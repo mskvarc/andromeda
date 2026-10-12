@@ -171,7 +171,7 @@ pub(crate) fn history(error: TemporalStoreError) -> AttemptFailure {
         | TemporalStoreError::NotFound(_)
         | TemporalStoreError::Encoding(_)
         | TemporalStoreError::Collation(_)
-        | TemporalStoreError::CopyField(_)
+        | TemporalStoreError::HistoryMembers(_)
         | TemporalStoreError::NameLookup(_)
         | TemporalStoreError::Invariant(_)
         | TemporalStoreError::Refused(_)

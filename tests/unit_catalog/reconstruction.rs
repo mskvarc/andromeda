@@ -6,7 +6,7 @@
 //! client asking for a pre-1.3 representation still gets the member removed
 //! under clause 4.3.6.8.
 
-use crate::fixtures::{EXPANDED_UNIT_CODE, SUITE, default_context_iri, device_with_unit, history_metadata, history_unit_identities};
+use crate::fixtures::{SUITE, default_context_iri, device_with_unit, history_sub_attribute_counts, history_unit_identities};
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
@@ -94,12 +94,10 @@ async fn history_holds_the_unit_in_its_column_and_not_in_the_metadata_document()
         assert!(identity.is_some(), "a unit-bearing instance must store its identity in the column");
     }
 
-    for metadata in history_metadata(scope.database_pool(), &id, &weight).await {
-        let document = metadata.expect("the sub-attribute keeps the metadata document populated");
-        assert_eq!(
-            document.get(EXPANDED_UNIT_CODE),
-            None,
-            "the instance's unit member must not survive in metadata: {document}"
+    for elements in history_sub_attribute_counts(scope.database_pool(), &id, &weight).await {
+        assert!(
+            elements.is_some_and(|count| count > 0),
+            "the sub-attribute is stored as an element beside the unit's column: {elements:?}"
         );
     }
 

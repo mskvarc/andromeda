@@ -2,7 +2,7 @@
 //! expanded form the canonical codec writes it in.
 
 use crate::temporal::history_row::neutral_row_to_instance;
-use andromeda_ngsi_ld_entity::{geometry_value::GeometryValue, non_empty::NonEmpty};
+use andromeda_ngsi_ld_entity::{document::instance_document::InstanceDocument, geometry_value::GeometryValue, non_empty::NonEmpty};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_identity::InstanceIdentity, rfc3339::sub_second};
 use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue, observation_metadata::ObservationMetadata, structured_value::StructuredValue};
@@ -385,12 +385,13 @@ fn broker_minted_system_times_render_at_their_stored_resolution() {
 #[test]
 fn the_stored_metadata_renders_beside_the_value() {
     let mut row = row(one());
-    row.metadata = ObservationMetadata::from_stored(
-        AttributeType::Property,
-        &row.attribute_name,
-        r#"{"https://uri.etsi.org/ngsi-ld/unitCode": [{"@value": "KMH"}], "https://example.org/accuracy": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 0.5}]}]}"#,
-    )
-    .expect("stored metadata reads");
+    let members = json!({
+        "@type": [AttributeType::Property.iri_str()],
+        "https://uri.etsi.org/ngsi-ld/unitCode": [{"@value": "KMH"}],
+        "https://example.org/accuracy": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 0.5}]}]
+    });
+    let document = InstanceDocument::from_slice(&row.attribute_name, &serde_json::to_vec(&members).expect("JSON")).expect("expanded members");
+    row.metadata = ObservationMetadata::from_parts(document.into_parts());
     let rendered = rendered(row, SysAttrsInclusion::Strip);
     pretty_assertions::assert_eq!(member(&rendered, expanded_properties::UNIT_CODE.as_str()), Some(&json!([{"@value": "KMH"}])));
     pretty_assertions::assert_eq!(member(&rendered, AttributeType::Property.value_key_str()), Some(&json!([{"@value": 1}])));

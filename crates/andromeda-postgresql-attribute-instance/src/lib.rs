@@ -6,8 +6,8 @@
 //! `objectType`, `unitCode`, `observedAt`, `expiresAt` and seals) and its
 //! sub-attributes (clause 4.5.2) as `sub_attribute` elements in pre-order. This
 //! crate owns those members, the element and the composite it travels as, the
-//! dictionary keys every name is held as, and the flattening and assembly of
-//! one instance and its tree. Where an instance sits (a current-state row, a
+//! dictionary keys every name is held as and their minting and lookup, and the
+//! flattening and assembly of one instance and its tree. Where an instance sits (a current-state row, a
 //! history row, a queue record) and the statements that write and read it
 //! belong to the stores that hold it.
 
@@ -20,6 +20,9 @@ pub mod assemble;
 pub mod flatten;
 /// The dictionary keys stored instances hold names as.
 pub mod name_keys;
+/// Minting the keys a write flattens with, and reading back the names a read
+/// assembles with.
+pub mod name_resolution;
 /// The family value an instance's stored columns hold.
 mod stored_family;
 /// A JSON piece held as its codec wrote it.
@@ -44,6 +47,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-number",
         "andromeda-postgresql-codes",
         "andromeda-postgresql-encoding",
+        "andromeda-postgresql-name-dictionary",
         "andromeda-postgresql-query",
         "andromeda-unit-catalog",
     ],

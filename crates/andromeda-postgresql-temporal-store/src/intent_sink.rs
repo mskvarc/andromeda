@@ -4,6 +4,7 @@ use crate::{
     attribute_history_row::AttributeHistoryRow,
     attribute_history_value::AttributeHistoryValue,
     error::TemporalStoreError,
+    history_members::{CommittedMetadata, HistoryMembers},
     repo::TemporalRepository,
     scope_history_entry::ScopeHistoryEntry,
     scope_history_value::ScopeHistoryValue,
@@ -11,12 +12,12 @@ use crate::{
     temporal_catalog_write::TemporalCatalog,
     temporal_store_invariant::TemporalStoreInvariant,
     temporal_stream::{TemporalCatalogUpsert, TemporalStreamKey},
-    unit_code_metadata::take_unit_code,
     write_record_persist::persist_write_record,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, observation_metadata::ObservationMetadata};
+use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
+use andromeda_postgresql_attribute_instance::{name_keys::MentionedNames, name_resolution::resolve_mentioned};
 use andromeda_postgresql_codes::{attribute_kind_code::stored_attribute_kind, stream_key::StreamKey, temporal_entity_key::TemporalEntityKey};
 use andromeda_temporal::{
     append_intent::{TemporalAppendEntry, TemporalAppendIntent, TemporalObservationIdentity},
@@ -95,7 +96,22 @@ impl PostgresTemporalHistorySink {
             })?;
         }
         let IntentRows { history, scopes } = rows;
-        repository.insert_history_batch_in_tx(tx, target, &history).await?;
+        let mut mentioned = MentionedNames::default();
+        history
+            .iter()
+            .filter_map(|(_, metadata)| metadata.as_ref())
+            .for_each(|metadata| metadata.mention(&mut mentioned));
+        let keys = resolve_mentioned(tx, mentioned, repository.entity_type_names.as_ref(), repository.attribute_names.as_ref()).await?;
+        let history = history
+            .into_iter()
+            .map(|(mut row, metadata)| {
+                if let Some(metadata) = metadata {
+                    row.members = metadata.keyed(&keys)?;
+                }
+                Ok(row)
+            })
+            .collect::<Result<Vec<_>, TemporalStoreError>>()?;
+        repository.insert_history_batch_in_tx(tx, target, history).await?;
         repository.insert_scope_history_batch_in_tx(tx, target, &scopes).await?;
         Ok(())
     }
@@ -104,8 +120,10 @@ impl PostgresTemporalHistorySink {
 /// The history and scope rows a chunk's intents amount to.
 #[derive(Default)]
 struct IntentRows {
-    /// Attribute history rows, observations and endings alike.
-    history: Vec<AttributeHistoryRow>,
+    /// Attribute history rows, observations and endings alike, each
+    /// observation beside the committed metadata its members are keyed from
+    /// once the chunk's names are minted.
+    history: Vec<(AttributeHistoryRow, Option<CommittedMetadata>)>,
     /// Scope history rows.
     scopes: Vec<ScopeHistoryEntry>,
 }
@@ -132,7 +150,9 @@ impl IntentRows {
             match entry {
                 TemporalAppendEntry::Observation { row } => {
                     let stream_key = resolve_stream(catalog, entity_key, &row.attribute_name, row.dataset_id.as_ref())?;
-                    self.history.push(observation_row(stream_key, row, recorded_at, identity)?);
+                    let metadata = CommittedMetadata::of(&row.attribute_name, row.metadata.as_ref())?;
+                    let row = observation_row(stream_key, row, recorded_at, identity, HistoryMembers::default())?;
+                    self.history.push((row, Some(metadata)));
                 }
                 TemporalAppendEntry::Tombstone {
                     attribute_name,
@@ -141,23 +161,25 @@ impl IntentRows {
                     instance,
                 } => {
                     let stream_key = resolve_stream(catalog, entity_key, attribute_name, dataset_id.as_ref())?;
-                    self.history.push(AttributeHistoryRow {
-                        recorded_at,
-                        identity,
-                        stream_key,
-                        // The family the ended instance belonged to is carried on
-                        // the tombstone, which is what lets the render synthesise
-                        // the null member that family prescribes.
-                        attribute_kind: stored_attribute_kind(*attribute_type),
-                        // A deletion records its instant and no typed value; the
-                        // null representation is synthesised from the attribute
-                        // family at render time (clauses 4.5.7 and 4.5.8).
-                        value: AttributeHistoryValue::Tombstone { deleted_at: recorded_at },
-                        axes: SemanticTimeAxes::default(),
-                        instance: instance.clone(), // clone: the persisted row owns its stable instance identity.
-                        unit_code_id: None,
-                        metadata: None,
-                    });
+                    self.history.push((
+                        AttributeHistoryRow {
+                            recorded_at,
+                            identity,
+                            stream_key,
+                            // The family the ended instance belonged to is carried on
+                            // the tombstone, which is what lets the render synthesise
+                            // the null member that family prescribes.
+                            attribute_kind: stored_attribute_kind(*attribute_type),
+                            // A deletion records its instant and no typed value; the
+                            // null representation is synthesised from the attribute
+                            // family at render time (clauses 4.5.7 and 4.5.8).
+                            value: AttributeHistoryValue::Tombstone { deleted_at: recorded_at },
+                            axes: SemanticTimeAxes::default(),
+                            instance: instance.clone(), // clone: the persisted row owns its stable instance identity.
+                            members: HistoryMembers::default(),
+                        },
+                        None,
+                    ));
                 }
                 TemporalAppendEntry::Scope {
                     observation,
@@ -294,25 +316,20 @@ fn resolve_stream(
         .ok_or_else(|| TemporalStoreInvariant::StreamUnresolved(attribute_name.clone()).into())
 }
 
-/// Build one history row from a neutral observation.
+/// Build one history row from a neutral observation and the `members` its
+/// metadata stores as.
 ///
 /// # Errors
 ///
-/// Returns [`TemporalStoreError`] when the observation's unit code, metadata
-/// or value does not read as a stored row.
+/// Returns [`TemporalStoreError`] when the observation's value does not read
+/// as a stored row.
 pub(crate) fn observation_row(
     stream_key: StreamKey,
     row: &TemporalHistoryRow,
     recorded_at: DateTime<Utc>,
     identity: TemporalObservationIdentity,
+    members: HistoryMembers,
 ) -> Result<AttributeHistoryRow, TemporalStoreError> {
-    // clone: the persisted row owns its metadata, the durable intent keeps its own.
-    let (metadata, unit_code_id) = take_unit_code(row.metadata.clone())?;
-    let metadata = metadata
-        .as_ref()
-        .map(ObservationMetadata::to_stored_json)
-        .transpose()
-        .map_err(TemporalStoreError::StoredJson)?;
     Ok(AttributeHistoryRow {
         recorded_at,
         identity,
@@ -328,8 +345,7 @@ pub(crate) fn observation_row(
             modified_at: row.modified_at,
         },
         instance: row.instance.clone(), // clone: the persisted row owns its instance identity.
-        unit_code_id,
-        metadata,
+        members,
     })
 }
 
@@ -343,9 +359,11 @@ mod tests {
     use crate::{
         attribute_history_value::AttributeHistoryValue,
         error::TemporalStoreError,
-        intent_sink::recording_entity_key,
+        history_members::HistoryMembers,
+        intent_sink::{IntentRows, recording_entity_key},
         temporal_catalog_write::TemporalCatalog,
         temporal_store_invariant::TemporalStoreInvariant,
+        temporal_stream::TemporalStreamKey,
     };
     use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
     use andromeda_ngsi_ld_entity::geometry_value::GeometryValue;
@@ -358,7 +376,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
     use andromeda_ngsi_ld_number::JsonNumber;
-    use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
+    use andromeda_postgresql_codes::{stream_key::StreamKey, temporal_entity_key::TemporalEntityKey};
     use andromeda_temporal::append_intent::{TemporalAppendEntry, TemporalAppendIntent};
     use chrono::{TimeZone, Utc};
     use serde_json::json;
@@ -459,6 +477,30 @@ mod tests {
             let resolved = recording_entity_key(&catalog, &intent(entries)).expect("a resolved key is not an error");
             pretty_assertions::assert_eq!(resolved, Some(entity_key));
         }
+    }
+
+    /// Clauses 4.5.7 and 4.5.8: a deletion records its instant and no value,
+    /// so no member a value carries beside it is stored either.
+    #[test]
+    fn a_tombstone_stores_no_metadata() {
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("valid entity URI");
+        let entity_key = TemporalEntityKey::try_from(7_i64).expect("a positive narrow key");
+        let grain = TemporalStreamKey {
+            attribute_name: SPEED.parse::<AttributeName>().expect("valid attribute name"),
+            dataset_id: None,
+        };
+        let catalog = TemporalCatalog {
+            entity_keys: HashMap::from([(entity_id, entity_key)]),
+            streams: HashMap::from([((entity_key, grain), StreamKey::try_from(9_i64).expect("a positive stream key"))]),
+        };
+        let mut rows = IntentRows::default();
+        rows.extend(&catalog, &intent(vec![tombstone()])).expect("the tombstone records");
+        let [(row, metadata)] = rows.history.as_slice() else {
+            panic!("one row: {:?}", rows.history);
+        };
+        assert!(metadata.is_none());
+        pretty_assertions::assert_eq!(row.members, HistoryMembers::default());
+        assert!(matches!(row.value, AttributeHistoryValue::Tombstone { .. }));
     }
 
     /// The observation carries the geometry already built, so the row stores

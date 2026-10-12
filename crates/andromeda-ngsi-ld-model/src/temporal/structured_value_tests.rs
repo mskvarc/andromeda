@@ -9,10 +9,11 @@ use crate::temporal::{
     structured_value_codec::StoredValueError,
 };
 use andromeda_ngsi_ld_entity::{
-    document::slot::Slot,
+    document::{instance_document::InstanceDocument, slot::Slot},
     expanded_value::ExpandedValue,
     geometry_value::GeometryValue,
     literal::LiteralValue,
+    refusal::EntityRefusal,
     unit_code::UnitCode,
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
@@ -23,6 +24,24 @@ use std::str::FromStr;
 
 fn attribute() -> AttributeName {
     "https://example.org/speed".parse().expect("a valid attribute name")
+}
+
+/// The metadata the expanded members `json` of a Property instance of
+/// `attribute()` carry, as the intent wire reads them.
+fn read_metadata(json: &str) -> Result<Option<ObservationMetadata>, EntityRefusal> {
+    let mut instance: Value = serde_json::from_str(json).expect("expanded members");
+    if let Some(members) = instance.as_object_mut() {
+        members.insert("@type".to_owned(), json!(["https://uri.etsi.org/ngsi-ld/Property"]));
+    }
+    let bytes = serde_json::to_vec(&instance).expect("JSON");
+    Ok(ObservationMetadata::from_parts(
+        InstanceDocument::from_slice(&attribute(), &bytes)?.into_parts(),
+    ))
+}
+
+/// The JSON `metadata` serializes as.
+fn written(metadata: &ObservationMetadata) -> Value {
+    serde_json::to_value(metadata).expect("metadata writes")
 }
 
 /// Decode `stored` as a value of `family` and write it back.
@@ -149,11 +168,10 @@ fn metadata_reads_and_writes_back_unchanged() {
             "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 0.5}]
         }]
     });
-    let metadata = ObservationMetadata::from_stored(AttributeType::Property, &attribute(), &stored.to_string())
+    let metadata = read_metadata(&stored.to_string())
         .expect("stored metadata reads")
         .expect("the members are metadata");
-    let written: Value = serde_json::from_str(metadata.to_stored_json().expect("metadata writes").get()).expect("the written JSON parses");
-    pretty_assertions::assert_eq!(written, stored);
+    pretty_assertions::assert_eq!(written(&metadata), stored);
 }
 
 /// The members a history row keeps in columns of their own never stay in its
@@ -164,10 +182,7 @@ fn column_members_are_not_metadata() {
         "https://uri.etsi.org/ngsi-ld/createdAt": [{"@value": "2024-01-01T00:00:00.000000Z", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}],
         "https://uri.etsi.org/ngsi-ld/observedAt": [{"@value": "2024-01-01T00:00:00Z", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}]
     });
-    pretty_assertions::assert_eq!(
-        ObservationMetadata::from_stored(AttributeType::Property, &attribute(), &stored.to_string()).expect("readable"),
-        None
-    );
+    pretty_assertions::assert_eq!(read_metadata(&stored.to_string()).expect("readable"), None);
 }
 
 /// The unit leaves the metadata for its column and comes back exactly.
@@ -177,27 +192,20 @@ fn the_unit_code_round_trips_through_its_column() {
         "https://uri.etsi.org/ngsi-ld/unitCode": [{"@value": "KGM"}],
         "https://example.org/accuracy": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]}]
     });
-    let metadata = ObservationMetadata::from_stored(AttributeType::Property, &attribute(), &stored.to_string())
-        .expect("readable")
-        .expect("metadata");
+    let metadata = read_metadata(&stored.to_string()).expect("readable").expect("metadata");
     let (rest, unit_code) = metadata.take_unit_code();
     let Some(Slot::Set(unit_code)) = unit_code else {
         panic!("the unit is taken: {unit_code:?}");
     };
     pretty_assertions::assert_eq!(unit_code, UnitCode::resolve("KGM").expect("a common code"));
-    let rest_json: Value = serde_json::from_str(rest.as_ref().expect("the sub-attribute remains").to_stored_json().expect("writes").get()).expect("parses");
+    let rest_json = written(rest.as_ref().expect("the sub-attribute remains"));
     assert!(rest_json.get("https://uri.etsi.org/ngsi-ld/unitCode").is_none(), "{rest_json}");
     let restored = ObservationMetadata::with_unit_code(rest, unit_code);
-    let restored_json: Value = serde_json::from_str(restored.to_stored_json().expect("writes").get()).expect("parses");
-    pretty_assertions::assert_eq!(restored_json, stored);
+    pretty_assertions::assert_eq!(written(&restored), stored);
 
-    let unit_only = ObservationMetadata::from_stored(
-        AttributeType::Property,
-        &attribute(),
-        r#"{"https://uri.etsi.org/ngsi-ld/unitCode": [{"@value": "MTR"}]}"#,
-    )
-    .expect("readable")
-    .expect("metadata");
+    let unit_only = read_metadata(r#"{"https://uri.etsi.org/ngsi-ld/unitCode": [{"@value": "MTR"}]}"#)
+        .expect("readable")
+        .expect("metadata");
     pretty_assertions::assert_eq!(unit_only.take_unit_code().0, None, "metadata holding only the unit stores no document");
 }
 
@@ -326,10 +334,9 @@ fn values_and_metadata_at_the_decodable_ceiling_read_back() {
     if let Some(members) = members.as_object_mut() {
         members.retain(|name, _| name != "@type" && !name.starts_with("https://uri.etsi.org/ngsi-ld/"));
     }
-    let metadata = ObservationMetadata::from_stored(AttributeType::Property, &attribute(), &members.to_string())
+    let metadata = read_metadata(&members.to_string())
         .expect("the stored metadata reads")
         .expect("the sub-attributes are metadata");
-    let stored = metadata.to_stored_json().expect("the metadata writes");
-    let reread = ObservationMetadata::from_stored(AttributeType::Property, &attribute(), stored.get()).expect("the written metadata reads");
+    let reread = read_metadata(&written(&metadata).to_string()).expect("the written metadata reads");
     pretty_assertions::assert_eq!(reread, Some(metadata));
 }

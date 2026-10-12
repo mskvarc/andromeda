@@ -13,7 +13,9 @@ use crate::error::TemporalError;
 use andromeda_context_commit::submission_refusal::SubmissionRefusal;
 use andromeda_json_literal::piece::{JsonKind, JsonPiece};
 use andromeda_ngsi_ld_entity::{
+    attributes::Attributes,
     document::{
+        attribute_member::AttributeMember,
         instance_document::{InstanceDocument, InstanceDocumentParts},
         slot::Slot,
         written_value::{ValueSlot, WrittenValue},
@@ -24,9 +26,11 @@ use andromeda_ngsi_ld_entity::{
     list_object::ListObject,
     literal::{Literal, LiteralValue},
     non_empty::NonEmpty,
+    refusal::EntityRefusal,
     value_mode::Fragment,
 };
 use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
     attribute_type::AttributeType,
     identifier::Identifier,
     ngsi_ld_date_time::NgsiLdDateTime,
@@ -38,6 +42,7 @@ use andromeda_ngsi_ld_model::temporal::{TemporalValue, observation_metadata::Obs
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_render::uri_decoding::decode_percent_encoded_uri;
 use chrono::{DateTime, Utc};
+use indexmap::IndexMap;
 use std::{borrow::Cow, str::FromStr};
 
 /// The JSON-LD datatype of a JSON literal, which a time value classification
@@ -74,8 +79,11 @@ impl ObservedInstance {
     ///
     /// Returns [`TemporalError::Validation`] when the instance carries no value
     /// of the shape its family requires, declares an `observedAt` that is not a
-    /// clause 4.6.3 `DateTime` in UTC, or carries a Property value written in
-    /// a clause 4.6.3 time form it does not satisfy.
+    /// clause 4.6.3 `DateTime` in UTC, carries a Property value written in a
+    /// clause 4.6.3 time form it does not satisfy, sets a companion member
+    /// (`expiresAt`, `unitCode`, `valueType`, `objectType`) to the NGSI-LD
+    /// Null, or holds a sub-attribute the committed model refuses (the NGSI-LD
+    /// Null, a member its family does not define).
     pub fn read(instance: InstanceDocument) -> Result<Option<ObservedInstance>, TemporalError> {
         let InstanceDocumentParts {
             family,
@@ -86,9 +94,9 @@ impl ObservedInstance {
             unit_code,
             value_type,
             object_types,
-            created_at,
-            modified_at,
-            deleted_at,
+            created_at: _,
+            modified_at: _,
+            deleted_at: _,
             instance_id,
             proof_seals,
             sub_attributes,
@@ -109,6 +117,19 @@ impl ObservedInstance {
             ),
             Some(Slot::Remove) | None => None,
         };
+        // Clause 5.5.4 excepts the temporal evolution from the Null in a
+        // value position alone (a deleted instance, clause 4.5.7); a companion
+        // member of a recorded instance holding it deletes nothing.
+        let deletes_a_companion = [
+            expires_at.as_ref().is_some_and(Slot::is_remove),
+            unit_code.as_ref().is_some_and(Slot::is_remove),
+            value_type.as_ref().is_some_and(Slot::is_remove),
+            object_types.as_ref().is_some_and(Slot::is_remove),
+        ]
+        .contains(&true);
+        if deletes_a_companion {
+            return Err(EntityRefusal::NullInState { attribute: None }.into());
+        }
         let metadata = ObservationMetadata::from_parts(InstanceDocumentParts {
             family: None,
             dataset_id: None,
@@ -118,12 +139,12 @@ impl ObservedInstance {
             unit_code,
             value_type,
             object_types,
-            created_at,
-            modified_at,
-            deleted_at,
+            created_at: None,
+            modified_at: None,
+            deleted_at: None,
             instance_id: None,
             proof_seals,
-            sub_attributes,
+            sub_attributes: committed_sub_attributes(sub_attributes)?,
         });
         Ok(Some(ObservedInstance {
             attribute_type: family,
@@ -134,6 +155,29 @@ impl ObservedInstance {
             metadata,
         }))
     }
+}
+
+/// The sub-attributes `written` as the committed model holds them, in the
+/// members a document writes.
+///
+/// A sub-attribute of an observation is a Property or Relationship as clause
+/// 4.5.2 mandates, whatever the Temporal Evolution around it: its output-only
+/// members are ignored (Table 5.2.5-2), the NGSI-LD Null is refused (clause
+/// 5.5.4 excepts only the deleted instance of the temporal evolution itself,
+/// clause 4.5.7), and every value takes the spelling storage keeps.
+///
+/// # Errors
+///
+/// Returns [`TemporalError::Validation`] when a sub-attribute is no instance
+/// the committed model holds.
+fn committed_sub_attributes(mut written: IndexMap<AttributeName, AttributeMember>) -> Result<IndexMap<AttributeName, AttributeMember>, TemporalError> {
+    if written.is_empty() {
+        return Ok(written);
+    }
+    written.values_mut().for_each(AttributeMember::forget_output_only_members_throughout);
+    let mut attributes = Attributes::try_from_members(written)?;
+    attributes.canonicalize_values();
+    Ok(attributes.written_members())
 }
 
 /// The refusal of an instance of `family` that carries no value member of the

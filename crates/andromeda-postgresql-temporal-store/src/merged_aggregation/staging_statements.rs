@@ -72,7 +72,7 @@ const STREAM_COLUMNS: [TemporalAttributeStreams; 4] = [
 ];
 
 /// The history hypertable's columns.
-const HISTORY_COLUMNS: [AttributeHistory; 22] = [
+const HISTORY_COLUMNS: [AttributeHistory; 26] = [
     AttributeHistory::RecordedAt,
     AttributeHistory::WriteId,
     AttributeHistory::StreamKey,
@@ -94,7 +94,11 @@ const HISTORY_COLUMNS: [AttributeHistory; 22] = [
     AttributeHistory::ValueGeometryMembers,
     AttributeHistory::ValueObject,
     AttributeHistory::ValueUri,
-    AttributeHistory::Metadata,
+    AttributeHistory::ValueTypeKey,
+    AttributeHistory::ObjectTypeKeys,
+    AttributeHistory::ProofSeals,
+    AttributeHistory::ExpiresAt,
+    AttributeHistory::SubAttributes,
 ];
 
 /// Which of the entity's local history rows the staging copies.
@@ -324,6 +328,19 @@ mod tests {
 
         let snapshot = branch_schema(Some(Alias::new("snap_7").into_iden()));
         assert!(staging_tables(&snapshot)[2].contains(r#"(LIKE "snap_7"."attribute_history""#));
+    }
+
+    /// A copied local row keeps every column the branch's row holds, the typed
+    /// members beside its value included.
+    #[test]
+    fn the_staged_answer_carries_the_typed_metadata_columns() {
+        let copy = copy_history(&branch_schema(None), CopiedHistory::Whole)
+            .expect("the copy builds")
+            .to_string(PostgresQueryBuilder);
+        for column in ["value_type_key", "object_type_keys", "proof_seals", "expires_at", "sub_attributes"] {
+            assert!(copy.contains(&format!(r#""{column}""#)), "{column} missing: {copy}");
+        }
+        assert!(!copy.contains("metadata"), "{copy}");
     }
 
     /// An aggregation reads the window alone, so only its rows are copied.

@@ -21,7 +21,7 @@ use crate::temporal::{
     structured_value_codec::StoredValueError,
 };
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_entity::refusal::EntityRefusal;
+use andromeda_ngsi_ld_entity::{document::instance_document::InstanceDocument, refusal::EntityRefusal};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
@@ -164,12 +164,10 @@ impl TryFrom<HistoryRowWire> for TemporalHistoryRow {
             ValueWire::Tombstone { deleted_at } => TemporalValue::Tombstone { deleted_at },
         };
         let metadata = match metadata {
-            Some(stored) => {
-                ObservationMetadata::from_stored(attribute_type, &attribute_name, &stored.to_string()).map_err(|source| StoredObservationError::Metadata {
-                    attribute: attribute_name.clone(), // clone: the error owns the attribute it names
-                    source,
-                })?
-            }
+            Some(stored) => metadata_of(attribute_type, &attribute_name, &stored.to_string()).map_err(|source| StoredObservationError::Metadata {
+                attribute: attribute_name.clone(), // clone: the error owns the attribute it names
+                source,
+            })?,
             None => None,
         };
         Ok(TemporalHistoryRow {
@@ -186,4 +184,27 @@ impl TryFrom<HistoryRowWire> for TemporalHistoryRow {
             partition_total,
         })
     }
+}
+
+/// Read the metadata the row of `attribute`, recorded in `family`, carries as
+/// the expanded members of an instance, `None` when they hold no metadata
+/// member.
+///
+/// Which members are companions of the value and which are sub-attributes is
+/// the family's to say (`objectType` belongs to the two Relationship families
+/// alone), so the members are read as those of an instance declaring the
+/// family.
+fn metadata_of(family: AttributeType, attribute: &AttributeName, json: &str) -> Result<Option<ObservationMetadata>, EntityRefusal> {
+    let members = json.trim_start().strip_prefix('{').unwrap_or(json);
+    let separator = if members.trim_start().starts_with('}') { "" } else { "," };
+    let family_iri = family.iri_str();
+    let mut instance = String::with_capacity(json.len() + family_iri.len() + 16);
+    instance.push_str("{\"@type\":[\"");
+    instance.push_str(family_iri);
+    instance.push_str("\"]");
+    instance.push_str(separator);
+    instance.push_str(members);
+    Ok(ObservationMetadata::from_parts(
+        InstanceDocument::from_slice(attribute, instance.as_bytes())?.into_parts(),
+    ))
 }

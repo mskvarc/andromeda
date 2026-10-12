@@ -24,7 +24,6 @@ use andromeda_entity_map::store::EntityMapStore;
 use andromeda_http_context_registry::hosted_context_reference::TenantHostedContexts;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
-use andromeda_postgresql_atomic_write::config::BulkWriteMode;
 use andromeda_postgresql_context_store::{
     context_space::resolve_live_target,
     csource_registration::{pattern_forms_refresh::refresh_stale_pattern_forms, registration_store::PostgresRegistrationStore},
@@ -40,11 +39,7 @@ use andromeda_postgresql_context_store::{
 };
 use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_lookup::NameLookup, schema_epoch::read_established_epoch};
 use andromeda_postgresql_pool::pool_options::configure_pool_options;
-use andromeda_postgresql_temporal_store::{
-    bulk_write_mode::BulkWriteMode as TemporalBulkWriteMode,
-    columnstore_capability::ColumnstoreSupport,
-    repo::TemporalRepository,
-};
+use andromeda_postgresql_temporal_store::{columnstore_capability::ColumnstoreSupport, repo::TemporalRepository};
 use andromeda_registration::store::RegistrationStore;
 use andromeda_snapshot::store::SnapshotStore;
 use andromeda_subscription::cache::SubscriptionCache;
@@ -231,10 +226,6 @@ pub(super) async fn initialize_storage(
             tracing::warn!(%error, event = "entity_type_names_preload_failed");
         }
     }
-    let bulk_write_mode = match config.atomic_write.bulk_mode {
-        BulkWriteMode::Unnest => TemporalBulkWriteMode::Unnest,
-        BulkWriteMode::CopyStaging => TemporalBulkWriteMode::CopyStaging,
-    };
     // One cache per dictionary per tenant, shared by every path that resolves
     // an attribute or type IRI: the temporal catalogue, the entity repository's
     // read path and the entity rows and projection the commit writes.
@@ -247,7 +238,6 @@ pub(super) async fn initialize_storage(
     let columnstore = ColumnstoreSupport::detect(&pool).await?;
     let temporal_repo = Arc::new(TemporalRepository::new(
         &pool,
-        bulk_write_mode,
         Arc::clone(&attribute_names),
         Arc::clone(&entity_type_names),
         columnstore,

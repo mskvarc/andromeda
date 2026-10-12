@@ -7,7 +7,7 @@
 //! shape a stored instance can take.
 
 use crate::{
-    conversion::instance_from_document::attributes_from_members,
+    attributes::Attributes,
     document::{EntityDocument, slot::Slot},
     entity_state::EntityState,
     entity_types::EntityTypes,
@@ -31,7 +31,7 @@ impl TryFrom<EntityDocument> for EntityState {
             Some(Slot::Set(expires_at)) => Some(expires_at),
             Some(Slot::Remove) => return Err(EntityRefusal::NullInState { attribute: None }),
         };
-        let attributes = attributes_from_members(parts.attributes)?;
+        let attributes = Attributes::try_from_members(parts.attributes)?;
         Ok(EntityState::from_parts(id, types, scope, expires_at, attributes))
     }
 }

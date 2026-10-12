@@ -27,17 +27,18 @@ impl AttributeMember {
         }
     }
 
-    /// Drop `createdAt` and `modifiedAt` from every instance of this member
-    /// and of its sub-attributes, at every depth.
-    pub fn forget_system_instants_throughout(&mut self) {
+    /// Drop the output-only members of every instance of this member and of
+    /// its sub-attributes, at every depth
+    /// ([`InstanceDocument::forget_output_only_members`]).
+    pub fn forget_output_only_members_throughout(&mut self) {
         match self {
             AttributeMember::Remove => {}
             AttributeMember::Instances(instances) => instances.iter_mut().for_each(|instance| {
-                instance.forget_system_instants();
+                instance.forget_output_only_members();
                 instance
                     .sub_attributes_mut()
                     .values_mut()
-                    .for_each(AttributeMember::forget_system_instants_throughout);
+                    .for_each(AttributeMember::forget_output_only_members_throughout);
             }),
         }
     }
@@ -46,9 +47,11 @@ impl AttributeMember {
 #[cfg(test)]
 mod tests {
     use crate::{
+        date_time_text::DateTimeText,
         document::{attribute_member::AttributeMember, instance_document::InstanceDocument},
         system_instant::SystemInstant,
     };
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use indexmap::IndexMap;
 
     /// A client-written instant.
@@ -56,39 +59,47 @@ mod tests {
         "1900-01-01T00:00:00Z".parse().expect("RFC 3339")
     }
 
-    /// A member of one instance carrying both system times, with one
-    /// sub-attribute that carries them too.
-    fn stamped_member() -> AttributeMember {
-        let nested = InstanceDocument::builder().created_at(Some(at())).modified_at(Some(at())).build();
-        let instance = InstanceDocument::builder()
+    /// An instance carrying every output-only member a producer could write.
+    fn claiming(sub_attributes: IndexMap<AttributeName, AttributeMember>) -> InstanceDocument {
+        InstanceDocument::builder()
             .created_at(Some(at()))
             .modified_at(Some(at()))
-            .sub_attributes(IndexMap::from([(
-                "https://example.org/method".parse().expect("a valid name"),
-                AttributeMember::Instances(vec![nested]),
-            )]))
-            .build();
-        AttributeMember::Instances(vec![instance])
+            .deleted_at(Some("1900-01-02T00:00:00Z".parse::<DateTimeText>().expect("a DateTime")))
+            .instance_id(Some("urn:ngsi-ld:instance:1".parse::<Identifier>().expect("a URI")))
+            .sub_attributes(sub_attributes)
+            .build()
     }
 
-    /// The system times of the member's instance and of its one sub-attribute.
-    fn times(member: &AttributeMember) -> [(Option<SystemInstant>, Option<SystemInstant>); 2] {
+    /// A member of one instance carrying every output-only member, with one
+    /// sub-attribute that carries them too.
+    fn claiming_member() -> AttributeMember {
+        let nested = claiming(IndexMap::new());
+        AttributeMember::Instances(vec![claiming(IndexMap::from([(
+            "https://example.org/method".parse().expect("a valid name"),
+            AttributeMember::Instances(vec![nested]),
+        )]))])
+    }
+
+    /// Whether `instance` still carries an output-only member.
+    fn claims_any(instance: &InstanceDocument) -> bool {
+        instance.created_at().is_some() || instance.modified_at().is_some() || instance.deleted_at().is_some() || instance.instance_id().is_some()
+    }
+
+    /// Table 5.2.5-2: `createdAt`, `modifiedAt`, `deletedAt` and `instanceId`
+    /// are output-only, and a broker ignores them when a producer writes them.
+    #[test]
+    fn forgetting_output_only_members_throughout_reaches_every_depth() {
+        let mut member = claiming_member();
+        member.forget_output_only_members_throughout();
         let instance = &member.instances()[0];
         let nested = &instance.sub_attributes()[0].instances()[0];
-        [(instance.created_at(), instance.modified_at()), (nested.created_at(), nested.modified_at())]
+        assert!(!claims_any(instance) && !claims_any(nested), "{member:?}");
     }
 
     #[test]
-    fn forgetting_system_times_throughout_reaches_every_depth() {
-        let mut member = stamped_member();
-        member.forget_system_instants_throughout();
-        pretty_assertions::assert_eq!(times(&member), [(None, None), (None, None)]);
-    }
-
-    #[test]
-    fn a_removal_has_no_system_times_to_forget() {
+    fn a_removal_has_no_output_only_members_to_forget() {
         let mut member = AttributeMember::Remove;
-        member.forget_system_instants_throughout();
+        member.forget_output_only_members_throughout();
         pretty_assertions::assert_eq!(member, AttributeMember::Remove);
     }
 }

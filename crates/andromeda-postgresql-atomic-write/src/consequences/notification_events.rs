@@ -12,9 +12,8 @@
 //! is waiting for, and reaping it later is work the write can simply not create.
 
 use crate::{
-    commit_refusal::context_store,
+    commit_refusal::{context_store, name_lookup},
     consequences::ConsequenceWrite,
-    name_resolution::{distinct, resolve_mentioned},
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
@@ -27,7 +26,10 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
-use andromeda_postgresql_attribute_instance::name_keys::{MentionedNames, NameKeys};
+use andromeda_postgresql_attribute_instance::{
+    name_keys::{MentionedNames, NameKeys},
+    name_resolution::{distinct, resolve_mentioned},
+};
 use andromeda_postgresql_context_store::notification_delivery::{event_insert::insert_events_in_tx, rows::NewNotificationEvent};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
@@ -75,7 +77,9 @@ pub(crate) async fn apply(
     if groups.is_empty() {
         return Ok((base, ConsequenceWrite::Nothing));
     }
-    let keys = resolve_mentioned(tx, mentioned_names(&groups), entity_type_names, attribute_names).await?;
+    let keys = resolve_mentioned(tx, mentioned_names(&groups), entity_type_names, attribute_names)
+        .await
+        .map_err(|error| name_lookup(&error))?;
     let events = groups
         .into_iter()
         .enumerate()

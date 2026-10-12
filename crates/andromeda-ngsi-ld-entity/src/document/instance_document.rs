@@ -239,15 +239,18 @@ impl InstanceDocument {
         self.instance_id = instance_id;
     }
 
-    /// Drop `createdAt` and `modifiedAt` from this instance, leaving its
-    /// sub-attributes as they are.
+    /// Drop the output-only members `createdAt`, `modifiedAt`, `deletedAt`
+    /// and `instanceId` from this instance, leaving its sub-attributes as they
+    /// are.
     ///
-    /// The broker generates both (clause 4.8) and ignores any a request
-    /// carries (clause 5.2.5); a sub-attribute holds none at all, since Table
-    /// 6.3.11-1 includes them only "where known".
-    pub const fn forget_system_instants(&mut self) {
+    /// The broker generates them (clauses 4.8 and 4.5.7) and ignores any a
+    /// producer provides (Table 5.2.5-2: they "shall not be provided by
+    /// Context Producers" and "NGSI-LD implementations shall ignore them").
+    pub fn forget_output_only_members(&mut self) {
         self.created_at = None;
         self.modified_at = None;
+        self.deleted_at = None;
+        self.instance_id = None;
     }
 
     /// The written sub-attributes, for a mutation.

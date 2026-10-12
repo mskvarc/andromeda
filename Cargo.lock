@@ -1619,13 +1619,9 @@ dependencies = [
  "pretty_assertions",
  "sea-query",
  "sea-query-sqlx",
- "serde",
  "serde_json",
  "sqlx",
- "strum",
  "tokio",
- "toml",
- "toml-comment",
  "tracing",
  "uuid",
 ]
@@ -1642,6 +1638,7 @@ dependencies = [
  "andromeda-ngsi-ld-number",
  "andromeda-postgresql-codes",
  "andromeda-postgresql-encoding",
+ "andromeda-postgresql-name-dictionary",
  "andromeda-postgresql-query",
  "andromeda-unit-catalog",
  "bigdecimal",
@@ -1947,6 +1944,7 @@ dependencies = [
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-persistence-failure",
+ "andromeda-postgresql-attribute-instance",
  "andromeda-postgresql-branch",
  "andromeda-postgresql-codes",
  "andromeda-postgresql-collation",
@@ -1972,6 +1970,7 @@ dependencies = [
  "sqlx",
  "strum",
  "thiserror 2.0.21",
+ "tokio",
  "uuid",
 ]
 

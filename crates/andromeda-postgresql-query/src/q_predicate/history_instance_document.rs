@@ -8,7 +8,6 @@ use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
     jsonb::{jsonb_build_array, jsonb_build_object, jsonb_strip_nulls, jsonb_typeof, to_jsonb},
     literal::{int_literal, text_literal},
-    pg_operator::PgBinaryOperator,
 };
 use sea_query::{CaseStatement, Expr as SeaExpr, ExprTrait, Func, SimpleExpr};
 
@@ -17,9 +16,9 @@ use sea_query::{CaseStatement, Expr as SeaExpr, ExprTrait, Func, SimpleExpr};
 ///
 /// A Query Term reaching a sub-attribute or a member of a compound value is
 /// answered by a jsonpath over an expanded entity (clause 4.9), and a history
-/// instance keeps exactly what that path walks: its sub-attributes in
-/// `metadata`, verbatim, its value in the typed columns, and its `observedAt` in
-/// its own column. The value becomes the `hasValue` node the path descends into
+/// instance keeps its value in the typed columns and its `observedAt` in its
+/// own column; its sub-attributes are typed elements this document does not
+/// rebuild, so a path into one matches nothing here. The value becomes the `hasValue` node the path descends into
 /// (the stored node itself for an object value, a value node for a scalar),
 /// except a `JsonProperty`'s raw JSON, which becomes the one `@json` value node
 /// of a `hasJSON` carrier (clause 4.5.24). The Relationship object becomes a
@@ -62,9 +61,7 @@ pub(crate) fn instance_document(attribute_iri: &str, aliases: &HistoryAliases) -
         text_literal(OBSERVED_AT.as_str()),
         jsonb_build_array(jsonb_build_object([text_literal("@value"), to_jsonb(column(AttributeHistory::ObservedAt))])),
     ]));
-    let metadata: SimpleExpr = Func::coalesce([column(AttributeHistory::Metadata), jsonb_build_object([])]).into();
-    let instance = metadata.jsonb_concat(carriers);
-    jsonb_build_array(jsonb_build_object([text_literal(attribute_iri), jsonb_build_array(instance)]))
+    jsonb_build_array(jsonb_build_object([text_literal(attribute_iri), jsonb_build_array(carriers)]))
 }
 
 #[cfg(test)]
@@ -72,14 +69,14 @@ mod tests {
     use crate::q_predicate::{history_instance_document::instance_document, history_window::HistoryAliases};
     use sea_query::{PostgresQueryBuilder, Query, SimpleExpr};
 
-    /// The rebuilt instance carries the sub-attributes, the value carriers and
-    /// `observedAt` the `q` jsonpath walks, under the attribute's IRI.
+    /// The rebuilt instance carries the value carriers and `observedAt` the
+    /// `q` jsonpath walks, under the attribute's IRI.
     #[test]
     fn the_instance_document_rebuilds_the_expanded_attribute() {
         let document: SimpleExpr = instance_document("https://example.org/speed", &HistoryAliases::top_level());
         let sql = Query::select().expr(document).to_owned().to_string(PostgresQueryBuilder);
         for fragment in [
-            r#"jsonb_build_array(jsonb_build_object('https://example.org/speed', jsonb_build_array(COALESCE("qh"."metadata", jsonb_build_object()) || jsonb_strip_nulls("#,
+            r"jsonb_build_array(jsonb_build_object('https://example.org/speed', jsonb_build_array(jsonb_strip_nulls(",
             "'https://uri.etsi.org/ngsi-ld/hasValue'",
             "'https://uri.etsi.org/ngsi-ld/hasObject'",
             r#"'https://uri.etsi.org/ngsi-ld/hasJSON', (CASE WHEN ("qh"."attribute_kind" = (6)) THEN jsonb_build_array(jsonb_build_object('@value', "qh"."value_object")) END)"#,

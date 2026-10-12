@@ -81,7 +81,7 @@ const CATALOG_ASSIGNED_IDENTIFIERS: &[(&str, &str)] = &[
 /// (`table` names the composite type for a field). Every other JSON document
 /// is stored as `json`, which keeps the text it was written as.
 const NAVIGATED_JSONB: &[(&str, &str)] = &[
-    ("attribute_history", "metadata"),
+    ("attribute_history", "proof_seals"),
     ("attribute_history", "value_geometry_members"),
     ("attribute_history", "value_object"),
     ("attribute_instance_record", "proof_seals"),

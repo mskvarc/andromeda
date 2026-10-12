@@ -11,6 +11,7 @@ use andromeda_ngsi_ld_entity::refusal::EntityRefusal;
 use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, reference::NgsiLdReferenceError, scope::path::ScopePathError, uri::UriParseError};
 use andromeda_ngsi_ld_model::temporal::structured_value_codec::StoredValueError;
 use andromeda_ngsi_ld_number::JsonNumberError;
+use andromeda_postgresql_attribute_instance::{assemble::AssemblyError, stored_members::StoredInstanceError};
 use andromeda_postgresql_codes::registry::UnknownCompactCode;
 use andromeda_postgresql_encoding::ewkb::EwkbError;
 use andromeda_unit_catalog::unit_code_id::UnitCodeIdOutOfRange;
@@ -155,15 +156,22 @@ pub enum StoredHistoryError {
     ValueNumber(#[source] JsonNumberError),
     /// A structured value is not the stored JSON of a value of its family.
     ///
-    /// Boxed, as is [`StoredHistoryError::Metadata`]: the refusal is the
-    /// widest member, and inlining it would enlarge every temporal store
-    /// `Result`.
+    /// Boxed, as are [`StoredHistoryError::Members`] and
+    /// [`StoredHistoryError::ProofSeals`]: the refusal is the widest member,
+    /// and inlining it would enlarge every temporal store `Result`.
     #[error("a stored attribute_history value_object is not a value of its family: {0}")]
     ValueObject(#[source] Box<StoredValueError>),
-    /// A stored metadata document is not the expanded members of an instance
-    /// of its family.
-    #[error("a stored attribute_history metadata is not the members of an instance: {0}")]
-    Metadata(#[source] Box<EntityRefusal>),
+    /// The stored `valueType`, `objectType` or sub-attribute elements do not
+    /// assemble: a key has no name, or the elements break an invariant of the
+    /// stored layout.
+    #[error("the stored members of an attribute_history row do not assemble: {0}")]
+    Members(#[source] Box<AssemblyError>),
+    /// A stored `proof_seals` document is not the seal members of an instance.
+    #[error("a stored attribute_history proof_seals is not the seals of an instance: {0}")]
+    ProofSeals(#[source] Box<EntityRefusal>),
+    /// A stored sub-attribute element breaks its invariants.
+    #[error("a stored attribute_history sub-attribute element is unreadable: {0}")]
+    SubAttribute(#[source] Box<StoredInstanceError>),
     /// A stored `value_geometry_members` document is not the `bbox` and
     /// foreign members of a geometry.
     #[error("a stored attribute_history value_geometry_members is not the members of a geometry: {0}")]

@@ -23,6 +23,15 @@ impl<T> Slot<T> {
         }
     }
 
+    /// The value, when the member is set, given up.
+    #[must_use]
+    pub fn into_set(self) -> Option<T> {
+        match self {
+            Slot::Set(value) => Some(value),
+            Slot::Remove => None,
+        }
+    }
+
     /// Whether the member is the NGSI-LD Null.
     #[must_use]
     pub const fn is_remove(&self) -> bool {

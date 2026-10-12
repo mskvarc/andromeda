@@ -33,6 +33,14 @@
 -- Relationship, a language map for a LanguageProperty (clauses 4.5.0, 4.5.7,
 -- 4.5.8).
 --
+-- What an instance carries beside its value is stored as current state stores
+-- it: `value_type_key`, `object_type_keys`, `unit_code_id`, `expires_at`,
+-- `proof_seals`, and its sub-attributes as `sub_attribute` elements whose
+-- `createdAt` and `modifiedAt` are NULL (history records the system times of
+-- the instance alone). A tombstone holds none of them. No foreign key reaches
+-- the dictionary keys, as none reaches `stream_key`: the dictionaries are
+-- append-only, and a key is minted in the transaction that writes the row.
+--
 -- An instance identifier sits in one of two columns: a broker-minted one as its
 -- UUID, rendered through the stable template
 -- `urn:ngsi-ld:attribute:instance:{uuid}`; a client-supplied one exactly as
@@ -54,7 +62,11 @@ create table attribute_history (
     modified_at timestamptz,
     deleted_at timestamptz,
     value_date_time timestamptz,
+    -- The instance's clause 4.22 `expiresAt`, as it was recorded.
+    expires_at timestamptz,
     generated_instance_id uuid,
+    -- `entity_type_names` key of the instance's clause 4.5.2 `valueType`.
+    value_type_key integer,
     unit_code_id smallint,
     value_boolean boolean,
     verbatim_instance_id text compression lz4 collate "C",
@@ -64,7 +76,14 @@ create table attribute_history (
     value_geometry_members jsonb compression lz4,
     value_object jsonb compression lz4,
     value_uri text compression lz4 collate "C",
-    metadata jsonb compression lz4,
+    -- `entity_type_names` keys of the clause 4.5.3 `objectType` list, in
+    -- written order.
+    object_type_keys integer[] compression lz4,
+    -- The clause 4.5.2.2 `entityIdSealed` and `entityTypeSealed` members of
+    -- the instance, NULL when it carries neither.
+    proof_seals jsonb compression lz4,
+    -- The instance's sub-attributes, NULL when it has none.
+    sub_attributes sub_attribute[] compression lz4,
     constraint uq_attribute_history_write_identity unique (recorded_at, write_id, write_ordinal),
     constraint chk_attribute_history_write_ordinal check (write_ordinal >= 0),
     constraint chk_attribute_history_attribute_kind check (attribute_kind between 1 and 8),
@@ -78,7 +97,10 @@ create table attribute_history (
     constraint chk_attribute_history_value_geometry_valid check (value_geometry is null or st_isvalid(value_geometry)),
     constraint chk_attribute_history_value_geometry_srid check (value_geometry is null or st_srid(value_geometry) = 4326),
     constraint chk_attribute_history_value_geometry_zm check (value_geometry is null or st_zmflag(value_geometry) in (0, 2)),
-    constraint chk_attribute_history_value_geometry_members check (value_geometry_members is null or (value_geometry is not null and jsonb_typeof(value_geometry_members) = 'object'))
+    constraint chk_attribute_history_value_geometry_members check (value_geometry_members is null or (value_geometry is not null and jsonb_typeof(value_geometry_members) = 'object')),
+    constraint chk_attribute_history_tombstone_members check (value_kind <> 0 or num_nonnulls (value_type_key, object_type_keys, unit_code_id, expires_at, proof_seals, sub_attributes) = 0),
+    constraint chk_attribute_history_object_type_keys_present check (object_type_keys is null or cardinality(object_type_keys) > 0),
+    constraint chk_attribute_history_sub_attributes_present check (sub_attributes is null or cardinality(sub_attributes) > 0)
 );
 
 create index idx_attribute_history_stream_recorded_at on attribute_history (stream_key, recorded_at desc);

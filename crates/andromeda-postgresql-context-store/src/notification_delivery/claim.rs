@@ -21,7 +21,7 @@ use crate::{
     error::ContextStoreError,
     notification_delivery::{
         branches::{drainable_targets, is_reaped_branch},
-        claimed_event::{RawClaimedEventRow, ReadEvents, names_of},
+        claimed_event::{RawClaimedEventRow, ReadEvents},
         rows::{RawClaimedDeliveryRow, UnreadableClaimedDelivery},
     },
 };
@@ -29,6 +29,7 @@ use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::{context_target::ContextTarget, snapshot_target::SnapshotTarget};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_notification::{delivery_entry::DeliveryEntry, delivery_lease::LeaseTerm};
+use andromeda_postgresql_attribute_instance::name_resolution::names_of;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_schema::{

@@ -24,19 +24,16 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::port::retrieved_entity::RetrievedEntity;
 use andromeda_ngsi_ld_entity::scopes::Scopes;
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    entity_type_name::EntityTypeName,
-    identifier::Identifier,
-    reference::NgsiLdReference,
-    scope::path::ScopePath,
-};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, scope::path::ScopePath};
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
-use andromeda_postgresql_attribute_instance::name_keys::{HeldKeys, KeyNames};
+use andromeda_postgresql_attribute_instance::{
+    name_keys::{HeldKeys, KeyNames},
+    name_resolution::names_of,
+};
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::entity_key::EntityKey;
 use andromeda_postgresql_context_query::entity_head::{EntityHead, select_head};
-use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
+use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use andromeda_postgresql_schema::current::{CurrentAttributes, E, Entities, EntitySearch};
 use sea_query::{Expr, ExprTrait, Iden, JoinType, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
@@ -171,26 +168,17 @@ impl GatheredEntities {
             held.collect(&row.members, &row.sub_attributes);
         }
         held.types.extend(self.heads.iter().flat_map(|head| head.types.iter().copied()));
-        held.attributes.sort_unstable_by_key(|key| key.get());
-        held.attributes.dedup();
-        held.types.sort_unstable_by_key(|key| key.get());
-        held.types.dedup();
-        held
+        held.distinct()
     }
 
     /// The states of the gathered Entities, in the order their heads were
-    /// read, every key read back through `attributes` and `types`.
+    /// read, every key read back through `names`.
     ///
     /// # Errors
     ///
     /// Returns [`ContextStoreError::StoredEntity`] when a type key has no name,
     /// when an Entity carries no type, or when its rows do not assemble.
-    fn assemble(
-        mut self,
-        attributes: HashMap<AttributeNameKey, AttributeName>,
-        types: &HashMap<EntityTypeNameKey, EntityTypeName>,
-    ) -> Result<Vec<RetrievedEntity>, ContextStoreError> {
-        let names = KeyNames::from_pairs(attributes, types.iter().map(|(key, name)| (*key, NgsiLdReference::from(name))));
+    fn assemble(mut self, names: &KeyNames) -> Result<Vec<RetrievedEntity>, ContextStoreError> {
         self.heads
             .into_iter()
             .map(|head| {
@@ -201,7 +189,7 @@ impl GatheredEntities {
                     rows: self.rows.remove(&head.key).unwrap_or_default(),
                 };
                 Ok(RetrievedEntity {
-                    state: Arc::new(stored.assemble(head.id, &names)?),
+                    state: Arc::new(stored.assemble(head.id, names)?),
                     sys_attrs: head.sys_attrs,
                 })
             })
@@ -260,10 +248,8 @@ impl EntityRepository {
     /// Returns [`ContextStoreError`] when a dictionary lookup fails, or when a
     /// head or the rows of an Entity do not read back.
     pub(crate) async fn assembled(&self, gathered: GatheredEntities) -> Result<Vec<RetrievedEntity>, ContextStoreError> {
-        let held = gathered.held_keys();
-        let attributes = self.attribute_names.names_of(&held.attributes).await?;
-        let types = self.entity_type_names.names_of(&held.types).await?;
-        gathered.assemble(attributes, &types)
+        let names = names_of(&gathered.held_keys(), self.attribute_names.as_ref(), self.entity_type_names.as_ref()).await?;
+        gathered.assemble(&names)
     }
 }
 
@@ -274,9 +260,9 @@ mod tests {
         entity::stored_entities::{GatheredEntities, StoredHead},
     };
     use andromeda_ngsi_ld_entity::{entity_state::EntityState, system_instant::SystemInstant};
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, reference::NgsiLdReference};
     use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
-    use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
+    use andromeda_postgresql_attribute_instance::name_keys::{KeyNames, NameKeys};
     use andromeda_postgresql_codes::entity_key::EntityKey;
     use andromeda_postgresql_query::{
         attribute_name_key::AttributeNameKey,
@@ -286,7 +272,7 @@ mod tests {
     use chrono::{TimeZone, Utc};
     use pretty_assertions::assert_eq;
     use serde_json::json;
-    use std::{cmp::Reverse, collections::HashMap};
+    use std::cmp::Reverse;
 
     const EX: &str = "https://ex.org/";
 
@@ -312,7 +298,9 @@ mod tests {
         state
     }
 
-    fn names() -> (NameKeys, HashMap<AttributeNameKey, AttributeName>, HashMap<EntityTypeNameKey, EntityTypeName>) {
+    /// The keys of `a`, `b` and `c`, and the names behind them and behind
+    /// the `Building` type key 9.
+    fn names() -> (NameKeys, KeyNames) {
         let attributes: Vec<(AttributeName, AttributeNameKey)> = ["a", "b", "c"]
             .iter()
             .zip(1..)
@@ -320,11 +308,11 @@ mod tests {
             .collect();
         let building: EntityTypeName = format!("{EX}Building").parse().expect("a type");
         let keys = NameKeys::new(ResolvedNames::from_pairs(attributes.clone()), ResolvedNames::default());
-        (
-            keys,
-            attributes.into_iter().map(|(name, key)| (key, name)).collect(),
-            HashMap::from([(EntityTypeNameKey::from(9), building)]),
-        )
+        let names = KeyNames::from_pairs(
+            attributes.into_iter().map(|(name, key)| (key, name)),
+            [(EntityTypeNameKey::from(9), NgsiLdReference::from(&building))],
+        );
+        (keys, names)
     }
 
     fn head(key: i64, id: &str) -> StoredHead {
@@ -347,7 +335,7 @@ mod tests {
     /// ordinal order, whatever order the rows arrived in.
     #[test]
     fn rows_of_a_page_in_any_order_assemble_in_page_order() {
-        let (keys, attribute_names, type_names) = names();
+        let (keys, names) = names();
         let page = [
             (3, "urn:ngsi-ld:Building:c", 30),
             (1, "urn:ngsi-ld:Building:a", 10),
@@ -365,7 +353,7 @@ mod tests {
             gathered.rows.entry(key).or_default().push(row);
         }
 
-        let assembled = gathered.assemble(attribute_names, &type_names).expect("the rows assemble");
+        let assembled = gathered.assemble(&names).expect("the rows assemble");
         let ids: Vec<&str> = assembled.iter().map(|entity| entity.state.id().as_str()).collect();
         assert_eq!(ids, vec!["urn:ngsi-ld:Building:c", "urn:ngsi-ld:Building:a", "urn:ngsi-ld:Building:b"]);
         for ((_, id, seed), entity) in page.iter().zip(&assembled) {
@@ -377,10 +365,10 @@ mod tests {
     /// attribute.
     #[test]
     fn an_entity_without_rows_assembles_without_attributes() {
-        let (_, attribute_names, type_names) = names();
+        let (_, names) = names();
         let mut gathered = GatheredEntities::default();
         gathered.heads.push(head(1, "urn:ngsi-ld:Building:a"));
-        let assembled = gathered.assemble(attribute_names, &type_names).expect("the head assembles");
+        let assembled = gathered.assemble(&names).expect("the head assembles");
         assert!(assembled.first().is_some_and(|entity| entity.state.attributes().is_empty()));
     }
 
@@ -388,9 +376,8 @@ mod tests {
     /// Entity without that type.
     #[test]
     fn a_type_key_without_a_name_is_refused() {
-        let (_, attribute_names, _) = names();
         let mut gathered = GatheredEntities::default();
         gathered.heads.push(head(1, "urn:ngsi-ld:Building:a"));
-        assert!(gathered.assemble(attribute_names, &HashMap::new()).is_err());
+        assert!(gathered.assemble(&KeyNames::default()).is_err());
     }
 }

@@ -17,6 +17,8 @@ pub(crate) mod aggregation_group_key_decode;
 pub(crate) mod aggregation_row_decode;
 /// Reading one entity's aggregation rows as the aggregates they compute.
 pub(crate) mod aggregation_rows_read;
+/// The column-major binds one attribute-history batch travels in.
+pub(crate) mod attribute_history_binds;
 /// One row of the `attribute_history` hypertable.
 pub mod attribute_history_row;
 /// The value one attribute-history row carries, and the column it occupies.
@@ -25,20 +27,18 @@ pub mod attribute_history_value;
 pub mod attribute_history_write;
 /// Deleting the Temporal Evolution of one attribute.
 pub mod attribute_stream_deletion;
-/// Dispatch mode for bulk history writes.
-pub mod bulk_write_mode;
 /// Whether the attached `TimescaleDB` edition provides the hypercore columnstore.
 pub mod columnstore_capability;
 /// Enabling the hypercore columnstore on the temporal hypertables.
 pub mod columnstore_enablement;
-/// Binary COPY path for bulk attribute-history inserts.
-pub(crate) mod copy;
 /// The invariant that one client-supplied `instanceId` names one attribute
 /// instance across every sibling `datasetId` stream of an attribute.
 pub mod duplicate_instance_claim;
 mod entity_attribute_history;
 /// Error types for the temporal store crate.
 pub mod error;
+/// What a history row stores beside its value, keyed as current state keys it.
+pub mod history_members;
 /// Decoding `PgRow` into the backend-neutral temporal row types.
 pub(crate) mod history_row_decode;
 /// The identity and column reads the two history hypertables share.
@@ -130,6 +130,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-persistence-failure",
+        "andromeda-postgresql-attribute-instance",
         "andromeda-postgresql-branch",
         "andromeda-postgresql-name-dictionary",
         "andromeda-postgresql-pool",

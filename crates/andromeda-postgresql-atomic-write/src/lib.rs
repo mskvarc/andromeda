@@ -15,8 +15,6 @@ mod columns;
 mod commit_refusal;
 /// Native PostgreSQL implementation of the context commit port.
 pub mod committer;
-/// PostgreSQL atomic-write execution configuration.
-pub mod config;
 mod consequences;
 mod contention_retry;
 mod deferred_history;

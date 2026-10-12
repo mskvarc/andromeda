@@ -62,12 +62,14 @@ impl EntityState {
     }
 }
 
-/// Give every value of `attributes` its committed spelling, copying only the
-/// attributes whose values change.
-fn canonicalize_attributes(attributes: &mut Attributes) {
-    for (_, instances) in attributes.iter_shared_mut() {
-        if instances.iter().any(|(_, instance)| instance_needs_canonical(instance)) {
-            Arc::make_mut(instances).iter_mut().for_each(|(_, instance)| canonicalize_instance(instance));
+impl Attributes {
+    /// Give every value of these attributes, at every depth, its committed
+    /// spelling, copying only the attributes whose values change.
+    pub fn canonicalize_values(&mut self) {
+        for (_, instances) in self.iter_shared_mut() {
+            if instances.iter().any(|(_, instance)| instance_needs_canonical(instance)) {
+                Arc::make_mut(instances).iter_mut().for_each(|(_, instance)| canonicalize_instance(instance));
+            }
         }
     }
 }
@@ -96,7 +98,7 @@ fn canonicalize_instance(instance: &mut Instance) {
     if let Some(canonical) = instance.expires_at().and_then(canonical_instant) {
         instance.set_expires_at(Some(canonical));
     }
-    canonicalize_attributes(instance.sub_attributes_mut());
+    instance.sub_attributes_mut().canonicalize_values();
 }
 
 /// Whether `value` is not in its committed spelling.

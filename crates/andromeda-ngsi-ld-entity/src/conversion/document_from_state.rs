@@ -32,7 +32,7 @@ impl From<&EntityState> for EntityDocument {
             state.types().as_slice().to_vec(),
             state.scope().cloned().map(Slot::Set),      // clone: as above
             state.expires_at().cloned().map(Slot::Set), // clone: as above
-            attribute_members(state.attributes()),
+            state.attributes().written_members(),
         )
     }
 }
@@ -56,17 +56,19 @@ impl InstanceDocument {
             .modified_at(instance.modified_at())
             .instance_id(instance.instance_id().cloned()) // clone: as above
             .proof_seals(instance.proof_seals().clone()) // clone: as above
-            .sub_attributes(attribute_members(instance.sub_attributes()))
+            .sub_attributes(instance.sub_attributes().written_members())
             .build()
     }
 }
 
-/// Every stored attribute as its written member, in stored order.
-fn attribute_members(attributes: &Attributes) -> IndexMap<AttributeName, AttributeMember> {
-    attributes
-        .iter()
-        .map(|(name, instances)| (name.clone(), instance_members(instances))) // clone: the document owns its member names
-        .collect()
+impl Attributes {
+    /// Every stored attribute as its written member, in stored order.
+    #[must_use]
+    pub fn written_members(&self) -> IndexMap<AttributeName, AttributeMember> {
+        self.iter()
+            .map(|(name, instances)| (name.clone(), instance_members(instances))) // clone: the document owns its member names
+            .collect()
+    }
 }
 
 /// The instances of one stored attribute, in stored order.

@@ -60,12 +60,7 @@ mod tests {
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
     use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_cache_config::NameCacheConfig};
-    use andromeda_postgresql_temporal_store::{
-        bulk_write_mode::BulkWriteMode,
-        columnstore_capability::ColumnstoreSupport,
-        recorder::TemporalRecorder,
-        repo::TemporalRepository,
-    };
+    use andromeda_postgresql_temporal_store::{columnstore_capability::ColumnstoreSupport, recorder::TemporalRecorder, repo::TemporalRepository};
     use andromeda_temporal::port::temporal_intent_publisher::NoTemporalIntentPublisher;
     use sqlx::postgres::PgPoolOptions;
     use std::sync::Arc;
@@ -78,7 +73,6 @@ mod tests {
             .expect("a lazy pool is built without connecting");
         Arc::new(TemporalRecorder::new(Arc::new(TemporalRepository::new(
             &pool,
-            BulkWriteMode::default(),
             Arc::new(NameCache::<AttributeName>::new(&pool, &NameCacheConfig::default())),
             Arc::new(NameCache::<EntityTypeName>::new(&pool, &NameCacheConfig::default())),
             ColumnstoreSupport::Absent,

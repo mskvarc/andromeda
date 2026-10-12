@@ -146,7 +146,9 @@ fn geometry_write(marker: usize) -> SimpleExpr {
 /// with no exact double is stored exactly as a creation stores it. `modified_at`
 /// advances the NGSI-LD axis while `recorded_at` is left alone.
 /// `attribute_kind` moves with the value columns so a replacement that changes
-/// family keeps the row's declared family in agreement with its value shape.
+/// family keeps the row's declared family in agreement with its value shape,
+/// and every member the replacement carries beside its value replaces the
+/// row's, so none of the replaced instance's survives.
 pub(crate) fn update_instance_sql(column: InstanceColumn, target: &ContextTarget) -> String {
     Query::update()
         .table(table_of(target, AttributeHistory::Table))
@@ -160,10 +162,14 @@ pub(crate) fn update_instance_sql(column: InstanceColumn, target: &ContextTarget
             (AttributeHistory::ValueDateTime, external_placeholder(10)),
             (AttributeHistory::ValueUri, external_placeholder(11)),
             (AttributeHistory::ObservedAt, external_placeholder(12)),
-            (AttributeHistory::Metadata, external_placeholder(13)),
+            (AttributeHistory::ValueTypeKey, external_placeholder(13)),
             (AttributeHistory::UnitCodeId, external_placeholder(14)),
             (AttributeHistory::AttributeKind, external_placeholder(15)),
             (AttributeHistory::ValueGeometryMembers, external_placeholder(16)),
+            (AttributeHistory::ObjectTypeKeys, external_placeholder(17)),
+            (AttributeHistory::ProofSeals, external_placeholder(18)),
+            (AttributeHistory::ExpiresAt, external_placeholder(19)),
+            (AttributeHistory::SubAttributes, external_placeholder(20)),
             (AttributeHistory::ModifiedAt, now()),
         ])
         .and_where(Expr::col(column.column()).eq(external_placeholder(1)))
@@ -250,6 +256,16 @@ mod tests {
             assert!(!statement.contains(r#""recorded_at" ="#), "{statement}");
             assert!(statement.contains(r#""value_kind" = $4"#), "{statement}");
             assert!(statement.contains(r#""attribute_kind" = $15"#), "{statement}");
+            for member in [
+                r#""value_type_key" = $13"#,
+                r#""unit_code_id" = $14"#,
+                r#""object_type_keys" = $17"#,
+                r#""proof_seals" = $18"#,
+                r#""expires_at" = $19"#,
+                r#""sub_attributes" = $20"#,
+            ] {
+                assert!(statement.contains(member), "{member} missing: {statement}");
+            }
         }
     }
 

@@ -16,33 +16,111 @@
 
 use crate::{
     error::TemporalStoreError,
+    history_members::HistoryMembers,
     history_row_identity::{decode_instance_identity, decode_write_identity, nullable_instant, required_column},
     stored_history_error::{HistoryColumn, HistoryTable, StoredHistoryError, UnitCodeColumn},
-    unit_code_metadata::restore_unit_code,
 };
 use andromeda_ngsi_ld_entity::geometry_value::{ExpandedGeoJsonMembers, GeometryValue};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, uri::Uri};
-use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue, observation_metadata::ObservationMetadata, structured_value::StructuredValue};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    entity_type_name::EntityTypeName,
+    identifier::Identifier,
+    uri::Uri,
+};
+use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue, structured_value::StructuredValue};
 use andromeda_ngsi_ld_number::JsonNumber;
+use andromeda_postgresql_attribute_instance::{
+    name_keys::{HeldKeys, KeyNames},
+    name_resolution::names_of,
+    stored_json::StoredJson,
+    sub_attribute::{SubAttributeElement, SubAttributeRecord},
+};
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, attribute_kind_code::attribute_type_of, value_kind::ValueKind};
 use andromeda_postgresql_encoding::ewkb::Ewkb;
+use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
+use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use andromeda_temporal::port::history_reader::TemporalHistoryObservation;
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use bigdecimal::BigDecimal;
 use serde_json::value::RawValue;
-use sqlx::{Row, postgres::PgRow};
+use sqlx::{Row, postgres::PgRow, types::Json};
 
 /// The table every row this module decodes comes from.
 const TABLE: HistoryTable = HistoryTable::AttributeHistory;
 
-/// Decode one `attribute_history` row into a [`TemporalHistoryRow`].
-pub(crate) fn decode_history_row(row: &PgRow) -> Result<TemporalHistoryObservation, TemporalStoreError> {
+/// One `attribute_history` row read back but for its metadata, whose names
+/// the read looks up for every row at once.
+struct DecodedHistoryRow {
+    /// The observation, its metadata not yet assembled.
+    observation: TemporalHistoryObservation,
+    /// What the row stores beside its value, every name still a key.
+    members: HistoryMembers,
+}
+
+impl DecodedHistoryRow {
+    /// Add every key the row's members hold to `held`.
+    fn collect_keys(&self, held: &mut HeldKeys) {
+        self.members.collect_keys(held);
+    }
+
+    /// The observation, its metadata assembled through `names`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalStoreError`] when a key has no name in `names` or the
+    /// members do not assemble.
+    fn assemble(self, names: &KeyNames) -> Result<TemporalHistoryObservation, TemporalStoreError> {
+        let DecodedHistoryRow { mut observation, members } = self;
+        observation.row.metadata = members.metadata(&observation.row.attribute_name, names)?;
+        Ok(observation)
+    }
+}
+
+/// The observations `rows` of one read hold, the names of every key their
+/// members hold looked up once per dictionary.
+///
+/// # Errors
+///
+/// Returns [`TemporalStoreError`] when a row does not decode, a dictionary
+/// cannot be read, or a row's members do not assemble.
+pub(crate) async fn assembled_history(
+    rows: &[PgRow],
+    attribute_names: &dyn NameLookup<AttributeName>,
+    entity_type_names: &dyn NameLookup<EntityTypeName>,
+) -> Result<Vec<TemporalHistoryObservation>, TemporalStoreError> {
+    let decoded = rows.iter().map(decode_history_row).collect::<Result<Vec<_>, _>>()?;
+    assemble_history(decoded, attribute_names, entity_type_names).await
+}
+
+/// The observations `decoded`, the names of every key their members hold
+/// looked up once per dictionary.
+///
+/// # Errors
+///
+/// Returns [`TemporalStoreError`] when a dictionary cannot be read or a row's
+/// members do not assemble.
+async fn assemble_history(
+    decoded: Vec<DecodedHistoryRow>,
+    attribute_names: &dyn NameLookup<AttributeName>,
+    entity_type_names: &dyn NameLookup<EntityTypeName>,
+) -> Result<Vec<TemporalHistoryObservation>, TemporalStoreError> {
+    let mut held = HeldKeys::default();
+    for row in &decoded {
+        row.collect_keys(&mut held);
+    }
+    let names = names_of(&held.distinct(), attribute_names, entity_type_names).await?;
+    decoded.into_iter().map(|row| row.assemble(&names)).collect()
+}
+
+/// Decode one `attribute_history` row into a [`TemporalHistoryRow`] whose
+/// metadata is assembled once the read has the names of its keys.
+fn decode_history_row(row: &PgRow) -> Result<DecodedHistoryRow, TemporalStoreError> {
     let attribute_type = attribute_type_of(decode_attribute_kind(row)?);
     let attribute_name = decode_attribute_name(row)?;
     let value = decode_value(row, attribute_type, &attribute_name)?;
-    let metadata = decode_metadata(row, attribute_type, &attribute_name)?;
-    let metadata = restore_unit_code(metadata, decode_unit_code_id(row, UnitCodeColumn::UnitCodeId)?)?;
+    let members = decode_members(row)?;
 
     let temporal_row = TemporalHistoryRow {
         attribute_name,
@@ -58,12 +136,15 @@ pub(crate) fn decode_history_row(row: &PgRow) -> Result<TemporalHistoryObservati
         created_at: nullable_instant(row, HistoryColumn::CreatedAt)?,
         modified_at: nullable_instant(row, HistoryColumn::ModifiedAt)?,
         instance: decode_instance_identity(row, TABLE)?,
-        metadata,
+        metadata: None,
         partition_total: row.try_get("partition_total").ok(),
     };
-    Ok(TemporalHistoryObservation {
-        row: temporal_row,
-        identity: Some(decode_write_identity(row, TABLE)?),
+    Ok(DecodedHistoryRow {
+        observation: TemporalHistoryObservation {
+            row: temporal_row,
+            identity: Some(decode_write_identity(row, TABLE)?),
+        },
+        members,
     })
 }
 
@@ -99,14 +180,28 @@ pub(crate) fn decode_unit_code_id(row: &PgRow, column: UnitCodeColumn) -> Result
         .transpose()?)
 }
 
-/// Read the row's metadata, as an instance of its family stores it.
-fn decode_metadata(row: &PgRow, attribute_type: AttributeType, attribute_name: &AttributeName) -> Result<Option<ObservationMetadata>, TemporalStoreError> {
-    let stored: Option<&RawValue> = row.try_get("metadata").unwrap_or(None);
-    match stored {
-        Some(stored) => Ok(ObservationMetadata::from_stored(attribute_type, attribute_name, stored.get())
-            .map_err(|refusal| StoredHistoryError::Metadata(Box::new(refusal)))?),
-        None => Ok(None),
-    }
+/// Read what the row stores beside its value, every name as its key.
+fn decode_members(row: &PgRow) -> Result<HistoryMembers, TemporalStoreError> {
+    let sub_attributes = row
+        .try_get::<Option<Vec<SubAttributeRecord>>, _>("sub_attributes")?
+        .unwrap_or_default()
+        .into_iter()
+        .map(SubAttributeElement::try_from)
+        .collect::<Result<_, _>>()
+        .map_err(|error| StoredHistoryError::SubAttribute(Box::new(error)))?;
+    Ok(HistoryMembers {
+        value_type_key: row.try_get::<Option<i32>, _>("value_type_key")?.map(EntityTypeNameKey::from),
+        object_type_keys: row
+            .try_get::<Option<Vec<i32>>, _>("object_type_keys")?
+            .unwrap_or_default()
+            .into_iter()
+            .map(EntityTypeNameKey::from)
+            .collect(),
+        unit_code_id: decode_unit_code_id(row, UnitCodeColumn::UnitCodeId)?,
+        expires_at: row.try_get("expires_at")?,
+        proof_seals: row.try_get::<Option<Json<Box<RawValue>>>, _>("proof_seals")?.map(StoredJson::from),
+        sub_attributes,
+    })
 }
 
 /// Read the row's value from the column its stored value kind names.
@@ -162,7 +257,154 @@ fn geometry_from_ewkb(bytes: &[u8]) -> Result<Geometry, StoredHistoryError> {
 
 #[cfg(test)]
 mod tests {
-    use crate::history_row_decode::geometry_from_ewkb;
+    use crate::{
+        error::TemporalStoreError,
+        history_members::HistoryMembers,
+        history_row_decode::{DecodedHistoryRow, assemble_history, geometry_from_ewkb},
+        stored_history_error::StoredHistoryError,
+    };
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_identity::InstanceIdentity};
+    use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
+    use andromeda_postgresql_attribute_instance::{
+        name_keys::KeyNames,
+        stored_members::InstanceMembers,
+        stored_value::StoredValue,
+        sub_attribute::SubAttributeElement,
+    };
+    use andromeda_postgresql_codes::attribute_kind::AttributeKind;
+    use andromeda_postgresql_name_dictionary::name_lookup::{NameLookup, NameLookupError};
+    use andromeda_postgresql_query::{
+        attribute_name_key::AttributeNameKey,
+        dictionary::{interned_name::InternedName, resolved_names::ResolvedNames},
+    };
+    use andromeda_temporal::port::history_reader::TemporalHistoryObservation;
+    use chrono::{TimeZone, Utc};
+    use sqlx::PgConnection;
+    use std::{collections::HashMap, sync::Mutex};
+
+    const SPEED: &str = "https://example.org/speed";
+
+    /// A Boolean sub-attribute element of the attribute keyed `key`, under
+    /// `parent`.
+    fn element(parent: i32, key: i32) -> SubAttributeElement {
+        SubAttributeElement {
+            parent,
+            members: InstanceMembers {
+                attribute_name_key: AttributeNameKey::from(key),
+                dataset_id: None,
+                attribute_kind: AttributeKind::Property,
+                value: StoredValue::Boolean { flag: true, datatype: None },
+                value_type_key: None,
+                object_type_keys: Vec::new(),
+                unit_code_id: None,
+                observed_at: None,
+                expires_at: None,
+                proof_seals: None,
+            },
+            created_at: None,
+            modified_at: None,
+        }
+    }
+
+    /// A decoded row of `speed` whose members hold `sub_attributes`.
+    fn decoded(sub_attributes: Vec<SubAttributeElement>) -> DecodedHistoryRow {
+        let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant");
+        DecodedHistoryRow {
+            observation: TemporalHistoryObservation {
+                row: TemporalHistoryRow {
+                    attribute_name: SPEED.parse().expect("an attribute name"),
+                    attribute_type: AttributeType::Property,
+                    dataset_id: None,
+                    value: TemporalValue::Boolean(true),
+                    observed_at: None,
+                    recorded_at,
+                    created_at: Some(recorded_at),
+                    modified_at: Some(recorded_at),
+                    instance: InstanceIdentity::generate(),
+                    metadata: None,
+                    partition_total: None,
+                },
+                identity: None,
+            },
+            members: HistoryMembers {
+                sub_attributes,
+                ..HistoryMembers::default()
+            },
+        }
+    }
+
+    /// The names of the attribute keys 3 and 7.
+    fn names() -> KeyNames {
+        let name = |raw: &str| raw.parse::<AttributeName>().expect("an attribute name");
+        KeyNames::from_pairs(
+            [
+                (AttributeNameKey::from(3), name("https://example.org/accuracy")),
+                (AttributeNameKey::from(7), name("https://example.org/method")),
+            ],
+            [],
+        )
+    }
+
+    #[test]
+    fn a_history_row_decodes_its_sub_attributes_through_the_dictionary() {
+        let observation = decoded(vec![element(0, 3), element(1, 7)]).assemble(&names()).expect("the members assemble");
+        let parts = observation.row.metadata.expect("the sub-attributes are metadata").into_parts();
+        let accuracy = parts.sub_attributes.get("https://example.org/accuracy").expect("accuracy");
+        let method = accuracy.instances()[0].sub_attributes().get("https://example.org/method");
+        assert!(method.is_some(), "{parts:?}");
+    }
+
+    #[test]
+    fn an_element_key_without_a_name_is_a_store_fault() {
+        let refused = decoded(vec![element(0, 99)]).assemble(&names()).expect_err("key 99 has no name");
+        assert!(
+            matches!(refused, TemporalStoreError::StoredHistory(StoredHistoryError::Members(_))),
+            "{refused:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_names_of_a_read_are_looked_up_once_per_dictionary() {
+        let rows = (0..50).map(|_| decoded(vec![element(0, 3), element(1, 7)])).collect();
+        let attributes = RecordingNames::default();
+        let types = RecordingNames::default();
+        assemble_history(rows, &attributes, &types).await.expect_err("the double names no key");
+        pretty_assertions::assert_eq!(attributes.calls(), vec![vec![3, 7]]);
+        pretty_assertions::assert_eq!(types.calls(), vec![Vec::<i32>::new()]);
+    }
+
+    /// A dictionary double that answers no name and records every key set it
+    /// is asked for.
+    #[derive(Debug, Default)]
+    struct RecordingNames {
+        /// The key sets `names_of` was asked for, in call order.
+        asked: Mutex<Vec<Vec<i32>>>,
+    }
+
+    impl RecordingNames {
+        fn calls(&self) -> Vec<Vec<i32>> {
+            self.asked.lock().expect("the record is not poisoned").clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl<N: InternedName> NameLookup<N> for RecordingNames {
+        async fn lookup(&self, _names: &[N]) -> Result<ResolvedNames<N>, NameLookupError> {
+            Ok(ResolvedNames::default())
+        }
+
+        async fn resolve_or_create(&self, _connection: &mut PgConnection, _names: &[N]) -> Result<HashMap<N, N::Key>, NameLookupError> {
+            Ok(HashMap::new())
+        }
+
+        async fn names_of(&self, keys: &[N::Key]) -> Result<HashMap<N::Key, N>, NameLookupError> {
+            self.asked
+                .lock()
+                .expect("the record is not poisoned")
+                .push(keys.iter().map(|key| N::key_value(*key)).collect());
+            Ok(HashMap::new())
+        }
+    }
     use andromeda_ngsi_ld_geometry::geometry::Geometry;
     use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
     use serde_json::json;

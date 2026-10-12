@@ -87,10 +87,18 @@ pub enum AttributeHistory {
     ValueDateTime,
     /// URI value, when `value_kind` selects it
     ValueUri,
-    /// Expanded instance metadata, without the `unitCode` member
-    Metadata,
     /// The instance's `unitCode` catalog identity, carrying no foreign key
     UnitCodeId,
+    /// `entity_type_names` key of the instance's `valueType` (clause 4.5.2)
+    ValueTypeKey,
+    /// `entity_type_names` keys of the instance's `objectType` list (clause 4.5.3), in written order
+    ObjectTypeKeys,
+    /// The instance's `entityIdSealed` and `entityTypeSealed` members (clause 4.5.2.2)
+    ProofSeals,
+    /// The instance's `expiresAt` (clause 4.22) as it was recorded
+    ExpiresAt,
+    /// The instance's sub-attributes as `sub_attribute` elements in pre-order
+    SubAttributes,
 }
 
 /// The `attribute_history_instance_claims` table - the uniqueness reservations a
@@ -165,5 +173,16 @@ mod tests {
     fn attribute_history_names() {
         pretty_assertions::assert_eq!(AttributeHistory::Table.to_string(), "attribute_history");
         pretty_assertions::assert_eq!(AttributeHistory::StreamKey.to_string(), "stream_key");
+        pretty_assertions::assert_eq!(
+            [
+                AttributeHistory::ValueTypeKey,
+                AttributeHistory::ObjectTypeKeys,
+                AttributeHistory::ProofSeals,
+                AttributeHistory::ExpiresAt,
+                AttributeHistory::SubAttributes,
+            ]
+            .map(|column| column.to_string()),
+            ["value_type_key", "object_type_keys", "proof_seals", "expires_at", "sub_attributes"]
+        );
     }
 }

@@ -99,6 +99,21 @@ impl HeldKeys {
     /// `sub_attributes` elements.
     pub fn collect(&mut self, members: &InstanceMembers, sub_attributes: &[SubAttributeElement]) {
         self.members(members);
+        self.collect_elements(sub_attributes);
+    }
+
+    /// The keys held, each once, in key order.
+    #[must_use]
+    pub fn distinct(mut self) -> HeldKeys {
+        self.attributes.sort_unstable_by_key(|key| key.get());
+        self.attributes.dedup();
+        self.types.sort_unstable_by_key(|key| key.get());
+        self.types.dedup();
+        self
+    }
+
+    /// Add the keys the `sub_attributes` elements of one stored instance hold.
+    pub fn collect_elements(&mut self, sub_attributes: &[SubAttributeElement]) {
         for element in sub_attributes {
             self.members(&element.members);
         }

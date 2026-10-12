@@ -37,7 +37,6 @@ x-pooled-env: &pooled-env
   ANDROMEDA__DATABASE__POOLER__TENANT_MAX_CONNECTIONS: "2"
 
 x-broker-features: &broker-features
-  ANDROMEDA__ATOMIC_WRITE__BULK_MODE: "copy-staging"
   ANDROMEDA__NOTIFICATIONS__DELIVERY__MODE: "durable"
   ANDROMEDA__DATABASE__MAINTENANCE__MODE: "automatic"
   ANDROMEDA__DATABASE__MAINTENANCE__PROFILE: "responsive"

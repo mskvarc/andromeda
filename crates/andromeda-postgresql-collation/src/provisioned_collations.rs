@@ -15,6 +15,16 @@ use thiserror::Error;
 /// the failure a clause 5.7.2.4 `BadRequestData` rather than a broker fault.
 const INVALID_PARAMETER_VALUE: &str = "22023";
 
+/// The `SQLSTATE` of a unique violation.
+const UNIQUE_VIOLATION: &str = "23505";
+
+/// The catalog index that makes a collation name unique within its schema.
+///
+/// `IF NOT EXISTS` checks the catalog before it inserts, so two concurrent
+/// creates of one name both pass the check and the later insert is refused on
+/// this index once the earlier commits. That refusal means the object exists.
+const COLLATION_NAME_INDEX: &str = "pg_collation_name_enc_nsp_index";
+
 /// The ICU collation objects one tenant's database is known to hold.
 ///
 /// A collation object is per-database, and every store above one tenant's pool
@@ -22,7 +32,8 @@ const INVALID_PARAMETER_VALUE: &str = "22023";
 /// from: the `CREATE COLLATION` for a given identifier runs once per store that
 /// orders under it rather than once per query. Two stores over the same tenant
 /// each keep their own set, so an identifier both of them order by is created
-/// once by each; `IF NOT EXISTS` makes the second a no-op.
+/// once by each; `IF NOT EXISTS` makes the second a no-op, and a create that
+/// loses a concurrent race on [`COLLATION_NAME_INDEX`] counts as done.
 ///
 /// Membership is only ever added after a successful create, so a failed
 /// provisioning is retried on the next request rather than remembered as done.
@@ -57,7 +68,8 @@ impl ProvisionedCollations {
     /// the one place that can ask it: the statement runs in its own transaction
     /// under [`STRICT_ICU_LOCALE_VALIDATION`], so an unknown locale is refused
     /// rather than silently creating an object that sorts by the root
-    /// collation.
+    /// collation. A create refused because a concurrent create of the same
+    /// name committed first has provisioned the object all the same.
     ///
     /// # Errors
     ///
@@ -69,15 +81,27 @@ impl ProvisionedCollations {
         if self.created.contains(collation) {
             return Ok(());
         }
-        self.create(collation).await.map_err(|source| {
+        if let Err(source) = self.create(collation).await {
+            let failure = source.as_database_error().map_or(CreateFailure::Statement, |database| {
+                failure_of(database.code().as_deref(), database.constraint())
+            });
             // clone: the error outlives the ordering that named the identifier.
-            let named = collation.clone();
-            if refused_the_locale(&source) {
-                CollationProvisioningError::NotAnIcuCollation { collation: named, source }
-            } else {
-                CollationProvisioningError::Statement { collation: named, source }
+            match failure {
+                CreateFailure::CreatedConcurrently => {}
+                CreateFailure::LocaleRefused => {
+                    return Err(CollationProvisioningError::NotAnIcuCollation {
+                        collation: collation.clone(),
+                        source,
+                    });
+                }
+                CreateFailure::Statement => {
+                    return Err(CollationProvisioningError::Statement {
+                        collation: collation.clone(),
+                        source,
+                    });
+                }
             }
-        })?;
+        }
         self.created.insert(collation.clone()); // clone: the cache outlives the ordering that named the identifier.
         Ok(())
     }
@@ -99,12 +123,25 @@ impl ProvisionedCollations {
     }
 }
 
-/// Whether the statement failed because ICU would not accept the locale.
-///
-/// Every other `sqlx::Error` is a connection, protocol or decoding failure of
-/// the broker's own rather than a judgement on the client's identifier.
-fn refused_the_locale(error: &sqlx::Error) -> bool {
-    matches!(error, sqlx::Error::Database(database) if database.code().is_some_and(|code| code == INVALID_PARAMETER_VALUE))
+/// What a failed `CREATE COLLATION` means for the identifier.
+#[derive(Debug, PartialEq, Eq)]
+enum CreateFailure {
+    /// ICU would not accept the locale: the client's identifier is at fault.
+    LocaleRefused,
+    /// A concurrent create of the same name committed first, so the object
+    /// exists.
+    CreatedConcurrently,
+    /// A connection, protocol or statement failure of the broker's own.
+    Statement,
+}
+
+/// The meaning of a database refusal with SQLSTATE `code` on `constraint`.
+fn failure_of(code: Option<&str>, constraint: Option<&str>) -> CreateFailure {
+    match (code, constraint) {
+        (Some(INVALID_PARAMETER_VALUE), _) => CreateFailure::LocaleRefused,
+        (Some(UNIQUE_VIOLATION), Some(COLLATION_NAME_INDEX)) => CreateFailure::CreatedConcurrently,
+        (Some(_) | None, _) => CreateFailure::Statement,
+    }
 }
 
 /// An ICU collation object could not be created on the tenant's database.
@@ -129,4 +166,37 @@ pub enum CollationProvisioningError {
         #[source]
         source: sqlx::Error,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::provisioned_collations::{CreateFailure, failure_of};
+    use pretty_assertions::assert_eq;
+
+    /// Clauses 5.7.2.4 and 5.7.4.4: a collation ICU does not hold is the
+    /// client's `BadRequestData`.
+    #[test]
+    fn an_invalid_parameter_value_is_a_refused_locale() {
+        assert_eq!(failure_of(Some("22023"), None), CreateFailure::LocaleRefused);
+    }
+
+    #[test]
+    fn a_unique_violation_on_the_collation_name_index_is_a_concurrent_create() {
+        assert_eq!(
+            failure_of(Some("23505"), Some("pg_collation_name_enc_nsp_index")),
+            CreateFailure::CreatedConcurrently
+        );
+    }
+
+    #[test]
+    fn a_unique_violation_on_another_index_is_a_statement_failure() {
+        assert_eq!(failure_of(Some("23505"), Some("pg_type_typname_nsp_index")), CreateFailure::Statement);
+        assert_eq!(failure_of(Some("23505"), None), CreateFailure::Statement);
+    }
+
+    #[test]
+    fn any_other_refusal_is_a_statement_failure() {
+        assert_eq!(failure_of(Some("57P01"), None), CreateFailure::Statement);
+        assert_eq!(failure_of(None, None), CreateFailure::Statement);
+    }
 }

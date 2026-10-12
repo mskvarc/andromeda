@@ -4,10 +4,9 @@
 //! `observedAt` and its clause 4.8 times in columns of their own. What remains
 //! is the instance's metadata: its sub-attributes (clause 4.5.2) and the
 //! companion members of its family — `unitCode`, `valueType`, `objectType` —
-//! together with `expiresAt` (clause 4.22) and, on an instance recording a
-//! deletion, `deletedAt` (clause 4.5.7). The row stores them as the JSON object
-//! of those members in their expanded form, which the temporal `q` merges into
-//! the expanded instance it rebuilds around the stored value.
+//! together with `expiresAt` (clause 4.22) and the data-integrity seals. A
+//! `deletedAt` is no metadata: the broker generates it (Table 5.2.5-2), and a
+//! history row recording a deletion holds it in a column of its own.
 
 use andromeda_ngsi_ld_entity::{
     date_time_text::DateTimeText,
@@ -16,13 +15,10 @@ use andromeda_ngsi_ld_entity::{
         instance_document::{InstanceDocument, InstanceDocumentParts},
         slot::Slot,
     },
-    refusal::EntityRefusal,
     unit_code::UnitCode,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use serde_json::value::{RawValue, to_raw_value};
 
 /// The metadata of one observed instance: never empty, and never holding the
 /// value, the identity or the time axes the row keeps in columns.
@@ -38,56 +34,19 @@ impl ObservationMetadata {
     /// instance carries none.
     ///
     /// The value, the family, `datasetId`, `instanceId`, `observedAt`,
-    /// `createdAt` and `modifiedAt` are not metadata: each has a column of its
-    /// own, and keeping `createdAt` or `modifiedAt` here would echo a
-    /// current-state system time back as a sub-Property of a past observation.
+    /// `createdAt`, `modifiedAt` and `deletedAt` are not metadata: each has a
+    /// column of its own, and keeping `createdAt` or `modifiedAt` here would
+    /// echo a current-state system time back as a sub-Property of a past
+    /// observation.
     #[must_use]
     pub fn from_parts(parts: InstanceDocumentParts) -> Option<ObservationMetadata> {
         let carries_nothing = parts.expires_at.is_none()
             && parts.unit_code.is_none()
             && parts.value_type.is_none()
             && parts.object_types.is_none()
-            && parts.deleted_at.is_none()
             && parts.proof_seals.is_empty()
             && parts.sub_attributes.is_empty();
         (!carries_nothing).then(|| ObservationMetadata(Box::new(metadata_document(parts))))
-    }
-
-    /// Read the metadata a row of `attribute`, recorded in `family`, stores as
-    /// `json`, `None` when the stored object carries no metadata member.
-    ///
-    /// Which members are companions of the value and which are sub-attributes
-    /// is the family's to say (`objectType` belongs to the two Relationship
-    /// families alone), so the stored members are read as those of an instance
-    /// declaring the family.
-    ///
-    /// # Errors
-    ///
-    /// Returns the [`EntityRefusal`] of a text that is not the expanded members
-    /// of an instance of `family`.
-    pub fn from_stored(family: AttributeType, attribute: &AttributeName, json: &str) -> Result<Option<ObservationMetadata>, EntityRefusal> {
-        let members = json.trim_start().strip_prefix('{').unwrap_or(json);
-        let separator = if members.trim_start().starts_with('}') { "" } else { "," };
-        let family_iri = family.iri_str();
-        let mut instance = String::with_capacity(json.len() + family_iri.len() + 16);
-        instance.push_str("{\"@type\":[\"");
-        instance.push_str(family_iri);
-        instance.push_str("\"]");
-        instance.push_str(separator);
-        instance.push_str(members);
-        Ok(ObservationMetadata::from_parts(
-            InstanceDocument::from_slice(attribute, instance.as_bytes())?.into_parts(),
-        ))
-    }
-
-    /// The JSON object a history row stores the metadata as.
-    ///
-    /// # Errors
-    ///
-    /// Returns the serializer's failure, which metadata of the model never
-    /// produces.
-    pub fn to_stored_json(&self) -> Result<Box<RawValue>, serde_json::Error> {
-        to_raw_value(self)
     }
 
     /// The `unitCode` member, or its deletion.
@@ -136,17 +95,19 @@ impl ObservationMetadata {
 
 /// The instance holding the metadata members of `parts` and nothing else.
 ///
-/// The sub-attributes keep no `createdAt` or `modifiedAt`: history records
-/// the system times of the instance alone, and a time a client wrote is never
-/// kept (clause 5.2.5).
+/// The sub-attributes keep no output-only member: history records the system
+/// times of the instance alone, and a member a client wrote in their place is
+/// never kept (Table 5.2.5-2).
 fn metadata_document(mut parts: InstanceDocumentParts) -> InstanceDocument {
-    parts.sub_attributes.values_mut().for_each(AttributeMember::forget_system_instants_throughout);
+    parts
+        .sub_attributes
+        .values_mut()
+        .for_each(AttributeMember::forget_output_only_members_throughout);
     InstanceDocument::builder()
         .expires_at(parts.expires_at)
         .unit_code(parts.unit_code)
         .value_type(parts.value_type)
         .object_types(parts.object_types)
-        .deleted_at(parts.deleted_at)
         .proof_seals(parts.proof_seals)
         .sub_attributes(parts.sub_attributes)
         .build()

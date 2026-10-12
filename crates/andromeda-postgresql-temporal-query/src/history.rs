@@ -170,7 +170,11 @@ fn project_base_columns(select: &mut SelectStatement) {
         AttributeHistory::ValueDateTime,
         AttributeHistory::ValueUri,
         AttributeHistory::UnitCodeId,
-        AttributeHistory::Metadata,
+        AttributeHistory::ValueTypeKey,
+        AttributeHistory::ObjectTypeKeys,
+        AttributeHistory::ProofSeals,
+        AttributeHistory::ExpiresAt,
+        AttributeHistory::SubAttributes,
         AttributeHistory::WriteId,
         AttributeHistory::WriteOrdinal,
     ] {
@@ -402,8 +406,8 @@ mod tests {
         let sql = sql_of(&minimal_compiled());
         assert!(sql.contains("\"ah\".\"attribute_kind\""), "{sql}");
         assert!(sql.contains("\"ah\".\"value_kind\""), "{sql}");
-        assert!(!sql.contains("attribute_type"), "{sql}");
-        assert!(!sql.contains("value_type"), "{sql}");
+        assert!(!sql.contains("\"attribute_type\""), "{sql}");
+        assert!(!sql.contains("\"value_type\""), "{sql}");
     }
 
     /// Clause 4.5.7: a client-supplied `instanceId` survives verbatim while a

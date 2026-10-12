@@ -3,6 +3,7 @@
 use crate::{
     columnstore_enablement::StoredColumnstore,
     duplicate_instance_claim::DuplicateInstanceClaimError,
+    history_members::HistoryMembersError,
     retention_sweep::TemporalRetentionHorizonInvalid,
     schema_ddl::timescale_policy::HypertableName,
     stored_aggregation_error::StoredAggregationError,
@@ -15,7 +16,7 @@ use andromeda_context_commit::{submission_refusal::SubmissionRefusal, write_id::
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_date_time::NgsiLdDateTimeError, ngsi_ld_time::NgsiLdTimeError};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_collation::provisioned_collations::CollationProvisioningError;
-use andromeda_postgresql_encoding::{copy::CopyFieldError, ewkb::EwkbError};
+use andromeda_postgresql_encoding::ewkb::EwkbError;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
 use andromeda_postgresql_pool::persistence_classification::classify;
 use andromeda_postgresql_query::error::RenderError;
@@ -59,11 +60,6 @@ pub enum TemporalStoreError {
     /// An ICU collation a clause-4.23 ordering named could not be created.
     #[error("temporal store collation: {0}")]
     Collation(#[from] CollationProvisioningError),
-    /// A value could not be staged as a binary COPY field: it is longer than
-    /// the format's 32-bit field prefix can announce, or it does not
-    /// serialise.
-    #[error("temporal store COPY field: {0}")]
-    CopyField(#[from] CopyFieldError),
     /// A name dictionary resolution failed.
     #[error("temporal store name lookup: {0}")]
     NameLookup(#[from] NameLookupError),
@@ -93,13 +89,16 @@ pub enum TemporalStoreError {
     /// gives a Scope no attribute stream.
     #[error("temporal store: an entity scope has no attribute history row")]
     ScopeHasNoAttributeRow,
-    /// A structured value or metadata did not write as the JSON its column
-    /// stores.
+    /// A structured value or geometry members did not write as the JSON its
+    /// column stores.
     #[error("temporal store: a stored JSON document does not encode: {0}")]
     StoredJson(#[source] serde_json::Error),
     /// A `DateTime` attribute value could not be accepted at microsecond resolution.
     #[error("temporal store timestamp precision: {0}")]
     TimestampPrecision(#[from] NgsiLdDateTimeError),
+    /// An observation's metadata has no stored members.
+    #[error("temporal store history members: {0}")]
+    HistoryMembers(#[from] HistoryMembersError),
     /// The instance's `unitCode` member could not be moved to or from its column.
     #[error("temporal store unit code: {0}")]
     UnitCode(#[from] UnitCodeMetadataError),
@@ -160,10 +159,10 @@ impl TemporalStoreError {
             | TemporalStoreError::UnitCode(UnitCodeMetadataError::UnknownIdentity { .. }) => Some(PersistenceFailure::Undecodable),
             TemporalStoreError::Render(_) | TemporalStoreError::StatementBuild(_) => Some(PersistenceFailure::StatementUnbuildable),
             TemporalStoreError::Encoding(_)
-            | TemporalStoreError::CopyField(_)
             | TemporalStoreError::WriteOrdinal(_)
             | TemporalStoreError::EntryPosition(_)
-            | TemporalStoreError::StoredJson(_) => Some(PersistenceFailure::Unencodable),
+            | TemporalStoreError::StoredJson(_)
+            | TemporalStoreError::HistoryMembers(HistoryMembersError::Seals(_)) => Some(PersistenceFailure::Unencodable),
             TemporalStoreError::Collation(CollationProvisioningError::Statement { .. }) => Some(PersistenceFailure::StatementRejected),
             TemporalStoreError::Invariant(TemporalStoreInvariant::NotAHypertable(_) | TemporalStoreInvariant::NoTimeDimension(_)) => {
                 Some(PersistenceFailure::SchemaMismatch)
@@ -181,6 +180,9 @@ impl TemporalStoreError {
             | TemporalStoreError::WriteRecordMismatch { .. }
             | TemporalStoreError::RetentionHorizon(_)
             | TemporalStoreError::ScopeHasNoAttributeRow
+            | TemporalStoreError::HistoryMembers(
+                HistoryMembersError::SubAttributes { .. } | HistoryMembersError::Flatten(_) | HistoryMembersError::UnresolvedType(_),
+            )
             | TemporalStoreError::UnitCode(UnitCodeMetadataError::Catalog(_)) => Some(PersistenceFailure::ContractBroken),
             TemporalStoreError::ColumnstoreSettingsDrift { .. } => Some(PersistenceFailure::SchemaMismatch),
             TemporalStoreError::NotFound(_)
@@ -236,7 +238,6 @@ impl From<TemporalStoreError> for TemporalError {
             | TemporalStoreError::Render(_)
             | TemporalStoreError::Encoding(_)
             | TemporalStoreError::Collation(CollationProvisioningError::Statement { .. })
-            | TemporalStoreError::CopyField(_)
             | TemporalStoreError::NameLookup(_)
             | TemporalStoreError::Invariant(_)
             | TemporalStoreError::UnitCode(UnitCodeMetadataError::UnknownIdentity { .. } | UnitCodeMetadataError::Catalog(_))
@@ -248,6 +249,7 @@ impl From<TemporalStoreError> for TemporalError {
             | TemporalStoreError::RetentionHorizon(_)
             | TemporalStoreError::StoredTime(_)
             | TemporalStoreError::StoredJson(_)
+            | TemporalStoreError::HistoryMembers(_)
             | TemporalStoreError::ScopeHasNoAttributeRow) => TemporalError::from(PersistenceFailure::ContractBroken.record(&fault)),
         }
     }

@@ -376,9 +376,8 @@ fn the_metadata_holds_neither_the_value_nor_the_identity_nor_the_time_axes() {
     pretty_assertions::assert_eq!(observation.dataset_id.as_ref().map(Identifier::as_str), Some("urn:ngsi-ld:Dataset:a"));
     assert!(observation.observed_at.is_some());
     let metadata = observation.metadata.expect("the unit and the sub-attribute are metadata");
-    let stored: Value = serde_json::from_str(metadata.to_stored_json().expect("metadata writes").get()).expect("parses");
     pretty_assertions::assert_eq!(
-        stored,
+        serde_json::to_value(&metadata).expect("metadata writes"),
         json!({
             expanded_properties::UNIT_CODE.as_str(): [{"@value": "KMH"}],
             "https://example.org/accuracy": accuracy
@@ -469,4 +468,111 @@ fn a_recorded_geo_observation_keeps_its_members() {
 fn an_empty_array_valued_property_is_recorded_as_the_empty_array() {
     let value = recorded(&property(&json!([])));
     pretty_assertions::assert_eq!(stored(&value), json!([]));
+}
+
+/// The metadata `instance` records, as the JSON it serializes as.
+fn metadata_of(instance: &Value) -> Value {
+    serde_json::to_value(observed(instance).metadata.expect("metadata")).expect("metadata writes")
+}
+
+/// Table 5.2.5-2: `createdAt`, `modifiedAt`, `deletedAt` and `instanceId`
+/// are output-only, and a broker ignores them when a producer writes them, on
+/// the instance and on its sub-attributes at every depth.
+#[test]
+fn output_only_members_a_producer_wrote_are_not_metadata() {
+    let date_time = |text: &str| json!([{"@value": text, "@type": expanded_classes::DATE_TIME.as_str()}]);
+    let method = json!([{
+        "@type": [PROPERTY],
+        expanded_properties::VALUE.as_str(): [{"@value": "gps"}],
+        expanded_properties::INSTANCE_ID.as_str(): [{"@id": "urn:ngsi-ld:instance:2"}],
+        expanded_properties::DELETED_AT.as_str(): date_time("2024-01-03T00:00:00Z")
+    }]);
+    let instance = json!({
+        "@type": [PROPERTY],
+        expanded_properties::VALUE.as_str(): [{"@value": 1}],
+        expanded_properties::DELETED_AT.as_str(): date_time("2024-01-02T00:00:00Z"),
+        "https://example.org/accuracy": [{
+            "@type": [PROPERTY],
+            expanded_properties::VALUE.as_str(): [{"@value": 0.5}],
+            expanded_properties::INSTANCE_ID.as_str(): [{"@id": "urn:ngsi-ld:instance:1"}],
+            expanded_properties::DELETED_AT.as_str(): date_time("2024-01-02T00:00:00Z"),
+            expanded_properties::CREATED_AT.as_str(): date_time("2024-01-01T00:00:00Z"),
+            "https://example.org/method": method
+        }]
+    });
+    pretty_assertions::assert_eq!(
+        metadata_of(&instance),
+        json!({
+            "https://example.org/accuracy": [{
+                "@type": [PROPERTY],
+                expanded_properties::VALUE.as_str(): [{"@value": 0.5}],
+                "https://example.org/method": [{"@type": [PROPERTY], expanded_properties::VALUE.as_str(): [{"@value": "gps"}]}]
+            }]
+        })
+    );
+    let deleted_only = json!({
+        "@type": [PROPERTY],
+        expanded_properties::VALUE.as_str(): [{"@value": 1}],
+        expanded_properties::DELETED_AT.as_str(): date_time("2024-01-02T00:00:00Z")
+    });
+    assert!(observed(&deleted_only).metadata.is_none());
+}
+
+/// Clause 5.5.4 admits the NGSI-LD Null in the temporal evolution only as the
+/// value of a deleted instance (clause 4.5.7); a sub-attribute of a recorded
+/// instance is a Property as clause 4.5.2 mandates.
+#[test]
+fn a_sub_attribute_holding_the_null_is_refused() {
+    let instance = json!({
+        "@type": [PROPERTY],
+        expanded_properties::VALUE.as_str(): [{"@value": 1}],
+        "https://example.org/accuracy": [{"@type": [PROPERTY], expanded_properties::VALUE.as_str(): [{"@value": "urn:ngsi-ld:null"}]}]
+    });
+    assert!(matches!(read(&instance), Err(TemporalError::Validation(_))), "{:?}", read(&instance));
+}
+
+/// A sub-attribute's instants, its `DateTime` value and its list targets take
+/// the spelling storage keeps, as the instance's own `observedAt` does.
+#[test]
+fn a_sub_attribute_takes_the_spelling_storage_keeps() {
+    let date_time = |text: &str| json!([{"@value": text, "@type": expanded_classes::DATE_TIME.as_str()}]);
+    let instance = json!({
+        "@type": [PROPERTY],
+        expanded_properties::VALUE.as_str(): [{"@value": 1}],
+        "https://example.org/accuracy": [{
+            "@type": [PROPERTY],
+            expanded_properties::VALUE.as_str(): date_time("2026-01-01T00:00:00.5Z"),
+            expanded_properties::OBSERVED_AT.as_str(): date_time("2026-01-01T00:00:00.25Z")
+        }],
+        "https://example.org/sources": [{
+            "@type": [LIST_RELATIONSHIP],
+            expanded_properties::OBJECT_LIST.as_str(): [{"@list": [{"@id": "urn:ngsi-ld:Source:1"}]}]
+        }]
+    });
+    let metadata = metadata_of(&instance);
+    pretty_assertions::assert_eq!(
+        metadata["https://example.org/accuracy"][0][expanded_properties::VALUE.as_str()],
+        date_time("2026-01-01T00:00:00.500Z")
+    );
+    pretty_assertions::assert_eq!(
+        metadata["https://example.org/accuracy"][0][expanded_properties::OBSERVED_AT.as_str()],
+        date_time("2026-01-01T00:00:00.250Z")
+    );
+    pretty_assertions::assert_eq!(
+        metadata["https://example.org/sources"][0][expanded_properties::OBJECT_LIST.as_str()],
+        json!([{"@list": [{expanded_properties::OBJECT.as_str(): [{"@id": "urn:ngsi-ld:Source:1"}]}]}])
+    );
+}
+
+/// Clause 5.5.4 admits the NGSI-LD Null in a temporal evolution in the value
+/// position of a deleted instance alone; as a companion member of a recorded
+/// instance it is refused.
+#[test]
+fn a_companion_member_holding_the_null_is_refused() {
+    let instance = json!({
+        "@type": [PROPERTY],
+        expanded_properties::VALUE.as_str(): [{"@value": 1}],
+        expanded_properties::UNIT_CODE.as_str(): [{"@value": "urn:ngsi-ld:null"}]
+    });
+    assert!(matches!(read(&instance), Err(TemporalError::Validation(_))), "{:?}", read(&instance));
 }

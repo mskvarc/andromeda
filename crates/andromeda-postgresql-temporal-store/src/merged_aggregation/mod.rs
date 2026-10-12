@@ -17,8 +17,9 @@ mod staging_statements;
 
 use crate::{
     aggregation_rows_read::decode_aggregation_rows,
-    attribute_history_write::insert_history_rows_unnest,
+    attribute_history_write::insert_history_rows,
     error::TemporalStoreError,
+    history_members::HistoryMembers,
     intent_sink::observation_row,
     merged_aggregation::staging_statements::{
         CopiedHistory,
@@ -37,6 +38,7 @@ use crate::{
     repo::TemporalRepository,
     stored_catalog_error::StoredCatalogError,
     temporal_store_invariant::TemporalStoreInvariant,
+    unit_code_metadata::take_unit_code,
 };
 use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
 use andromeda_context_space::context_target::ContextTarget;
@@ -153,6 +155,11 @@ impl TemporalRepository {
                     .get(&grain)
                     .ok_or_else(|| TemporalStoreInvariant::StreamUnresolved(row.attribute_name.clone()))?; // clone: the invariant owns the name it failed on
                 let ordinal = u32::try_from(position).map_err(TemporalStoreError::EntryPosition)?;
+                // An aggregation reads the value and its unit alone (clause
+                // 4.5.19), so an answered row is staged without the rest of
+                // its metadata, whose names this tenant may never have keyed.
+                // clone: the staged row owns its unit, the answer keeps its metadata.
+                let (_, unit_code_id) = take_unit_code(row.metadata.clone())?;
                 observation_row(
                     stream_key,
                     row,
@@ -161,10 +168,14 @@ impl TemporalRepository {
                         write_id: staged_write,
                         ordinal: WriteOrdinal::at(ordinal),
                     },
+                    HistoryMembers {
+                        unit_code_id,
+                        ..HistoryMembers::default()
+                    },
                 )
             })
             .collect::<Result<Vec<_>, TemporalStoreError>>()?;
-        insert_history_rows_unnest(tx, staging_history_table(), &rows).await?;
+        insert_history_rows(tx, staging_history_table(), rows).await?;
         execute_delete(tx, drop_restated_instances(staged_write.as_uuid())).await
     }
 

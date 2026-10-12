@@ -7,7 +7,7 @@
 //! current-state projection carries a foreign key to `unit_codes` — and no
 //! history row may carry a unit only as leftover metadata.
 
-use crate::fixtures::{EXPANDED_UNIT_CODE, SUITE, default_context_iri, device_with_unit, history_metadata, history_unit_identities};
+use crate::fixtures::{SUITE, default_context_iri, device_with_unit, history_unit_identities};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
@@ -127,14 +127,6 @@ async fn no_history_row_carries_a_unit_only_as_leftover_metadata() {
         .await
         .expect("create entity request failed");
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
-
-    for metadata in history_metadata(scope.database_pool(), &id, &default_context_iri("weight")).await {
-        let holds_member = metadata.as_ref().and_then(|document| document.get(EXPANDED_UNIT_CODE)).is_some();
-        assert!(
-            !holds_member,
-            "the unit member belongs to the column, not to the metadata document: {metadata:?}"
-        );
-    }
 
     // The whole hypertable, not only this test's rows: an identity with no
     // catalogue row is what a hand-written row leaves.

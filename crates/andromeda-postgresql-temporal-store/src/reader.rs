@@ -3,7 +3,7 @@
 use crate::{
     aggregation_rows_read::decode_aggregation_rows,
     error::TemporalStoreError,
-    history_row_decode::decode_history_row,
+    history_row_decode::assembled_history,
     repo::TemporalRepository,
     scope_history_read::decode_scope_history,
     stored_attribute_shape::StoredAttributeShape,
@@ -247,10 +247,11 @@ impl TemporalHistoryReader for TemporalRepository {
         // reads. The scope leads, which is the order annex C clause C.5.16
         // renders it in.
         let mut observations = self.read_scope_history(target, entity_id, compiled).await?;
-        observations.reserve(pg_rows.len());
-        for pg_row in &pg_rows {
-            observations.push(decode_history_row(pg_row).map_err(TemporalError::from)?);
-        }
+        observations.extend(
+            assembled_history(&pg_rows, self.attribute_names.as_ref(), self.entity_type_names.as_ref())
+                .await
+                .map_err(TemporalError::from)?,
+        );
 
         Ok(TemporalHistoryOutcome { observations })
     }

@@ -1,12 +1,10 @@
 //! One row of the `attribute_history` hypertable.
 
-use crate::{attribute_history_value::AttributeHistoryValue, error::TemporalStoreError, semantic_time_axes::SemanticTimeAxes};
+use crate::{attribute_history_value::AttributeHistoryValue, error::TemporalStoreError, history_members::HistoryMembers, semantic_time_axes::SemanticTimeAxes};
 use andromeda_ngsi_ld_lexicon::instance_identity::InstanceIdentity;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stream_key::StreamKey};
 use andromeda_temporal::append_intent::TemporalObservationIdentity;
-use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use chrono::{DateTime, Utc};
-use serde_json::value::RawValue;
 use uuid::Uuid;
 
 /// A row is keyed on its stream (one entity, one attribute name, one dataset) and on the identity of the atomic write that produced it. That write
@@ -18,7 +16,7 @@ use uuid::Uuid;
 /// `recorded_at` is the operational axis the hypertable partitions on and is
 /// never rendered as an NGSI-LD Temporal Property. The axes a query may select
 /// live in [`SemanticTimeAxes`] and in the tombstone's deletion instant.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct AttributeHistoryRow {
     /// Instant the broker durably accepted the write; the hypertable's partition column.
     pub recorded_at: DateTime<Utc>,
@@ -36,10 +34,9 @@ pub struct AttributeHistoryRow {
     pub axes: SemanticTimeAxes,
     /// Identifier the instance is published to clients under.
     pub instance: InstanceIdentity,
-    /// Catalog identity of the instance's `unitCode`, absent when it declares none.
-    pub unit_code_id: Option<UnitCodeId>,
-    /// Stored JSON of the instance's metadata, with `unitCode` already lifted into its column.
-    pub metadata: Option<Box<RawValue>>,
+    /// What the instance carries beside its value, every name held as its
+    /// dictionary key.
+    pub members: HistoryMembers,
 }
 
 impl AttributeHistoryRow {
@@ -63,7 +60,12 @@ impl AttributeHistoryRow {
 
 #[cfg(test)]
 mod tests {
-    use crate::{attribute_history_row::AttributeHistoryRow, attribute_history_value::AttributeHistoryValue, semantic_time_axes::SemanticTimeAxes};
+    use crate::{
+        attribute_history_row::AttributeHistoryRow,
+        attribute_history_value::AttributeHistoryValue,
+        history_members::HistoryMembers,
+        semantic_time_axes::SemanticTimeAxes,
+    };
     use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_ngsi_ld_lexicon::instance_identity::InstanceIdentity;
     use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stream_key::StreamKey};
@@ -83,8 +85,7 @@ mod tests {
             value: AttributeHistoryValue::Boolean(true),
             axes: SemanticTimeAxes::default(),
             instance,
-            unit_code_id: None,
-            metadata: None,
+            members: HistoryMembers::default(),
         }
     }
 

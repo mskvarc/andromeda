@@ -9,12 +9,7 @@ use andromeda_context_commit::commit_consequence_publisher::NoCommitConsequenceP
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_postgresql_atomic_write::{committer::PostgresAtomicCommitter, history_mode::TemporalHistoryCommitMode};
 use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_cache_config::NameCacheConfig, name_lookup::NameLookup};
-use andromeda_postgresql_temporal_store::{
-    bulk_write_mode::BulkWriteMode,
-    columnstore_capability::ColumnstoreSupport,
-    recorder::TemporalRecorder,
-    repo::TemporalRepository,
-};
+use andromeda_postgresql_temporal_store::{columnstore_capability::ColumnstoreSupport, recorder::TemporalRecorder, repo::TemporalRepository};
 use andromeda_temporal::core_write_history::CoreWriteHistory;
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -26,7 +21,6 @@ pub fn committer(pool: &PgPool) -> PostgresAtomicCommitter {
     let entity_type_names = Arc::new(NameCache::<EntityTypeName>::new(pool, &NameCacheConfig::default())) as Arc<dyn NameLookup<EntityTypeName>>;
     let repository = Arc::new(TemporalRepository::new(
         pool,
-        BulkWriteMode::default(),
         Arc::clone(&attribute_names),   // clone: the repository and the committer share one dictionary.
         Arc::clone(&entity_type_names), // clone: the same, for entity types.
         ColumnstoreSupport::Absent,

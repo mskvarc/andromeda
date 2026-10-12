@@ -1,37 +1,28 @@
 //! Bulk inserts into the `attribute_history` hypertable.
 
 use crate::{
+    attribute_history_binds::{attribute_history_binds, element_trees},
     attribute_history_row::AttributeHistoryRow,
-    bulk_write_mode::BulkWriteMode,
-    copy::insert_history_batch_via_copy_in_tx,
     error::TemporalStoreError,
     repo::TemporalRepository,
-    stored_instance_columns::{generated_instance_id, verbatim_instance_id},
     verbatim_instance_claim::{claim_verbatim_instances, run_history_dedup_deletes, verbatim_instance_targets},
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stream_key::StreamKey, value_kind::ValueKind};
-use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
+use andromeda_postgresql_encoding::array_literal::IntegerArrayLiteral;
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
+    cast::cast,
     pg_type::PostgresType,
     placeholder::external_placeholder,
     postgis::validated_geom_from_ewkb,
     unnest::{UnnestColumn, apply_column_alias, unnest_call},
 };
 use andromeda_telemetry::statement::{StatementName, observe_statement};
-use andromeda_unit_catalog::unit_code_id::UnitCodeId;
-use bigdecimal::BigDecimal;
-use chrono::{DateTime, Utc};
 use sea_query::{CaseStatement, Expr, ExprTrait, Iden, Keyword, OnConflict, PostgresQueryBuilder, Query, SimpleExpr, TableRef};
-use serde_json::value::RawValue;
-use sqlx::{AssertSqlSafe, PgConnection, Postgres, Transaction, types::Json};
-use uuid::Uuid;
+use sqlx::{AssertSqlSafe, PgConnection, Postgres, Transaction};
 
-/// The statement name the history batch insert is observed under, in either
-/// bulk-write mode.
+/// The statement name the history batch insert is observed under.
 const HISTORY_INSERT: StatementName = StatementName("attribute-history-insert");
 
 /// The `UNNEST` staging alias, `d`.
@@ -84,8 +75,16 @@ enum HistoryStaged {
     ValueObject,
     /// URI value.
     ValueUri,
-    /// Retained expanded members.
-    Metadata,
+    /// `entity_type_names` key of `valueType`.
+    ValueTypeKey,
+    /// `entity_type_names` keys of `objectType`, as an array literal.
+    ObjectTypeKeys,
+    /// The seal members.
+    ProofSeals,
+    /// `expiresAt`.
+    ExpiresAt,
+    /// The sub-attribute elements, in their carrier composite.
+    SubAttributes,
 }
 
 impl TemporalRepository {
@@ -100,128 +99,20 @@ impl TemporalRepository {
         &self,
         tx: &mut Transaction<'_, Postgres>,
         target: &ContextTarget,
-        rows: &[AttributeHistoryRow],
+        rows: Vec<AttributeHistoryRow>,
     ) -> Result<(), TemporalStoreError> {
         if rows.is_empty() {
             return Ok(());
         }
-        let targets = verbatim_instance_targets(rows);
+        let targets = verbatim_instance_targets(&rows);
         run_history_dedup_deletes(tx, target, &targets).await?;
         claim_verbatim_instances(tx, target, &targets).await?;
-        match self.bulk_write_mode {
-            BulkWriteMode::Unnest => observe_statement(HISTORY_INSERT, insert_history_rows_unnest(tx, table_of(target, AttributeHistory::Table), rows)).await?,
-            BulkWriteMode::CopyStaging => observe_statement(HISTORY_INSERT, insert_history_batch_via_copy_in_tx(tx, target, rows)).await?,
-        }
-        Ok(())
+        observe_statement(HISTORY_INSERT, insert_history_rows(tx, table_of(target, AttributeHistory::Table), rows)).await
     }
 }
 
-/// Column-major binds for one attribute-history batch.
-struct AttributeHistoryBinds<'a> {
-    /// Write clock of each row, and the hypertable's partition column.
-    recorded_ats: Vec<DateTime<Utc>>,
-    /// Atomic write each row belongs to.
-    write_ids: Vec<Uuid>,
-    /// Stream each row extends.
-    stream_keys: Vec<i64>,
-    /// Position of each row within its atomic write.
-    write_ordinals: Vec<i32>,
-    /// Attribute family each row was written as.
-    attribute_kinds: Vec<i16>,
-    /// Stored value shape of each row.
-    value_kinds: Vec<i16>,
-    /// Client-declared observation instants.
-    observed_ats: Vec<Option<DateTime<Utc>>>,
-    /// Instants the instances were first recorded at.
-    created_ats: Vec<Option<DateTime<Utc>>>,
-    /// Instants the instances were last altered at.
-    modified_ats: Vec<Option<DateTime<Utc>>>,
-    /// Deletion instants, present only on tombstones.
-    deleted_ats: Vec<Option<DateTime<Utc>>>,
-    /// Timestamp values.
-    value_date_times: Vec<Option<DateTime<Utc>>>,
-    /// Broker-minted instance identifiers.
-    generated_instance_ids: Vec<Option<Uuid>>,
-    /// Catalog identities of the instances' units.
-    unit_code_ids: Vec<Option<i16>>,
-    /// Boolean values.
-    value_booleans: Vec<Option<bool>>,
-    /// Instance identifiers stored exactly as received.
-    verbatim_instance_ids: Vec<Option<&'a str>>,
-    /// Arbitrary-precision values bound directly as `numeric[]`.
-    value_numbers: Vec<Option<BigDecimal>>,
-    /// String values.
-    value_strings: Vec<Option<&'a str>>,
-    /// Geometry values as EWKB, projected server-side.
-    value_geometries: Vec<Option<Vec<u8>>>,
-    /// The geometries' `bbox` and foreign members, as the JSON the column
-    /// stores.
-    value_geometry_members: Vec<Option<Json<&'a RawValue>>>,
-    /// Structured values, as the JSON the column stores.
-    value_objects: Vec<Option<Json<&'a RawValue>>>,
-    /// URI values, which is how a relationship object is stored.
-    value_uris: Vec<Option<&'a str>>,
-    /// The instances' metadata, as the JSON the column stores.
-    metadatas: Vec<Option<Json<&'a RawValue>>>,
-}
-
-/// Spread one attribute-history batch into its column-major binds.
-fn attribute_history_binds(rows: &[AttributeHistoryRow]) -> Result<AttributeHistoryBinds<'_>, TemporalStoreError> {
-    let mut binds = AttributeHistoryBinds {
-        recorded_ats: Vec::with_capacity(rows.len()),
-        write_ids: Vec::with_capacity(rows.len()),
-        stream_keys: Vec::with_capacity(rows.len()),
-        write_ordinals: Vec::with_capacity(rows.len()),
-        attribute_kinds: Vec::with_capacity(rows.len()),
-        value_kinds: Vec::with_capacity(rows.len()),
-        observed_ats: Vec::with_capacity(rows.len()),
-        created_ats: Vec::with_capacity(rows.len()),
-        modified_ats: Vec::with_capacity(rows.len()),
-        deleted_ats: Vec::with_capacity(rows.len()),
-        value_date_times: Vec::with_capacity(rows.len()),
-        generated_instance_ids: Vec::with_capacity(rows.len()),
-        unit_code_ids: Vec::with_capacity(rows.len()),
-        value_booleans: Vec::with_capacity(rows.len()),
-        verbatim_instance_ids: Vec::with_capacity(rows.len()),
-        value_numbers: Vec::with_capacity(rows.len()),
-        value_strings: Vec::with_capacity(rows.len()),
-        value_geometries: Vec::with_capacity(rows.len()),
-        value_geometry_members: Vec::with_capacity(rows.len()),
-        value_objects: Vec::with_capacity(rows.len()),
-        value_uris: Vec::with_capacity(rows.len()),
-        metadatas: Vec::with_capacity(rows.len()),
-    };
-    for row in rows {
-        binds.recorded_ats.push(row.recorded_at);
-        binds.write_ids.push(row.write_id());
-        binds.stream_keys.push(StreamKey::get(row.stream_key));
-        binds.write_ordinals.push(row.write_ordinal()?);
-        binds.attribute_kinds.push(AttributeKind::code(row.attribute_kind));
-        binds.value_kinds.push(ValueKind::code(row.value.kind()));
-        binds.observed_ats.push(row.axes.observed_at);
-        binds.created_ats.push(row.axes.created_at);
-        binds.modified_ats.push(row.axes.modified_at);
-        binds.deleted_ats.push(row.value.deleted_at());
-        binds.value_date_times.push(row.value.date_time());
-        binds.generated_instance_ids.push(generated_instance_id(&row.instance));
-        binds.unit_code_ids.push(row.unit_code_id.map(UnitCodeId::get));
-        binds.value_booleans.push(row.value.boolean());
-        binds.verbatim_instance_ids.push(verbatim_instance_id(&row.instance));
-        // SQLx owns the array values. Clone the decimal itself so the bind is
-        // exact and never passes through text or binary64.
-        binds.value_numbers.push(row.value.number().cloned());
-        binds.value_strings.push(row.value.string());
-        binds.value_geometries.push(geometry_bytes(row.value.geometry())?);
-        binds.value_geometry_members.push(row.value.geometry_members().map(Json));
-        binds.value_objects.push(row.value.object().map(Json));
-        binds.value_uris.push(row.value.uri().map(Uri::as_str));
-        binds.metadatas.push(row.metadata.as_deref().map(Json));
-    }
-    Ok(binds)
-}
-
-/// The twenty-two staging columns of an attribute-history row, in bind order.
-fn history_staging_columns() -> [UnnestColumn; 22] {
+/// The twenty-six staging columns of an attribute-history row, in bind order.
+fn history_staging_columns() -> [UnnestColumn; 26] {
     [
         UnnestColumn::new(HistoryStaged::RecordedAt, PostgresType::TimestamptzArray),
         UnnestColumn::new(HistoryStaged::WriteId, PostgresType::UuidArray),
@@ -244,7 +135,11 @@ fn history_staging_columns() -> [UnnestColumn; 22] {
         UnnestColumn::new(HistoryStaged::ValueGeometryMembers, PostgresType::JsonbArray),
         UnnestColumn::new(HistoryStaged::ValueObject, PostgresType::JsonbArray),
         UnnestColumn::new(HistoryStaged::ValueUri, PostgresType::TextArray),
-        UnnestColumn::new(HistoryStaged::Metadata, PostgresType::JsonbArray),
+        UnnestColumn::new(HistoryStaged::ValueTypeKey, PostgresType::IntegerArray),
+        UnnestColumn::new(HistoryStaged::ObjectTypeKeys, PostgresType::TextArray),
+        UnnestColumn::new(HistoryStaged::ProofSeals, PostgresType::JsonbArray),
+        UnnestColumn::new(HistoryStaged::ExpiresAt, PostgresType::TimestamptzArray),
+        UnnestColumn::new(HistoryStaged::SubAttributes, PostgresType::SubAttributeTreeArray),
     ]
 }
 
@@ -255,7 +150,7 @@ fn staged(column: HistoryStaged) -> SimpleExpr {
 
 /// The bulk attribute-history insert into `table`.
 ///
-/// The value number reaches the arbitrary-precision column through a native `numeric[]` bind, never widened to a double; the geometry is validated from its embedded-SRID EWKB, with a NULL EWKB projecting to a NULL geometry. The conflict target names the columns `uq_attribute_history_write_identity` covers, so a row replayed under its original write identity is a no-op.
+/// The value number reaches the arbitrary-precision column through a native `numeric[]` bind, never widened to a double; the geometry is validated from its embedded-SRID EWKB, with a NULL EWKB projecting to a NULL geometry. The `objectType` keys of each row travel as an array literal, since the rows' lists are ragged, and the sub-attribute elements as one `sub_attribute_tree` per row, which `UNNEST` expands to the row's `sub_attribute[]`. The conflict target names the columns `uq_attribute_history_write_identity` covers, so a row replayed under its original write identity is a no-op.
 fn attribute_history_insert_sql(table: TableRef) -> Result<String, TemporalStoreError> {
     let columns = history_staging_columns();
     let call = unnest_call(columns.iter().enumerate().map(|(index, column)| (column, external_placeholder(index + 1))));
@@ -291,7 +186,11 @@ fn attribute_history_insert_sql(table: TableRef) -> Result<String, TemporalStore
         .expr(staged(HistoryStaged::ValueGeometryMembers))
         .expr(staged(HistoryStaged::ValueObject))
         .expr(staged(HistoryStaged::ValueUri))
-        .expr(staged(HistoryStaged::Metadata))
+        .expr(staged(HistoryStaged::ValueTypeKey))
+        .expr(cast(staged(HistoryStaged::ObjectTypeKeys), PostgresType::IntegerArray))
+        .expr(staged(HistoryStaged::ProofSeals))
+        .expr(staged(HistoryStaged::ExpiresAt))
+        .expr(staged(HistoryStaged::SubAttributes))
         .from_function(call, D);
     let select = select;
 
@@ -318,7 +217,11 @@ fn attribute_history_insert_sql(table: TableRef) -> Result<String, TemporalStore
         AttributeHistory::ValueGeometryMembers,
         AttributeHistory::ValueObject,
         AttributeHistory::ValueUri,
-        AttributeHistory::Metadata,
+        AttributeHistory::ValueTypeKey,
+        AttributeHistory::ObjectTypeKeys,
+        AttributeHistory::ProofSeals,
+        AttributeHistory::ExpiresAt,
+        AttributeHistory::SubAttributes,
     ]);
     insert.select_from(select).map_err(TemporalStoreError::StatementBuild)?.on_conflict(
         OnConflict::columns([AttributeHistory::RecordedAt, AttributeHistory::WriteId, AttributeHistory::WriteOrdinal])
@@ -337,8 +240,14 @@ fn attribute_history_insert_sql(table: TableRef) -> Result<String, TemporalStore
 ///
 /// Returns [`TemporalStoreError`] when a row does not bind or the statement
 /// fails.
-pub(crate) async fn insert_history_rows_unnest(connection: &mut PgConnection, table: TableRef, rows: &[AttributeHistoryRow]) -> Result<(), TemporalStoreError> {
-    let binds = attribute_history_binds(rows)?;
+pub(crate) async fn insert_history_rows(connection: &mut PgConnection, table: TableRef, mut rows: Vec<AttributeHistoryRow>) -> Result<(), TemporalStoreError> {
+    let sub_attributes = element_trees(&mut rows)?;
+    let binds = attribute_history_binds(&rows)?;
+    let object_type_keys: Vec<Option<&str>> = binds
+        .object_type_keys
+        .iter()
+        .map(|keys| keys.as_ref().map(IntegerArrayLiteral::as_str))
+        .collect();
     let sql = attribute_history_insert_sql(table)?;
     sqlx::query(AssertSqlSafe(sql))
         .bind(&binds.recorded_ats)
@@ -362,7 +271,11 @@ pub(crate) async fn insert_history_rows_unnest(connection: &mut PgConnection, ta
         .bind(&binds.value_geometry_members)
         .bind(&binds.value_objects)
         .bind(&binds.value_uris)
-        .bind(&binds.metadatas)
+        .bind(&binds.value_type_keys)
+        .bind(object_type_keys)
+        .bind(&binds.proof_seals)
+        .bind(&binds.expires_ats)
+        .bind(sub_attributes)
         .execute(connection)
         .await?;
     Ok(())
@@ -370,10 +283,81 @@ pub(crate) async fn insert_history_rows_unnest(connection: &mut PgConnection, ta
 
 #[cfg(test)]
 mod tests {
-    use crate::attribute_history_write::attribute_history_insert_sql;
+    use crate::{
+        attribute_history_binds::element_trees,
+        attribute_history_row::AttributeHistoryRow,
+        attribute_history_value::AttributeHistoryValue,
+        attribute_history_write::attribute_history_insert_sql,
+        history_members::HistoryMembers,
+        semantic_time_axes::SemanticTimeAxes,
+    };
+    use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_ngsi_ld_lexicon::instance_identity::InstanceIdentity;
+    use andromeda_postgresql_attribute_instance::{stored_members::InstanceMembers, stored_value::StoredValue, sub_attribute::SubAttributeElement};
     use andromeda_postgresql_branch::table_of;
+    use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stream_key::StreamKey};
+    use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
     use andromeda_postgresql_schema::temporal::AttributeHistory;
+    use andromeda_temporal::append_intent::TemporalObservationIdentity;
+    use chrono::{TimeZone, Utc};
+    use uuid::Uuid;
+
+    /// A row of `speed` at `ordinal` whose members hold `sub_attributes`.
+    fn row(ordinal: u32, sub_attributes: Vec<SubAttributeElement>) -> AttributeHistoryRow {
+        AttributeHistoryRow {
+            recorded_at: Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant"),
+            identity: TemporalObservationIdentity {
+                write_id: WriteId::from_uuid(Uuid::nil()),
+                ordinal: WriteOrdinal::at(ordinal),
+            },
+            stream_key: StreamKey::try_from(1).expect("positive"),
+            attribute_kind: AttributeKind::Property,
+            value: AttributeHistoryValue::Boolean(true),
+            axes: SemanticTimeAxes::default(),
+            instance: InstanceIdentity::Generated(Uuid::nil()),
+            members: HistoryMembers {
+                sub_attributes,
+                ..HistoryMembers::default()
+            },
+        }
+    }
+
+    /// A Boolean sub-attribute element under the instance itself.
+    fn element() -> SubAttributeElement {
+        SubAttributeElement {
+            parent: 0,
+            members: InstanceMembers {
+                attribute_name_key: AttributeNameKey::from(3),
+                dataset_id: None,
+                attribute_kind: AttributeKind::Property,
+                value: StoredValue::Boolean { flag: true, datatype: None },
+                value_type_key: None,
+                object_type_keys: Vec::new(),
+                unit_code_id: None,
+                observed_at: None,
+                expires_at: None,
+                proof_seals: None,
+            },
+            created_at: None,
+            modified_at: None,
+        }
+    }
+
+    #[test]
+    fn the_insert_binds_the_companion_columns_and_the_element_trees() {
+        let sql = attribute_history_insert_sql(table_of(&ContextTarget::Live, AttributeHistory::Table)).expect("the fixed attribute-history insert builds");
+        assert!(
+            sql.contains(r#""value_uri", "value_type_key", "object_type_keys", "proof_seals", "expires_at", "sub_attributes")"#),
+            "{sql}"
+        );
+        assert!(sql.contains(r"$26::sub_attribute_tree[]) AS d("), "{sql}");
+        assert!(sql.contains(r#""d"."object_type_keys"::integer[]"#), "{sql}");
+        let mut rows = vec![row(0, Vec::new()), row(1, vec![element()]), row(2, Vec::new())];
+        let trees = element_trees(&mut rows).expect("the elements encode");
+        let carried: Vec<Option<usize>> = trees.iter().map(|tree| tree.as_ref().map(|tree| tree.elements.len())).collect();
+        pretty_assertions::assert_eq!(carried, vec![None, Some(1), None]);
+    }
 
     #[test]
     fn the_insert_carries_the_partition_column_and_the_whole_write_identity() {

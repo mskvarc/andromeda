@@ -1,6 +1,6 @@
 //! Connection and capability holder for the PostgreSQL temporal repository.
 
-use crate::{bulk_write_mode::BulkWriteMode, columnstore_capability::ColumnstoreSupport};
+use crate::columnstore_capability::ColumnstoreSupport;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_postgresql_collation::provisioned_collations::ProvisionedCollations;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
@@ -16,8 +16,6 @@ pub struct TemporalRepository {
     pub(crate) attribute_names: Arc<dyn NameLookup<AttributeName>>,
     /// Shared `entity_type_names` dictionary cache.
     pub(crate) entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
-    /// Dispatch mode for bulk history inserts.
-    pub(crate) bulk_write_mode: BulkWriteMode,
     /// Whether this tenant's `TimescaleDB` edition provides the hypercore
     /// columnstore, probed once when the tenant was opened.
     ///
@@ -39,7 +37,6 @@ impl TemporalRepository {
     /// Wraps `pool` and the shared dictionary caches; the provisioned-collation set starts empty.
     pub fn new(
         pool: &PgPool,
-        bulk_write_mode: BulkWriteMode,
         attribute_names: Arc<dyn NameLookup<AttributeName>>,
         entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
         columnstore: ColumnstoreSupport,
@@ -48,7 +45,6 @@ impl TemporalRepository {
             pool: pool.clone(), // clone: `PgPool` shares its inner pool by reference count.
             attribute_names,
             entity_type_names,
-            bulk_write_mode,
             columnstore,
             collations: ProvisionedCollations::of_pool(pool),
         }

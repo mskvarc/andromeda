@@ -111,7 +111,7 @@ const fn classify_retention_failure(error: TemporalStoreError) -> TaskFailure<Te
         | TemporalStoreError::StoredAggregation(_)
         | TemporalStoreError::Render(_)
         | TemporalStoreError::Encoding(_)
-        | TemporalStoreError::CopyField(_)
+        | TemporalStoreError::HistoryMembers(_)
         | TemporalStoreError::Invariant(_)
         | TemporalStoreError::MixedAggregationGroup(_)
         | TemporalStoreError::WriteRecordMismatch { .. }

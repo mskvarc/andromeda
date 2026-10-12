@@ -20,7 +20,6 @@ use crate::SUITE;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_cache_config::NameCacheConfig};
 use andromeda_postgresql_temporal_store::{
-    bulk_write_mode::BulkWriteMode,
     columnstore_capability::ColumnstoreSupport,
     repo::TemporalRepository,
     schema_ddl::timescale_policy::HypertableName,
@@ -93,7 +92,6 @@ async fn repository(pool: &PgPool) -> TemporalRepository {
     let columnstore = ColumnstoreSupport::detect(pool).await.expect("the columnstore capability probe runs");
     TemporalRepository::new(
         pool,
-        BulkWriteMode::Unnest,
         Arc::new(NameCache::<AttributeName>::new(pool, &NameCacheConfig::default())),
         Arc::new(NameCache::<EntityTypeName>::new(pool, &NameCacheConfig::default())),
         columnstore,

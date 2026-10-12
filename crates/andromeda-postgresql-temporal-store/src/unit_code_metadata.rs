@@ -84,20 +84,26 @@ pub fn restore_unit_code(metadata: Option<ObservationMetadata>, identity: Option
 #[cfg(test)]
 mod tests {
     use crate::unit_code_metadata::{UnitCodeMetadataError, restore_unit_code, take_unit_code};
+    use andromeda_ngsi_ld_entity::document::instance_document::InstanceDocument;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
     use andromeda_ngsi_ld_model::temporal::observation_metadata::ObservationMetadata;
     use andromeda_unit_catalog::{expanded_unit_code::UnitCodeRefusal, unit_code_id::UnitCodeId};
     use serde_json::{Value, json};
 
-    /// The metadata `stored` reads as.
+    /// The metadata the expanded members `stored` of a Property instance hold.
     fn metadata(stored: &Value) -> Option<ObservationMetadata> {
         let attribute: AttributeName = "https://example.org/speed".parse().expect("a valid attribute name");
-        ObservationMetadata::from_stored(AttributeType::Property, &attribute, &stored.to_string()).expect("readable metadata")
+        let mut instance = stored.clone(); // clone: the fixture is read as an instance declaring its family
+        if let Some(members) = instance.as_object_mut() {
+            members.insert("@type".to_owned(), json!([AttributeType::Property.iri_str()]));
+        }
+        let document = InstanceDocument::from_slice(&attribute, &serde_json::to_vec(&instance).expect("JSON")).expect("expanded members");
+        ObservationMetadata::from_parts(document.into_parts())
     }
 
-    /// The stored JSON `metadata` writes as.
+    /// The JSON `metadata` serializes as.
     fn stored(metadata: Option<&ObservationMetadata>) -> Option<Value> {
-        metadata.map(|metadata| serde_json::from_str(metadata.to_stored_json().expect("metadata writes").get()).expect("parses"))
+        metadata.map(|metadata| serde_json::to_value(metadata).expect("metadata writes"))
     }
 
     fn with_unit(code: &str) -> Value {

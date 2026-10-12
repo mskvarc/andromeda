@@ -51,9 +51,9 @@ impl Instance {
         let family = resolved_family(&parts);
         reject_nulls(attribute, &parts)?;
         let envelope = Envelope {
-            unit_code: parts.unit_code.and_then(set),
-            value_type: parts.value_type.and_then(set),
-            object_types: parts.object_types.and_then(set).unwrap_or_default(),
+            unit_code: parts.unit_code.and_then(Slot::into_set),
+            value_type: parts.value_type.and_then(Slot::into_set),
+            object_types: parts.object_types.and_then(Slot::into_set).unwrap_or_default(),
         };
         if envelope.unit_code.is_some() && unit_code_admission(family) == UnitCodeAdmission::Forbidden {
             return Err(EntityRefusal::UnitCodeForbidden {
@@ -78,13 +78,13 @@ impl Instance {
         let value = family_value(attribute, family, parts.value, envelope)?;
         let instance = Instance::builder()
             .value(value)
-            .observed_at(parts.observed_at.and_then(set))
-            .expires_at(parts.expires_at.and_then(set))
+            .observed_at(parts.observed_at.and_then(Slot::into_set))
+            .expires_at(parts.expires_at.and_then(Slot::into_set))
             .created_at(parts.created_at)
             .modified_at(parts.modified_at)
             .evolution_id(parts.instance_id)
             .proof_seals(parts.proof_seals)
-            .sub_attributes(attributes_from_members(parts.sub_attributes)?)
+            .sub_attributes(Attributes::try_from_members(parts.sub_attributes)?)
             .build();
         Ok((parts.dataset_id, instance))
     }
@@ -98,14 +98,6 @@ struct Envelope {
     value_type: Option<NgsiLdReference>,
     /// `objectType`.
     object_types: Vec<NgsiLdReference>,
-}
-
-/// The value a slot sets; deletions were refused before.
-fn set<T>(slot: Slot<T>) -> Option<T> {
-    match slot {
-        Slot::Set(value) => Some(value),
-        Slot::Remove => None,
-    }
 }
 
 /// The family a written instance is stored as: the one it declares, else the
@@ -204,37 +196,39 @@ fn family_value(attribute: &AttributeName, family: AttributeType, value: ValueSl
     Ok(value)
 }
 
-/// The stored attributes written attribute members make.
-///
-/// # Errors
-///
-/// Returns the refusal of the first member that cannot be stored.
-pub(crate) fn attributes_from_members(members: IndexMap<AttributeName, AttributeMember>) -> Result<Attributes, EntityRefusal> {
-    let mut attributes = Attributes::new();
-    for (name, member) in members {
-        if MemberRole::is_reserved(name.as_str()) {
-            return Err(EntityRefusal::ReservedAttributeName { attribute: name });
+impl Attributes {
+    /// The stored attributes written attribute members make.
+    ///
+    /// # Errors
+    ///
+    /// Returns the refusal of the first member that cannot be stored.
+    pub fn try_from_members(members: IndexMap<AttributeName, AttributeMember>) -> Result<Attributes, EntityRefusal> {
+        let mut attributes = Attributes::new();
+        for (name, member) in members {
+            if MemberRole::is_reserved(name.as_str()) {
+                return Err(EntityRefusal::ReservedAttributeName { attribute: name });
+            }
+            let instances = match member {
+                AttributeMember::Remove => return Err(EntityRefusal::ReservedNullValue { attribute: name }),
+                AttributeMember::Instances(instances) => instances,
+            };
+            let converted = instances
+                .into_iter()
+                .map(|instance| Instance::try_from_document(&name, instance))
+                .collect::<Result<Vec<_>, _>>()?;
+            let held = AttributeInstances::try_from_instances(converted).map_err(|repeated| match repeated {
+                RepeatedInstance::Default => EntityRefusal::MultipleDefaultInstances { attribute: name.clone() },
+                RepeatedInstance::Dataset(dataset_id) => EntityRefusal::RepeatedInstance {
+                    attribute: name.clone(),
+                    dataset_id,
+                },
+            })?;
+            if let Some(held) = held {
+                attributes.insert(name, held);
+            }
         }
-        let instances = match member {
-            AttributeMember::Remove => return Err(EntityRefusal::ReservedNullValue { attribute: name }),
-            AttributeMember::Instances(instances) => instances,
-        };
-        let converted = instances
-            .into_iter()
-            .map(|instance| Instance::try_from_document(&name, instance))
-            .collect::<Result<Vec<_>, _>>()?;
-        let held = AttributeInstances::try_from_instances(converted).map_err(|repeated| match repeated {
-            RepeatedInstance::Default => EntityRefusal::MultipleDefaultInstances { attribute: name.clone() },
-            RepeatedInstance::Dataset(dataset_id) => EntityRefusal::RepeatedInstance {
-                attribute: name.clone(),
-                dataset_id,
-            },
-        })?;
-        if let Some(held) = held {
-            attributes.insert(name, held);
-        }
+        Ok(attributes)
     }
-    Ok(attributes)
 }
 
 #[cfg(test)]

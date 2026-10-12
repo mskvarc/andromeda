@@ -3,9 +3,9 @@
 use crate::{
     attribute_history_value::AttributeHistoryValue,
     error::TemporalStoreError,
+    history_members::{CommittedMetadata, HistoryMembers},
     instance_statements::{InstanceColumn, delete_instance_sql, release_verbatim_instance_claim_sql, select_instance_sql, update_instance_sql},
     repo::TemporalRepository,
-    unit_code_metadata::take_unit_code,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{
@@ -15,13 +15,18 @@ use andromeda_ngsi_ld_lexicon::{
     instance_identity::InstanceIdentity,
     uri::Uri,
 };
-use andromeda_ngsi_ld_model::temporal::observation_metadata::ObservationMetadata;
+use andromeda_postgresql_attribute_instance::{
+    name_keys::MentionedNames,
+    name_resolution::resolve_mentioned,
+    stored_json::StoredJson,
+    sub_attribute::SubAttributeRecord,
+};
 use andromeda_postgresql_codes::attribute_kind_code::stored_attribute_kind;
-use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
+use andromeda_postgresql_encoding::{ewkb::EwkbError, ewkb_binding::geometry_bytes};
+use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use andromeda_temporal::{observed_instance::ObservedInstance, temporal_not_found_reason::TemporalNotFoundReason};
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use chrono::{DateTime, Utc};
-use serde_json::value::RawValue;
 use sqlx::{AssertSqlSafe, postgres::PgRow, types::Json};
 
 impl TemporalRepository {
@@ -35,8 +40,8 @@ impl TemporalRepository {
         instance: &InstanceIdentity,
         replacement: &ObservedInstance,
     ) -> Result<(), TemporalStoreError> {
-        let state = UpdateInstanceState::of_replacement(replacement)?;
-        self.update_instance(target, entity_id, attribute_name, instance, &state).await
+        let state = UpdateInstanceState::of_replacement(attribute_name, replacement)?;
+        self.update_instance(target, entity_id, attribute_name, instance, state).await
     }
 
     /// Physically remove one named attribute instance from history.
@@ -87,15 +92,33 @@ impl TemporalRepository {
         Ok(())
     }
 
-    /// Modify one named attribute instance in place.
+    /// Modify one named attribute instance in place, minting the names its
+    /// members hold in the same transaction.
     async fn update_instance(
         &self,
         target: &ContextTarget,
         entity_id: &Identifier,
         attribute_name: &AttributeName,
         instance: &InstanceIdentity,
-        state: &UpdateInstanceState,
+        state: UpdateInstanceState,
     ) -> Result<(), TemporalStoreError> {
+        let mut tx = self.pool.begin().await?;
+        let mut mentioned = MentionedNames::default();
+        state.metadata.mention(&mut mentioned);
+        let keys = resolve_mentioned(&mut tx, mentioned, self.entity_type_names.as_ref(), self.attribute_names.as_ref()).await?;
+        let HistoryMembers {
+            value_type_key,
+            object_type_keys,
+            unit_code_id,
+            expires_at,
+            proof_seals,
+            sub_attributes,
+        } = state.metadata.keyed(&keys)?;
+        let elements = sub_attributes
+            .into_iter()
+            .map(SubAttributeRecord::try_from)
+            .collect::<Result<Vec<_>, EwkbError>>()?;
+        let object_type_keys: Vec<i32> = object_type_keys.into_iter().map(EntityTypeNameKey::get).collect();
         let generated_sql = update_instance_sql(InstanceColumn::Generated, target);
         let verbatim_sql = update_instance_sql(InstanceColumn::Verbatim, target);
         let statement = match instance {
@@ -114,16 +137,21 @@ impl TemporalRepository {
             .bind(state.value.date_time())
             .bind(state.value.uri().map(Uri::as_str))
             .bind(state.observed_at)
-            .bind(state.metadata.as_deref().map(Json))
-            .bind(state.unit_code_id.map(UnitCodeId::get))
+            .bind(value_type_key.map(EntityTypeNameKey::get))
+            .bind(unit_code_id.map(UnitCodeId::get))
             .bind(stored_attribute_kind(state.attribute_type).code())
             .bind(state.value.geometry_members().map(Json))
-            .execute(&self.pool)
+            .bind((!object_type_keys.is_empty()).then_some(object_type_keys))
+            .bind(proof_seals.map(StoredJson::into_json))
+            .bind(expires_at)
+            .bind((!elements.is_empty()).then_some(elements))
+            .execute(&mut *tx)
             .await?
             .rows_affected();
         if updated == 0 {
             return Err(TemporalStoreError::NotFound(instance_not_found(instance)));
         }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -164,11 +192,9 @@ struct UpdateInstanceState {
     /// that shape is reserved for a row recording a deletion (clauses 4.5.7
     /// and 4.5.8), which clause 5.6.15 cannot produce.
     value: AttributeHistoryValue,
-    /// The stored JSON of the replacement's metadata, without the `unitCode`
-    /// member.
-    metadata: Option<Box<RawValue>>,
-    /// Catalog identity of the instance's `unitCode`, when it declares one.
-    unit_code_id: Option<UnitCodeId>,
+    /// The replacement's metadata in the committed model, its unit lifted to
+    /// its catalog identity.
+    metadata: CommittedMetadata,
     /// The observation instant the modified instance declares, if any.
     observed_at: Option<DateTime<Utc>>,
     /// The attribute family of the replacement instance.
@@ -182,23 +208,16 @@ struct UpdateInstanceState {
 }
 
 impl UpdateInstanceState {
-    /// The update one replacement observation makes.
+    /// The update one replacement observation of `attribute_name` makes.
     ///
     /// # Errors
     ///
     /// Returns [`TemporalStoreError`] when the value or the metadata does not
     /// encode, or the `unitCode` names no unit a row can hold.
-    fn of_replacement(replacement: &ObservedInstance) -> Result<UpdateInstanceState, TemporalStoreError> {
-        // clone: the update owns its metadata, the replacement keeps its own.
-        let (metadata, unit_code_id) = take_unit_code(replacement.metadata.clone())?;
+    fn of_replacement(attribute_name: &AttributeName, replacement: &ObservedInstance) -> Result<UpdateInstanceState, TemporalStoreError> {
         Ok(UpdateInstanceState {
             value: AttributeHistoryValue::of_observation(&replacement.value)?,
-            metadata: metadata
-                .as_ref()
-                .map(ObservationMetadata::to_stored_json)
-                .transpose()
-                .map_err(TemporalStoreError::StoredJson)?,
-            unit_code_id,
+            metadata: CommittedMetadata::of(attribute_name, replacement.metadata.as_ref())?,
             observed_at: replacement.observed_at,
             attribute_type: replacement.attribute_type,
         })
@@ -207,10 +226,12 @@ impl UpdateInstanceState {
 
 #[cfg(test)]
 mod tests {
-    use crate::instance_mutation::UpdateInstanceState;
+    use crate::{history_members::HistoryMembers, instance_mutation::UpdateInstanceState};
     use andromeda_ngsi_ld_entity::document::instance_document::InstanceDocument;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
     use andromeda_postgresql_codes::value_kind::ValueKind;
+    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames};
     use andromeda_temporal::observed_instance::ObservedInstance;
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
@@ -222,7 +243,7 @@ mod tests {
         let replacement = ObservedInstance::read(document)
             .expect("a readable replacement")
             .expect("a replacement records a value");
-        UpdateInstanceState::of_replacement(&replacement).expect("the replacement encodes")
+        UpdateInstanceState::of_replacement(&speed, &replacement).expect("the replacement encodes")
     }
 
     /// The clause 5.6.15 replacement is read by the same decoder an append is, so an array-valued Property replaced in place keeps every element, as the structured column stores it.
@@ -237,21 +258,29 @@ mod tests {
         assert_eq!(stored, json!([1, 2, 3]));
     }
 
-    /// The replacement's metadata holds its sub-attributes and companions alone: the value, the plural and list members and the clause 4.8 times are not metadata, and the unit moves to its column.
+    /// Clause 5.6.15 replaces the whole instance: its sub-attribute is bound
+    /// as a typed element and its unit as its catalog identity, and no member
+    /// travels as JSON.
     #[test]
-    fn a_replacement_stores_only_its_metadata_in_the_metadata_column() {
-        let accuracy = json!([{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 0.5}]}]);
+    fn a_replacement_instance_binds_its_typed_metadata() {
         let update = update_of(&json!({
             "@type": ["https://uri.etsi.org/ngsi-ld/ListProperty"],
             "https://uri.etsi.org/ngsi-ld/hasValueList": [{"@list": [{"@value": 1}]}],
             "https://uri.etsi.org/ngsi-ld/createdAt": [{"@value": "2024-01-01T00:00:00.000000Z", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}],
-            "https://uri.etsi.org/ngsi-ld/modifiedAt": [{"@value": "2024-01-01T00:00:00.000000Z", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}],
             "https://uri.etsi.org/ngsi-ld/unitCode": [{"@value": "MTR"}],
-            "https://example.org/accuracy": accuracy
+            "https://example.org/accuracy": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 0.5}]}]
         }));
-        let metadata: Value = serde_json::from_str(update.metadata.as_deref().expect("the sub-attribute is metadata").get()).expect("parses");
-        assert_eq!(metadata, json!({"https://example.org/accuracy": accuracy}));
-        assert!(update.unit_code_id.is_some());
+        let accuracy: AttributeName = "https://example.org/accuracy".parse().expect("a valid attribute name");
+        let keys = NameKeys::new(ResolvedNames::from_pairs([(accuracy, AttributeNameKey::from(7))]), ResolvedNames::default());
+        let members: HistoryMembers = update.metadata.keyed(&keys).expect("the metadata keys");
+        assert!(members.unit_code_id.is_some());
+        let keyed: Vec<(i32, AttributeNameKey)> = members
+            .sub_attributes
+            .iter()
+            .map(|element| (element.parent, element.members.attribute_name_key))
+            .collect();
+        assert_eq!(keyed, vec![(0, AttributeNameKey::from(7))]);
+        assert!(members.proof_seals.is_none() && members.value_type_key.is_none() && members.object_type_keys.is_empty());
         let value: Value = serde_json::from_str(update.value.object().expect("the structured column").get()).expect("parses");
         assert_eq!(value, json!([{"@value": 1}]));
     }

@@ -62,10 +62,11 @@ pub async fn history_unit_identities(pool: &PgPool, entity_id: &str, attribute_i
     .collect()
 }
 
-/// The `metadata` document of every history row of one entity's attribute.
-pub async fn history_metadata(pool: &PgPool, entity_id: &str, attribute_iri: &str) -> Vec<Option<Value>> {
+/// The number of sub-attribute elements of every history row of one entity's
+/// attribute, `None` for a row without any.
+pub async fn history_sub_attribute_counts(pool: &PgPool, entity_id: &str, attribute_iri: &str) -> Vec<Option<i32>> {
     sqlx::query(
-        "SELECT ah.metadata \
+        "SELECT cardinality(ah.sub_attributes) AS elements \
          FROM attribute_history ah \
          JOIN temporal_attribute_streams s ON s.stream_key = ah.stream_key \
          JOIN temporal_entities te ON te.temporal_entity_key = s.temporal_entity_key \
@@ -79,7 +80,7 @@ pub async fn history_metadata(pool: &PgPool, entity_id: &str, attribute_iri: &st
     .await
     .expect("history rows must be readable")
     .into_iter()
-    .map(|row| row.get::<Option<Value>, _>("metadata"))
+    .map(|row| row.get::<Option<i32>, _>("elements"))
     .collect()
 }
 
@@ -87,6 +88,3 @@ pub async fn history_metadata(pool: &PgPool, entity_id: &str, attribute_iri: &st
 pub fn default_context_iri(term: &str) -> String {
     format!("https://uri.etsi.org/ngsi-ld/default-context/{term}")
 }
-
-/// The expanded `unitCode` member key as it appears inside a metadata document.
-pub const EXPANDED_UNIT_CODE: &str = "https://uri.etsi.org/ngsi-ld/unitCode";

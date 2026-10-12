@@ -28,7 +28,7 @@ use andromeda_federation::config::FederationConfig;
 use andromeda_http_headers::link::field_layout::LinkFieldLayout;
 use andromeda_http_source_identity::config::InfoConfig;
 use andromeda_jsonld::config::JsonLdConfig;
-use andromeda_postgresql_atomic_write::{committer::PostgresAtomicCommitter, config::AtomicWriteConfig};
+use andromeda_postgresql_atomic_write::committer::PostgresAtomicCommitter;
 use andromeda_postgresql_context_store::{config::DatabaseConfig, tenant_database::DatabaseUrl};
 use andromeda_snapshot::config::SnapshotConfig;
 use andromeda_subscription_forwarding::mapping::ForwardedSubscriptionRouter;
@@ -95,7 +95,6 @@ struct TenantFactoryConfig {
     identity: InfoConfig,
     jsonld: JsonLdConfig,
     notifications: NotificationsConfig,
-    atomic_write: AtomicWriteConfig,
     snapshot: SnapshotConfig,
     spatial: SpatialConfig,
     temporal: TemporalConfig,
@@ -115,7 +114,6 @@ impl From<&RuntimeConfig> for TenantFactoryConfig {
             identity: config.identity.clone(),
             jsonld: config.jsonld.clone(),
             notifications: config.notifications.clone(),
-            atomic_write: config.atomic_write.clone(),
             snapshot: config.snapshot.clone(),
             spatial: config.spatial.clone(),
             temporal: config.temporal.clone(),

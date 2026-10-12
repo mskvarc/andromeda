@@ -13,7 +13,10 @@
 //! the object. The concern is therefore owned here, once, rather than copied
 //! into each store. Each store keeps its own record of what it has created, so
 //! a collation both of them order by is created once by each; the statement is
-//! `IF NOT EXISTS`, so the second create is a no-op.
+//! `IF NOT EXISTS`, so the second create is a no-op. Two creates that run
+//! concurrently both pass that check, and the later one is refused on the
+//! catalog's unique index; that refusal means the object exists, so it counts
+//! as created.
 //!
 //! Whether the locale names a collation ICU holds is decided here too, and only
 //! here. ICU's set of known languages is its own, so no copy of it kept in the

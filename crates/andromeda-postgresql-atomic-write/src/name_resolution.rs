@@ -14,11 +14,12 @@
 use crate::commit_refusal::name_lookup;
 use andromeda_context_commit::{atomic_write::AtomicWrite, error::CommitError};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
-use andromeda_postgresql_attribute_instance::name_keys::{MentionedNames, NameKeys};
+use andromeda_postgresql_attribute_instance::{
+    name_keys::{MentionedNames, NameKeys},
+    name_resolution::resolve_mentioned,
+};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
-use andromeda_postgresql_query::dictionary::resolved_names::ResolvedNames;
 use sqlx::{Postgres, Transaction};
-use std::collections::HashMap;
 
 /// Mint the dictionary key of every name the writes' records project or
 /// store: every entity type and attribute name the search row carries, every
@@ -56,43 +57,7 @@ pub(crate) async fn resolve_write_names(
                 .extend(replaced.attributes().names().filter(|name| !attributes.contains(name)).cloned());
         }
     }
-    resolve_mentioned(tx, mentioned, entity_type_names, attribute_names).await
-}
-
-/// Mint the dictionary key of every name `mentioned` collects, one resolution
-/// per dictionary, each name asked for once.
-///
-/// # Errors
-///
-/// Returns [`CommitError::Persistence`] when a dictionary cannot be resolved,
-/// which includes a resolution refused for taking the tenant's dictionary past
-/// its bound.
-pub(crate) async fn resolve_mentioned(
-    tx: &mut Transaction<'_, Postgres>,
-    mentioned: MentionedNames,
-    entity_type_names: &dyn NameLookup<EntityTypeName>,
-    attribute_names: &dyn NameLookup<AttributeName>,
-) -> Result<NameKeys, CommitError> {
-    let MentionedNames { attributes, types } = distinct(mentioned);
-    let types = if types.is_empty() {
-        HashMap::new()
-    } else {
-        entity_type_names.resolve_or_create(tx, &types).await.map_err(|error| name_lookup(&error))?
-    };
-    let attributes = if attributes.is_empty() {
-        HashMap::new()
-    } else {
-        attribute_names.resolve_or_create(tx, &attributes).await.map_err(|error| name_lookup(&error))?
-    };
-    Ok(NameKeys::new(ResolvedNames::from_pairs(attributes), ResolvedNames::from_pairs(types)))
-}
-
-/// The names `mentioned` collects, each once, in sorted order.
-pub(crate) fn distinct(mentioned: MentionedNames) -> MentionedNames {
-    let MentionedNames { mut attributes, mut types } = mentioned;
-    types.sort_unstable();
-    types.dedup();
-    attributes.sort_unstable();
-    attributes.dedup();
-    MentionedNames { attributes, types }
+    resolve_mentioned(tx, mentioned, entity_type_names, attribute_names)
+        .await
+        .map_err(|error| name_lookup(&error))
 }

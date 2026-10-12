@@ -17,7 +17,6 @@ use andromeda_http_stack::config::HttpStackConfig;
 use andromeda_http3_server::config::Http3Config;
 use andromeda_jsonld::config::JsonLdConfig;
 use andromeda_ngsi_ld_request::pagination::config::PaginationConfig;
-use andromeda_postgresql_atomic_write::config::AtomicWriteConfig;
 use andromeda_postgresql_context_store::config::DatabaseConfig;
 use andromeda_server_tls::config::TlsConfig;
 use andromeda_snapshot::config::SnapshotConfig;
@@ -109,9 +108,6 @@ pub struct RuntimeConfig {
 
     /// Distributed Context Source forwarding configuration.
     pub federation: FederationConfig,
-
-    /// Atomic-write strategy.
-    pub atomic_write: AtomicWriteConfig,
 
     /// Snapshot operation configuration.
     pub snapshot: SnapshotConfig,
@@ -763,6 +759,14 @@ port = 1600
         assert!(rendered.contains("[server]"), "{rendered}");
         assert!(rendered.contains("[database.maintenance]"), "{rendered}");
         assert!(rendered.lines().any(|line| line.starts_with('#')), "{rendered}");
+    }
+
+    /// History is written by one statement shape, so the configuration has no
+    /// bulk-write strategy to choose.
+    #[test]
+    fn the_default_configuration_names_no_atomic_write_section() {
+        let rendered = <RuntimeConfig as TomlComment>::default_toml();
+        assert!(!rendered.contains("atomic_write") && !rendered.contains("bulk_mode"), "{rendered}");
     }
 
     #[test]

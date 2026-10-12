@@ -26,9 +26,8 @@ use andromeda_ngsi_ld_entity::{
 };
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
-    entity_type_name::EntityTypeName,
     identifier::{Identifier, IdentifierParseError},
-    reference::{NgsiLdReference, NgsiLdReferenceError},
+    reference::NgsiLdReferenceError,
 };
 use andromeda_ngsi_ld_model::{
     entity_change::{EntityChange, EntityLifecycle},
@@ -37,7 +36,6 @@ use andromeda_ngsi_ld_model::{
 use andromeda_notification::notification_event::{NotificationEvent, NotificationEventKey};
 use andromeda_postgresql_attribute_instance::name_keys::{HeldKeys, KeyNames};
 use andromeda_postgresql_codes::{attribute_change_kind::AttributeChangeKindCode, entity_lifecycle::EntityLifecycleCode, registry::UnknownCompactCode};
-use andromeda_postgresql_name_dictionary::name_lookup::{NameLookup, NameLookupError};
 use chrono::{DateTime, Utc};
 use std::{collections::HashMap, sync::Arc};
 use thiserror::Error;
@@ -222,11 +220,7 @@ impl ReadEvents {
         {
             state.collect_keys(&mut held);
         }
-        held.attributes.sort_unstable_by_key(|key| key.get());
-        held.attributes.dedup();
-        held.types.sort_unstable_by_key(|key| key.get());
-        held.types.dedup();
-        held
+        held.distinct()
     }
 
     /// The events with their states assembled, every key read back through
@@ -242,24 +236,6 @@ impl ReadEvents {
                 .collect(),
         )
     }
-}
-
-/// The names behind `held`, one lookup per dictionary.
-///
-/// # Errors
-///
-/// Returns [`NameLookupError`] when a dictionary cannot be read.
-pub(crate) async fn names_of(
-    held: &HeldKeys,
-    attribute_names: &dyn NameLookup<AttributeName>,
-    entity_type_names: &dyn NameLookup<EntityTypeName>,
-) -> Result<KeyNames, NameLookupError> {
-    let attributes = attribute_names.names_of(&held.attributes).await?;
-    let types = entity_type_names.names_of(&held.types).await?;
-    Ok(KeyNames::from_pairs(
-        attributes,
-        types.iter().map(|(key, name)| (*key, NgsiLdReference::from(name))),
-    ))
 }
 
 /// Validate every stored value of one claimed event but its states' names.
@@ -371,14 +347,14 @@ pub(crate) mod tests {
         current_attribute::round_trip_tests::{committed, dictionary_of, ex, ngsi, property, with},
         entity::stored_entity_error::StoredEntityError,
         entity_state_record::state_record::{EntityStateRecord, record_of},
-        notification_delivery::claimed_event::{ClaimedEventError, ClaimedEvents, RawClaimedEventRow, ReadEvents, names_of},
+        notification_delivery::claimed_event::{ClaimedEventError, ClaimedEvents, RawClaimedEventRow, ReadEvents},
     };
     use andromeda_context_commit::write_ordinal::WriteOrdinal;
     use andromeda_ngsi_ld_entity::{entity_state::EntityState, reads::attribute_change::AttributeChangeKind};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::entity_change::EntityLifecycle;
     use andromeda_notification::notification_event::{NotificationEvent, NotificationEventKey};
-    use andromeda_postgresql_attribute_instance::{name_keys::KeyNames, stored_members::StoredInstanceError};
+    use andromeda_postgresql_attribute_instance::{name_keys::KeyNames, name_resolution::names_of, stored_members::StoredInstanceError};
     use andromeda_postgresql_name_dictionary::name_lookup::{NameLookup, NameLookupError};
     use andromeda_postgresql_query::dictionary::{interned_name::InternedName, resolved_names::ResolvedNames};
     use chrono::Utc;

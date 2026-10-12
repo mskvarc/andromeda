@@ -21,6 +21,12 @@ impl StoredJson {
         self.0.get()
     }
 
+    /// The JSON, for a bind that borrows it.
+    #[must_use]
+    pub fn as_raw(&self) -> &RawValue {
+        &self.0
+    }
+
     /// The JSON as the `jsonb` bind and decode wrapper carries it.
     #[must_use]
     pub fn into_json(self) -> Json<Box<RawValue>> {
