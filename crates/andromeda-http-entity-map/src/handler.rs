@@ -26,13 +26,10 @@ use andromeda_http_extraction::{
     typed_path::TypedPath,
 };
 use andromeda_http_response::{problem_response::ProblemResponse, rendered_response::RenderedResponse, single::NgsiLdResponse};
-use andromeda_jsonld::{
-    context_spec::ContextSpec,
-    user_context_admission::{SubmittedContext, admit_user_context},
-};
+use andromeda_jsonld::user_context_admission::{SubmittedContext, admit_user_context};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::query::body::Query;
-use andromeda_ngsi_ld_query::page_window::PageWindow;
+use andromeda_ngsi_ld_query::{candidate_filters::CandidateFilters, page_window::PageWindow};
 use andromeda_ngsi_ld_render::entity_map_body::EntityMapBody;
 use andromeda_ngsi_ld_request::{
     body::entity_map::UpdateEntityMapBody,
@@ -40,10 +37,10 @@ use andromeda_ngsi_ld_request::{
     query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
     query_narrowing::ExecutionScope,
 };
-use andromeda_temporal::{candidate_filters::CandidateFilters, requested_identifiers::RequestedIdentifiers};
+use andromeda_temporal::requested_identifiers::RequestedIdentifiers;
 use axum::{
     extract::OriginalUri,
-    http::{StatusCode, Uri as HttpUri},
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 use std::sync::Arc;
@@ -111,12 +108,12 @@ pub async fn delete(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-/// Whether a creation's local candidates are held to the request's value, geo
-/// and scope filters.
+/// Whether a creation's local candidates are held to every filter of the
+/// request.
 ///
 /// Clauses 5.14.4.4 and 5.14.5.4: under split entities a request that is not
 /// limited to the local scope maps every local Entity its selectors match,
-/// because a locally held part that fails those filters may belong to an
+/// because a locally held part that fails the other filters may belong to an
 /// Entity that meets them once gathered; each request that later runs under
 /// the map evaluates them over the merged result.
 fn candidate_filters(state: &EntityMapRouteServices, split_entities: Option<bool>, scope: ExecutionScope) -> CandidateFilters {
@@ -129,15 +126,30 @@ fn candidate_filters(state: &EntityMapRouteServices, split_entities: Option<bool
 }
 
 /// Resolve the local membership `window` selects of an entity query (clause
-/// 5.14.4.4).
+/// 5.14.4.4), held to the filters `filters` says.
 async fn local_entity_ids(
     state: &Arc<EntityMapRouteServices>,
     query: &EntityQueryParameters,
     window: &PageWindow,
-    context: &ContextSpec,
-    uri: &HttpUri,
+    filters: CandidateFilters,
+    rendering: &CreationRendering<'_>,
 ) -> Result<Vec<Identifier>, ProblemResponse> {
-    let compiled = state.entity_query.compile_query_public(query, context).await.with_entity_map_instance(uri)?;
+    let uri = rendering.uri;
+    let mut compiled = state
+        .entity_query
+        .compile_query_public(query, rendering.context)
+        .await
+        .with_entity_map_instance(uri)?;
+    match filters {
+        CandidateFilters::Applied => {}
+        // Clause 5.14.4.4: the split branch selects on the identifier, the id
+        // pattern and the type alone.
+        CandidateFilters::Deferred => {
+            compiled.selection.without_split_filters();
+            compiled.selection.without_attribute_requirement();
+        }
+    }
+    let compiled = compiled;
     state
         .entity_query
         .query_ids(&state.live_target, &compiled, window)
@@ -148,23 +160,15 @@ async fn local_entity_ids(
 /// Create the map an entity query selects, over either binding (clause 5.14.4.4).
 async fn create_from_entity_query(
     state: &Arc<EntityMapRouteServices>,
-    query: &mut EntityQueryParameters,
+    query: &EntityQueryParameters,
     window: &PageWindow,
     forwarded_query: String,
     rendering: &CreationRendering<'_>,
     triggering: TriggeringRequest<'_>,
 ) -> Result<Response, ProblemResponse> {
-    // The fingerprint is taken from the request as written, before any filter is
-    // held back, so a later query reusing this map -- which fingerprints with its
-    // `q`, geoquery and `scopeQ` present -- matches it.
     let fingerprint = fingerprint_of(FingerprintedRequest::QueryEntities(query)).with_entity_map_instance(rendering.uri)?;
-    match candidate_filters(state, query.split_entities, query.execution_scope()) {
-        CandidateFilters::Deferred => {
-            let _deferred = query.defer_split_filters();
-        }
-        CandidateFilters::Applied => {}
-    }
-    let local_ids = local_entity_ids(state, query, window, rendering.context, rendering.uri).await?;
+    let filters = candidate_filters(state, query.split_entities, query.execution_scope());
+    let local_ids = local_entity_ids(state, query, window, filters, rendering).await?;
     create_map(
         state,
         MapCreation {
@@ -237,7 +241,7 @@ pub async fn create_from_query(
     ResponseContextRequest { context, api_root }: ResponseContextRequest,
     prefer: PreferHeader,
     pagination: RequestPagination,
-    EntityQuery(mut query): EntityQuery,
+    EntityQuery(query): EntityQuery,
 ) -> Result<Response, ProblemResponse> {
     let context = admit_user_context(state.entity_query.engine(), SubmittedContext::from(context))
         .await
@@ -248,7 +252,7 @@ pub async fn create_from_query(
     let forwarded_query = forwarded_query_string(&uri, filters);
     create_from_entity_query(
         &state,
-        &mut query,
+        &query,
         &window,
         forwarded_query,
         &CreationRendering::builder()
@@ -280,14 +284,14 @@ pub async fn create_from_query_post(
     // extractor resolved, admitted first (clause 5.5.7).
     let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_map_instance(&uri)?;
     let body = body.admitted(&context)?;
-    let mut query = EntityQueryParameters::try_from(body).with_entity_map_instance(&uri)?;
+    let query = EntityQueryParameters::try_from(body).with_entity_map_instance(&uri)?;
     validate_entity_map_query(&query, accept.media_type(), &uri)?;
     let window = membership_window(&pagination, &query.page, &query.ordering, &uri)?;
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(query.split_entities).is_split());
     let forwarded_query = body_query_string(&query, filters, &uri);
     create_from_entity_query(
         &state,
-        &mut query,
+        &query,
         &window,
         forwarded_query,
         &CreationRendering::builder()

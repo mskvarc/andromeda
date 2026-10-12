@@ -187,6 +187,18 @@ impl EntitySelection {
         self.geo = None;
         self.scope_q = None;
     }
+
+    /// Drop what an entity has to carry, the `attrs` list and the projection's
+    /// members, leaving the other filters to decide alone.
+    ///
+    /// Clause 5.14.4.4 creates an `EntityMap` under split entities from every
+    /// local Entity whose identifier, id pattern and type match: a locally held
+    /// part may lack every listed Attribute that another Context Source holds,
+    /// so clause 5.7.2.4 checks the Attribute list only on the gathered Entity.
+    pub fn without_attribute_requirement(&mut self) {
+        self.attrs.clear();
+        self.projected_members = ProjectedMembers::Unconditional;
+    }
 }
 
 #[cfg(test)]
@@ -197,6 +209,7 @@ mod tests {
         geo::query::GeoQuery,
         identifier_axis::IdentifierAxis,
         pattern::Pattern,
+        projection::projected_members::{ProjectedMembers, ScopeRetention},
         scope::query::ScopeQuery,
     };
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
@@ -298,6 +311,34 @@ mod tests {
         pretty_assertions::assert_eq!(selection.selectors[0].ids.len(), 1);
         assert!(selection.selectors[0].id_pattern.is_some(), "the id pattern stays");
         pretty_assertions::assert_eq!(selection.attrs, vec![speed]);
+        pretty_assertions::assert_eq!(selection.considered, ConsideredEntities::NoEntity);
+    }
+
+    /// Clause 5.14.4.4: under split entities the Attribute list and the
+    /// projection's members wait for the gathered Entity, while the selectors,
+    /// the value filter and the considered entities are left as they were.
+    #[test]
+    fn dropping_the_attribute_requirement_leaves_the_selectors_and_the_value_filter() {
+        let speed: IriBuf = "https://example.com/speed".parse().expect("valid IRI");
+        let mut selection = EntitySelection::builder()
+            .selectors(vec![
+                EntitySelector::builder()
+                    .id_pattern(Some(Pattern::parse("^urn:").expect("valid pattern")))
+                    .build(),
+            ])
+            .attrs(vec![speed.clone()]) // clone: the projection keeps the IRI the attribute list takes
+            .q_expr(Some(parse("speed>10").expect("q parses")))
+            .considered(ConsideredEntities::NoEntity)
+            .projected_members(ProjectedMembers::AnyOf {
+                attributes: vec![speed],
+                scope: ScopeRetention::Removed,
+            })
+            .build();
+        selection.without_attribute_requirement();
+        assert!(selection.attrs.is_empty(), "the Attribute list is dropped");
+        pretty_assertions::assert_eq!(selection.projected_members, ProjectedMembers::Unconditional);
+        assert!(selection.selectors[0].id_pattern.is_some(), "the id pattern stays");
+        assert!(selection.q_expr.is_some(), "the value filter stays");
         pretty_assertions::assert_eq!(selection.considered, ConsideredEntities::NoEntity);
     }
 }

@@ -1,12 +1,18 @@
 use crate::{
-    candidate_filters::CandidateFilters,
     requested_identifiers::RequestedIdentifiers,
     stub_broker::{StubBroker, live_target, service_over},
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_rel::TimeRel};
-use andromeda_ngsi_ld_query::{entity_selection::EntitySelection, filter::parser::parse, page_window::PageWindow, pattern::Pattern, scope::query::ScopeQuery};
+use andromeda_ngsi_ld_query::{
+    candidate_filters::CandidateFilters,
+    entity_selection::EntitySelection,
+    filter::parser::parse,
+    page_window::PageWindow,
+    pattern::Pattern,
+    scope::query::ScopeQuery,
+};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use serde_json::json;
 use std::{iter, sync::Arc};

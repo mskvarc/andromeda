@@ -2,7 +2,6 @@
 
 use crate::{
     aggregation_eligibility::ensure_aggregation_eligible,
-    candidate_filters::CandidateFilters,
     error::TemporalError,
     port::history_reader::TemporalHistoryReader,
     read::{dataset_step::DatasetStep, entity_members::carries_members, rendered_entity::HistoryPresence},
@@ -16,7 +15,12 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow, temporal::compiled::CompiledTemporalQuery};
+use andromeda_ngsi_ld_query::{
+    candidate_filters::CandidateFilters,
+    count_policy::CountPolicy,
+    page_window::PageWindow,
+    temporal::compiled::CompiledTemporalQuery,
+};
 use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation};
 use andromeda_telemetry::temporal::{self, TemporalOperation};
 use std::slice::from_ref;
