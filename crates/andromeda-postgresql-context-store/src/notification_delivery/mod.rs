@@ -22,6 +22,8 @@ pub mod branches;
 pub(crate) mod change_code;
 /// Leasing due deliveries and reading the events they answer.
 pub mod claim;
+/// The events one delivery claim read back, each decoded once.
+pub mod claimed_event;
 /// Reaping delivered rows and the events they leave behind.
 pub mod cleanup;
 /// Writing one write's notification events and their deliveries.

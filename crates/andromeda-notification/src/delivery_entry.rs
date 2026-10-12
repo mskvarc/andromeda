@@ -12,6 +12,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use chrono::{DateTime, Utc};
 use derive_more::{Display, From};
+use std::sync::Arc;
 use typed_builder::TypedBuilder;
 
 /// Database-generated key of a persisted notification delivery.
@@ -39,8 +40,9 @@ pub struct DeliveryEntry {
     pub attempt_count: i32,
     /// Earliest instant at which the next attempt may be made.
     pub next_attempt_at: DateTime<Utc>,
-    /// The immutable event this delivery carries.
-    pub event: NotificationEvent,
+    /// The immutable event this delivery carries, shared by every delivery of
+    /// one claim that answers it.
+    pub event: Arc<NotificationEvent>,
 }
 
 #[cfg(test)]

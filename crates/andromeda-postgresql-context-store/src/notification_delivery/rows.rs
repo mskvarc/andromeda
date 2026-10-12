@@ -1,70 +1,19 @@
 //! Validated notification delivery records and their mapper errors.
 
-use crate::{
-    json_text::JsonText,
-    notification_delivery::change_code::{change_kind_of, lifecycle_of},
-};
-use andromeda_context_commit::{
-    subscription_key::SubscriptionKey,
-    write_id::WriteId,
-    write_ordinal::{WriteOrdinal, WriteOrdinalOutOfRange},
-};
+use crate::notification_delivery::claimed_event::{ClaimedEventError, ClaimedEvents};
+use andromeda_context_commit::{subscription_key::SubscriptionKey, write_ordinal::WriteOrdinal};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_entity::{
-    entity_state::EntityState,
-    reads::{attribute_change::AttributeChange, attribute_instance_key::AttributeInstanceKey},
-    refusal::EntityRefusal,
-};
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    identifier::{Identifier, IdentifierParseError},
-    reference::NgsiLdReferenceError,
-};
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
+use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
 use andromeda_ngsi_ld_model::{entity_change::EntityChange, notification::SysAttrsSnapshot};
-use andromeda_notification::delivery_entry::DeliveryKey;
-use andromeda_postgresql_codes::{attribute_change_kind::AttributeChangeKindCode, entity_lifecycle::EntityLifecycleCode, registry::UnknownCompactCode};
+use andromeda_notification::{
+    delivery_entry::{DeliveryEntry, DeliveryKey},
+    notification_event::NotificationEventKey,
+};
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use chrono::{DateTime, Utc};
+use std::sync::Arc;
 use thiserror::Error;
-use uuid::Uuid;
-
-/// One claimed delivery, together with the event it answers.
-///
-/// The queue columns come from `notification_deliveries` and the payload
-/// columns from the `notification_events` row it references, because a worker
-/// needs both to build a notification: what to send, and how many times sending
-/// it has already been attempted.
-#[derive(Debug)]
-pub struct ClaimedDelivery {
-    /// Context branch that owns the event and subscription.
-    pub target: ContextTarget,
-    /// Key of the claimed delivery row.
-    pub delivery_key: DeliveryKey,
-    /// Subscription this delivery answers.
-    pub subscription_id: Identifier,
-    /// Delivery attempts already made.
-    pub attempt_count: i32,
-    /// Earliest instant a further attempt may be made.
-    pub next_attempt_at: DateTime<Utc>,
-    /// Key of the event this delivery carries.
-    pub event_key: i64,
-    /// Write that produced the event.
-    pub write_id: WriteId,
-    /// Position of the event within that write.
-    pub event_ordinal: WriteOrdinal,
-    /// What the write did to the Entity (clause 5.8.6).
-    pub change: EntityChange,
-    /// Entity whose change the event records.
-    pub entity_id: Identifier,
-    /// Entity state after the change, or the state a deletion removed.
-    pub entity_snapshot: Option<EntityState>,
-    /// Entity state before the change, for `showChanges`.
-    pub previous_snapshot: Option<EntityState>,
-    /// The clause 4.8 system attributes of an entity a deletion removed.
-    pub sys_attrs_snapshot: Option<SysAttrsSnapshot>,
-    /// Instant the event was recorded.
-    pub created_at: DateTime<Utc>,
-}
 
 /// A claimed delivery whose row could not be read back as its domain record.
 ///
@@ -91,141 +40,64 @@ pub enum ClaimedDeliveryError {
         #[source]
         source: IdentifierParseError,
     },
-    /// The entity identifier is not a URI permitted by clause 4.6.2.
-    #[error("references an invalid entity URI")]
-    InvalidEntityId {
-        /// URI validation failure.
-        #[source]
-        source: IdentifierParseError,
+    /// The event the delivery answers was read back but does not decode; every
+    /// delivery of that event is unreadable for the same reason.
+    #[error("answers event {event_key}, which {reason}")]
+    UnreadableEvent {
+        /// Key of the event.
+        event_key: NotificationEventKey,
+        /// Why the event does not decode, shared by every delivery of it.
+        reason: Arc<ClaimedEventError>,
     },
-    /// The stored number names no Entity lifecycle transition, which is what a
-    /// row written by a release that knows more transitions looks like.
-    #[error("carries an unreadable lifecycle")]
-    UnknownLifecycle {
-        /// Registry rejection naming the number.
-        #[source]
-        source: UnknownCompactCode,
+    /// The claim read back no event under the key the delivery references.
+    ///
+    /// An invariant breach: a delivery cascades away with its event, the
+    /// reap removes only events no delivery references, and the claim holds
+    /// the delivery's row lock from the claim through the event read.
+    #[error("answers event {event_key}, which the claim did not read back")]
+    EventNotRead {
+        /// Key of the event.
+        event_key: NotificationEventKey,
     },
-    /// A stored number names no Attribute instance transition.
-    #[error("carries an unreadable instance transition")]
-    UnknownChangeKind {
-        /// Registry rejection naming the number.
-        #[source]
-        source: UnknownCompactCode,
-    },
-    /// The per-instance arrays disagree in length, so no instance can be
-    /// told apart from its neighbour.
-    #[error("carries {kinds} instance transitions for {attributes} attributes and {datasets} datasetIds")]
-    ChangeArity {
-        /// Number of stored transitions.
-        kinds: usize,
-        /// Number of attribute names the dictionary resolved.
-        attributes: usize,
-        /// Number of stored dataset discriminators.
-        datasets: usize,
-    },
-    /// The stored event ordinal is outside the range the write identity numbers.
-    #[error("carries an unreadable event ordinal")]
-    InvalidEventOrdinal {
-        /// Ordinal range failure.
-        #[source]
-        source: WriteOrdinalOutOfRange,
-    },
-    /// One changed attribute is not a valid NGSI-LD attribute name.
-    #[error("references an invalid attribute name")]
-    InvalidAttributeName {
-        /// Attribute-name validation failure.
-        #[source]
-        source: NgsiLdReferenceError,
-    },
-    /// The stored dataset discriminator is not a valid URI.
-    #[error("references an invalid datasetId")]
-    InvalidDatasetId {
-        /// URI validation failure.
-        #[source]
-        source: IdentifierParseError,
-    },
-    /// A stored entity snapshot no longer decodes as an entity state.
-    #[error("carries an unreadable entity snapshot")]
-    UnreadableSnapshot {
-        /// Why the stored document is not an entity state.
-        #[source]
-        source: EntityRefusal,
-    },
-    /// The removed entity's `createdAt` and `modifiedAt` are not stored
-    /// together, which the event's own check constraint rules out.
-    #[error("carries an incomplete set of entity system attributes")]
-    IncompleteSystemAttributes,
 }
 
-/// SQL decode shape of one claimed delivery joined to its event.
+/// SQL decode shape of one claimed delivery and the subscription it answers.
 ///
 /// Crate-private so unvalidated database text cannot cross the persistence
 /// boundary.
 #[derive(Debug, sqlx::FromRow)]
-pub(crate) struct RawClaimedDeliveryRow<'r> {
+pub(crate) struct RawClaimedDeliveryRow {
     /// Database-generated delivery key.
-    delivery_key: i64,
+    pub(crate) delivery_key: i64,
     /// Raw subscription identifier decoded by the row mapper.
-    subscription_id: String,
+    pub(crate) subscription_id: String,
     /// Delivery attempts already made.
-    attempt_count: i32,
+    pub(crate) attempt_count: i32,
     /// Earliest instant a further attempt may be made.
-    next_attempt_at: DateTime<Utc>,
-    /// Database-generated event key.
-    event_key: i64,
-    /// Raw write identity decoded by the row mapper.
-    write_id: Uuid,
-    /// Raw event ordinal decoded by the row mapper.
-    event_ordinal: i32,
-    /// Raw lifecycle number decoded by the row mapper.
-    lifecycle: i16,
-    /// Raw entity identifier decoded by the row mapper.
-    entity_id: String,
-    /// Raw transition number of each changed instance.
-    change_kinds: Vec<i16>,
-    /// Attribute name of each changed instance, resolved from the dictionary
-    /// by the statement.
-    ///
-    /// The event stores dictionary keys; the claim resolves them back to the
-    /// expanded IRIs a notification is built from, position for position.
-    change_attributes: Vec<String>,
-    /// Dataset discriminator of each changed instance, `None` for the default
-    /// instance.
-    change_dataset_ids: Vec<Option<String>>,
-    /// Entity state after the change, as the stored document's JSON text.
-    entity_snapshot: Option<JsonText<'r>>,
-    /// Entity state before the change, as the stored document's JSON text.
-    previous_snapshot: Option<JsonText<'r>>,
-    /// Clause 4.8 `createdAt` of an entity a deletion removed.
-    entity_created_at: Option<DateTime<Utc>>,
-    /// Clause 4.8 `modifiedAt` of an entity a deletion removed.
-    entity_modified_at: Option<DateTime<Utc>>,
-    /// Clause 4.22 `expiresAt` of an entity a deletion removed.
-    entity_expires_at: Option<DateTime<Utc>>,
-    /// Instant the event was recorded.
-    created_at: DateTime<Utc>,
+    pub(crate) next_attempt_at: DateTime<Utc>,
+    /// Key of the event the delivery carries.
+    pub(crate) event_key: i64,
 }
 
-impl ClaimedDelivery {
-    /// Validate one claimed row into its domain record, attaching the branch
-    /// `target` it was drained from.
+impl RawClaimedDeliveryRow {
+    /// Validate one claimed delivery into the entry the worker delivers,
+    /// sharing the decoded event with every other delivery of it, and attach
+    /// the branch `target` it was drained from.
     ///
     /// The branch is the caller's, not decoded from the row: a delivery lives in
     /// its branch's own queue, so the drain that reads `snap_<key>.notification_deliveries`
-    /// already knows which Snapshot it is answering for. Validation still spans
-    /// several independent domain types, so no derive expresses it.
+    /// already knows which Snapshot it is answering for.
     ///
     /// # Errors
     ///
-    /// Returns [`UnreadableClaimedDelivery`] when a stored identifier,
-    /// transition, ordinal, attribute name or dataset id is not a valid domain
-    /// value, or the per-instance arrays disagree in length,
-    /// carrying the branch and key the leased row's acknowledgement addresses.
-    /// It is boxed because it is rare and far wider than the success path.
-    pub(crate) fn from_row(row: RawClaimedDeliveryRow<'_>, target: &ContextTarget) -> Result<ClaimedDelivery, Box<UnreadableClaimedDelivery>> {
-        let delivery_key = DeliveryKey::from(row.delivery_key);
-        ClaimedDelivery::decode(row, target).map_err(|reason| {
+    /// Returns [`UnreadableClaimedDelivery`] when the subscription identifier
+    /// is not a valid URI, or the event the delivery answers does not decode
+    /// or was not read back, carrying the branch and key the leased row's
+    /// acknowledgement addresses. It is boxed because it is rare and far wider
+    /// than the success path.
+    pub(crate) fn into_entry(self, events: &ClaimedEvents, target: &ContextTarget) -> Result<DeliveryEntry, Box<UnreadableClaimedDelivery>> {
+        let delivery_key = DeliveryKey::from(self.delivery_key);
+        self.decode(events, target).map_err(|reason| {
             Box::new(UnreadableClaimedDelivery {
                 target: target.clone(), // clone: the unreadable row answers for the branch every row of the claim shares.
                 delivery_key,
@@ -234,92 +106,32 @@ impl ClaimedDelivery {
         })
     }
 
-    /// Validate every stored value of one claimed row.
-    fn decode(row: RawClaimedDeliveryRow<'_>, target: &ContextTarget) -> Result<ClaimedDelivery, ClaimedDeliveryError> {
-        let subscription_id = row
+    /// Validate every stored value of one claimed delivery and find its event.
+    fn decode(self, events: &ClaimedEvents, target: &ContextTarget) -> Result<DeliveryEntry, ClaimedDeliveryError> {
+        let subscription_id: Identifier = self
             .subscription_id
             .parse()
             .map_err(|source| ClaimedDeliveryError::InvalidSubscriptionId { source })?;
-        let entity_id = row.entity_id.parse().map_err(|source| ClaimedDeliveryError::InvalidEntityId { source })?;
-        let event_ordinal = WriteOrdinal::try_from(row.event_ordinal).map_err(|source| ClaimedDeliveryError::InvalidEventOrdinal { source })?;
-        let change = decode_change(row.lifecycle, row.change_kinds, row.change_attributes, row.change_dataset_ids)?;
-        let entity_snapshot = row.entity_snapshot.map(decode_snapshot).transpose()?;
-        let previous_snapshot = row.previous_snapshot.map(decode_snapshot).transpose()?;
-        let sys_attrs_snapshot = decode_system_attributes(row.entity_created_at, row.entity_modified_at, row.entity_expires_at)?;
-        Ok(ClaimedDelivery {
-            target: target.clone(), // clone: every row of the claim answers for the one branch it was drained from.
-            delivery_key: DeliveryKey::from(row.delivery_key),
-            subscription_id,
-            attempt_count: row.attempt_count,
-            next_attempt_at: row.next_attempt_at,
-            event_key: row.event_key,
-            write_id: WriteId::from_uuid(row.write_id),
-            event_ordinal,
-            change,
-            entity_id,
-            entity_snapshot,
-            previous_snapshot,
-            sys_attrs_snapshot,
-            created_at: row.created_at,
-        })
+        let event_key = NotificationEventKey::from(self.event_key);
+        let event = match events.get(event_key) {
+            Some(Ok(event)) => Arc::clone(event),
+            Some(Err(reason)) => {
+                return Err(ClaimedDeliveryError::UnreadableEvent {
+                    event_key,
+                    reason: Arc::clone(reason),
+                });
+            }
+            None => return Err(ClaimedDeliveryError::EventNotRead { event_key }),
+        };
+        Ok(DeliveryEntry::builder()
+            .target(target.clone()) // clone: every row of the claim answers for the one branch it was drained from.
+            .key(DeliveryKey::from(self.delivery_key))
+            .subscription_id(subscription_id)
+            .attempt_count(self.attempt_count)
+            .next_attempt_at(self.next_attempt_at)
+            .event(event)
+            .build())
     }
-}
-
-/// Decode one stored snapshot into the entity state it was written from.
-fn decode_snapshot(text: JsonText<'_>) -> Result<EntityState, ClaimedDeliveryError> {
-    EntityState::from_slice(text.as_bytes()).map_err(|source| ClaimedDeliveryError::UnreadableSnapshot { source })
-}
-
-/// Read the removed entity's stored system attributes back: none, or a
-/// `createdAt` and `modifiedAt` together with the optional `expiresAt`.
-const fn decode_system_attributes(
-    created_at: Option<DateTime<Utc>>,
-    modified_at: Option<DateTime<Utc>>,
-    expires_at: Option<DateTime<Utc>>,
-) -> Result<Option<SysAttrsSnapshot>, ClaimedDeliveryError> {
-    match (created_at, modified_at, expires_at) {
-        (Some(created_at), Some(modified_at), expires_at) => Ok(Some(SysAttrsSnapshot {
-            created_at,
-            modified_at,
-            expires_at,
-        })),
-        (None, None, None) => Ok(None),
-        (Some(_), None, _) | (None, Some(_), _) | (None, None, Some(_)) => Err(ClaimedDeliveryError::IncompleteSystemAttributes),
-    }
-}
-
-/// Validate the stored change: the lifecycle and, position for position, each
-/// changed instance's transition, attribute and `datasetId`.
-fn decode_change(lifecycle: i16, kinds: Vec<i16>, attributes: Vec<String>, datasets: Vec<Option<String>>) -> Result<EntityChange, ClaimedDeliveryError> {
-    let lifecycle = EntityLifecycleCode::try_from(lifecycle)
-        .map(lifecycle_of)
-        .map_err(|source| ClaimedDeliveryError::UnknownLifecycle { source })?;
-    if kinds.len() != attributes.len() || kinds.len() != datasets.len() {
-        return Err(ClaimedDeliveryError::ChangeArity {
-            kinds: kinds.len(),
-            attributes: attributes.len(),
-            datasets: datasets.len(),
-        });
-    }
-    let instances = kinds
-        .into_iter()
-        .zip(attributes)
-        .zip(datasets)
-        .map(|((kind, attribute), dataset)| {
-            let kind = AttributeChangeKindCode::try_from(kind)
-                .map(change_kind_of)
-                .map_err(|source| ClaimedDeliveryError::UnknownChangeKind { source })?;
-            let attr: AttributeName = attribute.parse().map_err(|source| ClaimedDeliveryError::InvalidAttributeName { source })?;
-            let dataset_id = dataset
-                .map(|value| value.parse().map_err(|source| ClaimedDeliveryError::InvalidDatasetId { source }))
-                .transpose()?;
-            Ok(AttributeChange {
-                key: AttributeInstanceKey { attr, dataset_id },
-                kind,
-            })
-        })
-        .collect::<Result<Vec<AttributeChange>, ClaimedDeliveryError>>()?;
-    Ok(EntityChange::new(lifecycle, instances))
 }
 
 /// One notification event to write, and the subscriptions it is due to.
@@ -353,112 +165,108 @@ pub struct NewNotificationEvent<'a> {
 mod tests {
     use crate::{
         json_text::JsonText,
-        notification_delivery::rows::{ClaimedDelivery, ClaimedDeliveryError, RawClaimedDeliveryRow, UnreadableClaimedDelivery},
+        notification_delivery::{
+            claimed_event::{ClaimedEventError, ClaimedEvents, RawClaimedEventRow, tests::event_row},
+            rows::{ClaimedDeliveryError, RawClaimedDeliveryRow, UnreadableClaimedDelivery},
+        },
     };
-    use andromeda_context_commit::write_ordinal::WriteOrdinal;
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes, reads::attribute_change::AttributeChangeKind};
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_model::entity_change::EntityLifecycle;
-    use andromeda_notification::delivery_entry::DeliveryKey;
+    use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes};
+    use andromeda_notification::{delivery_entry::DeliveryKey, notification_event::NotificationEventKey};
     use chrono::Utc;
-    use uuid::Uuid;
+    use std::sync::Arc;
 
-    fn row() -> RawClaimedDeliveryRow<'static> {
+    fn delivery(delivery_key: i64, event_key: i64) -> RawClaimedDeliveryRow {
         RawClaimedDeliveryRow {
-            delivery_key: 7,
+            delivery_key,
             subscription_id: "urn:ngsi-ld:Subscription:1".to_owned(),
             attempt_count: 2,
             next_attempt_at: Utc::now(),
-            event_key: 3,
-            write_id: Uuid::nil(),
-            event_ordinal: 1,
-            lifecycle: 2,
-            entity_id: "https://example.org/entities/1".to_owned(),
-            change_kinds: vec![2, 3],
-            change_attributes: vec!["temperature".to_owned(), "https://example.org/pressure".to_owned()],
-            change_dataset_ids: vec![None, Some("urn:ngsi-ld:Dataset:a".to_owned())],
-            entity_snapshot: None,
-            previous_snapshot: None,
-            entity_created_at: None,
-            entity_modified_at: None,
-            entity_expires_at: None,
-            created_at: Utc::now(),
+            event_key,
         }
     }
 
-    /// A stored snapshot reads back as the entity state it was written from,
-    /// and the removed entity's system attributes travel beside it.
-    #[test]
-    fn a_stored_snapshot_and_its_system_attributes_read_back_typed() {
-        let state = EntityState::new(
+    fn event(event_key: i64, snapshot: &[u8]) -> RawClaimedEventRow<'_> {
+        let mut row = event_row();
+        row.event_key = event_key;
+        row.entity_snapshot = Some(JsonText::new(snapshot));
+        row
+    }
+
+    fn building() -> Vec<u8> {
+        EntityState::new(
             "https://example.org/entities/1".parse().expect("a valid entity URI"),
             EntityTypes::one("https://example.org/Building".parse().expect("a valid type name")),
-        );
-        let encoded = state.to_vec().expect("the state encodes");
-        let mut raw: RawClaimedDeliveryRow<'_> = row();
-        raw.entity_snapshot = Some(JsonText::new(&encoded));
-        let removed_at = Utc::now();
-        raw.entity_created_at = Some(removed_at);
-        raw.entity_modified_at = Some(removed_at);
-        let record = ClaimedDelivery::from_row(raw, &ContextTarget::Live).expect("a valid claimed delivery");
-        pretty_assertions::assert_eq!(record.entity_snapshot, Some(state));
-        assert!(record.previous_snapshot.is_none());
-        let sys_attrs = record.sys_attrs_snapshot.expect("the stored system attributes");
-        pretty_assertions::assert_eq!(sys_attrs.created_at, removed_at);
-        assert!(sys_attrs.expires_at.is_none());
-    }
-
-    #[test]
-    fn a_snapshot_that_is_no_entity_state_is_rejected() {
-        let mut raw = row();
-        raw.previous_snapshot = Some(JsonText::new(br#"[{"@id":"urn:ngsi-ld:A"}]"#));
-        assert!(matches!(
-            ClaimedDelivery::from_row(raw, &ContextTarget::Live).map_err(|unreadable| *unreadable),
-            Err(UnreadableClaimedDelivery {
-                reason: ClaimedDeliveryError::UnreadableSnapshot { .. },
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn a_creation_instant_without_a_modification_instant_is_rejected() {
-        let mut raw = row();
-        raw.entity_created_at = Some(Utc::now());
-        assert!(matches!(
-            ClaimedDelivery::from_row(raw, &ContextTarget::Live).map_err(|unreadable| *unreadable),
-            Err(UnreadableClaimedDelivery {
-                reason: ClaimedDeliveryError::IncompleteSystemAttributes,
-                ..
-            })
-        ));
+        )
+        .to_vec()
+        .expect("the state encodes")
     }
 
     #[test]
     fn a_valid_row_decodes_every_domain_value() {
-        let record = ClaimedDelivery::from_row(row(), &ContextTarget::Live).expect("a valid claimed delivery");
-        pretty_assertions::assert_eq!(record.subscription_id.as_str(), "urn:ngsi-ld:Subscription:1");
-        pretty_assertions::assert_eq!(record.entity_id.as_str(), "https://example.org/entities/1");
-        pretty_assertions::assert_eq!(record.change.lifecycle, EntityLifecycle::Modified);
-        pretty_assertions::assert_eq!(record.event_ordinal, WriteOrdinal::at(1));
-        pretty_assertions::assert_eq!(record.change.instances[0].key.attr.as_str(), "temperature");
-        pretty_assertions::assert_eq!(record.change.instances[0].kind, AttributeChangeKind::Updated);
-        assert!(record.change.instances[0].key.dataset_id.is_none());
-        pretty_assertions::assert_eq!(record.change.instances[1].kind, AttributeChangeKind::Deleted);
-        pretty_assertions::assert_eq!(
-            record.change.instances[1].key.dataset_id.as_ref().map(Identifier::as_str),
-            Some("urn:ngsi-ld:Dataset:a")
+        let events = ClaimedEvents::decode([event_row()]);
+        let entry = delivery(7, 3).into_entry(&events, &ContextTarget::Live).expect("a valid claimed delivery");
+        pretty_assertions::assert_eq!(entry.key, DeliveryKey::from(7));
+        pretty_assertions::assert_eq!(entry.subscription_id.as_str(), "urn:ngsi-ld:Subscription:1");
+        pretty_assertions::assert_eq!(entry.attempt_count, 2);
+        pretty_assertions::assert_eq!(entry.event.key, NotificationEventKey::from(3_i64));
+        pretty_assertions::assert_eq!(entry.target, ContextTarget::Live);
+    }
+
+    #[test]
+    fn deliveries_of_one_event_share_one_decoded_state() {
+        let snapshot = building();
+        let events = ClaimedEvents::decode([event(7, &snapshot)]);
+        let entries = [1, 2, 3].map(|key| delivery(key, 7).into_entry(&events, &ContextTarget::Live).expect("a readable delivery"));
+        let states = entries
+            .iter()
+            .map(|entry| entry.event.entity_snapshot.as_ref().expect("the stored state"))
+            .collect::<Vec<_>>();
+        assert!(
+            states.iter().all(|state| Arc::ptr_eq(state, states[0])),
+            "every delivery shares one decoded state"
         );
-        pretty_assertions::assert_eq!(record.delivery_key, DeliveryKey::from(7));
+        assert!(entries.iter().all(|entry| Arc::ptr_eq(&entry.event, &entries[0].event)));
+        pretty_assertions::assert_eq!(entries.map(|entry| entry.key), [1, 2, 3].map(DeliveryKey::from));
+    }
+
+    #[test]
+    fn an_unreadable_event_makes_each_of_its_deliveries_unreadable() {
+        let events = ClaimedEvents::decode([event(7, br#"[{"@id":"urn:ngsi-ld:A"}]"#)]);
+        let refused = [4, 5].map(|key| delivery(key, 7).into_entry(&events, &ContextTarget::Live).expect_err("an unreadable event"));
+        for (unreadable, key) in refused.iter().zip([4, 5]) {
+            pretty_assertions::assert_eq!(unreadable.delivery_key, DeliveryKey::from(key));
+            pretty_assertions::assert_eq!(unreadable.target, ContextTarget::Live);
+            assert!(
+                matches!(&unreadable.reason, ClaimedDeliveryError::UnreadableEvent { event_key, reason }
+                    if *event_key == NotificationEventKey::from(7_i64) && matches!(reason.as_ref(), ClaimedEventError::UnreadableSnapshot { .. })),
+                "{unreadable}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_delivery_whose_event_was_not_read_is_an_invariant_breach() {
+        let events = ClaimedEvents::decode([event_row()]);
+        let unreadable = delivery(9, 5)
+            .into_entry(&events, &ContextTarget::Live)
+            .expect_err("an event the claim did not read");
+        assert!(matches!(
+            *unreadable,
+            UnreadableClaimedDelivery {
+                reason: ClaimedDeliveryError::EventNotRead { event_key },
+                ..
+            } if event_key == NotificationEventKey::from(5_i64)
+        ));
     }
 
     #[test]
     fn an_invalid_subscription_identifier_is_rejected() {
-        let mut raw = row();
+        let mut raw = delivery(7, 3);
         raw.subscription_id = "not a uri".to_owned();
+        let events = ClaimedEvents::decode([event_row()]);
         assert!(matches!(
-            ClaimedDelivery::from_row(raw, &ContextTarget::Live).map_err(|unreadable| *unreadable),
+            raw.into_entry(&events, &ContextTarget::Live).map_err(|unreadable| *unreadable),
             Err(UnreadableClaimedDelivery {
                 reason: ClaimedDeliveryError::InvalidSubscriptionId { .. },
                 ..
@@ -467,97 +275,14 @@ mod tests {
     }
 
     #[test]
-    fn an_invalid_entity_identifier_is_rejected() {
-        let mut raw = row();
-        raw.entity_id = "not a uri".to_owned();
-        assert!(matches!(
-            ClaimedDelivery::from_row(raw, &ContextTarget::Live).map_err(|unreadable| *unreadable),
-            Err(UnreadableClaimedDelivery {
-                reason: ClaimedDeliveryError::InvalidEntityId { .. },
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn a_lifecycle_number_the_registry_never_assigned_is_rejected() {
-        let mut raw = row();
+    fn the_mapper_failure_names_the_delivery_and_the_event_it_could_not_read() {
+        let mut raw = event_row();
         raw.lifecycle = 99;
-        assert!(matches!(
-            ClaimedDelivery::from_row(raw, &ContextTarget::Live).map_err(|unreadable| *unreadable),
-            Err(UnreadableClaimedDelivery {
-                reason: ClaimedDeliveryError::UnknownLifecycle { .. },
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn an_instance_transition_number_the_registry_never_assigned_is_rejected() {
-        let mut raw = row();
-        raw.change_kinds = vec![2, 99];
-        assert!(matches!(
-            ClaimedDelivery::from_row(raw, &ContextTarget::Live).map_err(|unreadable| *unreadable),
-            Err(UnreadableClaimedDelivery {
-                reason: ClaimedDeliveryError::UnknownChangeKind { .. },
-                ..
-            })
-        ));
-    }
-
-    /// An attribute key the dictionary no longer resolves shortens the
-    /// resolved names, and the instances can then no longer be paired up.
-    #[test]
-    fn per_instance_arrays_of_different_lengths_are_rejected() {
-        let mut raw = row();
-        raw.change_attributes = vec!["temperature".to_owned()];
-        assert!(matches!(
-            ClaimedDelivery::from_row(raw, &ContextTarget::Live).map_err(|unreadable| *unreadable),
-            Err(UnreadableClaimedDelivery {
-                reason: ClaimedDeliveryError::ChangeArity {
-                    kinds: 2,
-                    attributes: 1,
-                    datasets: 2
-                },
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn a_negative_event_ordinal_is_rejected() {
-        let mut raw = row();
-        raw.event_ordinal = -1;
-        assert!(matches!(
-            ClaimedDelivery::from_row(raw, &ContextTarget::Live).map_err(|unreadable| *unreadable),
-            Err(UnreadableClaimedDelivery {
-                reason: ClaimedDeliveryError::InvalidEventOrdinal { .. },
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn an_invalid_changed_attribute_is_rejected() {
-        let mut raw = row();
-        raw.change_attributes = vec!["bad name".to_owned(), "https://example.org/pressure".to_owned()];
-        assert!(matches!(
-            ClaimedDelivery::from_row(raw, &ContextTarget::Live).map_err(|unreadable| *unreadable),
-            Err(UnreadableClaimedDelivery {
-                reason: ClaimedDeliveryError::InvalidAttributeName { .. },
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn the_mapper_failure_names_the_delivery_it_could_not_read() {
-        let mut raw = row();
-        raw.lifecycle = 99;
-        let error = ClaimedDelivery::from_row(raw, &ContextTarget::Live).expect_err("an unreadable lifecycle");
-        assert!(
-            error.to_string().contains("notification delivery 7 "),
-            "the failure must name the unreadable delivery: {error}"
+        let events = ClaimedEvents::decode([raw]);
+        let error = delivery(7, 3).into_entry(&events, &ContextTarget::Live).expect_err("an unreadable lifecycle");
+        pretty_assertions::assert_eq!(
+            error.to_string(),
+            "notification delivery 7 answers event 3, which carries an unreadable lifecycle"
         );
     }
 
@@ -565,9 +290,11 @@ mod tests {
     /// acknowledgement addresses survive the failure to read it.
     #[test]
     fn an_unreadable_row_keeps_the_key_and_branch_its_acknowledgement_addresses() {
-        let mut raw = row();
-        raw.entity_id = "not a uri".to_owned();
-        let error = ClaimedDelivery::from_row(raw, &ContextTarget::Live).expect_err("an unreadable entity identifier");
+        let mut raw = delivery(7, 3);
+        raw.subscription_id = "not a uri".to_owned();
+        let error = raw
+            .into_entry(&ClaimedEvents::default(), &ContextTarget::Live)
+            .expect_err("an unreadable subscription identifier");
         pretty_assertions::assert_eq!(error.delivery_key, DeliveryKey::from(7));
         pretty_assertions::assert_eq!(error.target, ContextTarget::Live);
     }

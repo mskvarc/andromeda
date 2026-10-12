@@ -21,12 +21,13 @@ use crate::{
     error::ContextStoreError,
     notification_delivery::{
         branches::{drainable_targets, is_reaped_branch},
-        rows::{ClaimedDelivery, RawClaimedDeliveryRow, UnreadableClaimedDelivery},
+        claimed_event::{ClaimedEvents, RawClaimedEventRow},
+        rows::{RawClaimedDeliveryRow, UnreadableClaimedDelivery},
     },
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::{context_target::ContextTarget, snapshot_target::SnapshotTarget};
-use andromeda_notification::delivery_lease::LeaseTerm;
+use andromeda_notification::{delivery_entry::DeliveryEntry, delivery_lease::LeaseTerm};
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,
@@ -43,6 +44,7 @@ use andromeda_postgresql_seaquery::{
     unnest::{UnnestColumn, apply_with_ordinality, unnest_call},
 };
 use andromeda_telemetry::statement::{StatementName, observe_statement};
+use indexmap::IndexSet;
 use sea_query::{
     Alias,
     Expr,
@@ -85,7 +87,7 @@ pub async fn claim_due(
     worker_id: LeaseHolder,
     lease: LeaseTerm,
     batch_size: i32,
-) -> Result<Vec<Result<ClaimedDelivery, Box<UnreadableClaimedDelivery>>>, ContextStoreError> {
+) -> Result<Vec<Result<DeliveryEntry, Box<UnreadableClaimedDelivery>>>, ContextStoreError> {
     let mut results = Vec::new();
     let mut remaining = batch_size;
     for target in drainable_targets(pool).await? {
@@ -111,7 +113,7 @@ async fn claim_branch(
     worker_id: LeaseHolder,
     lease: LeaseTerm,
     batch_size: i32,
-) -> Result<Vec<Result<ClaimedDelivery, Box<UnreadableClaimedDelivery>>>, ContextStoreError> {
+) -> Result<Vec<Result<DeliveryEntry, Box<UnreadableClaimedDelivery>>>, ContextStoreError> {
     let mut tx = pool.begin().await?;
     if let Some(snapshot) = target.snapshot()
         && hold_snapshot_record(&mut tx, snapshot).await? == SnapshotRecord::Reaped
@@ -128,17 +130,26 @@ async fn claim_branch(
         return Ok(Vec::new());
     }
 
-    let (sql, values) = claimed_projection_statement(target, &claimed_keys).build_sqlx(PostgresQueryBuilder);
+    let (sql, values) = claimed_deliveries_statement(target, &claimed_keys).build_sqlx(PostgresQueryBuilder);
+    let deliveries: Vec<RawClaimedDeliveryRow> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut *tx).await?;
+
+    let event_keys = distinct_event_keys(deliveries.iter().map(|delivery| delivery.event_key));
+    let (sql, values) = claimed_events_statement(target, &event_keys).build_sqlx(PostgresQueryBuilder);
     let (unnest_alias, unnest_columns, ordinality) = ordinality_alias();
     let sql = apply_with_ordinality(sql, &unnest_alias, &unnest_columns, &ordinality);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut *tx).await?;
+    let event_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut *tx).await?;
 
     tx.commit().await?;
-    // The raw rows borrow their snapshot text from the fetched rows, so each
-    // is decoded straight from the bytes the driver received.
-    rows.iter()
-        .map(|row| Ok(ClaimedDelivery::from_row(RawClaimedDeliveryRow::from_row(row)?, target)))
-        .collect()
+    // The raw event rows borrow their snapshot text from the fetched rows, so
+    // each state is decoded straight from the bytes the driver received.
+    let events = ClaimedEvents::decode(event_rows.iter().map(RawClaimedEventRow::from_row).collect::<Result<Vec<_>, _>>()?);
+    Ok(deliveries.into_iter().map(|delivery| delivery.into_entry(&events, target)).collect())
+}
+
+/// The events a claim's deliveries answer, each once, in the order the
+/// deliveries first name them.
+fn distinct_event_keys(event_keys: impl IntoIterator<Item = i64>) -> Vec<i64> {
+    event_keys.into_iter().collect::<IndexSet<i64>>().into_iter().collect()
 }
 
 /// Whether a Snapshot's control record still existed when a claim locked it.
@@ -237,18 +248,42 @@ fn delivery_claimable_at() -> SimpleExpr {
     claimable_at(Expr::col(NotificationDeliveries::NextAttemptAt), Expr::col(NotificationDeliveries::LeaseUntil))
 }
 
-/// Read the claimed deliveries back with the events they answer, in `target`'s branch.
+/// Read the claimed deliveries back with the subscriptions they answer, in
+/// `target`'s branch.
 ///
 /// Only the rows this worker just claimed are named, by identifier: they carry
 /// a live lease held by this transaction, so no other worker can have altered
-/// them between the claim and this read. The changed attributes are resolved
-/// back through the tenant-global `attribute_names` dictionary in event-recorded
-/// order by a lateral aggregate over the event's `change_attribute_name_keys`,
-/// defaulting to an empty array when the event touched none. The aggregate keeps
-/// one name per key, repeats included, so it stays position for position with
-/// the event's transitions and `datasetId`s.
-fn claimed_projection_statement(target: &ContextTarget, claimed_keys: &[i64]) -> SelectStatement {
-    let (delivery, event, subscription) = (Alias::new("c"), Alias::new("e"), Alias::new("s"));
+/// them between the claim and this read. The events are read apart, once each,
+/// by [`claimed_events_statement`].
+fn claimed_deliveries_statement(target: &ContextTarget, claimed_keys: &[i64]) -> SelectStatement {
+    let (delivery, subscription) = (Alias::new("c"), Alias::new("s"));
+    Query::select()
+        .column((delivery.clone(), NotificationDeliveries::DeliveryKey))
+        .expr_as(Expr::col((subscription.clone(), Subscriptions::Id)), Alias::new("subscription_id"))
+        .column((delivery.clone(), NotificationDeliveries::AttemptCount))
+        .column((delivery.clone(), NotificationDeliveries::NextAttemptAt))
+        .column((delivery.clone(), NotificationDeliveries::EventKey))
+        .from(table_of(target, NotificationDeliveries::Table).alias(delivery.clone()))
+        .join_as(
+            JoinType::InnerJoin,
+            table_of(target, Subscriptions::Table),
+            subscription.clone(),
+            Expr::col((subscription, Subscriptions::SubscriptionKey)).equals((delivery.clone(), NotificationDeliveries::SubscriptionKey)),
+        )
+        .and_where(Expr::col((delivery, NotificationDeliveries::DeliveryKey)).eq(any(bigint_array(claimed_keys))))
+        .to_owned()
+}
+
+/// Read each event the claimed deliveries answer once, in `target`'s branch.
+///
+/// The changed attributes are resolved back through the tenant-global
+/// `attribute_names` dictionary in event-recorded order by a lateral aggregate
+/// over the event's `change_attribute_name_keys`, defaulting to an empty array
+/// when the event touched none. The aggregate keeps one name per key, repeats
+/// included, so it stays position for position with the event's transitions
+/// and `datasetId`s.
+fn claimed_events_statement(target: &ContextTarget, event_keys: &[i64]) -> SelectStatement {
+    let event = Alias::new("e");
     let (unnest_alias, unnest_columns, position) = ordinality_alias();
     let dictionary = Alias::new("n");
 
@@ -272,11 +307,7 @@ fn claimed_projection_statement(target: &ContextTarget, claimed_keys: &[i64]) ->
     let change_attributes = Func::coalesce([SimpleExpr::SubQuery(None, Box::new(ordered_names.into_sub_query_statement())), text_array(&[])]);
 
     Query::select()
-        .column((delivery.clone(), NotificationDeliveries::DeliveryKey))
-        .expr_as(Expr::col((subscription.clone(), Subscriptions::Id)), Alias::new("subscription_id"))
-        .column((delivery.clone(), NotificationDeliveries::AttemptCount))
-        .column((delivery.clone(), NotificationDeliveries::NextAttemptAt))
-        .expr_as(Expr::col((event.clone(), NotificationEvents::EventKey)), Alias::new("event_key"))
+        .column((event.clone(), NotificationEvents::EventKey))
         .column((event.clone(), NotificationEvents::WriteId))
         .column((event.clone(), NotificationEvents::EventOrdinal))
         .column((event.clone(), NotificationEvents::Lifecycle))
@@ -290,20 +321,8 @@ fn claimed_projection_statement(target: &ContextTarget, claimed_keys: &[i64]) ->
         .column((event.clone(), NotificationEvents::EntityModifiedAt))
         .column((event.clone(), NotificationEvents::EntityExpiresAt))
         .column((event.clone(), NotificationEvents::CreatedAt))
-        .from(table_of(target, NotificationDeliveries::Table).alias(delivery.clone()))
-        .join_as(
-            JoinType::InnerJoin,
-            table_of(target, NotificationEvents::Table),
-            event.clone(),
-            Expr::col((event, NotificationEvents::EventKey)).equals((delivery.clone(), NotificationDeliveries::EventKey)),
-        )
-        .join_as(
-            JoinType::InnerJoin,
-            table_of(target, Subscriptions::Table),
-            subscription.clone(),
-            Expr::col((subscription, Subscriptions::SubscriptionKey)).equals((delivery.clone(), NotificationDeliveries::SubscriptionKey)),
-        )
-        .and_where(Expr::col((delivery, NotificationDeliveries::DeliveryKey)).eq(any(bigint_array(claimed_keys))))
+        .from(table_of(target, NotificationEvents::Table).alias(event.clone()))
+        .and_where(Expr::col((event, NotificationEvents::EventKey)).eq(any(bigint_array(event_keys))))
         .to_owned()
 }
 
@@ -314,15 +333,26 @@ fn bigint_array(ids: &[i64]) -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use crate::notification_delivery::claim::{claim_statement, claimed_projection_statement, ordinality_alias, snapshot_record_lock_statement};
+    use crate::notification_delivery::claim::{
+        claim_statement,
+        claimed_deliveries_statement,
+        claimed_events_statement,
+        distinct_event_keys,
+        ordinality_alias,
+        snapshot_record_lock_statement,
+    };
     use andromeda_context_commit::lease_holder::LeaseHolder;
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_postgresql_seaquery::unnest::apply_with_ordinality;
     use sea_query::PostgresQueryBuilder;
     use uuid::Uuid;
 
-    fn projection_sql(target: &ContextTarget) -> String {
-        let sql = claimed_projection_statement(target, &[1, 2]).to_string(PostgresQueryBuilder);
+    fn deliveries_sql(target: &ContextTarget) -> String {
+        claimed_deliveries_statement(target, &[1, 2]).to_string(PostgresQueryBuilder)
+    }
+
+    fn events_sql(target: &ContextTarget) -> String {
+        let sql = claimed_events_statement(target, &[7, 3]).to_string(PostgresQueryBuilder);
         let (alias, columns, ordinality) = ordinality_alias();
         apply_with_ordinality(sql, &alias, &columns, &ordinality)
     }
@@ -394,46 +424,85 @@ mod tests {
 
     #[test]
     fn the_changed_attributes_keep_the_order_the_event_recorded_them_in() {
-        let sql = projection_sql(&ContextTarget::Live);
+        let sql = events_sql(&ContextTarget::Live);
         assert!(sql.contains(r#"array_agg("n"."name" ORDER BY "k"."position")"#), "{sql}");
         assert!(sql.contains("WITH ORDINALITY AS k(name_key, position)"), "{sql}");
-    }
-
-    #[test]
-    fn the_projection_reads_only_the_rows_this_worker_claimed() {
-        let sql = projection_sql(&ContextTarget::Live);
-        assert!(sql.contains(r#""c"."delivery_key" = ANY("#), "{sql}");
         assert!(sql.contains("COALESCE"), "{sql}");
     }
 
     #[test]
+    fn the_projection_reads_only_the_rows_this_worker_claimed() {
+        let sql = deliveries_sql(&ContextTarget::Live);
+        assert!(sql.contains(r#""c"."delivery_key" = ANY("#), "{sql}");
+    }
+
+    #[test]
+    fn the_delivery_projection_reads_no_snapshot() {
+        let sql = deliveries_sql(&ContextTarget::Live);
+        assert!(!sql.contains("entity_snapshot"), "{sql}");
+        assert!(!sql.contains("previous_snapshot"), "{sql}");
+        assert!(!sql.contains("notification_events"), "the deliveries are read apart from their events: {sql}");
+    }
+
+    #[test]
+    fn the_event_projection_reads_each_claimed_event_once() {
+        let sql = events_sql(&ContextTarget::Live);
+        assert!(sql.contains(r#"FROM "notification_events" AS "e""#), "{sql}");
+        assert!(sql.contains(r#""e"."event_key" = ANY("#), "{sql}");
+        assert!(!sql.contains("notification_deliveries"), "{sql}");
+        for column in [
+            "event_key",
+            "write_id",
+            "event_ordinal",
+            "lifecycle",
+            "entity_id",
+            "change_kinds",
+            "change_dataset_ids",
+            "entity_snapshot",
+            "previous_snapshot",
+            "entity_created_at",
+            "entity_modified_at",
+            "entity_expires_at",
+            "created_at",
+        ] {
+            assert!(sql.contains(&format!(r#""e"."{column}""#)), "{column}: {sql}");
+        }
+        assert!(sql.contains(r#"AS "change_attributes""#), "{sql}");
+    }
+
+    #[test]
+    fn a_snapshot_branch_event_projection_qualifies_its_relation() {
+        let sql = events_sql(&snapshot());
+        assert!(sql.contains(r#"FROM "snap_5"."notification_events" AS "e""#), "{sql}");
+    }
+
+    #[test]
+    fn the_event_keys_of_a_claim_are_distinct_in_first_seen_order() {
+        pretty_assertions::assert_eq!(distinct_event_keys([7, 3, 7, 9, 3]), [7, 3, 9]);
+    }
+
+    #[test]
     fn the_projection_does_not_recover_the_branch_from_a_control_table_join() {
-        let sql = projection_sql(&ContextTarget::Live);
-        assert!(!sql.contains("context_spaces"), "the branch is the caller's, not a joined control row: {sql}");
-        assert!(!sql.contains(r#""snap""#), "{sql}");
+        for sql in [deliveries_sql(&ContextTarget::Live), events_sql(&ContextTarget::Live)] {
+            assert!(!sql.contains("context_spaces"), "the branch is the caller's, not a joined control row: {sql}");
+            assert!(!sql.contains(r#""snap""#), "{sql}");
+        }
     }
 
     #[test]
     fn a_snapshot_branch_projection_qualifies_its_relations() {
-        let sql = projection_sql(&snapshot());
+        let sql = deliveries_sql(&snapshot());
         assert!(sql.contains(r#"FROM "snap_5"."notification_deliveries" AS "c""#), "{sql}");
-        assert!(sql.contains(r#""snap_5"."notification_events" AS "e""#), "{sql}");
         assert!(sql.contains(r#""snap_5"."subscriptions" AS "s""#), "{sql}");
     }
 
     #[test]
     fn the_projection_names_each_column_the_row_mapper_reads() {
-        let sql = projection_sql(&ContextTarget::Live);
+        let sql = deliveries_sql(&ContextTarget::Live);
+        assert!(sql.contains(r#""c"."delivery_key""#), "{sql}");
         assert!(sql.contains(r#"AS "subscription_id""#), "{sql}");
-        assert!(sql.contains(r#"AS "event_key""#), "{sql}");
-        assert!(sql.contains(r#"AS "change_attributes""#), "{sql}");
-        assert!(sql.contains(r#""e"."lifecycle""#), "{sql}");
-        assert!(sql.contains(r#""e"."change_kinds""#), "{sql}");
-        assert!(sql.contains(r#""e"."change_dataset_ids""#), "{sql}");
-        assert!(sql.contains(r#""e"."entity_snapshot""#), "{sql}");
-        assert!(sql.contains(r#""e"."previous_snapshot""#), "{sql}");
-        assert!(sql.contains(r#""e"."entity_created_at""#), "{sql}");
-        assert!(sql.contains(r#""e"."entity_modified_at""#), "{sql}");
-        assert!(sql.contains(r#""e"."entity_expires_at""#), "{sql}");
+        assert!(sql.contains(r#""c"."attempt_count""#), "{sql}");
+        assert!(sql.contains(r#""c"."next_attempt_at""#), "{sql}");
+        assert!(sql.contains(r#""c"."event_key""#), "{sql}");
     }
 }

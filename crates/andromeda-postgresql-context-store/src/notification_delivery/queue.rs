@@ -1,17 +1,12 @@
 //! The queue behind the notification-owned delivery store port.
 //!
 //! The port speaks one claimed delivery and the event it carries; storage keeps
-//! those as two rows joined by the claim. This is the only place the two
-//! vocabularies meet: the statements below it know nothing of the port, and the
-//! delivery worker above it knows nothing of the join.
+//! those as two rows, and a claim reads its deliveries and then each event they
+//! answer once. The statements below it know nothing of the port, and the
+//! delivery worker above it knows nothing of the two reads.
 
 use crate::{
-    notification_delivery::{
-        acknowledge,
-        claim,
-        cleanup,
-        rows::{ClaimedDelivery, UnreadableClaimedDelivery},
-    },
+    notification_delivery::{acknowledge, claim, cleanup, rows::UnreadableClaimedDelivery},
     store_fault::persistence_failure,
 };
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
@@ -22,12 +17,10 @@ use andromeda_notification::{
     delivery_lease::{DeliveryLeaseError, LeaseTerm},
     delivery_store::DeliveryStore,
     error::NotificationError,
-    notification_event::{NotificationEvent, NotificationEventKey},
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::postgres::PgPool;
-use std::sync::Arc;
 
 /// One tenant's notification delivery queue.
 #[derive(Debug)]
@@ -115,9 +108,9 @@ const fn held(outcome: LeaseAcknowledgement, key: DeliveryKey, worker_id: &Lease
 /// one of them would stall every other subscriber; the worker acknowledges the
 /// unreadable row instead, so it leaves the claimable set rather than being
 /// claimed again at every lease expiry.
-fn delivery_claim(claimed: Result<ClaimedDelivery, Box<UnreadableClaimedDelivery>>) -> DeliveryClaim {
+fn delivery_claim(claimed: Result<DeliveryEntry, Box<UnreadableClaimedDelivery>>) -> DeliveryClaim {
     match claimed {
-        Ok(delivery) => DeliveryClaim::Readable(Box::new(entry(delivery))),
+        Ok(entry) => DeliveryClaim::Readable(Box::new(entry)),
         Err(unreadable) => {
             let diagnostic = unreadable.to_string();
             DeliveryClaim::Unreadable(UnreadableDelivery {
@@ -129,65 +122,43 @@ fn delivery_claim(claimed: Result<ClaimedDelivery, Box<UnreadableClaimedDelivery
     }
 }
 
-/// Project one validated delivery into the value the port hands the worker.
-fn entry(delivery: ClaimedDelivery) -> DeliveryEntry {
-    DeliveryEntry::builder()
-        .target(delivery.target)
-        .key(delivery.delivery_key)
-        .subscription_id(delivery.subscription_id)
-        .attempt_count(delivery.attempt_count)
-        .next_attempt_at(delivery.next_attempt_at)
-        .event(
-            NotificationEvent::builder()
-                .key(NotificationEventKey::from(delivery.event_key))
-                .write_id(delivery.write_id)
-                .event_ordinal(delivery.event_ordinal)
-                .change(delivery.change)
-                .entity_id(delivery.entity_id)
-                .entity_snapshot(delivery.entity_snapshot.map(Arc::new))
-                .previous_snapshot(delivery.previous_snapshot.map(Arc::new))
-                .sys_attrs_snapshot(delivery.sys_attrs_snapshot)
-                .created_at(delivery.created_at)
-                .build(),
-        )
-        .build()
-}
-
 #[cfg(test)]
 mod tests {
     use crate::notification_delivery::{
-        queue::{delivery_claim, entry, held},
-        rows::{ClaimedDelivery, ClaimedDeliveryError, UnreadableClaimedDelivery},
+        queue::{delivery_claim, held},
+        rows::{ClaimedDeliveryError, UnreadableClaimedDelivery},
     };
     use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder, write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
     use andromeda_notification::{
         delivery_claim::DeliveryClaim,
-        delivery_entry::DeliveryKey,
+        delivery_entry::{DeliveryEntry, DeliveryKey},
         delivery_lease::DeliveryLeaseError,
-        notification_event::NotificationEventKey,
+        notification_event::{NotificationEvent, NotificationEventKey},
     };
     use chrono::Utc;
+    use std::sync::Arc;
     use uuid::Uuid;
 
-    fn delivery() -> ClaimedDelivery {
-        ClaimedDelivery {
-            target: ContextTarget::Live,
-            delivery_key: DeliveryKey::from(11_i64),
-            subscription_id: "urn:ngsi-ld:Subscription:1".parse().expect("a valid subscription URI"),
-            attempt_count: 1,
-            next_attempt_at: Utc::now(),
-            event_key: 3,
-            write_id: WriteId::from_uuid(Uuid::nil()),
-            event_ordinal: WriteOrdinal::at(2),
-            change: EntityChange::new(EntityLifecycle::Created, Vec::new()),
-            entity_id: "urn:ngsi-ld:Vehicle:1".parse().expect("a valid entity URI"),
-            entity_snapshot: None,
-            previous_snapshot: None,
-            sys_attrs_snapshot: None,
-            created_at: Utc::now(),
-        }
+    fn delivery() -> DeliveryEntry {
+        DeliveryEntry::builder()
+            .target(ContextTarget::Live)
+            .key(DeliveryKey::from(11_i64))
+            .subscription_id("urn:ngsi-ld:Subscription:1".parse().expect("a valid subscription URI"))
+            .attempt_count(1)
+            .next_attempt_at(Utc::now())
+            .event(Arc::new(
+                NotificationEvent::builder()
+                    .key(NotificationEventKey::from(3_i64))
+                    .write_id(WriteId::from_uuid(Uuid::nil()))
+                    .event_ordinal(WriteOrdinal::at(2))
+                    .change(EntityChange::new(EntityLifecycle::Created, Vec::new()))
+                    .entity_id("urn:ngsi-ld:Vehicle:1".parse().expect("a valid entity URI"))
+                    .created_at(Utc::now())
+                    .build(),
+            ))
+            .build()
     }
 
     #[test]
@@ -203,17 +174,6 @@ mod tests {
         assert!(matches!(outcome, Err(DeliveryLeaseError::LeaseLost { .. })));
     }
 
-    #[test]
-    fn a_claimed_delivery_becomes_the_entry_the_worker_delivers() {
-        let entry = entry(delivery());
-        pretty_assertions::assert_eq!(entry.key, DeliveryKey::from(11_i64));
-        pretty_assertions::assert_eq!(entry.subscription_id.as_str(), "urn:ngsi-ld:Subscription:1");
-        pretty_assertions::assert_eq!(entry.attempt_count, 1);
-        pretty_assertions::assert_eq!(entry.event.key, NotificationEventKey::from(3_i64));
-        pretty_assertions::assert_eq!(entry.event.event_ordinal, WriteOrdinal::at(2));
-        pretty_assertions::assert_eq!(entry.event.change.lifecycle, EntityLifecycle::Created);
-    }
-
     /// An unreadable row is still leased to the worker, so it reaches the
     /// worker with the key, branch and reason its acknowledgement records
     /// rather than being dropped from the claim.
@@ -222,15 +182,15 @@ mod tests {
         let unreadable = Box::new(UnreadableClaimedDelivery {
             target: ContextTarget::Live,
             delivery_key: DeliveryKey::from(11_i64),
-            reason: ClaimedDeliveryError::InvalidEventOrdinal {
-                source: WriteOrdinal::try_from(-1).expect_err("a negative ordinal"),
+            reason: ClaimedDeliveryError::EventNotRead {
+                event_key: NotificationEventKey::from(3_i64),
             },
         });
         match delivery_claim(Err(unreadable)) {
             DeliveryClaim::Unreadable(claim) => {
                 pretty_assertions::assert_eq!(claim.key, DeliveryKey::from(11_i64));
                 pretty_assertions::assert_eq!(claim.target, ContextTarget::Live);
-                pretty_assertions::assert_eq!(claim.diagnostic, "notification delivery 11 carries an unreadable event ordinal");
+                pretty_assertions::assert_eq!(claim.diagnostic, "notification delivery 11 answers event 3, which the claim did not read back");
             }
             DeliveryClaim::Readable(entry) => panic!("an unreadable row must not be handed over as deliverable: {entry:?}"),
         }

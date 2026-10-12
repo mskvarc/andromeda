@@ -656,7 +656,7 @@ mod tests {
             .subscription_id(parse("urn:ngsi-ld:Subscription:1")?)
             .attempt_count(0)
             .next_attempt_at(Utc::now())
-            .event(event)
+            .event(Arc::new(event))
             .build())
     }
 
