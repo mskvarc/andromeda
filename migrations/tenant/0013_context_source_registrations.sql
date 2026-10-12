@@ -47,25 +47,19 @@ create table context_source_registrations (
     id text compression lz4 collate "C" not null,
     registration_name text compression lz4,
     description text compression lz4,
-    -- The authority for every response body, rendered back verbatim.
-    -- `registration_information` is its routing projection.
-    information jsonb compression lz4 not null,
-    -- Each `idPattern` in `information`, keyed by the text as written, mapped
-    -- to the restatement the broker renders for this engine: every embedded
-    -- option applied and every class written out, so `~` here reads the
-    -- pattern as the broker's in-memory engine does (clause 4.9; PostgreSQL's
-    -- own `(?i)` folds only ASCII). NULL when `information` declares none.
-    -- The broker writes it beside `information`; nothing here derives it.
-    entity_id_pattern_forms jsonb compression lz4,
-    -- The revision of the broker's rendering that produced
-    -- `entity_id_pattern_forms`, NULL exactly when it is. A broker renders
-    -- again, when it opens the tenant, every row an older revision produced.
+    -- The revision of the broker's rendering that produced the
+    -- `entity_id_pattern_form` of this registration's information rows, NULL
+    -- when the registration declares no `idPattern`. A broker renders again,
+    -- when it opens the tenant, every row an older revision produced.
     entity_id_pattern_forms_revision smallint,
     -- The tenant to address at the context source; NULL means its default
     -- tenant.
     tenant text compression lz4,
-    observation_interval jsonb compression lz4,
-    management_interval jsonb compression lz4,
+    -- The two clause 5.2.11 intervals, each NULL when its member is absent.
+    observation_interval_start timestamptz,
+    observation_interval_end timestamptz,
+    management_interval_start timestamptz,
+    management_interval_end timestamptz,
     location geometry compression lz4,
     observation_space geometry compression lz4,
     operation_space geometry compression lz4,
@@ -83,8 +77,21 @@ create table context_source_registrations (
     -- the optional leading `/` of clause 4.18, and this is what reads back.
     verbatim_scope_paths text[] compression lz4 collate "C",
     refresh_rate text compression lz4,
-    management jsonb compression lz4,
-    context_source_info jsonb compression lz4,
+    -- Whether the registration declares `management` at all: an empty
+    -- `management` object reads back as written, with every member below
+    -- NULL.
+    is_management_declared boolean not null,
+    -- Table 5.2.34-1, each NULL when its member is absent. The duration is
+    -- held in the ISO 8601 text the broker writes; the two periods are
+    -- milliseconds.
+    management_cache_duration text compression lz4,
+    management_cooldown bigint,
+    management_local_only boolean,
+    management_timeout bigint,
+    -- `contextSourceInfo` as two parallel arrays in written order, both NULL
+    -- when the member is absent and both empty when it is an empty list.
+    context_source_info_keys text[] compression lz4,
+    context_source_info_values text[] compression lz4,
     -- Members outside Table 5.2.9-1, kept for the representation and for `q`
     -- filtering.
     additional_properties jsonb compression lz4,
@@ -98,8 +105,12 @@ create table context_source_registrations (
     constraint pk_context_source_registrations primary key (id),
     constraint chk_context_source_registrations_id_length check (octet_length(id) <= 1024),
     constraint chk_csr_mode check (mode between 1 and 4),
-    constraint chk_csr_entity_id_pattern_forms_object check (entity_id_pattern_forms is null or jsonb_typeof(entity_id_pattern_forms) = 'object'),
-    constraint chk_csr_entity_id_pattern_forms_revision check ((entity_id_pattern_forms is null) = (entity_id_pattern_forms_revision is null)),
+    constraint chk_csr_observation_interval_end_after_start check (observation_interval_end is null or (observation_interval_start is not null and observation_interval_end > observation_interval_start)),
+    constraint chk_csr_management_interval_end_after_start check (management_interval_end is null or (management_interval_start is not null and management_interval_end > management_interval_start)),
+    constraint chk_csr_management_presence check (is_management_declared or num_nonnulls (management_cache_duration, management_cooldown, management_local_only, management_timeout) = 0),
+    constraint chk_csr_management_cooldown_positive check (management_cooldown > 0),
+    constraint chk_csr_management_timeout_positive check (management_timeout > 0),
+    constraint chk_csr_context_source_info_pairs check ((context_source_info_keys is null) = (context_source_info_values is null) and cardinality(context_source_info_keys) = cardinality(context_source_info_values) and array_position(context_source_info_keys, null) is null and array_position(context_source_info_values, null) is null),
     constraint chk_csr_operations check (operations is null or (cardinality(operations) > 0 and array_position(operations, null) is null and 1 <= all (operations) and 48 >= all (operations))),
     constraint chk_csr_location_valid check (location is null or st_isvalid(location)),
     constraint chk_csr_location_srid check (location is null or st_srid(location) = 4326),

@@ -21,21 +21,34 @@ pub enum Csr {
     RegistrationName,
     /// Free-text description.
     Description,
-    /// The `information` array of registered entity/attribute coverage.
+    /// The `information` document the discovery statements still walk; the
+    /// relation holds it as `registration_information` rows.
     Information,
-    /// Each `idPattern` the `information` declares, mapped from the text as
-    /// written to the portable restatement the store evaluates in its place.
+    /// The pattern restatements the discovery statements still read; the
+    /// relation holds each as `registration_information.entity_id_pattern_form`.
     EntityIdPatternForms,
-    /// The rendering revision that produced `EntityIdPatternForms`.
+    /// The rendering revision that produced the registration's
+    /// `registration_information.entity_id_pattern_form` values; `NULL` when it
+    /// declares no `idPattern`.
     EntityIdPatternFormsRevision,
     /// The `datasetId` list of attribute instances the source provides.
     DatasetId,
     /// Owning tenant.
     Tenant,
-    /// The `observationInterval` temporal bounds.
+    /// The interval the discovery statements still read as one document; the
+    /// relation holds it as `observation_interval_start` and `_end`.
     ObservationInterval,
-    /// The `managementInterval` temporal bounds.
+    /// The interval the discovery statements still read as one document; the
+    /// relation holds it as `management_interval_start` and `_end`.
     ManagementInterval,
+    /// `observationInterval.startAt`; `NULL` when the member is absent.
+    ObservationIntervalStart,
+    /// `observationInterval.endAt`; `NULL` when absent or open.
+    ObservationIntervalEnd,
+    /// `managementInterval.startAt`; `NULL` when the member is absent.
+    ManagementIntervalStart,
+    /// `managementInterval.endAt`; `NULL` when absent or open.
+    ManagementIntervalEnd,
     /// `PostGIS` geometry of the registration `location`.
     Location,
     /// `PostGIS` geometry of the `observationSpace`.
@@ -58,10 +71,20 @@ pub enum Csr {
     VerbatimScopePaths,
     /// The refresh rate the source advertises.
     RefreshRate,
-    /// Management endpoint metadata.
-    Management,
-    /// The `contextSourceInfo` key-value pairs.
-    ContextSourceInfo,
+    /// Whether the registration declares a `management` member, empty or not.
+    IsManagementDeclared,
+    /// `management.cacheDuration`, the ISO 8601 duration text.
+    ManagementCacheDuration,
+    /// `management.cooldown`, in milliseconds.
+    ManagementCooldown,
+    /// `management.localOnly`.
+    ManagementLocalOnly,
+    /// `management.timeout`, in milliseconds.
+    ManagementTimeout,
+    /// The `contextSourceInfo` keys, in written order.
+    ContextSourceInfoKeys,
+    /// The `contextSourceInfo` values, parallel to the keys.
+    ContextSourceInfoValues,
     /// The registration's JSON-LD context.
     JsonldContext,
     /// The context source alias.
@@ -95,35 +118,37 @@ pub enum RegistrationDeliveryState {
     Status,
 }
 
-/// The `registration_information` routing projection derived from a
-/// registration's `information`, which distributed-operation discovery
-/// preselects against before reading the payload.
-///
-/// Every axis is `NOT NULL` and carries a sentinel where the row does not
-/// constrain it: `{'*'}` for the type set, `''` for the identifier, `{0}` for
-/// both attribute-key arrays. A registration constraining nothing is one row
-/// carrying every sentinel.
+/// The `registration_information` relation: a registration's `information`
+/// (clause 5.2.10), one row per `EntityInfo` of an item, or one row without
+/// entity columns for an item without `entities`. Absence is `NULL`.
 #[derive(Iden, Clone, Copy)]
 pub enum RegistrationInformation {
     /// The `registration_information` table.
     Table,
     /// Foreign key to the owning `context_source_registrations` row.
     RegistrationId,
-    /// The set of entity-type IRIs the information item constrains, or `{'*'}`
-    /// when it constrains no type.
+    /// The item's position in `information`, from 0.
+    ItemOrdinal,
+    /// The `EntityInfo`'s position in the item's `entities`, from 0; 0 for an
+    /// item without `entities`.
+    SelectorOrdinal,
+    /// The `EntityInfo` type names in written order; `NULL` for an item
+    /// without `entities`.
     EntityTypes,
-    /// The exact entity identifier the item constrains, or `''` when it names
-    /// none.
+    /// How Table 5.2.8-1 `type` was written: 1 one name, 2 an array.
+    EntityTypeShape,
+    /// The `EntityInfo` `id`, or `NULL`.
     EntityId,
-    /// The entity identifier pattern the item constrains, or `NULL`.
+    /// The `EntityInfo` `idPattern` as written, or `NULL`.
     EntityIdPattern,
-    /// The interned property-name dictionary keys the item declares; `{0}` when
-    /// it declares no name on either axis, `{}` when it declares names on the
-    /// relationship axis only.
+    /// The portable restatement of `EntityIdPattern` the store evaluates in
+    /// its place; `NULL` exactly when the pattern is.
+    EntityIdPatternForm,
+    /// The item's `propertyNames` as `attribute_names` keys; `NULL` when
+    /// absent.
     PropertyNameKeys,
-    /// The interned relationship-name dictionary keys the item declares; `{0}`
-    /// when it declares no name on either axis, `{}` when it declares names on
-    /// the property axis only.
+    /// The item's `relationshipNames` as `attribute_names` keys; `NULL` when
+    /// absent.
     RelationshipNameKeys,
 }
 
@@ -143,7 +168,9 @@ mod tests {
         assert_eq!(Csr::Id.to_string(), "id");
         assert_eq!(Csr::RegistrationName.to_string(), "registration_name");
         assert_eq!(Csr::DatasetId.to_string(), "dataset_id");
-        assert_eq!(Csr::ObservationInterval.to_string(), "observation_interval");
+        assert_eq!(Csr::ObservationIntervalStart.to_string(), "observation_interval_start");
+        assert_eq!(Csr::IsManagementDeclared.to_string(), "is_management_declared");
+        assert_eq!(Csr::ContextSourceInfoKeys.to_string(), "context_source_info_keys");
         assert_eq!(Csr::ObservationSpace.to_string(), "observation_space");
         assert_eq!(Csr::JsonldContext.to_string(), "jsonld_context");
         assert_eq!(Csr::AdditionalProperties.to_string(), "additional_properties");
@@ -162,5 +189,7 @@ mod tests {
         assert_eq!(RegistrationInformation::Table.to_string(), "registration_information");
         assert_eq!(RegistrationInformation::EntityTypes.to_string(), "entity_types");
         assert_eq!(RegistrationInformation::PropertyNameKeys.to_string(), "property_name_keys");
+        assert_eq!(RegistrationInformation::EntityIdPatternForm.to_string(), "entity_id_pattern_form");
+        assert_eq!(RegistrationInformation::SelectorOrdinal.to_string(), "selector_ordinal");
     }
 }

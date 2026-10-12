@@ -1,13 +1,17 @@
-//! PostgreSQL array literals of integers, the text a statement casts to an
-//! integer array.
+//! PostgreSQL array literals, the text a statement casts to an integer or a
+//! text array.
 //!
-//! A set-write binds one array per entity, and the arrays differ in length, so
-//! they cannot travel as one two-dimensional array parameter: each entity's
-//! array is carried as one text element instead. Of the text forms PostgreSQL
-//! can turn into an `integer[]`, its own array literal (`{3,11,11}`) is the one
-//! the server reads with the array type's input function alone, several times
+//! A set-write binds one array per row, and the arrays differ in length, so
+//! they cannot travel as one two-dimensional array parameter: each row's array
+//! is carried as one text element instead. Of the text forms PostgreSQL can
+//! turn into an array, its own array literal (`{3,11,11}`) is the one the
+//! server reads with the array type's input function alone, several times
 //! faster per row than expanding a JSON array element by element. Integers need
-//! no quoting or escaping in it, so the literal is exact by construction.
+//! no quoting or escaping in it, so an integer literal is exact by
+//! construction; a text literal quotes every element and escapes the two
+//! characters a quoted element gives meaning to, `"` and `\`, so any text,
+//! including one holding a comma, a brace or the word `NULL`, reads back as
+//! written.
 
 /// An array literal of integers, `{3,11,11}`, with the number of elements it
 /// holds.
@@ -48,9 +52,44 @@ impl IntegerArrayLiteral {
     }
 }
 
+/// An array literal of text, `{"a","b,c"}`, every element quoted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextArrayLiteral {
+    /// The literal text.
+    text: String,
+}
+
+impl TextArrayLiteral {
+    /// The literal of `values`, in the order given.
+    pub fn of<'value>(values: impl IntoIterator<Item = &'value str>) -> TextArrayLiteral {
+        let mut text = String::from("{");
+        for (index, value) in values.into_iter().enumerate() {
+            if index > 0 {
+                text.push(',');
+            }
+            text.push('"');
+            for character in value.chars() {
+                if matches!(character, '"' | '\\') {
+                    text.push('\\');
+                }
+                text.push(character);
+            }
+            text.push('"');
+        }
+        text.push('}');
+        TextArrayLiteral { text }
+    }
+
+    /// The literal text, as a statement binds it.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.text
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::array_literal::IntegerArrayLiteral;
+    use crate::array_literal::{IntegerArrayLiteral, TextArrayLiteral};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -70,5 +109,24 @@ mod tests {
     #[test]
     fn negative_and_wide_integers_are_written_exactly() {
         assert_eq!(IntegerArrayLiteral::of([-1, i64::from(i32::MAX)]).as_str(), "{-1,2147483647}");
+    }
+
+    #[test]
+    fn a_text_literal_quotes_every_element_in_order() {
+        assert_eq!(
+            TextArrayLiteral::of(["Building", "https://example.org/Shop"]).as_str(),
+            r#"{"Building","https://example.org/Shop"}"#
+        );
+        assert_eq!(TextArrayLiteral::of([]).as_str(), "{}");
+    }
+
+    #[test]
+    fn a_text_literal_keeps_commas_braces_and_null_as_text() {
+        assert_eq!(TextArrayLiteral::of(["a,b", "{c}", "NULL", ""]).as_str(), r#"{"a,b","{c}","NULL",""}"#);
+    }
+
+    #[test]
+    fn a_text_literal_escapes_quotes_and_backslashes() {
+        assert_eq!(TextArrayLiteral::of([r#"say "hi""#, r"back\slash"]).as_str(), r#"{"say \"hi\"","back\\slash"}"#);
     }
 }

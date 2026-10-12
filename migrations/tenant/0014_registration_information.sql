@@ -1,65 +1,59 @@
 -- ============================================================================
--- 0014: Registration routing projection
+-- 0014: Registration information
 -- ============================================================================
--- Spec: ETSI GS CIM 009 v1.9.1 clauses 4.17, 5.2.8, 5.2.9, 5.10, 5.12
+-- Spec: ETSI GS CIM 009 v1.9.1 clauses 4.17, 5.2.8, 5.2.9, 5.2.10, 5.10, 5.12
 --
--- `context_source_registrations.information` is one JSONB document per
--- registration, because it is rendered back verbatim. Discovery (clause 5.10)
--- and the forwarding coverage decision (clause 5.12) ask the opposite
--- question, which registrations could serve a given entity type, identifier or
--- attribute, and no ordinary index answers that over a nested array of
--- objects. `registration_information` is the document flattened into the
--- shape those predicates filter on: one row per information item per entity
--- selector. The broker rewrites it in the same transaction as every
--- registration mutation; nothing in the database derives it.
+-- A registration's `information` (clause 5.2.10), stored once and lossless:
+-- one row per `EntityInfo` of an item, or one row without entity columns for
+-- an item that has no `entities`. Every response body is assembled from these
+-- rows, and discovery (clause 5.10) and the forwarding coverage decision
+-- (clause 5.12) read the same rows. Clause 5.12 matches an entity
+-- specification and an attribute list against "the same" RegistrationInfo,
+-- so each row carries its item's names, and one row decides the type, the
+-- identifier and both attribute axes together.
 --
--- The projection only preselects. The evaluation that follows remains the
--- judge of membership, so every derivation resolves ambiguity towards the
--- wider row: an over-admitted registration costs one residual test, while an
--- omitted one silently drops out of distributed operations.
+-- Absence is NULL. The indexes spell the absent axis as a sentinel the
+-- readers name beside the requested value: `{*}` for the types, `''` for the
+-- identifier, and `{0}` on both attribute axes of a row whose item declares
+-- no name at all. A row whose item declares names on one axis only reads the
+-- other as `{}`, which overlaps nothing.
 --
--- A registration that constrains nothing is one wildcard row: the type set
--- `{'*'}`, the identifier `''`, no pattern, and `{0}` on both attribute axes.
--- Information items are disjunctive, so an item that bounds no axis, or an
--- empty `information`, makes the registration a candidate for every request.
--- The wildcard row lets a reader say that with an ordinary indexed test
--- instead of a `NOT EXISTS` disjunct on every dimension. Every column is
--- therefore `NOT NULL` and has a sentinel for "unconstrained on this axis",
--- and every reader predicate names the sentinel beside the requested value.
---
--- The registration's `operations` are not projected: no preselect filters on
--- them.
+-- The registration's `operations` are not here: no preselect filters on them.
 -- ============================================================================
 create table registration_information (
-    information_key bigint generated always as identity,
+    item_ordinal integer not null,
+    -- 0 for an item without `entities`.
+    selector_ordinal integer not null,
+    -- Table 5.2.8-1 `type` as written: 1 one name, 2 an array of names.
+    entity_type_shape smallint,
     registration_id text compression lz4 collate "C" not null,
-    -- The type names in a selector's Table 5.2.8-1 `type` member, or `{'*'}`
-    -- where it admits every type (`*` is not a legal type name). A conjunction
-    -- is stored as its members, which is wider than the selector and so
-    -- permitted. Readers ask `entity_types && ARRAY[$1, '*']`.
-    entity_types text[] compression lz4 collate "C" not null,
-    -- The exact identifier a selector names, or `''` where it names none (an
-    -- identifier is a URI and never empty).
-    entity_id text compression lz4 collate "C" not null,
-    -- Compared as written and never evaluated here: PostgreSQL's regular
-    -- expression dialect is not the one clause 5.2.8 mandates, and a dialect
-    -- disagreement would drop candidates instead of over-admitting them.
-    -- Readers ask `entity_id IN ($1, '') OR entity_id_pattern IS NOT NULL`.
+    entity_types text[] compression lz4 collate "C",
+    entity_id text compression lz4 collate "C",
+    -- Compared as written and never evaluated: PostgreSQL's regular
+    -- expression dialect is not the one clause 5.2.8 mandates.
     entity_id_pattern text compression lz4,
-    -- `attribute_names` keys. `{0}` is the sentinel for "declared no name on
-    -- either axis"; an item that declared names on one axis only stores `{}`
-    -- on the other, which overlaps nothing. The sentinel is set on both axes
-    -- together, because the writer widens both when it cannot intern a
-    -- declared name. Readers ask
-    -- `property_name_keys && (ARRAY(<resolved keys>) || 0)`.
-    property_name_keys integer[] compression lz4 not null,
-    relationship_name_keys integer[] compression lz4 not null,
-    constraint pk_registration_information primary key (information_key),
+    -- The restatement of `entity_id_pattern` the broker renders for this
+    -- engine: every embedded option applied and every class written out, so
+    -- `~` reads the pattern as the broker's in-memory engine does (clause 4.9;
+    -- PostgreSQL's own `(?i)` folds only ASCII). The broker writes it beside
+    -- the pattern; nothing here derives it.
+    entity_id_pattern_form text compression lz4,
+    -- `attribute_names` keys, in written order, repeated on every row of the
+    -- item.
+    property_name_keys integer[] compression lz4,
+    relationship_name_keys integer[] compression lz4,
+    constraint pk_registration_information primary key (registration_id, item_ordinal, selector_ordinal),
     constraint fk_registration_information_registration foreign key (registration_id) references context_source_registrations (id) on delete cascade,
     constraint chk_registration_information_registration_id_length check (octet_length(registration_id) <= 1024),
     constraint chk_registration_information_entity_id_length check (octet_length(entity_id) <= 1024),
     constraint chk_registration_information_entity_id_pattern_length check (octet_length(entity_id_pattern) <= 1024),
-    constraint chk_registration_information_wildcards_well_formed check (cardinality(entity_types) > 0 and array_position(entity_types, null) is null and ('*' <> all (entity_types) or entity_types = array['*']) and array_position(property_name_keys, null) is null and 0 <= all (property_name_keys) and (0 <> all (property_name_keys) or property_name_keys = array[0]) and array_position(relationship_name_keys, null) is null and 0 <= all (relationship_name_keys) and (0 <> all (relationship_name_keys) or relationship_name_keys = array[0]) and ((property_name_keys = array[0]) = (relationship_name_keys = array[0])))
+    constraint chk_registration_information_item_ordinal_non_negative check (item_ordinal >= 0),
+    constraint chk_registration_information_selector_ordinal_non_negative check (selector_ordinal >= 0),
+    constraint chk_registration_information_entity_type_shape check ((entity_types is null) = (entity_type_shape is null) and entity_type_shape between 1 and 2 and (entity_type_shape = 2 or cardinality(entity_types) = 1) and cardinality(entity_types) > 0 and array_position(entity_types, null) is null),
+    constraint chk_registration_information_selector check (entity_types is not null or (entity_id is null and entity_id_pattern is null and selector_ordinal = 0)),
+    constraint chk_registration_information_entity_id_pattern_form check ((entity_id_pattern is null) = (entity_id_pattern_form is null)),
+    constraint chk_registration_information_name_keys check (cardinality(property_name_keys) > 0 and array_position(property_name_keys, null) is null and 0 < all (property_name_keys) and cardinality(relationship_name_keys) > 0 and array_position(relationship_name_keys, null) is null and 0 < all (relationship_name_keys)),
+    constraint chk_registration_information_item_presence check (num_nonnulls (entity_types, property_name_keys, relationship_name_keys) > 0)
 )
 with (
     autovacuum_vacuum_scale_factor = 0.05,
@@ -68,19 +62,23 @@ with (
     autovacuum_analyze_threshold = 200
 );
 
--- The correlation with the registration, and the delete half of the writer's
--- wholesale rewrite.
-create index idx_registration_information_registration on registration_information (registration_id);
+create index idx_registration_information_entity_types on registration_information using gin ((coalesce(entity_types, '{*}')));
 
-create index idx_registration_information_entity_types on registration_information using gin (entity_types);
+create index idx_registration_information_property_name_keys on registration_information using gin (( case when property_name_keys is null and relationship_name_keys is null then
+    '{0}'
+else
+    coalesce(property_name_keys, '{}')
+end));
 
-create index idx_registration_information_property_name_keys on registration_information using gin (property_name_keys);
-
-create index idx_registration_information_relationship_name_keys on registration_information using gin (relationship_name_keys);
+create index idx_registration_information_relationship_name_keys on registration_information using gin (( case when property_name_keys is null and relationship_name_keys is null then
+    '{0}'
+else
+    coalesce(relationship_name_keys, '{}')
+end));
 
 -- Not partial: the sentinel `''` is one of the two values every identifier
 -- test names.
-create index idx_registration_information_entity_id on registration_information (entity_id);
+create index idx_registration_information_entity_id on registration_information ((coalesce(entity_id, '')));
 
 -- The pattern-presence branch of the identifier test.
 create index idx_registration_information_entity_id_pattern on registration_information (entity_id_pattern)

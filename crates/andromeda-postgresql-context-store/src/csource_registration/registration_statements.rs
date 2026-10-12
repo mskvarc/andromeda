@@ -7,12 +7,18 @@ use crate::csource_registration::{
     status_code::stored_status,
 };
 use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
-use andromeda_ngsi_ld_model::registration::{forwarding_mode::ForwardingMode, operation::CsrOperation, status::CsrStatus};
+use andromeda_ngsi_ld_model::{
+    key_value_pair::KeyValuePair,
+    registration::{forwarding_mode::ForwardingMode, operation::CsrOperation, status::CsrStatus},
+    registration_management::RegistrationManagementInfo,
+    time_interval::TimeInterval,
+};
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_postgresql_query::ltree::StoredScopePath;
 use andromeda_postgresql_schema::csr::{Csr, RegistrationDeliveryState};
 use andromeda_postgresql_seaquery::{cast::cast, clock::now, pg_type::PostgresType, placeholder::external_placeholder, postgis::validated_geom_from_ewkb};
 use andromeda_registration::{error::RegistrationError, store::forwarding_outcome::ForwardingOutcome};
+use chrono::{DateTime, Utc};
 use sea_query::{CaseStatement, Expr as SeaExpr, ExprTrait, Keyword, PostgresQueryBuilder, Query, SimpleExpr};
 
 /// The `CASE WHEN $marker IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($marker)) ELSE NULL END`
@@ -36,11 +42,12 @@ pub(super) fn csr_create_sql() -> Result<String, RegistrationError> {
         Csr::Id,
         Csr::RegistrationName,
         Csr::Description,
-        Csr::Information,
         Csr::DatasetId,
         Csr::Tenant,
-        Csr::ObservationInterval,
-        Csr::ManagementInterval,
+        Csr::ObservationIntervalStart,
+        Csr::ObservationIntervalEnd,
+        Csr::ManagementIntervalStart,
+        Csr::ManagementIntervalEnd,
         Csr::Location,
         Csr::ObservationSpace,
         Csr::OperationSpace,
@@ -51,12 +58,16 @@ pub(super) fn csr_create_sql() -> Result<String, RegistrationError> {
         Csr::Operations,
         Csr::ScopePaths,
         Csr::RefreshRate,
-        Csr::Management,
-        Csr::ContextSourceInfo,
+        Csr::IsManagementDeclared,
+        Csr::ManagementCacheDuration,
+        Csr::ManagementCooldown,
+        Csr::ManagementLocalOnly,
+        Csr::ManagementTimeout,
+        Csr::ContextSourceInfoKeys,
+        Csr::ContextSourceInfoValues,
         Csr::JsonldContext,
         Csr::ContextSourceAlias,
         Csr::AdditionalProperties,
-        Csr::EntityIdPatternForms,
         Csr::EntityIdPatternFormsRevision,
         Csr::VerbatimScopePaths,
         Csr::CreatedAt,
@@ -72,16 +83,16 @@ pub(super) fn csr_create_sql() -> Result<String, RegistrationError> {
             external_placeholder(6),
             external_placeholder(7),
             external_placeholder(8),
-            geometry_write(9),
+            external_placeholder(9),
             geometry_write(10),
             geometry_write(11),
-            external_placeholder(12),
+            geometry_write(12),
             external_placeholder(13),
             external_placeholder(14),
             external_placeholder(15),
             external_placeholder(16),
-            cast(external_placeholder(17), PostgresType::LtreeArray),
-            external_placeholder(18),
+            external_placeholder(17),
+            cast(external_placeholder(18), PostgresType::LtreeArray),
             external_placeholder(19),
             external_placeholder(20),
             external_placeholder(21),
@@ -90,6 +101,11 @@ pub(super) fn csr_create_sql() -> Result<String, RegistrationError> {
             external_placeholder(24),
             external_placeholder(25),
             external_placeholder(26),
+            external_placeholder(27),
+            external_placeholder(28),
+            external_placeholder(29),
+            external_placeholder(30),
+            external_placeholder(31),
             now(),
             now(),
         ])
@@ -105,29 +121,34 @@ pub(super) fn csr_update_sql() -> String {
         .values([
             (Csr::RegistrationName, external_placeholder(2)),
             (Csr::Description, external_placeholder(3)),
-            (Csr::Information, external_placeholder(4)),
-            (Csr::DatasetId, external_placeholder(5)),
-            (Csr::Tenant, external_placeholder(6)),
-            (Csr::ObservationInterval, external_placeholder(7)),
-            (Csr::ManagementInterval, external_placeholder(8)),
-            (Csr::Location, geometry_write(9)),
-            (Csr::ObservationSpace, geometry_write(10)),
-            (Csr::OperationSpace, geometry_write(11)),
-            (Csr::ExpiresAt, external_placeholder(12)),
-            (Csr::Endpoint, external_placeholder(13)),
-            (Csr::Accept, external_placeholder(14)),
-            (Csr::Mode, external_placeholder(15)),
-            (Csr::Operations, external_placeholder(16)),
-            (Csr::ScopePaths, cast(external_placeholder(17), PostgresType::LtreeArray)),
-            (Csr::RefreshRate, external_placeholder(18)),
-            (Csr::Management, external_placeholder(19)),
-            (Csr::ContextSourceInfo, external_placeholder(20)),
-            (Csr::JsonldContext, external_placeholder(21)),
-            (Csr::ContextSourceAlias, external_placeholder(22)),
-            (Csr::AdditionalProperties, external_placeholder(23)),
-            (Csr::EntityIdPatternForms, external_placeholder(24)),
-            (Csr::EntityIdPatternFormsRevision, external_placeholder(25)),
-            (Csr::VerbatimScopePaths, external_placeholder(26)),
+            (Csr::DatasetId, external_placeholder(4)),
+            (Csr::Tenant, external_placeholder(5)),
+            (Csr::ObservationIntervalStart, external_placeholder(6)),
+            (Csr::ObservationIntervalEnd, external_placeholder(7)),
+            (Csr::ManagementIntervalStart, external_placeholder(8)),
+            (Csr::ManagementIntervalEnd, external_placeholder(9)),
+            (Csr::Location, geometry_write(10)),
+            (Csr::ObservationSpace, geometry_write(11)),
+            (Csr::OperationSpace, geometry_write(12)),
+            (Csr::ExpiresAt, external_placeholder(13)),
+            (Csr::Endpoint, external_placeholder(14)),
+            (Csr::Accept, external_placeholder(15)),
+            (Csr::Mode, external_placeholder(16)),
+            (Csr::Operations, external_placeholder(17)),
+            (Csr::ScopePaths, cast(external_placeholder(18), PostgresType::LtreeArray)),
+            (Csr::RefreshRate, external_placeholder(19)),
+            (Csr::IsManagementDeclared, external_placeholder(20)),
+            (Csr::ManagementCacheDuration, external_placeholder(21)),
+            (Csr::ManagementCooldown, external_placeholder(22)),
+            (Csr::ManagementLocalOnly, external_placeholder(23)),
+            (Csr::ManagementTimeout, external_placeholder(24)),
+            (Csr::ContextSourceInfoKeys, external_placeholder(25)),
+            (Csr::ContextSourceInfoValues, external_placeholder(26)),
+            (Csr::JsonldContext, external_placeholder(27)),
+            (Csr::ContextSourceAlias, external_placeholder(28)),
+            (Csr::AdditionalProperties, external_placeholder(29)),
+            (Csr::EntityIdPatternFormsRevision, external_placeholder(30)),
+            (Csr::VerbatimScopePaths, external_placeholder(31)),
             (Csr::ModifiedAt, now()),
         ])
         .and_where(SeaExpr::col(Csr::Id).eq(external_placeholder(1)));
@@ -195,6 +216,48 @@ pub(super) fn dataset_selectors(dataset_id: Option<&[DatasetSelector]>) -> Optio
     dataset_id.map(|values| values.iter().map(ToString::to_string).collect())
 }
 
+/// A clause 5.2.11 interval as its two columns, `startAt` then `endAt`; both
+/// `NULL` when the member is absent.
+pub(super) fn interval_columns(interval: Option<&TimeInterval>) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
+    (interval.map(|interval| interval.start_at), interval.and_then(|interval| interval.end_at))
+}
+
+/// A registration's `management` (Table 5.2.34-1) as its columns.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct ManagementColumns {
+    /// Whether the member is present, empty or not.
+    pub(super) declared: bool,
+    /// `cacheDuration`, as the ISO 8601 text its type writes.
+    pub(super) cache_duration: Option<String>,
+    /// `cooldown`, in milliseconds.
+    pub(super) cooldown: Option<i64>,
+    /// `localOnly`.
+    pub(super) local_only: Option<bool>,
+    /// `timeout`, in milliseconds.
+    pub(super) timeout: Option<i64>,
+}
+
+impl ManagementColumns {
+    /// The columns of `management`, every member `NULL` when it is absent.
+    pub(super) fn of(management: Option<&RegistrationManagementInfo>) -> ManagementColumns {
+        ManagementColumns {
+            declared: management.is_some(),
+            cache_duration: management.and_then(|management| management.cache_duration.as_ref()).map(ToString::to_string),
+            cooldown: management.and_then(|management| management.cooldown).map(i64::from),
+            local_only: management.and_then(|management| management.local_only).map(bool::from),
+            timeout: management.and_then(|management| management.timeout).map(i64::from),
+        }
+    }
+}
+
+/// A registration's `contextSourceInfo` as its two parallel columns, keys
+/// then values, in written order; both `NULL` when the member is absent.
+pub(super) fn context_source_info_columns(pairs: Option<&[KeyValuePair]>) -> (Option<Vec<&str>>, Option<Vec<&str>>) {
+    pairs
+        .map(|pairs| pairs.iter().map(|pair| (pair.key.as_str(), pair.value.as_str())).unzip())
+        .unzip()
+}
+
 /// The health update one forwarding outcome applies (Table 5.2.9-2) to the
 /// registration's delivery state: the sent counter always grows; the failed
 /// counter, the matching timestamp and the status follow the outcome.
@@ -231,17 +294,23 @@ pub(super) fn proxied_mode() -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::csource_registration::registration_statements::{
+        ManagementColumns,
+        context_source_info_columns,
         csr_create_sql,
         csr_update_sql,
         delivery_state_insert_sql,
         health_update_sql,
+        interval_columns,
         proxied_mode,
         stored_scopes,
     };
     use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
+    use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, registration_management::RegistrationManagementInfo, time_interval::TimeInterval};
     use andromeda_registration::store::forwarding_outcome::ForwardingOutcome;
+    use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
+    use serde_json::json;
 
     /// Clause 4.18 scopes are stored as `ltree` label paths, the encoding
     /// `entity_search.scope_paths` uses, so the clause 4.19 `scopeQ` compiles to
@@ -269,8 +338,8 @@ mod tests {
         assert!(!sql.contains("ContextSourceRegistration"), "the type is never stored: {sql}");
         assert!(!sql.contains("\"type\""), "{sql}");
         assert!(!sql.contains("::csr_mode"), "{sql}");
-        assert!(sql.contains("$17::ltree[]"), "{sql}");
-        for marker in [9, 10, 11] {
+        assert!(sql.contains("$18::ltree[]"), "{sql}");
+        for marker in [10, 11, 12] {
             assert!(
                 sql.contains(&format!("ST_MakeValid(ST_GeomFromEWKB(${marker}))")),
                 "geometry {marker} is validated from its EWKB: {sql}"
@@ -278,32 +347,33 @@ mod tests {
         }
         assert!(sql.contains("NOW()"), "created_at and modified_at stamp the transaction clock: {sql}");
         assert!(sql.contains(r#""verbatim_scope_paths""#), "{sql}");
-        for marker in 1..=26 {
+        for marker in 1..=31 {
             assert!(sql.contains(&format!("${marker}")), "missing ${marker}: {sql}");
         }
     }
 
-    /// The restatement of the registration's identifier patterns is written in
-    /// the statement that writes the `information` it is derived from, on
-    /// create and on replacement alike.
+    /// The rendering revision of the registration's pattern restatements is
+    /// written in the statement that writes the registration, on create and on
+    /// replacement alike; the restatements themselves are information rows.
     #[test]
-    fn the_identifier_pattern_forms_are_written_with_the_information_they_restate() {
+    fn the_pattern_forms_revision_is_written_with_the_registration() {
         let create = csr_create_sql().expect("the fixed registration insert builds");
-        assert!(create.contains(r#""entity_id_pattern_forms""#), "{create}");
+        assert!(create.contains(r#""entity_id_pattern_forms_revision""#), "{create}");
+        assert!(!create.contains(r#""information""#), "{create}");
         let update = csr_update_sql();
-        assert!(update.contains(r#""entity_id_pattern_forms" = $24"#), "{update}");
-        assert!(update.contains(r#""entity_id_pattern_forms_revision" = $25"#), "{update}");
+        assert!(update.contains(r#""entity_id_pattern_forms_revision" = $30"#), "{update}");
+        assert!(!update.contains(r#""entity_id_pattern_forms""#), "{update}");
     }
 
     #[test]
     fn the_update_pins_the_row_by_id_and_binds_the_mode_code_and_ltree_scopes() {
         let sql = csr_update_sql();
         assert!(sql.contains(r#""id" = ($1)"#), "{sql}");
-        assert!(sql.contains(r#""mode" = $15"#), "{sql}");
-        assert!(sql.contains(r#""scope_paths" = $17::ltree[]"#), "{sql}");
-        assert!(sql.contains(r#""verbatim_scope_paths" = $26"#), "{sql}");
+        assert!(sql.contains(r#""mode" = $16"#), "{sql}");
+        assert!(sql.contains(r#""scope_paths" = $18::ltree[]"#), "{sql}");
+        assert!(sql.contains(r#""verbatim_scope_paths" = $31"#), "{sql}");
         assert!(sql.contains(r#""modified_at" = NOW()"#), "{sql}");
-        assert!(sql.contains("ST_MakeValid(ST_GeomFromEWKB($9))"), "{sql}");
+        assert!(sql.contains("ST_MakeValid(ST_GeomFromEWKB($10))"), "{sql}");
     }
 
     #[test]
@@ -339,5 +409,62 @@ mod tests {
     fn a_proxied_registration_is_exclusive_or_redirect_by_code() {
         let sql = Query::select().expr(proxied_mode()).to_string(PostgresQueryBuilder);
         assert_eq!(sql, r#"SELECT "context_source_registrations"."mode" IN (2, 3)"#);
+    }
+
+    fn instant(raw: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(raw).expect("a valid instant").with_timezone(&Utc)
+    }
+
+    #[test]
+    fn the_intervals_bind_as_four_instants() {
+        let observation: TimeInterval = serde_json::from_value(json!({"startAt": "2026-01-01T00:00:00Z"})).expect("a valid interval");
+        let management: TimeInterval =
+            serde_json::from_value(json!({"startAt": "2026-01-01T00:00:00Z", "endAt": "2026-02-01T00:00:00Z"})).expect("a valid interval");
+        assert_eq!(interval_columns(Some(&observation)), (Some(instant("2026-01-01T00:00:00Z")), None));
+        assert_eq!(
+            interval_columns(Some(&management)),
+            (Some(instant("2026-01-01T00:00:00Z")), Some(instant("2026-02-01T00:00:00Z")))
+        );
+        assert_eq!(interval_columns(None), (None, None));
+    }
+
+    #[test]
+    fn the_management_members_bind_as_four_columns() {
+        let management: RegistrationManagementInfo =
+            serde_json::from_value(json!({"cacheDuration": "PT10S", "cooldown": 500, "localOnly": true, "timeout": 3000})).expect("valid management");
+        assert_eq!(
+            ManagementColumns::of(Some(&management)),
+            ManagementColumns {
+                declared: true,
+                cache_duration: Some("PT10S".to_owned()),
+                cooldown: Some(500),
+                local_only: Some(true),
+                timeout: Some(3000),
+            }
+        );
+    }
+
+    /// An empty `management` object is declared with every member `NULL`, so
+    /// it reads back as the empty object it was written as.
+    #[test]
+    fn an_absent_management_binds_nulls() {
+        let absent = ManagementColumns {
+            declared: false,
+            cache_duration: None,
+            cooldown: None,
+            local_only: None,
+            timeout: None,
+        };
+        assert_eq!(ManagementColumns::of(None), absent);
+        let empty: RegistrationManagementInfo = serde_json::from_value(json!({})).expect("valid management");
+        assert_eq!(ManagementColumns::of(Some(&empty)), ManagementColumns { declared: true, ..absent });
+    }
+
+    #[test]
+    fn the_context_source_info_binds_as_two_parallel_arrays() {
+        let pairs: Vec<KeyValuePair> = serde_json::from_value(json!([{"key": "a", "value": "1"}, {"key": "b", "value": "2"}])).expect("valid pairs");
+        assert_eq!(context_source_info_columns(Some(&pairs)), (Some(vec!["a", "b"]), Some(vec!["1", "2"])));
+        assert_eq!(context_source_info_columns(Some(&[])), (Some(Vec::new()), Some(Vec::new())));
+        assert_eq!(context_source_info_columns(None), (None, None));
     }
 }

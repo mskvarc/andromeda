@@ -5,11 +5,13 @@
 //! holding something the broker never wrote: a restore from another release, or
 //! manual surgery. Each names the column and carries the parser's own rejection.
 
+use crate::csource_registration::stored_information_error::StoredInformationError;
 use andromeda_ngsi_ld_lexicon::{
     context_source_pseudonym::ContextSourcePseudonymError,
     dereferenceable_uri::NotDereferenceable,
     identifier::IdentifierParseError,
     non_empty_text::NonEmptyTextError,
+    positive_milliseconds::PositiveMillisecondsError,
     scope::path::ScopePathError,
     tenant::InvalidTenantName,
 };
@@ -33,21 +35,22 @@ pub enum StoredRegistrationError {
     /// The `tenant` column is not a tenant name.
     #[error("a stored registration tenant is not a tenant name: {0}")]
     Tenant(#[source] InvalidTenantName),
-    /// The `information` column does not deserialize.
-    #[error("a stored registration information document does not deserialize: {0}")]
-    Information(#[source] serde_json::Error),
+    /// The `registration_information` rows do not assemble to an
+    /// `information`.
+    #[error("a stored registration information does not assemble: {0}")]
+    Information(#[from] StoredInformationError),
     /// One `dataset_id` element is not a dataset selector.
     #[error("a stored registration datasetId is not a dataset selector: {0}")]
     DatasetId(#[source] Box<QueryError>),
     /// One `scope` label path does not convert back to a scope.
     #[error("a stored registration scope label path is not a scope: {0}")]
     Scope(#[source] ScopePathError),
-    /// The `observation_interval` column does not deserialize.
-    #[error("a stored registration observationInterval does not deserialize: {0}")]
-    ObservationInterval(#[source] serde_json::Error),
-    /// The `management_interval` column does not deserialize.
-    #[error("a stored registration managementInterval does not deserialize: {0}")]
-    ManagementInterval(#[source] serde_json::Error),
+    /// The `observation_interval_*` columns are not a clause 5.2.11 interval.
+    #[error("a stored registration observationInterval is not an interval: {0}")]
+    ObservationInterval(#[source] StoredIntervalError),
+    /// The `management_interval_*` columns are not a clause 5.2.11 interval.
+    #[error("a stored registration managementInterval is not an interval: {0}")]
+    ManagementInterval(#[source] StoredIntervalError),
     /// The `location` column does not deserialize into a geometry.
     #[error("a stored registration location does not deserialize: {0}")]
     Location(#[source] serde_json::Error),
@@ -78,12 +81,31 @@ pub enum StoredRegistrationError {
         /// Offset of the first character the duration grammar rejected.
         position: usize,
     },
-    /// The `management` column does not deserialize.
-    #[error("a stored registration management member does not deserialize: {0}")]
-    Management(#[source] serde_json::Error),
-    /// The `context_source_info` column does not deserialize.
-    #[error("a stored registration contextSourceInfo does not deserialize: {0}")]
-    ContextSourceInfo(#[source] serde_json::Error),
+    /// A `management_*` column holds a member of a registration that declares
+    /// no `management`.
+    #[error("a stored registration holds management members without declaring management")]
+    UndeclaredManagement,
+    /// The `management_cache_duration` column is not an ISO 8601 duration.
+    #[error("a stored registration management cacheDuration is not an ISO 8601 duration past position {position}")]
+    ManagementCacheDuration {
+        /// Offset of the first character the duration grammar rejected.
+        position: usize,
+    },
+    /// The `management_cooldown` column is not a positive millisecond count.
+    #[error("a stored registration management cooldown is not a positive millisecond count: {0}")]
+    ManagementCooldown(#[source] PositiveMillisecondsError),
+    /// The `management_timeout` column is not a positive millisecond count.
+    #[error("a stored registration management timeout is not a positive millisecond count: {0}")]
+    ManagementTimeout(#[source] PositiveMillisecondsError),
+    /// The `context_source_info_*` columns are not two arrays of one length,
+    /// or one is present without the other.
+    #[error("a stored registration contextSourceInfo does not pair each key with one value")]
+    ContextSourceInfoPairs {
+        /// How many keys are stored; `None` when the column is `NULL`.
+        keys: Option<usize>,
+        /// How many values are stored; `None` when the column is `NULL`.
+        values: Option<usize>,
+    },
     /// The `jsonld_context` column is not a dereferenceable URI.
     #[error("a stored registration jsonldContext is not a dereferenceable URI: {0}")]
     JsonldContext(#[source] NotDereferenceable),
@@ -93,4 +115,16 @@ pub enum StoredRegistrationError {
     /// The `status` column holds a code the status registry never assigned.
     #[error("a stored registration status is not a known code: {0}")]
     Status(#[source] UnknownCompactCode),
+}
+
+/// Why a pair of stored interval columns is not a clause 5.2.11 interval.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum StoredIntervalError {
+    /// An `endAt` is stored without a `startAt`, which Table 5.2.11-1 makes
+    /// mandatory.
+    #[error("an endAt is stored without a startAt")]
+    EndWithoutStart,
+    /// The stored `endAt` is not after the stored `startAt`.
+    #[error("the stored endAt is not after the stored startAt")]
+    EndNotAfterStart,
 }

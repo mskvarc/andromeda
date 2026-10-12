@@ -5,6 +5,7 @@
 //! two pieces of this adapter, or an identifier it minted itself, and reaching
 //! one means the adapter is wrong rather than the data or the database.
 
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use strum::Display;
 use thiserror::Error;
 
@@ -36,6 +37,20 @@ pub enum StoreInvariant {
     /// stored geometry, which a row being created does not have.
     #[error("a created search row was staged to keep a geometry it does not hold")]
     KeptGeometryWithoutStoredRow,
+    /// A registration's information rows were built before one of its
+    /// declared attribute names was interned.
+    #[error("registration information names {name}, which was not interned before its rows were built")]
+    InformationNameNotInterned {
+        /// The name without a key.
+        name: AttributeName,
+    },
+    /// A registration's information holds more items or selectors than the
+    /// ordinal column numbers.
+    #[error("registration information position {position} does not fit its ordinal column")]
+    InformationPositionOutOfRange {
+        /// The position that does not fit.
+        position: usize,
+    },
 }
 
 #[cfg(test)]

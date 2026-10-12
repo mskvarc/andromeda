@@ -50,6 +50,8 @@ pub mod csr_status;
 pub mod entity_key;
 /// The persisted lifecycle transition of one notification event.
 pub mod entity_lifecycle;
+/// The persisted shape of one registered `EntityInfo` type.
+pub mod entity_type_shape;
 /// The persisted kind of one stored JSON-LD context.
 pub mod jsonld_context_kind;
 /// The persisted outcome of one maintenance action.

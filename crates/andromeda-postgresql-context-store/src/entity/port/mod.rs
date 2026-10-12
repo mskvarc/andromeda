@@ -50,7 +50,6 @@ fn classify(error: &ContextStoreError) -> EntityError {
         | ContextStoreError::Migration(_)
         | ContextStoreError::SchemaContract(_)
         | ContextStoreError::BranchVersion(_)
-        | ContextStoreError::StoredRegistrationInformation(_)
         | ContextStoreError::StatementBuild(_)
         | ContextStoreError::PayloadEncoding(_)
         | ContextStoreError::OrdinalOutOfRange(_)

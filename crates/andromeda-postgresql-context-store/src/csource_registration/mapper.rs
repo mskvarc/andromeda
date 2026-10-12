@@ -1,7 +1,12 @@
 //! Row-to-domain mapping for context source registrations.
 
 use crate::{
-    csource_registration::{mode_code::mode_of, operation_code::operation_of, status_code::status_of, stored_registration_error::StoredRegistrationError},
+    csource_registration::{
+        mode_code::mode_of,
+        operation_code::operation_of,
+        status_code::status_of,
+        stored_registration_error::{StoredIntervalError, StoredRegistrationError},
+    },
     error::ContextStoreError,
     json_text::JsonText,
 };
@@ -11,6 +16,7 @@ use andromeda_ngsi_ld_lexicon::{
     dereferenceable_uri::DereferenceableUri,
     identifier::Identifier,
     non_empty_text::NonEmptyText,
+    positive_milliseconds::PositiveMilliseconds,
     scope::path::ScopePath,
     tenant::TenantName,
 };
@@ -21,11 +27,12 @@ use andromeda_ngsi_ld_model::{
         access::ContextSourceAccess,
         coverage::RegistrationCoverage,
         health::RegistrationHealth,
+        info::RegistrationInfo,
         lifecycle::RegistrationLifecycle,
         operation::CsrOperation,
         status::CsrStatus,
     },
-    registration_management::RegistrationManagementInfo,
+    registration_management::{LocalScope, RegistrationManagementInfo},
     time_interval::TimeInterval,
 };
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
@@ -48,20 +55,21 @@ fn read_json<T: DeserializeOwned>(
     Ok(text.map(|text| serde_json::from_slice(text.as_bytes()).map_err(unreadable)).transpose()?)
 }
 
-/// Convert a `context_source_registrations` row into the domain type.
+/// Convert a `context_source_registrations` row and the `information` its
+/// `registration_information` rows assemble to into the domain type.
 ///
 /// # Errors
 ///
 /// Returns [`ContextStoreError::StoredRegistration`] when a stored column does
 /// not parse back into its domain type: the registration URI, the
-/// `registrationName` or `description` text, the tenant name, the `information`
-/// document and the rest of the coverage members, the endpoint, media type,
+/// `registrationName` or `description` text, the tenant name, the coverage
+/// members, the endpoint, media type,
 /// forwarding mode code, operation codes, refresh rate and remaining access
 /// members, or the health status code, and [`ContextStoreError::Database`] when
 /// a column the projection carries is missing or does not decode into its
 /// stored type, or when the `context_source_alias` column exists but fails to
 /// read for a reason other than being absent or undecodable.
-pub fn row_to_csr(row: &PgRow) -> Result<ContextSourceRegistration, ContextStoreError> {
+pub fn row_to_csr(row: &PgRow, information: Vec<RegistrationInfo>) -> Result<ContextSourceRegistration, ContextStoreError> {
     let id_raw: String = row.try_get("id")?;
     let id: Identifier = id_raw.parse().map_err(StoredRegistrationError::Id)?;
     let registration_name = row
@@ -86,7 +94,7 @@ pub fn row_to_csr(row: &PgRow) -> Result<ContextSourceRegistration, ContextStore
         .registration_name(registration_name)
         .description(description)
         .tenant(tenant)
-        .coverage(row_to_coverage(row)?)
+        .coverage(row_to_coverage(row, information)?)
         .access(row_to_access(row)?)
         .health(row_to_health(row)?)
         .lifecycle(row_to_lifecycle(row)?)
@@ -95,9 +103,7 @@ pub fn row_to_csr(row: &PgRow) -> Result<ContextSourceRegistration, ContextStore
 }
 
 /// Rebuild the coverage members: what context the registration claims to serve.
-fn row_to_coverage(row: &PgRow) -> Result<RegistrationCoverage, ContextStoreError> {
-    let information_text: JsonText<'_> = row.try_get("information")?;
-    let information = serde_json::from_slice(information_text.as_bytes()).map_err(StoredRegistrationError::Information)?;
+fn row_to_coverage(row: &PgRow, information: Vec<RegistrationInfo>) -> Result<RegistrationCoverage, ContextStoreError> {
     let dataset_id = row
         .try_get::<Option<Vec<String>>, _>("dataset_id")?
         .map(|values| values.iter().map(|raw| DatasetSelector::parse(raw)).collect::<Result<Vec<_>, _>>())
@@ -114,8 +120,10 @@ fn row_to_coverage(row: &PgRow) -> Result<RegistrationCoverage, ContextStoreErro
                 .collect::<Result<Vec<_>, _>>()
         })
         .transpose()?;
-    let observation_interval = read_json::<TimeInterval>(row, "observation_interval", StoredRegistrationError::ObservationInterval)?;
-    let management_interval = read_json::<TimeInterval>(row, "management_interval", StoredRegistrationError::ManagementInterval)?;
+    let observation_interval = interval_of(row.try_get("observation_interval_start")?, row.try_get("observation_interval_end")?)
+        .map_err(StoredRegistrationError::ObservationInterval)?;
+    let management_interval =
+        interval_of(row.try_get("management_interval_start")?, row.try_get("management_interval_end")?).map_err(StoredRegistrationError::ManagementInterval)?;
     let location = read_json::<Geometry>(row, "location", StoredRegistrationError::Location)?;
     let observation_space = read_json::<Geometry>(row, "observation_space", StoredRegistrationError::ObservationSpace)?;
     let operation_space = read_json::<Geometry>(row, "operation_space", StoredRegistrationError::OperationSpace)?;
@@ -158,8 +166,14 @@ fn row_to_access(row: &PgRow) -> Result<ContextSourceAccess, ContextStoreError> 
         .map(|raw| raw.parse::<Iso8601Duration>())
         .transpose()
         .map_err(|error| StoredRegistrationError::RefreshRate { position: error.position })?;
-    let management = read_json::<RegistrationManagementInfo>(row, "management", StoredRegistrationError::Management)?;
-    let context_source_info = read_json::<Vec<KeyValuePair>>(row, "context_source_info", StoredRegistrationError::ContextSourceInfo)?;
+    let management = management_of(StoredManagement {
+        declared: row.try_get("is_management_declared")?,
+        cache_duration: row.try_get("management_cache_duration")?,
+        cooldown: row.try_get("management_cooldown")?,
+        local_only: row.try_get("management_local_only")?,
+        timeout: row.try_get("management_timeout")?,
+    })?;
+    let context_source_info = context_source_info_of(row.try_get("context_source_info_keys")?, row.try_get("context_source_info_values")?)?;
     let jsonld_context: Option<DereferenceableUri> = row
         .try_get::<Option<String>, _>("jsonld_context")?
         .as_deref()
@@ -179,6 +193,89 @@ fn row_to_access(row: &PgRow) -> Result<ContextSourceAccess, ContextStoreError> 
         .jsonld_context(jsonld_context)
         .context_source_alias(context_source_alias)
         .build())
+}
+
+/// The clause 5.2.11 interval two stored columns hold; `None` when neither
+/// holds an instant.
+fn interval_of(start_at: Option<DateTime<Utc>>, end_at: Option<DateTime<Utc>>) -> Result<Option<TimeInterval>, StoredIntervalError> {
+    match (start_at, end_at) {
+        (None, None) => Ok(None),
+        (None, Some(_)) => Err(StoredIntervalError::EndWithoutStart),
+        (Some(start_at), Some(end_at)) if end_at <= start_at => Err(StoredIntervalError::EndNotAfterStart),
+        (Some(start_at), end_at) => Ok(Some(TimeInterval { start_at, end_at })),
+    }
+}
+
+/// The `management` columns of one registration row.
+#[derive(Debug)]
+struct StoredManagement {
+    /// `is_management_declared`.
+    declared: bool,
+    /// `management_cache_duration`.
+    cache_duration: Option<String>,
+    /// `management_cooldown`.
+    cooldown: Option<i64>,
+    /// `management_local_only`.
+    local_only: Option<bool>,
+    /// `management_timeout`.
+    timeout: Option<i64>,
+}
+
+/// The `management` member (Table 5.2.34-1) the columns hold; `None` when the
+/// registration declares none.
+fn management_of(stored: StoredManagement) -> Result<Option<RegistrationManagementInfo>, StoredRegistrationError> {
+    if !stored.declared {
+        let holds_member = stored.cache_duration.is_some() || stored.cooldown.is_some() || stored.local_only.is_some() || stored.timeout.is_some();
+        return if holds_member {
+            Err(StoredRegistrationError::UndeclaredManagement)
+        } else {
+            Ok(None)
+        };
+    }
+    let cache_duration = stored
+        .cache_duration
+        .map(|raw| raw.parse::<Iso8601Duration>())
+        .transpose()
+        .map_err(|error| StoredRegistrationError::ManagementCacheDuration { position: error.position })?;
+    let cooldown = stored
+        .cooldown
+        .map(PositiveMilliseconds::try_from)
+        .transpose()
+        .map_err(StoredRegistrationError::ManagementCooldown)?;
+    let timeout = stored
+        .timeout
+        .map(PositiveMilliseconds::try_from)
+        .transpose()
+        .map_err(StoredRegistrationError::ManagementTimeout)?;
+    Ok(Some(
+        RegistrationManagementInfo::builder()
+            .cache_duration(cache_duration)
+            .cooldown(cooldown)
+            .local_only(stored.local_only.map(LocalScope::from))
+            .timeout(timeout)
+            .build(),
+    ))
+}
+
+/// The `contextSourceInfo` pairs the two parallel columns hold, in written
+/// order; `None` when both are `NULL`.
+fn context_source_info_of(keys: Option<Vec<String>>, values: Option<Vec<String>>) -> Result<Option<Vec<KeyValuePair>>, StoredRegistrationError> {
+    match (keys, values) {
+        (None, None) => Ok(None),
+        (Some(keys), Some(values)) if keys.len() == values.len() => Ok(Some(
+            keys.into_iter()
+                .zip(values)
+                .map(|(key, value)| KeyValuePair {
+                    key: key.into(),
+                    value: value.into(),
+                })
+                .collect(),
+        )),
+        (keys, values) => Err(StoredRegistrationError::ContextSourceInfoPairs {
+            keys: keys.as_ref().map(Vec::len),
+            values: values.as_ref().map(Vec::len),
+        }),
+    }
 }
 
 /// The pseudonym a distributed operation attributes forwarded context to.
@@ -255,4 +352,133 @@ fn row_to_lifecycle(row: &PgRow) -> Result<RegistrationLifecycle, ContextStoreEr
         .created_at(created_at)
         .modified_at(modified_at)
         .build())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::csource_registration::{
+        mapper::{StoredManagement, context_source_info_of, interval_of, management_of},
+        stored_registration_error::{StoredIntervalError, StoredRegistrationError},
+    };
+    use andromeda_ngsi_ld_model::{
+        key_value_pair::KeyValuePair,
+        registration_management::{LocalScope, RegistrationManagementInfo},
+        time_interval::TimeInterval,
+    };
+    use chrono::{DateTime, Utc};
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    fn instant(raw: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(raw).expect("a valid instant").with_timezone(&Utc)
+    }
+
+    fn management(cache_duration: Option<&str>, cooldown: Option<i64>, local_only: Option<bool>, timeout: Option<i64>) -> StoredManagement {
+        StoredManagement {
+            declared: true,
+            cache_duration: cache_duration.map(str::to_owned),
+            cooldown,
+            local_only,
+            timeout,
+        }
+    }
+
+    #[test]
+    fn the_intervals_read_back_as_written() {
+        let open: TimeInterval = serde_json::from_value(json!({"startAt": "2026-01-01T00:00:00Z"})).expect("a valid interval");
+        let closed: TimeInterval =
+            serde_json::from_value(json!({"startAt": "2026-01-01T00:00:00Z", "endAt": "2026-02-01T00:00:00Z"})).expect("a valid interval");
+        assert_eq!(interval_of(Some(instant("2026-01-01T00:00:00Z")), None), Ok(Some(open)));
+        assert_eq!(
+            interval_of(Some(instant("2026-01-01T00:00:00Z")), Some(instant("2026-02-01T00:00:00Z"))),
+            Ok(Some(closed))
+        );
+        assert_eq!(interval_of(None, None), Ok(None));
+    }
+
+    #[test]
+    fn an_end_without_a_start_is_refused() {
+        assert_eq!(
+            interval_of(None, Some(instant("2026-02-01T00:00:00Z"))),
+            Err(StoredIntervalError::EndWithoutStart)
+        );
+        assert_eq!(
+            interval_of(Some(instant("2026-02-01T00:00:00Z")), Some(instant("2026-02-01T00:00:00Z"))),
+            Err(StoredIntervalError::EndNotAfterStart)
+        );
+    }
+
+    #[test]
+    fn the_management_members_read_back_as_written() {
+        let read = management_of(management(Some("PT10S"), Some(500), Some(true), Some(3000)))
+            .expect("the members read back")
+            .expect("management is declared");
+        let written: RegistrationManagementInfo =
+            serde_json::from_value(json!({"cacheDuration": "PT10S", "cooldown": 500, "localOnly": true, "timeout": 3000})).expect("valid management");
+        assert_eq!(read, written);
+        assert_eq!(read.local_only, Some(LocalScope::LocalOnly));
+        assert_eq!(
+            management_of(management(None, None, None, None)).expect("an empty management reads back"),
+            Some(RegistrationManagementInfo::default())
+        );
+        let undeclared = StoredManagement {
+            declared: false,
+            ..management(None, None, None, None)
+        };
+        assert_eq!(management_of(undeclared).expect("no management reads back"), None);
+    }
+
+    #[test]
+    fn a_stored_duration_that_does_not_parse_is_refused() {
+        assert!(matches!(
+            management_of(management(Some("ten seconds"), None, None, None)),
+            Err(StoredRegistrationError::ManagementCacheDuration { .. })
+        ));
+    }
+
+    #[test]
+    fn a_non_positive_cooldown_is_refused() {
+        assert!(matches!(
+            management_of(management(None, Some(0), None, None)),
+            Err(StoredRegistrationError::ManagementCooldown(_))
+        ));
+        assert!(matches!(
+            management_of(management(None, None, None, Some(-1))),
+            Err(StoredRegistrationError::ManagementTimeout(_))
+        ));
+    }
+
+    #[test]
+    fn a_member_of_an_undeclared_management_is_refused() {
+        let undeclared = StoredManagement {
+            declared: false,
+            ..management(None, Some(500), None, None)
+        };
+        assert!(matches!(management_of(undeclared), Err(StoredRegistrationError::UndeclaredManagement)));
+    }
+
+    #[test]
+    fn the_context_source_info_reads_back_in_written_order() {
+        let pairs =
+            context_source_info_of(Some(vec!["z".to_owned(), "a".to_owned()]), Some(vec!["1".to_owned(), "2".to_owned()])).expect("the pairs read back");
+        let written: Vec<KeyValuePair> = serde_json::from_value(json!([{"key": "z", "value": "1"}, {"key": "a", "value": "2"}])).expect("valid pairs");
+        assert_eq!(pairs, Some(written));
+        assert_eq!(context_source_info_of(None, None).expect("absent"), None);
+        assert_eq!(context_source_info_of(Some(Vec::new()), Some(Vec::new())).expect("empty"), Some(Vec::new()));
+    }
+
+    #[test]
+    fn context_source_info_arrays_of_different_lengths_are_refused() {
+        assert!(matches!(
+            context_source_info_of(Some(vec!["a".to_owned()]), Some(Vec::new())),
+            Err(StoredRegistrationError::ContextSourceInfoPairs {
+                keys: Some(1),
+                values: Some(0)
+            })
+        ));
+        assert!(matches!(
+            context_source_info_of(Some(vec!["a".to_owned()]), None),
+            Err(StoredRegistrationError::ContextSourceInfoPairs { keys: Some(1), values: None })
+        ));
+    }
 }

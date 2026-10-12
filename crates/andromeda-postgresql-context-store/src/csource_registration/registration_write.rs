@@ -1,24 +1,26 @@
 //! The write side of the registration persistence port: every mutation
-//! rewrites the routing projection in the same transaction as the payload.
+//! rewrites the registration's information rows in the same transaction as
+//! its registration row.
 
 use crate::{
     context_source_change_clock::advance,
     csource_registration::{
-        entity_id_pattern_forms::stored_pattern_forms,
-        mapper::row_to_csr,
-        registration_read::{expired_select, written},
+        information_write::{prepare_information, replace_registration_information},
+        registration_read::{expired_select, registrations_of, written},
         registration_statements::{
+            ManagementColumns,
+            context_source_info_columns,
             csr_create_sql,
             csr_update_sql,
             dataset_selectors,
             delivery_state_insert_sql,
             health_update_sql,
+            interval_columns,
             mode_code,
             operation_codes,
             stored_scopes,
         },
         registration_store::{PostgresRegistrationStore, create_error, persistence_error},
-        routing_rewrite::replace_registration_information,
     },
 };
 use andromeda_json_literal::JsonLiteral;
@@ -32,6 +34,7 @@ use andromeda_ngsi_ld_lexicon::{
     tenant::TenantName,
 };
 use andromeda_ngsi_ld_model::csource_change_revision::CsourceChangeRevision;
+use andromeda_ngsi_ld_query::portable_pattern::RenderingRevision;
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
 use andromeda_postgresql_schema::csr::{Csr, RegistrationInformation};
 use andromeda_registration::{
@@ -57,11 +60,11 @@ fn stored_properties(properties: &IndexMap<AttributeName, JsonLiteral>) -> Optio
     (!properties.is_empty()).then_some(Json(properties))
 }
 
-/// Delete every registration due at or before `cutoff`, returning the deleted rows and the revision the sweep drew; their projection rows go in the same transaction.
+/// Delete every registration due at or before `cutoff`, returning the deleted rows and the revision the sweep drew; their information rows go in the same transaction.
 pub(super) async fn delete_expired(store: &PostgresRegistrationStore, cutoff: DateTime<Utc>) -> Result<ExpiredDeletion, RegistrationError> {
     let mut transaction = store.pool.begin().await.map_err(|error| persistence_error(error))?;
-    // The rows to return are read before either deletion, so the projection
-    // sees the geometries and enums the payload carried; the two deletions
+    // The rows to return are read before either deletion, information rows
+    // included; the two deletions
     // then remove exactly the same set, agreeing without depending on the
     // foreign key's referential action. All three run in one transaction, so
     // no reader observes a partial removal.
@@ -70,10 +73,7 @@ pub(super) async fn delete_expired(store: &PostgresRegistrationStore, cutoff: Da
         .fetch_all(&mut *transaction)
         .await
         .map_err(|error| persistence_error(error))?;
-    let expired = rows
-        .iter()
-        .map(|row| row_to_csr(row).map_err(|error| persistence_error(error)))
-        .collect::<Result<Vec<_>, _>>()?;
+    let expired = registrations_of(&mut *transaction, store.attribute_names.as_ref(), &rows).await?;
 
     let mut expired_ids = Query::select();
     expired_ids
@@ -110,25 +110,32 @@ pub(super) async fn delete_expired(store: &PostgresRegistrationStore, cutoff: Da
     })
 }
 
-/// Persist a new registration, its delivery state and its routing projection
+/// Persist a new registration, its delivery state and its information rows
 /// in one transaction, returning the registration as written and the revision
 /// the write drew.
 pub(super) async fn create(store: &PostgresRegistrationStore, id: &Identifier, params: &CreateCsrParams) -> Result<WrittenRegistration, RegistrationError> {
-    let pattern_forms = stored_pattern_forms(&params.information);
     let operations = operation_codes(&params.operations);
     let dataset_id = dataset_selectors(params.dataset_id.as_deref());
     let scopes = stored_scopes(params.scope.as_deref());
+    let (observation_start, observation_end) = interval_columns(params.observation_interval.as_ref());
+    let (management_start, management_end) = interval_columns(params.management_interval.as_ref());
+    let management = ManagementColumns::of(params.management.as_ref());
+    let (info_keys, info_values) = context_source_info_columns(params.context_source_info.as_deref());
     let mut transaction = store.pool.begin().await.map_err(|error| persistence_error(error))?;
+    let information = prepare_information(&mut transaction, &params.information, store.attribute_names.as_ref())
+        .await
+        .map_err(|error| persistence_error(error))?;
     let create_sql = csr_create_sql()?;
     sqlx::query(sqlx::AssertSqlSafe(create_sql.as_str()))
         .bind(id.as_str())
         .bind(params.registration_name.as_ref().map(NonEmptyText::as_str))
         .bind(params.description.as_ref().map(NonEmptyText::as_str))
-        .bind(Json(&params.information))
         .bind(dataset_id.as_deref())
         .bind(params.tenant.as_ref().map(TenantName::as_str))
-        .bind(params.observation_interval.as_ref().map(Json))
-        .bind(params.management_interval.as_ref().map(Json))
+        .bind(observation_start)
+        .bind(observation_end)
+        .bind(management_start)
+        .bind(management_end)
         .bind(geometry_bytes(params.location.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
         .bind(geometry_bytes(params.observation_space.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
         .bind(geometry_bytes(params.operation_space.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
@@ -139,13 +146,17 @@ pub(super) async fn create(store: &PostgresRegistrationStore, id: &Identifier, p
         .bind(operations.as_deref())
         .bind(scopes.label_paths.as_deref())
         .bind(params.refresh_rate.as_ref().map(ToString::to_string))
-        .bind(params.management.as_ref().map(Json))
-        .bind(params.context_source_info.as_ref().map(Json))
+        .bind(management.declared)
+        .bind(management.cache_duration.as_deref())
+        .bind(management.cooldown)
+        .bind(management.local_only)
+        .bind(management.timeout)
+        .bind(info_keys.as_deref())
+        .bind(info_values.as_deref())
         .bind(params.jsonld_context.as_ref().map(DereferenceableUri::as_str))
         .bind(params.context_source_alias.as_ref().map(ContextSourcePseudonym::as_str))
         .bind(stored_properties(&params.additional_properties))
-        .bind(pattern_forms.as_ref().map(|stored| Json(&stored.forms)))
-        .bind(pattern_forms.as_ref().map(|stored| stored.revision.get()))
+        .bind(information.pattern_forms_revision().map(RenderingRevision::get))
         .bind(scopes.written.as_deref())
         .execute(&mut *transaction)
         .await
@@ -156,36 +167,43 @@ pub(super) async fn create(store: &PostgresRegistrationStore, id: &Identifier, p
         .execute(&mut *transaction)
         .await
         .map_err(|error| persistence_error(error))?;
-    replace_registration_information(&mut transaction, id, &params.information, store.attribute_names.as_ref())
+    replace_registration_information(&mut transaction, id, &information)
         .await
         .map_err(|error| persistence_error(error))?;
-    let registration = written(&mut transaction, id).await?;
+    let registration = written(&mut transaction, id, &information.key_names()).await?;
     let revision = advance(&mut *transaction).await.map_err(|error| persistence_error(error))?;
     transaction.commit().await.map_err(|error| persistence_error(error))?;
     Ok(WrittenRegistration { revision, registration })
 }
 
-/// Replace a registration with a resolved value set and rebuild its routing projection in one transaction, returning the registration as written.
+/// Replace a registration with a resolved value set and its information rows in one transaction, returning the registration as written.
 pub(super) async fn update(
     store: &PostgresRegistrationStore,
     id: &Identifier,
     values: &ResolvedCsrUpdate,
 ) -> Result<RegistrationMutation<WrittenRegistration>, RegistrationError> {
-    let pattern_forms = stored_pattern_forms(&values.information);
     let operations = operation_codes(&values.operations);
     let dataset_id = dataset_selectors(values.dataset_id.as_deref());
     let scopes = stored_scopes(values.scope.as_deref());
+    let (observation_start, observation_end) = interval_columns(values.observation_interval.as_ref());
+    let (management_start, management_end) = interval_columns(values.management_interval.as_ref());
+    let management = ManagementColumns::of(values.management.as_ref());
+    let (info_keys, info_values) = context_source_info_columns(values.context_source_info.as_deref());
     let mut transaction = store.pool.begin().await.map_err(|error| persistence_error(error))?;
+    let information = prepare_information(&mut transaction, &values.information, store.attribute_names.as_ref())
+        .await
+        .map_err(|error| persistence_error(error))?;
     let update_sql = csr_update_sql();
     let result = sqlx::query(sqlx::AssertSqlSafe(update_sql.as_str()))
         .bind(id.as_str())
         .bind(values.registration_name.as_ref().map(NonEmptyText::as_str))
         .bind(values.description.as_ref().map(NonEmptyText::as_str))
-        .bind(Json(&values.information))
         .bind(dataset_id.as_deref())
         .bind(values.tenant.as_ref().map(TenantName::as_str))
-        .bind(values.observation_interval.as_ref().map(Json))
-        .bind(values.management_interval.as_ref().map(Json))
+        .bind(observation_start)
+        .bind(observation_end)
+        .bind(management_start)
+        .bind(management_end)
         .bind(geometry_bytes(values.location.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
         .bind(geometry_bytes(values.observation_space.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
         .bind(geometry_bytes(values.operation_space.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
@@ -196,27 +214,31 @@ pub(super) async fn update(
         .bind(operations.as_deref())
         .bind(scopes.label_paths.as_deref())
         .bind(values.refresh_rate.as_ref().map(ToString::to_string))
-        .bind(values.management.as_ref().map(Json))
-        .bind(values.context_source_info.as_ref().map(Json))
+        .bind(management.declared)
+        .bind(management.cache_duration.as_deref())
+        .bind(management.cooldown)
+        .bind(management.local_only)
+        .bind(management.timeout)
+        .bind(info_keys.as_deref())
+        .bind(info_values.as_deref())
         .bind(values.jsonld_context.as_ref().map(DereferenceableUri::as_str))
         .bind(values.context_source_alias.as_ref().map(ContextSourcePseudonym::as_str))
         .bind(stored_properties(&values.additional_properties))
-        .bind(pattern_forms.as_ref().map(|stored| Json(&stored.forms)))
-        .bind(pattern_forms.as_ref().map(|stored| stored.revision.get()))
+        .bind(information.pattern_forms_revision().map(RenderingRevision::get))
         .bind(scopes.written.as_deref())
         .execute(&mut *transaction)
         .await
         .map_err(|error| persistence_error(error))?;
-    // Nothing was replaced, so nothing derived from it may be rewritten: a
-    // missing registration has no projection rows to speak for.
+    // A missing registration has no information rows to replace, and the
+    // names interned for it roll back with the transaction.
     if result.rows_affected() == 0 {
         transaction.rollback().await.map_err(|error| persistence_error(error))?;
         return Ok(RegistrationMutation::Missing);
     }
-    replace_registration_information(&mut transaction, id, &values.information, store.attribute_names.as_ref())
+    replace_registration_information(&mut transaction, id, &information)
         .await
         .map_err(|error| persistence_error(error))?;
-    let registration = written(&mut transaction, id).await?;
+    let registration = written(&mut transaction, id, &information.key_names()).await?;
     let revision = advance(&mut *transaction).await.map_err(|error| persistence_error(error))?;
     transaction.commit().await.map_err(|error| persistence_error(error))?;
     Ok(RegistrationMutation::Applied(WrittenRegistration { revision, registration }))
@@ -239,12 +261,11 @@ pub(super) async fn record_forwarding_outcome(
     Ok(())
 }
 
-/// Delete a registration and its routing projection rows in one transaction.
+/// Delete a registration and its information rows in one transaction.
 pub(super) async fn delete(store: &PostgresRegistrationStore, id: &Identifier) -> Result<RegistrationMutation<CsourceChangeRevision>, RegistrationError> {
     let mut transaction = store.pool.begin().await.map_err(|error| persistence_error(error))?;
-    // Removed before the payload so the deletion holds whatever referential
-    // action the foreign key carries; a registration that lingers in the
-    // projection keeps being preselected for distributed operations.
+    // Removed before the registration row, so the deletion holds whatever
+    // referential action the foreign key carries.
     let delete_information = Query::delete()
         .from_table(RegistrationInformation::Table)
         .and_where(SeaExpr::col(RegistrationInformation::RegistrationId).eq(id.as_str()))

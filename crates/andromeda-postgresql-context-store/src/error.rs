@@ -99,11 +99,6 @@ pub enum ContextStoreError {
     /// The embedded branch migration set has no usable version.
     #[error("context store branch schema version: {0}")]
     BranchVersion(#[from] BranchVersionError),
-    /// A registration's stored `information` no longer reads as the typed
-    /// value it was written from, so its pattern restatements cannot be
-    /// rendered again.
-    #[error("context store registration information: {0}")]
-    StoredRegistrationInformation(#[source] serde_json::Error),
     /// A statement could not be assembled, which a column/value arity mismatch
     /// between a builder's column list and its rows is the only cause of.
     #[error("context store statement could not be built: {0}")]
@@ -196,7 +191,6 @@ impl ContextStoreError {
             ContextStoreError::Migration(_) | ContextStoreError::SchemaContract(_) | ContextStoreError::BranchVersion(_) => PersistenceFailure::SchemaMismatch,
             ContextStoreError::Saturated => PersistenceFailure::Saturated,
             ContextStoreError::ContextMapper(_)
-            | ContextStoreError::StoredRegistrationInformation(_)
             | ContextStoreError::StoredRegistration(_)
             | ContextStoreError::StoredSubscription(_)
             | ContextStoreError::StoredSnapshot(_)
@@ -232,7 +226,6 @@ impl ContextStoreError {
             | ContextStoreError::ContextMapper(_)
             | ContextStoreError::Migration(_)
             | ContextStoreError::BranchVersion(_)
-            | ContextStoreError::StoredRegistrationInformation(_)
             | ContextStoreError::StatementBuild(_)
             | ContextStoreError::PayloadEncoding(_)
             | ContextStoreError::OrdinalOutOfRange(_)
@@ -271,7 +264,6 @@ impl ContextStoreError {
             | ContextStoreError::ContextMapper(_)
             | ContextStoreError::Migration(_)
             | ContextStoreError::BranchVersion(_)
-            | ContextStoreError::StoredRegistrationInformation(_)
             | ContextStoreError::StatementBuild(_)
             | ContextStoreError::PayloadEncoding(_)
             | ContextStoreError::OrdinalOutOfRange(_)

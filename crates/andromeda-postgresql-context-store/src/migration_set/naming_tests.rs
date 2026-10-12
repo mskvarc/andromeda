@@ -60,7 +60,12 @@ const STORAGE_TYPE_WORDS: &[&str] = &["uuid", "geo", "bool", "datetime"];
 
 /// Columns that hold a specification member under the member's own name, which
 /// the word and boolean rules do not apply to.
-const SPECIFICATION_MEMBER_COLUMNS: &[(&str, &str)] = &[("subscriptions", "geo_q"), ("subscriptions", "local_only"), ("subscriptions", "split_entities")];
+const SPECIFICATION_MEMBER_COLUMNS: &[(&str, &str)] = &[
+    ("context_source_registrations", "management_local_only"),
+    ("subscriptions", "geo_q"),
+    ("subscriptions", "local_only"),
+    ("subscriptions", "split_entities"),
+];
 
 /// Integer identifiers whose values a catalog assigns outside the database, so
 /// they are `id`s rather than keys.
@@ -78,12 +83,6 @@ const NAVIGATED_JSONB: &[(&str, &str)] = &[
     ("attribute_history", "value_geometry_members"),
     ("attribute_history", "value_object"),
     ("context_source_registrations", "additional_properties"),
-    ("context_source_registrations", "context_source_info"),
-    ("context_source_registrations", "entity_id_pattern_forms"),
-    ("context_source_registrations", "information"),
-    ("context_source_registrations", "management"),
-    ("context_source_registrations", "management_interval"),
-    ("context_source_registrations", "observation_interval"),
     ("current_attributes", "proof_seals"),
     ("current_attributes", "value_geometry_members"),
     ("current_attributes", "value_object"),

@@ -140,7 +140,6 @@ impl PostgresPendingWorkProbe {
                 | ContextStoreError::ContextMapper(_)
                 | ContextStoreError::Migration(_)
                 | ContextStoreError::BranchVersion(_)
-                | ContextStoreError::StoredRegistrationInformation(_)
                 | ContextStoreError::StatementBuild(_)
                 | ContextStoreError::PayloadEncoding(_)
                 | ContextStoreError::OrdinalOutOfRange(_)

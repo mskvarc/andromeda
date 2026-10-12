@@ -1,9 +1,11 @@
 //! Persistence layer for context source registrations.
 
-/// The portable restatement of every `idPattern` a registration declares.
-mod entity_id_pattern_forms;
-/// The routing projection derived from a registration's `information`.
-pub mod information_projection;
+/// Reading the information rows of a set of registrations.
+pub mod information_read;
+/// A registration's `information` as its rows, and back.
+pub mod information_rows;
+/// Writing a registration's `information` as its rows.
+pub mod information_write;
 /// Row-to-domain mapping for context source registrations.
 pub mod mapper;
 /// The number the `mode` column stores a forwarding mode as.
@@ -23,9 +25,9 @@ pub mod registration_store;
 mod registration_write;
 /// The registry's possibly available types and attributes (clause 5.7.11).
 pub mod registry_type_source;
-/// The wholesale rewrite of a registration's routing rows.
-pub mod routing_rewrite;
 /// The number the delivery state stores a registration's health as.
 pub mod status_code;
+/// What a set of information rows that no write produces looks like.
+pub mod stored_information_error;
 /// What a registration row that no longer reads back as a registration looks like.
 pub mod stored_registration_error;
