@@ -5,22 +5,19 @@
 //! in the original request that created the EntityMap, except for the
 //! specification of Entity identifiers or parameters related to pagination,
 //! or, in the case of temporal requests, the temporal query". The digest
-//! therefore covers exactly the parameters that select entities and sources:
-//! the type selector, `idPattern`, `attrs`, `q`, the geo-query, `scopeQ` and
-//! `csf`. Identifiers, `limit`/`offset`/`count`, the temporal window, `lastN`
-//! and every representation parameter are left out, and list-valued
-//! parameters are sorted so the order the client wrote them in is irrelevant.
+//! therefore covers exactly the parameters that select entities and sources
+//! by anything but their identifiers: the type selector, `attrs`, `q`, the
+//! geo-query, `scopeQ` and `csf`. The identifiers and `idPattern` (both a
+//! specification of Entity identifiers, so a source holding a map may be asked
+//! for one mapped id where its map was created for a pattern),
+//! `limit`/`offset`/`count`, the temporal window, `lastN` and every
+//! representation parameter are left out, and list-valued parameters are
+//! sorted so the order the client wrote them in is irrelevant.
 
 use crate::{entity_map_invariant::EntityMapInvariant, error::EntityMapError};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::entity_map_fingerprint::{MapRequestKind, RequestFingerprint};
-use andromeda_ngsi_ld_query::{
-    filter::expression::Expr,
-    geo::input::GeoQueryInput,
-    pattern::Pattern,
-    scope::query::ScopeQuery,
-    type_selection::grammar::TypeExprRaw,
-};
+use andromeda_ngsi_ld_query::{filter::expression::Expr, geo::input::GeoQueryInput, scope::query::ScopeQuery, type_selection::grammar::TypeExprRaw};
 use andromeda_ngsi_ld_request::{
     entity::GetEntityParams,
     query::{entity::parameters::EntityQueryParameters, entity_selector::EntitySelectorParams, temporal::TemporalQueryParameters},
@@ -78,8 +75,6 @@ pub fn fingerprint_of(request: FingerprintedRequest<'_>) -> Result<RequestFinger
 struct QueryFilters<'a> {
     /// The clause 4.17 type selector.
     entity_type: Option<&'a TypeExprRaw>,
-    /// The identifier pattern.
-    id_pattern: Option<&'a Pattern>,
     /// The attribute list.
     attrs: Option<&'a [AttributeName]>,
     /// The clause 4.9 filter.
@@ -98,7 +93,6 @@ impl<'a> From<&'a EntityQueryParameters> for QueryFilters<'a> {
     fn from(params: &'a EntityQueryParameters) -> QueryFilters<'a> {
         QueryFilters {
             entity_type: params.entity_type.as_ref(),
-            id_pattern: params.id_pattern.as_ref(),
             attrs: params.attrs.as_deref(),
             q: params.q.as_ref(),
             geo: params.geo.0.as_ref(),
@@ -113,7 +107,6 @@ impl<'a> From<&'a TemporalQueryParameters> for QueryFilters<'a> {
     fn from(params: &'a TemporalQueryParameters) -> QueryFilters<'a> {
         QueryFilters {
             entity_type: params.entity_type.as_ref(),
-            id_pattern: params.id_pattern.as_ref(),
             attrs: params.attrs.as_deref(),
             q: params.q.as_ref(),
             geo: params.geo.0.as_ref(),
@@ -127,7 +120,7 @@ impl<'a> From<&'a TemporalQueryParameters> for QueryFilters<'a> {
 /// The owned canonical values of a query's filter parameters, in a fixed order.
 struct FilterRecord {
     /// Each parameter's canonical value, absent when the request omitted it.
-    values: [(&'static str, Option<String>); 8],
+    values: [(&'static str, Option<String>); 7],
 }
 
 /// The canonical record of a query's filters.
@@ -139,7 +132,6 @@ fn filter_record(filters: &QueryFilters<'_>) -> Result<FilterRecord, EntityMapEr
     Ok(FilterRecord {
         values: [
             ("type", filters.entity_type.map(ToString::to_string)),
-            ("idPattern", filters.id_pattern.map(ToString::to_string)),
             ("attrs", filters.attrs.map(sorted_names)),
             ("q", filters.q.map(ToString::to_string)),
             ("geoQ", geo),
@@ -158,7 +150,6 @@ fn retrieval_record(entity_type: Option<&TypeExprRaw>, attrs: Option<&[Attribute
     FilterRecord {
         values: [
             ("type", entity_type.map(ToString::to_string)),
-            ("idPattern", None),
             ("attrs", attrs.map(sorted_names)),
             ("q", None),
             ("geoQ", None),
@@ -176,24 +167,20 @@ fn sorted_names(names: &[AttributeName]) -> String {
     names.join(",")
 }
 
-/// The per-selector type and pattern of a POST body's `entities[]` (clause
-/// 5.2.11), without the identifiers clause 5.5.14 excepts, in a
-/// client-order-independent form.
+/// The per-selector types of a POST body's `entities[]` (clause 5.2.11),
+/// without the `id` and `idPattern` clause 5.5.14 excepts, in a
+/// client-order-independent form. The selectors are alternatives, so two that
+/// differ only in their identifiers select by one type and count once.
 fn selectors_value(selectors: &[EntitySelectorParams]) -> Option<String> {
     if selectors.is_empty() {
         return None;
     }
     let mut rendered: Vec<String> = selectors
         .iter()
-        .map(|selector| {
-            format!(
-                "{}|{}",
-                selector.type_.as_ref().map(ToString::to_string).unwrap_or_default(),
-                selector.id_pattern.as_ref().map(ToString::to_string).unwrap_or_default()
-            )
-        })
+        .map(|selector| selector.type_.as_ref().map(ToString::to_string).unwrap_or_default())
         .collect();
     rendered.sort_unstable();
+    rendered.dedup();
     Some(rendered.join(";"))
 }
 
@@ -262,6 +249,34 @@ mod tests {
         Ok(())
     }
 
+    /// Clause 5.5.14 excepts the specification of Entity identifiers, which
+    /// `idPattern` is as much as `id`: a broker forwarding under a map a source
+    /// created for a pattern names the mapped ids instead.
+    #[test]
+    fn an_id_pattern_is_excepted_like_the_identifiers() -> Result<(), EntityMapError> {
+        let created = entity_query("type=Vehicle&idPattern=urn:ngsi-ld:Vehicle:.*&entityMap=true")?;
+        pretty_assertions::assert_eq!(
+            created.compare(&entity_query("type=Vehicle&id=urn:ngsi-ld:Vehicle:1")?),
+            RequestComparison::Same
+        );
+        pretty_assertions::assert_eq!(
+            created.compare(&entity_query("type=Vehicle&idPattern=urn:ngsi-ld:Vehicle:1.*")?),
+            RequestComparison::Same
+        );
+        pretty_assertions::assert_eq!(
+            created.compare(&entity_query("type=Building&id=urn:ngsi-ld:Vehicle:1")?),
+            RequestComparison::Changed
+        );
+        let temporal = temporal_query("type=Vehicle&idPattern=urn:ngsi-ld:Vehicle:.*&timerel=before&timeAt=2030-01-01T00:00:00Z")?;
+        pretty_assertions::assert_eq!(
+            temporal.compare(&temporal_query(
+                "type=Vehicle&id=urn:ngsi-ld:Vehicle:1&timerel=before&timeAt=2030-01-01T00:00:00Z"
+            )?),
+            RequestComparison::Same
+        );
+        Ok(())
+    }
+
     #[test]
     fn a_changed_filter_is_a_changed_request() -> Result<(), EntityMapError> {
         let created = entity_query("type=Vehicle")?;
@@ -310,15 +325,21 @@ mod tests {
     }
 
     #[test]
-    fn a_post_body_selector_fingerprints_by_type_and_pattern_without_identifiers() -> Result<(), EntityMapError> {
+    fn a_post_body_selector_fingerprints_by_type_without_identifiers_or_pattern() -> Result<(), EntityMapError> {
         let body = |entities: &str| -> Result<RequestFingerprint, EntityMapError> {
             let query = serde_json::from_str::<Query>(&format!(r#"{{"type":"Query","entities":{entities}}}"#)).expect("a valid test fixture");
             let params = EntityQueryParameters::try_from(query).expect("a valid test fixture");
             fingerprint_of(FingerprintedRequest::QueryEntities(&params))
         };
-        let created = body(r#"[{"type":"Vehicle","id":"urn:ngsi-ld:Vehicle:1"},{"type":"Building"}]"#)?;
+        let created = body(r#"[{"type":"Vehicle","idPattern":"urn:ngsi-ld:Vehicle:.*"},{"type":"Building"}]"#)?;
         pretty_assertions::assert_eq!(
             created.compare(&body(r#"[{"type":"Building"},{"type":"Vehicle","id":"urn:ngsi-ld:Vehicle:2"}]"#)?),
+            RequestComparison::Same
+        );
+        pretty_assertions::assert_eq!(
+            created.compare(&body(
+                r#"[{"type":"Building"},{"type":"Vehicle","id":"urn:ngsi-ld:Vehicle:1"},{"type":"Vehicle","id":"urn:ngsi-ld:Vehicle:2"}]"#
+            )?),
             RequestComparison::Same
         );
         pretty_assertions::assert_eq!(created.compare(&body(r#"[{"type":"Vehicle"}]"#)?), RequestComparison::Changed);
