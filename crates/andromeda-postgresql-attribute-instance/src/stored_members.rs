@@ -18,7 +18,7 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_number::{JsonNumber, JsonNumberError};
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, registry::UnknownCompactCode, value_kind::ValueKind};
-use andromeda_postgresql_encoding::ewkb::{Ewkb, EwkbError};
+use andromeda_postgresql_encoding::ewkb::{Ewkb, EwkbError, encode};
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
 use andromeda_unit_catalog::unit_code_id::{UnitCodeId, UnitCodeIdOutOfRange};
 use bigdecimal::BigDecimal;
@@ -53,10 +53,11 @@ pub struct InstanceMembers {
     pub proof_seals: Option<StoredJson>,
 }
 
-/// The member columns of one stored instance, as read.
+/// The member columns of one stored instance, as an element's fields hold
+/// them.
 ///
 /// A row's string and URI each read as one column whichever side of the
-/// length split holds it.
+/// length split holds it; a writer of a row places them on their side.
 #[derive(Debug, FromRow)]
 pub struct MemberColumns {
     /// `attribute_name_key`.
@@ -189,6 +190,50 @@ impl TryFrom<MemberColumns> for InstanceMembers {
             expires_at,
             proof_seals: proof_seals.map(StoredJson::from),
         })
+    }
+}
+
+impl TryFrom<InstanceMembers> for MemberColumns {
+    type Error = EwkbError;
+
+    /// The fields `members` occupy, the value in the one field its kind names.
+    fn try_from(members: InstanceMembers) -> Result<MemberColumns, EwkbError> {
+        let mut columns = MemberColumns {
+            attribute_name_key: members.attribute_name_key.get(),
+            dataset_id: members.dataset_id.as_ref().map(|dataset_id| dataset_id.as_str().to_owned()),
+            attribute_kind: AttributeKind::code(members.attribute_kind),
+            value_kind: ValueKind::code(members.value.kind()),
+            value_number: None,
+            value_string: None,
+            value_boolean: None,
+            value_date_time: None,
+            value_geometry: None,
+            value_geometry_members: None,
+            value_object: None,
+            value_uri: None,
+            value_datatype_key: members.value.datatype_key().map(EntityTypeNameKey::get),
+            value_language: members.value.language().map(|language| language.as_str().to_owned()),
+            value_type_key: members.value_type_key.map(EntityTypeNameKey::get),
+            object_type_keys: (!members.object_type_keys.is_empty()).then(|| members.object_type_keys.iter().map(|key| key.get()).collect()),
+            proof_seals: members.proof_seals.map(StoredJson::into_json),
+            unit_code_id: members.unit_code_id.map(UnitCodeId::get),
+            observed_at: members.observed_at,
+            expires_at: members.expires_at,
+        };
+        match members.value {
+            // clone: the columns own the decimal they bind, and the number gives up none.
+            StoredValue::Number { number, .. } => columns.value_number = Some(number.decimal().clone()),
+            StoredValue::String { text, .. } => columns.value_string = Some(text),
+            StoredValue::Boolean { flag, .. } => columns.value_boolean = Some(flag),
+            StoredValue::DateTime { instant, .. } => columns.value_date_time = Some(instant),
+            StoredValue::Geometry { form, members } => {
+                columns.value_geometry = Some(EwkbGeometry(encode(&form)?.to_vec()));
+                columns.value_geometry_members = members.map(StoredJson::into_json);
+            }
+            StoredValue::Object(object) => columns.value_object = Some(object.into_json()),
+            StoredValue::Uri(uri) => columns.value_uri = Some(String::from(uri)),
+        }
+        Ok(columns)
     }
 }
 

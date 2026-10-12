@@ -2,12 +2,12 @@
 
 use crate::queue_database::{record_events, subscription, subscription_key};
 use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
-use andromeda_ngsi_ld_entity::entity_state::EntityState;
+use andromeda_ngsi_ld_entity::{entity_state::EntityState, system_instant::SystemInstant};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
 use andromeda_notification::{delivery_claim::DeliveryClaim, delivery_entry::DeliveryEntry};
 use andromeda_postgresql_context_store::notification_delivery::rows::NewNotificationEvent;
-use chrono::Utc;
+use chrono::{TimeZone, Utc};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -87,9 +87,16 @@ pub fn entity_snapshot(entity: &Identifier) -> EntityState {
     decoded(&entity_document(entity))
 }
 
-/// Decode a stored expanded document into the Entity state it stores.
+/// Decode a stored expanded document into the state a commit of it stores,
+/// every instance stamped at one whole-second instant a `timestamptz` keeps
+/// exactly.
 pub fn decoded(document: &Value) -> EntityState {
-    EntityState::from_slice(&serde_json::to_vec(document).expect("the document serialises")).expect("the document is an entity state")
+    let mut state = EntityState::from_slice(&serde_json::to_vec(document).expect("the document serialises")).expect("the document is an entity state");
+    state.settle(
+        None,
+        SystemInstant::new(Utc.with_ymd_and_hms(2026, 10, 12, 0, 0, 0).single().expect("a valid instant")),
+    );
+    state
 }
 
 /// The deliveries a claim read back, failing the verification on any row the

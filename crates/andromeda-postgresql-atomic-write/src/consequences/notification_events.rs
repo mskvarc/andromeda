@@ -12,8 +12,9 @@
 //! is waiting for, and reaping it later is work the write can simply not create.
 
 use crate::{
-    commit_refusal::{context_store, name_lookup},
+    commit_refusal::context_store,
     consequences::ConsequenceWrite,
+    name_resolution::{distinct, resolve_mentioned},
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
@@ -25,12 +26,12 @@ use andromeda_context_commit::{
     write_record::WriteRecord,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+use andromeda_postgresql_attribute_instance::name_keys::{MentionedNames, NameKeys};
 use andromeda_postgresql_context_store::notification_delivery::{event_insert::insert_events_in_tx, rows::NewNotificationEvent};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use sqlx::{Postgres, Transaction};
-use std::collections::HashMap;
 
 /// One change, and every subscription the matcher found for it.
 #[derive(Debug)]
@@ -57,7 +58,7 @@ struct EventGroup<'a> {
 ///
 /// # Errors
 ///
-/// Returns [`CommitError::Persistence`] when the dictionary cannot be resolved
+/// Returns [`CommitError::Persistence`] when a dictionary cannot be resolved
 /// or the statement fails, and [`CommitError::Invariant`] when a write produced
 /// more events than an ordinal can number or names an attribute the dictionary
 /// did not mint.
@@ -67,19 +68,22 @@ pub(crate) async fn apply(
     landed: &[&AtomicWrite],
     record: &WriteRecord,
     base: WriteOrdinal,
+    entity_type_names: &dyn NameLookup<EntityTypeName>,
     attribute_names: &dyn NameLookup<AttributeName>,
 ) -> Result<(WriteOrdinal, ConsequenceWrite), CommitError> {
     let groups = group(landed);
     if groups.is_empty() {
         return Ok((base, ConsequenceWrite::Nothing));
     }
-    let dictionary = resolve_dictionary(tx, &groups, attribute_names).await?;
+    let keys = resolve_mentioned(tx, mentioned_names(&groups), entity_type_names, attribute_names).await?;
     let events = groups
         .into_iter()
         .enumerate()
-        .map(|(position, group)| event(base, position, group, &dictionary))
+        .map(|(position, group)| event(base, position, group, &keys))
         .collect::<Result<Vec<NewNotificationEvent<'_>>, CommitError>>()?;
-    insert_events_in_tx(tx, target, record, &events).await.map_err(|error| context_store(error))?;
+    insert_events_in_tx(tx, target, record, &events, &keys)
+        .await
+        .map_err(|error| context_store(error))?;
     let advance = u32::try_from(events.len()).map_err(|error| CommitError::from(CommitInvariant::ConsequenceCount(error)))?;
     let next = base
         .advanced_by(advance)
@@ -107,36 +111,30 @@ fn group<'a>(landed: &[&'a AtomicWrite]) -> Vec<EventGroup<'a>> {
     groups
 }
 
-/// Mint the dictionary key of every attribute the grouped changes name.
+/// Every name the grouped changes store as a key: the attribute of each
+/// changed instance, and every name the states each event stores hold, which
+/// its `entity_state_record`s carry as keys.
 ///
-/// Creating rather than looking up: the events are written in the transaction
-/// that first records the attribute, so a key may not exist yet, and the same
-/// dictionary the current-attribute projection mints through is used so one
-/// attribute never ends up with two keys. That transaction's own connection
-/// carries the resolution, so an event and the names it reports are one write.
-async fn resolve_dictionary(
-    tx: &mut Transaction<'_, Postgres>,
-    groups: &[EventGroup<'_>],
-    attribute_names: &dyn NameLookup<AttributeName>,
-) -> Result<HashMap<AttributeName, AttributeNameKey>, CommitError> {
-    let mut names: Vec<AttributeName> = groups
-        .iter()
-        .flat_map(|group| group.change.change.instances.iter().map(|instance| &instance.key.attr))
-        .cloned() // clone: the dictionary request owns the names it resolves.
-        .collect();
-    names.sort_unstable();
-    names.dedup();
-    let names = names;
-    attribute_names.resolve_or_create(tx, &names).await.map_err(|error| name_lookup(&error))
+/// Minted in the transaction that first records them: a key may not exist
+/// yet, and the same dictionaries the current-attribute rows mint through are
+/// used, so one name never ends up with two keys.
+fn mentioned_names(groups: &[EventGroup<'_>]) -> MentionedNames {
+    let mut mentioned = MentionedNames::default();
+    for group in groups {
+        // clone: the dictionary request owns the names it resolves.
+        mentioned
+            .attributes
+            .extend(group.change.change.instances.iter().map(|instance| instance.key.attr.clone()));
+        for state in group.change.entity_snapshot.iter().chain(&group.change.previous_snapshot) {
+            mentioned.collect(state.attributes());
+            mentioned.types.extend(state.types().as_slice().iter().cloned()); // clone: the dictionary request owns the names it resolves.
+        }
+    }
+    distinct(mentioned)
 }
 
 /// Turn one group into the event row it is written as.
-fn event<'a>(
-    base: WriteOrdinal,
-    position: usize,
-    group: EventGroup<'a>,
-    dictionary: &HashMap<AttributeName, AttributeNameKey>,
-) -> Result<NewNotificationEvent<'a>, CommitError> {
+fn event<'a>(base: WriteOrdinal, position: usize, group: EventGroup<'a>, keys: &NameKeys) -> Result<NewNotificationEvent<'a>, CommitError> {
     let delta = u32::try_from(position).map_err(|error| CommitError::from(CommitInvariant::ConsequenceCount(error)))?;
     let ordinal = base
         .advanced_by(delta)
@@ -147,9 +145,7 @@ fn event<'a>(
         .instances
         .iter()
         .map(|instance| {
-            dictionary
-                .get(&instance.key.attr)
-                .copied()
+            keys.attribute(&instance.key.attr)
                 .ok_or(CommitError::Invariant(CommitInvariant::UnresolvedName(NameDictionary::AttributeName)))
         })
         .collect::<Result<Vec<AttributeNameKey>, CommitError>>()?;
@@ -167,7 +163,7 @@ fn event<'a>(
 
 #[cfg(test)]
 mod tests {
-    use crate::consequences::notification_events::{EventGroup, event, group};
+    use crate::consequences::notification_events::{EventGroup, event, group, mentioned_names};
     use andromeda_context_commit::{
         atomic_write::AtomicWrite,
         entity_mutation::EntityMutation,
@@ -183,14 +179,16 @@ mod tests {
             attribute_instance_key::AttributeInstanceKey,
         },
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::{
         entity_change::{EntityChange, EntityLifecycle},
         notification::SysAttrsSnapshot,
     };
-    use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+    use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
+    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames};
     use chrono::Utc;
-    use std::{collections::HashMap, ptr, sync::Arc};
+    use serde_json::json;
+    use std::{ptr, sync::Arc};
 
     const SPEED: &str = "https://example.org/speed";
 
@@ -200,6 +198,11 @@ mod tests {
 
     fn speed() -> AttributeName {
         SPEED.parse().expect("a valid attribute name")
+    }
+
+    /// The keys a commit resolved for `speed` alone.
+    fn speed_key() -> NameKeys {
+        NameKeys::new(ResolvedNames::from_pairs([(speed(), AttributeNameKey::from(7))]), ResolvedNames::default())
     }
 
     /// The `Vehicle` entity every match reports a change of.
@@ -298,7 +301,7 @@ mod tests {
             change: &matched,
             subscriptions: vec![matched.subscription_key],
         };
-        let dictionary = HashMap::from([(speed(), AttributeNameKey::from(7))]);
+        let dictionary = speed_key();
         let built = event(WriteOrdinal::at(0), 0, group, &dictionary).expect("a valid group builds an event");
         pretty_assertions::assert_eq!(built.sys_attrs_snapshot, Some(&sys_attrs));
     }
@@ -345,7 +348,7 @@ mod tests {
         let groups = group(&[&written]);
         pretty_assertions::assert_eq!(groups.len(), 1);
         pretty_assertions::assert_eq!(groups[0].subscriptions.len(), 3);
-        let dictionary = HashMap::from([(speed(), AttributeNameKey::from(7))]);
+        let dictionary = speed_key();
         let row = event(WriteOrdinal::at(0), 0, groups.into_iter().next().expect("one group"), &dictionary).expect("the group becomes one event");
         assert!(row.entity_snapshot.is_some_and(|written| ptr::eq(written, Arc::as_ptr(&snapshot))));
         assert!(row.previous_snapshot.is_some_and(|written| ptr::eq(written, Arc::as_ptr(&snapshot))));
@@ -371,7 +374,7 @@ mod tests {
             change: &matched,
             subscriptions: vec![matched.subscription_key],
         };
-        let dictionary = HashMap::from([(speed(), AttributeNameKey::from(7))]);
+        let dictionary = speed_key();
         let built = event(WriteOrdinal::at(4), 2, group, &dictionary).expect("a valid group builds an event");
         pretty_assertions::assert_eq!(built.ordinal, WriteOrdinal::at(6));
         pretty_assertions::assert_eq!(built.change_attribute_name_keys, vec![AttributeNameKey::from(7)]);
@@ -405,7 +408,7 @@ mod tests {
             change: &matched,
             subscriptions: vec![matched.subscription_key],
         };
-        let dictionary = HashMap::from([(speed(), AttributeNameKey::from(7))]);
+        let dictionary = speed_key();
         let built = event(WriteOrdinal::at(0), 0, group, &dictionary).expect("a valid group builds an event");
         pretty_assertions::assert_eq!(built.change_attribute_name_keys, vec![AttributeNameKey::from(7), AttributeNameKey::from(7)]);
     }
@@ -417,6 +420,44 @@ mod tests {
             change: &matched,
             subscriptions: vec![matched.subscription_key],
         };
-        assert!(event(WriteOrdinal::at(0), 0, group, &HashMap::new()).is_err());
+        assert!(event(WriteOrdinal::at(0), 0, group, &NameKeys::default()).is_err());
+    }
+
+    /// An event stores its states with every name as a key, so the commit
+    /// mints the names of both states with the changed attributes, each once.
+    #[test]
+    fn the_names_a_snapshot_holds_are_resolved_with_the_changed_attributes() {
+        let ex = |term: &str| format!("https://example.org/{term}");
+        let ngsi = |term: &str| format!("https://uri.etsi.org/ngsi-ld/{term}");
+        let document = json!([{
+            "@id": "urn:ngsi-ld:Vehicle:1",
+            "@type": [ex("Vehicle")],
+            ex("speed"): [{
+                "@type": [ngsi("Property")],
+                ngsi("hasValue"): [{"@value": 50}],
+                ex("accuracy"): [{"@type": [ngsi("Property")], ngsi("hasValue"): [{"@value": 0.5}]}]
+            }],
+            ex("driver"): [{
+                "@type": [ngsi("Relationship")],
+                ngsi("hasObject"): [{"@id": "urn:ngsi-ld:Person:1"}],
+                ngsi("hasObjectType"): [{"@id": ex("Person")}]
+            }]
+        }]);
+        let current = Arc::new(EntityState::from_slice(document.to_string().as_bytes()).expect("a stored entity"));
+        let mut changed = updated(1);
+        changed.entity_snapshot = Some(Arc::clone(&current));
+        changed.previous_snapshot = Some(current);
+        let other = updated(2);
+        let written = write(vec![changed, other]);
+        let mentioned = mentioned_names(&group(&[&written]));
+        let names = |names: &[&str]| names.iter().map(|name| ex(name)).collect::<Vec<_>>();
+        pretty_assertions::assert_eq!(
+            mentioned.attributes.iter().map(AttributeName::as_str).collect::<Vec<_>>(),
+            names(&["accuracy", "driver", "speed"])
+        );
+        pretty_assertions::assert_eq!(
+            mentioned.types.iter().map(EntityTypeName::as_str).collect::<Vec<_>>(),
+            names(&["Person", "Vehicle"])
+        );
     }
 }

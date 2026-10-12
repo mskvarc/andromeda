@@ -263,7 +263,16 @@ impl PostgresAtomicCommitter {
             HistoryPlacement::Inline(recorder) => history::apply(recorder, &mut tx, target, &record, intents).await?,
             HistoryPlacement::Queued(_) => deferred_history::apply(&mut tx, intents).await?,
         }
-        let (next, notifications) = notification_events::apply(&mut tx, target, &landed, &record, next, self.attribute_names.as_ref()).await?;
+        let (next, notifications) = notification_events::apply(
+            &mut tx,
+            target,
+            &landed,
+            &record,
+            next,
+            self.entity_type_names.as_ref(),
+            self.attribute_names.as_ref(),
+        )
+        .await?;
         let side_effects = side_effects::apply(&mut tx, target, &landed, &record, next).await?;
 
         tx.commit().await.map_err(|error| database(&error))?;

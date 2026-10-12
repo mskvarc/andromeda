@@ -21,14 +21,16 @@ use crate::{
     error::ContextStoreError,
     notification_delivery::{
         branches::{drainable_targets, is_reaped_branch},
-        claimed_event::{ClaimedEvents, RawClaimedEventRow},
+        claimed_event::{RawClaimedEventRow, ReadEvents, names_of},
         rows::{RawClaimedDeliveryRow, UnreadableClaimedDelivery},
     },
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::{context_target::ContextTarget, snapshot_target::SnapshotTarget};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_notification::{delivery_entry::DeliveryEntry, delivery_lease::LeaseTerm};
 use andromeda_postgresql_branch::table_of;
+use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,
     notification::{NotificationDeliveries, NotificationEvents},
@@ -62,10 +64,20 @@ use sea_query::{
     UpdateStatement,
 };
 use sea_query_sqlx::SqlxBinder;
-use sqlx::{FromRow, Postgres, Transaction, postgres::PgPool};
+use sqlx::{Postgres, Transaction, postgres::PgPool};
 
 /// The statement name the delivery claim is observed under.
 const DELIVERY_CLAIM: StatementName = StatementName("notification-delivery-claim");
+
+/// The dictionaries a claim reads the names of its events' states back
+/// through.
+#[derive(Debug, Clone, Copy)]
+pub struct ClaimDictionaries<'a> {
+    /// The `attribute_names` dictionary.
+    pub attribute_names: &'a dyn NameLookup<AttributeName>,
+    /// The `entity_type_names` dictionary.
+    pub entity_type_names: &'a dyn NameLookup<EntityTypeName>,
+}
 
 /// Claim up to `batch_size` due deliveries for `worker_id` under `lease`,
 /// sweeping the live branch and every Snapshot branch until the batch is filled.
@@ -78,12 +90,14 @@ const DELIVERY_CLAIM: StatementName = StatementName("notification-delivery-claim
 /// # Errors
 ///
 /// Returns [`ContextStoreError::Database`] when a statement fails for a reason
-/// other than a reaped branch, or [`ContextStoreError::StoredSnapshot`] when the
+/// other than a reaped branch, [`ContextStoreError::NameLookup`] when a
+/// dictionary cannot be read, or [`ContextStoreError::StoredSnapshot`] when the
 /// branch enumeration cannot read back a stored Snapshot identity. A single
 /// unreadable row is reported inside the returned vector, still leased and
 /// naming its branch and key, rather than as a failure of the claim.
 pub async fn claim_due(
     pool: &PgPool,
+    dictionaries: ClaimDictionaries<'_>,
     worker_id: LeaseHolder,
     lease: LeaseTerm,
     batch_size: i32,
@@ -94,7 +108,7 @@ pub async fn claim_due(
         if remaining <= 0 {
             break;
         }
-        match claim_branch(pool, &target, worker_id, lease, remaining).await {
+        match claim_branch(pool, dictionaries, &target, worker_id, lease, remaining).await {
             Ok(claimed) => {
                 remaining -= i32::try_from(claimed.len()).unwrap_or(remaining);
                 results.extend(claimed);
@@ -109,6 +123,7 @@ pub async fn claim_due(
 /// Claim and read back up to `batch_size` due deliveries from one branch.
 async fn claim_branch(
     pool: &PgPool,
+    dictionaries: ClaimDictionaries<'_>,
     target: &ContextTarget,
     worker_id: LeaseHolder,
     lease: LeaseTerm,
@@ -137,12 +152,14 @@ async fn claim_branch(
     let (sql, values) = claimed_events_statement(target, &event_keys).build_sqlx(PostgresQueryBuilder);
     let (unnest_alias, unnest_columns, ordinality) = ordinality_alias();
     let sql = apply_with_ordinality(sql, &unnest_alias, &unnest_columns, &ordinality);
-    let event_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut *tx).await?;
+    let event_rows: Vec<RawClaimedEventRow> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut *tx).await?;
 
     tx.commit().await?;
-    // The raw event rows borrow their snapshot text from the fetched rows, so
-    // each state is decoded straight from the bytes the driver received.
-    let events = ClaimedEvents::decode(event_rows.iter().map(RawClaimedEventRow::from_row).collect::<Result<Vec<_>, _>>()?);
+    let read = ReadEvents::read(event_rows);
+    let names = names_of(&read.held_keys(), dictionaries.attribute_names, dictionaries.entity_type_names)
+        .await
+        .map_err(ContextStoreError::NameLookup)?;
+    let events = read.assemble(&names);
     Ok(deliveries.into_iter().map(|delivery| delivery.into_entry(&events, target)).collect())
 }
 

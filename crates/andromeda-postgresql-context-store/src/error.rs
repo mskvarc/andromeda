@@ -4,6 +4,7 @@ use crate::{
     csource_registration::stored_registration_error::StoredRegistrationError,
     entity::{stored_entity_error::StoredEntityError, types_present::EntityTypesMissing},
     entity_map::mapper::StoredEntityMapError,
+    entity_state_record::state_record::StateRecordError,
     jsonld_context::mapper::ContextMapperError,
     migration_set::branch::BranchVersionError,
     schema_contract::error::SchemaContractError,
@@ -106,6 +107,10 @@ pub enum ContextStoreError {
     /// A JSON document the store writes could not be serialised.
     #[error("context store payload could not be encoded: {0}")]
     PayloadEncoding(#[source] serde_json::Error),
+    /// A committed Entity state has no `entity_state_record` under the keys
+    /// its commit resolved.
+    #[error("context store state record: {0}")]
+    StateRecord(#[from] StateRecordError),
     /// A write ordinal is past the `INTEGER` column that stores it.
     #[error("context store write ordinal: {0}")]
     OrdinalOutOfRange(#[from] WriteOrdinalOutOfRange),
@@ -186,6 +191,7 @@ impl ContextStoreError {
             ContextStoreError::Encoding(_)
             | ContextStoreError::CopyField(_)
             | ContextStoreError::PayloadEncoding(_)
+            | ContextStoreError::StateRecord(_)
             | ContextStoreError::OrdinalOutOfRange(_) => PersistenceFailure::Unencodable,
             ContextStoreError::Render(_) | ContextStoreError::StatementBuild(_) => PersistenceFailure::StatementUnbuildable,
             ContextStoreError::Migration(_) | ContextStoreError::SchemaContract(_) | ContextStoreError::BranchVersion(_) => PersistenceFailure::SchemaMismatch,
@@ -228,6 +234,7 @@ impl ContextStoreError {
             | ContextStoreError::BranchVersion(_)
             | ContextStoreError::StatementBuild(_)
             | ContextStoreError::PayloadEncoding(_)
+            | ContextStoreError::StateRecord(_)
             | ContextStoreError::OrdinalOutOfRange(_)
             | ContextStoreError::StoredRegistration(_)
             | ContextStoreError::StoredSubscription(_)
@@ -266,6 +273,7 @@ impl ContextStoreError {
             | ContextStoreError::BranchVersion(_)
             | ContextStoreError::StatementBuild(_)
             | ContextStoreError::PayloadEncoding(_)
+            | ContextStoreError::StateRecord(_)
             | ContextStoreError::OrdinalOutOfRange(_)
             | ContextStoreError::StoredRegistration(_)
             | ContextStoreError::StoredSubscription(_)

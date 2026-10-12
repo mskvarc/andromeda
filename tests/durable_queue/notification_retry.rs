@@ -8,12 +8,11 @@
 
 use crate::{
     notification_fixture::{delivery_ids, queue_notification, readable},
-    queue_database::queue_database,
+    queue_database::{delivery_queue, queue_database},
     queue_workers::{delivery_worker, holding_lease},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_notification::{delivery_entry::DeliveryKey, delivery_store::DeliveryStore};
-use andromeda_postgresql_context_store::notification_delivery::queue::NotificationDeliveryQueue;
 use chrono::{Duration, Utc};
 use pretty_assertions::assert_eq;
 use serial_test::serial;
@@ -50,7 +49,7 @@ async fn durable_queue_a_delivery_stays_claimable_through_repeated_failures_unti
     let pool = queue_database().await;
     let queued = queue_notification(&pool, 1).await;
     let delivery = *delivery_ids(&pool, &queued.record).await.first().expect("one queued delivery");
-    let queue = NotificationDeliveryQueue::new(&pool);
+    let queue = delivery_queue(&pool);
     let worker = delivery_worker();
 
     for attempt in 1..=MAX_ATTEMPTS {
@@ -101,7 +100,7 @@ async fn durable_queue_a_terminal_failure_retires_the_delivery_and_releases_its_
     let pool = queue_database().await;
     let queued = queue_notification(&pool, 1).await;
     let delivery = *delivery_ids(&pool, &queued.record).await.first().expect("one queued delivery");
-    let queue = NotificationDeliveryQueue::new(&pool);
+    let queue = delivery_queue(&pool);
     let worker = delivery_worker();
 
     let claimed = readable(

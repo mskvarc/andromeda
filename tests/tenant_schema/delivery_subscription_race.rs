@@ -20,6 +20,7 @@ use andromeda_context_commit::{subscription_key::SubscriptionKey, write_ordinal:
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
+use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
 use andromeda_postgresql_context_store::notification_delivery::{event_insert::insert_events_in_tx, rows::NewNotificationEvent};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::{database_access::connect_test_database, environment::TestEnvironment};
@@ -105,7 +106,8 @@ async fn delivery_insert_waits_out_a_concurrent_subscription_deletion_and_owes_i
         subscription_keys: vec![SubscriptionKey::try_from(key).expect("a positive subscription key")],
     }];
 
-    let insert = insert_events_in_tx(&mut write, &ContextTarget::Live, &record, &events);
+    let keys = NameKeys::default();
+    let insert = insert_events_in_tx(&mut write, &ContextTarget::Live, &record, &events, &keys);
     let (inserted, ()) = tokio::join!(insert, commit_once_the_insert_waits(pool, writer_pid, deletion));
     assert!(inserted.is_ok(), "the write must not fail on a subscription deleted under it: {inserted:?}");
     let owed: i64 = sqlx::query_scalar(

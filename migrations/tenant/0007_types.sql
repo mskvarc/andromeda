@@ -67,3 +67,49 @@ create type sub_attribute_tree as (
     elements sub_attribute[]
 );
 
+-- One top-level attribute instance of an Entity's state outside
+-- `current_attributes`: a row of that table without its `entity_key`, field
+-- for field in the table's column order and with the same types, so a record
+-- and a current row decode alike and SQL moves one into the other without a
+-- cast. The codes and keys are those of `sub_attribute`; `ordinal` is the
+-- instance's written position among the Entity's instances, from 0.
+create type attribute_instance_record as (
+    created_at timestamptz,
+    modified_at timestamptz,
+    attribute_name_key integer,
+    ordinal integer,
+    attribute_kind smallint,
+    value_kind smallint,
+    value_date_time timestamptz,
+    observed_at timestamptz,
+    expires_at timestamptz,
+    value_datatype_key integer,
+    value_type_key integer,
+    unit_code_id smallint,
+    value_boolean boolean,
+    dataset_id text,
+    value_number numeric,
+    value_string text,
+    value_language text,
+    value_geometry geometry,
+    value_geometry_members jsonb,
+    value_object jsonb,
+    value_uri text,
+    value_long_text text,
+    value_long_uri text,
+    object_type_keys integer[],
+    proof_seals jsonb,
+    sub_attributes sub_attribute[]
+);
+
+-- One Entity's state beside its identifier (clause 4.5.1): its types as
+-- `entity_type_names` keys in written order, its Scopes as written (empty
+-- when it has none), its entity-level `expiresAt` (clause 4.22), and its
+-- top-level attribute instances in ordinal order.
+create type entity_state_record as (
+    entity_type_name_keys integer[],
+    scope_paths text[],
+    expires_at timestamptz,
+    instances attribute_instance_record[]
+);
+

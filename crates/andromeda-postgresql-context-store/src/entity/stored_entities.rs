@@ -9,7 +9,6 @@
 
 use crate::{
     current_attribute::{
-        assemble::assemble,
         read::{RowSelection, row_of, rows_of},
         row::CurrentAttributeRow,
     },
@@ -19,11 +18,12 @@ use crate::{
         repo::EntityRepository,
         stored_entity_error::StoredEntityError,
     },
+    entity_state_record::stored_state::StoredState,
     error::ContextStoreError,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::port::retrieved_entity::RetrievedEntity;
-use andromeda_ngsi_ld_entity::{date_time_text::DateTimeText, entity_state::EntityState, entity_types::EntityTypes, scopes::Scopes};
+use andromeda_ngsi_ld_entity::scopes::Scopes;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     entity_type_name::EntityTypeName,
@@ -194,18 +194,14 @@ impl GatheredEntities {
         self.heads
             .into_iter()
             .map(|head| {
-                let rows = self.rows.remove(&head.key).unwrap_or_default();
-                let attributes = assemble(rows, &names).map_err(|error| StoredEntityError::Attributes(Box::new(error)))?;
-                let type_names = head
-                    .types
-                    .iter()
-                    // clone: every Entity of the read owns its type names
-                    .map(|key| types.get(key).cloned().ok_or(StoredEntityError::TypeKey(*key)))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let entity_types = EntityTypes::try_from_names(type_names).map_err(|_| StoredEntityError::Untyped)?;
-                let expires_at = head.sys_attrs.expires_at.map(DateTimeText::from_instant);
+                let stored = StoredState {
+                    types: head.types,
+                    scope: head.scope,
+                    expires_at: head.sys_attrs.expires_at,
+                    rows: self.rows.remove(&head.key).unwrap_or_default(),
+                };
                 Ok(RetrievedEntity {
-                    state: Arc::new(EntityState::from_parts(head.id, entity_types, head.scope, expires_at, attributes)),
+                    state: Arc::new(stored.assemble(head.id, &names)?),
                     sys_attrs: head.sys_attrs,
                 })
             })

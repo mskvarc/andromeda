@@ -7,15 +7,8 @@
 //! `sqlx` derive. Converting a record into an element is where a stored
 //! element breaking its invariants is refused, as a row's members are.
 
-use crate::{
-    stored_json::StoredJson,
-    stored_members::{InstanceMembers, MemberColumns, StoredInstanceError},
-    stored_value::StoredValue,
-};
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
-use andromeda_postgresql_encoding::ewkb::{EwkbError, encode};
-use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
-use andromeda_unit_catalog::unit_code_id::UnitCodeId;
+use crate::stored_members::{InstanceMembers, MemberColumns, StoredInstanceError};
+use andromeda_postgresql_encoding::ewkb::EwkbError;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::value::RawValue;
@@ -143,48 +136,53 @@ impl TryFrom<SubAttributeElement> for SubAttributeRecord {
             created_at,
             modified_at,
         } = element;
-        let value_kind = ValueKind::code(members.value.kind());
-        let value_datatype_key = members.value.datatype_key().map(EntityTypeNameKey::get);
-        let value_language = members.value.language().map(|language| language.as_str().to_owned());
-        let mut record = SubAttributeRecord {
-            parent,
-            attribute_name_key: members.attribute_name_key.get(),
-            dataset_id: members.dataset_id.as_ref().map(|dataset_id| dataset_id.as_str().to_owned()),
-            attribute_kind: AttributeKind::code(members.attribute_kind),
+        let MemberColumns {
+            attribute_name_key,
+            dataset_id,
+            attribute_kind,
             value_kind,
-            value_number: None,
-            value_string: None,
-            value_boolean: None,
-            value_date_time: None,
-            value_geometry: None,
-            value_geometry_members: None,
-            value_object: None,
-            value_uri: None,
+            value_number,
+            value_string,
+            value_boolean,
+            value_date_time,
+            value_geometry,
+            value_geometry_members,
+            value_object,
+            value_uri,
             value_datatype_key,
             value_language,
-            value_type_key: members.value_type_key.map(EntityTypeNameKey::get),
-            object_type_keys: (!members.object_type_keys.is_empty()).then(|| members.object_type_keys.iter().map(|key| key.get()).collect()),
-            proof_seals: members.proof_seals.map(StoredJson::into_json),
-            unit_code_id: members.unit_code_id.map(UnitCodeId::get),
-            observed_at: members.observed_at,
+            value_type_key,
+            object_type_keys,
+            proof_seals,
+            unit_code_id,
+            observed_at,
+            expires_at,
+        } = MemberColumns::try_from(members)?;
+        Ok(SubAttributeRecord {
+            parent,
+            attribute_name_key,
+            dataset_id,
+            attribute_kind,
+            value_kind,
+            value_number,
+            value_string,
+            value_boolean,
+            value_date_time,
+            value_geometry,
+            value_geometry_members,
+            value_object,
+            value_uri,
+            value_datatype_key,
+            value_language,
+            value_type_key,
+            object_type_keys,
+            proof_seals,
+            unit_code_id,
+            observed_at,
             created_at,
             modified_at,
-            expires_at: members.expires_at,
-        };
-        match members.value {
-            // clone: the record owns the decimal it binds, and the number gives up none.
-            StoredValue::Number { number, .. } => record.value_number = Some(number.decimal().clone()),
-            StoredValue::String { text, .. } => record.value_string = Some(text),
-            StoredValue::Boolean { flag, .. } => record.value_boolean = Some(flag),
-            StoredValue::DateTime { instant, .. } => record.value_date_time = Some(instant),
-            StoredValue::Geometry { form, members } => {
-                record.value_geometry = Some(EwkbGeometry(encode(&form)?.to_vec()));
-                record.value_geometry_members = members.map(StoredJson::into_json);
-            }
-            StoredValue::Object(object) => record.value_object = Some(object.into_json()),
-            StoredValue::Uri(uri) => record.value_uri = Some(String::from(uri)),
-        }
-        Ok(record)
+            expires_at,
+        })
     }
 }
 

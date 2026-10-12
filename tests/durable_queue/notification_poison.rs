@@ -10,7 +10,7 @@
 
 use crate::{
     notification_fixture::{delivery_ids, queue_notification},
-    queue_database::queue_database,
+    queue_database::{delivery_queue, queue_database},
 };
 use andromeda_notification::{
     delivery_config::DeliveryConfig,
@@ -18,7 +18,7 @@ use andromeda_notification::{
     delivery_entry::{DeliveryEntry, DeliveryKey},
     delivery_store::DeliveryStore,
 };
-use andromeda_postgresql_context_store::{notification_delivery::queue::NotificationDeliveryQueue, pending_work::earliest_obligation};
+use andromeda_postgresql_context_store::pending_work::earliest_obligation;
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use pretty_assertions::assert_eq;
@@ -93,7 +93,7 @@ async fn durable_queue_an_unreadable_delivery_is_dead_lettered_without_holding_b
 
     let transport = Arc::new(AcceptingTransport::default());
     let drain = NotificationDeliveryDrain::new(
-        Arc::new(NotificationDeliveryQueue::new(&pool)) as Arc<dyn DeliveryStore>,
+        Arc::new(delivery_queue(&pool)) as Arc<dyn DeliveryStore>,
         Arc::clone(&transport) as Arc<dyn NotificationDeliveryTransport>,
         &DeliveryConfig::default(),
     )

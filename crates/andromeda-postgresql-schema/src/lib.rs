@@ -22,6 +22,7 @@ pub mod context_source_change_clock;
 pub mod csr;
 pub mod current;
 pub mod entity_map;
+pub mod entity_state_record;
 pub mod jsonld;
 pub mod maintenance;
 pub mod name_dictionary;

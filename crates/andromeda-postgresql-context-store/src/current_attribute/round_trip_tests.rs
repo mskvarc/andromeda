@@ -41,27 +41,27 @@ const GEOJSON: &str = "https://purl.org/geojson/vocab#";
 const EX: &str = "https://ex.org/";
 
 /// The expanded IRI of an NGSI-LD core term.
-pub(super) fn ngsi(term: &str) -> String {
+pub(crate) fn ngsi(term: &str) -> String {
     format!("{NGSI}{term}")
 }
 
 /// The expanded IRI of an example term.
-pub(super) fn ex(term: &str) -> String {
+pub(crate) fn ex(term: &str) -> String {
     format!("{EX}{term}")
 }
 
 /// The expanded IRI of an NGSI-LD attribute family.
-pub(super) fn family(term: &str) -> Value {
+pub(crate) fn family(term: &str) -> Value {
     json!([ngsi(term)])
 }
 
 /// A typed `DateTime` member.
-fn date_time(text: &str) -> Value {
+pub(crate) fn date_time(text: &str) -> Value {
     json!([{"@type": ngsi("DateTime"), "@value": text}])
 }
 
 /// `instance` with the members of `extra` added.
-pub(super) fn with(mut instance: Value, extra: &Value) -> Value {
+pub(crate) fn with(mut instance: Value, extra: &Value) -> Value {
     if let (Some(instance), Some(extra)) = (instance.as_object_mut(), extra.as_object()) {
         instance.extend(extra.iter().map(|(key, value)| (key.clone(), value.clone())));
     }
@@ -69,7 +69,7 @@ pub(super) fn with(mut instance: Value, extra: &Value) -> Value {
 }
 
 /// A Property instance holding the expanded `values`.
-pub(super) fn property(values: &Value) -> Value {
+pub(crate) fn property(values: &Value) -> Value {
     json!({"@type": family("Property"), ngsi("hasValue"): values})
 }
 
@@ -91,7 +91,7 @@ fn geometry_members() -> Value {
 
 /// One instance of each of the eight families, every optional member set,
 /// each carrying `sub_attributes`.
-fn every_family(sub_attributes: &Value) -> Value {
+pub(crate) fn every_family(sub_attributes: &Value) -> Value {
     let geo = point(&json!([{"@value": 13.5}, {"@value": 52.25}]), &geometry_members());
     json!({
         ex("speed"): [with(with(property(&json!([{"@value": 55.5}])), &json!({
@@ -151,7 +151,7 @@ fn every_family(sub_attributes: &Value) -> Value {
 
 /// One sub-attribute of each of the eight families, each holding one
 /// sub-attribute of the same family.
-fn nested_every_family() -> Value {
+pub(crate) fn nested_every_family() -> Value {
     let inner = every_family(&json!({}));
     let mut nested = serde_json::Map::new();
     if let Some(families) = inner.as_object() {
@@ -170,7 +170,7 @@ fn nested_every_family() -> Value {
 }
 
 /// The stored document of an Entity with `attributes`.
-pub(super) fn document(attributes: &Value) -> Value {
+pub(crate) fn document(attributes: &Value) -> Value {
     json!([with(json!({"@id": "urn:ngsi-ld:Building:1", "@type": [ex("Building")]}), attributes)])
 }
 
@@ -180,7 +180,7 @@ fn now() -> SystemInstant {
 }
 
 /// The state a create commits from the stored `document`.
-pub(super) fn committed(document: &Value) -> EntityState {
+pub(crate) fn committed(document: &Value) -> EntityState {
     committed_text(&document.to_string())
 }
 
@@ -194,9 +194,18 @@ fn committed_text(text: &str) -> EntityState {
 /// Dictionary keys for every name `state` mentions, both ways: the names a
 /// write interns ([`MentionedNames`]), which flattening every fixture proves
 /// complete.
-pub(super) fn dictionary(state: &EntityState) -> (NameKeys, KeyNames) {
+pub(crate) fn dictionary(state: &EntityState) -> (NameKeys, KeyNames) {
+    dictionary_of([state])
+}
+
+/// Dictionary keys for every name `states` mention, their entity types
+/// included, both ways.
+pub(crate) fn dictionary_of<'a>(states: impl IntoIterator<Item = &'a EntityState>) -> (NameKeys, KeyNames) {
     let mut mentioned = MentionedNames::default();
-    mentioned.collect(state.attributes());
+    for state in states {
+        mentioned.collect(state.attributes());
+        mentioned.types.extend(state.types().as_slice().iter().cloned());
+    }
     let names: IndexSet<AttributeName> = mentioned.attributes.into_iter().collect();
     let types: IndexSet<EntityTypeName> = mentioned.types.into_iter().collect();
     let attribute_keys = names.iter().zip(1..).map(|(name, key)| (name.clone(), AttributeNameKey::from(key)));

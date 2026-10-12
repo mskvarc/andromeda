@@ -32,7 +32,7 @@ use crate::tenant_factory::{
         },
         expiry::register_expiry_workers,
         maintenance::{register_entity_side_effects, register_spatial_workers},
-        notification_delivery::DeliveryDrainDrive,
+        notification_delivery::{DeliveryDrainDrive, delivery_queue},
         pool_gauges::register_pool_gauges,
         snapshot::{PreparationRecovery, SnapshotStatusWake, register_snapshot_workers},
         table_size_gauges::register_table_size_gauges,
@@ -182,7 +182,7 @@ pub(super) fn supervise_tasks(
     let interval_subscription_changes = subscription.clone();
     register_notification_workers(
         &task_supervisor,
-        &storage.pool,
+        delivery_queue(storage),
         &config.notifications.delivery,
         notification_processor,
         &entity,

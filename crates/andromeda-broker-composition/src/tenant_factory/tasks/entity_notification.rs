@@ -33,6 +33,7 @@ use andromeda_jsonld::operation_hit_scope::run_in_operation_scope;
 use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
 use andromeda_notification::{
     delivery_config::DeliveryConfig,
+    delivery_store::DeliveryStore,
     interval::{IntervalNotificationDeps, IntervalNotificationOperation},
     processor::{NotificationProcessor, NotificationProcessorDeps},
 };
@@ -47,7 +48,6 @@ use andromeda_task_runtime::{
     task_name::TaskName,
     wake_trigger::wake_channel,
 };
-use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{
     broadcast,
@@ -109,6 +109,8 @@ pub(super) fn compose_notification_processor(
 /// the resident processor, and the drain delivering the notifications queued
 /// in the tenant's database.
 ///
+/// The drain claims from `store`, the queue the tenant's database holds.
+///
 /// The processor evaluates the tenant's committed entity changes only under
 /// live delivery, sending each notification at once. Under durable delivery
 /// the committer records every notification in the commit that raised it (the
@@ -123,7 +125,7 @@ pub(super) fn compose_notification_processor(
 /// or when the supervisor refuses a registration.
 pub(super) fn register_notification_workers(
     supervisor: &TaskSupervisor,
-    pool: &PgPool,
+    store: Arc<dyn DeliveryStore>,
     config: &DeliveryConfig,
     processor: Arc<NotificationProcessor>,
     entity_changes: &broadcast::Sender<ContextChangeEvent>,
@@ -142,7 +144,7 @@ pub(super) fn register_notification_workers(
         Arc::clone(&processor), // clone: the resident processor is also the delivery drain's transport.
         delivery,
     )?;
-    register_notification_delivery(supervisor, pool, config, processor, drive)
+    register_notification_delivery(supervisor, store, config, processor, drive)
 }
 
 /// What the periodic sweep reads and delivers through beside the tenant's

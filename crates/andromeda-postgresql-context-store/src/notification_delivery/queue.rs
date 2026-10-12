@@ -6,11 +6,17 @@
 //! delivery worker above it knows nothing of the two reads.
 
 use crate::{
-    notification_delivery::{acknowledge, claim, cleanup, rows::UnreadableClaimedDelivery},
+    notification_delivery::{
+        acknowledge,
+        claim::{self, ClaimDictionaries},
+        cleanup,
+        rows::UnreadableClaimedDelivery,
+    },
     store_fault::persistence_failure,
 };
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_notification::{
     delivery_claim::{DeliveryClaim, UnreadableDelivery},
     delivery_entry::{DeliveryEntry, DeliveryKey},
@@ -18,29 +24,50 @@ use andromeda_notification::{
     delivery_store::DeliveryStore,
     error::NotificationError,
 };
+use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::postgres::PgPool;
+use std::sync::Arc;
 
 /// One tenant's notification delivery queue.
 #[derive(Debug)]
 pub struct NotificationDeliveryQueue {
     /// The tenant connection pool.
     pool: PgPool,
+    /// The tenant's `attribute_names` dictionary, which the states a claim
+    /// reads hold their attribute names in.
+    attribute_names: Arc<dyn NameLookup<AttributeName>>,
+    /// The tenant's `entity_type_names` dictionary, which the states a claim
+    /// reads hold their types and type IRIs in.
+    entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
 }
 
 impl NotificationDeliveryQueue {
-    /// Open the delivery queue held in the given tenant's database.
+    /// Open the delivery queue held in the given tenant's database, reading
+    /// the names its states hold through the tenant's dictionaries.
     #[must_use]
-    pub fn new(pool: &PgPool) -> NotificationDeliveryQueue {
-        NotificationDeliveryQueue { pool: pool.clone() } // clone: Arc ref-count bump (PgPool is Arc-based)
+    pub fn new(
+        pool: &PgPool,
+        attribute_names: Arc<dyn NameLookup<AttributeName>>,
+        entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
+    ) -> NotificationDeliveryQueue {
+        NotificationDeliveryQueue {
+            pool: pool.clone(), // clone: Arc ref-count bump (PgPool is Arc-based)
+            attribute_names,
+            entity_type_names,
+        }
     }
 }
 
 #[async_trait]
 impl DeliveryStore for NotificationDeliveryQueue {
     async fn claim_pending(&self, worker_id: &LeaseHolder, lease: LeaseTerm, batch_size: i32) -> Result<Vec<DeliveryClaim>, NotificationError> {
-        let claimed = claim::claim_due(&self.pool, *worker_id, lease, batch_size)
+        let dictionaries = ClaimDictionaries {
+            attribute_names: self.attribute_names.as_ref(),
+            entity_type_names: self.entity_type_names.as_ref(),
+        };
+        let claimed = claim::claim_due(&self.pool, dictionaries, *worker_id, lease, batch_size)
             .await
             .map_err(|error| NotificationError::Persistence(persistence_failure(&error)))?;
         Ok(claimed.into_iter().map(delivery_claim).collect())

@@ -8,13 +8,11 @@
 
 use crate::{
     notification_fixture::{delivery_ids, queue_notification, readable},
-    queue_database::{deliveries_of, queue_database},
+    queue_database::{deliveries_of, delivery_queue, queue_database},
     queue_workers::{delivery_worker, holding_lease},
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_notification::{delivery_entry::DeliveryKey, delivery_store::DeliveryStore};
-use andromeda_postgresql_context_store::notification_delivery::queue::NotificationDeliveryQueue;
 use chrono::{Duration, Utc};
 use pretty_assertions::assert_eq;
 use serial_test::serial;
@@ -54,7 +52,7 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
             "each matching Subscription owes exactly one delivery"
         );
     }
-    let queue = NotificationDeliveryQueue::new(&pool);
+    let queue = delivery_queue(&pool);
     let worker = delivery_worker();
 
     let claimed = readable(queue.claim_pending(&worker, holding_lease(), 10).await.expect("claim the fan-out"));
@@ -92,16 +90,13 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
         .await
         .expect("retained delivery");
 
+    let stored = stored_snapshot(&pool).await;
+    assert!(stored.is_some(), "the event stores the state it was written with");
     let removed = queue.delete_delivered_before(Utc::now() + Duration::minutes(1)).await.expect("first reap");
     assert_eq!(removed, 2, "only the acknowledged deliveries are past the horizon");
     assert_eq!(stored_deliveries(&pool).await, 2, "the exhausted and retained deliveries stay");
     assert_eq!(stored_events(&pool).await, 1, "the event survives while any delivery references it");
-    let retained: Option<String> = sqlx::query_scalar("SELECT entity_snapshot::text FROM notification_events")
-        .fetch_one(&pool)
-        .await
-        .expect("retained payload");
-    let retained = retained.map(|text| EntityState::from_slice(text.as_bytes()).expect("the retained payload is an entity state"));
-    assert_eq!(retained.as_ref(), payload.as_deref(), "no surviving delivery loses its payload");
+    assert_eq!(stored_snapshot(&pool).await, stored, "no surviving delivery loses its payload");
 
     // Dead-letter retention removes the exhausted delivery kept as evidence;
     // the delivered-row reap never touches an undelivered row.
@@ -157,7 +152,7 @@ async fn durable_queue_a_delivery_exhausted_by_repeated_retries_is_reaped() {
     let queued = queue_notification(&pool, 1).await;
     let deliveries = delivery_ids(&pool, &queued.record).await;
     assert_eq!(deliveries.len(), 1, "one Subscription owes exactly one delivery");
-    let queue = NotificationDeliveryQueue::new(&pool);
+    let queue = delivery_queue(&pool);
     let worker = delivery_worker();
 
     for attempt in 0..MAX_ATTEMPTS {
@@ -212,4 +207,12 @@ async fn durable_queue_a_delivery_exhausted_by_repeated_retries_is_reaped() {
     assert_eq!(orphaned, 1, "the event the reaped delivery released is picked up by the orphan pass");
     assert_eq!(stored_events(&pool).await, 0, "no unreferenced event survives cleanup");
     pool.close().await;
+}
+
+/// The stored state of the one event the queue holds, as its record's text.
+async fn stored_snapshot(pool: &PgPool) -> Option<String> {
+    sqlx::query_scalar("SELECT entity_snapshot::text FROM notification_events")
+        .fetch_one(pool)
+        .await
+        .expect("the stored payload")
 }

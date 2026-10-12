@@ -28,6 +28,8 @@ pub mod current_attribute;
 pub mod entity;
 /// Entity Map persistence (clauses 5.2.39 and 5.5.14).
 pub mod entity_map;
+/// One Entity's state as the `entity_state_record` a queue stores it in.
+pub mod entity_state_record;
 /// Error types for the context store crate.
 pub mod error;
 /// The platform route from minted subscription identifiers to tenants (clause 5.8.1.4).

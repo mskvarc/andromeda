@@ -48,8 +48,12 @@ create table notification_events (
     change_kinds smallint[] compression lz4 not null,
     change_attribute_name_keys integer[] compression lz4 not null,
     change_dataset_ids text[] compression lz4 collate "C" not null,
-    entity_snapshot json compression lz4,
-    previous_snapshot json compression lz4,
+    -- The Entity's state after the change; for a deletion, the state it
+    -- removed, which is also its previous state, so a deletion stores no
+    -- `previous_snapshot`.
+    entity_snapshot entity_state_record compression lz4,
+    -- The Entity's state before a change that left it in place.
+    previous_snapshot entity_state_record compression lz4,
     -- The clause 4.8 createdAt, modifiedAt and expiresAt of an Entity a
     -- deletion removed. By delivery the Entity's row is gone, so clause 5.8.6
     -- can only report them from here; a change that leaves the Entity in place
@@ -63,6 +67,7 @@ create table notification_events (
     constraint chk_notification_events_lifecycle check (lifecycle between 1 and 3),
     constraint chk_notification_events_change_kinds check (change_kinds <@ array[1, 2, 3]::smallint[]),
     constraint chk_notification_events_change_arity check (cardinality(change_attribute_name_keys) = cardinality(change_kinds) and cardinality(change_dataset_ids) = cardinality(change_kinds)),
+    constraint chk_notification_events_deletion_state_once check (lifecycle <> 3 or previous_snapshot is null),
     constraint chk_notification_events_entity_system_times check (num_nonnulls (entity_created_at, entity_modified_at) in (0, 2) and (entity_expires_at is null or entity_created_at is not null)),
     constraint chk_notification_events_entity_id_length check (octet_length(entity_id) <= 1024)
 )

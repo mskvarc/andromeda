@@ -8,7 +8,7 @@
 
 use crate::migration_set::{
     branch::branch_migrations,
-    declared_schema::{ConstraintKind, DeclaredFunction, DeclaredIndex, DeclaredSchema, DeclaredTrigger, every_migration_sql},
+    declared_schema::{ConstraintKind, DeclaredColumn, DeclaredFunction, DeclaredIndex, DeclaredSchema, DeclaredTrigger, every_migration_sql},
 };
 use pretty_assertions::assert_eq;
 
@@ -108,6 +108,24 @@ fn an_element_names_its_parent_by_an_integer_position() {
         .find_map(|sql| sql.split_once("create type sub_attribute as (").map(|(_, fields)| fields.to_owned()))
         .unwrap_or_else(|| panic!("no migration declares sub_attribute"));
     assert!(fields.trim_start().starts_with("parent integer,"), "{fields}");
+}
+
+/// A queue holds an Entity's state as `attribute_instance_record`s, which SQL
+/// moves into `current_attributes` rows field for field: the record is the
+/// table's columns but `entity_key`, in order and with the same types.
+#[test]
+fn an_instance_record_declares_the_current_attributes_columns_in_order() {
+    let schema = DeclaredSchema::of_every_migration();
+    let fields = |table: &str, columns: &[DeclaredColumn]| {
+        columns
+            .iter()
+            .filter(|column| column.table == table && column.name != "entity_key")
+            .map(|column| (column.name.clone(), column.type_word()))
+            .collect::<Vec<_>>()
+    };
+    let record = fields("attribute_instance_record", &schema.composite_fields);
+    assert!(!record.is_empty(), "no migration declares attribute_instance_record");
+    assert_eq!(record, fields(TABLE, &schema.columns));
 }
 
 #[test]

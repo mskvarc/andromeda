@@ -76,12 +76,17 @@ const CATALOG_ASSIGNED_IDENTIFIERS: &[(&str, &str)] = &[
 ];
 
 /// The `jsonb` columns and composite type fields, each one SQL navigates
-/// inside (`table` names the composite type for a field). Every other JSON
-/// document is stored as `json`, which keeps the text it was written as.
+/// inside, or a record field holding such a column's value field for field,
+/// which keeps the column's type so SQL moves the value without a cast
+/// (`table` names the composite type for a field). Every other JSON document
+/// is stored as `json`, which keeps the text it was written as.
 const NAVIGATED_JSONB: &[(&str, &str)] = &[
     ("attribute_history", "metadata"),
     ("attribute_history", "value_geometry_members"),
     ("attribute_history", "value_object"),
+    ("attribute_instance_record", "proof_seals"),
+    ("attribute_instance_record", "value_geometry_members"),
+    ("attribute_instance_record", "value_object"),
     ("context_source_registrations", "additional_properties"),
     ("current_attributes", "proof_seals"),
     ("current_attributes", "value_geometry_members"),

@@ -13,6 +13,7 @@ use crate::tenant_factory::{
     assembly_invariant::{AssemblyInvariant, RetentionSetting},
     background_pacer::BackgroundPacer,
     error::TenantAssemblyError,
+    storage::TenantStorage,
     tasks::{notification_schedule::classify_notification_failure, retention::retention_duration},
 };
 use andromeda_notification::{
@@ -36,7 +37,6 @@ use andromeda_task_runtime::{
     wake_trigger::{DrainFallbackPolicy, DrainWakeReceiver},
 };
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
 use std::{
     sync::{Arc, atomic::AtomicU64},
     time::Duration,
@@ -53,8 +53,19 @@ pub(super) struct DeliveryDrainDrive {
     pub(super) pacer: Arc<BackgroundPacer>,
 }
 
+/// The queue the tenant's database holds, reading the names its queued
+/// states hold through the tenant's dictionaries.
+pub(super) fn delivery_queue(storage: &TenantStorage) -> Arc<dyn DeliveryStore> {
+    Arc::new(NotificationDeliveryQueue::new(
+        &storage.pool,
+        Arc::clone(&storage.attribute_names),   // clone: the queue shares the tenant's one dictionary cache.
+        Arc::clone(&storage.entity_type_names), // clone: the queue shares the tenant's one dictionary cache.
+    ))
+}
+
 /// Register the drain delivering the notifications queued in the tenant's
-/// database through `transport`, and the cleanup reaping what it finished.
+/// database `store` through `transport`, and the cleanup reaping what it
+/// finished.
 ///
 /// # Errors
 ///
@@ -62,12 +73,11 @@ pub(super) struct DeliveryDrainDrive {
 /// or when the supervisor refuses a registration.
 pub(super) fn register_notification_delivery(
     supervisor: &TaskSupervisor,
-    pool: &PgPool,
+    store: Arc<dyn DeliveryStore>,
     config: &DeliveryConfig,
     transport: Arc<dyn NotificationDeliveryTransport>,
     drive: DeliveryDrainDrive,
 ) -> Result<(), TenantAssemblyError> {
-    let store = Arc::new(NotificationDeliveryQueue::new(pool)) as Arc<dyn DeliveryStore>;
     let drain = Arc::new(NotificationDeliveryDrain::new(store, transport, config).map_err(|error| AssemblyInvariant::NotificationDrain(Box::new(error)))?);
     let DeliveryDrainDrive { wake, pacer } = drive;
     // clone: delivery and cleanup share one stateless delivery operation and the tenant's one pacer.

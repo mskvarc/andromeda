@@ -7,13 +7,12 @@
 
 use crate::{
     notification_fixture::{delivery_ids, queue_notification, readable},
-    queue_database::queue_database,
+    queue_database::{delivery_queue, queue_database},
     queue_workers::{delivery_worker, expiring_lease, holding_lease},
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_notification::{delivery_entry::DeliveryKey, delivery_lease::DeliveryLeaseError, delivery_store::DeliveryStore};
-use andromeda_postgresql_context_store::notification_delivery::queue::NotificationDeliveryQueue;
 use chrono::{DateTime, Utc};
 use pretty_assertions::assert_eq;
 use serial_test::serial;
@@ -40,7 +39,7 @@ async fn durable_queue_a_due_delivery_is_leased_to_exactly_one_worker() {
     let pool = queue_database().await;
     let queued = queue_notification(&pool, 1).await;
     let delivery = *delivery_ids(&pool, &queued.record).await.first().expect("one queued delivery");
-    let queue = NotificationDeliveryQueue::new(&pool);
+    let queue = delivery_queue(&pool);
 
     let first = delivery_worker();
     let second = delivery_worker();
@@ -69,7 +68,7 @@ async fn durable_queue_a_stale_worker_cannot_acknowledge_a_reclaimed_delivery() 
     let pool = queue_database().await;
     let queued = queue_notification(&pool, 1).await;
     let delivery = *delivery_ids(&pool, &queued.record).await.first().expect("one queued delivery");
-    let queue = NotificationDeliveryQueue::new(&pool);
+    let queue = delivery_queue(&pool);
 
     let stale = delivery_worker();
     let claimed = readable(queue.claim_pending(&stale, expiring_lease(), BATCH_SIZE).await.expect("first claim"));

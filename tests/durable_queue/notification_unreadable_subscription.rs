@@ -134,7 +134,7 @@ async fn durable_queue_a_delivery_whose_subscription_cannot_be_read_stays_pendin
             lifecycle: 1,
             entity_id: &entity_id,
             change: Vec::new(),
-            entity_snapshot: json!([{"@id": entity_id, "@type": [PROBE_TYPE]}]),
+            snapshot_type: PROBE_TYPE,
         },
     )
     .await;

@@ -11,7 +11,7 @@
 
 use crate::{
     notification_fixture::{decoded, entity_document, entity_id, entity_snapshot, readable, subscription_id},
-    queue_database::{attribute_name, deliveries_of, events_of, queue_database, record_events, subscription, subscription_key},
+    queue_database::{attribute_name, deliveries_of, delivery_queue, events_of, queue_database, record_events, subscription, subscription_key},
     queue_workers::{delivery_worker, holding_lease},
 };
 use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
@@ -25,7 +25,7 @@ use andromeda_ngsi_ld_entity::{
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
 use andromeda_notification::delivery_store::DeliveryStore;
-use andromeda_postgresql_context_store::notification_delivery::{queue::NotificationDeliveryQueue, rows::NewNotificationEvent};
+use andromeda_postgresql_context_store::notification_delivery::rows::NewNotificationEvent;
 use chrono::Utc;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
@@ -184,7 +184,7 @@ async fn durable_queue_one_event_owes_exactly_one_delivery_per_matching_subscrip
         "a hundred delivery rows ({queue_state} bytes) must cost less than one stored payload ({payload} bytes)"
     );
 
-    let queue = NotificationDeliveryQueue::new(&pool);
+    let queue = delivery_queue(&pool);
     let worker = delivery_worker();
     let claimed = readable(queue.claim_pending(&worker, holding_lease(), 200).await.expect("claim the whole fan-out"));
     assert_eq!(claimed.len(), HIGH_FAN_OUT + 1, "every owed delivery is claimable");
@@ -291,13 +291,13 @@ async fn durable_queue_claiming_a_delivery_leaves_its_event_untouched() {
     // `xmin` is the transaction that produced the event's current row version:
     // a claim that rewrote the event, rather than only its delivery, would
     // change it.
-    let before: String = sqlx::query_scalar("SELECT xmin::text FROM notification_events WHERE write_id = $1")
+    let before: (String, String) = sqlx::query_as("SELECT xmin::text, entity_snapshot::text FROM notification_events WHERE write_id = $1")
         .bind(record.write_id().as_uuid())
         .fetch_one(&pool)
         .await
         .expect("event row version");
 
-    let queue = NotificationDeliveryQueue::new(&pool);
+    let queue = delivery_queue(&pool);
     let worker = delivery_worker();
     let claimed = readable(queue.claim_pending(&worker, holding_lease(), 10).await.expect("claim"));
     assert_eq!(claimed.len(), 1);
@@ -307,11 +307,11 @@ async fn durable_queue_claiming_a_delivery_leaves_its_event_untouched() {
         .fetch_one(&pool)
         .await
         .expect("event row version after the claim");
-    assert_eq!(after.0, before, "a claim must not rewrite the event row");
+    assert_eq!(after, before, "a claim must not rewrite the event row or its stored payload");
     assert_eq!(
-        EntityState::from_slice(after.1.as_bytes()).expect("the stored payload is an entity state"),
-        snapshot,
-        "the stored payload is untouched by queue traffic"
+        claimed.first().and_then(|entry| entry.event.entity_snapshot.as_deref()),
+        Some(&snapshot),
+        "the claim reads the stored payload back as the state written"
     );
     pool.close().await;
 }

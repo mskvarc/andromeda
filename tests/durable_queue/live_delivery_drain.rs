@@ -16,12 +16,16 @@
 //! at every lease expiry.
 
 use crate::notification_adapter::NotificationAdapter;
+use andromeda_postgresql_context_store::entity_state_record::state_record::EntityStateRecord;
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
-use andromeda_test_harness::{dictionary_seed::attribute_name_key, environment::TestEnvironment};
+use andromeda_test_harness::{
+    dictionary_seed::{attribute_name_key, entity_type_name_key},
+    environment::TestEnvironment,
+};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
-use serde_json::{Value, json};
+use serde_json::json;
 use serial_test::serial;
 use sqlx::PgPool;
 use std::time::Duration;
@@ -86,6 +90,12 @@ pub async fn subscribe_to_created_probe(client: &TestClient, pool: &PgPool, enti
 /// Queue one due delivery of one event for `subscription_key`, as a durable
 /// commit would have, and return the delivery's key.
 pub async fn queue_delivery(pool: &PgPool, subscription_key: i64, event: QueuedEvent<'_>) -> i64 {
+    let snapshot = EntityStateRecord {
+        entity_type_name_keys: vec![entity_type_name_key(pool, event.snapshot_type).await.expect("seeded entity type")],
+        scope_paths: Vec::new(),
+        expires_at: None,
+        instances: Vec::new(),
+    };
     let event_key: i64 = sqlx::query_scalar(
         "INSERT INTO notification_events (created_at, event_ordinal, lifecycle, write_id, entity_id, change_kinds, change_attribute_name_keys, change_dataset_ids, entity_snapshot) \
          VALUES (NOW(), 0, $1, $2, $3, $4, $5, $6, $7) RETURNING event_key",
@@ -96,7 +106,7 @@ pub async fn queue_delivery(pool: &PgPool, subscription_key: i64, event: QueuedE
     .bind(event.change.iter().map(|instance| instance.kind).collect::<Vec<i16>>())
     .bind(event.change.iter().map(|instance| instance.attribute_name_key).collect::<Vec<i32>>())
     .bind(event.change.iter().map(|instance| instance.dataset_id).collect::<Vec<Option<&str>>>())
-    .bind(event.entity_snapshot)
+    .bind(snapshot)
     .fetch_one(pool)
     .await
     .expect("queue the notification event");
@@ -116,8 +126,8 @@ pub struct QueuedEvent<'a> {
     pub entity_id: &'a str,
     /// Every Attribute instance the change touched.
     pub change: Vec<QueuedInstance<'a>>,
-    /// The stored expanded Entity.
-    pub entity_snapshot: Value,
+    /// The one type of the stored Entity, which holds no attribute.
+    pub snapshot_type: &'a str,
 }
 
 /// The stored shape of one Attribute instance a queued change touched.
@@ -178,7 +188,7 @@ async fn durable_queue_a_live_delivery_broker_delivers_a_notification_its_databa
             lifecycle: 1,
             entity_id: &entity_id,
             change: Vec::new(),
-            entity_snapshot: json!([{"@id": entity_id, "@type": [PROBE_TYPE]}]),
+            snapshot_type: PROBE_TYPE,
         },
     )
     .await;
@@ -220,7 +230,7 @@ async fn durable_queue_a_live_delivery_broker_dead_letters_deliveries_it_can_nev
             lifecycle: 1,
             entity_id: &unreadable_entity,
             change: Vec::new(),
-            entity_snapshot: json!([{"@id": entity_id, "@type": [PROBE_TYPE]}]),
+            snapshot_type: PROBE_TYPE,
         },
     )
     .await;
@@ -239,7 +249,7 @@ async fn durable_queue_a_live_delivery_broker_dead_letters_deliveries_it_can_nev
                 attribute_name_key: name_key,
                 dataset_id: Some("not a dataset identifier"),
             }],
-            entity_snapshot: json!([{"@id": entity_id, "@type": [PROBE_TYPE]}]),
+            snapshot_type: PROBE_TYPE,
         },
     )
     .await;
@@ -250,7 +260,7 @@ async fn durable_queue_a_live_delivery_broker_dead_letters_deliveries_it_can_nev
             lifecycle: 1,
             entity_id: &entity_id,
             change: Vec::new(),
-            entity_snapshot: json!([{"@id": entity_id, "@type": [PROBE_TYPE]}]),
+            snapshot_type: PROBE_TYPE,
         },
     )
     .await;

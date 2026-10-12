@@ -95,6 +95,7 @@ dependencies = [
  "andromeda-ngsi-ld-representation",
  "andromeda-notification",
  "andromeda-postgresql-atomic-write",
+ "andromeda-postgresql-attribute-instance",
  "andromeda-postgresql-codes",
  "andromeda-postgresql-context-store",
  "andromeda-postgresql-name-dictionary",

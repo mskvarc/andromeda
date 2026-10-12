@@ -18,7 +18,7 @@
 
 use crate::{
     notification_fixture::{delivery_ids, queue_notification},
-    queue_database::queue_database,
+    queue_database::{delivery_queue, queue_database},
 };
 use andromeda_notification::{
     delivery_config::DeliveryConfig,
@@ -26,7 +26,6 @@ use andromeda_notification::{
     delivery_entry::{DeliveryEntry, DeliveryKey},
     delivery_store::DeliveryStore,
 };
-use andromeda_postgresql_context_store::notification_delivery::queue::NotificationDeliveryQueue;
 use chrono::{DateTime, TimeDelta, Utc};
 use futures::future::BoxFuture;
 use pretty_assertions::assert_eq;
@@ -66,12 +65,8 @@ fn slot_configuration(batch: usize, lease: &str) -> DeliveryConfig {
 /// A drain over the suite's queue sending through `transport` under
 /// `configuration`.
 fn drain(pool: &PgPool, transport: Arc<dyn NotificationDeliveryTransport>, configuration: &DeliveryConfig) -> NotificationDeliveryDrain {
-    NotificationDeliveryDrain::new(
-        Arc::new(NotificationDeliveryQueue::new(pool)) as Arc<dyn DeliveryStore>,
-        transport,
-        configuration,
-    )
-    .expect("the configuration composes a drain")
+    NotificationDeliveryDrain::new(Arc::new(delivery_queue(pool)) as Arc<dyn DeliveryStore>, transport, configuration)
+        .expect("the configuration composes a drain")
 }
 
 /// How many deliveries the two-drain verification queues and one pass may send.

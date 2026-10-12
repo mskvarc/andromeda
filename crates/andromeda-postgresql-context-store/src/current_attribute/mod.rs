@@ -14,7 +14,7 @@ pub mod flatten;
 /// Reading an Entity's rows back.
 pub mod read;
 #[cfg(test)]
-mod round_trip_tests;
+pub(crate) mod round_trip_tests;
 /// One row.
 pub mod row;
 /// What a write does to an Entity's rows.

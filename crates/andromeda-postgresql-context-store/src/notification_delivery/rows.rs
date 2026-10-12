@@ -163,16 +163,19 @@ pub struct NewNotificationEvent<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        json_text::JsonText,
-        notification_delivery::{
-            claimed_event::{ClaimedEventError, ClaimedEvents, RawClaimedEventRow, tests::event_row},
-            rows::{ClaimedDeliveryError, RawClaimedDeliveryRow, UnreadableClaimedDelivery},
+    use crate::notification_delivery::{
+        claimed_event::{
+            ClaimedEventError,
+            ClaimedEvents,
+            RawClaimedEventRow,
+            ReadEvents,
+            tests::{event_row, records, temperature},
         },
+        rows::{ClaimedDeliveryError, RawClaimedDeliveryRow, UnreadableClaimedDelivery},
     };
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes};
     use andromeda_notification::{delivery_entry::DeliveryKey, notification_event::NotificationEventKey};
+    use andromeda_postgresql_attribute_instance::name_keys::KeyNames;
     use chrono::Utc;
     use std::sync::Arc;
 
@@ -186,25 +189,13 @@ mod tests {
         }
     }
 
-    fn event(event_key: i64, snapshot: &[u8]) -> RawClaimedEventRow<'_> {
-        let mut row = event_row();
-        row.event_key = event_key;
-        row.entity_snapshot = Some(JsonText::new(snapshot));
-        row
-    }
-
-    fn building() -> Vec<u8> {
-        EntityState::new(
-            "https://example.org/entities/1".parse().expect("a valid entity URI"),
-            EntityTypes::one("https://example.org/Building".parse().expect("a valid type name")),
-        )
-        .to_vec()
-        .expect("the state encodes")
+    fn claimed(rows: impl IntoIterator<Item = RawClaimedEventRow>, names: &KeyNames) -> ClaimedEvents {
+        ReadEvents::read(rows).assemble(names)
     }
 
     #[test]
     fn a_valid_row_decodes_every_domain_value() {
-        let events = ClaimedEvents::decode([event_row()]);
+        let events = claimed([event_row()], &KeyNames::default());
         let entry = delivery(7, 3).into_entry(&events, &ContextTarget::Live).expect("a valid claimed delivery");
         pretty_assertions::assert_eq!(entry.key, DeliveryKey::from(7));
         pretty_assertions::assert_eq!(entry.subscription_id.as_str(), "urn:ngsi-ld:Subscription:1");
@@ -215,8 +206,12 @@ mod tests {
 
     #[test]
     fn deliveries_of_one_event_share_one_decoded_state() {
-        let snapshot = building();
-        let events = ClaimedEvents::decode([event(7, &snapshot)]);
+        let state = temperature(20);
+        let (mut records, names) = records(&[&state]);
+        let mut row = event_row();
+        row.event_key = 7;
+        row.entity_snapshot = records.pop();
+        let events = claimed([row], &names);
         let entries = [1, 2, 3].map(|key| delivery(key, 7).into_entry(&events, &ContextTarget::Live).expect("a readable delivery"));
         let states = entries
             .iter()
@@ -232,7 +227,12 @@ mod tests {
 
     #[test]
     fn an_unreadable_event_makes_each_of_its_deliveries_unreadable() {
-        let events = ClaimedEvents::decode([event(7, br#"[{"@id":"urn:ngsi-ld:A"}]"#)]);
+        let state = temperature(20);
+        let (mut records, _) = records(&[&state]);
+        let mut row = event_row();
+        row.event_key = 7;
+        row.entity_snapshot = records.pop();
+        let events = claimed([row], &KeyNames::default());
         let refused = [4, 5].map(|key| delivery(key, 7).into_entry(&events, &ContextTarget::Live).expect_err("an unreadable event"));
         for (unreadable, key) in refused.iter().zip([4, 5]) {
             pretty_assertions::assert_eq!(unreadable.delivery_key, DeliveryKey::from(key));
@@ -247,7 +247,7 @@ mod tests {
 
     #[test]
     fn a_delivery_whose_event_was_not_read_is_an_invariant_breach() {
-        let events = ClaimedEvents::decode([event_row()]);
+        let events = claimed([event_row()], &KeyNames::default());
         let unreadable = delivery(9, 5)
             .into_entry(&events, &ContextTarget::Live)
             .expect_err("an event the claim did not read");
@@ -264,7 +264,7 @@ mod tests {
     fn an_invalid_subscription_identifier_is_rejected() {
         let mut raw = delivery(7, 3);
         raw.subscription_id = "not a uri".to_owned();
-        let events = ClaimedEvents::decode([event_row()]);
+        let events = claimed([event_row()], &KeyNames::default());
         assert!(matches!(
             raw.into_entry(&events, &ContextTarget::Live).map_err(|unreadable| *unreadable),
             Err(UnreadableClaimedDelivery {
@@ -278,7 +278,7 @@ mod tests {
     fn the_mapper_failure_names_the_delivery_and_the_event_it_could_not_read() {
         let mut raw = event_row();
         raw.lifecycle = 99;
-        let events = ClaimedEvents::decode([raw]);
+        let events = claimed([raw], &KeyNames::default());
         let error = delivery(7, 3).into_entry(&events, &ContextTarget::Live).expect_err("an unreadable lifecycle");
         pretty_assertions::assert_eq!(
             error.to_string(),

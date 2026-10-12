@@ -56,14 +56,24 @@ pub(crate) async fn resolve_write_names(
                 .extend(replaced.attributes().names().filter(|name| !attributes.contains(name)).cloned());
         }
     }
-    let MentionedNames { mut attributes, mut types } = mentioned;
-    types.sort_unstable();
-    types.dedup();
-    attributes.sort_unstable();
-    attributes.dedup();
-    let types = types;
-    let attributes = attributes;
+    resolve_mentioned(tx, mentioned, entity_type_names, attribute_names).await
+}
 
+/// Mint the dictionary key of every name `mentioned` collects, one resolution
+/// per dictionary, each name asked for once.
+///
+/// # Errors
+///
+/// Returns [`CommitError::Persistence`] when a dictionary cannot be resolved,
+/// which includes a resolution refused for taking the tenant's dictionary past
+/// its bound.
+pub(crate) async fn resolve_mentioned(
+    tx: &mut Transaction<'_, Postgres>,
+    mentioned: MentionedNames,
+    entity_type_names: &dyn NameLookup<EntityTypeName>,
+    attribute_names: &dyn NameLookup<AttributeName>,
+) -> Result<NameKeys, CommitError> {
+    let MentionedNames { attributes, types } = distinct(mentioned);
     let types = if types.is_empty() {
         HashMap::new()
     } else {
@@ -75,4 +85,14 @@ pub(crate) async fn resolve_write_names(
         attribute_names.resolve_or_create(tx, &attributes).await.map_err(|error| name_lookup(&error))?
     };
     Ok(NameKeys::new(ResolvedNames::from_pairs(attributes), ResolvedNames::from_pairs(types)))
+}
+
+/// The names `mentioned` collects, each once, in sorted order.
+pub(crate) fn distinct(mentioned: MentionedNames) -> MentionedNames {
+    let MentionedNames { mut attributes, mut types } = mentioned;
+    types.sort_unstable();
+    types.dedup();
+    attributes.sort_unstable();
+    attributes.dedup();
+    MentionedNames { attributes, types }
 }

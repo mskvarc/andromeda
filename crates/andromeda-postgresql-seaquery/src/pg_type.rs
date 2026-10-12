@@ -110,6 +110,9 @@ pub enum PostgresType {
     /// instances, one composite per instance.
     #[iden = "sub_attribute_tree[]"]
     SubAttributeTreeArray,
+    /// `entity_state_record`: one Entity's state beside its identifier.
+    #[iden = "entity_state_record"]
+    EntityStateRecord,
 }
 
 #[cfg(test)]
@@ -152,5 +155,11 @@ mod tests {
             .to_string(PostgresQueryBuilder);
         assert_eq!(scalar, "SELECT '{}'::json");
         assert_eq!(array, "SELECT '{}'::json[]");
+    }
+
+    #[test]
+    fn composite_type_names_render_as_the_migrations_declare_them() {
+        assert_eq!(PostgresType::SubAttributeTreeArray.to_string(), "sub_attribute_tree[]");
+        assert_eq!(PostgresType::EntityStateRecord.to_string(), "entity_state_record");
     }
 }

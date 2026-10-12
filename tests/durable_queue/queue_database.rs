@@ -14,21 +14,25 @@ use andromeda_context_commit::{
     write_record::WriteRecord,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+use andromeda_postgresql_attribute_instance::name_keys::{MentionedNames, NameKeys};
 use andromeda_postgresql_codes::{subscription_kind::SubscriptionKindCode, subscription_status::SubscriptionStatusCode};
 use andromeda_postgresql_context_store::{
     config::SynchronousCommit,
     error::ContextStoreError,
-    notification_delivery::{event_insert::insert_events_in_tx, rows::NewNotificationEvent},
+    notification_delivery::{event_insert::insert_events_in_tx, queue::NotificationDeliveryQueue, rows::NewNotificationEvent},
     pending_side_effects::{payload::PersistedBatchSideEffectJob, repo::PendingSideEffectsRepository},
     tenant_database::{DatabaseUrl, create_database_if_missing},
     tenant_migration::migrate_tenant_db,
 };
-use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_cache_config::NameCacheConfig, name_lookup::NameLookup};
+use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames};
 use andromeda_tenancy::database_name::TenantDatabaseName;
 use andromeda_test_harness::{configuration::TestRunConfiguration, database_reset::reset_owned_tenant, dictionary_seed::attribute_name_key};
 use chrono::Utc;
 use serde_json::json;
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use sqlx::{PgPool, Postgres, Transaction, postgres::PgPoolOptions};
+use std::sync::Arc;
 
 /// Database these verifications own outright.
 const QUEUE_DATABASE: &str = "andromeda_verification_durable_queue";
@@ -93,7 +97,20 @@ pub async fn attribute_name(pool: &PgPool, name: &str) -> AttributeNameKey {
     AttributeNameKey::from(attribute_name_key(pool, name).await.expect("seeded attribute name"))
 }
 
-/// Write one write's notification events and the deliveries they owe.
+/// The tenant's two name dictionaries, cached as a broker caches them.
+pub fn dictionaries(pool: &PgPool) -> (Arc<NameCache<AttributeName>>, Arc<NameCache<EntityTypeName>>) {
+    let config = NameCacheConfig::default();
+    (Arc::new(NameCache::new(pool, &config)), Arc::new(NameCache::new(pool, &config)))
+}
+
+/// The queue a broker serving the verification database claims from.
+pub fn delivery_queue(pool: &PgPool) -> NotificationDeliveryQueue {
+    let (attribute_names, entity_type_names) = dictionaries(pool);
+    NotificationDeliveryQueue::new(pool, attribute_names, entity_type_names)
+}
+
+/// Write one write's notification events and the deliveries they owe, minting
+/// the names their states hold in the same transaction, as the commit does.
 ///
 /// The failure is returned rather than asserted away: a replayed write is
 /// expected to be refused by the queue's own write-identity constraint, and
@@ -101,9 +118,33 @@ pub async fn attribute_name(pool: &PgPool, name: &str) -> AttributeNameKey {
 pub async fn record_events(pool: &PgPool, record: &WriteRecord, events: &[NewNotificationEvent<'_>]) -> Result<(), ContextStoreError> {
     let target = live_target();
     let mut transaction = pool.begin().await?;
-    insert_events_in_tx(&mut transaction, &target, record, events).await?;
+    let keys = state_keys(pool, &mut transaction, events).await?;
+    insert_events_in_tx(&mut transaction, &target, record, events, &keys).await?;
     transaction.commit().await?;
     Ok(())
+}
+
+/// The keys of every name the states of `events` hold, minted in `transaction`.
+pub async fn state_keys(
+    pool: &PgPool,
+    transaction: &mut Transaction<'_, Postgres>,
+    events: &[NewNotificationEvent<'_>],
+) -> Result<NameKeys, ContextStoreError> {
+    let mut mentioned = MentionedNames::default();
+    for state in events.iter().flat_map(|event| event.entity_snapshot.into_iter().chain(event.previous_snapshot)) {
+        mentioned.collect(state.attributes());
+        mentioned.types.extend(state.types().as_slice().iter().cloned()); // clone: the dictionary request owns the names it resolves.
+    }
+    let (attribute_names, entity_type_names) = dictionaries(pool);
+    let attributes = attribute_names
+        .resolve_or_create(transaction, &mentioned.attributes)
+        .await
+        .map_err(ContextStoreError::NameLookup)?;
+    let types = entity_type_names
+        .resolve_or_create(transaction, &mentioned.types)
+        .await
+        .map_err(ContextStoreError::NameLookup)?;
+    Ok(NameKeys::new(ResolvedNames::from_pairs(attributes), ResolvedNames::from_pairs(types)))
 }
 
 /// Count the deliveries the queue currently holds for one Subscription key.
