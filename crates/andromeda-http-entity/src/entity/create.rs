@@ -7,7 +7,10 @@ use crate::{
         EntityTenantStateOrCreate,
         EntityTypeValue,
         ForwardProvisionRequest,
+        ForwardedWriteResult,
         ForwardingOperation,
+        HttpUri,
+        Identifier,
         IncomingVia,
         IntoResponse,
         JsonLd,
@@ -65,7 +68,7 @@ pub(crate) async fn create(
 
     if is_local {
         let id = service.create(&target, &entity.id, admitted).await.with_entity_instance(&uri)?;
-        return Ok(with_location(StatusCode::CREATED.into_response(), format!("/ngsi-ld/v1/entities/{id}")));
+        return Ok(located(StatusCode::CREATED.into_response(), &id));
     }
 
     let entity_id = entity.id.clone(); // clone: the forwarding request and local create both need the identifier
@@ -101,7 +104,7 @@ pub(crate) async fn create(
 
     if forwarded.is_empty() {
         let id = service.create(&target, &entity_id, admitted).await.with_entity_instance(&uri)?;
-        return Ok(with_location(StatusCode::CREATED.into_response(), format!("/ngsi-ld/v1/entities/{id}")));
+        return Ok(located(StatusCode::CREATED.into_response(), &id));
     }
 
     // Clause 5.6.1.4: the attributes proxied registrations cover leave the
@@ -110,6 +113,100 @@ pub(crate) async fn create(
         Some(remainder) => LocalOutcome::processed(service.create(&target, &entity_id, remainder).await, classify_entity_error),
         None => LocalOutcome::NothingRemained,
     };
-    let created = with_location(StatusCode::CREATED.into_response(), format!("/ngsi-ld/v1/entities/{entity_id}"));
-    provision_response(&entity_id, &forwarded, &local, created, &uri)
+    distributed_create_response(&entity_id, &forwarded, &local, &uri)
+}
+
+/// Answer a Create Entity some of whose parts went to context sources: 201
+/// when every part succeeded, 207 when some did, each naming the created
+/// entity in its `Location` (Table 6.4.3.1-1).
+///
+/// # Errors
+///
+/// The complete operation failed, as [`provision_response`].
+fn distributed_create_response(
+    entity_id: &Identifier,
+    forwarded: &[ForwardedWriteResult],
+    local: &LocalOutcome,
+    instance: &HttpUri,
+) -> Result<Response, ProblemResponse> {
+    provision_response(entity_id, forwarded, local, StatusCode::CREATED.into_response(), instance).map(|response| located(response, entity_id))
+}
+
+/// The response with a `Location` header holding the relative path of the
+/// created entity.
+fn located(response: Response, id: &Identifier) -> Response {
+    with_location(response, format!("/ngsi-ld/v1/entities/{id}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::entity::create::distributed_create_response;
+    use andromeda_federation::{
+        answer_body::AnswerBody,
+        outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
+    };
+    use andromeda_http_response::{classified_report::ClassifiedReport, provision::LocalOutcome};
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
+    use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+    use axum::{
+        http::{StatusCode, Uri as HttpUri},
+        response::Response,
+    };
+
+    const ENTITY: &str = "urn:ngsi-ld:Vehicle:1";
+
+    fn entity_id() -> Identifier {
+        ENTITY.parse().expect("valid URI")
+    }
+
+    fn instance() -> HttpUri {
+        HttpUri::from_static("/ngsi-ld/v1/entities")
+    }
+
+    fn inclusive(status: u16) -> ForwardedWriteResult {
+        ForwardedWriteResult {
+            registration_id: "urn:ngsi-ld:ContextSourceRegistration:test".parse().expect("valid URI"),
+            mode: ForwardingMode::Inclusive,
+            outcome: if status < 400 {
+                ForwardedWriteOutcome::Completed {
+                    status,
+                    body: AnswerBody::Absent,
+                }
+            } else {
+                ForwardedWriteOutcome::RemoteHttpFailure {
+                    status,
+                    body: AnswerBody::Absent,
+                }
+            },
+            attributes: Vec::new(),
+        }
+    }
+
+    fn location(response: &Response) -> Option<&str> {
+        response.headers().get("location").and_then(|value| value.to_str().ok())
+    }
+
+    /// Table 6.4.3.1-1: the 207 includes a `Location` header holding the
+    /// relative path of the created entity, as the 201 does.
+    #[test]
+    fn a_partly_failed_distributed_create_names_the_created_entity_in_its_location() {
+        let response = distributed_create_response(&entity_id(), &[inclusive(500)], &LocalOutcome::Processed(Ok(())), &instance()).expect("a partial success");
+        pretty_assertions::assert_eq!(response.status(), StatusCode::MULTI_STATUS);
+        pretty_assertions::assert_eq!(location(&response), Some("/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:1"));
+    }
+
+    #[test]
+    fn a_distributed_create_every_part_of_which_succeeded_names_the_created_entity_in_its_location() {
+        let response = distributed_create_response(&entity_id(), &[inclusive(201)], &LocalOutcome::Processed(Ok(())), &instance()).expect("a success");
+        pretty_assertions::assert_eq!(response.status(), StatusCode::CREATED);
+        pretty_assertions::assert_eq!(location(&response), Some("/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:1"));
+    }
+
+    #[test]
+    fn a_distributed_create_that_failed_everywhere_is_the_local_error() {
+        let conflict = ClassifiedReport::public(NgsiLdErrorType::AlreadyExists, "Entity urn:ngsi-ld:Vehicle:1 already exists");
+        let answer = distributed_create_response(&entity_id(), &[inclusive(500)], &LocalOutcome::Processed(Err(conflict)), &instance());
+        assert!(answer.is_err(), "no part created the entity");
+    }
 }
