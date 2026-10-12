@@ -1,12 +1,14 @@
-//! The page of matching entities an `EntityMap` creation fixes (clauses
-//! 5.14.4.4 and 5.14.5.4).
+//! The matching entities an `EntityMap` creation fixes (clauses 5.14.4.4 and
+//! 5.14.5.4): every one of them.
 //!
-//! A creation request is a query, and its `limit`/`offset` narrow the entities
-//! the map fixes as they narrow a query's answer. It hands out no page of its
-//! own to walk, so it can carry no cursor: the response is the map, never a
-//! collection with neighbouring pages. The decision goes through the broker's
-//! one pagination policy like every other collection, which refuses a cursor
-//! here before anything is forwarded to a context source.
+//! Clauses 5.14.4.3 and 5.14.5.3 list the clause 5.5.9 limit as an input the
+//! creation ignores, and name no offset: the map fixes the whole candidate set
+//! a later query pages through, so neither `limit` nor `offset` narrows it. A
+//! creation hands out no page of its own to walk, so it can carry no cursor:
+//! the response is the map, never a collection with neighbouring pages. The
+//! request still goes through the broker's one pagination policy like every
+//! other collection, which refuses a cursor here before anything is forwarded
+//! to a context source.
 
 use crate::error::EntityMapResultExt;
 use andromeda_http_extraction::pagination_policy::RequestPagination;
@@ -20,15 +22,15 @@ use andromeda_ngsi_ld_request::pagination::{
 };
 use axum::http::Uri;
 
-/// The page size of a map's membership: every match unless the request names
-/// a `limit`, and whatever it names otherwise, since the map is meant to fix
-/// the whole result set a later walk pages through.
+/// The page size the pagination policy reads a creation request with: every
+/// match by default, and no cap on a `limit` the creation ignores anyway.
 const ENTITY_MAP_PAGE_SIZE: PageSizeBounds = PageSizeBounds {
     default: u32::MAX,
     cap: PageSizeCap::Uncapped,
 };
 
-/// The window of matching entities a creation request fixes in its map.
+/// The window of matching entities a creation request fixes in its map:
+/// unbounded, whatever `limit` and `offset` the request names.
 ///
 /// # Errors
 ///
@@ -53,6 +55,7 @@ pub(crate) fn membership_window(
                 context: &pagination.context,
             },
         )
+        .map(|_ignored_page| PageWindow::unbounded())
         .with_entity_map_instance(uri)
 }
 
@@ -84,24 +87,26 @@ mod tests {
         "/ngsi-ld/v1/entityMaps".parse().expect("valid URI")
     }
 
-    /// A creation naming no page fixes every match.
     #[test]
     fn an_unpaged_creation_fixes_every_match() {
         let window = membership_window(&cursor_default(), &PageParameters::default(), &OrderingParameters::default(), &uri()).ok();
-        assert_eq!(window, Some(PageWindow::offset(u32::MAX, 0)));
+        assert_eq!(window, Some(PageWindow::unbounded()));
     }
 
-    /// A creation's `limit` and `offset` narrow the map like a query's answer.
+    /// Clauses 5.14.4.3 and 5.14.5.3: the limit is ignored, and the map fixes
+    /// the whole candidate set, so an offset places nothing either.
     #[test]
-    fn limit_and_offset_narrow_the_map() {
-        let page = PageParameters {
-            limit: Some(5),
-            offset: Some(10),
-            cursor: None,
-            context: None,
-        };
-        let window = membership_window(&cursor_default(), &page, &OrderingParameters::default(), &uri()).ok();
-        assert_eq!(window, Some(PageWindow::offset(5, 10)));
+    fn a_limit_and_an_offset_leave_the_map_fixing_every_match() {
+        for (limit, offset) in [(Some(1), None), (Some(0), None), (Some(5), Some(10)), (None, Some(3))] {
+            let page = PageParameters {
+                limit,
+                offset,
+                cursor: None,
+                context: None,
+            };
+            let window = membership_window(&cursor_default(), &page, &OrderingParameters::default(), &uri()).ok();
+            assert_eq!(window, Some(PageWindow::unbounded()), "limit {limit:?}, offset {offset:?}");
+        }
     }
 
     /// Clause 6.3.20: a creation hands out no pointer, so a cursor is a
