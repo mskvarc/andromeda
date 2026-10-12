@@ -7,13 +7,14 @@
 //! literal of the `objectType` keys and the `sub_attribute_tree` each row's
 //! elements travel in.
 
-use crate::current_attribute::{
-    row::{CurrentAttributeRow, InstanceMembers},
+use crate::current_attribute::row::{CurrentAttributeRow, row_column};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_postgresql_attribute_instance::{
     stored_json::StoredJson,
+    stored_members::InstanceMembers,
     stored_value::StoredValue,
     sub_attribute::{SubAttributeRecord, SubAttributeTree},
 };
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
 use andromeda_postgresql_encoding::{
     array_literal::IntegerArrayLiteral,
@@ -56,7 +57,7 @@ impl ValueColumns {
     /// The columns `value` occupies, a String or a URI past its B-tree bound
     /// in its overflow column.
     fn of(value: StoredValue) -> Result<ValueColumns, EwkbError> {
-        let column = value.row_column();
+        let column = row_column(&value);
         let mut columns = ValueColumns::default();
         match value {
             // clone: the bind owns the decimal it encodes, and the number gives up none.

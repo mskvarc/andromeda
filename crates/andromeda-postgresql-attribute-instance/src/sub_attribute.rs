@@ -7,10 +7,9 @@
 //! `sqlx` derive. Converting a record into an element is where a stored
 //! element breaking its invariants is refused, as a row's members are.
 
-use crate::current_attribute::{
-    row::InstanceMembers,
+use crate::{
     stored_json::StoredJson,
-    stored_members::{MemberColumns, StoredInstanceError},
+    stored_members::{InstanceMembers, MemberColumns, StoredInstanceError},
     stored_value::StoredValue,
 };
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
@@ -246,5 +245,135 @@ impl TryFrom<SubAttributeRecord> for SubAttributeElement {
             created_at,
             modified_at,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        stored_json::StoredJson,
+        stored_members::{InstanceMembers, StoredInstanceError},
+        stored_value::StoredValue,
+        sub_attribute::{SubAttributeElement, SubAttributeRecord},
+    };
+    use andromeda_ngsi_ld_geometry::geometry::Geometry;
+    use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
+    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
+    use bigdecimal::BigDecimal;
+    use chrono::{TimeZone, Utc};
+    use serde_json::{json, value::to_raw_value};
+
+    /// A stored record of a Property element holding the number 1.
+    fn number_record() -> SubAttributeRecord {
+        SubAttributeRecord {
+            parent: 0,
+            attribute_name_key: 1,
+            dataset_id: None,
+            attribute_kind: AttributeKind::code(AttributeKind::Property),
+            value_kind: ValueKind::code(ValueKind::Number),
+            value_number: Some(BigDecimal::from(1)),
+            value_string: None,
+            value_boolean: None,
+            value_date_time: None,
+            value_geometry: None,
+            value_geometry_members: None,
+            value_object: None,
+            value_uri: None,
+            value_datatype_key: None,
+            value_language: None,
+            value_type_key: None,
+            object_type_keys: None,
+            proof_seals: None,
+            unit_code_id: None,
+            observed_at: None,
+            created_at: None,
+            modified_at: None,
+            expires_at: None,
+        }
+    }
+
+    #[test]
+    fn an_element_with_two_values_is_an_assembly_error() {
+        let mut record = number_record();
+        record.value_string = Some("a".to_owned());
+        assert!(matches!(
+            SubAttributeElement::try_from(record),
+            Err(StoredInstanceError::ValueFields { kind: ValueKind::Number })
+        ));
+    }
+
+    #[test]
+    fn an_element_whose_value_is_in_another_field_is_an_assembly_error() {
+        let mut record = number_record();
+        record.value_number = None;
+        record.value_boolean = Some(true);
+        assert!(matches!(
+            SubAttributeElement::try_from(record),
+            Err(StoredInstanceError::ValueFields { kind: ValueKind::Number })
+        ));
+    }
+
+    #[test]
+    fn a_language_beside_a_number_is_an_assembly_error() {
+        let mut record = number_record();
+        record.value_language = Some("en".to_owned());
+        assert!(matches!(SubAttributeElement::try_from(record), Err(StoredInstanceError::Annotation)));
+    }
+
+    #[test]
+    fn the_element_round_trips_through_its_record() {
+        let instant = Utc.with_ymd_and_hms(2026, 1, 2, 3, 4, 5).single().expect("a valid instant");
+        let full = SubAttributeElement {
+            parent: 3,
+            members: InstanceMembers {
+                attribute_name_key: AttributeNameKey::from(7),
+                dataset_id: Some("urn:ngsi-ld:Dataset:a".parse().expect("a datasetId")),
+                attribute_kind: AttributeKind::GeoProperty,
+                value: StoredValue::Geometry {
+                    form: serde_json::from_value::<Geometry>(json!({"type": "Point", "coordinates": [13.5, 52.25, 34.0]}))
+                        .expect("a point")
+                        .into_parts()
+                        .0,
+                    members: Some(StoredJson::new(
+                        to_raw_value(&json!({"https://ex.org/title": [{"@value": "x"}]})).expect("JSON"),
+                    )),
+                },
+                value_type_key: Some(EntityTypeNameKey::from(3)),
+                object_type_keys: vec![EntityTypeNameKey::from(4), EntityTypeNameKey::from(5)],
+                unit_code_id: Some(1_i16.try_into().expect("a unit code identity")),
+                observed_at: Some(instant),
+                expires_at: Some(instant),
+                proof_seals: Some(StoredJson::new(
+                    to_raw_value(&json!({"https://uri.etsi.org/ngsi-ld/entityIdSealed": [{"@value": "x"}]})).expect("JSON"),
+                )),
+            },
+            created_at: Some(instant),
+            modified_at: Some(instant),
+        };
+        let empty = || SubAttributeElement {
+            parent: 0,
+            members: InstanceMembers {
+                attribute_name_key: AttributeNameKey::from(7),
+                dataset_id: None,
+                attribute_kind: AttributeKind::Property,
+                value: StoredValue::Boolean { flag: false, datatype: None },
+                value_type_key: None,
+                object_type_keys: Vec::new(),
+                unit_code_id: None,
+                observed_at: None,
+                expires_at: None,
+                proof_seals: None,
+            },
+            created_at: None,
+            modified_at: None,
+        };
+        let through = |element: SubAttributeElement| {
+            SubAttributeElement::try_from(SubAttributeRecord::try_from(element).expect("the element encodes")).expect("the record decodes")
+        };
+        let full_debug = format!("{full:?}");
+        pretty_assertions::assert_eq!(format!("{:?}", through(full)), full_debug);
+        pretty_assertions::assert_eq!(through(empty()), empty());
+        let record = SubAttributeRecord::try_from(empty()).expect("the element encodes");
+        assert!(record.object_type_keys.is_none() && record.value_geometry_members.is_none() && record.proof_seals.is_none());
     }
 }

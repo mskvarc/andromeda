@@ -9,10 +9,7 @@
 //! [`MentionedNames`] collects before it flattens; a read looks up the names of
 //! the keys [`HeldKeys`] collects before it assembles.
 
-use crate::current_attribute::{
-    flatten::scalar_literal,
-    row::{CurrentAttributeRow, InstanceMembers},
-};
+use crate::{flatten::scalar_literal, stored_members::InstanceMembers, sub_attribute::SubAttributeElement};
 use andromeda_ngsi_ld_entity::{attributes::Attributes, family_value::FamilyValue};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, reference::NgsiLdReference};
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey};
@@ -98,10 +95,11 @@ pub struct HeldKeys {
 }
 
 impl HeldKeys {
-    /// Add the keys `row` holds, its elements' included.
-    pub fn collect(&mut self, row: &CurrentAttributeRow) {
-        self.members(&row.members);
-        for element in &row.sub_attributes {
+    /// Add the keys one stored instance holds: its `members` and those of its
+    /// `sub_attributes` elements.
+    pub fn collect(&mut self, members: &InstanceMembers, sub_attributes: &[SubAttributeElement]) {
+        self.members(members);
+        for element in sub_attributes {
             self.members(&element.members);
         }
     }

@@ -98,6 +98,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-notification",
         "andromeda-persistence-failure",
+        "andromeda-postgresql-attribute-instance",
         "andromeda-postgresql-branch",
         "andromeda-postgresql-codes",
         "andromeda-postgresql-collation",

@@ -6,7 +6,7 @@
 //! column its family never uses, or a member its family never defines, is
 //! refused.
 
-use crate::current_attribute::{
+use crate::{
     assemble::AssemblyError,
     name_keys::KeyNames,
     stored_json::StoredJson,

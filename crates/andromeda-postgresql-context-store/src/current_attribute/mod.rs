@@ -11,8 +11,6 @@
 pub mod assemble;
 /// Flattening an Entity's attributes into rows.
 pub mod flatten;
-/// The dictionary keys rows hold names as.
-pub mod name_keys;
 /// Reading an Entity's rows back.
 pub mod read;
 #[cfg(test)]
@@ -27,15 +25,5 @@ pub mod staged_grains;
 pub mod staged_rows;
 /// The `instances` staging every statement writing rows reads them from.
 pub mod staging;
-/// The family value an instance's stored columns hold.
-mod stored_family;
-/// A JSON piece held as its codec wrote it.
-pub mod stored_json;
-/// The members of one stored instance and their reading back.
-pub mod stored_members;
-/// The value of one instance, by the column that holds it.
-pub mod stored_value;
-/// One sub-attribute element and the composite it travels as.
-pub mod sub_attribute;
 /// The statements that write an Entity's rows beside its Entity row.
 pub(crate) mod write;

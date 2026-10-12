@@ -14,7 +14,7 @@
 use crate::commit_refusal::name_lookup;
 use andromeda_context_commit::{atomic_write::AtomicWrite, error::CommitError};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
-use andromeda_postgresql_context_store::current_attribute::name_keys::{MentionedNames, NameKeys};
+use andromeda_postgresql_attribute_instance::name_keys::{MentionedNames, NameKeys};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_query::dictionary::resolved_names::ResolvedNames;
 use sqlx::{Postgres, Transaction};

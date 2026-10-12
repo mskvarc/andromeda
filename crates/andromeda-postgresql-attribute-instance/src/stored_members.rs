@@ -6,14 +6,16 @@
 //! its invariants (a value in no field or in two, a value in a field its kind
 //! does not name, a code no release defines) is refused.
 
-use crate::current_attribute::{
-    row::InstanceMembers,
+use crate::{
     stored_json::StoredJson,
     stored_value::{LiteralAnnotation, StoredValue},
     sub_attribute::EwkbGeometry,
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, uri::UriParseError};
+use andromeda_ngsi_ld_lexicon::{
+    identifier::{Identifier, IdentifierParseError},
+    uri::UriParseError,
+};
 use andromeda_ngsi_ld_number::{JsonNumber, JsonNumberError};
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, registry::UnknownCompactCode, value_kind::ValueKind};
 use andromeda_postgresql_encoding::ewkb::{Ewkb, EwkbError};
@@ -25,6 +27,31 @@ use langtag::{InvalidLangTag, LangTagBuf};
 use serde_json::value::RawValue;
 use sqlx::{FromRow, types::Json};
 use thiserror::Error;
+
+/// The members of one attribute instance a row and an element both hold.
+#[derive(Debug, PartialEq)]
+pub struct InstanceMembers {
+    /// `attribute_names` key of the attribute.
+    pub attribute_name_key: AttributeNameKey,
+    /// The `datasetId`, absent on the default instance (clause 4.5.5).
+    pub dataset_id: Option<Identifier>,
+    /// The attribute family.
+    pub attribute_kind: AttributeKind,
+    /// The value.
+    pub value: StoredValue,
+    /// `entity_type_names` key of the `valueType`.
+    pub value_type_key: Option<EntityTypeNameKey>,
+    /// `entity_type_names` keys of the `objectType` list, in written order.
+    pub object_type_keys: Vec<EntityTypeNameKey>,
+    /// Catalog identity of the `unitCode`.
+    pub unit_code_id: Option<UnitCodeId>,
+    /// `observedAt`.
+    pub observed_at: Option<DateTime<Utc>>,
+    /// `expiresAt` (clause 4.22).
+    pub expires_at: Option<DateTime<Utc>>,
+    /// The clause 4.5.2.2 seals, in their stored JSON.
+    pub proof_seals: Option<StoredJson>,
+}
 
 /// The member columns of one stored instance, as read.
 ///

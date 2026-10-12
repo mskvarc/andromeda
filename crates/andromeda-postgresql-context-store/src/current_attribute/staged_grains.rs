@@ -7,12 +7,9 @@
 //! expression `grains`; the Entities whose rows are overwritten travel as one
 //! identifier array.
 
-use crate::current_attribute::{
-    flatten::FlattenError,
-    name_keys::NameKeys,
-    row_edit::{EditReach, InstanceGrain, RowEdit},
-};
+use crate::current_attribute::row_edit::{EditReach, InstanceGrain, RowEdit};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_postgresql_attribute_instance::{flatten::FlattenError, name_keys::NameKeys};
 use andromeda_postgresql_schema::current::{CurrentAttributes, Entities};
 use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
@@ -140,11 +137,11 @@ impl<'a> StagedGrains<'a> {
 #[cfg(test)]
 mod tests {
     use crate::current_attribute::{
-        name_keys::NameKeys,
         row_edit::{EditReach, InstanceGrain, MovedInstance, RowEdit},
         staged_grains::{StagedGrains, apply_grains_alias, grains_cte},
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+    use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
     use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames};
     use sea_query::{PostgresQueryBuilder, Query, WithClause};
 

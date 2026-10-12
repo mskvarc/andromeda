@@ -30,7 +30,8 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_postgresql_context_store::{current_attribute::name_keys::NameKeys, entity::repo::EntityRepository};
+use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
+use andromeda_postgresql_context_store::entity::repo::EntityRepository;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_temporal::core_write_history::CoreWriteHistory;
 use chrono::Utc;

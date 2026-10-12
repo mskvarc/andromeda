@@ -15,12 +15,12 @@
 //! every stored grain it does not write is removed.
 
 use crate::current_attribute::{
-    flatten::{FlattenError, flatten_instance, ordinal},
-    name_keys::NameKeys,
+    flatten::{flatten_instance, ordinal},
     row::CurrentAttributeRow,
 };
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, instance::Instance};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_postgresql_attribute_instance::{flatten::FlattenError, name_keys::NameKeys};
 use std::{collections::HashMap, sync::Arc};
 
 /// The clause 4.5.5 identity of one top-level attribute instance.

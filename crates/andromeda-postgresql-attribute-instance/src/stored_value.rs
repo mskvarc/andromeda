@@ -6,13 +6,12 @@
 //! moves to an overflow column under the same value kind. An element has no
 //! B-tree, so it has no overflow field.
 
-use crate::current_attribute::stored_json::StoredJson;
+use crate::stored_json::StoredJson;
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
-use andromeda_postgresql_schema::{current::CurrentAttributes, string_value_column::StringValueColumn, uri_value_column::UriValueColumn};
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 
@@ -121,21 +120,6 @@ impl StoredValue {
             | StoredValue::Geometry { .. }
             | StoredValue::Object(_)
             | StoredValue::Uri(_) => None,
-        }
-    }
-
-    /// The `current_attributes` column a row holds the value in: a String or a
-    /// URI past its B-tree bound moves to its overflow column.
-    #[must_use]
-    pub fn row_column(&self) -> CurrentAttributes {
-        match self {
-            StoredValue::Number { .. } => CurrentAttributes::ValueNumber,
-            StoredValue::String { text, .. } => StringValueColumn::of(text).column(),
-            StoredValue::Boolean { .. } => CurrentAttributes::ValueBoolean,
-            StoredValue::DateTime { .. } => CurrentAttributes::ValueDateTime,
-            StoredValue::Geometry { .. } => CurrentAttributes::ValueGeometry,
-            StoredValue::Object(_) => CurrentAttributes::ValueObject,
-            StoredValue::Uri(uri) => UriValueColumn::of(uri.as_str()).column(),
         }
     }
 }

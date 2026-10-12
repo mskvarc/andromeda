@@ -44,6 +44,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-postgresql-branch",
         "andromeda-postgresql-name-dictionary",
         "andromeda-postgresql-pool",
+        "andromeda-postgresql-attribute-instance",
         "andromeda-postgresql-codes",
         "andromeda-postgresql-context-store",
         "andromeda-postgresql-query",

@@ -4,8 +4,8 @@
 //! The broker only ever writes identifiers it validated and names it interned,
 //! so each variant is a column holding something the broker never wrote.
 
-use crate::current_attribute::{assemble::AssemblyError, stored_members::StoredInstanceError};
 use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, reference::NgsiLdReferenceError, scope::path::ScopePathError};
+use andromeda_postgresql_attribute_instance::{assemble::AssemblyError, stored_members::StoredInstanceError};
 use andromeda_postgresql_codes::{entity_key::EntityKeyOutOfRange, registry::UnknownCompactCode};
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use thiserror::Error;

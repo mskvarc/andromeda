@@ -5,18 +5,14 @@
 //! row's string and URI each read as one column, whichever side of the length
 //! split holds them.
 
-use crate::{
-    current_attribute::{
-        row::{CurrentAttributeRow, InstanceMembers},
-        stored_members::{MemberColumns, StoredInstanceError},
-        sub_attribute::{SubAttributeElement, SubAttributeRecord},
-    },
-    entity::stored_entity_error::StoredEntityError,
-    error::ContextStoreError,
-};
+use crate::{current_attribute::row::CurrentAttributeRow, entity::stored_entity_error::StoredEntityError, error::ContextStoreError};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::projection::returned_attributes::ReturnedAttributes;
+use andromeda_postgresql_attribute_instance::{
+    stored_members::{InstanceMembers, MemberColumns, StoredInstanceError},
+    sub_attribute::{SubAttributeElement, SubAttributeRecord},
+};
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::entity_key::EntityKey;
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames};

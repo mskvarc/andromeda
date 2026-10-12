@@ -10,7 +10,6 @@
 use crate::{
     current_attribute::{
         assemble::assemble,
-        name_keys::{HeldKeys, KeyNames},
         read::{RowSelection, row_of, rows_of},
         row::CurrentAttributeRow,
     },
@@ -33,6 +32,7 @@ use andromeda_ngsi_ld_lexicon::{
     scope::path::ScopePath,
 };
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
+use andromeda_postgresql_attribute_instance::name_keys::{HeldKeys, KeyNames};
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::entity_key::EntityKey;
 use andromeda_postgresql_context_query::entity_head::{EntityHead, select_head};
@@ -168,7 +168,7 @@ impl GatheredEntities {
     fn held_keys(&self) -> HeldKeys {
         let mut held = HeldKeys::default();
         for row in self.rows.values().flatten() {
-            held.collect(row);
+            held.collect(&row.members, &row.sub_attributes);
         }
         held.types.extend(self.heads.iter().flat_map(|head| head.types.iter().copied()));
         held.attributes.sort_unstable_by_key(|key| key.get());
@@ -274,12 +274,13 @@ impl EntityRepository {
 #[cfg(test)]
 mod tests {
     use crate::{
-        current_attribute::{flatten::flatten, name_keys::NameKeys, row::CurrentAttributeRow},
+        current_attribute::{flatten::flatten, row::CurrentAttributeRow},
         entity::stored_entities::{GatheredEntities, StoredHead},
     };
     use andromeda_ngsi_ld_entity::{entity_state::EntityState, system_instant::SystemInstant};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
     use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
+    use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
     use andromeda_postgresql_codes::entity_key::EntityKey;
     use andromeda_postgresql_query::{
         attribute_name_key::AttributeNameKey,
