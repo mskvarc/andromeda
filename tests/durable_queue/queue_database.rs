@@ -25,7 +25,7 @@ use andromeda_postgresql_context_store::{
 };
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use andromeda_tenancy::database_name::TenantDatabaseName;
-use andromeda_test_harness::{configuration::TestRunConfiguration, database_reset::reset_owned_tenant};
+use andromeda_test_harness::{configuration::TestRunConfiguration, database_reset::reset_owned_tenant, dictionary_seed::attribute_name_key};
 use chrono::Utc;
 use serde_json::json;
 use sqlx::{PgPool, postgres::PgPoolOptions};
@@ -90,14 +90,7 @@ pub fn subscription_key(stored: i64) -> SubscriptionKey {
 
 /// Seed one dictionary entry and return the four-byte key an event stores.
 pub async fn attribute_name(pool: &PgPool, name: &str) -> AttributeNameKey {
-    let key: i32 = sqlx::query_scalar(
-        "INSERT INTO attribute_names (name) VALUES ($1) ON CONFLICT ON CONSTRAINT uq_attribute_names_name DO UPDATE SET name = EXCLUDED.name RETURNING attribute_name_key",
-    )
-    .bind(name)
-    .fetch_one(pool)
-    .await
-    .expect("seeded attribute name");
-    AttributeNameKey::from(key)
+    AttributeNameKey::from(attribute_name_key(pool, name).await.expect("seeded attribute name"))
 }
 
 /// Write one write's notification events and the deliveries they owe.

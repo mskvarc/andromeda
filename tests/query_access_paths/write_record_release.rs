@@ -10,8 +10,11 @@
 //! 5.6.16) and every retention sweep seek one index entry per chunk instead of
 //! scanning every chunk the history spans.
 
-use crate::seeded_corpus::{PlannerPaths, SEED_PREFIX, dictionary_key, explain_rolled_back, type_dictionary_key};
-use andromeda_test_harness::serialized_environment::SerializedEnvironment;
+use crate::seeded_corpus::{PlannerPaths, SEED_PREFIX, explain_rolled_back};
+use andromeda_test_harness::{
+    dictionary_seed::{attribute_name_key, entity_type_name_key},
+    serialized_environment::SerializedEnvironment,
+};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -38,7 +41,7 @@ const RELEASE_ATTRIBUTE: &str = "https://example.test/query-access-paths/release
 /// Every history row carries the `recorded_at` of its write's record, which is
 /// the invariant the committer keeps and the release correlation relies on.
 async fn seed_released_history(pool: &PgPool, prefix: &str) {
-    let type_key = type_dictionary_key(pool, HISTORIC_TYPE).await;
+    let type_key = entity_type_name_key(pool, HISTORIC_TYPE).await.expect("type dictionary seed must succeed");
     let entity_key: i64 = sqlx::query_scalar(
         "INSERT INTO temporal_entities (created_at, modified_at, id, entity_type_name_keys) \
          VALUES (now(), now(), $1::text || ':release', ARRAY[$2::integer]) RETURNING temporal_entity_key",
@@ -49,7 +52,9 @@ async fn seed_released_history(pool: &PgPool, prefix: &str) {
     .await
     .expect("temporal catalogue insert must succeed");
 
-    let attribute_name_key = dictionary_key(pool, RELEASE_ATTRIBUTE).await;
+    let attribute_name_key = attribute_name_key(pool, RELEASE_ATTRIBUTE)
+        .await
+        .expect("attribute dictionary seed must succeed");
     let stream_key: i64 =
         sqlx::query_scalar("INSERT INTO temporal_attribute_streams (temporal_entity_key, attribute_name_key) VALUES ($1, $2) RETURNING stream_key")
             .bind(entity_key)

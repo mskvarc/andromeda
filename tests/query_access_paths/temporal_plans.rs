@@ -6,8 +6,8 @@
 //! has no anchor to range over and must reach the trigram index instead of
 //! scanning the whole catalogue.
 
-use crate::seeded_corpus::{SEED_PREFIX, explain, type_dictionary_key};
-use andromeda_test_harness::serialized_environment::SerializedEnvironment;
+use crate::seeded_corpus::{SEED_PREFIX, explain};
+use andromeda_test_harness::{dictionary_seed::entity_type_name_key, serialized_environment::SerializedEnvironment};
 use sqlx::PgPool;
 
 /// Temporal Entities written per seeded catalogue.
@@ -22,7 +22,7 @@ const TEMPORAL_TYPE: &str = "https://example.test/query-access-paths/Instrument"
 /// a pattern naming the sensors is selective enough that an index path is the
 /// cheaper plan.
 async fn seed_temporal_entities(pool: &PgPool, prefix: &str) {
-    let type_key = type_dictionary_key(pool, TEMPORAL_TYPE).await;
+    let type_key = entity_type_name_key(pool, TEMPORAL_TYPE).await.expect("type dictionary seed must succeed");
     sqlx::query(
         "INSERT INTO temporal_entities (created_at, modified_at, id, entity_type_name_keys) \
          SELECT now(), now(), \

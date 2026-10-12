@@ -18,7 +18,7 @@
 use crate::notification_adapter::NotificationAdapter;
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
-use andromeda_test_harness::environment::TestEnvironment;
+use andromeda_test_harness::{dictionary_seed::attribute_name_key, environment::TestEnvironment};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
@@ -130,17 +130,6 @@ pub struct QueuedInstance<'a> {
     pub dataset_id: Option<&'a str>,
 }
 
-/// The dictionary key of `name` in the tenant's attribute name dictionary.
-async fn attribute_name_key(pool: &PgPool, name: &str) -> i32 {
-    sqlx::query_scalar(
-        "INSERT INTO attribute_names (name) VALUES ($1) ON CONFLICT ON CONSTRAINT uq_attribute_names_name DO UPDATE SET name = EXCLUDED.name RETURNING attribute_name_key",
-    )
-    .bind(name)
-    .fetch_one(pool)
-    .await
-    .expect("attribute name key")
-}
-
 /// Voids the tenant pacer's last obligation read, so the drain's next fallback
 /// tick reads the rows seeded behind the broker's back instead of resting on a
 /// verdict taken before they existed.
@@ -238,7 +227,7 @@ async fn durable_queue_a_live_delivery_broker_dead_letters_deliveries_it_can_nev
     // An attribute deletion whose stored change names the deleted instance by
     // a datasetId that is not an identifier: the entity reads back, but the
     // change it records never does.
-    let name_key = attribute_name_key(pool, PROBE_ATTRIBUTE).await;
+    let name_key = attribute_name_key(pool, PROBE_ATTRIBUTE).await.expect("attribute name key");
     let unevaluable = queue_delivery(
         pool,
         subscription_key,

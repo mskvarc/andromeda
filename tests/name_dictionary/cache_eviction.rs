@@ -7,7 +7,7 @@
 //! have pushed one another out, and a preload must stop at what the budget
 //! holds instead of failing on a dictionary larger than it.
 
-use crate::GENERATED_NAME_PREFIX;
+use crate::run_name_prefix;
 use andromeda_configuration_scalars::human_byte_size::HumanByteSize;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_postgresql_name_dictionary::{
@@ -26,19 +26,10 @@ const GENERATED_NAMES: i32 = 2_000;
 /// A budget of a few dozen entries, so the generated names evict one another.
 const TINY_BUDGET: HumanByteSize = HumanByteSize::kib(8);
 
-/// Remove exactly the names this check interned.
-async fn remove_generated_names(pool: &PgPool) {
-    sqlx::query("DELETE FROM attribute_names WHERE name LIKE $1")
-        .bind(format!("{GENERATED_NAME_PREFIX}%"))
-        .execute(pool)
-        .await
-        .expect("the generated dictionary entries must be removable");
-}
-
-/// The key the dictionary table holds for every generated name.
-async fn stored_keys(pool: &PgPool) -> HashMap<String, i32> {
+/// The key the dictionary table holds for every name minted under `prefix`.
+async fn stored_keys(pool: &PgPool, prefix: &str) -> HashMap<String, i32> {
     sqlx::query("SELECT name, attribute_name_key FROM attribute_names WHERE name LIKE $1")
-        .bind(format!("{GENERATED_NAME_PREFIX}%"))
+        .bind(format!("{prefix}%"))
         .fetch_all(pool)
         .await
         .expect("the dictionary must be readable")
@@ -64,14 +55,14 @@ async fn names_evicted_from_a_tiny_cache_still_resolve_to_the_keys_the_dictionar
         .expect("exclusive ownership of the shared dictionary");
     let pool = connect_test_database().await.expect("test database connection");
 
-    remove_generated_names(&pool).await;
+    let prefix = run_name_prefix();
     sqlx::query("INSERT INTO attribute_names (name) SELECT $1 || generated::TEXT FROM generate_series(1, $2) AS generated ON CONFLICT (name) DO NOTHING")
-        .bind(GENERATED_NAME_PREFIX)
+        .bind(&prefix)
         .bind(GENERATED_NAMES)
         .execute(&pool)
         .await
         .expect("interning distinct attribute names must not fail");
-    let stored = stored_keys(&pool).await;
+    let stored = stored_keys(&pool, &prefix).await;
     let names: Vec<AttributeName> = stored.keys().map(|name| name.parse().expect("a stored name is valid")).collect();
 
     let cache = NameCache::<AttributeName>::new(
@@ -85,7 +76,6 @@ async fn names_evicted_from_a_tiny_cache_still_resolve_to_the_keys_the_dictionar
     let first_pass = resolved_keys(&cache, &names).await;
     let second_pass = resolved_keys(&cache, &names).await;
 
-    remove_generated_names(&pool).await;
     pool.close().await;
 
     assert!(preloaded.is_ok(), "a dictionary larger than the budget preloads what fits: {preloaded:?}");

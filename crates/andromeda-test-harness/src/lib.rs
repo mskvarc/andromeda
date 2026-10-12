@@ -7,6 +7,7 @@ pub mod configuration;
 pub mod database_access;
 pub mod database_isolation;
 pub mod database_reset;
+pub mod dictionary_seed;
 pub mod discovery_census;
 pub mod environment;
 pub mod identifiers;

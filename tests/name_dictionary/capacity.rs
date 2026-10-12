@@ -6,10 +6,10 @@
 //! every one of them keeps a positive, distinct key that the same array-bound
 //! lookup the broker issues reads back unchanged.
 
-use crate::GENERATED_NAME_PREFIX;
+use crate::run_name_prefix;
 use andromeda_test_harness::{configuration::TestRunConfiguration, database_access::connect_test_database, serialized_environment::SerializedEnvironment};
 use pretty_assertions::assert_eq;
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 
 /// How many distinct names the capacity check interns.
 ///
@@ -20,15 +20,6 @@ const GENERATED_NAMES: i32 = 32_768;
 /// cache issues when it resolves a batch of previously unseen attributes.
 const LOOKUP_BATCH: i32 = 1_000;
 
-/// Remove exactly the names this check interned.
-async fn remove_generated_names(pool: &PgPool) {
-    sqlx::query("DELETE FROM attribute_names WHERE name LIKE $1")
-        .bind(format!("{GENERATED_NAME_PREFIX}%"))
-        .execute(pool)
-        .await
-        .expect("the generated dictionary entries must be removable");
-}
-
 #[tokio::test]
 async fn thirty_two_thousand_distinct_attribute_names_keep_positive_distinct_keys() {
     let configuration = TestRunConfiguration::from_environment().expect("integration test configuration");
@@ -37,10 +28,10 @@ async fn thirty_two_thousand_distinct_attribute_names_keep_positive_distinct_key
         .expect("exclusive ownership of the shared dictionary");
     let pool = connect_test_database().await.expect("test database connection");
 
-    remove_generated_names(&pool).await;
+    let prefix = run_name_prefix();
     let interned =
         sqlx::query("INSERT INTO attribute_names (name) SELECT $1 || generated::TEXT FROM generate_series(1, $2) AS generated ON CONFLICT (name) DO NOTHING")
-            .bind(GENERATED_NAME_PREFIX)
+            .bind(&prefix)
             .bind(GENERATED_NAMES)
             .execute(&pool)
             .await
@@ -56,7 +47,7 @@ async fn thirty_two_thousand_distinct_attribute_names_keep_positive_distinct_key
          MIN(attribute_name_key) AS lowest, MAX(attribute_name_key) AS highest \
          FROM attribute_names WHERE name LIKE $1",
     )
-    .bind(format!("{GENERATED_NAME_PREFIX}%"))
+    .bind(format!("{prefix}%"))
     .fetch_one(&pool)
     .await
     .expect("the dictionary must be readable");
@@ -76,7 +67,7 @@ async fn thirty_two_thousand_distinct_attribute_names_keep_positive_distinct_key
     // The lookup shape the broker's dictionary cache uses: one array bind
     // rather than a placeholder per name, which is what keeps a large batch
     // from exhausting the protocol's parameter space.
-    let batch: Vec<String> = (1..=LOOKUP_BATCH).map(|position| format!("{GENERATED_NAME_PREFIX}{position}")).collect();
+    let batch: Vec<String> = (1..=LOOKUP_BATCH).map(|position| format!("{prefix}{position}")).collect();
     let resolved = sqlx::query("SELECT attribute_name_key, name FROM attribute_names WHERE name = ANY($1)")
         .bind(&batch)
         .fetch_all(&pool)
@@ -89,7 +80,6 @@ async fn thirty_two_thousand_distinct_attribute_names_keep_positive_distinct_key
         assert!(key > 0, "{name} resolved to a non-positive key");
     }
 
-    remove_generated_names(&pool).await;
     pool.close().await;
     environment.finish().await.expect("releasing exclusive ownership failed");
 }

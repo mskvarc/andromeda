@@ -8,6 +8,7 @@
 //! reset that runs before each test in this suite.
 
 use andromeda_test_fixtures::high_entropy_text::high_entropy_text;
+use andromeda_test_harness::dictionary_seed::{attribute_name_key, entity_type_name_key};
 use sqlx::{Executor, PgPool, Postgres};
 
 /// Identifier prefix every resource this suite seeds carries.
@@ -169,28 +170,6 @@ pub fn owner_object(ordinal: usize) -> String {
     format!("{OWNER_PREFIX}{ordinal}")
 }
 
-/// Resolve, creating if necessary, the dictionary identifier of an attribute
-/// IRI. The dictionary is deliberately never truncated by the harness, so a
-/// repeated run reuses the same identifier.
-pub async fn dictionary_key(pool: &PgPool, name: &str) -> i32 {
-    sqlx::query_scalar("INSERT INTO attribute_names (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING attribute_name_key")
-        .bind(name)
-        .fetch_one(pool)
-        .await
-        .expect("attribute dictionary insert must succeed")
-}
-
-/// Resolve, creating if necessary, the type dictionary identifier of an entity
-/// type IRI. Like the attribute dictionary, it is never truncated by the
-/// harness, so a repeated run reuses the same identifier.
-pub async fn type_dictionary_key(pool: &PgPool, name: &str) -> i32 {
-    sqlx::query_scalar("INSERT INTO entity_type_names (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING entity_type_name_key")
-        .bind(name)
-        .fetch_one(pool)
-        .await
-        .expect("type dictionary insert must succeed")
-}
-
 /// The Entity rows of the corpus: `$1` the identifier prefix, `$2`/`$3` the
 /// rare and common type keys, `$4` the Entity count, `$5`/`$6` the city and
 /// alarm attribute keys. Every 997th Entity is of the rare type, and each type
@@ -222,13 +201,17 @@ const ENTITY_CORPUS: &str = "WITH seeded AS ( \
 /// `current_attributes` receives a numeric reading, a `GeoProperty` entrance,
 /// the city string and the owner Relationship per Entity.
 pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
-    let reading = dictionary_key(pool, READING_ATTRIBUTE).await;
-    let entrance = dictionary_key(pool, ENTRANCE_ATTRIBUTE).await;
-    let city = dictionary_key(pool, CITY_ATTRIBUTE).await;
-    let alarm = dictionary_key(pool, ALARM_ATTRIBUTE).await;
-    let owner = dictionary_key(pool, OWNER_ATTRIBUTE).await;
-    let rare_type = type_dictionary_key(pool, RARE_TYPE).await;
-    let common_type = type_dictionary_key(pool, COMMON_TYPE).await;
+    let reading = attribute_name_key(pool, READING_ATTRIBUTE)
+        .await
+        .expect("attribute dictionary seed must succeed");
+    let entrance = attribute_name_key(pool, ENTRANCE_ATTRIBUTE)
+        .await
+        .expect("attribute dictionary seed must succeed");
+    let city = attribute_name_key(pool, CITY_ATTRIBUTE).await.expect("attribute dictionary seed must succeed");
+    let alarm = attribute_name_key(pool, ALARM_ATTRIBUTE).await.expect("attribute dictionary seed must succeed");
+    let owner = attribute_name_key(pool, OWNER_ATTRIBUTE).await.expect("attribute dictionary seed must succeed");
+    let rare_type = entity_type_name_key(pool, RARE_TYPE).await.expect("type dictionary seed must succeed");
+    let common_type = entity_type_name_key(pool, COMMON_TYPE).await.expect("type dictionary seed must succeed");
 
     sqlx::query(ENTITY_CORPUS)
         .bind(prefix)
@@ -313,7 +296,7 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
 /// writer gives every String longer than 2048 UTF-8 octets, so the overflow
 /// indexes hold exactly these rows.
 pub async fn seed_essays(pool: &PgPool, corpus: &SeededCorpus) -> SeededEssays {
-    let attribute = dictionary_key(pool, ESSAY_ATTRIBUTE).await;
+    let attribute = attribute_name_key(pool, ESSAY_ATTRIBUTE).await.expect("attribute dictionary seed must succeed");
     let essays: Vec<String> = (0..SEEDED_ESSAYS).map(|seed| high_entropy_text(ESSAY_LENGTH, seed)).collect();
     let probe = essays
         .get(PROBED_ESSAY)

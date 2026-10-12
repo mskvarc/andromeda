@@ -12,7 +12,11 @@
 -- written by one broker is readable by any other: a code keeps its number
 -- forever, a withdrawn code keeps its row so old attributes stay decodable,
 -- and a new code appends. `id` therefore has no identity clause, and nothing
--- in the schema mints a unit-code number.
+-- in the schema mints a unit-code number. Triggers enforce the assignment: a
+-- row trigger refuses a delete and any update naming `id`, `code` or
+-- `first_revision`, a statement trigger refuses a truncate, and a retirement
+-- is final, so setting `retired_revision` once is the only update a code
+-- admits.
 --
 -- There is no conversion factor: the broker never converts between units.
 -- ============================================================================
@@ -51,4 +55,19 @@ create table unit_code_catalog_metadata (
 revoke insert, update, delete, truncate on unit_code_catalog_metadata from public;
 
 grant select on unit_code_catalog_metadata to public;
+
+create trigger trg_unit_codes_append_only_row
+    before update of id,
+    code,
+    first_revision or delete on unit_codes for each row
+    execute function refuse_dictionary_change ();
+
+create trigger trg_unit_codes_append_only_truncate
+    before truncate on unit_codes for each statement
+    execute function refuse_dictionary_change ();
+
+create trigger trg_unit_codes_retirement_final
+    before update of retired_revision on unit_codes for each row
+    when (old.retired_revision is not null)
+    execute function refuse_dictionary_change ();
 

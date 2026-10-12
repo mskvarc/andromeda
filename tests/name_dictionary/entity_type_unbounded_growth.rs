@@ -5,14 +5,13 @@
 //! attribute dictionary's, so a write that brings a new type is accepted at any
 //! dictionary size and a write of an existing type keeps resolving it.
 
-use crate::{GENERATED_NAME_PREFIX, SUITE};
+use crate::{SUITE, run_name_prefix};
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::{configuration::TestRunConfiguration, database_access::connect_test_database, serialized_environment::SerializedEnvironment};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
-use sqlx::PgPool;
 use uuid::Uuid;
 
 /// Types interned before the write under test.
@@ -30,15 +29,6 @@ fn entity_of_type(id: &str, entity_type: &str) -> Value {
     })
 }
 
-/// Remove exactly the type names this check interned.
-async fn remove_generated_types(pool: &PgPool) {
-    sqlx::query("DELETE FROM entity_type_names WHERE name LIKE $1")
-        .bind(format!("{GENERATED_NAME_PREFIX}%"))
-        .execute(pool)
-        .await
-        .expect("the generated dictionary entries must be removable");
-}
-
 /// Delete an entity, tolerating one that was never created.
 async fn discard(client: &TestClient, id: &str) {
     let _discarded = client.delete_entity(id).await;
@@ -53,13 +43,12 @@ async fn a_type_dictionary_past_ten_thousand_types_still_mints_new_types_and_ser
     let client = environment.client();
     let pool = connect_test_database().await.expect("test database connection");
     let run = Uuid::new_v4();
+    let prefix = run_name_prefix();
     let established_type = format!("TypeEstablished{}", run.simple());
     let novel_type = format!("TypeNovel{}", run.simple());
     let established_entity = format!("urn:ngsi-ld:test:{SUITE}:Type:established:{run}");
     let novel_entity = format!("urn:ngsi-ld:test:{SUITE}:Type:novel:{run}");
     let repeat_entity = format!("urn:ngsi-ld:test:{SUITE}:Type:repeat:{run}");
-
-    remove_generated_types(&pool).await;
 
     let established = client
         .post_entity(&entity_of_type(&established_entity, &established_type))
@@ -69,7 +58,7 @@ async fn a_type_dictionary_past_ten_thousand_types_still_mints_new_types_and_ser
     assert_eq!(established.status, StatusCode::CREATED, "create: {:?}", established.body);
 
     sqlx::query("INSERT INTO entity_type_names (name) SELECT $1 || generated::TEXT FROM generate_series(1, $2) AS generated ON CONFLICT (name) DO NOTHING")
-        .bind(GENERATED_NAME_PREFIX)
+        .bind(&prefix)
         .bind(TYPES_INTERNED_FIRST)
         .execute(&pool)
         .await
@@ -95,13 +84,11 @@ async fn a_type_dictionary_past_ten_thousand_types_still_mints_new_types_and_ser
         .await
         .expect("create entity request failed");
 
-    // Every observation is taken before the dictionary is put back and
-    // asserted afterwards, so a failed assertion cannot leave eleven thousand
-    // generated types behind in the shared dictionary.
+    // Every observation is taken before the entities are discarded and
+    // asserted afterwards, so a failed assertion cannot leave them behind.
     discard(client, &established_entity).await;
     discard(client, &novel_entity).await;
     discard(client, &repeat_entity).await;
-    remove_generated_types(&pool).await;
     pool.close().await;
 
     assert!(

@@ -172,3 +172,17 @@ create or replace function sub_eq_query_key (path integer[], value_kind smallint
         array[hashtextextended(value, public.sub_path_hash(path) # value_kind)]
 $$;
 
+-- Refuses every change to a dictionary but the ones its triggers let through.
+-- Keys of the dictionaries are held where no foreign key reaches, so they are
+-- correct only while a key, once minted, names the same value for the life of
+-- the tenant. Serves the row triggers and the statement triggers alike.
+create or replace function refuse_dictionary_change ()
+    returns trigger
+    language plpgsql
+    as $$
+begin
+    raise restrict_violation
+    using message = tg_table_name || ' is append-only: a key once minted names the same value for the life of the tenant', table = tg_table_name;
+end
+$$;
+

@@ -136,3 +136,4 @@ create table postgresql_maintenance_fleet (
     constraint chk_postgresql_maintenance_fleet_singleton check (singleton),
     constraint chk_postgresql_maintenance_fleet_saturated_passes_non_negative check (autovacuum_saturated_passes >= 0)
 );
+

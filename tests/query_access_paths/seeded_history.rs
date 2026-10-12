@@ -7,7 +7,7 @@
 //! minutes per test, so the rows are written directly and cleared again by the
 //! exclusive serialized reset that runs before each test in this suite.
 
-use crate::seeded_corpus::{dictionary_key, type_dictionary_key};
+use andromeda_test_harness::dictionary_seed::{attribute_name_key, entity_type_name_key};
 use sqlx::PgPool;
 
 /// Streams written per seeded history corpus.
@@ -47,22 +47,20 @@ impl SeededHistory {
 /// tombstone. That separation is what makes an axis answering from another
 /// axis' column detectable.
 pub async fn seed(pool: &PgPool, prefix: &str) -> SeededHistory {
-    let attribute_name_key: i32 =
-        sqlx::query_scalar("INSERT INTO attribute_names (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING attribute_name_key")
-            .bind(HISTORY_ATTRIBUTE)
-            .fetch_one(pool)
-            .await
-            .expect("attribute dictionary insert must succeed");
+    let history_attribute_key = attribute_name_key(pool, HISTORY_ATTRIBUTE)
+        .await
+        .expect("attribute dictionary seed must succeed");
+    let historic_type_key = entity_type_name_key(pool, "https://example.test/query-access-paths/Historic")
+        .await
+        .expect("type dictionary seed must succeed");
 
     let entity_key: i64 = sqlx::query_scalar(
-        "WITH type_name AS ( \
-             INSERT INTO entity_type_names (name) VALUES ('https://example.test/query-access-paths/Historic') \
-             ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING entity_type_name_key) \
-         INSERT INTO temporal_entities (created_at, modified_at, id, entity_type_name_keys) \
-         SELECT now(), now(), $1::text || ':history', ARRAY[type_name.entity_type_name_key] FROM type_name \
+        "INSERT INTO temporal_entities (created_at, modified_at, id, entity_type_name_keys) \
+         VALUES (now(), now(), $1::text || ':history', ARRAY[$2::integer]) \
          RETURNING temporal_entity_key",
     )
     .bind(prefix)
+    .bind(historic_type_key)
     .fetch_one(pool)
     .await
     .expect("temporal catalogue insert must succeed");
@@ -74,7 +72,7 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededHistory {
          RETURNING stream_key",
     )
     .bind(entity_key)
-    .bind(attribute_name_key)
+    .bind(history_attribute_key)
     .bind(SEEDED_STREAMS)
     .fetch_all(pool)
     .await
@@ -188,8 +186,12 @@ impl WindowedHistory {
 /// however long its history is: a growing chunk count would grow every
 /// stream-led probe for a reason that is not the probe's.
 pub async fn seed_window_and_prior(pool: &PgPool, prefix: &str, observations: i64) -> WindowedHistory {
-    let attribute = dictionary_key(pool, HISTORY_ATTRIBUTE).await;
-    let type_key = type_dictionary_key(pool, "https://example.test/query-access-paths/Meter").await;
+    let attribute = attribute_name_key(pool, HISTORY_ATTRIBUTE)
+        .await
+        .expect("attribute dictionary seed must succeed");
+    let type_key = entity_type_name_key(pool, "https://example.test/query-access-paths/Meter")
+        .await
+        .expect("type dictionary seed must succeed");
 
     sqlx::query(
         "WITH meters AS ( \

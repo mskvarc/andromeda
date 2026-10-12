@@ -14,7 +14,9 @@
 -- rather than a modelled constraint.
 --
 -- Neither dictionary ever deletes or re-keys a row, so a key, once minted,
--- names the same IRI for the life of the tenant.
+-- names the same IRI for the life of the tenant. Triggers enforce it: a row
+-- trigger refuses every update and delete, and a statement trigger refuses a
+-- truncate, so an insert is the only change either dictionary admits.
 -- ============================================================================
 create table attribute_names (
     attribute_name_key integer generated always as identity,
@@ -31,4 +33,20 @@ create table entity_type_names (
     constraint uq_entity_type_names_name unique (name),
     constraint chk_entity_type_names_name_length check (char_length(name) >= 1 and octet_length(name) <= 1024)
 );
+
+create trigger trg_attribute_names_append_only_row
+    before update or delete on attribute_names for each row
+    execute function refuse_dictionary_change ();
+
+create trigger trg_attribute_names_append_only_truncate
+    before truncate on attribute_names for each statement
+    execute function refuse_dictionary_change ();
+
+create trigger trg_entity_type_names_append_only_row
+    before update or delete on entity_type_names for each row
+    execute function refuse_dictionary_change ();
+
+create trigger trg_entity_type_names_append_only_truncate
+    before truncate on entity_type_names for each statement
+    execute function refuse_dictionary_change ();
 
