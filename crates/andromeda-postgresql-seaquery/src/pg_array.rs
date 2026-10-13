@@ -52,7 +52,7 @@ struct Cardinality;
 /// enclosing `WHERE` drops the row: the answer an empty array gets.
 #[must_use]
 pub fn has_elements(array: SimpleExpr) -> SimpleExpr {
-    SimpleExpr::from(Func::cust(Cardinality).args([array])).gt(0)
+    SimpleExpr::from(Func::cust(Cardinality).args([array])).gt(SimpleExpr::Constant(0.into()))
 }
 
 /// The `nullif` function.

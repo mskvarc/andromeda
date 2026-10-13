@@ -270,6 +270,7 @@ mod tests {
     use crate::{
         attribute_name_key::AttributeNameKey,
         dictionary::resolved_names::ResolvedNames,
+        history_source::HistoryBranch,
         q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, traversal::LinkedHop},
     };
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
@@ -287,8 +288,8 @@ mod tests {
             .expect("a valid instant")
             .with_timezone(&Utc);
         let window = HistoryWindow::builder()
-            .schema(None)
-            .temporal_entity_key(Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))))
+            .branch(HistoryBranch::live())
+            .entity_id(Expr::col((Alias::new("e"), Alias::new("id"))))
             .axis(AttributeHistory::ObservedAt)
             .interval(TimeInterval::After(start))
             .build();
@@ -301,12 +302,8 @@ mod tests {
             inner,
         );
         let sql = Query::select().expr(Expr::val(1)).cond_where(probe).to_owned().to_string(PostgresQueryBuilder);
-        assert_eq!(sql.matches("EXISTS").count(), 2, "{sql}");
-        for fragment in [
-            r#"JOIN "entities" AS "le1" ON "le1"."id" = "lo1""#,
-            r#""qs_ln1"."temporal_entity_key" = "e"."temporal_entity_key""#,
-            r#""le1"."entity_key" = 5"#,
-        ] {
+        assert_eq!(sql.matches(r#"AS "qh_ln1""#).count(), 2, "{sql}");
+        for fragment in [r#"JOIN "entities" AS "le1" ON "le1"."id" = "lo1""#, r#""le1"."entity_key" = 5"#] {
             assert_eq!(sql.matches(fragment).count(), 2, "{fragment}: {sql}");
         }
         assert!(sql.contains(r#"AS "qe_ln1" ON TRUE"#), "{sql}");
@@ -322,8 +319,8 @@ mod tests {
             .expect("a valid instant")
             .with_timezone(&Utc);
         let window = HistoryWindow::builder()
-            .schema(None)
-            .temporal_entity_key(Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))))
+            .branch(HistoryBranch::live())
+            .entity_id(Expr::col((Alias::new("e"), Alias::new("id"))))
             .axis(AttributeHistory::ObservedAt)
             .interval(TimeInterval::After(start))
             .build();

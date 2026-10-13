@@ -11,7 +11,7 @@
 //! so both render the same leaves from here.
 
 use crate::{
-    alias::{Ahg, Ang, Sg},
+    alias::{Ahg, Ang},
     axis::axis_column,
 };
 use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, contributed_entities::ContributedEntities};
@@ -19,6 +19,7 @@ use andromeda_postgresql_query::{
     dictionary::query_names::QueryNames,
     error::RenderError,
     geo_predicate::relation_expression,
+    history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, grain::HistoryGrain},
     q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, projection as q_filter},
     scope_predicate::{ScopeTarget, condition as scope_condition},
     time_interval_predicate::within_interval,
@@ -26,10 +27,10 @@ use andromeda_postgresql_query::{
 use andromeda_postgresql_schema::{
     current::E,
     name_dictionary::AttributeNames,
-    temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
+    temporal::{AttributeHistory, TemporalEntities},
 };
-use andromeda_postgresql_seaquery::{branch::qualified, cast::cast, literal::int_literal, pg_type::PostgresType};
-use sea_query::{Condition, DynIden, Expr as SeaExpr, ExprTrait, JoinType, SelectStatement};
+use andromeda_postgresql_seaquery::{cast::cast, literal::int_literal, pg_type::PostgresType};
+use sea_query::{Condition, Expr as SeaExpr, ExprTrait, JoinType, SelectStatement};
 
 /// The conjunction of the query's `q`, geo and scope filters over the temporal
 /// entity `e`, with the entities a Context Source contributed to a split query
@@ -43,19 +44,19 @@ use sea_query::{Condition, DynIden, Expr as SeaExpr, ExprTrait, JoinType, Select
 /// # Errors
 ///
 /// Returns [`RenderError`] exactly as [`temporal_geo_existential`] does.
-pub(crate) fn value_filter_condition(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Result<Option<Condition>, RenderError> {
+pub(crate) fn value_filter_condition(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Result<Option<Condition>, RenderError> {
     let mut filters = Condition::all();
     let mut present = false;
     if let Some(q_expr) = compiled.entities.q_expr.as_ref() {
-        filters = filters.add(q_filter::compile(q_expr, &InstanceScan::History(&windowed_instances(schema, compiled)), names));
+        filters = filters.add(q_filter::compile(q_expr, &InstanceScan::History(&windowed_instances(branch, compiled)), names));
         present = true;
     }
-    if let Some(probe) = temporal_geo_existential(schema, compiled)? {
+    if let Some(probe) = temporal_geo_existential(branch, compiled)? {
         filters = filters.add(SeaExpr::exists(probe));
         present = true;
     }
     if let Some(scope_q) = &compiled.entities.scope_q {
-        filters = filters.add(scope_condition(scope_q, &scope_history_target(schema, compiled)));
+        filters = filters.add(scope_condition(scope_q, &scope_history_target(branch, compiled)));
         present = true;
     }
     Ok(present.then(|| exempting_contributed(filters, &compiled.contributed)))
@@ -73,22 +74,22 @@ fn exempting_contributed(filters: Condition, contributed: &ContributedEntities) 
 /// The scope-history target a temporal `scopeQ` is read against: a validity
 /// interval of the entity `e` names overlapping the query's window on its
 /// Temporal Property (clause 4.18).
-pub(crate) fn scope_history_target(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery) -> ScopeTarget {
+pub(crate) fn scope_history_target(branch: &HistoryBranch, compiled: &CompiledTemporalQuery) -> ScopeTarget {
     ScopeTarget::history(
-        (E, TemporalEntities::TemporalEntityKey),
+        (E, TemporalEntities::Id),
         compiled.window.timeproperty,
         compiled.window.interval,
-        schema.cloned(),
+        branch.clone(), // clone: the target owns the branch its probe reads
     )
 }
 
 /// The Attribute instances a temporal `q` is checked against (clause 5.7.4.4
 /// step S2): the entity's history rows valid within the window on the
 /// requested Temporal Property, of every `datasetId`.
-pub(crate) fn windowed_instances(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery) -> HistoryWindow {
+pub(crate) fn windowed_instances(branch: &HistoryBranch, compiled: &CompiledTemporalQuery) -> HistoryWindow {
     HistoryWindow::builder()
-        .schema(schema.cloned())
-        .temporal_entity_key(SeaExpr::col((E, TemporalEntities::TemporalEntityKey)))
+        .branch(branch.clone()) // clone: the window owns the branch its probes read
+        .entity_id(SeaExpr::col((E, TemporalEntities::Id)))
         .axis(axis_column(compiled.window.timeproperty))
         .interval(compiled.window.interval)
         .build()
@@ -101,8 +102,8 @@ pub(crate) fn windowed_instances(schema: Option<&DynIden>, compiled: &CompiledTe
 /// the `GeoProperty` instances that are within the interval defined by the
 /// temporal query". Every instance of the target `GeoProperty` - the default
 /// `location` and any named one alike - is an `attribute_history` row carrying a
-/// `value_geometry`, so the probe reaches them uniformly through the stream rather
-/// than through the single hoisted current-state `location` column, which holds
+/// `value_geometry`, so the probe reaches them uniformly through the history
+/// rows rather than through the single hoisted current-state `location` column, which holds
 /// only one instant and answers a different question. Clause 4.10 makes one
 /// in-window instance meeting the restriction enough, which is exactly this
 /// existential. `None` when the query carries no geo restriction.
@@ -111,7 +112,7 @@ pub(crate) fn windowed_instances(schema: Option<&DynIden>, compiled: &CompiledTe
 ///
 /// Returns [`RenderError::ReferenceGeometryEncoding`] or [`RenderError::Query`]
 /// exactly as the shared relation rendering does.
-pub(crate) fn temporal_geo_existential(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery) -> Result<Option<SelectStatement>, RenderError> {
+pub(crate) fn temporal_geo_existential(branch: &HistoryBranch, compiled: &CompiledTemporalQuery) -> Result<Option<SelectStatement>, RenderError> {
     let Some(geo) = &compiled.entities.geo else {
         return Ok(None);
     };
@@ -123,20 +124,13 @@ pub(crate) fn temporal_geo_existential(schema: Option<&DynIden>, compiled: &Comp
     let mut probe = SelectStatement::new();
     probe
         .expr(int_literal(1))
-        .from(qualified(schema, TemporalAttributeStreams::Table).alias(Sg))
+        .from(attribute_rows(branch, &HistoryOf::Entity(SeaExpr::col((E, TemporalEntities::Id))), Ahg))
         .join_as(
             JoinType::Join,
             AttributeNames::Table,
             Ang,
-            SeaExpr::col((Ang, AttributeNames::AttributeNameKey)).equals((Sg, TemporalAttributeStreams::AttributeNameKey)),
+            SeaExpr::col((Ang, AttributeNames::AttributeNameKey)).equals((Ahg, HistoryGrain::AttributeNameKey)),
         )
-        .join_as(
-            JoinType::Join,
-            qualified(schema, AttributeHistory::Table),
-            Ahg,
-            SeaExpr::col((Ahg, AttributeHistory::StreamKey)).equals((Sg, TemporalAttributeStreams::StreamKey)),
-        )
-        .cond_where(SeaExpr::col((Sg, TemporalAttributeStreams::TemporalEntityKey)).equals((E, TemporalEntities::TemporalEntityKey)))
         .cond_where(SeaExpr::col((Ang, AttributeNames::Name)).eq(geo.geoproperty.as_str()))
         .cond_where(SeaExpr::col((Ahg, AttributeHistory::ValueGeometry)).is_not_null())
         .cond_where(geo_window_condition(compiled))

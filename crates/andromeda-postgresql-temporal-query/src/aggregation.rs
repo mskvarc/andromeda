@@ -18,17 +18,15 @@
 use crate::{
     aggregated_value::{arithmetic_numeric_expr, average_time_expr, distinct_value_expr, ordered_instant_expr, ordered_text_expr, sized_numeric_expr},
     aggregation_grouping::apply_grouping,
-    alias::{Ah, An, S},
+    alias::{Ah, An},
     axis::axis_column,
     history::base_history_source,
     recorded_shape::recorded_shape,
 };
 use andromeda_ngsi_ld_lexicon::aggr_method::AggrMethod;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
-use andromeda_postgresql_schema::{
-    name_dictionary::AttributeNames,
-    temporal::{AttributeHistory, TemporalAttributeStreams},
-};
+use andromeda_postgresql_query::history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, grain::HistoryGrain};
+use andromeda_postgresql_schema::{name_dictionary::AttributeNames, temporal::AttributeHistory};
 use andromeda_postgresql_seaquery::{
     aggregate::{bool_or, count_all, count_distinct, stddev},
     cast::{cast, typed_null},
@@ -37,7 +35,7 @@ use andromeda_postgresql_seaquery::{
     timescale::time_bucket,
 };
 use chrono::{DateTime, Utc};
-use sea_query::{Alias, Condition, DynIden, Expr, ExprTrait, Func, Iden, JoinType, Order, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, Condition, Expr, ExprTrait, Func, Iden, JoinType, Order, Query, SelectStatement, SimpleExpr};
 
 /// Lateral projection that computes one bucket boundary per history row.
 #[derive(Iden, Clone, Copy)]
@@ -127,25 +125,18 @@ fn aggregate_columns(methods: &[AggrMethod]) -> Vec<(SimpleExpr, &'static str)> 
     columns
 }
 
-/// The bucket origin, measured over the same entity's streams through the stream
-/// catalogue rather than through a current-state row.
+/// The bucket origin, measured over the history of the same entity rather than
+/// through a current-state row.
 ///
-/// Derived once per selected entity and supplied to the single bucket
-/// calculation rather than repeated in both rendered bounds.
-fn origin_subquery(axis: AttributeHistory) -> SelectStatement {
+/// The entity is the one stage 2 reads, so the origin is derived once and
+/// supplied to the single bucket calculation rather than repeated in both
+/// rendered bounds.
+fn origin_subquery(branch: &HistoryBranch, of: &HistoryOf, axis: AttributeHistory) -> SelectStatement {
     let ah2 = Alias::new("ah2");
-    let s2 = Alias::new("s2");
     let mut origin = Query::select();
     origin
         .expr_as(Func::min(Expr::col((ah2.clone(), axis))), Origin)
-        .from_as(AttributeHistory::Table, ah2.clone())
-        .join_as(
-            JoinType::Join,
-            TemporalAttributeStreams::Table,
-            s2.clone(),
-            Expr::col((s2.clone(), TemporalAttributeStreams::StreamKey)).equals((ah2, AttributeHistory::StreamKey)),
-        )
-        .and_where(Expr::col((s2, TemporalAttributeStreams::TemporalEntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)));
+        .from(attribute_rows(branch, of, ah2));
     origin.take()
 }
 
@@ -170,9 +161,10 @@ fn whole_range_bound(instant: Option<&DateTime<Utc>>) -> SimpleExpr {
     }
 }
 
-/// Build the aggregation query with `time_bucket` windows.
+/// Build the aggregation query with `time_bucket` windows over the rows `of`
+/// reads.
 #[must_use]
-pub fn build_aggregation_query(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery, condition: Condition) -> SelectStatement {
+pub fn build_aggregation_query(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemporalQuery, condition: Condition) -> SelectStatement {
     // Clause 4.5.19: an absent period aggregates the whole range into one
     // bucket rather than bucketing at all. A zero period is absent by
     // construction, so there is nothing to test for here.
@@ -185,9 +177,9 @@ pub fn build_aggregation_query(schema: Option<&DynIden>, compiled: &CompiledTemp
 
     let mut select = Query::select();
     select.expr_as(Expr::col((An, AttributeNames::Name)), Alias::new("attribute_name"));
-    select.expr(Expr::col((S, TemporalAttributeStreams::DatasetId)));
+    select.expr(Expr::col((Ah, HistoryGrain::DatasetId)));
     project_group_span(&mut select);
-    base_history_source(&mut select, schema);
+    base_history_source(&mut select, branch, of);
 
     if let Some(period) = period {
         let iso = period.as_iso8601();
@@ -196,7 +188,7 @@ pub fn build_aggregation_query(schema: Option<&DynIden>, compiled: &CompiledTemp
         let origin = if let Some(reference) = compiled.window.interval.reference() {
             Expr::val(*reference)
         } else {
-            select.join_lateral(JoinType::Join, origin_subquery(axis), BucketOrigin, SimpleExpr::from(true));
+            select.join_lateral(JoinType::Join, origin_subquery(branch, of, axis), BucketOrigin, SimpleExpr::from(true));
             Expr::col((BucketOrigin, Origin))
         };
         select.join_lateral(
@@ -232,14 +224,14 @@ pub fn build_aggregation_query(schema: Option<&DynIden>, compiled: &CompiledTemp
     // than no grouping at all.
     select.add_group_by([
         SimpleExpr::from(Expr::col((An, AttributeNames::Name))),
-        SimpleExpr::from(Expr::col((S, TemporalAttributeStreams::DatasetId))),
+        SimpleExpr::from(Expr::col((Ah, HistoryGrain::DatasetId))),
     ]);
     select
         .order_by((An, AttributeNames::Name), Order::Asc)
-        .order_by((S, TemporalAttributeStreams::DatasetId), Order::Asc);
+        .order_by((Ah, HistoryGrain::DatasetId), Order::Asc);
 
     if let Some(grouping) = &compiled.representation.grouping {
-        apply_grouping(&mut select, grouping, axis, schema);
+        apply_grouping(&mut select, grouping, axis, branch, of);
     }
 
     if period.is_some() {
@@ -253,7 +245,6 @@ pub fn build_aggregation_query(schema: Option<&DynIden>, compiled: &CompiledTemp
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alias::Te;
     use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
@@ -265,7 +256,7 @@ mod tests {
         },
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-    use andromeda_postgresql_schema::temporal::TemporalEntities;
+    use andromeda_postgresql_query::history_source::{HistoryBranch, HistoryOf};
     use sea_query::PostgresQueryBuilder;
 
     fn aggregated(methods: Vec<AggrMethod>, period: Option<&str>) -> CompiledTemporalQuery {
@@ -302,18 +293,17 @@ mod tests {
             .build()
     }
 
-    /// The entity predicate threaded into the aggregation, standing in for the
-    /// `te.id = <uri>` the history builder computes.
-    fn entity_filter() -> Condition {
-        Condition::all().add(Expr::col((Te, TemporalEntities::Id)).eq("urn:ngsi-ld:Vehicle:1"))
+    /// The entity the aggregation reads the history of.
+    fn vehicle() -> HistoryOf {
+        HistoryOf::Entity(Expr::val("urn:ngsi-ld:Vehicle:1"))
     }
 
     fn sql_of(compiled: &CompiledTemporalQuery) -> String {
-        build_aggregation_query(None, compiled, entity_filter()).to_string(PostgresQueryBuilder)
+        build_aggregation_query(&HistoryBranch::live(), &vehicle(), compiled, Condition::all()).to_string(PostgresQueryBuilder)
     }
 
     fn bound_sql_of(compiled: &CompiledTemporalQuery) -> (String, sea_query::Values) {
-        build_aggregation_query(None, compiled, entity_filter()).build(PostgresQueryBuilder)
+        build_aggregation_query(&HistoryBranch::live(), &vehicle(), compiled, Condition::all()).build(PostgresQueryBuilder)
     }
 
     #[test]
@@ -351,16 +341,19 @@ mod tests {
         let sql = sql_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
         assert!(sql.contains("time_bucket('PT1H'::interval, \"ah\".\"observed_at\""), "{sql}");
         assert!(sql.contains("MIN(\"ah2\".\"observed_at\")"), "{sql}");
-        assert!(!sql.contains("recorded_at"), "{sql}");
+        assert!(!sql.contains("\"ah\".\"recorded_at\""), "{sql}");
         pretty_assertions::assert_eq!(sql.matches("SELECT MIN(").count(), 1, "{sql}");
     }
 
     /// The bucket origin is measured over the same entity's streams, reached
     /// through the stream catalogue rather than through a current-state row.
     #[test]
-    fn the_bucket_origin_is_correlated_through_the_stream_catalogue() {
+    fn the_bucket_origin_is_measured_over_the_history_of_the_aggregated_entity() {
         let sql = sql_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
-        assert!(sql.contains("\"s2\".\"temporal_entity_key\" = \"s\".\"temporal_entity_key\""), "{sql}");
+        let origin = sql.split("AS \"origin\" FROM").nth(1).expect("the origin subquery");
+        let origin = origin.split("AS \"ah2\"").next().expect("the origin source");
+        assert!(origin.contains("\"re\".\"id\" = 'urn:ngsi-ld:Vehicle:1'"), "{sql}");
+        assert!(origin.contains("\"pe\".\"entity_id\" = 'urn:ngsi-ld:Vehicle:1'"), "{sql}");
         assert!(!sql.contains("temporal_entity_attributes"), "{sql}");
     }
 
@@ -381,12 +374,12 @@ mod tests {
         let sql = sql_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
         let group_by = sql.split("GROUP BY").nth(1).expect("a GROUP BY clause");
         let group_by = group_by.split("ORDER BY").next().expect("a clause before ORDER BY").trim();
-        pretty_assertions::assert_eq!(group_by, "\"an\".\"name\", \"s\".\"dataset_id\", \"bucket\".\"bucket_start\"", "{sql}");
+        pretty_assertions::assert_eq!(group_by, "\"an\".\"name\", \"ah\".\"dataset_id\", \"bucket\".\"bucket_start\"", "{sql}");
 
         let sql = sql_of(&aggregated(vec![AggrMethod::Avg], None));
         let group_by = sql.split("GROUP BY").nth(1).expect("a GROUP BY clause");
         let group_by = group_by.split("ORDER BY").next().expect("a clause before ORDER BY").trim();
-        pretty_assertions::assert_eq!(group_by, "\"an\".\"name\", \"s\".\"dataset_id\"", "{sql}");
+        pretty_assertions::assert_eq!(group_by, "\"an\".\"name\", \"ah\".\"dataset_id\"", "{sql}");
     }
 
     /// Keying the group on the unit, the attribute family or the value shape
@@ -421,7 +414,7 @@ mod tests {
         }
         assert!(sql.contains("jsonb_typeof"), "the shape span separates an array from an object: {sql}");
         assert!(!sql.contains("attribute_type"), "{sql}");
-        assert!(!sql.contains("value_type"), "{sql}");
+        assert!(!sql.contains("\"ah\".\"value_type"), "{sql}");
     }
 
     /// Table 4.5.19.1-1, "JSON Array" column: `avg`, `min`, `max` and `sum` are
@@ -531,7 +524,7 @@ mod tests {
         let order_by = sql.split("ORDER BY").nth(1).expect("an ORDER BY clause").trim();
         pretty_assertions::assert_eq!(
             order_by,
-            "\"an\".\"name\" ASC, \"s\".\"dataset_id\" ASC, \"bucket\".\"bucket_start\" ASC",
+            "\"an\".\"name\" ASC, \"ah\".\"dataset_id\" ASC, \"bucket\".\"bucket_start\" ASC",
             "{sql}"
         );
     }
@@ -597,5 +590,16 @@ mod tests {
         for column in ["agg_min", "agg_min_str", "agg_min_dt", "agg_max", "agg_max_str", "agg_max_dt"] {
             assert!(sql.contains(column), "{column} missing: {sql}");
         }
+    }
+
+    /// Clause 5.7.4: an aggregation on the live branch reads the entity's
+    /// queued entries beside its recorded rows, so a written observation is
+    /// aggregated before the drain applies it.
+    #[test]
+    fn aggregation_reads_the_pending_rows() {
+        let sql = sql_of(&aggregated(vec![AggrMethod::Sum, AggrMethod::Max], None));
+        let source = sql.split(r#") AS "ah" JOIN "attribute_names""#).next().expect("the attribute source");
+        assert!(source.contains(r#"UNION ALL (SELECT "pe"."entity_id" AS "entity_id""#), "{sql}");
+        assert!(source.contains(r#""pe"."entity_id" = 'urn:ngsi-ld:Vehicle:1'"#), "{sql}");
     }
 }

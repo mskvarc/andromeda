@@ -21,12 +21,12 @@ use andromeda_ngsi_ld_query::{
 use andromeda_postgresql_query::{
     dictionary::query_names::QueryNames,
     error::RenderError,
+    history_source::{HistoryBranch, entity_rows::entity_rows},
     q_predicate::{instance_scan::InstanceScan, projection as q_filter},
     scope_predicate::pattern_condition,
 };
 use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
-use andromeda_postgresql_seaquery::branch::qualified;
-use sea_query::{Alias, DynIden, Expr as SeaExpr, ExprTrait, SelectStatement};
+use sea_query::{Alias, Expr as SeaExpr, ExprTrait, SelectStatement};
 
 /// Build the statement reading, for every entity of `entity_ids` this broker
 /// holds a Temporal Evolution of, its identifier and then one boolean column
@@ -40,17 +40,15 @@ use sea_query::{Alias, DynIden, Expr as SeaExpr, ExprTrait, SelectStatement};
 /// Returns [`RenderError`] when the geo-query cannot be rendered, exactly as
 /// stage 1 does.
 pub fn build_filter_leaf_truths(
-    schema: Option<&DynIden>,
+    branch: &HistoryBranch,
     compiled: &CompiledTemporalQuery,
     entity_ids: &[Identifier],
     names: &QueryNames,
 ) -> Result<SelectStatement, RenderError> {
     let mut select = SelectStatement::new();
-    select
-        .column((E, TemporalEntities::Id))
-        .from(qualified(schema, TemporalEntities::Table).alias(E));
+    select.column((E, TemporalEntities::Id)).from(entity_rows(branch, E));
     for (position, leaf) in SplitFilter::of(&compiled.entities).leaves().enumerate() {
-        select.expr_as(leaf_expression(schema, compiled, leaf, names)?, Alias::new(format!("leaf_{position}")));
+        select.expr_as(leaf_expression(branch, compiled, leaf, names)?, Alias::new(format!("leaf_{position}")));
     }
     let ids: Vec<&str> = entity_ids.iter().map(AsRef::as_ref).collect();
     select.and_where(SeaExpr::col((E, TemporalEntities::Id)).is_in(ids));
@@ -58,16 +56,16 @@ pub fn build_filter_leaf_truths(
 }
 
 /// One leaf rendered over the temporal entity `e` names.
-fn leaf_expression(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery, leaf: FilterLeaf<'_>, names: &QueryNames) -> Result<SeaExpr, RenderError> {
+fn leaf_expression(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, leaf: FilterLeaf<'_>, names: &QueryNames) -> Result<SeaExpr, RenderError> {
     match leaf {
         FilterLeaf::Term(pred) => {
             // clone: the compilation reads an expression tree, and the Query
             // Term is borrowed from the query's own
             let term = Expr::Pred(pred.clone());
-            Ok(q_filter::compile(&term, &InstanceScan::History(&windowed_instances(schema, compiled)), names).into())
+            Ok(q_filter::compile(&term, &InstanceScan::History(&windowed_instances(branch, compiled)), names).into())
         }
-        FilterLeaf::Geo(_) => Ok(temporal_geo_existential(schema, compiled)?.map_or_else(|| SeaExpr::val(false), SeaExpr::exists)),
-        FilterLeaf::ScopeRequirement(pattern) => Ok(pattern_condition(pattern, &scope_history_target(schema, compiled))),
+        FilterLeaf::Geo(_) => Ok(temporal_geo_existential(branch, compiled)?.map_or_else(|| SeaExpr::val(false), SeaExpr::exists)),
+        FilterLeaf::ScopeRequirement(pattern) => Ok(pattern_condition(pattern, &scope_history_target(branch, compiled))),
     }
 }
 
@@ -92,6 +90,7 @@ mod tests {
     use andromeda_postgresql_query::{
         attribute_name_key::AttributeNameKey,
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
+        history_source::HistoryBranch,
     };
     use chrono::{DateTime, Utc};
     use sea_query::PostgresQueryBuilder;
@@ -145,7 +144,7 @@ mod tests {
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         };
         let compiled = compiled("\"https://example.com/speed\">50", Some(geo), Some("/Madrid"));
-        let (sql, values) = build_filter_leaf_truths(None, &compiled, &ids(), &speed_known())
+        let (sql, values) = build_filter_leaf_truths(&HistoryBranch::live(), &compiled, &ids(), &speed_known())
             .expect("renders")
             .build(PostgresQueryBuilder);
         let leaf_0 = sql.find(r#"AS "leaf_0""#).expect("the Query Term");
@@ -156,7 +155,7 @@ mod tests {
         assert!(sql[..leaf_0].contains(r#""qh"."value_number" >"#), "{sql}");
         assert!(sql[leaf_0..leaf_1].contains(r#""ahg"."value_geometry""#), "{sql}");
         assert!(sql[leaf_1..leaf_2].contains("scope_history"), "{sql}");
-        assert!(sql.contains(r#"FROM "temporal_entities" AS "e" WHERE "e"."id" IN ("#), "{sql}");
+        assert!(sql.contains(r#") AS "e" WHERE "e"."id" IN ("#), "{sql}");
         assert!(format!("{values:?}").contains("urn:ngsi-ld:Vehicle:2"), "{values:?}");
     }
 
@@ -166,16 +165,36 @@ mod tests {
     #[test]
     fn a_q_leaf_reads_the_window_and_the_instance_in_effect() {
         let compiled = compiled("\"https://example.com/speed\">100", None, None);
-        let (sql, _) = build_filter_leaf_truths(None, &compiled, &ids(), &speed_known())
+        let (sql, _) = build_filter_leaf_truths(&HistoryBranch::live(), &compiled, &ids(), &speed_known())
             .expect("renders")
             .build(PostgresQueryBuilder);
         for fragment in [
-            r#"FROM "temporal_attribute_streams" AS "qs" JOIN "attribute_history" AS "qh" ON "qh"."stream_key" = "qs"."stream_key""#,
+            r#") AS "qh" WHERE "qh"."attribute_name_key" ="#,
             r#""qh"."observed_at" >="#,
-            r#""qs"."temporal_entity_key" = "e"."temporal_entity_key""#,
-            r#"FROM "temporal_attribute_streams" AS "qs" JOIN LATERAL"#,
+            r#""re"."id" = "e"."id""#,
+            r#") AS "qs" JOIN LATERAL"#,
         ] {
             assert!(sql.contains(fragment), "{fragment} missing: {sql}");
         }
+    }
+
+    /// Clause 5.7.4.4: the leaves of a split query judge the part held here,
+    /// which on the live branch includes the queued entries, the entity source
+    /// and every leaf probe alike.
+    #[test]
+    fn the_leaf_truths_read_the_union() {
+        let compiled = compiled("\"https://example.com/speed\">50", None, Some("/Madrid"));
+        let sql = build_filter_leaf_truths(&HistoryBranch::live(), &compiled, &ids(), &speed_known())
+            .expect("renders")
+            .to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#"FROM "temporal_append_intents" AS "pt""#), "{sql}");
+        assert!(
+            sql.contains(r#"FROM "temporal_append_entries" AS "pe" WHERE "pe"."entry_kind" IN (1, 2)"#),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(r#"FROM "temporal_append_entries" AS "pe" WHERE "pe"."entry_kind" IN (3)"#),
+            "{sql}"
+        );
     }
 }

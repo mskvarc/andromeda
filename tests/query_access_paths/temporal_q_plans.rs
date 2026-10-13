@@ -31,6 +31,7 @@ use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_postgresql_query::{
     attribute_name_key::AttributeNameKey,
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
+    history_source::HistoryBranch,
 };
 use andromeda_postgresql_temporal_query::stage1::{Stage1Query, build_stage1_entity_ids};
 use andromeda_test_harness::serialized_environment::SerializedEnvironment;
@@ -80,7 +81,7 @@ fn stage1(corpus: &WindowedHistory) -> Stage1Query {
         )]),
         types: ResolvedNames::default(),
     };
-    build_stage1_entity_ids(None, &compiled, &PageWindow::offset(1000, 0), CountPolicy::Emit, &names).expect("a renderable stage-1 query")
+    build_stage1_entity_ids(&HistoryBranch::live(), &compiled, &PageWindow::offset(1000, 0), CountPolicy::Emit, &names).expect("a renderable stage-1 query")
 }
 
 /// The stage-1 page statement, with its values inline.

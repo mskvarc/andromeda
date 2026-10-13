@@ -141,6 +141,7 @@ mod tests {
     use crate::{
         attribute_name_key::AttributeNameKey,
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
+        history_source::HistoryBranch,
         q_predicate::{
             history_window::HistoryWindow,
             instance_row::{ElementLevel, InstanceRow, ProbedRow},
@@ -183,8 +184,8 @@ mod tests {
     /// window.
     fn temporal(q: &str) -> String {
         let window = HistoryWindow::builder()
-            .schema(None)
-            .temporal_entity_key(SeaExpr::col((Alias::new("e"), Alias::new("temporal_entity_key"))))
+            .branch(HistoryBranch::live())
+            .entity_id(SeaExpr::col((Alias::new("e"), Alias::new("id"))))
             .axis(AttributeHistory::ObservedAt)
             .interval(TimeInterval::Unbounded)
             .build();
@@ -262,7 +263,7 @@ mod tests {
         let sql = temporal("\"https://example.com/speed\".\"https://example.com/accuracy\">0.5");
         assert!(sql.contains("EXISTS"), "{sql}");
         assert!(sql.contains(r#"FROM UNNEST("qh"."sub_attributes") AS "l0""#), "{sql}");
-        assert!(sql.contains(r#""qs"."attribute_name_key" = 11"#), "{sql}");
+        assert!(sql.contains(r#""qh"."attribute_name_key" = 11"#), "{sql}");
         assert!(sql.contains(r#""l0"."attribute_name_key" = 12"#), "{sql}");
         assert!(sql.contains(r#""l0"."value_number" > "#), "{sql}");
         assert!(!sql.contains("jsonb_build_object"), "{sql}");

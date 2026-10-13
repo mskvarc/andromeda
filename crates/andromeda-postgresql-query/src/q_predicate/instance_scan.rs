@@ -94,6 +94,7 @@ mod tests {
     use crate::{
         attribute_name_key::AttributeNameKey,
         entity_row_refs::EntityRowRefs,
+        history_source::HistoryBranch,
         q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, instance_test::InstanceTest},
     };
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
@@ -102,8 +103,8 @@ mod tests {
 
     fn history() -> HistoryWindow {
         HistoryWindow::builder()
-            .schema(None)
-            .temporal_entity_key(Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))))
+            .branch(HistoryBranch::live())
+            .entity_id(Expr::col((Alias::new("e"), Alias::new("id"))))
             .axis(AttributeHistory::ModifiedAt)
             .interval(TimeInterval::Unbounded)
             .build()
@@ -121,7 +122,7 @@ mod tests {
     fn presence_over_history_is_an_in_window_instance_of_the_attribute() {
         let window = history();
         let sql = render(InstanceScan::History(&window).exists(AttributeNameKey::from(3), Condition::all()));
-        assert!(sql.contains(r#""qs"."attribute_name_key" = 3"#), "{sql}");
+        assert!(sql.contains(r#""qh"."attribute_name_key" = 3"#), "{sql}");
         assert!(sql.contains(r#""qh"."deleted_at" IS NULL"#), "{sql}");
     }
 
@@ -145,10 +146,11 @@ mod tests {
         let window = history();
         for (scan, key) in [
             (InstanceScan::Current(&rows), r#""ca"."attribute_name_key""#),
-            (InstanceScan::History(&window), r#""qs"."attribute_name_key""#),
+            (InstanceScan::History(&window), r#""qh"."attribute_name_key""#),
         ] {
             let sql = render(scan.exists_any(tests()).expect("two tests make a probe"));
-            assert_eq!(sql.matches("EXISTS").count(), 1, "{sql}");
+            assert_eq!(sql.matches("SELECT 1 WHERE EXISTS").count(), 1, "{sql}");
+            assert!(!sql.contains(") OR EXISTS(SELECT 1 FROM (SELECT"), "{sql}");
             assert!(sql.contains(&format!("{key} = 3")) && sql.contains(&format!("{key} = 4")), "{sql}");
         }
     }

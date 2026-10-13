@@ -7,12 +7,13 @@
 
 use crate::intent_application::intent_source::{E, I, IntentSource, S, Te, entry, entry_kind_in, intent, source_entries, write_ordinal};
 use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
+use andromeda_postgresql_query::history_source::entry_values::{attribute_entry_values, scope_entry_values};
 use andromeda_postgresql_schema::{
     queue::TemporalAppendIntents,
     temporal::{AttributeHistory, AttributeHistoryInstanceClaims, ScopeHistory, TemporalAttributeStreams, TemporalEntities},
     temporal_intent::TemporalEntry,
 };
-use andromeda_postgresql_seaquery::{branch::qualified, cast::cast, pg_operator::PgBinaryOperator, pg_type::PostgresType, postgis::st_make_valid};
+use andromeda_postgresql_seaquery::{branch::qualified, pg_operator::PgBinaryOperator};
 use sea_query::{
     DeleteStatement,
     DynIden,
@@ -135,78 +136,31 @@ pub(crate) fn claims_statement(source: &IntentSource<'_>, schema: Option<&DynIde
 /// The `attribute_history` row of every attribute entry, numbered from its
 /// intent's base ordinal.
 ///
-/// The geometry is made valid. The conflict target is the write identity, so
-/// an entry recorded once is never recorded twice.
+/// The values are the ones a temporal read of the live branch projects from
+/// the entry while it is still queued. The conflict target is the write
+/// identity, so an entry recorded once is never recorded twice.
 pub(crate) fn history_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
+    let (value_columns, values): (Vec<AttributeHistory>, Vec<SimpleExpr>) = attribute_entry_values(entry).into_iter().unzip();
     let mut select = entries_with_stream(source, schema);
     select
         .expr(intent(TemporalAppendIntents::RecordedAt))
         .expr(intent(TemporalAppendIntents::WriteId))
         .column((S, TemporalAttributeStreams::StreamKey))
         .expr(write_ordinal())
-        .exprs(
-            [
-                TemporalEntry::AttributeKind,
-                TemporalEntry::ValueKind,
-                TemporalEntry::ObservedAt,
-                TemporalEntry::CreatedAt,
-                TemporalEntry::ModifiedAt,
-                TemporalEntry::DeletedAt,
-                TemporalEntry::ValueDateTime,
-                TemporalEntry::ExpiresAt,
-                TemporalEntry::GeneratedInstanceId,
-                TemporalEntry::ValueTypeKey,
-                TemporalEntry::UnitCodeId,
-                TemporalEntry::ValueBoolean,
-                TemporalEntry::VerbatimInstanceId,
-                TemporalEntry::ValueNumber,
-                TemporalEntry::ValueString,
-            ]
-            .map(entry),
-        )
-        .expr(st_make_valid(entry(TemporalEntry::ValueGeometry)))
-        .exprs(
-            [
-                TemporalEntry::ValueGeometryMembers,
-                TemporalEntry::ValueObject,
-                TemporalEntry::ValueUri,
-                TemporalEntry::ObjectTypeKeys,
-                TemporalEntry::ProofSeals,
-                TemporalEntry::SubAttributes,
-            ]
-            .map(entry),
-        );
+        .exprs(values);
     let mut statement = Query::insert();
     statement
         .into_table(qualified(schema, AttributeHistory::Table))
-        .columns([
-            AttributeHistory::RecordedAt,
-            AttributeHistory::WriteId,
-            AttributeHistory::StreamKey,
-            AttributeHistory::WriteOrdinal,
-            AttributeHistory::AttributeKind,
-            AttributeHistory::ValueKind,
-            AttributeHistory::ObservedAt,
-            AttributeHistory::CreatedAt,
-            AttributeHistory::ModifiedAt,
-            AttributeHistory::DeletedAt,
-            AttributeHistory::ValueDateTime,
-            AttributeHistory::ExpiresAt,
-            AttributeHistory::GeneratedInstanceId,
-            AttributeHistory::ValueTypeKey,
-            AttributeHistory::UnitCodeId,
-            AttributeHistory::ValueBoolean,
-            AttributeHistory::VerbatimInstanceId,
-            AttributeHistory::ValueNumber,
-            AttributeHistory::ValueString,
-            AttributeHistory::ValueGeometry,
-            AttributeHistory::ValueGeometryMembers,
-            AttributeHistory::ValueObject,
-            AttributeHistory::ValueUri,
-            AttributeHistory::ObjectTypeKeys,
-            AttributeHistory::ProofSeals,
-            AttributeHistory::SubAttributes,
-        ])
+        .columns(
+            [
+                AttributeHistory::RecordedAt,
+                AttributeHistory::WriteId,
+                AttributeHistory::StreamKey,
+                AttributeHistory::WriteOrdinal,
+            ]
+            .into_iter()
+            .chain(value_columns),
+        )
         .select_from(select)?
         .on_conflict(
             OnConflict::columns([AttributeHistory::RecordedAt, AttributeHistory::WriteId, AttributeHistory::WriteOrdinal])
@@ -240,47 +194,31 @@ pub(crate) fn replaced_scopes_statement(source: &IntentSource<'_>, schema: Optio
         .to_owned()
 }
 
-/// The `scope_history` row of every Scope entry (clause 4.18), its
-/// label path cast to the `ltree` a `scopeQ` matches.
+/// The `scope_history` row of every Scope entry (clause 4.18), with the
+/// values a temporal read of the live branch projects from the entry while it
+/// is still queued.
 pub(crate) fn scope_history_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
+    let (value_columns, values): (Vec<ScopeHistory>, Vec<SimpleExpr>) = scope_entry_values(entry).into_iter().unzip();
     let mut select = scope_entries(source, schema);
     select
         .expr(intent(TemporalAppendIntents::RecordedAt))
         .column((Te, TemporalEntities::TemporalEntityKey))
         .expr(intent(TemporalAppendIntents::WriteId))
         .expr(write_ordinal())
-        .exprs(
-            [
-                TemporalEntry::ValueKind,
-                TemporalEntry::ObservedAt,
-                TemporalEntry::CreatedAt,
-                TemporalEntry::ModifiedAt,
-                TemporalEntry::DeletedAt,
-                TemporalEntry::GeneratedInstanceId,
-                TemporalEntry::VerbatimInstanceId,
-            ]
-            .map(entry),
-        )
-        .expr(cast(entry(TemporalEntry::ScopePath), PostgresType::Ltree))
-        .expr(entry(TemporalEntry::VerbatimScopePath));
+        .exprs(values);
     let mut statement = Query::insert();
     statement
         .into_table(qualified(schema, ScopeHistory::Table))
-        .columns([
-            ScopeHistory::RecordedAt,
-            ScopeHistory::TemporalEntityKey,
-            ScopeHistory::WriteId,
-            ScopeHistory::WriteOrdinal,
-            ScopeHistory::ValueKind,
-            ScopeHistory::ObservedAt,
-            ScopeHistory::CreatedAt,
-            ScopeHistory::ModifiedAt,
-            ScopeHistory::DeletedAt,
-            ScopeHistory::GeneratedInstanceId,
-            ScopeHistory::VerbatimInstanceId,
-            ScopeHistory::ScopePath,
-            ScopeHistory::VerbatimScopePath,
-        ])
+        .columns(
+            [
+                ScopeHistory::RecordedAt,
+                ScopeHistory::TemporalEntityKey,
+                ScopeHistory::WriteId,
+                ScopeHistory::WriteOrdinal,
+            ]
+            .into_iter()
+            .chain(value_columns),
+        )
         .select_from(select)?
         .on_conflict(
             OnConflict::columns([ScopeHistory::RecordedAt, ScopeHistory::WriteId, ScopeHistory::WriteOrdinal])

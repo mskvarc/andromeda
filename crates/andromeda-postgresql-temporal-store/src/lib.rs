@@ -31,6 +31,8 @@ pub mod duplicate_instance_claim;
 mod entity_attribute_history;
 /// Error types for the temporal store crate.
 pub mod error;
+/// Deciding which relations of a branch a temporal read takes history from.
+mod history_branch;
 /// What a history row stores beside its value, keyed as current state keys it.
 pub mod history_members;
 /// Decoding `PgRow` into the backend-neutral temporal row types.

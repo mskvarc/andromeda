@@ -1,13 +1,15 @@
 //! Stage 1 of a temporal query: select the entity ids that match every filter.
 //!
-//! The statement drives from `temporal_entities`, never from `entities`. Core
-//! Entity deletion (clause 5.6.6) removes the current-state row and leaves the
-//! temporal evolution standing, so an entity's history has to stay selectable
-//! after it; the entity URI and the entity types are carried on the temporal
-//! catalogue for exactly that reason. The value filters read the temporal
-//! evolution too: clause 5.7.4.4 checks `q` (step S2) and the geoquery (step S3)
-//! against the Attribute instances inside the temporal window, which are the
-//! `attribute_history` rows, never against current state.
+//! The statement drives from the temporal catalogue, never from `entities`.
+//! Core Entity deletion (clause 5.6.6) removes the current-state row and leaves
+//! the temporal evolution standing, so an entity's history has to stay
+//! selectable after it; the entity URI and the entity types are carried on the
+//! temporal catalogue for exactly that reason. The value filters read the
+//! temporal evolution too: clause 5.7.4.4 checks `q` (step S2) and the geoquery
+//! (step S3) against the Attribute instances inside the temporal window, which
+//! are the history rows, never against current state. On the live branch every
+//! one of those relations is the history source that also holds the entries
+//! still queued, so a write is selected the moment it is acknowledged.
 //!
 //! The `datasetId` parameter selects no Entity. Clause 5.7.4.4 applies it at
 //! step S8, after every selection step, to "filter the Attribute instances" and
@@ -39,22 +41,24 @@ use andromeda_postgresql_query::{
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     entity_ordering::{entity_identifier_key, ordering_collation},
     error::RenderError,
+    history_source::{
+        HistoryBranch,
+        HistoryOf,
+        attribute_rows::{attribute_rows, stream_rows},
+        entity_rows::entity_rows,
+        grain::HistoryGrain,
+    },
     page_window::apply_identifier_window,
     time_interval_predicate::within_interval,
     type_predicate::condition as type_condition,
 };
-use andromeda_postgresql_schema::{
-    current::E,
-    name_dictionary::AttributeNames,
-    temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
-};
+use andromeda_postgresql_schema::{current::E, name_dictionary::AttributeNames, temporal::TemporalEntities};
 use andromeda_postgresql_seaquery::{
-    branch::qualified,
     literal::{false_literal, int_literal},
     operator::regex_match,
 };
 use iri_rs::IriBuf;
-use sea_query::{Condition, DynIden, Expr as SeaExpr, ExprTrait, Func, JoinType, SelectStatement};
+use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Func, IntoIden, JoinType, SelectStatement};
 
 /// The Stage 1 statement and its optional count, each a statement tree the store
 /// binds and executes on its own.
@@ -86,21 +90,21 @@ pub struct Stage1Query {
 /// [`RenderError::ReferenceGeometryEncoding`] when the geo query's reference
 /// geometry cannot be encoded as `PostGIS` EWKB.
 pub fn build_stage1_entity_ids(
-    schema: Option<&DynIden>,
+    branch: &HistoryBranch,
     compiled: &CompiledTemporalQuery,
     window: &PageWindow,
     count: CountPolicy,
     names: &QueryNames,
 ) -> Result<Stage1Query, RenderError> {
     // Entity-level conditions, applied to `temporal_entities` under alias "e".
-    let entity_conditions = build_entity_conditions_for_temporal(schema, compiled, names)?;
+    let entity_conditions = build_entity_conditions_for_temporal(branch, compiled, names)?;
 
     let mut select = SelectStatement::new();
     select
         .expr_as(SeaExpr::col((E, TemporalEntities::Id)), EntityIdColumn)
-        .from(qualified(schema, TemporalEntities::Table).alias(E))
+        .from(entity_rows(branch, E))
         .cond_where(entity_conditions.clone()) // clone: the count query applies the same entity predicate
-        .cond_where(SeaExpr::exists(temporal_match_subquery(schema, compiled)));
+        .cond_where(SeaExpr::exists(temporal_match_subquery(branch, compiled)));
 
     // Clause 5.7.4.5: "If Entity ordering is specified (see clause 4.23), then
     // the JSON-LD array returned shall be ordered according to the member names
@@ -135,9 +139,9 @@ pub fn build_stage1_entity_ids(
             let mut count_select = SelectStatement::new();
             count_select
                 .expr(Func::count(SeaExpr::col((E, TemporalEntities::Id))))
-                .from(qualified(schema, TemporalEntities::Table).alias(E))
+                .from(entity_rows(branch, E))
                 .cond_where(entity_conditions)
-                .cond_where(SeaExpr::exists(temporal_match_subquery(schema, compiled)));
+                .cond_where(SeaExpr::exists(temporal_match_subquery(branch, compiled)));
             Some(count_select.take())
         }
         CountPolicy::Omit => None,
@@ -150,36 +154,33 @@ pub fn build_stage1_entity_ids(
     })
 }
 
-/// Build the correlated stream/history predicate shared by result and count.
-fn temporal_match_subquery(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery) -> SelectStatement {
-    let temporal_conditions = build_temporal_stage1_conditions(compiled);
+/// Build the correlated stream or history predicate shared by result and
+/// count: a bounded window asks for an instance inside it, an unbounded one
+/// only for a stream of a concerned attribute.
+fn temporal_match_subquery(branch: &HistoryBranch, compiled: &CompiledTemporalQuery) -> SelectStatement {
+    let of = HistoryOf::Entity(SeaExpr::col((E, TemporalEntities::Id)));
+    let (source, alias) = if compiled.window.interval.is_bounded() {
+        (attribute_rows(branch, &of, Ah), Ah.into_iden())
+    } else {
+        (stream_rows(branch, &of, S), S.into_iden())
+    };
     let mut select = SelectStatement::new();
     select
         .expr(int_literal(1))
-        .from(qualified(schema, TemporalAttributeStreams::Table).alias(S))
+        .from(source)
         .join_as(
             JoinType::Join,
             AttributeNames::Table,
             An,
-            SeaExpr::col((An, AttributeNames::AttributeNameKey)).equals((S, TemporalAttributeStreams::AttributeNameKey)),
+            SeaExpr::col((An, AttributeNames::AttributeNameKey)).equals((alias, HistoryGrain::AttributeNameKey)),
         )
-        .cond_where(SeaExpr::col((S, TemporalAttributeStreams::TemporalEntityKey)).equals((E, TemporalEntities::TemporalEntityKey)))
-        .cond_where(temporal_conditions);
-
-    if compiled.window.interval.is_bounded() {
-        select.join_as(
-            JoinType::Join,
-            qualified(schema, AttributeHistory::Table),
-            Ah,
-            SeaExpr::col((Ah, AttributeHistory::StreamKey)).equals((S, TemporalAttributeStreams::StreamKey)),
-        );
-    }
+        .cond_where(build_temporal_stage1_conditions(compiled));
     select.take()
 }
 
-/// Build entity-level conditions for temporal queries (using "e" alias for
-/// the `temporal_entities` table).
-fn build_entity_conditions_for_temporal(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Result<Condition, RenderError> {
+/// Build entity-level conditions for temporal queries, over the temporal
+/// catalogue under the `e` alias.
+fn build_entity_conditions_for_temporal(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Result<Condition, RenderError> {
     let mut condition = Condition::all();
 
     // Entity selectors, unioned (clause 5.2.33): `(sel1) OR (sel2) OR ...`,
@@ -205,14 +206,14 @@ fn build_entity_conditions_for_temporal(schema: Option<&DynIden>, compiled: &Com
 
     // Clause 5.7.4.4 S5 to S7: the value, geo and scope filters, from which
     // the entities a Context Source contributed to a split query are exempt.
-    if let Some(filters) = value_filter_condition(schema, compiled, names)? {
+    if let Some(filters) = value_filter_condition(branch, compiled, names)? {
         condition = condition.add(filters);
     }
 
     // Clauses 5.7.4.5 and 6.3.13: an entity the `pick` / `omit` projection
     // would reduce to no member is not selected, so it is left out here, where
     // the count and the page are taken.
-    if let Some(members) = projected_member_condition(schema, compiled) {
+    if let Some(members) = projected_member_condition(branch, compiled) {
         condition = condition.add(members);
     }
 
@@ -220,7 +221,8 @@ fn build_entity_conditions_for_temporal(schema: Option<&DynIden>, compiled: &Com
 }
 
 /// Render one selector's identifier, pattern and type predicates against the
-/// `e` alias stage 1 selects `temporal_entities` under, `ANDed` (clause 5.2.33).
+/// `e` alias stage 1 selects the temporal catalogue under, `ANDed` (clause
+/// 5.2.33).
 ///
 /// The entity path renders the same three axes against `entities`; the columns
 /// carry the same names on both relations, so the two cannot drift on what a
@@ -289,10 +291,11 @@ mod tests {
         attribute_name_key::AttributeNameKey,
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
         entity_type_name_key::EntityTypeNameKey,
+        history_source::HistoryBranch,
     };
     use chrono::{DateTime, Utc};
     use iri_rs::IriBuf;
-    use sea_query::{PostgresQueryBuilder, Value, Values};
+    use sea_query::{Alias, IntoIden, PostgresQueryBuilder, Value, Values};
     use std::str::FromStr;
 
     fn instant(raw: &str) -> DateTime<Utc> {
@@ -347,7 +350,7 @@ mod tests {
 
     /// The Stage 1 result statement of the page `window` selects.
     fn built_windowed(compiled: &CompiledTemporalQuery, window: &PageWindow, names: &QueryNames) -> (String, Values) {
-        build_stage1_entity_ids(None, compiled, window, CountPolicy::Omit, names)
+        build_stage1_entity_ids(&HistoryBranch::live(), compiled, window, CountPolicy::Omit, names)
             .expect("valid temporal query")
             .select
             .build(PostgresQueryBuilder)
@@ -355,7 +358,7 @@ mod tests {
 
     /// The count statement of a counted query over the page `window` selects.
     fn built_windowed_count(compiled: &CompiledTemporalQuery, window: &PageWindow, names: &QueryNames) -> String {
-        build_stage1_entity_ids(None, compiled, window, CountPolicy::Emit, names)
+        build_stage1_entity_ids(&HistoryBranch::live(), compiled, window, CountPolicy::Emit, names)
             .expect("valid temporal query")
             .count
             .expect("count requested")
@@ -365,7 +368,7 @@ mod tests {
 
     /// The count statement of a counted query.
     fn built_count(compiled: &CompiledTemporalQuery, names: &QueryNames) -> String {
-        build_stage1_entity_ids(None, compiled, &PageWindow::offset(20, 0), CountPolicy::Emit, names)
+        build_stage1_entity_ids(&HistoryBranch::live(), compiled, &PageWindow::offset(20, 0), CountPolicy::Emit, names)
             .expect("valid temporal query")
             .count
             .expect("count requested")
@@ -386,7 +389,7 @@ mod tests {
                 .build(),
         ];
         let (sql, _) = built(&compiled, &vehicle_is_known());
-        assert!(!sql.contains("SELECT DISTINCT"), "{sql}");
+        assert!(sql.starts_with(r#"SELECT "e"."id" AS "entity_id" FROM"#), "{sql}");
         assert!(sql.contains("EXISTS(SELECT"), "{sql}");
         assert!(sql.contains("\"e\".\"entity_type_name_keys\" @> (ARRAY[3])"), "{sql}");
         assert!(sql.contains("JOIN \"attribute_names\""), "{sql}");
@@ -399,7 +402,11 @@ mod tests {
     fn the_statement_drives_from_the_temporal_catalogue_and_never_joins_entities() {
         let compiled = minimal_compiled();
         let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(sql.contains("FROM \"temporal_entities\" AS \"e\""), "{sql}");
+        assert!(
+            sql.contains("(SELECT \"re\".\"id\", \"re\".\"entity_type_name_keys\", FALSE AS \"queued\" FROM \"temporal_entities\" AS \"re\""),
+            "{sql}"
+        );
+        assert!(sql.contains(") AS \"e\""), "{sql}");
         assert!(sql.contains("\"temporal_attribute_streams\""), "{sql}");
         assert!(!sql.contains("\"entities\""), "{sql}");
         assert!(!sql.contains("temporal_entity_attributes"), "{sql}");
@@ -408,10 +415,11 @@ mod tests {
     /// The stream catalogue carries the grain, so the correlation is on the
     /// surrogate entity key rather than on a repeated entity URI.
     #[test]
-    fn the_stream_probe_correlates_on_the_temporal_entity_key() {
+    fn the_stream_probe_reads_the_streams_of_the_selected_entity() {
         let compiled = minimal_compiled();
         let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(sql.contains("\"s\".\"temporal_entity_key\" = \"e\".\"temporal_entity_key\""), "{sql}");
+        assert!(sql.contains("\"re\".\"id\" = \"e\".\"id\""), "{sql}");
+        assert!(sql.contains("\"pe\".\"entity_id\" = \"e\".\"id\""), "{sql}");
     }
 
     #[test]
@@ -464,7 +472,7 @@ mod tests {
             let (sql, _) = built(&compiled, &QueryNames::default());
             assert!(sql.contains(column), "{prop}: {sql}");
             assert!(!sql.contains("COALESCE"), "{prop}: {sql}");
-            assert!(!sql.contains("recorded_at"), "{prop}: {sql}");
+            assert!(!sql.contains("\"ah\".\"recorded_at\""), "{prop}: {sql}");
         }
     }
 
@@ -479,7 +487,7 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.window.interval = TimeInterval::After(instant("2024-01-01T00:00:00Z"));
         let (bounded, _) = built(&compiled, &QueryNames::default());
-        assert!(bounded.contains("\"ah\".\"stream_key\" = \"s\".\"stream_key\""), "{bounded}");
+        assert!(bounded.contains(") AS \"ah\" JOIN \"attribute_names\""), "{bounded}");
     }
 
     #[test]
@@ -520,7 +528,8 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.entities.scope_q = Some(ScopeQuery::parse("/Madrid").expect("valid scope query"));
         let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(sql.contains("\"e\".\"temporal_entity_key\""), "{sql}");
+        assert!(sql.contains("\"rsh\""), "{sql}");
+        assert!(sql.contains("\"re\".\"id\" = \"e\".\"id\""), "{sql}");
     }
 
     #[test]
@@ -557,9 +566,8 @@ mod tests {
         // Each scope term has its own EXISTS subquery among the entity
         // conditions, beside the stream catalogue EXISTS predicate rather than
         // inside it: the scope probe correlates on the temporal entity alone.
-        let exists_count = sql.matches("EXISTS").count();
-        pretty_assertions::assert_eq!(exists_count, 4, "The catalogue predicate beside three scope predicates: {sql}");
-        let catalogue = sql.find(r#"FROM "temporal_attribute_streams" AS "s""#).expect("the catalogue predicate");
+        pretty_assertions::assert_eq!(sql.matches(r#") AS "sh" WHERE"#).count(), 3, "three scope predicates: {sql}");
+        let catalogue = sql.find(r#"JOIN "attribute_names" AS "an""#).expect("the catalogue predicate");
         let scope = sql.find("scope_history").expect("a scope predicate");
         assert!(scope < catalogue, "the scope predicates precede the catalogue predicate: {sql}");
     }
@@ -600,7 +608,7 @@ mod tests {
         let q = sql.find(r#"AS "qh""#).expect("the q probe");
         let geo = sql.find(r#"AS "ahg""#).expect("the geo probe");
         let scope = sql.find("scope_history").expect("the scope probe");
-        let catalogue = sql.find(r#"FROM "temporal_attribute_streams" AS "s""#).expect("the window match");
+        let catalogue = sql.find(r#"JOIN "attribute_names" AS "an""#).expect("the window match");
         assert!(selector < q && q < exemption && geo < exemption && scope < exemption, "{sql}");
         assert!(catalogue > exemption, "the window match stays outside the exemption: {sql}");
         let bound = values
@@ -645,12 +653,12 @@ mod tests {
         compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\">100").unwrap());
         let (sql, _) = built(&compiled, &speed_and_address());
         for fragment in [
-            r#"FROM "temporal_attribute_streams" AS "qs" JOIN "attribute_history" AS "qh" ON "qh"."stream_key" = "qs"."stream_key""#,
+            r#") AS "qh" WHERE "qh"."attribute_name_key" ="#,
             r#""qh"."deleted_at" IS NULL"#,
             r#""qh"."observed_at" >="#,
             r#""qh"."value_number" >"#,
-            r#""qs"."temporal_entity_key" = "e"."temporal_entity_key""#,
-            r#"FROM "temporal_attribute_streams" AS "qs" JOIN LATERAL"#,
+            r#""re"."id" = "e"."id""#,
+            r#") AS "qs" JOIN LATERAL"#,
         ] {
             assert!(sql.contains(fragment), "{fragment} missing: {sql}");
         }
@@ -669,7 +677,7 @@ mod tests {
         let count = built_count(&compiled, &speed_and_address());
         assert!(count.contains("JOIN LATERAL"), "{count}");
         assert!(count.contains(r#""qe"."placed" <"#), "{count}");
-        pretty_assertions::assert_eq!(count.matches(r#"JOIN "attribute_history" AS "qh""#).count(), 2, "{count}");
+        pretty_assertions::assert_eq!(count.matches(r#"AS "qh""#).count(), 2, "{count}");
     }
 
     /// The window a `q` term reads is on the requested Temporal Property.
@@ -704,9 +712,15 @@ mod tests {
                 geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
             });
             let (sql, _) = built(&compiled, &speed_and_address());
-            assert!(!sql.contains("dataset_id"), "{selectors:?}: {sql}");
+            assert!(
+                !sql.contains(r#""dataset_id" IN"#) && !sql.contains(r#""dataset_id" IS NULL"#),
+                "{selectors:?}: {sql}"
+            );
             let count = built_count(&compiled, &speed_and_address());
-            assert!(!count.contains("dataset_id"), "{selectors:?}: {count}");
+            assert!(
+                !count.contains(r#""dataset_id" IN"#) && !count.contains(r#""dataset_id" IS NULL"#),
+                "{selectors:?}: {count}"
+            );
         }
     }
 
@@ -720,10 +734,10 @@ mod tests {
         let (sql, _) = built(&compiled, &speed_and_address());
         pretty_assertions::assert_eq!(sql.matches(r#"AS "qh""#).count(), 1, "{sql}");
         assert!(
-            sql.contains(r#"(("qs"."attribute_name_key" = $1 AND "qh"."value_number" > $2) OR ("qs"."attribute_name_key" = $3 AND "qh"."value_number" < $4))"#),
+            sql.contains(r#"(("qh"."attribute_name_key" = $1 AND "qh"."value_number" > $2) OR ("qh"."attribute_name_key" = $3 AND "qh"."value_number" < $4))"#),
             "{sql}"
         );
-        assert!(!sql.contains(" OR EXISTS"), "{sql}");
+        assert!(!sql.contains(") OR EXISTS(SELECT 1 FROM (SELECT"), "{sql}");
     }
 
     #[test]
@@ -851,13 +865,9 @@ mod tests {
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         });
         let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(sql.contains(r#"FROM "temporal_attribute_streams" AS "sg""#), "{sql}");
-        assert!(sql.contains(r#"JOIN "attribute_history" AS "ahg""#), "{sql}");
+        assert!(sql.contains(r#") AS "ahg" JOIN "attribute_names" AS "ang""#), "{sql}");
         assert!(sql.contains(r#""ahg"."value_geometry""#), "{sql}");
-        assert!(
-            sql.contains(r#""sg"."temporal_entity_key" = "e"."temporal_entity_key""#),
-            "correlated to the temporal entity: {sql}"
-        );
+        assert!(sql.contains(r#""re"."id" = "e"."id""#), "correlated to the temporal entity: {sql}");
         assert!(!sql.contains("entity_search"), "the geo restriction no longer reads current state: {sql}");
     }
 
@@ -902,7 +912,7 @@ mod tests {
             geoproperty: "https://example.com/customGeo".parse().expect("valid attribute name"),
         });
         let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(sql.contains(r#"FROM "temporal_attribute_streams" AS "sg""#), "{sql}");
+        assert!(sql.contains(r#") AS "ahg""#), "{sql}");
         assert!(
             sql.contains(r#"JOIN "attribute_names" AS "ang""#),
             "the target GeoProperty is named through the dictionary: {sql}"
@@ -1005,7 +1015,8 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.ordering = Some(TemporalEntityOrdering::builder().direction(SortDirection::Ascending).build());
         let sql = built_count(&compiled, &QueryNames::default());
-        assert!(!sql.contains("ORDER BY"), "{sql}");
+        let outer = sql.rsplit(r#") AS "e""#).next().expect("the statement past its entity source");
+        assert!(!outer.contains("ORDER BY"), "{sql}");
     }
 
     fn boundary(id: &str) -> Identifier {
@@ -1066,5 +1077,62 @@ mod tests {
         let compiled = minimal_compiled();
         let sql = built_windowed_count(&compiled, &PageWindow::after(20, boundary("urn:ngsi-ld:Vehicle:001")), &QueryNames::default());
         assert!(!sql.contains(r#""e"."id" >"#), "the count is not narrowed by the cursor: {sql}");
+    }
+
+    /// Clause 5.7.4: on the live branch an entity is selected by its queued
+    /// entries as by its recorded rows, so stage 1 reads both.
+    #[test]
+    fn a_live_stage_one_reads_the_pending_entries_beside_the_history() {
+        let mut compiled = minimal_compiled();
+        compiled.window.interval = TimeInterval::After(instant("2024-01-01T00:00:00Z"));
+        let (sql, _) = built(&compiled, &QueryNames::default());
+        let history = sql.split(r#") AS "ah" JOIN "attribute_names""#).next().expect("the history source");
+        assert!(history.contains(r#"UNION ALL (SELECT "pe"."entity_id" AS "entity_id""#), "{sql}");
+        assert!(history.contains(r#"FROM "temporal_append_entries" AS "pe""#), "{sql}");
+    }
+
+    /// A Snapshot branch records its history in the write's own transaction
+    /// and has no queue, so its stage 1 reads the recorded relations alone.
+    #[test]
+    fn a_snapshot_stage_one_reads_no_pending_entry() {
+        let mut compiled = minimal_compiled();
+        compiled.window.interval = TimeInterval::After(instant("2024-01-01T00:00:00Z"));
+        let snapshot = Alias::new("snap_7").into_iden();
+        let stage1 = build_stage1_entity_ids(
+            &HistoryBranch::recorded_in(snapshot),
+            &compiled,
+            &PageWindow::offset(20, 0),
+            CountPolicy::Emit,
+            &QueryNames::default(),
+        )
+        .expect("valid temporal query");
+        for sql in [
+            stage1.select.to_string(PostgresQueryBuilder),
+            stage1.count.expect("count requested").to_string(PostgresQueryBuilder),
+        ] {
+            assert!(!sql.contains("temporal_append"), "{sql}");
+            assert!(sql.contains(r#"FROM "snap_7"."temporal_entities" AS "e""#), "{sql}");
+        }
+    }
+
+    /// Clause 6.3.13: the count is the number of entities the page is taken
+    /// from, so both read the same source.
+    #[test]
+    fn the_count_reads_the_same_source_as_the_page() {
+        let mut compiled = minimal_compiled();
+        compiled.window.interval = TimeInterval::After(instant("2024-01-01T00:00:00Z"));
+        let (page, _) = built(&compiled, &QueryNames::default());
+        let count = built_count(&compiled, &QueryNames::default());
+        let source = |sql: &str| {
+            let from = sql.find(" FROM ").expect("a FROM clause");
+            let entities = sql.rfind(r#") AS "e""#).expect("the entity source");
+            let tail = [" ORDER BY ", " LIMIT "]
+                .iter()
+                .filter_map(|clause| sql[entities..].find(clause).map(|at| entities + at))
+                .min()
+                .unwrap_or(sql.len());
+            sql[from..tail].to_owned()
+        };
+        pretty_assertions::assert_eq!(source(&page), source(&count));
     }
 }

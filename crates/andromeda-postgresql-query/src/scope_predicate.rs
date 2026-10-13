@@ -11,6 +11,7 @@
 //! disagree about when a stored scope event stopped applying.
 
 use crate::{
+    history_source::{HistoryBranch, HistoryOf, scope_rows::scope_rows},
     ltree::pattern_to_lquery,
     scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis, valid_at},
 };
@@ -20,8 +21,8 @@ use andromeda_ngsi_ld_query::{
     temporal::window::TimeInterval,
 };
 use andromeda_postgresql_schema::temporal::ScopeHistory;
-use andromeda_postgresql_seaquery::{branch::qualified, column_reference::ColumnReference, ltree::ltree_matches};
-use sea_query::{Condition, DynIden, Expr as SeaExpr, ExprTrait, IntoIden, Query, SelectStatement, SimpleExpr};
+use andromeda_postgresql_seaquery::{column_reference::ColumnReference, ltree::ltree_matches};
+use sea_query::{Condition, Expr as SeaExpr, IntoIden, Query, SelectStatement, SimpleExpr};
 
 /// Which relation a scope predicate is evaluated against.
 #[derive(Debug, Clone)]
@@ -40,18 +41,17 @@ pub enum ScopeTarget {
     /// the window opened does not.
     ///
     /// Scope history hangs off the temporal catalogue rather than off current
-    /// entity state, so the probe correlates on the surrogate
-    /// `temporal_entity_key` an entity keeps after clause 5.6.6 deletion.
+    /// entity state, so the probe correlates on the Entity identifier its
+    /// Temporal Evolution keeps after clause 5.6.6 deletion.
     History {
-        /// The temporal entity key the probe correlates against, named by its iden.
-        entity_key_column: ColumnReference,
+        /// The Entity identifier the probe correlates against, named by its iden.
+        entity_id_column: ColumnReference,
         /// The Temporal Property the window is measured on (clause 5.2.21).
         timeproperty: TimeProp,
         /// The window a validity interval has to overlap.
         interval: TimeInterval,
-        /// The branch schema the `scope_history` probe is read in, or `None` for
-        /// the live branch.
-        schema: Option<DynIden>,
+        /// The branch whose scope history the probe reads.
+        branch: HistoryBranch,
     },
     /// `scope_history`, read as the scope that was valid at one instant.
     ///
@@ -61,15 +61,14 @@ pub enum ScopeTarget {
     /// valid", so an attribute instance is admitted only while the scope query
     /// held at the instant that instance is positioned on.
     ValidAt {
-        /// The temporal entity key the probe correlates against, named by its iden.
-        entity_key_column: ColumnReference,
+        /// The Entity identifier the probe correlates against, named by its iden.
+        entity_id_column: ColumnReference,
         /// The Temporal Property the instant is measured on (clause 5.2.21).
         timeproperty: TimeProp,
         /// The instant the scope has to have been valid at.
         instant: SimpleExpr,
-        /// The branch schema the `scope_history` probe is read in, or `None` for
-        /// the live branch.
-        schema: Option<DynIden>,
+        /// The branch whose scope history the probe reads.
+        branch: HistoryBranch,
     },
 }
 
@@ -87,27 +86,27 @@ impl ScopeTarget {
         }
     }
 
-    /// The scope-history target correlating on the `(alias, column)` temporal
-    /// entity key, asking whether a validity interval overlaps `interval` on
+    /// The scope-history target correlating on the `(alias, column)` Entity
+    /// identifier, asking whether a validity interval overlaps `interval` on
     /// the `timeproperty` axis.
-    pub fn history(entity_key_column: (impl IntoIden, impl IntoIden), timeproperty: TimeProp, interval: TimeInterval, schema: Option<DynIden>) -> ScopeTarget {
+    pub fn history(entity_id_column: (impl IntoIden, impl IntoIden), timeproperty: TimeProp, interval: TimeInterval, branch: HistoryBranch) -> ScopeTarget {
         ScopeTarget::History {
-            entity_key_column: ColumnReference::qualified(entity_key_column.0, entity_key_column.1),
+            entity_id_column: ColumnReference::qualified(entity_id_column.0, entity_id_column.1),
             timeproperty,
             interval,
-            schema,
+            branch,
         }
     }
 
-    /// The scope-history target correlating on the `(alias, column)` temporal
-    /// entity key, asking whether the scope was valid at `instant` on the
-    /// `timeproperty` axis, reading `scope_history` in the given branch schema.
-    pub fn valid_at(entity_key_column: (impl IntoIden, impl IntoIden), timeproperty: TimeProp, instant: SimpleExpr, schema: Option<DynIden>) -> ScopeTarget {
+    /// The scope-history target correlating on the `(alias, column)` Entity
+    /// identifier, asking whether the scope was valid at `instant` on the
+    /// `timeproperty` axis, reading the scope history of the given branch.
+    pub fn valid_at(entity_id_column: (impl IntoIden, impl IntoIden), timeproperty: TimeProp, instant: SimpleExpr, branch: HistoryBranch) -> ScopeTarget {
         ScopeTarget::ValidAt {
-            entity_key_column: ColumnReference::qualified(entity_key_column.0, entity_key_column.1),
+            entity_id_column: ColumnReference::qualified(entity_id_column.0, entity_id_column.1),
             timeproperty,
             instant,
-            schema,
+            branch,
         }
     }
 }
@@ -142,34 +141,28 @@ pub fn pattern_condition(pattern: &ScopePattern, target: &ScopeTarget) -> Simple
     match target {
         ScopeTarget::CurrentPaths { column } => ltree_matches(column.column_expr(), SeaExpr::val(lquery)),
         ScopeTarget::History {
-            entity_key_column,
+            entity_id_column,
             timeproperty,
             interval,
-            schema,
+            branch,
         } => {
             let axis = scope_history_axis(*timeproperty);
             SeaExpr::exists(matching_scope_events(
                 &lquery,
-                entity_key_column,
+                entity_id_column,
                 axis,
-                overlaps_window(axis, *interval, schema.as_ref()),
-                schema.as_ref(),
+                overlaps_window(axis, *interval, branch),
+                branch,
             ))
         }
         ScopeTarget::ValidAt {
-            entity_key_column,
+            entity_id_column,
             timeproperty,
             instant,
-            schema,
+            branch,
         } => {
             let axis = scope_history_axis(*timeproperty);
-            SeaExpr::exists(matching_scope_events(
-                &lquery,
-                entity_key_column,
-                axis,
-                valid_at(axis, instant, schema.as_ref()),
-                schema.as_ref(),
-            ))
+            SeaExpr::exists(matching_scope_events(&lquery, entity_id_column, axis, valid_at(axis, instant, branch), branch))
         }
     }
 }
@@ -183,18 +176,11 @@ pub fn pattern_condition(pattern: &ScopePattern, target: &ScopeTarget) -> Simple
 /// that ends someone else's interval. That is also what makes a `scopeQ`
 /// measured on the `deletedAt` axis select nothing at all: `deletedAt` is
 /// carried by removals alone, and a removal names no scope to match.
-fn matching_scope_events(
-    lquery: &str,
-    entity_key_column: &ColumnReference,
-    axis: ScopeHistory,
-    validity: Condition,
-    schema: Option<&DynIden>,
-) -> SelectStatement {
+fn matching_scope_events(lquery: &str, entity_id_column: &ColumnReference, axis: ScopeHistory, validity: Condition, branch: &HistoryBranch) -> SelectStatement {
     let mut probe = Query::select();
     probe
         .expr(SeaExpr::val(1))
-        .from(qualified(schema, ScopeHistory::Table).alias(ScopeEvent))
-        .and_where(SeaExpr::col((ScopeEvent, ScopeHistory::TemporalEntityKey)).eq(entity_key_column.column_expr()))
+        .from(scope_rows(branch, &HistoryOf::Entity(entity_id_column.column_expr()), ScopeEvent))
         .and_where(positioned_on_axis(axis))
         .and_where(ltree_matches(
             SeaExpr::col((ScopeEvent, ScopeHistory::ScopePath)),
@@ -220,15 +206,15 @@ mod tests {
     }
 
     fn history(interval: TimeInterval) -> ScopeTarget {
-        ScopeTarget::history((Alias::new("e"), Alias::new("entity_key")), TimeProp::Observed, interval, None)
+        ScopeTarget::history((Alias::new("e"), Alias::new("id")), TimeProp::Observed, interval, HistoryBranch::live())
     }
 
     fn instant_valid_at() -> ScopeTarget {
         ScopeTarget::valid_at(
-            (Alias::new("te"), Alias::new("entity_key")),
+            (Alias::new("ah"), Alias::new("entity_id")),
             TimeProp::Observed,
             SeaExpr::col((Alias::new("ah"), Alias::new("observed_at"))),
-            None,
+            HistoryBranch::live(),
         )
     }
 
@@ -257,8 +243,8 @@ mod tests {
     #[test]
     fn a_single_scope_history_term_renders_one_probe() {
         let sql = render(condition(&scope("/A/B"), &history(TimeInterval::Unbounded)));
-        assert_eq!(sql.matches("EXISTS").count(), 1, "{sql}");
-        assert!(!sql.contains(" OR "), "{sql}");
+        assert_eq!(sql.matches(r#") AS "sh" WHERE"#).count(), 1, "{sql}");
+        assert!(!sql.contains(") OR EXISTS(SELECT 1 FROM (SELECT"), "{sql}");
     }
 
     #[test]
@@ -276,7 +262,7 @@ mod tests {
     #[test]
     fn scope_history_renders_one_probe_per_term() {
         let sql = render(condition(&scope("(/A;/B),/C"), &history(TimeInterval::Unbounded)));
-        assert_eq!(sql.matches("EXISTS").count(), 3, "{sql}");
+        assert_eq!(sql.matches(r#") AS "sh" WHERE"#).count(), 3, "{sql}");
         assert!(sql.contains("scope_history"), "{sql}");
     }
 
@@ -300,14 +286,15 @@ mod tests {
         assert!(sql.contains("NOT EXISTS"), "{sql}");
     }
 
-    /// The rebuilt `scope_history` hangs off the temporal catalogue: it carries
-    /// `temporal_entity_key` and the four semantic axes, and no `entity_id` or
-    /// `time` column for the probe to reach for.
+    /// Scope history hangs off the temporal catalogue, so the probe reads the
+    /// Entity it correlates on inside both branches of the scope source: the
+    /// recorded events through the catalogue's identifier, the queued Scope
+    /// entries through their own.
     #[test]
-    fn scope_history_probes_the_columns_the_rebuilt_relation_declares() {
+    fn scope_history_probes_read_the_entity_inside_each_source() {
         let sql = render(condition(&scope("/A"), &history(TimeInterval::Unbounded)));
-        assert!(sql.contains("\"sh\".\"temporal_entity_key\" = \"e\".\"entity_key\""), "{sql}");
-        assert!(!sql.contains("\"sh\".\"entity_id\""), "{sql}");
+        assert!(sql.contains("\"re\".\"id\" = \"e\".\"id\""), "{sql}");
+        assert!(sql.contains("\"pe\".\"entity_id\" = \"e\".\"id\""), "{sql}");
         assert!(!sql.contains("\"sh\".\"time\""), "{sql}");
     }
 
@@ -326,7 +313,7 @@ mod tests {
                 (Alias::new("e"), Alias::new("entity_key")),
                 timeproperty,
                 TimeInterval::After(instant("2024-01-01T00:00:00Z")),
-                None,
+                HistoryBranch::live(),
             );
             let sql = render(condition(&scope("/A"), &target));
             assert!(sql.contains(&format!("\"sh\".\"{column}\" IS NOT NULL")), "{sql}");
@@ -351,7 +338,7 @@ mod tests {
         let sql = render(condition(&scope("/A"), &instant_valid_at()));
         assert!(sql.contains("\"sh\".\"observed_at\" <= \"ah\".\"observed_at\""), "{sql}");
         assert!(sql.contains("\"sh_next\".\"observed_at\" <= \"ah\".\"observed_at\""), "{sql}");
-        assert!(sql.contains("\"sh\".\"temporal_entity_key\" = \"te\".\"entity_key\""), "{sql}");
+        assert!(sql.contains("\"re\".\"id\" = \"ah\".\"entity_id\""), "{sql}");
     }
 
     /// All three targets walk the same grammar, so a change to the precedence

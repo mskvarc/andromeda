@@ -16,14 +16,15 @@
 //! Vehicle B9211 (scoped at 11:00, queried between 12:00 and 13:00) into the
 //! answer with the 11:00 instant the annex renders.
 
-use crate::alias::Te;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
-use andromeda_postgresql_query::scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis};
-use andromeda_postgresql_schema::temporal::{ScopeHistory, TemporalEntities};
-use andromeda_postgresql_seaquery::branch::qualified;
-use sea_query::{Alias, Condition, DynIden, Expr, ExprTrait, JoinType, Order, Query, SelectStatement};
+use andromeda_postgresql_query::{
+    history_source::{HistoryBranch, HistoryOf, scope_rows::scope_rows},
+    scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis},
+};
+use andromeda_postgresql_schema::temporal::ScopeHistory;
+use sea_query::{Alias, Expr, Order, Query, SelectStatement};
 
 /// The name the statement projects the requested axis under.
 ///
@@ -69,7 +70,7 @@ pub fn scope_is_selected(compiled: &CompiledTemporalQuery) -> bool {
 /// "each Property and Relationship" rather than among them; the events the
 /// window admits are what the representation carries.
 #[must_use]
-pub fn build_scope_history_query(schema: Option<&DynIden>, entity_id: &Identifier, compiled: &CompiledTemporalQuery) -> SelectStatement {
+pub fn build_scope_history_query(branch: &HistoryBranch, entity_id: &Identifier, compiled: &CompiledTemporalQuery) -> SelectStatement {
     let axis = scope_history_axis(compiled.window.timeproperty);
 
     let mut select = Query::select();
@@ -96,23 +97,13 @@ pub fn build_scope_history_query(schema: Option<&DynIden>, entity_id: &Identifie
     // instances of a Property "at a particular point in time" each.
     select.expr_as(Expr::col((ScopeEvent, axis)), Alias::new(SCOPE_EVENT_AT));
 
+    // Clause 5.6.6 leaves the Temporal Evolution standing when the entity is
+    // deleted, so the scope source reads the identity from the temporal
+    // catalogue and never from current state.
     select
-        .from(qualified(schema, ScopeHistory::Table).alias(ScopeEvent))
-        // Clause 5.6.6 leaves the Temporal Evolution standing when the entity
-        // is deleted, so the identity is read from the temporal catalogue and
-        // never from current state.
-        .join_as(
-            JoinType::Join,
-            qualified(schema, TemporalEntities::Table),
-            Te,
-            Expr::col((Te, TemporalEntities::TemporalEntityKey)).equals((ScopeEvent, ScopeHistory::TemporalEntityKey)),
-        )
-        .cond_where(
-            Condition::all()
-                .add(Expr::col((Te, TemporalEntities::Id)).eq(entity_id.to_string()))
-                .add(positioned_on_axis(axis)),
-        )
-        .cond_where(overlaps_window(axis, compiled.window.interval, schema))
+        .from(scope_rows(branch, &HistoryOf::Entity(Expr::val(entity_id.as_str())), ScopeEvent))
+        .cond_where(positioned_on_axis(axis))
+        .cond_where(overlaps_window(axis, compiled.window.interval, branch))
         .order_by((ScopeEvent, axis), Order::Asc)
         .order_by((ScopeEvent, ScopeHistory::RecordedAt), Order::Asc)
         .order_by((ScopeEvent, ScopeHistory::WriteId), Order::Asc)
@@ -136,6 +127,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+    use andromeda_postgresql_query::history_source::HistoryBranch;
     use iri_rs::IriBuf;
     use sea_query::PostgresQueryBuilder;
 
@@ -158,7 +150,7 @@ mod tests {
     }
 
     fn sql_of(compiled: &CompiledTemporalQuery) -> String {
-        build_scope_history_query(None, &vehicle_id(), compiled).to_string(PostgresQueryBuilder)
+        build_scope_history_query(&HistoryBranch::live(), &vehicle_id(), compiled).to_string(PostgresQueryBuilder)
     }
 
     fn iri(raw: &str) -> IriBuf {
@@ -172,7 +164,7 @@ mod tests {
     fn the_scope_read_reaches_the_entity_through_the_temporal_catalogue() {
         let sql = sql_of(&minimal_compiled());
         assert!(
-            sql.contains("JOIN \"temporal_entities\" AS \"te\" ON \"te\".\"temporal_entity_key\" = \"sh\".\"temporal_entity_key\""),
+            sql.contains("JOIN \"temporal_entities\" AS \"re\" ON \"re\".\"temporal_entity_key\" = \"rsh\".\"temporal_entity_key\""),
             "{sql}"
         );
         assert!(!sql.contains("\"entities\""), "{sql}");
@@ -276,5 +268,17 @@ mod tests {
             iri(expanded_properties::SCOPE.as_str()),
         ];
         assert!(scope_is_selected(&unfiltered));
+    }
+
+    /// Clause 4.18: the reified Scope of the live branch includes the Scope
+    /// entries still queued for the entity.
+    #[test]
+    fn the_scope_history_read_unions_pending_scope_entries() {
+        let sql = sql_of(&minimal_compiled());
+        assert!(
+            sql.contains(r#"FROM "temporal_append_entries" AS "pe" WHERE "pe"."entry_kind" IN (3)"#),
+            "{sql}"
+        );
+        assert!(sql.contains(&format!(r#""pe"."entity_id" = '{}'"#, vehicle_id())), "{sql}");
     }
 }

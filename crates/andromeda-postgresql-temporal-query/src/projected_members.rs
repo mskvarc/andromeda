@@ -13,7 +13,7 @@
 //! overlaps the window.
 
 use crate::{
-    alias::{An, Te},
+    alias::An,
     history::{base_history_source, represented_instances},
     scope_history::scope_is_selected,
 };
@@ -21,19 +21,18 @@ use andromeda_ngsi_ld_query::{
     projection::projected_members::{ProjectedMembers, ScopeRetention},
     temporal::compiled::CompiledTemporalQuery,
 };
-use andromeda_postgresql_query::scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis};
-use andromeda_postgresql_schema::{
-    current::E,
-    name_dictionary::AttributeNames,
-    temporal::{ScopeHistory, TemporalEntities},
+use andromeda_postgresql_query::{
+    history_source::{HistoryBranch, HistoryOf, scope_rows::scope_rows},
+    scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis},
 };
-use andromeda_postgresql_seaquery::{branch::qualified, literal::int_literal};
-use sea_query::{Condition, DynIden, Expr, ExprTrait, Query, SelectStatement, SimpleExpr};
+use andromeda_postgresql_schema::{current::E, name_dictionary::AttributeNames, temporal::TemporalEntities};
+use andromeda_postgresql_seaquery::literal::int_literal;
+use sea_query::{Condition, Expr, ExprTrait, Query, SelectStatement, SimpleExpr};
 
 /// The condition an entity of the stage 1 `e` relation has to satisfy for the
 /// query's projection to leave it a member; `None` when every entity does.
 #[must_use]
-pub fn projected_member_condition(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery) -> Option<Condition> {
+pub fn projected_member_condition(branch: &HistoryBranch, compiled: &CompiledTemporalQuery) -> Option<Condition> {
     let projected = &compiled.entities.projected_members;
     let attribute_name = Expr::col((An, AttributeNames::Name));
     let (kept_names, scope) = match projected {
@@ -41,38 +40,39 @@ pub fn projected_member_condition(schema: Option<&DynIden>, compiled: &CompiledT
         ProjectedMembers::AnyOf { scope, .. } => (attribute_name.is_in(projected.names()), *scope),
         ProjectedMembers::AnyBesides { scope, .. } => (attribute_name.is_not_in(projected.names()), *scope),
     };
-    let attribute = Expr::exists(represented_attribute(schema, compiled, kept_names));
+    let attribute = Expr::exists(represented_attribute(branch, compiled, kept_names));
     Some(match scope {
-        ScopeRetention::Kept if scope_is_selected(compiled) => Condition::any().add(attribute).add(Expr::exists(represented_scope(schema, compiled))),
+        ScopeRetention::Kept if scope_is_selected(compiled) => Condition::any().add(attribute).add(Expr::exists(represented_scope(branch, compiled))),
         ScopeRetention::Kept | ScopeRetention::Removed => Condition::all().add(attribute),
     })
 }
 
 /// The instances of the entity stage 2 would represent, restricted to the
 /// Attributes whose names satisfy `kept_names`.
-fn represented_attribute(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery, kept_names: SimpleExpr) -> SelectStatement {
+fn represented_attribute(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, kept_names: SimpleExpr) -> SelectStatement {
     let mut probe = Query::select();
     probe.expr(int_literal(1));
-    base_history_source(&mut probe, schema);
-    probe
-        .cond_where(Expr::col((Te, TemporalEntities::TemporalEntityKey)).equals((E, TemporalEntities::TemporalEntityKey)))
-        .cond_where(represented_instances(schema, compiled))
-        .cond_where(kept_names);
+    base_history_source(&mut probe, branch, &of_selected_entity());
+    probe.cond_where(represented_instances(branch, compiled)).cond_where(kept_names);
     probe.take()
 }
 
 /// The scope events of the entity whose clause 4.18 validity overlaps the
 /// window, which is what the scope half of stage 2 represents.
-fn represented_scope(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery) -> SelectStatement {
+fn represented_scope(branch: &HistoryBranch, compiled: &CompiledTemporalQuery) -> SelectStatement {
     let axis = scope_history_axis(compiled.window.timeproperty);
     let mut probe = Query::select();
     probe
         .expr(int_literal(1))
-        .from(qualified(schema, ScopeHistory::Table).alias(ScopeEvent))
-        .cond_where(Expr::col((ScopeEvent, ScopeHistory::TemporalEntityKey)).equals((E, TemporalEntities::TemporalEntityKey)))
+        .from(scope_rows(branch, &of_selected_entity(), ScopeEvent))
         .cond_where(positioned_on_axis(axis))
-        .cond_where(overlaps_window(axis, compiled.window.interval, schema));
+        .cond_where(overlaps_window(axis, compiled.window.interval, branch));
     probe.take()
+}
+
+/// The history of the entity of the stage 1 `e` relation.
+fn of_selected_entity() -> HistoryOf {
+    HistoryOf::Entity(Expr::col((E, TemporalEntities::Id)))
 }
 
 #[cfg(test)]
@@ -91,6 +91,7 @@ mod tests {
         },
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+    use andromeda_postgresql_query::history_source::HistoryBranch;
     use chrono::{DateTime, Utc};
     use iri_rs::IriBuf;
     use sea_query::{PostgresQueryBuilder, Query};
@@ -124,7 +125,8 @@ mod tests {
     }
 
     fn rendered(compiled: &CompiledTemporalQuery) -> Option<String> {
-        projected_member_condition(None, compiled).map(|condition| Query::select().cond_where(condition).to_owned().to_string(PostgresQueryBuilder))
+        projected_member_condition(&HistoryBranch::live(), compiled)
+            .map(|condition| Query::select().cond_where(condition).to_owned().to_string(PostgresQueryBuilder))
     }
 
     /// A projection that keeps `id` leaves every entity a member.
@@ -140,7 +142,7 @@ mod tests {
     fn a_pick_probes_the_represented_instances_of_the_picked_attributes() {
         let sql = rendered(&compiled(&Projection::builder().pick(vec![speed()]).build())).expect("a condition");
         assert!(sql.contains(r#""an"."name" IN ('https://example.com/speed')"#), "{sql}");
-        assert!(sql.contains(r#""te"."temporal_entity_key" = "e"."temporal_entity_key""#), "{sql}");
+        assert!(sql.contains(r#""re"."id" = "e"."id""#), "{sql}");
         assert!(sql.contains(r#""ah"."observed_at" >="#), "the window bounds the instances: {sql}");
         assert!(!sql.contains("scope_history"), "the pick does not keep the scope: {sql}");
     }

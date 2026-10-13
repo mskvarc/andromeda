@@ -1,17 +1,18 @@
 //! Stage 2 of a temporal query: attribute history for one entity, optionally
 //! narrowed to one clause 6.3.10 page of instances per attribute.
 //!
-//! The statement reads the hypertable through the temporal catalogue
-//! alone - `attribute_history` to `temporal_attribute_streams` to
-//! `temporal_entities` - so an entity whose current state was deleted (clause
-//! 5.6.6) still answers with its evolution. Every row carries its own
-//! `attribute_kind` and `value_kind`, which is what the reconstruction reads:
-//! a historical instance's kind is a fact of the row, never re-derived from a
-//! catalogue that a later type change would have overwritten.
+//! The statement reads the attribute source of the branch, which reaches the
+//! hypertable through the temporal catalogue alone, so an entity whose
+//! current state was deleted (clause 5.6.6) still answers with its evolution,
+//! and on the live branch carries the entries still queued for it. Every row
+//! carries its own `attribute_kind` and `value_kind`, which is what the
+//! reconstruction reads: a historical instance's kind is a fact of the row,
+//! never re-derived from a catalogue that a later type change would have
+//! overwritten.
 
 use crate::{
     aggregation::build_aggregation_query,
-    alias::{Ah, An, S, Te},
+    alias::{Ah, An},
     axis::axis_column,
 };
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};
@@ -21,18 +22,15 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_postgresql_query::{
     dataset_predicate::dataset_condition,
+    history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, grain::HistoryGrain},
     scope_predicate::{ScopeTarget, condition as scope_condition},
 };
-use andromeda_postgresql_schema::{
-    name_dictionary::AttributeNames,
-    temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
-};
+use andromeda_postgresql_schema::{name_dictionary::AttributeNames, temporal::AttributeHistory};
 use andromeda_postgresql_seaquery::{
     aggregate::{count_all, rank, row_number},
-    branch::qualified,
     postgis::st_as_ewkb,
 };
-use sea_query::{Alias, Asterisk, Condition, DynIden, Expr, ExprTrait, Func, JoinType, NullOrdering, Order, Query, SelectStatement, WindowStatement};
+use sea_query::{Alias, Asterisk, Condition, Expr, ExprTrait, Func, JoinType, NullOrdering, Order, OverStatement, Query, SelectStatement, WindowStatement};
 
 /// Build Stage 2 query: temporal history for a single entity.
 ///
@@ -40,34 +38,29 @@ use sea_query::{Alias, Asterisk, Condition, DynIden, Expr, ExprTrait, Func, Join
 /// its whole placeholder sequence and no two functions have to agree on where
 /// it starts.
 #[must_use]
-pub fn build_temporal_history_query(schema: Option<&DynIden>, entity_id: &Identifier, compiled: &CompiledTemporalQuery) -> SelectStatement {
-    let condition = stage2_conditions(schema, entity_id, compiled);
+pub fn build_temporal_history_query(branch: &HistoryBranch, entity_id: &Identifier, compiled: &CompiledTemporalQuery) -> SelectStatement {
+    // The ranked, unranked and aggregated shapes read the same entity's rows
+    // among the same represented instances, so none can reach a row the others
+    // cannot.
+    let of = HistoryOf::Entity(Expr::val(entity_id.as_str()));
+    let condition = represented_instances(branch, compiled);
     match compiled.representation.format {
         // The grouped extension format runs the same aggregation pipeline; the
         // builder adds the group-key columns when `representation.grouping` is set.
-        TemporalFormat::AggregatedValues | TemporalFormat::GroupedValues => build_aggregation_query(schema, compiled, condition),
-        TemporalFormat::Normalized | TemporalFormat::TemporalValues => build_history_query(schema, compiled, condition),
+        TemporalFormat::AggregatedValues | TemporalFormat::GroupedValues => build_aggregation_query(branch, &of, compiled, condition),
+        TemporalFormat::Normalized | TemporalFormat::TemporalValues => build_history_query(branch, &of, compiled, condition),
     }
 }
 
-/// The row-level filter shared by the ranked, unranked and aggregated shapes, so
-/// none can reach a row the others cannot: one entity's rows among the
-/// [`represented_instances`].
-fn stage2_conditions(schema: Option<&DynIden>, entity_id: &Identifier, compiled: &CompiledTemporalQuery) -> Condition {
-    Condition::all()
-        .add(Expr::col((Te, TemporalEntities::Id)).eq(entity_id.to_string()))
-        .add(represented_instances(schema, compiled))
-}
-
 /// The Attribute instances the temporal representation of an entity carries,
-/// over the joins of [`base_history_source`]: stage 2 reads them, and stage 1
+/// over the rows of [`base_history_source`]: stage 2 reads them, and stage 1
 /// asks whether a projection leaves an entity any of them.
 ///
 /// Clause 5.2.21: an instance is placed on the requested axis by the column that
 /// holds it. `deletedAt` exists only on a row that records a deletion, so asking
 /// for that axis asks for those rows and no others; the deletion is recognised
 /// by the axis itself rather than by a sentinel value.
-pub(crate) fn represented_instances(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery) -> Condition {
+pub(crate) fn represented_instances(branch: &HistoryBranch, compiled: &CompiledTemporalQuery) -> Condition {
     let mut condition = Condition::all();
 
     if compiled.window.timeproperty == TimeProp::Deleted {
@@ -93,7 +86,7 @@ pub(crate) fn represented_instances(schema: Option<&DynIden>, compiled: &Compile
     // parameter keeps only the instances of the datasets it names. It filters
     // the instances an Entity is represented with, never which Entities are.
     condition = condition.add(dataset_condition(
-        &Expr::col((S, TemporalAttributeStreams::DatasetId)),
+        &Expr::col((Ah, HistoryGrain::DatasetId)),
         &DatasetFilter::from_selectors(&compiled.instances.dataset_id_filter),
     ));
 
@@ -106,10 +99,10 @@ pub(crate) fn represented_instances(schema: Option<&DynIden>, compiled: &Compile
     // event in force there.
     if let Some(scope_q) = &compiled.entities.scope_q {
         let target = ScopeTarget::valid_at(
-            (Te, TemporalEntities::TemporalEntityKey),
+            (Ah, HistoryGrain::EntityId),
             compiled.window.timeproperty,
             Expr::col((Ah, axis)),
-            schema.cloned(),
+            branch.clone(), // clone: the target owns the branch its probe reads
         );
         condition = condition.add(scope_condition(scope_q, &target));
     }
@@ -117,30 +110,26 @@ pub(crate) fn represented_instances(schema: Option<&DynIden>, compiled: &Compile
     condition
 }
 
-/// The catalogue path from the hypertable to the entity grain, shared by the
-/// ranked and unranked shapes and the aggregation so none can reach a row the
-/// others cannot.
-pub(crate) fn base_history_source(select: &mut SelectStatement, schema: Option<&DynIden>) {
-    select
-        .from(qualified(schema, AttributeHistory::Table).alias(Ah))
-        .join_as(
-            JoinType::Join,
-            qualified(schema, TemporalAttributeStreams::Table),
-            S,
-            Expr::col((S, TemporalAttributeStreams::StreamKey)).equals((Ah, AttributeHistory::StreamKey)),
-        )
-        .join_as(
-            JoinType::Join,
-            qualified(schema, TemporalEntities::Table),
-            Te,
-            Expr::col((Te, TemporalEntities::TemporalEntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)),
-        )
-        .join_as(
-            JoinType::Join,
-            AttributeNames::Table,
-            An,
-            Expr::col((An, AttributeNames::AttributeNameKey)).equals((S, TemporalAttributeStreams::AttributeNameKey)),
-        );
+/// The attribute rows `of` reads beside the name of their attribute, shared by
+/// the ranked and unranked shapes and the aggregation so none can reach a row
+/// the others cannot.
+pub(crate) fn base_history_source(select: &mut SelectStatement, branch: &HistoryBranch, of: &HistoryOf) {
+    select.from(attribute_rows(branch, of, Ah)).join_as(
+        JoinType::Join,
+        AttributeNames::Table,
+        An,
+        Expr::col((An, AttributeNames::AttributeNameKey)).equals((Ah, HistoryGrain::AttributeNameKey)),
+    );
+}
+
+/// The window one stream's instances are ranked and counted in: its attribute
+/// and `datasetId` within the one entity stage 2 reads.
+fn stream_partition() -> WindowStatement {
+    let mut window = WindowStatement::new();
+    window
+        .add_partition_by(Expr::col((Ah, HistoryGrain::AttributeNameKey)))
+        .add_partition_by(Expr::col((Ah, HistoryGrain::DatasetId)));
+    window
 }
 
 /// Project every column a history row carries, before the optional `lastN`
@@ -153,7 +142,6 @@ pub(crate) fn base_history_source(select: &mut SelectStatement, schema: Option<&
 fn project_base_columns(select: &mut SelectStatement) {
     for column in [
         AttributeHistory::RecordedAt,
-        AttributeHistory::StreamKey,
         AttributeHistory::AttributeKind,
         AttributeHistory::ValueKind,
         AttributeHistory::ObservedAt,
@@ -184,25 +172,25 @@ fn project_base_columns(select: &mut SelectStatement) {
     // decodes that wire form into a GeoJSON value in Rust.
     select.expr_as(st_as_ewkb(Expr::col((Ah, AttributeHistory::ValueGeometry))), Alias::new("value_geometry_ewkb"));
     select.expr_as(Expr::col((An, AttributeNames::Name)), Alias::new("attribute_name"));
-    select.expr(Expr::col((S, TemporalAttributeStreams::DatasetId)));
+    select.expr(Expr::col((Ah, HistoryGrain::DatasetId)));
 }
 
 /// Build the history query, narrowed to the page the query compiled.
-fn build_history_query(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery, condition: Condition) -> SelectStatement {
+fn build_history_query(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemporalQuery, condition: Condition) -> SelectStatement {
     match compiled.instances.page {
-        InstancePage::Whole => whole_history(schema, compiled, condition),
-        InstancePage::LastN { n } => ranked_history(schema, compiled, condition, &last_n_ranking(compiled, n)),
-        InstancePage::Forward { size } => ranked_history(schema, compiled, condition, &forward_page_ranking(compiled, size)),
-        InstancePage::Backward { size, .. } => ranked_history(schema, compiled, condition, &backward_page_ranking(compiled, size)),
+        InstancePage::Whole => whole_history(branch, of, compiled, condition),
+        InstancePage::LastN { n } => ranked_history(branch, of, compiled, condition, &last_n_ranking(compiled, n)),
+        InstancePage::Forward { size } => ranked_history(branch, of, compiled, condition, &forward_page_ranking(compiled, size)),
+        InstancePage::Backward { size, .. } => ranked_history(branch, of, compiled, condition, &backward_page_ranking(compiled, size)),
     }
 }
 
 /// Every instance in the window, in rendering order.
-fn whole_history(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery, condition: Condition) -> SelectStatement {
+fn whole_history(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemporalQuery, condition: Condition) -> SelectStatement {
     let axis = axis_column(compiled.window.timeproperty);
     let mut select = Query::select();
     project_base_columns(&mut select);
-    base_history_source(&mut select, schema);
+    base_history_source(&mut select, branch, of);
     select.cond_where(condition);
     select
         .order_by((An, AttributeNames::Name), Order::Asc)
@@ -235,7 +223,7 @@ struct Ranking {
 /// the requested axis are kept or dropped the same way on every execution.
 fn last_n_ranking(compiled: &CompiledTemporalQuery, n: u32) -> Ranking {
     let axis = axis_column(compiled.window.timeproperty);
-    let mut window = WindowStatement::partition_by((Ah, AttributeHistory::StreamKey));
+    let mut window = stream_partition();
     window
         .order_by((Ah, axis), Order::Desc)
         .order_by((Ah, AttributeHistory::RecordedAt), Order::Desc)
@@ -261,7 +249,7 @@ fn last_n_ranking(compiled: &CompiledTemporalQuery, n: u32) -> Ranking {
 /// counting them could stall a resumed walk on that one timestamp.
 fn forward_page_ranking(compiled: &CompiledTemporalQuery, size: u32) -> Ranking {
     let axis = axis_column(compiled.window.timeproperty);
-    let mut window = WindowStatement::partition_by((Ah, AttributeHistory::StreamKey));
+    let mut window = stream_partition();
     window.order_by_with_nulls((Ah, axis), Order::Asc, NullOrdering::Last);
     let uncounted = match compiled.window.interval {
         TimeInterval::After(lower) | TimeInterval::Between { from: lower, .. } => {
@@ -284,7 +272,7 @@ fn forward_page_ranking(compiled: &CompiledTemporalQuery, size: u32) -> Ranking 
 /// group again nor misses any of it.
 fn backward_page_ranking(compiled: &CompiledTemporalQuery, size: u32) -> Ranking {
     let axis = axis_column(compiled.window.timeproperty);
-    let mut window = WindowStatement::partition_by((Ah, AttributeHistory::StreamKey));
+    let mut window = stream_partition();
     window.order_by_with_nulls((Ah, axis), Order::Desc, NullOrdering::Last);
     Ranking {
         function: rank(),
@@ -296,9 +284,9 @@ fn backward_page_ranking(compiled: &CompiledTemporalQuery, size: u32) -> Ranking
 
 /// The history narrowed by `ranking`, with every stream's total in the window
 /// beside it so the page can tell whether it left instances out.
-fn ranked_history(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery, condition: Condition, ranking: &Ranking) -> SelectStatement {
+fn ranked_history(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemporalQuery, condition: Condition, ranking: &Ranking) -> SelectStatement {
     let axis = axis_column(compiled.window.timeproperty);
-    let partition = || WindowStatement::partition_by((Ah, AttributeHistory::StreamKey));
+    let partition = stream_partition;
 
     let mut ranked = Query::select();
     project_base_columns(&mut ranked);
@@ -309,7 +297,7 @@ fn ranked_history(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery, co
         // clone: same.
         ranked.expr_window_as(uncounted.clone(), partition(), Alias::new("uncounted"));
     }
-    base_history_source(&mut ranked, schema);
+    base_history_source(&mut ranked, branch, of);
     ranked.cond_where(condition);
 
     let ranked_alias = Alias::new("ranked");
@@ -342,8 +330,9 @@ mod tests {
         temporal::{aggregation_period::AggregationPeriod, instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+    use andromeda_postgresql_query::history_source::HistoryBranch;
     use iri_rs::IriBuf;
-    use sea_query::PostgresQueryBuilder;
+    use sea_query::{IntoIden, PostgresQueryBuilder};
 
     /// The one entity these tests build a history statement for.
     fn vehicle_id() -> Identifier {
@@ -368,13 +357,13 @@ mod tests {
     /// The stage-2 statement rendered as SQL with its values inlined, which is
     /// what the shape assertions read.
     fn sql_of(compiled: &CompiledTemporalQuery) -> String {
-        build_temporal_history_query(None, &vehicle_id(), compiled).to_string(PostgresQueryBuilder)
+        build_temporal_history_query(&HistoryBranch::live(), &vehicle_id(), compiled).to_string(PostgresQueryBuilder)
     }
 
     #[test]
     fn build_temporal_history_no_filters() {
         let sql = sql_of(&minimal_compiled());
-        assert!(sql.contains("\"te\".\"id\" ="), "{sql}");
+        assert!(sql.contains("\"re\".\"id\" ="), "{sql}");
         assert!(sql.contains("attribute_history"), "{sql}");
         assert!(sql.contains("JOIN \"attribute_names\""), "{sql}");
         assert!(sql.contains("ORDER BY"), "{sql}");
@@ -387,11 +376,11 @@ mod tests {
     fn history_reaches_the_entity_through_the_temporal_catalogue() {
         let sql = sql_of(&minimal_compiled());
         assert!(
-            sql.contains("JOIN \"temporal_attribute_streams\" AS \"s\" ON \"s\".\"stream_key\" = \"ah\".\"stream_key\""),
+            sql.contains("JOIN \"temporal_attribute_streams\" AS \"rs\" ON \"rs\".\"stream_key\" = \"rh\".\"stream_key\""),
             "{sql}"
         );
         assert!(
-            sql.contains("JOIN \"temporal_entities\" AS \"te\" ON \"te\".\"temporal_entity_key\" = \"s\".\"temporal_entity_key\""),
+            sql.contains("JOIN \"temporal_entities\" AS \"re\" ON \"re\".\"temporal_entity_key\" = \"rs\".\"temporal_entity_key\""),
             "{sql}"
         );
         assert!(!sql.contains("temporal_entity_attributes"), "{sql}");
@@ -455,7 +444,7 @@ mod tests {
         compiled.instances.page = InstancePage::LastN { n: 5 };
         let sql = sql_of(&compiled);
         assert!(sql.contains("ROW_NUMBER()"), "{sql}");
-        assert!(sql.contains("PARTITION BY \"ah\".\"stream_key\""), "{sql}");
+        assert!(sql.contains("PARTITION BY \"ah\".\"attribute_name_key\", \"ah\".\"dataset_id\""), "{sql}");
         assert!(sql.contains("\"ah\".\"write_ordinal\" DESC"), "{sql}");
     }
 
@@ -534,7 +523,7 @@ mod tests {
         compiled.instances.page = InstancePage::Forward { size: 100 };
         let sql = sql_of(&compiled);
         assert!(
-            sql.contains("RANK() OVER ( PARTITION BY \"ah\".\"stream_key\" ORDER BY \"ah\".\"observed_at\" ASC NULLS LAST )"),
+            sql.contains("RANK() OVER ( PARTITION BY \"ah\".\"attribute_name_key\", \"ah\".\"dataset_id\" ORDER BY \"ah\".\"observed_at\" ASC NULLS LAST )"),
             "{sql}"
         );
         assert!(!sql.contains("ROW_NUMBER()"), "{sql}");
@@ -559,7 +548,7 @@ mod tests {
             compiled.window.interval = interval;
             let sql = sql_of(&compiled);
             assert!(
-                sql.contains("SUM((CASE WHEN (\"ah\".\"observed_at\" = '2024-01-15 10:00:00.000000 +00:00') THEN 1 ELSE 0 END)) OVER ( PARTITION BY \"ah\".\"stream_key\" ) AS \"uncounted\""),
+                sql.contains("SUM((CASE WHEN (\"ah\".\"observed_at\" = '2024-01-15 10:00:00.000000 +00:00') THEN 1 ELSE 0 END)) OVER ( PARTITION BY \"ah\".\"attribute_name_key\", \"ah\".\"dataset_id\" ) AS \"uncounted\""),
                 "{sql}"
             );
             assert!(sql.contains("\"ranked\".\"rn\" - \"ranked\".\"uncounted\" <= 100"), "{sql}");
@@ -575,7 +564,7 @@ mod tests {
         compiled.window.interval = TimeInterval::Before("2024-01-15T10:00:00Z".parse().expect("valid instant"));
         let sql = sql_of(&compiled);
         assert!(
-            sql.contains("RANK() OVER ( PARTITION BY \"ah\".\"stream_key\" ORDER BY \"ah\".\"observed_at\" DESC NULLS LAST )"),
+            sql.contains("RANK() OVER ( PARTITION BY \"ah\".\"attribute_name_key\", \"ah\".\"dataset_id\" ORDER BY \"ah\".\"observed_at\" DESC NULLS LAST )"),
             "{sql}"
         );
         assert!(sql.contains("\"ranked\".\"rn\" <= 1000"), "{sql}");
@@ -595,7 +584,7 @@ mod tests {
             compiled.instances.page = page;
             let sql = sql_of(&compiled);
             assert!(
-                sql.contains("COUNT(*) OVER ( PARTITION BY \"ah\".\"stream_key\" ) AS \"partition_total\""),
+                sql.contains("COUNT(*) OVER ( PARTITION BY \"ah\".\"attribute_name_key\", \"ah\".\"dataset_id\" ) AS \"partition_total\""),
                 "{page:?}: {sql}"
             );
         }
@@ -619,20 +608,20 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.instances.dataset_id_filter = selectors(&["@none"]);
         let sql = sql_of(&compiled);
-        assert!(sql.contains("\"s\".\"dataset_id\" IS NULL"), "{sql}");
-        assert!(!sql.contains("\"s\".\"dataset_id\" IN"), "{sql}");
+        assert!(sql.contains("\"ah\".\"dataset_id\" IS NULL"), "{sql}");
+        assert!(!sql.contains("\"ah\".\"dataset_id\" IN"), "{sql}");
 
         let mut compiled = minimal_compiled();
         compiled.instances.dataset_id_filter = selectors(&["urn:ngsi-ld:Dataset:one"]);
         let sql = sql_of(&compiled);
-        assert!(sql.contains("\"s\".\"dataset_id\" IN"), "{sql}");
-        assert!(!sql.contains("\"s\".\"dataset_id\" IS NULL"), "{sql}");
+        assert!(sql.contains("\"ah\".\"dataset_id\" IN"), "{sql}");
+        assert!(!sql.contains("\"ah\".\"dataset_id\" IS NULL"), "{sql}");
 
         let mut compiled = minimal_compiled();
         compiled.instances.dataset_id_filter = selectors(&["@none", "urn:ngsi-ld:Dataset:one"]);
         let sql = sql_of(&compiled);
-        assert!(sql.contains("\"s\".\"dataset_id\" IN"), "{sql}");
-        assert!(sql.contains("OR \"s\".\"dataset_id\" IS NULL"), "{sql}");
+        assert!(sql.contains("\"ah\".\"dataset_id\" IN"), "{sql}");
+        assert!(sql.contains("OR \"ah\".\"dataset_id\" IS NULL"), "{sql}");
     }
 
     #[test]
@@ -656,5 +645,18 @@ mod tests {
         let sql = sql_of(&compiled);
         assert!(sql.contains("agg_total_count"), "{sql}");
         assert!(sql.contains("GROUP BY"), "{sql}");
+    }
+
+    /// Clause 5.7.3: the evolution of one entity on the live branch is its
+    /// recorded rows and its queued entries, both read for that entity alone.
+    #[test]
+    fn the_history_read_unions_the_pending_rows_of_the_entity() {
+        let sql = sql_of(&minimal_compiled());
+        assert!(sql.contains(r#""re"."id" = 'urn:ngsi-ld:Vehicle:1'"#), "{sql}");
+        assert!(sql.contains(r#"UNION ALL (SELECT "pe"."entity_id" AS "entity_id""#), "{sql}");
+        assert!(sql.contains(r#""pe"."entity_id" = 'urn:ngsi-ld:Vehicle:1'"#), "{sql}");
+        let snapshot = Alias::new("snap_7").into_iden();
+        let recorded = build_temporal_history_query(&HistoryBranch::recorded_in(snapshot), &vehicle_id(), &minimal_compiled()).to_string(PostgresQueryBuilder);
+        assert!(!recorded.contains("temporal_append"), "{recorded}");
     }
 }

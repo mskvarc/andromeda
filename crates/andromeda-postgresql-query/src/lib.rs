@@ -32,6 +32,7 @@ pub mod entity_row_refs;
 pub mod entity_type_name_key;
 pub mod error;
 pub mod geo_predicate;
+pub mod history_source;
 pub mod instance_expiry;
 pub mod jsonb;
 pub mod location_instances;

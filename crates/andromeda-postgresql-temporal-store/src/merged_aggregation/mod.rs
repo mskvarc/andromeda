@@ -26,6 +26,7 @@ use crate::{
         copy_history,
         copy_streams,
         drop_restated_instances,
+        queued_grains,
         stage_entity,
         stage_stream,
         staged_entity_key,
@@ -45,6 +46,7 @@ use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryR
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_postgresql_attribute_instance::{name_keys::MentionedNames, name_resolution::resolve_mentioned};
 use andromeda_postgresql_branch::schema_iden;
+use andromeda_postgresql_query::history_source::HistoryBranch;
 use andromeda_postgresql_temporal_query::history::build_temporal_history_query;
 use andromeda_temporal::error::TemporalError;
 use chrono::Utc;
@@ -94,11 +96,15 @@ impl TemporalRepository {
                 interval: compiled.window.interval,
             }
         };
+        let snapshot = schema_iden(target);
         execute_insert(&mut tx, copy_entity(&branch, entity_id).map_err(TemporalStoreError::from)?).await?;
         execute_insert(&mut tx, copy_streams(&branch).map_err(TemporalStoreError::from)?).await?;
-        execute_insert(&mut tx, copy_history(&branch, copied).map_err(TemporalStoreError::from)?).await?;
+        if snapshot.is_none() {
+            self.stage_queued_streams(&mut tx, entity_id, entity_types).await?;
+        }
+        execute_insert(&mut tx, copy_history(snapshot.as_ref(), entity_id, copied).map_err(TemporalStoreError::from)?).await?;
         self.stage_answered(&mut tx, entity_id, entity_types, answered).await?;
-        let statement = build_temporal_history_query(Some(&temporary_schema()), entity_id, compiled);
+        let statement = build_temporal_history_query(&HistoryBranch::recorded_in(temporary_schema()), entity_id, compiled);
         let pg_rows = fetch(&mut tx, statement).await?;
         let rows = decode_aggregation_rows(&pg_rows, entity_id, compiled)?;
         tx.commit().await.map_err(TemporalStoreError::from)?;
@@ -127,6 +133,7 @@ impl TemporalRepository {
         let keys = resolve_mentioned(&mut *tx, mentioned, self.entity_type_names.as_ref(), self.attribute_names.as_ref()).await?;
         let entity_key = self.staged_entity(tx, entity_id, entity_types).await?;
         let streams = read_staged_streams(tx).await?;
+        let first_position = streams.len().saturating_add(1);
         let missing: HashSet<(&AttributeName, Option<&Identifier>)> = answered
             .iter()
             .map(|row| (&row.attribute_name, row.dataset_id.as_ref()))
@@ -142,7 +149,7 @@ impl TemporalRepository {
                 .ok_or_else(|| TemporalStoreInvariant::AttributeNameUnresolved(name.clone()))?; // clone: the invariant owns the name it failed on
             execute_insert(
                 tx,
-                stage_stream(staged_key(position.saturating_add(1)), entity_key, name_key.get(), dataset_id)?,
+                stage_stream(staged_key(first_position.saturating_add(position)), entity_key, name_key.get(), dataset_id)?,
             )
             .await?;
         }
@@ -167,6 +174,31 @@ impl TemporalRepository {
         )
         .await?;
         execute_delete(tx, drop_restated_instances(staged.write_id().as_uuid())).await
+    }
+
+    /// Stage a stream for every grain the live branch's queued entries of the
+    /// entity extend that no recorded stream holds, so the copied history
+    /// lands those entries too.
+    async fn stage_queued_streams(&self, tx: &mut PgConnection, entity_id: &Identifier, entity_types: &[EntityTypeName]) -> Result<(), TemporalStoreError> {
+        let grains = fetch(tx, queued_grains(entity_id)).await?;
+        if grains.is_empty() {
+            return Ok(());
+        }
+        let entity_key = self.staged_entity(tx, entity_id, entity_types).await?;
+        for (position, grain) in grains.iter().enumerate() {
+            let attribute_name_key: i32 = grain.try_get(0)?;
+            let dataset_id = grain
+                .try_get::<Option<String>, _>(1)?
+                .map(|raw| raw.parse::<Identifier>())
+                .transpose()
+                .map_err(StoredCatalogError::StreamDatasetId)?;
+            execute_insert(
+                tx,
+                stage_stream(staged_key(position.saturating_add(1)), entity_key, attribute_name_key, dataset_id.as_ref())?,
+            )
+            .await?;
+        }
+        Ok(())
     }
 
     /// The staged catalogue key of the entity: its copied local one, or one

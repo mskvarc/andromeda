@@ -88,9 +88,31 @@ pub enum TemporalAppendIntents {
     LastError,
 }
 
+/// The `temporal_append_entries` view: every entry of every queued intent,
+/// one row each, beside the write identity its history row will carry.
+///
+/// Its other columns are the fields of the `temporal_entry` composite, under
+/// the names [`TemporalEntry`](crate::temporal_intent::TemporalEntry) gives
+/// them.
+#[derive(Iden, Clone, Copy)]
+pub enum TemporalAppendEntries {
+    /// View name: `temporal_append_entries`
+    Table,
+    /// Key of the intent the entry belongs to
+    IntentKey,
+    /// Entity the entry records history for
+    EntityId,
+    /// Ingestion instant of the write
+    RecordedAt,
+    /// Identity of the write
+    WriteId,
+    /// The entry's write ordinal: its intent's base ordinal plus its position from 0
+    WriteOrdinal,
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::queue::{PendingSideEffects, TemporalAppendIntents, WriteRecords};
+    use crate::queue::{PendingSideEffects, TemporalAppendEntries, TemporalAppendIntents, WriteRecords};
     use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
@@ -110,6 +132,16 @@ mod tests {
         assert_eq!(TemporalAppendIntents::ClaimedBy.to_string(), "claimed_by");
         assert_eq!(TemporalAppendIntents::AttemptCount.to_string(), "attempt_count");
         assert_eq!(TemporalAppendIntents::LastError.to_string(), "last_error");
+    }
+
+    #[test]
+    fn temporal_append_entries_view_and_columns() {
+        assert_eq!(TemporalAppendEntries::Table.to_string(), "temporal_append_entries");
+        assert_eq!(TemporalAppendEntries::IntentKey.to_string(), "intent_key");
+        assert_eq!(TemporalAppendEntries::EntityId.to_string(), "entity_id");
+        assert_eq!(TemporalAppendEntries::RecordedAt.to_string(), "recorded_at");
+        assert_eq!(TemporalAppendEntries::WriteId.to_string(), "write_id");
+        assert_eq!(TemporalAppendEntries::WriteOrdinal.to_string(), "write_ordinal");
     }
 
     #[test]

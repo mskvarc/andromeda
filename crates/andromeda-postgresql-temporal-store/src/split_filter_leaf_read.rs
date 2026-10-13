@@ -8,7 +8,6 @@ use andromeda_ngsi_ld_query::{
     split_filter::{LeafTruths, SplitFilter},
     temporal::compiled::CompiledTemporalQuery,
 };
-use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_temporal_query::split_filter_leaves::build_filter_leaf_truths;
 use andromeda_temporal::error::TemporalError;
 use sqlx::{Row, postgres::PgRow};
@@ -34,7 +33,8 @@ impl TemporalRepository {
             return Ok(HashMap::new());
         }
         let names = self.resolve_query_names(compiled).await?;
-        let statement = build_filter_leaf_truths(schema_iden(target).as_ref(), compiled, entity_ids, &names).map_err(TemporalStoreError::Render)?;
+        let branch = self.history_branch(target).await?;
+        let statement = build_filter_leaf_truths(&branch, compiled, entity_ids, &names).map_err(TemporalStoreError::Render)?;
         let rows = self.execute_temporal_query(TemporalStatement::SplitFilterLeaves, statement).await?;
         let leaves = filter.leaf_count();
         rows.iter()

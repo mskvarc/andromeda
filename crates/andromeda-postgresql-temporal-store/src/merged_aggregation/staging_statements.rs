@@ -5,11 +5,22 @@
 //! statement reads them unchanged once it is pointed at the temporary schema;
 //! every statement that reads the branch therefore names the branch schema,
 //! the live one included, because an unqualified name now resolves to the
-//! temporary copy.
+//! temporary copy. The history is copied from the branch's history source, so
+//! the live branch's queued entries are copied beside its recorded rows, under
+//! staged streams where they extend a grain no recorded stream holds.
 
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
-use andromeda_postgresql_query::time_interval_predicate::within_interval;
+use andromeda_postgresql_query::{
+    history_source::{
+        HistoryBranch,
+        HistoryOf,
+        attribute_rows::{attribute_rows, stream_rows},
+        entry_values::attribute_value_columns,
+        grain::HistoryGrain,
+    },
+    time_interval_predicate::within_interval,
+};
 use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,
     temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
@@ -22,6 +33,7 @@ use andromeda_postgresql_seaquery::{
 use andromeda_postgresql_temporal_query::axis::axis_column;
 use chrono::{DateTime, Utc};
 use sea_query::{
+    Condition,
     DeleteStatement,
     DynIden,
     Expr,
@@ -54,6 +66,16 @@ struct Local;
 #[iden = "r"]
 struct Staged;
 
+/// The staged stream a copied row lands on, alias `ts`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "ts"]
+struct StagedStream;
+
+/// The live branch's streams a queued grain is read from, alias `g`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "g"]
+struct QueuedGrain;
+
 /// The temporal catalogue's columns, in table order.
 const ENTITY_COLUMNS: [TemporalEntities; 5] = [
     TemporalEntities::TemporalEntityKey,
@@ -69,36 +91,6 @@ const STREAM_COLUMNS: [TemporalAttributeStreams; 4] = [
     TemporalAttributeStreams::TemporalEntityKey,
     TemporalAttributeStreams::AttributeNameKey,
     TemporalAttributeStreams::DatasetId,
-];
-
-/// The history hypertable's columns.
-const HISTORY_COLUMNS: [AttributeHistory; 26] = [
-    AttributeHistory::RecordedAt,
-    AttributeHistory::WriteId,
-    AttributeHistory::StreamKey,
-    AttributeHistory::WriteOrdinal,
-    AttributeHistory::AttributeKind,
-    AttributeHistory::ValueKind,
-    AttributeHistory::ObservedAt,
-    AttributeHistory::CreatedAt,
-    AttributeHistory::ModifiedAt,
-    AttributeHistory::DeletedAt,
-    AttributeHistory::ValueDateTime,
-    AttributeHistory::GeneratedInstanceId,
-    AttributeHistory::UnitCodeId,
-    AttributeHistory::ValueBoolean,
-    AttributeHistory::VerbatimInstanceId,
-    AttributeHistory::ValueNumber,
-    AttributeHistory::ValueString,
-    AttributeHistory::ValueGeometry,
-    AttributeHistory::ValueGeometryMembers,
-    AttributeHistory::ValueObject,
-    AttributeHistory::ValueUri,
-    AttributeHistory::ValueTypeKey,
-    AttributeHistory::ObjectTypeKeys,
-    AttributeHistory::ProofSeals,
-    AttributeHistory::ExpiresAt,
-    AttributeHistory::SubAttributes,
 ];
 
 /// Which of the entity's local history rows the staging copies.
@@ -189,31 +181,74 @@ pub(crate) fn copy_streams(branch: &DynIden) -> Result<InsertStatement, SeaQuery
     Ok(insert.take())
 }
 
-/// Copy the history rows of the staged streams the aggregation reads.
+/// The grains the live branch's queued entries of `entity_id` extend that no
+/// recorded stream holds.
+pub(crate) fn queued_grains(entity_id: &Identifier) -> SelectStatement {
+    Query::select()
+        .column((QueuedGrain, HistoryGrain::AttributeNameKey))
+        .column((QueuedGrain, HistoryGrain::DatasetId))
+        .from(stream_rows(
+            &HistoryBranch::live_in(LiveSchema.into_iden()),
+            &HistoryOf::Entity(Expr::val(entity_id.as_str())),
+            QueuedGrain,
+        ))
+        .and_where(Expr::col((QueuedGrain, HistoryGrain::StreamKey)).is_null())
+        .to_owned()
+}
+
+/// Copy the history rows of `entity_id` the aggregation reads from the
+/// branch's history source, each onto the staged stream of its grain.
+///
+/// `snapshot` names the Snapshot branch, `None` the live one, whose queued
+/// entries are copied beside its recorded rows.
 ///
 /// # Errors
 ///
 /// Returns [`SeaQueryError`] when the statement cannot be assembled.
-pub(crate) fn copy_history(branch: &DynIden, copied: CopiedHistory) -> Result<InsertStatement, SeaQueryError> {
-    let mut staged_streams = Query::select();
-    staged_streams
-        .column(TemporalAttributeStreams::StreamKey)
-        .from(temporary(TemporalAttributeStreams::Table));
+pub(crate) fn copy_history(snapshot: Option<&DynIden>, entity_id: &Identifier, copied: CopiedHistory) -> Result<InsertStatement, SeaQueryError> {
+    let of = HistoryOf::Entity(Expr::val(entity_id.as_str()));
+    let branch = match snapshot {
+        None => HistoryBranch::live_in(LiveSchema.into_iden()),
+        Some(schema) => HistoryBranch::recorded_in(schema.clone()), // clone: the branch owns the schema it names
+    };
+    let source = attribute_rows(&branch, &of, Local);
     let mut select = Query::select();
     select
-        .columns(HISTORY_COLUMNS)
-        .from(qualified(Some(branch), AttributeHistory::Table))
-        .and_where(Expr::col(AttributeHistory::StreamKey).in_subquery(staged_streams));
+        .expr(Expr::col((Local, AttributeHistory::RecordedAt)))
+        .expr(Expr::col((Local, AttributeHistory::WriteId)))
+        .expr(Expr::col((StagedStream, TemporalAttributeStreams::StreamKey)))
+        .expr(Expr::col((Local, AttributeHistory::WriteOrdinal)))
+        .exprs(attribute_value_columns().map(|column| Expr::col((Local, column))))
+        .from(source)
+        .join(
+            JoinType::Join,
+            temporary(TemporalAttributeStreams::Table).alias(StagedStream),
+            Condition::all()
+                .add(Expr::col((StagedStream, TemporalAttributeStreams::AttributeNameKey)).equals((Local, HistoryGrain::AttributeNameKey)))
+                .add(
+                    SimpleExpr::from(Expr::col((StagedStream, TemporalAttributeStreams::DatasetId)))
+                        .not_distinct_from(Expr::col((Local, HistoryGrain::DatasetId))),
+                ),
+        );
     match copied {
         CopiedHistory::Window { timeproperty, interval } => {
-            select.cond_where(within_interval(&Expr::col(axis_column(timeproperty)), &interval));
+            select.cond_where(within_interval(&Expr::col((Local, axis_column(timeproperty))), &interval));
         }
         CopiedHistory::Whole => {}
     }
     let mut insert = Query::insert();
     insert
         .into_table(temporary(AttributeHistory::Table))
-        .columns(HISTORY_COLUMNS)
+        .columns(
+            [
+                AttributeHistory::RecordedAt,
+                AttributeHistory::WriteId,
+                AttributeHistory::StreamKey,
+                AttributeHistory::WriteOrdinal,
+            ]
+            .into_iter()
+            .chain(attribute_value_columns()),
+        )
         .select_from(select)?;
     Ok(insert.take())
 }
@@ -302,10 +337,14 @@ pub(crate) fn drop_restated_instances(staged_write: Uuid) -> DeleteStatement {
 
 #[cfg(test)]
 mod tests {
-    use crate::merged_aggregation::staging_statements::{CopiedHistory, branch_schema, copy_history, staging_tables};
-    use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
+    use crate::merged_aggregation::staging_statements::{CopiedHistory, branch_schema, copy_history, queued_grains, staging_tables};
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
     use sea_query::{Alias, IntoIden, PostgresQueryBuilder};
+
+    fn vehicle() -> Identifier {
+        "urn:ngsi-ld:Vehicle:1".parse().expect("a valid identifier")
+    }
 
     /// The copies are temporary and dropped with the transaction, and every
     /// branch relation is named schema-qualified, the live one included,
@@ -317,12 +356,12 @@ mod tests {
             staging_tables(&live)[0],
             r#"CREATE TEMPORARY TABLE "temporal_entities" (LIKE "public"."temporal_entities" INCLUDING DEFAULTS INCLUDING INDEXES) ON COMMIT DROP"#
         );
-        let copy = copy_history(&live, CopiedHistory::Whole)
+        let copy = copy_history(None, &vehicle(), CopiedHistory::Whole)
             .expect("the copy builds")
             .to_string(PostgresQueryBuilder);
         assert!(copy.starts_with(r#"INSERT INTO "pg_temp"."attribute_history""#), "{copy}");
-        assert!(copy.contains(r#"FROM "public"."attribute_history""#), "{copy}");
-        assert!(copy.contains(r#"FROM "pg_temp"."temporal_attribute_streams""#), "{copy}");
+        assert!(copy.contains(r#"FROM "public"."attribute_history" AS "rh""#), "{copy}");
+        assert!(copy.contains(r#"JOIN "pg_temp"."temporal_attribute_streams" AS "ts""#), "{copy}");
 
         let snapshot = branch_schema(Some(Alias::new("snap_7").into_iden()));
         assert!(staging_tables(&snapshot)[2].contains(r#"(LIKE "snap_7"."attribute_history""#));
@@ -332,7 +371,7 @@ mod tests {
     /// members beside its value included.
     #[test]
     fn the_staged_answer_carries_the_typed_metadata_columns() {
-        let copy = copy_history(&branch_schema(None), CopiedHistory::Whole)
+        let copy = copy_history(None, &vehicle(), CopiedHistory::Whole)
             .expect("the copy builds")
             .to_string(PostgresQueryBuilder);
         for column in ["value_type_key", "object_type_keys", "proof_seals", "expires_at", "sub_attributes"] {
@@ -348,9 +387,28 @@ mod tests {
             timeproperty: TimeProp::Modified,
             interval: TimeInterval::Before("2030-01-01T00:00:00Z".parse().expect("an instant")),
         };
-        let copy = copy_history(&branch_schema(None), window)
+        let copy = copy_history(None, &vehicle(), window).expect("the copy builds").to_string(PostgresQueryBuilder);
+        assert!(copy.contains(r#""l"."modified_at" <"#), "{copy}");
+    }
+
+    /// The live branch's queued entries are copied beside its recorded rows,
+    /// the recorded relations named in the live schema the temporary copies
+    /// shadow, and a Snapshot's copy reads no queue.
+    #[test]
+    fn the_live_copy_reads_the_queued_entries_of_the_entity() {
+        let copy = copy_history(None, &vehicle(), CopiedHistory::Whole)
             .expect("the copy builds")
             .to_string(PostgresQueryBuilder);
-        assert!(copy.contains(r#""modified_at" <"#), "{copy}");
+        assert!(copy.contains(r#"FROM "temporal_append_entries" AS "pe""#), "{copy}");
+        assert!(copy.contains(r#""pe"."entity_id" = 'urn:ngsi-ld:Vehicle:1'"#), "{copy}");
+        assert!(copy.contains(r#"FROM "public"."temporal_entities" AS "pv""#), "{copy}");
+        let snapshot = Alias::new("snap_7").into_iden();
+        let copy = copy_history(Some(&snapshot), &vehicle(), CopiedHistory::Whole)
+            .expect("the copy builds")
+            .to_string(PostgresQueryBuilder);
+        assert!(!copy.contains("temporal_append"), "{copy}");
+        let grains = queued_grains(&vehicle()).to_string(PostgresQueryBuilder);
+        assert!(grains.contains(r#"WHERE "g"."stream_key" IS NULL"#), "{grains}");
+        assert!(grains.contains(r#"FROM "public"."temporal_attribute_streams" AS "ps""#), "{grains}");
     }
 }

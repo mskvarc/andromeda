@@ -67,3 +67,47 @@ create index idx_temporal_append_intents_claim on temporal_append_intents (next_
 -- Entity holds a pending intent.
 create index idx_temporal_append_intents_entity on temporal_append_intents (entity_id, intent_key);
 
+-- Every entry of every intent beside the write identity its history row will
+-- carry: `write_ordinal` is the intent's `base_ordinal` plus the entry's
+-- position counted from 0, as the application numbers it. A temporal read of
+-- the live branch unions these entries with the recorded history, so an entry
+-- answers the same whether or not it has been applied yet.
+create view temporal_append_entries as
+select
+    i.intent_key,
+    i.entity_id,
+    i.recorded_at,
+    i.write_id,
+    (i.base_ordinal + e.ordinality - 1)::integer as write_ordinal,
+    e.entry_kind,
+    e.attribute_name_key,
+    e.dataset_id,
+    e.attribute_kind,
+    e.value_kind,
+    e.observed_at,
+    e.created_at,
+    e.modified_at,
+    e.deleted_at,
+    e.value_date_time,
+    e.expires_at,
+    e.generated_instance_id,
+    e.value_type_key,
+    e.unit_code_id,
+    e.value_boolean,
+    e.verbatim_instance_id,
+    e.value_number,
+    e.value_string,
+    e.value_geometry,
+    e.value_geometry_members,
+    e.value_object,
+    e.value_uri,
+    e.object_type_keys,
+    e.proof_seals,
+    e.sub_attributes,
+    e.scope_path,
+    e.verbatim_scope_path
+from
+    temporal_append_intents i
+    cross join lateral unnest(i.entries)
+    with ordinality as e;
+

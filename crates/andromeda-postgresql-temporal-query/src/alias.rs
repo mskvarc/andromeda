@@ -8,12 +8,12 @@
 
 use sea_query::Iden;
 
-/// Alias `s` for the `temporal_attribute_streams` table.
+/// Alias `s` for the stream source, or the `temporal_attribute_streams` table.
 #[derive(Iden, Clone, Copy)]
 #[iden = "s"]
 pub struct S;
 
-/// Alias `ah` for the `attribute_history` hypertable.
+/// Alias `ah` for the attribute source, or the `attribute_history` hypertable.
 #[derive(Iden, Clone, Copy)]
 #[iden = "ah"]
 pub struct Ah;
@@ -28,21 +28,16 @@ pub struct An;
 #[iden = "te"]
 pub struct Te;
 
-/// Alias `sg` for the `temporal_attribute_streams` row the geo existential
-/// reads, kept distinct from [`S`] so the clause 5.7.4.4 geo probe nested beside
-/// the main stream match cannot capture its rows.
-#[derive(Iden, Clone, Copy)]
-#[iden = "sg"]
-pub struct Sg;
-
 /// Alias `ang` for the `attribute_names` row the geo existential joins to name
 /// the target `GeoProperty`.
 #[derive(Iden, Clone, Copy)]
 #[iden = "ang"]
 pub struct Ang;
 
-/// Alias `ahg` for the `attribute_history` rows the geo existential filters:
-/// the `GeoProperty` instances within the temporal window (clause 5.7.4.4 S3).
+/// Alias `ahg` for the attribute rows the geo existential filters: the
+/// `GeoProperty` instances within the temporal window (clause 5.7.4.4 S3), kept
+/// distinct from [`Ah`] so the probe nested beside the window match cannot
+/// capture its rows.
 #[derive(Iden, Clone, Copy)]
 #[iden = "ahg"]
 pub struct Ahg;
@@ -54,7 +49,7 @@ pub struct EntityIdColumn;
 
 #[cfg(test)]
 mod tests {
-    use crate::alias::{Ah, Ahg, An, Ang, EntityIdColumn, S, Sg, Te};
+    use crate::alias::{Ah, Ahg, An, Ang, EntityIdColumn, S, Te};
     use sea_query::Iden;
 
     #[test]
@@ -63,7 +58,6 @@ mod tests {
         pretty_assertions::assert_eq!(Ah.to_string(), "ah");
         pretty_assertions::assert_eq!(An.to_string(), "an");
         pretty_assertions::assert_eq!(Te.to_string(), "te");
-        pretty_assertions::assert_eq!(Sg.to_string(), "sg");
         pretty_assertions::assert_eq!(Ang.to_string(), "ang");
         pretty_assertions::assert_eq!(Ahg.to_string(), "ahg");
         pretty_assertions::assert_eq!(EntityIdColumn.to_string(), "entity_id");

@@ -20,28 +20,22 @@
 //!   through a `JOIN LATERAL` selecting the instance whose axis value is the
 //!   greatest not after the aggregated row's (the "in effect at t" rule).
 
-use crate::{
-    aggregation_group::PromotedGroupFacets,
-    alias::{Ah, S},
-};
+use crate::{aggregation_group::PromotedGroupFacets, alias::Ah};
 use andromeda_ngsi_ld_query::temporal::grouping::{
     AggregationGrouping,
     bucket_term::{BucketKind, BucketTerm},
     entity_member::EntityMember,
     group_key::GroupKey,
 };
-use andromeda_postgresql_schema::{
-    name_dictionary::AttributeNames,
-    temporal::{AttributeHistory, TemporalAttributeStreams},
-};
+use andromeda_postgresql_query::history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, grain::HistoryGrain};
+use andromeda_postgresql_schema::{name_dictionary::AttributeNames, temporal::AttributeHistory};
 use andromeda_postgresql_seaquery::{
-    branch::qualified,
     cast::cast,
     date_field::{date_part, date_trunc},
     literal::int_literal,
     pg_type::PostgresType,
 };
-use sea_query::{Alias, DynIden, Expr, ExprTrait, Func, JoinType, Order, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, Expr, ExprTrait, Func, JoinType, Order, Query, SelectStatement, SimpleExpr};
 
 /// Which facets an `aggrGroupBy` promotes to group keys, for the mixed-group
 /// guard, computed from the grouping alone so the SQL builder and the reader
@@ -78,11 +72,6 @@ fn value_key_alias(index: usize) -> Alias {
 /// The attribute-history alias inside term `index`'s value-in-effect lateral.
 fn value_key_history_alias(index: usize) -> Alias {
     Alias::new(format!("ahk{index}"))
-}
-
-/// The stream alias inside term `index`'s value-in-effect lateral.
-fn value_key_stream_alias(index: usize) -> Alias {
-    Alias::new(format!("sk{index}"))
 }
 
 /// The attribute-names alias inside term `index`'s value-in-effect lateral.
@@ -128,7 +117,13 @@ fn history_value_as_text(history: &Alias) -> SimpleExpr {
 /// period column, so the group-key columns sit between the fixed key and the
 /// period in both `GROUP BY` and `ORDER BY`. Returns which facets were promoted
 /// to keys, for the mixed-group guard.
-pub fn apply_grouping(select: &mut SelectStatement, grouping: &AggregationGrouping, axis: AttributeHistory, schema: Option<&DynIden>) -> PromotedGroupFacets {
+pub fn apply_grouping(
+    select: &mut SelectStatement,
+    grouping: &AggregationGrouping,
+    axis: AttributeHistory,
+    branch: &HistoryBranch,
+    of: &HistoryOf,
+) -> PromotedGroupFacets {
     for (index, term) in grouping.terms().iter().enumerate() {
         match (&term.key, term.bucket) {
             (GroupKey::Member(EntityMember::DatasetId | EntityMember::Id | EntityMember::Scope), _) => {
@@ -151,7 +146,7 @@ pub fn apply_grouping(select: &mut SelectStatement, grouping: &AggregationGroupi
                 add_group_key(select, expr);
             }
             (GroupKey::Path(path), None) => {
-                project_value_in_effect(select, index, path.attr.as_str(), axis, schema);
+                project_value_in_effect(select, index, path.attr.as_str(), axis, branch, of);
                 select.expr_as(Expr::col((value_key_alias(index), group_key_alias(index))), group_key_alias(index));
                 add_group_key(select, SimpleExpr::from(Expr::col((value_key_alias(index), group_key_alias(index)))));
             }
@@ -168,31 +163,23 @@ fn add_group_key(select: &mut SelectStatement, expr: SimpleExpr) {
 
 /// Join the value in effect at each aggregated instant for one value key.
 ///
-/// Correlates on the aggregated entity's streams: the instance of the key
-/// attribute whose axis value is the greatest one not after the aggregated
-/// row's axis value (clause 4.8; the "in effect at t" rule). A
+/// Reads the history of the aggregated entity, which `of` names: the instance
+/// of the key attribute whose axis value is the greatest one not after the
+/// aggregated row's axis value (clause 4.8; the "in effect at t" rule). A
 /// tombstone (`value_kind = 0`) carries no value, so it is excluded.
-fn project_value_in_effect(select: &mut SelectStatement, index: usize, attribute_iri: &str, axis: AttributeHistory, schema: Option<&DynIden>) {
+fn project_value_in_effect(select: &mut SelectStatement, index: usize, attribute_iri: &str, axis: AttributeHistory, branch: &HistoryBranch, of: &HistoryOf) {
     let history = value_key_history_alias(index);
-    let stream = value_key_stream_alias(index);
     let name = value_key_name_alias(index);
     let mut lateral = Query::select();
     lateral
         .expr_as(history_value_as_text(&history), group_key_alias(index))
-        .from_as(qualified(schema, AttributeHistory::Table), history.clone())
-        .join_as(
-            JoinType::Join,
-            qualified(schema, TemporalAttributeStreams::Table),
-            stream.clone(),
-            Expr::col((stream.clone(), TemporalAttributeStreams::StreamKey)).equals((history.clone(), AttributeHistory::StreamKey)),
-        )
+        .from(attribute_rows(branch, of, history.clone()))
         .join_as(
             JoinType::Join,
             AttributeNames::Table,
             name.clone(),
-            Expr::col((name.clone(), AttributeNames::AttributeNameKey)).equals((stream.clone(), TemporalAttributeStreams::AttributeNameKey)),
+            Expr::col((name.clone(), AttributeNames::AttributeNameKey)).equals((history.clone(), HistoryGrain::AttributeNameKey)),
         )
-        .and_where(Expr::col((stream, TemporalAttributeStreams::TemporalEntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)))
         .and_where(Expr::col((name, AttributeNames::Name)).eq(attribute_iri))
         .and_where(Expr::col((history.clone(), AttributeHistory::ValueKind)).ne(int_literal(0)))
         .and_where(Expr::col((history.clone(), axis)).lte(Expr::col((Ah, axis))))
