@@ -10,7 +10,7 @@
 
 use crate::{
     operator::{compare, does_not_hold},
-    q_predicate::{instance_row::InstanceRow, projection_probe::projection_column},
+    q_predicate::{history_window::HistoryAliases, instance_row::InstanceRow, projection_probe::projection_column},
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::filter::{
@@ -18,7 +18,10 @@ use andromeda_ngsi_ld_query::filter::{
     scalar::{CompareValue, Scalar},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{CREATED_AT, EXPIRES_AT, MODIFIED_AT, OBSERVED_AT, UNIT_CODE};
-use andromeda_postgresql_schema::current::{CurrentAttributes, SubAttribute};
+use andromeda_postgresql_schema::{
+    current::{CurrentAttributes, SubAttribute},
+    temporal::AttributeHistory,
+};
 use andromeda_postgresql_seaquery::literal::false_literal;
 use andromeda_unit_catalog::expanded_unit_code::unit_code_identity;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
@@ -55,21 +58,24 @@ impl MemberField {
         .find_map(|(iri, field)| (iri == name).then_some(field))
     }
 
-    /// The field of `holder`, a row or an element; `None` for a history row,
-    /// whose members a temporal `q` reads off the rebuilt document.
+    /// The field of `holder`, a current row, a history row or an element.
+    ///
+    /// The elements of a history row record no `createdAt` or `modifiedAt`
+    /// (clause 5.2.5 system times a sub-attribute is stored without), so a path
+    /// ending on either below the top level matches nothing in history.
     #[must_use]
-    pub fn of_instance(self, holder: InstanceRow) -> Option<SimpleExpr> {
-        let (row, element) = match self {
-            MemberField::ObservedAt => (CurrentAttributes::ObservedAt, SubAttribute::ObservedAt),
-            MemberField::UnitCode => (CurrentAttributes::UnitCodeId, SubAttribute::UnitCodeId),
-            MemberField::CreatedAt => (CurrentAttributes::CreatedAt, SubAttribute::CreatedAt),
-            MemberField::ModifiedAt => (CurrentAttributes::ModifiedAt, SubAttribute::ModifiedAt),
-            MemberField::ExpiresAt => (CurrentAttributes::ExpiresAt, SubAttribute::ExpiresAt),
+    pub fn of_instance(self, holder: InstanceRow) -> SimpleExpr {
+        let (current, history, element) = match self {
+            MemberField::ObservedAt => (CurrentAttributes::ObservedAt, AttributeHistory::ObservedAt, SubAttribute::ObservedAt),
+            MemberField::UnitCode => (CurrentAttributes::UnitCodeId, AttributeHistory::UnitCodeId, SubAttribute::UnitCodeId),
+            MemberField::CreatedAt => (CurrentAttributes::CreatedAt, AttributeHistory::CreatedAt, SubAttribute::CreatedAt),
+            MemberField::ModifiedAt => (CurrentAttributes::ModifiedAt, AttributeHistory::ModifiedAt, SubAttribute::ModifiedAt),
+            MemberField::ExpiresAt => (CurrentAttributes::ExpiresAt, AttributeHistory::ExpiresAt, SubAttribute::ExpiresAt),
         };
         match holder {
-            InstanceRow::Current => Some(projection_column(row)),
-            InstanceRow::Element(level) => Some(level.field(element)),
-            InstanceRow::History => None,
+            InstanceRow::Current => projection_column(current),
+            InstanceRow::History => HistoryAliases::top_level().instance_column(history),
+            InstanceRow::Element(level) => level.field(element),
         }
     }
 
@@ -152,9 +158,7 @@ mod tests {
         let Expr::Pred(pred) = parse("\"https://example.com/t\".\"https://uri.etsi.org/ngsi-ld/observedAt\">\"2024-01-01T00:00:00Z\"").expect("parse q") else {
             panic!("a single predicate");
         };
-        let field = MemberField::ObservedAt
-            .of_instance(InstanceRow::Element(ElementLevel::at(1)))
-            .expect("an element holds the field");
+        let field = MemberField::ObservedAt.of_instance(InstanceRow::Element(ElementLevel::at(1)));
         let sql = Query::select()
             .cond_where(MemberField::ObservedAt.condition(&field, &pred))
             .to_owned()
@@ -167,7 +171,7 @@ mod tests {
         let Expr::Pred(pred) = parse("\"https://example.com/t\".\"https://uri.etsi.org/ngsi-ld/unitCode\"==\"CEL\"").expect("parse q") else {
             panic!("a single predicate");
         };
-        let field = MemberField::UnitCode.of_instance(InstanceRow::Current).expect("a row holds the field");
+        let field = MemberField::UnitCode.of_instance(InstanceRow::Current);
         let sql = Query::select()
             .cond_where(MemberField::UnitCode.condition(&field, &pred))
             .to_owned()

@@ -21,6 +21,7 @@ use crate::{
     entity_row_refs::EntityRowRefs,
     q_predicate::{
         equality_term::equality_value,
+        instance_row::ProbedRow,
         language_map::LanguageSelection,
         local_target::{LocalTarget, local_target},
         projection_probe::{Ca, of_attribute, projection_column, standing},
@@ -114,7 +115,7 @@ fn candidates_of(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames) -> 
         | LocalTarget::NestedMember
         | LocalTarget::SubAttribute(Some(LanguageSelection::TargetLanguage(_)) | None) => return None,
     }
-    let element = ElementPath::resolve(path, &names.attributes)?;
+    let element = ElementPath::resolve(path, ProbedRow::Current, &names.attributes)?;
     if element.chain.is_empty() || element.field.is_some() {
         return None;
     }

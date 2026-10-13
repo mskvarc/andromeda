@@ -13,8 +13,9 @@ use crate::{
     entity_row_refs::EntityRowRefs,
     q_predicate::{
         history_window::{HistoryAliases, HistoryWindow},
+        instance_row::ProbedRow,
         instance_test::InstanceTest,
-        projection_probe::{exists_any_on_projection, exists_on_projection},
+        projection_probe::{ProbeShape, exists_any_on_projection, exists_on_projection, probe},
     },
 };
 use sea_query::{Condition, DynIden};
@@ -37,6 +38,28 @@ impl InstanceScan<'_> {
         match self {
             InstanceScan::Current(rows) => rows.schema(),
             InstanceScan::History(window) => window.schema(),
+        }
+    }
+
+    /// The row each instance the scan reads is held in.
+    #[must_use]
+    pub const fn row(&self) -> ProbedRow {
+        match self {
+            InstanceScan::Current(_) => ProbedRow::Current,
+            InstanceScan::History(_) => ProbedRow::History,
+        }
+    }
+
+    /// Whether one instance of the attribute satisfies `value`, a recheck
+    /// through its `sub_attributes` tree.
+    ///
+    /// Over current state the probe is walked in page order (see
+    /// [`ProbeShape::Walked`]); a window's probes are already narrowed to one
+    /// temporal entity's streams, so they stay as they are.
+    pub(crate) fn exists_in_tree(&self, id: AttributeNameKey, value: Condition) -> Condition {
+        match self {
+            InstanceScan::Current(rows) => probe(id, value, rows, ProbeShape::Walked),
+            InstanceScan::History(window) => window.exists(id, value, &HistoryAliases::top_level()),
         }
     }
 

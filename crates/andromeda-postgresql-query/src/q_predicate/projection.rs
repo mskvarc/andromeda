@@ -11,11 +11,8 @@
 
 use crate::{
     dictionary::query_names::QueryNames,
-    entity_row_refs::EntityRowRefs,
     q_predicate::{
-        document_term::{document_equality, document_exists, document_ordering, document_pattern, on_history_document},
         equality_term::equality_value,
-        history_window::HistoryWindow,
         instance_row::InstanceRow,
         instance_scan::InstanceScan,
         instance_test::{CompiledTerm, Disjunction, InstanceTest},
@@ -25,7 +22,6 @@ use crate::{
         local_target::{LocalTarget, local_target},
         ordering_term::ordering_value,
         pattern_term::pattern_value,
-        projection_probe::{ProbeShape, probe},
         structured_target::{StructuredTarget, carries_target_language},
         sub_attribute::element_path::ElementPath,
         traversal::LinkedHop,
@@ -40,7 +36,7 @@ use andromeda_ngsi_ld_query::filter::{
     predicate::{PatternPolarity, Predicate},
 };
 use andromeda_postgresql_seaquery::literal::false_literal;
-use sea_query::{Condition, SimpleExpr};
+use sea_query::Condition;
 use std::ptr;
 
 /// Compile a parsed `q` expression into a sea-query [`Condition`].
@@ -111,10 +107,7 @@ fn compile_predicate(pred: &Predicate, scan: &InstanceScan<'_>, names: &QueryNam
 /// entity being queried and says nothing of the entities it points at.
 fn compile_along_path(pred: &Predicate, path: &QueryPath, scan: &InstanceScan<'_>, names: &QueryNames, depth: usize) -> CompiledTerm {
     match path {
-        QueryPath::Local(local) => match scan {
-            InstanceScan::Current(rows) => compile_current(pred, local, rows, names),
-            InstanceScan::History(window) => compile_history(pred, local, window, names),
-        },
+        QueryPath::Local(local) => compile_local(pred, local, scan, names),
         QueryPath::Linked {
             relationship,
             guard_types,
@@ -169,20 +162,21 @@ const fn target_language(target: LocalTarget<'_>) -> Option<&AttributeName> {
     }
 }
 
-/// Compile a term over current state.
+/// Compile a term over the instances `scan` reads.
 ///
 /// The target element is held by a row of the attribute, or by an element of
-/// the row's `sub_attributes` for a sub-attribute path. A row's test joins the
-/// probe of its attribute, which a disjunction shares; an element's test is a
-/// probe of its own, walked in page order (see [`ProbeShape::Walked`]).
-fn compile_current(pred: &Predicate, path: &AttrPath, rows: &EntityRowRefs, names: &QueryNames) -> CompiledTerm {
-    let Some(element) = ElementPath::resolve(path, &names.attributes) else {
+/// the row's `sub_attributes` for a sub-attribute path; a current row and a
+/// history row hold both alike. A row's test joins the probe of its attribute,
+/// which a disjunction shares; an element's test is a probe of its own (see
+/// [`InstanceScan::exists_in_tree`]).
+fn compile_local(pred: &Predicate, path: &AttrPath, scan: &InstanceScan<'_>, names: &QueryNames) -> CompiledTerm {
+    let Some(element) = ElementPath::resolve(path, scan.row(), &names.attributes) else {
         return unsatisfiable_term();
     };
     let target = local_target(path);
     let holder = element.holder();
     let value = if let Some(field) = element.field {
-        field.of_instance(holder).map_or_else(unsatisfiable, |column| field.condition(&column, pred))
+        field.condition(&field.of_instance(holder), pred)
     } else {
         let own = match reading(target) {
             Reading::OwnValue => own_value(pred, holder),
@@ -199,7 +193,7 @@ fn compile_current(pred: &Predicate, path: &AttrPath, rows: &EntityRowRefs, name
             value,
         });
     }
-    CompiledTerm::Standalone(probe(element.attribute, element.condition(value), rows, ProbeShape::Walked))
+    CompiledTerm::Standalone(scan.exists_in_tree(element.attribute, element.condition(value)))
 }
 
 /// A term against the instance's own value.
@@ -239,57 +233,6 @@ fn json_reading(pred: &Predicate, member: &JsonTarget) -> Condition {
         Predicate::Ordering { op, rhs, .. } => json_ordering(member, *op, rhs),
         Predicate::MatchPattern { pattern, .. } => json_pattern(member, pattern, PatternPolarity::Match),
         Predicate::NotMatchPattern { pattern, .. } => json_pattern(member, pattern, PatternPolarity::NotMatch),
-    }
-}
-
-/// Compile a term over the instances of a temporal window.
-///
-/// A history row holds a top-level instance's value in the typed columns a
-/// current row does, and its sub-attributes verbatim in `metadata`, so a term
-/// on the attribute's own value (or one language of it) reads the row and every
-/// other term reads the instance rebuilt as an expanded document. A
-/// sub-attribute that is a `LanguageProperty` is the target element of its
-/// path (clause 4.9), so its `languageMap` reading is disjoined with the
-/// document reading of a Property's value. The two cannot both match one
-/// instance: only a `LanguageProperty` carries `hasLanguageMap`, and it carries
-/// no `hasValue`.
-fn compile_history(pred: &Predicate, path: &AttrPath, window: &HistoryWindow, names: &QueryNames) -> CompiledTerm {
-    let target = local_target(path);
-    let scan = InstanceScan::History(window);
-    let document = || on_history_document(window, &path.attr, names, |document| document_reading(pred, path, &document));
-    match target {
-        LocalTarget::OwnValue => match names.attributes.get(&path.attr) {
-            Some(id) => CompiledTerm::Instances(InstanceTest {
-                attribute: id,
-                value: own_value(pred, InstanceRow::History),
-            }),
-            None => unsatisfiable_term(),
-        },
-        LocalTarget::TrailingMember(member) => {
-            let tagged = match names.attributes.get(&path.attr) {
-                Some(id) => scan.exists(id, language_reading(pred, member, InstanceRow::History)),
-                None => unsatisfiable(),
-            };
-            CompiledTerm::Standalone(Condition::any().add(tagged).add(document()))
-        }
-        LocalTarget::SubAttribute(Some(selection)) => {
-            let language = on_history_document(window, &path.attr, names, |document| {
-                Condition::all().add(language_term(pred, &LanguageMap::of_document(path, document), selection))
-            });
-            CompiledTerm::Standalone(Condition::any().add(document()).add(language))
-        }
-        LocalTarget::NestedMember | LocalTarget::SubAttribute(None) => CompiledTerm::Standalone(document()),
-    }
-}
-
-/// A term against the rebuilt document of a history instance.
-fn document_reading(pred: &Predicate, path: &AttrPath, document: &SimpleExpr) -> Condition {
-    match pred {
-        Predicate::Exists(_) => document_exists(path, document),
-        Predicate::Equality { membership, rhs, .. } => document_equality(path, *membership, rhs, document),
-        Predicate::Ordering { op, rhs, .. } => document_ordering(path, *op, rhs, document),
-        Predicate::MatchPattern { pattern, .. } => document_pattern(path, pattern, PatternPolarity::Match, document),
-        Predicate::NotMatchPattern { pattern, .. } => document_pattern(path, pattern, PatternPolarity::NotMatch, document),
     }
 }
 

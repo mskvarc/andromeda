@@ -23,6 +23,7 @@ use andromeda_postgresql_query::{
     dictionary::resolved_names::ResolvedNames,
     entity_row_refs::EntityRowRefs,
     q_predicate::{
+        instance_row::ProbedRow,
         projection_probe::{Ca, of_attribute, projection_column, standing},
         sub_attribute::{element_path::ElementPath, member_field::MemberField},
         value_object_member::{expanded_jsonpath, is_json_property, literal_jsonpath},
@@ -110,7 +111,7 @@ impl AttributeValue {
     pub fn lateral(&self, rows: &EntityRowRefs, path: &AttrPath, attributes: &ResolvedNames<AttributeName>) -> SelectStatement {
         let source = Alias::new(SOURCE_ALIAS);
         let read = instance_read(rows, path, attributes);
-        let value = ordered_value(path, ElementPath::resolve(path, attributes).as_ref(), &source);
+        let value = ordered_value(path, ElementPath::resolve(path, ProbedRow::Current, attributes).as_ref(), &source);
         let mut projection = Query::select();
         projection
             .from_subquery(read, source)
@@ -198,7 +199,7 @@ fn instance_read(rows: &EntityRowRefs, path: &AttrPath, attributes: &ResolvedNam
         .and_where(projection_column(CurrentAttributes::EntityKey).eq(rows.entity_key_column()))
         .order_by_expr(projection_column(CurrentAttributes::Ordinal), Order::Asc)
         .limit(1);
-    match ElementPath::resolve(path, attributes) {
+    match ElementPath::resolve(path, ProbedRow::Current, attributes) {
         // No dictionary row means no instance was ever written.
         None => {
             read.and_where(false_literal());

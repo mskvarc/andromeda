@@ -6,7 +6,10 @@
 //! row's `sub_attributes` when the term addresses a sub-attribute. The three
 //! hold a value in fields of the same names, apart from the overflow columns
 //! only a row has, so a value condition is written once against an
-//! [`InstanceRow`] and reads the fields of whichever one it is handed.
+//! [`InstanceRow`] and reads the fields of whichever one it is handed. A
+//! current row and a history row both hold their sub-attributes as a tree of
+//! elements in `sub_attributes`, so a path into a sub-attribute walks the tree
+//! of whichever [`ProbedRow`] the probe reads.
 
 use crate::q_predicate::{history_window::HistoryAliases, projection_probe::projection_column, value_column::ValueColumn};
 use andromeda_postgresql_schema::{
@@ -14,6 +17,36 @@ use andromeda_postgresql_schema::{
     temporal::AttributeHistory,
 };
 use sea_query::{Alias, Expr as SeaExpr, IntoIden, SimpleExpr};
+
+/// The top-level row a probe reads, whose `sub_attributes` a sub-attribute
+/// path walks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbedRow {
+    /// The `current_attributes` row the value probe reads.
+    Current,
+    /// The `attribute_history` row a window probe reads.
+    History,
+}
+
+impl ProbedRow {
+    /// The row as the instance a value condition reads.
+    #[must_use]
+    pub const fn instance(self) -> InstanceRow {
+        match self {
+            ProbedRow::Current => InstanceRow::Current,
+            ProbedRow::History => InstanceRow::History,
+        }
+    }
+
+    /// The row's sub-attribute tree.
+    #[must_use]
+    pub fn sub_attributes(self) -> SimpleExpr {
+        match self {
+            ProbedRow::Current => projection_column(CurrentAttributes::SubAttributes),
+            ProbedRow::History => HistoryAliases::top_level().instance_column(AttributeHistory::SubAttributes),
+        }
+    }
+}
 
 /// The stored instance a value condition reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,7 +124,7 @@ impl InstanceRow {
 #[cfg(test)]
 mod tests {
     use crate::q_predicate::{
-        instance_row::{ElementLevel, InstanceRow},
+        instance_row::{ElementLevel, InstanceRow, ProbedRow},
         value_column::ValueColumn,
     };
     use sea_query::{PostgresQueryBuilder, Query, SimpleExpr};
@@ -114,5 +147,11 @@ mod tests {
         assert!(render(InstanceRow::Current.attribute_family()).contains(r#""ca"."attribute_kind""#));
         assert!(render(InstanceRow::History.attribute_family()).contains(r#""qh"."attribute_kind""#));
         assert!(render(InstanceRow::Element(ElementLevel::at(0)).attribute_family()).contains(r#""l0"."attribute_kind""#));
+    }
+
+    #[test]
+    fn each_probed_row_offers_its_own_sub_attribute_tree() {
+        assert!(render(ProbedRow::Current.sub_attributes()).contains(r#""ca"."sub_attributes""#));
+        assert!(render(ProbedRow::History.sub_attributes()).contains(r#""qh"."sub_attributes""#));
     }
 }

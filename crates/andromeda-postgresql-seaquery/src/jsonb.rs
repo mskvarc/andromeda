@@ -53,17 +53,6 @@ struct JsonbBuildArray;
 #[iden = "jsonb_build_object"]
 struct JsonbBuildObject;
 
-/// The `to_jsonb(value)` conversion of any SQL value to its JSONB form.
-#[derive(Iden, Clone, Copy)]
-#[iden = "to_jsonb"]
-struct ToJsonb;
-
-/// The `jsonb_strip_nulls(value)` function, which drops every object member
-/// whose value is JSON null, at every depth.
-#[derive(Iden, Clone, Copy)]
-#[iden = "jsonb_strip_nulls"]
-struct JsonbStripNulls;
-
 /// The `jsonb_path_exists(target, jsonpath)` predicate function.
 #[derive(Iden, Clone, Copy)]
 #[iden = "jsonb_path_exists"]
@@ -163,22 +152,6 @@ pub fn jsonb_build_object<Members: IntoIterator<Item = SimpleExpr>>(members: Mem
     Func::cust(JsonbBuildObject).args(members).into()
 }
 
-/// JSONB: `to_jsonb(value)` - any SQL value as the JSONB value it converts to:
-/// a number as a JSON number, text as a JSON string, a timestamp as its ISO 8601
-/// text, and SQL NULL as SQL NULL.
-#[must_use]
-pub fn to_jsonb(value: SimpleExpr) -> SimpleExpr {
-    Func::cust(ToJsonb).args([value]).into()
-}
-
-/// JSONB: `jsonb_strip_nulls(value)` - `value` with every object member whose
-/// value is JSON null removed, at every depth, so a document assembled from
-/// optional columns carries only the members that hold something.
-#[must_use]
-pub fn jsonb_strip_nulls(value: SimpleExpr) -> SimpleExpr {
-    Func::cust(JsonbStripNulls).args([value]).into()
-}
-
 /// JSONB: `jsonb_array_length(array)` - the number of elements in a JSONB array.
 ///
 /// Used by type-aware aggregation (clause 4.5.19.1), where an array-valued
@@ -241,15 +214,6 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
-
-    #[test]
-    fn to_jsonb_and_strip_nulls_render_as_the_functions_they_name() {
-        let sql = Query::select()
-            .expr(jsonb_strip_nulls(to_jsonb(Expr::col((Alias::new("h"), Alias::new("value_number"))))))
-            .to_owned()
-            .to_string(PostgresQueryBuilder);
-        assert_eq!(sql, r#"SELECT jsonb_strip_nulls(to_jsonb("h"."value_number"))"#);
-    }
 
     #[test]
     fn jsonb_key_exists_uses_the_containment_operator() {

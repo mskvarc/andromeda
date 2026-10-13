@@ -734,20 +734,106 @@ mod tests {
         assert!(sql.contains("FALSE"), "{sql}");
     }
 
-    /// A compound-value term is answered over each in-window instance rebuilt
-    /// as a one-instance entity document, inside the history probe: the
-    /// document's instances are enumerated and the sub-attribute path is read
-    /// on each of them.
+    /// The attributes and sub-attributes the temporal `q` shapes below name.
+    fn speed_address_and_their_sub_attributes() -> QueryNames {
+        QueryNames {
+            attributes: ResolvedNames::from_pairs(
+                [("speed", 7), ("address", 8), ("accuracy", 9), ("method", 10), ("label", 11), ("isParkedIn", 12)].map(|(name, key)| {
+                    (
+                        format!("https://example.com/{name}").parse().expect("valid attribute name"),
+                        AttributeNameKey::from(key),
+                    )
+                }),
+            ),
+            types: ResolvedNames::default(),
+        }
+    }
+
+    /// Whether every `jsonb_build_object` of `sql` is built from operands and
+    /// literals alone, never from a column of the history row a probe reads,
+    /// which is what rebuilding that row as a document would take.
+    fn builds_no_object_from_a_history_row(sql: &str) -> bool {
+        sql.match_indices("jsonb_build_object(").all(|(start, call)| {
+            let arguments = &sql[start + call.len()..];
+            let end = arguments
+                .char_indices()
+                .scan(1_usize, |depth, (at, character)| {
+                    *depth = if character == '(' {
+                        *depth + 1
+                    } else if character == ')' {
+                        *depth - 1
+                    } else {
+                        *depth
+                    };
+                    Some((at, *depth))
+                })
+                .find_map(|(at, depth)| (depth == 0).then_some(at))
+                .unwrap_or(arguments.len());
+            !arguments[..end].contains(r#""qh"."#)
+        })
+    }
+
+    /// Whether every jsonpath function of `sql` reads a stored `value_object`.
+    fn reads_jsonpath_only_over_stored_values(sql: &str) -> bool {
+        sql.split("jsonb_path_").skip(1).all(|call| {
+            call.split_once('(')
+                .and_then(|(_, arguments)| arguments.split_once(','))
+                .is_some_and(|(target, _)| target.ends_with(r#"."value_object""#))
+        })
+    }
+
+    /// Clause 4.9 reads a compound member as a `MemberExpression` of the target
+    /// value, which a history row holds in `value_object` as current state
+    /// does, so the member is read off the stored value.
     #[test]
-    fn a_q_predicate_on_a_compound_value_reads_the_rebuilt_history_instance() {
+    fn a_q_predicate_on_a_compound_value_reads_the_value_object() {
         let mut compiled = minimal_compiled();
         compiled.entities.q_expr = Some(parser::parse("\"https://example.com/address\"[city]==\"Berlin\"").unwrap());
         let (sql, _) = built(&compiled, &speed_and_address());
-        assert!(
-            sql.contains("jsonb_path_query(jsonb_build_array(jsonb_build_object('https://example.com/address'"),
-            "{sql}"
-        );
-        assert!(sql.contains(r#"jsonb_path_query_first("attribute_instance"."attribute_instance""#), "{sql}");
+        assert!(sql.contains(r#"jsonb_path_query("qh"."value_object""#), "{sql}");
+        assert!(builds_no_object_from_a_history_row(&sql), "{sql}");
+        assert!(!sql.contains("jsonb_strip_nulls"), "{sql}");
+        assert!(reads_jsonpath_only_over_stored_values(&sql), "{sql}");
+    }
+
+    /// Clause 5.7.4.4 S2 checks every shape of Query Term against the stored
+    /// in-window instances, which hold their values and their sub-attributes
+    /// in columns and elements, so no shape rebuilds an instance as a document.
+    #[test]
+    fn no_temporal_statement_rebuilds_a_history_instance_document() {
+        for q in [
+            "\"https://example.com/speed\"==1",
+            "\"https://example.com/speed\"!=1",
+            "\"https://example.com/speed\">1",
+            "\"https://example.com/speed\"==1..5",
+            "\"https://example.com/speed\"==1,2",
+            "\"https://example.com/speed\"~=\"^a\"",
+            "\"https://example.com/speed\"!~=\"^a\"",
+            "\"https://example.com/speed\"",
+            "\"https://example.com/address\"[city]==\"Berlin\"",
+            "\"https://example.com/address\"[city.name]==\"Bern\"",
+            "\"https://example.com/address\"[en]==\"Main\"",
+            "\"https://example.com/address\"[en]>\"M\"",
+            "\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/observedAt\">\"2026-01-01T00:00:00Z\"",
+            "\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/unitCode\"==\"KMH\"",
+            "\"https://example.com/speed\".\"https://example.com/accuracy\">0.5",
+            "\"https://example.com/speed\".\"https://example.com/accuracy\"",
+            "\"https://example.com/speed\".\"https://example.com/accuracy\".\"https://example.com/method\"==\"gps\"",
+            "\"https://example.com/speed\".\"https://example.com/accuracy\".\"https://uri.etsi.org/ngsi-ld/observedAt\">\"2026-01-01T00:00:00Z\"",
+            "\"https://example.com/speed\".\"https://example.com/accuracy\"[c]==\"x\"",
+            "\"https://example.com/speed\".\"https://example.com/label\"[en]==\"fast\"",
+            "\"https://example.com/speed\".\"https://example.com/label\"~=\"^fa\"",
+            "\"https://example.com/isParkedIn\"{\"https://example.com/address\"[city]}==\"Bern\"",
+            "\"https://example.com/speed\">1|\"https://example.com/address\"[city]==\"Bern\"",
+        ] {
+            let mut compiled = minimal_compiled();
+            compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
+            compiled.entities.q_expr = Some(parser::parse(q).expect("parse q"));
+            let (sql, _) = built(&compiled, &speed_address_and_their_sub_attributes());
+            assert!(builds_no_object_from_a_history_row(&sql), "{q}: {sql}");
+            assert!(!sql.contains("jsonb_strip_nulls") && !sql.contains("to_jsonb("), "{q}: {sql}");
+            assert!(reads_jsonpath_only_over_stored_values(&sql), "{q}: {sql}");
+        }
     }
 
     /// Clause 5.7.4.4 S3: the geospatial restriction is checked against the

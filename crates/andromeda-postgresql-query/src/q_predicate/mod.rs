@@ -28,9 +28,10 @@
 //! | a path ending on `observedAt`, `unitCode` or a timestamp | the typed field of the instance it hangs off |
 //! | attribute IRI absent from `attribute_names` | constant `FALSE` |
 //!
-//! A temporal `q` reads history rows, which keep the sub-attributes of an
-//! instance verbatim, so a term on a sub-attribute or a compound member walks
-//! the instance rebuilt as a document (see [`document_term`]).
+//! A temporal `q` reads `attribute_history` rows, which hold an instance the
+//! same way, its sub-attributes included, so every path compiles to the same
+//! tests over the history row (see
+//! [`ProbedRow`](crate::q_predicate::instance_row::ProbedRow)).
 //!
 //! # Attribute families beyond Property and Relationship
 //!
@@ -89,9 +90,8 @@
 //! one probe, each arm keeping its attribute key beside its value test (see
 //! [`instance_test`]). A disjunction of separate `EXISTS` can only be evaluated
 //! as a filter on every entity row; one `EXISTS` is a semi-join the planner
-//! drives from a `BitmapOr` over every arm's value index. Hops, sub-attribute
-//! probes and history document readings read other rows, so they stay beside
-//! the shared probe.
+//! drives from a `BitmapOr` over every arm's value index. Hops and sub-attribute
+//! probes read other rows, so they stay beside the shared probe.
 //!
 //! # Multi-instance semantics
 //!
@@ -100,9 +100,7 @@
 //! Value of such instances").
 
 pub mod attribute_names;
-pub mod document_term;
 pub mod equality_term;
-pub mod history_instance_document;
 pub mod history_window;
 pub mod in_effect_instance;
 pub mod instance_row;

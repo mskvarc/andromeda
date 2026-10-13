@@ -131,3 +131,32 @@ pub(crate) fn json_pattern(target: &JsonTarget, pattern: &Pattern, polarity: Pat
     let value = pattern_predicate(text, polarity, SeaExpr::val(pattern.portable().as_str()));
     Condition::all().add(present_and(target.presence.clone(), value)) // clone: as above
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::q_predicate::{instance_row::InstanceRow, json_value_term::json_equality, value_object_member::on_some_member};
+    use andromeda_ngsi_ld_query::filter::{
+        expression::Expr,
+        parser::parse,
+        path::QueryPath,
+        predicate::{Predicate, SetMembership},
+    };
+    use sea_query::{PostgresQueryBuilder, Query};
+
+    /// Clause 4.9 evaluates `address[city]` as a `MemberExpression` of the
+    /// target value, which a history row holds in its own `value_object`.
+    #[test]
+    fn a_temporal_q_on_a_compound_value_reads_value_object() {
+        let Expr::Pred(pred) = parse("\"https://example.com/address\"[city]==\"Bern\"").expect("parse q") else {
+            panic!("a single predicate");
+        };
+        let (QueryPath::Local(path), Predicate::Equality { rhs, .. }) = (pred.path(), &pred) else {
+            panic!("a local equality");
+        };
+        let condition = on_some_member(path, InstanceRow::History, |member| json_equality(member, SetMembership::Within, rhs));
+        let sql = Query::select().cond_where(condition).to_owned().to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#"jsonb_path_query("qh"."value_object", '$."city"[*]."@value"')"#), "{sql}");
+        assert!(sql.contains("'Bern'"), "{sql}");
+        assert!(!sql.contains("jsonb_build_object"), "{sql}");
+    }
+}

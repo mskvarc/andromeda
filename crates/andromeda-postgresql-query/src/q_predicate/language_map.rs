@@ -14,24 +14,21 @@
 //!
 //! The expanded map is an array of `{"@language": …, "@value": …}` entries
 //! (`@language` absent on the `@none` entry), held in the `value_object` of a
-//! current row or element and of a history row, and under `hasLanguageMap` in
-//! the expanded document a temporal `q` rebuilds for a sub-attribute. Each entry is one string, so the map is unnested and every
-//! comparison runs against one entry's `@value` text.
+//! current or history row and of an element. Each entry is one string, so the
+//! map is unnested and every comparison runs against one entry's `@value`
+//! text.
 
 use crate::q_predicate::{instance_row::InstanceRow, value_column::ValueColumn};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::filter::path::AttrPath;
-use andromeda_ngsi_ld_vocabulary::expanded::properties::LANGUAGE_MAP;
 use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_seaquery::{
     cast::cast,
-    jsonb::{escape_jsonpath_key, jsonb_array_elements, jsonb_path_query_array},
+    jsonb::jsonb_array_elements,
     literal::{int_literal, text_literal},
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
 use sea_query::{Alias, CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Query, SelectStatement, SimpleExpr};
-use std::iter::once;
 
 /// The alias one unnested `languageMap` entry is read under.
 const ENTRY: &str = "ls";
@@ -73,18 +70,6 @@ impl LanguageMap {
         let language_property = int_literal(i64::from(AttributeKind::LanguageProperty.code()));
         let map = CaseStatement::new().case(row.attribute_family().eq(language_property), row.value(ValueColumn::Object));
         LanguageMap(map.into())
-    }
-
-    /// Every map the sub-attribute `path` addresses holds in an expanded
-    /// `document`, across every instance of the attribute and of each
-    /// sub-attribute on the way (clause 4.9: "the target value shall be any
-    /// Value of such instances").
-    ///
-    /// Only a `LanguageProperty` carries `hasLanguageMap`, so the path selects
-    /// nothing under any other family.
-    #[must_use]
-    pub fn of_document(path: &AttrPath, document: SimpleExpr) -> LanguageMap {
-        LanguageMap(jsonb_path_query_array(document, &language_map_jsonpath(path)))
     }
 
     /// A map held by an arbitrary expression, for tests that need no scan.
@@ -141,21 +126,6 @@ fn entry_text(keyword: &str) -> SimpleExpr {
     SeaExpr::col((Alias::new(ENTRY), Alias::new(ENTRY_VALUE))).json_get_text(text_literal(keyword))
 }
 
-/// The jsonpath reaching every `languageMap` entry of the sub-attribute a path
-/// addresses: `$[0]."<attr>"[*]."<sub>"[*]…."hasLanguageMap"[*]`.
-fn language_map_jsonpath(path: &AttrPath) -> String {
-    let mut jsonpath = String::from("$[0]");
-    for name in once(&path.attr).chain(&path.sub_attrs) {
-        jsonpath.push_str(".\"");
-        jsonpath.push_str(&escape_jsonpath_key(name.as_str()));
-        jsonpath.push_str("\"[*]");
-    }
-    jsonpath.push_str(".\"");
-    jsonpath.push_str(&escape_jsonpath_key(LANGUAGE_MAP.as_str()));
-    jsonpath.push_str("\"[*]");
-    jsonpath
-}
-
 #[cfg(test)]
 mod tests {
     use crate::q_predicate::{
@@ -163,7 +133,6 @@ mod tests {
         language_map::{LanguageMap, LanguageSelection},
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_query::filter::{expression::Expr, parser::parse, path::QueryPath};
     use andromeda_postgresql_seaquery::literal::text_literal;
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr as SeaExpr, ExprTrait, PostgresQueryBuilder, Query, SimpleExpr, Value};
@@ -226,25 +195,5 @@ mod tests {
         assert_eq!(sql.matches("@language").count(), 1, "{sql}");
         assert!(sql.contains("(NOT EXISTS("), "{sql}");
         assert!(matches!(&binds[0], Value::String(Some(text)) if text.as_str() == "fr"), "{binds:?}");
-    }
-
-    /// A sub-attribute's maps are read from every instance of the attribute
-    /// and of the sub-attribute, under the `hasLanguageMap` carrier.
-    #[test]
-    fn a_document_reads_the_maps_under_every_instance_of_the_path() {
-        let expr = parse("\"https://example.com/door\".\"https://example.com/label\"").expect("parses");
-        let Expr::Pred(pred) = expr else {
-            panic!("a single predicate");
-        };
-        let QueryPath::Local(path) = pred.path() else {
-            panic!("a local path");
-        };
-        let (sql, _) = render(LanguageMap::of_document(path, SeaExpr::col(Alias::new("document"))).holds(LanguageSelection::AnyLanguage));
-        assert!(
-            sql.contains(
-                r#"jsonb_path_query_array("document", '$[0]."https://example.com/door"[*]."https://example.com/label"[*]."https://uri.etsi.org/ngsi-ld/hasLanguageMap"[*]')"#
-            ),
-            "{sql}"
-        );
     }
 }
