@@ -4,8 +4,8 @@
 //! `temporal_entities` and `temporal_attribute_streams` catalogue, the
 //! `attribute_history` and `scope_history` hypertables, and the `write_records`
 //! idempotency relation. It provides the [`TemporalRepository`] concrete adapter
-//! and [`TemporalRecorder`] bulk-write coordinator while implementing the ports
-//! owned by `andromeda-temporal`.
+//! and the [`TemporalRecorder`] a commit records its history with, while
+//! implementing the ports owned by `andromeda-temporal`.
 //!
 //! [`TemporalRepository`]: repo::TemporalRepository
 //! [`TemporalRecorder`]: recorder::TemporalRecorder
@@ -17,14 +17,8 @@ pub(crate) mod aggregation_group_key_decode;
 pub(crate) mod aggregation_row_decode;
 /// Reading one entity's aggregation rows as the aggregates they compute.
 pub(crate) mod aggregation_rows_read;
-/// The column-major binds one attribute-history batch travels in.
-pub(crate) mod attribute_history_binds;
-/// One row of the `attribute_history` hypertable.
-pub mod attribute_history_row;
 /// The value one attribute-history row carries, and the column it occupies.
 pub mod attribute_history_value;
-/// Bulk inserts into the `attribute_history` hypertable.
-pub mod attribute_history_write;
 /// Deleting the Temporal Evolution of one attribute.
 pub mod attribute_stream_deletion;
 /// Whether the attached `TimescaleDB` edition provides the hypercore columnstore.
@@ -46,10 +40,9 @@ pub(crate) mod history_row_identity;
 mod instance_mutation;
 /// The statements addressing one temporal attribute instance by its `instanceId`.
 mod instance_statements;
-/// Applying queued temporal append intents to history in SQL.
+/// Applying temporal append intents to a branch's history in SQL, for the
+/// drain and the commit alike.
 pub mod intent_application;
-/// Recording a commit's temporal append intents as history rows.
-pub(crate) mod intent_sink;
 /// Aggregating one entity over its local and answered instances (clause 5.7.4.4).
 pub(crate) mod merged_aggregation;
 /// `andromeda-temporal` mutation-port implementation on [`TemporalRepository`](repo::TemporalRepository).
@@ -60,19 +53,13 @@ pub mod reader;
 pub mod recorder;
 /// SQL-only repository for the NGSI-LD Temporal API.
 pub mod repo;
-/// The Temporal Evolutions a chunk resolved, and which of them it created.
-pub(crate) mod resolved_evolutions;
 /// Operator retention: ageing temporal storage out without NGSI-LD semantics.
 pub mod retention_sweep;
 /// TimescaleDB procedural DDL SeaQuery has no form for.
 pub mod schema_ddl;
-/// One scope observation offered to the scope-history bulk insert.
-pub mod scope_history_entry;
 pub(crate) mod scope_history_read;
 /// The value one scope-history row carries.
 pub mod scope_history_value;
-/// Bulk inserts into the `scope_history` hypertable.
-pub mod scope_history_write;
 /// The NGSI-LD time axes a stored temporal row carries besides its write clock.
 pub mod semantic_time_axes;
 /// Reading the leaves of a split temporal query's filters (clause 5.7.4.4).
@@ -89,14 +76,8 @@ pub mod stored_catalog_error;
 pub mod stored_history_error;
 /// Splitting one stored instance identity across its two history columns.
 pub mod stored_instance_columns;
-/// The stream grains one chunk requests, bound column-major and indexed back.
-pub(crate) mod stream_grain_binds;
 /// Reading the temporal catalogue.
 pub mod temporal_catalog_read;
-/// Coordinating one chunk's temporal-entity and temporal-stream catalogue writes.
-pub mod temporal_catalog_write;
-/// Establishing the `temporal_entities` half of the catalogue for a chunk.
-pub mod temporal_entity_catalog_write;
 /// Temporal Evolution deletion and the orphan audit that checks it.
 pub mod temporal_entity_deletion;
 /// One temporal append intent as the records the intent queue holds.
@@ -105,16 +86,8 @@ pub mod temporal_entry_record;
 pub(crate) mod temporal_query_execution;
 /// Conditions the temporal store's own statements and callers guarantee.
 pub mod temporal_store_invariant;
-/// The grain one temporal attribute stream is keyed by.
-pub mod temporal_stream;
-/// Establishing the `temporal_attribute_streams` half of the catalogue for a chunk.
-pub mod temporal_stream_catalog_write;
 /// Windowed temporal history deletion (the delete-by-query extension).
 pub mod temporal_windowed_deletion;
-/// The clause 4.5.7 verbatim-`instanceId` uniqueness pass a history batch runs.
-pub(crate) mod verbatim_instance_claim;
-/// The write's own idempotency bookkeeping record.
-pub(crate) mod write_record_persist;
 /// When one write's idempotency record may be released.
 pub(crate) mod write_record_release;
 

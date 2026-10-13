@@ -16,10 +16,11 @@ mod lease_statements;
 
 use crate::intent_store::lease_statements::{applied_removal_statement, claim_statement, holds_intent_statement, retry_statement};
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder, write_id::WriteId};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_pool::persistence_classification::classify;
-use andromeda_postgresql_temporal_store::intent_application::apply_queued_intents_in_tx;
+use andromeda_postgresql_temporal_store::intent_application::{apply_intents_in_tx, intent_source::IntentSource};
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use andromeda_temporal::{
     append_intent::TemporalIntentKey,
@@ -104,7 +105,9 @@ impl PostgresTemporalIntentStore {
     async fn apply_held(&self, owner: LeaseHolder, intents: &[ClaimedTemporalIntent]) -> Result<LeaseAcknowledgement, TemporalError> {
         let keys: Vec<i64> = intents.iter().map(|intent| intent.key.get()).collect();
         let mut tx = self.pool.begin().await.map_err(|error| persistence(&error))?;
-        apply_queued_intents_in_tx(&mut tx, &keys).await.map_err(TemporalError::from)?;
+        apply_intents_in_tx(&mut tx, &IntentSource::Queued(&keys), &ContextTarget::Live)
+            .await
+            .map_err(TemporalError::from)?;
         let (sql, values) = applied_removal_statement(&keys, owner).build_sqlx(PostgresQueryBuilder);
         let removed = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .execute(&mut *tx)

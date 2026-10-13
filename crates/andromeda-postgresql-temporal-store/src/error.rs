@@ -28,7 +28,6 @@ use andromeda_temporal::{
     temporal_validation_reason::TemporalValidationReason,
 };
 use sea_query::error::Error as SeaQueryError;
-use std::num::TryFromIntError;
 
 /// Errors produced by a temporal store implementation.
 ///
@@ -72,9 +71,6 @@ pub enum TemporalStoreError {
     /// means the write carried more entries than the broker can address.
     #[error("temporal store write ordinal: {0}")]
     WriteOrdinal(#[from] WriteOrdinalOutOfRange),
-    /// An intent entry's position does not fit the ordinal delta it advances by.
-    #[error("temporal store intent entry position is out of range: {0}")]
-    EntryPosition(#[source] TryFromIntError),
     /// A statement could not be assembled.
     #[error("temporal store statement could not be built: {0}")]
     StatementBuild(#[from] SeaQueryError),
@@ -159,7 +155,6 @@ impl TemporalStoreError {
             TemporalStoreError::Render(_) | TemporalStoreError::StatementBuild(_) => Some(PersistenceFailure::StatementUnbuildable),
             TemporalStoreError::Encoding(_)
             | TemporalStoreError::WriteOrdinal(_)
-            | TemporalStoreError::EntryPosition(_)
             | TemporalStoreError::StoredJson(_)
             | TemporalStoreError::HistoryMembers(HistoryMembersError::Seals(_)) => Some(PersistenceFailure::Unencodable),
             TemporalStoreError::Collation(CollationProvisioningError::Statement { .. }) => Some(PersistenceFailure::StatementRejected),
@@ -169,10 +164,6 @@ impl TemporalStoreError {
             TemporalStoreError::Invariant(
                 TemporalStoreInvariant::AttributeNameUnresolved(_)
                 | TemporalStoreInvariant::EntityTypeUnresolved(_)
-                | TemporalStoreInvariant::EntityKeyUnresolved(_)
-                | TemporalStoreInvariant::StreamUnresolved(_)
-                | TemporalStoreInvariant::UnrequestedStream { .. }
-                | TemporalStoreInvariant::GrainPositionOutOfRange { .. }
                 | TemporalStoreInvariant::CountStatementMissing
                 | TemporalStoreInvariant::CountOutOfRange(_),
             )
@@ -233,7 +224,6 @@ impl From<TemporalStoreError> for TemporalError {
             | TemporalStoreError::WriteRecordMismatch { .. }
             | TemporalStoreError::ColumnstoreSettingsDrift { .. }
             | TemporalStoreError::WriteOrdinal(_)
-            | TemporalStoreError::EntryPosition(_)
             | TemporalStoreError::StatementBuild(_)
             | TemporalStoreError::RetentionHorizon(_)
             | TemporalStoreError::StoredTime(_)

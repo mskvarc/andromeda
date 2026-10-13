@@ -17,10 +17,8 @@ mod staging_statements;
 
 use crate::{
     aggregation_rows_read::decode_aggregation_rows,
-    attribute_history_write::insert_history_rows,
     error::TemporalStoreError,
-    history_members::HistoryMembers,
-    intent_sink::observation_row,
+    intent_application::{intent_source::IntentSource, record_history_in_tx},
     merged_aggregation::staging_statements::{
         CopiedHistory,
         branch_schema,
@@ -37,24 +35,23 @@ use crate::{
     },
     repo::TemporalRepository,
     stored_catalog_error::StoredCatalogError,
+    temporal_entry_record::{TemporalEntryRecord, TemporalIntentRecord},
     temporal_store_invariant::TemporalStoreInvariant,
 };
-use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
+use andromeda_context_commit::write_record::WriteRecord;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow};
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
+use andromeda_postgresql_attribute_instance::{name_keys::MentionedNames, name_resolution::resolve_mentioned};
 use andromeda_postgresql_branch::schema_iden;
-use andromeda_postgresql_codes::stream_key::StreamKey;
-use andromeda_postgresql_schema::temporal::AttributeHistory;
-use andromeda_postgresql_seaquery::branch::qualified;
 use andromeda_postgresql_temporal_query::history::build_temporal_history_query;
-use andromeda_temporal::{append_intent::TemporalObservationIdentity, error::TemporalError};
+use andromeda_temporal::error::TemporalError;
 use chrono::Utc;
-use sea_query::{DeleteStatement, InsertStatement, PostgresQueryBuilder, SelectStatement, TableRef};
+use sea_query::{DeleteStatement, InsertStatement, PostgresQueryBuilder, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{AssertSqlSafe, PgConnection, Row, postgres::PgRow};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 /// The key the staging counts its own catalogue and stream keys down from:
 /// far past every key an identity sequence assigns, so a staged key never
@@ -111,6 +108,9 @@ impl TemporalRepository {
     /// Stage the answered rows beside the copied local ones, in streams of
     /// their own where the branch holds none of their grain, and drop the
     /// answered instances a local row already carries.
+    ///
+    /// The rows are recorded by the statement that records every history row,
+    /// as the entries of one intent of the entity under a write of their own.
     async fn stage_answered(
         &self,
         tx: &mut PgConnection,
@@ -122,55 +122,51 @@ impl TemporalRepository {
         if answered.is_empty() {
             return Ok(());
         }
+        let mut mentioned = MentionedNames::default();
+        mentioned.attributes.extend(answered.iter().map(|row| row.attribute_name.clone())); // clone: the dictionary request owns the names it resolves
+        let keys = resolve_mentioned(&mut *tx, mentioned, self.entity_type_names.as_ref(), self.attribute_names.as_ref()).await?;
         let entity_key = self.staged_entity(tx, entity_id, entity_types).await?;
-        let mut streams = read_staged_streams(tx).await?;
-        let missing: Vec<Grain> = answered
+        let streams = read_staged_streams(tx).await?;
+        let missing: HashSet<(&AttributeName, Option<&Identifier>)> = answered
             .iter()
-            .map(|row| (row.attribute_name.clone(), row.dataset_id.clone())) // clone: the grain map owns its keys
-            .filter(|grain| !streams.contains_key(grain))
-            .collect::<HashSet<Grain>>()
-            .into_iter()
-            .collect();
-        if !missing.is_empty() {
-            let names: Vec<AttributeName> = missing.iter().map(|(name, _)| name.clone()).collect::<HashSet<_>>().into_iter().collect(); // clone: the dictionary resolves owned names
-            let name_keys = self.attribute_names.resolve_or_create(&mut *tx, &names).await?;
-            for (position, (name, dataset_id)) in missing.into_iter().enumerate() {
-                let name_key = name_keys
-                    .get(&name)
-                    .ok_or_else(|| TemporalStoreInvariant::AttributeNameUnresolved(name.clone()))?; // clone: the invariant owns the name it failed on
-                let stream_key = staged_key(position.saturating_add(1));
-                execute_insert(tx, stage_stream(stream_key, entity_key, name_key.get(), dataset_id.as_ref())?).await?;
-                streams.insert((name, dataset_id), StreamKey::try_from(stream_key).map_err(StoredCatalogError::StreamKey)?);
-            }
-        }
-        let staged_write = WriteId::mint();
-        let recorded_at = Utc::now();
-        let rows = answered
-            .iter()
-            .enumerate()
-            .map(|(position, row)| {
-                let grain = (row.attribute_name.clone(), row.dataset_id.clone()); // clone: the grain map is keyed by owned grains
-                let stream_key = *streams
-                    .get(&grain)
-                    .ok_or_else(|| TemporalStoreInvariant::StreamUnresolved(row.attribute_name.clone()))?; // clone: the invariant owns the name it failed on
-                let ordinal = u32::try_from(position).map_err(TemporalStoreError::EntryPosition)?;
-                // An aggregation reads the value and its unit alone (clause
-                // 4.5.19), so an answered row is staged without the rest of
-                // its metadata, whose names this tenant may never have keyed.
-                observation_row(
-                    stream_key,
-                    row,
-                    recorded_at,
-                    TemporalObservationIdentity {
-                        write_id: staged_write,
-                        ordinal: WriteOrdinal::at(ordinal),
-                    },
-                    HistoryMembers::unit_alone(row.metadata.as_ref()),
-                )
+            .map(|row| (&row.attribute_name, row.dataset_id.as_ref()))
+            .filter(|(name, dataset_id)| {
+                !streams
+                    .iter()
+                    .any(|(staged, staged_dataset)| staged == *name && staged_dataset.as_ref() == *dataset_id)
             })
+            .collect();
+        for (position, (name, dataset_id)) in missing.into_iter().enumerate() {
+            let name_key = keys
+                .attribute(name)
+                .ok_or_else(|| TemporalStoreInvariant::AttributeNameUnresolved(name.clone()))?; // clone: the invariant owns the name it failed on
+            execute_insert(
+                tx,
+                stage_stream(staged_key(position.saturating_add(1)), entity_key, name_key.get(), dataset_id)?,
+            )
+            .await?;
+        }
+        let entries = answered
+            .iter()
+            .map(|row| TemporalEntryRecord::answered(row, &keys))
             .collect::<Result<Vec<_>, TemporalStoreError>>()?;
-        insert_history_rows(tx, staging_history_table(), rows).await?;
-        execute_delete(tx, drop_restated_instances(staged_write.as_uuid())).await
+        let staged = WriteRecord::mint(Utc::now());
+        let intents = [TemporalIntentRecord {
+            entity_id: String::from(entity_id.as_str()),
+            entity_type_name_keys: Vec::new(),
+            base_ordinal: 0,
+            entries,
+        }];
+        record_history_in_tx(
+            tx,
+            &IntentSource::Bound {
+                record: &staged,
+                intents: &intents,
+            },
+            &temporary_schema(),
+        )
+        .await?;
+        execute_delete(tx, drop_restated_instances(staged.write_id().as_uuid())).await
     }
 
     /// The staged catalogue key of the entity: its copied local one, or one
@@ -192,11 +188,6 @@ fn staged_key(position: usize) -> i64 {
     STAGED_KEY_CEILING.saturating_sub(i64::try_from(position).unwrap_or(i64::MAX))
 }
 
-/// The temporary history relation the staged rows land in.
-fn staging_history_table() -> TableRef {
-    qualified(Some(&temporary_schema()), AttributeHistory::Table)
-}
-
 /// The answered rows, an instance answered by several sources once.
 fn distinct_instances(answered: &[TemporalHistoryRow]) -> Vec<&TemporalHistoryRow> {
     let mut seen = HashSet::new();
@@ -206,23 +197,22 @@ fn distinct_instances(answered: &[TemporalHistoryRow]) -> Vec<&TemporalHistoryRo
         .collect()
 }
 
-/// The staged streams, keyed by grain.
-async fn read_staged_streams(tx: &mut PgConnection) -> Result<HashMap<Grain, StreamKey>, TemporalStoreError> {
+/// The grains the staging holds a stream of.
+async fn read_staged_streams(tx: &mut PgConnection) -> Result<HashSet<Grain>, TemporalStoreError> {
     fetch(tx, staged_streams())
         .await?
         .iter()
         .map(|row| {
-            let stream_key = StreamKey::try_from(row.try_get::<i64, _>(0)?).map_err(StoredCatalogError::StreamKey)?;
             let name = row
-                .try_get::<String, _>(1)?
+                .try_get::<String, _>(0)?
                 .parse::<AttributeName>()
                 .map_err(StoredCatalogError::AttributeName)?;
             let dataset_id = row
-                .try_get::<Option<String>, _>(2)?
+                .try_get::<Option<String>, _>(1)?
                 .map(|raw| raw.parse::<Identifier>())
                 .transpose()
                 .map_err(StoredCatalogError::StreamDatasetId)?;
-            Ok(((name, dataset_id), stream_key))
+            Ok((name, dataset_id))
         })
         .collect()
 }

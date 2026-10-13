@@ -176,7 +176,6 @@ pub(crate) fn history(error: TemporalStoreError) -> AttemptFailure {
         | TemporalStoreError::Invariant(_)
         | TemporalStoreError::Refused(_)
         | TemporalStoreError::WriteOrdinal(_)
-        | TemporalStoreError::EntryPosition(_)
         | TemporalStoreError::StatementBuild(_)
         | TemporalStoreError::RetentionHorizon(_)
         | TemporalStoreError::StoredTime(_)

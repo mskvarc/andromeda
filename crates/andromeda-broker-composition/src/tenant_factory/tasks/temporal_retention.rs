@@ -100,7 +100,6 @@ const fn classify_retention_failure(error: TemporalStoreError) -> TaskFailure<Te
         // other one does, so a retry is worth taking.
         TemporalStoreError::Database(_) | TemporalStoreError::NameLookup(_) | TemporalStoreError::Collation(_) => FailureClass::Transient,
         TemporalStoreError::WriteOrdinal(_)
-        | TemporalStoreError::EntryPosition(_)
         | TemporalStoreError::StatementBuild(_)
         | TemporalStoreError::RetentionHorizon(_)
         | TemporalStoreError::StoredTime(_)

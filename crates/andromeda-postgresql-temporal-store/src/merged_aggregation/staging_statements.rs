@@ -243,11 +243,9 @@ pub(crate) fn stage_entity(key: i64, entity_id: &Identifier, type_keys: Vec<i32>
     Ok(insert.take())
 }
 
-/// The staged streams with the attribute name and dataset each is the grain
-/// of.
+/// The attribute name and dataset each staged stream is the grain of.
 pub(crate) fn staged_streams() -> SelectStatement {
     Query::select()
-        .column((TemporalAttributeStreams::Table, TemporalAttributeStreams::StreamKey))
         .column((AttributeNames::Table, AttributeNames::Name))
         .column((TemporalAttributeStreams::Table, TemporalAttributeStreams::DatasetId))
         .from(temporary(TemporalAttributeStreams::Table))

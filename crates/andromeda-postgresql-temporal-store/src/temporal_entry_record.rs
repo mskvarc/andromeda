@@ -16,6 +16,7 @@ use crate::{
     temporal_entry_record::entry_fields::{Grain, MemberColumns, ValueColumns, record},
     temporal_store_invariant::TemporalStoreInvariant,
 };
+use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
 use andromeda_postgresql_attribute_instance::{
     name_keys::{MentionedNames, NameKeys},
     sub_attribute::{EwkbGeometry, SubAttributeRecord},
@@ -182,26 +183,7 @@ fn entry_record(entry: &TemporalAppendEntry, recorded_at: DateTime<Utc>, keys: &
                 .map(|metadata| HistoryMembers::keyed(metadata, keys))
                 .transpose()?
                 .unwrap_or_default();
-            Ok(record(
-                Grain::attribute(
-                    TemporalEntryKind::Observation,
-                    &row.attribute_name,
-                    row.dataset_id.as_ref(),
-                    stored_attribute_kind(row.attribute_type),
-                    keys,
-                )?,
-                ValueColumns::of_attribute(AttributeHistoryValue::of_observation(&row.value)?)?,
-                MemberColumns::of(members)?,
-                // Each axis is kept exactly as the observation carried it: one
-                // that declared none matches no window on that Temporal
-                // Property (clauses 4.11 and 5.2.21).
-                SemanticTimeAxes {
-                    observed_at: row.observed_at,
-                    created_at: row.created_at,
-                    modified_at: row.modified_at,
-                },
-                &row.instance,
-            ))
+            observation_record(row, members, keys)
         }
         TemporalAppendEntry::Tombstone {
             attribute_name,
@@ -258,7 +240,47 @@ fn entry_record(entry: &TemporalAppendEntry, recorded_at: DateTime<Utc>, keys: &
     }
 }
 
+impl TemporalEntryRecord {
+    /// The entry an observation a Context Source answered is staged as for
+    /// an aggregation, which reads the value and its unit alone (clause
+    /// 4.5.19): the rest of its metadata names what this tenant may never
+    /// have keyed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalStoreError`] when the attribute name has no key in
+    /// `keys`, or the value cannot be stored.
+    pub(crate) fn answered(row: &TemporalHistoryRow, keys: &NameKeys) -> Result<TemporalEntryRecord, TemporalStoreError> {
+        observation_record(row, HistoryMembers::unit_alone(row.metadata.as_ref()), keys)
+    }
+}
+
+/// The entry `row` is recorded as, beside the `members` its metadata stores
+/// as.
+fn observation_record(row: &TemporalHistoryRow, members: HistoryMembers, keys: &NameKeys) -> Result<TemporalEntryRecord, TemporalStoreError> {
+    Ok(record(
+        Grain::attribute(
+            TemporalEntryKind::Observation,
+            &row.attribute_name,
+            row.dataset_id.as_ref(),
+            stored_attribute_kind(row.attribute_type),
+            keys,
+        )?,
+        ValueColumns::of_attribute(AttributeHistoryValue::of_observation(&row.value)?)?,
+        MemberColumns::of(members)?,
+        // Each axis is kept exactly as the observation carried it: one that
+        // declared none matches no window on that Temporal Property (clauses
+        // 4.11 and 5.2.21).
+        SemanticTimeAxes {
+            observed_at: row.observed_at,
+            created_at: row.created_at,
+            modified_at: row.modified_at,
+        },
+        &row.instance,
+    ))
+}
+
 /// The field groups an entry is assembled from.
 mod entry_fields;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

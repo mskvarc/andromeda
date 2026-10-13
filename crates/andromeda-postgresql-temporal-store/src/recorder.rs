@@ -3,10 +3,9 @@
 
 use crate::{
     error::TemporalStoreError,
-    intent_sink::append_intents_in_tx,
+    intent_application::{apply_intents_in_tx, intent_source::IntentSource},
     repo::TemporalRepository,
     temporal_entry_record::{TemporalIntentRecord, mention_intent},
-    write_record_persist::persist_write_record,
 };
 use andromeda_context_commit::write_record::WriteRecord;
 use andromeda_context_space::context_target::ContextTarget;
@@ -31,9 +30,9 @@ impl TemporalRecorder {
 
     /// Record typed append intents inside the caller's anchor transaction.
     ///
-    /// `record` is the write identity every intent in `intents` shares, persisted once rather than once per intent. The caller states it explicitly rather than this method inferring it from `intents.first()`, and every intent is checked against it before anything is written: history rows are stamped from each intent's own record, `write_records` has no foreign key from `attribute_history` or `scope_history` to catch a disagreement, and the release of a write record seeks its history rows by the persisted `recorded_at`, so a row stamped with another instant would protect nothing and survive its record.
+    /// `record` is the write identity every intent in `intents` shares. The caller states it explicitly rather than this method inferring it from `intents.first()`, and every intent is checked against it before anything is written: history rows are stamped with the record's instant, `write_records` has no foreign key from `attribute_history` or `scope_history` to catch a disagreement, and the release of a write record seeks its history rows by the persisted `recorded_at`, so a row stamped with another instant would protect nothing and survive its record.
     ///
-    /// Idempotency of the rows themselves is row-level: each entry insert carries `ON CONFLICT ... DO NOTHING` on its stream's write identity, so a commit retried after the transaction was already durable appends every intent again and lands nothing a second time.
+    /// The intents become the records the queue would hold, bound as one array, and the statements the drain applies queued intents with record them, so a commit and a drain write identical rows. Idempotency is row-level: each row lands under its write identity with `ON CONFLICT ... DO NOTHING`, so a commit retried after the transaction was already durable lands nothing a second time.
     ///
     /// History only. Current entity state is written by the same transaction, but by the crate that owns the commit rather than from here, and the temporal catalogue keeps Temporal Evolution independent of it in both directions.
     ///
@@ -41,11 +40,13 @@ impl TemporalRecorder {
     ///
     /// Returns [`TemporalStoreError::WriteRecordMismatch`] when an intent
     /// carries a write record other than `record`,
-    /// [`TemporalStoreError::Database`] when a statement fails,
-    /// [`TemporalStoreError::NotFound`] when an intent records an observation
-    /// against a Temporal Evolution that does not exist and declares no entity
-    /// type to create it with, or [`TemporalStoreError::Validation`] when a row
-    /// cannot be encoded.
+    /// [`TemporalStoreError::EntityIntent`] naming the entity whose intent
+    /// cannot be stored, [`TemporalStoreError::NotFound`] when an intent
+    /// records an observation against a Temporal Evolution that does not exist
+    /// and declares no entity type to create it with,
+    /// [`TemporalStoreError::DuplicateInstanceClaim`] when two instances of one
+    /// attribute claim one `instanceId`, and [`TemporalStoreError::Database`]
+    /// when a statement fails.
     pub async fn record_intents_in_tx(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -56,10 +57,8 @@ impl TemporalRecorder {
         if intents.is_empty() {
             return Ok(());
         }
-        refuse_foreign_records(record, intents)?;
-        persist_write_record(tx, record).await?;
-        append_intents_in_tx(&self.repo, tx, target, intents).await?;
-        Ok(())
+        let records = self.intent_records_in_tx(tx, record, intents).await?;
+        apply_intents_in_tx(tx, &IntentSource::Bound { record, intents: &records }, target).await
     }
 
     /// The records `intents` wait in the intent queue as, every name they

@@ -37,7 +37,7 @@ use uuid::Uuid;
 const SPEED: &str = "https://example.com/speed";
 const VEHICLE: &str = "https://example.com/Vehicle";
 
-fn recorded_at() -> DateTime<Utc> {
+pub(crate) fn recorded_at() -> DateTime<Utc> {
     Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant")
 }
 
@@ -46,7 +46,7 @@ fn observed_at() -> DateTime<Utc> {
 }
 
 /// One intent over `urn:ngsi-ld:Vehicle:1`, a Vehicle, carrying `entries`.
-fn intent(entries: Vec<TemporalAppendEntry>) -> TemporalAppendIntent {
+pub(crate) fn intent(entries: Vec<TemporalAppendEntry>) -> TemporalAppendIntent {
     TemporalAppendIntent {
         record: WriteRecord::restored(WriteId::mint(), recorded_at()),
         base_ordinal: WriteOrdinal::at(4),
@@ -57,7 +57,7 @@ fn intent(entries: Vec<TemporalAppendEntry>) -> TemporalAppendIntent {
 }
 
 /// Keys for every name `intent` mentions, numbered from 1 in sorted order.
-fn keys(intent: &TemporalAppendIntent) -> NameKeys {
+pub(crate) fn keys(intent: &TemporalAppendIntent) -> NameKeys {
     let mut mentioned = MentionedNames::default();
     mention_intent(intent, &mut mentioned);
     let MentionedNames { attributes, types } = distinct(mentioned);
@@ -94,7 +94,7 @@ fn unit_and_accuracy() -> ObservationMetadata {
 }
 
 /// An observation of `speed` holding `value`, recorded as `instance`.
-fn observation(value: TemporalValue, instance: InstanceIdentity, metadata: Option<ObservationMetadata>) -> TemporalAppendEntry {
+pub(crate) fn observation(value: TemporalValue, instance: InstanceIdentity, metadata: Option<ObservationMetadata>) -> TemporalAppendEntry {
     TemporalAppendEntry::Observation {
         row: TemporalHistoryRow {
             attribute_name: SPEED.parse().expect("an attribute name"),
