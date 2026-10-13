@@ -78,6 +78,8 @@ pub mod subscription_kind;
 pub mod subscription_status;
 /// The narrow key a temporal entity is referenced by.
 pub mod temporal_entity_key;
+/// The persisted kind of one entry of a temporal append intent.
+pub mod temporal_entry_kind;
 /// The persisted administrative status of one tenant.
 pub mod tenant_status;
 /// The persisted value shape of one attribute-history row.

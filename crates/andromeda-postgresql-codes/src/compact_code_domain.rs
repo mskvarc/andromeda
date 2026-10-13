@@ -55,6 +55,8 @@ pub enum CompactCodeDomain {
     SubscriptionKindCode,
     /// [`SubscriptionStatusCode`](crate::subscription_status::SubscriptionStatusCode).
     SubscriptionStatusCode,
+    /// [`TemporalEntryKind`](crate::temporal_entry_kind::TemporalEntryKind).
+    TemporalEntryKind,
     /// [`TenantStatusCode`](crate::tenant_status::TenantStatusCode).
     TenantStatusCode,
     /// [`ValueKind`](crate::value_kind::ValueKind).

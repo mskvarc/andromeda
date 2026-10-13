@@ -1,11 +1,6 @@
 //! Backend-neutral temporal observations and aggregation values.
 
-use crate::temporal::{
-    geometry_observation::serialize_geometry,
-    history_row_wire::HistoryRowWire,
-    observation_metadata::ObservationMetadata,
-    structured_value::StructuredValue,
-};
+use crate::temporal::{observation_metadata::ObservationMetadata, structured_value::StructuredValue};
 use andromeda_ngsi_ld_entity::geometry_value::GeometryValue;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -20,16 +15,11 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_vocabulary::NULL_URI;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 
 /// Reading the aggregated representation a peer answered with.
 pub mod aggregated_decoding;
 /// The aggregated representation of the Temporal Evolution of an Entity.
 pub mod aggregated_entity;
-/// The geometry of one observation as a durable intent carries it.
-mod geometry_observation;
-/// The wire form a durable intent persists a history row in.
-mod history_row_wire;
 /// The members an observed instance carries beside its value.
 pub mod observation_metadata;
 /// Why a simplified temporal attribute is refused.
@@ -59,13 +49,9 @@ pub mod written_temporal_entity;
 
 /// A single decoded value from temporal history storage.
 ///
-/// Serialised for the durable intent it travels in, under the kebab-case tag of
-/// its variant; a structured value is written under `object` as the JSON a
-/// history row stores it as. Decoding a structured value needs the attribute
-/// family the row records, so a value is decoded as part of its
-/// [`TemporalHistoryRow`] rather than alone.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
+/// Decoding a structured value needs the attribute family the row records, so
+/// a value is decoded as part of its [`TemporalHistoryRow`] rather than alone.
+#[derive(Debug, Clone, PartialEq)]
 pub enum TemporalValue {
     /// An exact numeric attribute value.
     Number(JsonNumber),
@@ -73,17 +59,13 @@ pub enum TemporalValue {
     String(String),
     /// A boolean attribute value.
     Boolean(bool),
-    /// A `GeoJSON` geometry, held decoded with its `bbox` and foreign members:
-    /// it persists as the `GeoJSON` of its positions beside the stored JSON of
-    /// its members.
-    #[serde(serialize_with = "serialize_geometry")]
+    /// A `GeoJSON` geometry, held decoded with its `bbox` and foreign members.
     Geometry(GeometryValue),
     /// A structured attribute value: what no typed column can hold.
     ///
     /// What the value is depends on the attribute family that carries it
     /// (clause 4.5): the values of a Property, the targets of a Relationship
     /// naming several, a language map, a JSON literal, a list.
-    #[serde(rename = "object")]
     Structured(StructuredValue),
     /// A datetime attribute value.
     DateTime(DateTime<Utc>),
@@ -132,13 +114,7 @@ impl TemporalValue {
 }
 
 /// One decoded temporal attribute observation.
-///
-/// Persisted inside a durable intent. The structured value and the metadata
-/// are written in the JSON a history row stores them as, so an intent and a row
-/// share one stored form; reading them back needs the row's attribute name and
-/// family, which is why the row decodes through [`HistoryRowWire`].
-#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
-#[serde(try_from = "HistoryRowWire")]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TemporalHistoryRow {
     /// Expanded attribute IRI.
     pub attribute_name: AttributeName,

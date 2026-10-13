@@ -377,7 +377,7 @@ fn the_metadata_holds_neither_the_value_nor_the_identity_nor_the_time_axes() {
     assert!(observation.observed_at.is_some());
     let metadata = observation.metadata.expect("the unit and the sub-attribute are metadata");
     pretty_assertions::assert_eq!(
-        serde_json::to_value(&metadata).expect("metadata writes"),
+        serde_json::to_value(InstanceDocument::from(metadata)).expect("metadata writes"),
         json!({
             expanded_properties::UNIT_CODE.as_str(): [{"@value": "KMH"}],
             "https://example.org/accuracy": accuracy
@@ -470,9 +470,9 @@ fn an_empty_array_valued_property_is_recorded_as_the_empty_array() {
     pretty_assertions::assert_eq!(stored(&value), json!([]));
 }
 
-/// The metadata `instance` records, as the JSON it serializes as.
+/// The metadata `instance` records, as the expanded members it renders as.
 fn metadata_of(instance: &Value) -> Value {
-    serde_json::to_value(observed(instance).metadata.expect("metadata")).expect("metadata writes")
+    serde_json::to_value(InstanceDocument::from(observed(instance).metadata.expect("metadata"))).expect("metadata writes")
 }
 
 /// Table 5.2.5-2: `createdAt`, `modifiedAt`, `deletedAt` and `instanceId`

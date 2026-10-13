@@ -261,7 +261,7 @@ impl PostgresAtomicCommitter {
         let placement = self.history_mode.placement(target);
         match placement {
             HistoryPlacement::Inline(recorder) => history::apply(recorder, &mut tx, target, &record, intents).await?,
-            HistoryPlacement::Queued(_) => deferred_history::apply(&mut tx, intents).await?,
+            HistoryPlacement::Queued { recorder, .. } => deferred_history::apply(&mut tx, recorder, &record, intents).await?,
         }
         let (next, notifications) = notification_events::apply(
             &mut tx,
@@ -278,7 +278,7 @@ impl PostgresAtomicCommitter {
         tx.commit().await.map_err(|error| database(&error))?;
         tracing::debug!(write_id = %record.write_id(), writes = writes.len(), "atomic context write committed");
         if !intents.is_empty()
-            && let HistoryPlacement::Queued(publisher) = placement
+            && let HistoryPlacement::Queued { publisher, .. } = placement
         {
             publisher.intents_available();
         }

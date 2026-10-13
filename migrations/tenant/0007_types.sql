@@ -113,3 +113,62 @@ create type entity_state_record as (
     instances attribute_instance_record[]
 );
 
+-- One entry of a temporal append intent (clause 4.5.6), in the shape its
+-- history row will be written in: the `attribute_history` columns but the
+-- write identity and the stream, in the table's column order, behind the
+-- three members that name the row's grain. The queue holds an entry exactly
+-- as the drain will store it, so applying an intent moves its entries into
+-- history without reading them back into the broker.
+--
+-- `entry_kind` is 1 for an attribute observation, 2 for the end of an
+-- attribute instance (clauses 4.5.7 and 4.5.8: `value_kind` 0 and
+-- `deleted_at` the write's instant) and 3 for a Scope entry (clause 4.18).
+-- `attribute_name_key` is an `attribute_names` key and with `dataset_id`
+-- names the stream an attribute entry extends. A Scope entry has no
+-- `attribute_name_key`, `dataset_id` or `attribute_kind`; its `value_kind` is
+-- the `scope_history` code (0 a deletion, 1 a path), its `ltree` label path is
+-- `scope_path` and the Scope as written `verbatim_scope_path`, both NULL for a
+-- deletion. The other codes and keys are those of `attribute_history`.
+create type temporal_entry as (
+    entry_kind smallint,
+    attribute_name_key integer,
+    dataset_id text,
+    attribute_kind smallint,
+    value_kind smallint,
+    observed_at timestamptz,
+    created_at timestamptz,
+    modified_at timestamptz,
+    deleted_at timestamptz,
+    value_date_time timestamptz,
+    expires_at timestamptz,
+    generated_instance_id uuid,
+    value_type_key integer,
+    unit_code_id smallint,
+    value_boolean boolean,
+    verbatim_instance_id text,
+    value_number numeric,
+    value_string text,
+    value_geometry geometry,
+    value_geometry_members jsonb,
+    value_object jsonb,
+    value_uri text,
+    object_type_keys integer[],
+    proof_seals jsonb,
+    sub_attributes sub_attribute[],
+    scope_path text,
+    verbatim_scope_path text
+);
+
+-- One intent of a commit as the enqueue binds it: every intent of a commit
+-- travels in one array parameter, and an intent's entries, whose count
+-- differs from intent to intent, travel each intent in one value.
+-- `entity_type_name_keys` are `entity_type_names` keys, empty for an intent
+-- that only ends instances; `base_ordinal` is the write ordinal of the first
+-- entry.
+create type temporal_intent as (
+    entity_id text,
+    entity_type_name_keys integer[],
+    base_ordinal integer,
+    entries temporal_entry[]
+);
+

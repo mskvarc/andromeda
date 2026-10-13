@@ -1,8 +1,16 @@
-//! Writing typed temporal append intents in an existing anchor transaction.
+//! Writing typed temporal append intents in an existing anchor transaction:
+//! as history, or as the records the intent queue holds them in.
 
-use crate::{error::TemporalStoreError, intent_sink::PostgresTemporalHistorySink, repo::TemporalRepository, write_record_persist::persist_write_record};
+use crate::{
+    error::TemporalStoreError,
+    intent_sink::append_intents_in_tx,
+    repo::TemporalRepository,
+    temporal_entry_record::{TemporalIntentRecord, mention_intent},
+    write_record_persist::persist_write_record,
+};
 use andromeda_context_commit::write_record::WriteRecord;
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_postgresql_attribute_instance::{name_keys::MentionedNames, name_resolution::resolve_mentioned};
 use andromeda_temporal::append_intent::TemporalAppendIntent;
 use sqlx::{Postgres, Transaction};
 use std::sync::Arc;
@@ -50,8 +58,45 @@ impl TemporalRecorder {
         }
         refuse_foreign_records(record, intents)?;
         persist_write_record(tx, record).await?;
-        PostgresTemporalHistorySink::append_entries_batch(&self.repo, tx, target, intents).await?;
+        append_intents_in_tx(&self.repo, tx, target, intents).await?;
         Ok(())
+    }
+
+    /// The records `intents` wait in the intent queue as, every name they
+    /// hold as a key minted once in the caller's transaction, so a key an
+    /// entry holds exists exactly when the entry does.
+    ///
+    /// `record` is the write identity every intent shares; the queue stores it
+    /// once per intent beside the record rather than in it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalStoreError::WriteRecordMismatch`] when an intent
+    /// carries a write record other than `record`,
+    /// [`TemporalStoreError::NameLookup`] when a dictionary cannot be
+    /// resolved, and [`TemporalStoreError::EntityIntent`] naming the entity
+    /// whose intent cannot be stored as a record.
+    pub async fn intent_records_in_tx(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        record: &WriteRecord,
+        intents: &[TemporalAppendIntent],
+    ) -> Result<Vec<TemporalIntentRecord>, TemporalStoreError> {
+        refuse_foreign_records(record, intents)?;
+        let mut mentioned = MentionedNames::default();
+        for intent in intents {
+            mention_intent(intent, &mut mentioned);
+        }
+        let keys = resolve_mentioned(tx, mentioned, self.repo.entity_type_names.as_ref(), self.repo.attribute_names.as_ref()).await?;
+        intents
+            .iter()
+            .map(|intent| {
+                TemporalIntentRecord::of(intent, &keys).map_err(|source| TemporalStoreError::EntityIntent {
+                    entity_id: intent.entity_id.clone(), // clone: the failure owns the entity it names.
+                    source: Box::new(source),
+                })
+            })
+            .collect()
     }
 }
 
@@ -86,7 +131,6 @@ mod tests {
             entity_id: "urn:ngsi-ld:Vehicle:1".parse().expect("a valid entity URI"),
             entity_types: Vec::new(),
             entries: Vec::new(),
-            selection_value: None,
         }
     }
 

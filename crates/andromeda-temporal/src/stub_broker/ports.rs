@@ -4,7 +4,7 @@
 use crate::{
     error::TemporalError,
     observed_instance::ObservedInstance,
-    outcome::{TemporalEntityIdOutcome, TemporalPaginationOutcome, TemporalResidual},
+    outcome::TemporalEntityIdOutcome,
     port::{
         history_reader::{
             AggregationPushdown,
@@ -93,9 +93,8 @@ impl TemporalHistoryReader for StubBroker {
             .expect("the recording lock is never poisoned")
             .push(compiled.entities.clone()); // clone: the recording outlives the compiled query
         Ok(TemporalEntityIdOutcome {
-            candidates: Vec::new(),
-            residual: TemporalResidual::default(),
-            pagination: TemporalPaginationOutcome::Deferred,
+            entity_ids: Vec::new(),
+            total: None,
         })
     }
 

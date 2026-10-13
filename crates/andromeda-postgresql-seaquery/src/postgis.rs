@@ -152,7 +152,8 @@ fn st_geom_from_ewkb(ewkb: SimpleExpr) -> SimpleExpr {
 }
 
 /// `PostGIS`: `ST_MakeValid(geom)` - attempts to make an invalid geometry valid.
-fn st_make_valid(geom: SimpleExpr) -> SimpleExpr {
+#[must_use]
+pub fn st_make_valid(geom: SimpleExpr) -> SimpleExpr {
     Func::cust(PostgisFunction::MakeValid).args([geom]).into()
 }
 

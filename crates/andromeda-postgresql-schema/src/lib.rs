@@ -33,6 +33,7 @@ pub mod string_value_column;
 pub mod subscription_forwarding;
 pub mod subscriptions;
 pub mod temporal;
+pub mod temporal_intent;
 pub mod tenancy;
 pub mod uri_value_column;
 

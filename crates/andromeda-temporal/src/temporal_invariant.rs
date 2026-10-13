@@ -4,7 +4,6 @@
 //! policy, the ports it drives and the HTTP layer answering from it that a
 //! correct broker never breaks, so a broken one is answered `InternalError`.
 
-use crate::outcome::InvalidTemporalOutcome;
 use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
@@ -44,9 +43,6 @@ pub enum TemporalInvariant {
     /// Pending history remains after the bounded mutation barrier.
     #[error("pending temporal history remains after the bounded mutation barrier")]
     PendingHistoryRemains,
-    /// A store reported an identifier outcome that cannot be completed.
-    #[error("the store reported an incoherent identifier outcome: {0}")]
-    IncompleteOutcome(#[source] InvalidTemporalOutcome),
     /// An attribute IRI the JSON-LD engine expanded is not an attribute name.
     #[error("an expanded attribute IRI is not an attribute name: {0}")]
     ExpandedAttributeName(#[source] NgsiLdReferenceError),

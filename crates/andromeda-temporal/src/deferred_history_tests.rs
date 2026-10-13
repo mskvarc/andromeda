@@ -1,84 +1,36 @@
 use crate::{
-    append_intent::{KeyedTemporalAppendIntent, TemporalAppendEntry, TemporalAppendIntent, TemporalIntentKey, TemporalObservationIdentity},
+    append_intent::TemporalIntentKey,
     error::TemporalError,
-    intent_drain::{TemporalIntentClaim, TemporalIntentDrain},
+    intent_drain::{StuckTemporalIntent, TemporalIntentClaim, TemporalIntentDrain},
     intent_retry_policy::TemporalIntentRetryPolicy,
-    observed_selection::ObservedSelection,
-    outcome::{TemporalEntityCandidate, TemporalEntityIdOutcome, TemporalPaginationOutcome, TemporalResidual},
-    pending_overlay::PendingTemporalHistoryOverlay,
     port::{
-        history_reader::{
-            AggregationPushdown,
-            HistoryVisibility,
-            RecordedAttributeShape,
-            TemporalHistoryObservation,
-            TemporalHistoryOutcome,
-            TemporalHistoryReader,
-            TemporalReaderCapabilities,
-        },
         mutation_barrier::TemporalMutationBarrier,
-        pending_intent_reader::PendingTemporalIntentReader,
-        temporal_history_sink::TemporalHistorySink,
-        temporal_intent_queue::{ClaimedTemporalAppendIntent, TemporalIntentBatchSize, TemporalIntentQueue, TemporalIntentRetry},
+        temporal_intent_application::TemporalIntentApplication,
+        temporal_intent_queue::{ClaimedTemporalIntent, TemporalIntentBatchSize, TemporalIntentQueue, TemporalIntentRetry},
     },
     temporal_not_found_reason::TemporalNotFoundReason,
-    temporal_operation_unsupported::TemporalOperationUnsupported,
 };
 use andromeda_context_commit::{
     failure_summary::FAILURE_SUMMARY_MAX_CHARACTERS,
     lease_acknowledgement::LeaseAcknowledgement,
     lease_holder::LeaseHolder,
     write_id::WriteId,
-    write_ordinal::WriteOrdinal,
-    write_record::WriteRecord,
 };
 use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
-use andromeda_ngsi_ld_entity::document::EntityDocument;
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    attribute_type::AttributeType,
-    entity_type_name::EntityTypeName,
-    identifier::Identifier,
-    instance_identity::InstanceIdentity,
-    temporal_format::TemporalFormat,
-    time_prop::TimeProp,
-};
-use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow, TemporalValue};
-use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_query::{
-    count_policy::CountPolicy,
-    cursor::PageCursor,
-    entity_selection::EntitySelection,
-    page_window::{PageStart, PageWindow},
-    split_filter::LeafTruths,
-    temporal::{
-        compiled::CompiledTemporalQuery,
-        contributed_entities::{ContributedEntities, ContributedRendering},
-        instance_selection::InstanceSelection,
-        representation::Representation,
-        window::TemporalWindow,
-    },
-};
-use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
-use indexmap::IndexMap;
-use std::{
-    collections::{HashMap, HashSet},
-    num::NonZeroU32,
-    slice,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashSet, num::NonZeroU32, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
 #[derive(Default)]
 struct RecordingQueueState {
-    pending: Vec<ClaimedTemporalAppendIntent>,
-    acknowledged: Vec<WriteId>,
+    pending: Vec<ClaimedTemporalIntent>,
     retries: Vec<TemporalIntentRetry>,
-    /// When set, every acknowledgement and retry reports a lapsed lease.
+    /// The entities the pending probe was asked about.
+    probed: Vec<Identifier>,
+    /// When set, every retry reports a lapsed lease.
     lease_lapsed: bool,
 }
 
@@ -88,47 +40,28 @@ struct RecordingQueue {
 }
 
 impl RecordingQueue {
-    async fn insert(&self, pending: KeyedTemporalAppendIntent) {
-        self.state.lock().await.pending.push(ClaimedTemporalAppendIntent { pending, attempts: 0 });
+    async fn insert(&self, claim: ClaimedTemporalIntent) {
+        self.state.lock().await.pending.push(claim);
     }
 
-    async fn pending_count(&self) -> usize {
-        self.state.lock().await.pending.len()
+    async fn pending_keys(&self) -> Vec<i64> {
+        self.state.lock().await.pending.iter().map(|claim| claim.key.get()).collect()
     }
 
-    async fn acknowledged_count(&self) -> usize {
-        self.state.lock().await.acknowledged.len()
-    }
-
-    async fn retry_count(&self) -> usize {
-        self.state.lock().await.retries.len()
+    async fn remove(&self, keys: &[i64]) {
+        self.state.lock().await.pending.retain(|claim| !keys.contains(&claim.key.get()));
     }
 
     async fn retries(&self) -> Vec<TemporalIntentRetry> {
         self.state.lock().await.retries.clone()
     }
 
+    async fn probed(&self) -> Vec<Identifier> {
+        self.state.lock().await.probed.clone()
+    }
+
     async fn lapse_leases(&self) {
         self.state.lock().await.lease_lapsed = true;
-    }
-}
-
-#[async_trait]
-impl PendingTemporalIntentReader for RecordingQueue {
-    async fn pending_for_entity(&self, entity_id: &Identifier) -> Result<Vec<KeyedTemporalAppendIntent>, TemporalError> {
-        Ok(self
-            .state
-            .lock()
-            .await
-            .pending
-            .iter()
-            .filter(|claim| claim.pending.intent.entity_id == *entity_id)
-            .map(|claim| claim.pending.clone())
-            .collect())
-    }
-
-    async fn pending_intents(&self) -> Result<Vec<KeyedTemporalAppendIntent>, TemporalError> {
-        Ok(self.state.lock().await.pending.iter().map(|claim| claim.pending.clone()).collect())
     }
 }
 
@@ -139,7 +72,7 @@ impl TemporalIntentQueue for RecordingQueue {
         _owner: LeaseHolder,
         limit: TemporalIntentBatchSize,
         _lease_until: DateTime<Utc>,
-    ) -> Result<Vec<ClaimedTemporalAppendIntent>, TemporalError> {
+    ) -> Result<Vec<ClaimedTemporalIntent>, TemporalError> {
         let limit = usize::try_from(limit.get()).unwrap_or(usize::MAX);
         Ok(self.state.lock().await.pending.iter().take(limit).cloned().collect())
     }
@@ -150,7 +83,7 @@ impl TemporalIntentQueue for RecordingQueue {
         entity_id: &Identifier,
         limit: TemporalIntentBatchSize,
         _lease_until: DateTime<Utc>,
-    ) -> Result<Vec<ClaimedTemporalAppendIntent>, TemporalError> {
+    ) -> Result<Vec<ClaimedTemporalIntent>, TemporalError> {
         let limit = usize::try_from(limit.get()).unwrap_or(usize::MAX);
         Ok(self
             .state
@@ -158,34 +91,24 @@ impl TemporalIntentQueue for RecordingQueue {
             .await
             .pending
             .iter()
-            .filter(|claim| claim.pending.intent.entity_id == *entity_id)
+            .filter(|claim| claim.entity_id == *entity_id)
             .take(limit)
             .cloned()
             .collect())
     }
 
-    async fn acknowledge(&self, _owner: LeaseHolder, intent: &KeyedTemporalAppendIntent) -> Result<LeaseAcknowledgement, TemporalError> {
+    async fn holds_intent_for(&self, entity_id: &Identifier) -> Result<bool, TemporalError> {
         let mut state = self.state.lock().await;
-        if state.lease_lapsed {
-            return Ok(LeaseAcknowledgement::Lost);
-        }
-        state
-            .pending
-            .retain(|claim| claim.pending.intent.record.write_id() != intent.intent.record.write_id());
-        state.acknowledged.push(intent.intent.record.write_id());
-        Ok(LeaseAcknowledgement::Applied)
+        state.probed.push(entity_id.clone()); // clone: the recording owns the entity it was asked about.
+        Ok(state.pending.iter().any(|claim| claim.entity_id == *entity_id))
     }
 
-    async fn retry(&self, _owner: LeaseHolder, intent: &KeyedTemporalAppendIntent, retry: TemporalIntentRetry) -> Result<LeaseAcknowledgement, TemporalError> {
+    async fn retry(&self, _owner: LeaseHolder, intent: &ClaimedTemporalIntent, retry: TemporalIntentRetry) -> Result<LeaseAcknowledgement, TemporalError> {
         let mut state = self.state.lock().await;
         if state.lease_lapsed {
             return Ok(LeaseAcknowledgement::Lost);
         }
-        if let Some(claim) = state
-            .pending
-            .iter_mut()
-            .find(|claim| claim.pending.intent.record.write_id() == intent.intent.record.write_id())
-        {
+        if let Some(claim) = state.pending.iter_mut().find(|claim| claim.key == intent.key) {
             claim.attempts = claim.attempts.saturating_add(1);
         }
         state.retries.push(retry);
@@ -193,9 +116,9 @@ impl TemporalIntentQueue for RecordingQueue {
     }
 }
 
-/// How the recording sink refuses an append while it is told to.
+/// How the recording application refuses an intent while it is told to.
 #[derive(Clone, Copy)]
-enum SinkRejection {
+enum ApplicationFailure {
     /// The history store is unreachable.
     StoreUnavailable,
     /// A refusal whose rendering runs past the failure-summary bound: three
@@ -203,11 +126,11 @@ enum SinkRejection {
     LongDiagnostic,
 }
 
-impl SinkRejection {
+impl ApplicationFailure {
     fn error(self) -> TemporalError {
         match self {
-            SinkRejection::StoreUnavailable => TemporalError::from(PersistenceFailure::Unavailable),
-            SinkRejection::LongDiagnostic => {
+            ApplicationFailure::StoreUnavailable => TemporalError::from(PersistenceFailure::Unavailable),
+            ApplicationFailure::LongDiagnostic => {
                 let long = |prefix: &str| format!("{prefix}{}", "x".repeat(1000));
                 TemporalError::NotFound(TemporalNotFoundReason::AttributeDatasetOnEntity {
                     attribute: long("https://example.org/").parse().expect("a valid long attribute name"),
@@ -220,220 +143,81 @@ impl SinkRejection {
 }
 
 #[derive(Default)]
-struct RecordingSinkState {
-    observations: HashMap<WriteId, (Identifier, Vec<TemporalHistoryObservation>)>,
-    /// The failure every append reports while set.
-    reject: Option<SinkRejection>,
+struct RecordingApplicationState {
+    /// The keys of every call, in call order.
+    calls: Vec<Vec<i64>>,
+    /// The keys whose application fails, failing every call naming one.
+    failing: HashSet<i64>,
+    /// The failure every call reports while set.
+    failure: Option<ApplicationFailure>,
+    /// When set, every call reports a lapsed lease.
+    lease_lapsed: bool,
 }
 
-#[derive(Default)]
-struct RecordingSink {
-    state: Mutex<RecordingSinkState>,
+/// An application that removes what it applies from the queue it was built
+/// over, as the store's one transaction does.
+struct RecordingApplication {
+    queue: Arc<RecordingQueue>,
+    state: Mutex<RecordingApplicationState>,
 }
 
-impl RecordingSink {
-    async fn reject(&self) {
-        self.reject_with(SinkRejection::StoreUnavailable).await;
+impl RecordingApplication {
+    fn over(queue: &Arc<RecordingQueue>) -> RecordingApplication {
+        RecordingApplication {
+            queue: Arc::clone(queue),
+            state: Mutex::new(RecordingApplicationState::default()),
+        }
     }
 
-    async fn reject_with(&self, rejection: SinkRejection) {
-        self.state.lock().await.reject = Some(rejection);
+    async fn fail(&self, failure: ApplicationFailure) {
+        self.state.lock().await.failure = Some(failure);
     }
 
-    async fn logical_effect_count(&self) -> usize {
-        self.state.lock().await.observations.len()
+    async fn fail_key(&self, key: i64) {
+        self.state.lock().await.failing.insert(key);
+    }
+
+    async fn lapse_leases(&self) {
+        self.state.lock().await.lease_lapsed = true;
+    }
+
+    async fn calls(&self) -> Vec<Vec<i64>> {
+        self.state.lock().await.calls.clone()
     }
 }
 
 #[async_trait]
-impl TemporalHistorySink for RecordingSink {
-    async fn append(&self, _target: &ContextTarget, intent: &TemporalAppendIntent) -> Result<(), TemporalError> {
+impl TemporalIntentApplication for RecordingApplication {
+    async fn apply(&self, _owner: LeaseHolder, intents: &[ClaimedTemporalIntent]) -> Result<LeaseAcknowledgement, TemporalError> {
+        let keys: Vec<i64> = intents.iter().map(|intent| intent.key.get()).collect();
         let mut state = self.state.lock().await;
-        if let Some(rejection) = state.reject {
-            return Err(rejection.error());
+        state.calls.push(keys.clone()); // clone: the recording owns the keys of each call.
+        if let Some(failure) = state.failure {
+            return Err(failure.error());
         }
-        let observations = intent
-            .history_entries()
-            .filter_map(|(identity, entry)| match entry {
-                TemporalAppendEntry::Observation { row, .. } => Some(TemporalHistoryObservation {
-                    row: row.clone(), // clone: the recording sink owns the accepted observation.
-                    identity: Some(identity),
-                }),
-                TemporalAppendEntry::Tombstone {
-                    attribute_name,
-                    dataset_id,
-                    attribute_type,
-                    instance,
-                } => Some(TemporalHistoryObservation {
-                    row: TemporalHistoryRow {
-                        attribute_name: attribute_name.clone(), // clone: the recording sink owns the tombstone identity.
-                        attribute_type: *attribute_type,
-                        dataset_id: dataset_id.clone(), // clone: the recording sink owns the dataset identity.
-                        value: TemporalValue::Tombstone {
-                            deleted_at: intent.record.recorded_at(),
-                        },
-                        observed_at: None,
-                        recorded_at: intent.record.recorded_at(),
-                        created_at: None,
-                        modified_at: None,
-                        instance: instance.clone(), // clone: the recording sink owns the instance identity.
-                        metadata: None,
-                        partition_total: None,
-                    },
-                    identity: Some(identity),
-                }),
-                TemporalAppendEntry::Scope { .. } => None,
-            })
-            .collect();
-        state.observations.insert(intent.record.write_id(), (intent.entity_id.clone(), observations)); // clone: the recording sink owns the entity identity.
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl TemporalHistoryReader for RecordingSink {
-    fn capabilities(&self) -> TemporalReaderCapabilities {
-        TemporalReaderCapabilities {
-            aggregation: AggregationPushdown::None,
-            history_visibility: HistoryVisibility::Eventual {
-                maximum_lag: Duration::from_secs(1),
-            },
+        if keys.iter().any(|key| state.failing.contains(key)) {
+            return Err(ApplicationFailure::StoreUnavailable.error());
         }
-    }
-
-    async fn entity_exists(&self, _target: &ContextTarget, entity_id: &Identifier) -> Result<bool, TemporalError> {
-        Ok(self.state.lock().await.observations.values().any(|(stored_id, _)| stored_id == entity_id))
-    }
-
-    async fn entity_types(&self, _target: &ContextTarget, entity_ids: &[Identifier]) -> Result<HashMap<Identifier, Vec<EntityTypeName>>, TemporalError> {
-        let state = self.state.lock().await;
-        Ok(entity_ids
-            .iter()
-            .filter(|entity_id| state.observations.values().any(|(stored_id, _)| stored_id == *entity_id))
-            .map(|entity_id| (entity_id.clone(), Vec::new())) // clone: the index owns its validated entity URI.
-            .collect())
-    }
-
-    async fn query_entity_ids(
-        &self,
-        _target: &ContextTarget,
-        _compiled: &CompiledTemporalQuery,
-        _window: &PageWindow,
-        _count: CountPolicy,
-    ) -> Result<TemporalEntityIdOutcome, TemporalError> {
-        let state = self.state.lock().await;
-        let mut identifiers = state
-            .observations
-            .values()
-            .map(|(entity_id, _)| entity_id.clone()) // clone: the reader outcome owns its identifier.
-            .collect::<Vec<_>>();
-        identifiers.sort_by(|left, right| left.as_str().cmp(right.as_str()));
-        identifiers.dedup();
-        Ok(TemporalEntityIdOutcome {
-            candidates: identifiers
-                .into_iter()
-                .map(|entity_id| TemporalEntityCandidate { entity_id, selection: None })
-                .collect(),
-            residual: TemporalResidual::default(),
-            pagination: TemporalPaginationOutcome::Deferred,
-        })
-    }
-
-    /// The recording sink holds rows, not the documents a filter reads, so
-    /// its stored part holds no leaf of any filter.
-    async fn filter_leaf_truths(
-        &self,
-        _target: &ContextTarget,
-        _compiled: &CompiledTemporalQuery,
-        _entity_ids: &[Identifier],
-    ) -> Result<HashMap<Identifier, LeafTruths>, TemporalError> {
-        Ok(HashMap::new())
-    }
-
-    async fn query_entity_history(
-        &self,
-        _target: &ContextTarget,
-        entity_id: &Identifier,
-        _compiled: &CompiledTemporalQuery,
-    ) -> Result<TemporalHistoryOutcome, TemporalError> {
-        let observations = self
-            .state
-            .lock()
-            .await
-            .observations
-            .values()
-            .filter(|(stored_id, _)| stored_id == entity_id)
-            .flat_map(|(_, observations)| observations.clone()) // clone: the reader outcome owns rows retained by the recording sink.
-            .collect();
-        Ok(TemporalHistoryOutcome { observations })
-    }
-
-    async fn query_entity_aggregation(
-        &self,
-        _target: &ContextTarget,
-        _entity_id: &Identifier,
-        _compiled: &CompiledTemporalQuery,
-    ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
-        Err(TemporalError::OperationNotSupported(TemporalOperationUnsupported::RecordingSinkNoAggregation))
-    }
-    async fn query_merged_entity_aggregation(
-        &self,
-        _target: &ContextTarget,
-        _entity_id: &Identifier,
-        _entity_types: &[EntityTypeName],
-        _compiled: &CompiledTemporalQuery,
-        _answered: &[TemporalHistoryRow],
-    ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
-        Err(TemporalError::OperationNotSupported(TemporalOperationUnsupported::RecordingSinkNoAggregation))
-    }
-
-    async fn recorded_attribute_shapes(
-        &self,
-        _target: &ContextTarget,
-        _attributes: &[AttributeName],
-    ) -> Result<HashMap<AttributeName, HashSet<RecordedAttributeShape>>, TemporalError> {
-        Ok(HashMap::new())
+        if state.lease_lapsed {
+            return Ok(LeaseAcknowledgement::Lost);
+        }
+        drop(state);
+        self.queue.remove(&keys).await;
+        Ok(LeaseAcknowledgement::Applied)
     }
 }
 
-fn fixture() -> (KeyedTemporalAppendIntent, Identifier) {
-    let entity_id = "urn:ngsi-ld:Vehicle:deferred".parse::<Identifier>().expect("valid entity ID");
-    (fixture_for(&entity_id, 1), entity_id)
+fn vehicle(index: u8) -> Identifier {
+    format!("urn:ngsi-ld:Vehicle:{index}").parse().expect("valid entity ID")
 }
 
-/// One pending intent recording a speed observation of `entity_id`, queued
-/// under `key`.
-fn fixture_for(entity_id: &Identifier, key: i64) -> KeyedTemporalAppendIntent {
-    let record = WriteRecord::mint(instant());
-    let row = TemporalHistoryRow {
-        attribute_name: "https://example.com/speed".parse().expect("valid attribute name"),
-        attribute_type: AttributeType::Property,
-        dataset_id: None,
-        value: TemporalValue::Number(JsonNumber::from(42)),
-        observed_at: Some(instant()),
-        recorded_at: instant(),
-        created_at: Some(instant()),
-        modified_at: Some(instant()),
-        instance: InstanceIdentity::generate(),
-        metadata: None,
-        partition_total: None,
-    };
-    KeyedTemporalAppendIntent {
+/// One claimed intent of `entity_id` queued under `key`.
+fn claimed(key: i64, entity_id: &Identifier) -> ClaimedTemporalIntent {
+    ClaimedTemporalIntent {
         key: TemporalIntentKey::new(key).expect("positive key"),
-        intent: TemporalAppendIntent {
-            record,
-            base_ordinal: WriteOrdinal::at(0),
-            entity_id: entity_id.clone(), // clone: the intent owns the entity it records.
-            entity_types: Vec::new(),
-            entries: vec![TemporalAppendEntry::Observation { row }],
-            selection_value: Some(ObservedSelection::Written(Arc::new(EntityDocument::new(
-                Some(entity_id.clone()), // clone: the observed document names the entity the intent records.
-                Vec::new(),
-                None,
-                None,
-                IndexMap::new(),
-            )))),
-        },
+        write_id: WriteId::mint(),
+        entity_id: entity_id.clone(), // clone: the claim owns the entity it names.
+        attempts: 0,
     }
 }
 
@@ -445,18 +229,11 @@ fn live_target() -> ContextTarget {
     ContextTarget::Live
 }
 
-fn query() -> CompiledTemporalQuery {
-    CompiledTemporalQuery::builder()
-        .entities(EntitySelection::builder().build())
-        .window(TemporalWindow::builder().timeproperty(TimeProp::Observed).build())
-        .instances(InstanceSelection::builder().build())
-        .representation(
-            Representation::builder()
-                .format(TemporalFormat::Normalized)
-                .sys_attrs(SysAttrsInclusion::Strip)
-                .build(),
-        )
-        .build()
+fn snapshot_target() -> ContextTarget {
+    ContextTarget::Snapshot(SnapshotTarget::published(
+        SnapshotKey::try_from(7).expect("a positive key"),
+        "urn:ngsi-ld:Snapshot:deferred".parse().expect("a valid snapshot URI"),
+    ))
 }
 
 /// The retry schedule the drains under test use: two seconds a step, capped
@@ -466,11 +243,10 @@ fn retry_policy() -> TemporalIntentRetryPolicy {
         .expect("the ceiling is above the base delay")
 }
 
-fn drain(queue: Arc<RecordingQueue>, sink: Arc<RecordingSink>) -> TemporalIntentDrain {
+fn drain(queue: &Arc<RecordingQueue>, application: &Arc<RecordingApplication>) -> TemporalIntentDrain {
     TemporalIntentDrain::new(
-        Arc::clone(&queue) as Arc<dyn TemporalIntentQueue>,
-        queue as Arc<dyn PendingTemporalIntentReader>,
-        sink,
+        Arc::clone(queue) as Arc<dyn TemporalIntentQueue>,
+        Arc::clone(application) as Arc<dyn TemporalIntentApplication>,
         TemporalIntentClaim {
             owner: LeaseHolder::mint(),
             batch_size: TemporalIntentBatchSize::new(NonZeroU32::new(8).expect("non-zero batch")),
@@ -480,133 +256,95 @@ fn drain(queue: Arc<RecordingQueue>, sink: Arc<RecordingSink>) -> TemporalIntent
     )
 }
 
-async fn overlay_rows(queue: Arc<RecordingQueue>, sink: Arc<RecordingSink>, entity_id: &Identifier) -> Vec<TemporalHistoryObservation> {
-    PendingTemporalHistoryOverlay::new(sink, queue)
-        .query_entity_history(&live_target(), entity_id, &query())
-        .await
-        .expect("overlay read")
-        .observations
+/// A queue holding three intents of three entities, keys 1 to 3, and an
+/// application over it.
+async fn three_intents() -> (Arc<RecordingQueue>, Arc<RecordingApplication>) {
+    let queue = Arc::new(RecordingQueue::default());
+    for key in 1..=3 {
+        queue.insert(claimed(key, &vehicle(u8::try_from(key).expect("a small key")))).await;
+    }
+    let application = Arc::new(RecordingApplication::over(&queue));
+    (queue, application)
 }
 
 #[tokio::test]
-async fn committed_pending_intent_is_immediately_visible_once() {
-    let queue = Arc::new(RecordingQueue::default());
-    let sink = Arc::new(RecordingSink::default());
-    let (pending, entity_id) = fixture();
-    queue.insert(pending).await;
-    let overlay = PendingTemporalHistoryOverlay::new(
-        Arc::clone(&sink) as Arc<dyn TemporalHistoryReader>,
-        Arc::clone(&queue) as Arc<dyn PendingTemporalIntentReader>,
-    );
-    assert!(overlay.entity_exists(&live_target(), &entity_id).await.expect("logical entity existence"));
-    let rows = overlay_rows(queue, sink, &entity_id).await;
-    assert_eq!(rows.len(), 1);
-    assert!(rows[0].identity.is_some());
+async fn an_applied_batch_is_counted_as_acknowledged() {
+    let (queue, application) = three_intents().await;
+    let outcome = drain(&queue, &application).execute(instant()).await.expect("the pass runs");
+    assert_eq!(outcome.acknowledged, 3);
+    assert_eq!(outcome.retried, 0);
+    assert_eq!(application.calls().await, vec![vec![1, 2, 3]], "one transaction for the batch");
+    assert_eq!(queue.pending_keys().await, Vec::<i64>::new());
 }
 
 #[tokio::test]
-async fn successful_drain_moves_visibility_from_overlay_to_sink_without_changing_rows() {
-    let queue = Arc::new(RecordingQueue::default());
-    let sink = Arc::new(RecordingSink::default());
-    let (pending, entity_id) = fixture();
-    queue.insert(pending).await;
-    let before = overlay_rows(Arc::clone(&queue), Arc::clone(&sink), &entity_id).await;
-    drain(Arc::clone(&queue), Arc::clone(&sink)).execute(instant()).await.expect("drain succeeds");
-    let after = overlay_rows(Arc::clone(&queue), Arc::clone(&sink), &entity_id).await;
-    pretty_assertions::assert_eq!(before, after);
-    assert_eq!(queue.pending_count().await, 0);
-    assert_eq!(queue.acknowledged_count().await, 1);
+async fn a_failed_batch_is_applied_again_one_intent_at_a_time() {
+    let (queue, application) = three_intents().await;
+    application.fail_key(2).await;
+    drain(&queue, &application).execute(instant()).await.expect("the pass runs");
+    assert_eq!(application.calls().await, vec![vec![1, 2, 3], vec![1], vec![2], vec![3]]);
 }
 
 #[tokio::test]
-async fn mutation_barrier_delivers_the_target_entity_before_returning() {
-    let queue = Arc::new(RecordingQueue::default());
-    let sink = Arc::new(RecordingSink::default());
-    let (pending, entity_id) = fixture();
-    queue.insert(pending).await;
-    drain(Arc::clone(&queue), Arc::clone(&sink))
-        .synchronize(&live_target(), &entity_id)
-        .await
-        .expect("entity synchronization succeeds");
-    assert_eq!(queue.pending_count().await, 0);
-    assert_eq!(sink.logical_effect_count().await, 1);
-}
-
-#[tokio::test]
-async fn sink_acceptance_before_acknowledgement_deduplicates_by_intent_identity() {
-    let queue = Arc::new(RecordingQueue::default());
-    let sink = Arc::new(RecordingSink::default());
-    let (pending, entity_id) = fixture();
-    queue.insert(pending.clone()).await;
-    sink.append(&live_target(), &pending.intent).await.expect("sink accepts intent");
-    let rows = overlay_rows(queue, sink, &entity_id).await;
-    assert_eq!(rows.len(), 1);
-    pretty_assertions::assert_eq!(
-        rows[0].identity,
-        Some(TemporalObservationIdentity {
-            write_id: pending.intent.record.write_id(),
-            ordinal: WriteOrdinal::at(0)
-        })
-    );
-}
-
-#[tokio::test]
-async fn restart_after_anchor_commit_retains_overlay_and_allows_delivery() {
-    let queue = Arc::new(RecordingQueue::default());
-    let sink = Arc::new(RecordingSink::default());
-    let (pending, entity_id) = fixture();
-    queue.insert(pending).await;
-    assert_eq!(overlay_rows(Arc::clone(&queue), Arc::clone(&sink), &entity_id).await.len(), 1);
-    drain(Arc::clone(&queue), Arc::clone(&sink))
-        .execute(instant())
-        .await
-        .expect("restarted drain succeeds");
-    assert_eq!(sink.logical_effect_count().await, 1);
-    assert_eq!(queue.pending_count().await, 0);
-}
-
-#[tokio::test]
-async fn lost_acknowledgement_replays_successfully_with_one_logical_sink_effect() {
-    let queue = Arc::new(RecordingQueue::default());
-    let sink = Arc::new(RecordingSink::default());
-    let (pending, _entity_id) = fixture();
-    queue.insert(pending.clone()).await;
-    sink.append(&live_target(), &pending.intent).await.expect("first sink effect succeeds");
-    drain(Arc::clone(&queue), Arc::clone(&sink)).execute(instant()).await.expect("replay succeeds");
-    assert_eq!(sink.logical_effect_count().await, 1);
-    assert_eq!(queue.acknowledged_count().await, 1);
-}
-
-#[tokio::test]
-async fn sink_failure_records_retry_and_keeps_pending_overlay_visible() {
-    let queue = Arc::new(RecordingQueue::default());
-    let sink = Arc::new(RecordingSink::default());
-    let (pending, entity_id) = fixture();
-    queue.insert(pending).await;
-    sink.reject().await;
-    let outcome = drain(Arc::clone(&queue), Arc::clone(&sink))
-        .execute(instant())
-        .await
-        .expect("failure is retained per item");
+async fn one_failing_intent_does_not_hold_back_its_batch() {
+    let (queue, application) = three_intents().await;
+    application.fail_key(2).await;
+    let outcome = drain(&queue, &application).execute(instant()).await.expect("the pass runs");
+    assert_eq!(outcome.acknowledged, 2);
     assert_eq!(outcome.retried, 1);
-    assert_eq!(outcome.lease_lost, 0);
-    assert_eq!(queue.retry_count().await, 1);
-    assert_eq!(queue.pending_count().await, 1);
-    assert_eq!(queue.acknowledged_count().await, 0);
-    assert_eq!(overlay_rows(queue, sink, &entity_id).await.len(), 1);
+    assert_eq!(queue.pending_keys().await, vec![2], "only the failing intent stays queued");
+    assert_eq!(queue.retries().await.len(), 1);
+}
+
+/// A batch of one is applied once: its own transaction is the per-intent one.
+#[tokio::test]
+async fn a_single_claimed_intent_is_applied_once() {
+    let queue = Arc::new(RecordingQueue::default());
+    queue.insert(claimed(1, &vehicle(1))).await;
+    let application = Arc::new(RecordingApplication::over(&queue));
+    application.fail(ApplicationFailure::StoreUnavailable).await;
+    let outcome = drain(&queue, &application).execute(instant()).await.expect("the pass runs");
+    assert_eq!(application.calls().await, vec![vec![1]]);
+    assert_eq!(outcome.retried, 1);
+}
+
+/// An application or retry whose lease has lapsed is counted as lost, not as
+/// applied or retried, and the intent is left to the worker that now holds it.
+#[tokio::test]
+async fn a_lapsed_lease_is_reported_as_lost_rather_than_as_an_outcome() {
+    let queue = Arc::new(RecordingQueue::default());
+    queue.insert(claimed(1, &vehicle(1))).await;
+    let application = Arc::new(RecordingApplication::over(&queue));
+    application.lapse_leases().await;
+    let outcome = drain(&queue, &application)
+        .execute(instant())
+        .await
+        .expect("a lapsed lease is an outcome, not a failure");
+    assert_eq!(outcome.acknowledged, 0);
+    assert_eq!(outcome.retried, 0);
+    assert_eq!(outcome.lease_lost, 1);
+    assert_eq!(queue.pending_keys().await, vec![1], "the intent is left to its new owner");
+
+    queue.lapse_leases().await;
+    application.fail(ApplicationFailure::StoreUnavailable).await;
+    let outcome = drain(&queue, &application)
+        .execute(instant())
+        .await
+        .expect("a lapsed lease is an outcome, not a failure");
+    assert_eq!(outcome.retried, 0);
+    assert_eq!(outcome.lease_lost, 1, "a retry that lost its lease is lost too");
 }
 
 /// The retry delay grows a base step per completed attempt and stops at the
 /// policy ceiling, so an intent that keeps failing is retried at a bounded
 /// cadence instead of backing off without limit.
 #[tokio::test]
-async fn repeated_sink_failures_back_off_linearly_up_to_the_configured_ceiling() {
+async fn repeated_application_failures_back_off_linearly_up_to_the_configured_ceiling() {
     let queue = Arc::new(RecordingQueue::default());
-    let sink = Arc::new(RecordingSink::default());
-    let (pending, _entity_id) = fixture();
-    queue.insert(pending).await;
-    sink.reject().await;
-    let drain = drain(Arc::clone(&queue), Arc::clone(&sink));
+    queue.insert(claimed(1, &vehicle(1))).await;
+    let application = Arc::new(RecordingApplication::over(&queue));
+    application.fail(ApplicationFailure::StoreUnavailable).await;
+    let drain = drain(&queue, &application);
     for _ in 0..4 {
         drain.execute(instant()).await.expect("failure is retained per item");
     }
@@ -618,87 +356,78 @@ async fn repeated_sink_failures_back_off_linearly_up_to_the_configured_ceiling()
     );
 }
 
-/// An acknowledgement or retry whose lease has lapsed is counted as lost, not
-/// as delivered or retried, and is left to the worker that now holds the row.
+/// The application's failure summary is cut to what the queue row can hold.
 #[tokio::test]
-async fn a_lapsed_lease_is_reported_as_lost_rather_than_as_an_outcome() {
+async fn a_long_application_failure_summary_is_cut_to_the_column_limit() {
     let queue = Arc::new(RecordingQueue::default());
-    let sink = Arc::new(RecordingSink::default());
-    let (pending, _entity_id) = fixture();
-    queue.insert(pending).await;
-    queue.lapse_leases().await;
-    let outcome = drain(Arc::clone(&queue), Arc::clone(&sink))
-        .execute(instant())
-        .await
-        .expect("a lapsed lease is an outcome, not a failure");
-    assert_eq!(outcome.acknowledged, 0);
-    assert_eq!(outcome.retried, 0);
-    assert_eq!(outcome.lease_lost, 1);
-    assert_eq!(queue.acknowledged_count().await, 0, "the row is left to its new owner");
-    assert_eq!(queue.pending_count().await, 1);
-}
-
-/// The sink's failure summary is cut to what the queue row can hold.
-#[tokio::test]
-async fn a_long_sink_failure_summary_is_cut_to_the_column_limit() {
-    let queue = Arc::new(RecordingQueue::default());
-    let sink = Arc::new(RecordingSink::default());
-    let (pending, _entity_id) = fixture();
-    queue.insert(pending).await;
-    sink.reject_with(SinkRejection::LongDiagnostic).await;
-    drain(Arc::clone(&queue), Arc::clone(&sink))
-        .execute(instant())
-        .await
-        .expect("failure is retained per item");
+    queue.insert(claimed(1, &vehicle(1))).await;
+    let application = Arc::new(RecordingApplication::over(&queue));
+    application.fail(ApplicationFailure::LongDiagnostic).await;
+    drain(&queue, &application).execute(instant()).await.expect("failure is retained per item");
     let summaries: Vec<usize> = queue.retries().await.iter().map(|retry| retry.summary.chars().count()).collect();
     assert_eq!(summaries, vec![usize::try_from(FAILURE_SUMMARY_MAX_CHARACTERS).expect("fits usize")]);
 }
 
-fn snapshot_target() -> ContextTarget {
-    ContextTarget::Snapshot(SnapshotTarget::published(
-        SnapshotKey::try_from(7).expect("a positive key"),
-        "urn:ngsi-ld:Snapshot:deferred".parse().expect("a valid snapshot URI"),
-    ))
+/// An intent is reported stuck from the third completed attempt by what names
+/// it in the queue, read from the claim alone.
+#[tokio::test]
+async fn a_stuck_intent_is_reported_by_its_key_write_and_entity() {
+    let queue = Arc::new(RecordingQueue::default());
+    let intent = claimed(7, &vehicle(7));
+    queue.insert(intent.clone()).await; // clone: the expected report is built from the claim after it is queued
+    let application = Arc::new(RecordingApplication::over(&queue));
+    application.fail(ApplicationFailure::StoreUnavailable).await;
+    let drain = drain(&queue, &application);
+    let mut reported = Vec::new();
+    for _ in 0..3 {
+        reported.push(drain.execute(instant()).await.expect("failure is retained per item").stuck);
+    }
+    assert_eq!(
+        reported,
+        vec![
+            Vec::new(),
+            Vec::new(),
+            vec![StuckTemporalIntent {
+                key: intent.key,
+                write_id: intent.write_id,
+                entity_id: intent.entity_id,
+                attempts: 3,
+            }],
+        ]
+    );
 }
 
-/// Only the live branch defers its history, so an intent the queue holds is
-/// the live branch's: a Snapshot read neither sees its rows, nor counts its
-/// entity as existing, nor lists it among the matching entities.
 #[tokio::test]
-async fn a_snapshot_read_does_not_overlay_the_live_branchs_pending_intents() {
-    let queue = Arc::new(RecordingQueue::default());
-    let sink = Arc::new(RecordingSink::default());
-    let (pending, entity_id) = fixture();
-    queue.insert(pending).await;
-    let overlay = PendingTemporalHistoryOverlay::new(
-        Arc::clone(&sink) as Arc<dyn TemporalHistoryReader>,
-        Arc::clone(&queue) as Arc<dyn PendingTemporalIntentReader>,
-    );
-    let snapshot = snapshot_target();
-
-    let rows = overlay
-        .query_entity_history(&snapshot, &entity_id, &query())
+async fn the_mutation_barrier_delivers_the_target_entity_before_returning() {
+    let (queue, application) = three_intents().await;
+    drain(&queue, &application)
+        .synchronize(&live_target(), &vehicle(2))
         .await
-        .expect("snapshot history read")
-        .observations;
-    assert!(rows.is_empty(), "the live branch's pending rows must not appear in a Snapshot: {rows:?}");
-    assert!(!overlay.entity_exists(&snapshot, &entity_id).await.expect("snapshot existence"));
-    let listed = overlay
-        .query_entity_ids(&snapshot, &query(), &PageWindow::unbounded(), CountPolicy::Omit)
-        .await
-        .expect("snapshot entity listing");
-    assert!(listed.candidates.is_empty(), "the pending entity is the live branch's");
-    assert!(
-        overlay
-            .entity_types(&snapshot, slice::from_ref(&entity_id))
-            .await
-            .expect("snapshot types")
-            .is_empty()
-    );
+        .expect("entity synchronization succeeds");
+    assert_eq!(application.calls().await, vec![vec![2]]);
+    assert_eq!(queue.pending_keys().await, vec![1, 3]);
+}
 
-    // The same intent is visible on the live branch, so the Snapshot read
-    // skipped it rather than finding nothing to overlay.
-    assert!(overlay.entity_exists(&live_target(), &entity_id).await.expect("live existence"));
+/// The barrier asks the queue whether the entity holds an intent, before and
+/// after delivering, and claims nothing when it holds none.
+#[tokio::test]
+async fn the_mutation_barrier_asks_the_queue_without_reading_intents() {
+    let (queue, application) = three_intents().await;
+    let drain = drain(&queue, &application);
+    drain.synchronize(&live_target(), &vehicle(9)).await.expect("nothing to synchronize");
+    assert!(application.calls().await.is_empty(), "an entity without intents claims nothing");
+    drain.synchronize(&live_target(), &vehicle(1)).await.expect("entity synchronization succeeds");
+    assert_eq!(queue.probed().await, vec![vehicle(9), vehicle(1), vehicle(1)]);
+}
+
+/// A barrier that cannot deliver every intent of the entity fails rather than
+/// letting the mutation run ahead of history still queued.
+#[tokio::test]
+async fn a_mutation_barrier_that_leaves_an_intent_queued_fails() {
+    let (queue, application) = three_intents().await;
+    application.fail_key(2).await;
+    let refused = drain(&queue, &application).synchronize(&live_target(), &vehicle(2)).await;
+    assert!(matches!(refused, Err(TemporalError::Internal(_))), "{refused:?}");
 }
 
 /// A Snapshot branch records its history in the write's own transaction, so
@@ -706,96 +435,12 @@ async fn a_snapshot_read_does_not_overlay_the_live_branchs_pending_intents() {
 /// branch's pending intent for the entity alone.
 #[tokio::test]
 async fn a_snapshot_mutation_barrier_neither_waits_for_nor_delivers_live_intents() {
-    let queue = Arc::new(RecordingQueue::default());
-    let sink = Arc::new(RecordingSink::default());
-    let (pending, entity_id) = fixture();
-    queue.insert(pending).await;
-
-    drain(Arc::clone(&queue), Arc::clone(&sink))
-        .synchronize(&snapshot_target(), &entity_id)
+    let (queue, application) = three_intents().await;
+    drain(&queue, &application)
+        .synchronize(&snapshot_target(), &vehicle(1))
         .await
         .expect("a Snapshot barrier has nothing to synchronize");
-
-    assert_eq!(queue.pending_count().await, 1, "the live branch's intent stays queued");
-    assert_eq!(sink.logical_effect_count().await, 0, "nothing was delivered on the Snapshot's behalf");
-}
-
-/// The overlay over three stored and three pending entities, listing every
-/// one of them in identifier order.
-async fn merged_overlay() -> PendingTemporalHistoryOverlay {
-    let queue = Arc::new(RecordingQueue::default());
-    let sink = Arc::new(RecordingSink::default());
-    for (index, key) in [(1, 11), (3, 13), (5, 15)] {
-        let entity_id = format!("urn:ngsi-ld:Vehicle:{index}").parse::<Identifier>().expect("valid entity ID");
-        sink.append(&live_target(), &fixture_for(&entity_id, key).intent).await.expect("stored history");
-    }
-    for (index, key) in [(2, 12), (4, 14), (6, 16)] {
-        let entity_id = format!("urn:ngsi-ld:Vehicle:{index}").parse::<Identifier>().expect("valid entity ID");
-        queue.insert(fixture_for(&entity_id, key)).await;
-    }
-    PendingTemporalHistoryOverlay::new(sink as Arc<dyn TemporalHistoryReader>, queue as Arc<dyn PendingTemporalIntentReader>)
-}
-
-fn vehicles(indices: &[u8]) -> Vec<Identifier> {
-    indices
-        .iter()
-        .map(|index| format!("urn:ngsi-ld:Vehicle:{index}").parse().expect("valid entity ID"))
-        .collect()
-}
-
-/// Clause 5.5.9.1: a from-end cursor over stored and pending entities lands on
-/// the final entities of the merged collection, not of the stored one alone.
-#[tokio::test]
-async fn pending_ids_merged_under_a_from_end_cursor_yield_the_final_ids() {
-    let window = PageWindow {
-        limit: 2,
-        start: PageStart::Cursor(Some(PageCursor::End)),
-    };
-    let (identifiers, _) = merged_overlay()
-        .await
-        .query_entity_ids(&live_target(), &query(), &window, CountPolicy::Omit)
-        .await
-        .expect("merged listing")
-        .complete(&window, CountPolicy::Omit)
-        .expect("a deferred outcome");
-    assert_eq!(identifiers, vehicles(&[5, 6]));
-}
-
-/// Clause 6.3.13: the count of a merged listing is every stored and pending
-/// match, whatever page the window cuts.
-#[tokio::test]
-async fn the_overlay_count_is_the_whole_merged_set() {
-    let window = PageWindow::offset(2, 2);
-    let (identifiers, total) = merged_overlay()
-        .await
-        .query_entity_ids(&live_target(), &query(), &window, CountPolicy::Emit)
-        .await
-        .expect("merged listing")
-        .complete(&window, CountPolicy::Emit)
-        .expect("a deferred outcome");
-    assert_eq!(identifiers, vehicles(&[3, 4]));
-    assert_eq!(total, Some(6));
-}
-
-/// Clause 5.7.4.4: an entity a Context Source contributed a part of to a split
-/// query is judged on its gathered parts, so its pending part passes the value
-/// filters the other pending entities are still held to.
-#[tokio::test]
-async fn a_contributed_pending_entity_passes_the_value_filters() {
-    let mut filtered = query();
-    filtered.entities.q_expr = Some("\"https://example.com/speed\">50".parse().expect("a valid q"));
-    filtered.contributed = ContributedEntities::new(vehicles(&[4]), ContributedRendering::Local);
-    let window = PageWindow::unbounded();
-    let (identifiers, _) = merged_overlay()
-        .await
-        .query_entity_ids(&live_target(), &filtered, &window, CountPolicy::Omit)
-        .await
-        .expect("merged listing")
-        .complete(&window, CountPolicy::Omit)
-        .expect("a deferred outcome");
-    assert_eq!(
-        identifiers,
-        vehicles(&[1, 3, 4, 5]),
-        "the stored entities, and of the pending ones only the contributed one"
-    );
+    assert_eq!(queue.pending_keys().await, vec![1, 2, 3], "the live branch's intent stays queued");
+    assert!(application.calls().await.is_empty(), "nothing was delivered on the Snapshot's behalf");
+    assert_eq!(queue.probed().await, Vec::<Identifier>::new());
 }

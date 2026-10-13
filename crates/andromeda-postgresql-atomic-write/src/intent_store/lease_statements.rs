@@ -1,4 +1,4 @@
-//! The claim, pending-read and lease-guarded acknowledgement statements of the
+//! The claim, pending-probe, lease-guarded removal and retry statements of the
 //! temporal append intent queue.
 //!
 //! The queue lives only in the live branch, in the tenant's default schema, so
@@ -6,6 +6,7 @@
 
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_postgresql_schema::queue::TemporalAppendIntents;
+use andromeda_postgresql_seaquery::{clock::wall_clock, pg_array::any};
 use chrono::{DateTime, Utc};
 use sea_query::{
     Cond,
@@ -57,23 +58,22 @@ pub(super) fn claim_statement(owner: LeaseHolder, entity_id: Option<&str>, limit
         .and_where(Expr::col(TemporalAppendIntents::IntentKey).in_subquery(eligible.clone()))
         .returning(Query::returning().columns([
             TemporalAppendIntents::IntentKey,
-            TemporalAppendIntents::Payload,
+            TemporalAppendIntents::WriteId,
+            TemporalAppendIntents::EntityId,
             TemporalAppendIntents::AttemptCount,
         ]))
         .to_owned()
 }
 
-/// Read pending intents in key order, optionally for one entity.
-pub(super) fn pending_statement(entity_id: Option<&str>) -> SelectStatement {
-    let mut statement = Query::select();
-    statement
-        .column(TemporalAppendIntents::IntentKey)
-        .column(TemporalAppendIntents::Payload)
-        .from(TemporalAppendIntents::Table);
-    if let Some(entity_id) = entity_id {
-        statement.and_where(Expr::col(TemporalAppendIntents::EntityId).eq(entity_id));
-    }
-    statement.order_by(TemporalAppendIntents::IntentKey, Order::Asc).to_owned()
+/// Whether the queue holds an intent for one entity, leased or not; answered
+/// by `idx_temporal_append_intents_entity` alone.
+pub(super) fn holds_intent_statement(entity_id: &str) -> SelectStatement {
+    let probe = Query::select()
+        .expr(Expr::val(1))
+        .from(TemporalAppendIntents::Table)
+        .and_where(Expr::col(TemporalAppendIntents::EntityId).eq(entity_id))
+        .to_owned();
+    Query::select().expr(Expr::exists(probe)).to_owned()
 }
 
 /// The guard every lease-scoped statement carries: the row is this worker's
@@ -91,11 +91,22 @@ fn lease_guard(intent_key: i64, write_id: Uuid, owner: LeaseHolder) -> Condition
         .add(Expr::col(TemporalAppendIntents::LeaseUntil).gt(Expr::current_timestamp()))
 }
 
-/// Remove one acknowledged intent held under this worker's live lease.
-pub(super) fn acknowledge_statement(intent_key: i64, write_id: Uuid, owner: LeaseHolder) -> DeleteStatement {
+/// Remove the applied intents named by `intent_keys` that this worker still
+/// holds under a live lease, in the transaction that applied them.
+///
+/// The lease is compared with the clock at the removal, not at the start of
+/// the transaction: the application may outlast the lease, and then another
+/// worker may already hold the intents, so a removal that reaches fewer rows
+/// than it names rolls the application back.
+pub(super) fn applied_removal_statement(intent_keys: &[i64], owner: LeaseHolder) -> DeleteStatement {
     Query::delete()
         .from_table(TemporalAppendIntents::Table)
-        .cond_where(lease_guard(intent_key, write_id, owner))
+        .cond_where(
+            Cond::all()
+                .add(Expr::col(TemporalAppendIntents::IntentKey).eq(any(Expr::val(intent_keys.to_vec()))))
+                .add(Expr::col(TemporalAppendIntents::ClaimedBy).eq(owner.as_uuid()))
+                .add(Expr::col(TemporalAppendIntents::LeaseUntil).gt(wall_clock())),
+        )
         .to_owned()
 }
 
@@ -114,7 +125,7 @@ pub(super) fn retry_statement(next_attempt_at: DateTime<Utc>, last_error: &str, 
 
 #[cfg(test)]
 mod tests {
-    use crate::intent_store::lease_statements::{acknowledge_statement, claim_statement, pending_statement, retry_statement};
+    use crate::intent_store::lease_statements::{applied_removal_statement, claim_statement, holds_intent_statement, retry_statement};
     use andromeda_context_commit::lease_holder::LeaseHolder;
     use chrono::Utc;
     use sea_query::PostgresQueryBuilder;
@@ -137,24 +148,33 @@ mod tests {
         assert!(sql.contains(r#""entity_id" = 'urn:ngsi-ld:Vehicle:1'"#), "{sql}");
     }
 
+    /// The claim names each intent without reading its entries: the queue
+    /// applies them where they wait.
     #[test]
-    fn pending_reads_are_ordered_by_intent_key() {
-        let all = pending_statement(None).to_string(PostgresQueryBuilder);
-        assert!(all.contains(r#"ORDER BY "intent_key""#), "{all}");
-        let one = pending_statement(Some("urn:ngsi-ld:Vehicle:1")).to_string(PostgresQueryBuilder);
-        assert!(one.contains(r#""entity_id" = 'urn:ngsi-ld:Vehicle:1'"#), "{one}");
+    fn the_claim_returns_the_intent_identity_and_no_entries() {
+        let sql = claim_statement(holder(), None, 10, Utc::now()).to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#"RETURNING "intent_key", "write_id", "entity_id", "attempt_count""#), "{sql}");
+        assert!(!sql.contains("entries"), "{sql}");
+    }
+
+    #[test]
+    fn the_pending_probe_asks_whether_one_entity_holds_an_intent() {
+        let sql = holds_intent_statement("urn:ngsi-ld:Vehicle:1").to_string(PostgresQueryBuilder);
+        assert!(sql.starts_with("SELECT EXISTS(SELECT 1 FROM"), "{sql}");
+        assert!(sql.contains(r#""entity_id" = 'urn:ngsi-ld:Vehicle:1'"#), "{sql}");
+        assert!(!sql.contains("entries"), "{sql}");
     }
 
     /// Owner alone is not the guard: a lapsed lease may already have been
-    /// reclaimed, so both statements also require the lease to be live.
+    /// reclaimed, so the removal and the retry also require the lease to be
+    /// live, the removal at the instant it runs.
     #[test]
-    fn acknowledgement_and_retry_are_guarded_by_lease_ownership_and_a_live_lease() {
-        let ack = acknowledge_statement(1, Uuid::nil(), holder()).to_string(PostgresQueryBuilder);
-        assert!(
-            ack.contains(r#"DELETE FROM "temporal_append_intents""#) && ack.contains(r#""claimed_by" ="#),
-            "{ack}"
-        );
-        assert!(ack.contains(r#""lease_until" > CURRENT_TIMESTAMP"#), "{ack}");
+    fn the_application_removes_only_intents_held_under_a_live_lease() {
+        let removal = applied_removal_statement(&[1, 2], holder()).to_string(PostgresQueryBuilder);
+        assert!(removal.starts_with(r#"DELETE FROM "temporal_append_intents""#), "{removal}");
+        assert!(removal.contains(r#""intent_key" = ANY(ARRAY [1,2])"#), "{removal}");
+        assert!(removal.contains(r#""claimed_by" ="#), "{removal}");
+        assert!(removal.contains(r#""lease_until" > CLOCK_TIMESTAMP()"#), "{removal}");
         let retry = retry_statement(Utc::now(), "boom", 1, Uuid::nil(), holder()).to_string(PostgresQueryBuilder);
         assert!(retry.contains(r#""claimed_by" = NULL"#) && retry.contains(r#""lease_until" = NULL"#), "{retry}");
         assert!(retry.contains(r#""lease_until" > CURRENT_TIMESTAMP"#), "{retry}");

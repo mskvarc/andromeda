@@ -18,7 +18,7 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_number::{JsonNumber, JsonNumberError};
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, registry::UnknownCompactCode, value_kind::ValueKind};
-use andromeda_postgresql_encoding::ewkb::{Ewkb, EwkbError, encode};
+use andromeda_postgresql_encoding::ewkb::{Ewkb, EwkbError};
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
 use andromeda_unit_catalog::unit_code_id::{UnitCodeId, UnitCodeIdOutOfRange};
 use bigdecimal::BigDecimal;
@@ -227,7 +227,7 @@ impl TryFrom<InstanceMembers> for MemberColumns {
             StoredValue::Boolean { flag, .. } => columns.value_boolean = Some(flag),
             StoredValue::DateTime { instant, .. } => columns.value_date_time = Some(instant),
             StoredValue::Geometry { form, members } => {
-                columns.value_geometry = Some(EwkbGeometry(encode(&form)?.to_vec()));
+                columns.value_geometry = Some(EwkbGeometry::of(&form)?);
                 columns.value_geometry_members = members.map(StoredJson::into_json);
             }
             StoredValue::Object(object) => columns.value_object = Some(object.into_json()),

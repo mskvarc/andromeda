@@ -1,4 +1,5 @@
-//! Idempotent temporal append sink backed by PostgreSQL history tables.
+//! Recording a commit's temporal append intents as history rows in the
+//! commit's own transaction.
 
 use crate::{
     attribute_history_row::AttributeHistoryRow,
@@ -12,7 +13,6 @@ use crate::{
     temporal_catalog_write::TemporalCatalog,
     temporal_store_invariant::TemporalStoreInvariant,
     temporal_stream::{TemporalCatalogUpsert, TemporalStreamKey},
-    write_record_persist::persist_write_record,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
@@ -21,100 +21,75 @@ use andromeda_postgresql_attribute_instance::{name_keys::MentionedNames, name_re
 use andromeda_postgresql_codes::{attribute_kind_code::stored_attribute_kind, stream_key::StreamKey, temporal_entity_key::TemporalEntityKey};
 use andromeda_temporal::{
     append_intent::{TemporalAppendEntry, TemporalAppendIntent, TemporalObservationIdentity},
-    error::TemporalError,
-    port::temporal_history_sink::TemporalHistorySink,
     scope_observation::ScopeObservation,
     write_purpose::TemporalWritePurpose,
 };
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use std::{slice, sync::Arc};
 
-/// PostgreSQL temporal history used through the idempotent append port.
+/// Append a whole chunk of typed intents in the caller's transaction.
 ///
-/// The sink writes Temporal Evolution and nothing else. Current entity state is
-/// written by the transaction that mutates the entity, so a deferred history
-/// append touches none of it: an append that reaches this sink describes an
-/// entity mutation that has already committed.
-pub struct PostgresTemporalHistorySink {
-    /// Temporal repository selected for the sink workload.
-    repository: Arc<TemporalRepository>,
-}
-
-impl PostgresTemporalHistorySink {
-    /// Construct one PostgreSQL-backed idempotent history sink.
-    #[must_use]
-    pub const fn new(repository: Arc<TemporalRepository>) -> PostgresTemporalHistorySink {
-        PostgresTemporalHistorySink { repository }
+/// The catalogue is resolved once for the chunk — every entity's narrow key
+/// and every grain's stream in a fixed number of statements regardless of
+/// how many entities the chunk carries — then the history and scope rows of
+/// every intent are built in memory against that one catalogue and landed in
+/// one history insert and one scope insert. Per-intent ordinal derivation
+/// stays per-intent; only the statements are hoisted to the chunk.
+///
+/// An intent that only ends instances is passed over when the entity has no
+/// Temporal Evolution left: clause 5.6.16 deletes one independently of
+/// clause 5.6.6's deletion of current state, so a client can delete history
+/// first and there is then no sequence for clauses 4.5.7 and 4.5.8 to record
+/// an ending in.
+///
+/// # Errors
+///
+/// Returns [`TemporalStoreError::NotFound`] when an intent records an
+/// observation against a Temporal Evolution that does not exist and declares
+/// no entity type to create it with, [`TemporalStoreError::Validation`] when
+/// an entry cannot be encoded, and [`TemporalStoreError::Database`] when a
+/// statement fails.
+pub(crate) async fn append_intents_in_tx(
+    repository: &TemporalRepository,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    target: &ContextTarget,
+    intents: &[TemporalAppendIntent],
+) -> Result<(), TemporalStoreError> {
+    if intents.is_empty() {
+        return Ok(());
     }
-
-    /// Append a whole chunk of typed intents in the caller's transaction.
-    ///
-    /// The catalogue is resolved once for the chunk — every entity's narrow key
-    /// and every grain's stream in a fixed number of statements regardless of
-    /// how many entities the chunk carries — then the history and scope rows of
-    /// every intent are built in memory against that one catalogue and landed in
-    /// one history insert and one scope insert. Per-intent ordinal derivation
-    /// stays per-intent; only the statements are hoisted to the chunk.
-    ///
-    /// An intent that only ends instances is passed over when the entity has no
-    /// Temporal Evolution left: clause 5.6.16 deletes one independently of
-    /// clause 5.6.6's deletion of current state, so a client can delete history
-    /// first and there is then no sequence for clauses 4.5.7 and 4.5.8 to record
-    /// an ending in.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TemporalStoreError::NotFound`] when an intent records an
-    /// observation against a Temporal Evolution that does not exist and declares
-    /// no entity type to create it with, [`TemporalStoreError::Validation`] when
-    /// an entry cannot be encoded, and [`TemporalStoreError::Database`] when a
-    /// statement fails.
-    pub(crate) async fn append_entries_batch(
-        repository: &TemporalRepository,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        target: &ContextTarget,
-        intents: &[TemporalAppendIntent],
-    ) -> Result<(), TemporalStoreError> {
-        if intents.is_empty() {
-            return Ok(());
-        }
-        let upserts: Vec<TemporalCatalogUpsert> = intents.iter().map(catalog_upsert).collect();
-        // Every intent in the chunk shares its commit's one ingestion instant:
-        // the native path hands one record to the whole chunk, and the single
-        // deferred path a one-element chunk, so the catalogue's write clock is
-        // that instant.
-        let recorded_at = intents[0].record.recorded_at();
-        let catalog = repository.upsert_temporal_catalog_batch_in_tx(tx, target, &upserts, recorded_at).await?;
-        let mut rows = IntentRows::default();
-        for intent in intents {
-            // Every failure below is this intent's own, so it names the entity
-            // whose write the commit can set aside when it is a refusal.
-            rows.extend(&catalog, intent).map_err(|source| TemporalStoreError::EntityIntent {
-                entity_id: intent.entity_id.clone(), // clone: the failure owns the entity it names.
-                source: Box::new(source),
-            })?;
-        }
-        let IntentRows { history, scopes } = rows;
-        let mut mentioned = MentionedNames::default();
-        history
-            .iter()
-            .filter_map(|(_, metadata)| *metadata)
-            .for_each(|metadata| mention(metadata, &mut mentioned));
-        let keys = resolve_mentioned(tx, mentioned, repository.entity_type_names.as_ref(), repository.attribute_names.as_ref()).await?;
-        let history = history
-            .into_iter()
-            .map(|(mut row, metadata)| {
-                if let Some(metadata) = metadata {
-                    row.members = HistoryMembers::keyed(metadata, &keys)?;
-                }
-                Ok(row)
-            })
-            .collect::<Result<Vec<_>, TemporalStoreError>>()?;
-        repository.insert_history_batch_in_tx(tx, target, history).await?;
-        repository.insert_scope_history_batch_in_tx(tx, target, &scopes).await?;
-        Ok(())
+    let upserts: Vec<TemporalCatalogUpsert> = intents.iter().map(catalog_upsert).collect();
+    // Every intent in the chunk shares its commit's one ingestion instant, so
+    // the catalogue's write clock is that instant.
+    let recorded_at = intents[0].record.recorded_at();
+    let catalog = repository.upsert_temporal_catalog_batch_in_tx(tx, target, &upserts, recorded_at).await?;
+    let mut rows = IntentRows::default();
+    for intent in intents {
+        // Every failure below is this intent's own, so it names the entity
+        // whose write the commit can set aside when it is a refusal.
+        rows.extend(&catalog, intent).map_err(|source| TemporalStoreError::EntityIntent {
+            entity_id: intent.entity_id.clone(), // clone: the failure owns the entity it names.
+            source: Box::new(source),
+        })?;
     }
+    let IntentRows { history, scopes } = rows;
+    let mut mentioned = MentionedNames::default();
+    history
+        .iter()
+        .filter_map(|(_, metadata)| *metadata)
+        .for_each(|metadata| mention(metadata, &mut mentioned));
+    let keys = resolve_mentioned(tx, mentioned, repository.entity_type_names.as_ref(), repository.attribute_names.as_ref()).await?;
+    let history = history
+        .into_iter()
+        .map(|(mut row, metadata)| {
+            if let Some(metadata) = metadata {
+                row.members = HistoryMembers::keyed(metadata, &keys)?;
+            }
+            Ok(row)
+        })
+        .collect::<Result<Vec<_>, TemporalStoreError>>()?;
+    repository.insert_history_batch_in_tx(tx, target, history).await?;
+    repository.insert_scope_history_batch_in_tx(tx, target, &scopes).await?;
+    Ok(())
 }
 
 /// The history and scope rows a chunk's intents amount to.
@@ -209,24 +184,6 @@ impl<'a> IntentRows<'a> {
                 }),
             }
         }
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl TemporalHistorySink for PostgresTemporalHistorySink {
-    async fn append(&self, target: &ContextTarget, intent: &TemporalAppendIntent) -> Result<(), TemporalError> {
-        let mut tx = self.repository.pool.begin().await.map_err(|error| persistence(error))?;
-        persist_write_record(&mut tx, &intent.record).await.map_err(|error| persistence(error))?;
-        // No claim gate: a replay of the same intent always reaches this call
-        // again, and its rows collide with the ones the first attempt wrote on
-        // their row-level `ON CONFLICT ... DO NOTHING` constraints instead of
-        // duplicating them. The one intent is a one-element chunk to the batch
-        // path the native commit drives many entities through.
-        PostgresTemporalHistorySink::append_entries_batch(&self.repository, &mut tx, target, slice::from_ref(intent))
-            .await
-            .map_err(|error| persistence(error))?;
-        tx.commit().await.map_err(|error| persistence(error))?;
         Ok(())
     }
 }
@@ -349,11 +306,6 @@ pub(crate) fn observation_row(
     })
 }
 
-/// Classify one store failure at the temporal port boundary.
-#[track_caller]
-fn persistence(error: impl Into<TemporalStoreError>) -> TemporalError {
-    TemporalError::from(error.into())
-}
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -393,7 +345,6 @@ mod tests {
             entity_id: "urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("valid entity URI"),
             entity_types: Vec::new(),
             entries,
-            selection_value: None,
         }
     }
 

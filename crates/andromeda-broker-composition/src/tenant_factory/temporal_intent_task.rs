@@ -24,8 +24,7 @@ use andromeda_temporal::{
     intent_retry_policy::TemporalIntentRetryPolicy,
     port::{
         mutation_barrier::TemporalMutationBarrier,
-        pending_intent_reader::PendingTemporalIntentReader,
-        temporal_history_sink::TemporalHistorySink,
+        temporal_intent_application::TemporalIntentApplication,
         temporal_intent_publisher::TemporalIntentPublisher,
         temporal_intent_queue::{TemporalIntentBatchSize, TemporalIntentQueue},
     },
@@ -67,8 +66,7 @@ pub(super) fn register_temporal_intent_drain(
     config: &TemporalConfig,
     supervisor: &TaskSupervisor,
     queue: Arc<dyn TemporalIntentQueue>,
-    pending: Arc<dyn PendingTemporalIntentReader>,
-    sink: Arc<dyn TemporalHistorySink>,
+    application: Arc<dyn TemporalIntentApplication>,
     pacer: Arc<BackgroundPacer>,
 ) -> Result<TemporalIntentRegistration, TenantAssemblyError> {
     let fallback_floor = config.intent_fallback.duration();
@@ -83,8 +81,7 @@ pub(super) fn register_temporal_intent_drain(
         TemporalIntentRetryPolicy::new(config.intent_retry.duration(), config.intent_retry_max.duration(), stuck_after).map_err(AssemblyInvariant::from)?;
     let drain = Arc::new(TemporalIntentDrain::new(
         queue,
-        pending,
-        sink,
+        application,
         TemporalIntentClaim {
             owner: LeaseHolder::mint(),
             batch_size,

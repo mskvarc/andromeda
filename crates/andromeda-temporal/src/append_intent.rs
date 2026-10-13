@@ -1,12 +1,6 @@
 //! Typed durable temporal append intents.
 
-use crate::{
-    error::TemporalError,
-    intent_preparation::prepare,
-    observed_selection::ObservedSelection,
-    scope_observation::ScopeObservation,
-    write_purpose::TemporalWritePurpose,
-};
+use crate::{error::TemporalError, intent_preparation::prepare, scope_observation::ScopeObservation, write_purpose::TemporalWritePurpose};
 use andromeda_context_commit::{history_record::HistoryRecord, write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -18,10 +12,9 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
 use chrono::{DateTime, Utc};
 use derive_more::Display;
-use serde::{Deserialize, Serialize};
 
 /// Monotonic anchor-assigned order of committed intents within one tenant.
-#[derive(Clone, Copy, Debug, Deserialize, Display, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Display, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[display("{_0}")]
 pub struct TemporalIntentKey(i64);
 
@@ -58,7 +51,7 @@ pub struct InvalidTemporalIntentKey;
 /// This is the pair a persisted history row deduplicates on, so a replay of the
 /// same write reproduces it exactly and collides with the rows the first attempt
 /// stored instead of duplicating them.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct TemporalObservationIdentity {
     /// The write whose temporal consequences the observation belongs to.
     pub write_id: WriteId,
@@ -70,8 +63,7 @@ pub struct TemporalObservationIdentity {
 ///
 /// No entry carries an instant of its own: every consequence of one accepted
 /// write shares the write's ingestion instant, which the intent holds once.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TemporalAppendEntry {
     /// One neutral NGSI-LD attribute observation.
     Observation {
@@ -108,7 +100,7 @@ pub enum TemporalAppendEntry {
 
 /// One anchor-committed idempotent temporal append command.
 ///
-/// The intent is the unit the deferred queue claims, acknowledges and replays,
+/// The intent is the unit the deferred queue holds and its drain applies,
 /// so it owns the write identity and ingestion instant its rows are stored
 /// under. Every entry shares them: they are consequences of one accepted write.
 ///
@@ -117,7 +109,7 @@ pub enum TemporalAppendEntry {
 /// landed entity, not just this one, so entries are numbered from `base_ordinal` rather
 /// than from zero: that is what keeps two entities landed by the same commit
 /// from ever numbering an entry with the same `(write_id, ordinal)` pair.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TemporalAppendIntent {
     /// Identity and ingestion instant every entry of this intent is stored under.
     pub record: WriteRecord,
@@ -138,12 +130,6 @@ pub struct TemporalAppendIntent {
     pub entity_types: Vec<EntityTypeName>,
     /// Entries in semantic write order.
     pub entries: Vec<TemporalAppendEntry>,
-    /// What the write observed of the entity, which a query answered before
-    /// the intent lands selects the entity by (stage one of a temporal query).
-    ///
-    /// Shared with the write rather than copied, and persisted as the expanded
-    /// document it is.
-    pub selection_value: Option<ObservedSelection>,
 }
 
 impl TemporalAppendIntent {
@@ -222,15 +208,6 @@ impl TemporalAppendIntent {
             }
         })
     }
-}
-
-/// One committed intent together with its durable tenant-local order.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct KeyedTemporalAppendIntent {
-    /// Database-generated intent key, monotonic in commit order.
-    pub key: TemporalIntentKey,
-    /// Idempotent append command.
-    pub intent: TemporalAppendIntent,
 }
 
 #[cfg(test)]
@@ -424,7 +401,6 @@ mod tests {
                 observed_at: Some(recorded_at),
                 instance: InstanceIdentity::generate(),
             }],
-            selection_value: None,
         };
         pretty_assertions::assert_eq!(intent.write_purpose(), TemporalWritePurpose::Observation);
     }

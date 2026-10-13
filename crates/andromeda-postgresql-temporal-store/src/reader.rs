@@ -30,7 +30,7 @@ use andromeda_postgresql_temporal_query::{
 };
 use andromeda_temporal::{
     error::TemporalError,
-    outcome::{TemporalEntityCandidate, TemporalEntityIdOutcome, TemporalPaginationOutcome, TemporalResidual},
+    outcome::TemporalEntityIdOutcome,
     port::history_reader::{
         AggregationPushdown,
         HistoryVisibility,
@@ -214,12 +214,8 @@ impl TemporalHistoryReader for TemporalRepository {
         };
 
         Ok(TemporalEntityIdOutcome {
-            candidates: entity_ids
-                .into_iter()
-                .map(|entity_id| TemporalEntityCandidate { entity_id, selection: None })
-                .collect(),
-            residual: TemporalResidual::default(),
-            pagination: TemporalPaginationOutcome::Applied { total: total_count },
+            entity_ids,
+            total: total_count,
         })
     }
 

@@ -1,30 +1,32 @@
 //! PostgreSQL anchor persistence and delivery state for temporal append intents.
 //!
 //! The store's enqueue, run inside the entity anchor transaction, lives in
-//! [`enqueue`]; the claim, pending-read and lease-guarded statements in
-//! [`lease_statements`]; the port implementations here.
+//! [`enqueue`]; the claim, pending-probe, removal and retry statements in
+//! [`lease_statements`]; the port implementations here. An application runs
+//! the history statements of `andromeda-postgresql-temporal-store` over the
+//! claimed rows and removes them under the lease in the same transaction.
 //!
 //! The queue lives only in the live branch: a Snapshot branch records its
 //! history in the write's own transaction, so nothing here names a branch.
 
 /// Enqueueing temporal append intents inside the entity anchor transaction.
 mod enqueue;
-/// The claim, pending-read and lease-guarded acknowledgement statements.
+/// The claim, pending-probe, lease-guarded removal and retry statements.
 mod lease_statements;
 
-use crate::intent_store::lease_statements::{acknowledge_statement, claim_statement, pending_statement, retry_statement};
-use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
+use crate::intent_store::lease_statements::{applied_removal_statement, claim_statement, holds_intent_statement, retry_statement};
+use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder, write_id::WriteId};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
-use andromeda_postgresql_context_store::json_text::JsonText;
 use andromeda_postgresql_pool::persistence_classification::classify;
+use andromeda_postgresql_temporal_store::intent_application::apply_queued_intents_in_tx;
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use andromeda_temporal::{
-    append_intent::{KeyedTemporalAppendIntent, TemporalIntentKey},
+    append_intent::TemporalIntentKey,
     error::TemporalError,
     port::{
-        pending_intent_reader::PendingTemporalIntentReader,
-        temporal_intent_queue::{ClaimedTemporalAppendIntent, TemporalIntentBatchSize, TemporalIntentQueue, TemporalIntentRetry},
+        temporal_intent_application::TemporalIntentApplication,
+        temporal_intent_queue::{ClaimedTemporalIntent, TemporalIntentBatchSize, TemporalIntentQueue, TemporalIntentRetry},
     },
 };
 use async_trait::async_trait;
@@ -32,11 +34,15 @@ use chrono::{DateTime, Utc};
 use sea_query::PostgresQueryBuilder;
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Row, postgres::PgRow};
+use uuid::Uuid;
 
 /// The statement name the intent claim is observed under.
 const INTENT_CLAIM: StatementName = StatementName("temporal-intent-claim");
-/// The statement name intent acknowledgement and retry are observed under.
-const INTENT_ACKNOWLEDGE: StatementName = StatementName("temporal-intent-acknowledge");
+/// The statement name intent retry is observed under.
+const INTENT_RETRY: StatementName = StatementName("temporal-intent-retry");
+/// The name an intent application, from its first statement to its commit, is
+/// observed under.
+const INTENT_APPLICATION: StatementName = StatementName("temporal-intent-application");
 
 /// PostgreSQL-backed pending temporal intent queue for one tenant.
 #[derive(Clone, Debug)]
@@ -54,14 +60,23 @@ impl PostgresTemporalIntentStore {
         }
     }
 
-    /// Decode one durable queue row, the intent straight from the column's
-    /// JSON text.
-    fn decode(row: &PgRow) -> Result<KeyedTemporalAppendIntent, TemporalError> {
+    /// Decode one claimed row: the intent's identity, never its entries.
+    fn decode(row: &PgRow) -> Result<ClaimedTemporalIntent, TemporalError> {
         let raw_key: i64 = row.try_get("intent_key").map_err(|error| persistence(&error))?;
         let key = TemporalIntentKey::new(raw_key).map_err(|error| TemporalError::from(PersistenceFailure::Undecodable.record(&error)))?;
-        let payload: JsonText<'_> = row.try_get("payload").map_err(|error| persistence(&error))?;
-        let intent = serde_json::from_slice(payload.as_bytes()).map_err(|error| TemporalError::from(PersistenceFailure::Undecodable.record(&error)))?;
-        Ok(KeyedTemporalAppendIntent { key, intent })
+        let write_id: Uuid = row.try_get("write_id").map_err(|error| persistence(&error))?;
+        let entity_id: String = row.try_get("entity_id").map_err(|error| persistence(&error))?;
+        let entity_id = entity_id
+            .parse::<Identifier>()
+            .map_err(|error| TemporalError::from(PersistenceFailure::Undecodable.record(&error)))?;
+        let attempts: i32 = row.try_get("attempt_count").map_err(|error| persistence(&error))?;
+        let attempts = u32::try_from(attempts).map_err(|error| TemporalError::from(PersistenceFailure::Undecodable.record(&error)))?;
+        Ok(ClaimedTemporalIntent {
+            key,
+            write_id: WriteId::from_uuid(write_id),
+            entity_id,
+            attempts: attempts.saturating_sub(1),
+        })
     }
 
     /// Claim an ordered bounded batch, optionally restricted to one entity.
@@ -71,56 +86,43 @@ impl PostgresTemporalIntentStore {
         entity_id: Option<&Identifier>,
         limit: TemporalIntentBatchSize,
         lease_until: DateTime<Utc>,
-    ) -> Result<Vec<ClaimedTemporalAppendIntent>, TemporalError> {
+    ) -> Result<Vec<ClaimedTemporalIntent>, TemporalError> {
         let (sql, values) = claim_statement(owner, entity_id.map(Identifier::as_str), limit.get(), lease_until).build_sqlx(PostgresQueryBuilder);
         let rows = observe_statement(INTENT_CLAIM, sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool))
             .await
             .map_err(|error| persistence(&error))?;
         let mut claimed = rows
             .iter()
-            .map(|row| {
-                let attempts: i32 = row.try_get("attempt_count").map_err(|error| persistence(&error))?;
-                let attempts = u32::try_from(attempts).map_err(|error| TemporalError::from(PersistenceFailure::Undecodable.record(&error)))?;
-                Ok(ClaimedTemporalAppendIntent {
-                    pending: PostgresTemporalIntentStore::decode(row)?,
-                    attempts: attempts.saturating_sub(1),
-                })
-            })
+            .map(PostgresTemporalIntentStore::decode)
             .collect::<Result<Vec<_>, TemporalError>>()?;
-        claimed.sort_by_key(|claim| claim.pending.key);
+        claimed.sort_by_key(|claim| claim.key);
         Ok(claimed)
     }
-}
 
-#[async_trait]
-impl PendingTemporalIntentReader for PostgresTemporalIntentStore {
-    async fn pending_for_entity(&self, entity_id: &Identifier) -> Result<Vec<KeyedTemporalAppendIntent>, TemporalError> {
-        let (sql, values) = pending_statement(Some(entity_id.as_str())).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-            .fetch_all(&self.pool)
+    /// Apply `intents` and remove them under `owner`'s live lease, in one
+    /// transaction that commits only when every intent is still held.
+    async fn apply_held(&self, owner: LeaseHolder, intents: &[ClaimedTemporalIntent]) -> Result<LeaseAcknowledgement, TemporalError> {
+        let keys: Vec<i64> = intents.iter().map(|intent| intent.key.get()).collect();
+        let mut tx = self.pool.begin().await.map_err(|error| persistence(&error))?;
+        apply_queued_intents_in_tx(&mut tx, &keys).await.map_err(TemporalError::from)?;
+        let (sql, values) = applied_removal_statement(&keys, owner).build_sqlx(PostgresQueryBuilder);
+        let removed = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .execute(&mut *tx)
             .await
-            .map_err(|error| persistence(&error))?;
-        rows.iter().map(PostgresTemporalIntentStore::decode).collect()
-    }
-
-    async fn pending_intents(&self) -> Result<Vec<KeyedTemporalAppendIntent>, TemporalError> {
-        let (sql, values) = pending_statement(None).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|error| persistence(&error))?;
-        rows.iter().map(PostgresTemporalIntentStore::decode).collect()
+            .map_err(|error| persistence(&error))?
+            .rows_affected();
+        if usize::try_from(removed).ok() != Some(keys.len()) {
+            tx.rollback().await.map_err(|error| persistence(&error))?;
+            return Ok(LeaseAcknowledgement::Lost);
+        }
+        tx.commit().await.map_err(|error| persistence(&error))?;
+        Ok(LeaseAcknowledgement::Applied)
     }
 }
 
 #[async_trait]
 impl TemporalIntentQueue for PostgresTemporalIntentStore {
-    async fn claim(
-        &self,
-        owner: LeaseHolder,
-        limit: TemporalIntentBatchSize,
-        lease_until: DateTime<Utc>,
-    ) -> Result<Vec<ClaimedTemporalAppendIntent>, TemporalError> {
+    async fn claim(&self, owner: LeaseHolder, limit: TemporalIntentBatchSize, lease_until: DateTime<Utc>) -> Result<Vec<ClaimedTemporalIntent>, TemporalError> {
         self.claim_matching(owner, None, limit, lease_until).await
     }
 
@@ -130,37 +132,35 @@ impl TemporalIntentQueue for PostgresTemporalIntentStore {
         entity_id: &Identifier,
         limit: TemporalIntentBatchSize,
         lease_until: DateTime<Utc>,
-    ) -> Result<Vec<ClaimedTemporalAppendIntent>, TemporalError> {
+    ) -> Result<Vec<ClaimedTemporalIntent>, TemporalError> {
         self.claim_matching(owner, Some(entity_id), limit, lease_until).await
     }
 
-    async fn acknowledge(&self, owner: LeaseHolder, intent: &KeyedTemporalAppendIntent) -> Result<LeaseAcknowledgement, TemporalError> {
-        let (sql, values) = acknowledge_statement(intent.key.get(), intent.intent.record.write_id().as_uuid(), owner).build_sqlx(PostgresQueryBuilder);
-        let result = observe_statement(
-            INTENT_ACKNOWLEDGE,
-            sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&self.pool),
-        )
-        .await
-        .map_err(|error| persistence(&error))?;
-        held(result.rows_affected())
+    async fn holds_intent_for(&self, entity_id: &Identifier) -> Result<bool, TemporalError> {
+        let (sql, values) = holds_intent_statement(entity_id.as_str()).build_sqlx(PostgresQueryBuilder);
+        sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|error| persistence(&error))
     }
 
-    async fn retry(&self, owner: LeaseHolder, intent: &KeyedTemporalAppendIntent, retry: TemporalIntentRetry) -> Result<LeaseAcknowledgement, TemporalError> {
-        let (sql, values) = retry_statement(
-            retry.eligible_at,
-            &retry.summary,
-            intent.key.get(),
-            intent.intent.record.write_id().as_uuid(),
-            owner,
-        )
-        .build_sqlx(PostgresQueryBuilder);
-        let result = observe_statement(
-            INTENT_ACKNOWLEDGE,
-            sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&self.pool),
-        )
-        .await
-        .map_err(|error| persistence(&error))?;
+    async fn retry(&self, owner: LeaseHolder, intent: &ClaimedTemporalIntent, retry: TemporalIntentRetry) -> Result<LeaseAcknowledgement, TemporalError> {
+        let (sql, values) =
+            retry_statement(retry.eligible_at, &retry.summary, intent.key.get(), intent.write_id.as_uuid(), owner).build_sqlx(PostgresQueryBuilder);
+        let result = observe_statement(INTENT_RETRY, sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&self.pool))
+            .await
+            .map_err(|error| persistence(&error))?;
         held(result.rows_affected())
+    }
+}
+
+#[async_trait]
+impl TemporalIntentApplication for PostgresTemporalIntentStore {
+    async fn apply(&self, owner: LeaseHolder, intents: &[ClaimedTemporalIntent]) -> Result<LeaseAcknowledgement, TemporalError> {
+        if intents.is_empty() {
+            return Ok(LeaseAcknowledgement::Applied);
+        }
+        observe_statement(INTENT_APPLICATION, self.apply_held(owner, intents)).await
     }
 }
 

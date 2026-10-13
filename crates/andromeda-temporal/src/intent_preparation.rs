@@ -4,7 +4,6 @@ use crate::{
     append_intent::{TemporalAppendEntry, TemporalAppendIntent},
     error::TemporalError,
     observed_instance::ObservedInstance,
-    observed_selection::ObservedSelection,
     reified_scope::scope_observations,
     scope_observation::ScopeObservation,
 };
@@ -24,7 +23,6 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::{DateTime, Utc};
-use std::sync::Arc;
 
 /// Prepare one typed intent from the history consequences of an atomic write.
 ///
@@ -49,7 +47,6 @@ pub(crate) fn prepare(
     }
     let recorded_at = record.recorded_at();
     let mut entries = Vec::new();
-    let mut selection = None;
     for consequence in history {
         match consequence {
             HistoryRecord::Observations(state) => {
@@ -57,17 +54,11 @@ pub(crate) fn prepare(
                 // read as the written document whose instances they take over,
                 // the one form every observation is read in.
                 append_document_entries(EntityDocument::from(state.as_ref()), recorded_at, &mut entries)?;
-                selection = Some(ObservedSelection::Observed(Arc::clone(state)));
             }
             HistoryRecord::EvolutionInstances(document) => {
                 // clone: every history row owns the values it records, while the
                 // written document stays shared with the write it belongs to.
                 append_document_entries(EntityDocument::clone(document), recorded_at, &mut entries)?;
-                // A document of reified Scope instances alone states no entity
-                // a query could select.
-                if document.id().is_some() {
-                    selection = Some(ObservedSelection::Written(Arc::clone(document)));
-                }
             }
             HistoryRecord::Tombstone(removed) => entries.push(TemporalAppendEntry::Tombstone {
                 attribute_name: removed.key.attr.clone(),   // clone: the durable intent owns the instance identity.
@@ -94,7 +85,6 @@ pub(crate) fn prepare(
         entity_id: entity_id.clone(), // clone: the durable intent owns the validated identifier.
         entity_types: entity_types.to_vec(),
         entries,
-        selection_value: selection,
     }))
 }
 

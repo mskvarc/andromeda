@@ -1,12 +1,6 @@
 //! The intent the history consequences of one write prepare.
 
-use crate::{
-    append_intent::TemporalAppendEntry,
-    error::TemporalError,
-    intent_preparation::prepare,
-    observed_selection::ObservedSelection,
-    scope_observation::ScopeObservation,
-};
+use crate::{append_intent::TemporalAppendEntry, error::TemporalError, intent_preparation::prepare, scope_observation::ScopeObservation};
 use andromeda_context_commit::{
     history_record::{HistoryRecord, tombstone},
     write_id::WriteId,
@@ -210,23 +204,6 @@ fn every_written_instance_is_its_own_observation() {
             .collect::<Vec<_>>(),
         vec!["urn:ngsi-ld:instance:1", "urn:ngsi-ld:instance:2"]
     );
-}
-
-/// The intent shares what the write observed rather than copying it: a Core
-/// write's observed state and a Temporal API write's document are the very
-/// allocations the write holds.
-#[test]
-fn the_selection_shares_the_observation_the_write_holds() {
-    let history = [observed(
-        &json!({"https://example.com/speed": [{"@type": [PROPERTY], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]}]}),
-    )];
-    let intent = prepare(&entity_id(), &[], &history, record(recorded_at()), WriteOrdinal::at(0))
-        .expect("the history prepares")
-        .expect("an intent");
-    let (Some(ObservedSelection::Observed(shared)), HistoryRecord::Observations(held)) = (&intent.selection_value, &history[0]) else {
-        panic!("a Core write's observation is the selection: {:?}", intent.selection_value);
-    };
-    assert!(Arc::ptr_eq(shared, held));
 }
 
 /// The entity state a Property holding a `DateTime`-typed `raw` value

@@ -46,8 +46,10 @@ pub(crate) mod history_row_identity;
 mod instance_mutation;
 /// The statements addressing one temporal attribute instance by its `instanceId`.
 mod instance_statements;
-/// Idempotent PostgreSQL implementation of deferred temporal appends.
-pub mod intent_sink;
+/// Applying queued temporal append intents to history in SQL.
+pub mod intent_application;
+/// Recording a commit's temporal append intents as history rows.
+pub(crate) mod intent_sink;
 /// Aggregating one entity over its local and answered instances (clause 5.7.4.4).
 pub(crate) mod merged_aggregation;
 /// `andromeda-temporal` mutation-port implementation on [`TemporalRepository`](repo::TemporalRepository).
@@ -97,6 +99,8 @@ pub mod temporal_catalog_write;
 pub mod temporal_entity_catalog_write;
 /// Temporal Evolution deletion and the orphan audit that checks it.
 pub mod temporal_entity_deletion;
+/// One temporal append intent as the records the intent queue holds.
+pub mod temporal_entry_record;
 /// Running one compiled temporal statement against the tenant pool.
 pub(crate) mod temporal_query_execution;
 /// Conditions the temporal store's own statements and callers guarantee.
@@ -150,19 +154,16 @@ andromeda_architecture_checks::dependency_boundary! {
 
 #[cfg(test)]
 mod port_contract_tests {
-    use crate::{intent_sink::PostgresTemporalHistorySink, repo::TemporalRepository};
-    use andromeda_temporal::port::{history_reader::TemporalHistoryReader, mutator::TemporalMutator, temporal_history_sink::TemporalHistorySink};
+    use crate::repo::TemporalRepository;
+    use andromeda_temporal::port::{history_reader::TemporalHistoryReader, mutator::TemporalMutator};
 
     fn assert_history_reader<T: TemporalHistoryReader>() {}
 
     fn assert_mutator<T: TemporalMutator>() {}
 
-    fn assert_sink<T: TemporalHistorySink>() {}
-
     #[test]
     fn repository_implements_temporal_ports_directly() {
         assert_history_reader::<TemporalRepository>();
         assert_mutator::<TemporalRepository>();
-        assert_sink::<PostgresTemporalHistorySink>();
     }
 }

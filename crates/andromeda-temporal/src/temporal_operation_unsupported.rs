@@ -18,10 +18,6 @@ pub enum TemporalOperationUnsupported {
         /// The aggregation methods the reader declined.
         methods: Vec<AggrMethod>,
     },
-    /// A pending-intent overlay cannot union unmaterialised observations into an
-    /// aggregation.
-    #[error("aggregation requires sink-side pending-intent union support")]
-    PendingUnionUnsupported,
     /// The recording sink offers no aggregation capability at all.
     #[error("recording sink has no aggregation")]
     RecordingSinkNoAggregation,

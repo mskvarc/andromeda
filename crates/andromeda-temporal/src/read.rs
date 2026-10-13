@@ -192,10 +192,7 @@ impl TemporalService {
             let compiled = compiled;
             ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
             let outcome = self.reader.query_entity_ids(target, &compiled, window, CountPolicy::Omit).await?;
-            let (identifiers, _total) = outcome
-                .complete(window, CountPolicy::Omit)
-                .map_err(|error| TemporalError::from(TemporalInvariant::IncompleteOutcome(error)))?;
-            Ok(identifiers)
+            Ok(outcome.entity_ids)
         }
         .await;
         timer.finish_result(&result);

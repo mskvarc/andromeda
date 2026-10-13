@@ -67,8 +67,13 @@ pub enum TemporalAppendIntents {
     EntityId,
     /// Ordinal base the intent's entries start at, part of the dedup key
     BaseOrdinal,
-    /// Serialised temporal append intent
-    Payload,
+    /// Ingestion instant of the write, every entry's `recorded_at`
+    RecordedAt,
+    /// `entity_type_names` keys the Temporal Evolution is recorded under,
+    /// empty for an intent that only ends instances
+    EntityTypeNameKeys,
+    /// The intent's `temporal_entry` values in write order
+    Entries,
     /// Earliest instant the intent may next be claimed (shared claimable-queue contract)
     NextAttemptAt,
     /// Instant the current lease was acquired
@@ -96,7 +101,9 @@ mod tests {
         assert_eq!(TemporalAppendIntents::WriteId.to_string(), "write_id");
         assert_eq!(TemporalAppendIntents::EntityId.to_string(), "entity_id");
         assert_eq!(TemporalAppendIntents::BaseOrdinal.to_string(), "base_ordinal");
-        assert_eq!(TemporalAppendIntents::Payload.to_string(), "payload");
+        assert_eq!(TemporalAppendIntents::RecordedAt.to_string(), "recorded_at");
+        assert_eq!(TemporalAppendIntents::EntityTypeNameKeys.to_string(), "entity_type_name_keys");
+        assert_eq!(TemporalAppendIntents::Entries.to_string(), "entries");
         assert_eq!(TemporalAppendIntents::NextAttemptAt.to_string(), "next_attempt_at");
         assert_eq!(TemporalAppendIntents::ClaimedAt.to_string(), "claimed_at");
         assert_eq!(TemporalAppendIntents::LeaseUntil.to_string(), "lease_until");

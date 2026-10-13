@@ -275,9 +275,9 @@ mod tests {
         (members, read)
     }
 
-    /// The JSON `metadata` serializes as.
+    /// The expanded members `metadata` renders as.
     fn rendered(metadata: Option<&ObservationMetadata>) -> Value {
-        serde_json::to_value(metadata).expect("metadata writes")
+        serde_json::to_value(metadata.cloned().map(InstanceDocument::from)).expect("metadata writes") // clone: the fixture is compared after it is rendered
     }
 
     #[test]

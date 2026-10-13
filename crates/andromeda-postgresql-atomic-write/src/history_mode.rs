@@ -28,7 +28,8 @@ pub enum TemporalHistoryCommitMode {
     Deferred {
         /// Edge notification that reduces delivery latency without carrying work.
         publisher: Arc<dyn TemporalIntentPublisher>,
-        /// Transactional recorder a Snapshot branch's history is written with.
+        /// Transactional recorder a Snapshot branch's history is written with,
+        /// and the live branch's intents are keyed through.
         recorder: Arc<TemporalRecorder>,
     },
 }
@@ -37,10 +38,16 @@ pub enum TemporalHistoryCommitMode {
 pub(crate) enum HistoryPlacement<'a> {
     /// Into the history tables, inside the commit's own transaction.
     Inline(&'a TemporalRecorder),
-    /// Into the live branch's intent queue, for the deferred drain to apply,
-    /// waking the drain through `publisher` once the commit lands. Only a
-    /// live-branch commit is placed here.
-    Queued(&'a dyn TemporalIntentPublisher),
+    /// Into the live branch's intent queue as the records `recorder` makes
+    /// of them, for the deferred drain to apply, waking the drain through
+    /// `publisher` once the commit lands. Only a live-branch commit is placed
+    /// here.
+    Queued {
+        /// The recorder whose dictionaries key the queued entries.
+        recorder: &'a TemporalRecorder,
+        /// The drain's wake.
+        publisher: &'a dyn TemporalIntentPublisher,
+    },
 }
 
 impl TemporalHistoryCommitMode {
@@ -49,7 +56,10 @@ impl TemporalHistoryCommitMode {
         match (self, target) {
             (TemporalHistoryCommitMode::Native { recorder }, ContextTarget::Live | ContextTarget::Snapshot(_))
             | (TemporalHistoryCommitMode::Deferred { recorder, .. }, ContextTarget::Snapshot(_)) => HistoryPlacement::Inline(recorder),
-            (TemporalHistoryCommitMode::Deferred { publisher, .. }, ContextTarget::Live) => HistoryPlacement::Queued(publisher.as_ref()),
+            (TemporalHistoryCommitMode::Deferred { publisher, recorder }, ContextTarget::Live) => HistoryPlacement::Queued {
+                recorder,
+                publisher: publisher.as_ref(),
+            },
         }
     }
 }
@@ -95,7 +105,7 @@ mod tests {
 
     #[tokio::test]
     async fn deferred_mode_queues_the_live_branchs_history() {
-        assert!(matches!(deferred().placement(&ContextTarget::Live), HistoryPlacement::Queued(_)));
+        assert!(matches!(deferred().placement(&ContextTarget::Live), HistoryPlacement::Queued { .. }));
     }
 
     /// Clause 5.5.15 permits the Temporal API on a Snapshot, so its history

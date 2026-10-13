@@ -26,16 +26,13 @@ use andromeda_ngsi_ld_entity::{
     unit_code::UnitCode,
 };
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
-use serde::Serialize;
 
 /// The metadata of one observed instance: never empty, and never holding the
 /// value, the identity or the time axes the row keeps in columns.
 ///
 /// Boxed because most observations carry none, and the row every observation
-/// is held in should not pay for the members of those that do. Written as the
-/// expanded members of an instance.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(into = "InstanceDocument")]
+/// is held in should not pay for the members of those that do.
+#[derive(Clone, Debug, PartialEq)]
 pub struct ObservationMetadata(Box<MetadataMembers>);
 
 /// The metadata members of one observed instance.

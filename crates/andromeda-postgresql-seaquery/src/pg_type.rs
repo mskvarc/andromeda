@@ -113,6 +113,9 @@ pub enum PostgresType {
     /// `entity_state_record`: one Entity's state beside its identifier.
     #[iden = "entity_state_record"]
     EntityStateRecord,
+    /// `temporal_intent[]`: the temporal append intents of one commit.
+    #[iden = "temporal_intent[]"]
+    TemporalIntentArray,
 }
 
 #[cfg(test)]
@@ -161,5 +164,6 @@ mod tests {
     fn composite_type_names_render_as_the_migrations_declare_them() {
         assert_eq!(PostgresType::SubAttributeTreeArray.to_string(), "sub_attribute_tree[]");
         assert_eq!(PostgresType::EntityStateRecord.to_string(), "entity_state_record");
+        assert_eq!(PostgresType::TemporalIntentArray.to_string(), "temporal_intent[]");
     }
 }

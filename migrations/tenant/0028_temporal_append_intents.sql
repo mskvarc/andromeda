@@ -3,7 +3,10 @@
 -- ============================================================================
 -- Temporal history appends the broker accepted together with current Entity
 -- state but has not yet applied to the temporal catalog and history. A
--- background worker leases them in `intent_key` order and applies them.
+-- background worker leases them in `intent_key` order and applies them in
+-- SQL: an intent's `entries` are `temporal_entry` values that hold exactly the
+-- columns their history rows will hold, so applying one moves them into
+-- history and deletes the intent in one transaction.
 --
 -- There is no `exhausted_at`. An intent is history the broker has already
 -- acknowledged, so it is never discarded: an intent that keeps failing stays
@@ -31,8 +34,13 @@ create table temporal_append_intents (
     claimed_at timestamptz,
     lease_until timestamptz,
     claimed_by uuid,
+    -- The write's ingestion instant, every entry's `recorded_at`.
+    recorded_at timestamptz not null,
     entity_id text compression lz4 collate "C" not null,
-    payload json compression lz4 not null,
+    -- `entity_type_names` keys of the types the Temporal Evolution is recorded
+    -- under (clause 4.5.6), empty for an intent that only ends instances.
+    entity_type_name_keys integer[] compression lz4 not null,
+    entries temporal_entry[] compression lz4 not null,
     last_error text compression lz4,
     constraint pk_temporal_append_intents primary key (intent_key),
     constraint uq_temporal_append_intents_write_identity unique (write_id, entity_id, base_ordinal),
@@ -55,6 +63,7 @@ with (
 -- so older work is never starved behind newer.
 create index idx_temporal_append_intents_claim on temporal_append_intents (next_attempt_at, intent_key);
 
--- The claim and the pending read scoped to one Entity, in key order.
+-- The claim scoped to one Entity, in key order, and the probe for whether an
+-- Entity holds a pending intent.
 create index idx_temporal_append_intents_entity on temporal_append_intents (entity_id, intent_key);
 

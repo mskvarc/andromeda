@@ -64,15 +64,15 @@ andromeda_architecture_checks::dependency_boundary! {
 #[cfg(test)]
 mod port_contract_tests {
     use crate::intent_store::PostgresTemporalIntentStore;
-    use andromeda_temporal::port::{pending_intent_reader::PendingTemporalIntentReader, temporal_intent_queue::TemporalIntentQueue};
+    use andromeda_temporal::port::{temporal_intent_application::TemporalIntentApplication, temporal_intent_queue::TemporalIntentQueue};
 
-    fn assert_pending_reader<T: PendingTemporalIntentReader>() {}
+    fn assert_application<T: TemporalIntentApplication>() {}
 
     fn assert_intent_queue<T: TemporalIntentQueue>() {}
 
     #[test]
     fn postgres_anchor_implements_temporal_intent_ports_directly() {
-        assert_pending_reader::<PostgresTemporalIntentStore>();
+        assert_application::<PostgresTemporalIntentStore>();
         assert_intent_queue::<PostgresTemporalIntentStore>();
     }
 }

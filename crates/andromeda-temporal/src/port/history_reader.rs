@@ -158,13 +158,11 @@ pub trait TemporalHistoryReader: Send + Sync {
     #[must_use = "temporal entity type reads must be awaited"]
     async fn entity_types(&self, target: &ContextTarget, entity_ids: &[Identifier]) -> Result<HashMap<Identifier, Vec<EntityTypeName>>, TemporalError>;
 
-    /// Resolve the temporal entity candidates `window` selects, counting every
-    /// match when `count` asks for it (clause 6.3.13), and report every
-    /// unapplied predicate and window operation.
+    /// Resolve the temporal entities `window` selects, counting every match
+    /// when `count` asks for it (clause 6.3.13).
     ///
-    /// An applied window is returned in the order it is presented: ascending by
+    /// The page is returned in the order it is presented: ascending by
     /// identifier for a cursor window, in the query's order for an offset one.
-    /// A reader that defers the window returns every candidate in that order.
     #[must_use = "temporal entity selection must be awaited"]
     async fn query_entity_ids(
         &self,

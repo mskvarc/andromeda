@@ -1,38 +1,23 @@
 //! Enqueueing temporal append intents inside the entity anchor transaction.
 
 use crate::intent_store::PostgresTemporalIntentStore;
+use andromeda_context_commit::write_record::WriteRecord;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
-use andromeda_postgresql_schema::queue::TemporalAppendIntents;
-use andromeda_postgresql_seaquery::{
-    cast::cast,
-    pg_array::text_array,
-    pg_type::PostgresType,
-    unnest::{UnnestColumn, apply_column_alias, unnest_call},
-};
-use andromeda_postgresql_temporal_store::error::TemporalStoreError;
-use andromeda_temporal::{append_intent::TemporalAppendIntent, error::TemporalError};
-use sea_query::{Alias, Expr, InsertStatement, OnConflict, PostgresQueryBuilder, Query, error::Error as SeaQueryError};
-use sea_query_sqlx::SqlxBinder;
+use andromeda_postgresql_schema::{queue::TemporalAppendIntents, temporal_intent::TemporalIntent};
+use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType, placeholder::external_placeholder, unnest::unnest_of};
+use andromeda_postgresql_temporal_store::{error::TemporalStoreError, temporal_entry_record::TemporalIntentRecord};
+use andromeda_temporal::error::TemporalError;
+use sea_query::{Expr, Iden, InsertStatement, OnConflict, PostgresQueryBuilder, Query, error::Error as SeaQueryError};
 use sqlx::{Postgres, Transaction};
-use uuid::Uuid;
 
-/// The `AS input(write_id, entity_id, base_ordinal, payload)` column-list alias the
-/// enqueue's `UNNEST` set-write projects, in the order the parallel arrays are
-/// bound and the insert's columns are named.
-///
-/// The payloads are bound as the intents' JSON text and cast to `json` by the
-/// projection, which the column keeps as written, so no JSON tree is built for
-/// them on the way.
-pub(super) fn intent_unnest_columns() -> [UnnestColumn; 4] {
-    [
-        UnnestColumn::new(Alias::new("write_id"), PostgresType::UuidArray),
-        UnnestColumn::new(Alias::new("entity_id"), PostgresType::TextArray),
-        UnnestColumn::new(Alias::new("base_ordinal"), PostgresType::IntegerArray),
-        UnnestColumn::new(Alias::new("payload"), PostgresType::TextArray),
-    ]
-}
+/// The alias of one unnested intent, `input`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "input"]
+struct Input;
 
-/// Insert a batch of temporal append intents from four parallel arrays.
+/// Insert every intent of one commit in one statement: the write identity
+/// `$1` and its instant `$2` as scalars, the intents as one
+/// `$3::temporal_intent[]`, each intent's entries travelling inside it.
 ///
 /// One commit may land more than one entity, and every intent it produces
 /// shares the commit's single write identity; that alone does not identify
@@ -46,30 +31,26 @@ pub(super) fn intent_unnest_columns() -> [UnnestColumn; 4] {
 /// `ON CONFLICT ... DO NOTHING` is what makes a commit replayed under its
 /// original identity enqueue no second copy of any entity's intent at a given
 /// base ordinal.
-pub(super) fn enqueue_statement(ids: Vec<Uuid>, entity_ids: &[&str], bases: Vec<i32>, payloads: Vec<String>) -> Result<InsertStatement, SeaQueryError> {
-    let columns = intent_unnest_columns();
-    let call = unnest_call([
-        (&columns[0], Expr::val(ids)),
-        (&columns[1], text_array(entity_ids)),
-        (&columns[2], Expr::val(bases)),
-        (&columns[3], Expr::val(payloads)),
-    ]);
-    let input = Alias::new("input");
+pub(super) fn enqueue_statement() -> Result<InsertStatement, SeaQueryError> {
     let source = Query::select()
-        .expr(Expr::col((input.clone(), Alias::new("write_id"))))
-        .expr(Expr::col((input.clone(), Alias::new("entity_id"))))
-        .expr(Expr::col((input.clone(), Alias::new("base_ordinal"))))
-        .expr(cast(Expr::col((input.clone(), Alias::new("payload"))), PostgresType::Json))
-        .from_function(call, input)
+        .expr(external_placeholder(1))
+        .expr(external_placeholder(2))
+        .expr(Expr::col((Input, TemporalIntent::EntityId)))
+        .expr(Expr::col((Input, TemporalIntent::EntityTypeNameKeys)))
+        .expr(Expr::col((Input, TemporalIntent::BaseOrdinal)))
+        .expr(Expr::col((Input, TemporalIntent::Entries)))
+        .from_function(unnest_of(cast(external_placeholder(3), PostgresType::TemporalIntentArray)), Input)
         .to_owned();
     let mut statement = Query::insert();
     statement
         .into_table(TemporalAppendIntents::Table)
         .columns([
             TemporalAppendIntents::WriteId,
+            TemporalAppendIntents::RecordedAt,
             TemporalAppendIntents::EntityId,
+            TemporalAppendIntents::EntityTypeNameKeys,
             TemporalAppendIntents::BaseOrdinal,
-            TemporalAppendIntents::Payload,
+            TemporalAppendIntents::Entries,
         ])
         .select_from(source)?
         .on_conflict(
@@ -81,36 +62,28 @@ pub(super) fn enqueue_statement(ids: Vec<Uuid>, entity_ids: &[&str], bases: Vec<
             .do_nothing()
             .to_owned(),
         );
-    Ok(statement.clone())
+    Ok(statement)
 }
 
 impl PostgresTemporalIntentStore {
-    /// Persist complete intents inside the entity anchor transaction, in the
-    /// live branch's queue: only the live branch defers its history.
-    pub(crate) async fn enqueue_in_tx(tx: &mut Transaction<'_, Postgres>, intents: &[TemporalAppendIntent]) -> Result<(), TemporalError> {
+    /// Persist the intents of the commit `record` inside the entity anchor
+    /// transaction, in the live branch's queue: only the live branch defers
+    /// its history.
+    pub(crate) async fn enqueue_in_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        record: &WriteRecord,
+        intents: Vec<TemporalIntentRecord>,
+    ) -> Result<(), TemporalError> {
         if intents.is_empty() {
             return Ok(());
         }
-        let mut ids = Vec::with_capacity(intents.len());
-        let mut entity_ids = Vec::with_capacity(intents.len());
-        let mut bases = Vec::with_capacity(intents.len());
-        let mut payloads = Vec::with_capacity(intents.len());
-        for intent in intents {
-            ids.push(intent.record.write_id().as_uuid());
-            entity_ids.push(intent.entity_id.as_str());
-            bases.push(
-                intent
-                    .base_ordinal
-                    .as_i32()
-                    .map_err(|error| TemporalError::from(PersistenceFailure::Unencodable.record(&error)))?,
-            );
-            payloads.push(serde_json::to_string(intent).map_err(|error| TemporalError::from(PersistenceFailure::Unencodable.record(&error)))?);
-        }
-        let statement = enqueue_statement(ids, &entity_ids, bases, payloads)
-            .map_err(|error| TemporalError::from(PersistenceFailure::StatementUnbuildable.record(&error)))?;
-        let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        let sql = apply_column_alias(sql, &Alias::new("input"), &intent_unnest_columns());
-        sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let sql = enqueue_statement()
+            .map_err(|error| TemporalError::from(PersistenceFailure::StatementUnbuildable.record(&error)))?
+            .to_string(PostgresQueryBuilder);
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(record.write_id().as_uuid())
+            .bind(record.recorded_at())
+            .bind(intents)
             .execute(&mut **tx)
             .await
             // Classified like every other temporal-store statement, so a
@@ -122,56 +95,45 @@ impl PostgresTemporalIntentStore {
 
 #[cfg(test)]
 mod tests {
-    use crate::intent_store::enqueue::{enqueue_statement, intent_unnest_columns};
-    use andromeda_postgresql_seaquery::unnest::apply_column_alias;
-    use sea_query::{Alias, PostgresQueryBuilder};
-    use uuid::Uuid;
+    use crate::intent_store::enqueue::enqueue_statement;
+    use sea_query::PostgresQueryBuilder;
 
     fn enqueue_sql() -> String {
-        let statement = enqueue_statement(vec![Uuid::nil()], &["urn:ngsi-ld:Vehicle:1"], vec![0], vec!["{}".to_owned()]).expect("arity");
-        let sql = statement.to_string(PostgresQueryBuilder);
-        apply_column_alias(sql, &Alias::new("input"), &intent_unnest_columns())
+        enqueue_statement().expect("arity").to_string(PostgresQueryBuilder)
     }
+
+    #[test]
+    fn every_intent_of_a_commit_is_one_row_of_one_statement() {
+        let sql = enqueue_sql();
+        assert!(sql.starts_with(r#"INSERT INTO "temporal_append_intents""#), "{sql}");
+        assert!(sql.contains(r#"FROM UNNEST($3::temporal_intent[]) AS "input""#), "{sql}");
+        assert_eq!(sql.matches("UNNEST").count(), 1, "{sql}");
+    }
+
+    /// Clause 4.5.6: the types travel on the intent row, so the drain can
+    /// bring the Temporal Evolution into being; the write's instant travels
+    /// beside them once, as every entry's `recorded_at`.
+    #[test]
+    fn an_intent_row_carries_its_types_and_recorded_instant() {
+        let sql = enqueue_sql();
+        assert!(
+            sql.contains(r#"("write_id", "recorded_at", "entity_id", "entity_type_name_keys", "base_ordinal", "entries")"#),
+            "{sql}"
+        );
+        assert!(sql.contains(r#"SELECT $1, $2, "input"."entity_id", "input"."entity_type_name_keys""#), "{sql}");
+    }
+
     #[test]
     fn a_commit_replayed_under_its_original_identity_enqueues_no_second_intent_per_entity_and_base() {
         let sql = enqueue_sql();
         assert!(sql.contains(r#"ON CONFLICT ("write_id", "entity_id", "base_ordinal") DO NOTHING"#), "{sql}");
     }
 
+    /// No JSON leaves the broker for an intent: the entries are composites.
     #[test]
-    fn the_deduplicating_key_names_the_write_the_entity_and_the_ordinal_base() {
+    fn no_intent_is_bound_as_json() {
         let sql = enqueue_sql();
-        assert!(
-            sql.contains(r#"INTO "temporal_append_intents" ("write_id", "entity_id", "base_ordinal", "payload")"#),
-            "{sql}"
-        );
-    }
-
-    /// The parallel-array set-write projects a `AS input(...)` column-list
-    /// alias with no ordinality, and each array is cast to its element type.
-    #[test]
-    fn the_enqueue_projects_the_four_parallel_arrays_as_named_columns() {
-        let sql = enqueue_sql();
-        assert!(sql.contains("AS input(write_id, entity_id, base_ordinal, payload)"), "{sql}");
-        assert!(sql.contains("::uuid[]") && sql.contains("::text[]"), "{sql}");
-        assert!(!sql.contains("WITH ORDINALITY"), "{sql}");
-    }
-
-    /// The payloads travel as JSON text and become `json` in the projection, so
-    /// no JSON tree is built for them on the way to the column.
-    #[test]
-    fn the_intent_is_bound_as_text_cast_to_json() {
-        let sql = enqueue_sql();
-        assert!(sql.contains(r#""input"."payload"::json"#), "{sql}");
-        assert!(!sql.contains("::jsonb"), "{sql}");
-    }
-
-    /// A batch commit whose side effects are deferred keys on `base_ordinal` as
-    /// well as `(write_id, entity_id)` so two intents for the same write and
-    /// entity at different ordinals are not collided.
-    #[test]
-    fn two_intents_for_the_same_write_and_entity_are_distinguished_by_their_ordinal_base() {
-        let sql = enqueue_sql();
-        assert!(!sql.contains(r#"ON CONFLICT ("write_id", "entity_id") DO NOTHING"#), "{sql}");
+        assert!(!sql.contains("json"), "{sql}");
+        assert!(!sql.contains("payload"), "{sql}");
     }
 }

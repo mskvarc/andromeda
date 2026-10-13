@@ -27,8 +27,6 @@ pub mod forwarded_evolution;
 mod grouping_depth;
 /// The page sizes an instance-returning temporal read runs under.
 pub mod instance_limits;
-/// Choosing the instances of one attribute stream a temporal page keeps.
-pub(crate) mod instance_page_selection;
 /// Bounded delivery of deferred temporal append intents.
 pub mod intent_drain;
 mod intent_preparation;
@@ -38,12 +36,7 @@ pub mod intent_retry_policy;
 pub mod linked;
 /// Reading one written attribute instance as the observation a history row records.
 pub mod observed_instance;
-/// What one write observed of an entity, as a temporal query selects it by.
-pub mod observed_selection;
 pub mod outcome;
-mod pending_observation;
-/// Read overlay combining stored history with committed pending intents.
-pub mod pending_overlay;
 pub mod port;
 mod read;
 /// What one reified Scope instance of a Temporal Evolution states.
@@ -75,8 +68,6 @@ pub mod write_purpose;
 /// The Temporal Evolution a client writes, from its compact form to the documents its write records.
 mod written_evolution;
 
-#[cfg(test)]
-mod append_intent_ceiling_tests;
 #[cfg(test)]
 mod deferred_history_tests;
 

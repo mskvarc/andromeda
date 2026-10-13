@@ -94,6 +94,9 @@ const NAVIGATED_JSONB: &[(&str, &str)] = &[
     ("sub_attribute", "proof_seals"),
     ("sub_attribute", "value_geometry_members"),
     ("sub_attribute", "value_object"),
+    ("temporal_entry", "proof_seals"),
+    ("temporal_entry", "value_geometry_members"),
+    ("temporal_entry", "value_object"),
 ];
 
 /// One broken convention.

@@ -3,13 +3,13 @@
 
 use crate::{
     error::TemporalError,
+    outcome::TemporalEntityIdOutcome,
     read::{
         dataset_step::DatasetStep,
         ensure_aggregation_supported,
         rendered_entity::{HistoryPresence, RenderedTemporalEntity, render_history_page},
     },
     service::{TemporalQueryResult, TemporalQueryWarning, TemporalRange, TemporalService},
-    temporal_invariant::TemporalInvariant,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -74,10 +74,10 @@ impl TemporalService {
             // window, so whether the collection continues is known before any
             // history is read, and only the page's own entities are read.
             let read_window = window.with_lookahead();
-            let id_outcome = self.reader.query_entity_ids(target, &compiled, &read_window, count).await?;
-            let (entity_ids, total_count) = id_outcome
-                .complete(&read_window, count)
-                .map_err(|error| TemporalError::from(TemporalInvariant::IncompleteOutcome(error)))?;
+            let TemporalEntityIdOutcome {
+                entity_ids,
+                total: total_count,
+            } = self.reader.query_entity_ids(target, &compiled, &read_window, count).await?;
             let (entity_ids, reach) = window.settle(entity_ids);
             let entity_ids: Vec<Identifier> = entity_ids.into_iter().filter(|entity_id| contributed_reading.renders(entity_id)).collect();
 

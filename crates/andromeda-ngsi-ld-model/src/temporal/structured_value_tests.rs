@@ -1,33 +1,24 @@
-//! The stored JSON of structured values and metadata, and the durable wire of a
-//! history row, pinned against the shapes rows already hold.
+//! The stored JSON of structured values and metadata, pinned against the
+//! shapes rows already hold.
 
-use crate::temporal::{
-    TemporalHistoryRow,
-    TemporalValue,
-    observation_metadata::ObservationMetadata,
-    structured_value::StructuredValue,
-    structured_value_codec::StoredValueError,
-};
+use crate::temporal::{observation_metadata::ObservationMetadata, structured_value::StructuredValue, structured_value_codec::StoredValueError};
 use andromeda_ngsi_ld_entity::{
     document::instance_document::InstanceDocument,
     expanded_value::ExpandedValue,
-    geometry_value::GeometryValue,
     literal::LiteralValue,
     refusal::EntityRefusal,
     unit_code::UnitCode,
 };
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
 use andromeda_ngsi_ld_number::JsonNumber;
 use serde_json::{Value, json};
-use std::str::FromStr;
 
 fn attribute() -> AttributeName {
     "https://example.org/speed".parse().expect("a valid attribute name")
 }
 
 /// The metadata the expanded members `json` of a Property instance of
-/// `attribute()` carry, as the intent wire reads them.
+/// `attribute()` carry.
 fn read_metadata(json: &str) -> Result<Option<ObservationMetadata>, EntityRefusal> {
     let mut instance: Value = serde_json::from_str(json).expect("expanded members");
     if let Some(members) = instance.as_object_mut() {
@@ -37,9 +28,9 @@ fn read_metadata(json: &str) -> Result<Option<ObservationMetadata>, EntityRefusa
     ObservationMetadata::admit(InstanceDocument::from_slice(&attribute(), &bytes)?.into_parts())
 }
 
-/// The JSON `metadata` serializes as.
+/// The expanded members `metadata` renders as.
 fn written(metadata: &ObservationMetadata) -> Value {
-    serde_json::to_value(metadata).expect("metadata writes")
+    serde_json::to_value(InstanceDocument::from(metadata.clone())).expect("metadata writes") // clone: the fixture is compared after it is rendered
 }
 
 /// Decode `stored` as a value of `family` and write it back.
@@ -206,63 +197,6 @@ fn the_unit_code_is_held_apart_from_the_sub_attributes() {
     pretty_assertions::assert_eq!(ObservationMetadata::new(unit_only), None, "metadata holding only the unit holds nothing else");
 }
 
-/// A durable row of the fixed fields and the given value and metadata.
-fn durable_row(value: &Value, metadata: &Value) -> Value {
-    json!({
-        "attribute_name": "https://example.org/speed",
-        "attribute_type": "Relationship",
-        "dataset_id": null,
-        "value": value,
-        "observed_at": null,
-        "recorded_at": "2024-01-01T00:00:00Z",
-        "created_at": "2024-01-01T00:00:00Z",
-        "modified_at": "2024-01-01T00:00:00Z",
-        "instance": {"generated": "01942f6c-7f00-7000-8000-000000000001"},
-        "metadata": metadata,
-        "partition_total": null
-    })
-}
-
-/// The structured value and the metadata travel in an intent in the JSON a
-/// stored row holds, under the `object` tag, so a durable row reads back typed
-/// and writes out as it was read.
-#[test]
-fn a_durable_row_reads_back_typed_and_writes_out_unchanged() {
-    let durable = durable_row(
-        &json!({"object": ["urn:ngsi-ld:Device:1", "urn:ngsi-ld:Device:2"]}),
-        &json!({"https://uri.etsi.org/ngsi-ld/hasObjectType": [{"@id": "https://example.org/Device"}]}),
-    );
-    let row: TemporalHistoryRow = serde_json::from_value(durable.clone()).expect("a durable row reads"); // clone: the fixture is compared after the read
-    assert!(matches!(row.value, TemporalValue::Structured(StructuredValue::Objects(_))), "{row:?}");
-    assert!(row.metadata.is_some());
-    pretty_assertions::assert_eq!(serde_json::to_value(&row).expect("the row writes"), durable);
-    let reread: TemporalHistoryRow = serde_json::from_str(&serde_json::to_string(&row).expect("the row writes")).expect("the written row reads");
-    pretty_assertions::assert_eq!(reread, row);
-}
-
-/// The scalar values keep the wire shape of durable intents.
-#[test]
-fn scalar_values_keep_their_durable_wire_shape() {
-    let number = TemporalValue::Number(JsonNumber::from_str("0.100000000000000005").expect("supported exact number"));
-    pretty_assertions::assert_eq!(serde_json::to_string(&number).expect("durable JSON"), r#"{"number":0.100000000000000005}"#);
-    let point = serde_json::from_value::<Geometry>(json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("a point");
-    pretty_assertions::assert_eq!(
-        serde_json::to_value(TemporalValue::Geometry(GeometryValue::new(point.into_parts().0))).expect("durable JSON"),
-        json!({"geometry": {"form": {"type": "Point", "coordinates": [1.0, 2.0]}}})
-    );
-    for (wire, expected) in [
-        (json!({"number": 42}), TemporalValue::Number(JsonNumber::from(42))),
-        (
-            json!({"number": 1.5}),
-            TemporalValue::Number(JsonNumber::from_str("1.5").expect("exact decimal")),
-        ),
-        (json!({"string": "free"}), TemporalValue::String("free".to_owned())),
-    ] {
-        let row: TemporalHistoryRow = serde_json::from_value(durable_row(&wire, &Value::Null)).expect("an old intent row reads");
-        pretty_assertions::assert_eq!(row.value, expected);
-    }
-}
-
 /// A single JSON literal is stored as its value object, so it reads back as
 /// the literal rather than as a node its keys would not make.
 #[test]
@@ -284,32 +218,6 @@ fn an_empty_array_valued_property_is_stored_as_the_empty_array() {
         StructuredValue::from_stored(AttributeType::Property, &attribute(), "[]").expect("a stored empty array"),
         StructuredValue::Values(Vec::new())
     );
-}
-
-/// IETF RFC 7946 sections 5 and 6.1, clause 4.6.4: a geometry observation
-/// travels in its intent with its `bbox` and foreign members, and one written
-/// without members reads back without them.
-#[test]
-fn a_geometry_observation_keeps_its_members_through_the_intent() {
-    let members = json!({
-        "https://purl.org/geojson/vocab#bbox": [{"@list": [{"@value": 1}, {"@value": 2}, {"@value": 1}, {"@value": 2}]}],
-        "https://ex.org/plotName": [{"@value": "plot 7"}]
-    });
-    let wire = json!({"geometry": {"form": {"type": "Point", "coordinates": [1.0, 2.0]}, "members": members}});
-    let row: TemporalHistoryRow = serde_json::from_value(durable_row(&wire, &Value::Null)).expect("a durable row reads");
-    let TemporalValue::Geometry(geometry) = &row.value else {
-        panic!("a geometry: {row:?}");
-    };
-    let kept = geometry.members().expect("the members travel with the geometry");
-    pretty_assertions::assert_eq!(kept.bbox().map(|bbox| bbox.ordinates().collect::<Vec<_>>()), Some(vec![1.0, 2.0, 1.0, 2.0]));
-    pretty_assertions::assert_eq!(serde_json::to_value(&row.value).expect("durable JSON"), wire);
-
-    let bare = json!({"geometry": {"form": {"type": "Point", "coordinates": [1.0, 2.0]}}});
-    let row: TemporalHistoryRow = serde_json::from_value(durable_row(&bare, &Value::Null)).expect("a durable row reads");
-    let TemporalValue::Geometry(geometry) = &row.value else {
-        panic!("a geometry: {row:?}");
-    };
-    assert!(geometry.members().is_none());
 }
 
 /// Every structured value and every metadata object a write is admitted with

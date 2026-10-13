@@ -8,7 +8,8 @@
 //! element breaking its invariants is refused, as a row's members are.
 
 use crate::stored_members::{InstanceMembers, MemberColumns, StoredInstanceError};
-use andromeda_postgresql_encoding::ewkb::EwkbError;
+use andromeda_ngsi_ld_geometry::form::GeometryForm;
+use andromeda_postgresql_encoding::ewkb::{EwkbError, encode};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::value::RawValue;
@@ -40,6 +41,17 @@ pub struct SubAttributeElement {
 /// A geometry in the binary form of `PostGIS` `geometry`, which is EWKB.
 #[derive(Debug)]
 pub struct EwkbGeometry(pub(crate) Vec<u8>);
+
+impl EwkbGeometry {
+    /// The EWKB of `form`, its SRID embedded.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EwkbError`] when `form` has no EWKB encoding.
+    pub fn of(form: &GeometryForm) -> Result<EwkbGeometry, EwkbError> {
+        Ok(EwkbGeometry(encode(form)?.to_vec()))
+    }
+}
 
 // Hand-written: `geometry` is a `PostGIS` type `sqlx` knows only by name, and
 // its binary send and receive form is the EWKB the store already builds, so
