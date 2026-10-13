@@ -67,10 +67,10 @@ impl SpatialIndexingCommitter {
 
     /// Forward one commit, updating the index around it when it targets the
     /// live branch.
-    async fn forward(&self, target: &ContextTarget, writes: Vec<AtomicWrite>, replay: Option<CommitReplay>) -> Result<Vec<WriteOutcome>, CommitError> {
+    async fn forward(&self, target: &ContextTarget, writes: Vec<AtomicWrite>, kind: CommitKind) -> Result<Vec<WriteOutcome>, CommitError> {
         // A Snapshot branch is never indexed: its queries always go to the store.
         if target.snapshot().is_some() {
-            return self.commit_inner(target, writes, replay).await;
+            return self.commit_inner(target, writes, kind).await;
         }
         let changes: Vec<IndexChange> = writes.iter().map(IndexChange::of).collect();
         let entities: Vec<Identifier> = changes.iter().filter_map(IndexChange::entity).cloned().collect(); // clone: the lock map owns the identifiers it locks
@@ -78,7 +78,7 @@ impl SpatialIndexingCommitter {
         for change in &changes {
             change.anticipate(&self.index, &self.placement);
         }
-        let outcomes = self.commit_inner(target, writes, replay).await?;
+        let outcomes = self.commit_inner(target, writes, kind).await?;
         for (change, outcome) in changes.into_iter().zip(&outcomes) {
             change.settle(&self.index, &self.placement, outcome);
         }
@@ -86,23 +86,38 @@ impl SpatialIndexingCommitter {
     }
 
     /// Forward one commit to the wrapped port.
-    async fn commit_inner(&self, target: &ContextTarget, writes: Vec<AtomicWrite>, replay: Option<CommitReplay>) -> Result<Vec<WriteOutcome>, CommitError> {
-        match replay {
-            Some(replay) => self.inner.commit_replayed(target, replay, writes).await,
-            None => self.inner.commit(target, writes).await,
+    async fn commit_inner(&self, target: &ContextTarget, writes: Vec<AtomicWrite>, kind: CommitKind) -> Result<Vec<WriteOutcome>, CommitError> {
+        match kind {
+            CommitKind::Fresh => self.inner.commit(target, writes).await,
+            CommitKind::Enqueued => self.inner.commit_enqueued(writes).await,
+            CommitKind::Replayed(replay) => self.inner.commit_replayed(target, replay, writes).await,
         }
     }
+}
+
+/// Which commit of the wrapped port one forwarded commit is.
+enum CommitKind {
+    /// [`ContextCommitter::commit`].
+    Fresh,
+    /// [`ContextCommitter::commit_enqueued`], on the live branch.
+    Enqueued,
+    /// [`ContextCommitter::commit_replayed`] of this replay.
+    Replayed(CommitReplay),
 }
 
 impl ContextCommitter for SpatialIndexingCommitter {
     fn commit(&self, target: &ContextTarget, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         let target = target.clone(); // clone: the owned future outlives the borrowed target
-        Box::pin(async move { self.forward(&target, writes, None).await })
+        Box::pin(async move { self.forward(&target, writes, CommitKind::Fresh).await })
+    }
+
+    fn commit_enqueued(&self, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        Box::pin(async move { self.forward(&ContextTarget::Live, writes, CommitKind::Enqueued).await })
     }
 
     fn commit_replayed(&self, target: &ContextTarget, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         let target = target.clone(); // clone: the owned future outlives the borrowed target
-        Box::pin(async move { self.forward(&target, writes, Some(replay)).await })
+        Box::pin(async move { self.forward(&target, writes, CommitKind::Replayed(replay)).await })
     }
 }
 
@@ -240,6 +255,10 @@ mod tests {
                 Script::Answer(outcome) => Box::pin(async move { Ok(writes.iter().map(|_| outcome()).collect()) }),
                 Script::Hang => Box::pin(pending()),
             }
+        }
+
+        fn commit_enqueued(&self, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+            self.commit(&ContextTarget::Live, writes)
         }
 
         fn commit_replayed(&self, target: &ContextTarget, _replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
@@ -413,6 +432,10 @@ mod tests {
         impl ContextCommitter for FailingStore {
             fn commit(&self, _target: &ContextTarget, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
                 Box::pin(async { Err(CommitError::Persistence(PersistenceFailure::Unavailable)) })
+            }
+
+            fn commit_enqueued(&self, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+                self.commit(&ContextTarget::Live, writes)
             }
 
             fn commit_replayed(&self, target: &ContextTarget, _replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {

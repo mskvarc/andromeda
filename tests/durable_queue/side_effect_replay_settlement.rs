@@ -16,7 +16,7 @@
 
 use crate::{
     broker_committer::committer,
-    queue_database::{deliveries_of, enqueue_side_effect, events_of, live_target, queue_database, subscription, subscription_key},
+    queue_database::{deliveries_of, enqueue_side_effect, events_of, live_target, queue_database, side_effect_queue, subscription, subscription_key},
     queue_workers::side_effect_worker,
 };
 use andromeda_context_commit::{
@@ -32,7 +32,6 @@ use andromeda_context_commit::{
 use andromeda_entity::side_effect_queue::{LeasedSideEffect, SideEffectQueue};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
-use andromeda_postgresql_context_store::pending_side_effects::repo::PendingSideEffectsRepository;
 use pretty_assertions::assert_eq;
 use serial_test::serial;
 use sqlx::PgPool;
@@ -90,7 +89,7 @@ async fn durable_queue_a_replay_under_a_reclaimed_lease_commits_nothing_and_the_
     let pool = queue_database().await;
     let stored_subscription = subscription(&pool, "urn:ngsi-ld:Subscription:replay-settlement").await;
     enqueue_side_effect(&pool).await;
-    let repository = PendingSideEffectsRepository::new(&pool);
+    let repository = side_effect_queue(&pool);
     let committer = committer(&pool);
     let first = side_effect_worker();
     let second = side_effect_worker();
@@ -155,7 +154,7 @@ async fn durable_queue_a_replay_slower_than_its_lease_keeps_its_job_and_lands_on
     let pool = queue_database().await;
     let stored_subscription = subscription(&pool, "urn:ngsi-ld:Subscription:slow-replay").await;
     enqueue_side_effect(&pool).await;
-    let repository = PendingSideEffectsRepository::new(&pool);
+    let repository = side_effect_queue(&pool);
     let first = side_effect_worker();
     let leased = repository.lease_batch(&first, BATCH_SIZE, LEASE_SECONDS).await.expect("first lease");
     let leased = leased.into_iter().next().expect("the due job is leased to the first worker");

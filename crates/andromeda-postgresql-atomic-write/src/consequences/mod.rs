@@ -5,6 +5,7 @@
 //! knows nothing of their statements.
 
 pub(crate) mod notification_events;
+pub(crate) mod numbering;
 pub(crate) mod side_effects;
 
 /// Whether a commit's consequence phase persisted anything worth waking a drain for.

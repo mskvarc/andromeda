@@ -301,6 +301,10 @@ impl ContextCommitter for StubBroker {
         Box::pin(async { panic!("commit is not exercised by the traversal harness") })
     }
 
+    fn commit_enqueued(&self, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        Box::pin(async { panic!("commit_enqueued is not exercised by the traversal harness") })
+    }
+
     fn commit_replayed(&self, _target: &ContextTarget, _replay: CommitReplay, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         Box::pin(async { panic!("commit_replayed is not exercised by the traversal harness") })
     }

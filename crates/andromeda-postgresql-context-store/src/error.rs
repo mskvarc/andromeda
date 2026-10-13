@@ -7,6 +7,7 @@ use crate::{
     entity_state_record::state_record::StateRecordError,
     jsonld_context::mapper::ContextMapperError,
     migration_set::branch::BranchVersionError,
+    pending_side_effects::change_event_record::ChangeEventRecordError,
     schema_contract::error::SchemaContractError,
     snapshot::stored_snapshot_error::StoredSnapshotError,
     store_invariant::StoreInvariant,
@@ -104,9 +105,10 @@ pub enum ContextStoreError {
     /// between a builder's column list and its rows is the only cause of.
     #[error("context store statement could not be built: {0}")]
     StatementBuild(#[from] SeaQueryError),
-    /// A JSON document the store writes could not be serialised.
-    #[error("context store payload could not be encoded: {0}")]
-    PayloadEncoding(#[source] serde_json::Error),
+    /// An owed change has no `pending_change_event` record under the keys its
+    /// commit resolved.
+    #[error("context store change event record: {0}")]
+    ChangeEventRecord(#[from] ChangeEventRecordError),
     /// A committed Entity state has no `entity_state_record` under the keys
     /// its commit resolved.
     #[error("context store state record: {0}")]
@@ -190,7 +192,7 @@ impl ContextStoreError {
             ContextStoreError::InvalidRegex(_) | ContextStoreError::Collation(_) => PersistenceFailure::StatementRejected,
             ContextStoreError::Encoding(_)
             | ContextStoreError::CopyField(_)
-            | ContextStoreError::PayloadEncoding(_)
+            | ContextStoreError::ChangeEventRecord(_)
             | ContextStoreError::StateRecord(_)
             | ContextStoreError::OrdinalOutOfRange(_) => PersistenceFailure::Unencodable,
             ContextStoreError::Render(_) | ContextStoreError::StatementBuild(_) => PersistenceFailure::StatementUnbuildable,
@@ -233,7 +235,7 @@ impl ContextStoreError {
             | ContextStoreError::Migration(_)
             | ContextStoreError::BranchVersion(_)
             | ContextStoreError::StatementBuild(_)
-            | ContextStoreError::PayloadEncoding(_)
+            | ContextStoreError::ChangeEventRecord(_)
             | ContextStoreError::StateRecord(_)
             | ContextStoreError::OrdinalOutOfRange(_)
             | ContextStoreError::StoredRegistration(_)
@@ -272,7 +274,7 @@ impl ContextStoreError {
             | ContextStoreError::Migration(_)
             | ContextStoreError::BranchVersion(_)
             | ContextStoreError::StatementBuild(_)
-            | ContextStoreError::PayloadEncoding(_)
+            | ContextStoreError::ChangeEventRecord(_)
             | ContextStoreError::StateRecord(_)
             | ContextStoreError::OrdinalOutOfRange(_)
             | ContextStoreError::StoredRegistration(_)

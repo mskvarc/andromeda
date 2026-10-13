@@ -4,12 +4,12 @@
 //! crashes, and the clock advances past `lease_until`. Only one initial lease
 //! exists, the row is reclaimed after expiry, only the current holder's
 //! settlement removes it, and only once, a release by the worker whose lease
-//! passed on changes nothing, a payload that cannot be decoded
+//! passed on changes nothing, a job that cannot be decoded
 //! reaches a coherent dead state, and a dead row is reaped once its retention
 //! has passed while a live row is not.
 
 use crate::{
-    queue_database::{enqueue_side_effect, queue_database, settle_side_effect},
+    queue_database::{UNREADABLE_EVENTS, enqueue_changes_under, enqueue_side_effect, owed_creation, queue_database, settle_side_effect, side_effect_queue},
     queue_workers::side_effect_worker,
 };
 use andromeda_context_commit::{
@@ -17,14 +17,11 @@ use andromeda_context_commit::{
     lease_acknowledgement::LeaseAcknowledgement,
     side_effect_job_id::SideEffectJobId,
     write_id::WriteId,
-    write_ordinal::WriteOrdinal,
     write_record::WriteRecord,
 };
 use andromeda_entity::side_effect_queue::{DeadLetterAttempt, SideEffectQueue};
-use andromeda_postgresql_context_store::pending_side_effects::{payload::PersistedBatchSideEffectJob, repo::PendingSideEffectsRepository};
 use chrono::{DateTime, Duration as RetentionDuration, Utc};
 use pretty_assertions::assert_eq;
-use serde_json::json;
 use serial_test::serial;
 use sqlx::PgPool;
 use std::time::Duration;
@@ -50,7 +47,7 @@ async fn queued_job(pool: &PgPool) -> SideEffectJobId {
 async fn durable_queue_a_due_side_effect_is_leased_once_and_reclaimed_after_its_lease_expires() {
     let pool = queue_database().await;
     let write_id = enqueue_side_effect(&pool).await;
-    let repository = PendingSideEffectsRepository::new(&pool);
+    let repository = side_effect_queue(&pool);
     let owner = side_effect_worker();
     let contender = side_effect_worker();
 
@@ -118,7 +115,7 @@ async fn job_state(pool: &PgPool, write_id: WriteId) -> (Option<uuid::Uuid>, i32
 async fn durable_queue_a_release_by_a_worker_whose_lapsed_job_was_reclaimed_is_refused_and_changes_nothing() {
     let pool = queue_database().await;
     let write_id = enqueue_side_effect(&pool).await;
-    let repository = PendingSideEffectsRepository::new(&pool);
+    let repository = side_effect_queue(&pool);
     let owner = side_effect_worker();
     let contender = side_effect_worker();
     let leased = repository.lease_batch(&owner, BATCH_SIZE, LEASE_SECONDS).await.expect("first lease");
@@ -162,16 +159,8 @@ async fn durable_queue_a_release_by_a_worker_whose_lapsed_job_was_reclaimed_is_r
 async fn durable_queue_a_replayed_commit_enqueues_no_second_side_effect_job() {
     let pool = queue_database().await;
     let record = WriteRecord::mint(Utc::now());
-    let payload = PersistedBatchSideEffectJob {
-        temporal_entities: Vec::new(),
-        change_events: Vec::new(),
-    };
     for _ in 0..2 {
-        let mut transaction = pool.begin().await.expect("enqueue transaction");
-        PendingSideEffectsRepository::enqueue_in_tx(&mut transaction, &record, WriteOrdinal::at(0), &payload)
-            .await
-            .expect("enqueue under the same write identity");
-        transaction.commit().await.expect("commit the enqueue");
+        enqueue_changes_under(&pool, &record, &[owed_creation("urn:ngsi-ld:Vehicle:replayed")]).await;
     }
 
     let queued: i64 = sqlx::query_scalar("SELECT count(*) FROM pending_side_effects WHERE write_id = $1")
@@ -187,18 +176,19 @@ async fn durable_queue_a_replayed_commit_enqueues_no_second_side_effect_job() {
 #[serial(durable_queue)]
 async fn durable_queue_a_side_effect_payload_that_cannot_be_decoded_reaches_a_coherent_dead_state() {
     let pool = queue_database().await;
-    sqlx::query("INSERT INTO pending_side_effects (id, write_id, recorded_at, base_ordinal, payload) VALUES ($1, $2, $3, $4, $5)")
-        .bind(SideEffectJobId::mint().as_uuid())
-        .bind(WriteId::mint().as_uuid())
-        .bind(Utc::now())
-        .bind(0_i32)
-        .bind(json!({"unreadable": true}))
-        .execute(&pool)
-        .await
-        .expect("seed an undecodable job");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO pending_side_effects (id, write_id, recorded_at, base_ordinal, events) VALUES ($1, $2, $3, $4, {UNREADABLE_EVENTS})"
+    )))
+    .bind(SideEffectJobId::mint().as_uuid())
+    .bind(WriteId::mint().as_uuid())
+    .bind(Utc::now())
+    .bind(0_i32)
+    .execute(&pool)
+    .await
+    .expect("seed an undecodable job");
     let job = queued_job(&pool).await;
 
-    let repository = PendingSideEffectsRepository::new(&pool);
+    let repository = side_effect_queue(&pool);
     let leased = repository
         .lease_batch(&side_effect_worker(), BATCH_SIZE, LEASE_SECONDS)
         .await
@@ -229,18 +219,19 @@ async fn durable_queue_a_side_effect_payload_that_cannot_be_decoded_reaches_a_co
 #[serial(durable_queue)]
 async fn durable_queue_the_dead_letter_reap_removes_only_dead_jobs_older_than_the_cutoff() {
     let pool = queue_database().await;
-    sqlx::query("INSERT INTO pending_side_effects (id, write_id, recorded_at, base_ordinal, payload) VALUES ($1, $2, $3, $4, $5)")
-        .bind(SideEffectJobId::mint().as_uuid())
-        .bind(WriteId::mint().as_uuid())
-        .bind(Utc::now())
-        .bind(0_i32)
-        .bind(json!({"unreadable": true}))
-        .execute(&pool)
-        .await
-        .expect("seed an undecodable job");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO pending_side_effects (id, write_id, recorded_at, base_ordinal, events) VALUES ($1, $2, $3, $4, {UNREADABLE_EVENTS})"
+    )))
+    .bind(SideEffectJobId::mint().as_uuid())
+    .bind(WriteId::mint().as_uuid())
+    .bind(Utc::now())
+    .bind(0_i32)
+    .execute(&pool)
+    .await
+    .expect("seed an undecodable job");
     enqueue_side_effect(&pool).await;
 
-    let repository = PendingSideEffectsRepository::new(&pool);
+    let repository = side_effect_queue(&pool);
     // Leasing retires the undecodable job; the decodable one is handed out and
     // stays live under its lease.
     let leased = repository
@@ -288,15 +279,14 @@ async fn durable_queue_a_job_exhausted_after_the_retention_window_survives_the_r
         (&recently_exhausted, now - RetentionDuration::days(30), now - RetentionDuration::hours(1)),
         (&long_exhausted, now - RetentionDuration::days(30), now - RetentionDuration::days(8)),
     ] {
-        sqlx::query(
-            "INSERT INTO pending_side_effects (id, write_id, recorded_at, base_ordinal, payload, created_at, exhausted_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
-        )
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO pending_side_effects (id, write_id, recorded_at, base_ordinal, events, created_at, exhausted_at) \
+             VALUES ($1, $2, $3, $4, {UNREADABLE_EVENTS}, $5, $6)"
+        )))
         .bind(job.as_uuid())
         .bind(WriteId::mint().as_uuid())
         .bind(created_at)
         .bind(0_i32)
-        .bind(json!({"unreadable": true}))
         .bind(created_at)
         .bind(exhausted_at)
         .execute(&pool)
@@ -304,7 +294,7 @@ async fn durable_queue_a_job_exhausted_after_the_retention_window_survives_the_r
         .expect("seed a dead-lettered job");
     }
 
-    let repository = PendingSideEffectsRepository::new(&pool);
+    let repository = side_effect_queue(&pool);
     let reaped = repository
         .purge_dead_before(now - RetentionDuration::days(7))
         .await

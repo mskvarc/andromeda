@@ -32,3 +32,5 @@ pub mod event_insert;
 pub mod queue;
 /// Validated notification delivery records and their mapper errors.
 pub mod rows;
+/// Reading back one stored entity change.
+pub(crate) mod stored_change;

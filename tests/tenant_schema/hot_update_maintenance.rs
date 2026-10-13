@@ -498,8 +498,9 @@ async fn sustained_side_effect_claims_stay_heap_only() {
     let pool = scope.database_pool();
 
     sqlx::query(
-        "INSERT INTO pending_side_effects (id, write_id, recorded_at, base_ordinal, payload) \
-         VALUES (gen_random_uuid(), gen_random_uuid(), NOW(), 0, '{\"temporal_entities\": [], \"change_events\": []}'::json)",
+        "INSERT INTO pending_side_effects (id, write_id, recorded_at, base_ordinal, events) \
+         VALUES (gen_random_uuid(), gen_random_uuid(), NOW(), 0, \
+         ARRAY[ROW(1, 'urn:ngsi-ld:Vehicle:churn', '{}'::integer[], '{}'::smallint[], '{}'::integer[], '{}'::text[], NOW(), 1, NULL, NULL, NULL, NULL, NULL)::pending_change_event])",
     )
     .execute(pool)
     .await

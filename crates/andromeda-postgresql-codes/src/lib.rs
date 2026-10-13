@@ -4,8 +4,8 @@
 //! first is the compact code domains: the small closed vocabularies a migration
 //! writes into `SMALLINT` columns — the attribute family and value shape of a
 //! history row, the trigger conditions of a subscription, the lifecycle and
-//! instance transitions of a notification event, the operation set of a
-//! context-source registration. The second is the identities those rows are
+//! instance transitions of a notification event, the origin of an owed
+//! change, the operation set of a context-source registration. The second is the identities those rows are
 //! keyed and referenced by: the current-state entity key, the temporal entity
 //! key and the attribute stream key.
 //!
@@ -38,6 +38,8 @@ pub mod attribute_change_kind;
 pub mod attribute_kind;
 /// Translation between the NGSI-LD attribute family and its stored code.
 pub mod attribute_kind_code;
+/// The persisted origin of one change a respond-async job owes.
+pub mod change_origin;
 /// The closed catalogue of compact code domains an unreadable number is reported against.
 pub mod compact_code_domain;
 /// The persisted distributed-operation mode of one registration.

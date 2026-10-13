@@ -25,12 +25,22 @@ pub trait ContextCommitter: Send + Sync + 'static {
     /// nothing lands.
     fn commit(&self, target: &ContextTarget, writes: Vec<AtomicWrite>) -> CommitFuture<'_>;
 
+    /// Commit writes on the live branch for a client that asked to be answered
+    /// before their consequences are produced (RFC 7240 section 4.1,
+    /// `respond-async`), with the semantics of [`Self::commit`] otherwise.
+    ///
+    /// The writes' temporal history is committed as queued intents whichever
+    /// append mode the store runs, so the drain, not the commit, writes it to
+    /// the history tables; a read of the Temporal API answers it at once
+    /// either way. Each write's side-effect job is queued beside it.
+    fn commit_enqueued(&self, writes: Vec<AtomicWrite>) -> CommitFuture<'_>;
+
     /// Commit writes as the replay of a previously enqueued, partially durable
     /// commit.
     ///
     /// Every consequence lands under `replay.record`'s identity instead of a
-    /// freshly minted one, and the ordinal counter that numbers temporal,
-    /// notification and side-effect consequences resumes at
+    /// freshly minted one, and the ordinal counter that numbers its
+    /// consequences resumes at
     /// `replay.base_ordinal` instead of zero, so the replay's rows belong to
     /// the write that deferred them and follow the consequences it already
     /// committed.

@@ -33,7 +33,7 @@ use crate::{
         retry_delay::RetryDelay,
         service_ports::EntityServicePorts,
     },
-    recording_ports::{ImmediateRetry, RecordingCommitter, SnapshotReader, UnusedAttributeHistory, UnusedBlockingExecutor},
+    recording_ports::{ImmediateRetry, RecordedCommits, RecordingCommitter, SnapshotReader, UnusedAttributeHistory, UnusedBlockingExecutor},
 };
 use andromeda_context_commit::{atomic_write::AtomicWrite, change_event::ChangeEvent, committer::ContextCommitter, context_change_event::ContextChangeEvent};
 use andromeda_context_space::context_target::ContextTarget;
@@ -90,6 +90,22 @@ pub(crate) fn building_snapshot() -> EntityState {
 /// committer, with the one Building subscription in its cache, returning the
 /// shared recording buffer.
 pub(crate) async fn recording_service() -> (EntityService, Arc<Mutex<Vec<AtomicWrite>>>) {
+    let (service, RecordedCommits { writes: recorded, .. }, _payload_reads) = recording_service_with(
+        ChangeNotifier::new(
+            None,
+            SubscriptionMatching::AtCommit(NotificationWriteConfig {
+                subscription_cache: building_subscription_cache().await,
+            }),
+        ),
+        ProbeAnswer::Answers(DeletionWatchers::Possible),
+        EntityConfig::default().payload_budget(),
+    );
+    (service, recorded)
+}
+
+/// [`recording_service`], also counting the commits that arrive as
+/// respond-async ones.
+pub(crate) async fn recording_service_counting_enqueued() -> (EntityService, RecordedCommits) {
     let (service, recorded, _payload_reads) = recording_service_with(
         ChangeNotifier::new(
             None,
@@ -180,7 +196,7 @@ fn observed_service(probe: ProbeAnswer, matching: SubscriptionMatching) -> Obser
         published: Arc::clone(&published), // clone: the sink and the test both hold the published changes
     };
     let notifier = ChangeNotifier::new(Some(Arc::new(sink) as Arc<dyn EntityChangeSink>), matching);
-    let (service, recorded, payload_reads) = recording_service_with(notifier, probe, EntityConfig::default().payload_budget());
+    let (service, RecordedCommits { writes: recorded, .. }, payload_reads) = recording_service_with(notifier, probe, EntityConfig::default().payload_budget());
     ObservedService {
         service,
         recorded,
@@ -208,7 +224,7 @@ pub(crate) enum CachedSubscription {
 /// committer: it records no durable match, because its notification worker
 /// evaluates every change in-process.
 pub(crate) fn live_recording_service() -> (EntityService, Arc<Mutex<Vec<AtomicWrite>>>) {
-    let (service, recorded, _payload_reads) = recording_service_with(
+    let (service, RecordedCommits { writes: recorded, .. }, _payload_reads) = recording_service_with(
         ChangeNotifier::new(None, SubscriptionMatching::Absent),
         ProbeAnswer::Answers(DeletionWatchers::Possible),
         EntityConfig::default().payload_budget(),
@@ -218,11 +234,7 @@ pub(crate) fn live_recording_service() -> (EntityService, Arc<Mutex<Vec<AtomicWr
 
 /// An entity service over the recording committer that notifies through
 /// `notifier` and admits payloads within `budget`.
-fn recording_service_with(
-    notifier: ChangeNotifier,
-    probe: ProbeAnswer,
-    budget: EntityPayloadBudget,
-) -> (EntityService, Arc<Mutex<Vec<AtomicWrite>>>, Arc<AtomicUsize>) {
+fn recording_service_with(notifier: ChangeNotifier, probe: ProbeAnswer, budget: EntityPayloadBudget) -> (EntityService, RecordedCommits, Arc<AtomicUsize>) {
     let (committer, recorded) = RecordingCommitter::new();
     let payload_reads = Arc::new(AtomicUsize::new(0));
     let modified_at = Utc::now();

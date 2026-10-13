@@ -1,9 +1,11 @@
 //! Work a batch write produces but does not have to finish before it answers.
 //!
 //! Temporal history and change events are the two, and Andromeda lets a
-//! client trade read-your-write for latency on them with `Prefer:
-//! respond-async`. Either they run inline in the request that caused them, or
-//! they are persisted alongside the entity write and drained by a worker.
+//! client trade waiting for them for latency with `Prefer: respond-async`.
+//! Either they run inline in the request that caused them, or they are
+//! persisted alongside the entity write: the history as queued intents, which
+//! every temporal read answers at once, and the change events as a job a
+//! worker drains.
 
 use andromeda_context_space::context_target::ContextTarget;
 
@@ -20,13 +22,13 @@ static LIVE_BRANCH: ContextTarget = ContextTarget::Live;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SideEffectPlacement<'a> {
     /// Run side effects inline in the request that triggered them, on this
-    /// branch. Strong read-your-write: the batch response implies the temporal
-    /// history and any derived notifications have already been produced.
+    /// branch: the batch response implies the temporal history and any
+    /// derived notifications have already been produced.
     Inline(&'a ContextTarget),
-    /// Write the live branch and persist the side-effect job in the same
-    /// transaction as the entity write; a background worker executes the job
-    /// at-least-once. Opt-in via `Prefer: respond-async` plus the configured
-    /// minimum-batch-size threshold.
+    /// Write the live branch, its history as queued intents, and persist the
+    /// side-effect job in the same transaction as the entity write; a
+    /// background worker executes the job at-least-once. Opt-in via `Prefer:
+    /// respond-async` plus the configured minimum-batch-size threshold.
     DeferredOnLive,
 }
 

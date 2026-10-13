@@ -290,12 +290,14 @@ impl EntityService {
     ///
     /// Placed inline, the observations ride the same transaction as the
     /// entity rows and the change events are emitted once it commits. Deferred
-    /// on the live branch, both are persisted alongside the entity rows and a
-    /// worker replays them, which is what makes `Prefer: respond-async`
+    /// on the live branch, the commit is a respond-async one: the history is
+    /// committed as queued intents beside the entity rows, which every
+    /// temporal read answers at once, and the change events no durable match
+    /// was recorded for are persisted in the same transaction as the job a
+    /// worker replays, which is what makes `Prefer: respond-async`
     /// crash-consistent rather than merely faster. The durable subscription
     /// matches commit with the entity row either way, never deferred to the
-    /// worker, and a job carries the change events only when no durable match
-    /// was recorded for them.
+    /// worker.
     pub(super) async fn commit_chunk(&self, placement: SideEffectPlacement<'_>, entries: Vec<GuardedWrite>) -> Result<ChunkOutcome, EntityError> {
         let target = placement.target();
         if entries.is_empty() {
@@ -309,35 +311,21 @@ impl EntityService {
             let ChunkWrite { id, entity, history, plan } = write;
             let NotificationPlan { matches, events } = plan;
             let creates = entity.is_insert();
-            let entity_id = Arc::new(id.clone()); // clone: the write and deferred side effect share this identifier.
 
             let builder = AtomicWrite::builder()
-                .entity_id(Arc::clone(&entity_id)) // clone: Arc ref-count bump
+                .entity_id(Arc::new(id.clone())) // clone: the write and the settled outcome each own the identifier.
                 .entity(entity)
+                .history(history)
                 .subscription_matches(matches)
                 .precondition(precondition);
 
             let (write, inline_events) = match placement {
-                SideEffectPlacement::Inline(_) => (builder.history(history).build(), events),
+                SideEffectPlacement::Inline(_) => (builder.build(), events),
                 SideEffectPlacement::DeferredOnLive => {
-                    // Tombstones stay inline in both modes: the deferred job
-                    // replays observations alone, so the endings commit with
-                    // the write that made them.
-                    let (observations, endings): (Vec<HistoryRecord>, Vec<HistoryRecord>) = history.into_iter().partition(HistoryRecord::is_observations);
-                    let temporal_entities = observations
-                        .into_iter()
-                        .filter_map(|record| match record {
-                            HistoryRecord::Observations(observed) => Some((Arc::clone(&entity_id), observed)), // clone: Arc ref-count bump
-                            // A Core batch writes no Temporal API addition, and the
-                            // partition above routes none here.
-                            HistoryRecord::EvolutionInstances(_) | HistoryRecord::Tombstone(_) | HistoryRecord::ScopeRemoval => None,
-                        })
-                        .collect();
                     let job = BatchSideEffectJob {
-                        temporal_entities,
                         change_events: self.notifier.owed_change_events(events),
                     };
-                    (builder.history(endings).side_effects((!job.is_empty()).then_some(job)).build(), Vec::new())
+                    (builder.side_effects((!job.is_empty()).then_some(job)).build(), Vec::new())
                 }
             };
 
@@ -345,7 +333,10 @@ impl EntityService {
             settled.push((id, creates, inline_events));
         }
 
-        let outcomes = self.writes.commit(target, writes).await?;
+        let outcomes = match placement {
+            SideEffectPlacement::Inline(target) => self.writes.commit(target, writes).await?,
+            SideEffectPlacement::DeferredOnLive => self.writes.commit_enqueued(writes).await?,
+        };
         if outcomes.len() != settled.len() {
             return Err(EntityInvariant::OutcomeCountMismatch {
                 submitted: settled.len(),

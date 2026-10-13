@@ -10,7 +10,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_postgresql_atomic_write::{committer::PostgresAtomicCommitter, history_mode::TemporalHistoryCommitMode};
 use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_cache_config::NameCacheConfig, name_lookup::NameLookup};
 use andromeda_postgresql_temporal_store::{columnstore_capability::ColumnstoreSupport, recorder::TemporalRecorder, repo::TemporalRepository};
-use andromeda_temporal::core_write_history::CoreWriteHistory;
+use andromeda_temporal::{config::TemporalAppendMode, core_write_history::CoreWriteHistory, port::temporal_intent_publisher::NoTemporalIntentPublisher};
 use sqlx::PgPool;
 use std::sync::Arc;
 
@@ -27,9 +27,11 @@ pub fn committer(pool: &PgPool) -> PostgresAtomicCommitter {
     ));
     PostgresAtomicCommitter::new(
         pool,
-        TemporalHistoryCommitMode::Native {
-            recorder: Arc::new(TemporalRecorder::new(repository)),
-        },
+        TemporalHistoryCommitMode::new(
+            TemporalAppendMode::Native,
+            Arc::new(TemporalRecorder::new(repository)),
+            Arc::new(NoTemporalIntentPublisher),
+        ),
         CoreWriteHistory::Recorded,
         attribute_names,
         entity_type_names,

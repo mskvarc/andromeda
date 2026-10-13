@@ -33,7 +33,7 @@ use crate::{
     side_effect::SideEffectPlacement,
     write_kind::{BatchCreate, BatchMerge, BatchUpdate, BatchUpsert},
 };
-use andromeda_context_commit::{atomic_write::AtomicWrite, subscription_match::SubscriptionMatch};
+use andromeda_context_commit::{atomic_write::AtomicWrite, history_record::HistoryRecord, subscription_match::SubscriptionMatch};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::operation::selection::OverwritePolicy;
 use andromeda_ngsi_ld_model::{attribute::member_reading::MemberReading, entity::Entity, notification::NotificationTrigger};
@@ -108,9 +108,26 @@ async fn batch_create_records_the_match_and_defers_no_event_when_enqueued() {
         &[NotificationTrigger::EntityCreated, NotificationTrigger::AttributeCreated],
         CATEGORY_IRI,
     );
-    let job = write.side_effects.as_ref().expect("an enqueued write carries a deferred job");
-    assert_eq!(job.temporal_entities.len(), 1, "the observation is still deferred to the worker");
-    assert!(job.change_events.is_empty(), "the notifications were queued at commit");
+    assert!(
+        write.history.iter().any(HistoryRecord::is_observations),
+        "the observation commits with the write, as a queued intent"
+    );
+    assert!(write.side_effects.is_none(), "the notifications were queued at commit, so no job is owed");
+}
+
+/// Under durable delivery every notification is queued at commit and the
+/// history is queued as intents, so a respond-async write owes no job.
+#[tokio::test]
+async fn a_respond_async_commit_under_durable_delivery_writes_no_job() {
+    let (service, recorded) = recording_service().await;
+    let admitted = admitted_batch(&service, BatchCreate, vec![building_entity("office")], &ContextSpec::core_only()).await;
+    service
+        .batch_create(SideEffectPlacement::DeferredOnLive, admitted)
+        .await
+        .expect("the batch create lands");
+
+    let write = single_recorded_write(&recorded);
+    assert!(write.side_effects.is_none(), "the write carries no job");
 }
 
 #[tokio::test]

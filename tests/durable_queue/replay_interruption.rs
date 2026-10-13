@@ -1,21 +1,15 @@
 //! Failing a side-effect replay on demand, at a chosen point in its lease.
 //!
-//! The replay of a job owing an observation writes the Entity's Temporal
-//! Evolution. A session holding the temporal history relations in SHARE mode
-//! keeps that replay waiting inside its transaction, after it has already
-//! locked its job; cancelling the waiting statement then fails the replay
-//! (SQLSTATE 57014, which the committer reports as a persistence failure, not
-//! as contention it would run again), and the drain releases the job.
+//! A session holding the relations a replay writes in SHARE mode keeps that
+//! replay waiting inside its transaction, after it has already locked its
+//! job; cancelling the waiting statement then fails the replay (SQLSTATE
+//! 57014, which the committer reports as a persistence failure, not as
+//! contention it would run again), and the drain releases the job.
 
-use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
+use crate::queue_database::{enqueue_changes, owed_creation};
+use andromeda_context_commit::write_id::WriteId;
 use andromeda_entity::side_effect_drain::{EntitySideEffectDrain, EntitySideEffectDrainOutcome};
-use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_postgresql_context_store::pending_side_effects::{
-    payload::{PersistedBatchSideEffectJob, PersistedTemporalEntity},
-    repo::PendingSideEffectsRepository,
-};
 use chrono::{DateTime, Utc};
-use serde_json::json;
 use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};
 use tokio::time::{Instant, sleep};
@@ -23,33 +17,10 @@ use tokio::time::{Instant, sleep};
 /// The longest a replay is waited for to reach the held lock.
 const BLOCKED_DEADLINE: Duration = Duration::from_secs(10);
 
-/// Queue one job owing one observation of `entity_id` to its Temporal
-/// Evolution, as a respond-async batch defers it, and return the write it
-/// belongs to.
+/// Queue one job owing the creation of `entity_id` to its subscribers, as a
+/// respond-async batch defers it, and return the write it belongs to.
 pub async fn enqueue_observation(pool: &PgPool, entity_id: &str) -> WriteId {
-    let record = WriteRecord::mint(Utc::now());
-    let document = json!([{
-        "@id": entity_id,
-        "@type": ["https://uri.etsi.org/ngsi-ld/default-context/Vehicle"],
-        "https://uri.etsi.org/ngsi-ld/default-context/speed": [{
-            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
-            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 120}]
-        }]
-    }]);
-    let observed = EntityState::from_slice(&serde_json::to_vec(&document).expect("the document serialises")).expect("the document is an entity state");
-    let payload = PersistedBatchSideEffectJob {
-        temporal_entities: vec![PersistedTemporalEntity {
-            id: entity_id.parse().expect("a valid entity identifier"),
-            expanded: Arc::new(observed),
-        }],
-        change_events: Vec::new(),
-    };
-    let mut transaction = pool.begin().await.expect("enqueue transaction");
-    PendingSideEffectsRepository::enqueue_in_tx(&mut transaction, &record, WriteOrdinal::at(0), &payload)
-        .await
-        .expect("enqueue the job");
-    transaction.commit().await.expect("commit the enqueue");
-    record.write_id()
+    enqueue_changes(pool, &[owed_creation(entity_id)]).await
 }
 
 /// Whether another session of the suite's database is waiting for a lock.
@@ -60,17 +31,17 @@ pub async fn a_session_waits_for_a_lock(pool: &PgPool) -> bool {
         .expect("session activity")
 }
 
-/// A pass of `drain` whose replay of a queued observation is held for `held`
-/// once it has reached the temporal history relations, and then fails.
+/// A pass of `drain` whose replay of a queued change is held for `held` once
+/// it has reached the notification relations, and then fails.
 ///
 /// Returns the pass's outcome and the instant the replay was failed at: any
 /// release the drain recorded for it was recorded after that instant.
 pub async fn pass_with_failed_replay(pool: &PgPool, drain: &Arc<EntitySideEffectDrain>, held: Duration) -> (EntitySideEffectDrainOutcome, DateTime<Utc>) {
     let mut holder = pool.begin().await.expect("lock holder transaction");
-    sqlx::query("LOCK TABLE temporal_entities, temporal_attribute_streams, attribute_history IN SHARE MODE")
+    sqlx::query("LOCK TABLE notification_events, notification_deliveries IN SHARE MODE")
         .execute(&mut *holder)
         .await
-        .expect("hold the temporal history relations");
+        .expect("hold the notification relations");
     let passing = Arc::clone(drain);
     let pass = tokio::spawn(async move { passing.execute(Utc::now()).await });
     let deadline = Instant::now() + BLOCKED_DEADLINE;
@@ -86,7 +57,7 @@ pub async fn pass_with_failed_replay(pool: &PgPool, drain: &Arc<EntitySideEffect
             .await
             .expect("cancel the waiting replay");
     assert!(cancelled, "the waiting replay is cancelled");
-    holder.rollback().await.expect("release the temporal history relations");
+    holder.rollback().await.expect("release the notification relations");
     let outcome = pass.await.expect("the drain pass ran to completion").expect("the drain pass reports no error");
     (outcome, failed_at)
 }

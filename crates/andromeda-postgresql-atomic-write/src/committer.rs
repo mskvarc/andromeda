@@ -4,13 +4,17 @@ use crate::{
     attempt_failure::AttemptFailure,
     columns::{columns_for, expectations},
     commit_refusal::{context_store, database, entity_statement},
-    consequences::{ConsequenceWrite, notification_events, side_effects},
+    consequences::{
+        ConsequenceWrite,
+        notification_events,
+        numbering::{NumberedConsequences, number_consequences},
+        side_effects,
+    },
     contention_retry::rerun_while_contended,
     deferred_history,
     entity_group::{EntityGroups, IndexedWrite, RowReturned, delete_outcome, group, insert_outcome, update_outcome},
     history,
-    history_interpretation::interpret,
-    history_mode::{HistoryPlacement, TemporalHistoryCommitMode},
+    history_mode::{CommitResponse, HistoryPlacement, TemporalHistoryCommitMode},
     job_settlement::settle,
     name_resolution::resolve_write_names,
     write_isolation::IsolatedSubmission,
@@ -204,8 +208,9 @@ impl PostgresAtomicCommitter {
     /// temporal history entries, its notification events, and its side-effect
     /// job — shares the one write identity and ingestion instant carried by
     /// `record`, and draws its ordinals from the one running counter that
-    /// starts at `base`. `commit` mints a fresh record and starts that counter
-    /// at zero; `commit_replayed` reuses a durably stored record and resumes
+    /// starts at `base`, in the order [`number_consequences`] gives them.
+    /// `commit` and `commit_enqueued` mint a fresh record and start that
+    /// counter at zero; `commit_replayed` reuses a durably stored record and resumes
     /// the counter at its stored `base_ordinal`, so a replay's consequences
     /// belong to the write that deferred them and follow the ones that write
     /// already committed.
@@ -225,6 +230,9 @@ impl PostgresAtomicCommitter {
     /// [`CommitError::ReplayLeaseLost`] before it wrote anything, and one that
     /// held it keeps the job row-locked until it commits, however long the
     /// replay runs.
+    ///
+    /// `response` says whether the client waits for the consequences, which
+    /// decides where a live-branch commit's history is placed.
     async fn commit_under(
         &self,
         target: &ContextTarget,
@@ -232,6 +240,7 @@ impl PostgresAtomicCommitter {
         base: WriteOrdinal,
         writes: &[AtomicWrite],
         settles: Option<JobLease>,
+        response: CommitResponse,
     ) -> Result<Vec<WriteOutcome>, AttemptFailure> {
         if writes.is_empty() && settles.is_none() {
             return Ok(Vec::new());
@@ -256,24 +265,38 @@ impl PostgresAtomicCommitter {
             .filter(|(_, outcome)| consequences_land(outcome))
             .map(|(write, _)| write)
             .collect();
-        let (intents, next) = interpret(&landed, &record, base, self.core_write_history)?;
+        let NumberedConsequences {
+            intents,
+            events,
+            events_base,
+            job_base,
+        } = number_consequences(&landed, &record, base, self.core_write_history)?;
         let intents = &intents;
-        let placement = self.history_mode.placement(target);
+        let placement = self.history_mode.placement(target, response);
         match placement {
             HistoryPlacement::Inline(recorder) => history::apply(recorder, &mut tx, target, &record, intents).await?,
             HistoryPlacement::Queued { recorder, .. } => deferred_history::apply(&mut tx, recorder, &record, intents).await?,
         }
-        let (next, notifications) = notification_events::apply(
+        let notifications = notification_events::apply(
             &mut tx,
             target,
-            &landed,
+            events,
             &record,
-            next,
+            events_base,
             self.entity_type_names.as_ref(),
             self.attribute_names.as_ref(),
         )
         .await?;
-        let side_effects = side_effects::apply(&mut tx, target, &landed, &record, next).await?;
+        let side_effects = side_effects::apply(
+            &mut tx,
+            target,
+            &landed,
+            &record,
+            job_base,
+            self.entity_type_names.as_ref(),
+            self.attribute_names.as_ref(),
+        )
+        .await?;
 
         tx.commit().await.map_err(|error| database(&error))?;
         tracing::debug!(write_id = %record.write_id(), writes = writes.len(), "atomic context write committed");
@@ -292,33 +315,51 @@ impl PostgresAtomicCommitter {
         }
         Ok(outcomes)
     }
-}
 
-impl ContextCommitter for PostgresAtomicCommitter {
+    /// Commit `writes` under a freshly minted write identity, answered as
+    /// `response`.
+    ///
     /// Every refused write is set aside and the rest run again, one attempt per
     /// refusal, so a successful commit costs one transaction and each refused
     /// entity costs its chunk one more.
+    async fn commit_fresh(&self, target: &ContextTarget, writes: Vec<AtomicWrite>, response: CommitResponse) -> Result<Vec<WriteOutcome>, CommitError> {
+        let record = WriteRecord::mint(Utc::now());
+        let mut submission = IsolatedSubmission::new(writes);
+        loop {
+            match rerun_while_contended(|| self.commit_under(target, record, WriteOrdinal::at(0), submission.writes(), None, response)).await {
+                Ok(landed) => return submission.outcomes(landed),
+                Err(AttemptFailure::Refused(refused)) => submission.set_aside(&refused.entity_id, refused.refusal)?,
+                Err(AttemptFailure::Failed(error)) => return Err(error),
+            }
+        }
+    }
+}
+
+impl ContextCommitter for PostgresAtomicCommitter {
     fn commit(&self, target: &ContextTarget, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         let target = target.clone();
-        Box::pin(async move {
-            let record = WriteRecord::mint(Utc::now());
-            let mut submission = IsolatedSubmission::new(writes);
-            loop {
-                match rerun_while_contended(|| self.commit_under(&target, record, WriteOrdinal::at(0), submission.writes(), None)).await {
-                    Ok(landed) => return submission.outcomes(landed),
-                    Err(AttemptFailure::Refused(refused)) => submission.set_aside(&refused.entity_id, refused.refusal)?,
-                    Err(AttemptFailure::Failed(error)) => return Err(error),
-                }
-            }
-        })
+        Box::pin(async move { self.commit_fresh(&target, writes, CommitResponse::Synchronous).await })
+    }
+
+    fn commit_enqueued(&self, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        Box::pin(async move { self.commit_fresh(&ContextTarget::Live, writes, CommitResponse::RespondAsync).await })
     }
 
     fn commit_replayed(&self, target: &ContextTarget, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         let target = target.clone();
         Box::pin(async move {
-            rerun_while_contended(|| self.commit_under(&target, replay.record, replay.base_ordinal, &writes, Some(replay.lease)))
-                .await
-                .map_err(AttemptFailure::into_commit_error)
+            rerun_while_contended(|| {
+                self.commit_under(
+                    &target,
+                    replay.record,
+                    replay.base_ordinal,
+                    &writes,
+                    Some(replay.lease),
+                    CommitResponse::Synchronous,
+                )
+            })
+            .await
+            .map_err(AttemptFailure::into_commit_error)
         })
     }
 }
@@ -333,7 +374,7 @@ mod tests {
     fn returned_flag_reports_identifier_membership() {
         let present = "urn:ngsi-ld:A".parse::<Identifier>().expect("valid entity URI");
         let absent = "urn:ngsi-ld:B".parse::<Identifier>().expect("valid entity URI");
-        let landed = HashSet::from([present.clone()]); // clone: the set and the probe each own the identifier
+        let landed = HashSet::from([present.clone()]); // clone: the set and the probe each own the probe identifier
         assert!(matches!(returned_flag(&landed, &present), RowReturned::Yes));
         assert!(matches!(returned_flag(&landed, &absent), RowReturned::No));
     }

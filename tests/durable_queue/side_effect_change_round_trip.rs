@@ -111,24 +111,18 @@ async fn durable_queue_a_job_hands_each_write_its_whole_change_back() {
     let write = AtomicWrite::builder()
         .entity_id(Arc::new(entity_id))
         .entity(EntityMutation::None)
-        .side_effects(Some(BatchSideEffectJob {
-            temporal_entities: Vec::new(),
-            change_events: vec![event],
-        }))
+        .side_effects(Some(BatchSideEffectJob { change_events: vec![event] }))
         .build();
     committer(&pool).commit(&live_target(), vec![write]).await.expect("the write commits its job");
 
-    let payload: Value = sqlx::query_scalar("SELECT payload FROM pending_side_effects")
-        .fetch_one(&pool)
-        .await
-        .expect("the queued job");
-    assert_eq!(
-        payload["change_events"].as_array().map(Vec::len),
-        Some(1),
-        "one write defers one change: {payload}"
-    );
-    assert_eq!(payload["change_events"][0]["lifecycle"], json!("modified"), "{payload}");
-    assert_eq!(payload["change_events"][0]["current_payload"], modified_document(), "{payload}");
+    let (events, lifecycle, stored_state): (i32, i16, bool) =
+        sqlx::query_as("SELECT cardinality(events), (events[1]).lifecycle, (events[1]).entity_snapshot IS NOT NULL FROM pending_side_effects")
+            .fetch_one(&pool)
+            .await
+            .expect("the queued job");
+    assert_eq!(events, 1, "one write defers one change");
+    assert_eq!(lifecycle, 2, "the change is stored as a modification");
+    assert!(stored_state, "the change stores the Entity the write left behind");
 
     let (drain, published) = live_side_effect_drain(
         &pool,

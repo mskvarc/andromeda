@@ -11,13 +11,12 @@
 
 use crate::{
     live_side_effect_drain::live_side_effect_drain,
-    queue_database::{enqueue_side_effect, queue_database},
+    queue_database::{enqueue_side_effect, queue_database, side_effect_queue},
     queue_workers::side_effect_worker,
     replay_interruption::{enqueue_observation, pass_with_failed_replay},
 };
 use andromeda_context_commit::write_id::WriteId;
 use andromeda_entity::{side_effect_drain::EntitySideEffectDrainConfig, side_effect_queue::SideEffectQueue};
-use andromeda_postgresql_context_store::pending_side_effects::repo::PendingSideEffectsRepository;
 use chrono::Utc;
 use pretty_assertions::assert_eq;
 use serial_test::serial;
@@ -69,7 +68,7 @@ async fn assert_dead_lettered_at_the_ceiling(pool: &PgPool, write_id: WriteId) {
     );
     assert_eq!(lock_columns, 0, "dead-lettering releases the lease the drain took");
     assert!(last_error.is_some_and(|error| !error.is_empty()), "the reason is recorded");
-    let after = PendingSideEffectsRepository::new(pool)
+    let after = side_effect_queue(pool)
         .lease_batch(&side_effect_worker(), 1, LEASE_SECONDS)
         .await
         .expect("claim after the dead-lettering");
@@ -84,7 +83,7 @@ async fn assert_dead_lettered_at_the_ceiling(pool: &PgPool, write_id: WriteId) {
 async fn durable_queue_a_job_whose_claims_all_lapsed_is_dead_lettered_by_the_next_drain_pass() {
     let pool = queue_database().await;
     let write_id = enqueue_side_effect(&pool).await;
-    let repository = PendingSideEffectsRepository::new(&pool);
+    let repository = side_effect_queue(&pool);
 
     for expected_attempts in 0..i32::from(MAX_ATTEMPTS) {
         let claimed = repository.lease_batch(&side_effect_worker(), 1, LEASE_SECONDS).await.expect("claim the job");

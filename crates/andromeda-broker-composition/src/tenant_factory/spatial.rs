@@ -141,6 +141,10 @@ mod tests {
             Box::pin(async { Ok(Vec::new()) })
         }
 
+        fn commit_enqueued(&self, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+
         fn commit_replayed(&self, _target: &ContextTarget, _replay: CommitReplay, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
             Box::pin(async { Ok(Vec::new()) })
         }

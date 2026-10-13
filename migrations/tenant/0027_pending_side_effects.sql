@@ -2,10 +2,13 @@
 -- 0027: Pending side effects
 -- ============================================================================
 -- When a batch entity operation asks for `Prefer: respond-async`, the broker
--- queues the write's side effects (temporal history, change events) here in
--- the same transaction as the Entity write, so either both commit or neither
--- does. A background worker drains the queue at least once per job, and a
--- worker that crashes leaves its lease to lapse for another to reclaim.
+-- queues here, in the same transaction as the Entity write, the changes whose
+-- notifications that write did not record as durable deliveries, so either
+-- both commit or neither does. The write's temporal history is queued as
+-- temporal append intents in the same transaction, never here. A background
+-- worker drains the queue at least once per job, and a worker that crashes
+-- leaves its lease to lapse for another to reclaim. A write that owes no
+-- change queues no job.
 --
 -- The queue exists only in the live branch. A request scoped to a Snapshot
 -- runs its side effects inline, so no Snapshot branch ever has a job to
@@ -17,10 +20,10 @@ create table pending_side_effects (
     id uuid not null,
     created_at timestamptz not null default now(),
     -- With `base_ordinal`, what a replay resumes from: the commit's recorded
-    -- instant, and the first ordinal left free after its history and events
-    -- drew from the commit's numbering. A crash-retried job reuses both
-    -- rather than minting a new identity or restarting at zero, so it never
-    -- duplicates the commit's consequences.
+    -- instant, and the first ordinal left free after its history intents and
+    -- its notification events drew from the commit's numbering. A
+    -- crash-retried job reuses both rather than minting a new identity or
+    -- restarting at zero, so it never duplicates the commit's consequences.
     recorded_at timestamptz not null,
     -- One commit queues exactly one job, so the enqueue does nothing on a
     -- conflict here: a commit replayed under its original identity finds its
@@ -35,13 +38,16 @@ create table pending_side_effects (
     claimed_by uuid,
     exhausted_at timestamptz,
     last_error text compression lz4,
-    payload json compression lz4 not null,
+    -- The owed changes, in the order the commit made them, each state an
+    -- `entity_state_record`, so no state crosses the queue as JSON.
+    events pending_change_event[] compression lz4 not null,
     constraint pk_pending_side_effects primary key (id),
     constraint chk_pse_base_ordinal_non_negative check (base_ordinal >= 0),
     constraint chk_pse_attempt_count_non_negative check (attempt_count >= 0),
     constraint chk_pse_claim_coherent check (num_nonnulls (claimed_at, lease_until, claimed_by) in (0, 3)),
     constraint chk_pse_exhausted_state check (exhausted_at is null or num_nonnulls (claimed_at, lease_until, claimed_by) = 0),
     constraint chk_pse_last_error_length check (last_error is null or char_length(last_error) <= 2048),
+    constraint chk_pse_events_present check (cardinality(events) > 0),
     constraint uq_pse_write_identity unique (write_id)
 )
 with (

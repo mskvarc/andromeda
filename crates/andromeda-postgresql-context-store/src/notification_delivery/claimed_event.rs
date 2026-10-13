@@ -14,16 +14,13 @@
 use crate::{
     entity::stored_entity_error::StoredEntityError,
     entity_state_record::{state_record::EntityStateRecord, stored_state::StoredState},
-    notification_delivery::change_code::{change_kind_of, lifecycle_of},
+    notification_delivery::stored_change::{StoredChangeError, decode_change, decode_system_attributes},
 };
 use andromeda_context_commit::{
     write_id::WriteId,
     write_ordinal::{WriteOrdinal, WriteOrdinalOutOfRange},
 };
-use andromeda_ngsi_ld_entity::{
-    entity_state::EntityState,
-    reads::{attribute_change::AttributeChange, attribute_instance_key::AttributeInstanceKey},
-};
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     identifier::{Identifier, IdentifierParseError},
@@ -35,7 +32,6 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_notification::notification_event::{NotificationEvent, NotificationEventKey};
 use andromeda_postgresql_attribute_instance::name_keys::{HeldKeys, KeyNames};
-use andromeda_postgresql_codes::{attribute_change_kind::AttributeChangeKindCode, entity_lifecycle::EntityLifecycleCode, registry::UnknownCompactCode};
 use chrono::{DateTime, Utc};
 use std::{collections::HashMap, sync::Arc};
 use thiserror::Error;
@@ -51,32 +47,9 @@ pub enum ClaimedEventError {
         #[source]
         source: IdentifierParseError,
     },
-    /// The stored number names no Entity lifecycle transition, which is what a
-    /// row written by a release that knows more transitions looks like.
-    #[error("carries an unreadable lifecycle")]
-    UnknownLifecycle {
-        /// Registry rejection naming the number.
-        #[source]
-        source: UnknownCompactCode,
-    },
-    /// A stored number names no Attribute instance transition.
-    #[error("carries an unreadable instance transition")]
-    UnknownChangeKind {
-        /// Registry rejection naming the number.
-        #[source]
-        source: UnknownCompactCode,
-    },
-    /// The per-instance arrays disagree in length, so no instance can be
-    /// told apart from its neighbour.
-    #[error("carries {kinds} instance transitions for {attributes} attributes and {datasets} datasetIds")]
-    ChangeArity {
-        /// Number of stored transitions.
-        kinds: usize,
-        /// Number of attribute names the dictionary resolved.
-        attributes: usize,
-        /// Number of stored dataset discriminators.
-        datasets: usize,
-    },
+    /// The stored change does not read back.
+    #[error(transparent)]
+    Change(#[from] StoredChangeError),
     /// The stored event ordinal is outside the range the write identity numbers.
     #[error("carries an unreadable event ordinal")]
     InvalidEventOrdinal {
@@ -91,13 +64,6 @@ pub enum ClaimedEventError {
         #[source]
         source: NgsiLdReferenceError,
     },
-    /// The stored dataset discriminator is not a valid URI.
-    #[error("references an invalid datasetId")]
-    InvalidDatasetId {
-        /// URI validation failure.
-        #[source]
-        source: IdentifierParseError,
-    },
     /// A stored entity state no longer reads back as an entity state.
     #[error("carries an unreadable entity snapshot")]
     UnreadableSnapshot {
@@ -105,10 +71,6 @@ pub enum ClaimedEventError {
         #[source]
         source: StoredEntityError,
     },
-    /// The removed entity's `createdAt` and `modifiedAt` are not stored
-    /// together, which the event's own check constraint rules out.
-    #[error("carries an incomplete set of entity system attributes")]
-    IncompleteSystemAttributes,
 }
 
 /// SQL decode shape of one claimed event.
@@ -250,7 +212,7 @@ fn read_event(row: RawClaimedEventRow) -> Result<ReadEvent, ClaimedEventError> {
         key: NotificationEventKey::from(row.event_key),
         write_id: WriteId::from_uuid(row.write_id),
         event_ordinal: WriteOrdinal::try_from(row.event_ordinal).map_err(|source| ClaimedEventError::InvalidEventOrdinal { source })?,
-        change: decode_change(row.lifecycle, row.change_kinds, row.change_attributes, row.change_dataset_ids)?,
+        change: decode_change(row.lifecycle, row.change_kinds, attribute_names(row.change_attributes)?, row.change_dataset_ids)?,
         entity_id: row.entity_id.parse().map_err(|source| ClaimedEventError::InvalidEntityId { source })?,
         entity_state: state(row.entity_snapshot)?,
         previous_state: state(row.previous_snapshot)?,
@@ -289,56 +251,12 @@ fn assemble_event(read: ReadEvent, names: &KeyNames) -> Result<NotificationEvent
         .build())
 }
 
-/// Read the removed entity's stored system attributes back: none, or a
-/// `createdAt` and `modifiedAt` together with the optional `expiresAt`.
-const fn decode_system_attributes(
-    created_at: Option<DateTime<Utc>>,
-    modified_at: Option<DateTime<Utc>>,
-    expires_at: Option<DateTime<Utc>>,
-) -> Result<Option<SysAttrsSnapshot>, ClaimedEventError> {
-    match (created_at, modified_at, expires_at) {
-        (Some(created_at), Some(modified_at), expires_at) => Ok(Some(SysAttrsSnapshot {
-            created_at,
-            modified_at,
-            expires_at,
-        })),
-        (None, None, None) => Ok(None),
-        (Some(_), None, _) | (None, Some(_), _) | (None, None, Some(_)) => Err(ClaimedEventError::IncompleteSystemAttributes),
-    }
-}
-
-/// Validate the stored change: the lifecycle and, position for position, each
-/// changed instance's transition, attribute and `datasetId`.
-fn decode_change(lifecycle: i16, kinds: Vec<i16>, attributes: Vec<String>, datasets: Vec<Option<String>>) -> Result<EntityChange, ClaimedEventError> {
-    let lifecycle = EntityLifecycleCode::try_from(lifecycle)
-        .map(lifecycle_of)
-        .map_err(|source| ClaimedEventError::UnknownLifecycle { source })?;
-    if kinds.len() != attributes.len() || kinds.len() != datasets.len() {
-        return Err(ClaimedEventError::ChangeArity {
-            kinds: kinds.len(),
-            attributes: attributes.len(),
-            datasets: datasets.len(),
-        });
-    }
-    let instances = kinds
+/// The changed attributes' names, each validated as an attribute name.
+fn attribute_names(names: Vec<String>) -> Result<Vec<AttributeName>, ClaimedEventError> {
+    names
         .into_iter()
-        .zip(attributes)
-        .zip(datasets)
-        .map(|((kind, attribute), dataset)| {
-            let kind = AttributeChangeKindCode::try_from(kind)
-                .map(change_kind_of)
-                .map_err(|source| ClaimedEventError::UnknownChangeKind { source })?;
-            let attr: AttributeName = attribute.parse().map_err(|source| ClaimedEventError::InvalidAttributeName { source })?;
-            let dataset_id = dataset
-                .map(|value| value.parse().map_err(|source| ClaimedEventError::InvalidDatasetId { source }))
-                .transpose()?;
-            Ok(AttributeChange {
-                key: AttributeInstanceKey { attr, dataset_id },
-                kind,
-            })
-        })
-        .collect::<Result<Vec<AttributeChange>, ClaimedEventError>>()?;
-    Ok(EntityChange::new(lifecycle, instances))
+        .map(|name| name.parse().map_err(|source| ClaimedEventError::InvalidAttributeName { source }))
+        .collect()
 }
 
 #[cfg(test)]
@@ -347,7 +265,10 @@ pub(crate) mod tests {
         current_attribute::round_trip_tests::{committed, dictionary_of, ex, ngsi, property, with},
         entity::stored_entity_error::StoredEntityError,
         entity_state_record::state_record::{EntityStateRecord, record_of},
-        notification_delivery::claimed_event::{ClaimedEventError, ClaimedEvents, RawClaimedEventRow, ReadEvents},
+        notification_delivery::{
+            claimed_event::{ClaimedEventError, ClaimedEvents, RawClaimedEventRow, ReadEvents},
+            stored_change::StoredChangeError,
+        },
     };
     use andromeda_context_commit::write_ordinal::WriteOrdinal;
     use andromeda_ngsi_ld_entity::{entity_state::EntityState, reads::attribute_change::AttributeChangeKind};
@@ -586,7 +507,10 @@ pub(crate) mod tests {
     fn a_creation_instant_without_a_modification_instant_is_rejected() {
         let mut raw = event_row();
         raw.entity_created_at = Some(Utc::now());
-        assert!(matches!(refused(raw).as_ref(), ClaimedEventError::IncompleteSystemAttributes));
+        assert!(matches!(
+            refused(raw).as_ref(),
+            ClaimedEventError::Change(StoredChangeError::IncompleteSystemAttributes)
+        ));
     }
 
     #[test]
@@ -600,14 +524,20 @@ pub(crate) mod tests {
     fn a_lifecycle_number_the_registry_never_assigned_is_rejected() {
         let mut raw = event_row();
         raw.lifecycle = 99;
-        assert!(matches!(refused(raw).as_ref(), ClaimedEventError::UnknownLifecycle { .. }));
+        assert!(matches!(
+            refused(raw).as_ref(),
+            ClaimedEventError::Change(StoredChangeError::UnknownLifecycle { .. })
+        ));
     }
 
     #[test]
     fn an_instance_transition_number_the_registry_never_assigned_is_rejected() {
         let mut raw = event_row();
         raw.change_kinds = vec![2, 99];
-        assert!(matches!(refused(raw).as_ref(), ClaimedEventError::UnknownChangeKind { .. }));
+        assert!(matches!(
+            refused(raw).as_ref(),
+            ClaimedEventError::Change(StoredChangeError::UnknownChangeKind { .. })
+        ));
     }
 
     /// An attribute key the dictionary no longer resolves shortens the
@@ -618,11 +548,11 @@ pub(crate) mod tests {
         raw.change_attributes = vec!["temperature".to_owned()];
         assert!(matches!(
             refused(raw).as_ref(),
-            ClaimedEventError::ChangeArity {
+            ClaimedEventError::Change(StoredChangeError::ChangeArity {
                 kinds: 2,
                 attributes: 1,
                 datasets: 2
-            }
+            })
         ));
     }
 

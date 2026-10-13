@@ -6,6 +6,7 @@
 //! before it seeds its own fixture.
 
 use andromeda_context_commit::{
+    change_event::ChangeEvent,
     job_lease::JobLease,
     lease_acknowledgement::LeaseAcknowledgement,
     subscription_key::SubscriptionKey,
@@ -15,13 +16,23 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
-use andromeda_postgresql_attribute_instance::name_keys::{MentionedNames, NameKeys};
+use andromeda_ngsi_ld_model::{
+    entity_change::{EntityChange, EntityLifecycle},
+    notification::ChangeOrigin,
+};
+use andromeda_postgresql_attribute_instance::{
+    name_keys::{MentionedNames, NameKeys},
+    name_resolution::resolve_mentioned,
+};
 use andromeda_postgresql_codes::{subscription_kind::SubscriptionKindCode, subscription_status::SubscriptionStatusCode};
 use andromeda_postgresql_context_store::{
     config::SynchronousCommit,
     error::ContextStoreError,
     notification_delivery::{event_insert::insert_events_in_tx, queue::NotificationDeliveryQueue, rows::NewNotificationEvent},
-    pending_side_effects::{payload::PersistedBatchSideEffectJob, repo::PendingSideEffectsRepository},
+    pending_side_effects::{
+        change_event_record::{mention_event, record_of_event},
+        repo::PendingSideEffectsRepository,
+    },
     tenant_database::{DatabaseUrl, create_database_if_missing},
     tenant_migration::migrate_tenant_db,
 };
@@ -165,20 +176,63 @@ pub async fn events_of(pool: &PgPool, record: &WriteRecord) -> i64 {
         .expect("event count")
 }
 
-/// Enqueue one decodable side-effect job through the committer's own enqueue
-/// statement, returning the identity of the write it belongs to.
-pub async fn enqueue_side_effect(pool: &PgPool) -> WriteId {
+/// The side-effect queue a broker serving the verification database claims
+/// from.
+pub fn side_effect_queue(pool: &PgPool) -> PendingSideEffectsRepository {
+    let (attribute_names, entity_type_names) = dictionaries(pool);
+    PendingSideEffectsRepository::new(pool, attribute_names, entity_type_names)
+}
+
+/// The creation of the Vehicle `entity_id`, owed to its subscribers.
+pub fn owed_creation(entity_id: &str) -> ChangeEvent {
+    ChangeEvent::builder()
+        .entity_id(entity_id.parse().expect("a valid entity identifier"))
+        .entity_types(vec!["https://uri.etsi.org/ngsi-ld/default-context/Vehicle".parse().expect("a valid type name")])
+        .change(EntityChange::new(EntityLifecycle::Created, Vec::new()))
+        .occurred_at(Utc::now())
+        .origin(ChangeOrigin::Local)
+        .build()
+}
+
+/// Enqueue one job owing `events` through the committer's own enqueue
+/// statement, minting the names they hold in the same transaction, and return
+/// the identity of the write it belongs to.
+pub async fn enqueue_changes(pool: &PgPool, events: &[ChangeEvent]) -> WriteId {
     let record = WriteRecord::mint(Utc::now());
-    let payload = PersistedBatchSideEffectJob {
-        temporal_entities: Vec::new(),
-        change_events: Vec::new(),
-    };
+    enqueue_changes_under(pool, &record, events).await;
+    record.write_id()
+}
+
+/// Enqueue one job owing `events` under the write `record`, as a commit
+/// replayed under its original identity enqueues it again.
+pub async fn enqueue_changes_under(pool: &PgPool, record: &WriteRecord, events: &[ChangeEvent]) {
+    let mut mentioned = MentionedNames::default();
+    for event in events {
+        mention_event(event, &mut mentioned);
+    }
+    let (attribute_names, entity_type_names) = dictionaries(pool);
     let mut transaction = pool.begin().await.expect("enqueue transaction");
-    PendingSideEffectsRepository::enqueue_in_tx(&mut transaction, &record, WriteOrdinal::at(0), &payload)
+    let keys = resolve_mentioned(&mut transaction, mentioned, entity_type_names.as_ref(), attribute_names.as_ref())
+        .await
+        .expect("the names resolve");
+    let records = events
+        .iter()
+        .map(|event| record_of_event(event, &keys).expect("the change has a record"))
+        .collect();
+    PendingSideEffectsRepository::enqueue_in_tx(&mut transaction, record, WriteOrdinal::at(0), records)
         .await
         .expect("enqueue the job");
     transaction.commit().await.expect("commit the enqueue");
-    record.write_id()
+}
+
+/// One owed change no release can read back, its origin a number the
+/// registry never assigned, as the SQL of an `events` value.
+pub const UNREADABLE_EVENTS: &str = "ARRAY[ROW(2, 'urn:ngsi-ld:Vehicle:unreadable', '{}'::integer[], '{}'::smallint[], '{}'::integer[], '{}'::text[], now(), 99, NULL, NULL, NULL, NULL, NULL)::pending_change_event]";
+
+/// Enqueue one decodable side-effect job owing one change, returning the
+/// identity of the write it belongs to.
+pub async fn enqueue_side_effect(pool: &PgPool) -> WriteId {
+    enqueue_changes(pool, &[owed_creation("urn:ngsi-ld:Vehicle:queued")]).await
 }
 
 /// Settle one side-effect job under `lease` in a transaction of its own, the

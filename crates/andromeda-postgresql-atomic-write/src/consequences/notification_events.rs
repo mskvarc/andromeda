@@ -37,7 +37,7 @@ use sqlx::{Postgres, Transaction};
 
 /// One change, and every subscription the matcher found for it.
 #[derive(Debug)]
-struct EventGroup<'a> {
+pub(crate) struct EventGroup<'a> {
     /// The pending notification the event's payload columns are taken from.
     ///
     /// Every member of the group agrees on all of them, which is what made them
@@ -47,16 +47,15 @@ struct EventGroup<'a> {
     subscriptions: Vec<SubscriptionKey>,
 }
 
-/// Persist the notification events of landed writes and the deliveries they
-/// owe, and report the ordinal one past the last event this phase consumed
-/// together with whether any event was written.
+/// Persist the notification events of `groups` and the deliveries they owe,
+/// reporting whether any event was written.
 ///
 /// `base` continues the commit's one running ordinal counter: temporal history
 /// entries have already drawn from it, and every event group here draws the
 /// next ordinals in submission order, so `(write_id, event_ordinal)` never
 /// collides with a history entry's `(write_id, write_ordinal)` pair of the same
 /// commit — the two live in the same numbering rather than each restarting
-/// their own count at zero.
+/// their own count at zero. The groups draw exactly one ordinal each.
 ///
 /// # Errors
 ///
@@ -67,15 +66,14 @@ struct EventGroup<'a> {
 pub(crate) async fn apply(
     tx: &mut Transaction<'_, Postgres>,
     target: &ContextTarget,
-    landed: &[&AtomicWrite],
+    groups: Vec<EventGroup<'_>>,
     record: &WriteRecord,
     base: WriteOrdinal,
     entity_type_names: &dyn NameLookup<EntityTypeName>,
     attribute_names: &dyn NameLookup<AttributeName>,
-) -> Result<(WriteOrdinal, ConsequenceWrite), CommitError> {
-    let groups = group(landed);
+) -> Result<ConsequenceWrite, CommitError> {
     if groups.is_empty() {
-        return Ok((base, ConsequenceWrite::Nothing));
+        return Ok(ConsequenceWrite::Nothing);
     }
     let keys = resolve_mentioned(tx, mentioned_names(&groups), entity_type_names, attribute_names)
         .await
@@ -88,11 +86,7 @@ pub(crate) async fn apply(
     insert_events_in_tx(tx, target, record, &events, &keys)
         .await
         .map_err(|error| context_store(error))?;
-    let advance = u32::try_from(events.len()).map_err(|error| CommitError::from(CommitInvariant::ConsequenceCount(error)))?;
-    let next = base
-        .advanced_by(advance)
-        .map_err(|error| CommitError::from(CommitInvariant::OrdinalOverflow(error)))?;
-    Ok((next, ConsequenceWrite::Written))
+    Ok(ConsequenceWrite::Written)
 }
 
 /// Fold every landed write's pending notifications into one group per change.
@@ -101,7 +95,7 @@ pub(crate) async fn apply(
 /// which is what makes the ordinal each group is numbered by deterministic: a
 /// replay of the same commit reproduces the same grouping and therefore the same
 /// numbering.
-fn group<'a>(landed: &[&'a AtomicWrite]) -> Vec<EventGroup<'a>> {
+pub(crate) fn group<'a>(landed: &[&'a AtomicWrite]) -> Vec<EventGroup<'a>> {
     let mut groups: Vec<EventGroup<'a>> = Vec::new();
     for change in landed.iter().flat_map(|write| write.subscription_matches.iter()) {
         match groups.iter_mut().find(|group| group.change.same_change(change)) {

@@ -198,6 +198,10 @@ impl ContextCommitter for InMemoryStore {
         Box::pin(async move { Ok(outcomes) })
     }
 
+    fn commit_enqueued(&self, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        self.commit(&ContextTarget::Live, writes)
+    }
+
     fn commit_replayed(&self, target: &ContextTarget, _replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         self.commit(target, writes)
     }

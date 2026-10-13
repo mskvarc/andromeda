@@ -2,18 +2,14 @@
 //!
 //! Only the live branch defers side effects: a request scoped to a Snapshot
 //! runs them inline, so a job always finishes a live-branch write and names
-//! no branch.
+//! no branch. The write's temporal history is not part of the job: it is
+//! committed as queued intents with the write itself.
 
 use crate::change_event::ChangeEvent;
-use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use std::sync::Arc;
 
-/// Temporal writes and change events deferred by one live-branch entity write.
+/// The change events deferred by one live-branch entity write.
 #[derive(Debug)]
 pub struct BatchSideEffectJob {
-    /// Entities whose observations still have to reach Temporal Evolution.
-    pub temporal_entities: Vec<(Arc<Identifier>, Arc<EntityState>)>,
     /// Changes whose notifications the queuing commit did not record as
     /// durable deliveries, and which whichever broker drains the job therefore
     /// still owes its subscribers.
@@ -26,40 +22,20 @@ pub struct BatchSideEffectJob {
 }
 
 impl BatchSideEffectJob {
-    /// Whether the job carries no work at all, so a write need not queue it.
+    /// Whether the job carries no change, so a write need not queue it.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.temporal_entities.is_empty() && self.change_events.is_empty()
+        self.change_events.is_empty()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::batch_side_effect_job::BatchSideEffectJob;
-    use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes};
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use std::sync::Arc;
 
     #[test]
-    fn a_job_keeps_shared_temporal_payloads_without_copying_them() {
-        let payload = Arc::new(EntityState::new(
-            "urn:ngsi-ld:A".parse().expect("valid entity URI"),
-            EntityTypes::one("https://example.org/T".parse().expect("valid type name")),
-        ));
-        let job = BatchSideEffectJob {
-            temporal_entities: vec![(Arc::new("urn:ngsi-ld:A".parse::<Identifier>().expect("valid entity URI")), Arc::clone(&payload))],
-            change_events: Vec::new(),
-        };
-        assert!(Arc::ptr_eq(&payload, &job.temporal_entities[0].1));
-        assert!(!job.is_empty());
-    }
-
-    #[test]
-    fn a_job_without_observations_or_changes_is_empty() {
-        let job = BatchSideEffectJob {
-            temporal_entities: Vec::new(),
-            change_events: Vec::new(),
-        };
+    fn a_job_without_changes_is_empty() {
+        let job = BatchSideEffectJob { change_events: Vec::new() };
         assert!(job.is_empty());
     }
 }

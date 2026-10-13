@@ -25,11 +25,10 @@ create table temporal_append_intents (
     base_ordinal integer not null,
     attempt_count integer not null default 0,
     -- The atomic write the intent belongs to, shared by every intent of that
-    -- write, so it is not the intent's identity. One write can even produce
-    -- two intents for the same Entity: an inline intent for its tombstones,
-    -- and one replayed later from the write's `pending_side_effects` job under
-    -- the same write identity. `base_ordinal` tells them apart, hence the
-    -- unique triple.
+    -- write, so it is not the intent's identity, and with `entity_id` it is
+    -- not either: the identity of an intent is the first ordinal it occupies
+    -- in the write's one numbering, hence the unique triple, which also makes
+    -- a commit replayed under its write identity enqueue nothing twice.
     write_id uuid not null,
     claimed_at timestamptz,
     lease_until timestamptz,

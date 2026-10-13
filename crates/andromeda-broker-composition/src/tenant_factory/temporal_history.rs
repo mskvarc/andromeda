@@ -9,7 +9,7 @@ use andromeda_postgresql_atomic_write::{history_mode::TemporalHistoryCommitMode,
 use andromeda_postgresql_temporal_store::{recorder::TemporalRecorder, repo::TemporalRepository};
 use andromeda_task_runtime::supervisor::TaskSupervisor;
 use andromeda_temporal::{
-    config::{TemporalAppendMode, TemporalConfig},
+    config::TemporalConfig,
     port::{
         history_reader::TemporalHistoryReader,
         mutation_barrier::TemporalMutationBarrier,
@@ -68,12 +68,9 @@ pub(super) fn compose_temporal_history(
         Arc::clone(pacer), // clone: the intent drain consults the tenant's one pacer.
     )?;
     let recorder = Arc::new(TemporalRecorder::new(Arc::clone(repository))); // clone: the recorder and the read path share one repository.
-    let history_mode = match config.append_mode {
-        TemporalAppendMode::Native => TemporalHistoryCommitMode::Native { recorder },
-        // A Snapshot branch's history is still recorded in the write's
-        // transaction: nothing drains a branch's intent queue.
-        TemporalAppendMode::Deferred => TemporalHistoryCommitMode::Deferred { publisher, recorder },
-    };
+    // Both modes queue a respond-async commit's history, so both hold the
+    // drain's wake.
+    let history_mode = TemporalHistoryCommitMode::new(config.append_mode, recorder, publisher);
     Ok(TemporalComposition {
         history_mode,
         ports: TemporalPorts {

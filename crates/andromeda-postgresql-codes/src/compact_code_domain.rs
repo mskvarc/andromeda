@@ -22,6 +22,8 @@ pub enum CompactCodeDomain {
     AttributeChangeKindCode,
     /// [`AttributeKind`](crate::attribute_kind::AttributeKind).
     AttributeKind,
+    /// [`ChangeOriginCode`](crate::change_origin::ChangeOriginCode).
+    ChangeOriginCode,
     /// [`CsrModeCode`](crate::csr_mode::CsrModeCode).
     CsrModeCode,
     /// [`CsrOperationCode`](crate::csr_operation::CsrOperationCode).

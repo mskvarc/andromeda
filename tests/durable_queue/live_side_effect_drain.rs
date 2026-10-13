@@ -1,7 +1,7 @@
 //! The broker's own side-effect drain over the suite's database, in live
 //! delivery, with the changes it publishes recorded.
 
-use crate::{broker_committer::committer, recorded_changes::RecordedChanges};
+use crate::{broker_committer::committer, queue_database::side_effect_queue, recorded_changes::RecordedChanges};
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_entity::{
     change_sink::EntityChangeSink,
@@ -9,7 +9,6 @@ use andromeda_entity::{
     side_effect_notification::SideEffectNotificationRoute,
     side_effect_queue::SideEffectQueue,
 };
-use andromeda_postgresql_context_store::pending_side_effects::repo::PendingSideEffectsRepository;
 use sqlx::PgPool;
 use std::sync::Arc;
 
@@ -18,7 +17,7 @@ use std::sync::Arc;
 pub fn live_side_effect_drain(pool: &PgPool, config: EntitySideEffectDrainConfig) -> (Arc<EntitySideEffectDrain>, Arc<RecordedChanges>) {
     let published = Arc::new(RecordedChanges::default());
     let drain = EntitySideEffectDrain::new(
-        Arc::new(PendingSideEffectsRepository::new(pool)) as Arc<dyn SideEffectQueue>,
+        Arc::new(side_effect_queue(pool)) as Arc<dyn SideEffectQueue>,
         Arc::new(committer(pool)) as Arc<dyn ContextCommitter>,
         SideEffectNotificationRoute::Live(Arc::clone(&published) as Arc<dyn EntityChangeSink>),
         config,

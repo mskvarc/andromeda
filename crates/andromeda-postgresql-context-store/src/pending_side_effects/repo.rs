@@ -8,7 +8,7 @@
 //! a request scoped to a Snapshot runs its side effects inline, so no statement
 //! here names a branch.
 
-use crate::{error::ContextStoreError, pending_side_effects::payload::PersistedBatchSideEffectJob};
+use crate::{error::ContextStoreError, pending_side_effects::change_event_record::PendingChangeEvent};
 use andromeda_context_commit::{
     job_lease::JobLease,
     lease_acknowledgement::LeaseAcknowledgement,
@@ -17,12 +17,18 @@ use andromeda_context_commit::{
     write_ordinal::WriteOrdinal,
     write_record::WriteRecord,
 };
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_schema::queue::PendingSideEffects;
-use andromeda_postgresql_seaquery::{cast::cast, clock::wall_clock, pg_type::PostgresType};
-use chrono::{DateTime, Utc};
+use andromeda_postgresql_seaquery::{
+    clock::wall_clock,
+    pg_type::PostgresType,
+    placeholder::{external_placeholder, external_placeholder_as},
+};
 use sea_query::{DeleteStatement, Expr, ExprTrait, InsertStatement, OnConflict, PostgresQueryBuilder, Query, error::Error as SeaQueryError};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{Postgres, Transaction, postgres::PgPool};
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Insert one deferred job under the identity of the write that produced it.
@@ -32,16 +38,16 @@ use uuid::Uuid;
 /// already queued and adds no second copy, so the at-least-once drain never
 /// executes the same batch's side effects twice because of a retried commit.
 ///
-/// `recorded_at` and `base_ordinal` are persisted alongside the payload so
-/// a worker that later leases this job can rebuild the exact
+/// `recorded_at` and `base_ordinal` are persisted alongside the events so a
+/// worker that later leases this job can rebuild the exact
 /// [`WriteRecord`](andromeda_context_commit::write_record::WriteRecord) and
-/// ordinal base the enqueueing commit used, and resume its temporal and
-/// notification consequences under them rather than under a freshly minted
-/// identity.
+/// ordinal base the enqueueing commit used, and resume its notification
+/// consequences under them rather than under a freshly minted identity.
 ///
-/// The payload is the job's JSON text, cast to `json`, which the column keeps
-/// as written.
-fn enqueue_statement(id: Uuid, write_id: Uuid, recorded_at: DateTime<Utc>, base_ordinal: i32, payload: String) -> Result<InsertStatement, SeaQueryError> {
+/// Every value is a marker the caller binds: the row identity `$1`, the write
+/// identity `$2`, its instant `$3`, the base `$4`, and the events as one
+/// `$5::pending_change_event[]`, a composite array sea-query cannot carry.
+fn enqueue_statement() -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
         .into_table(PendingSideEffects::Table)
@@ -50,17 +56,17 @@ fn enqueue_statement(id: Uuid, write_id: Uuid, recorded_at: DateTime<Utc>, base_
             PendingSideEffects::WriteId,
             PendingSideEffects::RecordedAt,
             PendingSideEffects::BaseOrdinal,
-            PendingSideEffects::Payload,
+            PendingSideEffects::Events,
         ])
         .values([
-            Expr::val(id),
-            Expr::val(write_id),
-            recorded_at.into(),
-            base_ordinal.into(),
-            cast(Expr::val(payload), PostgresType::Json),
+            external_placeholder(1),
+            external_placeholder(2),
+            external_placeholder(3),
+            external_placeholder(4),
+            external_placeholder_as(5, PostgresType::PendingChangeEventArray),
         ])?
         .on_conflict(OnConflict::column(PendingSideEffects::WriteId).do_nothing().to_owned());
-    Ok(statement.clone())
+    Ok(statement)
 }
 
 /// Remove a job its replay settles, while this worker's lease on it is live.
@@ -86,23 +92,41 @@ fn settle_statement(id: Uuid, owner: LeaseHolder) -> DeleteStatement {
 }
 
 /// Postgres-backed queue for deferred batch side-effects.
-#[derive(Debug)]
 pub struct PendingSideEffectsRepository {
     /// The tenant connection pool.
     pool: PgPool,
+    /// Dictionary the changed attributes and the states' attribute keys of a
+    /// claimed job are named through.
+    attribute_names: Arc<dyn NameLookup<AttributeName>>,
+    /// Dictionary the type keys of a claimed job are named through.
+    entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
 }
 
 impl PendingSideEffectsRepository {
-    /// Create a new repository backed by the given connection pool.
+    /// Create a new repository backed by the given connection pool, naming
+    /// the keys a claimed job holds through the tenant's dictionaries.
     #[must_use]
-    pub fn new(pool: &PgPool) -> PendingSideEffectsRepository {
-        PendingSideEffectsRepository { pool: pool.clone() } // clone: Arc ref-count bump (PgPool is Arc-based)
+    pub fn new(
+        pool: &PgPool,
+        attribute_names: Arc<dyn NameLookup<AttributeName>>,
+        entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
+    ) -> PendingSideEffectsRepository {
+        PendingSideEffectsRepository {
+            pool: pool.clone(), // clone: Arc ref-count bump (PgPool is Arc-based)
+            attribute_names,
+            entity_type_names,
+        }
     }
 
     /// Borrow the pool for focused port implementations in this crate.
     #[must_use]
     pub const fn pool(&self) -> &PgPool {
         &self.pool
+    }
+
+    /// The dictionaries a claimed job's keys are named through.
+    pub(crate) fn dictionaries(&self) -> (&dyn NameLookup<AttributeName>, &dyn NameLookup<EntityTypeName>) {
+        (self.attribute_names.as_ref(), self.entity_type_names.as_ref())
     }
 
     /// Append a side-effect job within an existing transaction. The row
@@ -113,31 +137,31 @@ impl PendingSideEffectsRepository {
     /// and the identity of the committing write is stored alongside it as the
     /// deduplication key. `record` and `base_ordinal` are persisted
     /// verbatim, so a worker that leases this job later can resume the
-    /// enqueueing commit's identity and ordinal counter exactly.
+    /// enqueueing commit's identity and ordinal counter exactly. The caller
+    /// keyed every name the events hold in the same transaction.
     ///
     /// # Errors
     ///
-    /// Returns [`ContextStoreError::PayloadEncoding`] when the payload cannot be
-    /// encoded as JSON, when the consequence base does not fit the column's
-    /// signed range, or when the insert statement cannot be built, and
-    /// [`ContextStoreError::Database`] when the insert fails.
+    /// Returns [`ContextStoreError::OrdinalOutOfRange`] when the consequence
+    /// base does not fit the column's signed range,
+    /// [`ContextStoreError::StatementBuild`] when the insert statement cannot
+    /// be built, and [`ContextStoreError::Database`] when the insert fails.
     pub async fn enqueue_in_tx(
         tx: &mut Transaction<'_, Postgres>,
         record: &WriteRecord,
         base_ordinal: WriteOrdinal,
-        payload: &PersistedBatchSideEffectJob,
+        events: Vec<PendingChangeEvent>,
     ) -> Result<(), ContextStoreError> {
-        let payload_json = serde_json::to_string(payload).map_err(ContextStoreError::PayloadEncoding)?;
         let base_ordinal = base_ordinal.as_i32()?;
-        let statement = enqueue_statement(
-            SideEffectJobId::mint().as_uuid(),
-            record.write_id().as_uuid(),
-            record.recorded_at(),
-            base_ordinal,
-            payload_json,
-        )?;
-        let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut **tx).await?;
+        let sql = enqueue_statement()?.to_string(PostgresQueryBuilder);
+        sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .bind(SideEffectJobId::mint().as_uuid())
+            .bind(record.write_id().as_uuid())
+            .bind(record.recorded_at())
+            .bind(base_ordinal)
+            .bind(events)
+            .execute(&mut **tx)
+            .await?;
         Ok(())
     }
 
@@ -165,36 +189,26 @@ impl PendingSideEffectsRepository {
 mod tests {
     use crate::pending_side_effects::repo::{enqueue_statement, settle_statement};
     use andromeda_context_commit::lease_holder::LeaseHolder;
-    use chrono::Utc;
     use sea_query::PostgresQueryBuilder;
     use uuid::Uuid;
 
     fn rendered() -> String {
-        enqueue_statement(Uuid::nil(), Uuid::nil(), Utc::now(), 0, "{}".to_owned())
-            .expect("arity")
-            .to_string(PostgresQueryBuilder)
+        enqueue_statement().expect("arity").to_string(PostgresQueryBuilder)
     }
 
     #[test]
     fn the_enqueue_supplies_the_row_identity_rather_than_leaving_it_to_the_database() {
         let sql = rendered();
-        assert!(
-            sql.contains(r#""id""#)
-                && sql.contains(r#""write_id""#)
-                && sql.contains(r#""recorded_at""#)
-                && sql.contains(r#""base_ordinal""#)
-                && sql.contains(r#""payload""#),
-            "{sql}"
-        );
+        assert!(sql.contains(r#"("id", "write_id", "recorded_at", "base_ordinal", "events")"#), "{sql}");
     }
 
-    /// The job is bound as its JSON text and cast to `json`, so no JSON tree
-    /// is built for it on the way to the column.
+    /// The events travel as one typed composite array, so no state crosses
+    /// the queue as JSON.
     #[test]
-    fn the_job_is_bound_as_text_cast_to_json() {
+    fn the_job_binds_its_events_as_one_typed_array() {
         let sql = rendered();
-        assert!(sql.contains("'{}'::json"), "{sql}");
-        assert!(!sql.contains("::jsonb"), "{sql}");
+        assert!(sql.contains("VALUES ($1, $2, $3, $4, $5::pending_change_event[])"), "{sql}");
+        assert!(!sql.contains("json"), "{sql}");
     }
 
     #[test]

@@ -39,19 +39,31 @@ use std::{
     time::Duration,
 };
 
+/// What a [`RecordingCommitter`] saw: every write it was handed, and how
+/// many commits arrived as respond-async ones.
+pub(crate) struct RecordedCommits {
+    /// Every write, in the order the commits handed them over.
+    pub(crate) writes: Arc<Mutex<Vec<AtomicWrite>>>,
+    /// How many commits arrived through [`ContextCommitter::commit_enqueued`].
+    pub(crate) enqueued: Arc<AtomicUsize>,
+}
+
 /// A committer that lands every write as an update and keeps the writes it saw.
 pub(crate) struct RecordingCommitter {
     recorded: Arc<Mutex<Vec<AtomicWrite>>>,
+    enqueued: Arc<AtomicUsize>,
 }
 
 impl RecordingCommitter {
-    pub(crate) fn new() -> (RecordingCommitter, Arc<Mutex<Vec<AtomicWrite>>>) {
+    pub(crate) fn new() -> (RecordingCommitter, RecordedCommits) {
         let recorded: Arc<Mutex<Vec<AtomicWrite>>> = Arc::new(Mutex::new(Vec::new()));
+        let enqueued = Arc::new(AtomicUsize::new(0));
         (
             RecordingCommitter {
                 recorded: Arc::clone(&recorded), // clone: the committer and the test both hold the recording.
+                enqueued: Arc::clone(&enqueued), // clone: the committer and the test both hold the count.
             },
-            recorded,
+            RecordedCommits { writes: recorded, enqueued },
         )
     }
 }
@@ -78,6 +90,11 @@ impl ContextCommitter for RecordingCommitter {
             .collect();
         self.recorded.lock().expect("recording mutex is not poisoned").extend(writes);
         Box::pin(async move { Ok(outcomes) })
+    }
+
+    fn commit_enqueued(&self, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        self.enqueued.fetch_add(1, Ordering::Relaxed);
+        self.commit(&ContextTarget::Live, writes)
     }
 
     fn commit_replayed(&self, _target: &ContextTarget, _replay: CommitReplay, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {

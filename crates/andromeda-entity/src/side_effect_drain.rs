@@ -2,10 +2,11 @@
 //!
 //! Delivery replays through
 //! [`ContextCommitter::commit_replayed`](andromeda_context_commit::committer::ContextCommitter::commit_replayed)
-//! under the job's stored write identity and ordinal base, so the temporal
-//! history and notification events the replay writes belong to the write that
-//! deferred them and are numbered after the consequences that write already
-//! committed, never over them.
+//! under the job's stored write identity and ordinal base, so the notification
+//! events the replay writes belong to the write that deferred them and are
+//! numbered after the consequences that write already committed, never over
+//! them. A job holds no history: the write that enqueued it queued its history
+//! as intents in its own transaction.
 //!
 //! The replay also removes the job, as the first statement of the same
 //! transaction and only while this worker still holds its lease, so a job's
@@ -283,7 +284,7 @@ impl EntitySideEffectDrain {
         record_queue_outcome(QueueName::PendingSideEffects, outcome, 1);
     }
 
-    /// Replay the job's durable consequences, removing the job in the same
+    /// Replay the job's notification consequences, removing the job in the same
     /// transaction under its lease, and hand back the live change events to
     /// publish once that commit landed.
     ///
@@ -292,15 +293,12 @@ impl EntitySideEffectDrain {
     /// changes are handed back whole. A replay whose lease was lost committed
     /// nothing and hands back nothing.
     async fn deliver(&self, job: BatchSideEffectJob, replay: CommitReplay) -> Result<ReplaySettlement, EntityError> {
-        let BatchSideEffectJob {
-            temporal_entities,
-            change_events,
-        } = job;
+        let BatchSideEffectJob { change_events } = job;
         let (owed, change_events) = match &self.notifications {
             SideEffectNotificationRoute::Live(_) => (Vec::new(), change_events),
             SideEffectNotificationRoute::Durable(recording) => (owed_subscription_matches(recording, &ContextTarget::Live, &change_events), Vec::new()),
         };
-        let writes = replay_writes(temporal_entities, owed);
+        let writes = replay_writes(owed);
         match self.writes.commit_replayed(&ContextTarget::Live, replay, writes).await {
             Ok(_) => Ok(ReplaySettlement::Settled(CommittedSideEffect { change_events })),
             Err(CommitError::ReplayLeaseLost { .. }) => Ok(ReplaySettlement::LeaseLost),
@@ -467,6 +465,10 @@ mod tests {
             Box::pin(async move { panic!("the side-effect drain must replay, never mint a fresh commit") })
         }
 
+        fn commit_enqueued(&self, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+            Box::pin(async move { panic!("the side-effect drain must replay, never enqueue") })
+        }
+
         fn commit_replayed(&self, _target: &ContextTarget, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
             Box::pin(async move {
                 self.replays.lock().expect("the test lock is not poisoned").push(replay);
@@ -586,10 +588,7 @@ mod tests {
         LeasedSideEffect {
             id: SideEffectJobId::mint(),
             attempts,
-            job: BatchSideEffectJob {
-                temporal_entities: Vec::new(),
-                change_events: Vec::new(),
-            },
+            job: BatchSideEffectJob { change_events: Vec::new() },
             record: fixed_record(),
             base_ordinal: WriteOrdinal::at(3),
         }
@@ -644,10 +643,7 @@ mod tests {
         LeasedSideEffect {
             id: SideEffectJobId::mint(),
             attempts: 0,
-            job: BatchSideEffectJob {
-                temporal_entities: Vec::new(),
-                change_events: vec![event],
-            },
+            job: BatchSideEffectJob { change_events: vec![event] },
             record: fixed_record(),
             base_ordinal: WriteOrdinal::at(3),
         }
@@ -962,14 +958,14 @@ mod tests {
 
     /// A job a live-delivery broker queued owes its changes' notifications. A
     /// durable-delivery broker draining it queues the matched deliveries in the
-    /// replay commit, joined to the entity's observation write, rather than
-    /// publishing the change to a live channel its notification worker never
-    /// reads (clause 5.8.6: every matching change is notified).
+    /// replay commit rather than publishing the change to a live channel its
+    /// notification worker never reads (clause 5.8.6: every matching change is
+    /// notified). The replay records no history: the enqueueing commit queued
+    /// it.
     #[tokio::test]
     async fn a_durable_drain_queues_the_deliveries_a_live_producers_job_still_owes() -> Result<(), EntityError> {
         let id = "urn:ngsi-ld:Building:owed-by-live";
         let job = BatchSideEffectJob {
-            temporal_entities: vec![(Arc::new(uri(id)), Arc::new(building(id)))],
             change_events: vec![owed_creation(id)],
         };
         let queue = Arc::new(RecordingQueue::with_lease(lease_of(job)));
@@ -979,55 +975,11 @@ mod tests {
 
         pretty_assertions::assert_eq!(outcome.completed, 1);
         let writes = committer.replayed_writes.lock().expect("the test lock is not poisoned");
-        pretty_assertions::assert_eq!(writes.len(), 1, "the owed match joins the entity's observation write");
-        pretty_assertions::assert_eq!(writes[0].history.len(), 1);
+        pretty_assertions::assert_eq!(writes.len(), 1, "the owed match is the entity's one write");
+        assert!(writes[0].history.is_empty(), "a replay records no history");
         pretty_assertions::assert_eq!(writes[0].subscription_matches.len(), 1);
         pretty_assertions::assert_eq!(writes[0].subscription_matches[0].subscription_key, subscription_key());
         pretty_assertions::assert_eq!(writes[0].subscription_matches[0].change.lifecycle, EntityLifecycle::Created);
-        Ok(())
-    }
-
-    /// A job a durable-delivery broker queued carries no change: its
-    /// notifications were queued at commit. Draining it replays the
-    /// observations alone and queues nothing a second time.
-    #[tokio::test]
-    async fn a_durable_drain_of_a_job_without_owed_changes_queues_no_delivery() -> Result<(), EntityError> {
-        let id = "urn:ngsi-ld:Building:queued-at-commit";
-        let job = BatchSideEffectJob {
-            temporal_entities: vec![(Arc::new(uri(id)), Arc::new(building(id)))],
-            change_events: Vec::new(),
-        };
-        let queue = Arc::new(RecordingQueue::with_lease(lease_of(job)));
-        let committer = Arc::new(FixedCommitter::new(CommitDisposition::Applied));
-
-        durable_drain(queue, Arc::clone(&committer)).await.execute(Utc::now()).await?;
-
-        let writes = committer.replayed_writes.lock().expect("the test lock is not poisoned");
-        pretty_assertions::assert_eq!(writes.len(), 1);
-        assert!(writes[0].subscription_matches.is_empty(), "nothing is owed, so nothing is queued");
-        Ok(())
-    }
-
-    /// A job a durable-delivery broker queued carries no change, so a
-    /// live-delivery broker draining it publishes nothing: publishing would
-    /// notify the subscribers the committing broker already queued deliveries
-    /// for a second time.
-    #[tokio::test]
-    async fn a_live_drain_of_a_job_without_owed_changes_publishes_nothing() -> Result<(), EntityError> {
-        let id = "urn:ngsi-ld:Building:queued-at-commit";
-        let job = BatchSideEffectJob {
-            temporal_entities: vec![(Arc::new(uri(id)), Arc::new(building(id)))],
-            change_events: Vec::new(),
-        };
-        let queue = Arc::new(RecordingQueue::with_lease(lease_of(job)));
-        let sink = Arc::new(RecordingSink::default());
-
-        let outcome = drain_with_sink(queue, CommitDisposition::Applied, Arc::clone(&sink))
-            .execute(Utc::now())
-            .await?;
-
-        pretty_assertions::assert_eq!(outcome.completed, 1);
-        pretty_assertions::assert_eq!(sink.count(), 0);
         Ok(())
     }
 
@@ -1038,7 +990,6 @@ mod tests {
     async fn a_live_drain_publishes_the_owed_change_with_its_resulting_entity() -> Result<(), EntityError> {
         let id = "urn:ngsi-ld:Building:owed-to-live";
         let job = BatchSideEffectJob {
-            temporal_entities: Vec::new(),
             change_events: vec![owed_creation(id)],
         };
         let queue = Arc::new(RecordingQueue::with_lease(lease_of(job)));

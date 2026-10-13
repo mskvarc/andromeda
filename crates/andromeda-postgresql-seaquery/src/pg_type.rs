@@ -116,6 +116,9 @@ pub enum PostgresType {
     /// `temporal_intent[]`: the temporal append intents of one commit.
     #[iden = "temporal_intent[]"]
     TemporalIntentArray,
+    /// `pending_change_event[]`: the changes one respond-async job owes.
+    #[iden = "pending_change_event[]"]
+    PendingChangeEventArray,
 }
 
 #[cfg(test)]
@@ -165,5 +168,6 @@ mod tests {
         assert_eq!(PostgresType::SubAttributeTreeArray.to_string(), "sub_attribute_tree[]");
         assert_eq!(PostgresType::EntityStateRecord.to_string(), "entity_state_record");
         assert_eq!(PostgresType::TemporalIntentArray.to_string(), "temporal_intent[]");
+        assert_eq!(PostgresType::PendingChangeEventArray.to_string(), "pending_change_event[]");
     }
 }

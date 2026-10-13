@@ -1,31 +1,24 @@
 //! Direct PostgreSQL implementation of the entity side-effect queue port.
 
 use crate::{
-    json_text::JsonText,
     pending_side_effects::{
-        payload::{PersistedBatchSideEffectJob, PersistedChangeEvent},
+        claimed_job::{read_row, stored_column},
         repo::PendingSideEffectsRepository,
     },
-    store_fault::{persistence_failure, undecodable},
+    store_fault::persistence_failure,
 };
 use andromeda_context_commit::{
-    batch_side_effect_job::BatchSideEffectJob,
-    change_event::ChangeEvent,
     failure_summary::{FAILURE_SUMMARY_LIMIT, bounded_failure_summary},
     lease_acknowledgement::LeaseAcknowledgement,
     lease_holder::LeaseHolder,
     side_effect_job_id::SideEffectJobId,
-    write_id::WriteId,
-    write_ordinal::WriteOrdinal,
-    write_record::WriteRecord,
 };
 use andromeda_entity::{
     error::EntityError,
     side_effect_queue::{DeadLetterAttempt, LeasedSideEffect, SideEffectQueue},
 };
-use andromeda_ngsi_ld_entity::reads::{attribute_change::AttributeChange, attribute_instance_key::AttributeInstanceKey};
-use andromeda_ngsi_ld_model::{entity_change::EntityChange, notification::SysAttrsSnapshot};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+use andromeda_postgresql_attribute_instance::name_resolution::names_of;
 use andromeda_postgresql_schema::queue::PendingSideEffects;
 use andromeda_postgresql_seaquery::interval::make_interval_secs;
 use andromeda_telemetry::statement::{StatementName, observe_statement};
@@ -46,8 +39,7 @@ use sea_query::{
     UpdateStatement,
 };
 use sea_query_sqlx::SqlxBinder;
-use sqlx::{Row, postgres::PgRow};
-use std::sync::Arc;
+use sqlx::postgres::PgRow;
 use tracing::error;
 use uuid::Uuid;
 
@@ -77,7 +69,7 @@ impl SideEffectQueue for PendingSideEffectsRepository {
             let claimed_count = claimed.len();
             for row in claimed {
                 let id = SideEffectJobId::from_uuid(stored_column(&row, "id")?);
-                match leased_effect(id, &row) {
+                match self.leased_effect(id, &row).await? {
                     Ok(effect) => leased.push(effect),
                     Err(err) => {
                         let detail = err.to_string();
@@ -155,31 +147,25 @@ impl PendingSideEffectsRepository {
     }
 }
 
-/// Decode one claimed row into the leased job the entity policy consumes.
-fn leased_effect(id: SideEffectJobId, row: &PgRow) -> Result<LeasedSideEffect, EntityError> {
-    let payload: JsonText<'_> = stored_column(row, "payload")?;
-    let job = decode_job(payload)?;
-    let write_id = WriteId::from_uuid(stored_column(row, "write_id")?);
-    let recorded_at: DateTime<Utc> = stored_column(row, "recorded_at")?;
-    let record = WriteRecord::restored(write_id, recorded_at);
-    let stored_base: i32 = stored_column(row, "base_ordinal")?;
-    let base_ordinal = WriteOrdinal::try_from(stored_base).map_err(|error| EntityError::from(undecodable(&error)))?;
-    Ok(LeasedSideEffect {
-        id,
-        attempts: stored_column(row, "attempt_count")?,
-        job,
-        record,
-        base_ordinal,
-    })
-}
-
-/// Read one column of a claimed row; a column that does not decode is an
-/// undecodable record.
-fn stored_column<'r, T>(row: &'r PgRow, column: &str) -> Result<T, EntityError>
-where
-    T: sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
-{
-    row.try_get(column).map_err(|error| EntityError::from(undecodable(&error)))
+impl PendingSideEffectsRepository {
+    /// Decode one claimed row into the leased job the entity policy consumes,
+    /// or report why it never will.
+    ///
+    /// The names behind every key the job's events hold are looked up once
+    /// per dictionary. A dictionary that cannot be read fails the claim, and
+    /// the job's lease lapses for a later one; a key no name answers is an
+    /// unreadable job.
+    async fn leased_effect(&self, id: SideEffectJobId, row: &PgRow) -> Result<Result<LeasedSideEffect, EntityError>, EntityError> {
+        let read = match read_row(id, row) {
+            Ok(read) => read,
+            Err(unreadable) => return Ok(Err(unreadable)),
+        };
+        let (attribute_names, entity_type_names) = self.dictionaries();
+        let names = names_of(&read.held_keys(), attribute_names, entity_type_names)
+            .await
+            .map_err(|error| EntityError::from(persistence_failure(&error)))?;
+        Ok(read.assemble(&names))
+    }
 }
 
 /// Map a driver failure into the entity port's persistence category.
@@ -188,7 +174,7 @@ fn persistence(error: &sqlx::Error) -> EntityError {
     EntityError::from(persistence_failure(error))
 }
 
-/// Claim a batch of due jobs for `owner`, returning each claimed row's payload.
+/// Claim a batch of due jobs for `owner`, returning each claimed row's events.
 ///
 /// One `UPDATE` whose `WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED)` both selects and claims the
 /// batch atomically. The candidate predicate is the queue's claim index: not
@@ -234,7 +220,7 @@ fn lease_batch_statement(owner: LeaseHolder, limit: u64, lease_seconds: f64) -> 
         .returning(Query::returning().columns([
             PendingSideEffects::Id,
             PendingSideEffects::AttemptCount,
-            PendingSideEffects::Payload,
+            PendingSideEffects::Events,
             PendingSideEffects::WriteId,
             PendingSideEffects::RecordedAt,
             PendingSideEffects::BaseOrdinal,
@@ -334,57 +320,6 @@ fn purge_dead_statement(cutoff: DateTime<Utc>) -> DeleteStatement {
         .and_where(Expr::col(PendingSideEffects::ExhaustedAt).is_not_null())
         .and_where(Expr::col(PendingSideEffects::ExhaustedAt).lt(cutoff))
         .to_owned()
-}
-
-/// Decode one persisted queue payload into the semantic side-effect job.
-fn decode_job(payload: JsonText<'_>) -> Result<BatchSideEffectJob, EntityError> {
-    let persisted = PersistedBatchSideEffectJob::decode(payload.as_bytes()).map_err(|error| EntityError::from(undecodable(&error)))?;
-    Ok(persisted_to_domain(persisted))
-}
-
-/// Move a validated persisted payload into the policy-owned job representation.
-fn persisted_to_domain(persisted: PersistedBatchSideEffectJob) -> BatchSideEffectJob {
-    let temporal_entities = persisted
-        .temporal_entities
-        .into_iter()
-        .map(|temporal| (Arc::new(temporal.id), temporal.expanded))
-        .collect();
-    let change_events = persisted.change_events.into_iter().map(domain_change_event).collect();
-    BatchSideEffectJob {
-        temporal_entities,
-        change_events,
-    }
-}
-
-/// Move one persisted change event into the change it records.
-fn domain_change_event(persisted: PersistedChangeEvent) -> ChangeEvent {
-    let sys_attrs_snapshot = persisted.sys_attrs_snapshot.map(|s| SysAttrsSnapshot {
-        created_at: s.created_at,
-        modified_at: s.modified_at,
-        expires_at: s.expires_at,
-    });
-    let instances = persisted
-        .instances
-        .into_iter()
-        .map(|instance| AttributeChange {
-            key: AttributeInstanceKey {
-                attr: instance.attribute,
-                dataset_id: instance.dataset_id,
-            },
-            kind: instance.kind,
-        })
-        .collect();
-    ChangeEvent::builder()
-        .entity_id(persisted.entity_id)
-        .entity_types(persisted.entity_types)
-        .change(EntityChange::new(persisted.lifecycle, instances))
-        .occurred_at(persisted.occurred_at)
-        .entity_snapshot(persisted.entity_snapshot)
-        .previous_attributes(persisted.previous_attributes)
-        .sys_attrs_snapshot(sys_attrs_snapshot)
-        .origin(persisted.origin)
-        .current_payload(persisted.current_payload)
-        .build()
 }
 
 #[cfg(test)]

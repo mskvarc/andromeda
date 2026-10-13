@@ -113,6 +113,31 @@ create type entity_state_record as (
     instances attribute_instance_record[]
 );
 
+-- One change a respond-async job still owes its subscribers (clause 5.8.6),
+-- in the shape `notification_events` stores one: the fields both hold carry
+-- the same names, codes and order, and a deletion's removed state is
+-- `entity_snapshot` alone. Beside them the job keeps what a notification
+-- built from the change needs before any event row exists: the Entity's
+-- types as `entity_type_name_keys`, the instant the change occurred, and its
+-- origin (1 local, 2 forwarded from a context source). It has no ordinal:
+-- the replay numbers the events it records from the job's `base_ordinal` in
+-- the order the job holds them.
+create type pending_change_event as (
+    lifecycle smallint,
+    entity_id text,
+    entity_type_name_keys integer[],
+    change_kinds smallint[],
+    change_attribute_name_keys integer[],
+    change_dataset_ids text[],
+    occurred_at timestamptz,
+    origin smallint,
+    entity_snapshot entity_state_record,
+    previous_snapshot entity_state_record,
+    entity_created_at timestamptz,
+    entity_modified_at timestamptz,
+    entity_expires_at timestamptz
+);
+
 -- One entry of a temporal append intent (clause 4.5.6), in the shape its
 -- history row will be written in: the `attribute_history` columns but the
 -- write identity and the stream, in the table's column order, behind the

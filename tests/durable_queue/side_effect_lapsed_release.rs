@@ -16,12 +16,11 @@
 
 use crate::{
     live_side_effect_drain::live_side_effect_drain,
-    queue_database::queue_database,
+    queue_database::{queue_database, side_effect_queue},
     queue_workers::side_effect_worker,
     replay_interruption::{enqueue_observation, pass_with_failed_replay},
 };
 use andromeda_entity::{side_effect_drain::EntitySideEffectDrainConfig, side_effect_queue::SideEffectQueue};
-use andromeda_postgresql_context_store::pending_side_effects::repo::PendingSideEffectsRepository;
 use chrono::{DateTime, TimeDelta, Utc};
 use pretty_assertions::assert_eq;
 use serial_test::serial;
@@ -74,7 +73,7 @@ async fn durable_queue_a_replay_that_fails_after_outliving_its_lease_releases_it
     assert_eq!(claim_columns, 0, "the release lets the lease go");
     assert_eq!(attempts, 1, "the failed attempt is counted once");
     assert!(!exhausted, "one failure does not exhaust the job");
-    let contended = PendingSideEffectsRepository::new(&pool)
+    let contended = side_effect_queue(&pool)
         .lease_batch(&side_effect_worker(), 1, LEASE_SECONDS)
         .await
         .expect("claim after the release");

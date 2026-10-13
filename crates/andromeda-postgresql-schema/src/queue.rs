@@ -36,8 +36,8 @@ pub enum PendingSideEffects {
     RecordedAt,
     /// Ordinal base the enqueueing write's consequences resume from
     BaseOrdinal,
-    /// Serialised batch side-effect job
-    Payload,
+    /// The owed changes, as one `pending_change_event[]`
+    Events,
     /// Number of drain attempts already made (shared claimable-queue contract)
     AttemptCount,
     /// Dead-letter door: instant the job was retired, NULL while drainable
@@ -160,7 +160,7 @@ mod tests {
         assert_eq!(PendingSideEffects::WriteId.to_string(), "write_id");
         assert_eq!(PendingSideEffects::RecordedAt.to_string(), "recorded_at");
         assert_eq!(PendingSideEffects::BaseOrdinal.to_string(), "base_ordinal");
-        assert_eq!(PendingSideEffects::Payload.to_string(), "payload");
+        assert_eq!(PendingSideEffects::Events.to_string(), "events");
         assert_eq!(PendingSideEffects::AttemptCount.to_string(), "attempt_count");
         assert_eq!(PendingSideEffects::ExhaustedAt.to_string(), "exhausted_at");
         assert_eq!(PendingSideEffects::LastError.to_string(), "last_error");

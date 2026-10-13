@@ -13,14 +13,25 @@
 //! The mirror case -- a durable-delivery broker's job drained by a live-delivery broker -- is not driven here: a broker's own commit wakes its own drain, so no request can hand the job to another broker, and whichever broker drains it the job carries no change, because the durable broker recorded the match with the write.
 
 use crate::{client, control_pool, reset};
-use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
-use andromeda_ngsi_ld_entity::{entity_state::EntityState, reads::attribute_change::AttributeChangeKind};
-use andromeda_ngsi_ld_lexicon::tenant::TenantName;
-use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, notification::ChangeOrigin};
+use andromeda_context_commit::{change_event::ChangeEvent, write_ordinal::WriteOrdinal, write_record::WriteRecord};
+use andromeda_ngsi_ld_entity::{
+    entity_state::EntityState,
+    reads::{
+        attribute_change::{AttributeChange, AttributeChangeKind},
+        attribute_instance_key::AttributeInstanceKey,
+    },
+};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, tenant::TenantName};
+use andromeda_ngsi_ld_model::{
+    entity_change::{EntityChange, EntityLifecycle},
+    notification::ChangeOrigin,
+};
+use andromeda_postgresql_attribute_instance::{name_keys::MentionedNames, name_resolution::resolve_mentioned};
 use andromeda_postgresql_context_store::pending_side_effects::{
-    payload::{PersistedAttributeChange, PersistedBatchSideEffectJob, PersistedChangeEvent},
+    change_event_record::{mention_event, record_of_event},
     repo::PendingSideEffectsRepository,
 };
+use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_cache_config::NameCacheConfig};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::pooler_probe::{endpoints, tenant_database::connect_tenant_database, tenant_load};
 use andromeda_test_mocks::{notification_server::NotificationServer, server_config::MockServerConfig};
@@ -134,30 +145,27 @@ fn created_device(entity_id: &str) -> EntityState {
     EntityState::from_slice(&serde_json::to_vec(&document).expect("the document serialises")).expect("the document is an entity state")
 }
 
-/// The job exactly as a live-delivery broker defers the creation of `entity_id`:
-/// no observation left to record and one change, carrying the entity the write
-/// left behind, still owed its notification.
-fn live_deferred_creation(entity_id: &str) -> PersistedBatchSideEffectJob {
-    let change = PersistedChangeEvent {
-        entity_id: entity_id.parse().expect("a valid entity identifier"),
-        entity_types: vec![DEVICE.parse().expect("a valid entity type")],
-        lifecycle: EntityLifecycle::Created,
-        instances: vec![PersistedAttributeChange {
-            attribute: TEMPERATURE.parse().expect("a valid attribute name"),
-            dataset_id: None,
-            kind: AttributeChangeKind::Created,
-        }],
-        occurred_at: Utc::now(),
-        entity_snapshot: None,
-        previous_attributes: None,
-        sys_attrs_snapshot: None,
-        origin: ChangeOrigin::Local,
-        current_payload: Some(Arc::new(created_device(entity_id))),
-    };
-    PersistedBatchSideEffectJob {
-        temporal_entities: Vec::new(),
-        change_events: vec![change],
-    }
+/// The change exactly as a live-delivery broker defers the creation of
+/// `entity_id`: one change, carrying the entity the write left behind, still
+/// owed its notification.
+fn live_deferred_creation(entity_id: &str) -> ChangeEvent {
+    ChangeEvent::builder()
+        .entity_id(entity_id.parse().expect("a valid entity identifier"))
+        .entity_types(vec![DEVICE.parse().expect("a valid entity type")])
+        .change(EntityChange::new(
+            EntityLifecycle::Created,
+            vec![AttributeChange {
+                key: AttributeInstanceKey {
+                    attr: TEMPERATURE.parse().expect("a valid attribute name"),
+                    dataset_id: None,
+                },
+                kind: AttributeChangeKind::Created,
+            }],
+        ))
+        .occurred_at(Utc::now())
+        .origin(ChangeOrigin::Local)
+        .current_payload(Some(Arc::new(created_device(entity_id))))
+        .build()
 }
 
 /// A live-delivery broker defers the changes of a respond-async batch to its
@@ -193,12 +201,20 @@ async fn a_live_brokers_deferred_change_is_notified_once_when_a_durable_broker_d
     let entity_id = format!("urn:ngsi-ld:Device:provision:{tenant}");
     let tenant_name: TenantName = tenant.parse().expect("a provisioned tenant has a valid name");
     let tenant_database = connect_tenant_database(&pool, &tenant_name).await.expect("the tenant database is reachable");
+    let change = live_deferred_creation(&entity_id);
+    let mut mentioned = MentionedNames::default();
+    mention_event(&change, &mut mentioned);
+    let attribute_names = NameCache::<AttributeName>::new(&tenant_database, &NameCacheConfig::default());
+    let entity_type_names = NameCache::<EntityTypeName>::new(&tenant_database, &NameCacheConfig::default());
     let mut transaction = tenant_database.begin().await.expect("the enqueue transaction begins");
+    let keys = resolve_mentioned(&mut transaction, mentioned, &entity_type_names, &attribute_names)
+        .await
+        .expect("the change's names resolve");
     PendingSideEffectsRepository::enqueue_in_tx(
         &mut transaction,
         &WriteRecord::mint(Utc::now()),
         WriteOrdinal::at(0),
-        &live_deferred_creation(&entity_id),
+        vec![record_of_event(&change, &keys).expect("the change has a record")],
     )
     .await
     .expect("the deferred job is queued");

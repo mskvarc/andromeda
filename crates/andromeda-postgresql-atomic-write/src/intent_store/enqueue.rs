@@ -20,17 +20,13 @@ struct Input;
 /// `$3::temporal_intent[]`, each intent's entries travelling inside it.
 ///
 /// One commit may land more than one entity, and every intent it produces
-/// shares the commit's single write identity; that alone does not identify
-/// one durable intent, because a batch commit whose side effects are
-/// deferred (`SideEffectPlacement::DeferredOnLive`) writes an inline intent for
-/// an entity's tombstones and later replays that same entity's deferred
-/// side-effect job under the same write identity, producing a second intent
-/// for the same entity whose entries occupy a different ordinal range. The
-/// deduplicating key is therefore `(write_id, entity_id, base_ordinal)`, matching
-/// `uq_temporal_append_intents_write_identity`, rather than `(write_id, entity_id)`.
-/// `ON CONFLICT ... DO NOTHING` is what makes a commit replayed under its
-/// original identity enqueue no second copy of any entity's intent at a given
-/// base ordinal.
+/// shares the commit's single write identity, so that alone does not identify
+/// one durable intent: an intent is the first ordinal its entries occupy in
+/// the write's one numbering. The deduplicating key is therefore `(write_id,
+/// entity_id, base_ordinal)`, matching
+/// `uq_temporal_append_intents_write_identity`. `ON CONFLICT ... DO NOTHING`
+/// is what makes a commit replayed under its original identity enqueue no
+/// second copy of any entity's intent at a given base ordinal.
 pub(super) fn enqueue_statement() -> Result<InsertStatement, SeaQueryError> {
     let source = Query::select()
         .expr(external_placeholder(1))

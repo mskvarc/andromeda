@@ -78,7 +78,11 @@ pub(super) fn register_entity_side_effects(
         SideEffectNotificationRoute::Live(Arc::new(BroadcastEntityChangeSink::new(changes.clone())) as Arc<dyn EntityChangeSink>) // clone: services and the drain each own a sender handle.
     };
     let drain = Arc::new(EntitySideEffectDrain::new(
-        Arc::new(PendingSideEffectsRepository::new(&storage.pool)),
+        Arc::new(PendingSideEffectsRepository::new(
+            &storage.pool,
+            Arc::clone(&storage.attribute_names),   // clone: the claim names a job's keys through the tenant's one cache.
+            Arc::clone(&storage.entity_type_names), // clone: the claim names a job's keys through the tenant's one cache.
+        )),
         Arc::clone(writes), // clone: request handling and the drain share one committer.
         notifications,
         EntitySideEffectDrainConfig {

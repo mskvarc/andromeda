@@ -4,9 +4,8 @@
 //! Evolution an instance "as mandated by clause 4.5.2", so what a Core API write
 //! records has to be the instance the write left in the Entity, not the
 //! Fragment that asked for it. These helpers read both off one
-//! [`AtomicWrite`]: the observation among its history records, or deferred to
-//! the side-effect job on the asynchronous batch path, and the state its
-//! entity record stores, each encoded as the expanded document the store
+//! [`AtomicWrite`]: the observation among its history records and the state
+//! its entity record stores, each encoded as the expanded document the store
 //! keeps.
 
 use andromeda_context_commit::{atomic_write::AtomicWrite, history_record::HistoryRecord};
@@ -15,20 +14,15 @@ use pretty_assertions::assert_eq;
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 
-/// The one observation a write records, inline or deferred to its side-effect
-/// job, encoded as stored, or `None` when it records none.
+/// The one observation a write records, encoded as stored, or `None` when it
+/// records none.
 pub(crate) fn recorded_observation(write: &AtomicWrite) -> Option<Value> {
     let inline = write.history.iter().filter_map(|record| match record {
         HistoryRecord::Observations(observed) => Some(serde_json::to_value(observed.as_ref()).expect("an observation encodes")),
         HistoryRecord::EvolutionInstances(observed) => Some(serde_json::to_value(observed.as_ref()).expect("an observation encodes")),
         HistoryRecord::Tombstone(_) | HistoryRecord::ScopeRemoval => None,
     });
-    let deferred = write.side_effects.iter().flat_map(|job| {
-        job.temporal_entities
-            .iter()
-            .map(|(_, observed)| serde_json::to_value(observed.as_ref()).expect("an observation encodes"))
-    });
-    let observations: Vec<Value> = inline.chain(deferred).collect();
+    let observations: Vec<Value> = inline.collect();
     assert!(observations.len() <= 1, "a write records at most one observation: {observations:?}");
     observations.into_iter().next()
 }
