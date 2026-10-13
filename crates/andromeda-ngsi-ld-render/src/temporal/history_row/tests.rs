@@ -391,7 +391,7 @@ fn the_stored_metadata_renders_beside_the_value() {
         "https://example.org/accuracy": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 0.5}]}]
     });
     let document = InstanceDocument::from_slice(&row.attribute_name, &serde_json::to_vec(&members).expect("JSON")).expect("expanded members");
-    row.metadata = ObservationMetadata::from_parts(document.into_parts());
+    row.metadata = ObservationMetadata::admit(document.into_parts()).expect("the members are committed");
     let rendered = rendered(row, SysAttrsInclusion::Strip);
     pretty_assertions::assert_eq!(member(&rendered, expanded_properties::UNIT_CODE.as_str()), Some(&json!([{"@value": "KMH"}])));
     pretty_assertions::assert_eq!(member(&rendered, AttributeType::Property.value_key_str()), Some(&json!([{"@value": 1}])));

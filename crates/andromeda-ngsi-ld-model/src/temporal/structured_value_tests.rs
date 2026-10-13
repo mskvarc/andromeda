@@ -9,7 +9,7 @@ use crate::temporal::{
     structured_value_codec::StoredValueError,
 };
 use andromeda_ngsi_ld_entity::{
-    document::{instance_document::InstanceDocument, slot::Slot},
+    document::instance_document::InstanceDocument,
     expanded_value::ExpandedValue,
     geometry_value::GeometryValue,
     literal::LiteralValue,
@@ -34,9 +34,7 @@ fn read_metadata(json: &str) -> Result<Option<ObservationMetadata>, EntityRefusa
         members.insert("@type".to_owned(), json!(["https://uri.etsi.org/ngsi-ld/Property"]));
     }
     let bytes = serde_json::to_vec(&instance).expect("JSON");
-    Ok(ObservationMetadata::from_parts(
-        InstanceDocument::from_slice(&attribute(), &bytes)?.into_parts(),
-    ))
+    ObservationMetadata::admit(InstanceDocument::from_slice(&attribute(), &bytes)?.into_parts())
 }
 
 /// The JSON `metadata` serializes as.
@@ -185,28 +183,27 @@ fn column_members_are_not_metadata() {
     pretty_assertions::assert_eq!(read_metadata(&stored.to_string()).expect("readable"), None);
 }
 
-/// The unit leaves the metadata for its column and comes back exactly.
+/// The unit is a member of its own beside the sub-attributes, and the whole
+/// metadata writes back exactly as it was read.
 #[test]
-fn the_unit_code_round_trips_through_its_column() {
+fn the_unit_code_is_held_apart_from_the_sub_attributes() {
     let stored = json!({
         "https://uri.etsi.org/ngsi-ld/unitCode": [{"@value": "KGM"}],
         "https://example.org/accuracy": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]}]
     });
     let metadata = read_metadata(&stored.to_string()).expect("readable").expect("metadata");
-    let (rest, unit_code) = metadata.take_unit_code();
-    let Some(Slot::Set(unit_code)) = unit_code else {
-        panic!("the unit is taken: {unit_code:?}");
-    };
-    pretty_assertions::assert_eq!(unit_code, UnitCode::resolve("KGM").expect("a common code"));
-    let rest_json = written(rest.as_ref().expect("the sub-attribute remains"));
+    pretty_assertions::assert_eq!(written(&metadata), stored);
+    let mut members = metadata.into_members();
+    pretty_assertions::assert_eq!(members.unit_code.take(), Some(UnitCode::resolve("KGM").expect("a common code")));
+    let rest_json = written(&ObservationMetadata::new(members).expect("the sub-attribute remains"));
     assert!(rest_json.get("https://uri.etsi.org/ngsi-ld/unitCode").is_none(), "{rest_json}");
-    let restored = ObservationMetadata::with_unit_code(rest, unit_code);
-    pretty_assertions::assert_eq!(written(&restored), stored);
 
-    let unit_only = read_metadata(r#"{"https://uri.etsi.org/ngsi-ld/unitCode": [{"@value": "MTR"}]}"#)
+    let mut unit_only = read_metadata(r#"{"https://uri.etsi.org/ngsi-ld/unitCode": [{"@value": "MTR"}]}"#)
         .expect("readable")
-        .expect("metadata");
-    pretty_assertions::assert_eq!(unit_only.take_unit_code().0, None, "metadata holding only the unit stores no document");
+        .expect("metadata")
+        .into_members();
+    unit_only.unit_code = None;
+    pretty_assertions::assert_eq!(ObservationMetadata::new(unit_only), None, "metadata holding only the unit holds nothing else");
 }
 
 /// A durable row of the fixed fields and the given value and metadata.

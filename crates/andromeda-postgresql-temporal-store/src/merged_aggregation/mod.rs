@@ -38,7 +38,6 @@ use crate::{
     repo::TemporalRepository,
     stored_catalog_error::StoredCatalogError,
     temporal_store_invariant::TemporalStoreInvariant,
-    unit_code_metadata::take_unit_code,
 };
 use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
 use andromeda_context_space::context_target::ContextTarget;
@@ -158,8 +157,6 @@ impl TemporalRepository {
                 // An aggregation reads the value and its unit alone (clause
                 // 4.5.19), so an answered row is staged without the rest of
                 // its metadata, whose names this tenant may never have keyed.
-                // clone: the staged row owns its unit, the answer keeps its metadata.
-                let (_, unit_code_id) = take_unit_code(row.metadata.clone())?;
                 observation_row(
                     stream_key,
                     row,
@@ -168,10 +165,7 @@ impl TemporalRepository {
                         write_id: staged_write,
                         ordinal: WriteOrdinal::at(ordinal),
                     },
-                    HistoryMembers {
-                        unit_code_id,
-                        ..HistoryMembers::default()
-                    },
+                    HistoryMembers::unit_alone(row.metadata.as_ref()),
                 )
             })
             .collect::<Result<Vec<_>, TemporalStoreError>>()?;

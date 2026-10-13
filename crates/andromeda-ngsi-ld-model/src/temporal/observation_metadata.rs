@@ -3,114 +3,175 @@
 //! A history row keeps an instance's value, `datasetId`, `instanceId`,
 //! `observedAt` and its clause 4.8 times in columns of their own. What remains
 //! is the instance's metadata: its sub-attributes (clause 4.5.2) and the
-//! companion members of its family — `unitCode`, `valueType`, `objectType` —
+//! companion members of its family (`unitCode`, `valueType`, `objectType`),
 //! together with `expiresAt` (clause 4.22) and the data-integrity seals. A
 //! `deletedAt` is no metadata: the broker generates it (Table 5.2.5-2), and a
 //! history row recording a deletion holds it in a column of its own.
+//!
+//! The metadata is admitted once, when an observation is read: the
+//! sub-attributes become committed attributes in the spelling storage keeps,
+//! so every later reader (the store keying them, the renderer, the intent
+//! wire) takes them as they are.
 
 use andromeda_ngsi_ld_entity::{
+    attributes::Attributes,
     date_time_text::DateTimeText,
     document::{
         attribute_member::AttributeMember,
         instance_document::{InstanceDocument, InstanceDocumentParts},
         slot::Slot,
     },
+    proof_seals::ProofSeals,
+    refusal::EntityRefusal,
     unit_code::UnitCode,
 };
-use chrono::{DateTime, Utc};
+use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
 use serde::Serialize;
 
 /// The metadata of one observed instance: never empty, and never holding the
 /// value, the identity or the time axes the row keeps in columns.
 ///
 /// Boxed because most observations carry none, and the row every observation
-/// is held in should not pay for the members of those that do.
+/// is held in should not pay for the members of those that do. Written as the
+/// expanded members of an instance.
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(transparent)]
-pub struct ObservationMetadata(Box<InstanceDocument>);
+#[serde(into = "InstanceDocument")]
+pub struct ObservationMetadata(Box<MetadataMembers>);
+
+/// The metadata members of one observed instance.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MetadataMembers {
+    /// `expiresAt` (clause 4.22).
+    pub expires_at: Option<DateTimeText>,
+    /// `unitCode` (clause 4.5.2).
+    pub unit_code: Option<UnitCode>,
+    /// `valueType` (clause 4.5.2).
+    pub value_type: Option<NgsiLdReference>,
+    /// `objectType` (clause 4.5.3), in written order; empty when absent.
+    pub object_types: Vec<NgsiLdReference>,
+    /// The `entityIdSealed` and `entityTypeSealed` members (clause 4.5.2.2).
+    pub proof_seals: ProofSeals,
+    /// The sub-attributes, committed and in the spelling storage keeps, with
+    /// no system time on any of them.
+    pub sub_attributes: Attributes,
+}
+
+impl MetadataMembers {
+    /// Whether no member is present.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.expires_at.is_none()
+            && self.unit_code.is_none()
+            && self.value_type.is_none()
+            && self.object_types.is_empty()
+            && self.proof_seals.is_empty()
+            && self.sub_attributes.is_empty()
+    }
+}
 
 impl ObservationMetadata {
-    /// The metadata among the members of one instance, `None` when the
-    /// instance carries none.
+    /// The metadata `members` make, `None` when they hold none.
+    #[must_use]
+    pub fn new(members: MetadataMembers) -> Option<ObservationMetadata> {
+        (!members.is_empty()).then(|| ObservationMetadata(Box::new(members)))
+    }
+
+    /// Admit the metadata among the members of one written instance, `None`
+    /// when the instance carries none.
     ///
     /// The value, the family, `datasetId`, `instanceId`, `observedAt`,
-    /// `createdAt`, `modifiedAt` and `deletedAt` are not metadata: each has a
-    /// column of its own, and keeping `createdAt` or `modifiedAt` here would
-    /// echo a current-state system time back as a sub-Property of a past
-    /// observation.
-    #[must_use]
-    pub fn from_parts(parts: InstanceDocumentParts) -> Option<ObservationMetadata> {
-        let carries_nothing = parts.expires_at.is_none()
-            && parts.unit_code.is_none()
-            && parts.value_type.is_none()
-            && parts.object_types.is_none()
-            && parts.proof_seals.is_empty()
-            && parts.sub_attributes.is_empty();
-        (!carries_nothing).then(|| ObservationMetadata(Box::new(metadata_document(parts))))
-    }
-
-    /// The `unitCode` member, or its deletion.
-    #[must_use]
-    pub const fn unit_code(&self) -> Option<&Slot<UnitCode>> {
-        self.0.unit_code()
-    }
-
-    /// The instant the instance expires at (clause 4.22).
-    #[must_use]
-    pub fn expires_at(&self) -> Option<DateTime<Utc>> {
-        self.0.expires_at().and_then(Slot::as_set).map(DateTimeText::instant)
-    }
-
-    /// Give the `unitCode` member up, with what metadata remains without it.
+    /// `createdAt`, `modifiedAt` and `deletedAt` are not metadata and are not
+    /// read. A sub-attribute of an observation is a Property or Relationship as
+    /// clause 4.5.2 mandates, whatever the Temporal Evolution around it: its
+    /// output-only members are ignored (Table 5.2.5-2), and every value takes
+    /// the spelling storage keeps.
     ///
-    /// A history row keeps the unit in a catalog-identity column of its own
-    /// rather than repeating the expanded member in every metadata document.
-    #[must_use]
-    pub fn take_unit_code(self) -> (Option<ObservationMetadata>, Option<Slot<UnitCode>>) {
-        let mut parts = self.0.into_parts();
-        let unit_code = parts.unit_code.take();
-        (ObservationMetadata::from_parts(parts), unit_code)
+    /// # Errors
+    ///
+    /// Returns [`EntityRefusal::NullInState`] when a companion member holds
+    /// the NGSI-LD Null (clause 5.5.4 excepts the temporal evolution from the
+    /// Null in a value position alone, a deleted instance of clause 4.5.7), and
+    /// the model's refusal when a sub-attribute is no instance the committed
+    /// model holds, the NGSI-LD Null in one included.
+    pub fn admit(parts: InstanceDocumentParts) -> Result<Option<ObservationMetadata>, EntityRefusal> {
+        let InstanceDocumentParts {
+            expires_at,
+            unit_code,
+            value_type,
+            object_types,
+            proof_seals,
+            mut sub_attributes,
+            ..
+        } = parts;
+        let sub_attributes = if sub_attributes.is_empty() {
+            Attributes::new()
+        } else {
+            sub_attributes.values_mut().for_each(AttributeMember::forget_output_only_members_throughout);
+            let mut attributes = Attributes::try_from_members(sub_attributes)?;
+            attributes.canonicalize_values();
+            attributes
+        };
+        Ok(ObservationMetadata::new(MetadataMembers {
+            expires_at: set(expires_at)?,
+            unit_code: set(unit_code)?,
+            value_type: set(value_type)?,
+            object_types: set(object_types)?.unwrap_or_default(),
+            proof_seals,
+            sub_attributes,
+        }))
     }
 
-    /// Put `unit_code` back into `metadata`, as the instance carried it.
+    /// The members.
     #[must_use]
-    pub fn with_unit_code(metadata: Option<ObservationMetadata>, unit_code: UnitCode) -> ObservationMetadata {
-        let unit_code = Some(Slot::Set(unit_code));
-        match metadata {
-            Some(ObservationMetadata(document)) => {
-                let mut parts = document.into_parts();
-                parts.unit_code = unit_code;
-                ObservationMetadata(Box::new(metadata_document(parts)))
-            }
-            None => ObservationMetadata(Box::new(InstanceDocument::builder().unit_code(unit_code).build())),
-        }
+    pub fn members(&self) -> &MetadataMembers {
+        &self.0
+    }
+
+    /// Give the members up.
+    #[must_use]
+    pub fn into_members(self) -> MetadataMembers {
+        *self.0
     }
 
     /// Give the metadata up as the members of an instance.
     #[must_use]
     pub fn into_parts(self) -> InstanceDocumentParts {
-        self.0.into_parts()
+        InstanceDocument::from(self).into_parts()
     }
 }
 
-/// The instance holding the metadata members of `parts` and nothing else.
+impl From<ObservationMetadata> for InstanceDocument {
+    fn from(metadata: ObservationMetadata) -> InstanceDocument {
+        let MetadataMembers {
+            expires_at,
+            unit_code,
+            value_type,
+            object_types,
+            proof_seals,
+            sub_attributes,
+        } = metadata.into_members();
+        InstanceDocument::builder()
+            .expires_at(expires_at.map(Slot::Set))
+            .unit_code(unit_code.map(Slot::Set))
+            .value_type(value_type.map(Slot::Set))
+            .object_types((!object_types.is_empty()).then_some(Slot::Set(object_types)))
+            .proof_seals(proof_seals)
+            .sub_attributes(sub_attributes.written_members())
+            .build()
+    }
+}
+
+/// The member a companion slot sets.
 ///
-/// The sub-attributes keep no output-only member: history records the system
-/// times of the instance alone, and a member a client wrote in their place is
-/// never kept (Table 5.2.5-2).
-fn metadata_document(mut parts: InstanceDocumentParts) -> InstanceDocument {
-    parts
-        .sub_attributes
-        .values_mut()
-        .for_each(AttributeMember::forget_output_only_members_throughout);
-    InstanceDocument::builder()
-        .expires_at(parts.expires_at)
-        .unit_code(parts.unit_code)
-        .value_type(parts.value_type)
-        .object_types(parts.object_types)
-        .proof_seals(parts.proof_seals)
-        .sub_attributes(parts.sub_attributes)
-        .build()
+/// # Errors
+///
+/// Returns [`EntityRefusal::NullInState`] when the slot holds the NGSI-LD Null.
+fn set<T>(slot: Option<Slot<T>>) -> Result<Option<T>, EntityRefusal> {
+    match slot {
+        Some(Slot::Set(member)) => Ok(Some(member)),
+        Some(Slot::Remove) => Err(EntityRefusal::NullInState { attribute: None }),
+        None => Ok(None),
+    }
 }
 
 #[cfg(test)]
@@ -122,20 +183,20 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use indexmap::IndexMap;
+    use serde_json::{Value, json};
 
-    /// A client-written instant.
-    fn at() -> SystemInstant {
-        "1900-01-01T00:00:00Z".parse().expect("RFC 3339")
-    }
-
-    /// One sub-attribute named `name` carrying both system times and `nested`.
-    fn stamped(name: &str, nested: IndexMap<AttributeName, AttributeMember>) -> IndexMap<AttributeName, AttributeMember> {
-        let instance = InstanceDocument::builder()
-            .created_at(Some(at()))
-            .modified_at(Some(at()))
-            .sub_attributes(nested)
-            .build();
-        IndexMap::from([(name.parse().expect("a valid name"), AttributeMember::Instances(vec![instance]))])
+    /// A Property sub-attribute carrying both system times beside `nested`.
+    fn stamped(nested: &Value) -> Value {
+        let mut instance = json!({
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}],
+            "https://uri.etsi.org/ngsi-ld/createdAt": [{"@value": "1900-01-01T00:00:00Z", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}],
+            "https://uri.etsi.org/ngsi-ld/modifiedAt": [{"@value": "1900-01-01T00:00:00Z", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}]
+        });
+        if let (Some(members), Some(nested)) = (instance.as_object_mut(), nested.as_object()) {
+            members.extend(nested.iter().map(|(name, value)| (name.clone(), value.clone()))); // clone: the fixture owns its members
+        }
+        json!([instance])
     }
 
     /// The system times of every sub-attribute instance, depth first.
@@ -155,12 +216,40 @@ mod tests {
     /// the metadata a history row stores keeps none on any sub-attribute.
     #[test]
     fn sub_attribute_system_times_are_not_kept_at_any_depth() {
-        let written = InstanceDocument::builder()
-            .sub_attributes(stamped("https://example.org/accuracy", stamped("https://example.org/method", IndexMap::new())))
-            .build();
+        let speed: AttributeName = "https://example.org/speed".parse().expect("a valid name");
+        let written = json!({
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 3}],
+            "https://example.org/accuracy": stamped(&json!({"https://example.org/method": stamped(&json!({}))}))
+        });
+        let document = InstanceDocument::from_slice(&speed, &serde_json::to_vec(&written).expect("JSON")).expect("an expanded instance");
 
-        let metadata = ObservationMetadata::from_parts(written.into_parts()).expect("the sub-attributes are metadata");
+        let metadata = ObservationMetadata::admit(document.into_parts())
+            .expect("the sub-attributes are committed")
+            .expect("the sub-attributes are metadata");
 
         pretty_assertions::assert_eq!(times(&metadata.into_parts().sub_attributes), vec![(None, None), (None, None)]);
+    }
+
+    /// Clause 5.5.4 excepts the temporal evolution from the Null in a value
+    /// position alone, so a companion member holding it is refused.
+    #[test]
+    fn a_companion_member_holding_the_null_is_refused() {
+        let speed: AttributeName = "https://example.org/speed".parse().expect("a valid name");
+        let written = json!({
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 3}],
+            "https://uri.etsi.org/ngsi-ld/unitCode": [{"@value": "urn:ngsi-ld:null"}]
+        });
+        let document = InstanceDocument::from_slice(&speed, &serde_json::to_vec(&written).expect("JSON")).expect("an expanded instance");
+        assert!(ObservationMetadata::admit(document.into_parts()).is_err());
+    }
+
+    #[test]
+    fn an_instance_carrying_no_metadata_member_has_no_metadata() {
+        let speed: AttributeName = "https://example.org/speed".parse().expect("a valid name");
+        let written = json!({"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 3}]});
+        let document = InstanceDocument::from_slice(&speed, &serde_json::to_vec(&written).expect("JSON")).expect("an expanded instance");
+        assert!(ObservationMetadata::admit(document.into_parts()).expect("nothing to refuse").is_none());
     }
 }

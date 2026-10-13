@@ -4,7 +4,7 @@ use crate::{
     attribute_history_row::AttributeHistoryRow,
     attribute_history_value::AttributeHistoryValue,
     error::TemporalStoreError,
-    history_members::{CommittedMetadata, HistoryMembers},
+    history_members::{HistoryMembers, mention},
     repo::TemporalRepository,
     scope_history_entry::ScopeHistoryEntry,
     scope_history_value::ScopeHistoryValue,
@@ -16,7 +16,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
+use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, observation_metadata::ObservationMetadata};
 use andromeda_postgresql_attribute_instance::{name_keys::MentionedNames, name_resolution::resolve_mentioned};
 use andromeda_postgresql_codes::{attribute_kind_code::stored_attribute_kind, stream_key::StreamKey, temporal_entity_key::TemporalEntityKey};
 use andromeda_temporal::{
@@ -99,14 +99,14 @@ impl PostgresTemporalHistorySink {
         let mut mentioned = MentionedNames::default();
         history
             .iter()
-            .filter_map(|(_, metadata)| metadata.as_ref())
-            .for_each(|metadata| metadata.mention(&mut mentioned));
+            .filter_map(|(_, metadata)| *metadata)
+            .for_each(|metadata| mention(metadata, &mut mentioned));
         let keys = resolve_mentioned(tx, mentioned, repository.entity_type_names.as_ref(), repository.attribute_names.as_ref()).await?;
         let history = history
             .into_iter()
             .map(|(mut row, metadata)| {
                 if let Some(metadata) = metadata {
-                    row.members = metadata.keyed(&keys)?;
+                    row.members = HistoryMembers::keyed(metadata, &keys)?;
                 }
                 Ok(row)
             })
@@ -119,23 +119,23 @@ impl PostgresTemporalHistorySink {
 
 /// The history and scope rows a chunk's intents amount to.
 #[derive(Default)]
-struct IntentRows {
+struct IntentRows<'a> {
     /// Attribute history rows, observations and endings alike, each
-    /// observation beside the committed metadata its members are keyed from
-    /// once the chunk's names are minted.
-    history: Vec<(AttributeHistoryRow, Option<CommittedMetadata>)>,
+    /// observation beside the metadata its members are keyed from once the
+    /// chunk's names are minted.
+    history: Vec<(AttributeHistoryRow, Option<&'a ObservationMetadata>)>,
     /// Scope history rows.
     scopes: Vec<ScopeHistoryEntry>,
 }
 
-impl IntentRows {
+impl<'a> IntentRows<'a> {
     /// Add the rows one intent records, resolved against the chunk's catalogue.
     ///
     /// # Errors
     ///
     /// Returns [`TemporalStoreError`] when an entry cannot be encoded, or when
     /// the catalogue resolved no key or stream the intent needs.
-    fn extend(&mut self, catalog: &TemporalCatalog, intent: &TemporalAppendIntent) -> Result<(), TemporalStoreError> {
+    fn extend(&mut self, catalog: &TemporalCatalog, intent: &'a TemporalAppendIntent) -> Result<(), TemporalStoreError> {
         let recorded_at = intent.record.recorded_at();
         let Some(entity_key) = recording_entity_key(catalog, intent)? else {
             return Ok(());
@@ -150,9 +150,9 @@ impl IntentRows {
             match entry {
                 TemporalAppendEntry::Observation { row } => {
                     let stream_key = resolve_stream(catalog, entity_key, &row.attribute_name, row.dataset_id.as_ref())?;
-                    let metadata = CommittedMetadata::of(&row.attribute_name, row.metadata.as_ref())?;
+                    let metadata = row.metadata.as_ref();
                     let row = observation_row(stream_key, row, recorded_at, identity, HistoryMembers::default())?;
-                    self.history.push((row, Some(metadata)));
+                    self.history.push((row, metadata));
                 }
                 TemporalAppendEntry::Tombstone {
                     attribute_name,
@@ -493,8 +493,9 @@ mod tests {
             entity_keys: HashMap::from([(entity_id, entity_key)]),
             streams: HashMap::from([((entity_key, grain), StreamKey::try_from(9_i64).expect("a positive stream key"))]),
         };
+        let intent = intent(vec![tombstone()]);
         let mut rows = IntentRows::default();
-        rows.extend(&catalog, &intent(vec![tombstone()])).expect("the tombstone records");
+        rows.extend(&catalog, &intent).expect("the tombstone records");
         let [(row, metadata)] = rows.history.as_slice() else {
             panic!("one row: {:?}", rows.history);
         };

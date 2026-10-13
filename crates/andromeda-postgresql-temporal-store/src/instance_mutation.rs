@@ -3,7 +3,7 @@
 use crate::{
     attribute_history_value::AttributeHistoryValue,
     error::TemporalStoreError,
-    history_members::{CommittedMetadata, HistoryMembers},
+    history_members::{HistoryMembers, mention},
     instance_statements::{InstanceColumn, delete_instance_sql, release_verbatim_instance_claim_sql, select_instance_sql, update_instance_sql},
     repo::TemporalRepository,
 };
@@ -15,6 +15,7 @@ use andromeda_ngsi_ld_lexicon::{
     instance_identity::InstanceIdentity,
     uri::Uri,
 };
+use andromeda_ngsi_ld_model::temporal::observation_metadata::ObservationMetadata;
 use andromeda_postgresql_attribute_instance::{
     name_keys::MentionedNames,
     name_resolution::resolve_mentioned,
@@ -40,7 +41,7 @@ impl TemporalRepository {
         instance: &InstanceIdentity,
         replacement: &ObservedInstance,
     ) -> Result<(), TemporalStoreError> {
-        let state = UpdateInstanceState::of_replacement(attribute_name, replacement)?;
+        let state = UpdateInstanceState::of_replacement(replacement)?;
         self.update_instance(target, entity_id, attribute_name, instance, state).await
     }
 
@@ -100,11 +101,13 @@ impl TemporalRepository {
         entity_id: &Identifier,
         attribute_name: &AttributeName,
         instance: &InstanceIdentity,
-        state: UpdateInstanceState,
+        state: UpdateInstanceState<'_>,
     ) -> Result<(), TemporalStoreError> {
         let mut tx = self.pool.begin().await?;
         let mut mentioned = MentionedNames::default();
-        state.metadata.mention(&mut mentioned);
+        if let Some(metadata) = state.metadata {
+            mention(metadata, &mut mentioned);
+        }
         let keys = resolve_mentioned(&mut tx, mentioned, self.entity_type_names.as_ref(), self.attribute_names.as_ref()).await?;
         let HistoryMembers {
             value_type_key,
@@ -113,7 +116,11 @@ impl TemporalRepository {
             expires_at,
             proof_seals,
             sub_attributes,
-        } = state.metadata.keyed(&keys)?;
+        } = state
+            .metadata
+            .map(|metadata| HistoryMembers::keyed(metadata, &keys))
+            .transpose()?
+            .unwrap_or_default();
         let elements = sub_attributes
             .into_iter()
             .map(SubAttributeRecord::try_from)
@@ -184,17 +191,16 @@ fn instance_not_found(instance: &InstanceIdentity) -> TemporalNotFoundReason {
     }
 }
 
-/// Owned update values kept alive while PostgreSQL binds borrow them.
-struct UpdateInstanceState {
+/// Update values kept alive while PostgreSQL binds borrow them.
+struct UpdateInstanceState<'a> {
     /// The replacement's value, in the shape and column the row stores it in.
     ///
     /// A replacement always carries a value, so this is never a tombstone:
     /// that shape is reserved for a row recording a deletion (clauses 4.5.7
     /// and 4.5.8), which clause 5.6.15 cannot produce.
     value: AttributeHistoryValue,
-    /// The replacement's metadata in the committed model, its unit lifted to
-    /// its catalog identity.
-    metadata: CommittedMetadata,
+    /// The replacement's metadata.
+    metadata: Option<&'a ObservationMetadata>,
     /// The observation instant the modified instance declares, if any.
     observed_at: Option<DateTime<Utc>>,
     /// The attribute family of the replacement instance.
@@ -207,17 +213,16 @@ struct UpdateInstanceState {
     attribute_type: AttributeType,
 }
 
-impl UpdateInstanceState {
-    /// The update one replacement observation of `attribute_name` makes.
+impl UpdateInstanceState<'_> {
+    /// The update one replacement observation makes.
     ///
     /// # Errors
     ///
-    /// Returns [`TemporalStoreError`] when the value or the metadata does not
-    /// encode, or the `unitCode` names no unit a row can hold.
-    fn of_replacement(attribute_name: &AttributeName, replacement: &ObservedInstance) -> Result<UpdateInstanceState, TemporalStoreError> {
+    /// Returns [`TemporalStoreError`] when the value does not encode.
+    fn of_replacement(replacement: &ObservedInstance) -> Result<UpdateInstanceState<'_>, TemporalStoreError> {
         Ok(UpdateInstanceState {
             value: AttributeHistoryValue::of_observation(&replacement.value)?,
-            metadata: CommittedMetadata::of(attribute_name, replacement.metadata.as_ref())?,
+            metadata: replacement.metadata.as_ref(),
             observed_at: replacement.observed_at,
             attribute_type: replacement.attribute_type,
         })
@@ -236,23 +241,28 @@ mod tests {
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
 
-    /// The update the expanded replacement `instance` of `speed` makes.
-    fn update_of(instance: &Value) -> UpdateInstanceState {
+    /// The expanded replacement `instance` of `speed`, read as an observation.
+    fn replacement_of(instance: &Value) -> ObservedInstance {
         let speed: AttributeName = "https://example.org/speed".parse().expect("a valid attribute name");
         let document = InstanceDocument::from_slice(&speed, &serde_json::to_vec(instance).expect("JSON")).expect("an expanded instance");
-        let replacement = ObservedInstance::read(document)
+        ObservedInstance::read(document)
             .expect("a readable replacement")
-            .expect("a replacement records a value");
-        UpdateInstanceState::of_replacement(&speed, &replacement).expect("the replacement encodes")
+            .expect("a replacement records a value")
+    }
+
+    /// The update `replacement` makes.
+    fn update_of(replacement: &ObservedInstance) -> UpdateInstanceState<'_> {
+        UpdateInstanceState::of_replacement(replacement).expect("the replacement encodes")
     }
 
     /// The clause 5.6.15 replacement is read by the same decoder an append is, so an array-valued Property replaced in place keeps every element, as the structured column stores it.
     #[test]
     fn a_replaced_array_valued_property_stores_every_element() {
-        let update = update_of(&json!({
+        let replacement = replacement_of(&json!({
             "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
             "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}, {"@value": 2}, {"@value": 3}]
         }));
+        let update = update_of(&replacement);
         assert_eq!(update.value.kind(), ValueKind::Object);
         let stored: Value = serde_json::from_str(update.value.object().expect("the structured column").get()).expect("parses");
         assert_eq!(stored, json!([1, 2, 3]));
@@ -263,16 +273,17 @@ mod tests {
     /// travels as JSON.
     #[test]
     fn a_replacement_instance_binds_its_typed_metadata() {
-        let update = update_of(&json!({
+        let replacement = replacement_of(&json!({
             "@type": ["https://uri.etsi.org/ngsi-ld/ListProperty"],
             "https://uri.etsi.org/ngsi-ld/hasValueList": [{"@list": [{"@value": 1}]}],
             "https://uri.etsi.org/ngsi-ld/createdAt": [{"@value": "2024-01-01T00:00:00.000000Z", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}],
             "https://uri.etsi.org/ngsi-ld/unitCode": [{"@value": "MTR"}],
             "https://example.org/accuracy": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 0.5}]}]
         }));
+        let update = update_of(&replacement);
         let accuracy: AttributeName = "https://example.org/accuracy".parse().expect("a valid attribute name");
         let keys = NameKeys::new(ResolvedNames::from_pairs([(accuracy, AttributeNameKey::from(7))]), ResolvedNames::default());
-        let members: HistoryMembers = update.metadata.keyed(&keys).expect("the metadata keys");
+        let members = HistoryMembers::keyed(update.metadata.expect("the replacement carries metadata"), &keys).expect("the metadata keys");
         assert!(members.unit_code_id.is_some());
         let keyed: Vec<(i32, AttributeNameKey)> = members
             .sub_attributes
@@ -294,8 +305,8 @@ mod tests {
             (json!({"@value": true}), ValueKind::Boolean),
             (json!({"@value": "2026-07-25T10:00:00Z"}), ValueKind::DateTime),
         ] {
-            let update = update_of(&json!({"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [value]}));
-            assert_eq!(update.value.kind(), kind, "{value}");
+            let replacement = replacement_of(&json!({"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [value]}));
+            assert_eq!(update_of(&replacement).value.kind(), kind, "{value}");
         }
     }
 }

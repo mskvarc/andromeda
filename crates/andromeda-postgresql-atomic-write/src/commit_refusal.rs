@@ -212,13 +212,8 @@ mod tests {
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_postgresql_context_store::{entity::types_present::EntityTypesMissing, error::ContextStoreError};
     use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
-    use andromeda_postgresql_temporal_store::{
-        duplicate_instance_claim::DuplicateInstanceClaimError,
-        error::TemporalStoreError,
-        unit_code_metadata::UnitCodeMetadataError,
-    };
+    use andromeda_postgresql_temporal_store::{duplicate_instance_claim::DuplicateInstanceClaimError, error::TemporalStoreError};
     use andromeda_temporal::error::TemporalError;
-    use andromeda_unit_catalog::expanded_unit_code::UnitCodeRefusal;
 
     fn entity_id() -> Identifier {
         "urn:ngsi-ld:Building:1".parse().expect("valid entity URI")
@@ -253,8 +248,8 @@ mod tests {
     }
 
     #[test]
-    fn a_unit_code_failure_inside_history_is_refused_on_the_same_terms() {
-        let error = temporal_store(TemporalStoreError::UnitCode(UnitCodeMetadataError::Refused(UnitCodeRefusal::NotACommonCode)));
+    fn a_refusal_inside_history_is_refused_on_the_same_terms() {
+        let error = temporal_store(TemporalStoreError::Refused(SubmissionRefusal::RelationshipMissingObject));
         assert!(matches!(error, CommitError::Submission(_)), "{error}");
     }
 
@@ -344,11 +339,9 @@ mod tests {
             entity_id: entity_id(),
             source: Box::new(source),
         };
-        let refused = history(entity_intent(TemporalStoreError::UnitCode(UnitCodeMetadataError::Refused(
-            UnitCodeRefusal::NotACommonCode,
-        ))));
+        let refused = history(entity_intent(TemporalStoreError::Refused(SubmissionRefusal::RelationshipMissingObject)));
         assert!(
-            matches!(&refused, AttemptFailure::Refused(refused) if refused.entity_id == entity_id() && matches!(refused.refusal, SubmissionRefusal::UnitCodeUnregistered)),
+            matches!(&refused, AttemptFailure::Refused(refused) if refused.entity_id == entity_id() && matches!(refused.refusal, SubmissionRefusal::RelationshipMissingObject)),
             "{refused:?}"
         );
         let fault = history(entity_intent(TemporalStoreError::ScopeHasNoAttributeRow));

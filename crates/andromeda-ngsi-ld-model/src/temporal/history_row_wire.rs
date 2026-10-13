@@ -204,7 +204,5 @@ fn metadata_of(family: AttributeType, attribute: &AttributeName, json: &str) -> 
     instance.push_str("\"]");
     instance.push_str(separator);
     instance.push_str(members);
-    Ok(ObservationMetadata::from_parts(
-        InstanceDocument::from_slice(attribute, instance.as_bytes())?.into_parts(),
-    ))
+    ObservationMetadata::admit(InstanceDocument::from_slice(attribute, instance.as_bytes())?.into_parts())
 }

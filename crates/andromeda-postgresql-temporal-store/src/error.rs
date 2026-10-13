@@ -10,9 +10,9 @@ use crate::{
     stored_catalog_error::StoredCatalogError,
     stored_history_error::StoredHistoryError,
     temporal_store_invariant::TemporalStoreInvariant,
-    unit_code_metadata::UnitCodeMetadataError,
 };
 use andromeda_context_commit::{submission_refusal::SubmissionRefusal, write_id::WriteId, write_ordinal::WriteOrdinalOutOfRange};
+use andromeda_ngsi_ld_entity::unit_code::StoredUnitCodeError;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_date_time::NgsiLdDateTimeError, ngsi_ld_time::NgsiLdTimeError};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_collation::provisioned_collations::CollationProvisioningError;
@@ -27,7 +27,6 @@ use andromeda_temporal::{
     temporal_not_found_reason::TemporalNotFoundReason,
     temporal_validation_reason::TemporalValidationReason,
 };
-use andromeda_unit_catalog::expanded_unit_code::UnitCodeRefusal;
 use sea_query::error::Error as SeaQueryError;
 use std::num::TryFromIntError;
 
@@ -99,9 +98,9 @@ pub enum TemporalStoreError {
     /// An observation's metadata has no stored members.
     #[error("temporal store history members: {0}")]
     HistoryMembers(#[from] HistoryMembersError),
-    /// The instance's `unitCode` member could not be moved to or from its column.
+    /// A stored unit identity names no catalog code.
     #[error("temporal store unit code: {0}")]
-    UnitCode(#[from] UnitCodeMetadataError),
+    UnitCode(#[from] StoredUnitCodeError),
     /// The requested aggregate would have spanned inputs that do not share a meaning.
     #[error("temporal store aggregation: {0}")]
     MixedAggregationGroup(#[from] MixedAggregationGroup),
@@ -156,7 +155,7 @@ impl TemporalStoreError {
             | TemporalStoreError::StoredCatalog(_)
             | TemporalStoreError::StoredAggregation(_)
             | TemporalStoreError::StoredTime(_)
-            | TemporalStoreError::UnitCode(UnitCodeMetadataError::UnknownIdentity { .. }) => Some(PersistenceFailure::Undecodable),
+            | TemporalStoreError::UnitCode(StoredUnitCodeError::Unknown(_)) => Some(PersistenceFailure::Undecodable),
             TemporalStoreError::Render(_) | TemporalStoreError::StatementBuild(_) => Some(PersistenceFailure::StatementUnbuildable),
             TemporalStoreError::Encoding(_)
             | TemporalStoreError::WriteOrdinal(_)
@@ -180,15 +179,12 @@ impl TemporalStoreError {
             | TemporalStoreError::WriteRecordMismatch { .. }
             | TemporalStoreError::RetentionHorizon(_)
             | TemporalStoreError::ScopeHasNoAttributeRow
-            | TemporalStoreError::HistoryMembers(
-                HistoryMembersError::SubAttributes { .. } | HistoryMembersError::Flatten(_) | HistoryMembersError::UnresolvedType(_),
-            )
-            | TemporalStoreError::UnitCode(UnitCodeMetadataError::Catalog(_)) => Some(PersistenceFailure::ContractBroken),
+            | TemporalStoreError::HistoryMembers(HistoryMembersError::Flatten(_) | HistoryMembersError::UnresolvedType(_))
+            | TemporalStoreError::UnitCode(StoredUnitCodeError::Catalog(_)) => Some(PersistenceFailure::ContractBroken),
             TemporalStoreError::ColumnstoreSettingsDrift { .. } => Some(PersistenceFailure::SchemaMismatch),
             TemporalStoreError::NotFound(_)
             | TemporalStoreError::Refused(_)
             | TemporalStoreError::TimestampPrecision(_)
-            | TemporalStoreError::UnitCode(UnitCodeMetadataError::Refused(_))
             | TemporalStoreError::MixedAggregationGroup(_)
             | TemporalStoreError::DuplicateInstanceClaim(_)
             | TemporalStoreError::Collation(CollationProvisioningError::NotAnIcuCollation { .. }) => None,
@@ -206,13 +202,6 @@ impl From<TemporalStoreError> for TemporalError {
             TemporalStoreError::EntityIntent { source, .. } => TemporalError::from(*source),
             TemporalStoreError::NotFound(reason) => TemporalError::NotFound(reason),
             TemporalStoreError::Refused(refusal) => TemporalError::from(refusal),
-            // A unit the client sent is a request fault (clause 4.5.2).
-            TemporalStoreError::UnitCode(UnitCodeMetadataError::Refused(UnitCodeRefusal::Malformed)) => {
-                TemporalError::from(SubmissionRefusal::UnitCodeMalformed)
-            }
-            TemporalStoreError::UnitCode(UnitCodeMetadataError::Refused(UnitCodeRefusal::NotACommonCode | UnitCodeRefusal::Unregistered { .. })) => {
-                TemporalError::from(SubmissionRefusal::UnitCodeUnregistered)
-            }
             // A timestamp at a resolution the store cannot hold is client input,
             // and two instances claiming the same instanceId is a conflict inside
             // the submitted write (clause 4.5.7).
@@ -240,7 +229,7 @@ impl From<TemporalStoreError> for TemporalError {
             | TemporalStoreError::Collation(CollationProvisioningError::Statement { .. })
             | TemporalStoreError::NameLookup(_)
             | TemporalStoreError::Invariant(_)
-            | TemporalStoreError::UnitCode(UnitCodeMetadataError::UnknownIdentity { .. } | UnitCodeMetadataError::Catalog(_))
+            | TemporalStoreError::UnitCode(_)
             | TemporalStoreError::WriteRecordMismatch { .. }
             | TemporalStoreError::ColumnstoreSettingsDrift { .. }
             | TemporalStoreError::WriteOrdinal(_)
@@ -269,12 +258,11 @@ fn mixed_aggregation(mixed: MixedAggregationGroup) -> TemporalValidationReason {
 
 #[cfg(test)]
 mod tests {
-    use crate::{error::TemporalStoreError, unit_code_metadata::UnitCodeMetadataError};
+    use crate::error::TemporalStoreError;
     use andromeda_context_commit::submission_refusal::SubmissionRefusal;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
     use andromeda_temporal::{error::TemporalError, temporal_validation_reason::TemporalValidationReason};
-    use andromeda_unit_catalog::expanded_unit_code::UnitCodeRefusal;
 
     #[test]
     fn a_pool_timeout_becomes_store_saturated() {
@@ -315,15 +303,6 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn an_unregistered_unit_code_is_refused_without_echoing_the_code() {
-        let refused = TemporalError::from(TemporalStoreError::UnitCode(UnitCodeMetadataError::Refused(UnitCodeRefusal::NotACommonCode)));
-        assert!(matches!(
-            refused,
-            TemporalError::Validation(TemporalValidationReason::Refused(SubmissionRefusal::UnitCodeUnregistered))
-        ));
-    }
-
     /// The entity an intent failure names changes nothing about what the
     /// failure means: a refusal stays a refusal, a fault stays a fault.
     #[test]
@@ -332,12 +311,10 @@ mod tests {
             entity_id: "urn:ngsi-ld:Vehicle:1".parse().expect("a valid entity URI"),
             source: Box::new(source),
         };
-        let refused = TemporalError::from(entity_intent(TemporalStoreError::UnitCode(UnitCodeMetadataError::Refused(
-            UnitCodeRefusal::NotACommonCode,
-        ))));
+        let refused = TemporalError::from(entity_intent(TemporalStoreError::Refused(SubmissionRefusal::RelationshipMissingObject)));
         assert!(matches!(
             refused,
-            TemporalError::Validation(TemporalValidationReason::Refused(SubmissionRefusal::UnitCodeUnregistered))
+            TemporalError::Validation(TemporalValidationReason::Refused(SubmissionRefusal::RelationshipMissingObject))
         ));
         let fault = entity_intent(TemporalStoreError::ScopeHasNoAttributeRow);
         pretty_assertions::assert_eq!(fault.failure_class(), Some(PersistenceFailure::ContractBroken));

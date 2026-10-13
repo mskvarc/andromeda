@@ -1,31 +1,20 @@
 //! What a history row stores beside its value, keyed as current state keys it.
 //!
-//! An observation's metadata ([`ObservationMetadata`]) is read into the
-//! committed model once ([`CommittedMetadata`]): the unit is lifted into its
-//! catalog identity, the sub-attributes become committed attributes. The names
-//! it mentions are minted with the rest of the statement batch's, then
-//! [`CommittedMetadata::keyed`] makes the [`HistoryMembers`] a row binds. A
-//! read goes the other way: the keys every row of one read holds are looked up
-//! once, then [`HistoryMembers::metadata`] rebuilds the metadata.
+//! An observation's metadata ([`ObservationMetadata`]) is admitted into the
+//! committed model when the observation is read, so it is keyed as it is: the
+//! names it mentions are minted with the rest of the statement batch's
+//! ([`mention`]), then [`HistoryMembers::keyed`] makes the members a row binds.
+//! A read goes the other way: the keys every row of one read holds are looked
+//! up once, then [`HistoryMembers::metadata`] rebuilds the metadata.
 //!
 //! A sub-attribute's `createdAt` and `modifiedAt` are never stored: history
 //! records the system times of the instance alone (clause 5.2.5), so every
 //! element's are NULL.
 
-use crate::{
-    error::TemporalStoreError,
-    stored_history_error::StoredHistoryError,
-    unit_code_metadata::{restore_unit_code, take_unit_code},
-};
-use andromeda_ngsi_ld_entity::{
-    attributes::Attributes,
-    date_time_text::DateTimeText,
-    document::{instance_document::InstanceDocumentParts, slot::Slot, written_value::ValueSlot},
-    proof_seals::ProofSeals,
-    refusal::EntityRefusal,
-};
+use crate::{error::TemporalStoreError, stored_history_error::StoredHistoryError};
+use andromeda_ngsi_ld_entity::{date_time_text::DateTimeText, proof_seals::ProofSeals, unit_code::UnitCode};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, reference::NgsiLdReference};
-use andromeda_ngsi_ld_model::temporal::observation_metadata::ObservationMetadata;
+use andromeda_ngsi_ld_model::temporal::observation_metadata::{MetadataMembers, ObservationMetadata};
 use andromeda_postgresql_attribute_instance::{
     assemble::{AssemblyError, sub_attributes},
     flatten::{FlattenError, push_elements},
@@ -62,16 +51,6 @@ pub struct HistoryMembers {
 /// An observation's metadata that has no stored members.
 #[derive(Debug, Error)]
 pub enum HistoryMembersError {
-    /// A sub-attribute is no instance the committed model holds, which
-    /// admission of the observation rules out.
-    #[error("a sub-attribute of '{attribute}' is not one the committed model holds: {source}")]
-    SubAttributes {
-        /// The attribute the observation records.
-        attribute: AttributeName,
-        /// The model's refusal.
-        #[source]
-        source: Box<EntityRefusal>,
-    },
     /// A sub-attribute does not flatten: a name has no key, or a value is not
     /// in its committed spelling.
     #[error(transparent)]
@@ -84,93 +63,53 @@ pub enum HistoryMembersError {
     Seals(#[source] serde_json::Error),
 }
 
-/// An observation's metadata in the committed model, before its names are
-/// keyed.
-#[derive(Debug, Default)]
-pub struct CommittedMetadata {
-    /// `valueType`.
-    value_type: Option<NgsiLdReference>,
-    /// `objectType`, in written order.
-    object_types: Vec<NgsiLdReference>,
-    /// Catalog identity of `unitCode`.
-    unit_code_id: Option<UnitCodeId>,
-    /// `expiresAt`.
-    expires_at: Option<DateTime<Utc>>,
-    /// The seals.
-    proof_seals: ProofSeals,
-    /// The sub-attributes.
-    sub_attributes: Attributes,
+/// Add every name the stored members of `metadata` hold as a key to
+/// `mentioned`.
+pub fn mention(metadata: &ObservationMetadata, mentioned: &mut MentionedNames) {
+    let members = metadata.members();
+    mentioned
+        .types
+        .extend(members.value_type.iter().chain(&members.object_types).map(EntityTypeName::from));
+    mentioned.collect(&members.sub_attributes);
 }
 
-impl CommittedMetadata {
-    /// The committed form of the metadata of an observation of `attribute`.
-    ///
-    /// A companion member holding the NGSI-LD Null stores nothing: admission
-    /// of the observation refuses one, and a deleted member is absent.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TemporalStoreError::UnitCode`] when the unit names no catalog
-    /// unit, and [`TemporalStoreError::HistoryMembers`] when a sub-attribute is
-    /// no instance the committed model holds.
-    pub fn of(attribute: &AttributeName, metadata: Option<&ObservationMetadata>) -> Result<CommittedMetadata, TemporalStoreError> {
-        // clone: the stored row owns its members, the observation keeps its own.
-        let (metadata, unit_code_id) = take_unit_code(metadata.cloned())?;
-        let Some(metadata) = metadata else {
-            return Ok(CommittedMetadata {
-                unit_code_id,
-                ..CommittedMetadata::default()
-            });
-        };
-        let parts = metadata.into_parts();
-        let sub_attributes = Attributes::try_from_members(parts.sub_attributes).map_err(|source| HistoryMembersError::SubAttributes {
-            attribute: attribute.clone(), // clone: the failure owns the attribute it names
-            source: Box::new(source),
-        })?;
-        Ok(CommittedMetadata {
-            value_type: parts.value_type.and_then(Slot::into_set),
-            object_types: parts.object_types.and_then(Slot::into_set).unwrap_or_default(),
-            unit_code_id,
-            expires_at: parts.expires_at.and_then(Slot::into_set).map(|text| text.instant()),
-            proof_seals: parts.proof_seals,
-            sub_attributes,
-        })
+impl HistoryMembers {
+    /// The members a row stores of the unit `metadata` declares alone, for a
+    /// row whose other members are never keyed.
+    #[must_use]
+    pub fn unit_alone(metadata: Option<&ObservationMetadata>) -> HistoryMembers {
+        HistoryMembers {
+            unit_code_id: metadata.and_then(|metadata| metadata.members().unit_code).map(UnitCode::id),
+            ..HistoryMembers::default()
+        }
     }
 
-    /// Add every name the stored members hold as a key to `mentioned`.
-    pub fn mention(&self, mentioned: &mut MentionedNames) {
-        mentioned
-            .types
-            .extend(self.value_type.iter().chain(&self.object_types).map(EntityTypeName::from));
-        mentioned.collect(&self.sub_attributes);
-    }
-
-    /// The members a row stores, every name held as its key in `keys`.
+    /// The members a row stores of `metadata`, every name held as its key in
+    /// `keys`.
     ///
     /// # Errors
     ///
     /// Returns [`HistoryMembersError`] when a name has no key in `keys`, or a
     /// sub-attribute is not in its committed spelling.
-    pub fn keyed(&self, keys: &NameKeys) -> Result<HistoryMembers, HistoryMembersError> {
+    pub fn keyed(metadata: &ObservationMetadata, keys: &NameKeys) -> Result<HistoryMembers, HistoryMembersError> {
+        let members = metadata.members();
         let type_key = |reference: &NgsiLdReference| keys.type_name(reference).ok_or_else(|| HistoryMembersError::UnresolvedType(reference.clone())); // clone: the refusal names the type it could not key
         let mut sub_attributes = Vec::new();
-        push_elements(&self.sub_attributes, 0, keys, &mut sub_attributes)?;
+        push_elements(&members.sub_attributes, 0, keys, &mut sub_attributes)?;
         Ok(HistoryMembers {
-            value_type_key: self.value_type.as_ref().map(type_key).transpose()?,
-            object_type_keys: self.object_types.iter().map(type_key).collect::<Result<_, _>>()?,
-            unit_code_id: self.unit_code_id,
-            expires_at: self.expires_at,
-            proof_seals: if self.proof_seals.is_empty() {
+            value_type_key: members.value_type.as_ref().map(type_key).transpose()?,
+            object_type_keys: members.object_types.iter().map(type_key).collect::<Result<_, _>>()?,
+            unit_code_id: members.unit_code.map(UnitCode::id),
+            expires_at: members.expires_at.as_ref().map(DateTimeText::instant),
+            proof_seals: if members.proof_seals.is_empty() {
                 None
             } else {
-                Some(StoredJson::new(to_raw_value(&self.proof_seals).map_err(HistoryMembersError::Seals)?))
+                Some(StoredJson::new(to_raw_value(&members.proof_seals).map_err(HistoryMembersError::Seals)?))
             },
             sub_attributes,
         })
     }
-}
 
-impl HistoryMembers {
     /// Add every key the members hold to `held`.
     pub fn collect_keys(&self, held: &mut HeldKeys) {
         held.types.extend(self.value_type_key.iter().chain(&self.object_type_keys).copied());
@@ -207,24 +146,14 @@ impl HistoryMembers {
             .transpose()
             .map_err(|refusal| StoredHistoryError::ProofSeals(Box::new(refusal)))?
             .unwrap_or_default();
-        let sub_attributes = sub_attributes(elements, names).map_err(stored_members)?;
-        let metadata = ObservationMetadata::from_parts(InstanceDocumentParts {
-            family: None,
-            dataset_id: None,
-            value: ValueSlot::Absent,
-            observed_at: None,
-            expires_at: expires_at.map(|instant| Slot::Set(DateTimeText::from_instant(instant))),
-            unit_code: None,
-            value_type: value_type.map(Slot::Set),
-            object_types: (!object_types.is_empty()).then_some(Slot::Set(object_types)),
-            created_at: None,
-            modified_at: None,
-            deleted_at: None,
-            instance_id: None,
+        Ok(ObservationMetadata::new(MetadataMembers {
+            expires_at: expires_at.map(DateTimeText::from_instant),
+            unit_code: unit_code_id.map(UnitCode::from_id).transpose()?,
+            value_type,
+            object_types,
             proof_seals,
-            sub_attributes: sub_attributes.written_members(),
-        });
-        Ok(restore_unit_code(metadata, unit_code_id)?)
+            sub_attributes: sub_attributes(elements, names).map_err(stored_members)?,
+        }))
     }
 }
 
@@ -235,7 +164,7 @@ fn stored_members(error: AssemblyError) -> StoredHistoryError {
 
 #[cfg(test)]
 mod tests {
-    use crate::history_members::{CommittedMetadata, HistoryMembers};
+    use crate::history_members::{HistoryMembers, mention};
     use andromeda_ngsi_ld_entity::document::instance_document::InstanceDocument;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReference};
     use andromeda_ngsi_ld_model::temporal::observation_metadata::ObservationMetadata;
@@ -314,15 +243,17 @@ mod tests {
         let attribute: AttributeName = attribute.parse().expect("an attribute name");
         let instance = with(json!({"@type": [ngsi(family)]}), members);
         let document = InstanceDocument::from_slice(&attribute, &serde_json::to_vec(&instance).expect("JSON")).expect("expanded members");
-        let metadata = ObservationMetadata::from_parts(document.into_parts()).expect("the members are metadata");
+        let metadata = ObservationMetadata::admit(document.into_parts())
+            .expect("the members are committed")
+            .expect("the members are metadata");
         (attribute, metadata)
     }
 
-    /// Keys for every name `committed` mentions, numbered from 1 in sorted
+    /// Keys for every name `metadata` mentions, numbered from 1 in sorted
     /// order, and the names behind them.
-    fn dictionary(committed: &CommittedMetadata) -> (NameKeys, KeyNames) {
+    fn dictionary(metadata: &ObservationMetadata) -> (NameKeys, KeyNames) {
         let mut mentioned = MentionedNames::default();
-        committed.mention(&mut mentioned);
+        mention(metadata, &mut mentioned);
         let MentionedNames { attributes, types } = distinct(mentioned);
         let attributes: Vec<(AttributeName, AttributeNameKey)> =
             attributes.into_iter().zip(1..).map(|(name, key)| (name, AttributeNameKey::from(key))).collect();
@@ -336,11 +267,10 @@ mod tests {
 
     /// The members `metadata` of `attribute` stores, and the metadata they read
     /// back as.
-    fn round_trip(attribute: &AttributeName, metadata: Option<&ObservationMetadata>) -> (HistoryMembers, Option<ObservationMetadata>) {
-        let committed = CommittedMetadata::of(attribute, metadata).expect("the metadata is committed");
-        let (keys, names) = dictionary(&committed);
-        let members = committed.keyed(&keys).expect("every name has a key");
-        let stored = committed.keyed(&keys).expect("every name has a key");
+    fn round_trip(attribute: &AttributeName, metadata: &ObservationMetadata) -> (HistoryMembers, Option<ObservationMetadata>) {
+        let (keys, names) = dictionary(metadata);
+        let members = HistoryMembers::keyed(metadata, &keys).expect("every name has a key");
+        let stored = HistoryMembers::keyed(metadata, &keys).expect("every name has a key");
         let read = stored.metadata(attribute, &names).expect("the members assemble");
         (members, read)
     }
@@ -364,7 +294,7 @@ mod tests {
             &nested_every_family(),
         );
         let (speed, written) = metadata(&ex("speed"), "Property", &members);
-        let (stored, read) = round_trip(&speed, Some(&written));
+        let (stored, read) = round_trip(&speed, &written);
         assert!(stored.value_type_key.is_some() && stored.unit_code_id.is_some() && stored.proof_seals.is_some() && stored.expires_at.is_some());
         pretty_assertions::assert_eq!(stored.sub_attributes.len(), 16, "eight families, each with its method");
         pretty_assertions::assert_eq!(rendered(read.as_ref()), rendered(Some(&written)));
@@ -374,7 +304,7 @@ mod tests {
             ngsi("hasObjectType"): [{"@id": ex("A")}, {"@id": ex("B")}]
         });
         let (owner_name, written) = metadata(&ex("owner"), "Relationship", &owner);
-        let (stored, read) = round_trip(&owner_name, Some(&written));
+        let (stored, read) = round_trip(&owner_name, &written);
         pretty_assertions::assert_eq!(stored.object_type_keys.len(), 2);
         pretty_assertions::assert_eq!(rendered(read.as_ref()), rendered(Some(&written)));
     }
@@ -397,7 +327,7 @@ mod tests {
             }]
         });
         let (speed, written) = metadata(&ex("speed"), "Property", &stamped);
-        let (stored, _) = round_trip(&speed, Some(&written));
+        let (stored, _) = round_trip(&speed, &written);
         pretty_assertions::assert_eq!(stored.sub_attributes.len(), 2);
         assert!(
             stored
@@ -412,8 +342,21 @@ mod tests {
     #[test]
     fn an_observation_without_metadata_stores_no_element() {
         let speed: AttributeName = ex("speed").parse().expect("an attribute name");
-        let (stored, read) = round_trip(&speed, None);
+        let stored = HistoryMembers::unit_alone(None);
         pretty_assertions::assert_eq!(stored, HistoryMembers::default());
-        assert!(read.is_none());
+        assert!(stored.metadata(&speed, &KeyNames::default()).expect("nothing to assemble").is_none());
+    }
+
+    /// A row whose other members are never keyed keeps the unit alone.
+    #[test]
+    fn the_unit_alone_is_the_unit_and_nothing_else() {
+        let (_, written) = metadata(
+            &ex("speed"),
+            "Property",
+            &json!({ngsi("hasValue"): [{"@value": 1}], ngsi("unitCode"): [{"@value": "KMH"}], ngsi("hasValueType"): [{"@id": ex("Speed")}]}),
+        );
+        let stored = HistoryMembers::unit_alone(Some(&written));
+        assert!(stored.unit_code_id.is_some());
+        pretty_assertions::assert_eq!(stored.value_type_key, None);
     }
 }

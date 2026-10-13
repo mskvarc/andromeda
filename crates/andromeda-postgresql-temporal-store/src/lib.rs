@@ -107,8 +107,6 @@ pub mod temporal_stream;
 pub mod temporal_stream_catalog_write;
 /// Windowed temporal history deletion (the delete-by-query extension).
 pub mod temporal_windowed_deletion;
-/// Moving the NGSI-LD `unitCode` member between stored metadata and its column.
-pub mod unit_code_metadata;
 /// The clause 4.5.7 verbatim-`instanceId` uniqueness pass a history batch runs.
 pub(crate) mod verbatim_instance_claim;
 /// The write's own idempotency bookkeeping record.
