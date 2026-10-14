@@ -1,5 +1,6 @@
 //! Direct reads of the current-attribute projection for one Entity.
 
+use andromeda_unit_catalog::{unit_code_id::UnitCodeId, unit_code_registry::registry};
 use sqlx::{FromRow, PgPool, Row};
 
 /// The clause 4.5.5 grain of one projection row, with its typed value rendered
@@ -139,11 +140,10 @@ pub async fn attribute_name_key(pool: &PgPool, entity_id: &str, local_name: &str
 /// the local name at the end of its expanded IRI, absent when the projected
 /// instance carries none.
 pub async fn unit_code_of(pool: &PgPool, entity_id: &str, local_name: &str, dataset_id: Option<&str>) -> Option<String> {
-    sqlx::query_scalar(
-        "SELECT u.code FROM current_attributes AS c \
+    let stored: Option<i16> = sqlx::query_scalar(
+        "SELECT c.unit_code_id FROM current_attributes AS c \
          JOIN entities AS e ON e.entity_key = c.entity_key \
          JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
-         LEFT JOIN unit_codes AS u ON u.id = c.unit_code_id \
          WHERE e.id = $1 AND an.name LIKE '%' || $2 AND c.dataset_id IS NOT DISTINCT FROM $3",
     )
     .bind(entity_id)
@@ -151,5 +151,13 @@ pub async fn unit_code_of(pool: &PgPool, entity_id: &str, local_name: &str, data
     .bind(dataset_id)
     .fetch_one(pool)
     .await
-    .expect("the instance of the attribute must be projected")
+    .expect("the instance of the attribute must be projected");
+    stored.map(|identity| {
+        let id = UnitCodeId::try_from(identity).expect("a stored unit identity is positive");
+        let entry = registry()
+            .expect("the compiled-in unit catalog parses")
+            .entry(id)
+            .expect("the stored unit identity decodes");
+        entry.token().as_str().to_owned()
+    })
 }

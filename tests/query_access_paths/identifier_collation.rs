@@ -57,9 +57,7 @@ async fn identifier_columns_declare_byte_wise_collation() {
         ("jsonld_contexts", "url"),
         ("notification_events", "entity_id"),
         ("temporal_append_intents", "entity_id"),
-        ("unit_codes", "code"),
         ("schema_metadata", "migrations_sha256"),
-        ("unit_code_catalog_metadata", "source_sha256"),
     ] {
         assert_eq!(
             column_collation(pool, relation, column).await.as_deref(),

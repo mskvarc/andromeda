@@ -1,15 +1,12 @@
 -- Every mutable tenant table, truncated between test cases.
 --
--- Six tables are deliberately absent. `attribute_names` and
+-- Four tables are deliberately absent. `attribute_names` and
 -- `entity_type_names` are dictionaries whose keys are cached in-process, so
 -- truncating either would strand every cached key.
 -- `schema_metadata` carries the schema contract the broker stamps once after
 -- migrating and verifies on every later connection to the tenant: removing the
 -- singleton makes the tenant read as never-stamped, and every connection after
--- the reset is refused as drift. `unit_codes` and `unit_code_catalog_metadata`
--- are reference data seeded by a migration from the assignment the broker
--- compiles in: emptying them would leave every unit-code write without the row
--- its foreign key needs, and nothing outside a migration may reseed them.
+-- the reset is refused as drift.
 -- `context_source_change_clock` is a singleton a migration seeds and every
 -- registration write advances: emptying it would leave those writes nothing to
 -- advance, and a revision only has to grow, never to restart.

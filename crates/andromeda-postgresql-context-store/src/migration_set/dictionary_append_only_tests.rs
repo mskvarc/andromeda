@@ -55,29 +55,3 @@ fn both_name_dictionaries_refuse_update_delete_and_truncate() {
     assert!(body.contains("raise restrict_violation"), "the refusal raises SQLSTATE 23001: {body}");
     assert!(body.contains("is append-only"), "{body}");
 }
-
-#[test]
-fn unit_codes_refuse_every_change_but_a_retirement() {
-    let schema = DeclaredSchema::of_every_migration();
-    assert_eq!(
-        definition_on(&schema, "trg_unit_codes_append_only_row", "unit_codes"),
-        format!("before update of id, code, first_revision or delete on unit_codes for each row execute function {REFUSAL} ()")
-    );
-    assert_eq!(
-        definition_on(&schema, "trg_unit_codes_append_only_truncate", "unit_codes"),
-        format!("before truncate on unit_codes for each statement execute function {REFUSAL} ()")
-    );
-    assert_eq!(
-        definition_on(&schema, "trg_unit_codes_retirement_final", "unit_codes"),
-        format!("before update of retired_revision on unit_codes for each row when (old.retired_revision is not null) execute function {REFUSAL} ()")
-    );
-}
-
-#[test]
-fn the_unit_code_catalog_metadata_singleton_stays_updatable() {
-    let schema = DeclaredSchema::of_every_migration();
-    assert!(
-        !schema.triggers.iter().any(|trigger| trigger.table == "unit_code_catalog_metadata"),
-        "a catalogue upgrade rewrites the singleton, so no guard refuses it"
-    );
-}

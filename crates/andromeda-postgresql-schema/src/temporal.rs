@@ -87,7 +87,7 @@ pub enum AttributeHistory {
     ValueDateTime,
     /// URI value, when `value_kind` selects it
     ValueUri,
-    /// The instance's `unitCode` catalog identity, carrying no foreign key
+    /// `cefact-units` identity of the instance's `unitCode` (clause 4.5.2), carrying no foreign key
     UnitCodeId,
     /// `entity_type_names` key of the instance's `valueType` (clause 4.5.2)
     ValueTypeKey,

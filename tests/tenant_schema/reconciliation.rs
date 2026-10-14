@@ -86,10 +86,6 @@ const INVARIANTS: &[Invariant] = &[
         count: "SELECT COUNT(*) FROM context_source_registrations csr WHERE NOT EXISTS (SELECT 1 FROM registration_information ri WHERE ri.registration_id = csr.id)",
     },
     Invariant {
-        description: "history rows naming a unit the catalogue does not hold",
-        count: "SELECT COUNT(*) FROM attribute_history ah WHERE ah.unit_code_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM unit_codes uc WHERE uc.id = ah.unit_code_id)",
-    },
-    Invariant {
         description: "history rows naming a write record that does not exist",
         count: "SELECT COUNT(*) FROM attribute_history ah WHERE NOT EXISTS (SELECT 1 FROM write_records wr WHERE wr.write_id = ah.write_id)",
     },
@@ -132,7 +128,6 @@ const POPULATED_RELATIONS: &[&str] = &[
     "registration_information",
     "subscriptions",
     "subscription_delivery_state",
-    "unit_codes",
 ];
 
 /// A subscription, so the delivery-state row created with it is there to be

@@ -3,13 +3,14 @@
 //! A `unitCode` the catalogue does not register has no identity to store, so
 //! the write is refused rather than silently stripped: an attribute persisted
 //! without the unit its client declared would mean something else. The
-//! database holds the same line for a writer that bypasses the broker — the
-//! current-state projection carries a foreign key to `unit_codes` — and no
-//! history row may carry a unit only as leftover metadata.
+//! database refuses a non-positive identity from a writer that bypasses the
+//! broker, and no history row may carry a unit identity the catalogue cannot
+//! decode.
 
 use crate::fixtures::{SUITE, default_context_iri, device_with_unit, history_unit_identities};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
+use andromeda_unit_catalog::{unit_code_id::UnitCodeId, unit_code_registry::registry};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
@@ -85,7 +86,7 @@ async fn an_unregistered_unit_code_is_refused_as_bad_request_data() {
 }
 
 #[tokio::test]
-async fn a_bypass_write_of_an_unregistered_unit_identity_is_refused_by_the_dictionary_check() {
+async fn a_bypass_write_of_a_non_positive_unit_identity_is_refused_by_the_check() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
     let client = scope.client();
     let id = scope.id("Device:bypass-unit");
@@ -97,20 +98,22 @@ async fn a_bypass_write_of_an_unregistered_unit_identity_is_refused_by_the_dicti
         .expect("create entity request failed");
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
 
-    // 32767 is the largest identity the two-byte key can hold and one the
-    // catalogue has never assigned, so the statement-level dictionary check is
-    // the only thing that can refuse it, as a foreign-key violation.
     let bypass = sqlx::query(
-        "UPDATE current_attributes SET unit_code_id = 32767 \
+        "UPDATE current_attributes SET unit_code_id = 0 \
          WHERE entity_key = (SELECT entity_key FROM entities WHERE id = $1)",
     )
     .bind(&id)
     .execute(scope.database_pool())
     .await;
 
-    let refusal = bypass.expect_err("the dictionary check must refuse a unit identity the catalogue does not hold");
-    let code = refusal.as_database_error().and_then(|error| error.code().map(std::borrow::Cow::into_owned));
-    assert_eq!(code.as_deref(), Some("23503"), "the refusal must be a foreign-key violation: {refusal}");
+    let refusal = bypass.expect_err("the check must refuse a non-positive unit identity");
+    let database_error = refusal.as_database_error().expect("the refusal comes from the database");
+    assert_eq!(
+        database_error.code().as_deref(),
+        Some("23514"),
+        "the refusal must be a check violation: {refusal}"
+    );
+    assert_eq!(database_error.constraint(), Some("chk_current_attributes_unit_code_id_positive"));
 
     scope.finish().await.expect("cleanup failed");
 }
@@ -128,17 +131,17 @@ async fn no_history_row_carries_a_unit_only_as_leftover_metadata() {
         .expect("create entity request failed");
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
 
-    // The whole hypertable, not only this test's rows: an identity with no
-    // catalogue row is what a hand-written row leaves.
-    let unregistered: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM attribute_history ah \
-         LEFT JOIN unit_codes uc ON uc.id = ah.unit_code_id \
-         WHERE ah.unit_code_id IS NOT NULL AND uc.id IS NULL",
-    )
-    .fetch_one(scope.database_pool())
-    .await
-    .expect("the unit audit must be readable");
-    assert_eq!(unregistered, 0, "history holds unit identities the catalogue cannot decode");
+    // The whole hypertable, not only this test's rows: an identity the
+    // catalogue cannot decode is what a hand-written row leaves.
+    let stored: Vec<i16> = sqlx::query_scalar("SELECT DISTINCT unit_code_id FROM attribute_history WHERE unit_code_id IS NOT NULL")
+        .fetch_all(scope.database_pool())
+        .await
+        .expect("the unit audit must be readable");
+    let catalog = registry().expect("the compiled-in unit catalog parses");
+    for identity in stored {
+        let decoded = UnitCodeId::try_from(identity).ok().and_then(|id| catalog.entry(id).ok());
+        assert!(decoded.is_some(), "history holds unit identity {identity}, which the catalogue cannot decode");
+    }
 
     scope.finish().await.expect("cleanup failed");
 }

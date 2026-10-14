@@ -69,11 +69,7 @@ const SPECIFICATION_MEMBER_COLUMNS: &[(&str, &str)] = &[
 
 /// Integer identifiers whose values a catalog assigns outside the database, so
 /// they are `id`s rather than keys.
-const CATALOG_ASSIGNED_IDENTIFIERS: &[(&str, &str)] = &[
-    ("unit_codes", "id"),
-    ("attribute_history", "unit_code_id"),
-    ("current_attributes", "unit_code_id"),
-];
+const CATALOG_ASSIGNED_IDENTIFIERS: &[(&str, &str)] = &[("attribute_history", "unit_code_id"), ("current_attributes", "unit_code_id")];
 
 /// The `jsonb` columns and composite type fields, each one SQL navigates
 /// inside, or a record field holding such a column's value field for field,

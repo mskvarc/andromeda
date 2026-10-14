@@ -22,10 +22,10 @@ use serde_json::json;
 /// checks and the cascade standing in for the foreign keys of
 /// `current_attributes`.
 const TOLERATED_TRIGGERS: [&str; 5] = [
-    "current_attributes.trg_current_attributes_dictionary_keys_insert",
-    "current_attributes.trg_current_attributes_dictionary_keys_update",
     "current_attributes.trg_current_attributes_entities_insert",
     "current_attributes.trg_current_attributes_entities_update",
+    "current_attributes.trg_current_attributes_name_keys_insert",
+    "current_attributes.trg_current_attributes_name_keys_update",
     "entities.trg_entities_current_attributes_cascade",
 ];
 
@@ -35,8 +35,8 @@ const TOLERATED_TRIGGERS: [&str; 5] = [
 /// functions an expression index and its queries call.
 const TOLERATED_FUNCTIONS: [&str; 10] = [
     "cascade_entity_current_attributes",
-    "check_current_attribute_dictionary_keys",
     "check_current_attribute_entities",
+    "check_current_attribute_name_keys",
     "geom_to_geog",
     "sub_eq_keys",
     "sub_eq_query_key",

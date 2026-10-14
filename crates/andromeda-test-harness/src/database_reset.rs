@@ -309,14 +309,6 @@ mod tests {
     }
 
     #[test]
-    fn reset_script_leaves_the_seeded_unit_code_catalogue_in_place() {
-        // The catalogue is migration-seeded reference data, and
-        // `current_attributes.unit_code_id` references it.
-        assert!(!truncated_relations().contains("unit_codes"));
-        assert!(!truncated_relations().contains("unit_code_catalog_metadata"));
-    }
-
-    #[test]
     fn reset_script_drops_every_snapshot_branch_schema_and_keeps_the_live_default_schema() {
         // Each Snapshot branch is a `snap_<key>` schema; the reset drops them all
         // and has no `context_spaces` table to name.

@@ -191,13 +191,13 @@ async fn snapshot_branch_schema_references_only_its_own_relations() {
     );
 }
 
-/// A session holding `ROW EXCLUSIVE` on both dictionaries -- the lock every
-/// live write that mints a name or reads a unit code is compatible with --
-/// conflicts with every lock a foreign key's creation or removal takes on the
-/// relation it references. Creating, preparing and deleting a Snapshot while
-/// it is held therefore proves that no step of a Snapshot's lifetime locks the
-/// dictionaries: with a branch key into either one, preparation stalls until
-/// the session ends and the deletion never returns.
+/// A session holding `ROW EXCLUSIVE` on `attribute_names` -- the lock every
+/// live write that mints a name is compatible with -- conflicts with every
+/// lock a foreign key's creation or removal takes on the relation it
+/// references. Creating, preparing and deleting a Snapshot while it is held
+/// therefore proves that no step of a Snapshot's lifetime locks the
+/// dictionary: with a branch key into it, preparation stalls until the session
+/// ends and the deletion never returns.
 #[tokio::test]
 #[serial(snapshot)]
 async fn snapshot_lifecycle_completes_while_the_dictionaries_are_row_exclusive_locked() {
@@ -205,13 +205,13 @@ async fn snapshot_lifecycle_completes_while_the_dictionaries_are_row_exclusive_l
     let pool = snapshot_database().await;
     let id = "urn:ngsi-ld:Snapshot:dictionaries-held";
     let mut holder = pool.begin().await.expect("lock holder transaction");
-    sqlx::query("LOCK TABLE attribute_names, unit_codes IN ROW EXCLUSIVE MODE")
+    sqlx::query("LOCK TABLE attribute_names IN ROW EXCLUSIVE MODE")
         .execute(&mut *holder)
         .await
-        .expect("hold the dictionaries");
+        .expect("hold the dictionary");
 
-    // A live write interning a fresh type, a fresh attribute and a unit code
-    // is compatible with the held lock; the Snapshot then captures it.
+    // A live write interning a fresh type and a fresh attribute is compatible
+    // with the held lock; the Snapshot then captures it.
     let entity_type = "https://example.org/DictionaryHeldVehicle";
     let entity = json!({
         "id": "urn:ngsi-ld:DictionaryHeldVehicle:1",
@@ -227,16 +227,16 @@ async fn snapshot_lifecycle_completes_while_the_dictionaries_are_row_exclusive_l
     let body = json!({"id": id, "type": "Snapshot", "snapshotQueries": [{"type": "Query", "entities": [{"type": entity_type}]}]});
     let created = timeout(Duration::from_secs(5), create_snapshot_raw(&client(), &body))
         .await
-        .expect("the create never waits on the dictionaries");
+        .expect("the create never waits on the dictionary");
     pretty_assertions::assert_eq!(created.0, StatusCode::CREATED);
     let prepared = wait_for_snapshot_terminal(&client(), id, Duration::from_secs(5)).await;
     pretty_assertions::assert_eq!(prepared["snapshotStatus"], "success", "{prepared}");
     let deleted = timeout(Duration::from_secs(5), delete_snapshot_raw(&client(), id))
         .await
-        .expect("the deletion never waits on the dictionaries");
+        .expect("the deletion never waits on the dictionary");
     pretty_assertions::assert_eq!(deleted.0, StatusCode::NO_CONTENT);
 
-    holder.rollback().await.expect("release the dictionaries");
+    holder.rollback().await.expect("release the dictionary");
 }
 
 /// The relations `migration` creates, in the order it creates them.

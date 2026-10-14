@@ -46,9 +46,11 @@
 -- `urn:ngsi-ld:attribute:instance:{uuid}`; a client-supplied one exactly as
 -- received, because clause 4.5.7 hands it back to the client.
 --
--- `stream_key` and `unit_code_id` carry no foreign keys. TimescaleDB re-adds a
--- hypertable's foreign keys on every chunk under `SHARE ROW EXCLUSIVE`, which
--- deadlocks against concurrent upserts on the referenced table.
+-- `stream_key` carries no foreign key. TimescaleDB re-adds a hypertable's
+-- foreign keys on every chunk under `SHARE ROW EXCLUSIVE`, which deadlocks
+-- against concurrent upserts on the referenced table. `unit_code_id`
+-- references nothing in the database: the identity is the `cefact-units`
+-- assignment.
 -- ============================================================================
 create table attribute_history (
     recorded_at timestamptz not null,
@@ -87,6 +89,7 @@ create table attribute_history (
     constraint uq_attribute_history_write_identity unique (recorded_at, write_id, write_ordinal),
     constraint chk_attribute_history_write_ordinal check (write_ordinal >= 0),
     constraint chk_attribute_history_attribute_kind check (attribute_kind between 1 and 8),
+    constraint chk_attribute_history_unit_code_id_positive check (unit_code_id > 0),
     constraint chk_attribute_history_instance_identity check (num_nonnulls (generated_instance_id, verbatim_instance_id) = 1),
     constraint chk_attribute_history_verbatim_instance_id_length check (octet_length(verbatim_instance_id) <= 1024),
     constraint chk_attribute_history_value_presence check ((value_kind = 0 and deleted_at is not null and num_nonnulls (value_number, value_string, value_boolean, value_geometry, value_object, value_date_time, value_uri) = 0) or (value_kind <> 0 and num_nonnulls (value_number, value_string, value_boolean, value_geometry, value_object, value_date_time, value_uri) = 1)),

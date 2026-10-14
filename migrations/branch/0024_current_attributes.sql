@@ -50,9 +50,9 @@
 -- update, sharing one function. A check locks the
 -- referenced rows `FOR KEY SHARE`, the lock a foreign key takes, so a
 -- concurrent deletion of a referenced Entity waits for the writing
--- transaction or makes the check fail. The attribute name and unit code
--- references are checked on the live branch only, where the dictionaries'
--- references of every live relation are declared.
+-- transaction or makes the check fail. The attribute name references are
+-- checked on the live branch only, where the dictionaries' references of
+-- every live relation are declared.
 -- ============================================================================
 create table current_attributes (
     entity_key bigint not null,
@@ -73,6 +73,9 @@ create table current_attributes (
     value_datatype_key integer,
     -- `entity_type_names` key of the clause 4.5.2 `valueType`.
     value_type_key integer,
+    -- `cefact-units` identity of the clause 4.5.2 `unitCode`. The library
+    -- assigns identities append-only and never reuses one, and the broker
+    -- refuses to decode a value its library does not list.
     unit_code_id smallint,
     value_boolean boolean,
     dataset_id text compression lz4 collate "C",
@@ -114,6 +117,7 @@ create table current_attributes (
     -- Entity-correlated `q` probe.
     constraint uq_current_attributes_grain unique nulls not distinct (entity_key, attribute_name_key, dataset_id),
     constraint chk_current_attributes_attribute_kind check (attribute_kind between 1 and 8),
+    constraint chk_current_attributes_unit_code_id_positive check (unit_code_id > 0),
     constraint chk_current_attributes_ordinal_non_negative check (ordinal >= 0),
     constraint chk_current_attributes_value_presence check (num_nonnulls (value_number, value_string, value_boolean, value_geometry, value_object, value_date_time, value_uri, value_long_text, value_long_uri) = 1),
     constraint chk_current_attributes_value_kind_column check ((value_kind = 1 and value_number is not null) or (value_kind = 2 and num_nonnulls (value_string, value_long_text) = 1) or (value_kind = 3 and value_boolean is not null) or (value_kind = 4 and value_geometry is not null) or (value_kind = 5 and value_object is not null) or (value_kind = 6 and value_date_time is not null) or (value_kind = 7 and num_nonnulls (value_uri, value_long_uri) = 1)),

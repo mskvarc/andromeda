@@ -138,7 +138,7 @@ pub enum CurrentAttributes {
     /// `entity_type_names` key of the clause 4.5.2 `valueType`, NULL when the
     /// instance carries none
     ValueTypeKey,
-    /// `unit_codes` key of the instance's `unitCode` (clause 4.5.2)
+    /// `cefact-units` identity of the instance's `unitCode` (clause 4.5.2)
     UnitCodeId,
     /// Boolean value, when `value_kind` selects it
     ValueBoolean,
@@ -233,7 +233,7 @@ pub enum SubAttribute {
     /// The clause 4.5.2.2 `entityIdSealed` and `entityTypeSealed` members,
     /// NULL when the element carries neither
     ProofSeals,
-    /// `unit_codes` key of the element's `unitCode` (clause 4.5.2)
+    /// `cefact-units` identity of the element's `unitCode` (clause 4.5.2)
     UnitCodeId,
     /// The element's clause 4.5.2 `observedAt`, NULL when it carries none
     ObservedAt,

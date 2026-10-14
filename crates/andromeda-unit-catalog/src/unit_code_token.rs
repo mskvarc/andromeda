@@ -12,8 +12,7 @@ const MAXIMUM_LENGTH: usize = 3;
 /// A UN/CEFACT common code as it is written on the wire, for example `KGM`.
 ///
 /// Recommendation 20 restricts a common code to two or three upper-case
-/// alphanumeric characters, which is the same shape the catalog table's check
-/// constraint enforces. The token is the only representation a withdrawn code
+/// alphanumeric characters. The token is the only representation a withdrawn code
 /// still has: once a revision removes a code the generating artifact stops
 /// offering a typed variant for it, while the identifier already written into
 /// stored rows must stay readable, so the registry keeps the token itself.

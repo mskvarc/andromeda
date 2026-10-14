@@ -36,7 +36,7 @@ pub enum AttributeInstanceRecord {
     ValueDatatypeKey,
     /// `entity_type_names` key of the clause 4.5.2 `valueType`
     ValueTypeKey,
-    /// `unit_codes` key of the instance's `unitCode` (clause 4.5.2)
+    /// `cefact-units` identity of the instance's `unitCode` (clause 4.5.2)
     UnitCodeId,
     /// Boolean value, when `value_kind` selects it
     ValueBoolean,

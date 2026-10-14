@@ -232,7 +232,7 @@ fn instance_references_are_checked_per_statement() {
     );
     let pairs = [
         ("entities", "check_current_attribute_entities"),
-        ("dictionary_keys", "check_current_attribute_dictionary_keys"),
+        ("name_keys", "check_current_attribute_name_keys"),
     ];
     for (what, checking) in pairs {
         for event in ["insert", "update"] {
@@ -247,24 +247,50 @@ fn instance_references_are_checked_per_statement() {
     let entities = normalized(&function(&schema, "check_current_attribute_entities").definition);
     assert!(entities.contains("%I.entities where entity_key = any ($1) for key share"), "{entities}");
     assert!(entities.contains("raise foreign_key_violation"), "{entities}");
-    let dictionaries = normalized(&function(&schema, "check_current_attribute_dictionary_keys").definition);
+    let names = normalized(&function(&schema, "check_current_attribute_name_keys").definition);
     for checked in [
         "public.attribute_names",
-        "public.unit_codes",
         "cross join unnest(written.sub_attributes) element",
         "for key share",
         "raise foreign_key_violation",
     ] {
-        assert!(dictionaries.contains(checked), "the dictionary check lacks `{checked}`: {dictionaries}");
+        assert!(names.contains(checked), "the attribute name check lacks `{checked}`: {names}");
+    }
+    assert!(!names.contains("unit_code"), "a unit code references nothing in the database: {names}");
+}
+
+#[test]
+fn current_attributes_unit_code_id_is_checked_positive() {
+    let schema = DeclaredSchema::of_every_migration();
+    assert_eq!(
+        normalized(constraint(&schema, "chk_current_attributes_unit_code_id_positive")),
+        "check (unit_code_id > 0)"
+    );
+}
+
+#[test]
+fn attribute_history_unit_code_id_is_checked_positive() {
+    let schema = DeclaredSchema::of_every_migration();
+    assert_eq!(
+        normalized(constraint(&schema, "chk_attribute_history_unit_code_id_positive")),
+        "check (unit_code_id > 0)"
+    );
+}
+
+#[test]
+fn no_tenant_relation_is_named_unit_codes() {
+    let schema = DeclaredSchema::of_every_migration();
+    for table in ["unit_codes", "unit_code_catalog_metadata"] {
+        assert!(!schema.tables.iter().any(|declared| declared == table), "a migration declares {table}");
     }
 }
 
 #[test]
-fn the_entity_check_is_a_branch_relation_and_the_dictionary_check_is_live_only() {
+fn the_entity_check_is_a_branch_relation_and_the_name_check_is_live_only() {
     let branch: String = branch_migrations().iter().map(|migration| migration.sql.as_str()).collect();
     assert!(branch.contains("create trigger trg_current_attributes_entities_insert"));
     assert!(branch.contains("create trigger trg_current_attributes_entities_update"));
-    assert!(!branch.contains("trg_current_attributes_dictionary_keys"));
+    assert!(!branch.contains("trg_current_attributes_name_keys"));
 }
 
 #[test]
