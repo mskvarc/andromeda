@@ -174,12 +174,6 @@ fn row_to_access(row: &PgRow) -> Result<ContextSourceAccess, ContextStoreError> 
         timeout: row.try_get("management_timeout")?,
     })?;
     let context_source_info = context_source_info_of(row.try_get("context_source_info_keys")?, row.try_get("context_source_info_values")?)?;
-    let jsonld_context: Option<DereferenceableUri> = row
-        .try_get::<Option<String>, _>("jsonld_context")?
-        .as_deref()
-        .map(str::parse)
-        .transpose()
-        .map_err(StoredRegistrationError::JsonldContext)?;
     let context_source_alias = row_to_alias(row)?;
 
     Ok(ContextSourceAccess::builder()
@@ -190,7 +184,6 @@ fn row_to_access(row: &PgRow) -> Result<ContextSourceAccess, ContextStoreError> 
         .refresh_rate(refresh_rate)
         .management(management)
         .context_source_info(context_source_info)
-        .jsonld_context(jsonld_context)
         .context_source_alias(context_source_alias)
         .build())
 }

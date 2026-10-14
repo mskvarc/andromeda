@@ -27,8 +27,9 @@ impl RegistrationService {
     /// the broker accepts, [`RegistrationError::Conflict`]
     /// when a proxied footprint overlaps an existing registration or context
     /// data the broker already holds (clause 5.9.2.4),
-    /// [`RegistrationError::JsonLd`] when the request context cannot be
-    /// processed or the body cannot be expanded, [`RegistrationError::Internal`]
+    /// [`RegistrationError::JsonLd`] when the body cannot be expanded or the
+    /// `contextSourceInfo` `jsonldContext` cannot be retrieved or processed,
+    /// [`RegistrationError::Internal`]
     /// when no identifier could be minted for an anonymous registration,
     /// and [`RegistrationError::Persistence`] when the store rejects the
     /// write.
@@ -46,10 +47,6 @@ impl RegistrationService {
             None => generate_registration_id()?,
         };
 
-        // Clause 5.5.7: a context that does not process refuses the
-        // registration before any of its names is expanded under it.
-        self.engine.expansion_context(context).await?;
-
         let properties = expand_context_source_properties(&self.engine, take(&mut body.additional_properties), context).await?;
         if let Some(information) = body.information.as_set_mut() {
             self.expand_information(information, context).await?;
@@ -57,13 +54,14 @@ impl RegistrationService {
 
         let mut params = body.into_create_params()?;
         params.additional_properties = properties;
-        validate_shape(&RegistrationShape {
+        let source_info = validate_shape(&RegistrationShape {
             mode: params.mode,
             information: &params.information,
             operations: &params.operations,
             context_source_info: params.context_source_info.as_deref(),
             expires_at: params.expires_at,
         })?;
+        self.dereference_forwarding_context(&source_info).await?;
         check_conflicts(self.repo.as_ref(), self.entity_probe.as_ref(), params.mode, &params.information, None).await?;
         let written = self.repo.create(&id, &params).await?;
         self.emit_csr_change(CsrChangeEvent {

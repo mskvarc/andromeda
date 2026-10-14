@@ -67,8 +67,6 @@ pub struct ResolvedCsrUpdate {
     pub management: Option<RegistrationManagementInfo>,
     /// New context-source-info object.
     pub context_source_info: Option<Vec<KeyValuePair>>,
-    /// New JSON-LD context identifier.
-    pub jsonld_context: Option<DereferenceableUri>,
     /// New Via alias pseudonym.
     pub context_source_alias: Option<ContextSourcePseudonym>,
     /// New Context Source Properties (after the shallow merge).
@@ -113,7 +111,6 @@ pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateF
     let refresh_rate = fragment.refresh_rate.resolve(existing.access.refresh_rate);
     let management = fragment.management.resolve(existing.access.management);
     let context_source_info = fragment.context_source_info.resolve(existing.access.context_source_info);
-    let jsonld_context = fragment.jsonld_context.resolve(existing.access.jsonld_context);
     let context_source_alias = fragment.context_source_alias.resolve(existing.access.context_source_alias);
 
     // A property the fragment names replaces the stored one in place; the others
@@ -144,7 +141,6 @@ pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateF
         refresh_rate,
         management,
         context_source_info,
-        jsonld_context,
         context_source_alias,
         additional_properties,
         location,

@@ -24,13 +24,7 @@ use crate::{
     variant::SubscriptionVariant,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_json_literal::JsonLiteral;
-use andromeda_jsonld::{
-    context_validation::{validate_context_spec, validate_jsonld_context_value},
-    engine::processor::JsonLdEngine,
-    error::JsonLdError,
-    user_context_admission::AdmittedContext,
-};
+use andromeda_jsonld::{context_validation::dereference_context_reference, engine::processor::JsonLdEngine, user_context_admission::AdmittedContext};
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, ngsi_ld_urn::SubscriptionId};
 use andromeda_ngsi_ld_model::{subscription::SubscriptionStatus, subscription_request::SubscriptionRequest};
 use andromeda_ngsi_ld_query::geo::admission::GeoQueryAdmission;
@@ -115,12 +109,12 @@ where
         }
     }
 
-    /// Check that the `jsonldContext` a request names is a context the engine
-    /// can resolve (clause 5.8.1.4).
-    async fn validate_jsonld_context(&self, jsonld_context: Option<&IriBuf>) -> Result<(), SubscriptionError> {
-        if let Some(context) = jsonld_context {
-            let literal = JsonLiteral::string(context.as_str()).map_err(JsonLdError::from)?;
-            validate_jsonld_context_value(&self.engine, &literal).await?;
+    /// Resolve and process the `jsonldContext` a request names, if it names
+    /// one: clauses 5.8.1.4 and 5.8.2.4 refuse an unavailable one with
+    /// `LdContextNotAvailable` and an invalid one with `BadRequestData`.
+    async fn dereference_jsonld_context(&self, jsonld_context: Option<&IriBuf>) -> Result<(), SubscriptionError> {
+        if let Some(reference) = jsonld_context {
+            dereference_context_reference(&self.engine, reference).await?;
         }
         Ok(())
     }
@@ -171,8 +165,7 @@ where
                 None => generate_id()?,
             };
 
-            self.validate_jsonld_context(request.jsonld_context.as_set()).await?;
-            validate_context_spec(&self.engine, context).await?;
+            self.dereference_jsonld_context(request.jsonld_context.as_set()).await?;
 
             // Clause 5.8.1.4 (and clause 5.11.2.4 "as described in clause
             // 5.8.1.4"): a subscription created without `jsonldContext` has the
@@ -235,8 +228,7 @@ where
             self.variant.validate_update_extra(&request)?;
             request_validation::validate_notification_fragment(&request)?;
 
-            self.validate_jsonld_context(request.jsonld_context.as_set()).await?;
-            validate_context_spec(&self.engine, context).await?;
+            self.dereference_jsonld_context(request.jsonld_context.as_set()).await?;
 
             self.variant.expand_terms(&mut request, context).await?;
 

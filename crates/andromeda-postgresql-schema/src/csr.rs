@@ -73,8 +73,6 @@ pub enum Csr {
     ContextSourceInfoKeys,
     /// The `contextSourceInfo` values, parallel to the keys.
     ContextSourceInfoValues,
-    /// The registration's JSON-LD context.
-    JsonldContext,
     /// The context source alias.
     ContextSourceAlias,
     /// Creation instant (clause 4.8 system attribute).
@@ -160,7 +158,6 @@ mod tests {
         assert_eq!(Csr::IsManagementDeclared.to_string(), "is_management_declared");
         assert_eq!(Csr::ContextSourceInfoKeys.to_string(), "context_source_info_keys");
         assert_eq!(Csr::ObservationSpace.to_string(), "observation_space");
-        assert_eq!(Csr::JsonldContext.to_string(), "jsonld_context");
         assert_eq!(Csr::AdditionalProperties.to_string(), "additional_properties");
     }
 

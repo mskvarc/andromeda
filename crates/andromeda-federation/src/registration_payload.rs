@@ -13,7 +13,6 @@ use crate::{
     forwarding_context::{BodyPresence, ForwardingDecision, decide, decide_for_items},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::dereferenceable_uri::DereferenceableUri;
 use andromeda_ngsi_ld_model::{context_source_info::ContextSourceInfo, registration::ContextSourceRegistration};
 
 /// Read a registration's `contextSourceInfo`; stored registrations passed the
@@ -40,19 +39,14 @@ pub(crate) fn context_source_info(registration: &ContextSourceRegistration) -> R
 /// # Errors
 ///
 /// Returns [`FederationError::Internal`] when the registration's admitted
-/// `contextSourceInfo` or `jsonldContext` no longer reads as admitted.
+/// `contextSourceInfo` no longer reads as admitted.
 pub(crate) fn forwarding_decision(
     registration: &ContextSourceRegistration,
     inbound: &ContextSpec,
     presence: BodyPresence,
 ) -> Result<ForwardingDecision, FederationError> {
     let info = context_source_info(registration)?;
-    decide(
-        inbound,
-        &info,
-        registration.access.jsonld_context.as_ref().map(DereferenceableUri::url),
-        presence,
-    )
+    decide(inbound, &info, presence)
 }
 
 impl FederationService {
@@ -81,11 +75,7 @@ impl FederationService {
         items: Vec<ItemBody<'_>>,
     ) -> Result<ForwardedPayload, FederationError> {
         let info = context_source_info(registration)?;
-        let decision = decide_for_items(
-            items.iter().map(|item| item.context),
-            &info,
-            registration.access.jsonld_context.as_ref().map(DereferenceableUri::url),
-        )?;
+        let decision = decide_for_items(items.iter().map(|item| item.context), &info)?;
         build_items_payload(&self.engine, &decision, items, &info).await
     }
 }

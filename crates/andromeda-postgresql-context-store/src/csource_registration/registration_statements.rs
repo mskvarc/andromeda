@@ -65,7 +65,6 @@ pub(super) fn csr_create_sql() -> Result<String, RegistrationError> {
         Csr::ManagementTimeout,
         Csr::ContextSourceInfoKeys,
         Csr::ContextSourceInfoValues,
-        Csr::JsonldContext,
         Csr::ContextSourceAlias,
         Csr::AdditionalProperties,
         Csr::EntityIdPatternFormsRevision,
@@ -105,7 +104,6 @@ pub(super) fn csr_create_sql() -> Result<String, RegistrationError> {
             external_placeholder(28),
             external_placeholder(29),
             external_placeholder(30),
-            external_placeholder(31),
             now(),
             now(),
         ])
@@ -144,11 +142,10 @@ pub(super) fn csr_update_sql() -> String {
             (Csr::ManagementTimeout, external_placeholder(24)),
             (Csr::ContextSourceInfoKeys, external_placeholder(25)),
             (Csr::ContextSourceInfoValues, external_placeholder(26)),
-            (Csr::JsonldContext, external_placeholder(27)),
-            (Csr::ContextSourceAlias, external_placeholder(28)),
-            (Csr::AdditionalProperties, external_placeholder(29)),
-            (Csr::EntityIdPatternFormsRevision, external_placeholder(30)),
-            (Csr::VerbatimScopePaths, external_placeholder(31)),
+            (Csr::ContextSourceAlias, external_placeholder(27)),
+            (Csr::AdditionalProperties, external_placeholder(28)),
+            (Csr::EntityIdPatternFormsRevision, external_placeholder(29)),
+            (Csr::VerbatimScopePaths, external_placeholder(30)),
             (Csr::ModifiedAt, now()),
         ])
         .and_where(SeaExpr::col(Csr::Id).eq(external_placeholder(1)));
@@ -347,9 +344,10 @@ mod tests {
         }
         assert!(sql.contains("NOW()"), "created_at and modified_at stamp the transaction clock: {sql}");
         assert!(sql.contains(r#""verbatim_scope_paths""#), "{sql}");
-        for marker in 1..=31 {
+        for marker in 1..=30 {
             assert!(sql.contains(&format!("${marker}")), "missing ${marker}: {sql}");
         }
+        assert!(!sql.contains("$31"), "{sql}");
     }
 
     /// The rendering revision of the registration's pattern restatements is
@@ -361,7 +359,7 @@ mod tests {
         assert!(create.contains(r#""entity_id_pattern_forms_revision""#), "{create}");
         assert!(!create.contains(r#""information""#), "{create}");
         let update = csr_update_sql();
-        assert!(update.contains(r#""entity_id_pattern_forms_revision" = $30"#), "{update}");
+        assert!(update.contains(r#""entity_id_pattern_forms_revision" = $29"#), "{update}");
         assert!(!update.contains(r#""entity_id_pattern_forms""#), "{update}");
     }
 
@@ -371,7 +369,7 @@ mod tests {
         assert!(sql.contains(r#""id" = ($1)"#), "{sql}");
         assert!(sql.contains(r#""mode" = $16"#), "{sql}");
         assert!(sql.contains(r#""scope_paths" = $18::ltree[]"#), "{sql}");
-        assert!(sql.contains(r#""verbatim_scope_paths" = $31"#), "{sql}");
+        assert!(sql.contains(r#""verbatim_scope_paths" = $30"#), "{sql}");
         assert!(sql.contains(r#""modified_at" = NOW()"#), "{sql}");
         assert!(sql.contains("ST_MakeValid(ST_GeomFromEWKB($10))"), "{sql}");
     }

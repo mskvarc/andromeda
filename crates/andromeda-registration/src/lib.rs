@@ -22,6 +22,7 @@ pub mod expiry;
 mod fixed_probe;
 #[cfg(test)]
 mod fixed_store;
+mod forwarding_context;
 mod geometry;
 mod identifier;
 pub mod information_compaction;
@@ -44,6 +45,8 @@ pub mod removal_hook;
 /// Fully resolved registration update values and merge policy.
 pub mod resolved_update;
 mod retrieve;
+#[cfg(test)]
+mod service_fixture;
 /// The registration store port, and the parameter shapes it takes.
 pub mod store;
 mod update;

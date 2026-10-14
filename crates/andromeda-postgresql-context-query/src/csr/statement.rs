@@ -256,7 +256,7 @@ mod tests {
     #[test]
     fn discovery_reads_the_shared_registration_projection() {
         let built = build(&empty_query());
-        for column in ["\"id\"", "\"registration_name\"", "\"jsonld_context\"", "\"additional_properties\""] {
+        for column in ["\"id\"", "\"registration_name\"", "\"context_source_alias\"", "\"additional_properties\""] {
             assert!(built.sql.contains(column), "missing {column}: {}", built.sql);
         }
         assert!(

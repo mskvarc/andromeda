@@ -87,8 +87,6 @@ const fn expansion_failure(error: &JsonLdError) -> TermExpansionFailure {
         | JsonLdError::Expansion(_)
         | JsonLdError::Compaction(_)
         | JsonLdError::ContextUrlNotIri(_)
-        | JsonLdError::JsonLdContextText(_)
-        | JsonLdError::JsonLdContextShape
         | JsonLdError::ContextGraph(_)
         | JsonLdError::Json(_)
         | JsonLdError::ContextText(_)
@@ -105,6 +103,7 @@ mod tests {
         term_expansion::{ContextualExpander, expansion_failure},
     };
     use andromeda_ngsi_ld_query::term_expander::{TermExpander, TermExpansionFailure};
+    use iri_rs::IriBuf;
 
     #[tokio::test]
     async fn a_core_context_term_expands_to_an_absolute_iri() {
@@ -124,6 +123,10 @@ mod tests {
     fn a_json_ld_failure_is_classified_by_what_went_wrong() {
         pretty_assertions::assert_eq!(expansion_failure(&JsonLdError::TermNotExpanded), TermExpansionFailure::NotExpanded);
         pretty_assertions::assert_eq!(expansion_failure(&JsonLdError::TypeNotExpanded), TermExpansionFailure::NotExpanded);
-        pretty_assertions::assert_eq!(expansion_failure(&JsonLdError::JsonLdContextShape), TermExpansionFailure::ContextUnprocessable);
+        let not_an_iri = IriBuf::new("not an iri".to_owned()).expect_err("no scheme");
+        pretty_assertions::assert_eq!(
+            expansion_failure(&JsonLdError::ContextUrlNotIri(not_an_iri)),
+            TermExpansionFailure::ContextUnprocessable
+        );
     }
 }

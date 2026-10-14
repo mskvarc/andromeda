@@ -174,14 +174,6 @@ pub enum JsonLdError {
     #[error("the context URL is not an IRI")]
     ContextUrlNotIri(#[source] InvalidIri<String>),
 
-    /// A `jsonldContext` written as JSON text does not parse.
-    #[error("jsonldContext is not valid JSON: {0}")]
-    JsonLdContextText(#[source] serde_json::Error),
-
-    /// A `jsonldContext` value names no context in any form.
-    #[error("jsonldContext must be a valid URI or JSON-LD context")]
-    JsonLdContextShape,
-
     /// A `@context`'s references form a cycle or nest too deep.
     ///
     /// Clause 5.5.6 makes an invalid remote `@context` a `BadRequestData`, and
@@ -386,7 +378,6 @@ mod tests {
             JsonLdError::EmbeddedContextMissing { url: url() },
             JsonLdError::TermNotExpanded,
             JsonLdError::TypeNotExpanded,
-            JsonLdError::JsonLdContextShape,
             JsonLdError::ScopedUserContext {
                 term: ContextTerm::new("speed"),
             },

@@ -10,7 +10,7 @@
 
 use crate::key_value_pair::KeyValuePair;
 use andromeda_ngsi_ld_lexicon::spec_version::{SpecVersion, SpecVersionParseError};
-use iri_rs::{InvalidIri, IriRefBuf};
+use iri_rs::{InvalidIri, IriBuf};
 use mediatype::{
     MediaType,
     MediaTypeBuf,
@@ -62,8 +62,10 @@ pub enum ContextSourceInfoError {
         /// The media type the key named.
         media_type: MediaTypeBuf,
     },
-    /// `jsonldContext` is not a URL reference.
-    #[error("contextSourceInfo jsonldContext must be a URL reference")]
+    /// `jsonldContext` is not an absolute URL: a registration has no base a
+    /// relative reference could be resolved against, so nothing could be
+    /// dereferenced from one.
+    #[error("contextSourceInfo jsonldContext must be an absolute URL")]
     InvalidJsonLdContext(#[source] InvalidIri<String>),
     /// `ngsildConformance` is not of the form `major.minor`.
     #[error("contextSourceInfo ngsildConformance must be of the form major.minor")]
@@ -79,7 +81,7 @@ pub struct ContextSourceInfo<'a> {
     /// The media type a forwarded payload shall be sent as.
     pub content_type: Option<MediaTypeBuf>,
     /// The JSON-LD context a forwarded request shall be compacted against.
-    pub jsonld_context: Option<IriRefBuf>,
+    pub jsonld_context: Option<IriBuf>,
     /// The specification version the forwarded payload shall conform to.
     pub ngsild_conformance: Option<SpecVersion>,
     /// Every pair outside the reserved keys, in registration order.
@@ -112,7 +114,7 @@ impl<'a> TryFrom<&'a [KeyValuePair]> for ContextSourceInfo<'a> {
                 ACCEPT_KEY => info.accept = Some(parse_media_type(MediaTypeKey::Accept, &pair.value)?),
                 CONTENT_TYPE_KEY => info.content_type = Some(parse_media_type(MediaTypeKey::ContentType, &pair.value)?),
                 JSONLD_CONTEXT_KEY => {
-                    info.jsonld_context = Some(IriRefBuf::new(pair.value.to_string()).map_err(ContextSourceInfoError::InvalidJsonLdContext)?);
+                    info.jsonld_context = Some(IriBuf::new(pair.value.to_string()).map_err(ContextSourceInfoError::InvalidJsonLdContext)?);
                 }
                 NGSILD_CONFORMANCE_KEY => {
                     info.ngsild_conformance = Some(SpecVersion::from_str(&pair.value).map_err(ContextSourceInfoError::InvalidConformance)?);
@@ -199,11 +201,16 @@ mod tests {
     }
 
     #[test]
-    fn a_jsonld_context_that_is_not_a_url_reference_is_rejected() {
-        let pairs = [pair("jsonldContext", "http://exa mple.org/ctx")];
-        assert!(matches!(
-            ContextSourceInfo::try_from(pairs.as_slice()),
-            Err(ContextSourceInfoError::InvalidJsonLdContext(_))
-        ));
+    fn a_jsonld_context_that_is_not_an_absolute_url_is_rejected() {
+        for value in ["http://exa mple.org/ctx", "/ngsi-ld/v1/jsonldContexts/ctx", "context.jsonld"] {
+            let pairs = [pair("jsonldContext", value)];
+            assert!(
+                matches!(
+                    ContextSourceInfo::try_from(pairs.as_slice()),
+                    Err(ContextSourceInfoError::InvalidJsonLdContext(_))
+                ),
+                "{value} must be rejected"
+            );
+        }
     }
 }

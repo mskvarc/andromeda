@@ -25,6 +25,12 @@
 //! carry it in the [`SubmittedContext`], so the admission refuses it on every
 //! operation, after the context loaded and was found free of scoped contexts.
 //!
+//! A context that passes both is then processed, the last step of the
+//! admission: a context that loads but does not process (a malformed term
+//! definition, a redefined keyword) is refused here, so every service handed an
+//! [`AdmittedContext`] reads under a context that processes, and none of them
+//! checks it again.
+//!
 //! Three things shape the rule itself:
 //!
 //! - It is about the request's `@context`, not about its payload, so it reads
@@ -109,7 +115,7 @@ impl From<ContextSpec> for SubmittedContext {
 }
 
 /// A user `@context` [`admit_user_context`] admitted: every context it names
-/// loaded, and none declares a JSON-LD Scoped Context.
+/// loaded, none declares a JSON-LD Scoped Context, and the whole processes.
 #[derive(Debug, Clone, Deref)]
 pub struct AdmittedContext(ContextSpec);
 
@@ -144,13 +150,15 @@ impl AdmittedContext {
 /// `LdContextNotAvailable` -- [`JsonLdError::ScopedUserContext`] naming the
 /// first term found carrying a scoped `@context`, and
 /// [`JsonLdError::EmbeddedUserContext`] locating the first `@context` the body
-/// embedded below a document's top level.
+/// embedded below a document's top level, and the typed JSON-LD processing
+/// failure when the context loaded but does not process.
 pub async fn admit_user_context(engine: &JsonLdEngine, submitted: SubmittedContext) -> Result<AdmittedContext, JsonLdError> {
     let SubmittedContext { spec, embedded } = submitted;
     screen_user_context(engine, &spec).await?;
     if let Some(embedded) = embedded {
         return Err(JsonLdError::EmbeddedUserContext(embedded));
     }
+    engine.expansion_context(&spec).await?;
     Ok(AdmittedContext(spec))
 }
 
@@ -511,6 +519,22 @@ mod tests {
         ])));
         let error = admitted(&engine, &context).await.expect_err("the absent context is refused");
         assert!(error.is_context_not_available(), "expected a loading error, got {error}");
+    }
+
+    /// A context that loads and declares no scoped context, but whose term
+    /// definition is a number, is refused at admission rather than by each
+    /// service reading under it.
+    #[tokio::test]
+    async fn a_context_that_loads_but_does_not_process_is_refused() {
+        let engine = engine_serving(&[("https://example.org/invalid.jsonld", json!({"@context": {"speed": 42}}))]);
+        for context in [
+            ContextSpec::from_body(literal(&json!({"speed": 42}))),
+            link_spec("https://example.org/invalid.jsonld"),
+        ] {
+            let error = admitted(&engine, &context).await.expect_err("the context does not process");
+            assert!(!error.is_context_not_available(), "expected a processing failure, got {error}");
+            assert!(!matches!(error, JsonLdError::ScopedUserContext { .. }), "{error}");
+        }
     }
 
     /// A finding locating `@context` under `/speed`, as the extractor makes it.

@@ -31,15 +31,19 @@ pub(super) struct RegistrationShape<'a> {
 }
 
 /// Apply the clause 5.2.9 cross-member rules and the clause 4.3.6.6
-/// `contextSourceInfo` restrictions.
-pub(super) fn validate_shape(shape: &RegistrationShape<'_>) -> Result<(), RegistrationError> {
+/// `contextSourceInfo` restrictions, returning the reserved keys read.
+pub(super) fn validate_shape<'a>(shape: &RegistrationShape<'a>) -> Result<ContextSourceInfo<'a>, RegistrationError> {
     if shape.expires_at.is_some_and(|expires_at| expires_at <= Utc::now()) {
         return Err(RegistrationError::Validation(RegistrationValidationReason::ExpiresAtInPast));
     }
-    if let Some(pairs) = shape.context_source_info {
-        ContextSourceInfo::try_from(pairs).map_err(|error| RegistrationError::Validation(RegistrationValidationReason::ContextSourceInfo(error)))?;
-    }
-    validate_structure(shape.mode, shape.information, shape.operations)
+    let info = match shape.context_source_info {
+        Some(pairs) => {
+            ContextSourceInfo::try_from(pairs).map_err(|error| RegistrationError::Validation(RegistrationValidationReason::ContextSourceInfo(error)))?
+        }
+        None => ContextSourceInfo::default(),
+    };
+    validate_structure(shape.mode, shape.information, shape.operations)?;
+    Ok(info)
 }
 
 #[cfg(test)]

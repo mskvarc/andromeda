@@ -50,8 +50,6 @@ pub enum CsrMember {
     Management,
     /// `contextSourceInfo`.
     ContextSourceInfo,
-    /// `jsonldContext`.
-    JsonldContext,
     /// `contextSourceAlias`.
     ContextSourceAlias,
 }
@@ -72,7 +70,6 @@ mod tests {
     #[test]
     fn members_are_spelt_as_the_specification_spells_them() {
         assert_eq!(CsrMember::ExpiresAt.key(), "expiresAt");
-        assert_eq!(CsrMember::JsonldContext.key(), "jsonldContext");
         assert_eq!(CsrMember::Type.to_string(), "type");
     }
 

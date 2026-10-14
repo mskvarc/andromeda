@@ -44,27 +44,20 @@ impl RegistrationService {
 #[cfg(test)]
 mod tests {
     use crate::{
-        RegistrationService,
-        entity_probe::EntityPresence,
         error::RegistrationError,
-        fixed_probe::FixedProbe,
         fixed_store::{FixedStore, registration},
         removal_hook::{ForwardedSubscriptionCopy, RegistrationRemovalHook, RegistrationTeardown},
+        service_fixture::{offline_engine, service_over},
         store::RegistrationStore,
     };
-    use andromeda_jsonld::engine::processor::JsonLdEngine;
-    use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
+
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-    use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-    use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
+
     use futures::future::BoxFuture;
     use pretty_assertions::assert_eq;
     use serde_json::json;
-    use std::{
-        num::NonZeroUsize,
-        sync::{Arc, Mutex},
-    };
+    use std::sync::{Arc, Mutex};
 
     const REGISTRATION_ID: &str = "urn:ngsi-ld:ContextSourceRegistration:removed";
 
@@ -141,19 +134,10 @@ mod tests {
             store: Arc::clone(&store), // clone: the hook reads the store's deletion log
             steps: Mutex::new(Vec::new()),
         });
-        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
-        let service = RegistrationService::new(
+        let service = service_over(
             Arc::clone(&store) as Arc<dyn RegistrationStore>, // clone: the test keeps its own handle to read what was deleted
-            Arc::new(FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent)),
-            engine,
+            offline_engine(),
             None,
-            GeoQueryAdmission::new(
-                GeometryCensusLimits {
-                    positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-                    values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-                },
-                NearDistanceBand::Refused,
-            ),
         )
         .with_removal_hook(Arc::clone(&hook) as Arc<dyn RegistrationRemovalHook>); // clone: the test reads the hook's log
 
@@ -184,19 +168,10 @@ mod tests {
             store: Arc::clone(&store), // clone: the hook reads the store's deletion log
             steps: Mutex::new(Vec::new()),
         });
-        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
-        let service = RegistrationService::new(
+        let service = service_over(
             Arc::clone(&store) as Arc<dyn RegistrationStore>, // clone: the test keeps its own handle
-            Arc::new(FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent)),
-            engine,
+            offline_engine(),
             None,
-            GeoQueryAdmission::new(
-                GeometryCensusLimits {
-                    positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-                    values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-                },
-                NearDistanceBand::Refused,
-            ),
         )
         .with_removal_hook(Arc::clone(&hook) as Arc<dyn RegistrationRemovalHook>); // clone: the test reads the hook's log
 

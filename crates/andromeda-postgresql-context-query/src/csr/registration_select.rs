@@ -77,7 +77,6 @@ pub fn registration_select() -> SelectStatement {
         .column((Csr::Table, Csr::ManagementTimeout))
         .column((Csr::Table, Csr::ContextSourceInfoKeys))
         .column((Csr::Table, Csr::ContextSourceInfoValues))
-        .column((Csr::Table, Csr::JsonldContext))
         .column((Csr::Table, Csr::ContextSourceAlias))
         .column((Csr::Table, Csr::CreatedAt))
         .column((Csr::Table, Csr::ModifiedAt))

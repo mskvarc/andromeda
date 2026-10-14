@@ -139,7 +139,6 @@ fn read_defined<'de, A: MapAccess<'de>>(body: &mut RegistrationBody, member: Csr
         CsrMember::RefreshRate => read(&mut body.refresh_rate, member, members),
         CsrMember::Management => read(&mut body.management, member, members),
         CsrMember::ContextSourceInfo => read(&mut body.context_source_info, member, members),
-        CsrMember::JsonldContext => read(&mut body.jsonld_context, member, members),
         CsrMember::ContextSourceAlias => read(&mut body.context_source_alias, member, members),
     }
 }

@@ -106,9 +106,6 @@ pub enum StoredRegistrationError {
         /// How many values are stored; `None` when the column is `NULL`.
         values: Option<usize>,
     },
-    /// The `jsonld_context` column is not a dereferenceable URI.
-    #[error("a stored registration jsonldContext is not a dereferenceable URI: {0}")]
-    JsonldContext(#[source] NotDereferenceable),
     /// The `context_source_alias` column is not a pseudonym.
     #[error("a stored registration contextSourceAlias is not a pseudonym: {0}")]
     ContextSourceAlias(#[source] ContextSourcePseudonymError),

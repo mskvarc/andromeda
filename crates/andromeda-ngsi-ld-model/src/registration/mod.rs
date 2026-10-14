@@ -152,7 +152,6 @@ mod tests {
             "refreshRate": "PT1H",
             "management": {"cacheDuration": "PT10S", "cooldown": 500, "localOnly": false, "timeout": 3000},
             "contextSourceInfo": [{"key": "Authorization", "value": "Bearer x"}],
-            "jsonldContext": "https://example.com/context.jsonld",
             "contextSourceAlias": "source-1",
             "status": "ok",
             "timesSent": 3,

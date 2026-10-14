@@ -89,9 +89,6 @@ pub struct CsrUpdateFragment {
     /// Updated context source metadata entries.
     #[builder(default = Default::default())]
     pub context_source_info: NullableMember<Vec<KeyValuePair>>,
-    /// Updated JSON-LD context reference.
-    #[builder(default = Default::default())]
-    pub jsonld_context: NullableMember<DereferenceableUri>,
     /// Updated context source alias pseudonym.
     #[builder(default = Default::default())]
     pub context_source_alias: NullableMember<ContextSourcePseudonym>,
@@ -127,7 +124,6 @@ impl CsrUpdateFragment {
             refresh_rate,
             management,
             context_source_info,
-            jsonld_context,
             context_source_alias,
             additional_properties,
         } = self;
@@ -150,7 +146,6 @@ impl CsrUpdateFragment {
             && refresh_rate.is_absent()
             && management.is_absent()
             && context_source_info.is_absent()
-            && jsonld_context.is_absent()
             && context_source_alias.is_absent()
             && additional_properties.is_empty()
     }

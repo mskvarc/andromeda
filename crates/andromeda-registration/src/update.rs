@@ -28,7 +28,8 @@ impl RegistrationService {
     /// registration carries `id`, [`RegistrationError::Conflict`] when the
     /// merged footprint overlaps an existing registration or local context
     /// data (clause 5.9.3.4), [`RegistrationError::JsonLd`] when the fragment
-    /// cannot be expanded, and [`RegistrationError::Persistence`] when the
+    /// cannot be expanded or the `jsonldContext` of the `contextSourceInfo` it
+    /// names cannot be retrieved or processed, and [`RegistrationError::Persistence`] when the
     /// store rejects the read or the write.
     pub async fn update(&self, id: &Identifier, body: RegistrationBody, context: &AdmittedContext) -> Result<(), RegistrationError> {
         // Counted before the fragment is expanded.
@@ -51,13 +52,19 @@ impl RegistrationService {
         let resolved = apply_fragment(existing, &fragment);
         // Clause 5.9.3.4 evaluates the rules against the registration as it
         // will be after the merge, not against the fragment alone.
-        validate_shape(&RegistrationShape {
+        let source_info = validate_shape(&RegistrationShape {
             mode: resolved.mode,
             information: &resolved.information,
             operations: &resolved.operations,
             context_source_info: resolved.context_source_info.as_deref(),
             expires_at: resolved.expires_at,
         })?;
+        // A stored `jsonldContext` the fragment leaves in place was dereferenced
+        // when it was written; an update touching nothing else is not refused
+        // because that context went away since.
+        if !fragment.context_source_info.is_absent() {
+            self.dereference_forwarding_context(&source_info).await?;
+        }
         check_conflicts(self.repo.as_ref(), self.entity_probe.as_ref(), resolved.mode, &resolved.information, Some(id)).await?;
         let written = self.repo.update(id, &resolved).await?.require_applied(id)?;
 
@@ -78,33 +85,27 @@ mod tests {
     use crate::{
         RegistrationChangeSink,
         RegistrationService,
-        entity_probe::EntityPresence,
         error::RegistrationError,
-        fixed_probe::FixedProbe,
         fixed_store::{FixedStore, registration},
         registration_body::RegistrationBody,
+        service_fixture::{offline_engine, service_over},
         store::RegistrationStore,
     };
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{
         context_spec::ContextSpec,
-        engine::processor::JsonLdEngine,
         user_context_admission::{AdmittedContext, SubmittedContext, admit_user_context},
     };
-    use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
+
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{
         notification::{CsrChange, CsrChangeEvent},
         registration::ContextSourceRegistration,
         request_body::RequestBody,
     };
-    use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-    use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
+
     use serde_json::{Value, json};
-    use std::{
-        num::NonZeroUsize,
-        sync::{Arc, Mutex},
-    };
+    use std::sync::{Arc, Mutex};
 
     const REGISTRATION_ID: &str = "urn:ngsi-ld:ContextSourceRegistration:update";
 
@@ -126,19 +127,10 @@ mod tests {
 
     /// A service over `store` publishing its change events to `sink`.
     fn service_publishing_to(store: &Arc<FixedStore>, sink: Option<Arc<dyn RegistrationChangeSink>>) -> RegistrationService {
-        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
-        RegistrationService::new(
+        service_over(
             Arc::clone(store) as Arc<dyn RegistrationStore>, // clone: the test keeps its own handle to read what was written
-            Arc::new(FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent)),
-            engine,
+            offline_engine(),
             sink,
-            GeoQueryAdmission::new(
-                GeometryCensusLimits {
-                    positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-                    values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-                },
-                NearDistanceBand::Refused,
-            ),
         )
     }
 

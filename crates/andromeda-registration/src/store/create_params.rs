@@ -81,9 +81,6 @@ pub struct CreateCsrParams {
     /// Additional context source metadata entries.
     #[builder(default = Default::default())]
     pub context_source_info: Option<Vec<KeyValuePair>>,
-    /// JSON-LD context associated with this registration.
-    #[builder(default = Default::default())]
-    pub jsonld_context: Option<DereferenceableUri>,
     /// Unique pseudonym for Via-based loop detection.
     #[builder(default = Default::default())]
     pub context_source_alias: Option<ContextSourcePseudonym>,

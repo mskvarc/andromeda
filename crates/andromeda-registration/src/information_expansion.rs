@@ -63,31 +63,22 @@ const fn expanded_name(source: NgsiLdReferenceError) -> RegistrationError {
 
 #[cfg(test)]
 mod tests {
-    use crate::{RegistrationService, entity_probe::EntityPresence, fixed_probe::FixedProbe, fixed_store::FixedStore, store::RegistrationStore};
+    use crate::{
+        RegistrationService,
+        fixed_store::FixedStore,
+        service_fixture::{offline_engine, service_over},
+        store::RegistrationStore,
+    };
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-    use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
+    use andromeda_jsonld::context_spec::ContextSpec;
+
     use andromeda_ngsi_ld_model::registration::info::RegistrationInfo;
-    use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-    use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
+
     use serde_json::json;
-    use std::{num::NonZeroUsize, sync::Arc};
+    use std::sync::Arc;
 
     fn service() -> RegistrationService {
-        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
-        RegistrationService::new(
-            Arc::new(FixedStore::new(Vec::new())) as Arc<dyn RegistrationStore>,
-            Arc::new(FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent)),
-            engine,
-            None,
-            GeoQueryAdmission::new(
-                GeometryCensusLimits {
-                    positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-                    values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-                },
-                NearDistanceBand::Refused,
-            ),
-        )
+        service_over(Arc::new(FixedStore::new(Vec::new())) as Arc<dyn RegistrationStore>, offline_engine(), None)
     }
 
     /// Clause 5.5.7: the terms of `information` expand under the request's

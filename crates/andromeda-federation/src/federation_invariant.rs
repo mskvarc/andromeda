@@ -7,7 +7,6 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfoError;
 use http::header::{InvalidHeaderName, InvalidHeaderValue};
-use iri_rs::InvalidIri;
 use mediatype::MediaTypeBuf;
 use thiserror::Error;
 use url::Url;
@@ -15,9 +14,6 @@ use url::Url;
 /// A federation invariant that did not hold.
 #[derive(Debug, Error)]
 pub enum FederationInvariant {
-    /// A registration's admitted `jsonldContext` is not an absolute IRI.
-    #[error("a registration's jsonldContext is not an absolute IRI: {0}")]
-    RegistrationJsonldContext(#[source] InvalidIri<String>),
     /// A registration's admitted `contentType` names a media type no forwarded
     /// request can be sent as, although clause 4.3.6.6 admits only
     /// `application/json` and `application/ld+json`.

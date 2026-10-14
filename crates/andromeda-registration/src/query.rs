@@ -235,39 +235,21 @@ fn registration_matching_the_query(
 mod tests {
     use crate::{
         RegistrationService,
-        entity_probe::EntityPresence,
-        fixed_probe::FixedProbe,
         fixed_store::{FixedStore, registration},
+        service_fixture::{offline_engine, service_over},
         store::RegistrationStore,
     };
-    use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-    use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
+    use andromeda_jsonld::context_spec::ContextSpec;
+
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-    use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-    use andromeda_ngsi_ld_query::{
-        geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
-        page_reach::PageReach,
-        page_window::PageWindow,
-    };
+
+    use andromeda_ngsi_ld_query::{page_reach::PageReach, page_window::PageWindow};
     use andromeda_ngsi_ld_request::query::csr::CsrQueryParameters;
     use serde_json::json;
-    use std::{num::NonZeroUsize, sync::Arc};
+    use std::sync::Arc;
 
     fn service(store: FixedStore) -> RegistrationService {
-        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
-        RegistrationService::new(
-            Arc::new(store) as Arc<dyn RegistrationStore>,
-            Arc::new(FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent)),
-            engine,
-            None,
-            GeoQueryAdmission::new(
-                GeometryCensusLimits {
-                    positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-                    values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-                },
-                NearDistanceBand::Refused,
-            ),
-        )
+        service_over(Arc::new(store) as Arc<dyn RegistrationStore>, offline_engine(), None)
     }
 
     fn of_type(id: &str, entity_type: &str) -> ContextSourceRegistration {

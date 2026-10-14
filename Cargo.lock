@@ -2006,6 +2006,7 @@ dependencies = [
  "tokio",
  "tracing",
  "typed-builder",
+ "url",
 ]
 
 [[package]]

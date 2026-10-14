@@ -99,8 +99,6 @@ create table context_source_registrations (
     -- default instance (clause 4.5.5). Unindexed: nothing preselects
     -- registrations by dataset.
     dataset_id text[] compression lz4,
-    -- The `@context` the registration was created under.
-    jsonld_context text compression lz4,
     context_source_alias text compression lz4,
     constraint pk_context_source_registrations primary key (id),
     constraint chk_context_source_registrations_id_length check (octet_length(id) <= 1024),

@@ -89,8 +89,6 @@ pub struct RegistrationBody {
     pub(crate) management: NullableMember<RegistrationManagementInfo>,
     /// `contextSourceInfo`.
     pub(crate) context_source_info: NullableMember<Vec<KeyValuePair>>,
-    /// `jsonldContext`.
-    pub(crate) jsonld_context: NullableMember<DereferenceableUri>,
     /// `contextSourceAlias`.
     pub(crate) context_source_alias: NullableMember<ContextSourcePseudonym>,
     /// The Context Source Properties (clause 4.9): every member beyond the ones
@@ -168,7 +166,6 @@ impl RegistrationBody {
             refresh_rate,
             management,
             context_source_info,
-            jsonld_context,
             context_source_alias,
             additional_properties,
         } = self;
@@ -200,7 +197,6 @@ impl RegistrationBody {
             refresh_rate: refresh_rate.present(CsrMember::RefreshRate)?,
             management: management.present(CsrMember::Management)?,
             context_source_info: context_source_info.present(CsrMember::ContextSourceInfo)?,
-            jsonld_context: jsonld_context.present(CsrMember::JsonldContext)?,
             context_source_alias: context_source_alias.present(CsrMember::ContextSourceAlias)?,
             additional_properties,
         })
@@ -239,7 +235,6 @@ impl RegistrationBody {
             refresh_rate,
             management,
             context_source_info,
-            jsonld_context,
             context_source_alias,
             additional_properties,
         } = self;
@@ -266,7 +261,6 @@ impl RegistrationBody {
             refresh_rate,
             management,
             context_source_info,
-            jsonld_context,
             context_source_alias,
             additional_properties,
         })

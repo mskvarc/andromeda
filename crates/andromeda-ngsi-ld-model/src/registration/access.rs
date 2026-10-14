@@ -47,11 +47,6 @@ pub struct ContextSourceAccess {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default = Default::default())]
     pub context_source_info: Option<Vec<KeyValuePair>>,
-    /// JSON-LD context for term expansion, kept as it was written for the
-    /// same reason as `endpoint`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default = Default::default())]
-    pub jsonld_context: Option<DereferenceableUri>,
     /// Unique pseudonym for this context source, used for Via-based loop detection (clause 5.2.9).
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default = Default::default())]

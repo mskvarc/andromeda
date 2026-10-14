@@ -120,7 +120,7 @@ async fn payload(inbound: &ContextSpec, entries: &[(&str, &str)], body: Option<O
     let raw = pairs(entries);
     let info = ContextSourceInfo::try_from(raw.as_slice()).expect("valid info");
     let presence = if body.is_some() { BodyPresence::Present } else { BodyPresence::Absent };
-    let decision = decide(inbound, &info, None, presence).expect("decides");
+    let decision = decide(inbound, &info, presence).expect("decides");
     build_forwarded_payload(&engine(), inbound, &decision, body, &info)
         .await
         .expect("payload builds")
@@ -290,7 +290,7 @@ async fn an_inline_context_holding_a_relative_reference_is_never_forwarded() {
         let inbound = ContextSpec::from_body(literal(&relative));
         let raw = pairs(&ld);
         let info = ContextSourceInfo::try_from(raw.as_slice()).expect("valid info");
-        let decision = decide(&inbound, &info, None, BodyPresence::Present).expect("decides");
+        let decision = decide(&inbound, &info, BodyPresence::Present).expect("decides");
         pretty_assertions::assert_eq!(decision.context, ForwardingContext::InlineCore);
         pretty_assertions::assert_eq!(decision.context.rewording(), Rewording::Reword);
         pretty_assertions::assert_eq!(decision.context.naming(&inbound), ContextSpec::none());
@@ -320,7 +320,7 @@ async fn an_inline_context_of_absolute_references_travels_as_written() {
 async fn items_payload(entries: &[(&str, &str)], items: Vec<ItemBody<'_>>) -> ForwardedPayload {
     let raw = pairs(entries);
     let info = ContextSourceInfo::try_from(raw.as_slice()).expect("valid info");
-    let decision = decide_for_items(items.iter().map(|item| item.context), &info, None).expect("decides");
+    let decision = decide_for_items(items.iter().map(|item| item.context), &info).expect("decides");
     build_items_payload(&engine(), &decision, items, &info).await.expect("payload builds")
 }
 
@@ -415,7 +415,7 @@ fn items_under_ld_json_with_a_relative_reference_fall_back_to_the_inline_core_co
     let raw = pairs(&[("contentType", "application/ld+json")]);
     let info = ContextSourceInfo::try_from(raw.as_slice()).expect("valid info");
 
-    let decision = decide_for_items([&user, &relative], &info, None).expect("decides");
+    let decision = decide_for_items([&user, &relative], &info).expect("decides");
     pretty_assertions::assert_eq!(decision.context, ForwardingContext::InlineCore);
     pretty_assertions::assert_eq!(
         decision.context.inline_for(user.spec()).expect("an inline context"),
@@ -423,7 +423,7 @@ fn items_under_ld_json_with_a_relative_reference_fall_back_to_the_inline_core_co
     );
     pretty_assertions::assert_eq!(decision.context.naming(relative.spec()), ContextSpec::none());
 
-    let absolute_only = decide_for_items([&user, &other], &info, None).expect("decides");
+    let absolute_only = decide_for_items([&user, &other], &info).expect("decides");
     pretty_assertions::assert_eq!(absolute_only.context, ForwardingContext::InlinePerItem);
 }
 

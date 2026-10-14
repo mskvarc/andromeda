@@ -28,7 +28,6 @@ use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     context_source_pseudonym::ContextSourcePseudonym,
-    dereferenceable_uri::DereferenceableUri,
     identifier::Identifier,
     non_empty_text::NonEmptyText,
     tenant::TenantName,
@@ -164,7 +163,6 @@ pub(super) async fn create(store: &PostgresRegistrationStore, id: &Identifier, p
         .bind(management.timeout)
         .bind(info_keys.as_deref())
         .bind(info_values.as_deref())
-        .bind(params.jsonld_context.as_ref().map(DereferenceableUri::as_str))
         .bind(params.context_source_alias.as_ref().map(ContextSourcePseudonym::as_str))
         .bind(stored_properties(&params.additional_properties))
         .bind(information.pattern_forms_revision().map(RenderingRevision::get))
@@ -232,7 +230,6 @@ pub(super) async fn update(
         .bind(management.timeout)
         .bind(info_keys.as_deref())
         .bind(info_values.as_deref())
-        .bind(values.jsonld_context.as_ref().map(DereferenceableUri::as_str))
         .bind(values.context_source_alias.as_ref().map(ContextSourcePseudonym::as_str))
         .bind(stored_properties(&values.additional_properties))
         .bind(information.pattern_forms_revision().map(RenderingRevision::get))

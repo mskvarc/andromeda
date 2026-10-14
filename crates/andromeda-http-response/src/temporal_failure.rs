@@ -93,7 +93,7 @@ mod tests {
             ),
             (
                 "JsonLd",
-                TemporalError::JsonLd(JsonLdError::JsonLdContextShape),
+                TemporalError::JsonLd(JsonLdError::TypeNotExpanded),
                 NgsiLdErrorType::BadRequestData,
                 None,
             ),

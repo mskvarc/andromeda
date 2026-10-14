@@ -39,7 +39,6 @@ use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfo;
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::{Iri, IriBuf};
 use mediatype::{MediaType, MediaTypeBuf};
-use url::Url;
 
 /// The JSON-LD 1.1 keyword a context definition imports another context with
 /// (JSON-LD 1.1 section 4.1.10).
@@ -156,25 +155,17 @@ pub(crate) struct ForwardingDecision {
     pub(crate) context: ForwardingContext,
 }
 
-/// Decide how a request forwarded to a registration carrying `info` and the
-/// `jsonldContext` member `configured_member` is sent, for an inbound request
-/// under `inbound`.
+/// Decide how a request forwarded to a registration carrying `info` is sent,
+/// for an inbound request under `inbound`.
 ///
 /// # Errors
 ///
-/// Returns [`FederationInvariant::RegistrationJsonldContext`] when the
-/// registration's admitted `jsonldContext` is not an absolute IRI.
-pub(crate) fn decide(
-    inbound: &ContextSpec,
-    info: &ContextSourceInfo<'_>,
-    configured_member: Option<&Url>,
-    presence: BodyPresence,
-) -> Result<ForwardingDecision, FederationError> {
-    let configured = match (&info.jsonld_context, configured_member) {
-        (Some(from_info), _) => Some(absolute(from_info.as_str())?),
-        (None, Some(member)) => Some(absolute(member.as_str())?),
-        (None, None) => None,
-    };
+/// Returns [`FederationInvariant::RegistrationContentType`] when the
+/// registration's admitted `contentType` is not a forwardable media type, and
+/// [`FederationError::JsonLd`] when the inbound context cannot be written
+/// inline.
+pub(crate) fn decide(inbound: &ContextSpec, info: &ContextSourceInfo<'_>, presence: BodyPresence) -> Result<ForwardingDecision, FederationError> {
+    let configured = info.jsonld_context.clone(); // clone: the decision owns the IRI the registration keeps
     // Clause 6.3.19: a configured `jsonldContext` forces `application/json`,
     // the one form that names a context in a `Link` header; otherwise
     // `contentType` decides and the default is `application/json`.
@@ -232,7 +223,7 @@ fn holds_only_absolute_references(context: JsonPiece<'_>) -> bool {
 }
 
 /// Decide how a batch array whose entities were submitted under `contexts` is
-/// forwarded to a registration carrying `info` and `configured_member`.
+/// forwarded to a registration carrying `info`.
 ///
 /// Entities naming one context are forwarded exactly as a single request under
 /// it. Entities naming different ones have no single context a `Link` header
@@ -246,7 +237,6 @@ fn holds_only_absolute_references(context: JsonPiece<'_>) -> bool {
 pub(crate) fn decide_for_items<'c>(
     contexts: impl IntoIterator<Item = &'c BatchContext>,
     info: &ContextSourceInfo<'_>,
-    configured_member: Option<&Url>,
 ) -> Result<ForwardingDecision, FederationError> {
     // The batch parser gave every distinct context its identity once, so the
     // distinct ones are told apart by that identity and never compared again.
@@ -257,15 +247,15 @@ pub(crate) fn decide_for_items<'c>(
         }
     }
     match distinct.as_slice() {
-        [] => decide(&ContextSpec::none(), info, configured_member, BodyPresence::Present),
-        [only] => decide(only.spec(), info, configured_member, BodyPresence::Present),
-        [_, _, ..] => decide_mixed(&distinct, info, configured_member),
+        [] => decide(&ContextSpec::none(), info, BodyPresence::Present),
+        [only] => decide(only.spec(), info, BodyPresence::Present),
+        [_, _, ..] => decide_mixed(&distinct, info),
     }
 }
 
 /// The decision for a batch whose entities name the different `contexts`.
-fn decide_mixed(contexts: &[&BatchContext], info: &ContextSourceInfo<'_>, configured_member: Option<&Url>) -> Result<ForwardingDecision, FederationError> {
-    let decision = decide(&ContextSpec::none(), info, configured_member, BodyPresence::Present)?;
+fn decide_mixed(contexts: &[&BatchContext], info: &ContextSourceInfo<'_>) -> Result<ForwardingDecision, FederationError> {
+    let decision = decide(&ContextSpec::none(), info, BodyPresence::Present)?;
     let context = match decision.context {
         configured @ ForwardingContext::Configured(_) => configured,
         ForwardingContext::InlineInbound(_) | ForwardingContext::InlinePerItem | ForwardingContext::InlineCore => {
@@ -333,12 +323,6 @@ fn written_reference(url: &str) -> Result<JsonLiteral, FederationError> {
     JsonLiteral::string(url).map_err(|error| FederationError::from(JsonLdError::ContextText(error)))
 }
 
-/// A registration's `jsonldContext` as the absolute IRI a forwarded request
-/// names.
-fn absolute(reference: &str) -> Result<IriBuf, FederationError> {
-    IriBuf::new(reference.to_owned()).map_err(|error| FederationError::from(FederationInvariant::RegistrationJsonldContext(error)))
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -354,7 +338,6 @@ mod tests {
     use iri_rs::IriBuf;
     use mediatype::MediaTypeBuf;
     use serde_json::json;
-    use url::Url;
 
     const USER: &str = "https://example.org/user.jsonld";
     const OTHER: &str = "https://example.org/other.jsonld";
@@ -374,11 +357,10 @@ mod tests {
             .collect()
     }
 
-    fn decided(inbound: &ContextSpec, entries: &[(&str, &str)], member: Option<&str>, presence: BodyPresence) -> (ResponseMediaType, ForwardingContext) {
+    fn decided(inbound: &ContextSpec, entries: &[(&str, &str)], presence: BodyPresence) -> (ResponseMediaType, ForwardingContext) {
         let raw = pairs(entries);
         let info = ContextSourceInfo::try_from(raw.as_slice()).expect("valid info");
-        let member = member.map(|url| Url::parse(url).expect("a valid URL"));
-        let decision = decide(inbound, &info, member.as_ref(), presence).expect("decides");
+        let decision = decide(inbound, &info, presence).expect("decides");
         (decision.media_type, decision.context)
     }
 
@@ -394,7 +376,6 @@ mod tests {
             let (media, context) = decided(
                 &inbound,
                 &[("jsonldContext", CONFIGURED), ("contentType", "application/ld+json")],
-                None,
                 BodyPresence::Present,
             );
             pretty_assertions::assert_eq!(media, ResponseMediaType::Json);
@@ -402,8 +383,6 @@ mod tests {
             pretty_assertions::assert_eq!(context.link(), Some(iri(CONFIGURED)));
             pretty_assertions::assert_eq!(context.rewording(), Rewording::Reword);
         }
-        let (_, member) = decided(&ContextSpec::none(), &[], Some(CONFIGURED), BodyPresence::Absent);
-        pretty_assertions::assert_eq!(member, ForwardingContext::Configured(iri(CONFIGURED)));
     }
 
     /// A single inbound URL, from a `Link` header or a body string, is the
@@ -415,7 +394,7 @@ mod tests {
             ContextSpec::from_body(JsonLiteral::admit(&json!(USER).to_string()).expect("an admissible literal")),
             ContextSpec::from_body(JsonLiteral::admit(&json!([USER]).to_string()).expect("an admissible literal")),
         ] {
-            let (media, context) = decided(&inbound, &[], None, BodyPresence::Present);
+            let (media, context) = decided(&inbound, &[], BodyPresence::Present);
             pretty_assertions::assert_eq!(media, ResponseMediaType::Json);
             pretty_assertions::assert_eq!(context, ForwardingContext::InboundLink(iri(USER)));
             pretty_assertions::assert_eq!(context.link(), Some(iri(USER)));
@@ -432,7 +411,7 @@ mod tests {
             ContextSpec::from_body(JsonLiteral::admit(&json!({"speed": "https://example.org/speed"}).to_string()).expect("an admissible literal")),
             ContextSpec::from_body(JsonLiteral::admit(&json!([USER, {"speed": "https://example.org/speed"}]).to_string()).expect("an admissible literal")),
         ] {
-            let (_, context) = decided(&inbound, &[], None, BodyPresence::Absent);
+            let (_, context) = decided(&inbound, &[], BodyPresence::Absent);
             pretty_assertions::assert_eq!(context, ForwardingContext::CoreForCompound);
             pretty_assertions::assert_eq!(context.link(), Some(IriBuf::from(NGSI_LD_CORE_CONTEXT_URL)));
             pretty_assertions::assert_eq!(context.rewording(), Rewording::Reword);
@@ -444,7 +423,7 @@ mod tests {
     /// 6.3.5: its absence is the default context).
     #[test]
     fn a_default_inbound_context_is_forwarded_without_a_link() {
-        let (_, context) = decided(&ContextSpec::none(), &[], None, BodyPresence::Present);
+        let (_, context) = decided(&ContextSpec::none(), &[], BodyPresence::Present);
         pretty_assertions::assert_eq!(context, ForwardingContext::InboundDefault);
         assert!(context.link().is_none());
         pretty_assertions::assert_eq!(context.rewording(), Rewording::AsInbound);
@@ -457,7 +436,7 @@ mod tests {
     fn an_ld_json_body_carries_the_inbound_context_inline() {
         let inbound = ContextSpec::from_body(JsonLiteral::admit(&json!([USER, OTHER]).to_string()).expect("an admissible literal"));
         let ld = [("contentType", "application/ld+json")];
-        let (media, with_body) = decided(&inbound, &ld, None, BodyPresence::Present);
+        let (media, with_body) = decided(&inbound, &ld, BodyPresence::Present);
         pretty_assertions::assert_eq!(media, ResponseMediaType::JsonLd);
         pretty_assertions::assert_eq!(
             with_body,
@@ -466,10 +445,10 @@ mod tests {
         assert!(with_body.link().is_none());
         pretty_assertions::assert_eq!(with_body.rewording(), Rewording::AsInbound);
 
-        let (_, body_less) = decided(&inbound, &ld, None, BodyPresence::Absent);
+        let (_, body_less) = decided(&inbound, &ld, BodyPresence::Absent);
         pretty_assertions::assert_eq!(body_less, ForwardingContext::CoreForCompound);
 
-        let (_, default_inline) = decided(&ContextSpec::none(), &ld, None, BodyPresence::Present);
+        let (_, default_inline) = decided(&ContextSpec::none(), &ld, BodyPresence::Present);
         pretty_assertions::assert_eq!(
             default_inline,
             ForwardingContext::InlineInbound(JsonLiteral::admit(&json!(NGSI_LD_CORE_CONTEXT_URL.to_string()).to_string()).expect("an admissible literal"))
