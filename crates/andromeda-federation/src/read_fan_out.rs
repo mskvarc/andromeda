@@ -27,6 +27,7 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{
     filter::{eval::evaluate, expression::Expr},
+    geo::query::GeoQuery,
     queried_entity::linked_entities::NoLinkedEntities,
     scope::query::ScopeQuery,
     type_selection::grammar::TypeExprRaw,
@@ -52,6 +53,10 @@ pub(crate) struct ReadSelection<'a> {
     /// The client's scope query, used to avoid contacting registrations whose
     /// declared footprint cannot satisfy it.
     pub(crate) scope_q: Option<&'a ScopeQuery>,
+    /// The client's geoquery, compiled: a registration whose declared geometry
+    /// cannot hold a matching Entity is not contacted (clauses 4.3.6.1 and
+    /// 5.10.2.4).
+    pub(crate) geo: Option<&'a GeoQuery>,
     /// What the registration must be able to serve for this read (clause 4.20).
     pub(crate) serving: ReadServing,
     /// The modes this forwarding phase admits (clause 4.3.6.2).
@@ -138,8 +143,8 @@ pub(crate) struct SourceAnswer<T> {
 impl FederationService {
     /// The registrations a forwarded read contacts: those a live `EntityMap`
     /// names, or those clause 5.12 matches, narrowed to the ones advertising
-    /// the operation, passing the context source filter and admitted by the
-    /// phase's mode filter.
+    /// the operation, whose scope and geometry admit the query, passing the
+    /// context source filter and admitted by the phase's mode filter.
     pub(crate) async fn select_read_registrations(
         &self,
         context: &ContextSpec,
@@ -169,6 +174,7 @@ impl FederationService {
                 || selection.exclude_registration.is_some_and(|excluded| excluded == &registration.id)
                 || !mode_admitted(&registration, selection.mode_filter)
                 || !registration_scope_admits(&registration, selection.scope_q)
+                || selection.geo.is_some_and(|geo| !registration.coverage.admits_geo_query(geo))
             {
                 continue;
             }
@@ -329,7 +335,10 @@ mod tests {
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
     use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
-    use andromeda_ngsi_ld_query::filter::{expansion::expand_q_expr, json_key_attributes::JsonKeyAttributes, parser};
+    use andromeda_ngsi_ld_query::{
+        filter::{expansion::expand_q_expr, json_key_attributes::JsonKeyAttributes, parser},
+        geo::query::GeoQuery,
+    };
     use serde_json::json;
 
     fn registration(operations: Option<&[&str]>) -> ContextSourceRegistration {
@@ -458,6 +467,7 @@ mod tests {
                             exclude_registration: None,
                             csf: Some(&filter),
                             scope_q: None,
+                            geo: None,
                             serving: ReadServing::Operation(ForwardingOperation::QueryEntity),
                             mode_filter: CsrModeFilter::All,
                             entity_map: EntityMapInUse::None,
@@ -474,5 +484,42 @@ mod tests {
         pretty_assertions::assert_eq!(selected("sourceGroup==\"beta\"").await, vec!["urn:ngsi-ld:csr:beta"]);
         pretty_assertions::assert_eq!(selected("mode==\"inclusive\"").await.len(), 2);
         pretty_assertions::assert_eq!(selected("sourceGroup==\"gamma\"").await, Vec::<String>::new());
+    }
+
+    /// Clauses 4.3.6.1 and 5.10.2.4: a registration located where no Entity
+    /// the geoquery matches can be is not contacted; one declaring no location
+    /// may serve any area.
+    #[tokio::test]
+    async fn a_geoquery_selects_the_registrations_whose_location_may_hold_a_match() {
+        let madrid = registration_with("urn:ngsi-ld:csr:madrid", json!({"location": {"type": "Point", "coordinates": [-3.7, 40.4]}}));
+        let berlin = registration_with("urn:ngsi-ld:csr:berlin", json!({"location": {"type": "Point", "coordinates": [13.4, 52.5]}}));
+        let anywhere = registration_with("urn:ngsi-ld:csr:anywhere", json!({}));
+        let service = offline_service(vec![madrid, berlin, anywhere]);
+        let near_madrid = GeoQuery {
+            georel: "near;maxDistance==100000".parse().expect("a valid georel"),
+            geometry: serde_json::from_value(json!({"type": "Point", "coordinates": [-3.7, 40.4]})).expect("a valid point"),
+            geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("a valid attribute name"),
+        };
+        let selected: Vec<String> = service
+            .select_read_registrations(
+                &ContextSpec::none(),
+                ReadSelection {
+                    entity_type: None,
+                    entity_ids: None,
+                    exclude_registration: None,
+                    csf: None,
+                    scope_q: None,
+                    geo: Some(&near_madrid),
+                    serving: ReadServing::Operation(ForwardingOperation::QueryEntity),
+                    mode_filter: CsrModeFilter::All,
+                    entity_map: EntityMapInUse::None,
+                },
+            )
+            .await
+            .expect("the selection runs")
+            .into_iter()
+            .map(|registration| registration.id.to_string())
+            .collect();
+        pretty_assertions::assert_eq!(selected, vec!["urn:ngsi-ld:csr:madrid", "urn:ngsi-ld:csr:anywhere"]);
     }
 }

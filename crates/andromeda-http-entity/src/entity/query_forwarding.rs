@@ -12,6 +12,7 @@ use crate::{
         SourceContribution,
         collect_warnings,
         contributions_of,
+        query_admission::AdmittedQuery,
     },
     error::public_error,
 };
@@ -33,7 +34,7 @@ use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::filter::{expansion::expand_csf_expr, expression::Expr};
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
-use axum::http::Uri as HttpUri;
+use axum::http::{HeaderMap, Uri as HttpUri};
 use iri_rs::IriBuf;
 use tracing::warn;
 
@@ -133,14 +134,17 @@ pub(crate) struct QueryForwarding<'a> {
     pub(crate) uri: &'a HttpUri,
     /// The query as the client wrote it.
     pub(crate) query: &'a EntityQueryParameters,
+    /// The query as admitted: the `Via` chain it arrived with, the
+    /// `EntityMap` it runs under and the geoquery the registrations are
+    /// selected by (clause 5.10.2.4).
+    pub(crate) admitted: &'a AdmittedQuery,
     /// The resolved split-entities policy.
     pub(crate) split: SplitEntities,
     /// The request's JSON-LD context.
     pub(crate) context: &'a ContextSpec,
-    /// The triggering request's `Via` chain and headers.
-    pub(crate) triggering: TriggeringRequest<'a>,
-    /// The `EntityMap` the query runs under.
-    pub(crate) entity_map: EntityMapInUse<'a>,
+    /// The headers of the triggering request, passed through to the sources
+    /// (clause 6.3.19).
+    pub(crate) headers: &'a HeaderMap,
     /// The binding the client's query arrived on, mirrored by the forward when
     /// the registration advertises it (clause 6.23.1).
     pub(crate) delivery: QueryDelivery,
@@ -218,10 +222,14 @@ impl QueryForwarding<'_> {
                     delivery: self.delivery,
                     split: self.split,
                     context: self.context,
-                    triggering: self.triggering,
+                    triggering: TriggeringRequest {
+                        via: self.admitted.incoming_via.as_ref(),
+                        headers: Some(self.headers),
+                    },
                     csf_expr,
+                    geo: self.admitted.registry_geo.as_ref(),
                     mode_filter,
-                    entity_map: self.entity_map,
+                    entity_map: EntityMapInUse::from(&self.admitted.map_use),
                     budget,
                 },
             )

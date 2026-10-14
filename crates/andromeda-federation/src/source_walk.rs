@@ -481,6 +481,7 @@ mod tests {
                     context: &context,
                     triggering: TriggeringRequest::default(),
                     csf_expr: None,
+                    geo: None,
                     mode_filter: CsrModeFilter::All,
                     entity_map: EntityMapInUse::None,
                     budget: &budget,
@@ -533,6 +534,7 @@ mod tests {
                     operation: ForwardingOperation::QueryTemporalEntity,
                     triggering: TriggeringRequest::default(),
                     csf_expr: None,
+                    geo: None,
                     mode_filter: CsrModeFilter::All,
                     entity_map: EntityMapInUse::None,
                     paging: SourcePaging::Walk(&budget),
@@ -944,6 +946,7 @@ mod tests {
                     operation: ForwardingOperation::QueryTemporalEntity,
                     triggering: TriggeringRequest::default(),
                     csf_expr: None,
+                    geo: None,
                     mode_filter: CsrModeFilter::All,
                     entity_map: EntityMapInUse::None,
                     paging: SourcePaging::WalkHistory(HistoryBudget {

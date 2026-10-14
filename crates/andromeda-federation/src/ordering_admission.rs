@@ -42,7 +42,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_query::{entity_selection::ConsideredEntities, ordering::parameters::OrderingParameters};
+use andromeda_ngsi_ld_query::{entity_selection::ConsideredEntities, geo::query::GeoQuery, ordering::parameters::OrderingParameters};
 use andromeda_ngsi_ld_request::query_narrowing::ExecutionScope;
 use derive_more::IsVariant;
 
@@ -64,6 +64,9 @@ pub struct OrderedRead<'a> {
     pub requested_scope: ExecutionScope,
     /// The query, which decides which registrations could take part.
     pub client_query: ClientQuery<'a>,
+    /// The query's geoquery, compiled, which a registration's declared
+    /// geometry has to admit for it to take part (clause 5.10.2.4).
+    pub geo: Option<&'a GeoQuery>,
     /// The operation a registration has to advertise to take part (clause 4.20).
     pub operation: ForwardingOperation,
     /// The `EntityMap` the read runs under, which fixes the registrations that
@@ -131,6 +134,7 @@ impl FederationService {
                     exclude_registration: None,
                     csf: None,
                     scope_q: read.client_query.scope_q(),
+                    geo: read.geo,
                     serving: ReadServing::Operation(read.operation),
                     mode_filter: CsrModeFilter::All,
                     entity_map: read.entity_map,

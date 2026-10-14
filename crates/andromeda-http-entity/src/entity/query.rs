@@ -21,7 +21,7 @@ use crate::{
         ResolvedJoin,
         Response,
         StatusCode,
-        query_admission::{AdmittedQuery, admit_request},
+        query_admission::admit_request,
         query_binding::QueryBinding,
         query_forwarding::{ForwardedQueryResults, MergedEntities, QueryForwarding},
         query_page::{QueryPage, requested_window},
@@ -41,10 +41,7 @@ use andromeda_entity::query::{
     entity_versions::{VersionRead, held_version},
 };
 use andromeda_entity_map::recording::PageMatches;
-use andromeda_federation::{
-    config::SplitEntities,
-    request::{EntityMapInUse, TriggeringRequest},
-};
+use andromeda_federation::config::SplitEntities;
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{api_root::ApiRoot, context_target, pagination_policy::RequestPagination, response_context_request::ResponseContextRequest};
 use andromeda_jsonld::user_context_admission::{AdmittedContext, SubmittedContext, admit_user_context};
@@ -158,13 +155,8 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
     } = request;
     Box::pin(async move {
         let service = &state.entity_query;
-        let AdmittedQuery {
-            language_filter,
-            prefer,
-            incoming_via,
-            map_use,
-            opts,
-        } = admit_request(&state, &target, &context, protocol, &mut query, binding, &uri).await?;
+        let admitted = admit_request(&state, &target, &context, protocol, &mut query, binding, &uri).await?;
+        let opts = &admitted.opts;
         // Clauses 5.7.2.4 and 6.3.4: refused before the store is read.
         require_geojson_for_geometry_property(query.geometry_property.as_ref(), accept.media_type()).with_entity_instance(&uri)?;
 
@@ -190,13 +182,10 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
             engine: service.engine(),
             uri: &uri,
             query: &query,
+            admitted: &admitted,
             split,
             context: &context,
-            triggering: TriggeringRequest {
-                via: incoming_via.as_ref(),
-                headers: Some(&headers),
-            },
-            entity_map: EntityMapInUse::from(&map_use),
+            headers: &headers,
             delivery: binding.delivery(),
         });
         let forwarded = OptionFuture::from(forwarding.as_ref().map(QueryForwarding::run)).await.transpose()?;
@@ -244,18 +233,18 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
 
         // Table 6.4.3.2-3 and Table 6.23.3.1-1: 201 when an EntityMap has been
         // (re)created.
-        let status = if map_use.mints() { StatusCode::CREATED } else { StatusCode::OK };
+        let status = if admitted.map_use.mints() { StatusCode::CREATED } else { StatusCode::OK };
         let map_entities = LocalEntitySource::queried(service, &target, &query, &context, plan.as_ref(), &uri);
         let page_matches = split_page_matches(split_survivors, plan.as_ref());
-        let entity_map_uri = record_map_use(&state.entity_maps, map_use, contributions, map_entities, page_matches, &uri).await?;
+        let entity_map_uri = record_map_use(&state.entity_maps, admitted.map_use, contributions, map_entities, page_matches, &uri).await?;
 
         let answer = matched_entities(&entities, plan.as_ref(), &representation);
         let rendering = ResponseContextSource::new(service.engine(), &context, &state.context_hosting, &api_root)
-            .start_rendering(accept.media_type(), prefer.rendering_preferences(), opts.render_mode)
+            .start_rendering(accept.media_type(), admitted.prefer.rendering_preferences(), opts.render_mode)
             .await
             .with_entity_instance(&uri)?
             .with_geometry_selection(geometry_selection(&query));
-        let rendered = answer.render(rendering, language_filter.as_ref(), &uri)?;
+        let rendered = answer.render(rendering, admitted.language_filter.as_ref(), &uri)?;
         Ok(query_response(
             rendered,
             QueryCollectionMetadata {

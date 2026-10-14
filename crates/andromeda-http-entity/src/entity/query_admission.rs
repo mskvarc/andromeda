@@ -3,8 +3,9 @@
 //! Admission is everything that can be decided about a query before it reaches
 //! the store: folding the extension headers into it, refusing a scoped read
 //! `@context`, confining a non-federating branch to the local scope, validating
-//! it, resolving the Entity Map it runs under, parsing its response options, and
-//! holding it to the clause 5.7.2.4 ordering rule. [`crate::entity::query::run`]
+//! it, resolving the Entity Map it runs under, parsing its response options,
+//! compiling the geoquery the registrations are selected by, and holding it to
+//! the clause 5.7.2.4 ordering rule. [`crate::entity::query::run`]
 //! consumes the [`AdmittedQuery`] this produces.
 
 use crate::{
@@ -21,7 +22,8 @@ use andromeda_federation::{
 };
 use andromeda_http_extraction::prefer::PreferHeader;
 use andromeda_http_headers::{language::LanguageFilter, ngsild_entity_map::NgsiLdEntityMap, via::Via};
-use andromeda_jsonld::user_context_admission::AdmittedContext;
+use andromeda_jsonld::{term_expansion::ContextualExpander, user_context_admission::AdmittedContext};
+use andromeda_ngsi_ld_query::geo::{compile::compile_geo_query, query::GeoQuery};
 use andromeda_ngsi_ld_request::{
     error::ParameterError,
     query::entity::{
@@ -45,6 +47,10 @@ pub(crate) struct AdmittedQuery {
     pub(crate) map_use: EntityMapUse,
     /// The representation, `sysAttrs` and `count` options resolved (clause 6.3.7).
     pub(crate) opts: EntityQueryParametersOptions,
+    /// The geoquery a registration's declared geometry has to admit for the
+    /// registration to take part (clauses 4.3.6.1 and 5.10.2.4); `None` when
+    /// the query has none or does not reach the Context Registry.
+    pub(crate) registry_geo: Option<GeoQuery>,
 }
 
 /// Decode `protocol` into the query, hold the query to every rule that can be
@@ -60,7 +66,7 @@ pub(crate) struct AdmittedQuery {
 ///
 /// The classified failure of an extension header the query cannot take, of the
 /// clause 5.7.2.4 validation, of resolving the Entity Map, of the Table 6.3.7-1
-/// options, and of the clause 5.7.2.4 ordering rule.
+/// options, of compiling the geoquery, and of the clause 5.7.2.4 ordering rule.
 pub(crate) async fn admit_request(
     state: &EntityRouteServices,
     target: &ContextTarget,
@@ -78,14 +84,62 @@ pub(crate) async fn admit_request(
     let referenced = protocol.entity_map.as_ref().map(NgsiLdEntityMap::as_inner);
     let map_use = resolve_query_map_use(&state.entity_maps, target, query, referenced, instance).await?;
     let opts = query.parse_options().with_entity_instance(instance)?;
-    refuse_inadmissible_ordering(&state.forwarding, target, context, query, binding, EntityMapInUse::from(&map_use), instance).await?;
+    let registry_geo = registry_geo_query(state, context, query, instance).await?;
+    let read = RegistryRead {
+        query,
+        binding,
+        geo: registry_geo.as_ref(),
+        entity_map: EntityMapInUse::from(&map_use),
+    };
+    refuse_inadmissible_ordering(&state.forwarding, target, context, read, instance).await?;
     Ok(AdmittedQuery {
         language_filter: query.lang.take().or(protocol.language_filter),
         prefer: protocol.prefer,
         incoming_via: protocol.incoming_via,
         map_use,
         opts,
+        registry_geo,
     })
+}
+
+/// The query's geoquery compiled under the request's context, when the query
+/// reaches the Context Registry: clause 5.10.2.4 matches it against the
+/// geometry each registration declares.
+///
+/// # Errors
+///
+/// The classified failure of compiling the geoquery.
+async fn registry_geo_query(
+    state: &EntityRouteServices,
+    context: &ContextSpec,
+    query: &EntityQueryParameters,
+    instance: &HttpUri,
+) -> Result<Option<GeoQuery>, ProblemResponse> {
+    if query.is_local() {
+        return Ok(None);
+    }
+    let service = &state.entity_query;
+    let prepared_context = service.engine().prepare_term_context(context);
+    compile_geo_query(
+        query.geo.0.as_ref(),
+        &ContextualExpander::new(service.engine(), &prepared_context),
+        service.geo_admission(),
+    )
+    .await
+    .with_entity_instance(instance)
+}
+
+/// What the ordering rule asks the Context Registry about one query.
+struct RegistryRead<'a> {
+    /// The query as admitted so far.
+    query: &'a EntityQueryParameters,
+    /// The binding the query arrived on, which fixes the operation a
+    /// registration has to advertise.
+    binding: QueryBinding,
+    /// The compiled geoquery a registration's geometry has to admit.
+    geo: Option<&'a GeoQuery>,
+    /// The Entity Map the query runs under.
+    entity_map: EntityMapInUse<'a>,
 }
 
 /// Refuse an ordering clause 5.7.2.4 does not admit.
@@ -104,11 +158,15 @@ async fn refuse_inadmissible_ordering(
     forwarding: &FederationService,
     target: &ContextTarget,
     context: &ContextSpec,
-    query: &EntityQueryParameters,
-    binding: QueryBinding,
-    entity_map: EntityMapInUse<'_>,
+    read: RegistryRead<'_>,
     instance: &HttpUri,
 ) -> Result<(), ProblemResponse> {
+    let RegistryRead {
+        query,
+        binding,
+        geo,
+        entity_map,
+    } = read;
     let admission = forwarding
         .admit_ordering(
             target,
@@ -117,6 +175,7 @@ async fn refuse_inadmissible_ordering(
                 ordering: &query.ordering,
                 requested_scope: query.execution_scope(),
                 client_query: ClientQuery::EntityQuery(query),
+                geo,
                 operation: binding.forwarding_operation(),
                 entity_map,
             },

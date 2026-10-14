@@ -115,6 +115,7 @@ impl SnapshotExecutor {
                         operation: ForwardingOperation::QueryTemporalEntity,
                         triggering: TriggeringRequest::default(),
                         csf_expr: None,
+                        geo: None,
                         mode_filter: CsrModeFilter::All,
                         entity_map: EntityMapInUse::None,
                         paging: SourcePaging::Page(SourcePage {

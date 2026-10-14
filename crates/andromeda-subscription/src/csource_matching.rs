@@ -6,20 +6,13 @@
 //! and `csf` match the registration's own members as clause 5.11.2.4 describes.
 
 use crate::compiled::CompiledCsrSubscription;
-use andromeda_ngsi_ld_geometry::{geometry::Geometry, relation::matches as geometry_matches};
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_model::{
     registration::{ContextSourceRegistration, context_source_properties::ContextSourceProperties, info::RegistrationInfo},
     registration_matching::{EntitySpecification, RegistrationMatchSpecification},
     subscription::SubscriptionStatus,
 };
-use andromeda_ngsi_ld_query::{
-    csr::compiled::CompiledCsrTemporalFilter,
-    filter::eval::evaluate,
-    geo::query::GeoQuery,
-    queried_entity::linked_entities::NoLinkedEntities,
-};
-use andromeda_ngsi_ld_vocabulary::expanded::properties::{OBSERVATION_SPACE, OPERATION_SPACE};
+use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrTemporalFilter, filter::eval::evaluate, queried_entity::linked_entities::NoLinkedEntities};
 use chrono::Utc;
 
 /// Whether registration changes notify `sub` at all: the subscription is
@@ -58,7 +51,7 @@ pub fn csource_subscription_selects_registration(sub: &CompiledCsrSubscription, 
     };
     registration.coverage.information.iter().any(|info| specification.matches_information(info))
         && temporal_partition_admits(sub.temporal_q.as_ref(), registration)
-        && sub.geo_q.admits(|geo_q| geo_query_admits(geo_q, registration))
+        && sub.geo_q.admits(|geo_q| registration.coverage.admits_geo_query(geo_q))
         && scope_query_admits(sub, registration)
         && context_source_filter_admits(sub, registration)
 }
@@ -91,30 +84,6 @@ fn temporal_partition_admits(temporal_q: Option<&CompiledCsrTemporalFilter>, reg
         TimeProp::Created | TimeProp::Modified | TimeProp::Deleted => coverage.management_interval.as_ref(),
     };
     relevant.is_some_and(|interval| interval.meets(&temporal_q.interval))
-}
-
-/// Clause 5.11.2.4: the geoquery is matched against the registration's
-/// geometry, and a registration declaring none may still cover the area, so it
-/// matches.
-fn geo_query_admits(geo_q: &GeoQuery, registration: &ContextSourceRegistration) -> bool {
-    let Some(declared) = registration_geometry(geo_q, registration) else {
-        return true;
-    };
-    geometry_matches(&geo_q.georel, &declared.planar(), &geo_q.geometry.planar())
-}
-
-/// The registration geometry a `geoQ` names (Table 5.2.9-1): `observationSpace`
-/// or `operationSpace` when the geoproperty is one of them, `location` for
-/// every other `GeoProperty` including the clause 5.11.2.4 default.
-fn registration_geometry<'registration>(geo_q: &GeoQuery, registration: &'registration ContextSourceRegistration) -> Option<&'registration Geometry> {
-    let geoproperty = geo_q.geoproperty.as_str();
-    if geoproperty == OBSERVATION_SPACE.as_str() {
-        registration.coverage.observation_space.as_ref()
-    } else if geoproperty == OPERATION_SPACE.as_str() {
-        registration.coverage.operation_space.as_ref()
-    } else {
-        registration.coverage.location.as_ref()
-    }
 }
 
 /// Clause 5.11.2.4: the scope query is matched against the registration's

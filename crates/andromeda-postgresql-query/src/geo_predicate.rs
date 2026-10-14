@@ -3,7 +3,9 @@
 //! One reading of the seven `georel` relations, for every relation the broker
 //! filters on. What varies between callers is where the subject geometry is
 //! read from and what a row without one means; the relations themselves do not
-//! vary.
+//! vary. A registration's geometry is tested with the relation
+//! [`AreaCondition`] reduces the geoquery to, since it bounds where the
+//! source's Entities are rather than where one of them is (clause 5.10.2.4).
 //!
 //! Clause 4.10 lets `geoproperty` name any `GeoProperty` of the entity, defaulting
 //! to `location`, and clause 5.7.2.4 counts an entity as matching when any
@@ -33,7 +35,7 @@ use andromeda_ngsi_ld_geometry::{
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     error::QueryError,
-    geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery},
+    geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery, registration_area::AreaCondition},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_postgresql_encoding::ewkb::encode;
@@ -55,7 +57,7 @@ use andromeda_postgresql_seaquery::{
         validated_geom_from_ewkb,
     },
 };
-use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, SelectStatement, SimpleExpr};
+use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
 
 /// What a geo predicate is filtering, which fixes both where it reads the
 /// subject geometry and what a row without one means.
@@ -90,8 +92,10 @@ pub enum GeometrySource<'a> {
     /// carries. Registrations have no attribute rows and no `GeoProperty` of their own,
     /// so `geoproperty` does not apply.
     ///
-    /// Clause 5.10.2: a registration that declares no location may still serve
-    /// the area a discovery query asks about, so a null column matches.
+    /// Clause 5.10.2.4: the column matches when it possibly contains a location
+    /// the geoquery would match, and a registration that declares no location
+    /// may still serve the area a discovery query asks about, so a null column
+    /// matches.
     Registration {
         /// Unqualified column name.
         column: &'a str,
@@ -112,41 +116,51 @@ pub enum GeometrySource<'a> {
 /// `georel=near` names neither `maxDistance` nor `minDistance`, which clause
 /// 4.10 requires at least one of.
 pub fn condition(geo: &GeoQuery, source: GeometrySource<'_>, attribute_names: &ResolvedNames<AttributeName>) -> Result<Condition, RenderError> {
-    if let GeometrySource::Entity { rows, default_location } = source
-        && geo.geoproperty.as_str() == LOCATION.as_str()
-    {
+    let (rows, default_location) = match source {
+        GeometrySource::Registration { column } => return registration_area(geo, column),
+        GeometrySource::Entity { rows, default_location } => (rows, default_location),
+    };
+    if geo.geoproperty.as_str() == LOCATION.as_str() {
         return any_location_instance(geo, rows, default_location, attribute_names.get(&geo.geoproperty));
     }
-    let Some(subject) = subject_geometry(geo, source, attribute_names) else {
+    let Some(attribute_name_key) = attribute_names.get(&geo.geoproperty) else {
         // Clause 4.10: an Entity that does not convey the target GeoProperty is
         // non-matching. An IRI with no `attribute_names` row is conveyed by no
-        // Entity at all, so the predicate is constant. A registration reaches a
-        // named column that always exists, so it never lands here.
+        // Entity at all, so the predicate is constant.
         return Ok(Condition::all().add(false_literal()));
     };
-    let SubjectGeometry { planar, geographic, envelope } = subject;
-    // clone: a registration also reads the planar column for its null guard, and
-    // an instance scan for its bounding-box prefilter.
-    let spatial = relation_expression(&geo.georel, planar.clone(), geographic, &geo.geometry)?;
+    let planar = instance_geometry_column(INSTANCE_ALIAS);
+    // clone: the instance scan also reads the planar column for its
+    // bounding-box prefilter.
+    let spatial = relation_expression(&geo.georel, planar.clone(), cast(planar.clone(), PostgresType::Geography), &geo.geometry)?;
+    // Clause 5.7.2.4: it is enough that one instance of the GeoProperty meets
+    // the restriction, which is exactly an existential over the instance rows.
+    let mut probe = geometry_instances_of(rows, INSTANCE_ALIAS, attribute_name_key);
+    probe.expr(existence_marker());
+    if let Some(prefilter) = near_envelope_prefilter(geo, &planar) {
+        probe.and_where(prefilter);
+    }
+    probe.and_where(spatial);
+    Ok(Condition::all().add(SeaExpr::exists(probe)))
+}
 
-    Ok(match envelope {
-        // Clause 5.10.2: a registration that declares no location is not
-        // excluded by a geo filter, so the null column is an alternative to the
-        // relation rather than a failure of it.
-        Envelope::RegistrationColumn => Condition::any().add(SeaExpr::expr(planar).is_null()).add(spatial),
-        // Clause 5.7.2.4: it is enough that one instance of the GeoProperty
-        // meets the restriction, which is exactly an existential over the
-        // instance rows.
-        Envelope::Instances { correlation } => {
-            let mut probe = *correlation;
-            probe.expr(existence_marker());
-            if let Some(prefilter) = near_envelope_prefilter(geo, &planar) {
-                probe.and_where(prefilter);
-            }
-            probe.and_where(spatial);
-            Condition::all().add(SeaExpr::exists(probe))
-        }
-    })
+/// The geoquery over a registration's geometry `column` (clause 5.10.2.4).
+///
+/// The column is tested with the relation [`AreaCondition`] reduces the
+/// geoquery to, and a null column is an alternative to that test rather than
+/// a failure of it. A reduction that constrains no geometry is no condition.
+///
+/// # Errors
+///
+/// The failures of [`relation_expression`].
+fn registration_area(geo: &GeoQuery, column: &str) -> Result<Condition, RenderError> {
+    let planar = || SeaExpr::col(Alias::new(column));
+    let area = match AreaCondition::of(geo) {
+        AreaCondition::Relation(georel) => relation_expression(&georel, planar(), cast(planar(), PostgresType::Geography), &geo.geometry)?,
+        AreaCondition::NotWithin => relation_expression(&GeoRel::Within, planar(), cast(planar(), PostgresType::Geography), &geo.geometry)?.not(),
+        AreaCondition::Unconstrained => return Ok(Condition::all()),
+    };
+    Ok(Condition::any().add(planar().is_null()).add(area))
 }
 
 /// A bounding-box test a geometry `GiST` index answers, admitting every geometry
@@ -222,60 +236,6 @@ pub fn relation_expression(georel: &GeoRel, planar: SimpleExpr, geographic: Simp
         }
     };
     Ok(spatial)
-}
-
-/// The two operand expressions a geo predicate reads its subject geometry
-/// through, and how the relation reaches the rows carrying it.
-struct SubjectGeometry {
-    /// Planar `geometry`, for the topological relations.
-    planar: SimpleExpr,
-    /// Spheroidal `geography`, for `near`.
-    geographic: SimpleExpr,
-    /// How the rendered relation reaches the rows it is evaluated against.
-    envelope: Envelope,
-}
-
-/// How a rendered relation reaches the rows carrying the subject geometry, and
-/// what a row without one means.
-enum Envelope {
-    /// A registration's own geometry column, where a null column matches
-    /// (clause 5.10.2).
-    RegistrationColumn,
-    /// The geometry lives in the attribute's instance rows, so the relation is
-    /// evaluated inside a correlated `EXISTS`. An entity with no such row
-    /// satisfies no existential, which is the clause 4.10 exclusion.
-    Instances {
-        /// The correlated scan selecting those instance rows, left open so the
-        /// relation and the `SELECT 1` marker can be added before it is wrapped
-        /// in `EXISTS`. Boxed: a `SelectStatement` dwarfs the other variants.
-        correlation: Box<SelectStatement>,
-    },
-}
-
-/// Work out the two operand expressions and the envelope for a source.
-///
-/// `None` means the target `GeoProperty` is one no Entity can convey, because the
-/// broker has never recorded an attribute under that IRI.
-fn subject_geometry(geo: &GeoQuery, source: GeometrySource<'_>, attribute_names: &ResolvedNames<AttributeName>) -> Option<SubjectGeometry> {
-    match source {
-        // A registration carries no attributes of its own, so `geoproperty`
-        // does not apply and the named column is the whole of the subject.
-        GeometrySource::Registration { column } => Some(SubjectGeometry {
-            planar: SeaExpr::col(Alias::new(column)),
-            geographic: cast(SeaExpr::col(Alias::new(column)), PostgresType::Geography),
-            envelope: Envelope::RegistrationColumn,
-        }),
-        GeometrySource::Entity { rows, .. } => {
-            let attribute_name_key = attribute_names.get(&geo.geoproperty)?;
-            Some(SubjectGeometry {
-                planar: instance_geometry_column(INSTANCE_ALIAS),
-                geographic: cast(instance_geometry_column(INSTANCE_ALIAS), PostgresType::Geography),
-                envelope: Envelope::Instances {
-                    correlation: Box::new(geometry_instances_of(rows, INSTANCE_ALIAS, attribute_name_key)),
-                },
-            })
-        }
-    }
 }
 
 /// Alias the correlated instance subquery reads `current_attributes`
@@ -684,7 +644,7 @@ mod tests {
         let geo = point_query(GeoRel::Within, LOCATION);
         let sql = render(condition(&geo, registration_source(), &resolved_custom()).unwrap());
         assert!(sql.contains("\"location\" IS NULL"), "{sql}");
-        assert!(sql.contains("ST_Within"), "{sql}");
+        assert!(sql.contains("ST_Intersects"), "{sql}");
         assert!(sql.contains(" OR "), "the two are alternatives: {sql}");
     }
 
@@ -705,35 +665,55 @@ mod tests {
         let geo = point_query(GeoRel::Within, "https://example.com/neverRecorded");
         let sql = render(condition(&geo, registration_source(), &resolved_none()).expect("renders"));
         assert!(!sql.contains("FALSE"), "{sql}");
-        assert!(sql.contains("ST_Within"), "{sql}");
+        assert!(sql.contains("ST_Intersects"), "{sql}");
     }
 
     /// Every relation renders through the same seven arms whatever the source,
     /// so the `PostGIS` function each one picks cannot drift between callers.
+    /// A registration is tested with the relation clause 5.10.2.4 reduces the
+    /// geoquery to: the weakest one its geometry has to meet to possibly
+    /// contain a location the geoquery matches.
     #[test]
-    fn every_georel_renders_the_same_postgis_function_for_every_source() {
+    fn every_georel_renders_its_postgis_function_on_an_entity_and_its_reduction_on_a_registration() {
         let cases = [
-            (GeoRel::Within, "ST_Within"),
-            (GeoRel::Contains, "ST_Contains"),
-            (GeoRel::Intersects, "ST_Intersects"),
-            (GeoRel::Disjoint, "ST_Disjoint"),
-            (GeoRel::Equals, "ST_Equals"),
-            (GeoRel::Overlaps, "ST_Overlaps"),
+            (GeoRel::Within, "ST_Within", "ST_Intersects"),
+            (GeoRel::Contains, "ST_Contains", "ST_Contains"),
+            (GeoRel::Intersects, "ST_Intersects", "ST_Intersects"),
+            (GeoRel::Disjoint, "ST_Disjoint", "NOT ST_Within"),
+            (GeoRel::Equals, "ST_Equals", "ST_Contains"),
+            (GeoRel::Overlaps, "ST_Overlaps", "ST_Intersects"),
             (
                 GeoRel::Near {
                     max_distance: Some(PositiveDistance::from_str("500").expect("positive distance")),
-                    min_distance: None,
+                    min_distance: Some(PositiveDistance::from_str("100").expect("positive distance")),
                 },
+                "ST_DWithin",
                 "ST_DWithin",
             ),
         ];
-        for (georel, function) in cases {
+        for (georel, entity_function, registration_function) in cases {
             let geo = point_query(georel.clone(), LOCATION); // clone: the relation is asserted on again below
             let entity_sql = render(condition(&geo, entity_source(), &resolved_custom()).unwrap());
             let registration_sql = render(condition(&geo, registration_source(), &resolved_custom()).unwrap());
-            assert!(entity_sql.contains(function), "{georel:?} on an entity: {entity_sql}");
-            assert!(registration_sql.contains(function), "{georel:?} on a registration: {registration_sql}");
+            assert!(entity_sql.contains(entity_function), "{georel:?} on an entity: {entity_sql}");
+            assert!(
+                registration_sql.contains(registration_function),
+                "{georel:?} on a registration: {registration_sql}"
+            );
         }
+    }
+
+    /// A registration's area reaches arbitrarily far from its nearest point, so
+    /// a minimum distance excludes none, and only a maximum distance bounds it.
+    #[test]
+    fn a_registration_is_tested_against_a_near_maximum_distance_only() {
+        let bounded = near_query(13.4, 52.5, Some("500"), Some("100"));
+        let bounded_sql = render(condition(&bounded, registration_source(), &resolved_none()).expect("renders"));
+        assert!(!bounded_sql.contains("ST_Distance"), "{bounded_sql}");
+        let unbounded = near_query(13.4, 52.5, None, Some("100"));
+        let unbounded_sql = render(condition(&unbounded, registration_source(), &resolved_none()).expect("renders"));
+        assert!(!unbounded_sql.contains("ST_"), "{unbounded_sql}");
+        assert!(!unbounded_sql.contains("FALSE"), "{unbounded_sql}");
     }
 
     /// The entity and temporal targets bind the identical reference geometry;

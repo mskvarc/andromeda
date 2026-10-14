@@ -147,6 +147,7 @@ impl FederationService {
                     exclude_registration: None,
                     csf: None,
                     scope_q: None,
+                    geo: None,
                     serving: ReadServing::Operation(ForwardingOperation::RetrieveTemporalEntity),
                     mode_filter: CsrModeFilter::ExcludeAuxiliary,
                     entity_map: EntityMapInUse::None,

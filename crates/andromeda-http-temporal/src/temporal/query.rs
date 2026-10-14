@@ -16,7 +16,7 @@ use crate::{
         ResultInstanceExt,
         StatusCode,
         query::{
-            admission::{AdmittedQuery, admit_request},
+            admission::admit_request,
             complete_history::HistoryCompleteness,
             forwarding::{QueryScope, TemporalForwarding, forward_temporal_history},
             merged_page::{MergedPageCut, cut_merged_page},
@@ -83,7 +83,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         page,
     } = request;
     let service = &state.temporal;
-    let AdmittedQuery { prefer, incoming_via, map_use } = admit_request(&state, &target, &context, protocol, &mut params, &uri).await?;
+    let admitted = admit_request(&state, &target, &context, protocol, &mut params, &uri).await?;
     let scope = QueryScope::of(&target, &params);
 
     let split = state.forwarding.split_entities(params.split_entities);
@@ -93,7 +93,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     // Forwarding runs before the local read, because under `splitEntities`
     // what the sources answered decides which entities the local read exempts
     // from the value, geo and scope filters (clause 5.7.4.4).
-    let sources = TemporalForwarding::new(&state.forwarding, incoming_via.as_ref(), &headers, split, &map_use, shape.reach());
+    let sources = TemporalForwarding::new(&state.forwarding, &admitted, &headers, split, shape.reach());
     let forwarded = forward_temporal_history(sources, scope, service.engine(), &target, &params, &context, &uri).await?;
 
     let contributed = contributed_entities(filtering, &params, forwarded.as_ref(), shape.rendering());
@@ -162,8 +162,8 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     let (resolved, warnings) = apply_temporal_join(&read, &bodies, merged.warnings).await.with_instance(&uri)?;
     let linked_ids = resolved.linked_ids();
 
-    let map_created = map_use.mints();
-    let entity_map_uri = record_query_map(&state.entity_maps, &read, map_use, merged.contributions, linked_ids, &uri).await?;
+    let map_created = admitted.map_use.mints();
+    let entity_map_uri = record_query_map(&state.entity_maps, &read, admitted.map_use, merged.contributions, linked_ids, &uri).await?;
 
     let status = response_status(range.as_ref(), map_created);
     // Table 6.18.3.2-2 carries the 203 row and clause 6.3.6 the
@@ -174,7 +174,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     // behaviour of the GET and clause 6.3.6 ties the echo to any response
     // carrying a payload body, so both bindings answer the same way.
     let rendering = ResponseContextSource::new(service.engine(), &context, &state.context_hosting, &api_root)
-        .start_rendering_normalized(accept.media_type(), prefer.rendering_preferences())
+        .start_rendering_normalized(accept.media_type(), admitted.prefer.rendering_preferences())
         .await
         .with_instance(&uri)?;
     let plan = resolved.plan();

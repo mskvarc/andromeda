@@ -92,6 +92,7 @@ impl FederationService {
                 context,
                 triggering,
                 csf_expr,
+                geo,
                 mode_filter,
                 entity_map,
                 budget,
@@ -112,6 +113,7 @@ impl FederationService {
                         exclude_registration: None,
                         csf: csf_expr,
                         scope_q: client_query.scope_q(),
+                        geo,
                         serving: ReadServing::EntityQuery(intent),
                         mode_filter,
                         entity_map,
@@ -212,6 +214,7 @@ impl FederationService {
                         exclude_registration,
                         csf: None,
                         scope_q: None,
+                        geo: None,
                         // Clause 5.7.1.4: a retrieval is forwarded only to the
                         // registrations that "match and support the
                         // retrieveEntity operation" (Table 4.20-1); one

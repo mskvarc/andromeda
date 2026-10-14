@@ -10,6 +10,7 @@ use crate::temporal::{
     ProblemResponse,
     ResultInstanceExt,
     TemporalQueryParameters,
+    query::admission::AdmittedQuery,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity_map::reuse::EntityMapUse;
@@ -22,7 +23,6 @@ use andromeda_federation::{
     query_forwarding_error::QueryForwardingError,
     request::{EntityMapInUse, HistoryBudget, SourcePaging, TriggeringRequest},
 };
-use andromeda_http_headers::via::Via;
 use andromeda_http_response::{
     classified_report::ClassifiedReport,
     declined_representation::single_source_declined,
@@ -30,7 +30,7 @@ use andromeda_http_response::{
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use andromeda_ngsi_ld_query::filter::expansion::expand_csf_expr;
+use andromeda_ngsi_ld_query::{filter::expansion::expand_csf_expr, geo::query::GeoQuery};
 use axum::http::{HeaderMap, Uri};
 use tracing::warn;
 
@@ -84,8 +84,8 @@ pub(crate) enum HistoryReach {
 /// How a temporal query reaches the context sources that hold the rest of the
 /// history: the federation service that contacts them, the triggering request
 /// every forwarded copy replays (clause 6.3.18), the `splitEntities` mode they
-/// are asked under (clause 5.7.4.4), and the Entity Map that fixes which of
-/// them are contacted (clause 5.5.14).
+/// are asked under (clause 5.7.4.4), and the Entity Map and the geoquery that
+/// fix which of them are contacted (clauses 5.5.14 and 5.10.2.4).
 pub(crate) struct TemporalForwarding<'a> {
     /// The service that contacts every matching registration.
     pub(crate) forwarding: &'a FederationService,
@@ -96,27 +96,32 @@ pub(crate) struct TemporalForwarding<'a> {
     pub(crate) split: SplitEntities,
     /// The Entity Map the query runs under.
     pub(crate) map_use: &'a EntityMapUse,
+    /// The query's geoquery, compiled, which a registration's declared
+    /// geometry has to admit for it to be contacted.
+    pub(crate) geo: Option<&'a GeoQuery>,
     /// How much of each source's history is read.
     pub(crate) reach: HistoryReach,
 }
 
 impl<'a> TemporalForwarding<'a> {
-    /// The forwarding of a query that arrived through `via` with `headers`,
-    /// asked under `split` and `map_use`, reading `reach` of each source's
-    /// history.
-    pub(crate) const fn new(
+    /// The forwarding of the `admitted` query, arrived with `headers` and
+    /// asked under `split`, reading `reach` of each source's history.
+    pub(super) const fn new(
         forwarding: &'a FederationService,
-        via: Option<&'a Via>,
+        admitted: &'a AdmittedQuery,
         headers: &'a HeaderMap,
         split: SplitEntities,
-        map_use: &'a EntityMapUse,
         reach: HistoryReach,
     ) -> TemporalForwarding<'a> {
         TemporalForwarding {
             forwarding,
-            triggering: TriggeringRequest { via, headers: Some(headers) },
+            triggering: TriggeringRequest {
+                via: admitted.incoming_via.as_ref(),
+                headers: Some(headers),
+            },
             split,
-            map_use,
+            map_use: &admitted.map_use,
+            geo: admitted.registry_geo.as_ref(),
             reach,
         }
     }
@@ -185,6 +190,7 @@ pub(crate) async fn forward_temporal_history(
         triggering,
         split,
         map_use,
+        geo,
         reach,
     } = sources;
     if scope == QueryScope::Local {
@@ -221,6 +227,7 @@ pub(crate) async fn forward_temporal_history(
                 operation: ForwardingOperation::QueryTemporalEntity,
                 triggering,
                 csf_expr: csf_expr.as_ref(),
+                geo,
                 mode_filter: CsrModeFilter::All,
                 entity_map: EntityMapInUse::from(map_use),
                 paging,

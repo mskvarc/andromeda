@@ -11,8 +11,12 @@ use crate::csr::{
     registration_select::registration_select,
     temporal_partition::temporal_partition,
 };
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, geo::query::GeoQuery, page_window::PageWindow, read_order::ReadOrder};
-use andromeda_ngsi_ld_vocabulary::expanded::properties::{OBSERVATION_SPACE, OPERATION_SPACE};
+use andromeda_ngsi_ld_query::{
+    csr::compiled::CompiledCsrQuery,
+    geo::{query::GeoQuery, registration_area::RegistrationGeometry},
+    page_window::PageWindow,
+    read_order::ReadOrder,
+};
 use andromeda_postgresql_query::{
     dictionary::resolved_names::ResolvedNames,
     error::RenderError,
@@ -109,8 +113,8 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
         condition = condition.add(csr_expr_to_condition(expr));
     }
 
-    // Geo filter: a registration that declares no location still matches
-    // (clause 5.10.2.4).
+    // Geo filter: a registration that declares no location still matches, and
+    // one that possibly contains a matching location does (clause 5.10.2.4).
     if let Some(geo) = &query.geo {
         condition = condition.add(geo_sql::condition(
             geo,
@@ -141,20 +145,13 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
     Ok(condition)
 }
 
-/// The registration geometry a geoquery is matched against.
-///
-/// A registration carries three geometries (Table 5.2.9-1). The query's
-/// `geoproperty` selects `observationSpace` or `operationSpace` when it names
-/// one of them; every other `GeoProperty`, including the clause 5.10.2.4 default
-/// `location`, is matched against `location`.
+/// The column holding the registration geometry a geoquery is matched against
+/// (Table 5.2.9-1).
 fn registration_geometry_column(geo: &GeoQuery) -> &'static str {
-    let geoproperty = geo.geoproperty.as_str();
-    if geoproperty == OBSERVATION_SPACE.as_str() {
-        "observation_space"
-    } else if geoproperty == OPERATION_SPACE.as_str() {
-        "operation_space"
-    } else {
-        "location"
+    match RegistrationGeometry::of(geo) {
+        RegistrationGeometry::Location => "location",
+        RegistrationGeometry::ObservationSpace => "observation_space",
+        RegistrationGeometry::OperationSpace => "operation_space",
     }
 }
 
@@ -530,9 +527,11 @@ mod tests {
         let mut q = empty_query();
         q.geo = Some(geo_query("https://uri.etsi.org/ngsi-ld/location"));
         let built = build(&q);
-        // Clause 5.10.2: a registration with no location still matches.
+        // Clause 5.10.2.4: a registration with no location still matches, and
+        // one whose location reaches into the reference possibly contains a
+        // location within it.
         assert!(built.sql.contains("\"location\" IS NULL"), "{}", built.sql);
-        assert!(built.sql.contains("ST_Within"), "{}", built.sql);
+        assert!(built.sql.contains("ST_Intersects"), "{}", built.sql);
     }
 
     /// Table 5.2.9-1: `observationSpace` and `operationSpace` are geometries of
@@ -696,7 +695,7 @@ mod tests {
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         });
         let built = build(&q);
-        assert!(built.sql.contains("ST_Within"), "{}", built.sql);
+        assert!(built.sql.contains("ST_Intersects"), "{}", built.sql);
         assert!(built.sql.contains("ST_GeomFromEWKB"), "{}", built.sql);
     }
 }
