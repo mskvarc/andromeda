@@ -1,7 +1,6 @@
 //! Query parameter types for batch entity operation endpoints.
 
 use crate::{
-    case_insensitive_bool::deserialize_option_bool_case_insensitive,
     error::ParameterError,
     language_filter::deserialize_optional_language_filter,
     options::{EntityRepresentationOptions, OverwritePolicy, UpsertMode},
@@ -76,7 +75,6 @@ pub struct PostQueryParams {
     pub page: OffsetPageParameters,
     /// Whether the response reports the total number of matches
     /// (clause 6.3.13 `count`).
-    #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
     pub count: Option<bool>,
     /// Typed representation and system-attribute options (`options`).
     pub options: Option<WrittenValue<EntityRepresentationOptions>>,
@@ -104,7 +102,6 @@ pub struct PostQueryParams {
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
     pub omit: Option<Vec<RawProjectionTerm>>,
     /// Whether the operation is confined to this broker (clause 5.10 `local`).
-    #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
     pub local: Option<bool>,
 }
 

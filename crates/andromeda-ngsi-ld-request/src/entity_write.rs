@@ -1,6 +1,5 @@
 //! The parameters of the entity writes that name their target by `type`.
 
-use crate::case_insensitive_bool::deserialize_option_bool_case_insensitive;
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 use serde::Deserialize;
 
@@ -16,7 +15,6 @@ pub struct EntityWriteParams {
     #[serde(rename = "type")]
     pub entity_type: Option<TypeExprRaw>,
     /// Whether the operation is confined to this broker (clause 5.5.13).
-    #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
     pub local: Option<bool>,
 }
 
@@ -38,7 +36,7 @@ mod tests {
     /// malformed selector is a client error.
     #[test]
     fn an_entity_write_reads_a_type_selector_beside_the_local_flag() {
-        let params: EntityWriteParams = serde_urlencoded::from_str("type=Vehicle&local=TRUE").expect("both parameters parse");
+        let params: EntityWriteParams = serde_urlencoded::from_str("type=Vehicle&local=true").expect("both parameters parse");
         pretty_assertions::assert_eq!(params.entity_type.map(|selector| selector.to_string()), Some("Vehicle".to_string()));
         pretty_assertions::assert_eq!(params.local, Some(true));
         let bare: EntityWriteParams = serde_urlencoded::from_str("").expect("parses");

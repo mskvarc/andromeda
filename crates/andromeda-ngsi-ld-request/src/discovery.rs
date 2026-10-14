@@ -1,6 +1,5 @@
 //! The parameters of the `/types` and `/attributes` list endpoints.
 
-use crate::case_insensitive_bool::deserialize_option_bool_case_insensitive;
 use serde::Deserialize;
 
 /// Query parameters shared by the two discovery list endpoints (clause 5.7.6
@@ -12,7 +11,6 @@ pub struct DiscoveryListParams {
     #[serde(default)]
     pub details: bool,
     /// Whether the listing is confined to this broker.
-    #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
     pub local: Option<bool>,
 }
 

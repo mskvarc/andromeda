@@ -2,7 +2,6 @@
 
 use crate::{
     attribute_selection::{AttrsAdmission, validate_attrs},
-    case_insensitive_bool::deserialize_option_bool_case_insensitive,
     error::ParameterError,
     language_filter::deserialize_optional_language_filter,
     language_tag::deserialize_optional_language_tag,
@@ -102,7 +101,6 @@ pub struct MergeParams {
     #[serde(rename = "type")]
     pub entity_type: Option<TypeExprRaw>,
     /// Whether the operation is confined to this broker (clause 5.5.13).
-    #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
     pub local: Option<bool>,
 }
 
@@ -162,7 +160,6 @@ pub struct GetEntityParams {
     #[serde(rename = "geometryProperty")]
     pub geometry_property: Option<AttributeName>,
     /// Whether the operation is confined to this broker (clause 5.10 `local`).
-    #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
     pub local: Option<bool>,
     /// How linked entities reach the response (clause 4.5.23 `join`).
     pub join: Option<JoinMode>,
@@ -177,7 +174,6 @@ pub struct GetEntityParams {
     /// Whether the retrieval returns the location of the `EntityMap` it used,
     /// creating one when none is in use (Table 6.5.3.1-1 `entityMap`).
     #[serde(rename = "entityMap")]
-    #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
     pub entity_map: Option<bool>,
     /// How long a created entity map lives, as an ISO 8601 duration
     /// (Table 6.5.3.1-1 `entityMapLifetime`).
@@ -266,10 +262,11 @@ mod tests {
 
     #[test]
     fn a_retrieve_accepts_the_entity_map_flag_and_lifetime() {
-        let params: GetEntityParams = serde_urlencoded::from_str("entityMap=TRUE&entityMapLifetime=PT5M").expect("parses");
+        let params: GetEntityParams = serde_urlencoded::from_str("entityMap=true&entityMapLifetime=PT5M").expect("parses");
         pretty_assertions::assert_eq!(params.entity_map, Some(true));
         assert!(params.entity_map_lifetime.is_some());
         assert!(serde_urlencoded::from_str::<GetEntityParams>("entityMapLifetime=5m").is_err());
+        assert!(serde_urlencoded::from_str::<GetEntityParams>("entityMap=TRUE").is_err());
         let bare: GetEntityParams = serde_urlencoded::from_str("").expect("parses");
         assert!(bare.entity_map.is_none() && bare.entity_map_lifetime.is_none());
     }

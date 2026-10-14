@@ -22,7 +22,6 @@
 pub mod attribute_deletion;
 mod attribute_selection;
 pub mod body;
-pub mod case_insensitive_bool;
 pub mod deferred_split_filters;
 pub mod discovery;
 pub mod empty;

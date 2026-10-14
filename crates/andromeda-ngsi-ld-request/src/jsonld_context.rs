@@ -1,11 +1,8 @@
 //! Query parameter types for JSON-LD context management endpoints.
 
-use crate::{
-    case_insensitive_bool::deserialize_option_bool_case_insensitive,
-    pagination::{
-        page_size::{PageSizeBounds, PageSizeCap},
-        parameters::PageParameters,
-    },
+use crate::pagination::{
+    page_size::{PageSizeBounds, PageSizeCap},
+    parameters::PageParameters,
 };
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 use serde::Deserialize;
@@ -32,7 +29,6 @@ pub struct ListParams {
     /// The kind of context to list (`kind`).
     pub kind: Option<ContextKind>,
     /// Whether the response uses the detailed representation (`details`).
-    #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
     pub details: Option<bool>,
 }
 
@@ -46,7 +42,6 @@ pub struct ListParams {
 #[serde(deny_unknown_fields)]
 pub struct ServeParams {
     /// Whether the response uses the detailed representation (`details`).
-    #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
     pub details: Option<bool>,
 }
 
@@ -55,7 +50,6 @@ pub struct ServeParams {
 #[serde(deny_unknown_fields)]
 pub struct DeleteParams {
     /// Whether the context is refetched rather than served from cache (`reload`).
-    #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
     pub reload: Option<bool>,
 }
 
@@ -67,8 +61,10 @@ mod tests {
 
     #[test]
     fn serve_reads_the_detail_level() {
-        let params: ServeParams = serde_urlencoded::from_str("details=TRUE").expect("valid parameters");
+        let params: ServeParams = serde_urlencoded::from_str("details=true").expect("valid parameters");
         pretty_assertions::assert_eq!(params.details, Some(true));
+        assert!(serde_urlencoded::from_str::<ServeParams>("details=TRUE").is_err());
+        assert!(serde_urlencoded::from_str::<DeleteParams>("reload=True").is_err());
     }
 
     #[test]

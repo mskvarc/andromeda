@@ -1,6 +1,5 @@
 //! The `local` parameter, for endpoints that accept nothing else.
 
-use crate::case_insensitive_bool::deserialize_option_bool_case_insensitive;
 use serde::Deserialize;
 
 /// Query parameters for endpoints that accept only `local`.
@@ -12,7 +11,6 @@ use serde::Deserialize;
 #[serde(deny_unknown_fields)]
 pub struct LocalOnlyParams {
     /// Whether the operation is confined to this broker.
-    #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
     pub local: Option<bool>,
 }
 
@@ -21,9 +19,9 @@ mod tests {
     use crate::local::LocalOnlyParams;
 
     #[test]
-    fn the_flag_parses_in_any_case_and_defaults_to_absent() {
+    fn the_flag_is_read_and_defaults_to_absent() {
         pretty_assertions::assert_eq!(serde_urlencoded::from_str::<LocalOnlyParams>("").expect("parses").local, None);
-        pretty_assertions::assert_eq!(serde_urlencoded::from_str::<LocalOnlyParams>("local=TRUE").expect("parses").local, Some(true));
+        pretty_assertions::assert_eq!(serde_urlencoded::from_str::<LocalOnlyParams>("local=true").expect("parses").local, Some(true));
         pretty_assertions::assert_eq!(serde_urlencoded::from_str::<LocalOnlyParams>("local=false").expect("parses").local, Some(false));
     }
 
@@ -31,5 +29,14 @@ mod tests {
     fn a_non_boolean_or_an_unknown_parameter_is_rejected() {
         assert!(serde_urlencoded::from_str::<LocalOnlyParams>("local=yes").is_err());
         assert!(serde_urlencoded::from_str::<LocalOnlyParams>("unknown=x").is_err());
+    }
+
+    /// Clause 4.9 binds `true` and `false` to the RFC 8259 literals, which are
+    /// lowercase.
+    #[test]
+    fn a_boolean_outside_lowercase_is_rejected() {
+        for query in ["local=TRUE", "local=True", "local=FALSE", "local=False"] {
+            assert!(serde_urlencoded::from_str::<LocalOnlyParams>(query).is_err(), "{query}");
+        }
     }
 }

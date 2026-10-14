@@ -1,6 +1,6 @@
 //! The parameters of the attribute-deletion endpoints.
 
-use crate::{case_insensitive_bool::deserialize_option_bool_case_insensitive, query::deserialization::deserialize_optional_dataset_selector};
+use crate::query::deserialization::deserialize_optional_dataset_selector;
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, type_selection::grammar::TypeExprRaw};
 use serde::Deserialize;
 
@@ -23,11 +23,10 @@ macro_rules! attribute_deletion_params {
             #[serde(default, deserialize_with = "deserialize_optional_dataset_selector")]
             pub dataset_id: Option<DatasetSelector>,
             /// Whether every instance of the attribute is deleted.
-            #[serde(rename = "deleteAll", default, deserialize_with = "deserialize_option_bool_case_insensitive")]
+            #[serde(rename = "deleteAll")]
             pub delete_all: Option<bool>,
             $($extra)*
             /// Whether the operation is confined to this broker (clause 6.3.18).
-            #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
             pub local: Option<bool>,
         }
     };
@@ -83,10 +82,11 @@ mod tests {
     }
 
     #[test]
-    fn both_parameters_are_read_and_the_flag_is_case_insensitive() {
-        let params: DeleteAttrParams = serde_urlencoded::from_str("datasetId=urn:ngsi-ld:Dataset:test&deleteAll=TRUE").expect("parses");
+    fn both_parameters_are_read() {
+        let params: DeleteAttrParams = serde_urlencoded::from_str("datasetId=urn:ngsi-ld:Dataset:test&deleteAll=true").expect("parses");
         pretty_assertions::assert_eq!(params.dataset_id.as_ref().map(ToString::to_string).as_deref(), Some("urn:ngsi-ld:Dataset:test"));
         pretty_assertions::assert_eq!(params.delete_all, Some(true));
+        assert!(serde_urlencoded::from_str::<DeleteAttrParams>("deleteAll=TRUE").is_err());
     }
 
     #[test]
