@@ -1,7 +1,8 @@
 //! The `ListProperty` attribute family (ETSI GS CIM 009 clause 5.2.36).
 
-use crate::attribute::{common_fields::CommonAttributeFields, property::UnitCodeRef, value::NgsiLdValue};
+use crate::attribute::{common_fields::CommonAttributeFields, value::NgsiLdValue};
 use andromeda_ngsi_ld_lexicon::coerced_term::CoercedTerm;
+use cefact_units::UnitCode;
 use serde::Serialize;
 use serde_with::skip_serializing_none;
 
@@ -14,7 +15,7 @@ pub struct ListProperty {
     pub value_list: Vec<NgsiLdValue>,
     /// Measurement unit code: clause 4.5.21.2 keeps the `unitCode` a
     /// `ListProperty` inherits from the Property of clause 4.5.2.2.
-    pub unit_code: Option<UnitCodeRef>,
+    pub unit_code: Option<UnitCode>,
     /// Optional JSON-LD datatype for `valueList`.
     pub value_type: Option<CoercedTerm>,
     /// Previous value list emitted in notifications when `showChanges` is active.
@@ -61,7 +62,7 @@ mod tests {
         let Attribute::ListProperty(lp) = &attr else {
             panic!("expected ListProperty");
         };
-        pretty_assertions::assert_eq!(lp.unit_code.map(|code| code.0.as_str().to_owned()).as_deref(), Some("MMT"));
+        pretty_assertions::assert_eq!(lp.unit_code.map(|code| code.as_str().to_owned()).as_deref(), Some("MMT"));
         assert!(lp.common.sub_attributes.is_empty(), "{lp:?}");
         pretty_assertions::assert_eq!(
             serde_json::to_value(&attr).expect("serializes"),
@@ -78,7 +79,7 @@ mod tests {
         let Attribute::GeoProperty(geo) = &attr else {
             panic!("expected GeoProperty");
         };
-        pretty_assertions::assert_eq!(geo.unit_code.map(|code| code.0.as_str().to_owned()).as_deref(), Some("MMT"));
+        pretty_assertions::assert_eq!(geo.unit_code.map(|code| code.as_str().to_owned()).as_deref(), Some("MMT"));
         assert!(geo.common.sub_attributes.is_empty(), "{geo:?}");
     }
 

@@ -38,7 +38,6 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-postgresql-query",
         "andromeda-postgresql-schema",
         "andromeda-postgresql-seaquery",
-        "andromeda-unit-catalog",
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-ngsi-ld-geometry",

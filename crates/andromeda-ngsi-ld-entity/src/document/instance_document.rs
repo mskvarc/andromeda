@@ -10,7 +10,6 @@ use crate::{
     document::{attribute_member::AttributeMember, slot::Slot, written_value::ValueSlot},
     proof_seals::ProofSeals,
     system_instant::SystemInstant,
-    unit_code::UnitCode,
 };
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -19,6 +18,7 @@ use andromeda_ngsi_ld_lexicon::{
     reference::NgsiLdReference,
     time_prop::TimeProp,
 };
+use cefact_units::UnitCode;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use typed_builder::TypedBuilder;

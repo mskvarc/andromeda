@@ -17,10 +17,15 @@ use andromeda_ngsi_ld_entity::{
     member_shape::MemberShape,
     refusal::EntityRefusal,
     system_instant::SystemInstant,
-    unit_code::UnitCode,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, default_instance::DEFAULT_INSTANCE_TOKEN, identifier::Identifier, reference::NgsiLdReference};
-use andromeda_unit_catalog::expanded_unit_code::{ExpandedUnitCodeError, UnitCodeRefusal};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    default_instance::DEFAULT_INSTANCE_TOKEN,
+    identifier::Identifier,
+    reference::NgsiLdReference,
+    unit_code_resolution::{UnitCodeRefusal, resolve_unit_code},
+};
+use cefact_units::UnitCode;
 
 /// The refusal of a member not shaped as its expanded form shapes it.
 #[must_use]
@@ -157,8 +162,7 @@ pub fn instance_id(items: &[ExpandedItem], attribute: &AttributeName) -> Result<
 /// # Errors
 ///
 /// Returns [`EntityRefusal::UnitCodeUnusable`] for a member that is not one
-/// common code the catalog registers, and [`EntityRefusal::UnitCatalog`] when
-/// the compiled-in catalog does not parse.
+/// UN/CEFACT common code.
 pub fn unit_code_slot(items: &[ExpandedItem], attribute: &AttributeName) -> Result<Slot<UnitCode>, EntityRefusal> {
     if is_sole_null(items) {
         return Ok(Slot::Remove);
@@ -168,10 +172,7 @@ pub fn unit_code_slot(items: &[ExpandedItem], attribute: &AttributeName) -> Resu
         source,
     };
     let code = single_text(items, attribute, MemberShape::UnitCode).map_err(|_| unusable(UnitCodeRefusal::Malformed))?;
-    UnitCode::resolve(code).map(Slot::Set).map_err(|error| match error {
-        ExpandedUnitCodeError::Refused(refusal) => unusable(refusal),
-        ExpandedUnitCodeError::Catalog(catalog) => EntityRefusal::UnitCatalog(catalog),
-    })
+    resolve_unit_code(code).map(Slot::Set).map_err(unusable)
 }
 
 /// A `valueType` (clause 4.5.2.2).

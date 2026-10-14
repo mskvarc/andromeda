@@ -9,10 +9,6 @@
 
 use andromeda_ngsi_ld_number::{JsonNumber, JsonNumberError};
 use andromeda_postgresql_codes::registry::UnknownCompactCode;
-use andromeda_unit_catalog::{
-    unit_code_id::UnitCodeId,
-    unit_code_registry::{UnitCodeSnapshotMalformed, UnitCodeUnknown},
-};
 use strum::{Display, IntoStaticStr};
 use thiserror::Error;
 
@@ -109,18 +105,6 @@ pub enum StoredAggregationError {
     /// uniform, which the `GROUP BY` on that unit rules out.
     #[error("a unitCode grouping key produced a non-uniform unit span")]
     NonUniformGroupUnit,
-    /// The compiled-in unit catalog snapshot did not parse.
-    #[error("the unit catalog is unavailable: {0}")]
-    UnitCatalog(#[source] UnitCodeSnapshotMalformed),
-    /// A unit identity a grouping key reports names no catalog registration.
-    #[error("unitCode grouping key {identity} names no catalog registration: {source}")]
-    GroupUnitCode {
-        /// The identity the group reported.
-        identity: UnitCodeId,
-        /// The catalog's rejection.
-        #[source]
-        source: UnitCodeUnknown,
-    },
 }
 
 #[cfg(test)]

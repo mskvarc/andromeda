@@ -118,7 +118,6 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-subscription-forwarding",
         "andromeda-telemetry",
         "andromeda-tenancy",
-        "andromeda-unit-catalog",
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-json-literal",

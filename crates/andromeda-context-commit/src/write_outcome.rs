@@ -68,8 +68,8 @@ mod tests {
     #[test]
     fn single_reports_a_refused_write_as_the_commits_refusal() {
         assert!(matches!(
-            single(vec![WriteOutcome::Refused(SubmissionRefusal::UnitCodeUnregistered)]),
-            Err(CommitError::Submission(SubmissionRefusal::UnitCodeUnregistered))
+            single(vec![WriteOutcome::Refused(SubmissionRefusal::RelationshipMissingObject)]),
+            Err(CommitError::Submission(SubmissionRefusal::RelationshipMissingObject))
         ));
     }
 

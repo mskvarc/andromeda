@@ -393,7 +393,7 @@ mod tests {
     #[test]
     fn a_refused_write_reports_its_refusal_as_a_validation_failure() {
         let id = "urn:ngsi-ld:A".parse().expect("URI");
-        let error = error_of(&id, WriteOutcome::Refused(SubmissionRefusal::UnitCodeUnregistered));
+        let error = error_of(&id, WriteOutcome::Refused(SubmissionRefusal::RelationshipMissingObject));
         assert!(error.as_ref().is_some_and(EntityError::is_validation), "{error:?}");
     }
 

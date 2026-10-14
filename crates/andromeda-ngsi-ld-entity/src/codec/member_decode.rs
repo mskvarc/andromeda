@@ -20,12 +20,16 @@ use crate::{
     scope_slot::{ScopeItem, scope_slot},
     scopes::Scopes,
     system_instant::SystemInstant,
-    unit_code::UnitCode,
     value_mode::Fragment,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReference};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    identifier::Identifier,
+    reference::NgsiLdReference,
+    unit_code_resolution::{UnitCodeRefusal, resolve_unit_code},
+};
 use andromeda_ngsi_ld_vocabulary::expanded::classes;
-use andromeda_unit_catalog::expanded_unit_code::{ExpandedUnitCodeError, UnitCodeRefusal};
+use cefact_units::UnitCode;
 
 /// The refusal of a member not shaped as its expanded form.
 pub(crate) fn malformed(attribute: Option<&AttributeName>, member: MemberShape) -> EntityRefusal {
@@ -120,8 +124,7 @@ pub(crate) fn system_instant(elements: Vec<Decoded>, attribute: &AttributeName, 
     }
 }
 
-/// `unitCode`: a registered UN/CEFACT common code (Table 5.2.5-1), or its
-/// deletion.
+/// `unitCode`: a UN/CEFACT common code (Table 5.2.5-1), or its deletion.
 pub(crate) fn unit_code(elements: Vec<Decoded>, attribute: &AttributeName) -> Result<Slot<UnitCode>, EntityRefusal> {
     let unusable = |source: UnitCodeRefusal| EntityRefusal::UnitCodeUnusable {
         attribute: attribute.clone(),
@@ -134,10 +137,7 @@ pub(crate) fn unit_code(elements: Vec<Decoded>, attribute: &AttributeName) -> Re
             let LiteralValue::String(code) = literal.value() else {
                 return Err(unusable(UnitCodeRefusal::Malformed));
             };
-            UnitCode::resolve(code).map(Slot::Set).map_err(|error| match error {
-                ExpandedUnitCodeError::Refused(source) => unusable(source),
-                ExpandedUnitCodeError::Catalog(source) => EntityRefusal::UnitCatalog(source),
-            })
+            resolve_unit_code(code).map(Slot::Set).map_err(unusable)
         }
         Decoded::Value(ExpandedValue::Literal(_) | ExpandedValue::Node(_) | ExpandedValue::Json(_) | ExpandedValue::List(_))
         | Decoded::TaggedNull(_)

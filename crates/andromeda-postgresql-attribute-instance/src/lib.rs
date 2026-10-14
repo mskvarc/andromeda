@@ -49,7 +49,6 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-postgresql-encoding",
         "andromeda-postgresql-name-dictionary",
         "andromeda-postgresql-query",
-        "andromeda-unit-catalog",
     ],
     allow_workspace_dev_dependencies: [],
     allow_production_dependencies: ["sqlx"],

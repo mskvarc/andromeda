@@ -16,8 +16,7 @@ use andromeda_ngsi_ld_entity::document::{
     slot::Slot,
     written_value::ValueSlot,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
-use andromeda_unit_catalog::expanded_unit_code::UnitCodeRefusal;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, unit_code_resolution::UnitCodeRefusal};
 
 /// Refuse a written Temporal Evolution document carrying an attribute instance
 /// whose family forbids the `unitCode` it carries.

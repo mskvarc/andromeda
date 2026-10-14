@@ -26,6 +26,7 @@ use andromeda_postgresql_attribute_instance::{
 };
 use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
+use cefact_units::UnitCode;
 use chrono::{TimeZone, Utc};
 use serde_json::{Value, json, value::to_raw_value};
 
@@ -130,7 +131,7 @@ fn row_of(value: StoredValue) -> CurrentAttributeRow {
             value,
             value_type_key: None,
             object_type_keys: Vec::new(),
-            unit_code_id: None,
+            unit_code: None,
             observed_at: None,
             expires_at: None,
             proof_seals: None,
@@ -157,7 +158,7 @@ fn full_row() -> CurrentAttributeRow {
     row.members.attribute_kind = AttributeKind::GeoProperty;
     row.members.value_type_key = Some(EntityTypeNameKey::from(3));
     row.members.object_type_keys = vec![EntityTypeNameKey::from(4), EntityTypeNameKey::from(5)];
-    row.members.unit_code_id = Some(1_i16.try_into().expect("a unit code identity"));
+    row.members.unit_code = Some(UnitCode::Kgm);
     row.members.observed_at = Some(instant);
     row.members.expires_at = Some(instant);
     row.members.proof_seals = Some(json(json!({"https://uri.etsi.org/ngsi-ld/entityIdSealed": [{"@value": "x"}]})));

@@ -7,7 +7,8 @@
 //! instance transitions of a notification event, the origin of an owed
 //! change, the operation set of a context-source registration. The second is the identities those rows are
 //! keyed and referenced by: the current-state entity key, the temporal entity
-//! key and the attribute stream key.
+//! key, the attribute stream key and the unit-code identity the `cefact-units`
+//! library assigns.
 //!
 //! The split instance identity is deliberately not here. Clause 4.5.7 makes an
 //! `instanceId` part of what a client is handed back, so it is a domain value
@@ -72,6 +73,8 @@ pub mod registry;
 pub mod scope_value_kind;
 /// The persisted lifecycle state of one snapshot.
 pub mod snapshot_status;
+/// The stored form of a `unitCode`: the `cefact-units` identity of its code.
+pub mod stored_unit_code;
 /// The narrow key a temporal attribute stream is referenced by.
 pub mod stream_key;
 /// The persisted family of one stored subscription.

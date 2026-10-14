@@ -12,7 +12,7 @@
 //! element's are NULL.
 
 use crate::{error::TemporalStoreError, stored_history_error::StoredHistoryError};
-use andromeda_ngsi_ld_entity::{date_time_text::DateTimeText, proof_seals::ProofSeals, unit_code::UnitCode};
+use andromeda_ngsi_ld_entity::{date_time_text::DateTimeText, proof_seals::ProofSeals};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, reference::NgsiLdReference};
 use andromeda_ngsi_ld_model::temporal::observation_metadata::{MetadataMembers, ObservationMetadata};
 use andromeda_postgresql_attribute_instance::{
@@ -23,7 +23,7 @@ use andromeda_postgresql_attribute_instance::{
     sub_attribute::SubAttributeElement,
 };
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
-use andromeda_unit_catalog::unit_code_id::UnitCodeId;
+use cefact_units::UnitCode;
 use chrono::{DateTime, Utc};
 use serde_json::value::to_raw_value;
 use thiserror::Error;
@@ -37,8 +37,8 @@ pub struct HistoryMembers {
     pub value_type_key: Option<EntityTypeNameKey>,
     /// `entity_type_names` keys of `objectType`, in written order.
     pub object_type_keys: Vec<EntityTypeNameKey>,
-    /// Catalog identity of `unitCode`.
-    pub unit_code_id: Option<UnitCodeId>,
+    /// `unitCode`.
+    pub unit_code: Option<UnitCode>,
     /// `expiresAt` (clause 4.22).
     pub expires_at: Option<DateTime<Utc>>,
     /// The `entityIdSealed` and `entityTypeSealed` members, as their codec
@@ -79,7 +79,7 @@ impl HistoryMembers {
     #[must_use]
     pub fn unit_alone(metadata: Option<&ObservationMetadata>) -> HistoryMembers {
         HistoryMembers {
-            unit_code_id: metadata.and_then(|metadata| metadata.members().unit_code).map(UnitCode::id),
+            unit_code: metadata.and_then(|metadata| metadata.members().unit_code),
             ..HistoryMembers::default()
         }
     }
@@ -99,7 +99,7 @@ impl HistoryMembers {
         Ok(HistoryMembers {
             value_type_key: members.value_type.as_ref().map(type_key).transpose()?,
             object_type_keys: members.object_types.iter().map(type_key).collect::<Result<_, _>>()?,
-            unit_code_id: members.unit_code.map(UnitCode::id),
+            unit_code: members.unit_code,
             expires_at: members.expires_at.as_ref().map(DateTimeText::instant),
             proof_seals: if members.proof_seals.is_empty() {
                 None
@@ -123,13 +123,12 @@ impl HistoryMembers {
     ///
     /// Returns [`TemporalStoreError::StoredHistory`] when a key has no name in
     /// `names`, the elements break an invariant of the stored layout, or the
-    /// seals do not read back, and [`TemporalStoreError::UnitCode`] when the
-    /// unit identity names no unit.
+    /// seals do not read back.
     pub fn metadata(self, attribute: &AttributeName, names: &KeyNames) -> Result<Option<ObservationMetadata>, TemporalStoreError> {
         let HistoryMembers {
             value_type_key,
             object_type_keys,
-            unit_code_id,
+            unit_code,
             expires_at,
             proof_seals,
             sub_attributes: elements,
@@ -148,7 +147,7 @@ impl HistoryMembers {
             .unwrap_or_default();
         Ok(ObservationMetadata::new(MetadataMembers {
             expires_at: expires_at.map(DateTimeText::from_instant),
-            unit_code: unit_code_id.map(UnitCode::from_id).transpose()?,
+            unit_code,
             value_type,
             object_types,
             proof_seals,
@@ -295,7 +294,7 @@ mod tests {
         );
         let (speed, written) = metadata(&ex("speed"), "Property", &members);
         let (stored, read) = round_trip(&speed, &written);
-        assert!(stored.value_type_key.is_some() && stored.unit_code_id.is_some() && stored.proof_seals.is_some() && stored.expires_at.is_some());
+        assert!(stored.value_type_key.is_some() && stored.unit_code.is_some() && stored.proof_seals.is_some() && stored.expires_at.is_some());
         pretty_assertions::assert_eq!(stored.sub_attributes.len(), 16, "eight families, each with its method");
         pretty_assertions::assert_eq!(rendered(read.as_ref()), rendered(Some(&written)));
 
@@ -356,7 +355,7 @@ mod tests {
             &json!({ngsi("hasValue"): [{"@value": 1}], ngsi("unitCode"): [{"@value": "KMH"}], ngsi("hasValueType"): [{"@id": ex("Speed")}]}),
         );
         let stored = HistoryMembers::unit_alone(Some(&written));
-        assert!(stored.unit_code_id.is_some());
+        assert!(stored.unit_code.is_some());
         pretty_assertions::assert_eq!(stored.value_type_key, None);
     }
 }

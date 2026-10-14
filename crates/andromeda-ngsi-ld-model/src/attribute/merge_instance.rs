@@ -24,7 +24,6 @@ use crate::{
         nested_null::NestedMergeMember,
         one_or_many::OneOrMany,
         patched::{Patched, is_ngsi_ld_null, patched_instant_member, patched_member},
-        property::UnitCodeRef,
         value::NgsiLdValue,
     },
     node_refusal::{NodeReadError, NodeRefusal, RefusedMember, RefusedNode},
@@ -33,6 +32,7 @@ use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, coerced_term::CoercedTerm, identifier::Identifier};
 use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeMembers};
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
+use cefact_units::UnitCode;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::{Serialize, Serializer, ser::SerializeMap};
@@ -68,7 +68,7 @@ pub struct MergeInstance {
     /// The family's value member, when written.
     pub value: Option<Patched<MergeValue>>,
     /// `unitCode`, a Property's own.
-    pub unit_code: Option<Patched<UnitCodeRef>>,
+    pub unit_code: Option<Patched<UnitCode>>,
     /// `valueType`, the property families' own.
     pub value_type: Option<Patched<CoercedTerm>>,
     /// `objectType`, the relationship families' own.

@@ -181,7 +181,6 @@ pub(crate) fn history(error: TemporalStoreError) -> AttemptFailure {
         | TemporalStoreError::StoredTime(_)
         | TemporalStoreError::ScopeHasNoAttributeRow
         | TemporalStoreError::TimestampPrecision(_)
-        | TemporalStoreError::UnitCode(_)
         | TemporalStoreError::MixedAggregationGroup(_)
         | TemporalStoreError::DuplicateInstanceClaim(_)
         | TemporalStoreError::WriteRecordMismatch { .. }

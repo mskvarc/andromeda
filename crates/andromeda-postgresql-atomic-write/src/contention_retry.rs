@@ -125,7 +125,7 @@ mod tests {
         let outcome = rerun_while_contended(attempt_contended_for(0, &runs, || {
             Err(AttemptFailure::Refused(Box::new(RefusedWrite {
                 entity_id: "urn:ngsi-ld:A".parse().expect("a valid entity URI"),
-                refusal: SubmissionRefusal::UnitCodeUnregistered,
+                refusal: SubmissionRefusal::RelationshipMissingObject,
             })))
         }))
         .await;

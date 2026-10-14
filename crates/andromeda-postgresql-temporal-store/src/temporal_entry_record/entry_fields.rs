@@ -17,9 +17,13 @@ use andromeda_postgresql_attribute_instance::{
     stored_json::StoredJson,
     sub_attribute::{EwkbGeometry, SubAttributeRecord},
 };
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, temporal_entry_kind::TemporalEntryKind, value_kind::ValueKind};
+use andromeda_postgresql_codes::{
+    attribute_kind::AttributeKind,
+    stored_unit_code::stored_unit_code,
+    temporal_entry_kind::TemporalEntryKind,
+    value_kind::ValueKind,
+};
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
-use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::value::RawValue;
@@ -155,7 +159,7 @@ impl MemberColumns {
         let HistoryMembers {
             value_type_key,
             object_type_keys,
-            unit_code_id,
+            unit_code,
             expires_at,
             proof_seals,
             sub_attributes,
@@ -164,7 +168,7 @@ impl MemberColumns {
         Ok(MemberColumns {
             value_type_key: value_type_key.map(EntityTypeNameKey::get),
             object_type_keys: (!object_type_keys.is_empty()).then(|| object_type_keys.into_iter().map(EntityTypeNameKey::get).collect()),
-            unit_code_id: unit_code_id.map(UnitCodeId::get),
+            unit_code_id: unit_code.map(stored_unit_code),
             expires_at,
             proof_seals: proof_seals.map(StoredJson::into_json),
             sub_attributes: (!sub_attributes.is_empty()).then_some(sub_attributes),

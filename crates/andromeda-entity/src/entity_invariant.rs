@@ -12,7 +12,6 @@ use andromeda_ngsi_ld_lexicon::{
     reference::NgsiLdReferenceError,
 };
 use andromeda_ngsi_ld_model::node_refusal::RefusedNode;
-use andromeda_unit_catalog::unit_code_registry::UnitCodeSnapshotMalformed;
 use std::num::TryFromIntError;
 use thiserror::Error;
 
@@ -53,10 +52,6 @@ pub enum EntityInvariant {
     /// A JSON literal merged into a stored one could not be written back.
     #[error("a merged JSON literal could not be written: {0}")]
     LiteralMerge(#[source] JsonLiteralError),
-    /// The compiled-in UN/CEFACT unit catalog did not parse, so no `unitCode`
-    /// can be checked.
-    #[error("the unit catalog is unreadable: {0}")]
-    UnitCatalog(#[source] UnitCodeSnapshotMalformed),
     /// A durable side-effect job's attempt count left the range a retry counts in.
     #[error("a durable side-effect attempt count is out of range: {0}")]
     AttemptCountOutOfRange(#[source] TryFromIntError),

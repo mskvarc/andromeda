@@ -205,10 +205,10 @@ mod tests {
         },
         scopes::Scopes,
         system_instant::SystemInstant,
-        unit_code::UnitCode,
     };
     use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use cefact_units::UnitCode;
     use indexmap::IndexMap;
     use serde_json::json;
     use std::sync::Arc;
@@ -245,7 +245,7 @@ mod tests {
         let mut instance = Instance::builder()
             .value(FamilyValue::Property {
                 values: vec![number(value)],
-                unit_code: Some(UnitCode::resolve("CEL").expect("a registered code")),
+                unit_code: Some(UnitCode::Cel),
                 value_type: None,
             })
             .build();

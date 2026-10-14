@@ -50,7 +50,6 @@ andromeda-subscription.workspace = true
 andromeda-subscription-forwarding.workspace = true
 andromeda-telemetry.workspace = true
 andromeda-tenancy.workspace = true
-andromeda-unit-catalog.workspace = true
 async-trait = "0.1.92"
 bigdecimal = "0.4.11"
 chrono = { version = "0.4.45", features = ["serde"] }
@@ -82,5 +81,6 @@ uuid = { version = "1.27.0", features = ["v4"] }
 andromeda-architecture-checks.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-test-fixtures.workspace = true
+cefact-units = "1.0.0"
 pretty_assertions = "1.4.1"
 tokio = { version = "1.53.2", features = ["full"] }

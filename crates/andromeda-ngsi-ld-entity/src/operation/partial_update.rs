@@ -98,10 +98,10 @@ mod tests {
             },
         },
         refusal::EntityRefusal,
-        unit_code::UnitCode,
         value_mode::FragmentMember,
     };
     use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier_length::IDENTIFIER_BYTE_LIMIT, uri::Uri};
+    use cefact_units::UnitCode;
     use indexmap::IndexMap;
     use serde_json::json;
 
@@ -123,7 +123,7 @@ mod tests {
         Instance::builder()
             .value(FamilyValue::Property {
                 values: vec![number(4)],
-                unit_code: Some(UnitCode::resolve("C62").expect("a registered code")),
+                unit_code: Some(UnitCode::C62),
                 value_type: None,
             })
             .observed_at(Some(date_time("2020-09-09T16:40:00Z")))
@@ -148,7 +148,7 @@ mod tests {
     fn a_member_the_fragment_names_is_replaced_and_the_others_survive() {
         let instance = patched(&property_document(number(100), None));
         pretty_assertions::assert_eq!(integer_of(&instance), Some(100));
-        pretty_assertions::assert_eq!(instance.value().unit_code(), UnitCode::resolve("C62").ok());
+        pretty_assertions::assert_eq!(instance.value().unit_code(), Some(UnitCode::C62));
         assert!(instance.sub_attributes().contains(WEATHER));
     }
 
@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn a_member_absent_from_the_target_is_added() {
         let mut target = entity(vec![(SPEED, instances(vec![(None, property(number(4)))]))]);
-        let unit = UnitCode::resolve("CEL").expect("a registered code");
+        let unit = UnitCode::Cel;
         target
             .partial_update_attribute(&name(SPEED), &InstanceDocument::builder().unit_code(Some(Slot::Set(unit))).build())
             .expect("the patch applies");
@@ -195,7 +195,7 @@ mod tests {
         );
         let instance = patched(&InstanceDocument::builder().sub_attributes(sub_attributes).build());
         assert!(!instance.sub_attributes().contains(WEATHER));
-        pretty_assertions::assert_eq!(instance.value().unit_code(), UnitCode::resolve("C62").ok());
+        pretty_assertions::assert_eq!(instance.value().unit_code(), Some(UnitCode::C62));
     }
 
     /// Clause 5.5.8: a sub-attribute member "is only replaced if the

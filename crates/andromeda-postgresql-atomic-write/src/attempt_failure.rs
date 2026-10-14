@@ -77,9 +77,9 @@ mod tests {
 
     #[test]
     fn a_refusal_raised_for_one_write_is_attributed_to_that_write() {
-        let failure = AttemptFailure::of_write(CommitError::Submission(SubmissionRefusal::UnitCodeUnregistered), entity_id());
+        let failure = AttemptFailure::of_write(CommitError::Submission(SubmissionRefusal::RelationshipMissingObject), entity_id());
         assert!(
-            matches!(&failure, AttemptFailure::Refused(refused) if refused.entity_id == entity_id() && matches!(refused.refusal, SubmissionRefusal::UnitCodeUnregistered)),
+            matches!(&failure, AttemptFailure::Refused(refused) if refused.entity_id == entity_id() && matches!(refused.refusal, SubmissionRefusal::RelationshipMissingObject)),
             "{failure:?}"
         );
     }

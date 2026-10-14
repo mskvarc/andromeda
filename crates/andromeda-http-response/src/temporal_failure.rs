@@ -138,10 +138,10 @@ mod tests {
     /// policy conversion is what carries the refusal out of the commit port.
     #[test]
     fn a_commit_that_refused_the_submission_reports_bad_request_data() {
-        let error = TemporalError::from(CommitError::Submission(SubmissionRefusal::UnitCodeUnregistered));
+        let error = TemporalError::from(CommitError::Submission(SubmissionRefusal::RelationshipMissingObject));
         let report = classify_temporal_error(&error);
         pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::BadRequestData);
-        pretty_assertions::assert_eq!(report.detail(), "'unitCode' is not a UN/CEFACT common code the unit catalog registers");
+        pretty_assertions::assert_eq!(report.detail(), "Relationship missing object");
     }
 
     #[test]

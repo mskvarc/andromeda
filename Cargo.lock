@@ -109,9 +109,9 @@ dependencies = [
  "andromeda-test-fixtures",
  "andromeda-test-harness",
  "andromeda-test-mocks",
- "andromeda-unit-catalog",
  "axum",
  "bytes",
+ "cefact-units",
  "chrono",
  "clap",
  "clap-themes",
@@ -397,7 +397,6 @@ dependencies = [
  "andromeda-subscription",
  "andromeda-telemetry",
  "andromeda-tenancy",
- "andromeda-unit-catalog",
  "async-lock",
  "async-trait",
  "chrono",
@@ -1256,7 +1255,7 @@ dependencies = [
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-test-allocator",
  "andromeda-test-fixtures",
- "andromeda-unit-catalog",
+ "cefact-units",
  "chrono",
  "compact_str",
  "derive_more",
@@ -1287,7 +1286,7 @@ dependencies = [
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-test-allocator",
- "andromeda-unit-catalog",
+ "cefact-units",
  "chrono",
  "compact_str",
  "indexmap 2.14.2",
@@ -1328,6 +1327,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-vocabulary",
+ "cefact-units",
  "chrono",
  "compact_str",
  "derive_more",
@@ -1612,7 +1612,6 @@ dependencies = [
  "andromeda-postgresql-temporal-store",
  "andromeda-telemetry",
  "andromeda-temporal",
- "andromeda-unit-catalog",
  "async-trait",
  "chrono",
  "derive_more",
@@ -1640,8 +1639,8 @@ dependencies = [
  "andromeda-postgresql-encoding",
  "andromeda-postgresql-name-dictionary",
  "andromeda-postgresql-query",
- "andromeda-unit-catalog",
  "bigdecimal",
+ "cefact-units",
  "chrono",
  "indexmap 2.14.2",
  "langtag",
@@ -1668,6 +1667,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-lexicon",
+ "cefact-units",
  "derive_more",
  "pretty_assertions",
  "strum",
@@ -1752,9 +1752,9 @@ dependencies = [
  "andromeda-telemetry",
  "andromeda-tenancy",
  "andromeda-test-fixtures",
- "andromeda-unit-catalog",
  "async-trait",
  "bigdecimal",
+ "cefact-units",
  "chrono",
  "derive_more",
  "futures",
@@ -1875,7 +1875,6 @@ dependencies = [
  "andromeda-postgresql-encoding",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
- "andromeda-unit-catalog",
  "chrono",
  "derive_more",
  "iri-rs",
@@ -1918,7 +1917,7 @@ dependencies = [
  "andromeda-postgresql-query",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
- "andromeda-unit-catalog",
+ "cefact-units",
  "chrono",
  "iri-rs",
  "pretty_assertions",
@@ -1957,9 +1956,9 @@ dependencies = [
  "andromeda-postgresql-temporal-query",
  "andromeda-telemetry",
  "andromeda-temporal",
- "andromeda-unit-catalog",
  "async-trait",
  "bigdecimal",
+ "cefact-units",
  "chrono",
  "derive_more",
  "iri-rs",
@@ -2227,7 +2226,6 @@ dependencies = [
  "andromeda-persistence-failure",
  "andromeda-telemetry",
  "andromeda-test-fixtures",
- "andromeda-unit-catalog",
  "async-lock",
  "async-trait",
  "chrono",
@@ -2373,18 +2371,6 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "tempfile",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "andromeda-unit-catalog"
-version = "0.1.0"
-dependencies = [
- "andromeda-architecture-checks",
- "cefact-units",
- "derive_more",
- "hex",
- "pretty_assertions",
  "thiserror 2.0.21",
 ]
 
@@ -2579,16 +2565,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f28d99ec8bfea296261ca1af174f24225171fea9664ba9003cbebee704810528"
 dependencies = [
  "num-traits",
-]
-
-[[package]]
-name = "atoi_simd"
-version = "0.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3cdb3708a128e559a30fb830e8a77a5022ee6902806925c216658652b452a44"
-dependencies = [
- "debug_unsafe",
- "rustversion",
 ]
 
 [[package]]
@@ -2953,23 +2929,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "calamine"
-version = "0.36.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fa68281b1a76b54a62156474adb06bb380a67e07dd60656e3217152b42183f3"
-dependencies = [
- "atoi_simd",
- "byteorder",
- "codepage",
- "encoding_rs",
- "fast-float2",
- "log",
- "quick-xml",
- "serde",
- "zip",
-]
-
-[[package]]
 name = "castaway"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3001,26 +2960,11 @@ dependencies = [
 
 [[package]]
 name = "cefact-units"
-version = "0.1.2"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15a3304698c644f545c1115f1b1a7acc0ac25aa2a067a8964ba497d086eb7933"
+checksum = "c5243da4715825d6d5f1416caa674269d28faa780dc0cd37192ccc379f977afe"
 dependencies = [
- "cefact-units-macros",
  "serde",
-]
-
-[[package]]
-name = "cefact-units-macros"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e5c28c2be1c5bafddd87e265ca8168adc545d8cd0d807cbf46fca25d3b0a30e"
-dependencies = [
- "calamine",
- "heck 0.5.0",
- "proc-macro2",
- "quote",
- "syn 3.0.6",
- "unicode-normalization",
 ]
 
 [[package]]
@@ -3151,15 +3095,6 @@ name = "cmov"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
-
-[[package]]
-name = "codepage"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdff162541cd8b79de82e2edcc7eff3a8c2a6dc3d75152636028f96d93de3b26"
-dependencies = [
- "encoding_rs",
-]
 
 [[package]]
 name = "colorchoice"
@@ -3533,12 +3468,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 
 [[package]]
-name = "debug_unsafe"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7eed2c4702fa172d1ce21078faa7c5203e69f5394d48cc436d25928394a867a2"
-
-[[package]]
 name = "decoded-char"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3846,12 +3775,6 @@ dependencies = [
  "left-right",
  "smallvec",
 ]
-
-[[package]]
-name = "fast-float2"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6e8948ce679d00a02a94739ea185595dca7118ed04feb991127e443bd3d761f"
 
 [[package]]
 name = "faster-hex"
@@ -6212,16 +6135,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
 
 [[package]]
-name = "quick-xml"
-version = "0.41.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
-dependencies = [
- "encoding_rs",
- "memchr",
-]
-
-[[package]]
 name = "quinn"
 version = "0.11.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8254,12 +8167,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "typed-path"
-version = "0.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e28f89b80c87b8fb0cf04ab448d5dd0dd0ade2f8891bae878de66a75a28600e"
-
-[[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9023,20 +8930,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zip"
-version = "8.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d04a6b5381502aa6087c94c669499eb1602eb9c5e8198e534de571f7154809b"
-dependencies = [
- "crc32fast",
- "flate2",
- "indexmap 2.14.2",
- "memchr",
- "typed-path",
- "zopfli",
-]
-
-[[package]]
 name = "zlib-rs"
 version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9047,18 +8940,6 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
-
-[[package]]
-name = "zopfli"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f05cd8797d63865425ff89b5c4a48804f35ba0ce8d125800027ad6017d2b5249"
-dependencies = [
- "bumpalo",
- "crc32fast",
- "log",
- "simd-adler32",
-]
 
 [[package]]
 name = "zstd"

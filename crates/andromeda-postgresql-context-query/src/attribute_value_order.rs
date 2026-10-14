@@ -285,7 +285,7 @@ impl Holder {
     }
 
     /// A member of the holder the path ends on: an instant compares as one,
-    /// and a `unitCode` (held as the catalog identity of the code) has no
+    /// and a `unitCode` (held as the `cefact-units` identity of the code) has no
     /// value to order by.
     fn member(&self, field: MemberField) -> OrderedValue {
         let date_time = match field {

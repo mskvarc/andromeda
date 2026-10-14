@@ -7,7 +7,6 @@ use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Ident
 use andromeda_ngsi_ld_model::temporal::GroupKeyValue;
 use andromeda_ngsi_ld_query::temporal::grouping::{AggregationGrouping, bucket_term::BucketKind, entity_member::EntityMember, group_key::GroupKey};
 use andromeda_postgresql_temporal_query::{aggregation_group::ObservedUnits, aggregation_grouping::group_key_column};
-use andromeda_unit_catalog::{unit_code_id::UnitCodeId, unit_code_registry::registry};
 use chrono::{DateTime, Utc};
 use sqlx::postgres::PgRow;
 
@@ -17,7 +16,7 @@ use sqlx::postgres::PgRow;
 ///
 /// Returns [`TemporalStoreError::Database`] when a projected group-key column is
 /// present but unreadable, and [`TemporalStoreError::StoredAggregation`] when a
-/// promoted `unitCode` identity is not in the unit registry.
+/// promoted `unitCode` group's unit is not uniform.
 pub(crate) fn decode_group_keys(
     row: &PgRow,
     grouping: &AggregationGrouping,
@@ -65,18 +64,9 @@ fn optional_value(value: Option<String>) -> GroupKeyValue {
 fn unit_group_value(units: ObservedUnits) -> Result<GroupKeyValue, TemporalStoreError> {
     match units {
         ObservedUnits::Uniform(None) => Ok(GroupKeyValue::Absent),
-        ObservedUnits::Uniform(Some(id)) => Ok(GroupKeyValue::Value(unit_code_text(id)?)),
+        ObservedUnits::Uniform(Some(code)) => Ok(GroupKeyValue::Value(code.as_str().to_owned())),
         // A promoted unit facet is uniform per group by construction; a
         // non-uniform span here is a corrupt result rather than a value.
         ObservedUnits::Conflicting { .. } | ObservedUnits::UnitAndUnitless { .. } => Err(StoredAggregationError::NonUniformGroupUnit.into()),
     }
-}
-
-/// The UN/CEFACT common code one unit identity renders to.
-fn unit_code_text(identity: UnitCodeId) -> Result<String, StoredAggregationError> {
-    let registry = registry().map_err(StoredAggregationError::UnitCatalog)?;
-    let code = registry
-        .unit_code_of(identity)
-        .map_err(|source| StoredAggregationError::GroupUnitCode { identity, source })?;
-    Ok(code.as_str().to_owned())
 }

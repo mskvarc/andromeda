@@ -4,25 +4,8 @@ use crate::attribute::{common_fields::CommonAttributeFields, value::NgsiLdValue}
 use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::coerced_term::CoercedTerm;
 use cefact_units::UnitCode;
-use derive_more::{Deref, From, Into};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_with::skip_serializing_none;
-
-/// Newtype wrapping [`UnitCode`] to provide an [`AsRef<str>`] implementation
-/// (orphan rules forbid implementing the foreign trait for the foreign type
-/// directly). Used as a field value where the JSON-LD derive needs `&str` access.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, From, Into, Deref)]
-#[serde(transparent)]
-pub struct UnitCodeRef(pub UnitCode);
-
-// `#[as_ref(str)]` needs the field type to implement `AsRef<str>`, and
-// `cefact_units::UnitCode` exposes `as_str` without it, so the forwarding
-// cannot be derived.
-impl AsRef<str> for UnitCodeRef {
-    fn as_ref(&self) -> &str {
-        self.0.as_str()
-    }
-}
 
 /// NGSI-LD Property representation (ETSI GS CIM 009 clause 5.2.5).
 #[skip_serializing_none]
@@ -32,7 +15,7 @@ pub struct Property {
     /// Property value.
     pub value: NgsiLdValue,
     /// Measurement unit code.
-    pub unit_code: Option<UnitCodeRef>,
+    pub unit_code: Option<UnitCode>,
     /// Optional JSON-LD datatype for `value`, as written (Table 5.2.5-1).
     pub value_type: Option<CoercedTerm>,
     /// Previous value emitted in notifications when `showChanges` is active.
@@ -53,6 +36,7 @@ mod tests {
     use crate::attribute::{instance::Attribute, value::NgsiLdValue};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_lexicon::coerced_term::CoercedTerm;
+    use cefact_units::UnitCode;
 
     /// Clause 4.6.3 admits several spellings of one `DateTime`, so the document
     /// representation carries the one the client wrote rather than re-rendering
@@ -98,6 +82,16 @@ mod tests {
             serde_json::to_value(&property).expect("serialises")["valueType"],
             serde_json::json!("my-datatype")
         );
+    }
+
+    #[test]
+    fn a_property_unit_code_serializes_as_its_common_code() {
+        let attr: Attribute = serde_json::from_value(serde_json::json!({"type": "Property", "value": 1, "unitCode": "KGM"})).expect("property");
+        let Attribute::Property(property) = attr else {
+            panic!("expected Property");
+        };
+        pretty_assertions::assert_eq!(property.unit_code, Some(UnitCode::Kgm));
+        pretty_assertions::assert_eq!(serde_json::to_value(&property).expect("serialises")["unitCode"], serde_json::json!("KGM"));
     }
 
     #[test]

@@ -20,13 +20,13 @@ use andromeda_ngsi_ld_entity::{
     list_object::ListObject,
     literal::{Literal, LiteralValue},
     non_empty::NonEmpty,
-    unit_code::UnitCode,
     value_mode::Fragment,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, reference::NgsiLdReference, rfc3339::sub_second, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::structured_value::StructuredValue;
 use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
+use cefact_units::UnitCode;
 
 /// The members only some families define, as stored.
 pub(crate) struct Envelope {

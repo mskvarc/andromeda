@@ -74,11 +74,11 @@ mod tests {
         operation::speed_entity::{SPEED, dataset_ids, entity, fragment, instances, name, number, property, property_deletion, property_document, values},
         reads::member_name::MemberName,
         scopes::Scopes,
-        unit_code::UnitCode,
     };
     use andromeda_ngsi_ld_geometry::{form::GeometryForm, position::Position};
     use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
     use andromeda_ngsi_ld_vocabulary::expanded::properties;
+    use cefact_units::UnitCode;
     use indexmap::IndexMap;
     use std::sync::Arc;
 
@@ -118,7 +118,7 @@ mod tests {
         let existing = Instance::builder()
             .value(FamilyValue::Property {
                 values: vec![number(25)],
-                unit_code: Some(UnitCode::resolve("CEL").expect("a registered code")),
+                unit_code: Some(UnitCode::Cel),
                 value_type: None,
             })
             .build();

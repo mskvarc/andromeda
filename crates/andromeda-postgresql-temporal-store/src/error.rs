@@ -12,7 +12,6 @@ use crate::{
     temporal_store_invariant::TemporalStoreInvariant,
 };
 use andromeda_context_commit::{submission_refusal::SubmissionRefusal, write_id::WriteId, write_ordinal::WriteOrdinalOutOfRange};
-use andromeda_ngsi_ld_entity::unit_code::StoredUnitCodeError;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_date_time::NgsiLdDateTimeError, ngsi_ld_time::NgsiLdTimeError};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_collation::provisioned_collations::CollationProvisioningError;
@@ -94,9 +93,6 @@ pub enum TemporalStoreError {
     /// An observation's metadata has no stored members.
     #[error("temporal store history members: {0}")]
     HistoryMembers(#[from] HistoryMembersError),
-    /// A stored unit identity names no catalog code.
-    #[error("temporal store unit code: {0}")]
-    UnitCode(#[from] StoredUnitCodeError),
     /// The requested aggregate would have spanned inputs that do not share a meaning.
     #[error("temporal store aggregation: {0}")]
     MixedAggregationGroup(#[from] MixedAggregationGroup),
@@ -150,8 +146,7 @@ impl TemporalStoreError {
             TemporalStoreError::StoredHistory(_)
             | TemporalStoreError::StoredCatalog(_)
             | TemporalStoreError::StoredAggregation(_)
-            | TemporalStoreError::StoredTime(_)
-            | TemporalStoreError::UnitCode(StoredUnitCodeError::Unknown(_)) => Some(PersistenceFailure::Undecodable),
+            | TemporalStoreError::StoredTime(_) => Some(PersistenceFailure::Undecodable),
             TemporalStoreError::Render(_) | TemporalStoreError::StatementBuild(_) => Some(PersistenceFailure::StatementUnbuildable),
             TemporalStoreError::Encoding(_)
             | TemporalStoreError::WriteOrdinal(_)
@@ -170,8 +165,9 @@ impl TemporalStoreError {
             | TemporalStoreError::WriteRecordMismatch { .. }
             | TemporalStoreError::RetentionHorizon(_)
             | TemporalStoreError::ScopeHasNoAttributeRow
-            | TemporalStoreError::HistoryMembers(HistoryMembersError::Flatten(_) | HistoryMembersError::UnresolvedType(_))
-            | TemporalStoreError::UnitCode(StoredUnitCodeError::Catalog(_)) => Some(PersistenceFailure::ContractBroken),
+            | TemporalStoreError::HistoryMembers(HistoryMembersError::Flatten(_) | HistoryMembersError::UnresolvedType(_)) => {
+                Some(PersistenceFailure::ContractBroken)
+            }
             TemporalStoreError::ColumnstoreSettingsDrift { .. } => Some(PersistenceFailure::SchemaMismatch),
             TemporalStoreError::NotFound(_)
             | TemporalStoreError::Refused(_)
@@ -220,7 +216,6 @@ impl From<TemporalStoreError> for TemporalError {
             | TemporalStoreError::Collation(CollationProvisioningError::Statement { .. })
             | TemporalStoreError::NameLookup(_)
             | TemporalStoreError::Invariant(_)
-            | TemporalStoreError::UnitCode(_)
             | TemporalStoreError::WriteRecordMismatch { .. }
             | TemporalStoreError::ColumnstoreSettingsDrift { .. }
             | TemporalStoreError::WriteOrdinal(_)

@@ -1,6 +1,6 @@
 //! Direct reads of the current-attribute projection for one Entity.
 
-use andromeda_unit_catalog::{unit_code_id::UnitCodeId, unit_code_registry::registry};
+use cefact_units::UnitCode;
 use sqlx::{FromRow, PgPool, Row};
 
 /// The clause 4.5.5 grain of one projection row, with its typed value rendered
@@ -153,11 +153,9 @@ pub async fn unit_code_of(pool: &PgPool, entity_id: &str, local_name: &str, data
     .await
     .expect("the instance of the attribute must be projected");
     stored.map(|identity| {
-        let id = UnitCodeId::try_from(identity).expect("a stored unit identity is positive");
-        let entry = registry()
-            .expect("the compiled-in unit catalog parses")
-            .entry(id)
-            .expect("the stored unit identity decodes");
-        entry.token().as_str().to_owned()
+        UnitCode::from_smallint(identity)
+            .expect("the stored unit identity names a listed code")
+            .as_str()
+            .to_owned()
     })
 }

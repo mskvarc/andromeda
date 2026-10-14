@@ -101,7 +101,7 @@ fn a_typeless_object_with_value_reads_as_a_property_or_geo_property() {
     let Attribute::Property(property) = single(&json!({"value": 21, "unitCode": "CEL"})) else {
         panic!("a Property");
     };
-    assert_eq!(property.unit_code.map(|code| code.0.as_str().to_owned()).as_deref(), Some("CEL"));
+    assert_eq!(property.unit_code.map(|code| code.as_str().to_owned()).as_deref(), Some("CEL"));
     let geo = single(&json!({"value": {"type": "Point", "coordinates": [1, 2]}, "accuracy": 3}));
     let Attribute::GeoProperty(geo) = geo else {
         panic!("a GeoProperty: {geo:?}");
@@ -310,7 +310,7 @@ fn a_malformed_family_value_or_envelope_member_is_refused_where_it_stands() {
             json!({"type": "Property", "value": 1, "previousValue": {"type": "Point", "coordinates": [1]}}),
             "/previousValue",
         ),
-        (json!({"type": "Property", "value": 1, "unitCode": "XYZ"}), "/unitCode"),
+        (json!({"type": "Property", "value": 1, "unitCode": "QQQ"}), "/unitCode"),
         (json!({"type": "Property", "value": 1, "valueType": "bad ref"}), "/valueType"),
         (json!({"type": "Property", "value": 1, "observedAt": "yesterday"}), "/observedAt"),
         (json!({"type": "Property", "value": 1, "expiresAt": "2030-01-01"}), "/expiresAt"),

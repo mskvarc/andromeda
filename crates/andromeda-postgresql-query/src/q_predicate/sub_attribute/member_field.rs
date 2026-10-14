@@ -12,18 +12,18 @@ use crate::{
     operator::{compare, does_not_hold},
     q_predicate::{history_window::HistoryAliases, instance_row::InstanceRow, projection_probe::projection_column},
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, unit_code_resolution::resolve_unit_code};
 use andromeda_ngsi_ld_query::filter::{
     predicate::{CmpOp, Predicate, SetMembership},
     scalar::{CompareValue, Scalar},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{CREATED_AT, EXPIRES_AT, MODIFIED_AT, OBSERVED_AT, UNIT_CODE};
+use andromeda_postgresql_codes::stored_unit_code::stored_unit_code;
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, SubAttribute},
     temporal::AttributeHistory,
 };
 use andromeda_postgresql_seaquery::literal::false_literal;
-use andromeda_unit_catalog::expanded_unit_code::unit_code_identity;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
 
 /// A member of an instance a path can end on.
@@ -31,7 +31,7 @@ use sea_query::{Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
 pub enum MemberField {
     /// Clause 4.5.2 `observedAt`.
     ObservedAt,
-    /// Clause 4.5.2 `unitCode`, held as the catalog identity of the code.
+    /// Clause 4.5.2 `unitCode`, held as the `cefact-units` identity of the code.
     UnitCode,
     /// Clause 4.8 `createdAt`.
     CreatedAt,
@@ -121,8 +121,8 @@ impl MemberField {
             (MemberField::ObservedAt | MemberField::CreatedAt | MemberField::ModifiedAt | MemberField::ExpiresAt, Scalar::DateTime(instant)) => {
                 compare(field.clone(), op, SeaExpr::val(*instant))
             }
-            (MemberField::UnitCode, Scalar::Str(code)) => match (op, unit_code_identity(code)) {
-                (CmpOp::Equal | CmpOp::Unequal, Ok(identity)) => compare(field.clone(), op, SeaExpr::val(identity.get())),
+            (MemberField::UnitCode, Scalar::Str(code)) => match (op, resolve_unit_code(code)) {
+                (CmpOp::Equal | CmpOp::Unequal, Ok(unit_code)) => compare(field.clone(), op, SeaExpr::val(stored_unit_code(unit_code))),
                 (CmpOp::Equal | CmpOp::Unequal | CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq, Ok(_) | Err(_)) => false_literal(),
             },
             (
@@ -139,8 +139,10 @@ mod tests {
         instance_row::{ElementLevel, InstanceRow},
         sub_attribute::member_field::MemberField,
     };
+    use andromeda_ngsi_ld_lexicon::unit_code_resolution::resolve_unit_code;
     use andromeda_ngsi_ld_query::filter::{expression::Expr, parser::parse};
     use andromeda_ngsi_ld_vocabulary::expanded::properties::OBSERVED_AT;
+    use andromeda_postgresql_codes::stored_unit_code::stored_unit_code;
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
 
@@ -166,17 +168,30 @@ mod tests {
         assert!(sql.contains(r#""l1"."observed_at" > '2024-01-01 00:00:00.000000 +00:00'"#), "{sql}");
     }
 
-    #[test]
-    fn a_unit_code_compares_the_catalog_identity_of_the_code() {
-        let Expr::Pred(pred) = parse("\"https://example.com/t\".\"https://uri.etsi.org/ngsi-ld/unitCode\"==\"CEL\"").expect("parse q") else {
+    /// The SQL of `q` `"https://example.com/t"."unitCode"==<code>` over a
+    /// current row.
+    fn unit_code_condition(code: &str) -> String {
+        let Expr::Pred(pred) = parse(&format!("\"https://example.com/t\".\"https://uri.etsi.org/ngsi-ld/unitCode\"==\"{code}\"")).expect("parse q") else {
             panic!("a single predicate");
         };
         let field = MemberField::UnitCode.of_instance(InstanceRow::Current);
-        let sql = Query::select()
+        Query::select()
             .cond_where(MemberField::UnitCode.condition(&field, &pred))
             .to_owned()
-            .to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#""ca"."unit_code_id" = "#), "{sql}");
-        assert!(!sql.contains("FALSE"), "{sql}");
+            .to_string(PostgresQueryBuilder)
+    }
+
+    #[test]
+    fn a_unit_code_compares_the_stored_identity_of_the_code() {
+        let sql = unit_code_condition("CEL");
+        assert!(sql.contains(r#""ca"."unit_code_id" = 367"#), "{sql}");
+    }
+
+    /// Every listed code is a valid `unitCode`, whatever its status.
+    #[test]
+    fn a_deleted_unit_code_is_a_valid_q_operand() {
+        let deleted = stored_unit_code(resolve_unit_code("KTM").expect("a listed code"));
+        let sql = unit_code_condition("KTM");
+        assert!(sql.contains(&format!(r#""ca"."unit_code_id" = {deleted}"#)), "{sql}");
     }
 }

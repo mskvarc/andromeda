@@ -169,12 +169,10 @@ impl From<PersistenceFailure> for EntityError {
 
 /// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
 /// A written document the model refuses is the client's `BadRequestData`
-/// (clause 5.5.4), except an unreadable compiled-in unit catalog, which is the
-/// build's fault and no request can mend.
+/// (clause 5.5.4).
 impl From<EntityRefusal> for EntityError {
     fn from(refusal: EntityRefusal) -> EntityError {
         match refusal {
-            EntityRefusal::UnitCatalog(malformed) => EntityError::Internal(EntityInvariant::UnitCatalog(malformed)),
             refused @ (EntityRefusal::Syntax { .. }
             | EntityRefusal::Malformed { .. }
             | EntityRefusal::MissingId
@@ -359,10 +357,10 @@ mod tests {
 
     #[test]
     fn a_refused_commit_is_a_validation_failure_carrying_the_typed_refusal() {
-        let error = EntityError::from(CommitError::Submission(SubmissionRefusal::UnitCodeUnregistered));
+        let error = EntityError::from(CommitError::Submission(SubmissionRefusal::RelationshipMissingObject));
         assert!(matches!(
             error,
-            EntityError::Validation(EntityValidationReason::CommitRefused(SubmissionRefusal::UnitCodeUnregistered))
+            EntityError::Validation(EntityValidationReason::CommitRefused(SubmissionRefusal::RelationshipMissingObject))
         ));
     }
 

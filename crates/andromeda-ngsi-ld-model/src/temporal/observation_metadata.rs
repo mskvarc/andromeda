@@ -23,9 +23,9 @@ use andromeda_ngsi_ld_entity::{
     },
     proof_seals::ProofSeals,
     refusal::EntityRefusal,
-    unit_code::UnitCode,
 };
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
+use cefact_units::UnitCode;
 
 /// The metadata of one observed instance: never empty, and never holding the
 /// value, the identity or the time axes the row keeps in columns.

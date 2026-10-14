@@ -80,7 +80,7 @@ mod tests {
     #[test]
     fn a_refused_write_is_final() {
         pretty_assertions::assert_eq!(
-            after_attempt(&WriteOutcome::Refused(SubmissionRefusal::UnitCodeUnregistered)),
+            after_attempt(&WriteOutcome::Refused(SubmissionRefusal::RelationshipMissingObject)),
             AfterAttempt::Settled
         );
     }

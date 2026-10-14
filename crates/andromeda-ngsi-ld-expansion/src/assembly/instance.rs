@@ -26,10 +26,10 @@ use andromeda_ngsi_ld_entity::{
     proof_seals::ProofSeals,
     refusal::EntityRefusal,
     system_instant::SystemInstant,
-    unit_code::UnitCode,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, reference::NgsiLdReference};
 use andromeda_ngsi_ld_vocabulary::{compact_to_expanded, expanded::properties};
+use cefact_units::UnitCode;
 use indexmap::IndexMap;
 
 /// Read one expanded instance of `attribute`.

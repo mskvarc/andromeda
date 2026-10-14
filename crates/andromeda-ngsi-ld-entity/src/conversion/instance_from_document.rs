@@ -24,7 +24,6 @@ use crate::{
     member_role::MemberRole,
     member_shape::MemberShape,
     refusal::EntityRefusal,
-    unit_code::UnitCode,
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{
@@ -35,6 +34,7 @@ use andromeda_ngsi_ld_lexicon::{
     unit_code_admission::{UnitCodeAdmission, unit_code_admission},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
+use cefact_units::UnitCode;
 use indexmap::IndexMap;
 
 impl Instance {

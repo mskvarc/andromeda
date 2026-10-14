@@ -312,9 +312,9 @@ mod tests {
             speed_entity::{name, number},
         },
         refusal::EntityRefusal,
-        unit_code::UnitCode,
     };
     use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+    use cefact_units::UnitCode;
 
     fn relationship() -> FamilyValue {
         FamilyValue::Relationship {
@@ -327,9 +327,7 @@ mod tests {
     #[test]
     fn a_unit_code_on_a_relationship_is_refused() {
         let mut value = relationship();
-        let written = InstanceDocument::builder()
-            .unit_code(Some(Slot::Set(UnitCode::resolve("KMH").expect("a registered code"))))
-            .build();
+        let written = InstanceDocument::builder().unit_code(Some(Slot::Set(UnitCode::Kmh))).build();
         let refused = apply_companion_members(&name("https://example.org/r"), &mut value, &written).expect_err("a unitless family");
         assert!(
             matches!(refused, MutationError::Refused(ref refusal) if matches!(**refusal, EntityRefusal::UnitCodeForbidden { .. })),

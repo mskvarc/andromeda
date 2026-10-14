@@ -37,11 +37,12 @@ pub(crate) fn decoded_optional<'n, T: DeserializeOwned, N: CompactNode<'n>>(node
 #[cfg(test)]
 mod tests {
     use crate::{
-        attribute::{object_list::RelationshipObjectList, property::UnitCodeRef},
+        attribute::object_list::RelationshipObjectList,
         compact_member::{decoded, decoded_optional},
     };
     use andromeda_json_literal::piece::JsonPiece;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use cefact_units::UnitCode;
     use serde_json::{Value, json, value::RawValue};
 
     /// The text of `value` as raw JSON, the way a request hands it over.
@@ -49,14 +50,12 @@ mod tests {
         RawValue::from_string(value.to_string()).expect("the fixture is JSON")
     }
 
-    /// A unit code decodes only from a borrowed string, which a string member
-    /// is handed over as.
     #[test]
     fn a_unit_code_member_decodes_from_its_string() {
         let member = written(&json!("CEL"));
         let invalid = written(&json!("not a code"));
-        assert!(decoded::<UnitCodeRef, _>(JsonPiece::new(&member)).expect("a string is readable").is_ok());
-        assert!(decoded::<UnitCodeRef, _>(JsonPiece::new(&invalid)).expect("a string is readable").is_err());
+        assert!(decoded::<UnitCode, _>(JsonPiece::new(&member)).expect("a string is readable").is_ok());
+        assert!(decoded::<UnitCode, _>(JsonPiece::new(&invalid)).expect("a string is readable").is_err());
     }
 
     #[test]

@@ -186,7 +186,7 @@ fn a_header_with_a_malformed_spec_line_or_no_closing_rule_is_refused() {
 
 #[test]
 fn citations_of_code_documents_records_and_migrations_are_detected() {
-    assert!(cites_forbidden_reference("see `crates/andromeda-unit-catalog`"));
+    assert!(cites_forbidden_reference("see `crates/andromeda-ngsi-ld-lexicon`"));
     assert!(cites_forbidden_reference("`queue::claimable_at`"));
     assert!(cites_forbidden_reference("the live-only 0029"));
     assert!(cites_forbidden_reference("added by migration 0008"));

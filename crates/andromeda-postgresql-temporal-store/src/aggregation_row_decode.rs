@@ -15,7 +15,7 @@
 
 use crate::{
     error::TemporalStoreError,
-    history_row_decode::{decode_attribute_name, decode_dataset_id, decode_unit_code_id},
+    history_row_decode::{decode_attribute_name, decode_dataset_id, decode_unit_code},
     stored_aggregation_error::{AggregationColumn, StoredAggregationError},
     stored_history_error::UnitCodeColumn,
 };
@@ -255,14 +255,14 @@ where
     Ok(Code::try_from(stored).map_err(|source| StoredAggregationError::Code { column, source })?)
 }
 
-/// Read the unit identities one aggregation group's rows carried.
+/// Read the unit codes one aggregation group's rows carried.
 ///
 /// `MIN` and `MAX` skip nulls, so the two bounds alone cannot tell a group whose
 /// rows all carried a unit from one that also held unannotated rows; the null
 /// test projected beside them is what separates the two.
 fn decode_observed_units(row: &PgRow) -> Result<ObservedUnits, TemporalStoreError> {
-    let lowest = decode_unit_code_id(row, UnitCodeColumn::UnitCodeIdLowest)?;
-    let highest = decode_unit_code_id(row, UnitCodeColumn::UnitCodeIdHighest)?;
+    let lowest = decode_unit_code(row, UnitCodeColumn::UnitCodeIdLowest)?;
+    let highest = decode_unit_code(row, UnitCodeColumn::UnitCodeIdHighest)?;
     let any_unitless: Option<bool> = row.try_get(<&'static str>::from(AggregationColumn::AnyUnitless))?;
     let any_unitless = any_unitless.ok_or(StoredAggregationError::Absent {
         column: AggregationColumn::AnyUnitless,

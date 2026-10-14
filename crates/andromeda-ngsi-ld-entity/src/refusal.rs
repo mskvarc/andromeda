@@ -19,8 +19,8 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
     identifier::{Identifier, IdentifierParseError},
     reference::NgsiLdReferenceError,
+    unit_code_resolution::UnitCodeRefusal,
 };
-use andromeda_unit_catalog::{expanded_unit_code::UnitCodeRefusal, unit_code_registry::UnitCodeSnapshotMalformed};
 use iri_rs::Iri;
 use thiserror::Error;
 
@@ -205,8 +205,8 @@ pub enum EntityRefusal {
         /// The offending attribute.
         attribute: AttributeName,
     },
-    /// A `unitCode` names no UN/CEFACT common code the catalog registers, or
-    /// is not one plain string (Table 5.2.5-1, clause 4.5.2.2).
+    /// A `unitCode` names no UN/CEFACT common code, or is not one plain
+    /// string (Table 5.2.5-1, clause 4.5.2.2).
     #[error("'{}' carries an unusable 'unitCode': {source}", compact_term(.attribute))]
     UnitCodeUnusable {
         /// The offending attribute.
@@ -215,10 +215,6 @@ pub enum EntityRefusal {
         #[source]
         source: UnitCodeRefusal,
     },
-    /// The compiled-in unit catalog does not parse; the build's fault, not the
-    /// client's.
-    #[error(transparent)]
-    UnitCatalog(UnitCodeSnapshotMalformed),
     /// Two instances of one attribute share a `datasetId` (clause 4.5.5).
     #[error("attribute '{attribute}' repeats the instance with datasetId '{dataset_id}'")]
     RepeatedInstance {

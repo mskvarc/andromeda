@@ -63,7 +63,6 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-postgresql-encoding",
         "andromeda-postgresql-schema",
         "andromeda-postgresql-seaquery",
-        "andromeda-unit-catalog",
     ],
     allow_workspace_dev_dependencies: [
     ],

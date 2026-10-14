@@ -22,11 +22,10 @@ use andromeda_postgresql_attribute_instance::{
     stored_json::StoredJson,
     sub_attribute::SubAttributeRecord,
 };
-use andromeda_postgresql_codes::attribute_kind_code::stored_attribute_kind;
+use andromeda_postgresql_codes::{attribute_kind_code::stored_attribute_kind, stored_unit_code::stored_unit_code};
 use andromeda_postgresql_encoding::{ewkb::EwkbError, ewkb_binding::geometry_bytes};
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use andromeda_temporal::{observed_instance::ObservedInstance, temporal_not_found_reason::TemporalNotFoundReason};
-use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use chrono::{DateTime, Utc};
 use sqlx::{AssertSqlSafe, postgres::PgRow, types::Json};
 
@@ -112,7 +111,7 @@ impl TemporalRepository {
         let HistoryMembers {
             value_type_key,
             object_type_keys,
-            unit_code_id,
+            unit_code,
             expires_at,
             proof_seals,
             sub_attributes,
@@ -145,7 +144,7 @@ impl TemporalRepository {
             .bind(state.value.uri().map(Uri::as_str))
             .bind(state.observed_at)
             .bind(value_type_key.map(EntityTypeNameKey::get))
-            .bind(unit_code_id.map(UnitCodeId::get))
+            .bind(unit_code.map(stored_unit_code))
             .bind(stored_attribute_kind(state.attribute_type).code())
             .bind(state.value.geometry_members().map(Json))
             .bind((!object_type_keys.is_empty()).then_some(object_type_keys))
@@ -269,7 +268,7 @@ mod tests {
     }
 
     /// Clause 5.6.15 replaces the whole instance: its sub-attribute is bound
-    /// as a typed element and its unit as its catalog identity, and no member
+    /// as a typed element and its unit as its stored identity, and no member
     /// travels as JSON.
     #[test]
     fn a_replacement_instance_binds_its_typed_metadata() {
@@ -284,7 +283,7 @@ mod tests {
         let accuracy: AttributeName = "https://example.org/accuracy".parse().expect("a valid attribute name");
         let keys = NameKeys::new(ResolvedNames::from_pairs([(accuracy, AttributeNameKey::from(7))]), ResolvedNames::default());
         let members = HistoryMembers::keyed(update.metadata.expect("the replacement carries metadata"), &keys).expect("the metadata keys");
-        assert!(members.unit_code_id.is_some());
+        assert!(members.unit_code.is_some());
         let keyed: Vec<(i32, AttributeNameKey)> = members
             .sub_attributes
             .iter()

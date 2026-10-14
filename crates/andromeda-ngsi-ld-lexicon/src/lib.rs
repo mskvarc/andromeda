@@ -49,6 +49,7 @@ pub mod time_prop;
 pub mod time_rel;
 pub mod time_value;
 pub mod unit_code_admission;
+pub mod unit_code_resolution;
 pub mod uri;
 
 #[cfg(test)]

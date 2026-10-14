@@ -139,7 +139,7 @@ mod tests {
             WriteOutcome::AlreadyExists,
             WriteOutcome::NotFound,
             WriteOutcome::Superseded,
-            WriteOutcome::Refused(SubmissionRefusal::UnitCodeUnregistered),
+            WriteOutcome::Refused(SubmissionRefusal::RelationshipMissingObject),
         ] {
             assert!(!consequences_land(&outcome));
         }

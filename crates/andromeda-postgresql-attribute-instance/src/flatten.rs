@@ -28,7 +28,6 @@ use andromeda_ngsi_ld_entity::{
     list_object::ListObject,
     literal::{Literal, LiteralValue},
     system_instant::SystemInstant,
-    unit_code::UnitCode,
 };
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -131,7 +130,7 @@ pub fn members(name: &AttributeName, dataset_id: Option<&Identifier>, instance: 
         value: stored_value(name, family, keys)?,
         value_type_key: family.value_type().map(type_key).transpose()?,
         object_type_keys: family.object_types().iter().map(type_key).collect::<Result<_, _>>()?,
-        unit_code_id: family.unit_code().map(UnitCode::id),
+        unit_code: family.unit_code(),
         observed_at: instance.observed_at().map(DateTimeText::instant),
         expires_at: instance.expires_at().map(DateTimeText::instant),
         proof_seals: if instance.proof_seals().is_empty() {

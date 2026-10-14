@@ -16,7 +16,7 @@
 use crate::recorded_shape::RecordedShape;
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName};
 use andromeda_postgresql_codes::attribute_kind::AttributeKind;
-use andromeda_unit_catalog::unit_code_id::UnitCodeId;
+use cefact_units::UnitCode;
 use thiserror::Error;
 
 /// The lowest and highest code one aggregation group's rows carried in a
@@ -39,7 +39,7 @@ impl<Code: Copy + Eq> CodeSpan<Code> {
     }
 }
 
-/// The unit identities one aggregation group's rows carried (clause 4.5.2 `unitCode`).
+/// The unit codes one aggregation group's rows carried (clause 4.5.2 `unitCode`).
 ///
 /// A unit and its absence are distinct: an unannotated value is not a value in
 /// the annotated unit, so a group holding both is as undefined as one holding
@@ -47,18 +47,18 @@ impl<Code: Copy + Eq> CodeSpan<Code> {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ObservedUnits {
     /// Every row carried the same unit code, or every row carried none.
-    Uniform(Option<UnitCodeId>),
+    Uniform(Option<UnitCode>),
     /// Two rows carried different unit codes.
     Conflicting {
         /// The lower of the two contradicting codes.
-        first: UnitCodeId,
+        first: UnitCode,
         /// The higher of the two contradicting codes.
-        second: UnitCodeId,
+        second: UnitCode,
     },
     /// Some rows carried a unit code and others carried none at all.
     UnitAndUnitless {
         /// The unit the annotated rows carried.
-        present: UnitCodeId,
+        present: UnitCode,
     },
 }
 
@@ -67,7 +67,7 @@ pub enum ObservedUnits {
 pub struct AggregationGroupSpan {
     /// Expanded name of the aggregated attribute.
     pub attribute_name: AttributeName,
-    /// The unit identities the group's rows carried.
+    /// The unit codes the group's rows carried.
     pub units: ObservedUnits,
     /// The attribute families the group's rows were written as (clause 5.2.4).
     pub families: CodeSpan<AttributeKind>,
@@ -111,9 +111,9 @@ pub enum MixedAggregationGroup {
         /// Expanded name of the aggregated attribute.
         attribute_name: AttributeName,
         /// The lower of the two contradicting codes.
-        first: UnitCodeId,
+        first: UnitCode,
         /// The higher of the two contradicting codes.
-        second: UnitCodeId,
+        second: UnitCode,
     },
     /// Values with a unit and values without one were recorded inside one aggregation group.
     #[error("attribute '{attribute_name}' aggregates over values carrying unit code {present} and values carrying no unit at all")]
@@ -121,7 +121,7 @@ pub enum MixedAggregationGroup {
         /// Expanded name of the aggregated attribute.
         attribute_name: AttributeName,
         /// The unit the annotated values carried.
-        present: UnitCodeId,
+        present: UnitCode,
     },
     /// One aggregation group's rows were written as two different attribute families.
     #[error("attribute '{attribute_name}' aggregates over instances written as {} and as {}, which are different attribute families", .first.label(), .second.label())]
@@ -246,16 +246,12 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName};
     use andromeda_postgresql_codes::attribute_kind::AttributeKind;
-    use andromeda_unit_catalog::unit_code_id::UnitCodeId;
+    use cefact_units::UnitCode;
 
     const WEIGHT: &str = "https://uri.etsi.org/ngsi-ld/default-context/weight";
 
     fn name(raw: &str) -> AttributeName {
         raw.parse::<AttributeName>().expect("valid attribute name")
-    }
-
-    fn unit(id: i16) -> UnitCodeId {
-        UnitCodeId::try_from(id).expect("a registered unit identity")
     }
 
     /// A group whose rows agreed about everything, for tests that vary one facet.
@@ -276,7 +272,7 @@ mod tests {
 
     #[test]
     fn a_group_recorded_in_one_unit_is_accepted_unchanged() {
-        let groups = [uniform_group(WEIGHT, ObservedUnits::Uniform(Some(unit(367))))];
+        let groups = [uniform_group(WEIGHT, ObservedUnits::Uniform(Some(UnitCode::Cel)))];
         pretty_assertions::assert_eq!(
             ensure_uniform_aggregation_groups(&groups, &[AggrMethod::Avg], PromotedGroupFacets::default()),
             Ok(())
@@ -300,14 +296,14 @@ mod tests {
         let groups = [uniform_group(
             WEIGHT,
             ObservedUnits::Conflicting {
-                first: unit(1121),
-                second: unit(1407),
+                first: UnitCode::Kgm,
+                second: UnitCode::Mtr,
             },
         )];
         let expected = MixedAggregationGroup::ConflictingUnits {
             attribute_name: name(WEIGHT),
-            first: unit(1121),
-            second: unit(1407),
+            first: UnitCode::Kgm,
+            second: UnitCode::Mtr,
         };
         pretty_assertions::assert_eq!(
             ensure_uniform_aggregation_groups(&groups, &[AggrMethod::Avg], PromotedGroupFacets::default()),
@@ -317,10 +313,10 @@ mod tests {
 
     #[test]
     fn a_group_mixing_annotated_and_unannotated_values_is_refused() {
-        let groups = [uniform_group(WEIGHT, ObservedUnits::UnitAndUnitless { present: unit(1121) })];
+        let groups = [uniform_group(WEIGHT, ObservedUnits::UnitAndUnitless { present: UnitCode::Kgm })];
         let expected = MixedAggregationGroup::UnitAndUnitless {
             attribute_name: name(WEIGHT),
-            present: unit(1121),
+            present: UnitCode::Kgm,
         };
         pretty_assertions::assert_eq!(
             ensure_uniform_aggregation_groups(&groups, &[AggrMethod::Sum], PromotedGroupFacets::default()),
@@ -378,8 +374,8 @@ mod tests {
         let mut group = uniform_group(
             WEIGHT,
             ObservedUnits::Conflicting {
-                first: unit(1121),
-                second: unit(1407),
+                first: UnitCode::Kgm,
+                second: UnitCode::Mtr,
             },
         );
         group.families = CodeSpan {
@@ -411,8 +407,8 @@ mod tests {
         let groups = [uniform_group(
             WEIGHT,
             ObservedUnits::Conflicting {
-                first: unit(1121),
-                second: unit(1407),
+                first: UnitCode::Kgm,
+                second: UnitCode::Mtr,
             },
         )];
         assert!(ensure_uniform_aggregation_groups(&groups, &[AggrMethod::TotalCount, AggrMethod::Avg], PromotedGroupFacets::default()).is_err());
@@ -421,8 +417,11 @@ mod tests {
     #[test]
     fn two_attributes_may_each_hold_their_own_unit() {
         let groups = [
-            uniform_group(WEIGHT, ObservedUnits::Uniform(Some(unit(1121)))),
-            uniform_group("https://uri.etsi.org/ngsi-ld/default-context/length", ObservedUnits::Uniform(Some(unit(1407)))),
+            uniform_group(WEIGHT, ObservedUnits::Uniform(Some(UnitCode::Kgm))),
+            uniform_group(
+                "https://uri.etsi.org/ngsi-ld/default-context/length",
+                ObservedUnits::Uniform(Some(UnitCode::Mtr)),
+            ),
         ];
         pretty_assertions::assert_eq!(
             ensure_uniform_aggregation_groups(&groups, &[AggrMethod::Max], PromotedGroupFacets::default()),
@@ -455,8 +454,8 @@ mod tests {
         let groups = [uniform_group(
             WEIGHT,
             ObservedUnits::Conflicting {
-                first: unit(1121),
-                second: unit(1407),
+                first: UnitCode::Kgm,
+                second: UnitCode::Mtr,
             },
         )];
         let promoted = PromotedGroupFacets { units: true, families: false };

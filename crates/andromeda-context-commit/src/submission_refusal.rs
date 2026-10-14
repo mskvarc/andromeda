@@ -21,12 +21,6 @@ pub enum SubmissionRefusal {
     /// An Entity carried no type, and the store that refused it names no row.
     #[error("an entity write carried no type, but at least one is required")]
     UntypedEntityUnidentified,
-    /// A `unitCode` member was not one plain string (clause 4.5.2.2).
-    #[error("'unitCode' shall be a single string holding a UN/CEFACT common code, not a reified attribute or a repeated member")]
-    UnitCodeMalformed,
-    /// A `unitCode` names no code the closed UN/CEFACT list holds (clause 4.5.2).
-    #[error("'unitCode' is not a UN/CEFACT common code the unit catalog registers")]
-    UnitCodeUnregistered,
     /// An `observedAt` value was not a clause 4.6.3 `DateTime`.
     #[error("invalid observedAt: {0}")]
     ObservedAt(#[source] NgsiLdDateTimeError),
@@ -80,14 +74,6 @@ mod tests {
         assert_eq!(
             SubmissionRefusal::UntypedEntity(entity).to_string(),
             "entity urn:ngsi-ld:Building:1 carries no type, but at least one is required"
-        );
-    }
-
-    #[test]
-    fn an_unregistered_unit_code_does_not_echo_the_code() {
-        assert_eq!(
-            SubmissionRefusal::UnitCodeUnregistered.to_string(),
-            "'unitCode' is not a UN/CEFACT common code the unit catalog registers"
         );
     }
 }

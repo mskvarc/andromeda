@@ -109,12 +109,12 @@ mod tests {
         },
         refusal::EntityRefusal,
         scopes::Scopes,
-        unit_code::UnitCode,
         value_mode::{Fragment, FragmentMember, FragmentText},
     };
     use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, scope::path::ScopePath};
     use andromeda_ngsi_ld_vocabulary::expanded::properties;
+    use cefact_units::UnitCode;
     use chrono::{DateTime, Utc};
     use indexmap::IndexMap;
     use langtag::LangTagBuf;
@@ -527,7 +527,7 @@ mod tests {
     #[test]
     fn deep_merging_a_matching_dataset_id_merges_the_instance_members() {
         let mut target = entity(vec![(SPEED, instances(vec![(Some("urn:ngsi-ld:Dataset:A"), property(number(10)))]))]);
-        let unit = UnitCode::resolve("KMH").expect("a registered code");
+        let unit = UnitCode::Kmh;
         let patch = InstanceDocument::builder()
             .dataset_id(Some(dataset("urn:ngsi-ld:Dataset:A")))
             .value(ValueSlot::Set(WrittenValue::Value(vec![number(20)])))
@@ -547,7 +547,7 @@ mod tests {
     fn deep_merging_a_changed_attribute_type_replaces_the_whole_instance() {
         let mut existing = property(number(10));
         if let FamilyValue::Property { unit_code, .. } = existing.value_mut() {
-            *unit_code = Some(UnitCode::resolve("KMH").expect("a registered code"));
+            *unit_code = Some(UnitCode::Kmh);
         }
         let mut target = entity(vec![(SPEED, instances(vec![(None, existing)]))]);
         let vehicle = "urn:ngsi-ld:Vehicle:2".parse().expect("a valid URI");

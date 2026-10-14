@@ -7,7 +7,7 @@
 //! back no longer carries `"observedAt": "urn:ngsi-ld:null"`; a merge that
 //! removes one sub-attribute leaves no valueless instance behind; a merge that
 //! removes only `unitCode` is not refused 400, because the deletion instruction
-//! never reaches the unit catalog as if it were a code; and a fragment whose
+//! is never resolved as if it were a common code; and a fragment whose
 //! `datasetId` names the instance to act on deletes that instance, so a partial
 //! update targeting a named instance does not answer 404.
 //!
@@ -241,7 +241,7 @@ async fn regression_null_sentinel_deletion_partial_update_removes_one_sub_attrib
 
 /// Clause 5.5.12 applies the same deletion rule to Merge Entity. Removing only
 /// `unitCode` is not refused, since the deletion instruction is no UN/CEFACT
-/// common code to check against the unit catalog; removing a reified
+/// common code to resolve; removing a reified
 /// sub-attribute removes it whole rather than stripping its `object` and leaving
 /// the Relationship behind.
 #[tokio::test]

@@ -60,7 +60,6 @@ pub mod scopes;
 pub mod syntax_category;
 pub mod system_instant;
 pub mod system_time;
-pub mod unit_code;
 pub mod value_mode;
 
 #[cfg(test)]
@@ -73,7 +72,6 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-vocabulary",
-        "andromeda-unit-catalog",
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-test-allocator",

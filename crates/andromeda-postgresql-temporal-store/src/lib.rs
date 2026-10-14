@@ -120,7 +120,6 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-postgresql-temporal-query",
         "andromeda-telemetry",
         "andromeda-temporal",
-        "andromeda-unit-catalog",
     ],
     allow_workspace_dev_dependencies: [
     ],

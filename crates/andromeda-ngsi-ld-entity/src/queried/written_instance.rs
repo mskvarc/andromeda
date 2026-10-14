@@ -16,11 +16,11 @@ use crate::{
     },
     expanded_value::ValueNode,
     queried::family_values::{FamilyValues, language_strings},
-    unit_code::UnitCode,
     value_mode::Fragment,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, reference::NgsiLdReference};
 use andromeda_ngsi_ld_query::queried_entity::{attribute_reading::QueriedInstance, instance_metadata::InstanceMetadata, value_item::ValueItem};
+use cefact_units::UnitCode;
 use std::borrow::Cow;
 
 impl<'a> QueriedInstance<'a> for &'a InstanceDocument {

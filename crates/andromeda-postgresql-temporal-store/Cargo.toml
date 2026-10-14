@@ -33,9 +33,9 @@ andromeda-postgresql-seaquery.workspace = true
 andromeda-postgresql-temporal-query.workspace = true
 andromeda-telemetry.workspace = true
 andromeda-temporal.workspace = true
-andromeda-unit-catalog.workspace = true
 async-trait = "0.1.92"
 bigdecimal = "0.4.11"
+cefact-units = "1.0.0"
 chrono = { version = "0.4.45", features = ["serde"] }
 derive_more = { version = "2.1.1", features = ["as_ref", "display", "from"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }

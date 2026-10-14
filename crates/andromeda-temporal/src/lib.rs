@@ -95,7 +95,6 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-persistence-failure",
         "andromeda-telemetry",
-        "andromeda-unit-catalog",
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-test-fixtures",

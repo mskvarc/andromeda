@@ -32,7 +32,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_test_harness::environment::TestEnvironment;
-use andromeda_unit_catalog::{unit_code_registry::registry, unit_code_token::UnitCodeToken};
+use cefact_units::UnitCode;
 use pretty_assertions::assert_eq;
 use serde_json::{Map, json};
 use sqlx::PgPool;
@@ -216,17 +216,13 @@ async fn current_projection_writes_landed_after_a_refusal_hold_exactly_what_they
     let rows = rows_for_attribute(pool, &kept, "temperature").await;
     assert_eq!(rows.len(), 1, "one projection row, not one per attempt: {rows:?}");
     assert_eq!(rows[0].value_text.as_deref(), Some("21.5"));
-    let celsius = UnitCodeToken::try_from(CELSIUS).expect("CEL is a well-formed common code");
-    let celsius = registry()
-        .expect("the compiled-in unit catalog parses")
-        .id_of_token(celsius)
-        .expect("CEL holds an identity");
+    let celsius = UnitCode::from_code(CELSIUS).expect("CEL is a common code").id();
     let unit_rows: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM current_attributes AS c JOIN entities AS e ON e.entity_key = c.entity_key \
          WHERE e.id = $1 AND c.unit_code_id = $2",
     )
     .bind(&kept)
-    .bind(celsius.get())
+    .bind(celsius.to_smallint())
     .fetch_one(pool)
     .await
     .expect("the projected unit must be readable");

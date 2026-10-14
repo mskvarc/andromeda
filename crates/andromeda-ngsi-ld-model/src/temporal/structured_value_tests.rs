@@ -2,15 +2,10 @@
 //! shapes rows already hold.
 
 use crate::temporal::{observation_metadata::ObservationMetadata, structured_value::StructuredValue, structured_value_codec::StoredValueError};
-use andromeda_ngsi_ld_entity::{
-    document::instance_document::InstanceDocument,
-    expanded_value::ExpandedValue,
-    literal::LiteralValue,
-    refusal::EntityRefusal,
-    unit_code::UnitCode,
-};
+use andromeda_ngsi_ld_entity::{document::instance_document::InstanceDocument, expanded_value::ExpandedValue, literal::LiteralValue, refusal::EntityRefusal};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
 use andromeda_ngsi_ld_number::JsonNumber;
+use cefact_units::UnitCode;
 use serde_json::{Value, json};
 
 fn attribute() -> AttributeName {
@@ -185,7 +180,7 @@ fn the_unit_code_is_held_apart_from_the_sub_attributes() {
     let metadata = read_metadata(&stored.to_string()).expect("readable").expect("metadata");
     pretty_assertions::assert_eq!(written(&metadata), stored);
     let mut members = metadata.into_members();
-    pretty_assertions::assert_eq!(members.unit_code.take(), Some(UnitCode::resolve("KGM").expect("a common code")));
+    pretty_assertions::assert_eq!(members.unit_code.take(), Some(UnitCode::Kgm));
     let rest_json = written(&ObservationMetadata::new(members).expect("the sub-attribute remains"));
     assert!(rest_json.get("https://uri.etsi.org/ngsi-ld/unitCode").is_none(), "{rest_json}");
 

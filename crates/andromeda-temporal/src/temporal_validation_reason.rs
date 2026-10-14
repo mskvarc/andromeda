@@ -12,9 +12,13 @@
 use crate::aggregation_conflict::AggregationConflict;
 use andromeda_context_commit::submission_refusal::SubmissionRefusal;
 use andromeda_ngsi_ld_entity::{operation::mutation_error::MutationError, refusal::EntityRefusal};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, reference::NgsiLdReferenceError};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    reference::NgsiLdReferenceError,
+    unit_code_resolution::UnitCodeRefusal,
+};
 use andromeda_ngsi_ld_query::ordering::collation::IcuCollation;
-use andromeda_unit_catalog::expanded_unit_code::UnitCodeRefusal;
 use thiserror::Error;
 
 /// Why a temporal request or representation is invalid.
@@ -42,8 +46,8 @@ pub enum TemporalValidationReason {
         /// The offending attribute, by its expanded name.
         attribute: AttributeName,
     },
-    /// A `unitCode` names no UN/CEFACT common code the catalog registers, or
-    /// is not one plain string (Table 5.2.5-1, clause 4.5.2.2).
+    /// A `unitCode` names no UN/CEFACT common code, or is not one plain
+    /// string (Table 5.2.5-1, clause 4.5.2.2).
     #[error("'{attribute}' carries an unusable 'unitCode': {source}")]
     InstanceUnitCodeUnusable {
         /// The offending attribute, by its expanded name.

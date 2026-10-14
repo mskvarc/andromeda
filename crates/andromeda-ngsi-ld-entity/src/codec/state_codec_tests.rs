@@ -369,6 +369,26 @@ fn malformed_documents_are_refused_with_a_typed_refusal() {
     }
 }
 
+/// A Property whose expanded `unitCode` is `code`.
+fn unit_code_document(code: &str) -> Value {
+    json!([{"@id": "urn:a:b", "@type": ["https://ex.org/T"], "https://ex.org/a": [{"@type": [PROPERTY], ngsi("hasValue"): [{"@value": 1}], ngsi("unitCode"): [{"@value": code}]}]}])
+}
+
+/// Reference [15] pins Recommendation 20 Revision 9, so a code a later
+/// revision deprecates is still a common code (clause 4.5.2.2).
+#[test]
+fn a_deprecated_common_code_is_admitted() {
+    let document = unit_code_document("A1");
+    pretty_assertions::assert_eq!(round_trip(&document), document);
+}
+
+/// Revision 9 lists `KTM`, which Revision 17 deletes.
+#[test]
+fn a_deleted_common_code_is_admitted() {
+    let document = unit_code_document("KTM");
+    pretty_assertions::assert_eq!(round_trip(&document), document);
+}
+
 #[test]
 fn a_refusal_never_echoes_the_raw_input() {
     let error = refusal(

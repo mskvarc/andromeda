@@ -14,7 +14,7 @@
 //! exactly as the family's own members are in a decoded document.
 
 use crate::{
-    attribute::{common_fields::CommonAttributeFields, instance::AttributeValue, member_reading::MemberReading, property::UnitCodeRef},
+    attribute::{common_fields::CommonAttributeFields, instance::AttributeValue, member_reading::MemberReading},
     compact_member::decoded_optional,
     node_refusal::{NodeReadError, NodeRefusal, RefusedMember},
 };
@@ -33,6 +33,7 @@ use andromeda_ngsi_ld_representation::{
     proof_seal_admission::{ProofSealMember, proof_seal_admission},
 };
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
+use cefact_units::UnitCode;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::de::DeserializeOwned;
@@ -300,11 +301,11 @@ fn attribute_name(attribute: &str) -> Result<AttributeName, NodeRefusal> {
 ///
 /// Returns [`NodeRefusal::UnitCodeUnusable`] for a member that does not decode
 /// as a common code, and the node's [`CompactNode::Unreadable`].
-pub(crate) fn unit_code_member<'n, N: CompactNode<'n>>(attribute: &str, member: Option<N>) -> Result<Option<UnitCodeRef>, ReadError<'n, N>> {
+pub(crate) fn unit_code_member<'n, N: CompactNode<'n>>(attribute: &str, member: Option<N>) -> Result<Option<UnitCode>, ReadError<'n, N>> {
     let Some(member) = member else {
         return Ok(None);
     };
-    match decoded_optional::<UnitCodeRef, N>(member).map_err(NodeReadError::Unreadable)? {
+    match decoded_optional::<UnitCode, N>(member).map_err(NodeReadError::Unreadable)? {
         Ok(unit_code) => Ok(unit_code),
         Err(source) => Err(refused_member::<N>(
             RefusedMember::UnitCode,

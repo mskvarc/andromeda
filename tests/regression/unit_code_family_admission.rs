@@ -210,7 +210,7 @@ async fn regression_unit_code_family_admission_round_trips_a_list_property_unit_
 /// admission concerns which families may carry a unit, not which codes are
 /// units.
 #[tokio::test]
-async fn regression_unit_code_family_admission_still_refuses_an_unregistered_code() {
+async fn regression_unit_code_family_admission_still_refuses_a_string_that_is_no_common_code() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let client = scope.client();
 

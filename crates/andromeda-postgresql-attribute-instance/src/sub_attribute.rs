@@ -270,6 +270,7 @@ mod tests {
     use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
     use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
     use bigdecimal::BigDecimal;
+    use cefact_units::UnitCode;
     use chrono::{TimeZone, Utc};
     use serde_json::{json, value::to_raw_value};
 
@@ -350,7 +351,7 @@ mod tests {
                 },
                 value_type_key: Some(EntityTypeNameKey::from(3)),
                 object_type_keys: vec![EntityTypeNameKey::from(4), EntityTypeNameKey::from(5)],
-                unit_code_id: Some(1_i16.try_into().expect("a unit code identity")),
+                unit_code: Some(UnitCode::Kgm),
                 observed_at: Some(instant),
                 expires_at: Some(instant),
                 proof_seals: Some(StoredJson::new(
@@ -369,7 +370,7 @@ mod tests {
                 value: StoredValue::Boolean { flag: false, datatype: None },
                 value_type_key: None,
                 object_type_keys: Vec::new(),
-                unit_code_id: None,
+                unit_code: None,
                 observed_at: None,
                 expires_at: None,
                 proof_seals: None,

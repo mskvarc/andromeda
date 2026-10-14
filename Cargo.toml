@@ -86,9 +86,9 @@ andromeda-test-client.workspace = true
 andromeda-test-fixtures.workspace = true
 andromeda-test-harness.workspace = true
 andromeda-test-mocks.workspace = true
-andromeda-unit-catalog.workspace = true
 axum = { version = "0.8.9", features = ["ws"] }
 bytes = "1.12.1"
+cefact-units = "1.0.0"
 chrono = { version = "0.4.45", features = ["serde"] }
 futures = "0.3.34"
 h3 = "0.0.8"
@@ -203,4 +203,3 @@ andromeda-test-fixtures = { path = "crates/andromeda-test-fixtures" }
 andromeda-test-harness = { path = "crates/andromeda-test-harness" }
 andromeda-test-mocks = { path = "crates/andromeda-test-mocks" }
 andromeda-test-tls = { path = "crates/andromeda-test-tls" }
-andromeda-unit-catalog = { path = "crates/andromeda-unit-catalog" }

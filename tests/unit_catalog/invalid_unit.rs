@@ -1,25 +1,24 @@
-//! Invalid unit: a `unitCode` the catalogue does not register is refused.
+//! Invalid unit: a `unitCode` that is no UN/CEFACT common code is refused.
 //!
-//! A `unitCode` the catalogue does not register has no identity to store, so
-//! the write is refused rather than silently stripped: an attribute persisted
-//! without the unit its client declared would mean something else. The
-//! database refuses a non-positive identity from a writer that bypasses the
-//! broker, and no history row may carry a unit identity the catalogue cannot
-//! decode.
+//! A string that names no common code has no identity to store, so the write
+//! is refused rather than silently stripped: an attribute persisted without
+//! the unit its client declared would mean something else. The database
+//! refuses a non-positive identity from a writer that bypasses the broker,
+//! and no history row may carry a unit identity no listed code holds.
 
 use crate::fixtures::{SUITE, default_context_iri, device_with_unit, history_unit_identities};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
-use andromeda_unit_catalog::{unit_code_id::UnitCodeId, unit_code_registry::registry};
+use cefact_units::UnitCode;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
 
 /// A three-letter token of the right shape that Recommendation 20 never assigned.
-const UNREGISTERED_CODE: &str = "QQQ";
+const NOT_A_COMMON_CODE: &str = "QQQ";
 
 #[tokio::test]
-async fn a_property_carrying_an_unregistered_unit_code_is_refused_and_persists_nothing() {
+async fn a_property_carrying_a_string_that_is_no_common_code_is_refused_and_persists_nothing() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
     let client = scope.client();
     let id = scope.id("Device:invalid-unit");
@@ -27,14 +26,14 @@ async fn a_property_carrying_an_unregistered_unit_code_is_refused_and_persists_n
     let entity = json!({
         "id": id,
         "type": "Device",
-        "weight": {"type": "Property", "value": 5, "unitCode": UNREGISTERED_CODE},
+        "weight": {"type": "Property", "value": 5, "unitCode": NOT_A_COMMON_CODE},
         "@context": [CORE_CONTEXT]
     });
     let created = client.post_entity(&entity).send().await.expect("create entity request failed");
     assert_ne!(
         created.status,
         StatusCode::CREATED,
-        "a code the catalogue cannot register must not be accepted: {:?}",
+        "a string that is no common code must not be accepted: {:?}",
         created.body
     );
 
@@ -63,7 +62,7 @@ async fn a_property_carrying_an_unregistered_unit_code_is_refused_and_persists_n
 /// `BadRequestData`; an `InternalError` would tell the client to retry a
 /// request that can never succeed.
 #[tokio::test]
-async fn an_unregistered_unit_code_is_refused_as_bad_request_data() {
+async fn a_string_that_is_no_common_code_is_refused_as_bad_request_data() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
     let client = scope.client();
     let id = scope.id("Device:invalid-unit-status");
@@ -71,7 +70,7 @@ async fn an_unregistered_unit_code_is_refused_as_bad_request_data() {
     let entity = json!({
         "id": id,
         "type": "Device",
-        "weight": {"type": "Property", "value": 5, "unitCode": UNREGISTERED_CODE},
+        "weight": {"type": "Property", "value": 5, "unitCode": NOT_A_COMMON_CODE},
         "@context": [CORE_CONTEXT]
     });
     let created = client.post_entity(&entity).send().await.expect("create entity request failed");
@@ -131,16 +130,17 @@ async fn no_history_row_carries_a_unit_only_as_leftover_metadata() {
         .expect("create entity request failed");
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
 
-    // The whole hypertable, not only this test's rows: an identity the
-    // catalogue cannot decode is what a hand-written row leaves.
+    // The whole hypertable, not only this test's rows: an identity no listed
+    // code holds is what a hand-written row leaves.
     let stored: Vec<i16> = sqlx::query_scalar("SELECT DISTINCT unit_code_id FROM attribute_history WHERE unit_code_id IS NOT NULL")
         .fetch_all(scope.database_pool())
         .await
         .expect("the unit audit must be readable");
-    let catalog = registry().expect("the compiled-in unit catalog parses");
     for identity in stored {
-        let decoded = UnitCodeId::try_from(identity).ok().and_then(|id| catalog.entry(id).ok());
-        assert!(decoded.is_some(), "history holds unit identity {identity}, which the catalogue cannot decode");
+        assert!(
+            UnitCode::from_smallint(identity).is_some(),
+            "history holds unit identity {identity}, which no listed code holds"
+        );
     }
 
     scope.finish().await.expect("cleanup failed");

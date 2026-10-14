@@ -1,8 +1,9 @@
 //! The `GeoProperty` attribute family (ETSI GS CIM 009 clause 5.2.7).
 
-use crate::attribute::{common_fields::CommonAttributeFields, geo_property_value::GeoPropertyValue, property::UnitCodeRef};
+use crate::attribute::{common_fields::CommonAttributeFields, geo_property_value::GeoPropertyValue};
 use andromeda_ngsi_ld_geometry::{geojson::GeometryError, geometry::Geometry, geometry_members::JsonLdKeywords, written_geometry::WrittenGeometry};
 use andromeda_ngsi_ld_lexicon::coerced_term::CoercedTerm;
+use cefact_units::UnitCode;
 use serde::Serialize;
 use serde_with::skip_serializing_none;
 use thiserror::Error;
@@ -18,7 +19,7 @@ pub struct GeoProperty {
     /// Measurement unit code: clause 4.7.3 treats a `GeoProperty` carrying
     /// further members as an ordinary Property, which has the `unitCode` of
     /// clause 4.5.2.2.
-    pub unit_code: Option<UnitCodeRef>,
+    pub unit_code: Option<UnitCode>,
     /// Optional JSON-LD datatype for `value`.
     pub value_type: Option<CoercedTerm>,
     /// Previous geometry value emitted in notifications when `showChanges` is active.

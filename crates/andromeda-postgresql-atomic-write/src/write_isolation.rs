@@ -136,7 +136,7 @@ mod tests {
     fn a_refused_write_leaves_the_rest_to_be_committed_in_submission_order() {
         let mut submission = submission(&["urn:ngsi-ld:A", "urn:ngsi-ld:B", "urn:ngsi-ld:C"]);
         submission
-            .set_aside(&id("urn:ngsi-ld:B"), SubmissionRefusal::UnitCodeUnregistered)
+            .set_aside(&id("urn:ngsi-ld:B"), SubmissionRefusal::RelationshipMissingObject)
             .expect("B is in the submission");
         pretty_assertions::assert_eq!(committed(&submission), vec!["urn:ngsi-ld:A", "urn:ngsi-ld:C"]);
     }
@@ -145,7 +145,7 @@ mod tests {
     fn a_refused_write_reports_its_refusal_at_its_own_position() {
         let mut submission = submission(&["urn:ngsi-ld:A", "urn:ngsi-ld:B", "urn:ngsi-ld:C"]);
         submission
-            .set_aside(&id("urn:ngsi-ld:B"), SubmissionRefusal::UnitCodeUnregistered)
+            .set_aside(&id("urn:ngsi-ld:B"), SubmissionRefusal::RelationshipMissingObject)
             .expect("B is in the submission");
         let outcomes = submission
             .outcomes(vec![WriteOutcome::Created, WriteOutcome::Updated])
@@ -155,7 +155,7 @@ mod tests {
                 outcomes.as_slice(),
                 [
                     WriteOutcome::Created,
-                    WriteOutcome::Refused(SubmissionRefusal::UnitCodeUnregistered),
+                    WriteOutcome::Refused(SubmissionRefusal::RelationshipMissingObject),
                     WriteOutcome::Updated
                 ]
             ),
@@ -169,7 +169,7 @@ mod tests {
     fn writes_set_aside_one_after_another_keep_their_submission_positions() {
         let mut submission = submission(&["urn:ngsi-ld:A", "urn:ngsi-ld:B", "urn:ngsi-ld:C", "urn:ngsi-ld:D"]);
         submission
-            .set_aside(&id("urn:ngsi-ld:C"), SubmissionRefusal::UnitCodeMalformed)
+            .set_aside(&id("urn:ngsi-ld:C"), SubmissionRefusal::VocabPropertyMissingVocab)
             .expect("C is in the submission");
         submission
             .set_aside(&id("urn:ngsi-ld:A"), SubmissionRefusal::PropertyMissingValue)
@@ -183,7 +183,7 @@ mod tests {
                 [
                     WriteOutcome::Refused(SubmissionRefusal::PropertyMissingValue),
                     WriteOutcome::Created,
-                    WriteOutcome::Refused(SubmissionRefusal::UnitCodeMalformed),
+                    WriteOutcome::Refused(SubmissionRefusal::VocabPropertyMissingVocab),
                     WriteOutcome::Created
                 ]
             ),
@@ -198,7 +198,7 @@ mod tests {
         let mut submission = submission(&["urn:ngsi-ld:A", "urn:ngsi-ld:B"]);
         for raw in ["urn:ngsi-ld:B", "urn:ngsi-ld:A"] {
             submission
-                .set_aside(&id(raw), SubmissionRefusal::UnitCodeUnregistered)
+                .set_aside(&id(raw), SubmissionRefusal::RelationshipMissingObject)
                 .expect("the write is in the submission");
         }
         assert!(submission.writes().is_empty());
@@ -210,9 +210,9 @@ mod tests {
     #[test]
     fn a_refusal_naming_no_write_of_the_submission_fails_the_call() {
         let mut submission = submission(&["urn:ngsi-ld:A"]);
-        let refused = submission.set_aside(&id("urn:ngsi-ld:Z"), SubmissionRefusal::UnitCodeUnregistered);
+        let refused = submission.set_aside(&id("urn:ngsi-ld:Z"), SubmissionRefusal::RelationshipMissingObject);
         assert!(
-            matches!(refused, Err(CommitError::Submission(SubmissionRefusal::UnitCodeUnregistered))),
+            matches!(refused, Err(CommitError::Submission(SubmissionRefusal::RelationshipMissingObject))),
             "{refused:?}"
         );
         pretty_assertions::assert_eq!(committed(&submission), vec!["urn:ngsi-ld:A"]);

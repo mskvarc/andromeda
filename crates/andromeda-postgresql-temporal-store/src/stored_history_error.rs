@@ -12,9 +12,8 @@ use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, reference::Ngs
 use andromeda_ngsi_ld_model::temporal::structured_value_codec::StoredValueError;
 use andromeda_ngsi_ld_number::JsonNumberError;
 use andromeda_postgresql_attribute_instance::{assemble::AssemblyError, stored_members::StoredInstanceError};
-use andromeda_postgresql_codes::registry::UnknownCompactCode;
+use andromeda_postgresql_codes::{registry::UnknownCompactCode, stored_unit_code::UnknownStoredUnitCode};
 use andromeda_postgresql_encoding::ewkb::EwkbError;
-use andromeda_unit_catalog::unit_code_id::UnitCodeIdOutOfRange;
 use strum::{Display, IntoStaticStr};
 use thiserror::Error;
 
@@ -139,14 +138,14 @@ pub enum StoredHistoryError {
         /// The column that holds no value.
         column: HistoryColumn,
     },
-    /// A stored unit-code identity is outside the range the catalog assigns.
-    #[error("a stored {column} is out of range: {source}")]
+    /// A stored unit-code identity names no code this build lists.
+    #[error("a stored {column} names no unit code: {source}")]
     UnitCodeId {
         /// The column the identity was read from.
         column: UnitCodeColumn,
-        /// The catalog range's rejection.
+        /// The identity that names no code.
         #[source]
-        source: UnitCodeIdOutOfRange,
+        source: UnknownStoredUnitCode,
     },
     /// A URI value is not a URI.
     #[error("a stored attribute_history value_uri is not a URI: {0}")]

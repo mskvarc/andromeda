@@ -37,13 +37,18 @@ use andromeda_postgresql_attribute_instance::{
     stored_json::StoredJson,
     sub_attribute::{SubAttributeElement, SubAttributeRecord},
 };
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, attribute_kind_code::attribute_type_of, value_kind::ValueKind};
+use andromeda_postgresql_codes::{
+    attribute_kind::AttributeKind,
+    attribute_kind_code::attribute_type_of,
+    stored_unit_code::unit_code_from_stored,
+    value_kind::ValueKind,
+};
 use andromeda_postgresql_encoding::ewkb::Ewkb;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use andromeda_temporal::port::history_reader::TemporalHistoryObservation;
-use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use bigdecimal::BigDecimal;
+use cefact_units::UnitCode;
 use serde_json::value::RawValue;
 use sqlx::{Row, postgres::PgRow, types::Json};
 
@@ -168,16 +173,20 @@ pub(crate) fn decode_dataset_id(row: &PgRow) -> Result<Option<Identifier>, Tempo
         .transpose()?)
 }
 
-/// Read the row's stored unit-code identity.
+/// Read the unit code the row's stored identity names.
 ///
-/// A stored value outside the range the catalog assigns fails the decode: it
-/// cannot name a registration, so rendering the instance without its unit would
-/// silently change what the value means.
-pub(crate) fn decode_unit_code_id(row: &PgRow, column: UnitCodeColumn) -> Result<Option<UnitCodeId>, TemporalStoreError> {
+/// An identity this build does not list fails the decode: rendering the
+/// instance without its unit would silently change what the value means.
+pub(crate) fn decode_unit_code(row: &PgRow, column: UnitCodeColumn) -> Result<Option<UnitCode>, TemporalStoreError> {
     Ok(row
         .try_get::<Option<i16>, _>(<&'static str>::from(column))?
-        .map(|stored| UnitCodeId::try_from(stored).map_err(|source| StoredHistoryError::UnitCodeId { column, source }))
+        .map(|stored| unit_code_in(column, stored))
         .transpose()?)
+}
+
+/// The unit code the identity `stored`, read from `column`, names.
+fn unit_code_in(column: UnitCodeColumn, stored: i16) -> Result<UnitCode, StoredHistoryError> {
+    unit_code_from_stored(stored).map_err(|source| StoredHistoryError::UnitCodeId { column, source })
 }
 
 /// Read what the row stores beside its value, every name as its key.
@@ -197,7 +206,7 @@ fn decode_members(row: &PgRow) -> Result<HistoryMembers, TemporalStoreError> {
             .into_iter()
             .map(EntityTypeNameKey::from)
             .collect(),
-        unit_code_id: decode_unit_code_id(row, UnitCodeColumn::UnitCodeId)?,
+        unit_code: decode_unit_code(row, UnitCodeColumn::UnitCodeId)?,
         expires_at: row.try_get("expires_at")?,
         proof_seals: row.try_get::<Option<Json<Box<RawValue>>>, _>("proof_seals")?.map(StoredJson::from),
         sub_attributes,
@@ -260,8 +269,8 @@ mod tests {
     use crate::{
         error::TemporalStoreError,
         history_members::HistoryMembers,
-        history_row_decode::{DecodedHistoryRow, assemble_history, geometry_from_ewkb},
-        stored_history_error::StoredHistoryError,
+        history_row_decode::{DecodedHistoryRow, assemble_history, geometry_from_ewkb, unit_code_in},
+        stored_history_error::{StoredHistoryError, UnitCodeColumn},
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_identity::InstanceIdentity};
     use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
@@ -271,7 +280,7 @@ mod tests {
         stored_value::StoredValue,
         sub_attribute::SubAttributeElement,
     };
-    use andromeda_postgresql_codes::attribute_kind::AttributeKind;
+    use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stored_unit_code::UnknownStoredUnitCode};
     use andromeda_postgresql_name_dictionary::name_lookup::{NameLookup, NameLookupError};
     use andromeda_postgresql_query::{
         attribute_name_key::AttributeNameKey,
@@ -296,7 +305,7 @@ mod tests {
                 value: StoredValue::Boolean { flag: true, datatype: None },
                 value_type_key: None,
                 object_type_keys: Vec::new(),
-                unit_code_id: None,
+                unit_code: None,
                 observed_at: None,
                 expires_at: None,
                 proof_seals: None,
@@ -431,5 +440,19 @@ mod tests {
     #[test]
     fn stored_bytes_that_are_no_ewkb_are_refused() {
         assert!(geometry_from_ewkb(&[0x01, 0x02]).is_err());
+    }
+
+    /// An identity no code of this build holds was written by a newer
+    /// library; rendering the instance without its unit would change what the
+    /// value means.
+    #[test]
+    fn an_unknown_stored_unit_identity_fails_the_row_decode() {
+        assert!(matches!(
+            unit_code_in(UnitCodeColumn::UnitCodeId, i16::MAX),
+            Err(StoredHistoryError::UnitCodeId {
+                column: UnitCodeColumn::UnitCodeId,
+                source: UnknownStoredUnitCode { stored: i16::MAX },
+            })
+        ));
     }
 }

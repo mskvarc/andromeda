@@ -17,11 +17,16 @@ use andromeda_ngsi_ld_lexicon::{
     uri::UriParseError,
 };
 use andromeda_ngsi_ld_number::{JsonNumber, JsonNumberError};
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, registry::UnknownCompactCode, value_kind::ValueKind};
+use andromeda_postgresql_codes::{
+    attribute_kind::AttributeKind,
+    registry::UnknownCompactCode,
+    stored_unit_code::{UnknownStoredUnitCode, stored_unit_code, unit_code_from_stored},
+    value_kind::ValueKind,
+};
 use andromeda_postgresql_encoding::ewkb::{Ewkb, EwkbError};
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
-use andromeda_unit_catalog::unit_code_id::{UnitCodeId, UnitCodeIdOutOfRange};
 use bigdecimal::BigDecimal;
+use cefact_units::UnitCode;
 use chrono::{DateTime, Utc};
 use langtag::{InvalidLangTag, LangTagBuf};
 use serde_json::value::RawValue;
@@ -43,8 +48,8 @@ pub struct InstanceMembers {
     pub value_type_key: Option<EntityTypeNameKey>,
     /// `entity_type_names` keys of the `objectType` list, in written order.
     pub object_type_keys: Vec<EntityTypeNameKey>,
-    /// Catalog identity of the `unitCode`.
-    pub unit_code_id: Option<UnitCodeId>,
+    /// The `unitCode`.
+    pub unit_code: Option<UnitCode>,
     /// `observedAt`.
     pub observed_at: Option<DateTime<Utc>>,
     /// `expiresAt` (clause 4.22).
@@ -133,9 +138,9 @@ pub enum StoredInstanceError {
     /// The geometry is not canonical EWKB.
     #[error(transparent)]
     Geometry(#[from] EwkbError),
-    /// The unit code identity is out of the catalog's range.
+    /// The unit-code identity names no code this build lists.
     #[error(transparent)]
-    UnitCode(#[from] UnitCodeIdOutOfRange),
+    UnitCode(#[from] UnknownStoredUnitCode),
 }
 
 impl TryFrom<MemberColumns> for InstanceMembers {
@@ -185,7 +190,7 @@ impl TryFrom<MemberColumns> for InstanceMembers {
             value: fields.into_value(ValueKind::try_from(value_kind)?, annotation)?,
             value_type_key: value_type_key.map(EntityTypeNameKey::from),
             object_type_keys: object_type_keys.unwrap_or_default().into_iter().map(EntityTypeNameKey::from).collect(),
-            unit_code_id: unit_code_id.map(UnitCodeId::try_from).transpose()?,
+            unit_code: unit_code_id.map(unit_code_from_stored).transpose()?,
             observed_at,
             expires_at,
             proof_seals: proof_seals.map(StoredJson::from),
@@ -216,7 +221,7 @@ impl TryFrom<InstanceMembers> for MemberColumns {
             value_type_key: members.value_type_key.map(EntityTypeNameKey::get),
             object_type_keys: (!members.object_type_keys.is_empty()).then(|| members.object_type_keys.iter().map(|key| key.get()).collect()),
             proof_seals: members.proof_seals.map(StoredJson::into_json),
-            unit_code_id: members.unit_code_id.map(UnitCodeId::get),
+            unit_code_id: members.unit_code.map(stored_unit_code),
             observed_at: members.observed_at,
             expires_at: members.expires_at,
         };

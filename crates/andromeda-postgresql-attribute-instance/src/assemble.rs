@@ -23,7 +23,6 @@ use andromeda_ngsi_ld_entity::{
     proof_seals::ProofSeals,
     refusal::EntityRefusal,
     system_instant::SystemInstant,
-    unit_code::{StoredUnitCodeError, UnitCode},
 };
 use andromeda_ngsi_ld_geometry::geojson::GeometryError;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, reference::NgsiLdReferenceError};
@@ -92,9 +91,6 @@ pub enum AssemblyError {
     /// A structured value holds the NGSI-LD Null, which state never does.
     #[error("an instance of '{0}' stores the NGSI-LD Null")]
     NullInState(AttributeName),
-    /// The unit code identity names no unit code.
-    #[error(transparent)]
-    UnitCode(#[from] StoredUnitCodeError),
     /// The stored clause 4.7.2 string is not a geometry.
     #[error(transparent)]
     EncodedGeometry(#[from] GeometryError),
@@ -226,7 +222,7 @@ pub fn instance(
         value,
         value_type_key,
         object_type_keys,
-        unit_code_id,
+        unit_code,
         observed_at,
         expires_at,
         proof_seals,
@@ -237,7 +233,7 @@ pub fn instance(
         names,
     };
     let envelope = Envelope {
-        unit_code: unit_code_id.map(UnitCode::from_id).transpose()?,
+        unit_code,
         value_type: value_type_key.map(|key| stored.type_name(key)).transpose()?,
         object_types: object_type_keys.into_iter().map(|key| stored.type_name(key)).collect::<Result<_, _>>()?,
     };

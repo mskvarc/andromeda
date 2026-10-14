@@ -26,9 +26,9 @@ use crate::{
     proof_seals::ProofSeals,
     refusal::EntityRefusal,
     system_instant::SystemInstant,
-    unit_code::UnitCode,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, reference::NgsiLdReference};
+use cefact_units::UnitCode;
 use indexmap::IndexMap;
 use serde::{
     Deserializer,

@@ -157,12 +157,10 @@ impl From<SubmissionRefusal> for TemporalError {
 
 /// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
 /// A written document the model refuses is the client's `BadRequestData`
-/// (clause 5.5.4), an unusable or forbidden `unitCode` keeping its own reason, except an unreadable compiled-in
-/// unit catalog, which is the build's fault and no request can mend.
+/// (clause 5.5.4), an unusable or forbidden `unitCode` keeping its own reason.
 impl From<EntityRefusal> for TemporalError {
     fn from(refusal: EntityRefusal) -> TemporalError {
         match refusal {
-            EntityRefusal::UnitCatalog(malformed) => TemporalError::Internal(TemporalInvariant::UnitCatalog(malformed)),
             EntityRefusal::UnitCodeUnusable { attribute, source } => {
                 TemporalError::Validation(TemporalValidationReason::InstanceUnitCodeUnusable { attribute, source })
             }

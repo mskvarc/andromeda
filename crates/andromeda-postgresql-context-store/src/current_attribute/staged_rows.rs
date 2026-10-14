@@ -15,14 +15,13 @@ use andromeda_postgresql_attribute_instance::{
     stored_value::StoredValue,
     sub_attribute::{SubAttributeRecord, SubAttributeTree},
 };
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
+use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stored_unit_code::stored_unit_code, value_kind::ValueKind};
 use andromeda_postgresql_encoding::{
     array_literal::IntegerArrayLiteral,
     ewkb::{EwkbError, encode},
 };
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use andromeda_postgresql_schema::current::CurrentAttributes;
-use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::value::RawValue;
@@ -160,7 +159,7 @@ impl<'a> StagedRows<'a> {
                 value,
                 value_type_key,
                 object_type_keys,
-                unit_code_id,
+                unit_code,
                 observed_at,
                 expires_at,
                 proof_seals,
@@ -194,7 +193,7 @@ impl<'a> StagedRows<'a> {
             self.value_type_keys.push(value_type_key.map(EntityTypeNameKey::get));
             self.object_type_keys
                 .push((!object_type_keys.is_empty()).then(|| IntegerArrayLiteral::of(object_type_keys.iter().map(|key| i64::from(key.get())))));
-            self.unit_code_ids.push(unit_code_id.map(UnitCodeId::get));
+            self.unit_code_ids.push(unit_code.map(stored_unit_code));
             self.observed_ats.push(observed_at);
             self.created_ats.push(created_at);
             self.modified_ats.push(modified_at);

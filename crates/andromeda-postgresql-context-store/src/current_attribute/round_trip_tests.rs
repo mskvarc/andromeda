@@ -754,7 +754,7 @@ fn unit_code_value_type_and_times_round_trip() {
     accuracy.set_modified_at(Some(now()));
     let rows = round_trip(&state);
     let element = &rows[0].sub_attributes[0];
-    assert!(element.members.unit_code_id.is_some() && element.members.value_type_key.is_some());
+    assert!(element.members.unit_code.is_some() && element.members.value_type_key.is_some());
     assert!(element.members.observed_at.is_some() && element.members.expires_at.is_some());
     assert!(element.created_at.is_some() && element.modified_at.is_some());
 }

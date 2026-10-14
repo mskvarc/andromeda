@@ -6,16 +6,10 @@
 //! Property is not a state this type can reach (clauses 4.5.2.2, 4.5.3.2,
 //! 4.5.18.2, 4.5.20.2, 4.5.21.2, 4.5.22.2, 4.5.24.2).
 
-use crate::{
-    expanded_value::ExpandedValue,
-    geo_value::GeoValue,
-    language_entries::LanguageEntries,
-    list_object::ListObject,
-    non_empty::NonEmpty,
-    unit_code::UnitCode,
-};
+use crate::{expanded_value::ExpandedValue, geo_value::GeoValue, language_entries::LanguageEntries, list_object::ListObject, non_empty::NonEmpty};
 use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, reference::NgsiLdReference, uri::Uri};
+use cefact_units::UnitCode;
 
 /// One instance's family and value.
 #[derive(Clone, Debug, PartialEq)]
