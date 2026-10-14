@@ -105,9 +105,8 @@ impl PostgresTemporalIntentStore {
     async fn apply_held(&self, owner: LeaseHolder, intents: &[ClaimedTemporalIntent]) -> Result<LeaseAcknowledgement, TemporalError> {
         let keys: Vec<i64> = intents.iter().map(|intent| intent.key.get()).collect();
         let mut tx = self.pool.begin().await.map_err(|error| persistence(&error))?;
-        apply_intents_in_tx(&mut tx, &IntentSource::Queued(&keys), &ContextTarget::Live)
-            .await
-            .map_err(TemporalError::from)?;
+        let source = IntentSource::claimed(&mut tx, &keys).await.map_err(TemporalError::from)?;
+        apply_intents_in_tx(&mut tx, &source, &ContextTarget::Live).await.map_err(TemporalError::from)?;
         let (sql, values) = applied_removal_statement(&keys, owner).build_sqlx(PostgresQueryBuilder);
         let removed = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .execute(&mut *tx)

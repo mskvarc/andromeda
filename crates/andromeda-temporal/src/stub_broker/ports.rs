@@ -17,6 +17,7 @@ use crate::{
         },
         mutation_barrier::TemporalMutationBarrier,
         mutator::{TemporalDeleteScope, TemporalMutator},
+        read_scope::{ScopeReach, TemporalReadScope, UnrecordedHistory},
     },
     stub_broker::{CurrentState, StubBroker},
 };
@@ -64,11 +65,15 @@ impl TemporalHistoryReader for StubBroker {
         }
     }
 
-    async fn entity_exists(&self, _target: &ContextTarget, entity_id: &Identifier) -> Result<bool, TemporalError> {
+    async fn read_scope<'a>(&self, target: &'a ContextTarget, _reach: ScopeReach<'_>) -> Result<TemporalReadScope<'a>, TemporalError> {
+        Ok(TemporalReadScope::new(target, UnrecordedHistory::Absent))
+    }
+
+    async fn entity_exists(&self, _scope: &TemporalReadScope<'_>, entity_id: &Identifier) -> Result<bool, TemporalError> {
         Ok(self.links.contains_key(entity_id))
     }
 
-    async fn entity_types(&self, _target: &ContextTarget, entity_ids: &[Identifier]) -> Result<HashMap<Identifier, Vec<EntityTypeName>>, TemporalError> {
+    async fn entity_types(&self, _scope: &TemporalReadScope<'_>, entity_ids: &[Identifier]) -> Result<HashMap<Identifier, Vec<EntityTypeName>>, TemporalError> {
         Ok(entity_ids
             .iter()
             .filter(|entity_id| self.links.contains_key(*entity_id))
@@ -83,7 +88,7 @@ impl TemporalHistoryReader for StubBroker {
 
     async fn query_entity_ids(
         &self,
-        _target: &ContextTarget,
+        _scope: &TemporalReadScope<'_>,
         compiled: &CompiledTemporalQuery,
         _window: &PageWindow,
         _count: CountPolicy,
@@ -100,7 +105,7 @@ impl TemporalHistoryReader for StubBroker {
 
     async fn filter_leaf_truths(
         &self,
-        _target: &ContextTarget,
+        _scope: &TemporalReadScope<'_>,
         _compiled: &CompiledTemporalQuery,
         _entity_ids: &[Identifier],
     ) -> Result<HashMap<Identifier, LeafTruths>, TemporalError> {
@@ -109,7 +114,7 @@ impl TemporalHistoryReader for StubBroker {
 
     async fn query_entity_history(
         &self,
-        _target: &ContextTarget,
+        _scope: &TemporalReadScope<'_>,
         entity_id: &Identifier,
         _compiled: &CompiledTemporalQuery,
     ) -> Result<TemporalHistoryOutcome, TemporalError> {
@@ -124,7 +129,7 @@ impl TemporalHistoryReader for StubBroker {
 
     async fn query_entity_aggregation(
         &self,
-        _target: &ContextTarget,
+        _scope: &TemporalReadScope<'_>,
         _entity_id: &Identifier,
         _compiled: &CompiledTemporalQuery,
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
@@ -132,7 +137,7 @@ impl TemporalHistoryReader for StubBroker {
     }
     async fn query_merged_entity_aggregation(
         &self,
-        _target: &ContextTarget,
+        _scope: &TemporalReadScope<'_>,
         _entity_id: &Identifier,
         _entity_types: &[EntityTypeName],
         _compiled: &CompiledTemporalQuery,
@@ -147,7 +152,7 @@ impl TemporalHistoryReader for StubBroker {
 
     async fn recorded_attribute_shapes(
         &self,
-        _target: &ContextTarget,
+        _scope: &TemporalReadScope<'_>,
         _attributes: &[AttributeName],
     ) -> Result<HashMap<AttributeName, HashSet<RecordedAttributeShape>>, TemporalError> {
         Ok(HashMap::new())

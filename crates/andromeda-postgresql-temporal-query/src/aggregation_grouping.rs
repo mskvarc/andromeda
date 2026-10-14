@@ -99,6 +99,7 @@ const fn bucket_field(bucket: BucketTerm) -> &'static str {
 /// here; this is an equality key, so the exact textual form only has to be
 /// stable per value.
 fn history_value_as_text(history: &Alias) -> SimpleExpr {
+    // clone: each column reference takes the borrowed alias by value.
     Func::coalesce([
         Expr::col((history.clone(), AttributeHistory::ValueString)),
         cast(Expr::col((history.clone(), AttributeHistory::ValueNumber)), PostgresType::Text),
@@ -170,6 +171,7 @@ fn add_group_key(select: &mut SelectStatement, expr: SimpleExpr) {
 fn project_value_in_effect(select: &mut SelectStatement, index: usize, attribute_iri: &str, axis: AttributeHistory, branch: &HistoryBranch, of: &HistoryOf) {
     let history = value_key_history_alias(index);
     let name = value_key_name_alias(index);
+    // clone: the aliases are numbered per value key, and every clause naming one takes it by value.
     let mut lateral = Query::select();
     lateral
         .expr_as(history_value_as_text(&history), group_key_alias(index))

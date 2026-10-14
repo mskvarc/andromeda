@@ -35,6 +35,7 @@ pub(super) fn enqueue_statement() -> Result<InsertStatement, SeaQueryError> {
         .expr(Expr::col((Input, TemporalIntent::EntityTypeNameKeys)))
         .expr(Expr::col((Input, TemporalIntent::BaseOrdinal)))
         .expr(Expr::col((Input, TemporalIntent::Entries)))
+        .expr(Expr::col((Input, TemporalIntent::EntryNeeds)))
         .from_function(unnest_of(cast(external_placeholder(3), PostgresType::TemporalIntentArray)), Input)
         .to_owned();
     let mut statement = Query::insert();
@@ -47,6 +48,7 @@ pub(super) fn enqueue_statement() -> Result<InsertStatement, SeaQueryError> {
             TemporalAppendIntents::EntityTypeNameKeys,
             TemporalAppendIntents::BaseOrdinal,
             TemporalAppendIntents::Entries,
+            TemporalAppendIntents::EntryNeeds,
         ])
         .select_from(source)?
         .on_conflict(
@@ -113,7 +115,7 @@ mod tests {
     fn an_intent_row_carries_its_types_and_recorded_instant() {
         let sql = enqueue_sql();
         assert!(
-            sql.contains(r#"("write_id", "recorded_at", "entity_id", "entity_type_name_keys", "base_ordinal", "entries")"#),
+            sql.contains(r#"("write_id", "recorded_at", "entity_id", "entity_type_name_keys", "base_ordinal", "entries", "entry_needs")"#),
             "{sql}"
         );
         assert!(sql.contains(r#"SELECT $1, $2, "input"."entity_id", "input"."entity_type_name_keys""#), "{sql}");
@@ -123,6 +125,14 @@ mod tests {
     fn a_commit_replayed_under_its_original_identity_enqueues_no_second_intent_per_entity_and_base() {
         let sql = enqueue_sql();
         assert!(sql.contains(r#"ON CONFLICT ("write_id", "entity_id", "base_ordinal") DO NOTHING"#), "{sql}");
+    }
+
+    /// The drain decides which statements a batch needs from this column
+    /// alone, so it comes from the intent the commit bound.
+    #[test]
+    fn an_intent_row_keeps_what_its_entries_reach() {
+        let sql = enqueue_sql();
+        assert!(sql.contains(r#""input"."entries", "input"."entry_needs" FROM"#), "{sql}");
     }
 
     /// No JSON leaves the broker for an intent: the entries are composites.

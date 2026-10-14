@@ -6,8 +6,10 @@
 //! Geometries are decoded to `GeoJSON` and the `ltree[]` scopes to their text
 //! label paths under the column names the store's mapper reads them by; the
 //! mode and operations stay the registry codes they are stored as. The
-//! registration's `information` is not on this row: it is assembled from its
-//! `registration_information` rows, which a second statement reads.
+//! registration's `registration_information` rows travel on the same row as
+//! one array of that table's row type ([`InformationRows`]), so a read
+//! assembles each registration's `information` from one statement and one
+//! snapshot.
 //!
 //! The delivery state is `LEFT JOIN`ed on the registration's primary key. A
 //! registration always has its row -- the create transaction writes both --
@@ -15,9 +17,32 @@
 //! not require one. No column name repeats between the two relations, so the
 //! predicates callers add on registration columns stay unambiguous.
 
-use andromeda_postgresql_schema::csr::{Csr, RegistrationDeliveryState};
-use andromeda_postgresql_seaquery::postgis::geometry_as_geojson;
-use sea_query::{Expr as SeaExpr, ExprTrait, JoinType, Query, SelectStatement};
+use andromeda_postgresql_schema::csr::{Csr, RegistrationDeliveryState, RegistrationInformation};
+use andromeda_postgresql_seaquery::{pg_array::array_subquery, postgis::geometry_as_geojson};
+use sea_query::{Expr as SeaExpr, ExprTrait, Iden, JoinType, Order, Query, SelectStatement};
+
+/// The projected column holding a registration's `registration_information`
+/// rows, each a value of the table's row type, in item and selector order.
+#[derive(Iden, Clone, Copy)]
+#[iden = "information_rows"]
+pub struct InformationRows;
+
+/// The alias of one `registration_information` row inside the projection.
+#[derive(Iden, Clone, Copy)]
+#[iden = "info"]
+struct Info;
+
+/// The rows of the registration on the enclosing row, as one array.
+fn information_rows() -> SeaExpr {
+    let rows = Query::select()
+        .column(Info)
+        .from_as(RegistrationInformation::Table, Info)
+        .and_where(SeaExpr::col((Info, RegistrationInformation::RegistrationId)).equals((Csr::Table, Csr::Id)))
+        .order_by((Info, RegistrationInformation::ItemOrdinal), Order::Asc)
+        .order_by((Info, RegistrationInformation::SelectorOrdinal), Order::Asc)
+        .to_owned();
+    array_subquery(&rows)
+}
 
 /// A registration select with the canonical projection, `FROM` the
 /// registrations joined to their delivery state, ready for a caller's `WHERE`.
@@ -62,6 +87,7 @@ pub fn registration_select() -> SelectStatement {
         .column((RegistrationDeliveryState::Table, RegistrationDeliveryState::TimesFailed))
         .column((RegistrationDeliveryState::Table, RegistrationDeliveryState::LastSuccess))
         .column((RegistrationDeliveryState::Table, RegistrationDeliveryState::LastFailure))
+        .expr_as(information_rows(), InformationRows)
         .from(Csr::Table)
         .join(
             JoinType::LeftJoin,
@@ -91,6 +117,20 @@ mod tests {
                 "{health} is read from the delivery state: {sql}"
             );
         }
+    }
+
+    /// One statement reads a registration and its information rows, so the
+    /// two come from one snapshot without a transaction around them.
+    #[test]
+    fn the_information_rows_travel_on_the_registration_row() {
+        let sql = registration_select().to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains(concat!(
+                r#"ARRAY(SELECT "info" FROM "registration_information" AS "info" WHERE "info"."registration_id" = "context_source_registrations"."id" "#,
+                r#"ORDER BY "info"."item_ordinal" ASC, "info"."selector_ordinal" ASC) AS "information_rows""#
+            )),
+            "{sql}"
+        );
     }
 
     #[test]

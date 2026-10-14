@@ -3,13 +3,16 @@
 use crate::{
     error::TemporalError,
     outcome::TemporalEntityIdOutcome,
-    port::history_reader::{
-        AggregationPushdown,
-        HistoryVisibility,
-        RecordedAttributeShape,
-        TemporalHistoryOutcome,
-        TemporalHistoryReader,
-        TemporalReaderCapabilities,
+    port::{
+        history_reader::{
+            AggregationPushdown,
+            HistoryVisibility,
+            RecordedAttributeShape,
+            TemporalHistoryOutcome,
+            TemporalHistoryReader,
+            TemporalReaderCapabilities,
+        },
+        read_scope::{ScopeReach, TemporalReadScope, UnrecordedHistory},
     },
     read::ensure_aggregation_supported,
 };
@@ -38,19 +41,27 @@ impl TemporalHistoryReader for RefusingReader {
         }
     }
 
-    async fn entity_exists(&self, _target: &ContextTarget, _entity_id: &Identifier) -> Result<bool, TemporalError> {
+    async fn read_scope<'a>(&self, target: &'a ContextTarget, _reach: ScopeReach<'_>) -> Result<TemporalReadScope<'a>, TemporalError> {
+        Ok(TemporalReadScope::new(target, UnrecordedHistory::Absent))
+    }
+
+    async fn entity_exists(&self, _scope: &TemporalReadScope<'_>, _entity_id: &Identifier) -> Result<bool, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);
         panic!("query must not execute")
     }
 
-    async fn entity_types(&self, _target: &ContextTarget, _entity_ids: &[Identifier]) -> Result<HashMap<Identifier, Vec<EntityTypeName>>, TemporalError> {
+    async fn entity_types(
+        &self,
+        _scope: &TemporalReadScope<'_>,
+        _entity_ids: &[Identifier],
+    ) -> Result<HashMap<Identifier, Vec<EntityTypeName>>, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);
         panic!("query must not execute")
     }
 
     async fn query_entity_ids(
         &self,
-        _target: &ContextTarget,
+        _scope: &TemporalReadScope<'_>,
         _compiled: &CompiledTemporalQuery,
         _window: &PageWindow,
         _count: CountPolicy,
@@ -61,7 +72,7 @@ impl TemporalHistoryReader for RefusingReader {
 
     async fn filter_leaf_truths(
         &self,
-        _target: &ContextTarget,
+        _scope: &TemporalReadScope<'_>,
         _compiled: &CompiledTemporalQuery,
         _entity_ids: &[Identifier],
     ) -> Result<HashMap<Identifier, LeafTruths>, TemporalError> {
@@ -71,7 +82,7 @@ impl TemporalHistoryReader for RefusingReader {
 
     async fn query_entity_history(
         &self,
-        _target: &ContextTarget,
+        _scope: &TemporalReadScope<'_>,
         _entity_id: &Identifier,
         _compiled: &CompiledTemporalQuery,
     ) -> Result<TemporalHistoryOutcome, TemporalError> {
@@ -81,7 +92,7 @@ impl TemporalHistoryReader for RefusingReader {
 
     async fn query_entity_aggregation(
         &self,
-        _target: &ContextTarget,
+        _scope: &TemporalReadScope<'_>,
         _entity_id: &Identifier,
         _compiled: &CompiledTemporalQuery,
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
@@ -91,7 +102,7 @@ impl TemporalHistoryReader for RefusingReader {
 
     async fn query_merged_entity_aggregation(
         &self,
-        _target: &ContextTarget,
+        _scope: &TemporalReadScope<'_>,
         _entity_id: &Identifier,
         _entity_types: &[EntityTypeName],
         _compiled: &CompiledTemporalQuery,
@@ -103,7 +114,7 @@ impl TemporalHistoryReader for RefusingReader {
 
     async fn recorded_attribute_shapes(
         &self,
-        _target: &ContextTarget,
+        _scope: &TemporalReadScope<'_>,
         _attributes: &[AttributeName],
     ) -> Result<HashMap<AttributeName, HashSet<RecordedAttributeShape>>, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);

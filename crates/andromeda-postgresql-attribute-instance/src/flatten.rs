@@ -96,6 +96,7 @@ pub fn push_elements(attributes: &Attributes, parent: i32, keys: &NameKeys, elem
                 created_at: instance.created_at().map(SystemInstant::get),
                 modified_at: instance.modified_at().map(SystemInstant::get),
             });
+            // clone: the refusal owns the name it reports.
             let position = i32::try_from(elements.len()).map_err(|_| FlattenError::TooManyInstances(name.clone()))?;
             push_elements(instance.sub_attributes(), position, keys, elements)?;
         }
@@ -111,15 +112,19 @@ pub fn push_elements(attributes: &Attributes, parent: i32, keys: &NameKeys, elem
 /// instance is not one a write commits.
 pub fn members(name: &AttributeName, dataset_id: Option<&Identifier>, instance: &Instance, keys: &NameKeys) -> Result<InstanceMembers, FlattenError> {
     if instance.instance_id().is_some() {
+        // clone: the refusal owns the name it reports.
         return Err(FlattenError::InstanceIdentifier(name.clone()));
     }
     let committed = |text: &DateTimeText| DateTimeText::from_instant(text.instant()) == *text;
     if !instance.observed_at().is_none_or(committed) || !instance.expires_at().is_none_or(committed) {
+        // clone: the refusal owns the name it reports.
         return Err(FlattenError::UncommittedSpelling(name.clone()));
     }
     let family = instance.value();
+    // clone: the refusal owns the name it reports.
     let type_key = |reference: &NgsiLdReference| keys.type_name(reference).ok_or_else(|| FlattenError::UnresolvedType(reference.clone()));
     Ok(InstanceMembers {
+        // clone: the refusal owns the name it reports.
         attribute_name_key: keys.attribute(name).ok_or_else(|| FlattenError::UnresolvedAttribute(name.clone()))?,
         dataset_id: dataset_id.cloned(), // clone: the row owns its datasetId
         attribute_kind: stored_attribute_kind(instance.family()),
@@ -176,6 +181,7 @@ fn stored_value(name: &AttributeName, family: &FamilyValue, keys: &NameKeys) -> 
             .map(|object| match object {
                 // clone: the codec writes the targets it owns
                 ListObject::Wrapped(uri) => Ok(uri.clone()),
+                // clone: the refusal owns the name it reports.
                 ListObject::Bare(_) | ListObject::Literal(_) => Err(FlattenError::UncommittedSpelling(name.clone())),
             })
             .collect::<Result<Vec<_>, _>>()
@@ -197,6 +203,7 @@ pub const fn scalar_literal(values: &[ExpandedValue]) -> Option<&Literal> {
 fn literal_value(name: &AttributeName, literal: &Literal, keys: &NameKeys) -> Result<StoredValue, FlattenError> {
     let datatype = literal
         .datatype()
+        // clone: the refusal owns the name it reports.
         .map(|datatype| keys.type_name(datatype).ok_or_else(|| FlattenError::UnresolvedType(datatype.clone())))
         .transpose()?;
     Ok(match literal.value() {
@@ -208,6 +215,7 @@ fn literal_value(name: &AttributeName, literal: &Literal, keys: &NameKeys) -> Re
         LiteralValue::String(text) => match TimeValue::admitted(literal.datatype().map(NgsiLdReference::as_str), text) {
             Some(Ok(TimeValue::DateTime(instant))) => {
                 if sub_second(instant.get()) != text.as_str() {
+                    // clone: the refusal owns the name it reports.
                     return Err(FlattenError::UncommittedSpelling(name.clone()));
                 }
                 StoredValue::DateTime {

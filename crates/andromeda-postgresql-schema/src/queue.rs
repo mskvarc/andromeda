@@ -74,6 +74,8 @@ pub enum TemporalAppendIntents {
     EntityTypeNameKeys,
     /// The intent's `temporal_entry` values in write order
     Entries,
+    /// `TemporalIntentReach` codes of the application statements' needs the entries meet
+    EntryNeeds,
     /// Earliest instant the intent may next be claimed (shared claimable-queue contract)
     NextAttemptAt,
     /// Instant the current lease was acquired
@@ -132,6 +134,7 @@ mod tests {
         assert_eq!(TemporalAppendIntents::ClaimedBy.to_string(), "claimed_by");
         assert_eq!(TemporalAppendIntents::AttemptCount.to_string(), "attempt_count");
         assert_eq!(TemporalAppendIntents::LastError.to_string(), "last_error");
+        assert_eq!(TemporalAppendIntents::EntryNeeds.to_string(), "entry_needs");
     }
 
     #[test]

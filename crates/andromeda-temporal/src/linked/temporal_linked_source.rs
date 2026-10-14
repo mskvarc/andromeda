@@ -17,6 +17,7 @@
 
 use crate::{
     error::TemporalError,
+    port::read_scope::ScopeReach,
     read::{compacted_history::compact_history, rendered_entity::HistoryPresence},
     remote_linked::{RemoteTemporalLinkedEntities, TemporalLinkedWindow},
     service::TemporalService,
@@ -85,7 +86,8 @@ impl<'s> TemporalLinkedSource<'s> {
     /// Relationship a plain URI rather than failing the retrieval.
     async fn read_locally(&self, candidates: &[LinkedCandidate]) -> Result<LevelRead<TemporalBody>, TemporalError> {
         let ids: Vec<Identifier> = candidates.iter().map(|candidate| candidate.id.clone()).collect(); // clone: the store reads an owned id slice
-        let catalogued = self.service.reader.entity_types(self.target, &ids).await?;
+        let scope = self.service.reader.read_scope(self.target, ScopeReach::Every).await?;
+        let catalogued = self.service.reader.entity_types(&scope, &ids).await?;
         let compactor = self.service.engine.compactor(self.context);
         let compactor = EntityCompactor::new(&compactor);
         let mut nodes = IndexMap::with_capacity(candidates.len());
@@ -96,7 +98,7 @@ impl<'s> TemporalLinkedSource<'s> {
             };
             let rendered = self
                 .service
-                .render_one_temporal_entity(self.target, &candidate.id, types, self.compiled, &compactor)
+                .render_one_temporal_entity(&scope, &candidate.id, types, self.compiled, &compactor)
                 .await;
             let body = match rendered {
                 Ok(rendered) if rendered.presence == HistoryPresence::Present => compact_history(&compactor, rendered.history).await,

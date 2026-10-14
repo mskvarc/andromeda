@@ -23,12 +23,12 @@
 //! leaves it a member depends on the instances S8 kept.
 
 use crate::{
-    alias::{Ah, An, EntityIdColumn, S},
+    alias::{Ah, EntityIdColumn, S},
     axis::axis_column,
     projected_members::projected_member_condition,
     value_filters::value_filter_condition,
 };
-use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity_selection::{ConsideredEntities, EntitySelector},
@@ -38,6 +38,7 @@ use andromeda_ngsi_ld_query::{
     temporal::compiled::CompiledTemporalQuery,
 };
 use andromeda_postgresql_query::{
+    attribute_name_key::AttributeNameKey,
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     entity_ordering::{entity_identifier_key, ordering_collation},
     error::RenderError,
@@ -52,13 +53,12 @@ use andromeda_postgresql_query::{
     time_interval_predicate::within_interval,
     type_predicate::condition as type_condition,
 };
-use andromeda_postgresql_schema::{current::E, name_dictionary::AttributeNames, temporal::TemporalEntities};
+use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
 use andromeda_postgresql_seaquery::{
     literal::{false_literal, int_literal},
     operator::regex_match,
 };
-use iri_rs::IriBuf;
-use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Func, IntoIden, JoinType, SelectStatement};
+use sea_query::{Condition, DynIden, Expr as SeaExpr, ExprTrait, Func, IntoIden, SelectStatement};
 
 /// The Stage 1 statement and its optional count, each a statement tree the store
 /// binds and executes on its own.
@@ -104,7 +104,7 @@ pub fn build_stage1_entity_ids(
         .expr_as(SeaExpr::col((E, TemporalEntities::Id)), EntityIdColumn)
         .from(entity_rows(branch, E))
         .cond_where(entity_conditions.clone()) // clone: the count query applies the same entity predicate
-        .cond_where(SeaExpr::exists(temporal_match_subquery(branch, compiled)));
+        .cond_where(SeaExpr::exists(temporal_match_subquery(branch, compiled, names)));
 
     // Clause 5.7.4.5: "If Entity ordering is specified (see clause 4.23), then
     // the JSON-LD array returned shall be ordered according to the member names
@@ -141,7 +141,7 @@ pub fn build_stage1_entity_ids(
                 .expr(Func::count(SeaExpr::col((E, TemporalEntities::Id))))
                 .from(entity_rows(branch, E))
                 .cond_where(entity_conditions)
-                .cond_where(SeaExpr::exists(temporal_match_subquery(branch, compiled)));
+                .cond_where(SeaExpr::exists(temporal_match_subquery(branch, compiled, names)));
             Some(count_select.take())
         }
         CountPolicy::Omit => None,
@@ -157,7 +157,7 @@ pub fn build_stage1_entity_ids(
 /// Build the correlated stream or history predicate shared by result and
 /// count: a bounded window asks for an instance inside it, an unbounded one
 /// only for a stream of a concerned attribute.
-fn temporal_match_subquery(branch: &HistoryBranch, compiled: &CompiledTemporalQuery) -> SelectStatement {
+fn temporal_match_subquery(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames) -> SelectStatement {
     let of = HistoryOf::Entity(SeaExpr::col((E, TemporalEntities::Id)));
     let (source, alias) = if compiled.window.interval.is_bounded() {
         (attribute_rows(branch, &of, Ah), Ah.into_iden())
@@ -168,13 +168,7 @@ fn temporal_match_subquery(branch: &HistoryBranch, compiled: &CompiledTemporalQu
     select
         .expr(int_literal(1))
         .from(source)
-        .join_as(
-            JoinType::Join,
-            AttributeNames::Table,
-            An,
-            SeaExpr::col((An, AttributeNames::AttributeNameKey)).equals((alias, HistoryGrain::AttributeNameKey)),
-        )
-        .cond_where(build_temporal_stage1_conditions(compiled));
+        .cond_where(build_temporal_stage1_conditions(compiled, &alias, &names.attributes));
     select.take()
 }
 
@@ -245,15 +239,27 @@ fn temporal_selector_condition(selector: &EntitySelector, types: &ResolvedNames<
     condition
 }
 
-/// Build the clause 5.7.4.4 step S1 conditions of Stage 1: the concerned
-/// attributes and the window.
-fn build_temporal_stage1_conditions(compiled: &CompiledTemporalQuery) -> Condition {
+/// Build the clause 5.7.4.4 step S1 conditions of Stage 1 over the source
+/// under `alias`: the concerned attributes and the window.
+///
+/// The attributes are compared by dictionary key on the source's own grain
+/// column, which PostgreSQL pushes into every branch of the source, so the
+/// queued entries of other attributes are dropped before the rules that
+/// judge whether an entry is written; an attribute the dictionary never
+/// keyed has no history and matches nothing.
+fn build_temporal_stage1_conditions(compiled: &CompiledTemporalQuery, alias: &DynIden, attributes: &ResolvedNames<AttributeName>) -> Condition {
     let mut condition = Condition::all();
 
-    // Attribute filter: an.name IN (...).
     if !compiled.instances.attr_filter.is_empty() {
-        let names: Vec<&str> = compiled.instances.attr_filter.iter().map(IriBuf::as_str).collect();
-        condition = condition.add(SeaExpr::col((An, AttributeNames::Name)).is_in(names));
+        let keys: Vec<i32> = compiled
+            .instances
+            .attr_filter
+            .iter()
+            .filter_map(|name| attributes.get_str(name.as_str()))
+            .map(AttributeNameKey::get)
+            .collect();
+        // clone: the alias is shared by every condition on the source.
+        condition = condition.add(SeaExpr::col((alias.clone(), HistoryGrain::AttributeNameKey)).is_in(keys));
     }
 
     // Temporal filters (timerel + time_at), on the requested axis alone.
@@ -392,7 +398,7 @@ mod tests {
         assert!(sql.starts_with(r#"SELECT "e"."id" AS "entity_id" FROM"#), "{sql}");
         assert!(sql.contains("EXISTS(SELECT"), "{sql}");
         assert!(sql.contains("\"e\".\"entity_type_name_keys\" @> (ARRAY[3])"), "{sql}");
-        assert!(sql.contains("JOIN \"attribute_names\""), "{sql}");
+        assert!(sql.contains(r#") AS "s" WHERE"#), "{sql}");
     }
 
     /// Clause 5.6.6 leaves the temporal evolution standing when the current
@@ -487,7 +493,7 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.window.interval = TimeInterval::After(instant("2024-01-01T00:00:00Z"));
         let (bounded, _) = built(&compiled, &QueryNames::default());
-        assert!(bounded.contains(") AS \"ah\" JOIN \"attribute_names\""), "{bounded}");
+        assert!(bounded.contains(r#") AS "ah" WHERE"#), "{bounded}");
     }
 
     #[test]
@@ -505,11 +511,29 @@ mod tests {
         assert!(has_timestamp(&values), "the window instant is bound: {values:?}");
     }
 
+    /// The concerned attributes are compared by dictionary key on the
+    /// source's own grain column, a restriction PostgreSQL pushes into each
+    /// branch of the source, so the window match never reads the name
+    /// dictionary.
     #[test]
-    fn stage1_includes_attribute_names_join() {
-        let compiled = minimal_compiled();
-        let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(sql.contains("JOIN \"attribute_names\""), "{sql}");
+    fn the_attrs_selection_narrows_the_source_by_dictionary_key() {
+        let mut compiled = minimal_compiled();
+        compiled.window.interval = TimeInterval::After(instant("2024-01-01T00:00:00Z"));
+        compiled.instances.attr_filter = vec![iri("https://example.com/speed")];
+        let (sql, values) = built(&compiled, &speed_and_address());
+        assert!(!sql.contains("attribute_names"), "{sql}");
+        assert!(sql.contains(r#") AS "ah" WHERE "ah"."attribute_name_key" IN ($"#), "{sql}");
+        assert!(values.0.iter().any(|value| matches!(value, Value::Int(Some(7)))), "{values:?}");
+    }
+
+    /// An attribute the dictionary never keyed was never recorded, so a
+    /// query naming only such attributes matches no Entity.
+    #[test]
+    fn an_attribute_never_keyed_matches_nothing() {
+        let mut compiled = minimal_compiled();
+        compiled.instances.attr_filter = vec![iri("https://example.com/unknown")];
+        let (sql, _) = built(&compiled, &speed_and_address());
+        assert!(sql.contains(r#") AS "s" WHERE $1 = $2 AND"#), "{sql}");
     }
 
     #[test]
@@ -567,7 +591,7 @@ mod tests {
         // conditions, beside the stream catalogue EXISTS predicate rather than
         // inside it: the scope probe correlates on the temporal entity alone.
         pretty_assertions::assert_eq!(sql.matches(r#") AS "sh" WHERE"#).count(), 3, "three scope predicates: {sql}");
-        let catalogue = sql.find(r#"JOIN "attribute_names" AS "an""#).expect("the catalogue predicate");
+        let catalogue = sql.find(r#") AS "ah" WHERE"#).expect("the catalogue predicate");
         let scope = sql.find("scope_history").expect("a scope predicate");
         assert!(scope < catalogue, "the scope predicates precede the catalogue predicate: {sql}");
     }
@@ -608,7 +632,7 @@ mod tests {
         let q = sql.find(r#"AS "qh""#).expect("the q probe");
         let geo = sql.find(r#"AS "ahg""#).expect("the geo probe");
         let scope = sql.find("scope_history").expect("the scope probe");
-        let catalogue = sql.find(r#"JOIN "attribute_names" AS "an""#).expect("the window match");
+        let catalogue = sql.find(r#") AS "ah" WHERE"#).expect("the window match");
         assert!(selector < q && q < exemption && geo < exemption && scope < exemption, "{sql}");
         assert!(catalogue > exemption, "the window match stays outside the exemption: {sql}");
         let bound = values

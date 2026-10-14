@@ -59,6 +59,8 @@ pub enum CompactCodeDomain {
     SubscriptionStatusCode,
     /// [`TemporalEntryKind`](crate::temporal_entry_kind::TemporalEntryKind).
     TemporalEntryKind,
+    /// [`TemporalIntentReach`](crate::temporal_intent_reach::TemporalIntentReach).
+    TemporalIntentReach,
     /// [`TenantStatusCode`](crate::tenant_status::TenantStatusCode).
     TenantStatusCode,
     /// [`ValueKind`](crate::value_kind::ValueKind).

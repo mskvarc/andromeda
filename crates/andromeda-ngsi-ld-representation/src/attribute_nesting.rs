@@ -6,15 +6,14 @@
 //! sub-attributes of its own (clause 4.5.2). Current state holds the
 //! sub-attributes of an attribute instance as elements of one array, each
 //! naming its parent by an `integer` position, so depth costs it one element
-//! per level and no bound the value budgets reach. The durable queues and the
-//! temporal history hold an attribute as its JSON-LD expansion and are read
-//! back with `serde_json`'s reader, which refuses a text nesting more than
-//! [`READER_NESTING_LIMIT`] containers. The expansion wraps every level of an
-//! attribute in a node and an array, so a write and the reads of what it
-//! queued and recorded agree on what an attribute is only if the write is held
-//! to the depth those reads can take:
-//! [`AttributeNestingLimit::DECODABLE_CEILING`], set by the deepest of them, an
-//! entity state inside a pending side-effect job.
+//! per level and no bound the value budgets reach. The queues and the temporal
+//! history hold an instance in the same form, so the one JSON left in storage
+//! is a structured value or a JSON literal in `value_object`, read back inside
+//! one instance object with `serde_json`'s reader, which refuses a text nesting
+//! more than [`READER_NESTING_LIMIT`] containers. The expansion wraps every
+//! level of a value in a node and an array, so a write and the reads of what
+//! it stored agree on what an attribute is only if the write is held to the
+//! depth that read can take: [`AttributeNestingLimit::DECODABLE_CEILING`].
 //!
 //! The refusal is `BadRequestData`. Clause 6.3.2 keeps 413 for an input "too
 //! large i.e. too many bytes", which a deep value of a few hundred bytes is not,
@@ -27,10 +26,9 @@ use derive_more::Display;
 use std::num::NonZeroUsize;
 use thiserror::Error;
 
-/// Containers above an attribute instance in an entity document: the
-/// document's array, the entity node, the attribute's array of instances, and
-/// the instance node.
-const CONTAINERS_ABOVE_AN_INSTANCE: usize = 4;
+/// Containers a stored structured value is read inside: the instance object
+/// whose value member holds it.
+const CONTAINERS_ABOVE_A_STORED_VALUE: usize = 1;
 
 /// Containers below the deepest level of an attribute: the array of the
 /// member holding its leaf, and the leaf's value object.
@@ -40,10 +38,6 @@ const CONTAINERS_BELOW_THE_DEEPEST_LEVEL: usize = 2;
 /// and the array of each of its members, a list object and its `@list` array,
 /// or a sub-attribute's array and its instance.
 const CONTAINERS_PER_LEVEL: usize = 2;
-
-/// Containers the deepest queue wraps a stored entity document in: a pending
-/// side-effect job holds it as a member of one item of a member array.
-const CONTAINERS_AROUND_A_QUEUED_DOCUMENT: usize = 3;
 
 /// How deeply one attribute instance nests below itself, in the levels a client
 /// writes: each sub-attribute, each node of a structured value, each list, and
@@ -72,11 +66,11 @@ impl AttributeNesting {
 pub struct AttributeNestingLimit(NonZeroUsize);
 
 impl AttributeNestingLimit {
-    /// The deepest nesting every stored and queued document holding an
-    /// attribute decodes at: the reader's limit, less the containers the
-    /// deepest queue and the entity document it holds put around an attribute
-    /// instance and the containers below its deepest level, taken at the most
-    /// containers a level costs.
+    /// The deepest nesting every stored value of an attribute decodes at: the
+    /// reader's limit, less the container a stored value is read inside and
+    /// the containers below its deepest level, taken at the most containers a
+    /// level costs. A sub-attribute is an element of its own, so its levels
+    /// cost the stored JSON nothing.
     pub const DECODABLE_CEILING: AttributeNestingLimit = AttributeNestingLimit::decodable_ceiling();
 
     /// A limit of `levels` levels.
@@ -100,8 +94,7 @@ impl AttributeNestingLimit {
     /// Compute [`AttributeNestingLimit::DECODABLE_CEILING`].
     const fn decodable_ceiling() -> AttributeNestingLimit {
         let levels = READER_NESTING_LIMIT
-            .saturating_sub(CONTAINERS_AROUND_A_QUEUED_DOCUMENT)
-            .saturating_sub(CONTAINERS_ABOVE_AN_INSTANCE)
+            .saturating_sub(CONTAINERS_ABOVE_A_STORED_VALUE)
             .saturating_sub(CONTAINERS_BELOW_THE_DEEPEST_LEVEL)
             / CONTAINERS_PER_LEVEL;
         match NonZeroUsize::new(levels) {
@@ -130,11 +123,11 @@ mod tests {
         AttributeNestingLimit::new(NonZeroUsize::new(levels).expect("a positive test limit"))
     }
 
-    /// `serde_json` reads 127 containers; the pending side-effect job, the
-    /// entity document and the leaf take 9 of them, and each level 2.
+    /// `serde_json` reads 127 containers; the instance object a stored value
+    /// is read inside and the leaf take 3 of them, and each level 2.
     #[test]
-    fn the_decodable_ceiling_is_fifty_nine_levels() {
-        pretty_assertions::assert_eq!(AttributeNestingLimit::DECODABLE_CEILING.get(), 59);
+    fn the_decodable_ceiling_is_sixty_two_levels() {
+        pretty_assertions::assert_eq!(AttributeNestingLimit::DECODABLE_CEILING.get(), 62);
     }
 
     #[test]

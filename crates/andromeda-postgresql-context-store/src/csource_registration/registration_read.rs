@@ -1,13 +1,11 @@
 //! The read side of the registration persistence port.
 //!
-//! Every read selects the registration rows it returns, then their
-//! `registration_information` rows in one more statement, and assembles each
-//! registration's `information` from those rows with the names behind their
-//! keys looked up once per read.
-//!
-//! The two statements run in one REPEATABLE READ transaction. Under READ
-//! COMMITTED a registration deleted between them (its information rows go
-//! first) would be returned without the rows it cannot be assembled without.
+//! Every read selects the registration rows it returns with their
+//! `registration_information` rows on them, in one statement and so one
+//! snapshot, and assembles each registration's `information` from those rows
+//! with the names behind their keys looked up once per read. A discovery page
+//! and its total are two statements, which one REPEATABLE READ transaction
+//! keeps on one snapshot.
 
 use crate::{
     csource_registration::{
@@ -38,7 +36,7 @@ use iri_rs::IriBuf;
 use sea_query::{Expr as SeaExpr, ExprTrait, Iden, Order, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgConnection, PgExecutor, Postgres, Row, Transaction, postgres::PgRow};
-use std::{collections::HashMap, hash::BuildHasher};
+use std::{collections::HashMap, hash::BuildHasher, slice::from_ref};
 
 /// The registrations `rows` hold, each with the `information` its
 /// information rows assemble to under `names`.
@@ -68,18 +66,14 @@ fn identifiers(rows: &[PgRow]) -> Result<Vec<Identifier>, ContextStoreError> {
         .collect()
 }
 
-/// The registrations `rows` hold, their information read on `executor` and
-/// its names looked up in `attribute_names`.
-pub(super) async fn registrations_of<'connection>(
-    executor: impl PgExecutor<'connection>,
+/// The registrations `rows` hold, each with the information rows it carries,
+/// their names looked up in `attribute_names`.
+pub(super) async fn registrations_of(
     attribute_names: &dyn NameLookup<AttributeName>,
     rows: &[PgRow],
 ) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
     let ids = identifiers(rows).map_err(|error| persistence_error(error))?;
-    let texts: Vec<&str> = ids.iter().map(Identifier::as_str).collect();
-    let information = RegistrationInformationRows::read(executor, &texts)
-        .await
-        .map_err(|error| persistence_error(error))?;
+    let information = RegistrationInformationRows::of(rows).map_err(|error| persistence_error(error))?;
     let keys = information
         .held_keys()
         .map_err(|error| persistence_error(ContextStoreError::from(StoredRegistrationError::Information(error))))?;
@@ -100,23 +94,19 @@ async fn begin_snapshot(store: &PostgresRegistrationStore) -> Result<Transaction
     Ok(transaction)
 }
 
-/// The rows `select` finds, on `connection`.
-async fn fetch_rows(connection: &mut PgConnection, select: &SelectStatement) -> Result<Vec<PgRow>, RegistrationError> {
+/// The rows `select` finds, on `executor`.
+async fn fetch_rows<'connection>(executor: impl PgExecutor<'connection>, select: &SelectStatement) -> Result<Vec<PgRow>, RegistrationError> {
     let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-        .fetch_all(connection)
+        .fetch_all(executor)
         .await
         .map_err(|error| persistence_error(error))
 }
 
-/// The registrations `select` finds, each with its `information`, read in one
-/// snapshot.
+/// The registrations `select` finds, each with its `information`.
 async fn read_registrations(store: &PostgresRegistrationStore, select: &SelectStatement) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
-    let mut transaction = begin_snapshot(store).await?;
-    let rows = fetch_rows(&mut transaction, select).await?;
-    let registrations = registrations_of(&mut *transaction, store.attribute_names.as_ref(), &rows).await?;
-    transaction.commit().await.map_err(|error| persistence_error(error))?;
-    Ok(registrations)
+    let rows = fetch_rows(&store.pool, select).await?;
+    registrations_of(store.attribute_names.as_ref(), &rows).await
 }
 
 /// Every registration due at or before `cutoff`, in identifier order, with the
@@ -179,9 +169,7 @@ pub(super) async fn written(
         .fetch_one(&mut *connection)
         .await
         .map_err(|error| persistence_error(error))?;
-    let information = RegistrationInformationRows::read(connection, &[id.as_str()])
-        .await
-        .map_err(|error| persistence_error(error))?;
+    let information = RegistrationInformationRows::of(from_ref(&row)).map_err(|error| persistence_error(error))?;
     let assembled = information
         .information_of(id, names)
         .map_err(|error| persistence_error(ContextStoreError::from(StoredRegistrationError::Information(error))))?;
@@ -203,9 +191,9 @@ pub(super) async fn query_compiled(
         .fetch_one(&mut *transaction)
         .await
         .map_err(|error| persistence_error(error))?;
-    let rows = fetch_rows(&mut transaction, &built.select).await?;
-    let mut csrs = registrations_of(&mut *transaction, store.attribute_names.as_ref(), &rows).await?;
+    let rows = fetch_rows(&mut *transaction, &built.select).await?;
     transaction.commit().await.map_err(|error| persistence_error(error))?;
+    let mut csrs = registrations_of(store.attribute_names.as_ref(), &rows).await?;
     // Clause 5.5.9.1: a backward or from-end keyset page was read descending so
     // a single `id` index scan could serve it; it is reversed here to the
     // ascending order the client sees on every page.

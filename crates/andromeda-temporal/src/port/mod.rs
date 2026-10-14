@@ -3,6 +3,8 @@
 pub mod history_reader;
 pub mod mutation_barrier;
 pub mod mutator;
+/// What one temporal read knows of its branch before its first statement.
+pub mod read_scope;
 /// The caller-owned ports temporal policy is constructed over.
 pub mod service_ports;
 /// Applying claimed intents to history and removing them from the queue.

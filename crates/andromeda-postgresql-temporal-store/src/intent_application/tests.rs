@@ -2,7 +2,7 @@ use crate::{
     intent_application::{
         StepRole,
         application_steps,
-        intent_source::{EntryNeed, IntentSource},
+        intent_source::{EntryReads, IntentSource, reach_statement},
     },
     temporal_entry_record::{
         TemporalIntentRecord,
@@ -13,12 +13,14 @@ use andromeda_context_commit::{write_id::WriteId, write_record::WriteRecord};
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_identity::InstanceIdentity, scope::path::ScopePath};
 use andromeda_ngsi_ld_model::temporal::TemporalValue;
 use andromeda_ngsi_ld_number::JsonNumber;
+use andromeda_postgresql_codes::temporal_intent_reach::TemporalIntentReach;
 use andromeda_temporal::{
     append_intent::{TemporalAppendEntry, TemporalAppendIntent},
     scope_observation::ScopeObservation,
 };
 use pretty_assertions::assert_eq;
-use sea_query::{Alias, DynIden, IntoIden};
+use sea_query::{Alias, DynIden, IntoIden, PostgresQueryBuilder};
+use std::collections::BTreeSet;
 
 /// The queue rows the drain reads, as every statement names them.
 const QUEUED: &str = r#"(SELECT * FROM "temporal_append_intents" WHERE "intent_key" = ANY($1::bigint[])) AS "i""#;
@@ -42,7 +44,13 @@ fn steps_over(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Vec<(StepR
 
 /// The statements of an application over the queued intents 3 and 5.
 fn rendered_steps() -> Vec<(StepRole, String)> {
-    steps_over(&IntentSource::Queued(&[3, 5]), None)
+    steps_over(
+        &IntentSource::Queued {
+            keys: &[3, 5],
+            reach: TemporalIntentReach::ALL.to_vec(),
+        },
+        None,
+    )
 }
 
 /// The statements of a commit recording no intent, in the live branch.
@@ -79,21 +87,19 @@ fn record_of(intent: &TemporalAppendIntent) -> TemporalIntentRecord {
     TemporalIntentRecord::of(intent, &keys(intent)).expect("the intent is storable")
 }
 
-/// Which needs a commit binding `intents` meets, in the order of
-/// [`EntryNeed`].
+/// Which needs a commit binding `intents` meets, in registry order.
 fn needs_met(intents: &[TemporalIntentRecord]) -> Vec<bool> {
     let record = WriteRecord::restored(WriteId::mint(), recorded_at());
     let source = IntentSource::Bound { record: &record, intents };
-    [
-        EntryNeed::Any,
-        EntryNeed::TypedIntent,
-        EntryNeed::UntypedObservation,
-        EntryNeed::AttributeEntry,
-        EntryNeed::VerbatimInstance,
-        EntryNeed::ScopeEntry,
-    ]
-    .map(|need| source.may_meet(need))
-    .to_vec()
+    TemporalIntentReach::ALL.iter().map(|need| source.may_meet(*need)).collect()
+}
+
+/// The fields of the entry under `e` that `sql` reads.
+fn entry_fields_read(sql: &str) -> BTreeSet<&str> {
+    sql.match_indices(r#""e"."#)
+        .filter_map(|(at, marker)| sql[at + marker.len()..].strip_prefix('"'))
+        .filter_map(|rest| rest.split('"').next())
+        .collect()
 }
 
 /// The end of the default instance of `speed`.
@@ -199,7 +205,7 @@ fn a_commit_runs_only_the_statements_its_entries_reach() {
         InstanceIdentity::generate(),
         None,
     )]));
-    assert_eq!(needs_met(&[typed]), [true, true, false, true, false, false]);
+    assert_eq!(needs_met(&[typed]), [true, false, true, false, false]);
 
     let claimed = record_of(&intent(vec![observation(
         TemporalValue::Number(JsonNumber::from(42)),
@@ -211,7 +217,7 @@ fn a_commit_runs_only_the_statements_its_entries_reach() {
         observed_at: None,
         instance: InstanceIdentity::generate(),
     }]));
-    assert_eq!(needs_met(&[claimed, scoped]), [true, true, false, true, true, true]);
+    assert_eq!(needs_met(&[claimed, scoped]), [true, false, true, true, true]);
 }
 
 /// An intent stating no type observes, and is checked against its
@@ -223,30 +229,98 @@ fn only_an_untyped_intent_that_observes_reaches_the_pre_check() {
         untyped.entity_types.clear();
         record_of(&untyped)
     };
-    assert_eq!(needs_met(&[untyped(vec![tombstone()])])[2], false);
-    assert_eq!(needs_met(&[untyped(Vec::new())])[2], true);
+    assert_eq!(needs_met(&[untyped(vec![tombstone()])])[1], false);
+    assert_eq!(needs_met(&[untyped(Vec::new())])[1], true);
     let observing = untyped(vec![
         tombstone(),
         observation(TemporalValue::Number(JsonNumber::from(1)), InstanceIdentity::generate(), None),
     ]);
-    assert_eq!(needs_met(&[observing])[2], true);
+    assert_eq!(needs_met(&[observing])[1], true);
 }
 
-/// The drain never reads its entries back, so it runs every statement.
+/// The drain runs the statements its claimed intents reach, as their flags
+/// say, and nothing else.
 #[test]
-fn a_queued_source_runs_every_statement() {
-    let source = IntentSource::Queued(&[1]);
-    assert!(
-        [
-            EntryNeed::TypedIntent,
-            EntryNeed::UntypedObservation,
-            EntryNeed::AttributeEntry,
-            EntryNeed::VerbatimInstance,
-            EntryNeed::ScopeEntry
-        ]
-        .into_iter()
-        .all(|need| source.may_meet(need))
+fn a_queued_source_runs_the_statements_its_claimed_intents_reach() {
+    let reach = vec![TemporalIntentReach::TypedIntent, TemporalIntentReach::AttributeEntry];
+    let source = IntentSource::Queued { keys: &[1], reach };
+    let met: Vec<bool> = TemporalIntentReach::ALL.iter().map(|need| source.may_meet(*need)).collect();
+    assert_eq!(met, [true, false, true, false, false]);
+}
+
+/// The reach of a claimed batch comes from the rows' `entry_needs`, each
+/// code once, and never from the entries.
+#[test]
+fn the_reach_of_claimed_intents_is_read_without_their_entries() {
+    let sql = reach_statement().to_string(PostgresQueryBuilder);
+    assert_eq!(
+        sql,
+        r#"SELECT DISTINCT UNNEST("entry_needs") FROM "temporal_append_intents" WHERE "intent_key" = ANY($1::bigint[])"#
     );
+}
+
+/// A bound source sends each statement only the entry fields it reads, so a
+/// statement declared to read less must read no more.
+#[test]
+fn each_statement_reads_no_entry_field_beyond_what_it_is_bound() {
+    let identity = BTreeSet::from([
+        "entry_kind",
+        "attribute_name_key",
+        "dataset_id",
+        "generated_instance_id",
+        "verbatim_instance_id",
+    ]);
+    let record = WriteRecord::restored(WriteId::mint(), recorded_at());
+    for step in application_steps(&IntentSource::Bound { record: &record, intents: &[] }, None).expect("every statement builds") {
+        let read = entry_fields_read(&step.sql);
+        match step.reads {
+            EntryReads::Nothing => assert!(read.is_empty() && !step.sql.contains(r#"UNNEST("i"."entries")"#), "{}", step.sql),
+            EntryReads::Identities => assert!(read.is_subset(&identity), "{read:?} in {}", step.sql),
+            EntryReads::Everything => assert!(!read.is_empty(), "{}", step.sql),
+        }
+    }
+}
+
+/// The light forms a bound source sends keep what the statements reading
+/// them read, and drop every value.
+#[test]
+fn a_bound_head_drops_every_entry_and_an_identity_every_value() {
+    let full = record_of(&intent(vec![observation(
+        TemporalValue::Number(JsonNumber::from(42)),
+        InstanceIdentity::Verbatim("urn:x".parse().expect("an instance identifier")),
+        None,
+    )]));
+    let head = full.head();
+    assert_eq!(
+        (&head.entity_id, &head.entity_type_name_keys, head.base_ordinal, head.entries.len()),
+        (&full.entity_id, &full.entity_type_name_keys, full.base_ordinal, 0)
+    );
+    assert_eq!(
+        head.entry_needs,
+        [
+            TemporalIntentReach::TypedIntent,
+            TemporalIntentReach::AttributeEntry,
+            TemporalIntentReach::VerbatimInstance
+        ]
+        .map(TemporalIntentReach::code)
+    );
+    let identities = full.identities();
+    let ([identity], [entry]) = (identities.entries.as_slice(), full.entries.as_slice()) else {
+        panic!("one entry each: {identities:?}");
+    };
+    assert_eq!(
+        (identity.entry_kind, identity.attribute_name_key, &identity.dataset_id, identity.value_kind),
+        (entry.entry_kind, entry.attribute_name_key, &entry.dataset_id, entry.value_kind)
+    );
+    assert_eq!(
+        (&identity.verbatim_instance_id, identity.generated_instance_id),
+        (&entry.verbatim_instance_id, entry.generated_instance_id)
+    );
+    assert!(
+        entry.value_number.is_some() && entry.observed_at.is_some(),
+        "the fixture carries a value and an instant"
+    );
+    assert!(identity.value_number.is_none() && identity.observed_at.is_none() && identity.created_at.is_none() && identity.sub_attributes.is_none());
 }
 
 #[test]

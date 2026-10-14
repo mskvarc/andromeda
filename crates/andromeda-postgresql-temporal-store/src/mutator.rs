@@ -1,20 +1,24 @@
 //! Every question the mutator answers is answered from the temporal catalogue, never from current state, because clause 5.6.6 leaves the Temporal Evolution standing when the entity itself is deleted.
 
-use crate::{attribute_stream_deletion::AttributeStreamScope, repo::TemporalRepository};
+use crate::{attribute_stream_deletion::AttributeStreamScope, history_branch::branch_of, repo::TemporalRepository};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, instance_identity::InstanceIdentity};
 use andromeda_ngsi_ld_query::temporal::history_delete::TemporalHistoryDeleteScope;
 use andromeda_temporal::{
     error::TemporalError,
     observed_instance::ObservedInstance,
-    port::mutator::{TemporalDeleteScope, TemporalMutator},
+    port::{
+        mutator::{TemporalDeleteScope, TemporalMutator},
+        read_scope::ScopeReach,
+    },
 };
 use async_trait::async_trait;
 
 #[async_trait]
 impl TemporalMutator for TemporalRepository {
     async fn entity_exists(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<bool, TemporalError> {
-        self.temporal_entity_exists(target, entity_id).await.map_err(TemporalError::from)
+        let scope = self.scope_of(target, ScopeReach::Entity(entity_id)).await?;
+        self.temporal_entity_exists(&branch_of(&scope), entity_id).await.map_err(TemporalError::from)
     }
 
     async fn attribute_exists(&self, target: &ContextTarget, entity_id: &Identifier, attribute_name: &AttributeName) -> Result<bool, TemporalError> {

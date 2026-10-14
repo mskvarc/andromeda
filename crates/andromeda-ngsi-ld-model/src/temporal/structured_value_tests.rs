@@ -223,7 +223,8 @@ fn an_empty_array_valued_property_is_stored_as_the_empty_array() {
 /// Every structured value and every metadata object a write is admitted with
 /// reads back from its history row: at the deepest nesting any limit may
 /// admit, the value of each nesting family and the metadata of a chain of
-/// sub-attributes decode and write back unchanged.
+/// sub-attributes decode and write back unchanged. The ceiling is tight: a
+/// node or list chain one level deeper is a text `serde_json` refuses.
 #[test]
 fn values_and_metadata_at_the_decodable_ceiling_read_back() {
     use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingLimit;
@@ -234,6 +235,9 @@ fn values_and_metadata_at_the_decodable_ceiling_read_back() {
     let list_body = list_chain(ceiling)["@list"].clone(); // clone: the body is compared against its own round trip
     pretty_assertions::assert_eq!(round_trip(AttributeType::ListProperty, &list_body), list_body);
     pretty_assertions::assert_eq!(round_trip(AttributeType::JsonProperty, &object_chain(ceiling)), object_chain(ceiling));
+    assert!(StructuredValue::from_stored(AttributeType::Property, &attribute(), &node_chain(ceiling + 1).to_string()).is_err());
+    let deeper_list = list_chain(ceiling + 1)["@list"].to_string();
+    assert!(StructuredValue::from_stored(AttributeType::ListProperty, &attribute(), &deeper_list).is_err());
 
     let mut members = nested_instance(NestingShape::SubAttributeChain, ceiling);
     if let Some(members) = members.as_object_mut() {

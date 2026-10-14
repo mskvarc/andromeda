@@ -11,9 +11,9 @@
 //! differ in that one relation alone, so the drain and the commit record
 //! history through the same statements.
 
-use crate::temporal_entry_record::{TemporalEntryRecord, TemporalIntentRecord};
+use crate::{error::TemporalStoreError, stored_catalog_error::StoredCatalogError, temporal_entry_record::TemporalIntentRecord};
 use andromeda_context_commit::write_record::WriteRecord;
-use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
+use andromeda_postgresql_codes::temporal_intent_reach::TemporalIntentReach;
 use andromeda_postgresql_schema::{queue::TemporalAppendIntents, temporal_intent::TemporalEntry};
 use andromeda_postgresql_seaquery::{
     cast::cast,
@@ -23,7 +23,7 @@ use andromeda_postgresql_seaquery::{
     unnest::{Ordinality, apply_record_ordinality, unnest_of},
 };
 use sea_query::{Asterisk, Expr, ExprTrait, Iden, PostgresQueryBuilder, Query, QueryStatementWriter, SelectStatement, SimpleExpr};
-use sqlx::{Postgres, postgres::PgArguments, query::Query as SqlxQuery};
+use sqlx::{AssertSqlSafe, PgConnection, Postgres, postgres::PgArguments, query::Query as SqlxQuery};
 
 /// The source relation's alias, `i`.
 #[derive(Iden, Clone, Copy)]
@@ -53,8 +53,15 @@ struct Input;
 /// The intents one application records, as its statements read them.
 #[derive(Debug)]
 pub enum IntentSource<'a> {
-    /// The claimed rows of `temporal_append_intents` named by their keys.
-    Queued(&'a [i64]),
+    /// The claimed rows of `temporal_append_intents` named by their keys,
+    /// beside the needs their entries meet.
+    Queued {
+        /// The claimed intents' keys.
+        keys: &'a [i64],
+        /// The needs some claimed intent meets, read from the rows by
+        /// [`IntentSource::claimed`].
+        reach: Vec<TemporalIntentReach>,
+    },
     /// One commit's intents, recorded under the commit's write identity.
     Bound {
         /// The write identity and instant every intent shares.
@@ -64,31 +71,59 @@ pub enum IntentSource<'a> {
     },
 }
 
-/// What a statement needs among the entries for it to change anything.
+/// What of the entries a statement reads, so a bound source binds no more:
+/// the server decodes every value it is sent.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum EntryNeed {
-    /// Nothing: it runs for every source.
-    Any,
-    /// An intent stating types.
-    TypedIntent,
-    /// An intent stating no type that holds no entry or one that ends nothing.
-    UntypedObservation,
-    /// An observation or the end of an instance.
-    AttributeEntry,
-    /// An attribute entry carrying a client-supplied `instanceId`.
-    VerbatimInstance,
-    /// A Scope entry.
-    ScopeEntry,
+pub(crate) enum EntryReads {
+    /// No entry: the intents' identity, types and positions.
+    Nothing,
+    /// What identifies each entry: its kind, grain and instance identifiers.
+    Identities,
+    /// Every field of every entry.
+    Everything,
 }
 
-impl IntentSource<'_> {
+/// The needs the claimed rows `$1` names meet, one code a row, read from
+/// their `entry_needs` and never their entries.
+pub(crate) fn reach_statement() -> SelectStatement {
+    let mut statement = Query::select();
+    statement
+        .distinct()
+        .expr(unnest_of(Expr::col(TemporalAppendIntents::EntryNeeds)))
+        .from(TemporalAppendIntents::Table)
+        .and_where(Expr::col(TemporalAppendIntents::IntentKey).eq(any(cast(external_placeholder(1), PostgresType::BigintArray))));
+    statement
+}
+
+impl<'a> IntentSource<'a> {
+    /// The queued intents `keys` names, which the caller holds claimed, with
+    /// the needs their entries meet.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalStoreError::Database`] when the needs cannot be read,
+    /// and [`TemporalStoreError::StoredCatalog`] when a stored code names no
+    /// need.
+    pub async fn claimed(connection: &mut PgConnection, keys: &'a [i64]) -> Result<IntentSource<'a>, TemporalStoreError> {
+        let codes: Vec<i16> = sqlx::query_scalar(AssertSqlSafe(reach_statement().to_string(PostgresQueryBuilder)))
+            .bind(keys)
+            .fetch_all(connection)
+            .await?;
+        let reach = codes
+            .into_iter()
+            .map(TemporalIntentReach::try_from)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(StoredCatalogError::IntentReach)?;
+        Ok(IntentSource::Queued { keys, reach })
+    }
+
     /// The source relation under `i`: the claimed rows `$1` names, or the
     /// intents `$1` binds beside the write identity `$2` and its instant `$3`,
     /// each keyed by its position.
     fn relation(&self) -> SelectStatement {
         let mut relation = Query::select();
         match self {
-            IntentSource::Queued(_) => relation
+            IntentSource::Queued { .. } => relation
                 .column(Asterisk)
                 .from(TemporalAppendIntents::Table)
                 .and_where(Expr::col(TemporalAppendIntents::IntentKey).eq(any(cast(external_placeholder(1), PostgresType::BigintArray)))),
@@ -110,32 +145,26 @@ impl IntentSource<'_> {
         relation
     }
 
-    /// Whether some entry of the source may meet `need`: a bound source says
-    /// so from its entries, a queued one is never read back and may.
-    pub(crate) fn may_meet(&self, need: EntryNeed) -> bool {
-        let IntentSource::Bound { intents, .. } = self else {
-            return true;
-        };
-        let entries = || intents.iter().flat_map(|intent| &intent.entries);
-        let attribute = |entry: &TemporalEntryRecord| entry.entry_kind != TemporalEntryKind::Scope.code();
-        match need {
-            EntryNeed::Any => true,
-            EntryNeed::TypedIntent => intents.iter().any(|intent| !intent.entity_type_name_keys.is_empty()),
-            EntryNeed::UntypedObservation => intents.iter().any(|intent| {
-                intent.entity_type_name_keys.is_empty()
-                    && (intent.entries.is_empty() || intent.entries.iter().any(|entry| entry.entry_kind != TemporalEntryKind::Tombstone.code()))
-            }),
-            EntryNeed::AttributeEntry => entries().any(attribute),
-            EntryNeed::VerbatimInstance => entries().any(|entry| attribute(entry) && entry.verbatim_instance_id.is_some()),
-            EntryNeed::ScopeEntry => entries().any(|entry| !attribute(entry)),
+    /// Whether some intent of the source meets `need`.
+    pub(crate) fn may_meet(&self, need: TemporalIntentReach) -> bool {
+        match self {
+            IntentSource::Queued { reach, .. } => reach.contains(&need),
+            IntentSource::Bound { intents, .. } => intents.iter().any(|intent| intent.reaches(need)),
         }
     }
 
-    /// `query` with the source's values bound in marker order.
-    pub(crate) fn bind<'q>(&'q self, query: SqlxQuery<'q, Postgres, PgArguments>) -> SqlxQuery<'q, Postgres, PgArguments> {
+    /// `query` with the source's values bound in marker order, a bound
+    /// source's intents carrying no more of their entries than `reads`.
+    pub(crate) fn bind<'q>(&'q self, query: SqlxQuery<'q, Postgres, PgArguments>, reads: EntryReads) -> SqlxQuery<'q, Postgres, PgArguments> {
         match self {
-            IntentSource::Queued(keys) => query.bind(*keys),
-            IntentSource::Bound { record, intents } => query.bind(*intents).bind(record.write_id().as_uuid()).bind(record.recorded_at()),
+            IntentSource::Queued { keys, .. } => query.bind(*keys),
+            IntentSource::Bound { record, intents } => match reads {
+                EntryReads::Nothing => query.bind(intents.iter().map(TemporalIntentRecord::head).collect::<Vec<_>>()),
+                EntryReads::Identities => query.bind(intents.iter().map(TemporalIntentRecord::identities).collect::<Vec<_>>()),
+                EntryReads::Everything => query.bind(*intents),
+            }
+            .bind(record.write_id().as_uuid())
+            .bind(record.recorded_at()),
         }
     }
 }

@@ -64,10 +64,8 @@ fn stored_properties(properties: &IndexMap<AttributeName, JsonLiteral>) -> Optio
 ///
 /// A concurrent deletion or update of one of them either committed before the
 /// lock, so the row is not returned or is read as it left it, or waits behind
-/// it with its information rows still as they were committed. Without the lock
-/// a deletion committing between this read and the information read (it
-/// removes the information rows first) leaves a registration without the rows
-/// it is assembled from.
+/// it until the sweep has deleted it, so the sweep returns each registration
+/// exactly as it deletes it.
 fn swept_select(cutoff: DateTime<Utc>) -> SelectStatement {
     let mut select = expired_select(cutoff);
     select.lock_with_tables(LockType::Update, [Csr::Table]);
@@ -86,7 +84,7 @@ pub(super) async fn delete_expired(store: &PostgresRegistrationStore, cutoff: Da
         .fetch_all(&mut *transaction)
         .await
         .map_err(|error| persistence_error(error))?;
-    let expired = registrations_of(&mut *transaction, store.attribute_names.as_ref(), &rows).await?;
+    let expired = registrations_of(store.attribute_names.as_ref(), &rows).await?;
 
     let mut expired_ids = Query::select();
     expired_ids

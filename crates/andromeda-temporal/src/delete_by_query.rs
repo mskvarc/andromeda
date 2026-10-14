@@ -9,7 +9,7 @@
 //! local-only: [`selection_params`](TemporalDeleteParameters::selection_params)
 //! pins the local scope, so entity resolution never forwards.
 
-use crate::{error::TemporalError, service::TemporalService};
+use crate::{error::TemporalError, port::read_scope::ScopeReach, service::TemporalService};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -67,7 +67,12 @@ impl TemporalService {
         // matching entity, not one page of them. A cheap guard first — no entity
         // matched means nothing to count or delete.
         let unpaged = PageWindow::unbounded();
-        let entity_ids = self.reader.query_entity_ids(target, &compiled, &unpaged, CountPolicy::Omit).await?.entity_ids;
+        let read_scope = self.reader.read_scope(target, ScopeReach::Every).await?;
+        let entity_ids = self
+            .reader
+            .query_entity_ids(&read_scope, &compiled, &unpaged, CountPolicy::Omit)
+            .await?
+            .entity_ids;
         if entity_ids.is_empty() {
             return Ok(empty_outcome(params));
         }

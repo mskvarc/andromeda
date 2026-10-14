@@ -61,7 +61,8 @@ pub enum ClaimedDeliveryError {
     },
 }
 
-/// SQL decode shape of one claimed delivery and the subscription it answers.
+/// SQL decode shape of one claimed delivery and the subscription it answers,
+/// as the claim returns it.
 ///
 /// Crate-private so unvalidated database text cannot cross the persistence
 /// boundary.
@@ -69,7 +70,9 @@ pub enum ClaimedDeliveryError {
 pub(crate) struct RawClaimedDeliveryRow {
     /// Database-generated delivery key.
     pub(crate) delivery_key: i64,
-    /// Raw subscription identifier decoded by the row mapper.
+    /// Raw subscription identifier decoded by the row mapper, returned as the
+    /// subscription's `id`.
+    #[sqlx(rename = "id")]
     pub(crate) subscription_id: String,
     /// Delivery attempts already made.
     pub(crate) attempt_count: i32,

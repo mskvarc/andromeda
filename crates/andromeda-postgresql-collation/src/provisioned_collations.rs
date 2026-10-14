@@ -90,12 +90,14 @@ impl ProvisionedCollations {
                 CreateFailure::CreatedConcurrently => {}
                 CreateFailure::LocaleRefused => {
                     return Err(CollationProvisioningError::NotAnIcuCollation {
+                        // clone: the failure owns the collation it names.
                         collation: collation.clone(),
                         source,
                     });
                 }
                 CreateFailure::Statement => {
                     return Err(CollationProvisioningError::Statement {
+                        // clone: the failure owns the collation it names.
                         collation: collation.clone(),
                         source,
                     });

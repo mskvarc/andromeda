@@ -159,7 +159,13 @@ pub struct TemporalConfig {
     /// did not observe a wake for is claimed within this cadence.
     #[toml_comment(inline)]
     pub intent_fallback_max: HumanDuration,
-    /// Maximum intents claimed by one bounded drain pass.
+    /// Maximum intents claimed by one bounded drain pass, which applies them in
+    /// one transaction.
+    ///
+    /// Each statement of an application reads every claimed intent once, so a
+    /// wider batch spreads its cost over more entries: 256 applies a
+    /// respond-async write of 500 entities in two transactions, while a batch
+    /// that fails is applied again one intent per transaction.
     pub intent_batch_size: u32,
     /// Lease duration for one claimed intent batch, in human-readable form
     /// (`"30s"`).
@@ -218,7 +224,7 @@ impl Default for TemporalConfig {
             expiration_check_interval: HumanDuration::from_secs(30),
             intent_fallback: HumanDuration::from_secs(1),
             intent_fallback_max: HumanDuration::from_secs(30),
-            intent_batch_size: 64,
+            intent_batch_size: 256,
             intent_lease: HumanDuration::from_secs(30),
             intent_retry: HumanDuration::from_secs(2),
             intent_retry_max: HumanDuration::from_secs(300),
@@ -554,6 +560,12 @@ mod config_tests {
                 columnstore_after_days: NonZeroU32::new(3).expect("three days"),
             })
         );
+    }
+
+    /// A respond-async write of 500 entities drains in two batches.
+    #[test]
+    fn the_drain_applies_256_intents_per_batch_by_default() {
+        assert_eq!(TemporalConfig::default().intent_batch_size, 256);
     }
 
     #[test]

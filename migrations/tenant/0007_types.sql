@@ -189,11 +189,14 @@ create type temporal_entry as (
 -- differs from intent to intent, travel each intent in one value.
 -- `entity_type_name_keys` are `entity_type_names` keys, empty for an intent
 -- that only ends instances; `base_ordinal` is the write ordinal of the first
--- entry.
+-- entry. `entry_needs` are the codes of the application statements' needs the
+-- entries meet, so an application skips a statement no intent reaches without
+-- reading `entries`.
 create type temporal_intent as (
     entity_id text,
     entity_type_name_keys integer[],
     base_ordinal integer,
-    entries temporal_entry[]
+    entries temporal_entry[],
+    entry_needs smallint[]
 );
 

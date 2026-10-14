@@ -9,7 +9,7 @@
 //! one array, so they are no level. Each level costs at most two containers in
 //! the expansion, which is what lets
 //! [`AttributeNestingLimit::DECODABLE_CEILING`](andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingLimit::DECODABLE_CEILING)
-//! bound every queued and stored document from the levels alone.
+//! bound every stored value from the levels alone.
 
 use crate::{
     document::{

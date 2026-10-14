@@ -43,9 +43,8 @@ impl TemporalRepository {
     /// # Errors
     ///
     /// Returns [`TemporalStoreError::Database`] when the statement fails.
-    pub(crate) async fn temporal_entity_exists(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<bool, TemporalStoreError> {
-        let branch = self.history_branch(target).await?;
-        let (sql, values) = temporal_entity_exists_query(&branch, entity_id.as_str()).build_sqlx(PostgresQueryBuilder);
+    pub(crate) async fn temporal_entity_exists(&self, branch: &HistoryBranch, entity_id: &Identifier) -> Result<bool, TemporalStoreError> {
+        let (sql, values) = temporal_entity_exists_query(branch, entity_id.as_str()).build_sqlx(PostgresQueryBuilder);
         let exists = sqlx::query_scalar_with(AssertSqlSafe(sql), values).fetch_one(&self.pool).await?;
         Ok(exists)
     }
@@ -64,15 +63,14 @@ impl TemporalRepository {
     /// name is not the validated shape the catalogue writes.
     pub(crate) async fn temporal_entity_types(
         &self,
-        target: &ContextTarget,
+        branch: &HistoryBranch,
         entity_ids: &[Identifier],
     ) -> Result<HashMap<Identifier, Vec<EntityTypeName>>, TemporalStoreError> {
         if entity_ids.is_empty() {
             return Ok(HashMap::new());
         }
         let identifiers: Vec<&str> = entity_ids.iter().map(Identifier::as_str).collect();
-        let branch = self.history_branch(target).await?;
-        let (sql, values) = temporal_entity_types_query(&branch, &identifiers).build_sqlx(PostgresQueryBuilder);
+        let (sql, values) = temporal_entity_types_query(branch, &identifiers).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
         let mut types_by_entity = HashMap::with_capacity(rows.len());
         for row in rows {
@@ -108,15 +106,14 @@ impl TemporalRepository {
     /// projected shape code is not one the dictionary or the projection knows.
     pub(crate) async fn stored_attribute_shapes(
         &self,
-        target: &ContextTarget,
+        branch: &HistoryBranch,
         attributes: &[AttributeName],
     ) -> Result<HashMap<AttributeName, HashSet<StoredAttributeShape>>, TemporalStoreError> {
         if attributes.is_empty() {
             return Ok(HashMap::new());
         }
         let names: Vec<&str> = attributes.iter().map(AttributeName::as_str).collect();
-        let branch = self.history_branch(target).await?;
-        let (sql, values) = stored_attribute_shapes_query(&branch, &names).build_sqlx(PostgresQueryBuilder);
+        let (sql, values) = stored_attribute_shapes_query(branch, &names).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
         let mut shapes_by_attribute: HashMap<AttributeName, HashSet<StoredAttributeShape>> = HashMap::new();
         for row in rows {

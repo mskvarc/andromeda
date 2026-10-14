@@ -3,6 +3,7 @@
 use crate::{
     aggregation_rows_read::decode_aggregation_rows,
     error::TemporalStoreError,
+    history_branch::branch_of,
     history_row_decode::assembled_history,
     repo::TemporalRepository,
     scope_history_read::decode_scope_history,
@@ -31,18 +32,22 @@ use andromeda_postgresql_temporal_query::{
 use andromeda_temporal::{
     error::TemporalError,
     outcome::TemporalEntityIdOutcome,
-    port::history_reader::{
-        AggregationPushdown,
-        HistoryVisibility,
-        RecordedAttributeShape,
-        RecordedValueKind,
-        TemporalHistoryObservation,
-        TemporalHistoryOutcome,
-        TemporalHistoryReader,
-        TemporalReaderCapabilities,
+    port::{
+        history_reader::{
+            AggregationPushdown,
+            HistoryVisibility,
+            RecordedAttributeShape,
+            RecordedValueKind,
+            TemporalHistoryObservation,
+            TemporalHistoryOutcome,
+            TemporalHistoryReader,
+            TemporalReaderCapabilities,
+        },
+        read_scope::{ScopeReach, TemporalReadScope},
     },
 };
 use async_trait::async_trait;
+use iri_rs::IriBuf;
 use sqlx::Row;
 use std::collections::{HashMap, HashSet};
 
@@ -91,8 +96,15 @@ impl TemporalRepository {
     pub(crate) async fn resolve_query_names(&self, compiled: &CompiledTemporalQuery) -> Result<QueryNames, TemporalError> {
         // Clause 5.7.4.3 confines a temporal ordering to the `id` member, which
         // is a column of the temporal catalogue and names no attribute, so the
-        // dictionary lookup below has no ordering term to resolve.
-        let attribute_names = projected_attribute_names([], compiled.entities.q_expr.as_ref(), compiled.entities.geo.as_ref(), &[]);
+        // dictionary lookup below has no ordering term to resolve. The `attrs`
+        // selection resolves with the filters, so a statement narrows the
+        // history it reads by key inside the source rather than by name above it.
+        let attribute_names = projected_attribute_names(
+            compiled.instances.attr_filter.iter().map(IriBuf::as_str),
+            compiled.entities.q_expr.as_ref(),
+            compiled.entities.geo.as_ref(),
+            &[],
+        );
         // The projection is written inside the transaction that writes the
         // entity, so a dictionary hit is already backed by committed projection
         // rows and there is nothing to wait for.
@@ -149,20 +161,24 @@ impl TemporalHistoryReader for TemporalRepository {
         }
     }
 
-    async fn entity_exists(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<bool, TemporalError> {
-        self.temporal_entity_exists(target, entity_id).await.map_err(TemporalError::from)
+    async fn read_scope<'a>(&self, target: &'a ContextTarget, reach: ScopeReach<'_>) -> Result<TemporalReadScope<'a>, TemporalError> {
+        self.scope_of(target, reach).await.map_err(TemporalError::from)
     }
 
-    async fn entity_types(&self, target: &ContextTarget, entity_ids: &[Identifier]) -> Result<HashMap<Identifier, Vec<EntityTypeName>>, TemporalError> {
-        self.temporal_entity_types(target, entity_ids).await.map_err(TemporalError::from)
+    async fn entity_exists(&self, scope: &TemporalReadScope<'_>, entity_id: &Identifier) -> Result<bool, TemporalError> {
+        self.temporal_entity_exists(&branch_of(scope), entity_id).await.map_err(TemporalError::from)
+    }
+
+    async fn entity_types(&self, scope: &TemporalReadScope<'_>, entity_ids: &[Identifier]) -> Result<HashMap<Identifier, Vec<EntityTypeName>>, TemporalError> {
+        self.temporal_entity_types(&branch_of(scope), entity_ids).await.map_err(TemporalError::from)
     }
 
     async fn recorded_attribute_shapes(
         &self,
-        target: &ContextTarget,
+        scope: &TemporalReadScope<'_>,
         attributes: &[AttributeName],
     ) -> Result<HashMap<AttributeName, HashSet<RecordedAttributeShape>>, TemporalError> {
-        let recorded = self.stored_attribute_shapes(target, attributes).await.map_err(TemporalError::from)?;
+        let recorded = self.stored_attribute_shapes(&branch_of(scope), attributes).await.map_err(TemporalError::from)?;
         Ok(recorded
             .into_iter()
             .map(|(name, shapes)| (name, shapes.into_iter().map(neutral_attribute_shape).collect()))
@@ -171,7 +187,7 @@ impl TemporalHistoryReader for TemporalRepository {
 
     async fn query_entity_ids(
         &self,
-        target: &ContextTarget,
+        scope: &TemporalReadScope<'_>,
         compiled: &CompiledTemporalQuery,
         window: &PageWindow,
         count: CountPolicy,
@@ -186,8 +202,7 @@ impl TemporalHistoryReader for TemporalRepository {
             self.collations.ensure(collation).await.map_err(TemporalStoreError::from)?;
         }
 
-        let branch = self.history_branch(target).await?;
-        let stage1 = build_stage1_entity_ids(&branch, compiled, window, count, &names).map_err(TemporalStoreError::Render)?;
+        let stage1 = build_stage1_entity_ids(&branch_of(scope), compiled, window, count, &names).map_err(TemporalStoreError::Render)?;
 
         let entity_id_rows = self.execute_temporal_query(TemporalStatement::Stage1, stage1.select).await?;
 
@@ -222,20 +237,20 @@ impl TemporalHistoryReader for TemporalRepository {
 
     async fn filter_leaf_truths(
         &self,
-        target: &ContextTarget,
+        scope: &TemporalReadScope<'_>,
         compiled: &CompiledTemporalQuery,
         entity_ids: &[Identifier],
     ) -> Result<HashMap<Identifier, LeafTruths>, TemporalError> {
-        self.read_filter_leaf_truths(target, compiled, entity_ids).await
+        self.read_filter_leaf_truths(&branch_of(scope), compiled, entity_ids).await
     }
 
     async fn query_entity_history(
         &self,
-        target: &ContextTarget,
+        scope: &TemporalReadScope<'_>,
         entity_id: &Identifier,
         compiled: &CompiledTemporalQuery,
     ) -> Result<TemporalHistoryOutcome, TemporalError> {
-        let branch = self.history_branch(target).await?;
+        let branch = branch_of(scope);
         let stage2 = build_temporal_history_query(&branch, entity_id, compiled);
         let pg_rows = self.execute_temporal_query(TemporalStatement::History, stage2).await?;
 
@@ -256,23 +271,23 @@ impl TemporalHistoryReader for TemporalRepository {
 
     async fn query_merged_entity_aggregation(
         &self,
-        target: &ContextTarget,
+        scope: &TemporalReadScope<'_>,
         entity_id: &Identifier,
         entity_types: &[EntityTypeName],
         compiled: &CompiledTemporalQuery,
         answered: &[TemporalHistoryRow],
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
-        self.merged_entity_aggregation(target, entity_id, entity_types, compiled, answered).await
+        self.merged_entity_aggregation(scope.target(), entity_id, entity_types, compiled, answered)
+            .await
     }
 
     async fn query_entity_aggregation(
         &self,
-        target: &ContextTarget,
+        scope: &TemporalReadScope<'_>,
         entity_id: &Identifier,
         compiled: &CompiledTemporalQuery,
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
-        let branch = self.history_branch(target).await?;
-        let stage2 = build_temporal_history_query(&branch, entity_id, compiled);
+        let stage2 = build_temporal_history_query(&branch_of(scope), entity_id, compiled);
         let pg_rows = self.execute_temporal_query(TemporalStatement::Aggregation, stage2).await?;
 
         decode_aggregation_rows(&pg_rows, entity_id, compiled)

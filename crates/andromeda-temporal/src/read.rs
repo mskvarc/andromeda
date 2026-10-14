@@ -3,7 +3,10 @@
 use crate::{
     aggregation_eligibility::ensure_aggregation_eligible,
     error::TemporalError,
-    port::history_reader::TemporalHistoryReader,
+    port::{
+        history_reader::TemporalHistoryReader,
+        read_scope::{ScopeReach, TemporalReadScope},
+    },
     read::{dataset_step::DatasetStep, entity_members::carries_members, rendered_entity::HistoryPresence},
     requested_identifiers::RequestedIdentifiers,
     service::{TemporalRange, TemporalReadResult, TemporalService},
@@ -52,26 +55,24 @@ impl TemporalService {
 
             let compiled = self.compile_temporal_query(params, context).await?;
             ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
-            self.ensure_requested_attributes_aggregable(target, &compiled).await?;
-
-            if !self.reader.entity_exists(target, entity_id).await? {
-                return Err(TemporalError::NotFound(TemporalNotFoundReason::Entity { id: entity_id.clone() }));
+            if shapes_decide_eligibility(&compiled) {
+                let every = self.reader.read_scope(target, ScopeReach::Every).await?;
+                self.ensure_requested_attributes_aggregable(&every, &compiled).await?;
             }
+            let scope = self.reader.read_scope(target, ScopeReach::Entity(entity_id)).await?;
 
             // Clauses 4.5.1 and 4.5.6: the temporal catalogue is the authority for
             // an entity's types, so the mandatory `type` member survives the clause
             // 5.6.6 deletion that removes current state and leaves the Temporal
-            // Evolution standing.
-            let entity_types = self
-                .reader
-                .entity_types(target, from_ref(entity_id))
-                .await?
-                .remove(entity_id)
-                .unwrap_or_default();
+            // Evolution standing; an entity it records no evolution of is absent.
+            let Some(entity_types) = self.reader.entity_types(&scope, from_ref(entity_id)).await?.remove(entity_id) else {
+                // clone: the refusal owns the identifier it names.
+                return Err(TemporalError::NotFound(TemporalNotFoundReason::Entity { id: entity_id.clone() }));
+            };
 
             let compactor = self.engine.compactor(context);
             let rendered = self
-                .render_one_temporal_entity(target, entity_id, &entity_types, &compiled, &EntityCompactor::new(&compactor))
+                .render_one_temporal_entity(&scope, entity_id, &entity_types, &compiled, &EntityCompactor::new(&compactor))
                 .await?;
 
             // Clause 5.7.3.4, step S1: "if the time series, for all the
@@ -85,7 +86,7 @@ impl TemporalService {
             // given. With neither a window nor `attrs` nothing is removed, so an
             // entity whose evolution holds no attribute still answers itself.
             let restricted = compiled.window.interval.is_bounded() || !compiled.instances.attr_filter.is_empty();
-            if restricted && self.window_presence(target, entity_id, &compiled, rendered.presence).await? == HistoryPresence::Absent {
+            if restricted && self.window_presence(&scope, entity_id, &compiled, rendered.presence).await? == HistoryPresence::Absent {
                 return Err(TemporalError::NotFound(TemporalNotFoundReason::NoInstanceSelected {
                     entity: entity_id.clone(),
                 }));
@@ -136,7 +137,7 @@ impl TemporalService {
     /// Returns [`TemporalError::Persistence`] when the history cannot be read.
     async fn window_presence(
         &self,
-        target: &ContextTarget,
+        scope: &TemporalReadScope<'_>,
         entity_id: &Identifier,
         compiled: &CompiledTemporalQuery,
         presence: HistoryPresence,
@@ -148,7 +149,7 @@ impl TemporalService {
         let mut window_only = compiled.clone();
         window_only.instances.dataset_id_filter.clear();
         let window_only = window_only;
-        Ok(self.read_history_page(target, entity_id, &window_only).await?.presence())
+        Ok(self.read_history_page(scope, entity_id, &window_only).await?.presence())
     }
 
     /// Execute stage 1 entity ID resolution over the page `window` selects,
@@ -191,7 +192,8 @@ impl TemporalService {
             }
             let compiled = compiled;
             ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
-            let outcome = self.reader.query_entity_ids(target, &compiled, window, CountPolicy::Omit).await?;
+            let scope = self.reader.read_scope(target, ScopeReach::Every).await?;
+            let outcome = self.reader.query_entity_ids(&scope, &compiled, window, CountPolicy::Omit).await?;
             Ok(outcome.entity_ids)
         }
         .await;
@@ -208,8 +210,8 @@ impl TemporalService {
     /// request named can be checked ahead of the read; a request over every
     /// attribute is not, which is why the statement itself must also refuse to
     /// fold a value-derived aggregate for a family Table 4.5.19.1-3 marks N/A.
-    async fn ensure_requested_attributes_aggregable(&self, target: &ContextTarget, compiled: &CompiledTemporalQuery) -> Result<(), TemporalError> {
-        if !compiled.representation.format.is_aggregated() || compiled.instances.attr_filter.is_empty() {
+    async fn ensure_requested_attributes_aggregable(&self, scope: &TemporalReadScope<'_>, compiled: &CompiledTemporalQuery) -> Result<(), TemporalError> {
+        if !shapes_decide_eligibility(compiled) {
             return Ok(());
         }
         let attributes = compiled
@@ -219,9 +221,16 @@ impl TemporalService {
             .map(|iri| iri.as_str().parse::<AttributeName>())
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| TemporalError::from(TemporalInvariant::ExpandedAttributeName(error)))?;
-        let recorded = self.reader.recorded_attribute_shapes(target, &attributes).await?;
+        let recorded = self.reader.recorded_attribute_shapes(scope, &attributes).await?;
         ensure_aggregation_eligible(&attributes, &compiled.representation.aggr_methods, &recorded).map_err(TemporalError::from)
     }
+}
+
+/// Whether the shapes the requested attributes were recorded with decide the
+/// request's eligibility before its history is read: an aggregated
+/// representation naming its attributes.
+const fn shapes_decide_eligibility(compiled: &CompiledTemporalQuery) -> bool {
+    compiled.representation.format.is_aggregated() && !compiled.instances.attr_filter.is_empty()
 }
 
 /// Reject unsupported aggregation before invoking any reader query operation.

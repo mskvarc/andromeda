@@ -12,8 +12,13 @@
 //! The window arrives already compiled rather than as request parameters, so a
 //! caller that reads many entities compiles once instead of once per entity.
 
-use crate::{error::TemporalError, grouping_depth::grouping_depth, service::TemporalService, temporal_invariant::TemporalInvariant};
-use andromeda_context_space::context_target::ContextTarget;
+use crate::{
+    error::TemporalError,
+    grouping_depth::grouping_depth,
+    port::read_scope::TemporalReadScope,
+    service::TemporalService,
+    temporal_invariant::TemporalInvariant,
+};
 use andromeda_ngsi_ld_compaction::{aggregated_entity::aggregated_entity, entity_compactor::EntityCompactor};
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, temporal_history::TemporalHistory};
@@ -110,16 +115,16 @@ impl TemporalService {
     /// whether that ends the operation or merely drops one entity from it.
     pub(crate) async fn render_one_temporal_entity(
         &self,
-        target: &ContextTarget,
+        scope: &TemporalReadScope<'_>,
         entity_id: &Identifier,
         entity_types: &[EntityTypeName],
         compiled: &CompiledTemporalQuery,
         compactor: &EntityCompactor<'_>,
     ) -> Result<RenderedTemporalEntity, TemporalError> {
         if compiled.representation.format.is_aggregated() {
-            return self.render_aggregated_entity(target, entity_id, entity_types, compiled, compactor).await;
+            return self.render_aggregated_entity(scope, entity_id, entity_types, compiled, compactor).await;
         }
-        let page = self.read_history_page(target, entity_id, compiled).await?;
+        let page = self.read_history_page(scope, entity_id, compiled).await?;
         let cut = self.common_page_cut(compiled, slice::from_ref(&page))?;
         render_history_page(page, entity_types, compiled, cut)
     }
@@ -131,11 +136,11 @@ impl TemporalService {
     /// Returns [`TemporalError::Persistence`] when the history cannot be read.
     pub(crate) async fn read_history_page(
         &self,
-        target: &ContextTarget,
+        scope: &TemporalReadScope<'_>,
         entity_id: &Identifier,
         compiled: &CompiledTemporalQuery,
     ) -> Result<EntityHistoryPage, TemporalError> {
-        let rows = self.reader.query_entity_history(target, entity_id, compiled).await?.into_rows();
+        let rows = self.reader.query_entity_history(scope, entity_id, compiled).await?.into_rows();
         Ok(EntityHistoryPage {
             entity_id: entity_id.clone(), // clone: the page owns the identifier it is rendered under.
             rows,
@@ -177,13 +182,13 @@ impl TemporalService {
     /// compacted.
     async fn render_aggregated_entity(
         &self,
-        target: &ContextTarget,
+        scope: &TemporalReadScope<'_>,
         entity_id: &Identifier,
         entity_types: &[EntityTypeName],
         compiled: &CompiledTemporalQuery,
         compactor: &EntityCompactor<'_>,
     ) -> Result<RenderedTemporalEntity, TemporalError> {
-        let rows = self.reader.query_entity_aggregation(target, entity_id, compiled).await?;
+        let rows = self.reader.query_entity_aggregation(scope, entity_id, compiled).await?;
         // The grouped extension refuses a runaway grouping off the count of
         // distinct groups it produced -- one per row -- mirroring the
         // delete-by-query bound. `TooManyResults` is fatal

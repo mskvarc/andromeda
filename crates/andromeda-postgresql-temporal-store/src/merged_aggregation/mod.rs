@@ -158,12 +158,7 @@ impl TemporalRepository {
             .map(|row| TemporalEntryRecord::answered(row, &keys))
             .collect::<Result<Vec<_>, TemporalStoreError>>()?;
         let staged = WriteRecord::mint(Utc::now());
-        let intents = [TemporalIntentRecord {
-            entity_id: String::from(entity_id.as_str()),
-            entity_type_name_keys: Vec::new(),
-            base_ordinal: 0,
-            entries,
-        }];
+        let intents = [TemporalIntentRecord::reaching(String::from(entity_id.as_str()), Vec::new(), 0, entries)];
         record_history_in_tx(
             tx,
             &IntentSource::Bound {

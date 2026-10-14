@@ -216,6 +216,7 @@ impl Attributes {
                 .into_iter()
                 .map(|instance| Instance::try_from_document(&name, instance))
                 .collect::<Result<Vec<_>, _>>()?;
+            // clone: the refusal owns the attribute name it reports.
             let held = AttributeInstances::try_from_instances(converted).map_err(|repeated| match repeated {
                 RepeatedInstance::Default => EntityRefusal::MultipleDefaultInstances { attribute: name.clone() },
                 RepeatedInstance::Dataset(dataset_id) => EntityRefusal::RepeatedInstance {

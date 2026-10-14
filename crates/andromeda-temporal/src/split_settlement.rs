@@ -2,7 +2,7 @@
 //! the gathered parts of every entity a Context Source contributed to (clause
 //! 5.7.4.4).
 
-use crate::{answered_evolution::AnsweredEvolution, error::TemporalError, service::TemporalService};
+use crate::{answered_evolution::AnsweredEvolution, error::TemporalError, port::read_scope::ScopeReach, service::TemporalService};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -58,7 +58,8 @@ impl TemporalService {
             });
         }
 
-        let mut truths = self.reader.filter_leaf_truths(target, &compiled, &entity_ids).await?;
+        let scope = self.reader.read_scope(target, ScopeReach::Every).await?;
+        let mut truths = self.reader.filter_leaf_truths(&scope, &compiled, &entity_ids).await?;
         for (entity_id, answer) in parts {
             truths
                 .entry(entity_id)

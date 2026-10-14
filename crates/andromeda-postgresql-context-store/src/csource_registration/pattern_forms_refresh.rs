@@ -30,7 +30,7 @@ use andromeda_postgresql_seaquery::{
     placeholder::external_placeholder,
     unnest::{UnnestColumn, apply_column_alias, unnest_call},
 };
-use sea_query::{Alias, Expr, ExprTrait, Iden, IntoIden, JoinType, PostgresQueryBuilder, Query, TableRef};
+use sea_query::{Expr, ExprTrait, Iden, IntoIden, JoinType, PostgresQueryBuilder, Query, TableRef};
 use sqlx::PgPool;
 
 /// The `UNNEST` alias the rewritten restatements are expanded under.
@@ -53,25 +53,29 @@ struct StalePattern {
     entity_id_pattern: String,
 }
 
+/// The alias of one stored pattern's information row, `i`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "i"]
+struct StoredPattern;
+
 /// Every stored pattern of the registrations a revision older than `current`
 /// rendered, grouped by registration.
 fn stale_patterns_sql(current: RenderingRevision) -> String {
-    let information = Alias::new("i");
     Query::select()
         .column((Csr::Table, Csr::Id))
         .column((Csr::Table, Csr::EntityIdPatternFormsRevision))
-        .column((information.clone(), RegistrationInformation::ItemOrdinal))
-        .column((information.clone(), RegistrationInformation::SelectorOrdinal))
-        .column((information.clone(), RegistrationInformation::EntityIdPattern))
+        .column((StoredPattern, RegistrationInformation::ItemOrdinal))
+        .column((StoredPattern, RegistrationInformation::SelectorOrdinal))
+        .column((StoredPattern, RegistrationInformation::EntityIdPattern))
         .from(Csr::Table)
         .join_as(
             JoinType::InnerJoin,
             RegistrationInformation::Table,
-            information.clone(),
-            Expr::col((information.clone(), RegistrationInformation::RegistrationId)).equals((Csr::Table, Csr::Id)),
+            StoredPattern,
+            Expr::col((StoredPattern, RegistrationInformation::RegistrationId)).equals((Csr::Table, Csr::Id)),
         )
         .and_where(Expr::col((Csr::Table, Csr::EntityIdPatternFormsRevision)).lt(current.get()))
-        .and_where(Expr::col((information, RegistrationInformation::EntityIdPattern)).is_not_null())
+        .and_where(Expr::col((StoredPattern, RegistrationInformation::EntityIdPattern)).is_not_null())
         .order_by((Csr::Table, Csr::Id), sea_query::Order::Asc)
         .to_string(PostgresQueryBuilder)
 }

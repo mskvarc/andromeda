@@ -13,6 +13,7 @@ use crate::{
     answered_history::answered_history,
     error::TemporalError,
     grouping_depth::grouping_depth,
+    port::read_scope::ScopeReach,
     service::{TemporalQueryWarning, TemporalService},
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -60,7 +61,8 @@ impl TemporalService {
         compiled.entities.scope_q = None;
         let compiled = compiled;
         let entity_ids: Vec<Identifier> = parts.iter().map(|(entity_id, _)| entity_id.clone()).collect(); // clone: the catalogue read takes the identifiers by value
-        let local_types = self.reader.entity_types(target, &entity_ids).await?;
+        let scope = self.reader.read_scope(target, ScopeReach::Every).await?;
+        let local_types = self.reader.entity_types(&scope, &entity_ids).await?;
         let compactor = self.engine.compactor(context);
         let compactor = EntityCompactor::new(&compactor);
         let recorded_at = Utc::now();
@@ -80,7 +82,7 @@ impl TemporalService {
             let entity_types = local_types.get(&entity_id).cloned().unwrap_or(answered_types); // clone: the catalogue's types are read for every entity
             let aggregated = match self
                 .reader
-                .query_merged_entity_aggregation(target, &entity_id, &entity_types, &compiled, &rows)
+                .query_merged_entity_aggregation(&scope, &entity_id, &entity_types, &compiled, &rows)
                 .await
             {
                 Ok(aggregated) => aggregated,

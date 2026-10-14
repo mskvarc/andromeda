@@ -33,6 +33,9 @@ pub enum StoredCatalogError {
     /// A recorded value shape code is not one the registry assigned.
     #[error("a stored recorded shape is not a known code: {0}")]
     RecordedShape(#[source] UnknownCompactCode),
+    /// A queued intent's `entry_needs` holds a code the registry never assigned.
+    #[error("a stored temporal_append_intents.entry_needs code is not a known need: {0}")]
+    IntentReach(#[source] UnknownCompactCode),
     /// A `temporal_attribute_streams.dataset_id` is not a URI.
     #[error("a stored temporal_attribute_streams.dataset_id is not a URI: {0}")]
     StreamDatasetId(#[source] IdentifierParseError),

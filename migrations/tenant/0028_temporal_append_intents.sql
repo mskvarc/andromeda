@@ -40,6 +40,11 @@ create table temporal_append_intents (
     -- under (clause 4.5.6), empty for an intent that only ends instances.
     entity_type_name_keys integer[] compression lz4 not null,
     entries temporal_entry[] compression lz4 not null,
+    -- The codes of the application statements' needs the entries meet, as
+    -- the `temporal_intent` the commit bound carries them: an application
+    -- reads this instead of `entries` to skip the statements none of its
+    -- intents reaches.
+    entry_needs smallint[] compression lz4 not null,
     last_error text compression lz4,
     constraint pk_temporal_append_intents primary key (intent_key),
     constraint uq_temporal_append_intents_write_identity unique (write_id, entity_id, base_ordinal),

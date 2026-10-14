@@ -22,6 +22,7 @@ pub mod raw_sql;
 pub mod scope_grammar;
 mod source_scan;
 pub mod sql;
+pub mod state_codec_boundary;
 pub mod string_typed_error;
 pub mod type_erased_error;
 pub mod untyped_json;

@@ -92,6 +92,7 @@ impl InEffectInstance<'_> {
     /// stream's recorded rows that pass `placed_by`, read under `relation` as
     /// one descending probe.
     fn recorded_placement(&self, relation: Alias, column: AttributeHistory, placed_by: Condition, aliases: &HistoryAliases) -> SimpleExpr {
+        // clone: every clause of the probe names the relation, and each takes its alias by value.
         let mut latest = Query::select();
         latest
             .expr(SeaExpr::col((relation.clone(), column)))
@@ -115,6 +116,7 @@ impl InEffectInstance<'_> {
     /// entries of the stream's grain that pass `placed_by`, read under
     /// `relation`, or `None` where the branch reads no queue.
     fn queued_placement(&self, relation: Alias, column: AttributeHistory, placed_by: Condition, aliases: &HistoryAliases) -> Option<SimpleExpr> {
+        // clone: the source and every clause over it name the relation, each taking its alias by value.
         let entries = pending_attribute_rows(self.branch, &HistoryOf::Entity(aliases.stream_column(HistoryGrain::EntityId)), relation.clone())?;
         let mut latest = Query::select();
         latest
@@ -142,6 +144,7 @@ impl InEffectInstance<'_> {
     /// instant offers each of its values, as clause 4.9 asks of a term matched
     /// against "any Value of such instances".
     pub(crate) fn placed_on_stream(&self, aliases: &HistoryAliases, placed_instance: &Alias) -> Condition {
+        // clone: each column reference takes the borrowed alias by value.
         let column = |grain: HistoryGrain| SeaExpr::col((placed_instance.clone(), grain));
         Condition::all()
             .add(column(HistoryGrain::AttributeNameKey).eq(aliases.stream_column(HistoryGrain::AttributeNameKey)))

@@ -53,6 +53,7 @@ use sea_query::{
     Expr,
     ExprTrait,
     Func,
+    Iden,
     JoinType,
     LockBehavior,
     LockType,
@@ -139,15 +140,12 @@ async fn claim_branch(
     }
 
     let (sql, values) = claim_statement(target, worker_id, batch_size, f64::from(lease.seconds())).build_sqlx(PostgresQueryBuilder);
-    let claim = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut *tx);
-    let claimed_keys: Vec<i64> = observe_statement(DELIVERY_CLAIM, claim).await?;
-    if claimed_keys.is_empty() {
+    let claim = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut *tx);
+    let deliveries: Vec<RawClaimedDeliveryRow> = observe_statement(DELIVERY_CLAIM, claim).await?;
+    if deliveries.is_empty() {
         tx.commit().await?;
         return Ok(Vec::new());
     }
-
-    let (sql, values) = claimed_deliveries_statement(target, &claimed_keys).build_sqlx(PostgresQueryBuilder);
-    let deliveries: Vec<RawClaimedDeliveryRow> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut *tx).await?;
 
     let event_keys = distinct_event_keys(deliveries.iter().map(|delivery| delivery.event_key));
     let (sql, values) = claimed_events_statement(target, &event_keys).build_sqlx(PostgresQueryBuilder);
@@ -219,7 +217,14 @@ fn ordinality_alias() -> (Alias, [UnnestColumn; 1], Alias) {
     )
 }
 
-/// Claim a batch of due deliveries in `target`'s branch, returning their identifiers.
+/// Claim a batch of due deliveries in `target`'s branch, returning each with
+/// the subscription it answers.
+///
+/// The claimed rows are read back by the claim's own `RETURNING`: they carry a
+/// live lease held by this transaction, so no other worker can alter them
+/// before they are delivered, and joining their subscription in the claim's
+/// `FROM` saves a statement per claim. Every delivery has its subscription:
+/// the foreign key deletes a subscription's deliveries with it.
 ///
 /// The candidate predicate is exactly the one the queue's partial claim index
 /// carries: still queued (neither delivered nor exhausted) and claimable — the
@@ -256,40 +261,24 @@ fn claim_statement(target: &ContextTarget, worker_id: LeaseHolder, batch_size: i
             NotificationDeliveries::LeaseUntil,
             Expr::current_timestamp().add(make_interval_secs(Expr::val(lease_seconds))),
         )
-        .and_where(Expr::col(NotificationDeliveries::DeliveryKey).in_subquery(candidates))
-        .returning_col(NotificationDeliveries::DeliveryKey)
+        .from(table_of(target, Subscriptions::Table).alias(DeliverySubscription))
+        .and_where(Expr::col((NotificationDeliveries::Table, NotificationDeliveries::DeliveryKey)).in_subquery(candidates))
+        .and_where(
+            Expr::col((DeliverySubscription, Subscriptions::SubscriptionKey)).equals((NotificationDeliveries::Table, NotificationDeliveries::SubscriptionKey)),
+        )
+        .returning(Query::returning().exprs([
+            Expr::col((NotificationDeliveries::Table, NotificationDeliveries::DeliveryKey)),
+            Expr::col((DeliverySubscription, Subscriptions::Id)),
+            Expr::col((NotificationDeliveries::Table, NotificationDeliveries::AttemptCount)),
+            Expr::col((NotificationDeliveries::Table, NotificationDeliveries::NextAttemptAt)),
+            Expr::col((NotificationDeliveries::Table, NotificationDeliveries::EventKey)),
+        ]))
         .to_owned()
 }
 
 /// The instant a delivery row becomes claimable, as `idx_notification_deliveries_claim` indexes it.
 fn delivery_claimable_at() -> SimpleExpr {
     claimable_at(Expr::col(NotificationDeliveries::NextAttemptAt), Expr::col(NotificationDeliveries::LeaseUntil))
-}
-
-/// Read the claimed deliveries back with the subscriptions they answer, in
-/// `target`'s branch.
-///
-/// Only the rows this worker just claimed are named, by identifier: they carry
-/// a live lease held by this transaction, so no other worker can have altered
-/// them between the claim and this read. The events are read apart, once each,
-/// by [`claimed_events_statement`].
-fn claimed_deliveries_statement(target: &ContextTarget, claimed_keys: &[i64]) -> SelectStatement {
-    let (delivery, subscription) = (Alias::new("c"), Alias::new("s"));
-    Query::select()
-        .column((delivery.clone(), NotificationDeliveries::DeliveryKey))
-        .expr_as(Expr::col((subscription.clone(), Subscriptions::Id)), Alias::new("subscription_id"))
-        .column((delivery.clone(), NotificationDeliveries::AttemptCount))
-        .column((delivery.clone(), NotificationDeliveries::NextAttemptAt))
-        .column((delivery.clone(), NotificationDeliveries::EventKey))
-        .from(table_of(target, NotificationDeliveries::Table).alias(delivery.clone()))
-        .join_as(
-            JoinType::InnerJoin,
-            table_of(target, Subscriptions::Table),
-            subscription.clone(),
-            Expr::col((subscription, Subscriptions::SubscriptionKey)).equals((delivery.clone(), NotificationDeliveries::SubscriptionKey)),
-        )
-        .and_where(Expr::col((delivery, NotificationDeliveries::DeliveryKey)).eq(any(bigint_array(claimed_keys))))
-        .to_owned()
 }
 
 /// Read each event the claimed deliveries answer once, in `target`'s branch.
@@ -301,48 +290,63 @@ fn claimed_deliveries_statement(target: &ContextTarget, claimed_keys: &[i64]) ->
 /// included, so it stays position for position with the event's transitions
 /// and `datasetId`s.
 fn claimed_events_statement(target: &ContextTarget, event_keys: &[i64]) -> SelectStatement {
-    let event = Alias::new("e");
     let (unnest_alias, unnest_columns, position) = ordinality_alias();
-    let dictionary = Alias::new("n");
 
     let ordered_names = Query::select()
         .expr(array_agg_ordered(
-            Expr::col((dictionary.clone(), AttributeNames::Name)),
+            Expr::col((ChangedName, AttributeNames::Name)),
+            // clone: the aggregate and the join below name the same unnested relation.
             Expr::col((unnest_alias.clone(), position)),
         ))
         .from_function(
-            unnest_call([(&unnest_columns[0], Expr::col((event.clone(), NotificationEvents::ChangeAttributeNameKeys)))]),
+            unnest_call([(&unnest_columns[0], Expr::col((ClaimedEventRow, NotificationEvents::ChangeAttributeNameKeys)))]),
+            // clone: the unnested relation is named by its function call and by its join.
             unnest_alias.clone(),
         )
         .join_as(
             JoinType::Join,
             AttributeNames::Table,
-            dictionary.clone(),
-            Expr::col((dictionary, AttributeNames::AttributeNameKey)).equals((unnest_alias, Alias::new("name_key"))),
+            ChangedName,
+            Expr::col((ChangedName, AttributeNames::AttributeNameKey)).equals((unnest_alias, Alias::new("name_key"))),
         )
         .to_owned();
 
     let change_attributes = Func::coalesce([SimpleExpr::SubQuery(None, Box::new(ordered_names.into_sub_query_statement())), text_array(&[])]);
 
     Query::select()
-        .column((event.clone(), NotificationEvents::EventKey))
-        .column((event.clone(), NotificationEvents::WriteId))
-        .column((event.clone(), NotificationEvents::EventOrdinal))
-        .column((event.clone(), NotificationEvents::Lifecycle))
-        .column((event.clone(), NotificationEvents::EntityId))
-        .column((event.clone(), NotificationEvents::ChangeKinds))
+        .column((ClaimedEventRow, NotificationEvents::EventKey))
+        .column((ClaimedEventRow, NotificationEvents::WriteId))
+        .column((ClaimedEventRow, NotificationEvents::EventOrdinal))
+        .column((ClaimedEventRow, NotificationEvents::Lifecycle))
+        .column((ClaimedEventRow, NotificationEvents::EntityId))
+        .column((ClaimedEventRow, NotificationEvents::ChangeKinds))
         .expr_as(change_attributes, Alias::new("change_attributes"))
-        .column((event.clone(), NotificationEvents::ChangeDatasetIds))
-        .column((event.clone(), NotificationEvents::EntitySnapshot))
-        .column((event.clone(), NotificationEvents::PreviousSnapshot))
-        .column((event.clone(), NotificationEvents::EntityCreatedAt))
-        .column((event.clone(), NotificationEvents::EntityModifiedAt))
-        .column((event.clone(), NotificationEvents::EntityExpiresAt))
-        .column((event.clone(), NotificationEvents::CreatedAt))
-        .from(table_of(target, NotificationEvents::Table).alias(event.clone()))
-        .and_where(Expr::col((event, NotificationEvents::EventKey)).eq(any(bigint_array(event_keys))))
+        .column((ClaimedEventRow, NotificationEvents::ChangeDatasetIds))
+        .column((ClaimedEventRow, NotificationEvents::EntitySnapshot))
+        .column((ClaimedEventRow, NotificationEvents::PreviousSnapshot))
+        .column((ClaimedEventRow, NotificationEvents::EntityCreatedAt))
+        .column((ClaimedEventRow, NotificationEvents::EntityModifiedAt))
+        .column((ClaimedEventRow, NotificationEvents::EntityExpiresAt))
+        .column((ClaimedEventRow, NotificationEvents::CreatedAt))
+        .from(table_of(target, NotificationEvents::Table).alias(ClaimedEventRow))
+        .and_where(Expr::col((ClaimedEventRow, NotificationEvents::EventKey)).eq(any(bigint_array(event_keys))))
         .to_owned()
 }
+
+/// The alias of the subscription a delivery answers, `s`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "s"]
+struct DeliverySubscription;
+
+/// The alias of an event a claimed delivery answers, `e`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "e"]
+struct ClaimedEventRow;
+
+/// The alias of one changed attribute's dictionary row, `n`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "n"]
+struct ChangedName;
 
 /// A bound `bigint[]` value from a batch of claimed identifiers.
 fn bigint_array(ids: &[i64]) -> SimpleExpr {
@@ -353,7 +357,6 @@ fn bigint_array(ids: &[i64]) -> SimpleExpr {
 mod tests {
     use crate::notification_delivery::claim::{
         claim_statement,
-        claimed_deliveries_statement,
         claimed_events_statement,
         distinct_event_keys,
         ordinality_alias,
@@ -364,10 +367,6 @@ mod tests {
     use andromeda_postgresql_seaquery::unnest::apply_with_ordinality;
     use sea_query::PostgresQueryBuilder;
     use uuid::Uuid;
-
-    fn deliveries_sql(target: &ContextTarget) -> String {
-        claimed_deliveries_statement(target, &[1, 2]).to_string(PostgresQueryBuilder)
-    }
 
     fn events_sql(target: &ContextTarget) -> String {
         let sql = claimed_events_statement(target, &[7, 3]).to_string(PostgresQueryBuilder);
@@ -393,9 +392,9 @@ mod tests {
     }
 
     #[test]
-    fn the_claim_scans_and_updates_deliveries_alone() {
+    fn the_claim_updates_deliveries_alone() {
         let sql = claim_statement(&ContextTarget::Live, LeaseHolder::from(Uuid::nil()), 10, 30.0).to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#"UPDATE "notification_deliveries""#), "{sql}");
+        assert!(sql.starts_with(r#"UPDATE "notification_deliveries" SET"#), "{sql}");
         assert!(!sql.contains("notification_events"), "the claim must not touch the events table: {sql}");
     }
 
@@ -414,7 +413,8 @@ mod tests {
             sql.contains(r#"GREATEST("next_attempt_at", COALESCE("lease_until", '-infinity'::timestamptz)) <= CURRENT_TIMESTAMP"#),
             "{sql}"
         );
-        assert!(!sql.contains("attempt_count"), "the claim must not repeat the attempt ceiling: {sql}");
+        let predicate = sql.split(" RETURNING ").next().unwrap_or_default();
+        assert!(!predicate.contains("attempt_count"), "the claim must not repeat the attempt ceiling: {sql}");
     }
 
     #[test]
@@ -448,18 +448,24 @@ mod tests {
         assert!(sql.contains("COALESCE"), "{sql}");
     }
 
-    #[test]
-    fn the_projection_reads_only_the_rows_this_worker_claimed() {
-        let sql = deliveries_sql(&ContextTarget::Live);
-        assert!(sql.contains(r#""c"."delivery_key" = ANY("#), "{sql}");
+    fn claim_sql(target: &ContextTarget) -> String {
+        claim_statement(target, LeaseHolder::from(Uuid::nil()), 10, 30.0).to_string(PostgresQueryBuilder)
     }
 
+    /// The claim returns the rows it leased with their subscriptions, so no
+    /// further statement reads them back.
     #[test]
-    fn the_delivery_projection_reads_no_snapshot() {
-        let sql = deliveries_sql(&ContextTarget::Live);
-        assert!(!sql.contains("entity_snapshot"), "{sql}");
-        assert!(!sql.contains("previous_snapshot"), "{sql}");
-        assert!(!sql.contains("notification_events"), "the deliveries are read apart from their events: {sql}");
+    fn the_claim_returns_the_rows_it_leased_with_their_subscription() {
+        let sql = claim_sql(&ContextTarget::Live);
+        assert!(
+            sql.contains(r#"FROM "subscriptions" AS "s" WHERE "notification_deliveries"."delivery_key" IN (SELECT"#),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(r#""s"."subscription_key" = "notification_deliveries"."subscription_key""#),
+            "{sql}"
+        );
+        assert!(!sql.contains("entity_snapshot") && !sql.contains("previous_snapshot"), "{sql}");
     }
 
     #[test]
@@ -501,26 +507,27 @@ mod tests {
 
     #[test]
     fn the_projection_does_not_recover_the_branch_from_a_control_table_join() {
-        for sql in [deliveries_sql(&ContextTarget::Live), events_sql(&ContextTarget::Live)] {
+        for sql in [claim_sql(&ContextTarget::Live), events_sql(&ContextTarget::Live)] {
             assert!(!sql.contains("context_spaces"), "the branch is the caller's, not a joined control row: {sql}");
             assert!(!sql.contains(r#""snap""#), "{sql}");
         }
     }
 
     #[test]
-    fn a_snapshot_branch_projection_qualifies_its_relations() {
-        let sql = deliveries_sql(&snapshot());
-        assert!(sql.contains(r#"FROM "snap_5"."notification_deliveries" AS "c""#), "{sql}");
-        assert!(sql.contains(r#""snap_5"."subscriptions" AS "s""#), "{sql}");
+    fn a_snapshot_branch_claim_qualifies_its_subscriptions() {
+        let sql = claim_sql(&snapshot());
+        assert!(sql.contains(r#"FROM "snap_5"."subscriptions" AS "s""#), "{sql}");
     }
 
     #[test]
-    fn the_projection_names_each_column_the_row_mapper_reads() {
-        let sql = deliveries_sql(&ContextTarget::Live);
-        assert!(sql.contains(r#""c"."delivery_key""#), "{sql}");
-        assert!(sql.contains(r#"AS "subscription_id""#), "{sql}");
-        assert!(sql.contains(r#""c"."attempt_count""#), "{sql}");
-        assert!(sql.contains(r#""c"."next_attempt_at""#), "{sql}");
-        assert!(sql.contains(r#""c"."event_key""#), "{sql}");
+    fn the_claim_returns_each_column_the_row_mapper_reads() {
+        let sql = claim_sql(&ContextTarget::Live);
+        assert!(
+            sql.ends_with(concat!(
+                r#"RETURNING "notification_deliveries"."delivery_key", "s"."id", "notification_deliveries"."attempt_count", "#,
+                r#""notification_deliveries"."next_attempt_at", "notification_deliveries"."event_key""#
+            )),
+            "{sql}"
+        );
     }
 }

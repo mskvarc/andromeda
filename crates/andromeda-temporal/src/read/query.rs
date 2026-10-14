@@ -4,6 +4,7 @@
 use crate::{
     error::TemporalError,
     outcome::TemporalEntityIdOutcome,
+    port::read_scope::ScopeReach,
     read::{
         dataset_step::DatasetStep,
         ensure_aggregation_supported,
@@ -69,7 +70,8 @@ impl TemporalService {
             let contributed_reading = ContributedReading::of(&compiled);
 
             ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
-            self.ensure_requested_attributes_aggregable(target, &compiled).await?;
+            let scope = self.reader.read_scope(target, ScopeReach::Every).await?;
+            self.ensure_requested_attributes_aggregable(&scope, &compiled).await?;
             // Clause 5.5.9.1: the identifier page is read one entity past the
             // window, so whether the collection continues is known before any
             // history is read, and only the page's own entities are read.
@@ -77,14 +79,14 @@ impl TemporalService {
             let TemporalEntityIdOutcome {
                 entity_ids,
                 total: total_count,
-            } = self.reader.query_entity_ids(target, &compiled, &read_window, count).await?;
+            } = self.reader.query_entity_ids(&scope, &compiled, &read_window, count).await?;
             let (entity_ids, reach) = window.settle(entity_ids);
             let entity_ids: Vec<Identifier> = entity_ids.into_iter().filter(|entity_id| contributed_reading.renders(entity_id)).collect();
 
             // One batch read of the temporal catalogue, which owns the entity types
             // (clauses 4.5.1 and 4.5.6) and answers for entities whose current
             // state a clause 5.6.6 deletion has already removed.
-            let entity_types_map: HashMap<Identifier, Vec<EntityTypeName>> = self.reader.entity_types(target, &entity_ids).await?;
+            let entity_types_map: HashMap<Identifier, Vec<EntityTypeName>> = self.reader.entity_types(&scope, &entity_ids).await?;
 
             let dataset_step = DatasetStep::of(&compiled);
             let compactor = self.engine.compactor(context);
@@ -96,7 +98,7 @@ impl TemporalService {
                     let entity_types = entity_types_map.get(&entity_id).map(Vec::as_slice).unwrap_or_default();
                     let entity_compiled = contributed_reading.query_for(&entity_id);
                     let outcome = self
-                        .render_one_temporal_entity(target, &entity_id, entity_types, entity_compiled, &compactor)
+                        .render_one_temporal_entity(&scope, &entity_id, entity_types, entity_compiled, &compactor)
                         .await;
                     rendered.extend(settle_entity(entity_id, outcome, &mut warnings)?);
                 }
@@ -107,7 +109,7 @@ impl TemporalService {
                 // before any is rendered, because the cut depends on all of them.
                 let mut pages = Vec::with_capacity(entity_ids.len());
                 for entity_id in entity_ids {
-                    match self.read_history_page(target, &entity_id, contributed_reading.query_for(&entity_id)).await {
+                    match self.read_history_page(&scope, &entity_id, contributed_reading.query_for(&entity_id)).await {
                         Ok(page) => pages.push(page),
                         Err(error) => {
                             settle_entity(entity_id, Err(error), &mut warnings)?;

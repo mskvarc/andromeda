@@ -82,6 +82,8 @@ pub mod subscription_status;
 pub mod temporal_entity_key;
 /// The persisted kind of one entry of a temporal append intent.
 pub mod temporal_entry_kind;
+/// The persisted needs of an intent application one queued intent meets.
+pub mod temporal_intent_reach;
 /// The persisted administrative status of one tenant.
 pub mod tenant_status;
 /// The persisted value shape of one attribute-history row.

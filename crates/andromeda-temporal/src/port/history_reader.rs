@@ -1,6 +1,11 @@
 //! Temporal history selection and observation reads.
 
-use crate::{append_intent::TemporalObservationIdentity, error::TemporalError, outcome::TemporalEntityIdOutcome};
+use crate::{
+    append_intent::TemporalObservationIdentity,
+    error::TemporalError,
+    outcome::TemporalEntityIdOutcome,
+    port::read_scope::{ScopeReach, TemporalReadScope},
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{
     aggr_method::AggrMethod,
@@ -143,9 +148,16 @@ pub trait TemporalHistoryReader: Send + Sync {
         }
     }
 
+    /// The scope a read of `target` that begins now runs in, reaching the
+    /// history `reach` names: every later call of the read takes it, so the
+    /// reader inspects the branch once per read rather than once per
+    /// statement.
+    #[must_use = "temporal read scopes must be awaited"]
+    async fn read_scope<'a>(&self, target: &'a ContextTarget, reach: ScopeReach<'_>) -> Result<TemporalReadScope<'a>, TemporalError>;
+
     /// Return whether the logical history view contains an entity.
     #[must_use = "temporal entity existence reads must be awaited"]
-    async fn entity_exists(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<bool, TemporalError>;
+    async fn entity_exists(&self, scope: &TemporalReadScope<'_>, entity_id: &Identifier) -> Result<bool, TemporalError>;
 
     /// Read the entity types each named Temporal Evolution records.
     ///
@@ -156,7 +168,7 @@ pub trait TemporalHistoryReader: Send + Sync {
     /// of exactly the entities whose history outlived them. An entity the view
     /// does not contain is absent from the result.
     #[must_use = "temporal entity type reads must be awaited"]
-    async fn entity_types(&self, target: &ContextTarget, entity_ids: &[Identifier]) -> Result<HashMap<Identifier, Vec<EntityTypeName>>, TemporalError>;
+    async fn entity_types(&self, scope: &TemporalReadScope<'_>, entity_ids: &[Identifier]) -> Result<HashMap<Identifier, Vec<EntityTypeName>>, TemporalError>;
 
     /// Resolve the temporal entities `window` selects, counting every match
     /// when `count` asks for it (clause 6.3.13).
@@ -166,7 +178,7 @@ pub trait TemporalHistoryReader: Send + Sync {
     #[must_use = "temporal entity selection must be awaited"]
     async fn query_entity_ids(
         &self,
-        target: &ContextTarget,
+        scope: &TemporalReadScope<'_>,
         compiled: &CompiledTemporalQuery,
         window: &PageWindow,
         count: CountPolicy,
@@ -187,7 +199,7 @@ pub trait TemporalHistoryReader: Send + Sync {
     #[must_use = "filter leaf reads must be awaited"]
     async fn filter_leaf_truths(
         &self,
-        target: &ContextTarget,
+        scope: &TemporalReadScope<'_>,
         compiled: &CompiledTemporalQuery,
         entity_ids: &[Identifier],
     ) -> Result<HashMap<Identifier, LeafTruths>, TemporalError>;
@@ -196,7 +208,7 @@ pub trait TemporalHistoryReader: Send + Sync {
     #[must_use = "temporal history reads must be awaited"]
     async fn query_entity_history(
         &self,
-        target: &ContextTarget,
+        scope: &TemporalReadScope<'_>,
         entity_id: &Identifier,
         compiled: &CompiledTemporalQuery,
     ) -> Result<TemporalHistoryOutcome, TemporalError>;
@@ -205,7 +217,7 @@ pub trait TemporalHistoryReader: Send + Sync {
     #[must_use = "temporal aggregation reads must be awaited"]
     async fn query_entity_aggregation(
         &self,
-        target: &ContextTarget,
+        scope: &TemporalReadScope<'_>,
         entity_id: &Identifier,
         compiled: &CompiledTemporalQuery,
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError>;
@@ -223,7 +235,7 @@ pub trait TemporalHistoryReader: Send + Sync {
     #[must_use = "temporal aggregation reads must be awaited"]
     async fn query_merged_entity_aggregation(
         &self,
-        target: &ContextTarget,
+        scope: &TemporalReadScope<'_>,
         entity_id: &Identifier,
         entity_types: &[EntityTypeName],
         compiled: &CompiledTemporalQuery,
@@ -241,7 +253,7 @@ pub trait TemporalHistoryReader: Send + Sync {
     #[must_use = "recorded attribute shape reads must be awaited"]
     async fn recorded_attribute_shapes(
         &self,
-        target: &ContextTarget,
+        scope: &TemporalReadScope<'_>,
         attributes: &[AttributeName],
     ) -> Result<HashMap<AttributeName, HashSet<RecordedAttributeShape>>, TemporalError>;
 }

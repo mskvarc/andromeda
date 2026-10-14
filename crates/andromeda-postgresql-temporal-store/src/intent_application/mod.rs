@@ -30,13 +30,14 @@ use crate::{
             replaced_scopes_statement,
             scope_history_statement,
         },
-        intent_source::{EntryNeed, IntentSource, rendered},
+        intent_source::{EntryReads, IntentSource, rendered},
     },
     stored_catalog_error::StoredCatalogError,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::schema_iden;
+use andromeda_postgresql_codes::temporal_intent_reach::TemporalIntentReach;
 use andromeda_temporal::temporal_not_found_reason::TemporalNotFoundReason;
 use sea_query::{DynIden, QueryStatementWriter};
 use sqlx::{AssertSqlSafe, PgConnection, Row};
@@ -56,19 +57,23 @@ enum StepRole {
 struct Step {
     /// What its outcome means.
     role: StepRole,
-    /// What the source has to hold for it to change anything.
-    need: EntryNeed,
+    /// What the source has to hold for it to change anything; `None` when it
+    /// runs for every source.
+    need: Option<TemporalIntentReach>,
+    /// What of the entries it reads.
+    reads: EntryReads,
     /// The statement text.
     sql: String,
 }
 
 impl Step {
-    /// `statement` in `role`, changing something only where the source meets
-    /// `need`.
-    fn of(role: StepRole, need: EntryNeed, statement: &impl QueryStatementWriter) -> Step {
+    /// `statement` in `role`, reading `reads` of the entries and changing
+    /// something only where the source meets `need`.
+    fn of(role: StepRole, need: Option<TemporalIntentReach>, reads: EntryReads, statement: &impl QueryStatementWriter) -> Step {
         Step {
             role,
             need,
+            reads,
             sql: rendered(statement),
         }
     }
@@ -81,28 +86,72 @@ impl Step {
 /// before the claims and rows that take their place.
 fn application_steps(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<Vec<Step>, TemporalStoreError> {
     let build = TemporalStoreError::StatementBuild;
+    let (nothing, identities, everything) = (EntryReads::Nothing, EntryReads::Identities, EntryReads::Everything);
     Ok(vec![
-        Step::of(StepRole::Write, EntryNeed::Any, &write_records_statement(source).map_err(build)?),
-        Step::of(StepRole::Write, EntryNeed::TypedIntent, &evolutions_statement(source, schema).map_err(build)?),
+        Step::of(StepRole::Write, None, nothing, &write_records_statement(source).map_err(build)?),
+        Step::of(
+            StepRole::Write,
+            Some(TemporalIntentReach::TypedIntent),
+            nothing,
+            &evolutions_statement(source, schema).map_err(build)?,
+        ),
         Step::of(
             StepRole::RefuseUntyped,
-            EntryNeed::UntypedObservation,
+            Some(TemporalIntentReach::UntypedObservation),
+            identities,
             &untyped_observations_statement(source, schema),
         ),
-        Step::of(StepRole::Write, EntryNeed::AttributeEntry, &streams_statement(source, schema).map_err(build)?),
-        Step::of(StepRole::Write, EntryNeed::VerbatimInstance, &replaced_instances_statement(source, schema)),
-        Step::of(StepRole::Write, EntryNeed::VerbatimInstance, &released_claims_statement(source, schema)),
-        Step::of(StepRole::Claim, EntryNeed::VerbatimInstance, &claims_statement(source, schema).map_err(build)?),
-        Step::of(StepRole::Write, EntryNeed::AttributeEntry, &history_statement(source, schema).map_err(build)?),
-        Step::of(StepRole::Write, EntryNeed::ScopeEntry, &replaced_scopes_statement(source, schema)),
-        Step::of(StepRole::Write, EntryNeed::ScopeEntry, &scope_history_statement(source, schema).map_err(build)?),
+        Step::of(
+            StepRole::Write,
+            Some(TemporalIntentReach::AttributeEntry),
+            identities,
+            &streams_statement(source, schema).map_err(build)?,
+        ),
+        Step::of(
+            StepRole::Write,
+            Some(TemporalIntentReach::VerbatimInstance),
+            identities,
+            &replaced_instances_statement(source, schema),
+        ),
+        Step::of(
+            StepRole::Write,
+            Some(TemporalIntentReach::VerbatimInstance),
+            identities,
+            &released_claims_statement(source, schema),
+        ),
+        Step::of(
+            StepRole::Claim,
+            Some(TemporalIntentReach::VerbatimInstance),
+            identities,
+            &claims_statement(source, schema).map_err(build)?,
+        ),
+        Step::of(
+            StepRole::Write,
+            Some(TemporalIntentReach::AttributeEntry),
+            everything,
+            &history_statement(source, schema).map_err(build)?,
+        ),
+        Step::of(
+            StepRole::Write,
+            Some(TemporalIntentReach::ScopeEntry),
+            identities,
+            &replaced_scopes_statement(source, schema),
+        ),
+        Step::of(
+            StepRole::Write,
+            Some(TemporalIntentReach::ScopeEntry),
+            everything,
+            &scope_history_statement(source, schema).map_err(build)?,
+        ),
     ])
 }
 
 /// Apply the intents of `source` to the history of `target`, in the caller's
 /// transaction.
 ///
-/// A statement the source's entries cannot reach is not run. An intent that
+/// A statement no intent of the source reaches is not run, and each
+/// statement of a bound source is sent only the fields of the entries it
+/// reads. An intent that
 /// observes an Entity with no Temporal Evolution and states no type to create
 /// one refuses the whole application: clause 4.5.1 makes at least one type
 /// part of an Entity, and nothing may invent one.
@@ -117,7 +166,7 @@ fn application_steps(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Res
 pub async fn apply_intents_in_tx(connection: &mut PgConnection, source: &IntentSource<'_>, target: &ContextTarget) -> Result<(), TemporalStoreError> {
     let schema = schema_iden(target);
     for step in application_steps(source, schema.as_ref())? {
-        if source.may_meet(step.need) {
+        if step.need.is_none_or(|need| source.may_meet(need)) {
             run(connection, source, step).await?;
         }
     }
@@ -133,12 +182,17 @@ pub async fn apply_intents_in_tx(connection: &mut PgConnection, source: &IntentS
 /// built and [`TemporalStoreError::Database`] when it fails.
 pub(crate) async fn record_history_in_tx(connection: &mut PgConnection, source: &IntentSource<'_>, schema: &DynIden) -> Result<(), TemporalStoreError> {
     let statement = history_statement(source, Some(schema)).map_err(TemporalStoreError::StatementBuild)?;
-    run(connection, source, Step::of(StepRole::Write, EntryNeed::AttributeEntry, &statement)).await
+    run(
+        connection,
+        source,
+        Step::of(StepRole::Write, Some(TemporalIntentReach::AttributeEntry), EntryReads::Everything, &statement),
+    )
+    .await
 }
 
 /// Run one step over `source`.
-async fn run(connection: &mut PgConnection, source: &IntentSource<'_>, Step { role, sql, .. }: Step) -> Result<(), TemporalStoreError> {
-    let query = source.bind(sqlx::query(AssertSqlSafe(sql)));
+async fn run(connection: &mut PgConnection, source: &IntentSource<'_>, Step { role, reads, sql, .. }: Step) -> Result<(), TemporalStoreError> {
+    let query = source.bind(sqlx::query(AssertSqlSafe(sql)), reads);
     match role {
         StepRole::Write => {
             query.execute(&mut *connection).await?;

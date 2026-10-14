@@ -26,7 +26,6 @@ use crate::{
     refusal::EntityRefusal,
 };
 use andromeda_ngsi_ld_geometry::{bounding_box::BoundingBoxError, form::GeometryForm, geojson::GeometryError};
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_number::JsonNumber;
 use serde_json::{Value, json};
 
@@ -478,38 +477,4 @@ fn two_box_members_are_refused() {
         ),
         "{refused:?}"
     );
-}
-
-/// Every attribute a write is admitted with decodes back: at the deepest
-/// nesting any limit may admit, the stored entity document of each shape
-/// stays within `serde_json`'s reader, decodes as a state and as a written
-/// document, encodes to the depth the ceiling was computed from, and measures
-/// the nesting it was built with.
-#[test]
-fn an_attribute_at_the_decodable_ceiling_round_trips_in_every_shape() {
-    use crate::document::EntityDocument;
-    use andromeda_ngsi_ld_number::json_value::READER_NESTING_LIMIT;
-    use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingLimit;
-    use andromeda_test_fixtures::nesting_fixture::{NESTED_ATTRIBUTE, NestingShape, container_depth, nested_instance, stored_entity};
-
-    let ceiling = AttributeNestingLimit::DECODABLE_CEILING.get();
-    for shape in NestingShape::ALL {
-        let stored = serde_json::to_vec(&stored_entity("urn:ngsi-ld:NestingProbe:1", nested_instance(shape, ceiling))).expect("JSON");
-        let state = EntityState::from_slice(&stored).unwrap_or_else(|refusal| panic!("{shape:?} at the ceiling decodes: {refusal}"));
-        let encoded = state.to_vec().expect("the state encodes");
-        let expected = match shape {
-            NestingShape::JsonChain => ceiling + 6,
-            NestingShape::ObjectChain | NestingShape::ListChain | NestingShape::SubAttributeChain => 2 * ceiling + 6,
-        };
-        pretty_assertions::assert_eq!(container_depth(&encoded), expected, "{shape:?}");
-        assert!(
-            container_depth(&encoded) + 3 <= READER_NESTING_LIMIT,
-            "{shape:?} leaves room for the deepest queue"
-        );
-        pretty_assertions::assert_eq!(EntityState::from_slice(&encoded).expect("the encoding decodes"), state, "{shape:?}");
-        let written = EntityDocument::from_slice(&encoded).expect("the encoding decodes as a written document");
-        let attribute: AttributeName = NESTED_ATTRIBUTE.parse().expect("an attribute name");
-        let nesting = written.attributes()[&attribute].instances()[0].nesting();
-        pretty_assertions::assert_eq!(nesting.get(), ceiling, "{shape:?}");
-    }
 }

@@ -430,8 +430,8 @@ mod tests {
         q.ids = ids(&["urn:ngsi-ld:Vehicle:1"]);
         q.attrs = vec![iri("https://example.com/speed")];
         let built = build(&q);
-        assert_eq!(built.sql.matches("FROM \"registration_information\"").count(), 1, "{}", built.sql);
-        let row_scan = &built.sql[built.sql.find("FROM \"registration_information\"").expect("one row scan")..];
+        assert_eq!(built.sql.matches("FROM \"registration_information\" AS \"ri\"").count(), 1, "{}", built.sql);
+        let row_scan = &built.sql[built.sql.find("FROM \"registration_information\" AS \"ri\"").expect("one row scan")..];
         let where_clause = &row_scan[row_scan.find(" WHERE ").expect("the scan has a WHERE")..];
         for predicate in [
             "\"ri\".\"registration_id\" = \"context_source_registrations\".\"id\"",
@@ -506,11 +506,13 @@ mod tests {
     }
 
     #[test]
-    fn a_query_without_selective_filters_reads_no_information_rows() {
+    fn a_query_without_selective_filters_carries_no_preselect() {
         // Nothing to narrow: an unfiltered discovery must not pay for a
-        // semi-join that would admit every registration anyway.
+        // semi-join that would admit every registration anyway; the rows it
+        // reads are those the projection carries.
         let built = build(&empty_query());
-        assert!(!built.sql.contains("registration_information"), "{}", built.sql);
+        assert!(!built.sql.contains("AS \"ri\""), "{}", built.sql);
+        assert!(!built.sql.contains("EXISTS("), "{}", built.sql);
     }
 
     #[test]

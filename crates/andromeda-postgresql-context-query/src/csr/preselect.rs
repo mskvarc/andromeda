@@ -34,7 +34,7 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
 };
 use iri_rs::IriBuf;
-use sea_query::{Alias, CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Func, Query, SimpleExpr};
+use sea_query::{CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Func, Iden, Query, SimpleExpr};
 
 /// The type-axis sentinel: the row's item has no `entities` and admits every
 /// type. It names no type.
@@ -91,6 +91,11 @@ pub fn entity_id_candidate(entity_ids: &[Identifier]) -> SimpleExpr {
         .or(ri_col(RegistrationInformation::EntityIdPattern).is_not_null())
 }
 
+/// The alias of one requested attribute name's dictionary row, `an`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "an"]
+struct RequestedName;
+
 /// Whether the row's item declares one of `attribute_names`, or no name at all
 /// (clause 5.12).
 ///
@@ -103,12 +108,11 @@ pub fn entity_id_candidate(entity_ids: &[Identifier]) -> SimpleExpr {
 pub fn attribute_name_candidate(attribute_names: &[IriBuf]) -> SimpleExpr {
     let names: Vec<&str> = attribute_names.iter().map(IriBuf::as_str).collect();
     let requested_keys = || {
-        let an = Alias::new("an");
         let mut dictionary = Query::select();
         dictionary
-            .expr(SeaExpr::col((an.clone(), AttributeNames::AttributeNameKey)))
-            .from_as(AttributeNames::Table, an.clone())
-            .and_where(SeaExpr::col((an, AttributeNames::Name)).eq(any(text_array(&names))));
+            .expr(SeaExpr::col((RequestedName, AttributeNames::AttributeNameKey)))
+            .from_as(AttributeNames::Table, RequestedName)
+            .and_where(SeaExpr::col((RequestedName, AttributeNames::Name)).eq(any(text_array(&names))));
         array_append(cast(array_of_subquery(dictionary), PostgresType::IntegerArray), SeaExpr::val(ANY_ATTRIBUTE_KEY))
     };
     declared_name_keys(RegistrationInformation::PropertyNameKeys)

@@ -21,7 +21,11 @@ use andromeda_postgresql_attribute_instance::{
     name_keys::{MentionedNames, NameKeys},
     sub_attribute::{EwkbGeometry, SubAttributeRecord},
 };
-use andromeda_postgresql_codes::{attribute_kind_code::stored_attribute_kind, temporal_entry_kind::TemporalEntryKind};
+use andromeda_postgresql_codes::{
+    attribute_kind_code::stored_attribute_kind,
+    temporal_entry_kind::TemporalEntryKind,
+    temporal_intent_reach::TemporalIntentReach,
+};
 use andromeda_postgresql_query::{entity_type_name_key::EntityTypeNameKey, ltree::StoredScopePath};
 use andromeda_temporal::{
     append_intent::{TemporalAppendEntry, TemporalAppendIntent},
@@ -106,6 +110,9 @@ pub struct TemporalIntentRecord {
     pub base_ordinal: i32,
     /// `entries`, in write order.
     pub entries: Vec<TemporalEntryRecord>,
+    /// `entry_needs`, the [`TemporalIntentReach`] codes the intent meets, in
+    /// registry order.
+    pub entry_needs: Vec<i16>,
 }
 
 /// Add every name `intent` holds as a key to `mentioned`: its types when it
@@ -163,12 +170,74 @@ impl TemporalIntentRecord {
             .iter()
             .map(|entry| entry_record(entry, recorded_at, keys))
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(TemporalIntentRecord {
-            entity_id: String::from(intent.entity_id.as_str()),
+        Ok(TemporalIntentRecord::reaching(
+            String::from(intent.entity_id.as_str()),
             entity_type_name_keys,
-            base_ordinal: intent.base_ordinal.as_i32().map_err(TemporalStoreError::WriteOrdinal)?,
+            intent.base_ordinal.as_i32().map_err(TemporalStoreError::WriteOrdinal)?,
             entries,
-        })
+        ))
+    }
+
+    /// The record of `entries`, with the needs they meet.
+    pub(crate) fn reaching(entity_id: String, entity_type_name_keys: Vec<i32>, base_ordinal: i32, entries: Vec<TemporalEntryRecord>) -> TemporalIntentRecord {
+        let entry_needs = TemporalIntentReach::ALL
+            .iter()
+            .filter(|need| meets(&entity_type_name_keys, &entries, **need))
+            .map(|need| need.code())
+            .collect();
+        TemporalIntentRecord {
+            entity_id,
+            entity_type_name_keys,
+            base_ordinal,
+            entries,
+            entry_needs,
+        }
+    }
+
+    /// Whether the intent meets `need`.
+    pub(crate) fn reaches(&self, need: TemporalIntentReach) -> bool {
+        self.entry_needs.contains(&need.code())
+    }
+
+    /// The intent as a statement that reads none of its entries binds it:
+    /// every entry left out, so the server decodes no value.
+    pub(crate) fn head(&self) -> TemporalIntentRecord {
+        TemporalIntentRecord {
+            // clone: the bound head owns its identifier, types and needs, one of each per intent.
+            entity_id: self.entity_id.clone(),
+            entity_type_name_keys: self.entity_type_name_keys.clone(),
+            base_ordinal: self.base_ordinal,
+            entries: Vec::new(),
+            entry_needs: self.entry_needs.clone(),
+        }
+    }
+
+    /// The intent as a statement that reads only what identifies each entry
+    /// binds it: its kind, its grain and its instance identifiers.
+    pub(crate) fn identities(&self) -> TemporalIntentRecord {
+        TemporalIntentRecord {
+            entries: self.entries.iter().map(TemporalEntryRecord::identity).collect(),
+            ..self.head()
+        }
+    }
+}
+
+/// Whether an intent stating `entity_type_name_keys` and holding `entries`
+/// meets `need`.
+///
+/// An intent observes when it holds no entry or any entry that does not end
+/// an instance: clause 4.5.1 requires only `id` and `type` of an Entity, so a
+/// write observing one with no attribute still extends its evolution.
+fn meets(entity_type_name_keys: &[i32], entries: &[TemporalEntryRecord], need: TemporalIntentReach) -> bool {
+    let is_attribute = |entry: &TemporalEntryRecord| entry.entry_kind != TemporalEntryKind::Scope.code();
+    match need {
+        TemporalIntentReach::TypedIntent => !entity_type_name_keys.is_empty(),
+        TemporalIntentReach::UntypedObservation => {
+            entity_type_name_keys.is_empty() && (entries.is_empty() || entries.iter().any(|entry| entry.entry_kind != TemporalEntryKind::Tombstone.code()))
+        }
+        TemporalIntentReach::AttributeEntry => entries.iter().any(is_attribute),
+        TemporalIntentReach::VerbatimInstance => entries.iter().any(|entry| is_attribute(entry) && entry.verbatim_instance_id.is_some()),
+        TemporalIntentReach::ScopeEntry => !entries.iter().all(is_attribute),
     }
 }
 
@@ -241,6 +310,42 @@ fn entry_record(entry: &TemporalAppendEntry, recorded_at: DateTime<Utc>, keys: &
 }
 
 impl TemporalEntryRecord {
+    /// The fields that identify the entry, every value and member NULL: its
+    /// kind and value code, its attribute and `datasetId`, and its instance
+    /// identifiers.
+    fn identity(&self) -> TemporalEntryRecord {
+        TemporalEntryRecord {
+            entry_kind: self.entry_kind,
+            attribute_name_key: self.attribute_name_key,
+            // clone: the identity owns what it binds; a `datasetId` and a client `instanceId` are rare and short.
+            dataset_id: self.dataset_id.clone(),
+            attribute_kind: self.attribute_kind,
+            value_kind: self.value_kind,
+            observed_at: None,
+            created_at: None,
+            modified_at: None,
+            deleted_at: None,
+            value_date_time: None,
+            expires_at: None,
+            generated_instance_id: self.generated_instance_id,
+            value_type_key: None,
+            unit_code_id: None,
+            value_boolean: None,
+            verbatim_instance_id: self.verbatim_instance_id.clone(),
+            value_number: None,
+            value_string: None,
+            value_geometry: None,
+            value_geometry_members: None,
+            value_object: None,
+            value_uri: None,
+            object_type_keys: None,
+            proof_seals: None,
+            sub_attributes: None,
+            scope_path: None,
+            verbatim_scope_path: None,
+        }
+    }
+
     /// The entry an observation a Context Source answered is staged as for
     /// an aggregation, which reads the value and its unit alone (clause
     /// 4.5.19): the rest of its metadata names what this tenant may never

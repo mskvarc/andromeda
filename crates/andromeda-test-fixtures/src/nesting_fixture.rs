@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn a_stored_entity_nests_two_containers_a_level_and_six_around() {
         for shape in NestingShape::ALL {
-            for levels in [1, 7, 59] {
+            for levels in [1, 7, 62] {
                 let text = stored_entity("urn:ngsi-ld:NestingProbe:1", nested_instance(shape, levels)).to_string();
                 let expected = match shape {
                     NestingShape::JsonChain => levels + 6,

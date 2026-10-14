@@ -84,6 +84,8 @@ pub enum TemporalIntent {
     BaseOrdinal,
     /// The intent's entries in write order
     Entries,
+    /// `TemporalIntentReach` codes of the application statements' needs the entries meet
+    EntryNeeds,
 }
 
 #[cfg(test)]
@@ -99,10 +101,11 @@ mod tests {
             TemporalIntent::EntityTypeNameKeys,
             TemporalIntent::BaseOrdinal,
             TemporalIntent::Entries,
+            TemporalIntent::EntryNeeds,
         ]
         .map(|field| field.to_string());
         assert_eq!(TemporalIntent::Type.to_string(), "temporal_intent");
-        assert_eq!(fields, ["entity_id", "entity_type_name_keys", "base_ordinal", "entries"]);
+        assert_eq!(fields, ["entity_id", "entity_type_name_keys", "base_ordinal", "entries", "entry_needs",]);
     }
 
     #[test]

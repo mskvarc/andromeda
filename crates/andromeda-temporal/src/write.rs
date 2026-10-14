@@ -2,7 +2,7 @@
 
 use crate::{
     error::TemporalError,
-    port::mutator::TemporalDeleteScope,
+    port::{mutator::TemporalDeleteScope, read_scope::ScopeReach},
     service::{CreateOrUpdateResult, TemporalService, iri_short_name},
     temporal_not_found_reason::TemporalNotFoundReason,
     temporal_validation_reason::TemporalValidationReason,
@@ -91,7 +91,8 @@ impl TemporalService {
         // shall create the provided Temporal Evolution of an Entity". Both are
         // the same write -- every instance to history, the standing ones to
         // current state -- and the answer differs only in what it reports.
-        let exists = self.reader.entity_exists(target, &entity_id).await?;
+        let scope = self.reader.read_scope(target, ScopeReach::Entity(&entity_id)).await?;
+        let exists = self.reader.entity_exists(&scope, &entity_id).await?;
         self.commit_evolution(target, &entity_id, &evolution).await?;
         if exists {
             Ok(CreateOrUpdateResult::Updated)
@@ -134,23 +135,20 @@ impl TemporalService {
         payload: WrittenTemporalEntity,
         context: &ContextSpec,
     ) -> Result<(), TemporalError> {
-        if !self.reader.entity_exists(target, entity_id).await? {
+        // Clause 5.6.12 addresses the Temporal Evolution by the request path, and
+        // clause 4.5.6 makes it the Entity with the types its evolution records:
+        // the fragment need name neither, yet the instances it adds may have to
+        // bring current state back into being under the path's identifier. An
+        // entity the catalogue records no evolution of has none to add to.
+        let scope = self.reader.read_scope(target, ScopeReach::Entity(entity_id)).await?;
+        let Some(recorded_types) = self.reader.entity_types(&scope, from_ref(entity_id)).await?.remove(entity_id) else {
+            // clone: the refusal owns the identifier it names.
             return Err(TemporalError::NotFound(TemporalNotFoundReason::Entity { id: entity_id.clone() }));
-        }
+        };
 
         let expansion = EntityExpansion::prepare(&self.engine, context).await?;
         let evolution = WrittenEvolution::expand(&expansion, payload).await?;
         evolution.admit_budget(self.limits.payload_budget)?;
-        // Clause 5.6.12 addresses the Temporal Evolution by the request path, and
-        // clause 4.5.6 makes it the Entity with the types its evolution records:
-        // the fragment need name neither, yet the instances it adds may have to
-        // bring current state back into being under the path's identifier.
-        let recorded_types = self
-            .reader
-            .entity_types(target, from_ref(entity_id))
-            .await?
-            .remove(entity_id)
-            .unwrap_or_default();
         let evolution = evolution.addressed_to(entity_id, recorded_types);
         self.commit_evolution(target, entity_id, &evolution).await?;
         Ok(())

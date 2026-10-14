@@ -122,6 +122,7 @@ fn mentioned_names(groups: &[EventGroup<'_>]) -> MentionedNames {
         // clone: the dictionary request owns the names it resolves.
         mentioned
             .attributes
+            // clone: the dictionary request owns the names it resolves.
             .extend(group.change.change.instances.iter().map(|instance| instance.key.attr.clone()));
         for state in group.change.entity_snapshot.iter().chain(&group.change.previous_snapshot) {
             mentioned.collect(state.attributes());

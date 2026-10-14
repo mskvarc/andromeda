@@ -143,6 +143,12 @@ macro_rules! workspace_architecture {
                 $crate::untyped_json::assert_no_untyped_json(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
+            /// No PostgreSQL crate encodes or decodes an Entity state as its expanded document.
+            #[test]
+            fn postgresql_holds_entity_state_as_records_not_documents() {
+                $crate::state_codec_boundary::assert_no_state_codec_calls(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
+            }
+
             /// No production file crosses the length ceiling off the baseline.
             #[test]
             fn no_production_file_is_a_god_file() {
