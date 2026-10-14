@@ -5,6 +5,8 @@
 mod change_audience;
 /// The entity state a change event is notified with.
 mod change_payload;
+/// Why a queued delivery is retried or failed.
+mod delivery_failure;
 /// Delivery of a durably queued event through the processor.
 mod durable_delivery;
 pub(crate) mod payload;

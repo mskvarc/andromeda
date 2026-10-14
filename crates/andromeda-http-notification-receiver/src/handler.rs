@@ -10,7 +10,7 @@
 //! the subscription identifier.
 
 use crate::{
-    error::{bad_request_data, classify_forwarding, classify_resolution},
+    error::{classify_forwarding, classify_not_a_notification, classify_resolution},
     state::NotificationReceiverState,
 };
 use andromeda_http_extraction::notification_body::NotificationBody;
@@ -31,7 +31,7 @@ pub(crate) async fn receive(
     headers: HeaderMap,
     NotificationBody { text, context }: NotificationBody,
 ) -> Result<Response, ProblemResponse> {
-    let received = Inbound::from_slice(&text).map_err(|error| bad_request_data(format!("not a notification: {error}"), &uri))?;
+    let received = Inbound::from_slice(&text).map_err(|error| classify_not_a_notification(error, &uri))?;
     // The resolved forwarding service carries a lease on its tenant's runtime;
     // holding it across handling keeps the runtime resident so eviction cannot
     // close its pools while the notification is processed.

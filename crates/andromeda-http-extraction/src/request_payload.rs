@@ -38,6 +38,7 @@ use axum::{
     },
     http::{StatusCode, Uri, Version},
 };
+use thiserror::Error;
 
 /// What a client whose payload was refused as too large can do about it.
 pub(crate) const SPLIT_ADVICE: &str = "send the content in smaller requests, a batch operation as several smaller batches";
@@ -105,7 +106,7 @@ where
         if matches!(&rejection, BytesRejection::FailedToBufferBody(FailedToBufferBody::LengthLimitError(_))) {
             payload_too_large(limit, instance, version)
         } else {
-            ExtractorRejection::invalid_request(format!("the request payload body could not be read: {}", rejection.body_text()), instance)
+            ExtractorRejection::invalid_request(UnreadablePayload(rejection).to_string(), instance)
         }
     })
 }
@@ -119,15 +120,31 @@ fn declares_more_than(declared: DeclaredBodyLength, limit: RequestBodyLimit) -> 
 /// over `version`, naming the limit when the stack published one.
 fn payload_too_large(limit: Option<RequestBodyLimit>, instance: Uri, version: Version) -> ExtractorRejection {
     let detail = match limit {
-        Some(limit) => format!(
-            "the request payload body is larger than the {} bytes this broker accepts in one request; {SPLIT_ADVICE}",
-            limit.bytes()
-        ),
-        None => format!("the request payload body is larger than this broker accepts in one request; {SPLIT_ADVICE}"),
+        Some(limit) => PayloadTooLarge::Limited { bytes: limit.bytes() },
+        None => PayloadTooLarge::Unpublished,
     };
-    let refusal = ClassifiedReport::public(NgsiLdErrorType::RequestEntityTooLarge, detail).with_instance(instance);
+    let refusal = ClassifiedReport::public(NgsiLdErrorType::RequestEntityTooLarge, detail.to_string()).with_instance(instance);
     ExtractorRejection::Classified(closing_http1_connection(refusal, version))
 }
+
+/// A payload body past the size the broker accepts in one request.
+#[derive(Debug, Error)]
+enum PayloadTooLarge {
+    /// The stack published its limit.
+    #[error("the request payload body is larger than the {bytes} bytes this broker accepts in one request; {advice}", advice = SPLIT_ADVICE)]
+    Limited {
+        /// The published limit in bytes.
+        bytes: usize,
+    },
+    /// The stack published no limit.
+    #[error("the request payload body is larger than this broker accepts in one request; {advice}", advice = SPLIT_ADVICE)]
+    Unpublished,
+}
+
+/// A payload body the connection failed to deliver.
+#[derive(Debug, Error)]
+#[error("the request payload body could not be read: {0}")]
+struct UnreadablePayload(#[source] BytesRejection);
 
 /// Announce the close of an HTTP/1.x connection whose request content the
 /// refusal leaves unread; later versions stop the upload with a stream reset.

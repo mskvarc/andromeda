@@ -12,6 +12,7 @@ use crate::{
     processor::{
         NotificationProcessor,
         change_audience::{ChangeAudience, CommitFilters},
+        delivery_failure::DeliveryFailure,
     },
 };
 use andromeda_context_commit::change_event::ChangeEvent;
@@ -26,7 +27,7 @@ impl NotificationDeliveryTransport for NotificationProcessor {
         Box::pin(async move {
             let event = queued_change_event(&entry.event);
             if let Err(error) = self.refresh_cached_subscription(&entry.target, &entry.subscription_id).await {
-                return unreadable_subscription(&entry.subscription_id, &error);
+                return unreadable_subscription(&entry.subscription_id, error);
             }
             let audience = ChangeAudience::Queued {
                 subscription: &entry.subscription_id,
@@ -37,11 +38,17 @@ impl NotificationDeliveryTransport for NotificationProcessor {
                 DeliveryDisposition::Delivered
             } else if outcome.retryable_failures > 0 {
                 DeliveryDisposition::RetryableFailure {
-                    detail: format!("{} endpoint attempt(s) failed transiently", outcome.retryable_failures),
+                    detail: DeliveryFailure::TransientEndpoints {
+                        attempts: outcome.retryable_failures,
+                    }
+                    .to_string(),
                 }
             } else if outcome.terminal_failures > 0 {
                 DeliveryDisposition::TerminalFailure {
-                    detail: format!("{} endpoint attempt(s) failed permanently", outcome.terminal_failures),
+                    detail: DeliveryFailure::PermanentEndpoints {
+                        attempts: outcome.terminal_failures,
+                    }
+                    .to_string(),
                 }
             } else {
                 DeliveryDisposition::Obsolete
@@ -59,9 +66,14 @@ impl NotificationDeliveryTransport for NotificationProcessor {
 /// attempt, so the delivery is retried. No notification was attempted, so no
 /// subscription bookkeeping (clause 5.2.14.2 `timesSent`, `timesFailed`)
 /// records it.
-fn unreadable_subscription(subscription_id: &Identifier, error: &SubscriptionError) -> DeliveryDisposition {
+fn unreadable_subscription(subscription_id: &Identifier, error: SubscriptionError) -> DeliveryDisposition {
     DeliveryDisposition::RetryableFailure {
-        detail: format!("subscription {subscription_id} could not be read back before its notification: {error}"),
+        detail: DeliveryFailure::SubscriptionUnreadable {
+            // clone: the failure owns the identifier it names, the entry keeps its own
+            subscription_id: subscription_id.clone(),
+            source: error,
+        }
+        .to_string(),
     }
 }
 
@@ -276,7 +288,7 @@ mod tests {
     #[test]
     fn a_subscription_the_store_cannot_read_back_retries_the_delivery() {
         let subscription_id = "urn:ngsi-ld:Subscription:1".parse().expect("valid subscription URI");
-        let disposition = unreadable_subscription(&subscription_id, &SubscriptionError::from(PersistenceFailure::Unavailable));
+        let disposition = unreadable_subscription(&subscription_id, SubscriptionError::from(PersistenceFailure::Unavailable));
         match disposition {
             DeliveryDisposition::RetryableFailure { detail } => {
                 assert!(detail.contains("urn:ngsi-ld:Subscription:1"), "{detail}");

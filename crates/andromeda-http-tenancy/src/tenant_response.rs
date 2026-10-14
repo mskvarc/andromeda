@@ -1,6 +1,9 @@
 //! Turning a tenant's domain view into the fixed-JSON `Tenant` resource.
 
-use crate::{error::TenancyHttpError, options::TenantOptions};
+use crate::{
+    error::{CursorNotATenant, TenancyHttpError},
+    options::TenantOptions,
+};
 use andromeda_http_response::classified_report::ClassifiedReport;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, tenant::TenantName};
 use andromeda_ngsi_ld_model::tenant::{Tenant, TenantState, TenantUsage, tenant_id, tenant_name_from_id};
@@ -53,12 +56,7 @@ pub fn tenant_page_start(start: &PageStart) -> Result<TenantPageStart, Classifie
 
 /// The tenant name a cursor boundary identifier carries, or an `InvalidRequest`.
 fn name_from_boundary(id: &Identifier) -> Result<TenantName, ClassifiedReport> {
-    tenant_name_from_id(id).ok_or_else(|| {
-        ClassifiedReport::public(
-            NgsiLdErrorType::InvalidRequest,
-            format!("the pagination cursor does not address a tenant: {id}"),
-        )
-    })
+    tenant_name_from_id(id).ok_or_else(|| ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, CursorNotATenant { id }.to_string()))
 }
 
 /// Build the fixed-JSON tenant resource for a view, gathering the opt-in usage

@@ -1,6 +1,6 @@
 //! Typed results of context-source federation attempts.
 
-use crate::{answer_body::AnswerBody, error::FederationError, source_continuation::SourceContinuation};
+use crate::{answer_body::AnswerBody, error::FederationError, source_continuation::SourceContinuation, source_read_warning::SourceReadWarning};
 use andromeda_entity_map::contribution::SourceContribution;
 use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_warning::NgsiLdWarning};
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -117,13 +117,15 @@ impl ForwardGetOutcome {
     pub(crate) fn warning(&self, registration: &Identifier) -> Option<NgsiLdWarning> {
         match self {
             ForwardGetOutcome::Success(_) | ForwardGetOutcome::NotFound(_) => None,
-            ForwardGetOutcome::ErrorStatus(status) => Some(NgsiLdWarning::MiscellaneousPersistentWarning(format!(
-                "Context source {registration} returned HTTP {status}"
-            ))),
-            ForwardGetOutcome::Transport(failure) => Some(NgsiLdWarning::MiscellaneousWarning(format!(
-                "Context source {registration} did not respond: {failure}"
-            ))),
-            ForwardGetOutcome::LoopDetected => Some(NgsiLdWarning::MiscellaneousWarning(format!("registration loop detected for {registration}"))),
+            ForwardGetOutcome::ErrorStatus(status) => Some(NgsiLdWarning::MiscellaneousPersistentWarning(
+                SourceReadWarning::ErrorStatus { registration, status: *status }.to_string(),
+            )),
+            ForwardGetOutcome::Transport(failure) => Some(NgsiLdWarning::MiscellaneousWarning(
+                SourceReadWarning::Transport { registration, failure }.to_string(),
+            )),
+            ForwardGetOutcome::LoopDetected => Some(NgsiLdWarning::MiscellaneousWarning(
+                SourceReadWarning::LoopDetected { registration }.to_string(),
+            )),
         }
     }
 }
@@ -314,21 +316,6 @@ impl ForwardedWriteResult {
     #[must_use]
     pub const fn is_failure(&self) -> bool {
         !matches!(self.outcome, ForwardedWriteOutcome::Completed { .. })
-    }
-
-    /// The informative detail of a failure that produced no response body.
-    #[must_use]
-    pub fn failure_detail(&self) -> Option<String> {
-        match &self.outcome {
-            ForwardedWriteOutcome::Transport(failure) => Some(failure.to_string()),
-            ForwardedWriteOutcome::LoopDetected => Some(format!("registration {} loops back into the request's Via chain", self.registration_id)),
-            ForwardedWriteOutcome::NotAdvertised => Some(format!("registration {} does not advertise the requested operation", self.registration_id)),
-            ForwardedWriteOutcome::UpsertFollowUpNotAdvertised => Some(format!(
-                "registration {} reported the entity exists and advertises no operation to update it",
-                self.registration_id
-            )),
-            ForwardedWriteOutcome::Completed { .. } | ForwardedWriteOutcome::RemoteHttpFailure { .. } => None,
-        }
     }
 }
 

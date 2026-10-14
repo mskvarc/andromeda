@@ -5,32 +5,52 @@ use crate::{
     string_typed_error::{
         StringTypedErrorKind,
         StringTypedErrorSite,
+        formatted_text::{FormattedText, bound_idents},
         string_shape::{is_string_conversion_path, is_string_expression, type_mentions_string},
+        workspace_index::{TEXT_MEMBER_NAMES, WorkspaceIndex},
     },
 };
 use quote::ToTokens;
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, mem};
 use syn::{
-    Attribute,
     Expr,
     ExprCall,
     ExprMethodCall,
+    ExprStruct,
     Fields,
     File,
     GenericArgument,
     Ident,
+    ImplItemFn,
     Item,
     ItemEnum,
+    ItemFn,
     ItemImpl,
     ItemStruct,
+    Local,
+    Member,
     Path,
     PathArguments,
-    Token,
+    TraitItemFn,
     Type,
     TypePath,
-    punctuated::Punctuated,
+    UseRename,
     spanned::Spanned,
-    visit::{Visit, visit_expr_call, visit_expr_method_call, visit_item, visit_item_enum, visit_item_struct, visit_type_path},
+    visit::{
+        Visit,
+        visit_expr_call,
+        visit_expr_method_call,
+        visit_expr_struct,
+        visit_impl_item_fn,
+        visit_item,
+        visit_item_enum,
+        visit_item_fn,
+        visit_item_impl,
+        visit_item_struct,
+        visit_local,
+        visit_trait_item_fn,
+        visit_type_path,
+    },
 };
 
 /// Foreign error constructors that accept a message, named by their last path
@@ -42,20 +62,34 @@ const FOREIGN_ERROR_CONSTRUCTORS: &[&str] = &["custom", "new", "other"];
 pub(crate) struct StringTypedErrorVisitor<'a> {
     /// Workspace-relative path of the source under inspection.
     path: &'a str,
-    /// Names of the types the source implements `Error` for by hand.
-    implemented_errors: BTreeSet<String>,
+    /// What the workspace declares about error carriers and text sinks.
+    index: &'a WorkspaceIndex,
+    /// Names this source imports a foreign `Error` trait or type under
+    /// (`use serde::de::Error as DeserializeError`).
+    error_aliases: BTreeSet<String>,
+    /// The type of the `impl` block being walked, which `Self` names.
+    impl_owner: Option<&'a Ident>,
+    /// Locals of the function being walked that are bound to formatted text.
+    formatted_locals: BTreeSet<String>,
+    /// Start positions of the values already reported, so a value reached
+    /// through two sinks is reported once.
+    reported_values: BTreeSet<(usize, usize)>,
     /// Sites found so far.
     sites: Vec<StringTypedErrorSite>,
 }
 
 impl<'a> StringTypedErrorVisitor<'a> {
     /// Every string-typed error site in one parsed source.
-    pub(crate) fn inspect(path: &'a str, syntax: &File) -> Vec<StringTypedErrorSite> {
-        let mut collector = ErrorImplCollector { names: BTreeSet::new() };
-        collector.visit_file(syntax);
+    pub(crate) fn inspect(path: &'a str, syntax: &'a File, index: &'a WorkspaceIndex) -> Vec<StringTypedErrorSite> {
+        let mut aliases = ErrorAliasCollector { names: BTreeSet::new() };
+        aliases.visit_file(syntax);
         let mut visitor = StringTypedErrorVisitor {
             path,
-            implemented_errors: collector.names,
+            index,
+            error_aliases: aliases.names,
+            impl_owner: None,
+            formatted_locals: BTreeSet::new(),
+            reported_values: BTreeSet::new(),
             sites: Vec::new(),
         };
         visitor.visit_file(syntax);
@@ -72,9 +106,38 @@ impl<'a> StringTypedErrorVisitor<'a> {
         });
     }
 
-    /// Whether a type is an error: it derives `Error` or this file implements it.
-    fn is_error_type(&self, attributes: &[Attribute], ident: &Ident) -> bool {
-        derives_error(attributes) || self.implemented_errors.contains(&ident.to_string())
+    /// Record one value site at the start of `value`, unless that value is
+    /// already reported.
+    fn record_value(&mut self, value: &impl Spanned, kind: StringTypedErrorKind, subject: String) {
+        let start = value.span().start();
+        if self.reported_values.insert((start.line, start.column)) {
+            self.record(value, kind, subject);
+        }
+    }
+
+    /// The search for formatted text at the current point of the walk.
+    const fn formatted_text(&self) -> FormattedText<'_> {
+        FormattedText {
+            index: self.index,
+            locals: &self.formatted_locals,
+        }
+    }
+
+    /// Record the formatted text inside `value`, which `sink` receives.
+    fn inspect_text_sink(&mut self, sink: &impl ToTokens, value: &Expr) {
+        if let Some(formatted) = self.formatted_text().first_within(value) {
+            let subject = format!("{} <- {}", render(sink), render(formatted));
+            self.record_value(formatted, StringTypedErrorKind::FormattedErrorText, subject);
+        }
+    }
+
+    /// Record a string, or formatted text, that `sink` turns into an error value.
+    fn inspect_error_value(&mut self, sink: &impl ToTokens, value: &Expr) {
+        if is_string_expression(value) {
+            self.record_value(value, StringTypedErrorKind::StringErrorValue, render(sink));
+        } else {
+            self.inspect_text_sink(sink, value);
+        }
     }
 
     /// Record every field of an error type, or of one of its variants, that holds a string.
@@ -87,25 +150,67 @@ impl<'a> StringTypedErrorVisitor<'a> {
             self.record(&field.ty, StringTypedErrorKind::ErrorField, format!("{owner}.{name}: {}", render(&field.ty)));
         }
     }
+
+    /// Record the formatted text a path call hands an error carrier or a
+    /// text-carrying parameter.
+    fn inspect_path_call(&mut self, call: &ExprCall, function: &Path) {
+        let mut segments = function.segments.iter().rev();
+        let Some(name) = segments.next() else {
+            return;
+        };
+        let owner = segments.next();
+        if owner.is_some_and(|owner| self.index.is_carrier(owner)) {
+            for argument in &call.args {
+                self.inspect_text_sink(function, argument);
+            }
+            return;
+        }
+        let owner_name = owner.map(|owner| if owner.ident == "Self" { self.impl_owner } else { Some(&owner.ident) });
+        let owner_name = owner_name.flatten().map(Ident::to_string);
+        for position in self.index.path_text_arguments(owner_name.as_deref(), &name.ident) {
+            if let Some(argument) = call.args.iter().nth(position) {
+                self.inspect_text_sink(function, argument);
+            }
+        }
+    }
+
+    /// Whether a path is a foreign error constructor reached through an `Error`
+    /// type or an alias of one, such as `serde::de::Error::custom` or
+    /// `DeserializeError::custom`.
+    fn is_foreign_error_constructor(&self, path: &Path) -> bool {
+        let mut segments = path.segments.iter().rev();
+        let (Some(function), Some(owner)) = (segments.next(), segments.next()) else {
+            return false;
+        };
+        let names_error = owner.ident == "Error" || self.error_aliases.contains(&owner.ident.to_string());
+        names_error && FOREIGN_ERROR_CONSTRUCTORS.iter().any(|constructor| function.ident == constructor)
+    }
+
+    /// Walk one function body with its own set of formatted locals.
+    fn within_function(&mut self, walk: impl FnOnce(&mut StringTypedErrorVisitor<'a>)) {
+        let enclosing = mem::take(&mut self.formatted_locals);
+        walk(self);
+        self.formatted_locals = enclosing;
+    }
 }
 
-impl<'ast> Visit<'ast> for StringTypedErrorVisitor<'_> {
-    fn visit_item(&mut self, item: &'ast Item) {
+impl<'a> Visit<'a> for StringTypedErrorVisitor<'a> {
+    fn visit_item(&mut self, item: &'a Item) {
         if item_is_test_only(item) {
             return;
         }
         visit_item(self, item);
     }
 
-    fn visit_item_struct(&mut self, item: &'ast ItemStruct) {
-        if self.is_error_type(&item.attrs, &item.ident) {
+    fn visit_item_struct(&mut self, item: &'a ItemStruct) {
+        if self.index.is_error_type(&item.ident) {
             self.inspect_error_fields(&item.ident.to_string(), &item.fields);
         }
         visit_item_struct(self, item);
     }
 
-    fn visit_item_enum(&mut self, item: &'ast ItemEnum) {
-        if self.is_error_type(&item.attrs, &item.ident) {
+    fn visit_item_enum(&mut self, item: &'a ItemEnum) {
+        if self.index.is_error_type(&item.ident) {
             for variant in &item.variants {
                 self.inspect_error_fields(&format!("{}::{}", item.ident, variant.ident), &variant.fields);
             }
@@ -113,7 +218,53 @@ impl<'ast> Visit<'ast> for StringTypedErrorVisitor<'_> {
         visit_item_enum(self, item);
     }
 
-    fn visit_type_path(&mut self, ty: &'ast TypePath) {
+    fn visit_item_impl(&mut self, item: &'a ItemImpl) {
+        let owner = if let Type::Path(self_type) = item.self_ty.as_ref() {
+            self_type.path.segments.last().map(|segment| &segment.ident)
+        } else {
+            None
+        };
+        let enclosing = mem::replace(&mut self.impl_owner, owner);
+        visit_item_impl(self, item);
+        self.impl_owner = enclosing;
+    }
+
+    fn visit_item_fn(&mut self, item: &'a ItemFn) {
+        self.within_function(|visitor| visit_item_fn(visitor, item));
+    }
+
+    fn visit_impl_item_fn(&mut self, item: &'a ImplItemFn) {
+        if is_test_only(&item.attrs) {
+            return;
+        }
+        self.within_function(|visitor| visit_impl_item_fn(visitor, item));
+    }
+
+    fn visit_trait_item_fn(&mut self, item: &'a TraitItemFn) {
+        if is_test_only(&item.attrs) {
+            return;
+        }
+        self.within_function(|visitor| visit_trait_item_fn(visitor, item));
+    }
+
+    fn visit_local(&mut self, local: &'a Local) {
+        let formatted = local
+            .init
+            .as_ref()
+            .is_some_and(|init| !matches!(init.expr.as_ref(), Expr::Closure(_)) && self.formatted_text().first_within(&init.expr).is_some());
+        let mut bound = Vec::new();
+        bound_idents(&local.pat, &mut bound);
+        for ident in bound {
+            if formatted {
+                self.formatted_locals.insert(ident.to_string());
+            } else {
+                self.formatted_locals.remove(&ident.to_string());
+            }
+        }
+        visit_local(self, local);
+    }
+
+    fn visit_type_path(&mut self, ty: &'a TypePath) {
         if let Some(error) = result_error_type(ty)
             && type_mentions_string(error)
         {
@@ -122,64 +273,69 @@ impl<'ast> Visit<'ast> for StringTypedErrorVisitor<'_> {
         visit_type_path(self, ty);
     }
 
-    fn visit_expr_call(&mut self, call: &'ast ExprCall) {
+    fn visit_expr_call(&mut self, call: &'a ExprCall) {
         if let Expr::Path(function) = call.func.as_ref() {
-            let makes_string_error = if function.path.is_ident("Err") {
-                call.args.first().is_some_and(is_string_expression)
+            if function.path.is_ident("Err") {
+                if let Some(argument) = call.args.first() {
+                    self.inspect_error_value(call, argument);
+                }
+            } else if self.is_foreign_error_constructor(&function.path) {
+                for argument in &call.args {
+                    self.inspect_error_value(call, argument);
+                }
             } else {
-                is_foreign_error_constructor(&function.path) && call.args.iter().any(is_string_expression)
-            };
-            if makes_string_error {
-                self.record(call, StringTypedErrorKind::StringErrorValue, render(call));
+                self.inspect_path_call(call, &function.path);
             }
         }
         visit_expr_call(self, call);
     }
 
-    fn visit_expr_method_call(&mut self, call: &'ast ExprMethodCall) {
-        let makes_string_error = call.args.first().is_some_and(|argument| {
+    fn visit_expr_method_call(&mut self, call: &'a ExprMethodCall) {
+        if let Some(argument) = call.args.first() {
+            let sink = || format!(".{}({})", call.method, render(&call.args));
             if call.method == "map_err" || call.method == "ok_or_else" {
-                return yields_string(argument);
+                if yields_string(argument) {
+                    self.record_value(&call.method, StringTypedErrorKind::StringErrorValue, sink());
+                } else if let Expr::Closure(closure) = argument {
+                    self.inspect_text_sink(&call.method, &closure.body);
+                }
+            } else if call.method == "ok_or" {
+                self.inspect_error_value(&call.method, argument);
             }
-            call.method == "ok_or" && is_string_expression(argument)
-        });
-        if makes_string_error {
-            self.record(
-                &call.method,
-                StringTypedErrorKind::StringErrorValue,
-                format!(".{}({})", call.method, render(&call.args)),
-            );
+        }
+        let index = self.index;
+        for &position in index.method_text_arguments(&call.method).into_iter().flatten() {
+            if let Some(argument) = call.args.iter().nth(position) {
+                self.inspect_text_sink(&call.method, argument);
+            }
         }
         visit_expr_method_call(self, call);
     }
-}
 
-/// Collects the names of the types a source implements `Error` for by hand.
-struct ErrorImplCollector {
-    /// The implementing type names.
-    names: BTreeSet<String>,
-}
-
-impl<'ast> Visit<'ast> for ErrorImplCollector {
-    fn visit_item_impl(&mut self, item: &'ast ItemImpl) {
-        let implements_error = item
-            .trait_
-            .as_ref()
-            .is_some_and(|(trait_path, _)| trait_path.segments.last().is_some_and(|segment| segment.ident == "Error"));
-        if implements_error && let Type::Path(self_type) = item.self_ty.as_ref() {
-            self.names.extend(self_type.path.segments.last().map(|segment| segment.ident.to_string()));
+    fn visit_expr_struct(&mut self, literal: &'a ExprStruct) {
+        let carrier = literal.path.segments.iter().any(|segment| self.index.is_carrier(segment));
+        for field in &literal.fields {
+            let text_member = matches!(&field.member, Member::Named(name) if TEXT_MEMBER_NAMES.iter().any(|text| name == text));
+            if carrier || text_member {
+                self.inspect_text_sink(&literal.path, &field.expr);
+            }
         }
+        visit_expr_struct(self, literal);
     }
 }
 
-/// Whether the attributes derive `Error`, under any path spelling
-/// (`thiserror::Error`, a `use`-imported `Error`).
-fn derives_error(attributes: &[Attribute]) -> bool {
-    attributes.iter().filter(|attribute| attribute.path().is_ident("derive")).any(|attribute| {
-        attribute
-            .parse_args_with(Punctuated::<Path, Token![,]>::parse_terminated)
-            .is_ok_and(|derived| derived.iter().any(|path| path.segments.last().is_some_and(|segment| segment.ident == "Error")))
-    })
+/// Collects the names a source imports an `Error` under by renaming it.
+struct ErrorAliasCollector {
+    /// The alias names.
+    names: BTreeSet<String>,
+}
+
+impl<'ast> Visit<'ast> for ErrorAliasCollector {
+    fn visit_use_rename(&mut self, rename: &'ast UseRename) {
+        if rename.ident == "Error" {
+            self.names.insert(rename.rename.to_string());
+        }
+    }
 }
 
 /// The error type argument of a two-argument `Result<T, E>`.
@@ -201,16 +357,6 @@ fn result_error_type(ty: &TypePath) -> Option<&Type> {
     types.next()
 }
 
-/// Whether a path is a foreign error constructor reached through an `Error`
-/// type, such as `serde::de::Error::custom` or `io::Error::other`.
-fn is_foreign_error_constructor(path: &Path) -> bool {
-    let mut segments = path.segments.iter().rev();
-    let (Some(function), Some(owner)) = (segments.next(), segments.next()) else {
-        return false;
-    };
-    owner.ident == "Error" && FOREIGN_ERROR_CONSTRUCTORS.iter().any(|constructor| function.ident == constructor)
-}
-
 /// Whether a mapper argument yields a string: a closure whose body is a string
 /// expression, or a path to a string conversion such as `ToString::to_string`.
 fn yields_string(argument: &Expr) -> bool {
@@ -230,14 +376,24 @@ fn render(node: &impl ToTokens) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::string_typed_error::{StringTypedErrorKind, visitor::StringTypedErrorVisitor};
+    use crate::string_typed_error::{StringTypedErrorKind, visitor::StringTypedErrorVisitor, workspace_index::WorkspaceIndex};
 
-    fn kinds(source: &str) -> Vec<StringTypedErrorKind> {
-        let syntax = syn::parse_file(source).unwrap_or_else(|error| panic!("fixture parses: {error}"));
-        StringTypedErrorVisitor::inspect("fixture.rs", &syntax)
+    fn parse(source: &str) -> syn::File {
+        syn::parse_file(source).unwrap_or_else(|error| panic!("fixture parses: {error}"))
+    }
+
+    fn kinds_with_declarations(declarations: &str, source: &str) -> Vec<StringTypedErrorKind> {
+        let declarations = parse(declarations);
+        let syntax = parse(source);
+        let index = WorkspaceIndex::collect([&declarations, &syntax]);
+        StringTypedErrorVisitor::inspect("fixture.rs", &syntax, &index)
             .into_iter()
             .map(|site| site.kind)
             .collect()
+    }
+
+    fn kinds(source: &str) -> Vec<StringTypedErrorKind> {
+        kinds_with_declarations("", source)
     }
 
     #[test]
@@ -318,5 +474,141 @@ mod tests {
     fn test_only_items_are_not_inspected() {
         let source = "#[cfg(test)] mod tests { fn parse() -> Result<u8, String> { Err(format!(\"x\")) } }";
         assert_eq!(kinds(source), Vec::new());
+    }
+
+    #[test]
+    fn an_error_implemented_in_another_file_has_its_string_fields_flagged() {
+        let declarations = "impl std::error::Error for Rejection {}";
+        let source = "struct Rejection { reason: String }";
+        assert_eq!(kinds_with_declarations(declarations, source), vec![StringTypedErrorKind::ErrorField]);
+    }
+
+    #[test]
+    fn a_string_handed_to_an_aliased_foreign_error_constructor_is_flagged() {
+        let source = r#"use serde::de::Error as DeserializeError;
+        fn f() { let _ = DeserializeError::custom("bad"); }"#;
+        assert_eq!(kinds(source), vec![StringTypedErrorKind::StringErrorValue]);
+    }
+
+    #[test]
+    fn formatted_text_inside_an_error_value_is_flagged() {
+        let source = r#"fn f() {
+            let _ = Err(public_error(ErrorType::NotFound, format!("entity {id} not found"), &uri));
+            let _ = parse().map_err(|error| rejection(format!("invalid: {error}"), uri));
+            let _ = lookup().ok_or_else(|| problem(format!("missing {key}")));
+            let _ = lookup().ok_or(problem(format!("missing {key}")));
+        }"#;
+        assert_eq!(kinds(source), vec![StringTypedErrorKind::FormattedErrorText; 4]);
+    }
+
+    #[test]
+    fn formatted_text_handed_to_an_error_or_warning_constructor_is_flagged() {
+        let source = r#"fn f() {
+            let _ = NgsiLdWarning::RevalidationFailed(format!("source {id} answered garbage"));
+            let _ = StoreError::new(format!("closed {pool}"));
+        }"#;
+        assert_eq!(kinds(source), vec![StringTypedErrorKind::FormattedErrorText; 2]);
+    }
+
+    #[test]
+    fn formatted_text_in_a_text_field_or_a_carrier_literal_is_flagged() {
+        let source = r#"fn f() {
+            let _ = Disposition::Retry { detail: format!("{count} attempts failed") };
+            let _ = QueryWarning { entity_id, note: format!("{entity_id} unreadable") };
+        }"#;
+        assert_eq!(kinds(source), vec![StringTypedErrorKind::FormattedErrorText; 2]);
+    }
+
+    #[test]
+    fn formatted_text_handed_to_a_text_parameter_is_flagged() {
+        let declarations = r"
+            fn failure_detail(message: impl Into<String>) -> Details { todo!() }
+            impl Report { fn public(kind: Kind, detail: impl Into<String>) -> Report { todo!() } }
+            trait Queue { fn mark_dead(&self, id: Id, error: &str); }
+        ";
+        let source = r#"fn f() {
+            let _ = failure_detail(format!("failed: {error}"));
+            let _ = Report::public(Kind::Invalid, format!("bad {value}"));
+            queue.mark_dead(id, &format!("{attempts} attempts"));
+        }"#;
+        assert_eq!(kinds_with_declarations(declarations, source), vec![StringTypedErrorKind::FormattedErrorText; 3]);
+    }
+
+    #[test]
+    fn formatted_text_reaching_a_carrier_through_a_local_or_a_helper_is_flagged() {
+        let source = r#"
+            fn describe(status: u16) -> String { format!("answered HTTP {status}") }
+            fn f() {
+                let detail = match limit { Some(limit) => format!("over {limit}"), None => format!("over the limit") };
+                let _ = Report { detail };
+                let _ = NgsiLdWarning::Miscellaneous(describe(status));
+            }
+        "#;
+        assert_eq!(kinds(source), vec![StringTypedErrorKind::FormattedErrorText; 2]);
+    }
+
+    #[test]
+    fn displayed_typed_errors_and_literals_handed_to_a_carrier_are_not_flagged() {
+        let declarations = "impl Report { fn public(kind: Kind, detail: impl Into<String>) -> Report { todo!() } }";
+        let source = r#"fn f() {
+            let detail = format!("over {limit}");
+            let detail = Refusal::OverLimit { limit }.to_string();
+            let _ = Report::public(Kind::Invalid, detail);
+            let _ = Report::public(Kind::Invalid, "the body is empty");
+            let _ = NgsiLdWarning::RevalidationFailed(refusal.to_string());
+            let _ = Disposition::Retry { detail: failure.to_string() };
+        }"#;
+        assert_eq!(kinds_with_declarations(declarations, source), Vec::new());
+    }
+
+    #[test]
+    fn formatted_text_outside_any_error_carrier_is_not_flagged() {
+        let source = r#"fn f() {
+            let location = format!("/ngsi-ld/v1/entities/{id}");
+            let _ = with_location(response, location);
+            let _ = Url::parse(&format!("http://{host}/"));
+            lines.push(format!("{title} ({count})"));
+        }"#;
+        assert_eq!(kinds(source), Vec::new());
+    }
+
+    #[test]
+    fn formatted_text_reached_through_two_sinks_is_reported_once() {
+        let source = r#"use serde::de::Error as DeserializeError;
+        fn f() { let _ = Err(DeserializeError::custom(format!("bad {value}"))); }"#;
+        assert_eq!(kinds(source).len(), 1);
+    }
+
+    #[test]
+    fn a_closure_bound_to_a_local_is_not_formatted_text() {
+        let source = r#"use serde::de::Error as DeserializeError;
+        fn f() { let out_of_range = || DeserializeError::custom(format!("{value} is out of range")); let _ = Err(out_of_range()); }"#;
+        assert_eq!(kinds(source).len(), 1);
+    }
+
+    #[test]
+    fn a_method_name_some_declaration_does_not_format_is_not_formatted_text() {
+        let declarations = r#"
+            impl Site { fn report(&self) -> String { format!("{}", self.path) } }
+            impl Refusal { fn report(&self) -> Report { todo!() } }
+        "#;
+        let source = "fn f() { let _ = parse().map_err(|refusal| refusal.report()); }";
+        assert_eq!(kinds_with_declarations(declarations, source), Vec::new());
+    }
+
+    #[test]
+    fn a_method_every_declaration_of_which_formats_is_formatted_text() {
+        let declarations = r#"impl Outcome { fn failure_detail(&self) -> Option<String> { Some(format!("{} failed", self.id)) } }"#;
+        let source = "fn f() { let _ = NgsiLdWarning::MiscellaneousWarning(outcome.failure_detail().unwrap_or_default()); }";
+        assert_eq!(kinds_with_declarations(declarations, source), vec![StringTypedErrorKind::FormattedErrorText]);
+    }
+
+    #[test]
+    fn formatted_text_reaching_a_carrier_through_a_destructured_local_is_flagged() {
+        let source = r#"fn f() {
+            let (classification, detail) = match outcome { Outcome::Loop => (Kind::Loop, format!("{id} loops")), Outcome::Failed(error) => (Kind::Failed, error.to_string()) };
+            let _ = BatchProblemDetail { kind: classification, detail };
+        }"#;
+        assert_eq!(kinds(source), vec![StringTypedErrorKind::FormattedErrorText]);
     }
 }

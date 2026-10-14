@@ -1,7 +1,8 @@
 //! Deserialization of a single BCP 47 language tag query parameter.
 
-use langtag::LangTagBuf;
+use langtag::{InvalidLangTag, LangTagBuf};
 use serde::{Deserialize, Deserializer, de::Error as DeserializeError};
+use thiserror::Error;
 
 /// Deserialize an optional BCP 47 language tag.
 ///
@@ -17,8 +18,16 @@ where
     D: Deserializer<'de>,
 {
     Option::<String>::deserialize(deserializer)?
-        .map(|raw| LangTagBuf::new(raw).map_err(|error| DeserializeError::custom(format!("invalid BCP47 language tag: {error}"))))
+        .map(|raw| LangTagBuf::new(raw).map_err(|error| DeserializeError::custom(LanguageTagParameterError::Malformed(error))))
         .transpose()
+}
+
+/// A `lang` parameter that is not a BCP 47 language tag.
+#[derive(Debug, Error)]
+pub enum LanguageTagParameterError {
+    /// The value does not satisfy the BCP 47 grammar.
+    #[error("invalid BCP47 language tag: {0}")]
+    Malformed(#[source] InvalidLangTag<String>),
 }
 
 #[cfg(test)]

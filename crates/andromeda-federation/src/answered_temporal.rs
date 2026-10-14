@@ -4,13 +4,14 @@
 
 use crate::{
     FederationService,
+    entity_reading::TemporalEntityReading,
     outcome::{ForwardReadOutcome, ForwardedTemporalEntities},
     received_temporal_answer::ReceivedTemporalAnswer,
+    source_answer_failure::SourceAnswerFailure,
 };
-use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
-use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, error::ExpansionError};
+use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
 use andromeda_ngsi_ld_model::{
     entity_type::EntityTypeValue,
@@ -23,19 +24,7 @@ use andromeda_ngsi_ld_model::{
     },
 };
 use indexmap::{IndexMap, map::Entry};
-use thiserror::Error;
 use tracing::warn;
-
-/// Why one entity of an answer is not read into the model.
-#[derive(Debug, Error)]
-enum EntityReading {
-    /// The entity's own `@context` does not resolve or process.
-    #[error("its own @context cannot be processed: {0}")]
-    OwnContext(#[source] ExpansionError),
-    /// The entity does not read into the model.
-    #[error(transparent)]
-    Refused(ExpansionError),
-}
 
 impl FederationService {
     /// `context` is the client's, which an aggregate is respelled in, and `timeproperty` the Temporal Property the instances of one entity are ordered by when the pages of its history are put together.
@@ -75,18 +64,18 @@ impl FederationService {
                 TemporalBody::Evolution(entity) => {
                     let expanded = match own {
                         Some(own) => match EntityExpansion::prepare(&self.engine, &ContextSpec::from_body(own)).await {
-                            Ok(expansion) => expansion.temporal(entity).await.map_err(EntityReading::Refused),
-                            Err(error) => Err(EntityReading::OwnContext(error)),
+                            Ok(expansion) => expansion.temporal(entity).await.map_err(TemporalEntityReading::Refused),
+                            Err(error) => Err(TemporalEntityReading::OwnContext(error)),
                         },
                         None => match &spelled_in {
-                            Some(expansion) => expansion.temporal(entity).await.map_err(EntityReading::Refused),
+                            Some(expansion) => expansion.temporal(entity).await.map_err(TemporalEntityReading::Refused),
                             None => match EntityExpansion::prepare(&self.engine, &naming).await {
                                 Ok(expansion) => {
-                                    let expanded = expansion.temporal(entity).await.map_err(EntityReading::Refused);
+                                    let expanded = expansion.temporal(entity).await.map_err(TemporalEntityReading::Refused);
                                     spelled_in = Some(expansion);
                                     expanded
                                 }
-                                Err(error) => Err(EntityReading::OwnContext(error)),
+                                Err(error) => Err(TemporalEntityReading::OwnContext(error)),
                             },
                         },
                     };
@@ -94,9 +83,13 @@ impl FederationService {
                         Ok(document) => TemporalHistory::Instances(document),
                         Err(refusal) => {
                             warn!("Context source {} returned a temporal entity that does not read: {}", source, refusal);
-                            warnings.push(NgsiLdWarning::RevalidationFailed(format!(
-                                "Context source {source} returned a temporal entity that does not read: {refusal}"
-                            )));
+                            warnings.extend(registration_id.as_ref().map(|registration| {
+                                SourceAnswerFailure::TemporalEntityUnreadable {
+                                    registration,
+                                    reading: refusal,
+                                }
+                                .into_warning()
+                            }));
                             continue;
                         }
                     }
@@ -106,9 +99,11 @@ impl FederationService {
                         match self.engine.compactor(context).processed_context().await {
                             Ok(processed) => client_names = Some(NameCompaction::new(processed)),
                             Err(error) => {
-                                warnings.push(NgsiLdWarning::RevalidationFailed(format!(
-                                    "Context source {source} answered an aggregate that cannot be spelled in the client's context: {error}"
-                                )));
+                                warnings.extend(
+                                    registration_id
+                                        .as_ref()
+                                        .map(|registration| SourceAnswerFailure::AggregateContext { registration, error }.into_warning()),
+                                );
                                 continue;
                             }
                         }

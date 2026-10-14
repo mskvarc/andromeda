@@ -226,7 +226,7 @@ fn element_boundary(entities: &[TemporalHistory]) -> Option<(Identifier, Identif
 /// Record the non-fatal per-entity failures a temporal query collected.
 fn log_query_warnings(warnings: &[TemporalQueryWarning]) {
     for warning in warnings {
-        tracing::debug!(entity_id = %warning.entity_id, message = %warning.message, "Temporal query warning");
+        tracing::debug!(entity_id = %warning.entity_id, reason = %warning.reason, "Temporal query warning");
     }
 }
 

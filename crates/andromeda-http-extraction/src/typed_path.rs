@@ -7,6 +7,7 @@ use axum::{
     http::request::Parts,
 };
 use serde::de::DeserializeOwned;
+use thiserror::Error;
 
 /// A route parameter parsed once into its canonical domain type.
 ///
@@ -26,9 +27,14 @@ where
         Path::<T>::from_request_parts(parts, state)
             .await
             .map(|Path(value)| TypedPath(value))
-            .map_err(|rejection: PathRejection| ExtractorRejection::bad_request_data(format!("Invalid URI path parameter: {rejection}"), addressed_uri(parts)))
+            .map_err(|rejection: PathRejection| ExtractorRejection::bad_request_data(InvalidPathParameter(rejection).to_string(), addressed_uri(parts)))
     }
 }
+
+/// A route parameter that axum could not decode or the domain type refused.
+#[derive(Debug, Error)]
+#[error("invalid URI path parameter: {0}")]
+struct InvalidPathParameter(#[source] PathRejection);
 
 #[cfg(test)]
 mod tests {

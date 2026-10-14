@@ -1,7 +1,7 @@
 //! Handlers for the `/csourceRegistrations` endpoints.
 
 use crate::{
-    error::{RegistrationResultExt, internal_problem},
+    error::{RegistrationCountError, RegistrationResultExt, internal_problem},
     state::{RegistrationTenantState, RegistrationTenantStateOrCreate},
 };
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
@@ -157,14 +157,14 @@ pub(crate) async fn query(
     let rendered = RenderedResponse::resource(ready).with_registration_instance(&uri)?;
     let total_count = usize::try_from(total).map_err(|error| {
         internal_problem(
-            format!("registration count does not fit the response platform: {error}"),
+            RegistrationCountError::ResponsePlatform(error),
             InternalFailureSummary::new("internal registration error"),
             &uri,
         )
     })?;
     let pagination_total = i64::try_from(total).map_err(|error| {
         internal_problem(
-            format!("registration count does not fit offset pagination: {error}"),
+            RegistrationCountError::OffsetPagination(error),
             InternalFailureSummary::new("internal registration error"),
             &uri,
         )

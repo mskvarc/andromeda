@@ -14,6 +14,7 @@ proc-macro2 = { version = "1.0.107", features = ["span-locations"] }
 quote = "1.0.47"
 strum = { version = "0.28.0", features = ["derive"] }
 syn = { version = "3.0.6", features = ["full", "visit"] }
+thiserror = "2.0.21"
 toml_edit = "0.25.15"
 
 [lints]

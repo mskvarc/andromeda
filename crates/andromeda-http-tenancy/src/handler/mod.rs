@@ -5,7 +5,7 @@ pub mod collection;
 pub mod introspection;
 pub mod lifecycle;
 
-use crate::error::{TenancyHttpError, classify};
+use crate::error::{InvalidTenantPathName, TenancyHttpError, classify};
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
@@ -18,7 +18,7 @@ use axum::http::Uri;
 /// missing tenant, so it is answered with `InvalidRequest`.
 fn parse_tenant_name(raw: String, uri: &Uri) -> Result<TenantName, ProblemResponse> {
     TenantName::try_from(raw)
-        .map_err(|error| ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, format!("invalid tenant name: {error}")).with_instance(uri.clone()))
+        .map_err(|error| ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, InvalidTenantPathName(error).to_string()).with_instance(uri.clone()))
 }
 
 /// The 404 `NonexistentTenant` a management request for an absent tenant answers

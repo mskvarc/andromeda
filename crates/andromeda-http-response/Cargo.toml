@@ -33,6 +33,7 @@ iri-rs = "3.4.1"
 mediatype = "0.23.0"
 serde = "1.0.229"
 serde_json = "1.0.151"
+thiserror = "2.0.21"
 tracing = "0.1.44"
 url = "2.5.8"
 

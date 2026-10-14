@@ -11,6 +11,7 @@
 //! clause applied to the temporal API. The condition a traversal names carries
 //! no trace of which one it came from, so one mapping answers for both.
 
+use crate::linked_entity_unresolved::LinkedEntityUnresolved;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
 
@@ -23,7 +24,7 @@ pub fn with_linked_resolution_warnings(mut warnings: Vec<NgsiLdWarning>, failure
 
 /// The clause 6.3.17 warning one unresolved Linked Entity is reported as.
 fn linked_resolution_warning(failure: &LinkedResolutionFailure) -> NgsiLdWarning {
-    let detail = format!("Linked entity {} could not be resolved: {}", failure.id, failure.detail);
+    let detail = LinkedEntityUnresolved(failure).to_string();
     match failure.kind {
         LinkedResolutionFailureKind::StaleData => NgsiLdWarning::ResponseIsStale(detail),
         LinkedResolutionFailureKind::UnusableResponse => NgsiLdWarning::RevalidationFailed(detail),
@@ -55,22 +56,22 @@ mod tests {
         let expected = [
             (
                 LinkedResolutionFailureKind::StaleData,
-                NgsiLdWarning::ResponseIsStale("Linked entity urn:ngsi-ld:Building:1 could not be resolved: the context source did not respond".to_owned()),
+                NgsiLdWarning::ResponseIsStale("linked entity urn:ngsi-ld:Building:1 could not be resolved: the context source did not respond".to_owned()),
             ),
             (
                 LinkedResolutionFailureKind::UnusableResponse,
-                NgsiLdWarning::RevalidationFailed("Linked entity urn:ngsi-ld:Building:1 could not be resolved: the context source did not respond".to_owned()),
+                NgsiLdWarning::RevalidationFailed("linked entity urn:ngsi-ld:Building:1 could not be resolved: the context source did not respond".to_owned()),
             ),
             (
                 LinkedResolutionFailureKind::Unreachable,
                 NgsiLdWarning::MiscellaneousWarning(
-                    "Linked entity urn:ngsi-ld:Building:1 could not be resolved: the context source did not respond".to_owned(),
+                    "linked entity urn:ngsi-ld:Building:1 could not be resolved: the context source did not respond".to_owned(),
                 ),
             ),
             (
                 LinkedResolutionFailureKind::Refused,
                 NgsiLdWarning::MiscellaneousPersistentWarning(
-                    "Linked entity urn:ngsi-ld:Building:1 could not be resolved: the context source did not respond".to_owned(),
+                    "linked entity urn:ngsi-ld:Building:1 could not be resolved: the context source did not respond".to_owned(),
                 ),
             ),
         ];

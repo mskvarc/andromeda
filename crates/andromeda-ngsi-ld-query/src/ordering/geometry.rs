@@ -35,6 +35,9 @@ pub enum OrderingGeometryError {
     /// The geometry type and coordinates do not form a valid RFC 7946 geometry. The diagnostic is carried verbatim, so an `orderFrom` position with an unusable ordinate count reaches the client naming that count.
     #[error("orderFrom reference geometry: {0}")]
     Geometry(#[from] GeometryError),
+    /// `orderGeometry` was sent without the `orderFrom` coordinates it types.
+    #[error("orderGeometry requires orderFrom")]
+    WithoutCoordinates,
 }
 
 impl OrderingGeometry {

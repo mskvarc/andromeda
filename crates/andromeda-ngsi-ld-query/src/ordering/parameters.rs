@@ -1,9 +1,12 @@
 //! The complete ordering definition carried by a clause-5.2.23 `Query`.
 
-use crate::ordering::{
-    collation::IcuCollation,
-    geometry::{OrderingGeometry, OrderingGeometryError},
-    term::OrderTerm,
+use crate::{
+    error::QueryError,
+    ordering::{
+        collation::IcuCollation,
+        geometry::{OrderingGeometry, OrderingGeometryError},
+        term::OrderTerm,
+    },
 };
 use andromeda_ngsi_ld_geometry::{geometry_type::GeometryType, query_coordinates::QueryCoordinates};
 use serde::{
@@ -59,7 +62,7 @@ impl<'de> Deserialize<'de> for OrderingParameters {
         let wire = OrderingParametersWire::deserialize(deserializer)?;
         let geometry = match (wire.coordinates, wire.geometry) {
             (None, None) => None,
-            (None, Some(_)) => return Err(DeserializeError::custom("orderGeometry requires orderFrom")),
+            (None, Some(_)) => return Err(DeserializeError::custom(OrderingGeometryError::WithoutCoordinates)),
             (Some(coordinates), geometry) => {
                 let geometry_type = geometry.unwrap_or(GeometryType::Point);
                 let written = coordinates.into_written().map_err(DeserializeError::custom)?;
@@ -72,7 +75,7 @@ impl<'de> Deserialize<'de> for OrderingParameters {
         // Table 6.4.3.2-1 makes `orderFrom` mandatory when `orderBy` orders by
         // distance, so a geo-query's geometry never stands in for it.
         if geometry.is_none() && wire.order_by.iter().any(|term| term.direction.is_distance()) {
-            return Err(DeserializeError::custom("orderBy: a distance ordering requires orderFrom"));
+            return Err(DeserializeError::custom(QueryError::DistanceOrderWithoutReference));
         }
         Ok(OrderingParameters {
             collation: wire.collation,

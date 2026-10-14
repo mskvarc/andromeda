@@ -1,6 +1,7 @@
 //! What a context source answered a forwarded request with when it failed it.
 
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchProblemDetail;
+use std::fmt;
 use thiserror::Error;
 
 /// A context source's non-success answer to one forwarded request.
@@ -10,7 +11,7 @@ use thiserror::Error;
 /// problem detail it is, and renders its `detail` (or else its `title`) beside
 /// the status.
 #[derive(Debug, Clone, PartialEq, Error)]
-#[error("{}", describe_remote_answer(*.status, .problem.as_ref()))]
+#[error("context source answered HTTP {status}{}", ProblemDetailSuffix(.problem.as_ref()))]
 pub struct RemoteAnswer {
     /// The HTTP status the source answered with.
     pub status: u16,
@@ -18,19 +19,23 @@ pub struct RemoteAnswer {
     pub problem: Option<BatchProblemDetail>,
 }
 
-/// The most informative rendering of a remote answer: its problem `detail`
-/// (which reads as its `title` when it has none), or the bare status.
-#[must_use]
-pub fn describe_remote_answer(status: u16, problem: Option<&BatchProblemDetail>) -> String {
-    problem.map(|problem| problem.detail.as_str()).filter(|detail| !detail.is_empty()).map_or_else(
-        || format!("context source answered HTTP {status}"),
-        |detail| format!("context source answered HTTP {status}: {detail}"),
-    )
+/// The `: detail` an answer's problem document adds to the status, nothing when
+/// it sent none or its detail is empty.
+struct ProblemDetailSuffix<'a>(Option<&'a BatchProblemDetail>);
+
+impl fmt::Display for ProblemDetailSuffix<'_> {
+    // Manual impl: the suffix is conditional on the presence of a non-empty detail, which no derive expresses.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0.map(|problem| problem.detail.as_str()).filter(|detail| !detail.is_empty()) {
+            Some(detail) => write!(formatter, ": {detail}"),
+            None => Ok(()),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::remote_answer::{RemoteAnswer, describe_remote_answer};
+    use crate::remote_answer::RemoteAnswer;
     use andromeda_ngsi_ld_problem_details::batch_operation::BatchProblemDetail;
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -39,17 +44,21 @@ mod tests {
         serde_json::from_value(body.clone()).expect("a problem detail") // clone: the fixture stays readable
     }
 
+    fn rendered(status: u16, problem: Option<BatchProblemDetail>) -> String {
+        RemoteAnswer { status, problem }.to_string()
+    }
+
     #[test]
     fn the_rendering_prefers_the_problem_detail_then_the_title_then_the_status() {
         assert_eq!(
-            describe_remote_answer(403, Some(&problem(&json!({"type": "https://example.org/denied", "detail": "denied"})))),
+            rendered(403, Some(problem(&json!({"type": "https://example.org/denied", "detail": "denied"})))),
             "context source answered HTTP 403: denied"
         );
         assert_eq!(
-            describe_remote_answer(403, Some(&problem(&json!({"type": "https://example.org/denied", "title": "Forbidden"})))),
+            rendered(403, Some(problem(&json!({"type": "https://example.org/denied", "title": "Forbidden"})))),
             "context source answered HTTP 403: Forbidden"
         );
-        assert_eq!(describe_remote_answer(403, None), "context source answered HTTP 403");
+        assert_eq!(rendered(403, None), "context source answered HTTP 403");
     }
 
     #[test]

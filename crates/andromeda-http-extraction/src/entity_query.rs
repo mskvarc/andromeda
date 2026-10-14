@@ -23,11 +23,7 @@ pub struct EntityQuery(pub EntityQueryParameters);
 fn resolve_entity_query(parts: &Parts) -> Result<EntityQuery, ExtractorRejection> {
     let uri = addressed_uri(parts);
     let query_str = parts.uri.query().unwrap_or("");
-    let params = serde_urlencoded::from_str::<EntityQueryParameters>(query_str).map_err(|error| {
-        let error_text = error.to_string();
-        let message = format!("invalid query parameters: {error_text}");
-        classify_query_parse_error(&error_text, message, uri.clone())
-    })?;
+    let params = serde_urlencoded::from_str::<EntityQueryParameters>(query_str).map_err(|error| classify_query_parse_error(error, uri))?;
 
     Ok(EntityQuery(params))
 }

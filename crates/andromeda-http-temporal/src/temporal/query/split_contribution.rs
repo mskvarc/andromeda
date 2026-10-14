@@ -110,7 +110,7 @@ async fn render_contributions(
     let warnings = rendering
         .warnings
         .into_iter()
-        .map(|warning| NgsiLdWarning::RevalidationFailed(format!("{}: {}", warning.entity_id, warning.message)))
+        .map(|warning| NgsiLdWarning::RevalidationFailed(warning.to_string()))
         .collect();
     Ok(Some((rendering.entities, warnings)))
 }

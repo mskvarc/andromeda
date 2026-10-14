@@ -18,6 +18,8 @@ pub mod config;
 pub mod cooldown;
 /// Context-source discovery request execution.
 pub mod discovery;
+/// The warnings of a discovery answer that is not merged in full.
+mod discovery_answer_failure;
 /// Discovery response merging.
 pub mod discovery_result;
 /// The entities one forwarded query may gather from its sources.
@@ -26,6 +28,8 @@ pub mod entity_budget;
 pub mod entity_map;
 /// Current-entity query and retrieve execution.
 pub mod entity_read;
+/// Why one entity a source answered is not read into the model.
+mod entity_reading;
 /// Current-entity response merging.
 pub mod entity_result;
 /// Dropping source entities a write to this broker would refuse (clause 6.3.17).
@@ -64,6 +68,8 @@ mod forwarding_context;
 pub mod forwarding_url;
 /// Why a single forwarded request failed as a bad gateway.
 pub mod gateway_failure;
+/// The warning of a paged answer the walk could not read to its end.
+mod incomplete_answer;
 /// The most attribute instances one forwarded temporal query may gather.
 pub mod instance_budget;
 /// Resolving a locally-held entity's type for federated-write coverage.
@@ -108,6 +114,8 @@ pub mod remote_answer;
 pub mod request;
 /// Clause 6.3.17 single-source failure classification.
 pub mod single_source_failure;
+/// The warnings of a source's answer that is not read in full.
+mod source_answer_failure;
 /// Where a source's answer to a forwarded read continues.
 mod source_continuation;
 /// Sending one forwarded request and reading its answer's headers.
@@ -116,6 +124,8 @@ mod source_exchange;
 pub mod source_identity;
 /// Reads forwarded to one registration and how their answers are read back.
 mod source_read;
+/// The warnings of a forwarded read that failed or came back partial.
+mod source_read_warning;
 /// Walking every page of a source's answer to a forwarded query.
 pub mod source_walk;
 /// Subscription forwarding to registered context sources (clause 5.8).

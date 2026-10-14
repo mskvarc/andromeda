@@ -45,6 +45,7 @@ use crate::{
     committed_side_effect::CommittedSideEffect,
     entity_invariant::EntityInvariant,
     error::EntityError,
+    side_effect_exhaustion::SideEffectExhaustion,
     side_effect_notification::{SideEffectNotificationRoute, owed_subscription_matches},
     side_effect_queue::{DeadLetterAttempt, LeasedSideEffect, SideEffectQueue},
     side_effect_replay::replay_writes,
@@ -237,10 +238,11 @@ impl EntitySideEffectDrain {
     /// the job had is already counted, so the dead letter keeps `attempts` as
     /// its exact count.
     async fn retire_lapsed(&self, id: SideEffectJobId, attempts: i32) -> Result<(), EntityError> {
-        let detail = format!(
-            "{attempts} attempts ended without settling the job, the configured ceiling is {}",
-            self.config.max_attempts
-        );
+        let detail = SideEffectExhaustion {
+            attempts,
+            ceiling: self.config.max_attempts,
+        }
+        .to_string();
         let acknowledgement = self
             .queue
             .mark_dead(id, &self.config.lease_holder, &detail, DeadLetterAttempt::AlreadyCounted)

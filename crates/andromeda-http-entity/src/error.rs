@@ -17,12 +17,27 @@ use andromeda_http_response::{
     query_failure::classify_query_error,
 };
 use andromeda_jsonld::error::JsonLdError;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::{error::ParameterError, fragment_entity_id::FragmentEntityIdError};
 use andromeda_tenancy::error::TenancyError;
 use axum::http::Uri;
+use thiserror::Error;
+
+/// A single-entity retrieval that found the addressed entity nowhere.
+#[derive(Debug, Error)]
+#[error("entity {id} not found")]
+struct EntityNotFound<'id> {
+    /// The identifier the request addressed.
+    id: &'id Identifier,
+}
+
+/// The clause 5.7.1.4 `ResourceNotFound` answer for the entity `id`.
+pub(crate) fn entity_not_found(id: &Identifier, instance: &Uri) -> ProblemResponse {
+    public_error(NgsiLdErrorType::ResourceNotFound, EntityNotFound { id }.to_string(), instance)
+}
 
 /// Classifies a typed failure consumed by the entity route binding.
 pub trait EntityHttpClassify {

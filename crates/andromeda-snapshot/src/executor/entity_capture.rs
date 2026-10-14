@@ -20,6 +20,7 @@ use crate::{
         SnapshotExecutor,
         captured_state::narrow_captured,
         execution::entity_query_failure,
+        execution_failure::ExecutionFailure,
         forwarded_capture::ForwardedCapture,
         status::{failure_detail, success_detail},
         translation::entity_parameters,
@@ -130,7 +131,7 @@ impl SnapshotExecutor {
             Err(error) => return Ok(failure_detail(error.to_string())),
         };
         if let Err(error) = params.validate(EntityQueryOperation::Query) {
-            return Ok(failure_detail(format!("Snapshot query translation failed validation: {error}")));
+            return Ok(failure_detail(ExecutionFailure::QueryValidation { cause: &error }.to_string()));
         }
 
         let (mut pending, forwarding_failure) = match self.walk_sources(&params, context).await {
@@ -182,9 +183,7 @@ impl SnapshotExecutor {
             let last_captured = states.last().map(|state| state.id().clone());
             if matches!(window.start, PageStart::Cursor(None)) && local_page_len == 0 {
                 if let Some(error) = &forwarding_failure {
-                    return Ok(failure_detail(format!(
-                        "No valid entity result was available because distributed execution failed: {error}"
-                    )));
+                    return Ok(failure_detail(ExecutionFailure::DistributedExecution { cause: error }.to_string()));
                 }
                 if every_source_failed {
                     return Ok(failure_detail(

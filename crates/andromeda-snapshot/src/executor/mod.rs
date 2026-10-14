@@ -9,6 +9,8 @@ mod drain;
 /// Capturing the whole result of one snapshot entity query.
 mod entity_capture;
 mod execution;
+/// Why a Snapshot query or its preparation is recorded as failed.
+mod execution_failure;
 /// Turning the entities a capture merged with its sources into states.
 mod forwarded_capture;
 mod lease_renewal;

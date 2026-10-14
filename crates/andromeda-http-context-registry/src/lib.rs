@@ -6,6 +6,7 @@ pub mod error;
 mod handler;
 pub mod hosted_context_reference;
 pub mod hosted_context_url;
+mod inadmissible_body;
 pub mod response_context_host;
 pub mod response_rendering;
 pub mod routes;

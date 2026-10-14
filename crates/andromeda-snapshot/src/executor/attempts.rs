@@ -10,7 +10,7 @@
 
 use crate::{
     error::{Recurrence, SnapshotError},
-    executor::{lease_deadline, status::failure_detail},
+    executor::{execution_failure::ExecutionFailure, lease_deadline, status::failure_detail},
     store::{SnapshotPreparationJob, SnapshotStore},
 };
 use andromeda_context_commit::{lease_holder::LeaseHolder, write_retry::backoff_after_lost_attempts};
@@ -123,7 +123,7 @@ impl PreparationClaim<'_> {
     /// Move the Snapshot to `failure`, reporting `error` for every query.
     async fn record_failure(&self, error: &SnapshotError) -> Result<PreparationEnd, SnapshotError> {
         warn!(snapshot_id = %self.id, %error, "Snapshot preparation failed; recording its failure status");
-        let detail = format!("Snapshot preparation failed: {error}");
+        let detail = ExecutionFailure::Preparation { cause: error }.to_string();
         let entity = failure_details(self.queries.entity, &detail);
         let temporal = failure_details(self.queries.temporal, &detail);
         let recorded = self

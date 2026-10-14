@@ -15,7 +15,19 @@ use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_registration::error::RegistrationError;
 use axum::http::Uri;
-use std::fmt::Display;
+use std::{fmt::Display, num::TryFromIntError};
+use thiserror::Error;
+
+/// A stored registration count the response cannot carry.
+#[derive(Debug, Error)]
+pub(crate) enum RegistrationCountError {
+    /// The count does not fit the platform's `usize`.
+    #[error("registration count does not fit the response platform: {0}")]
+    ResponsePlatform(#[source] TryFromIntError),
+    /// The count does not fit the signed offset the pagination arithmetic uses.
+    #[error("registration count does not fit offset pagination: {0}")]
+    OffsetPagination(#[source] TryFromIntError),
+}
 
 /// A typed failure consumed by the registration HTTP binding.
 pub trait RegistrationHttpClassify {
@@ -91,8 +103,8 @@ where
 }
 
 /// Sanitize a binding invariant and attach the request URI.
-pub(crate) fn internal_problem(detail: impl Display, summary: InternalFailureSummary, instance: &Uri) -> ProblemResponse {
-    ClassifiedReport::internal(&detail, summary).with_instance(instance.clone())
+pub(crate) fn internal_problem(error: impl Display, summary: InternalFailureSummary, instance: &Uri) -> ProblemResponse {
+    ClassifiedReport::internal(&error, summary).with_instance(instance.clone())
 }
 
 #[cfg(test)]

@@ -21,9 +21,20 @@ pub enum DeliveryOutcome {
     /// The endpoint explicitly rejected the notification.
     Rejected {
         /// What the endpoint said.
-        reason: String,
+        reason: EndpointRejection,
         /// Whether attempting the same delivery again could succeed.
         retryable: bool,
+    },
+}
+
+/// Why an endpoint that was reached refused a notification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum EndpointRejection {
+    /// The endpoint answered an HTTP request with a non-success status.
+    #[error("HTTP {status}")]
+    HttpStatus {
+        /// The response status code.
+        status: u16,
     },
 }
 

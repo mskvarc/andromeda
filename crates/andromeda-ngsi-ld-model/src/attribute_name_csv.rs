@@ -7,6 +7,7 @@
 //! serves both resources, and it lives here rather than beside either of them.
 
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_query::comma_separated_list::{CommaSeparatedListError, ListedItem};
 use serde::{Deserialize, Deserializer, Serializer, de::Error as DeserializeError};
 
 /// Deserialize a comma-separated member into validated names.
@@ -26,7 +27,9 @@ where
                 .map(str::trim)
                 .map(|name| {
                     if name.is_empty() {
-                        return Err(DeserializeError::custom("attribute-name list contains an empty member"));
+                        return Err(DeserializeError::custom(CommaSeparatedListError::EmptyMember {
+                            list: ListedItem::AttributeName,
+                        }));
                     }
                     name.parse().map_err(DeserializeError::custom)
                 })

@@ -22,11 +22,8 @@ pub struct TemporalDeleteQuery(pub TemporalDeleteParameters);
 fn resolve_temporal_delete_query(parts: &Parts) -> Result<TemporalDeleteQuery, ExtractorRejection> {
     let uri = addressed_uri(parts);
     let query_str = parts.uri.query().unwrap_or("");
-    let params = serde_urlencoded::from_str::<TemporalDeleteParameters>(query_str).map_err(|error| {
-        let error_text = error.to_string();
-        let message = format!("invalid query parameters: {error_text}");
-        classify_query_parse_error(&error_text, message, uri.clone())
-    })?;
+    // clone: the decode refusal and the validation refusal each name the request.
+    let params = serde_urlencoded::from_str::<TemporalDeleteParameters>(query_str).map_err(|error| classify_query_parse_error(error, uri.clone()))?;
 
     params.validate().map_err(|error| {
         let report = classify_parameter_error(&error);

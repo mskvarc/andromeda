@@ -14,6 +14,7 @@ use crate::{
     error::TemporalError,
     grouping_depth::grouping_depth,
     port::read_scope::ScopeReach,
+    query_warning_reason::TemporalQueryWarningReason,
     service::{TemporalQueryWarning, TemporalService},
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -76,7 +77,7 @@ impl TemporalService {
                         rows.extend(history.rows);
                         answered_types.extend(history.entity_types);
                     }
-                    Err(error) => rendering.warnings.push(unreadable(&entity_id, &error)),
+                    Err(error) => rendering.warnings.push(unreadable(&entity_id, error)),
                 }
             }
             let entity_types = local_types.get(&entity_id).cloned().unwrap_or(answered_types); // clone: the catalogue's types are read for every entity
@@ -88,7 +89,7 @@ impl TemporalService {
                 Ok(aggregated) => aggregated,
                 Err(error @ TemporalError::TooManyResults { .. }) => return Err(error),
                 Err(error) => {
-                    rendering.warnings.push(unreadable(&entity_id, &error));
+                    rendering.warnings.push(unreadable(&entity_id, error));
                     continue;
                 }
             };
@@ -110,7 +111,7 @@ impl TemporalService {
                     grouping_depth(&compiled),
                     names,
                 ))),
-                Err(error) => rendering.warnings.push(unreadable(&entity_id, &TemporalError::from(error))),
+                Err(error) => rendering.warnings.push(unreadable(&entity_id, TemporalError::from(error))),
             }
         }
         Ok(rendering)
@@ -118,10 +119,10 @@ impl TemporalService {
 }
 
 /// The warning of an entity, or a part of it, that could not be rendered.
-fn unreadable(entity_id: &Identifier, error: &TemporalError) -> TemporalQueryWarning {
+fn unreadable(entity_id: &Identifier, error: TemporalError) -> TemporalQueryWarning {
     TemporalQueryWarning {
         entity_id: entity_id.clone(), // clone: the warning owns the identifier it names
-        message: format!("the merged aggregation of the entity could not be rendered in full: {error}"),
+        reason: TemporalQueryWarningReason::MergedAggregation(error),
     }
 }
 

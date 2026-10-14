@@ -1,8 +1,8 @@
 //! Projection of policy batch outcomes and forwarded write outcomes into
 //! clause 5.2.16 wire values.
 
-use crate::classified_report::ClassifiedReport;
-use andromeda_federation::{outcome::ForwardedWriteOutcome, remote_answer::describe_remote_answer};
+use crate::{classified_report::ClassifiedReport, forwarded_write_failure::ForwardedWriteFailure};
+use andromeda_federation::{outcome::ForwardedWriteOutcome, remote_answer::RemoteAnswer};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::Uri};
 use andromeda_ngsi_ld_problem_details::{
     batch_operation::{BatchEntityError, BatchErrorKind, BatchOperationResult, BatchProblemDetail},
@@ -49,11 +49,17 @@ pub fn forwarded_write_error(entity_id: Uri, registration_id: &Identifier, outco
 /// response.
 #[must_use]
 pub fn forwarded_write_problem(registration_id: &Identifier, outcome: &ForwardedWriteOutcome) -> Option<BatchProblemDetail> {
-    let (classification, detail) = match outcome {
+    let (classification, failure) = match outcome {
         ForwardedWriteOutcome::Completed { .. } => return None,
         ForwardedWriteOutcome::RemoteHttpFailure { status, body } => match body.problem() {
             Some(problem) => return Some(problem),
-            None => (classification_for_remote_status(*status), describe_remote_answer(*status, None)),
+            None => (
+                classification_for_remote_status(*status),
+                ForwardedWriteFailure::RemoteStatus(RemoteAnswer {
+                    status: *status,
+                    problem: None,
+                }),
+            ),
         },
         ForwardedWriteOutcome::Transport(failure) => {
             let classification = if failure.is_timeout() {
@@ -61,24 +67,24 @@ pub fn forwarded_write_problem(registration_id: &Identifier, outcome: &Forwarded
             } else {
                 ProblemClassification::BadGateway
             };
-            (classification, failure.to_string())
+            (classification, ForwardedWriteFailure::Transport(failure))
         }
         ForwardedWriteOutcome::LoopDetected => (
             ProblemClassification::LoopDetected,
-            format!("registration {registration_id} loops back into the request's Via chain"),
+            ForwardedWriteFailure::LoopDetected { registration: registration_id },
         ),
         ForwardedWriteOutcome::NotAdvertised => (
             ProblemClassification::Category(NgsiLdErrorType::Conflict),
-            format!("registration {registration_id} covers the data but does not advertise the requested operation"),
+            ForwardedWriteFailure::NotAdvertised { registration: registration_id },
         ),
         ForwardedWriteOutcome::UpsertFollowUpNotAdvertised => (
             ProblemClassification::Category(NgsiLdErrorType::OperationNotSupported),
-            format!("registration {registration_id} reported the entity exists and advertises no operation to update it"),
+            ForwardedWriteFailure::UpsertFollowUpNotAdvertised { registration: registration_id },
         ),
     };
     Some(BatchProblemDetail {
         error_type: BatchErrorKind::Known(classification),
-        detail,
+        detail: failure.to_string(),
     })
 }
 

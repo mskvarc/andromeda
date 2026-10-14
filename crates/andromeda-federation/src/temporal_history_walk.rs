@@ -14,11 +14,11 @@
 use crate::{
     FederationService,
     entity_budget::EntityBudget,
+    incomplete_answer::{IncompleteReason, incomplete_answer},
     query_forwarding_error::QueryForwardingError,
     read_fan_out::{ForwardedGetConditions, ForwardedRead, SourceAnswer},
     received_temporal_answer::ReceivedTemporalAnswer,
     request::HistoryBudget,
-    source_walk::incomplete_answer,
 };
 use andromeda_http_headers::ngsild_content_range::NgsiLdContentRange;
 use andromeda_ngsi_ld_lexicon::rfc3339::sub_second;
@@ -83,9 +83,7 @@ impl FederationService {
                 .filter(|_| resumed_at.is_none_or(|previous| stopped_at > previous))
                 .and_then(|url| resumed_window(url, stopped_at));
             let Some(resumed) = resumed else {
-                gathered
-                    .warnings
-                    .push(incomplete_answer(registration, "cut its history short at an instant it cannot be resumed past"));
+                gathered.warnings.push(incomplete_answer(registration, IncompleteReason::HistoryCutShort));
                 break;
             };
             // The resumed walk gathers entities the first one already counted,

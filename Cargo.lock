@@ -152,6 +152,7 @@ dependencies = [
  "quote",
  "strum",
  "syn 3.0.6",
+ "thiserror 2.0.21",
  "toml_edit",
 ]
 
@@ -825,6 +826,7 @@ dependencies = [
  "axum",
  "futures",
  "pretty_assertions",
+ "thiserror 2.0.21",
  "tokio",
  "tower",
 ]
@@ -864,6 +866,7 @@ dependencies = [
  "pretty_assertions",
  "serde",
  "serde_json",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "url",

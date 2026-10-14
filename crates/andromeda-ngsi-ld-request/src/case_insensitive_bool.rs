@@ -1,6 +1,7 @@
 //! Reading a boolean query parameter the way clause 6.3.x spells one.
 
 use serde::{Deserialize, Deserializer, de::Error as DeserializeError};
+use thiserror::Error;
 
 /// Deserialise an optional boolean query parameter case-insensitively.
 ///
@@ -22,9 +23,17 @@ where
         Some(raw) => match raw.to_lowercase().as_str() {
             "true" => Ok(Some(true)),
             "false" => Ok(Some(false)),
-            other => Err(DeserializeError::custom(format!("invalid boolean value: '{other}'"))),
+            _unrecognised => Err(DeserializeError::custom(BooleanParameterError::NotABoolean)),
         },
     }
+}
+
+/// A boolean query parameter whose value is neither `true` nor `false`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum BooleanParameterError {
+    /// The value matched no boolean token in any letter case.
+    #[error("invalid boolean value: expected true or false")]
+    NotABoolean,
 }
 
 #[cfg(test)]

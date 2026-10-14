@@ -1,6 +1,12 @@
 //! Handlers for the `/jsonldContexts` endpoints.
 
-use crate::{error::ContextRegistryResultExt, hosted_context_url::hosted_context_path, served_document::served_response, state::ContextRegistryTenantState};
+use crate::{
+    error::ContextRegistryResultExt,
+    hosted_context_url::hosted_context_path,
+    inadmissible_body::InadmissibleBody,
+    served_document::served_response,
+    state::ContextRegistryTenantState,
+};
 use andromeda_context_registry::{detail_level::ContextDetailLevel, identifier::ContextIdentifier, removal::ContextRemoval};
 use andromeda_http_extraction::{
     api_root::ApiRoot,
@@ -77,7 +83,7 @@ pub(crate) async fn create(
                 | JsonLiteralError::ProcessorText { .. } => NgsiLdErrorType::InvalidRequest,
             };
             // clone: the refusal names the request, which the response below names too
-            ClassifiedReport::public(error_type, format!("request body is not admissible JSON: {error}")).with_instance(uri.clone())
+            ClassifiedReport::public(error_type, InadmissibleBody(error).to_string()).with_instance(uri.clone())
         })?;
     // Clause 5.13.2 records the absolute URL the entry is served under, which a
     // request naming no authority gives nothing to build on (IETF RFC 9112

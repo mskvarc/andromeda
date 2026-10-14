@@ -18,9 +18,11 @@
 //! itself a failure, so the ratchet can only tighten.
 
 use crate::{
+    raw_sql_shape::RawSqlShape,
     source_scan::{is_test_only, item_is_test_only, workspace_sources},
     sql::looks_like_sql,
 };
+use proc_macro2::Ident;
 use std::{collections::BTreeSet, path::Path};
 use syn::{
     Expr,
@@ -82,8 +84,8 @@ const SQL_FORMATTING_MACROS: &[&str] = &["format", "write", "writeln"];
 pub struct RawSqlSite {
     /// Workspace-relative path of the file.
     pub path: String,
-    /// One-line description of the offending shape.
-    pub detail: String,
+    /// The offending shape; its `Display` is the one-line description.
+    pub detail: RawSqlShape,
 }
 
 /// Every raw-SQL site in the workspace, sanctioned paths included, sorted.
@@ -160,10 +162,10 @@ struct RawSqlVisitor<'path> {
 
 impl RawSqlVisitor<'_> {
     /// Record one site.
-    fn record(&mut self, detail: impl Into<String>) {
+    fn record(&mut self, detail: RawSqlShape) {
         self.sites.push(RawSqlSite {
             path: self.path.to_string(),
-            detail: detail.into(),
+            detail,
         });
     }
 }
@@ -178,52 +180,55 @@ impl<'ast> Visit<'ast> for RawSqlVisitor<'_> {
 
     fn visit_item_const(&mut self, item: &'ast ItemConst) {
         if !is_test_only(&item.attrs) && str_constant_is_sql(&item.ty, &item.expr) {
-            self.record(format!("constant {} holds SQL text", item.ident));
+            // The site outlives the parsed tree, so the identifier is owned.
+            self.record(RawSqlShape::Constant { name: item.ident.clone() });
         }
         visit_item_const(self, item);
     }
 
     fn visit_item_static(&mut self, item: &'ast ItemStatic) {
         if !is_test_only(&item.attrs) && str_constant_is_sql(&item.ty, &item.expr) {
-            self.record(format!("static {} holds SQL text", item.ident));
+            // The site outlives the parsed tree, so the identifier is owned.
+            self.record(RawSqlShape::Static { name: item.ident.clone() });
         }
         visit_item_static(self, item);
     }
 
     fn visit_expr_call(&mut self, call: &'ast ExprCall) {
         if let Some(function) = call_function_name(&call.func) {
-            if CUSTOM_SQL_FUNCTIONS.contains(&function.as_str()) {
-                self.record(format!("{function} spells a raw SQL fragment"));
-            } else if RAW_QUERY_FUNCTIONS.contains(&function.as_str()) && first_argument_is_raw_sql(call.args.first()) {
-                self.record(format!("{function} is built from a raw SQL string"));
+            if CUSTOM_SQL_FUNCTIONS.iter().any(|name| function == name) {
+                self.record(RawSqlShape::CustomFragment { function });
+            } else if RAW_QUERY_FUNCTIONS.iter().any(|name| function == name) && first_argument_is_raw_sql(call.args.first()) {
+                self.record(RawSqlShape::RawStringFunction { function });
             }
         }
         visit_expr_call(self, call);
     }
 
     fn visit_expr_method_call(&mut self, call: &'ast ExprMethodCall) {
-        let method = call.method.to_string();
-        if RAW_QUERY_FUNCTIONS.contains(&method.as_str()) && first_argument_is_raw_sql(call.args.first()) {
-            self.record(format!("{method} is built from a raw SQL string"));
+        if RAW_QUERY_FUNCTIONS.iter().any(|name| call.method == name) && first_argument_is_raw_sql(call.args.first()) {
+            // The site outlives the parsed tree, so the identifier is owned.
+            self.record(RawSqlShape::RawStringMethod { method: call.method.clone() });
         }
         visit_expr_method_call(self, call);
     }
 
     fn visit_macro(&mut self, mac: &'ast Macro) {
-        if let Some(name) = mac.path.segments.last().map(|segment| segment.ident.to_string())
-            && SQL_FORMATTING_MACROS.contains(&name.as_str())
+        if let Some(name) = mac.path.segments.last().map(|segment| segment.ident.clone())
+            && SQL_FORMATTING_MACROS.iter().any(|candidate| name == candidate)
             && first_string_literal(mac).is_some_and(|literal| looks_like_sql(&literal))
         {
-            self.record(format!("{name}! assembles a SQL string"));
+            self.record(RawSqlShape::AssembledString { name });
         }
         visit_macro(self, mac);
     }
 }
 
 /// The bare function name a call targets, from the last path segment.
-fn call_function_name(func: &Expr) -> Option<String> {
+fn call_function_name(func: &Expr) -> Option<Ident> {
     if let Expr::Path(path) = func {
-        path.path.segments.last().map(|segment| segment.ident.to_string())
+        // The site outlives the parsed tree, so the identifier is owned.
+        path.path.segments.last().map(|segment| segment.ident.clone())
     } else {
         None
     }
@@ -286,7 +291,7 @@ mod tests {
             sites: Vec::new(),
         };
         visitor.visit_file(&syntax);
-        visitor.sites.into_iter().map(|site| site.detail).collect()
+        visitor.sites.into_iter().map(|site| site.detail.to_string()).collect()
     }
 
     #[test]

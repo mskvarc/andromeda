@@ -2,6 +2,7 @@
 
 use crate::{
     port::{history_reader::TemporalHistoryReader, mutation_barrier::TemporalMutationBarrier, mutator::TemporalMutator, service_ports::TemporalServicePorts},
+    query_warning_reason::TemporalQueryWarningReason,
     remote_linked::RemoteTemporalLinkedSource,
     service_limits::TemporalServiceLimits,
 };
@@ -22,6 +23,7 @@ use andromeda_ngsi_ld_query::{
 };
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
+use thiserror::Error;
 
 /// Return short IRI token from fragment or last path segment.
 pub(crate) fn iri_short_name(iri: &str) -> Option<String> {
@@ -95,12 +97,14 @@ pub struct TemporalRange {
 }
 
 /// Warning collected when a per-entity temporal query step fails non-fatally.
-#[derive(Debug)]
+#[derive(Debug, Error)]
+#[error("{entity_id}: {reason}")]
 pub struct TemporalQueryWarning {
     /// The entity that triggered the warning.
     pub entity_id: Identifier,
-    /// Human-readable description of the problem.
-    pub message: String,
+    /// What failed for the entity.
+    #[source]
+    pub reason: TemporalQueryWarningReason,
 }
 
 /// Result of a temporal query operation.

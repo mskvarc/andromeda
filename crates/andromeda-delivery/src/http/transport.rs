@@ -10,7 +10,7 @@ use crate::{
         private_ip::{PrivateIpCheck, resolve_private_ip_outcome},
         resolver::PrivateIpResolver,
     },
-    outcome::{DeliveryOutcome, delivery_metric_outcome},
+    outcome::{DeliveryOutcome, EndpointRejection, delivery_metric_outcome},
     request::DeliveryRequest,
     transport::NotificationTransport,
 };
@@ -273,7 +273,7 @@ impl HttpTransport {
                 "HTTP notification delivery rejected"
             );
             Ok(DeliveryOutcome::Rejected {
-                reason: format!("HTTP {status}"),
+                reason: EndpointRejection::HttpStatus { status },
                 retryable: status >= 500 || status == 429,
             })
         }

@@ -5,6 +5,7 @@ use crate::{
     error::TemporalError,
     outcome::TemporalEntityIdOutcome,
     port::read_scope::ScopeReach,
+    query_warning_reason::TemporalQueryWarningReason,
     read::{
         dataset_step::DatasetStep,
         ensure_aggregation_supported,
@@ -247,7 +248,7 @@ fn settle_entity(
             tracing::warn!(error = %error, entity_id = %entity_id, "Failed to render the temporal evolution of an entity");
             warnings.push(TemporalQueryWarning {
                 entity_id, // moved: the warning owns the identifier this entity finished with
-                message: error.to_string(),
+                reason: TemporalQueryWarningReason::Unrenderable(error),
             });
             Ok(None)
         }

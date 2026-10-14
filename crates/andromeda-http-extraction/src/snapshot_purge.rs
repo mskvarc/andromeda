@@ -5,12 +5,18 @@
 //! query parameter. Missing or malformed values produce `400 BadRequestData`
 //! (clause 6.3.2).
 
-use crate::addressed_uri::addressed_uri;
+use crate::{addressed_uri::addressed_uri, query_decode_error::QueryDecodeError};
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
-use andromeda_ngsi_ld_model::snapshot_filter::{SnapshotPurgeFilter, parse_snapshot_q};
+use andromeda_ngsi_ld_model::snapshot_filter::{SnapshotPurgeFilter, SnapshotQParseError, parse_snapshot_q};
 use axum::{extract::FromRequestParts, http::request::Parts};
 use serde::Deserialize;
 use std::future::{Future, ready};
+use thiserror::Error;
+
+/// A `q` expression of `DELETE /snapshots` that does not parse as a snapshot filter.
+#[derive(Debug, Error)]
+#[error("invalid snapshot purge q: {0}")]
+struct InvalidSnapshotPurgeQ(#[source] SnapshotQParseError);
 
 /// Axum extractor for the required `?q=` parameter of `DELETE /snapshots`.
 #[derive(Debug)]
@@ -28,12 +34,12 @@ struct RawPurgeQuery {
 fn resolve_purge_query(parts: &Parts) -> Result<SnapshotPurgeQ, ExtractorRejection> {
     let uri = addressed_uri(parts);
     let query_str = parts.uri.query().unwrap_or("");
-    let raw: RawPurgeQuery = serde_urlencoded::from_str(query_str)
-        .map_err(|error| ExtractorRejection::bad_request_data(format!("invalid query parameters: {error}"), uri.clone()))?;
+    let raw: RawPurgeQuery =
+        serde_urlencoded::from_str(query_str).map_err(|error| ExtractorRejection::bad_request_data(QueryDecodeError(error).to_string(), uri.clone()))?;
     let q_value = raw
         .q
         .ok_or_else(|| ExtractorRejection::bad_request_data("DELETE /snapshots requires a 'q' query parameter (ETSI GS CIM 009 clause 5.16.7)", uri.clone()))?;
-    let filter = parse_snapshot_q(&q_value).map_err(|error| ExtractorRejection::bad_request_data(format!("Invalid snapshot purge q: {error}"), uri))?;
+    let filter = parse_snapshot_q(&q_value).map_err(|error| ExtractorRejection::bad_request_data(InvalidSnapshotPurgeQ(error).to_string(), uri))?;
     Ok(SnapshotPurgeQ(filter))
 }
 

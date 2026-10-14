@@ -38,6 +38,7 @@ pub mod linked;
 pub mod observed_instance;
 pub mod outcome;
 pub mod port;
+pub mod query_warning_reason;
 mod read;
 /// What one reified Scope instance of a Temporal Evolution states.
 mod reified_scope;

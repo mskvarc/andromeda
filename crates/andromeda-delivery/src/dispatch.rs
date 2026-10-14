@@ -125,7 +125,7 @@ impl TransportDispatcher {
             Ok(DeliveryOutcome::Rejected { reason, retryable }) => warn!(
                 subscription_id = %request.subscription_id,
                 endpoint = %request.endpoint_uri,
-                reason,
+                reason = %reason,
                 retryable,
                 "notification rejected by endpoint"
             ),
@@ -234,7 +234,7 @@ mod tests {
         mqtt::config::MqttPoolConfig,
         notification_body::NotificationBody,
         notification_context::NotificationContext,
-        outcome::DeliveryOutcome,
+        outcome::{DeliveryOutcome, EndpointRejection},
         request::{DeliveryRequest, NotificationDelivery},
         stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage},
     };
@@ -306,7 +306,7 @@ mod tests {
     #[test]
     fn a_4xx_rejection_is_terminal_so_it_is_attempted_once_not_through_the_whole_budget() {
         let result = classify(Ok(DeliveryOutcome::Rejected {
-            reason: "HTTP 400".to_string(),
+            reason: EndpointRejection::HttpStatus { status: 400 },
             retryable: false,
         }));
         assert!(!result.is_delivered());
@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn a_5xx_or_429_rejection_is_retryable() {
         let result = classify(Ok(DeliveryOutcome::Rejected {
-            reason: "HTTP 503".to_string(),
+            reason: EndpointRejection::HttpStatus { status: 503 },
             retryable: true,
         }));
         assert!(result.should_retry());

@@ -2,8 +2,24 @@
 
 use andromeda_http_extraction::classification::classify_tenancy_error;
 use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
-use andromeda_ngsi_ld_lexicon::identifier::IdentifierParseError;
+use andromeda_ngsi_ld_lexicon::{
+    identifier::{Identifier, IdentifierParseError},
+    tenant::InvalidTenantName,
+};
 use andromeda_tenancy::error::TenancyError;
+
+/// A tenant path segment that is not a valid tenant name.
+#[derive(Debug, thiserror::Error)]
+#[error("invalid tenant name: {0}")]
+pub(crate) struct InvalidTenantPathName(#[source] pub(crate) InvalidTenantName);
+
+/// A pagination cursor boundary that is not a tenant resource identifier.
+#[derive(Debug, thiserror::Error)]
+#[error("the pagination cursor does not address a tenant: {id}")]
+pub(crate) struct CursorNotATenant<'id> {
+    /// The boundary identifier the cursor carries.
+    pub(crate) id: &'id Identifier,
+}
 
 /// Failures local to the tenancy HTTP binding.
 #[derive(Debug, thiserror::Error)]

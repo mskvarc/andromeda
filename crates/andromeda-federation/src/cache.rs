@@ -16,6 +16,7 @@ use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use iri_rs::IriBuf;
 use std::time::{Duration, Instant};
+use thiserror::Error;
 use url::Url;
 
 /// Whether a forwarded GET targets one of the two resources clause 6.3.17
@@ -52,6 +53,14 @@ impl CacheKey {
             context: context.cloned(), // clone: same
         }
     }
+}
+
+/// A cached response served again within its `cacheDuration`.
+#[derive(Debug, Error)]
+#[error("cached response of registration {registration} reused within its cacheDuration")]
+struct CachedResponseReused<'a> {
+    /// The registration the response came from.
+    registration: &'a Identifier,
 }
 
 /// One cached response and when it stops being reusable.
@@ -95,10 +104,12 @@ impl ForwardedGetCache {
             return None;
         }
         let mut response = entry.response.clone(); // clone: the cache keeps its copy for the next hit
-        response.warnings.push(NgsiLdWarning::ResponseIsStale(format!(
-            "cached response of registration {} reused within its cacheDuration",
-            key.registration
-        )));
+        response.warnings.push(NgsiLdWarning::ResponseIsStale(
+            CachedResponseReused {
+                registration: &key.registration,
+            }
+            .to_string(),
+        ));
         Some(response)
     }
 

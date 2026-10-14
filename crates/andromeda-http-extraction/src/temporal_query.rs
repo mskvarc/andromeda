@@ -18,11 +18,7 @@ pub struct TemporalQuery(pub TemporalQueryParameters);
 /// Deserialize the temporal query string.
 fn resolve_temporal_query(parts: &Parts) -> Result<TemporalQuery, ExtractorRejection> {
     let query_str = parts.uri.query().unwrap_or("");
-    let params = serde_urlencoded::from_str::<TemporalQueryParameters>(query_str).map_err(|error| {
-        let error_text = error.to_string();
-        let message = format!("invalid query parameters: {error_text}");
-        classify_query_parse_error(&error_text, message, addressed_uri(parts))
-    })?;
+    let params = serde_urlencoded::from_str::<TemporalQueryParameters>(query_str).map_err(|error| classify_query_parse_error(error, addressed_uri(parts)))?;
     Ok(TemporalQuery(params))
 }
 

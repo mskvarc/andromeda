@@ -19,6 +19,7 @@ pub mod manifest_hygiene;
 pub mod module_naming;
 pub mod raw_constant;
 pub mod raw_sql;
+pub mod raw_sql_shape;
 pub mod scope_grammar;
 mod source_scan;
 pub mod sql;

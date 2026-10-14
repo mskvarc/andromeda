@@ -28,7 +28,19 @@ use andromeda_ngsi_ld_model::{entity_map::EntityMap, registration::ContextSource
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 use chrono::Utc;
 use futures::{StreamExt, stream};
+use thiserror::Error;
 use tracing::warn;
+
+/// A source answered the creation of an `EntityMap` with a body that is none.
+#[derive(Debug, Error)]
+#[error("context source {registration} returned an invalid EntityMap: {error}")]
+struct InvalidEntityMap<'a> {
+    /// The registration that answered.
+    registration: &'a Identifier,
+    /// Why the body does not decode.
+    #[source]
+    error: serde_json::Error,
+}
 
 /// Which `EntityMap` creation resource a forwarded request targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,10 +170,13 @@ impl FederationService {
                         Err(error) => {
                             warn!("Context source {} returned an invalid EntityMap: {}", registration.id, error);
                             let mut warnings = response.warnings;
-                            warnings.push(NgsiLdWarning::RevalidationFailed(format!(
-                                "Context source {} returned an invalid EntityMap: {error}",
-                                registration.id
-                            )));
+                            warnings.push(NgsiLdWarning::RevalidationFailed(
+                                InvalidEntityMap {
+                                    registration: &registration.id,
+                                    error,
+                                }
+                                .to_string(),
+                            ));
                             (None, warnings)
                         }
                     },

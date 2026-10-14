@@ -1,15 +1,17 @@
 //! Deserializers for structured query-string values.
 
+use crate::query::parameter_error::QueryParameterError;
 use andromeda_ngsi_ld_geometry::query_coordinates::QueryCoordinates;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReference};
 use andromeda_ngsi_ld_query::{
+    comma_separated_list::{CommaSeparatedListError, ListedItem},
     dataset::DatasetSelector,
     filter::{expression::Expr, parser},
     geo::input::{GeoQueryInput, GeoQueryInputError},
     pattern::Pattern,
     projection::grammar::{ProjectionList, RawProjectionTerm},
 };
-use iso8601_duration::Duration as Iso8601Duration;
+use iso8601_duration::{Duration as Iso8601Duration, ParseDurationError};
 use serde::{Deserialize, Deserializer, de::Error as DeserializeError};
 use std::num::{IntErrorKind, NonZeroU32};
 
@@ -111,7 +113,9 @@ where
             .map(str::trim)
             .map(|member| {
                 if member.is_empty() {
-                    return Err(DeserializeError::custom("entity identifier list contains an empty member"));
+                    return Err(DeserializeError::custom(CommaSeparatedListError::EmptyMember {
+                        list: ListedItem::EntityIdentifier,
+                    }));
                 }
                 member.parse::<Identifier>().map_err(DeserializeError::custom)
             })
@@ -133,7 +137,7 @@ where
     let raw = Option::<String>::deserialize(deserializer)?;
     raw.map(|value| {
         if value.trim().is_empty() {
-            return Err(DeserializeError::custom("Invalid idPattern: empty value"));
+            return Err(DeserializeError::custom(QueryParameterError::IdPatternEmpty));
         }
         value.parse().map_err(DeserializeError::custom)
     })
@@ -171,7 +175,9 @@ where
             .map(str::trim)
             .map(|member| {
                 if member.is_empty() {
-                    return Err(DeserializeError::custom("attribute name list contains an empty member"));
+                    return Err(DeserializeError::custom(CommaSeparatedListError::EmptyMember {
+                        list: ListedItem::AttributeName,
+                    }));
                 }
                 member.parse().map_err(DeserializeError::custom)
             })
@@ -222,7 +228,9 @@ where
             .map(str::trim)
             .map(|member| {
                 if member.is_empty() {
-                    return Err(DeserializeError::custom("dataset identifier list contains an empty member"));
+                    return Err(DeserializeError::custom(CommaSeparatedListError::EmptyMember {
+                        list: ListedItem::DatasetIdentifier,
+                    }));
                 }
                 member.parse().map_err(DeserializeError::custom)
             })
@@ -249,10 +257,10 @@ where
     raw.map(|value| {
         let value = value.trim();
         if value.contains(',') {
-            return Err(DeserializeError::custom("datasetId must contain one URI or @none selector"));
+            return Err(DeserializeError::custom(QueryParameterError::DatasetIdNotSingleton));
         }
         if value.is_empty() {
-            return Err(DeserializeError::custom("datasetId must not be empty"));
+            return Err(DeserializeError::custom(QueryParameterError::DatasetIdEmpty));
         }
         value.parse().map_err(DeserializeError::custom)
     })
@@ -280,13 +288,15 @@ where
     D: Deserializer<'de>,
 {
     let raw = Option::<String>::deserialize(deserializer)?;
-    raw.map(|value| {
-        let out_of_range = || DeserializeError::custom(format!("joinLevel {value} is not a positive integer"));
-        match value.parse::<i64>() {
-            Ok(level) => u32::try_from(level).ok().and_then(NonZeroU32::new).ok_or_else(out_of_range),
-            Err(error) if matches!(error.kind(), IntErrorKind::PosOverflow | IntErrorKind::NegOverflow) => Err(out_of_range()),
-            Err(_not_an_integer) => Err(DeserializeError::custom(JOIN_LEVEL_NOT_AN_INTEGER)),
+    raw.map(|value| match value.parse::<i64>() {
+        Ok(level) => u32::try_from(level)
+            .ok()
+            .and_then(NonZeroU32::new)
+            .ok_or_else(|| DeserializeError::custom(QueryParameterError::JoinLevelOutOfRange { level })),
+        Err(error) if matches!(error.kind(), IntErrorKind::PosOverflow | IntErrorKind::NegOverflow) => {
+            Err(DeserializeError::custom(QueryParameterError::JoinLevelOverflow(error)))
         }
+        Err(_not_an_integer) => Err(DeserializeError::custom(JOIN_LEVEL_NOT_AN_INTEGER)),
     })
     .transpose()
 }
@@ -301,8 +311,12 @@ where
     D: Deserializer<'de>,
 {
     let raw = Option::<String>::deserialize(deserializer)?;
-    raw.map(|value| value.parse().map_err(|error| DeserializeError::custom(format!("{error:?}"))))
-        .transpose()
+    raw.map(|value| {
+        value
+            .parse()
+            .map_err(|error: ParseDurationError| DeserializeError::custom(QueryParameterError::DurationInvalid { position: error.position }))
+    })
+    .transpose()
 }
 
 #[cfg(test)]

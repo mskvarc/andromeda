@@ -26,6 +26,7 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod candidate_filters;
+pub mod comma_separated_list;
 pub mod count_policy;
 pub mod csr;
 pub mod cursor;

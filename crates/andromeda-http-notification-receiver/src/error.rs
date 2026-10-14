@@ -3,8 +3,9 @@
 use crate::state::ReceiverResolutionError;
 use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use andromeda_subscription_forwarding::error::SubscriptionForwardingError;
+use andromeda_subscription_forwarding::{error::SubscriptionForwardingError, inbound::InboundError};
 use axum::http::Uri;
+use thiserror::Error;
 
 /// Classify a resolution failure.
 pub(crate) fn classify_resolution(error: &ReceiverResolutionError, instance: &Uri) -> ProblemResponse {
@@ -36,9 +37,14 @@ pub(crate) fn classify_forwarding(error: &SubscriptionForwardingError, instance:
     report.with_instance(instance.clone())
 }
 
-/// A request-shape failure the receiver reports as `BadRequestData`.
-pub(crate) fn bad_request_data(detail: impl Into<String>, instance: &Uri) -> ProblemResponse {
-    ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail).with_instance(instance.clone())
+/// A request body that is neither of the two notification documents the receiver accepts.
+#[derive(Debug, Error)]
+#[error("not a notification: {0}")]
+struct NotANotification(#[source] InboundError);
+
+/// Classify a body that is not a notification as `BadRequestData`.
+pub(crate) fn classify_not_a_notification(error: InboundError, instance: &Uri) -> ProblemResponse {
+    ClassifiedReport::public(NgsiLdErrorType::BadRequestData, NotANotification(error).to_string()).with_instance(instance.clone())
 }
 
 #[cfg(test)]

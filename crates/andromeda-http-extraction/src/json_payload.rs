@@ -9,6 +9,7 @@
 use crate::{
     addressed_uri::addressed_request_uri,
     content_length_precondition::declared_body_length,
+    invalid_json::InvalidJson,
     json_value_budget::refuse_values_past_budget,
     request_json_value_limit::RequestJsonValueLimit,
     request_payload::buffer_payload,
@@ -49,10 +50,11 @@ where
         // clone: a refused payload names the request, which a parse failure below names too.
         refuse_values_past_budget(&body, value_limit).map_err(|refusal| ExtractorRejection::Classified(refusal.report().with_instance(instance.clone())))?;
         serde_json::from_slice(&body).map(JsonPayload).map_err(|error| {
-            let detail = format!("Invalid JSON: {error}");
+            let category = error.classify();
+            let detail = InvalidJson(error).to_string();
             // Clause 5.5.4: a body that is not a JSON document is an invalid
             // request; a JSON document of the wrong shape is bad data.
-            match error.classify() {
+            match category {
                 Category::Data => ExtractorRejection::bad_request_data(detail, instance),
                 Category::Io | Category::Syntax | Category::Eof => ExtractorRejection::invalid_request(detail, instance),
             }

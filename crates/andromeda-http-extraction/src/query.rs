@@ -4,7 +4,7 @@
 //! mapping parse failures to the correct `InvalidRequest` or `BadRequestData`
 //! type (clause 6.3.20).
 
-use crate::addressed_uri::addressed_uri;
+use crate::{addressed_uri::addressed_uri, query_decode_error::QueryDecodeError};
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_ngsi_ld_request::query::deserialization::JOIN_LEVEL_NOT_AN_INTEGER;
 use axum::{
@@ -12,6 +12,7 @@ use axum::{
     http::{Uri, request::Parts},
 };
 use serde::de::DeserializeOwned;
+use serde_urlencoded::de::Error as UrlencodedError;
 use std::future::{Future, ready};
 
 /// Axum extractor that deserializes and validates query parameters.
@@ -29,11 +30,9 @@ where
     let uri = addressed_uri(parts);
     let query_str = parts.uri.query().unwrap_or("");
 
-    serde_urlencoded::from_str::<T>(query_str).map(ValidatedQuery).map_err(|error| {
-        let error_str = error.to_string();
-        let error_msg = format!("invalid query parameters: {error_str}");
-        classify_query_parse_error(&error_str, error_msg, uri)
-    })
+    serde_urlencoded::from_str::<T>(query_str)
+        .map(ValidatedQuery)
+        .map_err(|error| classify_query_parse_error(error, uri))
 }
 
 impl<S, T> FromRequestParts<S> for ValidatedQuery<T>
@@ -70,11 +69,14 @@ where
 /// as written and are refused by the parameter set's `validate`, where the
 /// error type is typed rather than read out of a message. See
 /// [`andromeda_ngsi_ld_request::representation_parameter`].
-pub fn classify_query_parse_error(error_str: &str, error_msg: String, uri: Uri) -> ExtractorRejection {
-    if error_str.contains(UNKNOWN_PARAMETER) || error_str.contains(JOIN_LEVEL_NOT_AN_INTEGER) {
-        ExtractorRejection::invalid_request(error_msg, uri)
+pub fn classify_query_parse_error(error: UrlencodedError, uri: Uri) -> ExtractorRejection {
+    let error_str = error.to_string();
+    let invalid_request = error_str.contains(UNKNOWN_PARAMETER) || error_str.contains(JOIN_LEVEL_NOT_AN_INTEGER);
+    let message = QueryDecodeError(error).to_string();
+    if invalid_request {
+        ExtractorRejection::invalid_request(message, uri)
     } else {
-        ExtractorRejection::bad_request_data(error_msg, uri)
+        ExtractorRejection::bad_request_data(message, uri)
     }
 }
 
@@ -91,7 +93,7 @@ mod tests {
         representation_parameter::WrittenValue,
     };
     use axum::{extract::FromRequestParts, http::Request};
-    use serde::Deserialize;
+    use serde::{Deserialize, de::Error as DecodeError};
     use std::num::NonZeroU32;
 
     #[derive(Debug, Deserialize)]
@@ -129,7 +131,7 @@ mod tests {
     fn a_reference_geometry_without_a_relation_is_bad_request_data() {
         // Clauses 5.7.2.4 and 5.10.2.4: a geoquery that is not valid as per
         // clause 4.10 is `BadRequestData`.
-        let rejection = classify_query_parse_error(INCOMPLETE_GEOQUERY, "incomplete geo query".to_owned(), "/test".parse().expect("valid URI"));
+        let rejection = classify_query_parse_error(DecodeError::custom(INCOMPLETE_GEOQUERY), "/test".parse().expect("valid URI"));
         assert!(matches!(rejection, ExtractorRejection::BadRequestData { .. }));
     }
 
@@ -138,7 +140,7 @@ mod tests {
         // Clause 4.10 needs all three of `georel`, `geometry` and `coordinates`
         // for a geoquery, so a lone `georel` is as incomplete as a lone
         // geometry, and clauses 5.7.2.4 and 5.10.2.4 make both `BadRequestData`.
-        let rejection = classify_query_parse_error(GEOREL_WITHOUT_GEOMETRY, "georel alone".to_owned(), "/test".parse().expect("valid URI"));
+        let rejection = classify_query_parse_error(DecodeError::custom(GEOREL_WITHOUT_GEOMETRY), "/test".parse().expect("valid URI"));
         assert!(matches!(rejection, ExtractorRejection::BadRequestData { .. }));
     }
 

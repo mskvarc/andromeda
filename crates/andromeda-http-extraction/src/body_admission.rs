@@ -14,6 +14,7 @@ use crate::{
     classification::classify_context_link_error,
     content_kind::{ContentKind, classify_content_type},
     content_length_precondition::{ContentLengthPreconditionError, declared_body_length},
+    invalid_json::InvalidJson,
     json_value_budget::refuse_values_past_budget,
     request_json_value_limit::RequestJsonValueLimit,
     request_links::{PayloadCarrier, RequestLinks},
@@ -48,7 +49,7 @@ pub(crate) struct AdmittedBody {
 /// 8259 section 4) `BadRequestData` (clause 5.5.4).
 pub(crate) fn text_rejection(refusal: JsonTextRefusal, uri: Uri) -> ExtractorRejection {
     match refusal {
-        JsonTextRefusal::Syntax(error) => ExtractorRejection::invalid_request(format!("Invalid JSON: {error}"), uri),
+        JsonTextRefusal::Syntax(error) => ExtractorRejection::invalid_request(InvalidJson(error).to_string(), uri),
         refused @ (JsonTextRefusal::OutOfRange(_) | JsonTextRefusal::ReservedMemberName { .. } | JsonTextRefusal::DuplicateMember { .. }) => {
             ExtractorRejection::bad_request_data(refused.to_string(), uri)
         }

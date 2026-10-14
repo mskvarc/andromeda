@@ -12,7 +12,6 @@ use crate::{
         IntoResponse,
         JoinRequest,
         NgsiLdCollectionResponse,
-        NgsiLdErrorType,
         NgsiLdProtocolHeaders,
         NgsiLdRequestEnvelope,
         NgsiLdResponse,
@@ -23,11 +22,11 @@ use crate::{
         RetrievalNarrowing,
         TypedPath,
         ValidatedQuery,
-        public_error,
         request_entity_map::{LocalEntitySource, record_map_use, resolve_retrieval_map_use},
         retrieve_forwarding::RetrieveForwarding,
         with_linked_resolution_warnings,
     },
+    error::entity_not_found,
     read_rendering::{EntityRepresentation, RetrievedAnswer, retrieved_entity, settle_representation},
 };
 use andromeda_entity::{error::EntityError, query::entity_versions::VersionRead};
@@ -169,7 +168,7 @@ pub(crate) async fn get(
         // invent an Entity from the registration's id and type, and clause
         // 6.3.17 does not treat a source's empty answer as abnormal.
         let Some(merged) = retrieved.entity else {
-            return Err(public_error(NgsiLdErrorType::ResourceNotFound, format!("entity {id} not found"), &uri).with_warnings(retrieved.warnings));
+            return Err(entity_not_found(&id, &uri).with_warnings(retrieved.warnings));
         };
         // Table 6.5.3.1-1 `entityMap`: the map the retrieval used is returned,
         // created now when none was in use (clause 5.7.1.4), naming this
@@ -194,7 +193,7 @@ pub(crate) async fn get(
         .await
         .with_entity_instance(&uri)?
         .pop()
-        .ok_or_else(|| public_error(NgsiLdErrorType::ResourceNotFound, format!("entity {id} not found"), &uri))?;
+        .ok_or_else(|| entity_not_found(&id, &uri))?;
 
     let representation = EntityRepresentation::new(params.resolve_render_mode().with_entity_instance(&uri)?, projection.as_ref());
     // Table 6.5.3.1-1 makes `attrs` the `pick` synonym, so it narrows every

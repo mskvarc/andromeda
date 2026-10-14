@@ -4,24 +4,21 @@
 
 use crate::{
     FederationService,
+    entity_reading::EntityReading,
     outcome::{ForwardGetOutcome, ForwardReadOutcome, ForwardedEntities, ForwardedResponse},
+    source_answer_failure::SourceAnswerFailure,
     source_walk::{ReadPage, WalkedAnswer},
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::operation::expiry_removal::InstanceExpiry;
-use andromeda_ngsi_ld_expansion::{
-    entity_expansion::EntityExpansion,
-    error::ExpansionError,
-    received_state::{ReceivedRefusal, ReceivedState},
-};
+use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, received_state::ReceivedState};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     received::{ContextualEntity, ReceivedElement, ReceivedEntities},
     registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
 };
 use chrono::{DateTime, Utc};
-use thiserror::Error;
 use tracing::{debug, warn};
 
 /// One source's answer of entities, decoded but not yet read into the model.
@@ -94,10 +91,13 @@ pub(crate) fn received_answer(registration: &ContextSourceRegistration, outcome:
                         ReceivedElement::Read(entity) => entities.push(entity),
                         ReceivedElement::Refused(refusal) => {
                             warn!("Context source {} returned an entity that is refused: {}", registration.id, refusal);
-                            warnings.push(NgsiLdWarning::RevalidationFailed(format!(
-                                "Context source {} returned an entity that is refused: {refusal}",
-                                registration.id
-                            )));
+                            warnings.push(
+                                SourceAnswerFailure::EntityRefused {
+                                    registration: &registration.id,
+                                    refusal,
+                                }
+                                .into_warning(),
+                            );
                         }
                     }
                 }
@@ -108,10 +108,13 @@ pub(crate) fn received_answer(registration: &ContextSourceRegistration, outcome:
             }
             Err(error) => {
                 warn!(registration = %registration.id, %error, "context source answered with a body that is no entity document");
-                warnings.push(NgsiLdWarning::RevalidationFailed(format!(
-                    "Context source {} returned a payload that is no entity document: {error}",
-                    registration.id
-                )));
+                warnings.push(
+                    SourceAnswerFailure::EntityDocument {
+                        registration: &registration.id,
+                        error,
+                    }
+                    .into_warning(),
+                );
                 ReadPage::empty(answer(naming, Vec::new(), warnings, None))
             }
         },
@@ -164,9 +167,13 @@ impl FederationService {
                             Ok(received) => states.extend(unexpired(received, &source, now)),
                             Err(refusal) => {
                                 warn!("Context source {} returned an entity that does not read: {}", source, refusal);
-                                warnings.push(NgsiLdWarning::RevalidationFailed(format!(
-                                    "Context source {source} returned an entity that does not read: {refusal}"
-                                )));
+                                warnings.extend(registration_id.as_ref().map(|registration| {
+                                    SourceAnswerFailure::EntityUnreadable {
+                                        registration,
+                                        reading: refusal,
+                                    }
+                                    .into_warning()
+                                }));
                             }
                         }
                     }
@@ -176,9 +183,11 @@ impl FederationService {
                         "The answer of context source {} names a context its entities cannot be read under: {}",
                         source, error
                     );
-                    warnings.push(NgsiLdWarning::RevalidationFailed(format!(
-                        "Context source {source} answered under a context its entities cannot be read under: {error}"
-                    )));
+                    warnings.extend(
+                        registration_id
+                            .as_ref()
+                            .map(|registration| SourceAnswerFailure::AnswerContext { registration, error }.into_warning()),
+                    );
                 }
             }
         }
@@ -206,17 +215,6 @@ impl FederationService {
             }
         }
     }
-}
-
-/// Why one entity of an answer is not read into the model.
-#[derive(Debug, Error)]
-enum EntityReading {
-    /// The entity's own `@context` does not resolve or process.
-    #[error("its own @context cannot be processed: {0}")]
-    OwnContext(#[source] ExpansionError),
-    /// The entity does not read into the model.
-    #[error(transparent)]
-    Refused(ReceivedRefusal),
 }
 
 /// The received entity, unless it expired at `now` (clauses 5.7.1.4, 5.7.2.4,

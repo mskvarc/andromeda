@@ -10,7 +10,7 @@
 //! client's terms by the one compaction of the request context, so two sources
 //! spelling one type differently answer one type.
 
-use crate::{FederationService, error::FederationError, outcome::ForwardedDiscoveryResult};
+use crate::{FederationService, discovery_answer_failure::DiscoveryAnswerFailure, error::FederationError, outcome::ForwardedDiscoveryResult};
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
@@ -67,11 +67,13 @@ fn decoded<T: DeserializeOwned>(remote: Vec<ForwardedDiscoveryResult>) -> Decode
         match serde_json::from_slice::<T>(&body) {
             Ok(answer) => answers.push((answer, result.naming)),
             Err(error) => {
-                let source = result.registration_id.as_ref().map(ToString::to_string).unwrap_or_default();
-                warn!(registration = %source, %error, "a context source answered discovery with a malformed body");
-                warnings.push(NgsiLdWarning::RevalidationFailed(format!(
-                    "Context source {source} answered discovery with a malformed body: {error}"
-                )));
+                warn!(registration = ?result.registration_id, %error, "a context source answered discovery with a malformed body");
+                warnings.extend(
+                    result
+                        .registration_id
+                        .as_ref()
+                        .map(|registration| DiscoveryAnswerFailure::Malformed { registration, error }.into_warning()),
+                );
             }
         }
     }
@@ -104,7 +106,7 @@ impl FederationService {
                         match self.respelled_type(&name, &naming, &names).await {
                             Some(name) if !list.type_list.contains(&name) => list.type_list.push(name),
                             Some(_) => {}
-                            None => warnings.push(unexpandable(name.as_str())),
+                            None => warnings.push(DiscoveryAnswerFailure::UnexpandableType { name: &name }.into_warning()),
                         }
                     }
                 }
@@ -117,7 +119,7 @@ impl FederationService {
                         match self.respelled_attribute(&name, &naming, &names).await {
                             Some(name) if !list.attribute_list.contains(&name) => list.attribute_list.push(name),
                             Some(_) => {}
-                            None => warnings.push(unexpandable(name.as_str())),
+                            None => warnings.push(DiscoveryAnswerFailure::UnexpandableAttribute { name: &name }.into_warning()),
                         }
                     }
                 }
@@ -131,7 +133,7 @@ impl FederationService {
                         for name in mem::take(&mut record.attribute_names) {
                             match self.respelled_attribute(&name, &naming, &names).await {
                                 Some(name) => attribute_names.push(name),
-                                None => warnings.push(unexpandable(name.as_str())),
+                                None => warnings.push(DiscoveryAnswerFailure::UnexpandableAttribute { name: &name }.into_warning()),
                             }
                         }
                         record.attribute_names = attribute_names;
@@ -213,20 +215,12 @@ impl FederationService {
         for name in mem::take(&mut record.type_names) {
             match self.respelled_type(&name, naming, names).await {
                 Some(name) => type_names.push(name),
-                None => warnings.push(unexpandable(name.as_str())),
+                None => warnings.push(DiscoveryAnswerFailure::UnexpandableType { name: &name }.into_warning()),
             }
         }
         record.type_names = type_names;
         record
     }
-}
-
-/// The warning of a name a source answered that does not expand under the
-/// context it spelled it in.
-fn unexpandable(name: &str) -> NgsiLdWarning {
-    NgsiLdWarning::RevalidationFailed(format!(
-        "a context source answered discovery with the name '{name}', which its context does not expand"
-    ))
 }
 
 /// The client's term for the type `iri`, or the IRI itself where the term is

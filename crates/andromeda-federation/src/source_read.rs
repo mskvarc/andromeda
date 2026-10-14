@@ -13,6 +13,7 @@ use crate::{
     request::TriggeringRequest,
     source_continuation::SourceContinuation,
     source_exchange::SentResponse,
+    source_read_warning::SourceReadWarning,
     transport::ForwardedRequest,
 };
 use andromeda_http_headers::{ngsild_warning::NgsiLdWarning, warning::Warning};
@@ -217,9 +218,9 @@ fn interpret_read_response(registration: &ContextSourceRegistration, answered: &
     // not say it cannot be combined with the rest of the result, so the
     // client is told the source's part may be incomplete.
     if sent.status == reqwest::StatusCode::PARTIAL_CONTENT && sent.partial_range.is_none() {
-        warnings.push(NgsiLdWarning::MiscellaneousWarning(format!(
-            "Context source {registration_id} answered 206 without a readable Content-Range; its part of the history may be incomplete"
-        )));
+        warnings.push(NgsiLdWarning::MiscellaneousWarning(
+            SourceReadWarning::UnreadableContentRange { registration: registration_id }.to_string(),
+        ));
     }
 
     // The body is read by the answer's own reader, which says why a body that

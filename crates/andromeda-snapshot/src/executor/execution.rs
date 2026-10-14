@@ -11,6 +11,7 @@ use crate::{
     error::{Recurrence, SnapshotError, entity_recurrence, temporal_recurrence},
     executor::{
         SnapshotExecutor,
+        execution_failure::ExecutionFailure,
         status::{failure_detail, success_detail},
         translation::temporal_parameters,
     },
@@ -93,11 +94,11 @@ impl SnapshotExecutor {
                 Ok(result) => result,
                 Err(error) => {
                     warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot temporal query failed");
-                    return temporal_failure(error, "");
+                    return temporal_failure(error, TemporalStep::Query);
                 }
             };
             for warning in &result.warnings {
-                warn!(snapshot_id = %snapshot_id, query_index = index, entity_id = %warning.entity_id, warning = %warning.message, "Snapshot temporal query retained usable results with a warning");
+                warn!(snapshot_id = %snapshot_id, query_index = index, entity_id = %warning.entity_id, warning = %warning.reason, "Snapshot temporal query retained usable results with a warning");
             }
             let local_page_len = result.entities.len();
             // clone: the cursor of the next page outlives the entities it was read from
@@ -198,7 +199,7 @@ impl SnapshotExecutor {
             Ok(writes) => writes,
             Err(error) => {
                 error!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Failed to read captured Snapshot results");
-                return Ok(failure_detail(format!("Failed to read results: {error}")));
+                return Ok(failure_detail(ExecutionFailure::ReadResults { cause: &error }.to_string()));
             }
         };
         let outcomes = match self.writes.commit(target, writes).await {
@@ -233,7 +234,7 @@ impl SnapshotExecutor {
         for document in documents {
             if let Err(error) = self.sources.temporal.record_history(target, document).await {
                 error!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Failed to materialize temporal Snapshot results");
-                return temporal_failure(error, "Failed to store temporal results: ");
+                return temporal_failure(error, TemporalStep::Store);
             }
         }
         Ok(success_detail(captured))
@@ -249,13 +250,25 @@ pub(super) fn entity_query_failure(error: EntityError) -> Result<ExecutionResult
     }
 }
 
-/// A failed temporal query or temporal write, `prefix` naming which: the
+/// Which temporal operation of a snapshot query failed.
+#[derive(Clone, Copy)]
+enum TemporalStep {
+    /// Reading a page of temporal entities.
+    Query,
+    /// Writing a captured evolution into the branch.
+    Store,
+}
+
+/// A failed temporal query or temporal write, `step` naming which: the
 /// query's own failure, or a transient store failure the preparation restarts
 /// on.
-fn temporal_failure(error: TemporalError, prefix: &str) -> Result<ExecutionResultDetails, SnapshotError> {
+fn temporal_failure(error: TemporalError, step: TemporalStep) -> Result<ExecutionResultDetails, SnapshotError> {
     match temporal_recurrence(&error) {
         Recurrence::Transient => Err(SnapshotError::from(error)),
-        Recurrence::Persistent => Ok(failure_detail(format!("{prefix}{error}"))),
+        Recurrence::Persistent => Ok(failure_detail(match step {
+            TemporalStep::Query => error.to_string(),
+            TemporalStep::Store => ExecutionFailure::StoreTemporalResults { cause: &error }.to_string(),
+        })),
     }
 }
 
@@ -286,6 +299,6 @@ fn branch_commit_failure(error: CommitError) -> Result<ExecutionResultDetails, S
         | CommitError::Persistence { .. }
         | CommitError::Invariant { .. }
         | CommitError::ReplayLeaseLost { .. }
-        | CommitError::UnexpectedOutcomeCount { .. }) => Ok(failure_detail(format!("Failed to store results: {failure}"))),
+        | CommitError::UnexpectedOutcomeCount { .. }) => Ok(failure_detail(ExecutionFailure::StoreResults { cause: &failure }.to_string())),
     }
 }

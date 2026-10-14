@@ -14,6 +14,15 @@
 use crate::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_problem_details::problem_detail::ProblemClassification;
 use axum::http::Uri;
+use thiserror::Error;
+
+/// The registered source holding the data answered with a status declining the representation.
+#[derive(Debug, Error)]
+#[error("the registered context source holding the requested data answered HTTP {status}: it does not support the requested representation")]
+struct DeclinedRepresentation {
+    /// The status the source declined with.
+    status: u16,
+}
 
 /// The response a read gives when the one exclusive or redirect source holding
 /// all of its data declined the representation with `status`.
@@ -21,11 +30,7 @@ use axum::http::Uri;
 /// `instance` is the request URI the resulting `ProblemDetails` names.
 #[must_use]
 pub fn single_source_declined(status: u16, instance: &Uri) -> ProblemResponse {
-    ClassifiedReport::public_binding(
-        ProblemClassification::NotImplemented,
-        format!("the registered context source holding the requested data answered HTTP {status}: it does not support the requested representation"),
-    )
-    .with_instance(instance.clone()) // clone: the problem detail owns the instance it names
+    ClassifiedReport::public_binding(ProblemClassification::NotImplemented, DeclinedRepresentation { status }.to_string()).with_instance(instance.clone()) // clone: the problem detail owns the instance it names
 }
 
 #[cfg(test)]

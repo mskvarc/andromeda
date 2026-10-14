@@ -2,6 +2,18 @@
 
 use andromeda_ngsi_ld_query::ordering::parameters::OrderingParameters;
 use serde::{Deserialize, Deserializer, de::Error as DeserializeError};
+use thiserror::Error;
+
+/// A `Query` member that Table 5.2.23-1 requires to be non-empty and is not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum NonEmptyMemberError {
+    /// An array member held no element.
+    #[error("an empty array is not allowed")]
+    EmptyArray,
+    /// The `ordering` member carried no `orderBy` term.
+    #[error("ordering requires a non-empty orderBy")]
+    OrderingWithoutOrderBy,
+}
 
 /// Deserialize an optional array that, when present, must hold at least one
 /// element ("Empty array (0 length) is not allowed", Table 5.2.23-1; a
@@ -18,7 +30,7 @@ where
 {
     let members = Option::<Vec<T>>::deserialize(deserializer)?;
     match members {
-        Some(members) if members.is_empty() => Err(DeserializeError::custom("an empty array is not allowed")),
+        Some(members) if members.is_empty() => Err(DeserializeError::custom(NonEmptyMemberError::EmptyArray)),
         other => Ok(other),
     }
 }
@@ -36,7 +48,7 @@ where
 {
     let ordering = Option::<OrderingParameters>::deserialize(deserializer)?;
     match ordering {
-        Some(ordering) if ordering.order_by.is_empty() => Err(DeserializeError::custom("ordering requires a non-empty orderBy")),
+        Some(ordering) if ordering.order_by.is_empty() => Err(DeserializeError::custom(NonEmptyMemberError::OrderingWithoutOrderBy)),
         other => Ok(other),
     }
 }

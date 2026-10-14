@@ -3,6 +3,7 @@
 use crate::{
     FederationService,
     outcome::{ForwardGetOutcome, ForwardedResponse},
+    source_answer_failure::SourceAnswerFailure,
     source_walk::{ReadPage, WalkedAnswer},
 };
 use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_warning::NgsiLdWarning};
@@ -117,10 +118,13 @@ impl FederationService {
                             ReceivedElement::Read(entity) => entities.push(entity),
                             ReceivedElement::Refused(refusal) => {
                                 warn!("Context source {} returned a temporal entity that is refused: {}", registration.id, refusal);
-                                warnings.push(NgsiLdWarning::RevalidationFailed(format!(
-                                    "Context source {} returned a temporal entity that is refused: {refusal}",
-                                    registration.id
-                                )));
+                                warnings.push(
+                                    SourceAnswerFailure::TemporalEntityRefused {
+                                        registration: &registration.id,
+                                        refusal,
+                                    }
+                                    .into_warning(),
+                                );
                             }
                         }
                     }
@@ -131,10 +135,13 @@ impl FederationService {
                 }
                 Err(error) => {
                     warn!(registration = %registration.id, %error, "context source answered with a body that is no temporal entity document");
-                    warnings.push(NgsiLdWarning::RevalidationFailed(format!(
-                        "Context source {} returned a payload that is no temporal entity document: {error}",
-                        registration.id
-                    )));
+                    warnings.push(
+                        SourceAnswerFailure::TemporalDocument {
+                            registration: &registration.id,
+                            error,
+                        }
+                        .into_warning(),
+                    );
                     ReadPage::empty(answered(naming, Vec::new(), warnings, None, None))
                 }
             },
