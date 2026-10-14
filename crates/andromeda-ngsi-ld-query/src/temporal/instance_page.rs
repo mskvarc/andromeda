@@ -1,6 +1,8 @@
 //! How many instances of each attribute a temporal read returns, and in which
 //! direction clause 6.3.10 pages through the rest.
 
+use std::num::NonZeroU32;
+
 /// The direction a partial temporal response is paged in (clause 6.3.10).
 ///
 /// Clause 6.3.10: "for requests where the parameter lastN is present,
@@ -18,7 +20,7 @@ pub enum PageDirection {
         /// The `lastN` the client asked for, which clause 6.3.10 reports as the
         /// `Content-Range` `size` ("shall be equal to the requested lastN")
         /// rather than the number of instances the page holds.
-        requested: u32,
+        requested: NonZeroU32,
     },
 }
 
@@ -39,7 +41,7 @@ pub enum InstancePage {
     /// the request and never a partial response.
     LastN {
         /// The number of instances the client asked for.
-        n: u32,
+        n: NonZeroU32,
     },
     /// No client `lastN`: the least recent `size` instances of every attribute,
     /// the broker's default page (clause 6.3.10 "a default limit is enforced").
@@ -53,7 +55,7 @@ pub enum InstancePage {
         /// The number of instances the page counts per attribute stream.
         size: u32,
         /// The `lastN` the client asked for.
-        requested: u32,
+        requested: NonZeroU32,
     },
 }
 
@@ -73,17 +75,27 @@ impl InstancePage {
 #[cfg(test)]
 mod tests {
     use crate::temporal::instance_page::{InstancePage, PageDirection};
+    use std::num::NonZeroU32;
+
+    /// `n` as a client `lastN`.
+    fn count(n: u32) -> NonZeroU32 {
+        NonZeroU32::new(n).expect("a positive count")
+    }
 
     /// Clause 6.3.10: only a page the broker narrowed is partial, forwards
     /// without `lastN` and backwards with it.
     #[test]
     fn only_a_narrowed_page_has_a_paging_direction() {
         pretty_assertions::assert_eq!(InstancePage::Whole.direction(), None);
-        pretty_assertions::assert_eq!(InstancePage::LastN { n: 5 }.direction(), None);
+        pretty_assertions::assert_eq!(InstancePage::LastN { n: count(5) }.direction(), None);
         pretty_assertions::assert_eq!(InstancePage::Forward { size: 100 }.direction(), Some(PageDirection::Forward));
         pretty_assertions::assert_eq!(
-            InstancePage::Backward { size: 1000, requested: 5000 }.direction(),
-            Some(PageDirection::Backward { requested: 5000 })
+            InstancePage::Backward {
+                size: 1000,
+                requested: count(5000)
+            }
+            .direction(),
+            Some(PageDirection::Backward { requested: count(5000) })
         );
     }
 }

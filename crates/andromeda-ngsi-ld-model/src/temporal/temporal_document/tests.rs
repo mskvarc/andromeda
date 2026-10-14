@@ -9,6 +9,7 @@ use andromeda_ngsi_ld_entity::{
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, time_prop::TimeProp};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
+use std::num::NonZeroU32;
 
 fn at(raw: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(raw).expect("a valid instant").with_timezone(&Utc)
@@ -92,7 +93,7 @@ fn last_n_after_a_merge_keeps_the_most_recent_in_ascending_order() {
         instance("2020-01-05T00:00:00Z", Some("urn:ngsi-ld:i:5")),
     ]);
     local.merge(remote, MergeMode::Inclusive, TimeProp::Observed);
-    local.keep_last(TimeProp::Observed, 3);
+    local.keep_last(TimeProp::Observed, NonZeroU32::new(3).expect("three"));
     pretty_assertions::assert_eq!(
         observed(&local),
         vec![at("2020-01-03T00:00:00Z"), at("2020-01-04T00:00:00Z"), at("2020-01-05T00:00:00Z")]

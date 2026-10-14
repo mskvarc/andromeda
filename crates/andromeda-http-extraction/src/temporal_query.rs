@@ -37,6 +37,7 @@ where
 mod tests {
     use super::*;
     use axum::{body::Body, http::Request};
+    use std::num::NonZeroU32;
 
     async fn extract(uri: &str) -> Result<TemporalQuery, ExtractorRejection> {
         let request = Request::builder().uri(uri).body(Body::empty()).expect("valid request");
@@ -55,6 +56,15 @@ mod tests {
             .await
             .expect("valid temporal query");
         assert!(params.timerel.is_some());
-        pretty_assertions::assert_eq!(params.last_n, Some(5));
+        pretty_assertions::assert_eq!(params.last_n.map(NonZeroU32::get), Some(5));
+    }
+
+    /// The `lastN` parameter is a "Positive integer" (Table 6.18.3.2-1), so zero
+    /// is a value the operation cannot take.
+    #[tokio::test]
+    async fn a_zero_last_n_is_bad_request_data() {
+        let rejection = extract("/ngsi-ld/v1/temporal/entities?type=Vehicle&timerel=after&timeAt=2020-01-01T00:00:00Z&lastN=0").await;
+
+        assert!(matches!(rejection, Err(ExtractorRejection::BadRequestData { .. })), "{rejection:?}");
     }
 }

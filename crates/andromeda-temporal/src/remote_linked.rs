@@ -49,7 +49,7 @@ pub struct TemporalLinkedWindow {
     /// The temporal property the window applies to (clause 4.8).
     pub timeproperty: TimeProp,
     /// How many instances per attribute the answer carries (`lastN`).
-    pub last_n: Option<u32>,
+    pub last_n: Option<NonZeroU32>,
     /// The representation the answer takes (clause 6.3.12 `format`).
     pub format: TemporalFormat,
     /// The aggregation methods, when the representation is aggregated.

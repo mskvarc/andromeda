@@ -260,6 +260,7 @@ mod tests {
     use andromeda_ngsi_ld_query::geo::reference_geometry::ReferenceGeometry;
     use chrono::{DateTime, Utc};
     use iso8601_duration::Duration as Iso8601Duration;
+    use std::num::NonZeroU32;
 
     #[test]
     fn an_unknown_snapshot_status_label_is_a_parse_error_not_a_panic() {
@@ -504,7 +505,7 @@ mod tests {
     fn a_snapshot_temporal_query_parses_its_time_property() {
         let tq = temporal_q(r#""timerel": "after", "timeAt": "2024-01-01T00:00:00Z", "timeproperty": "createdAt", "lastN": 10"#).expect("parses");
         pretty_assertions::assert_eq!(tq.timeproperty, Some(TimeProp::Created));
-        pretty_assertions::assert_eq!(tq.last_n, Some(10));
+        pretty_assertions::assert_eq!(tq.last_n.map(NonZeroU32::get), Some(10));
     }
 
     #[test]

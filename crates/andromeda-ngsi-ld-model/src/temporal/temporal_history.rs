@@ -13,6 +13,7 @@ use crate::temporal::{
 };
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
 use chrono::{DateTime, Utc};
+use std::num::NonZeroU32;
 
 /// The history of one entity, before it is compacted under a request context.
 #[derive(Clone, Debug)]
@@ -47,7 +48,7 @@ impl TemporalHistory {
 
     /// Keep, for every attribute, the `last_n` instances with the most recent
     /// instant on `timeproperty`. An aggregate has no instance to keep.
-    pub fn keep_last(&mut self, timeproperty: TimeProp, last_n: u32) {
+    pub fn keep_last(&mut self, timeproperty: TimeProp, last_n: NonZeroU32) {
         match self {
             TemporalHistory::Instances(document) => document.keep_last(timeproperty, last_n),
             TemporalHistory::Aggregates(_) => {}

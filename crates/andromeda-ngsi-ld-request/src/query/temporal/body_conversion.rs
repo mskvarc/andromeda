@@ -171,7 +171,7 @@ mod tests {
         pretty_assertions::assert_eq!(params.aggr_methods, Some(vec![AggrMethod::Avg]));
         pretty_assertions::assert_eq!(params.aggr_period_duration.map(|period| period.as_iso8601()), Some("PT1H".to_string()));
         pretty_assertions::assert_eq!(params.attrs.as_deref().map(|names| names[0].as_str()), Some("speed"));
-        pretty_assertions::assert_eq!(params.last_n, Some(10));
+        pretty_assertions::assert_eq!(params.last_n.map(NonZeroU32::get), Some(10));
     }
 
     /// Clause 5.7.4.3: the context source filter is an input of the temporal

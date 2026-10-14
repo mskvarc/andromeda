@@ -107,6 +107,7 @@ mod tests {
         page_window::{PageStart, PageWindow},
     };
     use serde_json::json;
+    use std::num::NonZeroU32;
 
     /// An entity whose `speed` was observed once a day for five days.
     async fn observed_daily(id: &str) -> TemporalHistory {
@@ -122,7 +123,7 @@ mod tests {
     #[tokio::test]
     async fn last_n_after_merge_keeps_ascending_order() {
         let params = TemporalQueryParameters {
-            last_n: Some(3),
+            last_n: NonZeroU32::new(3),
             ..TemporalQueryParameters::default()
         };
         let window = PageWindow::unbounded();

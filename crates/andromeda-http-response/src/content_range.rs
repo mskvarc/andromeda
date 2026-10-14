@@ -33,7 +33,7 @@ pub fn build_content_range(
     let most_recent = sub_second(max_time);
 
     let (start, end, size) = match direction {
-        PageDirection::Backward { requested } => (backwards_range_start(interval, &most_recent), least_recent, Some(u64::from(requested))),
+        PageDirection::Backward { requested } => (backwards_range_start(interval, &most_recent), least_recent, Some(u64::from(requested.get()))),
         PageDirection::Forward => (forwards_range_start(interval, &least_recent), most_recent, None),
     };
 
@@ -69,6 +69,7 @@ mod tests {
     use crate::content_range::build_content_range;
     use andromeda_ngsi_ld_query::temporal::{instance_page::PageDirection, window::TimeInterval};
     use chrono::{DateTime, Utc};
+    use std::num::NonZeroU32;
 
     fn instant(raw: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&Utc)
@@ -114,7 +115,9 @@ mod tests {
     /// range-end is the least recent timestamp; size is the requested `lastN`.
     #[test]
     fn a_backward_page_reports_its_end_bound_its_least_recent_instant_and_the_requested_last_n() {
-        let direction = PageDirection::Backward { requested: 5000 };
+        let direction = PageDirection::Backward {
+            requested: NonZeroU32::new(5000).expect("a positive lastN"),
+        };
         pretty_assertions::assert_eq!(
             rendered(TimeInterval::Before(instant("2021-01-01T00:00:00Z")), direction),
             "DateTime 2021-01-01T00:00:00Z-2020-01-01T01:01:00Z/5000"

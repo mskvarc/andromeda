@@ -218,7 +218,7 @@ mod tests {
             time_at: Some("2024-01-01T00:00:00Z".parse().expect("valid instant")),
             end_time_at: Some("2024-02-01T00:00:00Z".parse().expect("valid instant")),
             timeproperty: TimeProp::Modified,
-            last_n: Some(5),
+            last_n: NonZeroU32::new(5),
             format: TemporalFormat::AggregatedValues,
             aggr_methods: Some(vec![AggrMethod::Avg, AggrMethod::Max]),
             aggr_period_duration: AggregationPeriod::parse("PT1H").expect("valid duration"),
@@ -231,7 +231,7 @@ mod tests {
         pretty_assertions::assert_eq!(parameters.time_at, window.time_at);
         pretty_assertions::assert_eq!(parameters.end_time_at, window.end_time_at);
         pretty_assertions::assert_eq!(parameters.timeproperty, Some(TimeProp::Modified));
-        pretty_assertions::assert_eq!(parameters.last_n, Some(5));
+        pretty_assertions::assert_eq!(parameters.last_n.map(NonZeroU32::get), Some(5));
         pretty_assertions::assert_eq!(parameters.format, Some(WrittenValue::Supported(TemporalFormat::AggregatedValues)));
         pretty_assertions::assert_eq!(parameters.aggr_methods, Some(vec![AggrMethod::Avg, AggrMethod::Max]));
         pretty_assertions::assert_eq!(parameters.aggr_period_duration.map(|period| period.as_iso8601()), Some("PT1H".to_owned()));

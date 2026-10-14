@@ -152,6 +152,7 @@ mod tests {
     use andromeda_ngsi_ld_query::temporal::instance_page::PageDirection;
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use chrono::{DateTime, Duration, TimeZone, Utc};
+    use std::num::NonZeroU32;
     use uuid::Uuid;
 
     fn minute(offset: i64) -> DateTime<Utc> {
@@ -205,7 +206,9 @@ mod tests {
     fn a_backward_cut_is_the_latest_first_instant_of_any_cut_stream() {
         let mut rows = stream("speed", 2, 20, 20);
         rows.extend(stream("fuelLevel", 4, 22, 20));
-        let direction = PageDirection::Backward { requested: 20 };
+        let direction = PageDirection::Backward {
+            requested: NonZeroU32::new(20).expect("a positive lastN"),
+        };
         let cut = PageCut::of_page(&rows, TimeProp::Observed, direction).expect("both streams were cut");
         pretty_assertions::assert_eq!(cut.boundary, minute(4));
         let kept = rows.iter().filter(|row| cut.keeps(row, TimeProp::Observed)).count();
@@ -246,7 +249,9 @@ mod tests {
         };
         pretty_assertions::assert_eq!(PageCut::common([forward(19), forward(7), forward(30)]), Some(forward(7)));
         let backward = |offset| PageCut {
-            direction: PageDirection::Backward { requested: 50 },
+            direction: PageDirection::Backward {
+                requested: NonZeroU32::new(50).expect("a positive lastN"),
+            },
             boundary: minute(offset),
         };
         pretty_assertions::assert_eq!(PageCut::common([backward(4), backward(9), backward(1)]), Some(backward(9)));

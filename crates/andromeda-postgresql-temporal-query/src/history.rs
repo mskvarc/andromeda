@@ -31,6 +31,7 @@ use andromeda_postgresql_seaquery::{
     postgis::st_as_ewkb,
 };
 use sea_query::{Alias, Asterisk, Condition, Expr, ExprTrait, Func, JoinType, NullOrdering, Order, OverStatement, Query, SelectStatement, WindowStatement};
+use std::num::NonZeroU32;
 
 /// Build Stage 2 query: temporal history for a single entity.
 ///
@@ -221,7 +222,7 @@ struct Ranking {
 /// The ranking breaks ties on the hypertable's unique key,
 /// `(recorded_at, write_id, write_ordinal)`, so two instances sharing a value on
 /// the requested axis are kept or dropped the same way on every execution.
-fn last_n_ranking(compiled: &CompiledTemporalQuery, n: u32) -> Ranking {
+fn last_n_ranking(compiled: &CompiledTemporalQuery, n: NonZeroU32) -> Ranking {
     let axis = axis_column(compiled.window.timeproperty);
     let mut window = stream_partition();
     window
@@ -233,7 +234,7 @@ fn last_n_ranking(compiled: &CompiledTemporalQuery, n: u32) -> Ranking {
         function: row_number(),
         window,
         uncounted: None,
-        kept: n,
+        kept: n.get(),
     }
 }
 
@@ -339,6 +340,11 @@ mod tests {
         "urn:ngsi-ld:Vehicle:1".parse().expect("valid entity id")
     }
 
+    /// `n` as a client `lastN`.
+    fn count(n: u32) -> NonZeroU32 {
+        NonZeroU32::new(n).expect("a positive count")
+    }
+
     /// A query with every filter absent, for tests that vary one part at a time.
     fn minimal_compiled() -> CompiledTemporalQuery {
         CompiledTemporalQuery::builder()
@@ -441,7 +447,7 @@ mod tests {
         // breaks ties on the hypertable's unique key rather than leaving it to
         // the plan.
         let mut compiled = minimal_compiled();
-        compiled.instances.page = InstancePage::LastN { n: 5 };
+        compiled.instances.page = InstancePage::LastN { n: count(5) };
         let sql = sql_of(&compiled);
         assert!(sql.contains("ROW_NUMBER()"), "{sql}");
         assert!(sql.contains("PARTITION BY \"ah\".\"attribute_name_key\", \"ah\".\"dataset_id\""), "{sql}");
@@ -507,7 +513,7 @@ mod tests {
     #[test]
     fn build_temporal_history_with_last_n() {
         let mut compiled = minimal_compiled();
-        compiled.instances.page = InstancePage::LastN { n: 5 };
+        compiled.instances.page = InstancePage::LastN { n: count(5) };
         let sql = sql_of(&compiled);
         assert!(sql.contains("\"ranked\""), "{sql}");
         assert!(sql.contains("ROW_NUMBER()"), "{sql}");
@@ -560,7 +566,10 @@ mod tests {
     #[test]
     fn a_backward_page_ranks_descending_on_the_axis_alone() {
         let mut compiled = minimal_compiled();
-        compiled.instances.page = InstancePage::Backward { size: 1000, requested: 5000 };
+        compiled.instances.page = InstancePage::Backward {
+            size: 1000,
+            requested: count(5000),
+        };
         compiled.window.interval = TimeInterval::Before("2024-01-15T10:00:00Z".parse().expect("valid instant"));
         let sql = sql_of(&compiled);
         assert!(
@@ -576,9 +585,9 @@ mod tests {
     #[test]
     fn every_ranked_shape_reports_the_stream_total() {
         for page in [
-            InstancePage::LastN { n: 5 },
+            InstancePage::LastN { n: count(5) },
             InstancePage::Forward { size: 5 },
-            InstancePage::Backward { size: 5, requested: 50 },
+            InstancePage::Backward { size: 5, requested: count(50) },
         ] {
             let mut compiled = minimal_compiled();
             compiled.instances.page = page;

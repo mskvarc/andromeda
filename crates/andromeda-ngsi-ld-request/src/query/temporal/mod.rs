@@ -114,9 +114,10 @@ pub struct TemporalQueryParameters {
     #[serde(default, deserialize_with = "deserialize_option_timeproperty")]
     pub timeproperty: Option<TimeProp>,
 
-    /// How many instances per attribute the response carries (`lastN`).
+    /// How many instances per attribute the response carries (`lastN`), a
+    /// "Positive integer", so `lastN=0` fails to decode as `BadRequestData`.
     #[serde(rename = "lastN")]
-    pub last_n: Option<u32>,
+    pub last_n: Option<NonZeroU32>,
     /// The representation the response uses (clause 4.5.1 `format`).
     pub format: Option<WrittenValue<TemporalFormat>>,
     /// Typed temporal representation and system-attribute options (`options`).

@@ -30,7 +30,7 @@ use andromeda_ngsi_ld_query::{
     term_expander::TermExpander,
 };
 use andromeda_ngsi_ld_request::{error::ParameterError, query::temporal::TemporalQueryParameters};
-use std::collections::HashSet;
+use std::{collections::HashSet, num::NonZeroU32};
 
 impl TemporalService {
     /// Validate, expand, and compile temporal query parameters against one JSON-LD context.
@@ -172,13 +172,13 @@ async fn compile_q_filter(params: &TemporalQueryParameters, expander: &impl Term
 /// without `lastN` is the forward default page; a `lastN` within the maximum is
 /// answered in full; and one above it is narrowed to the maximum and paged
 /// backwards, the `Content-Range` still reporting the requested number.
-const fn compile_instance_page(last_n: Option<u32>, format: TemporalFormat, limits: TemporalInstanceLimits) -> InstancePage {
+const fn compile_instance_page(last_n: Option<NonZeroU32>, format: TemporalFormat, limits: TemporalInstanceLimits) -> InstancePage {
     if format.is_aggregated() {
         return InstancePage::Whole;
     }
     match last_n {
         None => InstancePage::Forward { size: limits.default_page },
-        Some(requested) if requested > limits.maximum => InstancePage::Backward {
+        Some(requested) if requested.get() > limits.maximum => InstancePage::Backward {
             size: limits.maximum,
             requested,
         },
@@ -252,6 +252,12 @@ mod tests {
     use crate::{compilation::compile_instance_page, instance_limits::TemporalInstanceLimits};
     use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
     use andromeda_ngsi_ld_query::temporal::instance_page::InstancePage;
+    use std::num::NonZeroU32;
+
+    /// `n` as a client `lastN`.
+    fn count(n: u32) -> NonZeroU32 {
+        NonZeroU32::new(n).expect("a positive count")
+    }
 
     const LIMITS: TemporalInstanceLimits = TemporalInstanceLimits {
         default_page: 100,
@@ -276,7 +282,7 @@ mod tests {
     /// A `lastN` the maximum admits is the whole answer, the maximum included.
     #[test]
     fn a_last_n_within_the_maximum_is_answered_in_full() {
-        for n in [1, 150, 1000] {
+        for n in [1, 150, 1000].map(count) {
             pretty_assertions::assert_eq!(compile_instance_page(Some(n), TemporalFormat::Normalized, LIMITS), InstancePage::LastN { n });
         }
     }
@@ -286,15 +292,18 @@ mod tests {
     #[test]
     fn a_last_n_above_the_maximum_is_a_backward_page_of_the_maximum() {
         pretty_assertions::assert_eq!(
-            compile_instance_page(Some(5000), TemporalFormat::Normalized, LIMITS),
-            InstancePage::Backward { size: 1000, requested: 5000 }
+            compile_instance_page(Some(count(5000)), TemporalFormat::Normalized, LIMITS),
+            InstancePage::Backward {
+                size: 1000,
+                requested: count(5000)
+            }
         );
     }
 
     /// Clause 4.5.19 bounds an aggregation by its period, so no page applies.
     #[test]
     fn an_aggregated_read_keeps_every_instance() {
-        for last_n in [None, Some(5), Some(5000)] {
+        for last_n in [None, Some(count(5)), Some(count(5000))] {
             pretty_assertions::assert_eq!(compile_instance_page(last_n, TemporalFormat::AggregatedValues, LIMITS), InstancePage::Whole);
         }
     }

@@ -164,7 +164,7 @@ mod tests {
         TimeInterval::After(at("2020-01-01T00:00:00Z"))
     }
 
-    fn params(last_n: Option<u32>) -> TemporalQueryParameters {
+    fn params(last_n: Option<NonZeroU32>) -> TemporalQueryParameters {
         TemporalQueryParameters {
             timerel: Some(TimeRel::After),
             time_at: Some(at("2020-01-01T00:00:00Z")),
@@ -243,11 +243,18 @@ mod tests {
     #[tokio::test]
     async fn backwards_the_bound_is_the_latest_stop_of_every_contributor() {
         let history = forwarded(vec![source(&[range("2021-01-01T00:00:00Z", "2020-06-01T00:00:00Z")]).await]);
-        let local = local_cut("2020-03-01T00:00:00Z", "2020-12-01T00:00:00Z", PageDirection::Backward { requested: 50 });
-        let completeness = HistoryCompleteness::of(&params(Some(50)), Some(local), Some(&history)).expect("a readable window");
+        let local = local_cut(
+            "2020-03-01T00:00:00Z",
+            "2020-12-01T00:00:00Z",
+            PageDirection::Backward {
+                requested: NonZeroU32::new(50).expect("a positive lastN"),
+            },
+        );
+        let completeness = HistoryCompleteness::of(&params(NonZeroU32::new(50)), Some(local), Some(&history)).expect("a readable window");
         assert!(matches!(
             completeness,
-            HistoryCompleteness::UpTo(HistoryBound { direction: PageDirection::Backward { requested: 50 }, bound, .. }) if bound == at("2020-06-01T00:00:00Z")
+            HistoryCompleteness::UpTo(HistoryBound { direction: PageDirection::Backward { requested }, bound, .. })
+                if bound == at("2020-06-01T00:00:00Z") && requested.get() == 50
         ));
     }
 

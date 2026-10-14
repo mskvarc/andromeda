@@ -18,7 +18,7 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
-use std::cmp::Reverse;
+use std::{cmp::Reverse, num::NonZeroU32};
 
 /// How the history another holder contributed joins the one already held
 /// (clauses 4.3.6.2 and 5.7.3.4).
@@ -129,8 +129,8 @@ impl TemporalDocument {
     /// instant on `timeproperty`, in ascending order of it: clause 5.7.3.4
     /// fixes which instants are kept, never the order of the response, and
     /// every response lists its instances oldest first.
-    pub fn keep_last(&mut self, timeproperty: TimeProp, last_n: u32) {
-        let keep = usize::try_from(last_n).unwrap_or(usize::MAX);
+    pub fn keep_last(&mut self, timeproperty: TimeProp, last_n: NonZeroU32) {
+        let keep = usize::try_from(last_n.get()).unwrap_or(usize::MAX);
         self.reshape_instances(|instances| {
             instances.sort_by_key(|instance| Reverse(instance.instant_on(timeproperty)));
             instances.truncate(keep);
