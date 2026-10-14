@@ -5,7 +5,10 @@
 //! only the members its family defines, and no NGSI-LD Null anywhere. A
 //! written instance that declares no family is read as its value member names
 //! it, and as a Property when it names none (clause 4.5.2). The written
-//! members are moved, never copied.
+//! members are moved, never copied. A written `instanceId` is dropped: Table
+//! 5.2.5-2 makes it output-only, and clause 5.2.5 has the broker ignore one a
+//! producer provides, so the Temporal Evolution instance the write adds is
+//! given an identity of the broker's own (clause 4.5.7).
 
 use crate::{
     attribute_instances::{AttributeInstances, RepeatedInstance},
@@ -82,7 +85,6 @@ impl Instance {
             .expires_at(parts.expires_at.and_then(Slot::into_set))
             .created_at(parts.created_at)
             .modified_at(parts.modified_at)
-            .evolution_id(parts.instance_id)
             .proof_seals(parts.proof_seals)
             .sub_attributes(Attributes::try_from_members(parts.sub_attributes)?)
             .build();
@@ -293,5 +295,24 @@ mod tests {
         let (accuracy, accuracy_times) = sub_attribute_times(&instance, ACCURACY);
         pretty_assertions::assert_eq!(accuracy_times, (Some(at()), Some(at())));
         pretty_assertions::assert_eq!(sub_attribute_times(accuracy, method).1, (Some(at()), Some(at())));
+    }
+
+    /// Table 5.2.5-2 makes `instanceId` output-only and clause 5.2.5 has the
+    /// broker ignore one a producer writes, so an instance written with one
+    /// at any depth is stored as if written without.
+    #[test]
+    fn a_written_instance_id_is_ignored_at_every_depth() {
+        let identified = |sub_attributes| {
+            let mut document = stamped(sub_attributes);
+            document.set_instance_id(Some("urn:ngsi-ld:Instance:client".parse().expect("a valid identifier")));
+            document
+        };
+        let with = identified(sub_attribute(ACCURACY, identified(IndexMap::new())));
+        let without = stamped(sub_attribute(ACCURACY, stamped(IndexMap::new())));
+
+        pretty_assertions::assert_eq!(
+            Instance::try_from_document(&name(SPEED), with).expect("a valid instance"),
+            Instance::try_from_document(&name(SPEED), without).expect("a valid instance")
+        );
     }
 }

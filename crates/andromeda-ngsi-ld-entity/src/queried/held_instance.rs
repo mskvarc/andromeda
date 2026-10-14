@@ -88,7 +88,9 @@ impl<'a> QueriedInstance<'a> for HeldInstance<'a> {
             InstanceMetadata::ModifiedAt => instance.modified_at().map(|instant| Cow::Owned(instant.to_string())),
             InstanceMetadata::ExpiresAt => instance.expires_at().map(DateTimeText::as_str).map(Cow::Borrowed),
             InstanceMetadata::DatasetId => self.dataset_id.map(Identifier::as_str).map(Cow::Borrowed),
-            InstanceMetadata::InstanceId => instance.instance_id().map(Identifier::as_str).map(Cow::Borrowed),
+            // Table 5.2.5-2 has `instanceId` only in the temporal representation,
+            // so a held instance never carries one.
+            InstanceMetadata::InstanceId => None,
             InstanceMetadata::UnitCode => instance.value().unit_code().map(|unit_code| Cow::Borrowed(unit_code.as_str())),
             InstanceMetadata::ValueType => instance.value().value_type().map(NgsiLdReference::as_str).map(Cow::Borrowed),
             InstanceMetadata::ObjectType => instance.value().object_types().first().map(NgsiLdReference::as_str).map(Cow::Borrowed),

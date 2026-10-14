@@ -65,10 +65,6 @@ pub enum FlattenError {
     /// codec stores one of.
     #[error("an instance of '{0}' holds several JSON literals")]
     SeveralJsonLiterals(AttributeName),
-    /// An instance carries an `instanceId`, which only a Temporal Evolution
-    /// holds (Table 5.2.5-2).
-    #[error("an instance of '{0}' carries an instanceId")]
-    InstanceIdentifier(AttributeName),
     /// An Entity holds more attribute instances than a row ordinal counts, or
     /// an instance more sub-attribute instances than an element position does.
     #[error("an instance of '{0}' holds more instances than storage numbers")]
@@ -110,10 +106,6 @@ pub fn push_elements(attributes: &Attributes, parent: i32, keys: &NameKeys, elem
 /// Returns [`FlattenError`] when a name has no key in `keys`, or when the
 /// instance is not one a write commits.
 pub fn members(name: &AttributeName, dataset_id: Option<&Identifier>, instance: &Instance, keys: &NameKeys) -> Result<InstanceMembers, FlattenError> {
-    if instance.instance_id().is_some() {
-        // clone: the refusal owns the name it reports.
-        return Err(FlattenError::InstanceIdentifier(name.clone()));
-    }
     let committed = |text: &DateTimeText| DateTimeText::from_instant(text.instant()) == *text;
     if !instance.observed_at().is_none_or(committed) || !instance.expires_at().is_none_or(committed) {
         // clone: the refusal owns the name it reports.

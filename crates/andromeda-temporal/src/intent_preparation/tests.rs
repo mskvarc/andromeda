@@ -16,6 +16,7 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
     identifier::Identifier,
     instance_family::InstanceFamily,
+    instance_identity::InstanceIdentity,
     scope::path::ScopePath,
 };
 use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
@@ -204,6 +205,24 @@ fn every_written_instance_is_its_own_observation() {
             .collect::<Vec<_>>(),
         vec!["urn:ngsi-ld:instance:1", "urn:ngsi-ld:instance:2"]
     );
+}
+
+/// Table 5.2.5-2 makes `instanceId` output-only and clause 5.2.5 has the
+/// broker ignore one a producer writes through the Core API, so the instance a
+/// Core write adds to the Temporal Evolution is given a minted identity.
+#[test]
+fn a_core_write_records_a_minted_instance_id_whatever_the_producer_wrote() {
+    let entries = prepared(&[observed(&json!({
+        "https://example.com/speed": [{
+            "@type": [PROPERTY],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 55}],
+            "https://uri.etsi.org/ngsi-ld/instanceId": [{"@id": "urn:ngsi-ld:Instance:client"}]
+        }]
+    }))]);
+
+    let rows = rows(&entries);
+    pretty_assertions::assert_eq!(rows.len(), 1);
+    assert!(matches!(rows[0].instance, InstanceIdentity::Generated(_)), "{:?}", rows[0].instance);
 }
 
 /// The entity state a Property holding a `DateTime`-typed `raw` value

@@ -33,11 +33,7 @@ use andromeda_context_commit::{
     write_retry::WRITE_ATTEMPTS,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_entity::{
-    entity_state::EntityState,
-    history::{written_observation::AddressedInstances, written_state::WrittenState},
-    system_instant::SystemInstant,
-};
+use andromeda_ngsi_ld_entity::{entity_state::EntityState, history::written_observation::AddressedInstances, system_instant::SystemInstant};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use std::sync::Arc;
 
@@ -106,17 +102,13 @@ impl<'a> StampedUpdate<'a> {
         // and the notification plan read the state, so both see it; only an
         // attribute whose stamps change stops being shared with `previous`.
         current.settle(Some(previous), now);
-        let WrittenState { held, observed } = WrittenState::of(Arc::new(current));
+        let current = Arc::new(current);
         // Clauses 5.6.8, 5.6.9 and 5.6.20 run the single-entity behaviours per
         // entity, so the batch records exactly what its single-entity sibling
         // records: the resulting instances it addressed and the ends of what it
         // removed.
-        let history = mutation_history(addressed, previous, &observed);
-        StampedUpdate {
-            previous,
-            current: held,
-            history,
-        }
+        let history = mutation_history(addressed, previous, &current);
+        StampedUpdate { previous, current, history }
     }
 }
 
@@ -168,8 +160,10 @@ impl EntityService {
         // Clause 4.8: a created entity's attribute instances carry the write
         // instant as both createdAt and modifiedAt.
         state.settle(None, now);
-        let WrittenState { held: state, observed } = WrittenState::of(Arc::new(state));
+        let state = Arc::new(state);
         let plan = self.notifier.plan(target, &id, state.types().as_slice(), creation(&state), Some(&state), None);
+        // clone: reference-count bump; the stored state is also the write's observation.
+        let history = vec![HistoryRecord::Observations(Arc::clone(&state))];
         let record = match EntityRecord::from_state(state) {
             Ok(record) => record,
             Err(error) => return Err(Box::new((id, error.into()))),
@@ -177,7 +171,7 @@ impl EntityService {
         Ok(ChunkWrite {
             id,
             entity: EntityMutation::Insert(record),
-            history: vec![HistoryRecord::Observations(observed)],
+            history,
             plan,
         })
     }

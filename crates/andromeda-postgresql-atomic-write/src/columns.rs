@@ -92,7 +92,6 @@ fn flatten_failure(error: &FlattenError) -> CommitError {
         FlattenError::Unstamped(_)
         | FlattenError::UncommittedSpelling(_)
         | FlattenError::SeveralJsonLiterals(_)
-        | FlattenError::InstanceIdentifier(_)
         | FlattenError::TooManyInstances(_)
         | FlattenError::Json(_) => CommitError::Persistence(PersistenceFailure::Unencodable.record(error)),
     }

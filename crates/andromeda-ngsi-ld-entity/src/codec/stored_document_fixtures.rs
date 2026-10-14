@@ -75,8 +75,7 @@ pub(crate) fn every_family_document() -> Value {
         ngsi("hasValueType"): [{"@id": "https://ex.org/Speed"}],
         ngsi("observedAt"): date_time("2026-01-01T00:00:00.5Z"),
         ngsi("expiresAt"): date_time("2027-01-01T00:00:00Z"),
-        ngsi("datasetId"): [{"@id": "urn:ngsi-ld:Dataset:a"}],
-        ngsi("instanceId"): [{"@id": "urn:ngsi-ld:Instance:1"}]
+        ngsi("datasetId"): [{"@id": "urn:ngsi-ld:Dataset:a"}]
     });
     if let (Some(speed), Some(nested)) = (speed.as_object_mut(), nested_sub_attributes().as_object()) {
         speed.extend(nested.iter().map(|(key, value)| (key.clone(), value.clone())));

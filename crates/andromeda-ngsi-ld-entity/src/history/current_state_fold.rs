@@ -233,8 +233,6 @@ mod tests {
             .expect("a foldable fragment")
             .expect("a new entity is always created");
         assert_eq!(values(&fold), vec![200]);
-        let held = fold.attributes().get(V).and_then(|instances| instances.get(None)).expect("the instance");
-        assert_eq!(held.instance_id(), None, "no instanceId in current state");
         assert_eq!(fold.types().as_slice(), &["https://example.org/TQ".parse().expect("a valid type")]);
     }
 

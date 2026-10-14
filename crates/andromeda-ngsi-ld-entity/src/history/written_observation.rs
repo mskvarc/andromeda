@@ -97,11 +97,8 @@ pub fn written_observation(addressed: AddressedInstances<'_>, previous: Option<&
                     .and_then(|held| held.get(dataset_id))
                     .filter(|_| !fragment.names_nothing())
                 {
-                    // clone: the observation owns the attribute name and the instance identity.
-                    observed.insert(
-                        attribute.clone(),
-                        AttributeInstances::one(dataset_id.cloned(), observed_instance(instance, fragment)),
-                    );
+                    // clone: the observation owns the attribute name, the instance identity and a copy of the instance the entity holds.
+                    observed.insert(attribute.clone(), AttributeInstances::one(dataset_id.cloned(), instance.clone()));
                 }
             }
         }
@@ -129,7 +126,7 @@ fn written_instances(
     overwrite: OverwritePolicy,
 ) -> Option<Arc<AttributeInstances>> {
     let held = current.attributes().get_shared(name)?;
-    let applied: Vec<(Option<&Identifier>, &Instance, &InstanceDocument)> = documents
+    let applied: Vec<(Option<&Identifier>, &Instance)> = documents
         .iter()
         .filter(|document| !matches!(document.value(), ValueSlot::Remove(_)))
         // Clause 5.6.3.4 leaves an instance the entity already held untouched
@@ -140,23 +137,23 @@ fn written_instances(
                     .and_then(|previous| previous.attributes().get(name))
                     .is_some_and(|instances| instances.contains(document.dataset_id()))
         })
-        .filter_map(|document| held.get(document.dataset_id()).map(|instance| (document.dataset_id(), instance, document)))
+        .filter_map(|document| held.get(document.dataset_id()).map(|instance| (document.dataset_id(), instance)))
         .collect();
     let exactly_held = applied.len() == held.len()
         && applied
             .iter()
             .zip(held.iter())
-            .all(|((dataset_id, _, document), (held_dataset_id, instance))| *dataset_id == held_dataset_id && instance.instance_id() == document.instance_id());
+            .all(|((dataset_id, _), (held_dataset_id, _))| *dataset_id == held_dataset_id);
     if exactly_held {
         // clone: reference-count bump; the observation shares the instances the entity holds.
         return Some(Arc::clone(held));
     }
     let mut applied = applied.into_iter();
-    let (dataset_id, instance, document) = applied.next()?;
-    // clone: the observation owns the identity of each instance it records.
-    let mut observed = AttributeInstances::one(dataset_id.cloned(), observed_instance(instance, document));
-    for (dataset_id, instance, document) in applied {
-        observed.insert(dataset_id.cloned(), observed_instance(instance, document));
+    let (dataset_id, instance) = applied.next()?;
+    // clone: the observation owns the identity and a copy of each instance it records.
+    let mut observed = AttributeInstances::one(dataset_id.cloned(), instance.clone());
+    for (dataset_id, instance) in applied {
+        observed.insert(dataset_id.cloned(), instance.clone());
     }
     Some(Arc::new(observed))
 }
@@ -170,21 +167,6 @@ fn written_scope<'a>(current: &'a EntityState, previous: Option<&EntityState>, o
     // disabled, so a scope that came out unchanged is one the write did not
     // apply.
     (overwrite == OverwritePolicy::Overwrite || !unchanged).then_some(scope)
-}
-
-/// One resulting instance as the observation records it.
-///
-/// Clause 4.5.7 has a system "maintain an instanceId for each such Property
-/// instance", and every write adds a new instance to the Temporal Evolution.
-/// The observation carries only the `instanceId` the request's own fragment
-/// supplied, never one the stored instance holds; without one, the instance
-/// is given a fresh identity when it is recorded.
-fn observed_instance(resulting: &Instance, requested: &InstanceDocument) -> Instance {
-    // clone: the observation owns a copy of the instance the entity holds.
-    let mut instance = resulting.clone();
-    // clone: the observation owns the requested identity.
-    instance.set_instance_id(requested.instance_id().cloned());
-    instance
 }
 
 #[cfg(test)]
@@ -501,31 +483,6 @@ mod tests {
         );
     }
 
-    /// Clause 4.5.7: the stored `instanceId` names an earlier instance, so the
-    /// observation carries only the one the request supplied.
-    #[test]
-    fn the_observation_never_reuses_an_instance_id_an_earlier_write_left_behind() {
-        let mut stored = property(number(2));
-        stored.set_instance_id(Some("urn:ngsi-ld:Instance:earlier".parse().expect("a valid identifier")));
-        let state = building(vec![(TEMPERATURE, vec![(None, stored)])]);
-        let attribute = name(TEMPERATURE);
-
-        let without = property_document(number(2), None);
-        pretty_assertions::assert_eq!(
-            written_observation(attribute_fragment(&without, &attribute), Some(&state), &state),
-            Some(building(vec![(TEMPERATURE, vec![(None, property(number(2)))])]))
-        );
-
-        let mut supplied = property_document(number(2), None);
-        supplied.set_instance_id(Some("urn:ngsi-ld:Instance:new".parse().expect("a valid identifier")));
-        let mut expected = property(number(2));
-        expected.set_instance_id(Some("urn:ngsi-ld:Instance:new".parse().expect("a valid identifier")));
-        pretty_assertions::assert_eq!(
-            written_observation(attribute_fragment(&supplied, &attribute), Some(&state), &state),
-            Some(building(vec![(TEMPERATURE, vec![(None, expected)])]))
-        );
-    }
-
     /// The entity's own members are not attributes and are never observed as
     /// one.
     #[test]
@@ -541,16 +498,16 @@ mod tests {
     }
 
     /// Clauses 5.6.8 (replace mode) and 5.6.18: a replacement addressed every
-    /// instance it holds, so each is observed as the stored entity holds it
-    /// (with the `instanceId` the replacement carried), together with its
-    /// scope, and shared rather than copied. The entity's own `expiresAt` is
-    /// not an attribute and is not observed.
+    /// instance it holds, so each is observed as the stored entity holds it,
+    /// together with its scope, and shared rather than copied. The entity's
+    /// own `expiresAt` is not an attribute and is not observed.
     #[test]
     fn a_replacement_observes_every_instance_and_the_scope_it_holds() {
-        let mut stamped = property(number(2));
-        stamped.set_instance_id(Some("urn:ngsi-ld:Instance:replacement".parse().expect("a valid identifier")));
         let mut current = building(vec![
-            (TEMPERATURE, vec![(None, stamped), (Some("urn:ngsi-ld:Dataset:b"), property(number(3)))]),
+            (
+                TEMPERATURE,
+                vec![(None, property(number(2))), (Some("urn:ngsi-ld:Dataset:b"), property(number(3)))],
+            ),
             (NAME, vec![(None, property(text("lobby")))]),
         ]);
         current.set_scope(Some(scope(&["/Madrid"])));

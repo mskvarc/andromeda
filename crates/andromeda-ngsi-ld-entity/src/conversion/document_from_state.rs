@@ -54,7 +54,6 @@ impl InstanceDocument {
             .object_types((!object_types.is_empty()).then(|| Slot::Set(object_types.to_vec())))
             .created_at(instance.created_at())
             .modified_at(instance.modified_at())
-            .instance_id(instance.instance_id().cloned()) // clone: as above
             .proof_seals(instance.proof_seals().clone()) // clone: as above
             .sub_attributes(instance.sub_attributes().written_members())
             .build()

@@ -148,9 +148,8 @@ pub(crate) fn patch_instance(
 ///
 /// `createdAt` and `modifiedAt` are never taken from a fragment: clause 5.2.5
 /// ignores them in a write, and the write stamps attribute instances itself
-/// (clause 4.8). Nor is `instanceId`: Table 5.2.5-2 uses it only in the
-/// temporal representation, so the observation of the write carries it and
-/// current state holds none.
+/// (clause 4.8). Nor is `instanceId`, which Table 5.2.5-2 makes output-only
+/// and clause 5.2.5 has the broker ignore.
 fn apply_instance_members(instance: &mut Instance, document: &InstanceDocument, observed_at: Option<&Slot<DateTimeText>>) {
     if let Some(slot) = observed_at.or_else(|| document.observed_at()) {
         instance.set_observed_at(slot.as_set().cloned()); // clone: the stored instance owns its copy of the borrowed fragment.
@@ -230,14 +229,20 @@ mod tests {
         );
     }
 
-    /// Table 5.2.5-2 uses `instanceId` only in the temporal representation.
+    /// Table 5.2.5-2 makes `instanceId` output-only, and clause 5.2.5 has the
+    /// broker ignore one a producer writes.
     #[test]
-    fn a_written_instance_id_never_reaches_the_held_instance() {
-        let written = InstanceDocument::builder()
-            .value(ValueSlot::Set(WrittenValue::Value(vec![number(1)])))
-            .instance_id(Some("urn:ngsi-ld:Instance:1".parse().expect("a valid identifier")))
-            .build();
-        let instance = new_instance(&name("https://example.org/p"), &written, None).expect("an instance");
-        pretty_assertions::assert_eq!(instance.instance_id(), None);
+    fn a_written_instance_id_is_ignored() {
+        let written = |instance_id: Option<&str>| {
+            InstanceDocument::builder()
+                .value(ValueSlot::Set(WrittenValue::Value(vec![number(1)])))
+                .instance_id(instance_id.map(|id| id.parse().expect("a valid identifier")))
+                .build()
+        };
+        let attribute = name("https://example.org/p");
+        pretty_assertions::assert_eq!(
+            new_instance(&attribute, &written(Some("urn:ngsi-ld:Instance:1")), None).expect("an instance"),
+            new_instance(&attribute, &written(None), None).expect("an instance")
+        );
     }
 }

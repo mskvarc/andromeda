@@ -3,10 +3,12 @@
 //! The instance's identity, its `datasetId`, is the key it is held under in
 //! [`AttributeInstances`](crate::attribute_instances::AttributeInstances), not
 //! a member of the instance itself: two instances with one identity cannot be
-//! held at all.
+//! held at all. An instance holds no `instanceId`: Table 5.2.5-2 has it "Only
+//! used in temporal representation of Properties", and clause 5.2.5 has a Core
+//! write ignore one a producer supplies.
 
 use crate::{attributes::Attributes, date_time_text::DateTimeText, family_value::FamilyValue, proof_seals::ProofSeals, system_instant::SystemInstant};
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use typed_builder::TypedBuilder;
 
 /// One attribute instance: its family and value, its temporal members and its
@@ -27,9 +29,6 @@ pub struct Instance {
     /// `modifiedAt` (clause 4.8), stamped by the broker.
     #[builder(default = None)]
     modified_at: Option<SystemInstant>,
-    /// `instanceId` (clause 4.5.7), on Temporal Evolution instances.
-    #[builder(default = None)]
-    evolution_id: Option<Identifier>,
     /// The `entityIdSealed` and `entityTypeSealed` members of clause 4.5.2.2.
     #[builder(default = ProofSeals::default())]
     proof_seals: ProofSeals,
@@ -73,12 +72,6 @@ impl Instance {
     #[must_use]
     pub const fn modified_at(&self) -> Option<SystemInstant> {
         self.modified_at
-    }
-
-    /// `instanceId`, when present.
-    #[must_use]
-    pub const fn instance_id(&self) -> Option<&Identifier> {
-        self.evolution_id.as_ref()
     }
 
     /// The data-integrity seals.
@@ -128,11 +121,6 @@ impl Instance {
         self.modified_at = modified_at;
     }
 
-    /// Replace `instanceId`.
-    pub fn set_instance_id(&mut self, instance_id: Option<Identifier>) {
-        self.evolution_id = instance_id;
-    }
-
     /// The sub-attributes, for a mutation.
     pub const fn sub_attributes_mut(&mut self) -> &mut Attributes {
         &mut self.sub_attributes
@@ -146,7 +134,6 @@ impl Instance {
         self.value == other.value
             && self.observed_at == other.observed_at
             && self.expires_at == other.expires_at
-            && self.evolution_id == other.evolution_id
             && self.proof_seals == other.proof_seals
             && self.sub_attributes.same_content(&other.sub_attributes)
     }

@@ -863,13 +863,14 @@ fn an_uncommitted_datetime_spelling_is_a_flatten_error() {
     assert!(matches!(flatten(state.attributes(), &keys), Err(FlattenError::UncommittedSpelling(_))));
 }
 
+/// Table 5.2.5-2 makes `instanceId` output-only, so current state holds none
+/// and a document carrying one is held as if it carried none.
 #[test]
-fn an_instance_id_is_a_flatten_error() {
-    let state = committed(&document(
+fn an_instance_id_is_not_held() {
+    let identified = committed(&document(
         &json!({ex("a"): [with(property(&json!([{"@value": 1}])), &json!({ngsi("instanceId"): [{"@id": "urn:ngsi-ld:Instance:1"}]}))]}),
     ));
-    let (keys, _) = dictionary(&state);
-    assert!(matches!(flatten(state.attributes(), &keys), Err(FlattenError::InstanceIdentifier(_))));
+    pretty_assertions::assert_eq!(identified, committed(&document(&json!({ex("a"): [property(&json!([{"@value": 1}]))]}))));
 }
 
 /// Every stored Entity document of a corpus, one per line, flattened and

@@ -78,9 +78,6 @@ impl Serialize for InstanceOut<'_> {
         if let Some(dataset_id) = self.dataset_id {
             write_reference(&mut map, properties::DATASET_ID.as_str(), dataset_id.as_str())?;
         }
-        if let Some(instance_id) = instance.instance_id() {
-            write_reference(&mut map, properties::INSTANCE_ID.as_str(), instance_id.as_str())?;
-        }
         write_seals(&mut map, instance.proof_seals())?;
         write_attributes(&mut map, instance.sub_attributes())?;
         map.end()
