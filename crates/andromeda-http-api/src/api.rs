@@ -124,6 +124,7 @@ mod tests {
         state::{EntityMapRouteServices, EntityMapStateResolver},
     };
     use andromeda_http_extraction::{
+        accept_language::AcceptLanguageReading,
         api_root::{AdvertisedApiRoot, ApiRoot},
         pagination_policy::RequestPagination,
     };
@@ -293,10 +294,18 @@ mod tests {
         let administration: Arc<dyn TenantAdministration> = Arc::new(FakeTenantAdministration);
         let usage: Arc<dyn TenantUsageProbe> = Arc::new(FakeTenantUsage);
         Ok(ApiRoutes::builder()
-            .entity(EntityRoutes::new(Arc::new(RejectEntity), EnabledExtensions::none()))
-            .temporal(TemporalRoutes::new(Arc::new(RejectTemporal), EnabledExtensions::none()))
+            .entity(EntityRoutes::new(
+                Arc::new(RejectEntity),
+                EnabledExtensions::none(),
+                AcceptLanguageReading::Ignored,
+            ))
+            .temporal(TemporalRoutes::new(
+                Arc::new(RejectTemporal),
+                EnabledExtensions::none(),
+                AcceptLanguageReading::Ignored,
+            ))
             .context_registry(ContextRegistryRoutes::new(Arc::new(RejectContextRegistry)))
-            .registration(RegistrationRoutes::new(Arc::new(RejectRegistration)))
+            .registration(RegistrationRoutes::new(Arc::new(RejectRegistration), AcceptLanguageReading::Ignored))
             .subscription(SubscriptionRoutes::new(Arc::new(RejectSubscription)))
             .entity_map(EntityMapRoutes::new(Arc::new(RejectEntityMap)))
             .snapshot(SnapshotRoutes::new(Arc::new(RejectSnapshot)))

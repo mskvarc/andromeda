@@ -1,11 +1,16 @@
 //! Language negotiation over BCP 47 ranges (clause 5.7.2.5).
 //!
-//! The same value reaches a request two ways -- the `lang` query parameter of
-//! clause 4.15 and the `NGSILD-Language` header -- and both spell it with the
-//! `Accept-Language` syntax of RFC 7231 section 5.3.5, so the grammar is owned
-//! here rather than by either carrier.
+//! The same value reaches a request three ways -- the `lang` query parameter
+//! of clause 4.15, the `NGSILD-Language` header and, under the
+//! `accept_language` extension, `Accept-Language` itself -- and all three spell
+//! it with the `Accept-Language` syntax of RFC 9110 section 12.5.4, so the
+//! grammar is owned here rather than by any carrier.
 
 use crate::quality::{Quality, QualityParseError, QualityValue};
+use http::{
+    HeaderValue,
+    header::{InvalidHeaderValue, ToStrError},
+};
 use langtag::{InvalidLangTag, LangTag, LangTagBuf};
 use std::{cmp::Reverse, fmt};
 use thiserror::Error;
@@ -146,6 +151,43 @@ impl LanguageFilter {
         LanguageFilter::new(raw.split(',').map(LanguageRange::parse_ranked).collect::<Result<Vec<_>, _>>()?)
     }
 
+    /// Read the preference list a header spells with the `Accept-Language`
+    /// syntax, across every line it was sent on.
+    ///
+    /// Empty list elements are skipped, as RFC 9110 section 5.6.1 requires of
+    /// a list recipient, so a header naming no language is `Ok(None)`: it
+    /// states no preference rather than an invalid one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LanguageFilterError::NotVisibleText`] for a value that is not
+    /// visible ASCII, and the error of the first element that is not a
+    /// language range with an optional weight.
+    pub fn from_header_values<'i, I>(values: I) -> Result<Option<LanguageFilter>, LanguageFilterError>
+    where
+        I: IntoIterator<Item = &'i HeaderValue>,
+    {
+        let mut preferences = Vec::new();
+        for value in values {
+            let raw = value.to_str().map_err(LanguageFilterError::NotVisibleText)?;
+            for element in raw.split(',').map(str::trim).filter(|element| !element.is_empty()) {
+                preferences.push(LanguageRange::parse_ranked(element)?);
+            }
+        }
+        Ok((!preferences.is_empty()).then_some(LanguageFilter { preferences }))
+    }
+
+    /// The preferences as one header value in the `Accept-Language` syntax,
+    /// in wire order.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`InvalidHeaderValue`] of a rendering that is no header
+    /// value, which a filter built from validated tags never produces.
+    pub fn to_header_value(&self) -> Result<HeaderValue, InvalidHeaderValue> {
+        HeaderValue::from_str(&self.preferences.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "))
+    }
+
     /// Build a filter from already-parsed preferences.
     ///
     /// # Errors
@@ -202,6 +244,9 @@ pub enum LanguageFilterError {
     /// A language tag was invalid.
     #[error("invalid language tag")]
     InvalidLanguageTag(#[source] InvalidLangTag<String>),
+    /// A header carrying the list is not visible ASCII text.
+    #[error("a language preference header is not visible ASCII text")]
+    NotVisibleText(#[source] ToStrError),
 }
 
 #[cfg(test)]
@@ -210,6 +255,7 @@ mod tests {
         language::{LanguageFilter, LanguageFilterError, LanguageRange},
         quality::{Quality, QualityParseError, QualityValue},
     };
+    use http::HeaderValue;
     use langtag::{LangTag, LangTagBuf};
 
     fn range(raw: &str) -> LanguageRange {
@@ -317,6 +363,61 @@ mod tests {
     #[test]
     fn a_parameter_other_than_quality_is_rejected() {
         assert!(matches!(LanguageFilter::parse("fr;level=1"), Err(LanguageFilterError::UnsupportedParameter)));
+    }
+
+    fn header_values(lines: &[&'static str]) -> Vec<HeaderValue> {
+        lines.iter().map(|line| HeaderValue::from_static(line)).collect()
+    }
+
+    #[test]
+    fn a_header_list_is_read_across_every_line_in_wire_order() {
+        let filter = LanguageFilter::from_header_values(&header_values(&["fr-CH, fr;q=0.9", "en;q=0.8, *;q=0.5"]))
+            .expect("valid")
+            .expect("a preference");
+        let rendered: Vec<String> = filter.preferences().iter().map(|preference| preference.value().to_string()).collect();
+        pretty_assertions::assert_eq!(rendered, vec!["fr-CH", "fr", "en", "*"]);
+    }
+
+    #[test]
+    fn a_header_list_skips_empty_elements() {
+        let filter = LanguageFilter::from_header_values(&header_values(&[" , fr ,, en;q=0.5 ,"]))
+            .expect("valid")
+            .expect("a preference");
+        pretty_assertions::assert_eq!(filter.preferences().len(), 2);
+    }
+
+    #[test]
+    fn a_header_list_naming_no_language_states_no_preference() {
+        assert!(LanguageFilter::from_header_values(&header_values(&[""])).expect("valid").is_none());
+        assert!(LanguageFilter::from_header_values(&header_values(&[" , "])).expect("valid").is_none());
+        assert!(LanguageFilter::from_header_values(&[]).expect("valid").is_none());
+    }
+
+    #[test]
+    fn a_header_list_with_an_invalid_element_is_rejected() {
+        assert!(matches!(
+            LanguageFilter::from_header_values(&header_values(&["fr, en_US"])),
+            Err(LanguageFilterError::InvalidLanguageTag(_))
+        ));
+        assert!(matches!(
+            LanguageFilter::from_header_values(&header_values(&["fr;level=1"])),
+            Err(LanguageFilterError::UnsupportedParameter)
+        ));
+    }
+
+    #[test]
+    fn a_header_value_that_is_not_visible_text_is_rejected() {
+        let value = HeaderValue::from_bytes(b"fr\xe9").expect("an opaque header value");
+        assert!(matches!(
+            LanguageFilter::from_header_values([&value]),
+            Err(LanguageFilterError::NotVisibleText(_))
+        ));
+    }
+
+    #[test]
+    fn the_header_value_lists_the_preferences_in_wire_order() {
+        let filter = LanguageFilter::parse("en;q=0.5,fr,*;q=0.1").expect("valid");
+        pretty_assertions::assert_eq!(filter.to_header_value().expect("a header value"), "en; q=0.5, fr, *; q=0.1");
     }
 
     #[test]

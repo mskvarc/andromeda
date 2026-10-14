@@ -15,7 +15,7 @@
 //! `lang` query parameter (NGSI-LD clause 4.15) but transmitted as a
 //! request header instead of a query parameter.
 
-use crate::language::{LanguageFilter, LanguageRange};
+use crate::language::LanguageFilter;
 use http::{HeaderName, HeaderValue};
 use std::iter;
 
@@ -52,23 +52,14 @@ impl headers::Header for NgsiLdLanguage {
     where
         I: Iterator<Item = &'i HeaderValue>,
     {
-        let mut preferences = Vec::new();
-        for value in values {
-            let raw = value.to_str().map_err(|_| headers::Error::invalid())?;
-            for item in raw.split(',') {
-                let trimmed = item.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                preferences.push(LanguageRange::parse_ranked(trimmed).map_err(|_| headers::Error::invalid())?);
-            }
+        match LanguageFilter::from_header_values(values) {
+            Ok(Some(filter)) => Ok(NgsiLdLanguage(filter)),
+            Ok(None) | Err(_) => Err(headers::Error::invalid()),
         }
-        LanguageFilter::new(preferences).map(NgsiLdLanguage).map_err(|_| headers::Error::invalid())
     }
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
-        let rendered: String = self.0.preferences().iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
-        match HeaderValue::from_str(&rendered) {
+        match self.0.to_header_value() {
             Ok(value) => values.extend(iter::once(value)),
             Err(error) => tracing::warn!(error = %error, "failed to encode NGSILD-Language header"),
         }

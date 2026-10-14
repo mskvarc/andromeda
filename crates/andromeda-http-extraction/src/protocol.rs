@@ -33,7 +33,8 @@ use headers::HeaderMapExt;
 /// NGSILD-Snapshot header, NGSILD-EntityMap header, and the Via header in a
 /// single pass.
 pub struct NgsiLdProtocolHeaders {
-    /// Language filter from the `NGSILD-Language` fallback header.
+    /// Language filter from the `NGSILD-Language` header, else from an accepted
+    /// `Accept-Language`; a `lang` parameter outranks it.
     pub language_filter: Option<LanguageFilter>,
     /// Parsed Prefer header (body format, version negotiation).
     pub prefer: PreferHeader,

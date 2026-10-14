@@ -135,6 +135,16 @@ pub struct ExtensionsConfig {
     /// (clause 5.7.2.4).
     #[toml_comment(inline)]
     pub near_distance_band: HttpFeatureMode,
+    /// `Accept-Language` read as the clause 4.15 language filter (non-standard).
+    ///
+    /// NGSI-LD carries the language filter in the `lang` parameter only. When
+    /// enabled, a Retrieve or Query of Entities, Temporal Evolutions or Context
+    /// Source Registrations that carries no `lang` takes its filter from the
+    /// `Accept-Language` header, and each of those responses carries
+    /// `Vary: Accept-Language` (RFC 9110 section 12.5.5). When disabled, the
+    /// header is ignored, as RFC 9110 section 12.5.4 permits.
+    #[toml_comment(inline)]
+    pub accept_language: HttpFeatureMode,
     /// The upper bound on the temporal history instances one delete-by-query may
     /// remove before it is refused with `TooManyResults` (403).
     ///
@@ -160,6 +170,7 @@ impl Default for ExtensionsConfig {
             tenant_management: HttpFeatureMode::Disabled,
             cursor_pagination: HttpFeatureMode::Enabled,
             near_distance_band: HttpFeatureMode::Disabled,
+            accept_language: HttpFeatureMode::Disabled,
             temporal_delete_by_query_max_matches: DEFAULT_TEMPORAL_DELETE_MAX_MATCHES,
             temporal_aggregation_grouping_max_groups: DEFAULT_TEMPORAL_AGGREGATION_MAX_GROUPS,
         }
@@ -205,6 +216,7 @@ impl ExtensionsConfig {
             || matches!(self.tenant_management, HttpFeatureMode::Enabled)
             || matches!(self.cursor_pagination, HttpFeatureMode::Enabled)
             || matches!(self.near_distance_band, HttpFeatureMode::Enabled)
+            || matches!(self.accept_language, HttpFeatureMode::Enabled)
     }
 }
 
@@ -224,6 +236,7 @@ mod tests {
         pretty_assertions::assert_eq!(config.temporal_linked_retrieval, HttpFeatureMode::Disabled);
         pretty_assertions::assert_eq!(config.tenant_management, HttpFeatureMode::Disabled);
         pretty_assertions::assert_eq!(config.near_distance_band, HttpFeatureMode::Disabled);
+        pretty_assertions::assert_eq!(config.accept_language, HttpFeatureMode::Disabled);
     }
 
     /// Clause 5.5.9.1 permits opaque pointers outright, so cursor pagination is
@@ -267,6 +280,7 @@ mod tests {
             tenant_management: HttpFeatureMode::Enabled,
             cursor_pagination: HttpFeatureMode::Disabled,
             near_distance_band: HttpFeatureMode::Enabled,
+            accept_language: HttpFeatureMode::Enabled,
             temporal_delete_by_query_max_matches: 42,
             temporal_aggregation_grouping_max_groups: 7,
         };
@@ -278,6 +292,7 @@ mod tests {
         pretty_assertions::assert_eq!(parsed.temporal_linked_retrieval, HttpFeatureMode::Enabled);
         pretty_assertions::assert_eq!(parsed.cursor_pagination, HttpFeatureMode::Disabled);
         pretty_assertions::assert_eq!(parsed.near_distance_band, HttpFeatureMode::Enabled);
+        pretty_assertions::assert_eq!(parsed.accept_language, HttpFeatureMode::Enabled);
         pretty_assertions::assert_eq!(parsed.temporal_delete_by_query_max_matches, 42);
         pretty_assertions::assert_eq!(parsed.temporal_aggregation_grouping_max_groups, 7);
     }
@@ -292,6 +307,7 @@ mod tests {
         assert!(rendered.contains("temporal_linked_retrieval"), "{rendered}");
         assert!(rendered.contains("cursor_pagination"), "{rendered}");
         assert!(rendered.contains("near_distance_band"), "{rendered}");
+        assert!(rendered.contains("accept_language"), "{rendered}");
     }
 
     #[test]

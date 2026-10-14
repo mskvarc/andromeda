@@ -59,6 +59,7 @@ pub(super) async fn admit_request(
     instance: &Uri,
 ) -> Result<AdmittedQuery, ProblemResponse> {
     protocol.extensions().apply_to_temporal_query(params).with_instance(instance)?;
+    params.lang = params.lang.take().or(protocol.language_filter);
     let map_use = resolve_query_map(&state.entity_maps, target, params, protocol.entity_map.as_ref(), instance).await?;
     if !target.permits_federation() {
         params.local = Some(true);

@@ -2,14 +2,12 @@
 
 use crate::{
     component_report::{ComponentReportError, collect as collect_component_reports},
-    config::{
-        management::{ManagementMode, MetricsExposure},
-        pagination::resolve_pagination,
-        runtime::RuntimeConfig,
-    },
+    config::{management::MetricsExposure, pagination::resolve_pagination, runtime::RuntimeConfig},
+    extension_routing::{accept_language_reading, tenant_management_mode},
     listeners,
     logging,
     outcome::ProcessExitOutcome,
+    planes::assemble_planes,
     postgresql_maintenance::{MaintenanceRegistrationError, register_postgresql_maintenance},
     routes::{
         context_registry::BrokerContextRegistryStateResolver,
@@ -28,13 +26,9 @@ use crate::{
     tenant_waker::{TenantWakerRegistrationError, register_tenant_waker},
 };
 use andromeda_delivery::mqtt::indicator::MqttHealthIndicator;
-use andromeda_extensions::{enabled::EnabledExtensions, startup_log::log_conformance_override};
+use andromeda_extensions::startup_log::log_conformance_override;
 use andromeda_health::aggregate::Health;
-use andromeda_http_api::{
-    api::HttpApi,
-    management::{ManagementApi, ManagementRoutes},
-    routes::ApiRoutes,
-};
+use andromeda_http_api::{api::HttpApi, management::ManagementApi, routes::ApiRoutes};
 use andromeda_http_component_report::routes::ComponentReportRoutes;
 use andromeda_http_context_registry::routes::ContextRegistryRoutes;
 use andromeda_http_entity::routes::EntityRoutes;
@@ -48,7 +42,7 @@ use andromeda_http_stack::stack::{HttpStack, HttpStackBuildError};
 use andromeda_http_subscription::routes::SubscriptionRoutes;
 use andromeda_http_telemetry::{error::TelemetryHttpError, routes::TelemetryRoutes};
 use andromeda_http_temporal::routes::TemporalRoutes;
-use andromeda_http_tenancy::routes::{TenancyRoutes, TenantManagement};
+use andromeda_http_tenancy::routes::TenancyRoutes;
 use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_request::pagination::policy::PaginationPolicyError;
 use andromeda_postgresql_context_store::{
@@ -202,16 +196,15 @@ fn install_telemetry(exposure: MetricsExposure) -> Result<Option<Arc<TelemetryRe
     }
 }
 
-/// The tenant-management routing switch the HTTP crate gates on.
-///
-/// Derived here rather than in the HTTP crate, which may not depend on the
-/// extension set (the HTTP stack depends on it, so the reverse would be a cycle).
-fn tenant_management_mode(enabled: EnabledExtensions) -> TenantManagement {
-    if enabled.tenant_management_enabled() {
-        TenantManagement::Enabled
-    } else {
-        TenantManagement::Disabled
+/// The health the probes report: the main database and, when the default
+/// tenant delivers over MQTT, its MQTT pool.
+fn broker_health(registry: &PostgresTenantRegistry, factory: &BrokerTenantFactory) -> Health {
+    let database_indicator = DatabaseHealthIndicator::new(registry.main_pool().clone()); // clone: PgPool is a shared handle
+    let mut health = Health::builder().with_indicator(database_indicator);
+    if let Some(mqtt_pool) = factory.default_mqtt_pool() {
+        health = health.with_indicator(MqttHealthIndicator::new(mqtt_pool));
     }
+    health.build()
 }
 
 /// The manager as the HTTP tenant-administration capability.
@@ -314,26 +307,30 @@ async fn construct(
     // evicted, so it needs no hold to stay resident.
     drop(tenants.resolve_state(&TenantRef::UnnamedDefault, TenantCreationPolicy::MustExist).await?);
 
-    let database_indicator = DatabaseHealthIndicator::new(registry.main_pool().clone()); // clone: PgPool is a shared handle
-    let mut health = Health::builder().with_indicator(database_indicator);
-    if let Some(mqtt_pool) = factory.default_mqtt_pool() {
-        health = health.with_indicator(MqttHealthIndicator::new(mqtt_pool));
-    }
+    let health = broker_health(&registry, &factory);
     let component_reports = collect_component_reports(registry.main_pool()).await?;
 
     let enabled_extensions = config.extensions.resolve();
     log_conformance_override(&config.extensions);
     let pagination = resolve_pagination(&config.extensions, config.pagination)?;
 
-    let entity_routes = EntityRoutes::new(Arc::new(BrokerEntityStateResolver::new(Arc::clone(&tenants))), enabled_extensions);
-    let temporal_routes = TemporalRoutes::new(Arc::new(BrokerTemporalStateResolver::new(Arc::clone(&tenants))), enabled_extensions);
+    let accept_language = accept_language_reading(enabled_extensions);
+    let entity_routes = EntityRoutes::new(
+        Arc::new(BrokerEntityStateResolver::new(Arc::clone(&tenants))),
+        enabled_extensions,
+        accept_language,
+    );
+    let temporal_routes = TemporalRoutes::new(
+        Arc::new(BrokerTemporalStateResolver::new(Arc::clone(&tenants))),
+        enabled_extensions,
+        accept_language,
+    );
     let context_registry_routes = ContextRegistryRoutes::new(Arc::new(BrokerContextRegistryStateResolver::new(Arc::clone(&tenants))));
-    let registration_routes = RegistrationRoutes::new(Arc::new(BrokerRegistrationStateResolver::new(Arc::clone(&tenants))));
+    let registration_routes = RegistrationRoutes::new(Arc::new(BrokerRegistrationStateResolver::new(Arc::clone(&tenants))), accept_language);
     let subscription_routes = SubscriptionRoutes::new(Arc::new(BrokerSubscriptionStateResolver::new(Arc::clone(&tenants))));
     let entity_map_routes = EntityMapRoutes::new(Arc::new(BrokerEntityMapStateResolver::new(Arc::clone(&tenants))));
     let snapshot_routes = SnapshotRoutes::new(Arc::new(BrokerSnapshotStateResolver::new(Arc::clone(&tenants))));
     let telemetry_routes = telemetry.map(TelemetryRoutes::new).transpose()?;
-    let health = health.build();
     let tenant_administration = tenant_administration(&tenants);
     let tenant_management = tenant_management_mode(enabled_extensions);
     let routes = ApiRoutes::builder()
@@ -363,30 +360,4 @@ async fn construct(
         tenants,
         process_tasks,
     })
-}
-
-/// Assemble the data plane and, when it stands alone, the management plane, per
-/// the configured topology.
-///
-/// `separate-port` isolates the observability endpoints behind their own
-/// listener; `merged` mounts them at the root of the data-plane listener;
-/// `disabled` serves no management plane, and validation has already forced
-/// metrics off in that case. The management probes are backed by the same
-/// registered indicators as the data-plane probes, over one shared `Arc`.
-fn assemble_planes(
-    mode: ManagementMode,
-    routes: ApiRoutes,
-    health: Health,
-    metrics: Option<TelemetryRoutes>,
-    stack: &HttpStack,
-) -> (HttpApi, Option<ManagementApi>) {
-    let management_routes = ManagementRoutes {
-        health: HealthRoutes::new(health),
-        metrics,
-    };
-    match mode {
-        ManagementMode::SeparatePort => (HttpApi::assemble(routes, None, stack), Some(ManagementApi::assemble(management_routes, stack))),
-        ManagementMode::Merged => (HttpApi::assemble(routes, Some(management_routes), stack), None),
-        ManagementMode::Disabled => (HttpApi::assemble(routes, None, stack), None),
-    }
 }

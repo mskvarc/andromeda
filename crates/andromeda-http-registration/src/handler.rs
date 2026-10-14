@@ -12,11 +12,11 @@ use andromeda_http_extraction::{
     jsonld::JsonLd,
     pagination_policy::RequestPagination,
     prefer::PreferHeader,
+    protocol::NgsiLdProtocolHeaders,
     query::ValidatedQuery,
     response_context_request::ResponseContextRequest,
     tenant_state::{ExistingTenantState, ProvisionableTenantState},
     typed_path::TypedPath,
-    via::IncomingVia,
 };
 use andromeda_http_headers::via::Via;
 use andromeda_http_response::{
@@ -101,7 +101,7 @@ pub(crate) async fn query(
     // output as a JSON-LD array of registrations, which has no GeoJSON form.
     accept: AcceptFormatNoGeo,
     ResponseContextRequest { context, api_root }: ResponseContextRequest,
-    IncomingVia(incoming_via): IncomingVia,
+    protocol: NgsiLdProtocolHeaders,
     RequestPagination {
         policy: pagination,
         context: page_context,
@@ -109,6 +109,7 @@ pub(crate) async fn query(
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
 ) -> Result<Response, ProblemResponse> {
     let options = params.parse_options().with_registration_instance(&uri)?;
+    let language_filter = params.lang.as_ref().or(protocol.language_filter.as_ref());
     // Clause 5.10.2: a discovery always reports its total, so `limit=0` asks
     // for that total alone (Table 6.3.10-1). The registrations are paged in
     // identifier order in either pagination mode.
@@ -126,7 +127,7 @@ pub(crate) async fn query(
         .with_registration_instance(&uri)?;
     // Clause 4.3.6.4: the `Via` chain lists the context sources the request
     // already passed through; clause 5.12 excludes their registrations.
-    let encountered_sources: Vec<_> = incoming_via.iter().flat_map(Via::pseudonyms).cloned().collect(); // clone: the discovery owns the listing across the store await
+    let encountered_sources: Vec<_> = protocol.incoming_via.iter().flat_map(Via::pseudonyms).cloned().collect(); // clone: the discovery owns the listing across the store await
     let DiscoveredRegistrations {
         registrations,
         total,
@@ -144,7 +145,7 @@ pub(crate) async fn query(
                 .with_sys_attrs(options.sys_attrs)
                 .with_pick(params.pick.as_deref())
                 .with_omit(params.omit.as_deref())
-                .with_language_filter(params.lang.as_ref())
+                .with_language_filter(language_filter)
                 .render()
         })
         .collect::<Result<Vec<_>, _>>()

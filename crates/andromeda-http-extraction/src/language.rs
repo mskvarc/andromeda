@@ -1,10 +1,12 @@
 //! Language negotiation extractor for NGSI-LD requests.
 //!
-//! Resolves an optional [`LanguageFilter`] from the `NGSILD-Language` header.
-//! Query parameters are parsed by the endpoint-specific request model so each
-//! wire value is decoded exactly once.
+//! Resolves an optional [`LanguageFilter`] from the `NGSILD-Language` header,
+//! or, failing that, from the `Accept-Language` header the
+//! [`crate::accept_language`] layer accepted. Query parameters are parsed by
+//! the endpoint-specific request model so each wire value is decoded exactly
+//! once, and the handler lets a `lang` outrank either header.
 
-use crate::addressed_uri::addressed_uri;
+use crate::{accept_language::AcceptedLanguage, addressed_uri::addressed_uri};
 use andromeda_http_headers::{language::LanguageFilter, ngsild_language::NgsiLdLanguage};
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use axum::{extract::FromRequestParts, http::request::Parts};
@@ -13,13 +15,13 @@ use std::future::{Future, ready};
 
 /// Axum extractor that resolves an optional [`LanguageFilter`] from the request.
 ///
-/// If the header is absent, the inner value is `None`. An invalid header
-/// produces a `BadRequestData` rejection.
+/// If neither header names a language, the inner value is `None`. An invalid
+/// `NGSILD-Language` produces a `BadRequestData` rejection.
 pub struct LanguageNegotiation(pub Option<LanguageFilter>);
 
 /// Decode the `NGSILD-Language` header, rejecting a header that is present but
-/// not a valid language list.
-fn resolve_language_negotiation(parts: &Parts) -> Result<LanguageNegotiation, ExtractorRejection> {
+/// not a valid language list, and fall back to the accepted `Accept-Language`.
+fn resolve_language_negotiation(parts: &mut Parts) -> Result<LanguageNegotiation, ExtractorRejection> {
     if parts.headers.contains_key("ngsild-language") {
         let header = parts
             .headers
@@ -28,7 +30,9 @@ fn resolve_language_negotiation(parts: &Parts) -> Result<LanguageNegotiation, Ex
         return Ok(LanguageNegotiation(Some(header.into_filter())));
     }
 
-    Ok(LanguageNegotiation(None))
+    Ok(LanguageNegotiation(
+        parts.extensions.remove::<AcceptedLanguage>().map(|AcceptedLanguage(filter)| filter),
+    ))
 }
 
 impl<S> FromRequestParts<S> for LanguageNegotiation

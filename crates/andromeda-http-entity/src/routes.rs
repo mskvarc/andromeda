@@ -8,7 +8,7 @@ use crate::{
     state::{EntityRouteState, EntityStateResolver},
 };
 use andromeda_extensions::enabled::EnabledExtensions;
-use andromeda_http_extraction::scoped_response::echo_scope_headers;
+use andromeda_http_extraction::{accept_language::AcceptLanguageReading, scoped_response::echo_scope_headers};
 use axum::{
     Extension,
     Router,
@@ -25,20 +25,21 @@ pub struct EntityRoutes {
 
 impl EntityRoutes {
     /// Construct every entity, entity-operation, type, and attribute route with
-    /// a focused tenant resolver and the enabled-extension set.
+    /// a focused tenant resolver, the enabled-extension set, and how Retrieve
+    /// and Query Entities read `Accept-Language`.
     ///
     /// The extension set is attached as a request extension so the single
     /// `DELETE /entities` gate reads it: the `EntityQuery` extractor has no
     /// config access, so the `purge_dataset_scope` gate is applied in the
     /// handler off this layer.
-    pub fn new(resolver: Arc<dyn EntityStateResolver>, enabled: EnabledExtensions) -> EntityRoutes {
+    pub fn new(resolver: Arc<dyn EntityStateResolver>, enabled: EnabledExtensions, accept_language: AcceptLanguageReading) -> EntityRoutes {
         let entity_routes = Router::new()
             .route("/", post(entity::create::create))
-            .route("/", get(entity::query::query))
+            .route("/", accept_language.negotiate(get(entity::query::query)))
             .route("/", delete(entity::delete_by_query::delete_by_query))
             .route("/", patch(entity::missing_identifier::patch_no_id))
             .route("/", put(entity::missing_identifier::put_no_id))
-            .route("/{id}", get(entity::retrieve::get))
+            .route("/{id}", accept_language.negotiate(get(entity::retrieve::get)))
             .route("/{id}", delete(entity::delete::delete))
             .route("/{id}", patch(entity::merge::merge))
             .route("/{id}", put(entity::replace::update))
@@ -60,7 +61,7 @@ impl EntityRoutes {
             .route("/update", post(entity_operations::update::batch_update))
             .route("/merge", post(entity_operations::merge::batch_merge))
             .route("/delete", post(entity_operations::delete::batch_delete))
-            .route("/query", post(entity_operations::query::query));
+            .route("/query", accept_language.negotiate(post(entity_operations::query::query)));
 
         let type_routes = Router::new().route("/", get(entity_type::query)).route("/{type_}", get(entity_type::get));
         let attribute_routes = Router::new().route("/", get(attribute::query)).route("/{attr_id}", get(attribute::get));
@@ -88,6 +89,7 @@ mod tests {
         state::{EntityRouteServices, EntityStateResolver},
     };
     use andromeda_extensions::enabled::EnabledExtensions;
+    use andromeda_http_extraction::accept_language::AcceptLanguageReading;
     use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
     use axum::{
         body::Body,
@@ -120,7 +122,7 @@ mod tests {
 
     #[tokio::test]
     async fn complete_entity_route_inventory_is_owned_by_this_fragment() -> Result<(), Box<dyn Error>> {
-        let routes = EntityRoutes::new(Arc::new(RejectingResolver), EnabledExtensions::none()).into_router();
+        let routes = EntityRoutes::new(Arc::new(RejectingResolver), EnabledExtensions::none(), AcceptLanguageReading::Ignored).into_router();
         for (method, path) in [
             (Method::POST, "/entities"),
             (Method::GET, "/entities"),
@@ -158,7 +160,7 @@ mod tests {
     /// handlers with the branch target resolved at the HTTP boundary.
     #[tokio::test]
     async fn snapshot_scoped_core_operations_reach_their_handlers() -> Result<(), Box<dyn Error>> {
-        let routes = EntityRoutes::new(Arc::new(RejectingResolver), EnabledExtensions::none()).into_router();
+        let routes = EntityRoutes::new(Arc::new(RejectingResolver), EnabledExtensions::none(), AcceptLanguageReading::Ignored).into_router();
         for (method, path) in [
             (Method::POST, "/entities"),
             (Method::PATCH, "/entities/urn:ngsi-ld:Entity:1"),
@@ -180,7 +182,7 @@ mod tests {
 
     #[tokio::test]
     async fn methods_outside_the_inventory_are_rejected() -> Result<(), Box<dyn Error>> {
-        let routes = EntityRoutes::new(Arc::new(RejectingResolver), EnabledExtensions::none()).into_router();
+        let routes = EntityRoutes::new(Arc::new(RejectingResolver), EnabledExtensions::none(), AcceptLanguageReading::Ignored).into_router();
         for (method, path) in [
             (Method::POST, "/types"),
             (Method::DELETE, "/attributes/speed"),

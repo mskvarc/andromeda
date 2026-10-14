@@ -40,6 +40,8 @@ const TENANT_MANAGEMENT_TOKEN: &str = "tenant-management";
 const CURSOR_PAGINATION_TOKEN: &str = "cursor-pagination";
 /// The advertised token for the `near` distance band extension.
 const NEAR_DISTANCE_BAND_TOKEN: &str = "near-distance-band";
+/// The advertised token for the `Accept-Language` language filter extension.
+const ACCEPT_LANGUAGE_TOKEN: &str = "accept-language";
 
 /// Merge the enabled extension tokens into the operator's `contextSourceExtras`.
 ///
@@ -104,6 +106,9 @@ fn enabled_tokens(enabled: EnabledExtensions) -> Vec<&'static str> {
     if enabled.near_distance_band_enabled() {
         tokens.push(token(Extension::NearDistanceBand));
     }
+    if enabled.accept_language_enabled() {
+        tokens.push(token(Extension::AcceptLanguage));
+    }
     tokens
 }
 
@@ -117,6 +122,7 @@ const fn token(extension: Extension) -> &'static str {
         Extension::TenantManagement => TENANT_MANAGEMENT_TOKEN,
         Extension::CursorPagination => CURSOR_PAGINATION_TOKEN,
         Extension::NearDistanceBand => NEAR_DISTANCE_BAND_TOKEN,
+        Extension::AcceptLanguage => ACCEPT_LANGUAGE_TOKEN,
     }
 }
 
@@ -139,6 +145,7 @@ pub fn advertises(extras: Option<&JsonLiteral>, extension: Extension) -> bool {
 mod tests {
     use crate::{
         advertisement::{
+            ACCEPT_LANGUAGE_TOKEN,
             CURSOR_PAGINATION_TOKEN,
             EXTENSION_KEY,
             NEAR_DISTANCE_BAND_TOKEN,
@@ -187,6 +194,7 @@ mod tests {
             tenant_management: HttpFeatureMode::Enabled,
             cursor_pagination: HttpFeatureMode::Enabled,
             near_distance_band: HttpFeatureMode::Enabled,
+            accept_language: HttpFeatureMode::Enabled,
             temporal_delete_by_query_max_matches: 100,
             temporal_aggregation_grouping_max_groups: 100,
         }
@@ -204,6 +212,7 @@ mod tests {
             TENANT_MANAGEMENT_TOKEN,
             CURSOR_PAGINATION_TOKEN,
             NEAR_DISTANCE_BAND_TOKEN,
+            ACCEPT_LANGUAGE_TOKEN,
         ] {
             assert!(rendered.iter().any(|rendered| rendered == token), "{rendered:?}");
         }
@@ -243,6 +252,19 @@ mod tests {
             !default_rendered.iter().any(|token| token == TEMPORAL_LINKED_RETRIEVAL_TOKEN),
             "{default_rendered:?}"
         );
+    }
+
+    #[test]
+    fn accept_language_is_advertised_only_when_enabled() {
+        let config = ExtensionsConfig {
+            accept_language: HttpFeatureMode::Enabled,
+            cursor_pagination: HttpFeatureMode::Disabled,
+            ..ExtensionsConfig::default()
+        };
+        pretty_assertions::assert_eq!(tokens(&extras(None, config.resolve()).expect("extras present")), vec![ACCEPT_LANGUAGE_TOKEN]);
+
+        let default_rendered = tokens(&extras(None, ExtensionsConfig::default().resolve()).expect("extras present"));
+        assert!(!default_rendered.iter().any(|token| token == ACCEPT_LANGUAGE_TOKEN), "{default_rendered:?}");
     }
 
     /// A default broker serves cursor pagination, and says so.

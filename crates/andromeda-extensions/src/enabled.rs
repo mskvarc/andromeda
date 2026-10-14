@@ -32,6 +32,8 @@ pub enum Extension {
     CursorPagination,
     /// A `near` geo-query bounded by both `maxDistance` and `minDistance`.
     NearDistanceBand,
+    /// `Accept-Language` read as the language filter where `lang` is absent.
+    AcceptLanguage,
 }
 
 /// The extensions that are actually on for this process.
@@ -64,6 +66,7 @@ impl ExtensionsConfig {
             (self.tenant_management, Extension::TenantManagement),
             (self.cursor_pagination, Extension::CursorPagination),
             (self.near_distance_band, Extension::NearDistanceBand),
+            (self.accept_language, Extension::AcceptLanguage),
         ] {
             if matches!(mode, HttpFeatureMode::Enabled) {
                 enabled.insert(extension);
@@ -134,6 +137,12 @@ impl EnabledExtensions {
     pub fn near_distance_band_enabled(&self) -> bool {
         self.enabled.contains(Extension::NearDistanceBand)
     }
+
+    /// Whether `Accept-Language` stands in for an absent `lang`.
+    #[must_use]
+    pub fn accept_language_enabled(&self) -> bool {
+        self.enabled.contains(Extension::AcceptLanguage)
+    }
 }
 
 #[cfg(test)]
@@ -151,6 +160,7 @@ mod tests {
             tenant_management: HttpFeatureMode::Enabled,
             cursor_pagination: HttpFeatureMode::Enabled,
             near_distance_band: HttpFeatureMode::Enabled,
+            accept_language: HttpFeatureMode::Enabled,
             temporal_delete_by_query_max_matches: 100,
             temporal_aggregation_grouping_max_groups: 100,
         }
@@ -166,6 +176,7 @@ mod tests {
         assert!(!enabled.tenant_management_enabled());
         assert!(enabled.cursor_pagination_enabled());
         assert!(!enabled.near_distance_band_enabled());
+        assert!(!enabled.accept_language_enabled());
     }
 
     #[test]
@@ -178,6 +189,7 @@ mod tests {
         assert!(enabled.tenant_management_enabled());
         assert!(enabled.cursor_pagination_enabled());
         assert!(enabled.near_distance_band_enabled());
+        assert!(enabled.accept_language_enabled());
     }
 
     /// The conformance override wins over every feature field at once, so a
@@ -195,6 +207,7 @@ mod tests {
         assert!(!enabled.tenant_management_enabled());
         assert!(!enabled.cursor_pagination_enabled());
         assert!(!enabled.near_distance_band_enabled());
+        assert!(!enabled.accept_language_enabled());
     }
 
     /// Clause 5.7.3.4 and 5.7.4.4 refuse Linked Entity retrieval on the
@@ -231,6 +244,7 @@ mod tests {
         assert!(!enabled.tenant_management_enabled());
         assert!(!enabled.cursor_pagination_enabled());
         assert!(!enabled.near_distance_band_enabled());
+        assert!(!enabled.accept_language_enabled());
     }
 
     #[test]
@@ -242,5 +256,6 @@ mod tests {
         assert!(enabled.temporal_linked_retrieval_enabled());
         assert!(enabled.tenant_management_enabled());
         assert!(enabled.near_distance_band_enabled());
+        assert!(enabled.accept_language_enabled());
     }
 }

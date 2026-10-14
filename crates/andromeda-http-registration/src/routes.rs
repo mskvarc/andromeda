@@ -4,6 +4,7 @@ use crate::{
     handler,
     state::{RegistrationRouteState, RegistrationStateResolver},
 };
+use andromeda_http_extraction::accept_language::AcceptLanguageReading;
 use axum::{
     Router,
     routing::{get, post},
@@ -16,10 +17,13 @@ pub struct RegistrationRoutes {
 }
 
 impl RegistrationRoutes {
-    /// Construct every registration route with only its focused resolver.
-    pub fn new(resolver: Arc<dyn RegistrationStateResolver>) -> RegistrationRoutes {
+    /// Construct every registration route with its focused resolver, Query
+    /// Context Source Registrations reading `Accept-Language` as
+    /// `accept_language` says.
+    pub fn new(resolver: Arc<dyn RegistrationStateResolver>, accept_language: AcceptLanguageReading) -> RegistrationRoutes {
         let registration_routes = Router::new()
-            .route("/", post(handler::create).get(handler::query))
+            .route("/", post(handler::create))
+            .route("/", accept_language.negotiate(get(handler::query)))
             .route("/{registration_id}", get(handler::get).patch(handler::update).delete(handler::delete));
         let router = Router::new()
             .nest("/csourceRegistrations", registration_routes)
@@ -35,7 +39,11 @@ impl RegistrationRoutes {
 
 #[cfg(test)]
 mod tests {
-    use crate::state::{RegistrationRouteServices, RegistrationStateResolver};
+    use crate::{
+        routes::RegistrationRoutes,
+        state::{RegistrationRouteServices, RegistrationStateResolver},
+    };
+    use andromeda_http_extraction::accept_language::AcceptLanguageReading;
     use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
     use axum::{
         body::Body,
@@ -60,7 +68,7 @@ mod tests {
 
     #[tokio::test]
     async fn owns_the_complete_registration_inventory() -> Result<(), Box<dyn Error>> {
-        let routes = super::RegistrationRoutes::new(Arc::new(RejectingResolver)).into_router();
+        let routes = RegistrationRoutes::new(Arc::new(RejectingResolver), AcceptLanguageReading::Ignored).into_router();
         for (method, path) in [
             (Method::POST, "/csourceRegistrations"),
             (Method::GET, "/csourceRegistrations"),
