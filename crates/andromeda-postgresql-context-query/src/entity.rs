@@ -8,6 +8,7 @@ use crate::{
     entity_total::{EntityTotal, KeyedTotal, TotalSource, entity_total},
     gated_page::PageSource,
     keyed_page::keyed_page,
+    numbered_page::{NumberedOrder, numbered_order, numbered_page},
     result_ordering,
     selector_predicate::condition as selector_condition,
 };
@@ -53,10 +54,11 @@ pub struct EntityQuery {
     /// The order the page's rows come back in, which the store presents
     /// ascending.
     pub read_order: ReadOrder,
-    /// How PostgreSQL may plan and run `select`: a gated page, keyed or cut
-    /// from the carriers of its `attrs`, with its bound values, which alone
-    /// let the planner price an index against walking the selection, and
-    /// without the parallel workers a gated-off branch would launch.
+    /// How PostgreSQL may plan and run `select`: a gated page, keyed, cut
+    /// from the carriers of its `attrs` or walked in the order of a numbered
+    /// Attribute, with its bound values, which alone let the planner price an
+    /// index against walking the selection, and without the parallel workers
+    /// a gated-off branch would launch.
     pub planning: StatementPlanning,
     /// How PostgreSQL may plan the statement `total` runs: a keyed count with
     /// its bound values, for the same pricing.
@@ -73,6 +75,9 @@ enum PageShape<'q> {
     /// The gated page of a selection by `attrs` alone, the statement reading
     /// the Entities that carry one of the Attributes.
     Carriers(SelectStatement),
+    /// The gated page of a selection ordered by one Attribute, walked in the
+    /// order of its value index while every instance of it holds a number.
+    Numbered(NumberedOrder),
 }
 
 /// A compiled identifier-only entity query.
@@ -118,7 +123,10 @@ pub fn build_query(
         .and_then(|q_expr| keyed_candidates(q_expr, &rows, names).map(|keyed| (q_expr, keyed)));
     let shape = match keyed {
         Some((q_expr, keyed)) => PageShape::Keyed(q_expr, keyed),
-        None => carriers(query, names, schema.as_ref()).map_or(PageShape::Plain, PageShape::Carriers),
+        None => carriers(query, names, schema.as_ref())
+            .map(PageShape::Carriers)
+            .or_else(|| numbered_order(query, names, window).map(PageShape::Numbered))
+            .unwrap_or(PageShape::Plain),
     };
 
     // An offset page, and the first page of a cursor walk, piggyback a
@@ -128,10 +136,12 @@ pub fn build_query(
     let counted_on_page = match (count, &window.start, &shape) {
         (CountPolicy::Emit, PageStart::Offset(_) | PageStart::Cursor(None), PageShape::Plain) => CountPolicy::Emit,
         (CountPolicy::Emit, PageStart::Cursor(Some(_)), PageShape::Plain)
-        | (CountPolicy::Emit, PageStart::Offset(_) | PageStart::Cursor(_), PageShape::Keyed(..) | PageShape::Carriers(_))
-        | (CountPolicy::Omit, PageStart::Offset(_) | PageStart::Cursor(_), PageShape::Plain | PageShape::Keyed(..) | PageShape::Carriers(_)) => {
-            CountPolicy::Omit
-        }
+        | (CountPolicy::Emit, PageStart::Offset(_) | PageStart::Cursor(_), PageShape::Keyed(..) | PageShape::Carriers(_) | PageShape::Numbered(_))
+        | (
+            CountPolicy::Omit,
+            PageStart::Offset(_) | PageStart::Cursor(_),
+            PageShape::Plain | PageShape::Keyed(..) | PageShape::Carriers(_) | PageShape::Numbered(_),
+        ) => CountPolicy::Omit,
     };
     let source = PageSource {
         relations: &relations,
@@ -176,6 +186,16 @@ pub fn build_query(
         }
         PageShape::Carriers(carriers) => {
             let (page, read_order) = carrier_page(&source, carriers)?;
+            (
+                heads_over(page, &rows, CountPolicy::Omit),
+                read_order,
+                StatementPlanning::GatedBranches,
+                StatementPlanning::Cached,
+                None,
+            )
+        }
+        PageShape::Numbered(order) => {
+            let (page, read_order) = numbered_page(&source, &order)?;
             (
                 heads_over(page, &rows, CountPolicy::Omit),
                 read_order,

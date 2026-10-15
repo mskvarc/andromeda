@@ -81,7 +81,7 @@ impl PageSource<'_> {
 
     /// How many matches the page needs from where the walk starts: every
     /// Entity an offset skips and the page itself, or the page past a cursor.
-    fn need(&self) -> u64 {
+    pub(crate) fn need(&self) -> u64 {
         match self.window.start {
             PageStart::Offset(offset) => u64::from(offset) + u64::from(self.window.limit),
             PageStart::Cursor(_) => u64::from(self.window.limit),
@@ -200,6 +200,6 @@ fn short_walk(short: ShortWalk<'_>, window: &PageWindow, need: u64) -> Result<Se
 
 /// `SELECT * FROM (<branch>) AS <alias>`, so the branch keeps its own order
 /// and window inside the union.
-fn wrapped(branch: SelectStatement, alias: &str) -> SelectStatement {
+pub(crate) fn wrapped(branch: SelectStatement, alias: &str) -> SelectStatement {
     Query::select().column(Asterisk).from_subquery(branch, Alias::new(alias)).take()
 }

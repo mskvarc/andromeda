@@ -117,11 +117,48 @@ pub fn sort_keys(
         }
     }
 
-    keys.push(SortKey::new(
+    keys.push(identifier_tiebreak(rows));
+    Ok(keys)
+}
+
+/// The `id ASC` key every result order ends with, so that pagination is
+/// stable (clause 5.5.9).
+pub(crate) fn identifier_tiebreak(rows: &EntityRowRefs) -> SortKey {
+    SortKey::new(
         rows.identity_column(Entities::Id),
         KeyOrder::new(SortDirection::Ascending, NullPlacement::Unstated),
-    ));
-    Ok(keys)
+    )
+}
+
+/// What one attribute-valued term compares an Entity on, in the order clause
+/// 4.23.2 reads it: the rank of the value's datatype, then the value as a
+/// number, as an instant and as collated text, each `NULL` for a value of
+/// another datatype.
+pub(crate) struct RankedValue {
+    /// The clause 4.23.2 rank of the datatype, `NULL` for no value.
+    pub(crate) rank: SimpleExpr,
+    /// The value when it is a number.
+    pub(crate) number: SimpleExpr,
+    /// The value when it is a `DateTime`.
+    pub(crate) instant: SimpleExpr,
+    /// The value when it compares as text, collated.
+    pub(crate) text: SimpleExpr,
+}
+
+/// The four keys `value` is ordered by in `direction`.
+///
+/// The rank runs ascending whichever way the term does: the sequence it is
+/// read from already runs the term's way, and reversing the key as well would
+/// move Null and the absent attribute to the front of a descending sort, which
+/// clause 4.23.2 pins to the back.
+pub(crate) fn ranked_keys(value: RankedValue, direction: SortDirection) -> [SortKey; 4] {
+    let by_value = KeyOrder::new(direction, NullPlacement::Unstated);
+    [
+        SortKey::new(value.rank, nulls_last(SortDirection::Ascending)),
+        SortKey::new(value.number, by_value),
+        SortKey::new(value.instant, by_value),
+        SortKey::new(value.text, by_value),
+    ]
 }
 
 /// `direction` with absent values last in either direction (clause 4.23.2).
@@ -160,17 +197,53 @@ fn attribute_keys(
     collation: &PostgresCollation,
     distance: Option<SimpleExpr>,
 ) -> impl Iterator<Item = SortKey> {
-    let by_value = KeyOrder::new(direction, NullPlacement::Unstated);
     let measured = distance.map(|distance| SortKey::new(distance, nulls_last(direction)));
-    // The rank runs ascending whichever way the term does: the sequence it is
-    // read from already runs the term's way, and reversing the key as well
-    // would move Null and the absent attribute to the front of a descending
-    // sort, which clause 4.23.2 pins to the back.
-    let ranked = [
-        SortKey::new(value.datatype_rank(direction), nulls_last(SortDirection::Ascending)),
-        SortKey::new(value.numeric_key(), by_value),
-        SortKey::new(value.instant_key(), by_value),
-        SortKey::new(value.text_key(collation), by_value),
-    ];
+    let ranked = ranked_keys(
+        RankedValue {
+            rank: value.datatype_rank(direction),
+            number: value.numeric_key(),
+            instant: value.instant_key(),
+            text: value.text_key(collation),
+        },
+        direction,
+    );
     measured.into_iter().chain(ranked)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::result_ordering::{RankedValue, ranked_keys};
+    use andromeda_ngsi_ld_query::ordering::sort_direction::SortDirection;
+    use pretty_assertions::assert_eq;
+    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
+
+    fn ordered(direction: SortDirection) -> String {
+        let column = |name: &str| Expr::col(Alias::new(name));
+        let value = RankedValue {
+            rank: column("r"),
+            number: column("n"),
+            instant: column("i"),
+            text: column("t"),
+        };
+        let mut select = Query::select();
+        select.expr(column("id"));
+        for key in ranked_keys(value, direction) {
+            key.order_by(&mut select);
+        }
+        select.to_string(PostgresQueryBuilder)
+    }
+
+    /// Clause 4.23.2 pins Null and the absent Attribute last, so the rank
+    /// runs ascending in both directions while the values follow the term.
+    #[test]
+    fn the_rank_runs_ascending_and_the_values_run_the_terms_way() {
+        assert_eq!(
+            ordered(SortDirection::Ascending),
+            r#"SELECT "id" ORDER BY "r" ASC NULLS LAST, "n" ASC, "i" ASC, "t" ASC"#
+        );
+        assert_eq!(
+            ordered(SortDirection::Descending),
+            r#"SELECT "id" ORDER BY "r" ASC NULLS LAST, "n" DESC, "i" DESC, "t" DESC"#
+        );
+    }
 }

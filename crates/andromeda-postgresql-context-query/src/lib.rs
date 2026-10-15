@@ -23,6 +23,7 @@ pub mod entity_total;
 mod gated_page;
 pub mod keyed_count;
 pub mod keyed_page;
+pub mod numbered_page;
 mod one_time_gate;
 pub mod order_geography;
 pub mod result_ordering;
