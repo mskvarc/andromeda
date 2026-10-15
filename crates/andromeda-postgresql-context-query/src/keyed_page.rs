@@ -1,6 +1,7 @@
 //! The page of an entity query whose `q` holds a conjunct an index answers:
-//! an equality on a sub-attribute, a `~=` on an attribute's own value, or an
-//! ordering or a range on an attribute's own `DateTime` or `Date` value.
+//! an equality on a sub-attribute, a `~=` on an attribute's own value, an
+//! ordering or a range on an attribute's own `DateTime` or `Date` value, or the
+//! bare existence of an attribute.
 //!
 //! The planner cannot price either term (it underestimates a broad one by
 //! orders of magnitude), so the page is a [`gated_page`]:
@@ -8,8 +9,10 @@
 //! 1. the short walk probes the first [`SHORT_WALK`] Entities of the
 //!    selection in page order for the whole `q`;
 //! 2. the index reads at most [`CANDIDATE_BOUND`] + 1 rows through
-//!    `idx_ca_sub_eq_keys` or the trigram indexes, each rechecked, or at most
-//!    [`RANGED_CANDIDATE_BOUND`] + 1 from a range of a typed value index
+//!    `idx_ca_sub_eq_keys` or the trigram indexes, each rechecked, at most
+//!    [`RANGED_CANDIDATE_BOUND`] + 1 from a range of a typed value index, or
+//!    at most [`PROBED_CANDIDATE_BOUND`] + 1 carriers of an attribute name,
+//!    each probed for a standing instance
 //!    ([`keyed_candidates`](andromeda_postgresql_query::q_predicate::keyed_term::keyed_candidates)),
 //!    and the page is cut from the selection narrowed to them under the rest
 //!    of `q`;
@@ -43,12 +46,21 @@ pub const CANDIDATE_BOUND: u64 = 1000;
 /// sooner than the walk well past the rechecked bound.
 pub const RANGED_CANDIDATE_BOUND: u64 = 50_000;
 
+/// The most carriers of an attribute name the index path hands to the page.
+///
+/// A carrier costs a posting of the GIN over the search row's names and one
+/// probe of the grain constraint, far less than a value recheck, so the bound
+/// sits well past the rechecked one: an Entity that holds the attribute among
+/// a selection mostly without it is reached through the index, not the walk.
+pub const PROBED_CANDIDATE_BOUND: u64 = 10_000;
+
 /// The most candidates the index path hands to the page, by what one costs to
 /// read.
 const fn page_bound(read: CandidateRead) -> u64 {
     match read {
         CandidateRead::Rechecked => CANDIDATE_BOUND,
         CandidateRead::Ranged => RANGED_CANDIDATE_BOUND,
+        CandidateRead::Probed => PROBED_CANDIDATE_BOUND,
     }
 }
 
@@ -185,6 +197,36 @@ mod tests {
         assert_eq!(candidates.matches("UNION ALL").count(), 1, "the typed and the language branch: {candidates}");
         assert!(values.0.contains(&Value::BigUnsigned(Some(50_001))), "{:?}", values.0);
         assert!(values.0.contains(&Value::BigUnsigned(Some(50_000))), "{:?}", values.0);
+    }
+
+    /// Clause 4.9 `q=attr`: the carriers of the name are each probed for a
+    /// standing instance, so the index branch leaves the term out and the full
+    /// walk keeps it.
+    #[test]
+    fn a_bare_existence_pages_through_the_carriers_of_its_name() {
+        let built = build_query(
+            &ContextTarget::Live,
+            &query("\"https://example.com/temperature\""),
+            &PageWindow::offset(100, 0),
+            CountPolicy::Omit,
+            &names(),
+        )
+        .expect("valid entity query");
+        assert_eq!(built.planning, StatementPlanning::GatedBranches);
+        let (sql, values) = built.select.build(PostgresQueryBuilder);
+        let candidates = sql
+            .split(r#""candidates" AS  MATERIALIZED ("#)
+            .nth(1)
+            .and_then(|rest| rest.split(r#") AS "matches""#).next())
+            .unwrap_or_else(|| panic!("the index path: {sql}"));
+        assert!(candidates.contains(r#""entity_search"."attribute_name_keys" @> (ARRAY[12])"#), "{candidates}");
+        assert!(candidates.contains(r#""ca"."entity_key" = "entity_search"."entity_key""#), "{candidates}");
+        assert!(values.0.contains(&Value::BigUnsigned(Some(10_001))), "{:?}", values.0);
+        assert!(values.0.contains(&Value::BigUnsigned(Some(10_000))), "{:?}", values.0);
+        let after_short = sql.split(r#"AS "answered""#).nth(1).expect("the index branch follows the short walk");
+        let (indexed, walk) = after_short.split_once(r#"AS "indexed""#).expect("the index branch");
+        assert!(!indexed.contains("current_attributes"), "{indexed}");
+        assert!(walk.contains(r#"FROM "current_attributes" AS "ca""#), "{walk}");
     }
 
     /// A Date is held as its fixed-width text, so its candidates range over the

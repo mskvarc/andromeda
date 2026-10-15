@@ -8,7 +8,7 @@
 //! by orders of magnitude while the candidates are few against the selection
 //! and loses once they approach it, and the planner cannot tell the two
 //! apart. The statement therefore reads at most [`COUNT_CANDIDATE_BOUND`] + 1
-//! rechecked candidates, or [`RANGED_COUNT_CANDIDATE_BOUND`] + 1 from a range
+//! rechecked or probed candidates, or [`RANGED_COUNT_CANDIDATE_BOUND`] + 1 from a range
 //! of a typed value index, behind a [`one_time_gate`](crate::one_time_gate): when they
 //! number at most the bound they are every candidate, and the selection
 //! narrowed to them is counted; when more qualify, the selection is walked.
@@ -21,8 +21,8 @@ use crate::{
 use andromeda_postgresql_query::{entity_row_refs::EntityRowRefs, q_predicate::keyed_term::CandidateRead};
 use sea_query::{Condition, DynIden, Expr, ExprTrait, Query, SelectStatement, WithClause};
 
-/// The most rechecked candidates a count reads from a keyed term's index
-/// before it walks the selection instead.
+/// The most rechecked or probed candidates a count reads from a keyed term's
+/// index before it walks the selection instead.
 pub const COUNT_CANDIDATE_BOUND: u64 = 10_000;
 
 /// The most candidates a count reads from a range of a typed value index
@@ -33,7 +33,7 @@ pub const RANGED_COUNT_CANDIDATE_BOUND: u64 = 50_000;
 /// The most candidates a count reads, by what one costs to read.
 const fn count_bound(read: CandidateRead) -> u64 {
     match read {
-        CandidateRead::Rechecked => COUNT_CANDIDATE_BOUND,
+        CandidateRead::Rechecked | CandidateRead::Probed => COUNT_CANDIDATE_BOUND,
         CandidateRead::Ranged => RANGED_COUNT_CANDIDATE_BOUND,
     }
 }
@@ -147,6 +147,18 @@ mod tests {
         let (indexed, walked) = arms(&sql);
         assert!(!indexed.contains("value_date_time"), "the candidates answer the ordering: {indexed}");
         assert!(walked.contains(r#""ca"."value_date_time" > $"#), "the walk probes the whole q: {walked}");
+    }
+
+    #[test]
+    fn a_bare_existence_counts_its_probed_carriers_under_the_rechecked_bound() {
+        let (sql, values) = count_of("\"https://example.com/temperature\"");
+        let (candidates, _) = sql.split_once(" SELECT (CASE WHEN ").unwrap_or_else(|| panic!("a gated count: {sql}"));
+        assert!(candidates.contains(r#""entity_search"."attribute_name_keys" @> (ARRAY[12])"#), "{candidates}");
+        assert!(values.contains(&Value::BigUnsigned(Some(10_001))), "{values:?}");
+        assert!(values.contains(&Value::BigUnsigned(Some(10_000))), "{values:?}");
+        let (indexed, walked) = arms(&sql);
+        assert!(!indexed.contains("current_attributes"), "the candidates answer the existence: {indexed}");
+        assert!(walked.contains(r#"FROM "current_attributes" AS "ca""#), "the walk probes the whole q: {walked}");
     }
 
     #[test]

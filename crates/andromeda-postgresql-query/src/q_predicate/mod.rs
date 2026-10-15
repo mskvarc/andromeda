@@ -108,6 +108,7 @@ pub mod instance_scan;
 pub mod instance_test;
 pub mod json_value_term;
 pub mod keyed_branches;
+pub mod keyed_existence;
 pub mod keyed_ordering;
 pub mod keyed_pattern;
 pub mod keyed_term;

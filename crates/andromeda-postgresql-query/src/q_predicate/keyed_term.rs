@@ -1,16 +1,18 @@
 //! The one Query Term of a `q` expression an index answers on the page's
 //! behalf, and the candidates the index reads for it.
 //!
-//! Three terms qualify: an equality on a sub-attribute's own value, read
+//! Four terms qualify: an equality on a sub-attribute's own value, read
 //! through `idx_ca_sub_eq_keys`
 //! ([`keyed_equality`](crate::q_predicate::sub_attribute::keyed_equality)),
 //! a `~=` on an attribute's own value, read through the trigram indexes
-//! ([`keyed_pattern`](crate::q_predicate::keyed_pattern)), and an ordering or
+//! ([`keyed_pattern`](crate::q_predicate::keyed_pattern)), an ordering or
 //! a range on an attribute's own value with `DateTime` or `Date` operands,
 //! read through the typed value indexes
-//! ([`keyed_ordering`](crate::q_predicate::keyed_ordering)). Each candidate is
-//! rechecked by the condition the term compiles to, so the candidates are
-//! exactly the Entities the term keeps.
+//! ([`keyed_ordering`](crate::q_predicate::keyed_ordering)), and the bare
+//! existence of an attribute, read through the GIN over the search row's
+//! attribute names ([`keyed_existence`](crate::q_predicate::keyed_existence)).
+//! Each candidate is rechecked by the condition the term compiles to, so the
+//! candidates are exactly the Entities the term keeps.
 //!
 //! The candidate statement is unbounded. The planner cannot price any of the
 //! terms (it underestimates a broad one by orders of magnitude), and a
@@ -23,7 +25,12 @@
 use crate::{
     dictionary::query_names::QueryNames,
     entity_row_refs::EntityRowRefs,
-    q_predicate::{keyed_ordering::ordering_candidates, keyed_pattern::pattern_candidates, sub_attribute::keyed_equality::equality_candidates},
+    q_predicate::{
+        keyed_existence::existence_candidates,
+        keyed_ordering::ordering_candidates,
+        keyed_pattern::pattern_candidates,
+        sub_attribute::keyed_equality::equality_candidates,
+    },
 };
 use andromeda_ngsi_ld_query::filter::{expression::Expr, predicate::Predicate};
 use sea_query::SelectStatement;
@@ -38,6 +45,9 @@ pub enum CandidateRead {
     /// The candidates are a range of a B-tree over the compared value, each
     /// a match as the index yields it.
     Ranged,
+    /// The index offers the Entities whose search row names the attribute,
+    /// and one probe of the grain constraint's leading columns confirms each.
+    Probed,
 }
 
 /// One term of a `q` expression's top-level conjunction and the candidates
@@ -78,13 +88,15 @@ pub fn keyed_candidates<'q>(expr: &'q Expr, rows: &EntityRowRefs, names: &QueryN
 fn candidates_of(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames) -> Option<(SelectStatement, CandidateRead)> {
     let rechecked = |select| (select, CandidateRead::Rechecked);
     let ranged = |select| (select, CandidateRead::Ranged);
+    let probed = |select| (select, CandidateRead::Probed);
     match pred {
         Predicate::Equality { .. } => equality_candidates(pred, rows, names)
             .map(rechecked)
             .or_else(|| ordering_candidates(pred, rows, names).map(ranged)),
         Predicate::Ordering { .. } => ordering_candidates(pred, rows, names).map(ranged),
         Predicate::MatchPattern { .. } => pattern_candidates(pred, rows, names).map(rechecked),
-        Predicate::Exists(_) | Predicate::NotMatchPattern { .. } => None,
+        Predicate::Exists(_) => existence_candidates(pred, rows, names).map(probed),
+        Predicate::NotMatchPattern { .. } => None,
     }
 }
 
@@ -121,7 +133,8 @@ mod tests {
     }
 
     /// A trigram or key match is rechecked against the value; a range of the
-    /// typed value index is a match as it is read.
+    /// typed value index is a match as it is read; a carrier of the name is
+    /// probed for a standing instance.
     #[test]
     fn each_term_states_what_reading_one_candidate_costs() {
         for (q, expected) in [
@@ -132,6 +145,7 @@ mod tests {
             ("\"https://example.com/name\"~=\"text-71.*\"", CandidateRead::Rechecked),
             ("\"https://example.com/observedOn\">2024-01-15T12:00:00Z", CandidateRead::Ranged),
             ("\"https://example.com/observedOn\"==2024-01-01..2024-02-01", CandidateRead::Ranged),
+            ("\"https://example.com/count\"", CandidateRead::Probed),
         ] {
             assert_eq!(read(q), Some(expected), "{q}");
         }
@@ -144,6 +158,7 @@ mod tests {
             "\"https://example.com/name\"~=\"text-71.*\"",
             "\"https://example.com/observedOn\">2024-01-15T12:00:00Z",
             "\"https://example.com/observedOn\"==2024-01-01..2024-02-01",
+            "\"https://example.com/count\"",
         ] {
             let sql = candidates(q).unwrap_or_else(|| panic!("keyed: {q}"));
             assert!(!sql.contains("LIMIT"), "{q}: {sql}");
@@ -156,6 +171,7 @@ mod tests {
             "\"https://example.com/name\"~=\"a.*\"|\"https://example.com/count\"==1",
             "\"https://example.com/name\".\"https://example.com/source\"==\"s\"|\"https://example.com/count\"==1",
             "\"https://example.com/observedOn\">2024-01-15|\"https://example.com/count\"==1",
+            "\"https://example.com/count\"|\"https://example.com/name\"==\"x\"",
         ] {
             assert_eq!(candidates(q), None, "{q}");
         }
@@ -172,6 +188,12 @@ mod tests {
     }
 
     #[test]
+    fn an_existence_conjunct_is_keyed_after_an_unkeyed_one() {
+        let sql = candidates("\"https://example.com/count\">1;\"https://example.com/name\"").expect("keyed");
+        assert!(sql.contains(r#""entity_search"."attribute_name_keys" @> (ARRAY[2])"#), "{sql}");
+    }
+
+    #[test]
     fn a_date_ordering_conjunct_is_keyed_after_an_unkeyed_one() {
         let sql = candidates("\"https://example.com/count\">1;\"https://example.com/observedOn\"<2024-01-15").expect("keyed");
         assert!(sql.contains(r#""ca"."value_string" < '2024-01-15'"#), "{sql}");
@@ -181,7 +203,6 @@ mod tests {
     fn a_term_no_index_answers_is_not_keyed() {
         for q in [
             "\"https://example.com/count\">1",
-            "\"https://example.com/count\"",
             "\"https://example.com/name\"!~=\"text-71.*\"",
             "\"https://example.com/name\">\"m\"",
         ] {
