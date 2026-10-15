@@ -1,8 +1,8 @@
-//! The page of an entity query whose `q` holds an equality on a sub-attribute
-//! the key index answers.
+//! The page of an entity query whose `q` holds a conjunct an index answers:
+//! an equality on a sub-attribute, or a `~=` on an attribute's own value.
 //!
-//! The planner cannot price a sub-attribute predicate (it underestimates a
-//! broad one by orders of magnitude), so the statement does not leave it the
+//! The planner cannot price either term (it underestimates a broad one by
+//! orders of magnitude), so the statement does not leave it the
 //! choice between walking the selection and reading the index. It tries the
 //! three in the order that stops soonest, and a gate on what the previous step
 //! found switches each later one off:
@@ -11,9 +11,10 @@
 //!    order, each probed for the whole `q`. A broad predicate fills the page
 //!    here in a few probes.
 //! 2. the index: at most [`CANDIDATE_BOUND`] + 1 rows through
-//!    `idx_ca_sub_eq_keys` ([`keyed_candidates`]), each rechecked, and the page
-//!    cut from the selection narrowed to them, when they number at most
-//!    [`CANDIDATE_BOUND`];
+//!    `idx_ca_sub_eq_keys` or the trigram indexes
+//!    ([`keyed_candidates`](andromeda_postgresql_query::q_predicate::keyed_term::keyed_candidates)),
+//!    each rechecked, and the page cut from the selection narrowed to them,
+//!    when they number at most [`CANDIDATE_BOUND`];
 //! 3. the full walk: the selection in page order, each Entity probed, when
 //!    more candidates qualify.
 //!
@@ -41,8 +42,8 @@ use andromeda_postgresql_query::{
     error::RenderError,
     q_predicate::{
         instance_scan::InstanceScan,
+        keyed_term::{CANDIDATE_BOUND, KeyedCandidates},
         projection::compile,
-        sub_attribute::keyed_equality::{CANDIDATE_BOUND, KeyedCandidates},
     },
 };
 use andromeda_postgresql_schema::current::Entities;
@@ -306,6 +307,67 @@ mod tests {
         let indexed = indexed.split(r#"AS "indexed""#).next().expect("the index branch");
         assert_eq!(indexed.matches("UNNEST(").count(), 0, "{indexed}");
         assert!(indexed.contains(r#""ca"."value_number" > "#), "{indexed}");
+    }
+
+    /// A `~=` on an own value tries the short walk, then the trigram
+    /// candidates, then the full walk, like a keyed equality.
+    #[test]
+    fn a_pattern_on_an_own_value_walks_short_then_probes_the_trigram_indexes() {
+        let built = build_query(
+            &ContextTarget::Live,
+            &query("\"https://example.com/temperature\"~=\"text-71.*\";\"https://example.com/temperature\"!=\"x\""),
+            &PageWindow::offset(100, 0),
+            CountPolicy::Omit,
+            &names(),
+        )
+        .expect("valid entity query");
+        assert_eq!(built.planning, StatementPlanning::BoundValues);
+        let (sql, _) = built.select.build(PostgresQueryBuilder);
+        let candidates = sql
+            .split(r#""candidates" AS  MATERIALIZED ("#)
+            .nth(1)
+            .and_then(|rest| rest.split(r#") AS "matches""#).next())
+            .unwrap_or_else(|| panic!("the index path: {sql}"));
+        assert!(candidates.contains(r#""ca"."value_string" ~ $"#), "{candidates}");
+        assert!(candidates.contains(r#""ca"."value_long_text" ~ $"#), "{candidates}");
+        assert_eq!(candidates.matches("UNION ALL").count(), 2, "{candidates}");
+        assert!(sql.contains(r#""entities"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#), "{sql}");
+        assert!(sql.contains(r#"(SELECT COUNT(*) FROM "candidates") > $"#), "{sql}");
+    }
+
+    /// Every branch cuts the same window over the same order, so whichever
+    /// gate opens returns the page the plain statement would.
+    #[test]
+    fn a_pattern_page_cuts_the_same_window_as_the_plain_statement() {
+        let q = "\"https://example.com/temperature\"~=\"text-71.*\"";
+        let window = PageWindow::offset(20, 40);
+        let keyed = build_query(&ContextTarget::Live, &query(q), &window, CountPolicy::Omit, &names()).expect("valid entity query");
+        let (sql, _) = keyed.select.build(PostgresQueryBuilder);
+        let branches: Vec<&str> = sql.split("UNION ALL (SELECT * FROM (").skip(1).collect();
+        assert_eq!(branches.len(), 2, "the index and the full walk follow the short walk: {sql}");
+        for branch in branches {
+            assert!(branch.contains(r#"ORDER BY "sort_0" ASC"#), "{branch}");
+            assert!(branch.contains("LIMIT $") && branch.contains("OFFSET $"), "{branch}");
+        }
+    }
+
+    /// The index branch answers the pattern with its candidates, so its filter
+    /// leaves the pattern out, and the full walk keeps it.
+    #[test]
+    fn the_pattern_candidates_are_rechecked_by_the_term() {
+        let built = build_query(
+            &ContextTarget::Live,
+            &query("\"https://example.com/temperature\"~=\"text-71.*\""),
+            &PageWindow::offset(100, 0),
+            CountPolicy::Omit,
+            &names(),
+        )
+        .expect("valid entity query");
+        let (sql, _) = built.select.build(PostgresQueryBuilder);
+        let after_short = sql.split(r#"AS "answered""#).nth(1).expect("the index branch follows the short walk");
+        let (indexed, walk) = after_short.split_once(r#"AS "indexed""#).expect("the index branch");
+        assert!(!indexed.contains("value_string"), "{indexed}");
+        assert!(walk.contains(r#""ca"."value_string" ~ $"#), "{walk}");
     }
 
     /// A pattern on a sub-attribute has no key, so the page is the plain walk.

@@ -27,7 +27,7 @@ use andromeda_postgresql_query::{
     geo_predicate as geo_sql,
     geo_predicate::GeometrySource,
     page_window::bound_to_window,
-    q_predicate::{instance_scan::InstanceScan, projection as q_filter, sub_attribute::keyed_equality::keyed_candidates},
+    q_predicate::{instance_scan::InstanceScan, keyed_term::keyed_candidates, projection as q_filter},
     scope_predicate::{ScopeTarget, condition as scope_condition},
     sort_key::{KeyOrder, NullPlacement, SortKey},
 };

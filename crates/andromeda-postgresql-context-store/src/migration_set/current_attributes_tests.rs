@@ -189,6 +189,29 @@ fn the_sub_attribute_key_index_is_partial_and_off_the_pending_list() {
     );
 }
 
+/// Concurrent writers queue on the posting pages of trigrams the strings of
+/// one attribute share, so the string trigram index takes its inserts on a
+/// pending list, bounded so a writer's flush and a read's scan stay short.
+#[test]
+fn the_string_trigram_index_is_on_a_bounded_pending_list() {
+    let schema = DeclaredSchema::of_every_migration();
+    assert_eq!(
+        normalized(&index(&schema, "idx_ca_value_string_trgm").definition),
+        "on current_attributes using gin (attribute_name_key int4_ops, value_string gin_trgm_ops) with (fastupdate = on, gin_pending_list_limit = 64) where value_string is not null"
+    );
+}
+
+/// One long value yields about a thousand trigram keys, which would overflow
+/// the bound alone.
+#[test]
+fn the_long_text_trigram_and_object_indexes_stay_off_the_pending_list() {
+    let schema = DeclaredSchema::of_every_migration();
+    for name in ["idx_ca_value_long_text_trgm", "idx_ca_value_object"] {
+        let definition = normalized(&index(&schema, name).definition);
+        assert!(definition.contains(" with (fastupdate = off) "), "{name}: {definition}");
+    }
+}
+
 #[test]
 fn the_sub_attribute_key_expression_has_statistics() {
     let schema = DeclaredSchema::of_every_migration();

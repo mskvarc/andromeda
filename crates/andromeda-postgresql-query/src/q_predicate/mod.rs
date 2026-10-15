@@ -107,6 +107,8 @@ pub mod instance_row;
 pub mod instance_scan;
 pub mod instance_test;
 pub mod json_value_term;
+pub mod keyed_pattern;
+pub mod keyed_term;
 pub mod language_map;
 pub mod language_term;
 pub mod local_target;

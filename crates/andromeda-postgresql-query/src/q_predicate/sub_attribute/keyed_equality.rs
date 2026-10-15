@@ -8,13 +8,6 @@
 //! [`key_expression`] renders it character for character. A key selects
 //! candidates only, so every candidate is rechecked by the same element
 //! condition the term compiles to.
-//!
-//! The path is bounded: it takes at most [`CANDIDATE_BOUND`] + 1 candidates.
-//! The planner underestimates a broad sub-attribute predicate by orders of
-//! magnitude, and a page whose matches are many is found sooner by walking the
-//! selection in page order than by fetching every match through the index, so
-//! the statement that cuts the page takes the candidates only when they number
-//! at most [`CANDIDATE_BOUND`].
 
 use crate::{
     dictionary::query_names::QueryNames,
@@ -31,7 +24,6 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime};
 use andromeda_ngsi_ld_query::filter::{
-    expression::Expr,
     path::QueryPath,
     predicate::{Predicate, SetMembership},
     scalar::{CompareValue, Scalar},
@@ -46,10 +38,6 @@ use andromeda_postgresql_seaquery::{
     sub_attribute_key::{sub_eq_keys, sub_eq_query_key, sub_eq_query_text_key},
 };
 use sea_query::{Expr as SeaExpr, Query, SelectStatement, SimpleExpr};
-use std::slice::from_ref;
-
-/// The most candidates the index path hands to the page.
-pub const CANDIDATE_BOUND: u64 = 1000;
 
 /// The `value_kind` salt of a String key.
 const STRING_KIND: i16 = 2;
@@ -67,39 +55,11 @@ pub fn key_expression() -> SimpleExpr {
     )
 }
 
-/// One sub-attribute equality of a `q` expression's top-level conjunction
-/// and the candidates the index path reads for it.
-#[derive(Debug)]
-pub struct KeyedCandidates<'q> {
-    /// The term the candidates answer, which the page leaves out of the
-    /// filter it applies to them.
-    pub term: &'q Predicate,
-    /// `SELECT "ca"."entity_key" …`, at most [`CANDIDATE_BOUND`] + 1 rows.
-    pub select: SelectStatement,
-}
-
-/// The first term of `expr`'s top-level conjunction the index path answers,
-/// with its candidates read in the branch `rows` names.
-///
-/// Only a conjunct can narrow the page to its candidates: an entity a
-/// disjunction keeps for another arm need not be one of them. A term
-/// qualifies when it is `==` with one operand on a sub-attribute's own value,
-/// every name of its path recorded.
-#[must_use]
-pub fn keyed_candidates<'q>(expr: &'q Expr, rows: &EntityRowRefs, names: &QueryNames) -> Option<KeyedCandidates<'q>> {
-    let conjuncts = match expr {
-        Expr::And(terms) => terms.as_slice(),
-        Expr::Or(_) | Expr::Pred(_) => from_ref(expr),
-    };
-    conjuncts.iter().find_map(|term| match term {
-        Expr::Pred(pred) => candidates_of(pred, rows, names).map(|select| KeyedCandidates { term: pred, select }),
-        Expr::And(_) | Expr::Or(_) => None,
-    })
-}
-
-/// The candidate statement of one term, `None` when the index cannot answer
-/// it.
-fn candidates_of(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames) -> Option<SelectStatement> {
+/// `SELECT "ca"."entity_key"` over the rows whose sub-attribute tree holds the
+/// operand of `pred` at its name path, `None` unless the key index answers
+/// `pred`: `==` with one operand on a sub-attribute's own value, every name of
+/// its path recorded.
+pub(crate) fn equality_candidates(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames) -> Option<SelectStatement> {
     let Predicate::Equality {
         path: QueryPath::Local(path),
         membership: SetMembership::Within,
@@ -128,8 +88,7 @@ fn candidates_of(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames) -> 
         .and_where(of_attribute(element.attribute))
         .and_where(standing())
         .and_where(key_expression().array_overlaps(keys))
-        .cond_where(element.condition(value))
-        .limit(CANDIDATE_BOUND + 1);
+        .cond_where(element.condition(value));
     Some(select.take())
 }
 
@@ -172,7 +131,7 @@ mod tests {
         attribute_name_key::AttributeNameKey,
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
         entity_row_refs::EntityRowRefs,
-        q_predicate::sub_attribute::keyed_equality::{key_expression, keyed_candidates},
+        q_predicate::{keyed_term::keyed_candidates, sub_attribute::keyed_equality::key_expression},
     };
     use andromeda_ngsi_ld_query::filter::parser::parse;
     use pretty_assertions::assert_eq;

@@ -152,10 +152,12 @@ create index idx_ca_value_string on current_attributes (attribute_name_key, valu
 where
     value_string is not null;
 
--- Unanchored `~=` and `!~=` patterns (clause 4.9). `fastupdate = off`: the
--- row is written inside the Entity's transaction, and a GIN pending list
--- would put its flush latency on the request path.
-create index idx_ca_value_string_trgm on current_attributes using gin (attribute_name_key int4_ops, value_string gin_trgm_ops) with (fastupdate = off)
+-- Unanchored `~=` patterns (clause 4.9). Strings of one attribute share most
+-- of their trigrams, so concurrent writers inserting into the posting pages
+-- directly queue on the same pages; a pending list takes the inserts instead,
+-- and its 64 kB bound keeps the flush a writer pays, and the list a read
+-- scans, small.
+create index idx_ca_value_string_trgm on current_attributes using gin (attribute_name_key int4_ops, value_string gin_trgm_ops) with (fastupdate = on, gin_pending_list_limit = 64)
 where
     value_string is not null;
 
