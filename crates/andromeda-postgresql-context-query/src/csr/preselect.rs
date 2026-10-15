@@ -14,27 +14,25 @@
 //! - **Entity identifier.** `coalesce(entity_id, '')` is one of the requested
 //!   identifiers or `''`, or the row carries a pattern. A pattern row is
 //!   admitted whatever its pattern; the residual evaluates it.
-//! - **Attribute names.** Each axis reads `{0}` on a row whose item declares no
-//!   name at all, `{}` on the axis an item leaves out while naming attributes on
-//!   the other, and the declared keys otherwise. The requested names resolve to
-//!   their `attribute_names` keys in the statement, and the keys with `0`
-//!   appended overlap either axis. Dictionary keys start at 1, so the test is
-//!   exact: a row matches when its item declares no name or declares one of the
-//!   requested names on either axis (clause 5.12). A name the dictionary never
-//!   saw resolves to no key and matches only rows declaring no name.
+//! - **Attribute names.** The requested names resolve to their
+//!   `attribute_names` keys in the statement, and the keys overlap either axis
+//!   as stored, or the row's item declares no name on either axis. Each branch
+//!   is one index of its own, the last a partial index whose predicate is the
+//!   branch. A row matches when its item declares no name or declares one of the
+//!   requested names on either axis (clause 5.12). An axis the item leaves out
+//!   is `NULL` and overlaps nothing. A name the dictionary never saw resolves to
+//!   no key and matches only rows declaring no name.
 
 use crate::csr::information_row::ri_col;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::{csr::RegistrationInformation, name_dictionary::AttributeNames};
 use andromeda_postgresql_seaquery::{
-    cast::cast,
     literal::text_literal,
-    pg_array::{any, array_append, array_of_subquery, text_array},
+    pg_array::{any, array_of_subquery, text_array},
     pg_operator::PgBinaryOperator,
-    pg_type::PostgresType,
 };
 use iri_rs::IriBuf;
-use sea_query::{CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Func, Iden, Query, SimpleExpr};
+use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Func, Iden, Query, SimpleExpr};
 
 /// The type-axis sentinel: the row's item has no `entities` and admits every
 /// type. It names no type.
@@ -42,9 +40,6 @@ pub const ANY_TYPE: &str = "*";
 
 /// The identifier-axis sentinel: the row names no exact identifier.
 const ANY_IDENTIFIER: &str = "";
-
-/// The attribute-axis sentinel: the row's item declares no name on either axis.
-const ANY_ATTRIBUTE_KEY: i32 = 0;
 
 /// `coalesce(ri.entity_types, '{*}')`, the expression
 /// `idx_registration_information_entity_types` indexes.
@@ -59,17 +54,12 @@ fn entity_id_or_none() -> SimpleExpr {
     Func::coalesce([ri_col(RegistrationInformation::EntityId), text_literal(ANY_IDENTIFIER)]).into()
 }
 
-/// The keys of one attribute axis as its index reads them: `{0}` when the item
-/// declares no name at all, `{}` when it names attributes only on the other
-/// axis, the declared keys otherwise.
-fn declared_name_keys(axis: RegistrationInformation) -> SimpleExpr {
-    let declares_nothing = Condition::all()
+/// Whether the row's item declares no name on either axis, the predicate of
+/// `idx_registration_information_undeclared_names`.
+fn declares_no_name() -> Condition {
+    Condition::all()
         .add(ri_col(RegistrationInformation::PropertyNameKeys).is_null())
-        .add(ri_col(RegistrationInformation::RelationshipNameKeys).is_null());
-    CaseStatement::new()
-        .case(declares_nothing, text_literal(&format!("{{{ANY_ATTRIBUTE_KEY}}}")))
-        .finally(Func::coalesce([ri_col(axis), text_literal("{}")]))
-        .into()
+        .add(ri_col(RegistrationInformation::RelationshipNameKeys).is_null())
 }
 
 /// Whether the row may admit one of `entity_types`: its types overlap them, or
@@ -113,11 +103,13 @@ pub fn attribute_name_candidate(attribute_names: &[IriBuf]) -> SimpleExpr {
             .expr(SeaExpr::col((RequestedName, AttributeNames::AttributeNameKey)))
             .from_as(AttributeNames::Table, RequestedName)
             .and_where(SeaExpr::col((RequestedName, AttributeNames::Name)).eq(any(text_array(&names))));
-        array_append(cast(array_of_subquery(dictionary), PostgresType::IntegerArray), SeaExpr::val(ANY_ATTRIBUTE_KEY))
+        array_of_subquery(dictionary)
     };
-    declared_name_keys(RegistrationInformation::PropertyNameKeys)
-        .array_overlaps(requested_keys())
-        .or(declared_name_keys(RegistrationInformation::RelationshipNameKeys).array_overlaps(requested_keys()))
+    Condition::any()
+        .add(ri_col(RegistrationInformation::PropertyNameKeys).array_overlaps(requested_keys()))
+        .add(ri_col(RegistrationInformation::RelationshipNameKeys).array_overlaps(requested_keys()))
+        .add(declares_no_name())
+        .into()
 }
 
 #[cfg(test)]
@@ -170,11 +162,11 @@ mod tests {
             ("idx_registration_information_entity_id", entity_id_or_none()),
             (
                 "idx_registration_information_property_name_keys",
-                declared_name_keys(RegistrationInformation::PropertyNameKeys),
+                ri_col(RegistrationInformation::PropertyNameKeys),
             ),
             (
                 "idx_registration_information_relationship_name_keys",
-                declared_name_keys(RegistrationInformation::RelationshipNameKeys),
+                ri_col(RegistrationInformation::RelationshipNameKeys),
             ),
         ] {
             pretty_assertions::assert_eq!(comparable(&index_definition(index)), comparable(&render(expression)), "{index}");
@@ -186,6 +178,10 @@ mod tests {
             comparable(&render(entity_id_candidate(&[uri("urn:ngsi-ld:Vehicle:1")]))).ends_with(&comparable(predicate)),
             "the pattern branch is the partial index's predicate"
         );
+        let undeclared_index = index_definition("idx_registration_information_undeclared_names");
+        let (indexed, predicate) = undeclared_index.split_once("where").expect("the undeclared-names index is partial");
+        pretty_assertions::assert_eq!(comparable(indexed), "registration_id");
+        pretty_assertions::assert_eq!(comparable(predicate), comparable(&render(declares_no_name().into())));
     }
 
     #[test]
@@ -214,21 +210,22 @@ mod tests {
     }
 
     /// Clause 5.12: an item naming no property and no relationship matches any
-    /// attribute list (`{0}` on both axes meets the appended `0`); an item
-    /// naming attributes on one axis only reads `{}` on the other, which meets
+    /// attribute list; an axis an item leaves out is `NULL`, which overlaps
     /// nothing.
     #[test]
-    fn an_absent_axis_matches_nothing_when_the_other_names_attributes_and_everything_when_both_are_absent() {
+    fn each_axis_overlaps_the_requested_keys_as_stored_beside_the_branch_for_an_item_declaring_no_name() {
         let sql = render(attribute_name_candidate(&[iri("https://example.com/speed")]));
         for axis in ["property_name_keys", "relationship_name_keys"] {
-            assert!(
-                sql.contains(&format!(
-                    "(CASE WHEN (\"ri\".\"property_name_keys\" IS NULL AND \"ri\".\"relationship_name_keys\" IS NULL) THEN '{{0}}' ELSE COALESCE(\"ri\".\"{axis}\", '{{}}') END) && array_append(ARRAY((SELECT"
-                )),
-                "{axis}: {sql}"
-            );
+            assert!(sql.contains(&format!("\"ri\".\"{axis}\" && (ARRAY((SELECT")), "{axis}: {sql}");
         }
-        assert!(sql.contains("::integer[], 0)"), "the sentinel is appended to the resolved keys: {sql}");
+        assert!(
+            sql.ends_with(" OR (\"ri\".\"property_name_keys\" IS NULL AND \"ri\".\"relationship_name_keys\" IS NULL)"),
+            "{sql}"
+        );
+        assert!(
+            !sql.contains("CASE"),
+            "each branch is an indexed column or the partial index's predicate: {sql}"
+        );
     }
 
     #[test]

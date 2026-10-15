@@ -411,7 +411,7 @@ mod tests {
         assert!(
             built
                 .sql
-                .contains("CASE WHEN (\"ri\".\"property_name_keys\" IS NULL AND \"ri\".\"relationship_name_keys\" IS NULL) THEN '{0}'"),
+                .contains("OR (\"ri\".\"property_name_keys\" IS NULL AND \"ri\".\"relationship_name_keys\" IS NULL)"),
             "{}",
             built.sql
         );
@@ -498,7 +498,7 @@ mod tests {
             "{}",
             built.sql
         );
-        assert!(built.sql.contains("END) && array_append("), "{}", built.sql);
+        assert!(built.sql.contains("\"ri\".\"property_name_keys\" && (ARRAY((SELECT"), "{}", built.sql);
         assert!(!built.sql.contains("NOT EXISTS"), "{}", built.sql);
     }
 

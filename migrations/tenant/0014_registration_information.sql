@@ -64,17 +64,15 @@ with (
 
 create index idx_registration_information_entity_types on registration_information using gin ((coalesce(entity_types, '{*}')));
 
-create index idx_registration_information_property_name_keys on registration_information using gin (( case when property_name_keys is null and relationship_name_keys is null then
-    '{0}'
-else
-    coalesce(property_name_keys, '{}')
-end));
+create index idx_registration_information_property_name_keys on registration_information using gin (property_name_keys);
 
-create index idx_registration_information_relationship_name_keys on registration_information using gin (( case when property_name_keys is null and relationship_name_keys is null then
-    '{0}'
-else
-    coalesce(relationship_name_keys, '{}')
-end));
+create index idx_registration_information_relationship_name_keys on registration_information using gin (relationship_name_keys);
+
+-- The branch of the attribute test that admits an item declaring no name,
+-- which matches every attribute list (clause 5.12).
+create index idx_registration_information_undeclared_names on registration_information (registration_id)
+where
+    property_name_keys is null and relationship_name_keys is null;
 
 -- Not partial: the sentinel `''` is one of the two values every identifier
 -- test names.
