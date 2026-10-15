@@ -38,7 +38,7 @@ const SEARCH_PATH: &str = "search_path";
 /// intra-branch references, foreign keys and statement-level checks alike
 /// (parents before children), which the relations a clone copies keep. The branch migrations create them; this list only orders
 /// the truncation and the copies.
-pub(crate) const BRANCH_TABLES: [&str; 16] = [
+pub(crate) const BRANCH_TABLES: [&str; 17] = [
     "entities",
     "temporal_entities",
     "subscriptions",
@@ -49,6 +49,7 @@ pub(crate) const BRANCH_TABLES: [&str; 16] = [
     "attribute_census",
     "entity_type_members",
     "current_attributes",
+    "temporal_entity_type_members",
     "temporal_attribute_streams",
     "attribute_history",
     "scope_history",

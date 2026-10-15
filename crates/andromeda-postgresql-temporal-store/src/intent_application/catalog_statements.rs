@@ -3,10 +3,15 @@
 
 use crate::intent_application::intent_source::{E, I, IntentSource, Te, entry, entry_kind_in, intent, source_entries, source_intents, write_ordinal};
 use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
+use andromeda_postgresql_query::{
+    type_membership::Memberships,
+    type_membership_moves::{Member, carried_among, membership_delete, membership_insert},
+};
 use andromeda_postgresql_schema::{
     queue::{TemporalAppendIntents, WriteRecords},
     temporal::{TemporalAttributeStreams, TemporalEntities},
     temporal_intent::TemporalEntry,
+    type_membership::TypeMembershipRelation,
 };
 use andromeda_postgresql_seaquery::{
     branch::qualified,
@@ -18,6 +23,7 @@ use andromeda_postgresql_seaquery::{
 use sea_query::{
     CommonTableExpression,
     Cond,
+    DeleteStatement,
     DynIden,
     Expr,
     ExprTrait,
@@ -56,6 +62,30 @@ struct CreatedStreams;
 #[derive(Iden, Clone, Copy)]
 #[iden = "created"]
 struct Created;
+
+/// The types the evolution is recorded under after the statement,
+/// `new_types`, a column of `evolved`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "new_types"]
+struct NewTypes;
+
+/// The types the evolution was recorded under before the statement, null for
+/// one it created, `old_types`, a column of `evolved`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "old_types"]
+struct OldTypes;
+
+/// The insert of the memberships of the types an evolution gained,
+/// `added_members`, whose only purpose is to run.
+#[derive(Iden, Clone, Copy)]
+#[iden = "added_members"]
+struct AddedMembers;
+
+/// The delete of the memberships of the types an evolution lost,
+/// `dropped_members`, whose only purpose is to run.
+#[derive(Iden, Clone, Copy)]
+#[iden = "dropped_members"]
+struct DroppedMembers;
 
 /// The first intent of the source holding an entry of a grain,
 /// `first_intent`, a column of `grains`.
@@ -109,7 +139,9 @@ pub(crate) fn write_records_statement(source: &IntentSource<'_>) -> Result<Inser
 /// later reaches their entries (intent, then write ordinal), so the keys
 /// they are given ascend in that order and the history rows extend every
 /// index led by `stream_key` at its right edge. An entry of an Entity no intent states types for reaches none
-/// of them: [`untyped_streams_statement`] writes its stream.
+/// of them: [`untyped_streams_statement`] writes its stream. The type
+/// memberships a temporal type selection walks move in the same statement
+/// ([`membership_moves`]).
 pub(crate) fn evolutions_and_streams_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
     let grain_columns = [
         TemporalAttributeStreams::TemporalEntityKey,
@@ -151,6 +183,7 @@ pub(crate) fn evolutions_and_streams_statement(source: &IntentSource<'_>, schema
         Ok(insert)
     };
     let created = || SimpleExpr::from(Expr::col((Grains, Created)));
+    let (added_members, dropped_members) = membership_moves(schema)?;
     let mut with = WithClause::new();
     with.cte(
         CommonTableExpression::new()
@@ -159,10 +192,14 @@ pub(crate) fn evolutions_and_streams_statement(source: &IntentSource<'_>, schema
                 TemporalEntities::TemporalEntityKey.into_iden(),
                 TemporalEntities::Id.into_iden(),
                 Created.into_iden(),
+                NewTypes.into_iden(),
+                OldTypes.into_iden(),
             ])
             .query(evolutions_statement(source, schema)?)
             .to_owned(),
     )
+    .cte(CommonTableExpression::new().table_name(AddedMembers).query(added_members).to_owned())
+    .cte(CommonTableExpression::new().table_name(DroppedMembers).query(dropped_members).to_owned())
     .cte(
         CommonTableExpression::new()
             .table_name(Grains)
@@ -228,8 +265,46 @@ fn evolutions_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> 
             Expr::col((New, TemporalEntities::TemporalEntityKey)),
             Expr::col((New, TemporalEntities::Id)),
             Expr::col((Old, TemporalEntities::TemporalEntityKey)).is_null(),
+            Expr::col((New, TemporalEntities::EntityTypeNameKeys)),
+            Expr::col((Old, TemporalEntities::EntityTypeNameKeys)),
         ]));
     Ok(statement)
+}
+
+/// The membership rows the evolutions `evolved` returns move: the types an
+/// evolution is recorded under that it was not (every type of one the
+/// statement created), and the types it was recorded under that it no longer
+/// is.
+///
+/// Both read the types the evolution had and has from the images its upsert
+/// returned, never from `temporal_entities` itself: the row the upsert
+/// replaced is the one it found after waiting on any concurrent writer, while
+/// the relation read in the same `WITH` is the statement's snapshot.
+fn membership_moves(schema: Option<&DynIden>) -> Result<(InsertStatement, DeleteStatement), SeaQueryError> {
+    let memberships = Memberships {
+        relation: TypeMembershipRelation::Temporal,
+        schema,
+    };
+    let member = Member {
+        key: Expr::col((Evolved, TemporalEntities::TemporalEntityKey)),
+        id: Expr::col((Evolved, TemporalEntities::Id)),
+    };
+    let gained = Expr::col((Evolved, Created)).or(carried_among(Expr::col((Evolved, OldTypes)), memberships).not());
+    let added = membership_insert(
+        memberships,
+        Query::select().from(Evolved).take(),
+        Expr::col((Evolved, NewTypes)),
+        member,
+        Some(gained),
+    )?;
+    let dropped = membership_delete(
+        memberships,
+        Query::select().from(Evolved).take(),
+        Expr::col((Evolved, OldTypes)),
+        Expr::col((Evolved, NewTypes)),
+        Expr::col((Evolved, TemporalEntities::Id)),
+    );
+    Ok((added, dropped))
 }
 
 /// The intents that observe an Entity which has no Temporal Evolution and

@@ -27,6 +27,23 @@ pub enum TemporalEntities {
     ModifiedAt,
 }
 
+/// The `temporal_entity_type_members` table - one row per type one Temporal
+/// Evolution is recorded under, keyed by type and then identifier.
+///
+/// A temporal type selection walks one key range of it in identifier order, so
+/// a page of a type reads no Evolution of another type.
+#[derive(Iden, Clone, Copy)]
+pub enum TemporalEntityTypeMembers {
+    /// Table name: `temporal_entity_type_members`
+    Table,
+    /// Foreign key to `temporal_entities`, cascading on the Evolution's deletion
+    TemporalEntityKey,
+    /// The `entity_type_names` key of the type recorded
+    EntityTypeNameKey,
+    /// The Entity's identifier, copied from `temporal_entities` so the walk is ordered by it
+    Id,
+}
+
 /// The `temporal_attribute_streams` table - the stable grain a history row belongs to.
 #[derive(Iden, Clone, Copy)]
 pub enum TemporalAttributeStreams {
@@ -150,7 +167,7 @@ pub enum ScopeHistory {
 
 #[cfg(test)]
 mod tests {
-    use crate::temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities};
+    use crate::temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities, TemporalEntityTypeMembers};
     use sea_query::Iden;
 
     #[test]
@@ -159,6 +176,14 @@ mod tests {
         pretty_assertions::assert_eq!(TemporalEntities::TemporalEntityKey.to_string(), "temporal_entity_key");
         pretty_assertions::assert_eq!(TemporalEntities::Id.to_string(), "id");
         pretty_assertions::assert_eq!(TemporalEntities::EntityTypeNameKeys.to_string(), "entity_type_name_keys");
+    }
+
+    #[test]
+    fn temporal_entity_type_member_names() {
+        pretty_assertions::assert_eq!(TemporalEntityTypeMembers::Table.to_string(), "temporal_entity_type_members");
+        pretty_assertions::assert_eq!(TemporalEntityTypeMembers::TemporalEntityKey.to_string(), "temporal_entity_key");
+        pretty_assertions::assert_eq!(TemporalEntityTypeMembers::EntityTypeNameKey.to_string(), "entity_type_name_key");
+        pretty_assertions::assert_eq!(TemporalEntityTypeMembers::Id.to_string(), "id");
     }
 
     #[test]

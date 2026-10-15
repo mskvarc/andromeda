@@ -241,6 +241,7 @@ mod tests {
             "entity_type_members",
             "jsonld_contexts",
             "temporal_entities",
+            "temporal_entity_type_members",
             "temporal_attribute_streams",
             "attribute_history",
             "attribute_history_instance_claims",

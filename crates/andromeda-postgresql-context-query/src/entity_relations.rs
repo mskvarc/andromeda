@@ -25,9 +25,12 @@ use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_postgresql_query::{
     dictionary::resolved_names::ResolvedNames,
     entity_row_refs::EntityRowRefs,
-    type_membership::{drives, members_of_any},
+    type_membership::{Memberships, drives, members_of_any},
 };
-use andromeda_postgresql_schema::current::{Entities, EntitySearch};
+use andromeda_postgresql_schema::{
+    current::{Entities, EntitySearch},
+    type_membership::TypeMembershipRelation,
+};
 use andromeda_postgresql_seaquery::branch::qualified;
 use sea_query::{DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, SelectStatement, SimpleExpr, TableRef};
 
@@ -162,7 +165,16 @@ fn source(selection: &EntitySelection, types: &ResolvedNames<EntityTypeName>, sc
         ConsideredEntities::NoEntity => false,
     };
     let walk = walkable
-        .then(|| members_of_any(selection.selectors.iter().filter_map(|selector| selector.type_expr.as_ref()), types, schema))
+        .then(|| {
+            members_of_any(
+                selection.selectors.iter().filter_map(|selector| selector.type_expr.as_ref()),
+                types,
+                Memberships {
+                    relation: TypeMembershipRelation::Current,
+                    schema,
+                },
+            )
+        })
         .flatten();
     match walk {
         Some(walk) => RowSource::TypeMembers {

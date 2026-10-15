@@ -9,7 +9,10 @@
 //! (step S3) against the Attribute instances inside the temporal window, which
 //! are the history rows, never against current state. On the live branch every
 //! one of those relations is the history source that also holds the entries
-//! still queued, so a write is selected the moment it is acknowledged.
+//! still queued, so a write is selected the moment it is acknowledged. A
+//! selection by type alone walks the type memberships of the temporal
+//! catalogue instead, so a page of a type visits that type's Evolutions in
+//! identifier order and no other.
 //!
 //! The `datasetId` parameter selects no Entity. Clause 5.7.4.4 applies it at
 //! step S8, after every selection step, to "filter the Attribute instances" and
@@ -36,6 +39,7 @@ use andromeda_ngsi_ld_query::{
     page_window::{PageStart, PageWindow},
     read_order::ReadOrder,
     temporal::compiled::CompiledTemporalQuery,
+    type_selection::grammar::TypeExpr,
 };
 use andromeda_postgresql_query::{
     attribute_name_key::AttributeNameKey,
@@ -46,11 +50,12 @@ use andromeda_postgresql_query::{
         HistoryBranch,
         HistoryOf,
         attribute_rows::{attribute_rows, stream_rows},
-        entity_rows::entity_rows,
+        entity_rows::{entity_rows, type_member_rows},
         grain::HistoryGrain,
     },
     page_window::apply_identifier_window,
     time_interval_predicate::within_interval,
+    type_membership::drives,
     type_predicate::condition as type_condition,
 };
 use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
@@ -58,7 +63,7 @@ use andromeda_postgresql_seaquery::{
     literal::{false_literal, int_literal},
     operator::regex_match,
 };
-use sea_query::{Condition, DynIden, Expr as SeaExpr, ExprTrait, Func, IntoIden, SelectStatement};
+use sea_query::{Condition, DynIden, Expr as SeaExpr, ExprTrait, Func, IntoIden, SelectStatement, TableRef};
 
 /// The Stage 1 statement and its optional count, each a statement tree the store
 /// binds and executes on its own.
@@ -96,13 +101,14 @@ pub fn build_stage1_entity_ids(
     count: CountPolicy,
     names: &QueryNames,
 ) -> Result<Stage1Query, RenderError> {
-    // Entity-level conditions, applied to `temporal_entities` under alias "e".
-    let entity_conditions = build_entity_conditions_for_temporal(branch, compiled, names)?;
+    let (evolutions, type_test) = evolution_rows(branch, compiled, &names.types);
+    // Entity-level conditions, applied to the Evolutions under alias "e".
+    let entity_conditions = build_entity_conditions_for_temporal(branch, compiled, names, type_test)?;
 
     let mut select = SelectStatement::new();
     select
         .expr_as(SeaExpr::col((E, TemporalEntities::Id)), EntityIdColumn)
-        .from(entity_rows(branch, E))
+        .from(evolutions.clone()) // clone: the count query reads the same Evolutions
         .cond_where(entity_conditions.clone()) // clone: the count query applies the same entity predicate
         .cond_where(SeaExpr::exists(temporal_match_subquery(branch, compiled, names)));
 
@@ -139,7 +145,7 @@ pub fn build_stage1_entity_ids(
             let mut count_select = SelectStatement::new();
             count_select
                 .expr(Func::count(SeaExpr::col((E, TemporalEntities::Id))))
-                .from(entity_rows(branch, E))
+                .from(evolutions)
                 .cond_where(entity_conditions)
                 .cond_where(SeaExpr::exists(temporal_match_subquery(branch, compiled, names)));
             Some(count_select.take())
@@ -172,19 +178,73 @@ fn temporal_match_subquery(branch: &HistoryBranch, compiled: &CompiledTemporalQu
     select.take()
 }
 
-/// Build entity-level conditions for temporal queries, over the temporal
-/// catalogue under the `e` alias.
-fn build_entity_conditions_for_temporal(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Result<Condition, RenderError> {
+/// How a selector's type is tested on the Evolutions stage 1 reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TypeTest {
+    /// A containment test on the Evolution's type keys.
+    TypeKeys,
+    /// Nothing: the membership walk the Evolutions come from selected the
+    /// type already.
+    Walked,
+}
+
+/// The Evolutions stage 1 reads under `e`, and how a selector's type is
+/// tested on them.
+///
+/// The walk of the type memberships when it answers every selector's type on
+/// its own: each selector names no identifier (the identifier index answers
+/// one already) and a type with a range to walk, and either there is one
+/// selector or none carries a pattern. The walk yields the union of the
+/// selectors' types, so it cannot tell which pattern goes with which type,
+/// and an Evolution only queued has no membership row to probe for it. A
+/// request that considers no Entity (clause 5.5.14) walks nothing. Otherwise
+/// the temporal catalogue, its types tested on its type keys.
+fn evolution_rows(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, types: &ResolvedNames<EntityTypeName>) -> (TableRef, TypeTest) {
+    let selection = &compiled.entities;
+    let selectors = &selection.selectors;
+    let walkable = match selection.considered {
+        ConsideredEntities::Selected => {
+            !selectors.is_empty()
+                && selectors.iter().all(|selector| selector.ids.is_empty())
+                && (selectors.len() == 1 || selectors.iter().all(|selector| selector.id_pattern.is_none()))
+        }
+        ConsideredEntities::NoEntity => false,
+    };
+    let exprs: Option<Vec<&TypeExpr>> = walkable
+        .then(|| {
+            selectors
+                .iter()
+                .map(|selector| selector.type_expr.as_ref().filter(|expr| drives(expr)))
+                .collect()
+        })
+        .flatten();
+    match exprs.and_then(|exprs| type_member_rows(branch, E, &exprs, types)) {
+        Some(walk) => (walk, TypeTest::Walked),
+        None => (entity_rows(branch, E), TypeTest::TypeKeys),
+    }
+}
+
+/// Build entity-level conditions for temporal queries, over the Evolutions
+/// under the `e` alias.
+fn build_entity_conditions_for_temporal(
+    branch: &HistoryBranch,
+    compiled: &CompiledTemporalQuery,
+    names: &QueryNames,
+    type_test: TypeTest,
+) -> Result<Condition, RenderError> {
     let mut condition = Condition::all();
 
     // Entity selectors, unioned (clause 5.2.33): `(sel1) OR (sel2) OR ...`,
-    // each reached through the `e` alias stage 1 selects the temporal
-    // catalogue under. Rendered only when every selector constrains, the
-    // reading `EntitySelection::selectors_constrain` shares with the entity path.
-    if compiled.entities.selectors_constrain() {
+    // each reached through the `e` alias stage 1 selects the Evolutions
+    // under. Rendered only when every selector constrains, the reading
+    // `EntitySelection::selectors_constrain` shares with the entity path, and
+    // a walk that selected the types leaves only a lone selector's pattern.
+    let selectors = &compiled.entities.selectors;
+    let walked_without_pattern = type_test == TypeTest::Walked && selectors.iter().all(|selector| selector.id_pattern.is_none());
+    if compiled.entities.selectors_constrain() && !walked_without_pattern {
         let mut union = Condition::any();
-        for selector in &compiled.entities.selectors {
-            union = union.add(temporal_selector_condition(selector, &names.types));
+        for selector in selectors {
+            union = union.add(temporal_selector_condition(selector, &names.types, type_test));
         }
         condition = condition.add(union);
     }
@@ -221,7 +281,7 @@ fn build_entity_conditions_for_temporal(branch: &HistoryBranch, compiled: &Compi
 /// The entity path renders the same three axes against `entities`; the columns
 /// carry the same names on both relations, so the two cannot drift on what a
 /// selector means.
-fn temporal_selector_condition(selector: &EntitySelector, types: &ResolvedNames<EntityTypeName>) -> Condition {
+fn temporal_selector_condition(selector: &EntitySelector, types: &ResolvedNames<EntityTypeName>, type_test: TypeTest) -> Condition {
     let mut condition = Condition::all();
     match selector.identifier_axis() {
         IdentifierAxis::Ids(ids) => {
@@ -233,8 +293,11 @@ fn temporal_selector_condition(selector: &EntitySelector, types: &ResolvedNames<
         }
         IdentifierAxis::Any => {}
     }
-    if let Some(type_expr) = &selector.type_expr {
-        condition = condition.add(type_condition(type_expr, &SeaExpr::col((E, TemporalEntities::EntityTypeNameKeys)), types));
+    match (&selector.type_expr, type_test) {
+        (Some(type_expr), TypeTest::TypeKeys) => {
+            condition = condition.add(type_condition(type_expr, &SeaExpr::col((E, TemporalEntities::EntityTypeNameKeys)), types));
+        }
+        (Some(_), TypeTest::Walked) | (None, TypeTest::TypeKeys | TypeTest::Walked) => {}
     }
     condition
 }
@@ -281,6 +344,7 @@ mod tests {
         geo::query::GeoQuery,
         ordering::{collation::IcuCollation, sort_direction::SortDirection},
         page_window::{PageStart, PageWindow},
+        pattern::Pattern,
         scope::query::ScopeQuery,
         temporal::{
             compiled::CompiledTemporalQuery,
@@ -386,19 +450,157 @@ mod tests {
         values.0.iter().any(|value| matches!(value, Value::ChronoDateTimeUtc(_)))
     }
 
-    #[test]
-    fn build_entity_id_selection_with_type() {
+    fn vehicle() -> TypeExpr {
+        TypeExpr::Type(iri("https://uri.etsi.org/ngsi-ld/default-context/Vehicle"))
+    }
+
+    fn typed(selectors: Vec<EntitySelector>) -> CompiledTemporalQuery {
         let mut compiled = minimal_compiled();
-        compiled.entities.selectors = vec![
-            EntitySelector::builder()
-                .type_expr(Some(TypeExpr::Type(iri("https://uri.etsi.org/ngsi-ld/default-context/Vehicle"))))
-                .build(),
-        ];
-        let (sql, _) = built(&compiled, &vehicle_is_known());
+        compiled.entities.selectors = selectors;
+        compiled
+    }
+
+    fn vehicle_selector() -> EntitySelector {
+        EntitySelector::builder().type_expr(Some(vehicle())).build()
+    }
+
+    /// Clause 4.17: a selection by type alone walks the type's membership
+    /// range, which yields its Evolutions in the clause 5.5.9 `id` order, and
+    /// tests no type key array.
+    #[test]
+    fn a_temporal_type_selection_walks_its_type_members() {
+        let compiled = typed(vec![vehicle_selector()]);
+        let (sql, _) = built_windowed(&compiled, &PageWindow::offset(20, 0), &vehicle_is_known());
         assert!(sql.starts_with(r#"SELECT "e"."id" AS "entity_id" FROM"#), "{sql}");
-        assert!(sql.contains("EXISTS(SELECT"), "{sql}");
-        assert!(sql.contains("\"e\".\"entity_type_name_keys\" @> (ARRAY[3])"), "{sql}");
+        assert!(
+            sql.contains(
+                r#"FROM (SELECT "temporal_entity_key", "id" FROM "temporal_entity_type_members" WHERE "entity_type_name_key" = (3) ORDER BY "id" ASC) AS "rw""#
+            ),
+            "{sql}"
+        );
+        assert!(!sql.contains(r#""e"."entity_type_name_keys""#), "{sql}");
+        assert!(!sql.contains(r#"FROM "temporal_entities" AS "re" UNION ALL"#), "{sql}");
         assert!(sql.contains(r#") AS "s" WHERE"#), "{sql}");
+        assert!(sql.contains(r#"ORDER BY "e"."id" ASC"#), "{sql}");
+    }
+
+    /// Clause 4.17 `,`: the walk merges the ranges of both types, each
+    /// Evolution once, in identifier order.
+    #[test]
+    fn a_type_disjunction_walks_the_merged_ranges_in_identifier_order() {
+        let bus = TypeExpr::Type(iri("https://uri.etsi.org/ngsi-ld/default-context/Bus"));
+        let mut names = vehicle_is_known();
+        names.types = ResolvedNames::from_pairs([
+            (
+                "https://uri.etsi.org/ngsi-ld/default-context/Vehicle".parse().expect("valid type name"),
+                EntityTypeNameKey::from(3),
+            ),
+            (
+                "https://uri.etsi.org/ngsi-ld/default-context/Bus".parse().expect("valid type name"),
+                EntityTypeNameKey::from(4),
+            ),
+        ]);
+        let compiled = typed(vec![EntitySelector::builder().type_expr(Some(TypeExpr::Or(vec![vehicle(), bus]))).build()]);
+        let (sql, _) = built(&compiled, &names);
+        assert!(
+            sql.contains(r#"FROM (SELECT DISTINCT ON ("typed"."id") "typed"."temporal_entity_key", "typed"."id" FROM ("#),
+            "{sql}"
+        );
+        assert!(sql.contains(r#"ORDER BY "typed"."id" ASC, "id" ASC) AS "rw""#), "{sql}");
+        assert!(
+            sql.contains(r#""rq"."entity_type_name_keys" @> (ARRAY[3])) OR ("rq"."entity_type_name_keys" @> (ARRAY[4]))"#),
+            "{sql}"
+        );
+    }
+
+    /// A Snapshot has no queue, so its type walk is the membership range alone.
+    #[test]
+    fn a_snapshot_type_selection_walks_its_own_type_members() {
+        let compiled = typed(vec![vehicle_selector()]);
+        let sql = build_stage1_entity_ids(
+            &HistoryBranch::recorded_in(Alias::new("snap_7").into_iden()),
+            &compiled,
+            &PageWindow::offset(20, 0),
+            CountPolicy::Omit,
+            &vehicle_is_known(),
+        )
+        .expect("valid temporal query")
+        .select
+        .to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains(r#"FROM (SELECT "temporal_entity_key", "id" FROM "snap_7"."temporal_entity_type_members" WHERE "entity_type_name_key" = (3)) AS "e""#),
+            "{sql}"
+        );
+    }
+
+    /// The count of a type selection counts the same walk the page cuts.
+    #[test]
+    fn a_counted_type_selection_counts_its_type_members() {
+        let compiled = typed(vec![vehicle_selector()]);
+        let count = built_count(&compiled, &vehicle_is_known());
+        assert!(count.starts_with(r#"SELECT COUNT("e"."id") FROM"#), "{count}");
+        assert!(
+            count.contains(r#""temporal_entity_type_members" WHERE "entity_type_name_key" = (3)"#),
+            "{count}"
+        );
+    }
+
+    /// A lone selector's pattern still filters the walk of its type.
+    #[test]
+    fn a_lone_typed_selector_keeps_its_pattern_over_the_walk() {
+        let compiled = typed(vec![
+            EntitySelector::builder()
+                .id_pattern(Some(Pattern::parse(".*:7$").expect("valid pattern")))
+                .type_expr(Some(vehicle()))
+                .build(),
+        ]);
+        let (sql, _) = built(&compiled, &vehicle_is_known());
+        assert!(sql.contains(r#""temporal_entity_type_members""#), "{sql}");
+        assert!(sql.contains(r#""e"."id" ~ "#), "{sql}");
+        assert!(!sql.contains(r#""e"."entity_type_name_keys""#), "{sql}");
+    }
+
+    /// A selector naming identifiers is answered by the identifier index, so
+    /// it keeps the catalogue and tests the type on its type keys.
+    #[test]
+    fn a_typed_selector_naming_identifiers_keeps_the_catalogue() {
+        let compiled = typed(vec![
+            EntitySelector::builder()
+                .ids(ids(&["urn:ngsi-ld:Vehicle:1"]))
+                .type_expr(Some(vehicle()))
+                .build(),
+        ]);
+        let (sql, _) = built(&compiled, &vehicle_is_known());
+        assert!(!sql.contains("temporal_entity_type_members"), "{sql}");
+        assert!(sql.contains(r#""e"."entity_type_name_keys" @> (ARRAY[3])"#), "{sql}");
+    }
+
+    /// The walk yields the union of the selectors' types, so it cannot pair a
+    /// pattern with its own selector's type: such selectors keep the
+    /// catalogue.
+    #[test]
+    fn several_selectors_pairing_types_with_patterns_keep_the_catalogue() {
+        let compiled = typed(vec![
+            EntitySelector::builder()
+                .id_pattern(Some(Pattern::parse(".*:7$").expect("valid pattern")))
+                .type_expr(Some(vehicle()))
+                .build(),
+            vehicle_selector(),
+        ]);
+        let (sql, _) = built(&compiled, &vehicle_is_known());
+        assert!(!sql.contains("temporal_entity_type_members"), "{sql}");
+        assert!(sql.contains(r#""e"."entity_type_name_keys" @> (ARRAY[3])"#), "{sql}");
+    }
+
+    /// A selector with no type has no range, so neither has the selection.
+    #[test]
+    fn a_selection_with_an_untyped_selector_keeps_the_catalogue() {
+        let compiled = typed(vec![
+            vehicle_selector(),
+            EntitySelector::builder().id_pattern(Some(Pattern::parse(".*").expect("valid pattern"))).build(),
+        ]);
+        let (sql, _) = built(&compiled, &vehicle_is_known());
+        assert!(!sql.contains("temporal_entity_type_members"), "{sql}");
     }
 
     /// Clause 5.6.6 leaves the temporal evolution standing when the current

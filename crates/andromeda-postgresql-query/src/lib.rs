@@ -5,7 +5,10 @@
 //! PostgreSQL. A `q` filter becomes a probe against the `current_attributes`
 //! rows, a `georel` becomes a `PostGIS`
 //! predicate, a `scopeQ` becomes an `lquery` match, a type selection becomes a
-//! predicate over the interned `entity_type_name_keys` array.
+//! predicate over the interned `entity_type_name_keys` array or a walk of a
+//! type-membership relation. The walk is only as good as the relation is
+//! current, so the rows a write moves in it are spelled here too, beside the
+//! walk that reads them.
 //!
 //! The primitives those renderings are built from live below the NGSI-LD line:
 //! the dialect vocabulary (PostGIS/ltree/jsonb operators, casts, bind, quoting)
@@ -49,6 +52,7 @@ pub mod temporal_operand;
 pub mod time_column;
 pub mod time_interval_predicate;
 pub mod type_membership;
+pub mod type_membership_moves;
 pub mod type_predicate;
 
 #[cfg(test)]

@@ -64,6 +64,7 @@ DECLARE
         'attribute_history_instance_claims',
         'attribute_history',
         'temporal_attribute_streams',
+        'temporal_entity_type_members',
         'temporal_entities',
         'entity_type_members',
         'entity_type_census',

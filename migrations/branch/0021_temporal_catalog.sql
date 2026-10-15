@@ -30,6 +30,35 @@ create index idx_temporal_entities_entity_type_name_keys on temporal_entities us
 
 create index idx_temporal_entities_id_trgm on temporal_entities using gin (id gin_trgm_ops);
 
+-- One row per type a Temporal Evolution is recorded under (clause 4.17
+-- selects on membership), keyed by type and then identifier, as
+-- `entity_type_members` is for current state. A temporal type selection pages
+-- by walking one range of this key in the clause 5.5.9 `id` order, so it
+-- visits the Evolutions of that type and no other. The GIN over
+-- `temporal_entities.entity_type_name_keys` cannot give that order, and a walk
+-- of `uq_temporal_entities_id` filtered by type reads every Evolution whose
+-- identifier sorts ahead of the type's last. The key carries
+-- `temporal_entity_key` so the walk never visits the heap.
+create table temporal_entity_type_members (
+    temporal_entity_key bigint not null,
+    entity_type_name_key integer not null,
+    id text compression lz4 collate "C" not null,
+    constraint pk_temporal_entity_type_members primary key (entity_type_name_key, id) include (temporal_entity_key),
+    constraint fk_temporal_entity_type_members_temporal_entity foreign key (temporal_entity_key) references temporal_entities (temporal_entity_key) on delete cascade
+)
+with (
+    autovacuum_vacuum_insert_scale_factor = 0.01,
+    autovacuum_vacuum_insert_threshold = 500,
+    autovacuum_vacuum_scale_factor = 0.02,
+    autovacuum_vacuum_threshold = 500,
+    autovacuum_analyze_scale_factor = 0.02,
+    autovacuum_analyze_threshold = 500,
+    autovacuum_vacuum_cost_delay = 0
+);
+
+-- The cascade from `temporal_entities` finds an Evolution's rows by key.
+create index idx_temporal_entity_type_members_temporal_entity_key on temporal_entity_type_members (temporal_entity_key);
+
 create table temporal_attribute_streams (
     -- Minted when the write path first inserts the grain and read back in the
     -- same transaction; never rendered.

@@ -24,10 +24,16 @@ use crate::{
     error::ContextStoreError,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_schema::current::{Entities, EntitySearch, EntityTypeMembers};
-use andromeda_postgresql_seaquery::{pg_array::any, unnest::unnest_of};
-use sea_query::{DeleteStatement, Expr, ExprTrait, Iden, InsertStatement, JoinType, Query, SelectStatement, SimpleExpr};
+use andromeda_postgresql_branch::schema_iden;
+use andromeda_postgresql_query::{
+    type_membership::Memberships,
+    type_membership_moves::{Member, carried_among, membership_delete, membership_insert},
+};
+use andromeda_postgresql_schema::{
+    current::{Entities, EntitySearch},
+    type_membership::TypeMembershipRelation,
+};
+use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, Iden, InsertStatement, Query};
 
 /// The membership CTE of a create or an update, `mbrs`, whose only purpose is
 /// to run.
@@ -41,38 +47,12 @@ pub(super) struct Mbrs;
 #[iden = "strays"]
 pub(super) struct Strays;
 
-/// The lateral that unnests one type-key array, one row per key.
-#[derive(Iden, Clone, Copy)]
-#[iden = "carried"]
-struct Carried;
-
-/// The membership rows of the Entities `rows` names: one per key of `keys`
-/// (for which `admitted` holds, when given), keyed by `entity_key` and
-/// identified by `id`.
-///
-/// # Errors
-///
-/// Returns [`ContextStoreError::StatementBuild`] if the projection ever stops
-/// matching the column list, which the fixed shape here makes unreachable.
-fn membership_insert(
-    target: &ContextTarget,
-    mut rows: SelectStatement,
-    keys: SimpleExpr,
-    entity_key: SimpleExpr,
-    id: SimpleExpr,
-    admitted: Option<SimpleExpr>,
-) -> Result<InsertStatement, ContextStoreError> {
-    unnest_keys(&mut rows, keys);
-    rows.expr(entity_key).expr(carried_key()).expr(id);
-    if let Some(admitted) = admitted {
-        rows.and_where(admitted);
+/// The current-state membership relation in the branch `schema` names.
+const fn current(schema: Option<&DynIden>) -> Memberships<'_> {
+    Memberships {
+        relation: TypeMembershipRelation::Current,
+        schema,
     }
-    let mut insert = Query::insert();
-    insert
-        .into_table(table_of(target, EntityTypeMembers::Table))
-        .columns([EntityTypeMembers::EntityKey, EntityTypeMembers::EntityTypeNameKey, EntityTypeMembers::Id])
-        .select_from(rows)?;
-    Ok(insert)
 }
 
 /// The membership rows of the Entities a create just minted, read from the
@@ -80,16 +60,21 @@ fn membership_insert(
 ///
 /// # Errors
 ///
-/// As [`membership_insert`].
+/// Returns [`ContextStoreError::StatementBuild`] if the projection ever stops
+/// matching the column list, which the fixed shape makes unreachable.
 pub(crate) fn created_memberships(target: &ContextTarget) -> Result<InsertStatement, ContextStoreError> {
-    membership_insert(
-        target,
+    let schema = schema_iden(target);
+    let member = Member {
+        key: Expr::col((Ins, Entities::EntityKey)),
+        id: Expr::col((Ins, Entities::Id)),
+    };
+    Ok(membership_insert(
+        current(schema.as_ref()),
         from_inserted(),
         projected(EntitySearch::EntityTypeNameKeys),
-        Expr::col((Ins, Entities::EntityKey)),
-        Expr::col((Ins, Entities::Id)),
+        member,
         None,
-    )
+    )?)
 }
 
 /// The membership rows an update adds: the types the rewritten search row
@@ -97,49 +82,35 @@ pub(crate) fn created_memberships(target: &ContextTarget) -> Result<InsertStatem
 ///
 /// # Errors
 ///
-/// As [`membership_insert`].
+/// As [`created_memberships`].
 pub(super) fn added_memberships(target: &ContextTarget) -> Result<InsertStatement, ContextStoreError> {
-    membership_insert(
-        target,
+    let schema = schema_iden(target);
+    let memberships = current(schema.as_ref());
+    let member = Member {
+        key: Expr::col((Srch, EntitySearch::EntityKey)),
+        id: Expr::col((Srch, Entities::Id)),
+    };
+    let added = carried_among(Expr::col((Srch, SearchImage::OldTypes)), memberships).not();
+    Ok(membership_insert(
+        memberships,
         Query::select().from(Srch).take(),
         Expr::col((Srch, SearchImage::NewTypes)),
-        Expr::col((Srch, EntitySearch::EntityKey)),
-        Expr::col((Srch, Entities::Id)),
-        Some(carried_key().eq(any(Expr::col((Srch, SearchImage::OldTypes)))).not()),
-    )
+        member,
+        Some(added),
+    )?)
 }
 
 /// The membership rows an update removes: the types the replaced search row
 /// held that the rewritten one does not, found by the membership key.
 pub(super) fn dropped_memberships(target: &ContextTarget) -> DeleteStatement {
-    let mut stale = Query::select().from(Srch).take();
-    unnest_keys(&mut stale, Expr::col((Srch, SearchImage::OldTypes)));
-    stale
-        .expr(carried_key())
-        .expr(Expr::col((Srch, Entities::Id)))
-        .and_where(carried_key().eq(any(Expr::col((Srch, SearchImage::NewTypes)))).not());
-    Query::delete()
-        .from_table(table_of(target, EntityTypeMembers::Table))
-        .and_where(Expr::tuple([Expr::col(EntityTypeMembers::EntityTypeNameKey), Expr::col(EntityTypeMembers::Id)]).in_subquery(stale.take()))
-        .take()
-}
-
-/// Join one row per key of `keys` to `rows`, as
-/// `INNER JOIN LATERAL (SELECT UNNEST(keys) AS entity_type_name_key) AS carried ON TRUE`.
-fn unnest_keys(rows: &mut SelectStatement, keys: SimpleExpr) {
-    rows.join_lateral(
-        JoinType::InnerJoin,
-        Query::select()
-            .expr_as(SimpleExpr::from(unnest_of(keys)), EntityTypeMembers::EntityTypeNameKey)
-            .take(),
-        Carried,
-        SimpleExpr::from(Expr::val(true)),
-    );
-}
-
-/// The key the lateral unnested: `carried.entity_type_name_key`.
-fn carried_key() -> SimpleExpr {
-    Expr::col((Carried, EntityTypeMembers::EntityTypeNameKey))
+    let schema = schema_iden(target);
+    membership_delete(
+        current(schema.as_ref()),
+        Query::select().from(Srch).take(),
+        Expr::col((Srch, SearchImage::OldTypes)),
+        Expr::col((Srch, SearchImage::NewTypes)),
+        Expr::col((Srch, Entities::Id)),
+    )
 }
 
 #[cfg(test)]

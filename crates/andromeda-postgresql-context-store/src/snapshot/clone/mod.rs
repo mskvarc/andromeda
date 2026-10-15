@@ -37,7 +37,7 @@ use sqlx::{Executor, PgConnection};
 
 /// The branch relations a clone copies, in the order `BRANCH_TABLES` gives
 /// them, which respects their references (parents before children).
-const CLONED_TABLES: [&str; 12] = [
+const CLONED_TABLES: [&str; 13] = [
     "entities",
     "temporal_entities",
     "entity_search",
@@ -46,6 +46,7 @@ const CLONED_TABLES: [&str; 12] = [
     "attribute_census",
     "entity_type_members",
     "current_attributes",
+    "temporal_entity_type_members",
     "temporal_attribute_streams",
     "attribute_history",
     "scope_history",

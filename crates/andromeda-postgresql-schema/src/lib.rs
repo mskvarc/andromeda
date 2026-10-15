@@ -36,6 +36,7 @@ pub mod subscriptions;
 pub mod temporal;
 pub mod temporal_intent;
 pub mod tenancy;
+pub mod type_membership;
 pub mod uri_value_column;
 
 #[cfg(test)]

@@ -20,10 +20,13 @@ use andromeda_ngsi_ld_query::{
 use andromeda_postgresql_query::{
     dictionary::resolved_names::ResolvedNames,
     entity_row_refs::EntityRowRefs,
-    type_membership::membership,
+    type_membership::{Memberships, membership},
     type_predicate::condition as type_condition,
 };
-use andromeda_postgresql_schema::current::{Entities, EntitySearch};
+use andromeda_postgresql_schema::{
+    current::{Entities, EntitySearch},
+    type_membership::TypeMembershipRelation,
+};
 use andromeda_postgresql_seaquery::{
     operator::regex_match,
     pg_array::{any, text_array},
@@ -94,7 +97,11 @@ fn selector_condition(rows: &EntityRowRefs, selector: &EntitySelector, types: &R
                 condition = condition.add(type_condition(type_expr, &rows.search_column(EntitySearch::EntityTypeNameKeys), types));
             }
             TypeTest::MembershipProbe => {
-                condition = condition.add(membership(type_expr, types, &rows.identity_column(Entities::Id), rows.schema()));
+                let memberships = Memberships {
+                    relation: TypeMembershipRelation::Current,
+                    schema: rows.schema(),
+                };
+                condition = condition.add(membership(type_expr, types, &rows.identity_column(Entities::Id), memberships));
             }
             TypeTest::Walked => {}
         }

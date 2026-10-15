@@ -381,6 +381,78 @@ fn the_latest_typed_intent_of_an_entity_gives_its_evolution_its_types() {
     );
 }
 
+/// The membership moves read the types the evolution had and has from the
+/// upsert's own images: the replaced row is the one it found after waiting on
+/// a concurrent writer, which the statement's snapshot may predate.
+#[test]
+fn an_evolution_returns_the_types_it_had_and_has() {
+    let evolving = evolving();
+    let evolutions = common_table(&evolving, "evolved");
+    assert!(
+        evolutions.starts_with(r#""evolved" ("temporal_entity_key", "id", "created", "new_types", "old_types") AS"#),
+        "{evolutions}"
+    );
+    assert!(
+        evolutions.ends_with(r#"RETURNING "new"."temporal_entity_key", "new"."id", "old"."temporal_entity_key" IS NULL, "new"."entity_type_name_keys", "old"."entity_type_name_keys""#),
+        "{evolutions}"
+    );
+}
+
+/// Clause 4.17 selects on membership: an evolution the statement created
+/// lands a row for every type, and an updated one for each type its old types
+/// lacked.
+#[test]
+fn an_evolution_lands_a_membership_row_for_every_type_it_gained() {
+    let evolving = evolving();
+    let added = common_table(&evolving, "added_members");
+    assert!(
+        added.contains(r#"AS (INSERT INTO "temporal_entity_type_members" ("temporal_entity_key", "entity_type_name_key", "id") SELECT "evolved"."temporal_entity_key", "carried"."entity_type_name_key", "evolved"."id" FROM "evolved""#),
+        "{added}"
+    );
+    assert!(added.contains(r#"UNNEST("evolved"."new_types")"#), "{added}");
+    assert!(
+        added.contains(r#"WHERE "evolved"."created" OR (NOT "carried"."entity_type_name_key" = ANY("evolved"."old_types"))"#),
+        "{added}"
+    );
+}
+
+/// A type the latest typed intent no longer states leaves the membership
+/// relation, so the evolution stops answering a selection of that type.
+#[test]
+fn an_evolution_drops_the_membership_rows_of_the_types_it_lost() {
+    let evolving = evolving();
+    let dropped = common_table(&evolving, "dropped_members");
+    assert!(
+        dropped.contains(r#"AS (DELETE FROM "temporal_entity_type_members" WHERE ("entity_type_name_key", "id") IN (SELECT "carried"."entity_type_name_key", "evolved"."id" FROM "evolved""#),
+        "{dropped}"
+    );
+    assert!(dropped.contains(r#"UNNEST("evolved"."old_types")"#), "{dropped}");
+    assert!(
+        dropped.contains(r#"NOT "carried"."entity_type_name_key" = ANY("evolved"."new_types")"#),
+        "{dropped}"
+    );
+}
+
+/// A Snapshot records its Temporal Evolutions in its own schema, memberships
+/// included.
+#[test]
+fn a_snapshot_moves_its_memberships_in_its_own_schema() {
+    let schema = Alias::new("snap_4").into_iden();
+    let evolving = steps_over(
+        &IntentSource::Queued {
+            keys: &[3, 5],
+            reach: TemporalIntentReach::ALL.to_vec(),
+        },
+        Some(&schema),
+    )
+    .into_iter()
+    .map(|(_, sql)| sql)
+    .find(|sql| sql.starts_with(r#"WITH "evolved""#))
+    .expect("an evolution statement");
+    assert!(evolving.contains(r#"INSERT INTO "snap_4"."temporal_entity_type_members""#), "{evolving}");
+    assert!(evolving.contains(r#"DELETE FROM "snap_4"."temporal_entity_type_members""#), "{evolving}");
+}
+
 #[test]
 fn entries_are_numbered_from_the_base_ordinal() {
     for table in ["attribute_history", "scope_history"] {
@@ -434,7 +506,7 @@ fn an_observation_without_evolution_or_types_is_named_by_the_pre_check() {
 fn the_streams_of_an_evolution_the_statement_creates_are_inserted_without_arbitration() {
     let evolving = evolving();
     assert!(
-        common_table(&evolving, "evolved").ends_with(r#"RETURNING "new"."temporal_entity_key", "new"."id", "old"."temporal_entity_key" IS NULL"#),
+        common_table(&evolving, "evolved").contains(r#"RETURNING "new"."temporal_entity_key", "new"."id", "old"."temporal_entity_key" IS NULL, "#),
         "{evolving}"
     );
     let created = common_table(&evolving, "created_streams");
