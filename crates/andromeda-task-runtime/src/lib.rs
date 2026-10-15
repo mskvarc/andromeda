@@ -20,6 +20,8 @@ mod driver_supervision;
 /// Runtime-neutral task failure classification.
 pub mod failure;
 mod failure_report;
+/// Concurrent work that keeps the order of the items sharing a key.
+pub mod keyed_lanes;
 /// Observable task lifecycle events.
 pub mod lifecycle_event;
 /// Periodic scheduling policy.

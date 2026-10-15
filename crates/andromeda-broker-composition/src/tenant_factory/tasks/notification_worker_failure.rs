@@ -2,7 +2,7 @@
 
 use crate::tenant_factory::tasks::notification_schedule::classify_notification_failure;
 use andromeda_notification::error::NotificationError;
-use andromeda_task_runtime::failure::TaskFailure;
+use andromeda_task_runtime::{failure::TaskFailure, keyed_lanes::LaneStopped};
 use strum::Display;
 use thiserror::Error;
 
@@ -29,6 +29,9 @@ pub(super) enum NotificationWorkerFailure {
     /// A change channel the worker listens on closed.
     #[error("{0} change channel closed")]
     ChannelClosed(ChangeChannel),
+    /// A lane evaluating live entity changes stopped running.
+    #[error("live notification evaluation: {0}")]
+    EvaluationLaneStopped(LaneStopped),
 }
 
 /// Classify a notification processing failure inside a resident worker.
@@ -44,15 +47,31 @@ pub(super) const fn channel_closed(channel: ChangeChannel) -> TaskFailure<Notifi
     TaskFailure::transient(NotificationWorkerFailure::ChannelClosed(channel))
 }
 
+/// The failure the entity notification worker stops with when one of its live
+/// evaluation lanes stopped.
+///
+/// The lanes no longer keep the order of an Entity's changes; a restarted
+/// worker starts them afresh, so the failure is transient.
+pub(super) const fn evaluation_lane_stopped(stopped: LaneStopped) -> TaskFailure<NotificationWorkerFailure> {
+    TaskFailure::transient(NotificationWorkerFailure::EvaluationLaneStopped(stopped))
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::tenant_factory::tasks::notification_worker_failure::{ChangeChannel, channel_closed};
-    use andromeda_task_runtime::failure::FailureClass;
+    use crate::tenant_factory::tasks::notification_worker_failure::{ChangeChannel, channel_closed, evaluation_lane_stopped};
+    use andromeda_task_runtime::{failure::FailureClass, keyed_lanes::LaneStopped};
 
     #[test]
     fn a_closed_change_channel_is_a_transient_failure_naming_the_channel() {
         let failure = channel_closed(ChangeChannel::CsourceSubscription);
         assert_eq!(failure.class(), FailureClass::Transient);
         assert_eq!(failure.to_string(), "csource-subscription change channel closed");
+    }
+
+    #[test]
+    fn a_stopped_evaluation_lane_is_a_transient_failure() {
+        let failure = evaluation_lane_stopped(LaneStopped);
+        assert_eq!(failure.class(), FailureClass::Transient);
+        assert_eq!(failure.to_string(), "live notification evaluation: the lane of a dispatched item has stopped");
     }
 }

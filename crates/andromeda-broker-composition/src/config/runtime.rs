@@ -682,6 +682,15 @@ port = 1600
 
     #[test]
     #[serial]
+    fn env_overrides_notifications_live_evaluation_lanes() {
+        unsafe { env::set_var("ANDROMEDA__NOTIFICATIONS__LIVE_EVALUATION_LANES", "7") };
+        let config = load_env_only();
+        unsafe { env::remove_var("ANDROMEDA__NOTIFICATIONS__LIVE_EVALUATION_LANES") };
+        pretty_assertions::assert_eq!(config.notifications.live_evaluation_lanes.get(), 7);
+    }
+
+    #[test]
+    #[serial]
     fn env_selects_the_spatial_consistency_mode_in_kebab_case() {
         unsafe { env::set_var("ANDROMEDA__SPATIAL__CONSISTENCY", "watermark") };
         let config = load_env_only();

@@ -8,6 +8,7 @@
 //! share nothing with these beyond the schedule helper.
 
 use crate::{
+    config::notifications::NotificationsConfig,
     linked_entity_forwarding::ForwardedLinkedEntitySource,
     tenant_factory::{
         assembly_invariant::AssemblyInvariant,
@@ -18,7 +19,7 @@ use crate::{
             EntityNotificationDelivery,
             notification_delivery::{DeliveryDrainDrive, register_notification_delivery},
             notification_schedule::{register_notification_schedule, register_periodic_wake},
-            notification_worker_failure::{ChangeChannel, channel_closed, worker_notification_failure},
+            notification_worker_failure::{ChangeChannel, channel_closed, evaluation_lane_stopped, worker_notification_failure},
         },
     },
 };
@@ -32,7 +33,6 @@ use andromeda_federation::FederationService;
 use andromeda_jsonld::operation_hit_scope::run_in_operation_scope;
 use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
 use andromeda_notification::{
-    delivery_config::DeliveryConfig,
     delivery_store::DeliveryStore,
     interval::{IntervalNotificationDeps, IntervalNotificationOperation},
     processor::{NotificationProcessor, NotificationProcessorDeps},
@@ -40,6 +40,7 @@ use andromeda_notification::{
 use andromeda_subscription::{change::SubscriptionChange, store::SubscriptionStore};
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
+    keyed_lanes::KeyedLanes,
     registration::TaskRegistration,
     resident_task::ResidentTask,
     restart_policy::RestartPolicy,
@@ -48,11 +49,17 @@ use andromeda_task_runtime::{
     task_name::TaskName,
     wake_trigger::wake_channel,
 };
-use std::{sync::Arc, time::Duration};
+use andromeda_telemetry::live_change_loss::record_lost_live_changes;
+use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 use tokio::sync::{
     broadcast,
     broadcast::error::{RecvError, TryRecvError},
 };
+use tracing::warn;
+
+/// Committed entity changes one live evaluation lane queues behind the change
+/// it is evaluating; a full lane holds the rest in the tenant's change buffer.
+const LIVE_LANE_DEPTH: NonZeroUsize = NonZeroUsize::MIN.saturating_add(31);
 
 /// Compose the query service one tenant's notifications resolve the Linked
 /// Entities of their `join` with, change-driven and periodic alike.
@@ -126,13 +133,13 @@ pub(super) fn compose_notification_processor(
 pub(super) fn register_notification_workers(
     supervisor: &TaskSupervisor,
     store: Arc<dyn DeliveryStore>,
-    config: &DeliveryConfig,
+    config: &NotificationsConfig,
     processor: Arc<NotificationProcessor>,
     entity_changes: &broadcast::Sender<ContextChangeEvent>,
     subscription_changes: broadcast::Sender<SubscriptionChange>,
     drive: DeliveryDrainDrive,
 ) -> Result<(), TenantAssemblyError> {
-    let delivery = if config.is_durable() {
+    let delivery = if config.delivery.is_durable() {
         EntityNotificationDelivery::Durable
     } else {
         EntityNotificationDelivery::Live
@@ -143,8 +150,9 @@ pub(super) fn register_notification_workers(
         subscription_changes,
         Arc::clone(&processor), // clone: the resident processor is also the delivery drain's transport.
         delivery,
+        config.live_evaluation_lanes,
     )?;
-    register_notification_delivery(supervisor, store, config, processor, drive)
+    register_notification_delivery(supervisor, store, &config.delivery, processor, drive)
 }
 
 /// What the periodic sweep reads and delivers through beside the tenant's
@@ -199,12 +207,53 @@ pub(super) fn register_interval_notification(
     })
 }
 
+/// Start the lanes live delivery evaluates committed entity changes on, none
+/// under durable delivery.
+///
+/// Clause 5.8.6 notifies each change of a watched attribute, and the changes of
+/// one Entity reach a subscriber in the order they were committed (clause
+/// 5.5.11.2 orders the updates of one Entity in a batch chronologically), so a
+/// change waits only for the earlier changes of its own Entity.
+fn live_evaluation_lanes(
+    processor: &Arc<NotificationProcessor>,
+    delivery: EntityNotificationDelivery,
+    width: NonZeroUsize,
+) -> Option<KeyedLanes<ContextChangeEvent>> {
+    match delivery {
+        EntityNotificationDelivery::Durable => None,
+        EntityNotificationDelivery::Live => {
+            let processor = Arc::clone(processor); // clone: the lanes own the policy operation they evaluate with.
+            Some(KeyedLanes::start(width, LIVE_LANE_DEPTH, move |change: ContextChangeEvent| {
+                let processor = Arc::clone(&processor); // clone: each evaluation owns the shared policy operation.
+                async move {
+                    // Clause 5.13.3.5: counting one hit per context per
+                    // operation means the notification's own context
+                    // resolutions count once for this change, distinct
+                    // from the write that produced it.
+                    run_in_operation_scope(processor.apply_entity_change(change)).await;
+                }
+            }))
+        }
+    }
+}
+
+/// Log and count the committed entity changes the live change buffer dropped
+/// before evaluation read them.
+fn report_lost_live_changes(skipped: u64) {
+    warn!(
+        skipped,
+        "live notification evaluation fell behind the committed entity changes; the notifications of the skipped changes are lost"
+    );
+    record_lost_live_changes(skipped);
+}
+
 fn register_notification_processor(
     supervisor: &TaskSupervisor,
     entity_changes: broadcast::Sender<ContextChangeEvent>,
     subscription_changes: broadcast::Sender<SubscriptionChange>,
     processor: Arc<NotificationProcessor>,
     delivery: EntityNotificationDelivery,
+    lanes: NonZeroUsize,
 ) -> Result<(), TenantAssemblyError> {
     let restart_delay = Duration::from_secs(1);
     let name = TaskName::try_from("notification-events").map_err(AssemblyInvariant::from)?;
@@ -220,10 +269,16 @@ fn register_notification_processor(
         let processor = Arc::clone(&processor); // clone: every resident attempt owns the shared policy operation.
         async move {
             processor.reload_cache().await.map_err(worker_notification_failure)?;
+            let evaluation = live_evaluation_lanes(&processor, delivery, lanes);
             execution.mark_running();
             loop {
                 tokio::select! {
-                    () = execution.cancellation().cancelled() => return Ok(()),
+                    () = execution.cancellation().cancelled() => {
+                        if let Some(lanes) = evaluation {
+                            lanes.finish().await;
+                        }
+                        return Ok(());
+                    }
                     received = subscription_receiver.recv() => match received {
                         Ok(change) => processor.apply_subscription_change(change).await,
                         Err(RecvError::Lagged(skipped)) => {
@@ -232,8 +287,8 @@ fn register_notification_processor(
                         }
                         Err(RecvError::Closed) => return Err(channel_closed(ChangeChannel::Subscription)),
                     },
-                    received = entity_receiver.recv(), if matches!(delivery, EntityNotificationDelivery::Live) => match received {
-                        Ok(event) => {
+                    received = entity_receiver.recv(), if evaluation.is_some() => match received {
+                        Ok(change) => {
                             loop {
                                 match subscription_receiver.try_recv() {
                                     Ok(change) => processor.apply_subscription_change(change).await,
@@ -244,13 +299,11 @@ fn register_notification_processor(
                                     Err(TryRecvError::Empty | TryRecvError::Closed) => break,
                                 }
                             }
-                            // Clause 5.13.3.5: counting one hit per context per
-                            // operation means the notification's own context
-                            // resolutions count once for this change, distinct
-                            // from the write that produced it.
-                            run_in_operation_scope(processor.apply_entity_change(event)).await;
+                            if let Some(lanes) = &evaluation {
+                                lanes.lane(&change.event.entity_id).dispatch(change).await.map_err(evaluation_lane_stopped)?;
+                            }
                         }
-                        Err(RecvError::Lagged(skipped)) => tracing::debug!(skipped, "notification entity stream lagged"),
+                        Err(RecvError::Lagged(skipped)) => report_lost_live_changes(skipped),
                         Err(RecvError::Closed) => return Err(channel_closed(ChangeChannel::Entity)),
                     },
                 }

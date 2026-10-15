@@ -4,8 +4,12 @@ use andromeda_configuration_scalars::human_duration::HumanDuration;
 use andromeda_http_subscription::config::{NotificationConfig, NotificationConfigError};
 use andromeda_notification::delivery_config::{DeliveryConfig, DeliveryConfigError};
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroUsize;
 use thiserror::Error;
 use toml_comment::TomlComment;
+
+/// Default number of committed entity changes live evaluation works on at once.
+const DEFAULT_LIVE_EVALUATION_LANES: NonZeroUsize = NonZeroUsize::MIN.saturating_add(31);
 
 /// Invalid notification configuration.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -53,8 +57,19 @@ pub struct NotificationsConfig {
     /// every cached runtime: at under half a kilobyte a slot the default costs
     /// under 4 MB per runtime. Live delivery is not durable: a burst larger
     /// than the buffer, arriving faster than the evaluator reads it, loses the
-    /// notifications of its oldest changes.
+    /// notifications of its oldest changes, and each lost change is logged at
+    /// warn and counted on `andromeda_notification_live_changes_lost_total`.
     pub live_change_capacity: usize,
+    /// Committed entity changes live notification evaluation works on at once.
+    ///
+    /// Changes of one Entity are evaluated one at a time in the order they were
+    /// committed; changes of different Entities run side by side up to this
+    /// many. Each change in flight reads its Entity and claims and records a
+    /// notification slot per matched subscription, so the lanes share the
+    /// tenant's database pool with request handling. Only `live` delivery
+    /// evaluates changes this way.
+    #[toml_comment(inline)]
+    pub live_evaluation_lanes: NonZeroUsize,
 }
 
 impl Default for NotificationsConfig {
@@ -64,6 +79,7 @@ impl Default for NotificationsConfig {
             streaming: NotificationConfig::default(),
             interval_max_sleep: HumanDuration::from_secs(30),
             live_change_capacity: 8192,
+            live_evaluation_lanes: DEFAULT_LIVE_EVALUATION_LANES,
         }
     }
 }

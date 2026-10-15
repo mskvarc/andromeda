@@ -183,7 +183,7 @@ pub(super) fn supervise_tasks(
     register_notification_workers(
         &task_supervisor,
         delivery_queue(storage),
-        &config.notifications.delivery,
+        &config.notifications,
         notification_processor,
         &entity,
         subscription,
