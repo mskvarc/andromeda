@@ -49,6 +49,7 @@ pub mod queried_entity;
 pub mod read_order;
 pub mod scope;
 pub mod split_filter;
+pub mod subject_start;
 pub mod temporal;
 pub mod term_compactor;
 pub mod term_expander;

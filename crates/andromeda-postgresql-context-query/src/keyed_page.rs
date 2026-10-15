@@ -241,8 +241,6 @@ mod tests {
         assert!(walk.contains(r#"FROM "current_attributes" AS "ca""#), "{walk}");
     }
 
-    /// A Date is held as its fixed-width text, so its candidates range over the
-    /// string index, and the index branch leaves the ordering out.
     /// The hop is read from the linked entities inward, and the index branch
     /// leaves it out of the filter it applies to the candidates, while the
     /// walk past the bound probes it outward.
@@ -276,6 +274,8 @@ mod tests {
         assert!(walk.contains("JOIN jsonb_array_elements_text("), "the walk probes the hop outward: {walk}");
     }
 
+    /// A Date is held as its fixed-width text, so its candidates range over the
+    /// string index, and the index branch leaves the ordering out.
     #[test]
     fn a_date_ordering_pages_through_the_string_index() {
         let built = build_query(

@@ -2,13 +2,10 @@
 
 use crate::{
     carried_names::{attrs_condition, projected_member_condition},
-    carrier_page::{carrier_page, carriers},
-    entity_page::{heads_of, heads_over},
     entity_relations::{EntityRelations, RowSource},
     entity_total::{EntityTotal, TotalSource, entity_total},
     gated_page::PageSource,
-    keyed_page::keyed_page,
-    numbered_page::{NumberedOrder, numbered_order, numbered_page},
+    page_shape::PageShape,
     result_ordering,
     selector_predicate::condition as selector_condition,
 };
@@ -18,7 +15,7 @@ use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity::compiled::CompiledEntityQuery,
     entity_selection::ConsideredEntities,
-    filter::{expression::Expr as QueryExpr, predicate::Predicate},
+    filter::predicate::Predicate,
     page_window::{PageStart, PageWindow},
     read_order::ReadOrder,
 };
@@ -30,11 +27,7 @@ use andromeda_postgresql_query::{
     geo_predicate as geo_sql,
     geo_predicate::GeometrySource,
     page_window::bound_to_window,
-    q_predicate::{
-        instance_scan::InstanceScan,
-        keyed_term::{KeyedCandidates, keyed_candidates},
-        projection as q_filter,
-    },
+    q_predicate::{instance_scan::InstanceScan, projection as q_filter},
     scope_predicate::{ScopeTarget, condition as scope_condition},
     sort_key::{KeyOrder, NullPlacement, SortKey},
 };
@@ -55,29 +48,15 @@ pub struct EntityQuery {
     /// ascending.
     pub read_order: ReadOrder,
     /// How PostgreSQL may plan and run `select`: a gated page, keyed, cut
-    /// from the carriers of its `attrs` or walked in the order of a numbered
-    /// Attribute, with its bound values, which alone let the planner price an
+    /// from the carriers of its `attrs` or the trigram matches of its
+    /// `idPattern`, or walked in the order of a numbered Attribute, with its
+    /// bound values, which alone let the planner price an
     /// index against walking the selection, and without the parallel workers
     /// a gated-off branch would launch.
     pub planning: StatementPlanning,
     /// How PostgreSQL may plan the statement `total` runs: a keyed count with
     /// its bound values, for the same pricing.
     pub total_planning: StatementPlanning,
-}
-
-/// How a page is cut from its selection.
-enum PageShape<'q> {
-    /// One statement over the selection, ordered and windowed, the plan left
-    /// to the planner.
-    Plain,
-    /// The gated page of a `q` whose conjunct an index answers.
-    Keyed(&'q QueryExpr, KeyedCandidates<'q>),
-    /// The gated page of a selection by `attrs` alone, the statement reading
-    /// the Entities that carry one of the Attributes.
-    Carriers(SelectStatement),
-    /// The gated page of a selection ordered by one Attribute, walked in the
-    /// order of its value index while every instance of it holds a number.
-    Numbered(NumberedOrder),
 }
 
 /// A compiled identifier-only entity query.
@@ -116,33 +95,8 @@ pub fn build_query(
     let relations = EntityRelations::for_query(query, &names.types, schema.as_ref());
     let rows = relations.rows(schema.clone());
     let condition = build_entity_conditions(query, names, &rows, &relations.source, QFilter::Whole)?;
-    let keyed = query
-        .selection
-        .q_expr
-        .as_ref()
-        .and_then(|q_expr| keyed_candidates(q_expr, &rows, names).map(|keyed| (q_expr, keyed)));
-    let shape = match keyed {
-        Some((q_expr, keyed)) => PageShape::Keyed(q_expr, keyed),
-        None => carriers(query, names, schema.as_ref())
-            .map(PageShape::Carriers)
-            .or_else(|| numbered_order(query, names, window).map(PageShape::Numbered))
-            .unwrap_or(PageShape::Plain),
-    };
-
-    // An offset page, and the first page of a cursor walk, piggyback a
-    // requested total on every row; a continued cursor page cannot, since its
-    // rows are only those past the cursor, and neither can a gated page, whose
-    // first branch reads only the Entities the short walk visited.
-    let counted_on_page = match (count, &window.start, &shape) {
-        (CountPolicy::Emit, PageStart::Offset(_) | PageStart::Cursor(None), PageShape::Plain) => CountPolicy::Emit,
-        (CountPolicy::Emit, PageStart::Cursor(Some(_)), PageShape::Plain)
-        | (CountPolicy::Emit, PageStart::Offset(_) | PageStart::Cursor(_), PageShape::Keyed(..) | PageShape::Carriers(_) | PageShape::Numbered(_))
-        | (
-            CountPolicy::Omit,
-            PageStart::Offset(_) | PageStart::Cursor(_),
-            PageShape::Plain | PageShape::Keyed(..) | PageShape::Carriers(_) | PageShape::Numbered(_),
-        ) => CountPolicy::Omit,
-    };
+    let shape = PageShape::of(query, names, window, &relations, &rows, schema.as_ref());
+    let counted_on_page = shape.counted_on_page(count, window);
     let source = PageSource {
         relations: &relations,
         schema: schema.as_ref(),
@@ -151,60 +105,7 @@ pub fn build_query(
         window,
         names,
     };
-    let (select, read_order, planning, total_planning, keyed_total) = match shape {
-        PageShape::Plain => {
-            let mut page = Query::select();
-            relations.apply_from(&mut page, schema.as_ref());
-            // clone: the count statement filters on the same condition.
-            page.cond_where(condition.clone());
-            let (keys, read_order) = window_and_sort_keys(&mut page, &rows, query, window, &names.attributes)?;
-            (
-                heads_of(page, &rows, keys, counted_on_page),
-                read_order,
-                StatementPlanning::Cached,
-                StatementPlanning::Cached,
-                None,
-            )
-        }
-        PageShape::Keyed(q_expr, keyed) => {
-            let keyed_total = match count {
-                // clone: the count reads the same candidates under its own bound
-                CountPolicy::Emit => Some(KeyedCandidates {
-                    select: keyed.select.clone(),
-                    ..keyed
-                }),
-                CountPolicy::Omit => None,
-            };
-            let (page, read_order) = keyed_page(&source, q_expr, keyed)?;
-            (
-                heads_over(page, &rows, CountPolicy::Omit),
-                read_order,
-                StatementPlanning::GatedBranches,
-                StatementPlanning::BoundValues,
-                keyed_total,
-            )
-        }
-        PageShape::Carriers(carriers) => {
-            let (page, read_order) = carrier_page(&source, carriers)?;
-            (
-                heads_over(page, &rows, CountPolicy::Omit),
-                read_order,
-                StatementPlanning::GatedBranches,
-                StatementPlanning::Cached,
-                None,
-            )
-        }
-        PageShape::Numbered(order) => {
-            let (page, read_order) = numbered_page(&source, &order)?;
-            (
-                heads_over(page, &rows, CountPolicy::Omit),
-                read_order,
-                StatementPlanning::GatedBranches,
-                StatementPlanning::Cached,
-                None,
-            )
-        }
-    };
+    let page = shape.cut(&source, &condition, count, counted_on_page)?;
 
     let total_source = TotalSource {
         query,
@@ -212,14 +113,14 @@ pub fn build_query(
         rows: &rows,
         schema: schema.as_ref(),
     };
-    let total = entity_total(&total_source, count, counted_on_page, condition, keyed_total)?;
+    let total = entity_total(&total_source, count, counted_on_page, condition, page.total_candidates)?;
 
     Ok(EntityQuery {
-        select,
+        select: page.select,
         total,
-        read_order,
-        planning,
-        total_planning,
+        read_order: page.read_order,
+        planning: page.planning,
+        total_planning: page.total_planning,
     })
 }
 

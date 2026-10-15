@@ -8,7 +8,7 @@
 //!
 //! One divergence is settled by configuration rather than refusal, because the construct is POSIX.2 itself: `.` matches a newline in POSIX.2 and in PostgreSQL's default newline-insensitive matching, but not in the `regex` crate's default. The in-memory engine is built with `dot_matches_new_line`, so `name~="a.b"` selects a value spelled `a\nb` on both sides.
 
-use crate::{error::QueryError, portable_pattern::PortablePattern, posix_dialect::check_posix_dialect};
+use crate::{error::QueryError, portable_pattern::PortablePattern, posix_dialect::check_posix_dialect, subject_start::SubjectStart};
 use regex::{Regex, RegexBuilder};
 use regex_syntax::{ast::parse::Parser, hir::translate::TranslatorBuilder};
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,8 @@ pub struct Pattern {
     compiled: Regex,
     /// The restatement the store evaluates.
     portable: PortablePattern,
+    /// What every match fixes about the text its subject begins with.
+    subject_start: SubjectStart,
 }
 
 impl Pattern {
@@ -40,7 +42,12 @@ impl Pattern {
         // Configured as `compiled` was built, so the restatement renders the reading the in-memory engine runs.
         let hir = TranslatorBuilder::new().dot_matches_new_line(true).build().translate(pattern, &ast)?;
         let portable = PortablePattern::render(&hir)?;
-        Ok(Pattern { compiled, portable })
+        let subject_start = SubjectStart::of(&hir);
+        Ok(Pattern {
+            compiled,
+            portable,
+            subject_start,
+        })
     }
 
     /// The pattern as the client wrote it: the wire form, and what a request forwarded to a Context Source carries.
@@ -53,6 +60,13 @@ impl Pattern {
     #[must_use]
     pub const fn portable(&self) -> &PortablePattern {
         &self.portable
+    }
+
+    /// Whether every match begins its subject with the same text, which a
+    /// store holding the subjects in order reads as one range.
+    #[must_use]
+    pub const fn subject_start(&self) -> SubjectStart {
+        self.subject_start
     }
 
     /// Whether the pattern matches anywhere in `haystack`.
