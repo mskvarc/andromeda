@@ -9,7 +9,7 @@
 //! and loses once they approach it, and the planner cannot tell the two
 //! apart. The statement therefore reads at most [`COUNT_CANDIDATE_BOUND`] + 1
 //! rechecked or probed candidates, or [`RANGED_COUNT_CANDIDATE_BOUND`] + 1 from a range
-//! of a typed value index, behind a [`one_time_gate`](crate::one_time_gate): when they
+//! of a typed value index or read inward through a Linked Entity hop, behind a [`one_time_gate`](crate::one_time_gate): when they
 //! number at most the bound they are every candidate, and the selection
 //! narrowed to them is counted; when more qualify, the selection is walked.
 
@@ -25,16 +25,16 @@ use sea_query::{Condition, DynIden, Expr, ExprTrait, Query, SelectStatement, Wit
 /// index before it walks the selection instead.
 pub const COUNT_CANDIDATE_BOUND: u64 = 10_000;
 
-/// The most candidates a count reads from a range of a typed value index
-/// before it walks the selection instead; a ranged candidate needs no
-/// recheck.
+/// The most candidates a count reads from a range of a typed value index, or
+/// inward through a Linked Entity hop, before it walks the selection instead;
+/// neither candidate needs a recheck.
 pub const RANGED_COUNT_CANDIDATE_BOUND: u64 = 50_000;
 
 /// The most candidates a count reads, by what one costs to read.
 const fn count_bound(read: CandidateRead) -> u64 {
     match read {
         CandidateRead::Rechecked | CandidateRead::Probed => COUNT_CANDIDATE_BOUND,
-        CandidateRead::Ranged => RANGED_COUNT_CANDIDATE_BOUND,
+        CandidateRead::Ranged | CandidateRead::Linked => RANGED_COUNT_CANDIDATE_BOUND,
     }
 }
 
@@ -91,7 +91,7 @@ mod tests {
     fn names() -> QueryNames {
         QueryNames {
             attributes: ResolvedNames::from_pairs(
-                [("temperature", 12), ("source", 13)]
+                [("temperature", 12), ("source", 13), ("hasTrip", 14)]
                     .map(|(name, key)| (format!("https://example.com/{name}").parse().expect("valid name"), AttributeNameKey::from(key))),
             ),
             types: ResolvedNames::default(),
@@ -159,6 +159,21 @@ mod tests {
         let (indexed, walked) = arms(&sql);
         assert!(!indexed.contains("current_attributes"), "the candidates answer the existence: {indexed}");
         assert!(walked.contains(r#"FROM "current_attributes" AS "ca""#), "the walk probes the whole q: {walked}");
+    }
+
+    #[test]
+    fn a_linked_entity_hop_counts_its_linking_entities_under_the_ranged_bound() {
+        let (sql, values) = count_of("\"https://example.com/hasTrip\"{\"https://example.com/temperature\"}==\"x\"");
+        let (candidates, _) = sql.split_once(" SELECT (CASE WHEN ").unwrap_or_else(|| panic!("a gated count: {sql}"));
+        assert!(
+            candidates.contains(r#""ca_ln1"."value_object" @> jsonb_build_array("le1"."id")"#),
+            "{candidates}"
+        );
+        assert!(values.contains(&Value::BigUnsigned(Some(50_001))), "{values:?}");
+        assert!(values.contains(&Value::BigUnsigned(Some(50_000))), "{values:?}");
+        let (indexed, walked) = arms(&sql);
+        assert!(!indexed.contains("ca_ln1"), "the candidates answer the hop: {indexed}");
+        assert!(walked.contains("JOIN jsonb_array_elements_text("), "the walk probes the hop outward: {walked}");
     }
 
     #[test]

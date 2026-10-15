@@ -1,7 +1,7 @@
 //! The page of an entity query whose `q` holds a conjunct an index answers:
 //! an equality on a sub-attribute, a `~=` on an attribute's own value, an
-//! ordering or a range on an attribute's own `DateTime` or `Date` value, or the
-//! bare existence of an attribute.
+//! ordering or a range on an attribute's own `DateTime` or `Date` value, the
+//! bare existence of an attribute, or a Linked Entity hop.
 //!
 //! The planner cannot price either term (it underestimates a broad one by
 //! orders of magnitude), so the page is a [`gated_page`]:
@@ -12,7 +12,9 @@
 //!    `idx_ca_sub_eq_keys` or the trigram indexes, each rechecked, at most
 //!    [`RANGED_CANDIDATE_BOUND`] + 1 from a range of a typed value index, or
 //!    at most [`PROBED_CANDIDATE_BOUND`] + 1 carriers of an attribute name,
-//!    each probed for a standing instance
+//!    each probed for a standing instance, or at most
+//!    [`LINKED_CANDIDATE_BOUND`] + 1 Entities naming a linked entity the
+//!    hop's inner term keeps
 //!    ([`keyed_candidates`](andromeda_postgresql_query::q_predicate::keyed_term::keyed_candidates)),
 //!    and the page is cut from the selection narrowed to them under the rest
 //!    of `q`;
@@ -54,6 +56,15 @@ pub const RANGED_CANDIDATE_BOUND: u64 = 50_000;
 /// a selection mostly without it is reached through the index, not the walk.
 pub const PROBED_CANDIDATE_BOUND: u64 = 10_000;
 
+/// The most Entities naming a linked entity the index path hands to the page.
+///
+/// A linked candidate costs an entry of the object's index and a heap visit,
+/// with no recheck. Past the bound the page walks the selection serially and
+/// probes each Entity's Relationship outward, which costs several times the
+/// candidates of a hop matching tens of thousands of Entities, so the bound
+/// sits at the ranged one.
+pub const LINKED_CANDIDATE_BOUND: u64 = 50_000;
+
 /// The most candidates the index path hands to the page, by what one costs to
 /// read.
 const fn page_bound(read: CandidateRead) -> u64 {
@@ -61,6 +72,7 @@ const fn page_bound(read: CandidateRead) -> u64 {
         CandidateRead::Rechecked => CANDIDATE_BOUND,
         CandidateRead::Ranged => RANGED_CANDIDATE_BOUND,
         CandidateRead::Probed => PROBED_CANDIDATE_BOUND,
+        CandidateRead::Linked => LINKED_CANDIDATE_BOUND,
     }
 }
 
@@ -110,7 +122,7 @@ mod tests {
     fn names() -> QueryNames {
         QueryNames {
             attributes: ResolvedNames::from_pairs(
-                [("temperature", 12), ("source", 13)]
+                [("temperature", 12), ("source", 13), ("hasTrip", 14)]
                     .map(|(name, key)| (format!("https://example.com/{name}").parse().expect("valid name"), AttributeNameKey::from(key))),
             ),
             types: ResolvedNames::default(),
@@ -231,6 +243,39 @@ mod tests {
 
     /// A Date is held as its fixed-width text, so its candidates range over the
     /// string index, and the index branch leaves the ordering out.
+    /// The hop is read from the linked entities inward, and the index branch
+    /// leaves it out of the filter it applies to the candidates, while the
+    /// walk past the bound probes it outward.
+    #[test]
+    fn a_linked_entity_hop_pages_through_the_instances_naming_its_linked_matches() {
+        let built = build_query(
+            &ContextTarget::Live,
+            &query("\"https://example.com/hasTrip\"{\"https://example.com/temperature\"}==\"x\""),
+            &PageWindow::offset(100, 0),
+            CountPolicy::Omit,
+            &names(),
+        )
+        .expect("valid entity query");
+        assert_eq!(built.planning, StatementPlanning::GatedBranches);
+        let (sql, values) = built.select.build(PostgresQueryBuilder);
+        let candidates = sql
+            .split(r#""candidates" AS  MATERIALIZED ("#)
+            .nth(1)
+            .and_then(|rest| rest.split(r#") AS "matches""#).next())
+            .unwrap_or_else(|| panic!("the index path: {sql}"));
+        assert!(
+            candidates.contains(r#"FROM "entities" AS "le1" JOIN "current_attributes" AS "ca_ln1""#),
+            "{candidates}"
+        );
+        assert!(candidates.contains(r#""ca_ln1"."value_uri" = "le1"."id""#), "{candidates}");
+        assert!(values.0.contains(&Value::BigUnsigned(Some(50_001))), "{:?}", values.0);
+        assert!(values.0.contains(&Value::BigUnsigned(Some(50_000))), "{:?}", values.0);
+        let after_short = sql.split(r#"AS "answered""#).nth(1).expect("the index branch follows the short walk");
+        let (indexed, walk) = after_short.split_once(r#"AS "indexed""#).expect("the index branch");
+        assert!(!indexed.contains("ca_ln1"), "the candidates answer the hop: {indexed}");
+        assert!(walk.contains("JOIN jsonb_array_elements_text("), "the walk probes the hop outward: {walk}");
+    }
+
     #[test]
     fn a_date_ordering_pages_through_the_string_index() {
         let built = build_query(

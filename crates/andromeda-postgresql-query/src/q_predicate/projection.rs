@@ -11,6 +11,7 @@
 
 use crate::{
     dictionary::query_names::QueryNames,
+    entity_row_refs::EntityRowRefs,
     q_predicate::{
         equality_term::equality_value,
         instance_row::InstanceRow,
@@ -121,11 +122,17 @@ fn compile_along_path(pred: &Predicate, path: &QueryPath, scan: &InstanceScan<'_
             };
             let hop = LinkedHop::at_depth(depth + 1);
             let inner_rows = hop.inner_rows(scan.schema().cloned());
-            let inner_scan = InstanceScan::Current(&inner_rows);
-            let inner_condition = compile_along_path(pred, inner, &inner_scan, names, depth + 1).into_condition(&inner_scan);
+            let inner_condition = linked_condition(pred, inner, &inner_rows, names, depth + 1);
             CompiledTerm::Standalone(hop.probe(relationship_id, guard_types, &names.types, scan, inner_condition))
         }
     }
+}
+
+/// What `pred` asks, along the rest `path` of its axis, of the linked entity
+/// `rows` names, reached `depth` hops into a traversal.
+pub(crate) fn linked_condition(pred: &Predicate, path: &QueryPath, rows: &EntityRowRefs, names: &QueryNames, depth: usize) -> Condition {
+    let scan = InstanceScan::Current(rows);
+    compile_along_path(pred, path, &scan, names, depth).into_condition(&scan)
 }
 
 /// Where an instance holds the value a term with no target language reads.

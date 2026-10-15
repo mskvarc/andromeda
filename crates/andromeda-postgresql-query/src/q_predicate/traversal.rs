@@ -13,6 +13,11 @@
 //! entity's `entity_search` row is joined only when the hop carries a type
 //! guard, since that is the one thing a hop reads from it.
 //!
+//! An index path reads the same hop inward instead, from the linked entities
+//! the rest of the predicate keeps to the instances naming them
+//! ([`LinkedHop::linking_branches`]), so its cost follows the linked matches
+//! rather than the Entities being filtered.
+//!
 //! This lives apart from the comparison rendering next door because it changes
 //! *which row* is being asked about rather than *what is asked* of it; the two
 //! change for unrelated reasons.
@@ -38,6 +43,7 @@ use andromeda_postgresql_seaquery::{
     jsonb::{jsonb_array_elements_text, jsonb_build_array},
     literal::{false_literal, int_literal},
     operator::array_contains_key,
+    pg_operator::PgBinaryOperator,
 };
 use sea_query::{Alias, Condition, DynIden, Expr as SeaExpr, ExprTrait, Func, JoinType, Query, SelectStatement, SimpleExpr, TableRef};
 
@@ -107,23 +113,83 @@ impl LinkedHop {
         match outer {
             InstanceScan::Current(rows) => {
                 let probe = self.current_objects(relationship_id, rows);
-                Condition::all().add(SeaExpr::exists(self.completed(probe, guard_types, types, outer, inner)))
+                Condition::all().add(SeaExpr::exists(self.completed(probe, guard_types, types, outer.schema(), inner)))
             }
             InstanceScan::History(window) => self
                 .windowed_objects(relationship_id, window)
-                .map(|probe| self.completed(probe, guard_types, types, outer, inner.clone())) // clone: each of the window's probes tests the linked entity
+                .map(|probe| self.completed(probe, guard_types, types, outer.schema(), inner.clone())) // clone: each of the window's probes tests the linked entity
                 .into_exists(),
         }
     }
 
+    /// The hop read inward, in the branch `outer` names: two selects of the
+    /// `entity_key` of every Entity whose standing instance of the
+    /// Relationship names an entity the type guard and `inner` keep.
+    ///
+    /// Each starts at the linked entities and reaches the instances naming
+    /// them through an index over the object: a single object through
+    /// `idx_ca_value_uri`, several through the containment
+    /// `idx_ca_value_object` answers, since an array of objects holds plain
+    /// URIs. A `value_long_uri` object is longer than any Entity identifier,
+    /// so it names no stored entity and needs no select. An Entity appears
+    /// once for each instance and object that reaches a kept entity.
+    pub(crate) fn linking_branches(
+        &self,
+        relationship_id: AttributeNameKey,
+        guard_types: &[AttributeName],
+        types: &ResolvedNames<EntityTypeName>,
+        outer: &EntityRowRefs,
+        inner: Condition,
+    ) -> [SelectStatement; 2] {
+        let hop = || Alias::new(self.attributes.as_str());
+        let linked_id = || SeaExpr::col((Alias::new(self.linked_entity.as_str()), Entities::Id));
+        let single = SeaExpr::col((hop(), CurrentAttributes::ValueUri)).equals((Alias::new(self.linked_entity.as_str()), Entities::Id));
+        let several = SimpleExpr::from(SeaExpr::col((hop(), CurrentAttributes::ValueObject))).array_contains(jsonb_build_array(linked_id()));
+        // clone: both selects test the linked entity
+        [
+            self.linking_branch(relationship_id, guard_types, types, outer, inner.clone(), single),
+            self.linking_branch(relationship_id, guard_types, types, outer, inner, several),
+        ]
+    }
+
+    /// One select of [`Self::linking_branches`]: the Relationship's standing
+    /// instances `names_linked` joins to the linked entity.
+    fn linking_branch(
+        &self,
+        relationship_id: AttributeNameKey,
+        guard_types: &[AttributeName],
+        types: &ResolvedNames<EntityTypeName>,
+        outer: &EntityRowRefs,
+        inner: Condition,
+        names_linked: SimpleExpr,
+    ) -> SelectStatement {
+        let hop = || Alias::new(self.attributes.as_str());
+        let mut branch = Query::select();
+        branch
+            .column((hop(), CurrentAttributes::EntityKey))
+            .from(outer.table(Entities::Table).alias(Alias::new(self.linked_entity.as_str())))
+            .join_as(
+                JoinType::Join,
+                outer.table(CurrentAttributes::Table),
+                hop(),
+                Condition::all()
+                    .add(SeaExpr::col((hop(), CurrentAttributes::AttributeNameKey)).eq(relationship_id.get()))
+                    .add(names_linked),
+            )
+            .and_where(SeaExpr::col((hop(), CurrentAttributes::AttributeKind)).is_in(relationship_kinds()))
+            .and_where(instance_stands(SeaExpr::col((hop(), CurrentAttributes::ExpiresAt))));
+        self.completed(branch, guard_types, types, outer.schema(), inner)
+    }
+
     /// One probe over the Relationship's instances, completed with the type
-    /// guard and the inner predicate on the entity each instance names.
+    /// guard and the inner predicate on the entity each instance names, whose
+    /// search row is read in the branch `schema`.
     fn completed(
         &self,
         mut probe: SelectStatement,
         guard_types: &[AttributeName],
         types: &ResolvedNames<EntityTypeName>,
-        outer: &InstanceScan<'_>,
+        schema: Option<&DynIden>,
         inner: Condition,
     ) -> SelectStatement {
         let linked = || Alias::new(self.linked_entity.as_str());
@@ -137,7 +203,7 @@ impl LinkedHop {
             probe
                 .join_as(
                     JoinType::Join,
-                    qualified(outer.schema(), EntitySearch::Table),
+                    qualified(schema, EntitySearch::Table),
                     search(),
                     SeaExpr::col((search(), EntitySearch::EntityKey)).equals((linked(), Entities::EntityKey)),
                 )

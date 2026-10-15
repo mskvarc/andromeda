@@ -1,7 +1,7 @@
 //! The one Query Term of a `q` expression an index answers on the page's
 //! behalf, and the candidates the index reads for it.
 //!
-//! Four terms qualify: an equality on a sub-attribute's own value, read
+//! Five terms qualify: an equality on a sub-attribute's own value, read
 //! through `idx_ca_sub_eq_keys`
 //! ([`keyed_equality`](crate::q_predicate::sub_attribute::keyed_equality)),
 //! a `~=` on an attribute's own value, read through the trigram indexes
@@ -10,9 +10,11 @@
 //! read through the typed value indexes
 //! ([`keyed_ordering`](crate::q_predicate::keyed_ordering)), and the bare
 //! existence of an attribute, read through the GIN over the search row's
-//! attribute names ([`keyed_existence`](crate::q_predicate::keyed_existence)).
-//! Each candidate is rechecked by the condition the term compiles to, so the
-//! candidates are exactly the Entities the term keeps.
+//! attribute names ([`keyed_existence`](crate::q_predicate::keyed_existence)),
+//! and a Linked Entity hop, read inward from the linked entities its inner
+//! term keeps ([`keyed_hop`](crate::q_predicate::keyed_hop)). Each candidate
+//! is rechecked by the condition the term compiles to, or is a match as it is
+//! read, so the candidates are exactly the Entities the term keeps.
 //!
 //! The candidate statement is unbounded. The planner cannot price any of the
 //! terms (it underestimates a broad one by orders of magnitude), and a
@@ -27,6 +29,7 @@ use crate::{
     entity_row_refs::EntityRowRefs,
     q_predicate::{
         keyed_existence::existence_candidates,
+        keyed_hop::hop_candidates,
         keyed_ordering::ordering_candidates,
         keyed_pattern::pattern_candidates,
         sub_attribute::keyed_equality::equality_candidates,
@@ -48,6 +51,10 @@ pub enum CandidateRead {
     /// The index offers the Entities whose search row names the attribute,
     /// and one probe of the grain constraint's leading columns confirms each.
     Probed,
+    /// The inner term's index offers the linked entities it keeps, and an
+    /// index over the object reaches each instance naming one, a match as it
+    /// is read.
+    Linked,
 }
 
 /// One term of a `q` expression's top-level conjunction and the candidates
@@ -83,12 +90,16 @@ pub fn keyed_candidates<'q>(expr: &'q Expr, rows: &EntityRowRefs, names: &QueryN
 /// The candidate statement of one term and what reading it costs, `None`
 /// when no index answers it.
 ///
+/// A hop of any operator is read inward, whatever its inner term compares.
 /// `!~=` never narrows: an Entity holds when none of its strings match, which
 /// no index of matching strings can enumerate.
 fn candidates_of(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames) -> Option<(SelectStatement, CandidateRead)> {
     let rechecked = |select| (select, CandidateRead::Rechecked);
     let ranged = |select| (select, CandidateRead::Ranged);
     let probed = |select| (select, CandidateRead::Probed);
+    if pred.path().is_linked() {
+        return hop_candidates(pred, rows, names).map(|select| (select, CandidateRead::Linked));
+    }
     match pred {
         Predicate::Equality { .. } => equality_candidates(pred, rows, names)
             .map(rechecked)
@@ -115,7 +126,7 @@ mod tests {
     fn names() -> QueryNames {
         QueryNames {
             attributes: ResolvedNames::from_pairs(
-                [("name", 2), ("source", 7), ("count", 9), ("observedOn", 11)]
+                [("name", 2), ("source", 7), ("count", 9), ("observedOn", 11), ("hasTrip", 13)]
                     .map(|(name, key)| (format!("https://example.com/{name}").parse().expect("valid name"), AttributeNameKey::from(key))),
             ),
             types: ResolvedNames::default(),
@@ -146,6 +157,7 @@ mod tests {
             ("\"https://example.com/observedOn\">2024-01-15T12:00:00Z", CandidateRead::Ranged),
             ("\"https://example.com/observedOn\"==2024-01-01..2024-02-01", CandidateRead::Ranged),
             ("\"https://example.com/count\"", CandidateRead::Probed),
+            ("\"https://example.com/hasTrip\"{\"https://example.com/name\"}==\"x\"", CandidateRead::Linked),
         ] {
             assert_eq!(read(q), Some(expected), "{q}");
         }
@@ -159,6 +171,7 @@ mod tests {
             "\"https://example.com/observedOn\">2024-01-15T12:00:00Z",
             "\"https://example.com/observedOn\"==2024-01-01..2024-02-01",
             "\"https://example.com/count\"",
+            "\"https://example.com/hasTrip\"{\"https://example.com/name\"}==\"x\"",
         ] {
             let sql = candidates(q).unwrap_or_else(|| panic!("keyed: {q}"));
             assert!(!sql.contains("LIMIT"), "{q}: {sql}");
@@ -172,6 +185,7 @@ mod tests {
             "\"https://example.com/name\".\"https://example.com/source\"==\"s\"|\"https://example.com/count\"==1",
             "\"https://example.com/observedOn\">2024-01-15|\"https://example.com/count\"==1",
             "\"https://example.com/count\"|\"https://example.com/name\"==\"x\"",
+            "\"https://example.com/hasTrip\"{\"https://example.com/name\"}==\"x\"|\"https://example.com/count\"==1",
         ] {
             assert_eq!(candidates(q), None, "{q}");
         }
@@ -194,6 +208,12 @@ mod tests {
     }
 
     #[test]
+    fn a_hop_conjunct_is_keyed_after_an_unkeyed_one() {
+        let sql = candidates("\"https://example.com/count\">1;\"https://example.com/hasTrip\"{\"https://example.com/name\"}==\"x\"").expect("keyed");
+        assert!(sql.contains(r#""ca_ln1"."value_uri" = "le1"."id""#), "{sql}");
+    }
+
+    #[test]
     fn a_date_ordering_conjunct_is_keyed_after_an_unkeyed_one() {
         let sql = candidates("\"https://example.com/count\">1;\"https://example.com/observedOn\"<2024-01-15").expect("keyed");
         assert!(sql.contains(r#""ca"."value_string" < '2024-01-15'"#), "{sql}");
@@ -205,6 +225,7 @@ mod tests {
             "\"https://example.com/count\">1",
             "\"https://example.com/name\"!~=\"text-71.*\"",
             "\"https://example.com/name\">\"m\"",
+            "\"https://example.com/hasTrip\"{\"https://example.com/name\"}!=\"x\"",
         ] {
             assert_eq!(candidates(q), None, "{q}");
         }
