@@ -206,6 +206,6 @@ pub(crate) fn entry_kind_in(kinds: &[i16]) -> SimpleExpr {
 /// positions. Every value but the source's is a constant of the statement, so
 /// the text is the same for every application over one kind of source.
 pub(crate) fn rendered(statement: &impl QueryStatementWriter) -> String {
-    let sql = apply_record_ordinality(statement.to_string(PostgresQueryBuilder), &E);
-    apply_record_ordinality(sql, &Input)
+    let sql = apply_record_ordinality(&statement.to_string(PostgresQueryBuilder), &E);
+    apply_record_ordinality(&sql, &Input)
 }

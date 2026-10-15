@@ -21,7 +21,7 @@ use crate::{
     duplicate_instance_claim::claim_write_failure,
     error::TemporalStoreError,
     intent_application::{
-        catalog_statements::{evolutions_statement, streams_statement, untyped_observations_statement, write_records_statement},
+        catalog_statements::{evolutions_and_streams_statement, untyped_observations_statement, untyped_streams_statement, write_records_statement},
         history_statements::{
             claims_statement,
             history_statement,
@@ -82,8 +82,9 @@ impl Step {
 /// The statements applying the intents of `source` to the branch `schema`
 /// names, in the order they run: the Temporal Evolutions and streams before
 /// the history that references them, the refusal of an untyped observation
-/// after the evolutions the source itself creates, the instance replacements
-/// before the claims and rows that take their place.
+/// after the evolutions the source itself creates, the streams of the intents
+/// stating no type after that refusal, the instance replacements before the
+/// claims and rows that take their place.
 fn application_steps(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<Vec<Step>, TemporalStoreError> {
     let build = TemporalStoreError::StatementBuild;
     let (nothing, identities, everything) = (EntryReads::Nothing, EntryReads::Identities, EntryReads::Everything);
@@ -92,8 +93,8 @@ fn application_steps(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Res
         Step::of(
             StepRole::Write,
             Some(TemporalIntentReach::TypedIntent),
-            nothing,
-            &evolutions_statement(source, schema).map_err(build)?,
+            identities,
+            &evolutions_and_streams_statement(source, schema).map_err(build)?,
         ),
         Step::of(
             StepRole::RefuseUntyped,
@@ -103,9 +104,9 @@ fn application_steps(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Res
         ),
         Step::of(
             StepRole::Write,
-            Some(TemporalIntentReach::AttributeEntry),
+            Some(TemporalIntentReach::UntypedAttributeEntry),
             identities,
-            &streams_statement(source, schema).map_err(build)?,
+            &untyped_streams_statement(source, schema).map_err(build)?,
         ),
         Step::of(
             StepRole::Write,

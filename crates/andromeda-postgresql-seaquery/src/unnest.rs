@@ -112,20 +112,17 @@ pub fn apply_column_alias(mut sql: String, alias: &dyn Iden, columns: &[UnnestCo
     sql
 }
 
-/// Rewrite the `AS "alias"` that `from_function` emits for an `UNNEST` of an
-/// array of composites into `WITH ORDINALITY AS "alias"`.
+/// Rewrite every `AS "alias"` that `from_function` emits for an `UNNEST` of
+/// an array of composites into `WITH ORDINALITY AS "alias"`.
 ///
 /// No column list: the rows keep the composite's own field names, and the
-/// position `WITH ORDINALITY` adds is the column [`Ordinality`] names. As with
-/// [`apply_with_ordinality`], the alias must be one sea-query renders nowhere
-/// else as `AS "alias"`.
-pub fn apply_record_ordinality(mut sql: String, alias: &dyn Iden) -> String {
+/// position `WITH ORDINALITY` adds is the column [`Ordinality`] names. A
+/// statement may unnest under one alias in several of its queries, each a
+/// scope of its own, so every occurrence is rewritten. The alias must be one
+/// sea-query renders nowhere else as `AS "alias"`.
+pub fn apply_record_ordinality(sql: &str, alias: &dyn Iden) -> String {
     let emitted = format!("AS {}", quoted(alias));
-    let replacement = format!("WITH ORDINALITY {emitted}");
-    if let Some(position) = sql.find(&emitted) {
-        sql.replace_range(position..position + emitted.len(), &replacement);
-    }
-    sql
+    sql.replace(&emitted, &format!("WITH ORDINALITY {emitted}"))
 }
 
 /// The column `WITH ORDINALITY` adds to an unnested array: the 1-based
@@ -217,7 +214,7 @@ mod tests {
         },
     };
     use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Condition, Expr, ExprTrait, PostgresQueryBuilder, Query, SimpleExpr};
+    use sea_query::{Alias, Condition, Expr, ExprTrait, PostgresQueryBuilder, Query, SimpleExpr, UnionType};
 
     /// The projection set-write's fourteen columns, in the order the upsert
     /// binds them, so the rendered source can be asserted against the real one.
@@ -381,7 +378,20 @@ mod tests {
             .from_function(unnest_of(Expr::col((Alias::new("i"), Alias::new("entries")))), Alias::new("e"))
             .to_owned()
             .to_string(PostgresQueryBuilder);
-        let sql = apply_record_ordinality(sql, &Alias::new("e"));
+        let sql = apply_record_ordinality(&sql, &Alias::new("e"));
         assert!(sql.contains(r#"FROM "intents" AS "i", UNNEST("i"."entries") WITH ORDINALITY AS "e""#), "{sql}");
+    }
+
+    #[test]
+    fn every_unnest_of_one_record_alias_gains_its_position() {
+        let unnested = || {
+            Query::select()
+                .expr(Expr::col((Alias::new("e"), Alias::new("entry_kind"))))
+                .from_function(unnest_of(Expr::col(Alias::new("entries"))), Alias::new("e"))
+                .to_owned()
+        };
+        let sql = unnested().union(UnionType::All, unnested()).to_owned().to_string(PostgresQueryBuilder);
+        let sql = apply_record_ordinality(&sql, &Alias::new("e"));
+        assert_eq!(sql.matches(r#"UNNEST("entries") WITH ORDINALITY AS "e""#).count(), 2, "{sql}");
     }
 }

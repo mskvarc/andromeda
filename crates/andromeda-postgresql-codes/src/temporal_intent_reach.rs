@@ -28,6 +28,9 @@ compact_code_registry! {
             VerbatimInstance = 4, "verbatim-instance";
             /// A Scope entry (clause 4.18).
             ScopeEntry = 5, "scope-entry";
+            /// The intent states no type and holds an attribute entry, whose
+            /// stream only an evolution that exists can carry.
+            UntypedAttributeEntry = 6, "untyped-attribute-entry";
         }
     }
 }
@@ -40,7 +43,7 @@ mod tests {
     #[test]
     fn every_reach_keeps_the_code_the_queue_stores() {
         let codes = TemporalIntentReach::ALL.iter().map(|reach| reach.code()).collect::<Vec<_>>();
-        assert_eq!(codes, [1, 2, 3, 4, 5]);
+        assert_eq!(codes, [1, 2, 3, 4, 5, 6]);
         assert!(TemporalIntentReach::try_from(0).is_err());
     }
 }

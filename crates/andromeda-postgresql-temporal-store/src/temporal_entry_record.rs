@@ -238,6 +238,7 @@ fn meets(entity_type_name_keys: &[i32], entries: &[TemporalEntryRecord], need: T
         TemporalIntentReach::AttributeEntry => entries.iter().any(is_attribute),
         TemporalIntentReach::VerbatimInstance => entries.iter().any(|entry| is_attribute(entry) && entry.verbatim_instance_id.is_some()),
         TemporalIntentReach::ScopeEntry => !entries.iter().all(is_attribute),
+        TemporalIntentReach::UntypedAttributeEntry => entity_type_name_keys.is_empty() && entries.iter().any(is_attribute),
     }
 }
 

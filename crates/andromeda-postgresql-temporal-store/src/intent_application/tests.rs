@@ -74,6 +74,29 @@ fn writing(table: &str) -> String {
     writing_in(rendered_steps(), table)
 }
 
+/// The statement of the drain that writes the Temporal Evolutions and the
+/// streams of the Entities intents state types for.
+fn evolving() -> String {
+    rendered_steps()
+        .into_iter()
+        .map(|(_, sql)| sql)
+        .find(|sql| sql.starts_with(r#"WITH "evolved""#))
+        .expect("an evolution statement")
+}
+
+/// The query `sql` names `name` in its `WITH` clause, up to the query that
+/// follows it.
+fn common_table<'s>(sql: &'s str, name: &str) -> &'s str {
+    let start = sql.find(&format!(r#""{name}" "#)).unwrap_or_else(|| panic!("no {name} in {sql}"));
+    let rest = &sql[start..];
+    let end = [") , ", ") INSERT "]
+        .iter()
+        .filter_map(|follower| rest.find(follower))
+        .min()
+        .unwrap_or_else(|| panic!("{name} ends nowhere in {sql}"));
+    &rest[..end]
+}
+
 /// The position of the first statement whose text starts with `prefix`.
 fn position(prefix: &str) -> usize {
     rendered_steps()
@@ -94,11 +117,13 @@ fn needs_met(intents: &[TemporalIntentRecord]) -> Vec<bool> {
     TemporalIntentReach::ALL.iter().map(|need| source.may_meet(*need)).collect()
 }
 
-/// The fields of the entry under `e` that `sql` reads.
+/// The fields of the entry under `e` that `sql` reads, its position aside:
+/// the unnest numbers every entry whatever the bound form holds.
 fn entry_fields_read(sql: &str) -> BTreeSet<&str> {
     sql.match_indices(r#""e"."#)
         .filter_map(|(at, marker)| sql[at + marker.len()..].strip_prefix('"'))
         .filter_map(|rest| rest.split('"').next())
+        .filter(|field| *field != "ordinality")
         .collect()
 }
 
@@ -139,8 +164,8 @@ fn the_commit_and_the_drain_render_one_statement_shape() {
 #[test]
 fn a_commit_binds_its_intents_as_one_typed_array() {
     for (_, sql) in commit_steps() {
-        assert_eq!(sql.matches("$1::temporal_intent[]").count(), 1, "{sql}");
         assert!(sql.contains(BOUND), "{sql}");
+        assert_eq!(sql.matches("$1::temporal_intent[]").count(), sql.matches(BOUND).count(), "{sql}");
         assert!(!sql.contains("temporal_append_intents"), "{sql}");
     }
 }
@@ -205,7 +230,7 @@ fn a_commit_runs_only_the_statements_its_entries_reach() {
         InstanceIdentity::generate(),
         None,
     )]));
-    assert_eq!(needs_met(&[typed]), [true, false, true, false, false]);
+    assert_eq!(needs_met(&[typed]), [true, false, true, false, false, false]);
 
     let claimed = record_of(&intent(vec![observation(
         TemporalValue::Number(JsonNumber::from(42)),
@@ -217,7 +242,7 @@ fn a_commit_runs_only_the_statements_its_entries_reach() {
         observed_at: None,
         instance: InstanceIdentity::generate(),
     }]));
-    assert_eq!(needs_met(&[claimed, scoped]), [true, false, true, true, true]);
+    assert_eq!(needs_met(&[claimed, scoped]), [true, false, true, true, true, false]);
 }
 
 /// An intent stating no type observes, and is checked against its
@@ -245,7 +270,7 @@ fn a_queued_source_runs_the_statements_its_claimed_intents_reach() {
     let reach = vec![TemporalIntentReach::TypedIntent, TemporalIntentReach::AttributeEntry];
     let source = IntentSource::Queued { keys: &[1], reach };
     let met: Vec<bool> = TemporalIntentReach::ALL.iter().map(|need| source.may_meet(*need)).collect();
-    assert_eq!(met, [true, false, true, false, false]);
+    assert_eq!(met, [true, false, true, false, false, false]);
 }
 
 /// The reach of a claimed batch comes from the rows' `entry_needs`, each
@@ -325,11 +350,15 @@ fn a_bound_head_drops_every_entry_and_an_identity_every_value() {
 
 #[test]
 fn missing_evolutions_and_streams_are_created_before_the_history() {
-    let evolutions = position(r#"INSERT INTO "temporal_entities""#);
-    let streams = position(r#"INSERT INTO "temporal_attribute_streams""#);
+    let evolutions = position(r#"WITH "evolved""#);
+    let untyped_streams = position(r#"INSERT INTO "temporal_attribute_streams""#);
     let history = position(r#"INSERT INTO "attribute_history""#);
     let scopes = position(r#"INSERT INTO "scope_history""#);
-    assert!(evolutions < streams && streams < history && evolutions < scopes, "{:?}", rendered_steps());
+    assert!(
+        evolutions < untyped_streams && untyped_streams < history && evolutions < scopes,
+        "{:?}",
+        rendered_steps()
+    );
     assert!(position(r#"INSERT INTO "write_records""#) < history);
     assert!(position(r#"DELETE FROM "attribute_history""#) < history, "the replaced instance goes first");
     assert!(position(r#"INSERT INTO "attribute_history_instance_claims""#) < history);
@@ -340,7 +369,9 @@ fn missing_evolutions_and_streams_are_created_before_the_history() {
 /// Entity's latest typed intent in one row.
 #[test]
 fn the_latest_typed_intent_of_an_entity_gives_its_evolution_its_types() {
-    let evolutions = writing("temporal_entities");
+    let evolving = evolving();
+    let evolutions = common_table(&evolving, "evolved");
+    assert!(evolutions.contains(r#"AS (INSERT INTO "temporal_entities""#), "{evolutions}");
     assert!(evolutions.contains(r#"SELECT DISTINCT ON ("i"."entity_id")"#), "{evolutions}");
     assert!(evolutions.contains(r#"ORDER BY "i"."entity_id" ASC, "i"."intent_key" DESC"#), "{evolutions}");
     assert!(evolutions.contains(r#"cardinality("i"."entity_type_name_keys") > 0"#), "{evolutions}");
@@ -388,10 +419,111 @@ fn an_observation_without_evolution_or_types_is_named_by_the_pre_check() {
         sql.contains(r#"(NOT EXISTS(SELECT 1 FROM "temporal_entities" AS "te" WHERE "te"."id" = "i"."entity_id"))"#),
         "{sql}"
     );
+    let pre_check = position("SELECT");
+    assert!(pre_check > position(r#"WITH "evolved""#), "the source's own evolutions count");
     assert!(
-        position("SELECT") > position(r#"INSERT INTO "temporal_entities""#),
-        "the source's own evolutions count"
+        pre_check < position(r#"INSERT INTO "temporal_attribute_streams""#),
+        "an untyped intent's streams follow its refusal"
     );
+}
+
+/// An evolution the statement creates is invisible to every other writer
+/// until the commit, so its streams are new and need no arbitration; the
+/// streams of one that existed arbitrate on the grain.
+#[test]
+fn the_streams_of_an_evolution_the_statement_creates_are_inserted_without_arbitration() {
+    let evolving = evolving();
+    assert!(
+        common_table(&evolving, "evolved").ends_with(r#"RETURNING "new"."temporal_entity_key", "new"."id", "old"."temporal_entity_key" IS NULL"#),
+        "{evolving}"
+    );
+    let created = common_table(&evolving, "created_streams");
+    assert!(created.contains(r#"AS (INSERT INTO "temporal_attribute_streams""#), "{created}");
+    assert!(
+        created.ends_with(r#"FROM "grains" WHERE "grains"."created" ORDER BY "grains"."first_intent" ASC, "grains"."first_ordinal" ASC"#),
+        "{created}"
+    );
+    assert!(!created.contains("ON CONFLICT"), "{created}");
+    assert!(
+        evolving.ends_with(concat!(
+            r#"FROM "grains" WHERE NOT "grains"."created" ORDER BY "grains"."first_intent" ASC, "grains"."first_ordinal" ASC "#,
+            r#"ON CONFLICT ("temporal_entity_key", "attribute_name_key", "dataset_id") DO NOTHING"#
+        )),
+        "{evolving}"
+    );
+}
+
+/// The streams of the Entities intents state types for take the evolution's
+/// key from what its insert returned, never from a read of the evolutions,
+/// so an evolution another writer committed while the statement ran still
+/// gets its streams, and every intent of such an Entity is read.
+#[test]
+fn the_streams_of_a_typed_entity_take_the_key_its_evolution_insert_returned() {
+    let evolving = evolving();
+    let grains = common_table(&evolving, "grains");
+    assert!(
+        grains.contains(r#"SELECT "evolved"."temporal_entity_key", "e"."attribute_name_key", "e"."dataset_id", "evolved"."created""#),
+        "{grains}"
+    );
+    assert!(
+        grains.contains(r#"GROUP BY "evolved"."temporal_entity_key", "e"."attribute_name_key", "e"."dataset_id", "evolved"."created""#),
+        "one row a grain: {grains}"
+    );
+    assert!(
+        grains.contains(r#"WHERE "evolved"."id" = "i"."entity_id" AND "e"."entry_kind" IN (1, 2)"#),
+        "{grains}"
+    );
+    assert!(!grains.contains("temporal_entities") && !grains.contains("cardinality("), "{grains}");
+}
+
+/// The streams are keyed in the order the history insert reaches their
+/// entries, so the history rows arrive in ascending stream key and every
+/// index led by it is extended at its right edge.
+#[test]
+fn the_streams_of_a_typed_entity_are_keyed_in_the_order_its_entries_are_recorded() {
+    let evolving = evolving();
+    let grains = common_table(&evolving, "grains");
+    assert!(
+        grains.contains(r#"MIN("i"."intent_key"), MIN("i"."base_ordinal" + ("e"."ordinality" - 1))"#),
+        "{grains}"
+    );
+    assert_eq!(
+        evolving
+            .matches(r#"ORDER BY "grains"."first_intent" ASC, "grains"."first_ordinal" ASC"#)
+            .count(),
+        2,
+        "{evolving}"
+    );
+}
+
+/// The intents that state no type extend only an evolution that exists, so
+/// only they reach the stream insert that reads the evolutions.
+#[test]
+fn only_an_intent_stating_no_type_reaches_the_untyped_stream_insert() {
+    let streams = writing("temporal_attribute_streams");
+    assert!(streams.contains(r#"(NOT cardinality("i"."entity_type_name_keys") > 0)"#), "{streams}");
+    assert!(
+        streams.ends_with(r#"ON CONFLICT ("temporal_entity_key", "attribute_name_key", "dataset_id") DO NOTHING"#),
+        "{streams}"
+    );
+    let untyped = |entries: Vec<TemporalAppendEntry>| {
+        let mut untyped = intent(entries);
+        untyped.entity_types.clear();
+        record_of(&untyped)
+    };
+    let reaches = |intents: &[TemporalIntentRecord]| needs_met(intents)[5];
+    assert!(reaches(&[untyped(vec![tombstone()])]));
+    assert!(!reaches(&[untyped(Vec::new())]));
+    assert!(!reaches(&[untyped(vec![TemporalAppendEntry::Scope {
+        observation: ScopeObservation::Deleted,
+        observed_at: None,
+        instance: InstanceIdentity::generate(),
+    }])]));
+    let typed = intent(vec![
+        tombstone(),
+        observation(TemporalValue::Number(JsonNumber::from(1)), InstanceIdentity::generate(), None),
+    ]);
+    assert!(!reaches(&[record_of(&typed)]));
 }
 
 /// Clause 4.5.7: a client-supplied `instanceId` names one instance across
