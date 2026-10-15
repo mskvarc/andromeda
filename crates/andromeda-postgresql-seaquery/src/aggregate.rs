@@ -20,17 +20,6 @@ struct StdDev;
 #[iden = "BOOL_OR"]
 struct BoolOr;
 
-/// The `ROW_NUMBER()` window function, numbering rows within a window frame.
-#[derive(Iden, Clone, Copy)]
-#[iden = "ROW_NUMBER"]
-struct RowNumber;
-
-/// The `RANK()` window function, ranking rows within a window frame with ties
-/// sharing one rank.
-#[derive(Iden, Clone, Copy)]
-#[iden = "RANK"]
-struct Rank;
-
 /// The `LEAD(value)` window function, the value of the next row of the frame.
 #[derive(Iden, Clone, Copy)]
 #[iden = "LEAD"]
@@ -56,26 +45,6 @@ pub fn stddev(value: SimpleExpr) -> SimpleExpr {
 #[must_use]
 pub fn bool_or(predicate: SimpleExpr) -> SimpleExpr {
     Func::cust(BoolOr).args([predicate]).into()
-}
-
-/// `ROW_NUMBER()` - the position of a row within its window frame, for the
-/// `lastN` ranking whose `OVER (…)` frame the caller supplies through
-/// [`sea_query::SelectStatement::expr_window_as`].
-#[must_use]
-pub fn row_number() -> SimpleExpr {
-    Func::cust(RowNumber).args::<[SimpleExpr; 0]>([]).into()
-}
-
-/// `RANK()` - one plus the number of rows that sort strictly before this one
-/// in its window frame, so rows that tie on every ordering key share a rank.
-///
-/// A temporal page keeps whole groups of instances sharing one timestamp by
-/// ranking on the timestamp alone: every member of the group at the page edge
-/// carries the rank of the group's first row. The `OVER (…)` frame is supplied
-/// through [`sea_query::SelectStatement::expr_window_as`].
-#[must_use]
-pub fn rank() -> SimpleExpr {
-    Func::cust(Rank).args::<[SimpleExpr; 0]>([]).into()
 }
 
 /// `LEAD(value)` - `value` on the row after this one in its window frame, NULL
@@ -181,12 +150,10 @@ mod tests {
 
     #[test]
     fn the_group_aggregates_render_their_own_function_names() {
-        use crate::aggregate::{bool_or, lag, lead, rank, row_number, stddev};
+        use crate::aggregate::{bool_or, lag, lead, stddev};
         let render = |expr| Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder);
         assert!(render(stddev(Expr::col(Alias::new("v")))).contains(r#"STDDEV("v")"#));
         assert!(render(bool_or(Expr::col(Alias::new("u")).is_null())).contains(r#"BOOL_OR("u" IS NULL)"#));
-        assert!(render(row_number()).contains("ROW_NUMBER()"));
-        assert!(render(rank()).contains("RANK()"));
         assert!(render(lead(Expr::col(Alias::new("s")))).contains(r#"LEAD("s")"#));
         assert!(render(lag(Expr::col(Alias::new("s")))).contains(r#"LAG("s")"#));
     }

@@ -25,6 +25,7 @@ pub mod recorded_shape;
 pub mod scope_history;
 pub mod split_filter_leaves;
 pub mod stage1;
+mod stream_page;
 pub mod structured_json;
 mod value_filters;
 

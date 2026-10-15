@@ -24,7 +24,7 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_identity::InstanceIdentity, scope::path::ScopePath};
 use andromeda_ngsi_ld_model::{
     scope_instance_value::scope_instance_value,
-    temporal::{TemporalHistoryRow, TemporalValue},
+    temporal::{StreamExtent, TemporalHistoryRow, TemporalValue},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_postgresql_codes::scope_value_kind::ScopeValueKind;
@@ -126,8 +126,8 @@ fn fold_event(event: &[&StoredScopeRow], scope_attribute: &AttributeName) -> Res
         // Temporal Properties, so it carries no sub-attributes to merge.
         metadata: None,
         // `lastN` does not bound the Scope (clause 5.7.4.4 defines it over
-        // Attribute instances), so there is no partition to report a total for.
-        partition_total: None,
+        // Attribute instances), so no page cuts its history.
+        stream_extent: StreamExtent::Whole,
     };
     Ok(TemporalHistoryObservation {
         row,
@@ -209,7 +209,7 @@ mod tests {
         instance_identity::InstanceIdentity,
         scope::path::ScopePath,
     };
-    use andromeda_ngsi_ld_model::temporal::TemporalValue;
+    use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalValue};
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use andromeda_postgresql_schema::temporal::ScopeHistory;
     use andromeda_postgresql_temporal_query::scope_history::SCOPE_EVENT_AT;
@@ -298,7 +298,7 @@ mod tests {
         pretty_assertions::assert_eq!(folded.row.created_at, Some(instant(1_533_121_200)));
         pretty_assertions::assert_eq!(folded.row.modified_at, Some(instant(1_533_121_200)));
         assert!(folded.row.metadata.is_none());
-        assert!(folded.row.partition_total.is_none());
+        pretty_assertions::assert_eq!(folded.row.stream_extent, StreamExtent::Whole);
     }
 
     /// The scope statement projects its event instant under an alias the query

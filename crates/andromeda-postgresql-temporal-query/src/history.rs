@@ -14,6 +14,7 @@ use crate::{
     aggregation::build_aggregation_query,
     alias::{Ah, An},
     axis::axis_column,
+    stream_page::{Walk, last_n_history, walked_history},
 };
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
@@ -26,12 +27,8 @@ use andromeda_postgresql_query::{
     scope_intervals::held_at,
 };
 use andromeda_postgresql_schema::{name_dictionary::AttributeNames, temporal::AttributeHistory};
-use andromeda_postgresql_seaquery::{
-    aggregate::{count_all, rank, row_number},
-    postgis::st_as_ewkb,
-};
-use sea_query::{Alias, Asterisk, Condition, Expr, ExprTrait, Func, JoinType, NullOrdering, Order, OverStatement, Query, SelectStatement, WindowStatement};
-use std::num::NonZeroU32;
+use andromeda_postgresql_seaquery::postgis::st_as_ewkb;
+use sea_query::{Alias, Condition, Expr, ExprTrait, JoinType, Order, Query, SelectStatement};
 
 /// Build Stage 2 query: temporal history for a single entity.
 ///
@@ -118,24 +115,13 @@ pub(crate) fn base_history_source(select: &mut SelectStatement, branch: &History
     );
 }
 
-/// The window one stream's instances are ranked and counted in: its attribute
-/// and `datasetId` within the one entity stage 2 reads.
-fn stream_partition() -> WindowStatement {
-    let mut window = WindowStatement::new();
-    window
-        .add_partition_by(Expr::col((Ah, HistoryGrain::AttributeNameKey)))
-        .add_partition_by(Expr::col((Ah, HistoryGrain::DatasetId)));
-    window
-}
-
-/// Project every column a history row carries, before the optional `lastN`
-/// ranking.
+/// Project every column a history row carries.
 ///
 /// The two instance-identity columns are projected side by side: a broker-minted
 /// identifier is a `UUID` rendered through the permanent URN template, a
 /// client-supplied one (clause 4.5.7 requires it to survive) is the stored text,
 /// and exactly one of them is populated on every row.
-fn project_base_columns(select: &mut SelectStatement) {
+pub(crate) fn project_base_columns(select: &mut SelectStatement) {
     for column in [
         AttributeHistory::RecordedAt,
         AttributeHistory::AttributeKind,
@@ -175,9 +161,9 @@ fn project_base_columns(select: &mut SelectStatement) {
 fn build_history_query(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemporalQuery, condition: Condition) -> SelectStatement {
     match compiled.instances.page {
         InstancePage::Whole => whole_history(branch, of, compiled, condition),
-        InstancePage::LastN { n } => ranked_history(branch, of, compiled, condition, &last_n_ranking(compiled, n)),
-        InstancePage::Forward { size } => ranked_history(branch, of, compiled, condition, &forward_page_ranking(compiled, size)),
-        InstancePage::Backward { size, .. } => ranked_history(branch, of, compiled, condition, &backward_page_ranking(compiled, size)),
+        InstancePage::LastN { n } => last_n_history(branch, of, compiled, &condition, n),
+        InstancePage::Forward { size } => walked_history(branch, of, compiled, &condition, Walk::Forward, size),
+        InstancePage::Backward { size, .. } => walked_history(branch, of, compiled, &condition, Walk::Backward, size),
     }
 }
 
@@ -197,125 +183,6 @@ fn whole_history(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemp
     select.take()
 }
 
-/// How one ranked shape numbers the instances of a stream and which numbers it
-/// keeps.
-struct Ranking {
-    /// The window function every row is numbered by.
-    function: Expr,
-    /// The per-stream ordering the numbering follows.
-    window: WindowStatement,
-    /// The instances at the inclusive lower bound of the window, which a forward
-    /// page keeps without counting them.
-    uncounted: Option<Expr>,
-    /// The largest number kept.
-    kept: u32,
-}
-
-/// Clauses 5.7.3.4 and 5.7.4.4: a `lastN` the broker answers in full is
-/// exactly the last `n` instances.
-///
-/// The ranking breaks ties on the hypertable's unique key,
-/// `(recorded_at, write_id, write_ordinal)`, so two instances sharing a value on
-/// the requested axis are kept or dropped the same way on every execution.
-fn last_n_ranking(compiled: &CompiledTemporalQuery, n: NonZeroU32) -> Ranking {
-    let axis = axis_column(compiled.window.timeproperty);
-    let mut window = stream_partition();
-    window
-        .order_by((Ah, axis), Order::Desc)
-        .order_by((Ah, AttributeHistory::RecordedAt), Order::Desc)
-        .order_by((Ah, AttributeHistory::WriteId), Order::Desc)
-        .order_by((Ah, AttributeHistory::WriteOrdinal), Order::Desc);
-    Ranking {
-        function: row_number(),
-        window,
-        uncounted: None,
-        kept: n.get(),
-    }
-}
-
-/// Clause 6.3.10 forwards: the least recent `size` instances of every stream.
-///
-/// The instances are ranked on the axis alone, so every instance of the group
-/// sharing the timestamp at the page edge carries the rank of the group's first
-/// member and the page keeps the group whole: a client resuming with
-/// `timerel=after&timeAt=<range-end>` (an inclusive bound, clause 4.11) then
-/// meets the group again rather than finding part of it missing. For the same
-/// reason the instances sitting exactly on the inclusive lower bound of the
-/// window are not counted: they are the group the previous page ended on, and
-/// counting them could stall a resumed walk on that one timestamp.
-fn forward_page_ranking(compiled: &CompiledTemporalQuery, size: u32) -> Ranking {
-    let axis = axis_column(compiled.window.timeproperty);
-    let mut window = stream_partition();
-    window.order_by_with_nulls((Ah, axis), Order::Asc, NullOrdering::Last);
-    let uncounted = match compiled.window.interval {
-        TimeInterval::After(lower) | TimeInterval::Between { from: lower, .. } => {
-            Some(Func::sum(Expr::case(Expr::col((Ah, axis)).eq(lower), 1).finally(0)).into())
-        }
-        TimeInterval::Unbounded | TimeInterval::Before(_) => None,
-    };
-    Ranking {
-        function: rank(),
-        window,
-        uncounted,
-        kept: size,
-    }
-}
-
-/// Clause 6.3.10 backwards: the most recent `size` instances of every stream,
-/// ranked on the axis alone so the group sharing the timestamp at the page's
-/// lower edge is kept whole. `timerel=before` is an exclusive bound (clause
-/// 4.11), so a client resuming with `timeAt=<range-end>` then neither meets the
-/// group again nor misses any of it.
-fn backward_page_ranking(compiled: &CompiledTemporalQuery, size: u32) -> Ranking {
-    let axis = axis_column(compiled.window.timeproperty);
-    let mut window = stream_partition();
-    window.order_by_with_nulls((Ah, axis), Order::Desc, NullOrdering::Last);
-    Ranking {
-        function: rank(),
-        window,
-        uncounted: None,
-        kept: size,
-    }
-}
-
-/// The history narrowed by `ranking`, with every stream's total in the window
-/// beside it so the page can tell whether it left instances out.
-fn ranked_history(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemporalQuery, condition: Condition, ranking: &Ranking) -> SelectStatement {
-    let axis = axis_column(compiled.window.timeproperty);
-    let partition = stream_partition;
-
-    let mut ranked = Query::select();
-    project_base_columns(&mut ranked);
-    // clone: sea-query owns every expression and window it renders.
-    ranked.expr_window_as(ranking.function.clone(), ranking.window.clone(), Alias::new("rn"));
-    ranked.expr_window_as(count_all(), partition(), Alias::new("partition_total"));
-    if let Some(uncounted) = &ranking.uncounted {
-        // clone: same.
-        ranked.expr_window_as(uncounted.clone(), partition(), Alias::new("uncounted"));
-    }
-    base_history_source(&mut ranked, branch, of);
-    ranked.cond_where(condition);
-
-    let ranked_alias = Alias::new("ranked");
-    let position = Expr::col((ranked_alias.clone(), Alias::new("rn")));
-    let counted = if ranking.uncounted.is_some() {
-        position.sub(Expr::col((ranked_alias.clone(), Alias::new("uncounted"))))
-    } else {
-        position
-    };
-    let mut outer = Query::select();
-    outer
-        .expr(Expr::col((ranked_alias.clone(), Asterisk)))
-        .from_subquery(ranked.take(), ranked_alias.clone())
-        .and_where(counted.lte(i64::from(ranking.kept)))
-        .order_by((ranked_alias.clone(), Alias::new("attribute_name")), Order::Asc)
-        .order_by((ranked_alias.clone(), axis), Order::Asc)
-        .order_by((ranked_alias.clone(), AttributeHistory::RecordedAt), Order::Asc)
-        .order_by((ranked_alias.clone(), AttributeHistory::WriteId), Order::Asc)
-        .order_by((ranked_alias, AttributeHistory::WriteOrdinal), Order::Asc);
-    outer.take()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,6 +197,7 @@ mod tests {
     use andromeda_postgresql_query::history_source::HistoryBranch;
     use iri_rs::IriBuf;
     use sea_query::{IntoIden, PostgresQueryBuilder};
+    use std::num::NonZeroU32;
 
     /// The one entity these tests build a history statement for.
     fn vehicle_id() -> Identifier {
@@ -437,20 +305,6 @@ mod tests {
     }
 
     #[test]
-    fn last_n_ranks_on_the_write_identity_tiebreaker() {
-        // Two instances sharing a timestamp must be kept or dropped consistently
-        // across executions, so the ROW_NUMBER window that picks the last N
-        // breaks ties on the hypertable's unique key rather than leaving it to
-        // the plan.
-        let mut compiled = minimal_compiled();
-        compiled.instances.page = InstancePage::LastN { n: count(5) };
-        let sql = sql_of(&compiled);
-        assert!(sql.contains("ROW_NUMBER()"), "{sql}");
-        assert!(sql.contains("PARTITION BY \"ah\".\"attribute_name_key\", \"ah\".\"dataset_id\""), "{sql}");
-        assert!(sql.contains("\"ah\".\"write_ordinal\" DESC"), "{sql}");
-    }
-
-    #[test]
     fn build_temporal_history_before() {
         let mut compiled = minimal_compiled();
         compiled.window.interval = TimeInterval::Before("2024-01-15T10:00:00Z".parse().expect("valid instant"));
@@ -504,103 +358,6 @@ mod tests {
         compiled.instances.attr_filter = vec![IriBuf::new("https://uri.etsi.org/ngsi-ld/default-context/speed".to_string()).expect("valid IRI")];
         let sql = sql_of(&compiled);
         assert!(sql.contains("\"an\".\"name\" IN ("), "{sql}");
-    }
-
-    #[test]
-    fn build_temporal_history_with_last_n() {
-        let mut compiled = minimal_compiled();
-        compiled.instances.page = InstancePage::LastN { n: count(5) };
-        let sql = sql_of(&compiled);
-        assert!(sql.contains("\"ranked\""), "{sql}");
-        assert!(sql.contains("ROW_NUMBER()"), "{sql}");
-        assert!(sql.contains("\"ranked\".\"rn\" <="), "{sql}");
-    }
-
-    /// Clause 6.3.10 forwards: without `lastN` the page is the least recent
-    /// instances, ranked ascending on the axis alone so a group sharing the
-    /// page-edge timestamp shares one rank and is kept whole.
-    #[test]
-    fn a_forward_page_ranks_ascending_on_the_axis_alone() {
-        let mut compiled = minimal_compiled();
-        compiled.instances.page = InstancePage::Forward { size: 100 };
-        let sql = sql_of(&compiled);
-        assert!(
-            sql.contains("RANK() OVER ( PARTITION BY \"ah\".\"attribute_name_key\", \"ah\".\"dataset_id\" ORDER BY \"ah\".\"observed_at\" ASC NULLS LAST )"),
-            "{sql}"
-        );
-        assert!(!sql.contains("ROW_NUMBER()"), "{sql}");
-        assert!(sql.contains("\"ranked\".\"rn\" <= 100"), "{sql}");
-        assert!(!sql.contains("uncounted"), "an unbounded window has no lower bound to leave uncounted: {sql}");
-    }
-
-    /// The instances on the inclusive lower bound of `after`/`between` are the
-    /// group a previous forward page ended on, so they are kept without being
-    /// counted and a resumed walk always advances.
-    #[test]
-    fn a_forward_page_leaves_the_inclusive_lower_bound_uncounted() {
-        for interval in [
-            TimeInterval::After("2024-01-15T10:00:00Z".parse().expect("valid instant")),
-            TimeInterval::Between {
-                from: "2024-01-15T10:00:00Z".parse().expect("valid instant"),
-                to: "2024-01-16T10:00:00Z".parse().expect("valid instant"),
-            },
-        ] {
-            let mut compiled = minimal_compiled();
-            compiled.instances.page = InstancePage::Forward { size: 100 };
-            compiled.window.interval = interval;
-            let sql = sql_of(&compiled);
-            assert!(
-                sql.contains("SUM((CASE WHEN (\"ah\".\"observed_at\" = '2024-01-15 10:00:00.000000 +00:00') THEN 1 ELSE 0 END)) OVER ( PARTITION BY \"ah\".\"attribute_name_key\", \"ah\".\"dataset_id\" ) AS \"uncounted\""),
-                "{sql}"
-            );
-            assert!(sql.contains("\"ranked\".\"rn\" - \"ranked\".\"uncounted\" <= 100"), "{sql}");
-        }
-    }
-
-    /// `before` is an exclusive bound, so a backward page counts every instance
-    /// and ranks descending on the axis alone.
-    #[test]
-    fn a_backward_page_ranks_descending_on_the_axis_alone() {
-        let mut compiled = minimal_compiled();
-        compiled.instances.page = InstancePage::Backward {
-            size: 1000,
-            requested: count(5000),
-        };
-        compiled.window.interval = TimeInterval::Before("2024-01-15T10:00:00Z".parse().expect("valid instant"));
-        let sql = sql_of(&compiled);
-        assert!(
-            sql.contains("RANK() OVER ( PARTITION BY \"ah\".\"attribute_name_key\", \"ah\".\"dataset_id\" ORDER BY \"ah\".\"observed_at\" DESC NULLS LAST )"),
-            "{sql}"
-        );
-        assert!(sql.contains("\"ranked\".\"rn\" <= 1000"), "{sql}");
-        assert!(!sql.contains("uncounted"), "{sql}");
-    }
-
-    /// Every ranked shape reports each stream's total in the window, which is
-    /// how the page tells whether it left an instance out.
-    #[test]
-    fn every_ranked_shape_reports_the_stream_total() {
-        for page in [
-            InstancePage::LastN { n: count(5) },
-            InstancePage::Forward { size: 5 },
-            InstancePage::Backward { size: 5, requested: count(50) },
-        ] {
-            let mut compiled = minimal_compiled();
-            compiled.instances.page = page;
-            let sql = sql_of(&compiled);
-            assert!(
-                sql.contains("COUNT(*) OVER ( PARTITION BY \"ah\".\"attribute_name_key\", \"ah\".\"dataset_id\" ) AS \"partition_total\""),
-                "{page:?}: {sql}"
-            );
-        }
-    }
-
-    /// Every instance in the window is read when no page applies.
-    #[test]
-    fn the_whole_history_is_not_ranked() {
-        let sql = sql_of(&minimal_compiled());
-        assert!(!sql.contains("RANK()"), "{sql}");
-        assert!(!sql.contains("ROW_NUMBER()"), "{sql}");
     }
 
     /// Clause 4.5.5: `@none` selects the instance that carries no `datasetId`,
@@ -660,7 +417,6 @@ mod tests {
     fn a_temporal_scope_q_reads_the_scope_intervals_once_per_entity() {
         let mut compiled = minimal_compiled();
         compiled.entities.scope_q = Some(ScopeQuery::parse("/Madrid/#").expect("valid scope query"));
-        compiled.instances.page = InstancePage::Forward { size: 100 };
         let sql = sql_of(&compiled);
         assert_eq!(sql.matches(r#"FROM "scope_history""#).count(), 1, "{sql}");
         assert!(!sql.contains("sh_next"), "{sql}");
@@ -687,5 +443,183 @@ mod tests {
         let snapshot = Alias::new("snap_7").into_iden();
         let recorded = build_temporal_history_query(&HistoryBranch::recorded_in(snapshot), &vehicle_id(), &minimal_compiled()).to_string(PostgresQueryBuilder);
         assert!(!recorded.contains("temporal_append"), "{recorded}");
+    }
+
+    /// `between` 2024-01-15T10:00Z and 2024-01-16T10:00Z, the window the page
+    /// tests read.
+    fn one_day() -> TimeInterval {
+        TimeInterval::Between {
+            from: "2024-01-15T10:00:00Z".parse().expect("valid instant"),
+            to: "2024-01-16T10:00:00Z".parse().expect("valid instant"),
+        }
+    }
+
+    /// The stage 2 statement of `page` over `interval` on the recorded rows
+    /// alone.
+    fn recorded_sql_of(page: InstancePage, interval: TimeInterval) -> String {
+        let mut compiled = minimal_compiled();
+        compiled.instances.page = page;
+        compiled.window.interval = interval;
+        build_temporal_history_query(&HistoryBranch::live_recorded(), &vehicle_id(), &compiled).to_string(PostgresQueryBuilder)
+    }
+
+    /// Clauses 5.7.3.4 and 5.7.4.4: `lastN` is the last `n` instances of each
+    /// stream, read most recent first through the axis index and limited, so
+    /// the read stops after them instead of ranking the window.
+    #[test]
+    fn a_last_n_page_reads_each_stream_backwards_with_a_limit() {
+        let sql = recorded_sql_of(InstancePage::LastN { n: count(5) }, one_day());
+        assert!(sql.contains("JOIN LATERAL"), "{sql}");
+        assert!(sql.contains(r#""rh"."stream_key" = "st"."stream_key""#), "{sql}");
+        assert!(
+            sql.contains(r#"ORDER BY "ah"."observed_at" DESC, "ah"."recorded_at" DESC, "ah"."write_id" DESC, "ah"."write_ordinal" DESC LIMIT 5"#),
+            "{sql}"
+        );
+        assert!(!sql.contains("OVER"), "{sql}");
+        assert!(!sql.contains("stream_continues"), "a complete answer reports no cut: {sql}");
+    }
+
+    /// Clause 6.3.10 forwards: the page is read through the axis index from
+    /// the least recent instant, its edge the `size`-th instance, so neither
+    /// read goes past the page.
+    #[test]
+    fn a_forward_page_reads_each_stream_with_a_limit() {
+        let sql = recorded_sql_of(InstancePage::Forward { size: 100 }, one_day());
+        assert!(sql.contains("LEFT JOIN LATERAL"), "{sql}");
+        assert!(sql.contains(r#"ORDER BY "ah"."observed_at" ASC LIMIT 100"#), "{sql}");
+        assert!(sql.contains(r#"ORDER BY "edge_candidates"."edge" ASC LIMIT 1 OFFSET 99"#), "{sql}");
+        assert!(!sql.contains("OVER"), "{sql}");
+        assert!(!sql.contains("COUNT(*)"), "{sql}");
+    }
+
+    /// The page keeps every instance up to its edge instant rather than a
+    /// count of them, so the group sharing the instant at the edge stays on
+    /// one page; the instances on the inclusive lower bound are the group the
+    /// previous page ended on and do not count towards the edge.
+    #[test]
+    fn instances_sharing_an_instant_stay_on_one_page() {
+        let sql = recorded_sql_of(InstancePage::Forward { size: 100 }, one_day());
+        assert!(
+            sql.contains(r#""ah"."observed_at" <= COALESCE("stream_edge"."edge", 'infinity'::timestamptz)"#),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(r#""ah"."observed_at" IS NOT NULL AND "ah"."observed_at" > '2024-01-15 10:00:00.000000 +00:00' ORDER BY"#),
+            "{sql}"
+        );
+        let unbounded = recorded_sql_of(InstancePage::Forward { size: 100 }, TimeInterval::Unbounded);
+        assert!(
+            unbounded.contains(r#""ah"."observed_at" IS NOT NULL ORDER BY "ah"."observed_at" ASC LIMIT 100"#),
+            "an unbounded window has no lower bound to leave uncounted: {unbounded}"
+        );
+    }
+
+    /// Clause 6.3.10 backwards: `before` is an exclusive bound, so the page
+    /// counts every instance and keeps all those from its edge on.
+    #[test]
+    fn a_backward_page_keeps_every_instance_from_its_edge() {
+        let sql = recorded_sql_of(
+            InstancePage::Backward {
+                size: 1000,
+                requested: count(5000),
+            },
+            TimeInterval::Before("2024-01-15T10:00:00Z".parse().expect("valid instant")),
+        );
+        assert!(sql.contains(r#"ORDER BY "ah"."observed_at" DESC LIMIT 1000"#), "{sql}");
+        assert!(sql.contains("OFFSET 999"), "{sql}");
+        assert!(
+            sql.contains(r#""ah"."observed_at" >= COALESCE("stream_edge"."edge", '-infinity'::timestamptz)"#),
+            "{sql}"
+        );
+    }
+
+    /// A page reports whether each stream holds an instance beyond its edge,
+    /// which is what the response's `Content-Range` is cut on.
+    #[test]
+    fn a_page_reports_whether_each_stream_runs_on_beyond_it() {
+        let forward = recorded_sql_of(InstancePage::Forward { size: 100 }, one_day());
+        assert!(forward.contains(r#"AS "stream_continues""#), "{forward}");
+        assert!(forward.contains(r#""ah"."observed_at" > "edge_row"."edge""#), "{forward}");
+        let backward = recorded_sql_of(
+            InstancePage::Backward {
+                size: 1000,
+                requested: count(5000),
+            },
+            one_day(),
+        );
+        assert!(backward.contains(r#""ah"."observed_at" < "edge_row"."edge""#), "{backward}");
+    }
+
+    /// An instance with no instant on the axis falls in an unbounded window
+    /// only, after every dated instance, and the axis index holds none: a
+    /// page reads those instances apart, keeping them when its edge was never
+    /// reached.
+    #[test]
+    fn an_unbounded_page_reads_the_undated_instances_apart() {
+        let unbounded = recorded_sql_of(InstancePage::Forward { size: 100 }, TimeInterval::Unbounded);
+        assert!(
+            unbounded.contains(r#""ah"."observed_at" IS NULL AND "stream_edge"."edge" IS NULL"#),
+            "{unbounded}"
+        );
+        assert!(
+            unbounded.contains("EXISTS(SELECT 1 FROM") && unbounded.contains(r#""ah"."observed_at" IS NULL) AS "stream_continues""#),
+            "{unbounded}"
+        );
+        let bounded = recorded_sql_of(InstancePage::Forward { size: 100 }, one_day());
+        assert!(!bounded.contains(r#""ah"."observed_at" IS NULL"#), "{bounded}");
+    }
+
+    /// Over an unbounded window a `lastN`, most recent first, takes the
+    /// undated instances ahead of the dated ones, as a single descending
+    /// ranking over the window orders them; `deletedAt` is carried by every
+    /// row it selects.
+    #[test]
+    fn an_unbounded_last_n_takes_the_undated_instances_first() {
+        let sql = recorded_sql_of(InstancePage::LastN { n: count(3) }, TimeInterval::Unbounded);
+        assert!(
+            sql.contains(r#""ah"."observed_at" IS NULL ORDER BY "ah"."recorded_at" DESC, "ah"."write_id" DESC, "ah"."write_ordinal" DESC LIMIT 3"#),
+            "{sql}"
+        );
+        assert!(sql.contains(r#"ORDER BY "latest"."observed_at" DESC"#), "{sql}");
+        let mut compiled = minimal_compiled();
+        compiled.instances.page = InstancePage::LastN { n: count(3) };
+        compiled.window.timeproperty = TimeProp::Deleted;
+        let deleted = build_temporal_history_query(&HistoryBranch::live_recorded(), &vehicle_id(), &compiled).to_string(PostgresQueryBuilder);
+        assert!(!deleted.contains(r#""ah"."deleted_at" IS NULL"#), "{deleted}");
+    }
+
+    /// On the live branch a stream's recorded rows and its queued entries are
+    /// each ordered and limited before they are joined, so the limit reaches
+    /// the axis index.
+    #[test]
+    fn each_part_of_a_live_stream_is_ordered_and_limited_on_its_own() {
+        let mut compiled = minimal_compiled();
+        compiled.instances.page = InstancePage::LastN { n: count(5) };
+        compiled.window.interval = one_day();
+        let sql = sql_of(&compiled);
+        assert_eq!(sql.matches("LIMIT 5").count(), 3, "both parts and their join: {sql}");
+        assert!(sql.contains(r#""rh"."stream_key" = "st"."stream_key""#), "{sql}");
+        assert!(sql.contains(r#""pe"."attribute_name_key" = "st"."attribute_name_key""#), "{sql}");
+        assert!(sql.contains(r#"("pe"."dataset_id" IS NOT DISTINCT FROM "st"."dataset_id")"#), "{sql}");
+    }
+
+    /// Every instance of a stream carries its attribute's name, so the name is
+    /// joined once per stream rather than per instance read.
+    #[test]
+    fn a_page_joins_the_attribute_name_once_per_stream() {
+        let sql = recorded_sql_of(InstancePage::Forward { size: 100 }, one_day());
+        assert_eq!(sql.matches(r#"JOIN "attribute_names""#).count(), 1, "{sql}");
+        assert!(
+            sql.contains(r#"JOIN "attribute_names" AS "an" ON "an"."attribute_name_key" = "st"."attribute_name_key""#),
+            "{sql}"
+        );
+    }
+
+    /// Every instance in the window is read when no page applies.
+    #[test]
+    fn the_whole_history_reads_every_instance() {
+        let sql = sql_of(&minimal_compiled());
+        assert!(!sql.contains("LATERAL"), "{sql}");
+        assert!(!sql.contains("LIMIT"), "{sql}");
     }
 }

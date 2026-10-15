@@ -17,14 +17,8 @@
 //! parameter: a bound value only matches under a custom plan, and a generic
 //! plan would silently stop using the index.
 
-use sea_query::{Expr, Func, SimpleExpr};
-
-/// The typed literal an unleased row's lease instant is coalesced to.
-///
-/// `-infinity` is below every real instant, so `GREATEST(due, -infinity)` is
-/// the due instant itself and an unleased row is claimable exactly when it is
-/// due.
-const UNLEASED: &str = "'-infinity'::timestamptz";
+use crate::open_instant::or_start_of_time;
+use sea_query::{Func, SimpleExpr};
 
 /// PostgreSQL: `GREATEST(due, COALESCE(lease_until, '-infinity'::timestamptz))`
 /// — the instant from which a queue row may be claimed.
@@ -32,10 +26,11 @@ const UNLEASED: &str = "'-infinity'::timestamptz";
 /// `due` is the column holding the earliest instant the row may be attempted
 /// and `lease_until` the column holding the current lease's expiry, null when
 /// no lease is held. Both are passed as expressions so a statement can name its
-/// own table alias.
+/// own table alias. `-infinity` is below every real instant, so an unleased
+/// row is claimable exactly when it is due.
 #[must_use]
 pub fn claimable_at(due: SimpleExpr, lease_until: SimpleExpr) -> SimpleExpr {
-    Func::greatest([due, Func::coalesce([lease_until, Expr::cust(UNLEASED)]).into()]).into()
+    Func::greatest([due, or_start_of_time(lease_until)]).into()
 }
 
 #[cfg(test)]

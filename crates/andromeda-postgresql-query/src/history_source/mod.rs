@@ -41,7 +41,8 @@ mod pending;
 /// The rows of scope history.
 pub mod scope_rows;
 
-use sea_query::{DynIden, ExprTrait, SelectStatement, SimpleExpr};
+use crate::history_source::grain::HistoryGrain;
+use sea_query::{DynIden, Expr, ExprTrait, IntoIden, SelectStatement, SimpleExpr};
 
 /// Whether a branch's history sources read queued entries beside the
 /// recorded rows.
@@ -175,6 +176,29 @@ impl HistoryOf {
                 branch.and_where(entity_id.eq(id.clone()));
             }
         }
+    }
+}
+
+/// One attribute stream a source reads alone: a row of
+/// [`attribute_rows::stream_rows`] under the alias it is read through, whose
+/// grain and recorded stream key the source narrows to.
+#[derive(Clone, Debug)]
+pub struct HistoryStream {
+    /// The alias the stream row is read under, usually a lateral reference.
+    row: DynIden,
+}
+
+impl HistoryStream {
+    /// The stream the row under `row` names.
+    #[must_use]
+    pub fn under(row: impl IntoIden) -> HistoryStream {
+        HistoryStream { row: row.into_iden() }
+    }
+
+    /// One grain column of the stream row.
+    pub(crate) fn column(&self, column: HistoryGrain) -> SimpleExpr {
+        // clone: every column reference names the row's alias.
+        Expr::col((self.row.clone(), column))
     }
 }
 

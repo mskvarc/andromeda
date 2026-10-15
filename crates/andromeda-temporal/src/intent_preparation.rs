@@ -20,7 +20,7 @@ use andromeda_ngsi_ld_lexicon::{
     instance_identity::InstanceIdentity,
     ngsi_ld_date_time::NgsiLdDateTime,
 };
-use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
+use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::{DateTime, Utc};
 
@@ -147,7 +147,7 @@ fn observation_entry(attribute_name: &AttributeName, observed: ObservedInstance,
                 InstanceIdentity::from_identifier(provided, InstanceFamily::Attribute)
             }),
             metadata,
-            partition_total: None,
+            stream_extent: StreamExtent::Whole,
         },
     }
 }

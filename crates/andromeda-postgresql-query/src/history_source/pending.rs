@@ -27,6 +27,7 @@
 
 use crate::history_source::{
     HistoryOf,
+    HistoryStream,
     entry_values::{attribute_entry_values, scope_entry_values},
     grain::HistoryGrain,
 };
@@ -214,6 +215,16 @@ pub(crate) fn attribute_rows(schema: Option<&DynIden>, of: &HistoryOf) -> Select
         .cond_where(applied(schema))
         .cond_where(lands(schema));
     of.narrow(&mut select, entry(TemporalAppendEntries::EntityId));
+    select
+}
+
+/// The queued attribute entries of the one grain `stream` names that the
+/// application would write, as rows of the attribute source.
+pub(crate) fn stream_attribute_rows(schema: Option<&DynIden>, stream: &HistoryStream) -> SelectStatement {
+    let mut select = attribute_rows(schema, &HistoryOf::Entity(stream.column(HistoryGrain::EntityId)));
+    select
+        .and_where(entry(TemporalEntry::AttributeNameKey).eq(stream.column(HistoryGrain::AttributeNameKey)))
+        .and_where(entry(TemporalEntry::DatasetId).not_distinct_from(stream.column(HistoryGrain::DatasetId)));
     select
 }
 

@@ -23,7 +23,7 @@ use andromeda_entity::{
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_linked_retrieval::admission::TemporalJoin;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, instance_identity::InstanceIdentity};
-use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow, TemporalValue};
+use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalAggregationRow, TemporalHistoryRow, TemporalValue};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::{entity_selection::EntitySelection, geo::near_distance_band::NearDistanceBand};
 use async_trait::async_trait;
@@ -132,7 +132,7 @@ impl StubBroker {
             modified_at: Some(instant),
             instance: InstanceIdentity::Verbatim(uri(&format!("urn:ngsi-ld:Instance:{entity_id}:reading"))),
             metadata: None,
-            partition_total: None,
+            stream_extent: StreamExtent::Whole,
         };
         iter::once(reading)
             .chain(targets.iter().map(|target| TemporalHistoryRow {
@@ -146,7 +146,7 @@ impl StubBroker {
                 modified_at: Some(instant),
                 instance: InstanceIdentity::Verbatim(uri(&format!("urn:ngsi-ld:Instance:{entity_id}:{target}"))),
                 metadata: None,
-                partition_total: None,
+                stream_extent: StreamExtent::Whole,
             }))
             .collect()
     }

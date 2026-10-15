@@ -7,7 +7,7 @@
 //! alike. Ordering ties keep breaking on the write identity, which a queued
 //! entry carries exactly as its recorded row will.
 
-use crate::history_source::{HistoryBranch, HistoryOf, PendingEntries, entry_values::attribute_value_columns, grain::HistoryGrain, pending};
+use crate::history_source::{HistoryBranch, HistoryOf, HistoryStream, PendingEntries, entry_values::attribute_value_columns, grain::HistoryGrain, pending};
 use andromeda_postgresql_schema::temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities};
 use andromeda_postgresql_seaquery::branch::qualified;
 use sea_query::{Condition, DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, Query, SelectStatement, SimpleExpr, TableRef, UnionType};
@@ -94,6 +94,64 @@ pub fn attribute_rows(branch: &HistoryBranch, of: &HistoryOf, alias: impl IntoId
     TableRef::SubQuery(Box::new(rows), alias.into_iden())
 }
 
+/// The recorded rows of the one stream `stream` names in the branch `schema`
+/// names, its grain taken from the stream row, less those a queued entry
+/// replaces when `pending` unions them.
+///
+/// The rows are narrowed by their stream key alone, so the stream-led axis
+/// indexes return them in axis order and a limited read stops after its page.
+fn recorded_stream_rows(schema: Option<&DynIden>, stream: &HistoryStream, pending: PendingEntries) -> SelectStatement {
+    let mut select = Query::select();
+    select
+        .expr_as(stream.column(HistoryGrain::EntityId), HistoryGrain::EntityId)
+        .expr_as(stream.column(HistoryGrain::AttributeNameKey), HistoryGrain::AttributeNameKey)
+        .expr_as(stream.column(HistoryGrain::DatasetId), HistoryGrain::DatasetId)
+        .exprs(IDENTITY_COLUMNS.map(|column| Expr::col((RecordedRow, column))))
+        .exprs(attribute_value_columns().map(|column| Expr::col((RecordedRow, column))))
+        .from(qualified(schema, AttributeHistory::Table).alias(RecordedRow))
+        .and_where(Expr::col((RecordedRow, AttributeHistory::StreamKey)).eq(stream.column(HistoryGrain::StreamKey)));
+    if let Some(kept) = kept_beside_pending(
+        pending,
+        stream.column(HistoryGrain::EntityId),
+        stream.column(HistoryGrain::AttributeNameKey),
+        Expr::col((RecordedRow, AttributeHistory::VerbatimInstanceId)),
+    ) {
+        select.cond_where(kept);
+    }
+    select
+}
+
+/// The attribute history of one stream, as the parts a statement reads one
+/// by one.
+///
+/// A statement that orders, limits or bounds a stream's instances applies
+/// that to every part before joining them: PostgreSQL leaves a union whose
+/// rows name a lateral row as a subquery, so an order or a bound above it
+/// would read every row of both parts.
+#[derive(Clone, Debug)]
+pub struct StreamHistoryParts {
+    /// The recorded rows of the stream.
+    pub recorded: SelectStatement,
+    /// The queued entries of the stream's grain the application would write,
+    /// `None` where the branch reads no queue.
+    pub pending: Option<SelectStatement>,
+}
+
+/// The attribute history of the one stream `stream` names in `branch`: its
+/// recorded rows and, where the branch reads its queue, the queued entries of
+/// its grain the application would write.
+#[must_use]
+pub fn stream_attribute_parts(branch: &HistoryBranch, stream: &HistoryStream) -> StreamHistoryParts {
+    let schema = branch.schema();
+    StreamHistoryParts {
+        recorded: recorded_stream_rows(schema, stream, branch.pending()),
+        pending: match branch.pending() {
+            PendingEntries::Unioned => Some(pending::stream_attribute_rows(schema, stream)),
+            PendingEntries::Absent => None,
+        },
+    }
+}
+
 /// The queued attribute entries `of` reads that the application would write,
 /// under `alias`, or `None` where `branch` reads no queue.
 #[must_use]
@@ -140,7 +198,8 @@ mod tests {
     use crate::history_source::{
         HistoryBranch,
         HistoryOf,
-        attribute_rows::{attribute_rows, stream_rows},
+        HistoryStream,
+        attribute_rows::{attribute_rows, stream_attribute_parts, stream_rows},
     };
     use sea_query::{Alias, Asterisk, DynIden, IntoIden, PostgresQueryBuilder, Query};
 
@@ -207,5 +266,39 @@ mod tests {
         assert!(sql.contains(r#"NOT EXISTS(SELECT 1 FROM "temporal_attribute_streams" AS "ps""#), "{sql}");
         let snapshot = rendered(stream_rows(&HistoryBranch::recorded_in(snapshot()), &HistoryOf::EveryEntity, Alias::new("qs")));
         assert!(!snapshot.contains("temporal_append"), "{snapshot}");
+    }
+
+    fn statement(select: &sea_query::SelectStatement) -> String {
+        select.to_string(PostgresQueryBuilder)
+    }
+
+    /// The recorded part of one stream is narrowed by its stream key alone,
+    /// so the stream-led axis indexes serve it, and takes its grain from the
+    /// stream row.
+    #[test]
+    fn a_stream_part_reads_its_recorded_rows_by_stream_key() {
+        let parts = stream_attribute_parts(&HistoryBranch::live_recorded(), &HistoryStream::under(Alias::new("st")));
+        let sql = statement(&parts.recorded);
+        assert!(sql.contains(r#"WHERE "rh"."stream_key" = "st"."stream_key""#), "{sql}");
+        assert!(sql.contains(r#""st"."entity_id" AS "entity_id""#), "{sql}");
+        assert!(!sql.contains("temporal_attribute_streams"), "{sql}");
+        assert!(parts.pending.is_none());
+    }
+
+    /// On the live branch the queued part holds the entries of the stream's
+    /// grain alone, and the recorded part leaves out a row a queued entry of
+    /// that grain replaces.
+    #[test]
+    fn a_live_stream_part_narrows_its_queued_entries_to_the_grain() {
+        let parts = stream_attribute_parts(&HistoryBranch::live(), &HistoryStream::under(Alias::new("st")));
+        let recorded = statement(&parts.recorded);
+        assert!(
+            recorded.contains(r#""pr"."entity_id" = "st"."entity_id" AND "pr"."attribute_name_key" = "st"."attribute_name_key""#),
+            "{recorded}"
+        );
+        let pending = statement(&parts.pending.expect("the live branch reads its queue"));
+        assert!(pending.contains(r#""pe"."entity_id" = "st"."entity_id""#), "{pending}");
+        assert!(pending.contains(r#""pe"."attribute_name_key" = "st"."attribute_name_key""#), "{pending}");
+        assert!(pending.contains(r#"("pe"."dataset_id" IS NOT DISTINCT FROM "st"."dataset_id")"#), "{pending}");
     }
 }

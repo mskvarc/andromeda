@@ -5,7 +5,13 @@ use crate::temporal::history_row::neutral_row_to_instance;
 use andromeda_ngsi_ld_entity::{document::instance_document::InstanceDocument, geometry_value::GeometryValue, non_empty::NonEmpty};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_identity::InstanceIdentity, rfc3339::sub_second};
-use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue, observation_metadata::ObservationMetadata, structured_value::StructuredValue};
+use andromeda_ngsi_ld_model::temporal::{
+    StreamExtent,
+    TemporalHistoryRow,
+    TemporalValue,
+    observation_metadata::ObservationMetadata,
+    structured_value::StructuredValue,
+};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::{NULL_URI, expanded::properties as expanded_properties};
@@ -43,7 +49,7 @@ fn row(value: TemporalValue) -> TemporalHistoryRow {
         modified_at: Some(instant(1_700_000_200)),
         instance: InstanceIdentity::Generated(minted()),
         metadata: None,
-        partition_total: None,
+        stream_extent: StreamExtent::Whole,
     }
 }
 

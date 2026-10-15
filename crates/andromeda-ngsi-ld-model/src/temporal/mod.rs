@@ -142,8 +142,21 @@ pub struct TemporalHistoryRow {
     /// The members the instance carries beside its value: its sub-attributes
     /// and the companion members of its family.
     pub metadata: Option<ObservationMetadata>,
-    /// Total observations in the attribute partition when requested by the query.
-    pub partition_total: Option<i64>,
+    /// Whether the page the row was read in left instances of its stream out
+    /// (clause 6.3.10).
+    pub stream_extent: StreamExtent,
+}
+
+/// How much of one attribute stream a paged temporal read returned
+/// (clause 6.3.10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StreamExtent {
+    /// Every instance of the stream in the window: the read was not paged, or
+    /// the page held them all.
+    #[default]
+    Whole,
+    /// The stream holds instances in the window beyond the page.
+    Cut,
 }
 
 impl TemporalHistoryRow {

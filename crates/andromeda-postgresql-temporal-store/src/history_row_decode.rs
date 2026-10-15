@@ -29,7 +29,7 @@ use andromeda_ngsi_ld_lexicon::{
     identifier::Identifier,
     uri::Uri,
 };
-use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue, structured_value::StructuredValue};
+use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, TemporalValue, structured_value::StructuredValue};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_attribute_instance::{
     name_keys::{HeldKeys, KeyNames},
@@ -142,7 +142,7 @@ fn decode_history_row(row: &PgRow) -> Result<DecodedHistoryRow, TemporalStoreErr
         modified_at: nullable_instant(row, HistoryColumn::ModifiedAt)?,
         instance: decode_instance_identity(row, TABLE)?,
         metadata: None,
-        partition_total: row.try_get("partition_total").ok(),
+        stream_extent: decode_stream_extent(row)?,
     };
     Ok(DecodedHistoryRow {
         observation: TemporalHistoryObservation {
@@ -157,6 +157,19 @@ fn decode_history_row(row: &PgRow) -> Result<DecodedHistoryRow, TemporalStoreErr
 fn decode_attribute_kind(row: &PgRow) -> Result<AttributeKind, TemporalStoreError> {
     let stored: i16 = row.try_get("attribute_kind")?;
     Ok(AttributeKind::try_from(stored).map_err(StoredHistoryError::AttributeKind)?)
+}
+
+/// Read whether the page the row was read in cut its stream.
+///
+/// Only a page the remainder of which a client pages through projects
+/// `stream_continues`, true when the stream holds instances beyond the page;
+/// a row of any other read holds its whole stream.
+fn decode_stream_extent(row: &PgRow) -> Result<StreamExtent, TemporalStoreError> {
+    match row.try_get::<Option<bool>, _>("stream_continues") {
+        Ok(Some(true)) => Ok(StreamExtent::Cut),
+        Ok(Some(false) | None) | Err(sqlx::Error::ColumnNotFound(_)) => Ok(StreamExtent::Whole),
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// Read the row's expanded attribute IRI.
@@ -273,7 +286,7 @@ mod tests {
         stored_history_error::{StoredHistoryError, UnitCodeColumn},
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_identity::InstanceIdentity};
-    use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
+    use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, TemporalValue};
     use andromeda_postgresql_attribute_instance::{
         name_keys::KeyNames,
         stored_members::InstanceMembers,
@@ -331,7 +344,7 @@ mod tests {
                     modified_at: Some(recorded_at),
                     instance: InstanceIdentity::generate(),
                     metadata: None,
-                    partition_total: None,
+                    stream_extent: StreamExtent::Whole,
                 },
                 identity: None,
             },

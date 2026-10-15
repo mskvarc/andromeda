@@ -22,7 +22,7 @@ use andromeda_ngsi_ld_lexicon::{
     instance_family::InstanceFamily,
     instance_identity::InstanceIdentity,
 };
-use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, temporal_document::TemporalDocument};
+use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, temporal_document::TemporalDocument};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::{DateTime, Utc};
 
@@ -92,7 +92,7 @@ fn instance_row(attribute_name: AttributeName, document: InstanceDocument, recor
             InstanceIdentity::from_identifier(provided, InstanceFamily::Attribute)
         }),
         metadata,
-        partition_total: None,
+        stream_extent: StreamExtent::Whole,
     }))
 }
 

@@ -9,7 +9,7 @@ use andromeda_ngsi_ld_lexicon::{
     instance_identity::InstanceIdentity,
     scope::path::ScopePath,
 };
-use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue, observation_metadata::ObservationMetadata};
+use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, TemporalValue, observation_metadata::ObservationMetadata};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_attribute_instance::{
     name_keys::{MentionedNames, NameKeys},
@@ -107,7 +107,7 @@ pub(crate) fn observation(value: TemporalValue, instance: InstanceIdentity, meta
             modified_at: Some(recorded_at()),
             instance,
             metadata,
-            partition_total: None,
+            stream_extent: StreamExtent::Whole,
         },
     }
 }

@@ -229,7 +229,7 @@ mod tests {
         temporal_format::TemporalFormat,
         time_prop::TimeProp,
     };
-    use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
+    use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, TemporalValue};
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
@@ -273,7 +273,7 @@ mod tests {
             modified_at: Some(instant()),
             instance: InstanceIdentity::Generated(Uuid::from_u128(u128::from(instance))),
             metadata: None,
-            partition_total: None,
+            stream_extent: StreamExtent::Whole,
         }
     }
 

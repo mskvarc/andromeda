@@ -77,7 +77,7 @@ pub fn neutral_row_to_instance(row: TemporalHistoryRow, sys_attrs: SysAttrsInclu
         modified_at,
         instance,
         metadata,
-        partition_total: _,
+        stream_extent: _,
     } = row;
     let (instance_id, dataset_id) = identity_members(&instance, InstanceFamily::of_attribute_name(&attribute_name), dataset_id)?;
     let deleted_at = value.deleted_at();
