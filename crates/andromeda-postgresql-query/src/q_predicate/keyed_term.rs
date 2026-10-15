@@ -8,12 +8,11 @@
 //! ([`keyed_pattern`](crate::q_predicate::keyed_pattern)). Each candidate is rechecked by the condition the term
 //! compiles to, so the candidates are exactly the Entities the term keeps.
 //!
-//! The path is bounded: it takes at most [`CANDIDATE_BOUND`] + 1 candidates.
-//! The planner cannot price either term (it underestimates a broad one by
-//! orders of magnitude), and a page whose matches are many is found sooner by
-//! walking the selection in page order than by fetching every match through
-//! the index, so the statement that cuts the page takes the candidates only
-//! when they number at most [`CANDIDATE_BOUND`].
+//! The candidate statement is unbounded. The planner cannot price either term
+//! (it underestimates a broad one by orders of magnitude), and a statement
+//! whose matches are many is answered sooner by walking the selection than by
+//! fetching every match through the index, so each statement that reads the
+//! candidates bounds them by the most it can use and walks past that bound.
 
 use crate::{
     dictionary::query_names::QueryNames,
@@ -24,9 +23,6 @@ use andromeda_ngsi_ld_query::filter::{expression::Expr, predicate::Predicate};
 use sea_query::SelectStatement;
 use std::slice::from_ref;
 
-/// The most candidates the index path hands to the page.
-pub const CANDIDATE_BOUND: u64 = 1000;
-
 /// One term of a `q` expression's top-level conjunction and the candidates
 /// the index path reads for it.
 #[derive(Debug)]
@@ -34,7 +30,7 @@ pub struct KeyedCandidates<'q> {
     /// The term the candidates answer, which the page leaves out of the
     /// filter it applies to them.
     pub term: &'q Predicate,
-    /// `SELECT "entity_key" …`, at most [`CANDIDATE_BOUND`] + 1 rows.
+    /// `SELECT "entity_key" …`, every candidate.
     pub select: SelectStatement,
 }
 
@@ -50,16 +46,12 @@ pub fn keyed_candidates<'q>(expr: &'q Expr, rows: &EntityRowRefs, names: &QueryN
         Expr::Or(_) | Expr::Pred(_) => from_ref(expr),
     };
     conjuncts.iter().find_map(|term| match term {
-        Expr::Pred(pred) => candidates_of(pred, rows, names).map(|mut select| {
-            select.limit(CANDIDATE_BOUND + 1);
-            KeyedCandidates { term: pred, select }
-        }),
+        Expr::Pred(pred) => candidates_of(pred, rows, names).map(|select| KeyedCandidates { term: pred, select }),
         Expr::And(_) | Expr::Or(_) => None,
     })
 }
 
-/// The unbounded candidate statement of one term, `None` when no index
-/// answers it.
+/// The candidate statement of one term, `None` when no index answers it.
 ///
 /// `!~=` never narrows: an Entity holds when none of its strings match, which
 /// no index of matching strings can enumerate.
@@ -99,13 +91,13 @@ mod tests {
     }
 
     #[test]
-    fn every_candidate_statement_is_bounded() {
+    fn the_candidate_statement_reads_every_candidate() {
         for q in [
             "\"https://example.com/name\".\"https://example.com/source\"==\"sensor-43\"",
             "\"https://example.com/name\"~=\"text-71.*\"",
         ] {
             let sql = candidates(q).unwrap_or_else(|| panic!("keyed: {q}"));
-            assert!(sql.ends_with("LIMIT 1001"), "{q}: {sql}");
+            assert!(!sql.contains("LIMIT"), "{q}: {sql}");
         }
     }
 

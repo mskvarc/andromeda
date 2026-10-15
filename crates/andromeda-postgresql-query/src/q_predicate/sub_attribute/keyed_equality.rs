@@ -188,7 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn a_keyed_equality_reads_its_candidates_through_the_index_bounded() {
+    fn a_keyed_equality_reads_its_candidates_through_the_index() {
         let sql = candidates("\"https://example.com/temperature\".\"https://example.com/source\"==\"sensor-43\"").expect("keyed");
         assert!(
             sql.contains(r#"sub_eq_keys("ca"."attribute_name_key", "ca"."sub_attributes") && array_cat(sub_eq_query_key(ARRAY[2, 7]::integer[], 2::smallint, 'sensor-43'::text), sub_eq_query_key(ARRAY[2, 7]::integer[], 7::smallint, 'sensor-43'::text))"#),
@@ -198,7 +198,6 @@ mod tests {
             sql.contains(r#"FROM UNNEST("ca"."sub_attributes") AS "l0""#),
             "the candidates are rechecked: {sql}"
         );
-        assert!(sql.ends_with("LIMIT 1001"), "{sql}");
     }
 
     #[test]

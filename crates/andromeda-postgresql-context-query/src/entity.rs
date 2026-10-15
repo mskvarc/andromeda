@@ -3,6 +3,7 @@
 use crate::{
     entity_page::{heads_of, heads_over},
     entity_relations::{EntityRelations, RowSource},
+    entity_total::{EntityTotal, KeyedTotal, TotalSource, entity_total},
     keyed_page::{PageSource, keyed_page},
     result_ordering,
     selector_predicate::condition as selector_condition,
@@ -38,7 +39,7 @@ use andromeda_postgresql_seaquery::{
     pg_array::has_elements,
     statement_planning::StatementPlanning,
 };
-use sea_query::{Asterisk, Condition, Expr as SeaExpr, ExprTrait, Func, Query, SelectStatement};
+use sea_query::{Condition, ExprTrait, Query, SelectStatement};
 
 /// A compiled entity query: the paginated result statement and how the total
 /// it reports is read, each a statement tree the store binds and executes on
@@ -52,9 +53,10 @@ pub struct EntityQuery {
     /// The order the page's rows come back in, which the store presents
     /// ascending.
     pub read_order: ReadOrder,
-    /// How PostgreSQL may plan `select`: a keyed page is planned with its
-    /// bound values, since only they let the planner price the key index
-    /// against walking the selection.
+    /// How PostgreSQL may plan `select` and the statement `total` runs: a
+    /// keyed page and its count are planned with their bound values, since
+    /// only they let the planner price the key index against walking the
+    /// selection.
     pub planning: StatementPlanning,
 }
 
@@ -65,25 +67,6 @@ pub struct EntityIdsQuery {
     /// The order the page's identifiers come back in, which the store presents
     /// ascending.
     pub read_order: ReadOrder,
-}
-
-/// How the store reads the total a counted entity query reports (clause
-/// 6.3.13).
-pub enum EntityTotal {
-    /// The query asked for no total.
-    Omitted,
-    /// Every row of an offset page carries the total as `COUNT(*) OVER ()`,
-    /// so the common case runs in one round-trip. An empty page carries no row
-    /// to read it from, and only then is this statement run.
-    OnPageRows {
-        /// The count run when the page comes back empty.
-        empty_page: SelectStatement,
-    },
-    /// The page is a keyset window (clause 5.5.9.1), whose predicate keeps only
-    /// the entities past its cursor, so a window count over it would count
-    /// those alone. The total is always this separate statement over the whole
-    /// selection.
-    Counted(SelectStatement),
 }
 
 /// Builds a parameterized SQL query to retrieve the heads of the entities
@@ -129,16 +112,24 @@ pub fn build_query(
         | (CountPolicy::Emit, PageStart::Offset(_) | PageStart::Cursor(_), Some(_))
         | (CountPolicy::Omit, PageStart::Offset(_) | PageStart::Cursor(_), None | Some(_)) => CountPolicy::Omit,
     };
-    let (select, read_order, planning) = match keyed {
+    let (select, read_order, planning, keyed_total) = match keyed {
         None => {
             let mut page = Query::select();
             relations.apply_from(&mut page, schema.as_ref());
             // clone: the count statement filters on the same condition.
             page.cond_where(condition.clone());
             let (keys, read_order) = window_and_sort_keys(&mut page, &rows, query, window, &names.attributes)?;
-            (heads_of(page, &rows, keys, counted_on_page), read_order, StatementPlanning::Cached)
+            (heads_of(page, &rows, keys, counted_on_page), read_order, StatementPlanning::Cached, None)
         }
         Some((q_expr, keyed)) => {
+            let keyed_total = match count {
+                CountPolicy::Emit => Some(KeyedTotal {
+                    term: keyed.term,
+                    // clone: the count reads the same candidates under its own bound
+                    candidates: keyed.select.clone(),
+                }),
+                CountPolicy::Omit => None,
+            };
             let source = PageSource {
                 relations: &relations,
                 schema: schema.as_ref(),
@@ -148,24 +139,22 @@ pub fn build_query(
                 names,
             };
             let (page, read_order) = keyed_page(&source, q_expr, keyed)?;
-            (heads_over(page, &rows, CountPolicy::Omit), read_order, StatementPlanning::BoundValues)
+            (
+                heads_over(page, &rows, CountPolicy::Omit),
+                read_order,
+                StatementPlanning::BoundValues,
+                keyed_total,
+            )
         }
     };
 
-    let total = match count {
-        CountPolicy::Omit => EntityTotal::Omitted,
-        CountPolicy::Emit => {
-            let mut count_select = Query::select();
-            count_select.expr(Func::count(SeaExpr::col(Asterisk)));
-            EntityRelations::for_count(query, &names.types, schema.as_ref()).apply_from(&mut count_select, schema.as_ref());
-            count_select.cond_where(condition);
-            let count_select = count_select.take();
-            match counted_on_page {
-                CountPolicy::Emit => EntityTotal::OnPageRows { empty_page: count_select },
-                CountPolicy::Omit => EntityTotal::Counted(count_select),
-            }
-        }
+    let total_source = TotalSource {
+        query,
+        names,
+        rows: &rows,
+        schema: schema.as_ref(),
     };
+    let total = entity_total(&total_source, count, counted_on_page, condition, keyed_total)?;
 
     Ok(EntityQuery {
         select,

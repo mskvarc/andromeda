@@ -18,16 +18,16 @@
 //! 3. the full walk: the selection in page order, each Entity probed, when
 //!    more candidates qualify.
 //!
-//! Each step is one branch of a `UNION ALL` and each gate an uncorrelated
-//! scalar subquery on a materialised CTE, which PostgreSQL evaluates once and
-//! turns into a one-time filter, so a branch whose gate fails reads nothing.
-//! Every branch cuts the same window over the same order, so whichever runs
-//! returns the page the plain statement would.
+//! Each step is one branch of a `UNION ALL` behind a
+//! [`one_time_gate`](crate::one_time_gate). Every branch cuts the same window
+//! over the same order, so whichever runs returns the page the plain
+//! statement would.
 
 use crate::{
     entity::{QFilter, build_entity_conditions, window_and_sort_keys},
     entity_page::{ProjectedPage, projected_page},
     entity_relations::EntityRelations,
+    one_time_gate::{Candidates, bounded, column_of, count_of, materialized, within},
 };
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
@@ -40,42 +40,20 @@ use andromeda_postgresql_query::{
     dictionary::query_names::QueryNames,
     entity_row_refs::EntityRowRefs,
     error::RenderError,
-    q_predicate::{
-        instance_scan::InstanceScan,
-        keyed_term::{CANDIDATE_BOUND, KeyedCandidates},
-        projection::compile,
-    },
+    q_predicate::{instance_scan::InstanceScan, keyed_term::KeyedCandidates, projection::compile},
 };
-use andromeda_postgresql_schema::current::Entities;
-use sea_query::{
-    Alias,
-    Asterisk,
-    CommonTableExpression,
-    Condition,
-    DynIden,
-    Expr,
-    ExprTrait,
-    Func,
-    Iden,
-    Query,
-    SelectStatement,
-    SimpleExpr,
-    UnionType,
-    WithClause,
-};
+use sea_query::{Alias, Asterisk, Condition, DynIden, Expr, ExprTrait, Iden, Query, SelectStatement, UnionType, WithClause};
 
 /// How many Entities the short walk probes before the index is read.
 pub const SHORT_WALK: u32 = 200;
+
+/// The most candidates the index path hands to the page.
+pub const CANDIDATE_BOUND: u64 = 1000;
 
 /// The CTE holding the short walk's matches.
 #[derive(Iden, Clone, Copy)]
 #[iden = "short_walk"]
 struct ShortWalk;
-
-/// The CTE holding the index path's candidates.
-#[derive(Iden, Clone, Copy)]
-#[iden = "candidates"]
-struct Candidates;
 
 /// The name the short walk reads the Entities it probes under.
 #[derive(Iden, Clone, Copy)]
@@ -132,7 +110,7 @@ pub(crate) fn keyed_page(source: &PageSource<'_>, q_expr: &QueryExpr, keyed: Key
     let short = short_walk(source, q_expr, need)?;
     let walked_enough = count_of(ShortWalk).gte(need);
     let walked_short = count_of(ShortWalk).lt(need);
-    let few_candidates = count_of(Candidates).lte(CANDIDATE_BOUND);
+    let few_candidates = within(Candidates, CANDIDATE_BOUND);
     let many_candidates = count_of(Candidates).gt(CANDIDATE_BOUND);
 
     let (indexed, read_order) = source.page(
@@ -166,7 +144,7 @@ pub(crate) fn keyed_page(source: &PageSource<'_>, q_expr: &QueryExpr, keyed: Key
         .with_cte(
             WithClause::new()
                 .cte(materialized(short, ShortWalk))
-                .cte(materialized(keyed.select, Candidates))
+                .cte(materialized(bounded(keyed.select, CANDIDATE_BOUND), Candidates))
                 .to_owned(),
         );
     Ok((ProjectedPage { select: union.take(), order }, read_order))
@@ -200,31 +178,15 @@ fn short_walk(source: &PageSource<'_>, q_expr: &QueryExpr, need: u64) -> Result<
     Ok(short.take())
 }
 
-/// `(SELECT COUNT(*) FROM <cte>)`.
-fn count_of(cte: impl Iden + 'static) -> SimpleExpr {
-    Query::select().expr(Func::count(Expr::col(Asterisk))).from(cte).take().into()
-}
-
-/// `SELECT entity_key FROM <cte>`.
-fn column_of(cte: impl Iden + 'static) -> SelectStatement {
-    Query::select().column(Entities::EntityKey).from(cte).take()
-}
-
 /// `SELECT * FROM (<branch>) AS <alias>`, so the branch keeps its own order
 /// and window inside the union.
 fn wrapped(branch: SelectStatement, alias: &str) -> SelectStatement {
     Query::select().column(Asterisk).from_subquery(branch, Alias::new(alias)).take()
 }
 
-/// `<name> AS MATERIALIZED (<query>)`: computed once, however many gates read
-/// it.
-fn materialized(query: SelectStatement, name: impl Iden + 'static) -> CommonTableExpression {
-    CommonTableExpression::new().query(query).table_name(name).materialized(true).to_owned()
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::entity::{EntityTotal, build_query};
+    use crate::{entity::build_query, entity_total::EntityTotal};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
@@ -239,7 +201,7 @@ mod tests {
     };
     use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
     use pretty_assertions::assert_eq;
-    use sea_query::PostgresQueryBuilder;
+    use sea_query::{PostgresQueryBuilder, Value};
 
     fn names() -> QueryNames {
         QueryNames {
@@ -288,6 +250,24 @@ mod tests {
             matches!(built.total, EntityTotal::Counted(_)),
             "the total is counted on its own, since the short walk sees part of the selection"
         );
+    }
+
+    #[test]
+    fn the_page_reads_one_candidate_past_its_bound() {
+        let built = build_query(
+            &ContextTarget::Live,
+            &query("\"https://example.com/temperature\"~=\"text-71.*\""),
+            &PageWindow::offset(100, 0),
+            CountPolicy::Omit,
+            &names(),
+        )
+        .expect("valid entity query");
+        let (sql, values) = built.select.build(PostgresQueryBuilder);
+        let candidates = sql
+            .split_once(r#""candidates" AS  MATERIALIZED ("#)
+            .map_or_else(|| panic!("the index path: {sql}"), |(_, rest)| rest);
+        assert!(candidates.contains(r#") AS "matches" LIMIT $"#), "{candidates}");
+        assert!(values.0.contains(&Value::BigUnsigned(Some(1001))), "{:?}", values.0);
     }
 
     /// The index branch answers the keyed term with its candidates, so its

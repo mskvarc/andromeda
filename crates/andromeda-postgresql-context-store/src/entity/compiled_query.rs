@@ -15,10 +15,7 @@ use andromeda_ngsi_ld_query::{
     page_window::PageWindow,
     projection::returned_attributes::ReturnedAttributes,
 };
-use andromeda_postgresql_context_query::{
-    entity::{self as entity_sql, EntityTotal},
-    entity_page::TOTAL_COUNT_COLUMN,
-};
+use andromeda_postgresql_context_query::{entity as entity_sql, entity_page::TOTAL_COUNT_COLUMN, entity_total::EntityTotal};
 use andromeda_postgresql_query::{
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     projected_attribute_names::projected_attribute_names,
@@ -69,7 +66,7 @@ impl EntityRepository {
         let names = self.resolve_names(&planned.query).await?;
         let built = entity_sql::build_query(target, &planned.query, &planned.window, planned.count, &names)?;
 
-        let head_rows = self.page_heads(&built.select, built.planning).await?;
+        let head_rows = self.fetch_planned(&built.select, built.planning).await?;
         let window_count = page_total(&head_rows, matches!(built.total, EntityTotal::OnPageRows { .. }));
         let returned = ReturnedAttributes::of(&planned.query.projection, &planned.query.selection.attrs);
         let selection = RowSelection::of(&returned, &names.attributes);
@@ -81,23 +78,23 @@ impl EntityRepository {
             EntityTotal::Omitted => None,
             EntityTotal::OnPageRows { empty_page } => match (window_count, rows.is_empty()) {
                 (Some(count), _) => Some(count),
-                (None, true) => Some(self.count_matches(empty_page).await?),
+                (None, true) => Some(self.count_matches(&empty_page, built.planning).await?),
                 (None, false) => None,
             },
-            EntityTotal::Counted(count) => Some(self.count_matches(count).await?),
+            EntityTotal::Counted(count) => Some(self.count_matches(&count, built.planning).await?),
         };
 
         Ok(planned.outcome(rows, total_count))
     }
 
-    /// Run the head statement of a page as `planning` asks: on the pool, or
-    /// in a transaction of its own that plans it with its bound values.
+    /// Run a statement of a page as `planning` asks: on the pool, or in a
+    /// transaction of its own that plans it with its bound values.
     ///
     /// # Errors
     ///
     /// Returns [`ContextStoreError`] when the statement fails, or the
     /// transaction it runs in cannot begin or commit.
-    async fn page_heads(&self, select: &SelectStatement, planning: StatementPlanning) -> Result<Vec<PgRow>, ContextStoreError> {
+    async fn fetch_planned(&self, select: &SelectStatement, planning: StatementPlanning) -> Result<Vec<PgRow>, ContextStoreError> {
         let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
         let statement = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values);
         match planning {
@@ -111,16 +108,17 @@ impl EntityRepository {
         }
     }
 
-    /// Run a `COUNT` statement and read back its one value.
+    /// Run a `COUNT` statement as `planning` asks and read back its one
+    /// value.
     ///
     /// # Errors
     ///
-    /// Returns [`ContextStoreError`] when the statement fails.
-    async fn count_matches(&self, count: SelectStatement) -> Result<i64, ContextStoreError> {
-        let (count_sql, count_values) = count.build_sqlx(PostgresQueryBuilder);
-        Ok(sqlx::query_scalar_with(sqlx::AssertSqlSafe(count_sql.as_str()), count_values)
-            .fetch_one(&self.pool)
-            .await?)
+    /// Returns [`ContextStoreError`] when the statement fails or returns no
+    /// row, or the transaction it runs in cannot begin or commit.
+    async fn count_matches(&self, count: &SelectStatement, planning: StatementPlanning) -> Result<i64, ContextStoreError> {
+        let rows = self.fetch_planned(count, planning).await?;
+        let total = rows.first().ok_or(sqlx::Error::RowNotFound)?;
+        Ok(total.try_get(0)?)
     }
 
     /// Execute a compiled query and return only the identifiers of the
