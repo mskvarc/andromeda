@@ -9,7 +9,7 @@
 //! waiting for that sweep.
 
 use crate::subscription_store::{
-    delivery_state::{interval_anchor_select, interval_elapsed},
+    delivery_state::{interval_anchor_select, interval_owed},
     projection::projected_select,
     status_code::status_is,
     stored_kind::{StoredKind, of_kind},
@@ -28,8 +28,8 @@ pub(crate) fn unexpired_at(at: SimpleExpr) -> Cond {
         .add(Expr::col((Subscriptions::Table, Subscriptions::ExpiresAt)).gt(at))
 }
 
-/// Every active, unexpired periodic subscription of `kind` whose interval has
-/// elapsed at `cutoff`, in the read-side projection.
+/// Every active, unexpired periodic subscription of `kind` owed a grid point
+/// at `cutoff`, in the read-side projection.
 pub(super) fn due_interval_select(kind: StoredKind, target: &ContextTarget, cutoff: DateTime<Utc>) -> SelectStatement {
     let mut select = projected_select(kind, target);
     select
@@ -37,12 +37,13 @@ pub(super) fn due_interval_select(kind: StoredKind, target: &ContextTarget, cuto
         .and_where(of_kind(kind))
         .and_where(Expr::col((Subscriptions::Table, Subscriptions::TimeInterval)).is_not_null())
         .cond_where(unexpired_at(Expr::val(cutoff)))
-        .cond_where(interval_elapsed(cutoff));
+        .and_where(interval_owed(cutoff));
     select
 }
 
-/// The grid anchors and intervals of every active periodic subscription of
-/// `kind` still in force at `cutoff`, for scheduling the next sweep.
+/// The grid anchors, intervals and last answered sweep instants of every
+/// active periodic subscription of `kind` still in force at `cutoff`, for
+/// scheduling the next sweep.
 pub(super) fn interval_anchors_select(kind: StoredKind, target: &ContextTarget, cutoff: DateTime<Utc>) -> SelectStatement {
     let mut select = interval_anchor_select(target);
     select

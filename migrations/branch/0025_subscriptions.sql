@@ -135,7 +135,11 @@ where
 -- endpoint accepted, and `times_failed` with `last_failure` on one it did
 -- not. A claim also reads `last_failure`: it is refused while that instant
 -- lies inside the endpoint's clause 5.2.15 `cooldown` window, which suppresses
--- the notification entirely.
+-- the notification entirely. `last_interval_tick` is not a clause 5.2.14.2
+-- member: it is the sweep instant at which a `timeInterval` subscription last
+-- answered its grid, by a notification or by finding nothing to notify. The
+-- grid itself is anchored on `created_at`, so a sweep that runs late delays
+-- one notification without moving the next (clause 5.8.6).
 create table subscription_delivery_state (
     subscription_key bigint not null,
     times_sent integer not null default 0,
@@ -143,6 +147,7 @@ create table subscription_delivery_state (
     last_notification timestamptz,
     last_success timestamptz,
     last_failure timestamptz,
+    last_interval_tick timestamptz,
     constraint pk_subscription_delivery_state primary key (subscription_key),
     constraint fk_subscription_delivery_state_subscription foreign key (subscription_key) references subscriptions (subscription_key) on delete cascade,
     -- The floor is zero, not the "greater than 0" of Table 5.2.14.2-1. That

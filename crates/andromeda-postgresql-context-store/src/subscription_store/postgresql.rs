@@ -14,7 +14,7 @@ use crate::{
     subscription::repo::SubscriptionRepository,
     subscription_store::{
         csource_statements::{bind_csource_create, bind_csource_update, csource_create_sql, csource_update_sql},
-        delivery_state::{SlotClaimStatement, advance_interval_anchor_statement, outcome_statement, slot_claim_statement, state_insert_sql},
+        delivery_state::{SlotClaimStatement, outcome_statement, record_interval_tick_statement, slot_claim_statement, state_insert_sql},
         entity_statements::{bind_entity_create, bind_entity_update, entity_create_sql, entity_update_sql},
         failure::{create_error, persistence_error},
         interned_attributes::intern_attribute_lists,
@@ -286,19 +286,21 @@ macro_rules! impl_subscription_store {
                     let Some(interval) = interval_duration(interval_seconds) else {
                         continue;
                     };
-                    let due = next_interval_grid_due(anchor, interval, cutoff);
+                    let Some(due) = next_interval_grid_due(anchor, interval, cutoff) else {
+                        continue;
+                    };
                     earliest = Some(earliest.map_or(due, |current| if due < current { due } else { current }));
                 }
                 Ok(earliest)
             }
 
-            async fn advance_interval_anchor(
+            async fn record_interval_tick(
                 &self,
                 target: &ContextTarget,
                 id: &Identifier,
                 cutoff: chrono::DateTime<chrono::Utc>,
             ) -> Result<(), SubscriptionError> {
-                let (sql, values) = advance_interval_anchor_statement(target, id, $kind, cutoff).build_sqlx(PostgresQueryBuilder);
+                let (sql, values) = record_interval_tick_statement(target, id, $kind, cutoff).build_sqlx(PostgresQueryBuilder);
                 sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .execute(&self.pool)
                     .await

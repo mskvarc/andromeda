@@ -14,9 +14,9 @@
 //! The queue and expiry sources are one `SELECT LEAST(...)` of index-backed
 //! scalar subqueries, each served by the same partial or expression index the
 //! owning worker's claim uses. The periodic-notification source is computed from
-//! each active subscription's stored grid anchor and interval with the shared
-//! [`next_interval_due`] grid, so the probe and the delivery drain agree on when
-//! a subscription is next due.
+//! each active subscription's grid anchor, interval and last answered sweep
+//! instant with the shared [`next_interval_due`] grid, so the probe and the
+//! delivery drain agree on when a subscription is next due.
 
 use crate::{
     error::ContextStoreError,
@@ -47,7 +47,7 @@ use andromeda_postgresql_schema::{
     subscriptions::Subscriptions,
 };
 use andromeda_postgresql_seaquery::{clock::now, queue::claimable_at};
-use andromeda_subscription::interval_schedule::interval_duration;
+use andromeda_subscription::interval_schedule::{interval_duration, next_interval_due};
 use andromeda_tenancy::{
     database_name::TenantDatabaseName,
     pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
@@ -182,7 +182,7 @@ pub async fn earliest_obligation(pool: &sqlx::PgPool) -> Result<Option<SystemTim
     };
 
     let (interval_sql, interval_values) = interval_probe_select().build_sqlx(PostgresQueryBuilder);
-    let anchors: Vec<(DateTime<Utc>, f64)> = sqlx::query_as_with(sqlx::AssertSqlSafe(interval_sql.as_str()), interval_values)
+    let anchors: Vec<(DateTime<Utc>, f64, Option<DateTime<Utc>>)> = sqlx::query_as_with(sqlx::AssertSqlSafe(interval_sql.as_str()), interval_values)
         .fetch_all(pool)
         .await?;
 
@@ -199,17 +199,17 @@ async fn earliest_queue_due(pool: &sqlx::PgPool) -> Result<Option<DateTime<Utc>>
 
 /// The earliest instant any periodic subscription owes a notification.
 ///
-/// A subscription's earliest owed notification is the first grid point after its
-/// last delivery, `anchor + interval`. When the tenant has been dormant across
-/// missed periods this is in the past, so the probe reports the subscription as
-/// due now and the tenant is woken to deliver -- rather than the next grid point
-/// after now, which would always be a period in the future and would never wake
-/// an overdue subscription. The delivery drain advances the anchor once it runs,
-/// so the next probe sees the following grid point.
-fn earliest_interval_due(anchors: Vec<(DateTime<Utc>, f64)>) -> Option<DateTime<Utc>> {
+/// A subscription owes the first grid point after the sweep instant it last
+/// answered at, or its first grid point when it never has. When the tenant has
+/// been dormant across that point it is in the past, so the probe reports the
+/// subscription as due now and the tenant is woken to deliver -- rather than
+/// the next grid point after now, which would always be a period in the future
+/// and would never wake an overdue subscription. The sweep records the instant
+/// it answers at, so the next probe sees the following grid point.
+fn earliest_interval_due(anchors: Vec<(DateTime<Utc>, f64, Option<DateTime<Utc>>)>) -> Option<DateTime<Utc>> {
     anchors
         .into_iter()
-        .filter_map(|(anchor, seconds)| interval_duration(seconds).and_then(|interval| anchor.checked_add_signed(interval)))
+        .filter_map(|(anchor, seconds, tick)| interval_duration(seconds).and_then(|interval| next_interval_due(anchor, interval, tick.unwrap_or(anchor))))
         .min()
 }
 
@@ -429,25 +429,35 @@ mod tests {
     #[test]
     fn the_probe_reports_an_overdue_interval_as_due_now() {
         let now = Utc::now();
-        // A subscription last delivered well over an interval ago is overdue, so
-        // its earliest owed notification is in the past and the tenant is woken.
-        let overdue = now - Duration::seconds(100);
-        let due = earliest_interval_due(vec![(overdue, 5.0)]);
-        assert_eq!(due, overdue.checked_add_signed(Duration::seconds(5)));
+        // Created 100 s ago on a 5 s grid and last answered 50 s ago, the
+        // subscription owes the grid point 55 s after its creation.
+        let created = now - Duration::seconds(100);
+        let answered = now - Duration::seconds(50);
+        let due = earliest_interval_due(vec![(created, 5.0, Some(answered))]);
+        assert_eq!(due, Some(created + Duration::seconds(55)));
         assert!(
             due.is_some_and(|instant| instant <= now),
             "an overdue interval subscription is due now, got {due:?}"
         );
 
-        // A subscription whose first grid point is still ahead is due in the future.
-        let ahead = earliest_interval_due(vec![(now, 5.0)]);
+        let never_answered = earliest_interval_due(vec![(created, 5.0, None)]);
+        assert_eq!(
+            never_answered,
+            Some(created + Duration::seconds(5)),
+            "a subscription never answered owes its first grid point"
+        );
+
+        let ahead = earliest_interval_due(vec![(now, 5.0, None)]);
         assert!(
             ahead.is_some_and(|instant| instant > now),
             "a fresh interval subscription is due a period ahead, got {ahead:?}"
         );
 
-        // A non-positive interval yields no due instant.
-        assert_eq!(earliest_interval_due(vec![(now, 0.0)]), None);
+        assert_eq!(
+            earliest_interval_due(vec![(now, 0.0, None)]),
+            None,
+            "a non-positive interval yields no due instant"
+        );
     }
 
     fn least_sql() -> String {

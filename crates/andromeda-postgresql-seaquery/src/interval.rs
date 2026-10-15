@@ -1,4 +1,4 @@
-//! Interval construction sea-query has no native form for.
+//! Interval construction and interval grids sea-query has no native form for.
 //!
 //! `make_interval(secs => n)` builds an `interval` from a number of seconds
 //! using PostgreSQL's named-argument call form, which sea-query cannot express:
@@ -18,11 +18,27 @@ pub fn make_interval_secs(seconds: SimpleExpr) -> SimpleExpr {
     Expr::cust_with_exprs("make_interval(secs => $1)", [seconds])
 }
 
+/// The first point strictly after `after` of the grid `origin + k * period`
+/// (`k >= 1`), for an `after` at or past `origin`: `origin + make_interval(secs
+/// => period * (floor(extract(epoch from (after - origin)) / period) + 1))`.
+///
+/// `period` is in seconds and may be fractional. `extract(epoch from ...)`
+/// reads the elapsed interval as seconds, so the grid needs no calendar
+/// arithmetic.
+#[must_use]
+pub fn next_grid_point(origin: SimpleExpr, period: SimpleExpr, after: SimpleExpr) -> SimpleExpr {
+    Expr::cust_with_exprs(
+        "$1 + make_interval(secs => $2 * (floor(extract(epoch from ($3 - $4)) / $5) + 1))",
+        // clone: the origin and the period each appear twice in the expression.
+        [origin.clone(), period.clone(), after, origin, period],
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::interval::make_interval_secs;
+    use crate::interval::{make_interval_secs, next_grid_point};
     use pretty_assertions::assert_eq;
-    use sea_query::{Expr, ExprTrait, PostgresQueryBuilder, Query};
+    use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query};
 
     #[test]
     fn the_interval_is_built_from_a_bound_seconds_argument() {
@@ -32,5 +48,21 @@ mod tests {
             .build(PostgresQueryBuilder);
         assert!(sql.contains("make_interval(secs => $1)"), "{sql}");
         assert_eq!(values.0.len(), 1, "the seconds argument is bound, not interpolated: {sql}");
+    }
+
+    #[test]
+    fn the_next_grid_point_counts_the_whole_periods_elapsed_since_the_origin() {
+        let sql = Query::select()
+            .expr(next_grid_point(
+                Expr::col(Alias::new("created_at")),
+                Expr::col(Alias::new("period")),
+                Expr::col(Alias::new("answered_at")),
+            ))
+            .to_owned()
+            .to_string(PostgresQueryBuilder);
+        assert_eq!(
+            sql,
+            r#"SELECT "created_at" + make_interval(secs => "period" * (floor(extract(epoch from ("answered_at" - "created_at")) / "period") + 1))"#
+        );
     }
 }

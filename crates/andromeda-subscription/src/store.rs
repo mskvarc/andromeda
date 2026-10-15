@@ -231,10 +231,12 @@ pub trait SubscriptionStore: Send + Sync + 'static {
         'life0: 'async_trait,
         'life1: 'async_trait,
         Self: 'async_trait;
-    /// Advance one active interval subscription's grid anchor to `cutoff` without
-    /// counting a notification, so a subscription that matched nothing this pass
-    /// is not re-read every pass.
-    fn advance_interval_anchor<'life0, 'life1, 'life2, 'async_trait>(
+    /// Record `cutoff` as the sweep instant one active interval subscription
+    /// answered its grid at without a notification: it matched nothing, so it
+    /// is not re-read before its next grid point and its `lastNotification`
+    /// stays the instant of the last notification actually sent (Table
+    /// 5.2.14.2-1).
+    fn record_interval_tick<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
         id: &'life2 Identifier,

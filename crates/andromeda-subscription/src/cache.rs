@@ -323,8 +323,8 @@ mod tests {
             Err(unused("next_interval_due"))
         }
 
-        async fn advance_interval_anchor(&self, _target: &ContextTarget, _id: &Identifier, _cutoff: DateTime<Utc>) -> Result<(), SubscriptionError> {
-            Err(unused("advance_interval_anchor"))
+        async fn record_interval_tick(&self, _target: &ContextTarget, _id: &Identifier, _cutoff: DateTime<Utc>) -> Result<(), SubscriptionError> {
+            Err(unused("record_interval_tick"))
         }
 
         async fn create_subscription(

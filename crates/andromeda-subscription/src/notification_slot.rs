@@ -11,11 +11,12 @@
 //!
 //! Clause 5.8.6 moves `timesSent` and `lastNotification` when a notification is
 //! sent and `lastSuccess` or `lastFailure` once its response is known. Only a
-//! sender that decides a later notification by `lastNotification` needs it
-//! moved before the send: a throttled subscription, whose next claim is gated
-//! on it, and a `timeInterval` subscription, whose grid is anchored on it.
-//! Every other notification is counted by the one write that records its
-//! outcome, so its delivery-state row is written once per notification.
+//! sender that decides a later notification at the claim needs its row moved
+//! before the send: a throttled subscription, whose next claim is gated on
+//! `lastNotification`, and a `timeInterval` subscription, which records the
+//! sweep instant the notification answers its grid at. Every other
+//! notification is counted by the one write that records its outcome, so its
+//! delivery-state row is written once per notification.
 
 use crate::{cooldown::ceiling_for_cooldown, throttle::ceiling_for_throttle};
 use andromeda_ngsi_ld_lexicon::positive_milliseconds::PositiveMilliseconds;
@@ -31,7 +32,7 @@ pub enum NotificationCadence {
         throttling_secs: Option<f64>,
     },
     /// Notified every `timeInterval`, on a grid anchored on the subscription's
-    /// `lastNotification`.
+    /// creation.
     Periodic,
 }
 
@@ -43,12 +44,18 @@ pub enum NotificationStamp {
     #[default]
     WithOutcome,
     /// At the claim, before the notification is sent, gated on a stored
-    /// `last_notification` at or before `ceiling` when one is set (clause
-    /// 5.2.12 `throttling`).
-    AtClaim {
-        /// Latest `last_notification` that still permits a claim; `None` is
-        /// no ceiling.
-        ceiling: Option<DateTime<Utc>>,
+    /// `last_notification` at or before `ceiling` (clause 5.2.12
+    /// `throttling`).
+    Throttled {
+        /// Latest `last_notification` that still permits a claim.
+        ceiling: DateTime<Utc>,
+    },
+    /// At the claim, before the notification is sent, with `tick` recorded as
+    /// the sweep instant the notification answers the `timeInterval` grid at
+    /// (clause 5.8.6).
+    Periodic {
+        /// The sweep instant the notification is sent for.
+        tick: DateTime<Utc>,
     },
 }
 
@@ -56,7 +63,7 @@ pub enum NotificationStamp {
 /// the notification.
 ///
 /// A claim succeeds only when the subscription's stored `last_notification` is
-/// at or before the [`NotificationStamp::AtClaim`] ceiling and its stored
+/// at or before the [`NotificationStamp::Throttled`] ceiling and its stored
 /// `last_failure` is at or before [`NotificationSlotGate::last_failure`]. `None`
 /// on either side is no ceiling at all, which is what an unthrottled
 /// subscription and an endpoint without a cooldown each carry.
@@ -76,9 +83,9 @@ impl NotificationSlotGate {
     #[must_use]
     pub fn at(now: DateTime<Utc>, cadence: NotificationCadence, cooldown: Option<PositiveMilliseconds>) -> NotificationSlotGate {
         let notification = match cadence {
-            NotificationCadence::Periodic => NotificationStamp::AtClaim { ceiling: None },
+            NotificationCadence::Periodic => NotificationStamp::Periodic { tick: now },
             NotificationCadence::OnChange { throttling_secs } => match ceiling_for_throttle(now, throttling_secs) {
-                Some(ceiling) => NotificationStamp::AtClaim { ceiling: Some(ceiling) },
+                Some(ceiling) => NotificationStamp::Throttled { ceiling },
                 None => NotificationStamp::WithOutcome,
             },
         };
@@ -158,8 +165,8 @@ mod tests {
         let throttled = NotificationSlotGate::at(now, throttling, None);
         pretty_assertions::assert_eq!(
             throttled.notification,
-            NotificationStamp::AtClaim {
-                ceiling: Some(now - Duration::seconds(5))
+            NotificationStamp::Throttled {
+                ceiling: now - Duration::seconds(5)
             }
         );
         assert!(throttled.last_failure.is_none());
@@ -174,14 +181,14 @@ mod tests {
         Ok(())
     }
 
-    /// The `timeInterval` grid is anchored on `lastNotification`, so a periodic
-    /// claim stamps it before the send, without a throttling ceiling (Table
-    /// 5.2.12-1 gives `throttling` cardinality 0 beside `timeInterval`).
+    /// A periodic claim records the sweep instant it answers the grid at, with
+    /// no throttling ceiling (Table 5.2.12-1 gives `throttling` cardinality 0
+    /// beside `timeInterval`).
     #[test]
-    fn a_periodic_subscription_stamps_its_notification_at_the_claim() -> Result<(), &'static str> {
+    fn a_periodic_subscription_records_its_sweep_instant_at_the_claim() -> Result<(), &'static str> {
         let now = Utc.timestamp_opt(1_000, 0).single().ok_or("the fixture timestamp must be valid")?;
         let periodic = NotificationSlotGate::at(now, NotificationCadence::Periodic, None);
-        pretty_assertions::assert_eq!(periodic.notification, NotificationStamp::AtClaim { ceiling: None });
+        pretty_assertions::assert_eq!(periodic.notification, NotificationStamp::Periodic { tick: now });
         assert!(periodic.last_failure.is_none());
         Ok(())
     }

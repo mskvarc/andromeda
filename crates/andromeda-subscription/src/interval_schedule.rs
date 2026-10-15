@@ -17,39 +17,29 @@ pub fn interval_duration(seconds: f64) -> Option<Duration> {
     Duration::from_std(StdDuration::from_secs_f64(seconds)).ok()
 }
 
-/// The next instant strictly after `cutoff` at which a periodic subscription
-/// anchored at `anchor` with period `interval` becomes due.
+/// The first grid point strictly after `after` of a periodic subscription
+/// created at `anchor` with period `interval`, or `None` for a non-positive
+/// interval or an instant out of range.
 ///
-/// Grid points are `anchor + k * interval` for non-negative `k`. An anchor that
-/// is already overdue relative to `cutoff` rolls forward to the following grid
-/// point rather than returning a past instant, so a sweep that fell behind wakes
-/// at the next real notification rather than busy-looping. A subscription whose
-/// anchor was advanced to the sweep's own cutoff (because it matched nothing)
-/// therefore becomes due exactly one interval after that cutoff. Clause 5.8.6
-/// fixes the period; this only decides when the next one lands.
+/// Grid points are `anchor + k * interval` for `k >= 1`: clause 5.8.6 sends a
+/// periodic notification each time the interval is reached, and none at
+/// creation. The creation instant alone fixes the grid, so a sweep that runs
+/// late delays the notification it sends without moving the ones after it.
+/// Given a sweep's cutoff this is when the sweep next has work; given the
+/// instant a subscription last answered its grid it is the notification the
+/// subscription is owed, in the past for a tenant that slept across it.
 #[must_use]
-pub fn next_interval_due(anchor: DateTime<Utc>, interval: Duration, cutoff: DateTime<Utc>) -> DateTime<Utc> {
-    // A non-positive interval has no grid to advance along; never return a past
-    // instant that would spin the drain.
-    if interval <= Duration::zero() {
-        return cutoff + Duration::seconds(1);
-    }
-    // An anchor still in the future is itself the next grid point.
-    if anchor > cutoff {
-        return anchor;
-    }
-    let elapsed_secs = (cutoff - anchor).num_seconds();
-    let interval_secs = interval.num_seconds().max(1);
-    // Full periods between the anchor and the cutoff; the next grid point is the
-    // one after, so it is always strictly greater than the cutoff.
-    let periods = elapsed_secs / interval_secs;
-    let next_period = i32::try_from(periods.saturating_add(1)).unwrap_or(i32::MAX);
-    anchor + interval * next_period
+pub fn next_interval_due(anchor: DateTime<Utc>, interval: Duration, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    let period = interval.num_microseconds().filter(|period| *period > 0)?;
+    let elapsed = (after - anchor).num_microseconds()?;
+    let reached = if elapsed < 0 { 0 } else { elapsed / period };
+    let next = i32::try_from(reached.checked_add(1)?).ok()?;
+    anchor.checked_add_signed(interval.checked_mul(next)?)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::interval_schedule::next_interval_due;
+    use crate::interval_schedule::{interval_duration, next_interval_due};
     use chrono::{DateTime, Duration, TimeZone, Utc};
 
     fn instant(second: u32) -> DateTime<Utc> {
@@ -57,34 +47,45 @@ mod tests {
     }
 
     #[test]
-    fn next_due_statement_rolls_an_overdue_anchor_to_the_following_grid_point() {
-        // Anchor at :00, five-second grid, sweep cutoff at :17 -- three whole
-        // periods have elapsed, so the next grid point is :20, the first strictly
-        // after the cutoff, not :05 (long past) nor :15 (already reached).
-        let anchor = instant(0);
-        let cutoff = instant(17);
-        assert_eq!(next_interval_due(anchor, Duration::seconds(5), cutoff), instant(20));
+    fn an_instant_past_several_grid_points_rolls_to_the_following_one() {
+        assert_eq!(next_interval_due(instant(0), Duration::seconds(5), instant(17)), Some(instant(20)));
     }
 
     #[test]
-    fn a_subscription_matching_nothing_is_next_due_one_interval_after_the_cutoff() {
-        // A subscription that matched nothing has its anchor advanced to the
-        // sweep's own cutoff, so its next due is exactly one interval later.
-        let cutoff = instant(30);
-        assert_eq!(next_interval_due(cutoff, Duration::seconds(5), cutoff), instant(35));
+    fn an_instant_exactly_on_a_grid_point_is_followed_by_the_next_one() {
+        assert_eq!(next_interval_due(instant(0), Duration::seconds(5), instant(10)), Some(instant(15)));
     }
 
     #[test]
-    fn an_anchor_exactly_on_a_grid_point_advances_by_one_interval() {
-        let anchor = instant(0);
-        let cutoff = instant(10);
-        assert_eq!(next_interval_due(anchor, Duration::seconds(5), cutoff), instant(15));
+    fn a_subscription_never_answered_is_first_owed_one_interval_after_its_creation() {
+        assert_eq!(next_interval_due(instant(30), Duration::seconds(5), instant(30)), Some(instant(35)));
     }
 
     #[test]
-    fn a_future_anchor_is_its_own_next_due() {
-        let anchor = instant(40);
-        let cutoff = instant(30);
-        assert_eq!(next_interval_due(anchor, Duration::seconds(5), cutoff), instant(40));
+    fn a_subscription_created_after_the_cutoff_is_first_due_one_interval_after_its_creation() {
+        assert_eq!(next_interval_due(instant(40), Duration::seconds(5), instant(30)), Some(instant(45)));
+    }
+
+    /// Clause 5.8.6 fixes the period: the sweep that answered :10 thirteen
+    /// seconds late, past the :20 grid point, still leaves :30 as the next one.
+    #[test]
+    fn a_sweep_answering_past_the_interval_does_not_push_the_next_due_instant() {
+        assert_eq!(next_interval_due(instant(0), Duration::seconds(10), instant(14)), Some(instant(20)));
+        assert_eq!(next_interval_due(instant(0), Duration::seconds(10), instant(23)), Some(instant(30)));
+    }
+
+    #[test]
+    fn a_fractional_interval_keeps_its_fraction_on_the_grid() {
+        let interval = interval_duration(2.5).expect("a positive interval");
+        assert_eq!(
+            next_interval_due(instant(0), interval, instant(6)),
+            Some(instant(7) + Duration::milliseconds(500))
+        );
+    }
+
+    #[test]
+    fn a_non_positive_interval_has_no_grid_point() {
+        assert_eq!(next_interval_due(instant(0), Duration::zero(), instant(6)), None);
+        assert_eq!(next_interval_due(instant(0), Duration::seconds(-5), instant(6)), None);
     }
 }

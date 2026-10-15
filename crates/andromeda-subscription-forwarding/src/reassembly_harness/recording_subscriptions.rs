@@ -114,7 +114,7 @@ impl SubscriptionStore for RecordingSubscriptions {
         Err(SubscriptionError::StoreUnavailable)
     }
 
-    async fn advance_interval_anchor(&self, _target: &ContextTarget, _id: &Identifier, _cutoff: DateTime<Utc>) -> Result<(), SubscriptionError> {
+    async fn record_interval_tick(&self, _target: &ContextTarget, _id: &Identifier, _cutoff: DateTime<Utc>) -> Result<(), SubscriptionError> {
         Err(SubscriptionError::StoreUnavailable)
     }
 

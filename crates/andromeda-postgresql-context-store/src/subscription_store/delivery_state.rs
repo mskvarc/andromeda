@@ -18,7 +18,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::subscriptions::{SubscriptionDeliveryState, Subscriptions};
-use andromeda_postgresql_seaquery::{clock::now, interval::make_interval_secs, placeholder::external_placeholder};
+use andromeda_postgresql_seaquery::{clock::now, interval::next_grid_point, placeholder::external_placeholder};
 use andromeda_subscription::{
     error::SubscriptionError,
     notification_slot::{NotificationOutcome, NotificationSlotGate, NotificationStamp, OutcomeRecord},
@@ -110,30 +110,24 @@ fn admitted_by(column: SubscriptionDeliveryState, ceiling: DateTime<Utc>) -> Con
 /// `cooldown` both stop a notification from being sent at all.
 ///
 /// A gate stamping at the claim moves `times_sent + 1` and `last_notification =
-/// NOW()` in the claim itself, because the next claim's throttling ceiling or
-/// the `timeInterval` grid reads that instant. Any other gate writes nothing:
-/// the claim reads `NOW()` as the notification's instant and the outcome's
-/// write counts it, so the row is written once per notification.
+/// NOW()` in the claim itself, because the next claim's throttling ceiling
+/// reads that instant; a periodic claim also records the sweep instant it
+/// answers the `timeInterval` grid at, which the next sweep reads. Any other
+/// gate writes nothing: the claim reads `NOW()` as the notification's instant
+/// and the outcome's write counts it, so the row is written once per
+/// notification.
 pub fn slot_claim_statement(target: &ContextTarget, id: &Identifier, kind: StoredKind, gate: NotificationSlotGate) -> SlotClaimStatement {
     let owner = Expr::col(SubscriptionDeliveryState::SubscriptionKey).eq(owner_key(target, id, kind, OwnerStatus::ActiveOnly));
     let cooldown = gate.last_failure.map(|ceiling| admitted_by(SubscriptionDeliveryState::LastFailure, ceiling));
     match gate.notification {
-        NotificationStamp::AtClaim { ceiling } => {
-            let mut statement = Query::update();
-            statement
-                .table(table_of(target, SubscriptionDeliveryState::Table))
-                .value(SubscriptionDeliveryState::TimesSent, Expr::col(SubscriptionDeliveryState::TimesSent).add(1))
-                .value(SubscriptionDeliveryState::LastNotification, now())
-                .and_where(owner);
-            for gated in [
-                ceiling.map(|ceiling| admitted_by(SubscriptionDeliveryState::LastNotification, ceiling)),
-                cooldown,
-            ]
-            .into_iter()
-            .flatten()
-            {
-                statement.cond_where(gated);
-            }
+        NotificationStamp::Throttled { ceiling } => {
+            let mut statement = stamping_claim(target, owner, cooldown);
+            statement.cond_where(admitted_by(SubscriptionDeliveryState::LastNotification, ceiling));
+            SlotClaimStatement::Stamping(statement)
+        }
+        NotificationStamp::Periodic { tick } => {
+            let mut statement = stamping_claim(target, owner, cooldown);
+            statement.value(SubscriptionDeliveryState::LastIntervalTick, Expr::val(tick));
             SlotClaimStatement::Stamping(statement)
         }
         NotificationStamp::WithOutcome => {
@@ -145,6 +139,21 @@ pub fn slot_claim_statement(target: &ContextTarget, id: &Identifier, kind: Store
             SlotClaimStatement::Checking(statement)
         }
     }
+}
+
+/// The `UPDATE` counting a notification at its claim on the `owner` row,
+/// refused inside the endpoint's `cooldown` window when one is set.
+fn stamping_claim(target: &ContextTarget, owner: SimpleExpr, cooldown: Option<Cond>) -> UpdateStatement {
+    let mut statement = Query::update();
+    statement
+        .table(table_of(target, SubscriptionDeliveryState::Table))
+        .value(SubscriptionDeliveryState::TimesSent, Expr::col(SubscriptionDeliveryState::TimesSent).add(1))
+        .value(SubscriptionDeliveryState::LastNotification, now())
+        .and_where(owner);
+    if let Some(cooldown) = cooldown {
+        statement.cond_where(cooldown);
+    }
+    statement
 }
 
 /// The write recording one notification's outcome on the state row, whatever
@@ -216,53 +225,44 @@ pub fn join_delivery_state(select: &mut SelectStatement, target: &ContextTarget)
         .column((SubscriptionDeliveryState::Table, SubscriptionDeliveryState::LastFailure));
 }
 
-/// `cutoff - make_interval(secs => time_interval)`: the instant a periodic
-/// subscription of the row's interval last became due, relative to the sweep's
-/// own cutoff rather than the wall clock, so a sweep decides the same set it was
-/// scheduled for.
-fn interval_deadline(cutoff: DateTime<Utc>) -> SimpleExpr {
-    Expr::val(cutoff).sub(make_interval_secs(Expr::col((Subscriptions::Table, Subscriptions::TimeInterval))))
-}
-
-/// The due-interval predicate over a select that has the state row joined: an
-/// active periodic subscription whose interval has elapsed since its last
-/// notification, or since creation if never sent, measured against `cutoff`.
-pub fn interval_elapsed(cutoff: DateTime<Utc>) -> Cond {
-    let never_sent = Cond::all()
-        .add(last_notification().is_null())
-        .add(Expr::col((Subscriptions::Table, Subscriptions::CreatedAt)).lte(interval_deadline(cutoff)));
-    let since_last = Cond::all()
-        .add(last_notification().is_not_null())
-        .add(last_notification().lte(interval_deadline(cutoff)));
-    Cond::any().add(never_sent).add(since_last)
-}
-
-/// The state row's `last_notification`, qualified for a joined select.
-fn last_notification() -> Expr {
-    Expr::col((SubscriptionDeliveryState::Table, SubscriptionDeliveryState::LastNotification))
-}
-
-/// A periodic subscription's grid anchor: its last notification instant, or its
-/// creation instant when it has never notified.
-fn interval_anchor() -> SimpleExpr {
-    Func::coalesce([
-        Expr::col((SubscriptionDeliveryState::Table, SubscriptionDeliveryState::LastNotification)),
-        Expr::col((Subscriptions::Table, Subscriptions::CreatedAt)),
-    ])
-    .into()
-}
-
-/// Select every periodic subscription's grid anchor and interval, so the drain
-/// can compute when the soonest one is next due.
+/// The first `timeInterval` grid point a periodic subscription has not yet
+/// answered: `created_at + k * time_interval` for the least `k >= 1` past
+/// `last_interval_tick`, or the first grid point when it has never answered.
 ///
-/// The state row is outer-joined so a never-notified subscription still reads,
-/// its anchor coalescing to `created_at`. The caller narrows this to one family
-/// and to active subscriptions with a non-null `time_interval`.
+/// The same grid the interval sweep schedules its wakes on, computed in the
+/// statement so a sweep selects what is owed at its cutoff. Clause 5.8.6 sends a notification each time the interval is reached; the
+/// creation instant alone fixes the grid, so a sweep that answered late owes
+/// the next grid point on time.
+fn owed_grid_point() -> SimpleExpr {
+    let created = || Expr::col((Subscriptions::Table, Subscriptions::CreatedAt));
+    let answered = Func::greatest([
+        Expr::col((SubscriptionDeliveryState::Table, SubscriptionDeliveryState::LastIntervalTick)),
+        created(),
+    ]);
+    next_grid_point(created(), Expr::col((Subscriptions::Table, Subscriptions::TimeInterval)), answered.into())
+}
+
+/// The due-interval predicate over a select that has the state row joined: a
+/// periodic subscription whose owed grid point has been reached at `cutoff`,
+/// the sweep's own instant rather than the wall clock, so a sweep decides the
+/// set it was scheduled for.
+pub fn interval_owed(cutoff: DateTime<Utc>) -> SimpleExpr {
+    owed_grid_point().lte(Expr::val(cutoff))
+}
+
+/// Select every periodic subscription's grid anchor (its creation instant),
+/// interval and last answered sweep instant, so a caller can compute when the
+/// soonest one is next due.
+///
+/// The state row is outer-joined so a subscription whose state row is missing
+/// still reads, as never answered. The caller narrows this to one family and to
+/// active subscriptions with a non-null `time_interval`.
 pub fn interval_anchor_select(target: &ContextTarget) -> SelectStatement {
     let mut select = Query::select();
     select
-        .expr_as(interval_anchor(), Alias::new("anchor"))
+        .expr_as(Expr::col((Subscriptions::Table, Subscriptions::CreatedAt)), Alias::new("anchor"))
         .column((Subscriptions::Table, Subscriptions::TimeInterval))
+        .column((SubscriptionDeliveryState::Table, SubscriptionDeliveryState::LastIntervalTick))
         .from(table_of(target, Subscriptions::Table))
         .join(
             JoinType::LeftJoin,
@@ -273,15 +273,15 @@ pub fn interval_anchor_select(target: &ContextTarget) -> SelectStatement {
     select
 }
 
-/// Advance one active periodic subscription's grid anchor to `cutoff` without
-/// counting a notification: the interval ticked but had nothing to send, so its
-/// `last_notification` moves so the sweep stops re-reading it every pass and it
-/// becomes next due one interval after the cutoff.
-pub fn advance_interval_anchor_statement(target: &ContextTarget, id: &Identifier, kind: StoredKind, cutoff: DateTime<Utc>) -> UpdateStatement {
+/// Record `cutoff` as the sweep instant one active periodic subscription
+/// answered its grid at without a notification: nothing matched, so it is not
+/// owed again before its next grid point, and `last_notification` keeps the
+/// instant of the last notification sent (Table 5.2.14.2-1).
+pub fn record_interval_tick_statement(target: &ContextTarget, id: &Identifier, kind: StoredKind, cutoff: DateTime<Utc>) -> UpdateStatement {
     let mut statement = Query::update();
     statement
         .table(table_of(target, SubscriptionDeliveryState::Table))
-        .value(SubscriptionDeliveryState::LastNotification, Expr::val(cutoff))
+        .value(SubscriptionDeliveryState::LastIntervalTick, Expr::val(cutoff))
         .and_where(Expr::col(SubscriptionDeliveryState::SubscriptionKey).eq(owner_key(target, id, kind, OwnerStatus::ActiveOnly)));
     statement
 }
@@ -291,11 +291,11 @@ mod tests {
     use crate::subscription_store::{
         delivery_state::{
             SlotClaimStatement,
-            advance_interval_anchor_statement,
             interval_anchor_select,
-            interval_elapsed,
+            interval_owed,
             join_delivery_state,
             outcome_statement,
+            record_interval_tick_statement,
             slot_claim_statement,
             state_insert_sql,
         },
@@ -363,6 +363,15 @@ mod tests {
             !sql.contains("last_notification\" IS NULL"),
             "a periodic claim carries no throttling ceiling: {sql}"
         );
+    }
+
+    /// The claim records the sweep instant the notification answers the grid
+    /// at, so the next sweep owes the following grid point however late this
+    /// one ran (clause 5.8.6).
+    #[test]
+    fn a_periodic_claim_records_the_sweep_instant_it_answers_the_grid_at() {
+        let sql = claim_sql(StoredKind::Entity, NotificationSlotGate::at(instant(30), NotificationCadence::Periodic, None));
+        assert!(sql.contains(r#""last_interval_tick" = '2026-08-17 12:00:30.000000 +00:00'"#), "{sql}");
     }
 
     /// Clause 5.8.6 moves `timesSent` and `lastNotification` for every
@@ -490,42 +499,43 @@ mod tests {
     }
 
     #[test]
-    fn the_interval_predicate_reads_the_last_notification_from_the_state_row() {
+    fn a_subscription_is_owed_the_first_grid_point_from_its_creation_past_its_last_answer() {
         let cutoff = Utc.with_ymd_and_hms(2026, 9, 20, 12, 0, 0).single().expect("valid instant");
-        let sql = Query::select().cond_where(interval_elapsed(cutoff)).to_string(PostgresQueryBuilder);
+        let sql = Query::select().and_where(interval_owed(cutoff)).to_string(PostgresQueryBuilder);
         assert!(
-            sql.contains(r#""subscription_delivery_state"."last_notification" IS NULL AND "subscriptions"."created_at" <="#),
+            sql.contains(r#"("subscriptions"."created_at" + make_interval(secs => "subscriptions"."time_interval" * (floor(extract(epoch from (GREATEST("subscription_delivery_state"."last_interval_tick", "subscriptions"."created_at") - "subscriptions"."created_at")) / "subscriptions"."time_interval") + 1))) <= '2026-09-20 12:00:00.000000 +00:00'"#),
             "{sql}"
         );
         assert!(
-            sql.contains(r#""subscription_delivery_state"."last_notification" <= '2026-09-20 12:00:00.000000 +00:00' - (make_interval(secs => "subscriptions"."time_interval"))"#),
-            "{sql}"
+            !sql.contains("last_notification"),
+            "the grid never reads the instant of the last notification sent: {sql}"
         );
     }
 
     #[test]
-    fn the_anchor_select_coalesces_the_last_notification_to_the_creation_instant() {
+    fn the_anchor_select_reads_the_creation_instant_and_the_last_answer() {
         let sql = interval_anchor_select(&ContextTarget::Live).to_string(PostgresQueryBuilder);
-        assert!(
-            sql.contains(r#"COALESCE("subscription_delivery_state"."last_notification", "subscriptions"."created_at") AS "anchor""#),
-            "{sql}"
-        );
+        assert!(sql.contains(r#""subscriptions"."created_at" AS "anchor""#), "{sql}");
         assert!(sql.contains(r#""subscriptions"."time_interval""#), "{sql}");
+        assert!(sql.contains(r#""subscription_delivery_state"."last_interval_tick""#), "{sql}");
         assert!(
             sql.contains(r#"LEFT JOIN "subscription_delivery_state" ON "subscription_delivery_state"."subscription_key" = "subscriptions"."subscription_key""#),
             "{sql}"
         );
     }
 
+    /// Table 5.2.14.2-1: `lastNotification` is the instant the last
+    /// notification was sent, so a sweep that sent nothing leaves it alone.
     #[test]
-    fn the_anchor_advance_moves_only_the_last_notification_of_an_active_subscription() {
+    fn an_answer_without_a_notification_moves_only_the_tick_of_an_active_subscription() {
         let cutoff = Utc.with_ymd_and_hms(2026, 9, 20, 12, 0, 30).single().expect("valid instant");
-        let sql = advance_interval_anchor_statement(&target(), &subscription(), StoredKind::Entity, cutoff).to_string(PostgresQueryBuilder);
+        let sql = record_interval_tick_statement(&target(), &subscription(), StoredKind::Entity, cutoff).to_string(PostgresQueryBuilder);
         assert!(
-            sql.starts_with(r#"UPDATE "subscription_delivery_state" SET "last_notification" = '2026-09-20 12:00:30.000000 +00:00'"#),
+            sql.starts_with(r#"UPDATE "subscription_delivery_state" SET "last_interval_tick" = '2026-09-20 12:00:30.000000 +00:00' WHERE"#),
             "{sql}"
         );
-        assert!(!sql.contains("times_sent"), "advancing the anchor counts no notification: {sql}");
+        assert!(!sql.contains("times_sent"), "{sql}");
+        assert!(!sql.contains("last_notification"), "{sql}");
         assert!(sql.contains(r#""subscriptions"."status" = 1"#), "{sql}");
     }
 }

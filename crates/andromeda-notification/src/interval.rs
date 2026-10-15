@@ -81,10 +81,13 @@ impl IntervalNotificationOperation {
 
     /// Evaluate every interval subscription due at the execution boundary.
     ///
-    /// Every due subscription's grid anchor is advanced past `cutoff` before this
-    /// returns, whether or not it had anything to send: a subscription that
-    /// matched nothing still ticked, so its anchor moves and the sweep stops
-    /// re-reading it, and re-running its paged scan, every pass.
+    /// Every due subscription records `cutoff` as the instant it answered its
+    /// grid at, whether or not it had anything to send: a subscription that
+    /// matched nothing still ticked, so the sweep stops re-reading it, and
+    /// re-running its paged scan, every pass until its next grid point. The
+    /// grid is anchored on the subscription's creation, so a pass that runs
+    /// late delays its notifications without moving the next grid point
+    /// (clause 5.8.6).
     ///
     /// # Errors
     ///
@@ -125,9 +128,9 @@ impl IntervalNotificationOperation {
 
                 if entities.is_empty() {
                     // Clause 5.8.6: no matching entities means no notification.
-                    // The anchor still advances so the interval is not re-read
+                    // The tick is still recorded so the interval is not re-read
                     // every pass until it next comes due.
-                    this.advance_anchor(&sub, cutoff).await;
+                    this.record_tick(&sub, cutoff).await;
                     return;
                 }
 
@@ -147,8 +150,8 @@ impl IntervalNotificationOperation {
         // Table 5.2.15-1: a periodic subscription carries no `throttling`
         // (Table 5.2.12-1 makes the pair mutually exclusive), but its
         // endpoint's `cooldown` still suppresses a notification that would
-        // follow too soon after a failure. A periodic claim stamps the anchor
-        // itself, so no separate advance is needed on the send path.
+        // follow too soon after a failure. A periodic claim records the tick
+        // itself, so the send path needs no separate write.
         let gate = NotificationSlotGate::at(cutoff, NotificationCadence::Periodic, sub.notification.endpoint.cooldown);
         let record = match self.sub_repo.claim_notification_slot(&self.target, &sub.id, gate).await {
             Ok(NotificationSlot::Claimed(record)) => record,
@@ -256,11 +259,12 @@ impl IntervalNotificationOperation {
         }
     }
 
-    /// Advance a due subscription's grid anchor past `cutoff`, logging a store
-    /// failure rather than aborting the sweep.
-    async fn advance_anchor(&self, sub: &Subscription, cutoff: DateTime<Utc>) {
-        if let Err(error) = self.sub_repo.advance_interval_anchor(&self.target, &sub.id, cutoff).await {
-            debug!("Failed to advance interval anchor for {}: {}", sub.id, error);
+    /// Record `cutoff` as the instant a due subscription answered its grid at
+    /// without a notification, logging a store failure rather than aborting
+    /// the sweep.
+    async fn record_tick(&self, sub: &Subscription, cutoff: DateTime<Utc>) {
+        if let Err(error) = self.sub_repo.record_interval_tick(&self.target, &sub.id, cutoff).await {
+            debug!("Failed to record the interval tick of {}: {}", sub.id, error);
         }
     }
 }

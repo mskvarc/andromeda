@@ -178,8 +178,8 @@ impl SubscriptionStore for FixtureSubscriptionStore {
         Err(unused_store_call("next_interval_due"))
     }
 
-    async fn advance_interval_anchor(&self, _target: &ContextTarget, _id: &Identifier, _cutoff: DateTime<Utc>) -> Result<(), SubscriptionError> {
-        Err(unused_store_call("advance_interval_anchor"))
+    async fn record_interval_tick(&self, _target: &ContextTarget, _id: &Identifier, _cutoff: DateTime<Utc>) -> Result<(), SubscriptionError> {
+        Err(unused_store_call("record_interval_tick"))
     }
 
     async fn create_subscription(

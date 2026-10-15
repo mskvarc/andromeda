@@ -102,6 +102,10 @@ pub enum SubscriptionDeliveryState {
     LastSuccess,
     /// The instant of the last failed notification (`notification.lastFailure`)
     LastFailure,
+    /// The sweep instant at which a `timeInterval` subscription last answered
+    /// its grid, by a notification or by finding nothing to notify; NULL until
+    /// it first does. Not a spec member.
+    LastIntervalTick,
 }
 
 /// The live-only `subscription_notified_registrations` table: the context
@@ -160,5 +164,6 @@ mod tests {
         assert_eq!(SubscriptionDeliveryState::LastNotification.to_string(), "last_notification");
         assert_eq!(SubscriptionDeliveryState::LastSuccess.to_string(), "last_success");
         assert_eq!(SubscriptionDeliveryState::LastFailure.to_string(), "last_failure");
+        assert_eq!(SubscriptionDeliveryState::LastIntervalTick.to_string(), "last_interval_tick");
     }
 }

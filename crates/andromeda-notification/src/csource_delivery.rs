@@ -119,9 +119,9 @@ impl CsourceNotificationDelivery {
     ///
     /// The gate follows the subscription's cadence: a `timeInterval`
     /// subscription carries no `throttling` (Table 5.2.12-1 gives the member
-    /// cardinality 0 when `timeInterval` is present) but stamps its grid's
-    /// anchor at the claim, and a change-driven one is gated by its
-    /// `throttling` when set.
+    /// cardinality 0 when `timeInterval` is present) but records the instant
+    /// it answers its grid at with the claim, and a change-driven one is
+    /// gated by its `throttling` when set.
     pub(crate) async fn deliver(
         &self,
         subscription: &CompiledCsrSubscription,
