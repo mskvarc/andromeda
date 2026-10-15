@@ -47,7 +47,7 @@ use andromeda_subscription::{
     compilation::compile_subscription,
     compiled::CompiledSubscription,
     matching::matches_entity_filters,
-    notification_slot::{NotificationSlot, NotificationSlotGate},
+    notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate},
 };
 use chrono::Utc;
 use tracing::{debug, warn};
@@ -270,20 +270,20 @@ impl SubscriptionForwardingService {
         // subscription's other notifications. The slot is claimed only once
         // the copy is ready to send, so a copy that failed before it was sent
         // spends no slot and the sender's retry is delivered.
-        let gate = NotificationSlotGate::at(Utc::now(), compiled.throttling_secs, compiled.endpoint_cooldown);
-        match self.subscriptions.claim_notification_slot(&self.live_target, &local, gate).await? {
-            NotificationSlot::Claimed => {}
+        let gate = NotificationSlotGate::at(Utc::now(), compiled.cadence(), compiled.endpoint_cooldown);
+        let record = match self.subscriptions.claim_notification_slot(&self.live_target, &local, gate).await? {
+            NotificationSlot::Claimed(record) => record,
             NotificationSlot::Suppressed => {
                 debug!(subscription = %local, "re-assembled notification suppressed by the subscription's throttling or its endpoint's cooldown");
                 return Ok(());
             }
-        }
-        let result = self.transport.deliver(&transport, &request).await;
-        if result.is_delivered() {
-            self.subscriptions.mark_success(&self.live_target, &local).await?;
+        };
+        let outcome = if self.transport.deliver(&transport, &request).await.is_delivered() {
+            NotificationOutcome::Success
         } else {
-            self.subscriptions.mark_failure(&self.live_target, &local).await?;
-        }
+            NotificationOutcome::Failure
+        };
+        self.subscriptions.record_outcome(&self.live_target, &local, outcome, record).await?;
         Ok(())
     }
 }

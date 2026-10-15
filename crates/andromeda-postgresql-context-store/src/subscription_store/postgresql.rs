@@ -14,7 +14,7 @@ use crate::{
     subscription::repo::SubscriptionRepository,
     subscription_store::{
         csource_statements::{bind_csource_create, bind_csource_update, csource_create_sql, csource_update_sql},
-        delivery_state::{DeliveryOutcome, advance_interval_anchor_statement, claim_statement, mark_statement, state_insert_sql},
+        delivery_state::{SlotClaimStatement, advance_interval_anchor_statement, outcome_statement, slot_claim_statement, state_insert_sql},
         entity_statements::{bind_entity_create, bind_entity_update, entity_create_sql, entity_update_sql},
         failure::{create_error, persistence_error},
         interned_attributes::intern_attribute_lists,
@@ -35,7 +35,7 @@ use andromeda_postgresql_schema::subscriptions::Subscriptions;
 use andromeda_subscription::{
     error::SubscriptionError,
     interval_schedule::{interval_duration, next_interval_due as next_interval_grid_due},
-    notification_slot::{NotificationSlot, NotificationSlotGate},
+    notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
     store::{SubscriptionFields, SubscriptionStore},
     stored_subscription::StoredSubscription,
 };
@@ -134,31 +134,42 @@ macro_rules! impl_subscription_store {
                 id: &Identifier,
                 gate: NotificationSlotGate,
             ) -> Result<NotificationSlot, SubscriptionError> {
-                let (sql, values) = claim_statement(target, id, $kind, gate).build_sqlx(PostgresQueryBuilder);
-                let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-                    .execute(&self.pool)
-                    .await
-                    .map_err(|error| persistence_error(error))?;
                 // The gate is the statement's own `WHERE`, so a state row it
                 // did not match is a slot the ceilings refused.
-                if result.rows_affected() > 0 {
-                    Ok(NotificationSlot::Claimed)
-                } else {
-                    Ok(NotificationSlot::Suppressed)
+                match slot_claim_statement(target, id, $kind, gate) {
+                    SlotClaimStatement::Stamping(statement) => {
+                        let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+                        let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                            .execute(&self.pool)
+                            .await
+                            .map_err(|error| persistence_error(error))?;
+                        Ok(if result.rows_affected() > 0 {
+                            NotificationSlot::Claimed(OutcomeRecord::OutcomeOnly)
+                        } else {
+                            NotificationSlot::Suppressed
+                        })
+                    }
+                    SlotClaimStatement::Checking(statement) => {
+                        let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+                        let claimed: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                            .fetch_optional(&self.pool)
+                            .await
+                            .map_err(|error| persistence_error(error))?;
+                        Ok(claimed.map_or(NotificationSlot::Suppressed, |notified_at| {
+                            NotificationSlot::Claimed(OutcomeRecord::CountingNotification { notified_at })
+                        }))
+                    }
                 }
             }
 
-            async fn mark_success(&self, target: &ContextTarget, id: &Identifier) -> Result<(), SubscriptionError> {
-                let (sql, values) = mark_statement(DeliveryOutcome::Success, target, id, $kind).build_sqlx(PostgresQueryBuilder);
-                sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-                    .execute(&self.pool)
-                    .await
-                    .map_err(|error| persistence_error(error))?;
-                Ok(())
-            }
-
-            async fn mark_failure(&self, target: &ContextTarget, id: &Identifier) -> Result<(), SubscriptionError> {
-                let (sql, values) = mark_statement(DeliveryOutcome::Failure, target, id, $kind).build_sqlx(PostgresQueryBuilder);
+            async fn record_outcome(
+                &self,
+                target: &ContextTarget,
+                id: &Identifier,
+                outcome: NotificationOutcome,
+                record: OutcomeRecord,
+            ) -> Result<(), SubscriptionError> {
+                let (sql, values) = outcome_statement(outcome, record, target, id, $kind).build_sqlx(PostgresQueryBuilder);
                 sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .execute(&self.pool)
                     .await

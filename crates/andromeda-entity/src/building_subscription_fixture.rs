@@ -13,7 +13,7 @@ use andromeda_ngsi_ld_query::page_window::PageWindow;
 use andromeda_subscription::{
     cache::SubscriptionCache,
     error::SubscriptionError,
-    notification_slot::{NotificationSlot, NotificationSlotGate},
+    notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
     store::{SubscriptionFields, SubscriptionStore},
     stored_subscription::StoredSubscription,
 };
@@ -156,12 +156,14 @@ impl SubscriptionStore for FixtureSubscriptionStore {
         Err(unused_store_call("claim_notification_slot"))
     }
 
-    async fn mark_success(&self, _target: &ContextTarget, _id: &Identifier) -> Result<(), SubscriptionError> {
-        Err(unused_store_call("mark_success"))
-    }
-
-    async fn mark_failure(&self, _target: &ContextTarget, _id: &Identifier) -> Result<(), SubscriptionError> {
-        Err(unused_store_call("mark_failure"))
+    async fn record_outcome(
+        &self,
+        _target: &ContextTarget,
+        _id: &Identifier,
+        _outcome: NotificationOutcome,
+        _record: OutcomeRecord,
+    ) -> Result<(), SubscriptionError> {
+        Err(unused_store_call("record_outcome"))
     }
 
     async fn expire_due(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Identifier>, SubscriptionError> {

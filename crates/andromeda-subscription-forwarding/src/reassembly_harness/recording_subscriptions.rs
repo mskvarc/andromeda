@@ -8,7 +8,7 @@ use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
 use andromeda_ngsi_ld_query::page_window::PageWindow;
 use andromeda_subscription::{
     error::SubscriptionError,
-    notification_slot::{NotificationSlot, NotificationSlotGate},
+    notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
     store::{SubscriptionFields, SubscriptionStore},
     stored_subscription::StoredSubscription,
 };
@@ -83,15 +83,22 @@ impl SubscriptionStore for RecordingSubscriptions {
         _gate: NotificationSlotGate,
     ) -> Result<NotificationSlot, SubscriptionError> {
         self.claims.fetch_add(1, Ordering::SeqCst);
-        Ok(NotificationSlot::Claimed)
+        Ok(NotificationSlot::Claimed(OutcomeRecord::OutcomeOnly))
     }
 
-    async fn mark_success(&self, _target: &ContextTarget, _id: &Identifier) -> Result<(), SubscriptionError> {
-        self.successes.fetch_add(1, Ordering::SeqCst);
-        Ok(())
-    }
-
-    async fn mark_failure(&self, _target: &ContextTarget, _id: &Identifier) -> Result<(), SubscriptionError> {
+    async fn record_outcome(
+        &self,
+        _target: &ContextTarget,
+        _id: &Identifier,
+        outcome: NotificationOutcome,
+        _record: OutcomeRecord,
+    ) -> Result<(), SubscriptionError> {
+        match outcome {
+            NotificationOutcome::Success => {
+                self.successes.fetch_add(1, Ordering::SeqCst);
+            }
+            NotificationOutcome::Failure => {}
+        }
         Ok(())
     }
 

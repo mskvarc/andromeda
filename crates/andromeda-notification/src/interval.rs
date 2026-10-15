@@ -6,6 +6,7 @@ use crate::{
     interval_candidates::IntervalCandidates,
     interval_match::matching_entities,
     interval_payload::PeriodicPayload,
+    notification_outcome::notification_outcome,
 };
 use andromeda_context_space::{context_target::ContextTarget, snapshot_target::SnapshotTarget};
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
@@ -14,10 +15,11 @@ use andromeda_entity::{
     query::EntityQueryService,
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_model::subscription::Subscription;
 use andromeda_ngsi_ld_render::{geometry_selection::GeometrySelection, notification_data::DataShape};
 use andromeda_subscription::{
-    notification_slot::{NotificationSlot, NotificationSlotGate},
+    notification_slot::{NotificationCadence, NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
     store::SubscriptionStore,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
@@ -102,7 +104,11 @@ impl IntervalNotificationOperation {
                     Ok(e) => e,
                     Err(e) => {
                         error!("IntervalWorker failed to fetch entities for {}: {}", sub.id, e);
-                        if let Err(e) = this.sub_repo.mark_failure(&this.target, &sub.id).await {
+                        if let Err(e) = this
+                            .sub_repo
+                            .record_outcome(&this.target, &sub.id, NotificationOutcome::Failure, OutcomeRecord::OutcomeOnly)
+                            .await
+                        {
                             debug!("Failed to mark failure for {}: {}", sub.id, e);
                         }
                         return;
@@ -125,93 +131,99 @@ impl IntervalNotificationOperation {
                     return;
                 }
 
-                // The slot is claimed only once a notification is certain to be sent.
-                // Table 5.2.15-1: a periodic subscription carries no
-                // `throttling` (Table 5.2.12-1 makes the pair mutually
-                // exclusive), but its endpoint's `cooldown` still suppresses a
-                // notification that would follow too soon after a failure. The
-                // claim advances the anchor itself, so no separate advance is
-                // needed on the send path.
-                let gate = NotificationSlotGate::at(cutoff, None, sub.notification.endpoint.cooldown);
-                match this.sub_repo.claim_notification_slot(&this.target, &sub.id, gate).await {
-                    Ok(NotificationSlot::Claimed) => {}
-                    Ok(NotificationSlot::Suppressed) => return,
-                    Err(error) => {
-                        debug!("IntervalWorker failed to claim slot for {}: {}", sub.id, error);
-                        return;
-                    }
-                }
-
-                let endpoint_uri = sub.notification.endpoint.uri.url();
-
-                let endpoint_transport = match parse_endpoint_transport(endpoint_uri, sub.notification.endpoint.notifier_info.as_deref()) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        debug!("IntervalWorker: invalid endpoint URI for {}: {}", sub.id, e);
-                        return;
-                    }
-                };
-
-                // Clause 5.5.6: a `jsonldContext` that cannot be loaded names no
-                // context this notification can be rendered under.
-                let Some(context) = claimed_notification_context(
-                    &this.engine,
-                    sub.delivery.jsonld_context.as_ref(),
-                    this.sub_repo.as_ref(),
-                    &this.target,
-                    &sub.id,
-                )
-                .await
-                else {
-                    return;
-                };
-                let delivery = NotificationDelivery::builder()
-                    .endpoint_uri(endpoint_uri)
-                    .accept(sub.notification.endpoint.accept.as_ref())
-                    .receiver_info(sub.notification.endpoint.receiver_info.as_deref())
-                    .context(&context)
-                    .tenant(this.tenant.tenant_name())
-                    .snapshot(this.target.snapshot().map(SnapshotTarget::snapshot_id))
-                    .timeout(sub.notification.endpoint.timeout)
-                    .subscription_id(&sub.id)
-                    .build();
-
-                // Table 5.3.1-1: an `application/geo+json` endpoint receives the
-                // entities as one `FeatureCollection`.
-                let shape = DataShape {
-                    media_type: delivery.content_type(),
-                    selection: GeometrySelection::new(None, sub.filters.dataset_id.as_deref().unwrap_or_default()),
-                    context: delivery.body_context(),
-                };
-                let data = match this.payload().entities(&sub, entities, shape).await {
-                    Ok(data) => data,
-                    Err(e) => {
-                        error!("IntervalWorker failed to build notification payload for {}: {}", sub.id, e);
-                        return;
-                    }
-                };
-                let request = match delivery.notification(data) {
-                    Ok(request) => request,
-                    Err(e) => {
-                        error!("Failed to write notification for {}: {}", sub.id, e);
-                        return;
-                    }
-                };
-
-                let success = this.transport.deliver(&endpoint_transport, &request).await.is_delivered();
-
-                if success {
-                    if let Err(e) = this.sub_repo.mark_success(&this.target, &sub.id).await {
-                        debug!("Failed to mark success for {}: {}", sub.id, e);
-                    }
-                } else if let Err(e) = this.sub_repo.mark_failure(&this.target, &sub.id).await {
-                    debug!("Failed to mark failure for {}: {}", sub.id, e);
-                }
+                this.notify(&sub, entities, cutoff).await;
             })
             .buffer_unordered(INTERVAL_NOTIFICATION_CONCURRENCY)
             .collect()
             .await;
         Ok(due_count)
+    }
+
+    /// Claim the slot of the due subscription `sub`, which matched `entities`
+    /// at `cutoff`, then send it its notification and record the outcome
+    /// (clause 5.8.6).
+    async fn notify(&self, sub: &Subscription, entities: Vec<EntityState>, cutoff: DateTime<Utc>) {
+        // The slot is claimed only once a notification is certain to be sent.
+        // Table 5.2.15-1: a periodic subscription carries no `throttling`
+        // (Table 5.2.12-1 makes the pair mutually exclusive), but its
+        // endpoint's `cooldown` still suppresses a notification that would
+        // follow too soon after a failure. A periodic claim stamps the anchor
+        // itself, so no separate advance is needed on the send path.
+        let gate = NotificationSlotGate::at(cutoff, NotificationCadence::Periodic, sub.notification.endpoint.cooldown);
+        let record = match self.sub_repo.claim_notification_slot(&self.target, &sub.id, gate).await {
+            Ok(NotificationSlot::Claimed(record)) => record,
+            Ok(NotificationSlot::Suppressed) => return,
+            Err(error) => {
+                debug!("IntervalWorker failed to claim slot for {}: {}", sub.id, error);
+                return;
+            }
+        };
+
+        let endpoint_uri = sub.notification.endpoint.uri.url();
+
+        let endpoint_transport = match parse_endpoint_transport(endpoint_uri, sub.notification.endpoint.notifier_info.as_deref()) {
+            Ok(t) => t,
+            Err(e) => {
+                debug!("IntervalWorker: invalid endpoint URI for {}: {}", sub.id, e);
+                return;
+            }
+        };
+
+        // Clause 5.5.6: a `jsonldContext` that cannot be loaded names no
+        // context this notification can be rendered under.
+        let Some(context) = claimed_notification_context(
+            &self.engine,
+            sub.delivery.jsonld_context.as_ref(),
+            self.sub_repo.as_ref(),
+            &self.target,
+            &sub.id,
+            record,
+        )
+        .await
+        else {
+            return;
+        };
+        let delivery = NotificationDelivery::builder()
+            .endpoint_uri(endpoint_uri)
+            .accept(sub.notification.endpoint.accept.as_ref())
+            .receiver_info(sub.notification.endpoint.receiver_info.as_deref())
+            .context(&context)
+            .tenant(self.tenant.tenant_name())
+            .snapshot(self.target.snapshot().map(SnapshotTarget::snapshot_id))
+            .timeout(sub.notification.endpoint.timeout)
+            .subscription_id(&sub.id)
+            .build();
+
+        // Table 5.3.1-1: an `application/geo+json` endpoint receives the
+        // entities as one `FeatureCollection`.
+        let shape = DataShape {
+            media_type: delivery.content_type(),
+            selection: GeometrySelection::new(None, sub.filters.dataset_id.as_deref().unwrap_or_default()),
+            context: delivery.body_context(),
+        };
+        let data = match self.payload().entities(sub, entities, shape).await {
+            Ok(data) => data,
+            Err(e) => {
+                error!("IntervalWorker failed to build notification payload for {}: {}", sub.id, e);
+                return;
+            }
+        };
+        let request = match delivery.notification(data) {
+            Ok(request) => request,
+            Err(e) => {
+                error!("Failed to write notification for {}: {}", sub.id, e);
+                return;
+            }
+        };
+
+        let delivery = self.transport.deliver(&endpoint_transport, &request).await;
+        if let Err(e) = self
+            .sub_repo
+            .record_outcome(&self.target, &sub.id, notification_outcome(&delivery), record)
+            .await
+        {
+            debug!("Failed to record the notification outcome for {}: {}", sub.id, e);
+        }
     }
 
     /// The earliest instant some active interval subscription is next due after

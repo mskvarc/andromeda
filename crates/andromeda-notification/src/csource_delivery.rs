@@ -9,7 +9,7 @@
 //! drifting apart, for instance on the `triggerReason` Table 5.3.2-1 makes
 //! mandatory.
 
-use crate::{claimed_notification_context::claimed_notification_context, error::NotificationError};
+use crate::{claimed_notification_context::claimed_notification_context, error::NotificationError, notification_outcome::notification_outcome};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::{
     dispatch::TransportDispatcher,
@@ -117,9 +117,11 @@ impl CsourceNotificationDelivery {
     /// `trigger_reason`, honouring the subscription's `throttling` and its
     /// endpoint's `cooldown`, and recording the outcome on it (clause 5.11.7).
     ///
-    /// A `timeInterval` subscription carries no `throttling` -- Table 5.2.12-1
-    /// gives the member cardinality 0 when `timeInterval` is present -- so the
-    /// one gate serves both cadences without either having to know which it is.
+    /// The gate follows the subscription's cadence: a `timeInterval`
+    /// subscription carries no `throttling` (Table 5.2.12-1 gives the member
+    /// cardinality 0 when `timeInterval` is present) but stamps its grid's
+    /// anchor at the claim, and a change-driven one is gated by its
+    /// `throttling` when set.
     pub(crate) async fn deliver(
         &self,
         subscription: &CompiledCsrSubscription,
@@ -128,30 +130,37 @@ impl CsourceNotificationDelivery {
     ) -> CsourceDeliveryOutcome {
         let sub_id = &subscription.id;
 
-        match self
+        let record = match self
             .sub_repo
             .claim_notification_slot(
                 &self.target,
                 sub_id,
-                NotificationSlotGate::at(Utc::now(), subscription.throttling_secs, subscription.endpoint_cooldown),
+                NotificationSlotGate::at(Utc::now(), subscription.cadence(), subscription.endpoint_cooldown),
             )
             .await
         {
-            Ok(NotificationSlot::Claimed) => {}
+            Ok(NotificationSlot::Claimed(record)) => record,
             Ok(NotificationSlot::Suppressed) => return CsourceDeliveryOutcome::NotSent,
             Err(error) => {
                 debug!("Failed to claim CSR notification slot for {}: {}", sub_id, error);
                 return CsourceDeliveryOutcome::NotSent;
             }
-        }
+        };
 
         let Some(endpoint_transport) = compiled_transport(subscription) else {
             return CsourceDeliveryOutcome::NotSent;
         };
         // Clause 5.5.6: a `jsonldContext` that cannot be loaded names no context
         // this notification can be rendered under.
-        let Some(context) =
-            claimed_notification_context(&self.engine, subscription.jsonld_context.as_ref(), self.sub_repo.as_ref(), &self.target, sub_id).await
+        let Some(context) = claimed_notification_context(
+            &self.engine,
+            subscription.jsonld_context.as_ref(),
+            self.sub_repo.as_ref(),
+            &self.target,
+            sub_id,
+            record,
+        )
+        .await
         else {
             return CsourceDeliveryOutcome::NotSent;
         };
@@ -176,14 +185,13 @@ impl CsourceNotificationDelivery {
             }
         };
         let request = delivery.assemble(body);
-        let success = self.transport.deliver(&endpoint_transport, &request).await.is_delivered();
-
-        if success {
-            if let Err(error) = self.sub_repo.mark_success(&self.target, sub_id).await {
-                debug!("Failed to mark CSR notification success for {}: {}", sub_id, error);
-            }
-        } else if let Err(error) = self.sub_repo.mark_failure(&self.target, sub_id).await {
-            debug!("Failed to mark CSR notification failure for {}: {}", sub_id, error);
+        let delivery = self.transport.deliver(&endpoint_transport, &request).await;
+        if let Err(error) = self
+            .sub_repo
+            .record_outcome(&self.target, sub_id, notification_outcome(&delivery), record)
+            .await
+        {
+            debug!("Failed to record the CSR notification outcome for {}: {}", sub_id, error);
         }
         CsourceDeliveryOutcome::Sent
     }

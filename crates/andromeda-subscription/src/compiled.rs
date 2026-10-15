@@ -7,7 +7,7 @@
 //! reference the query AST and the renderer's system-attribute policy. Transport
 //! selection remains in delivery bindings and is not compiled here.
 
-use crate::geo_filter::SubscriptionGeoFilter;
+use crate::{geo_filter::SubscriptionGeoFilter, notification_slot::NotificationCadence};
 use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_linked_retrieval::narrowing::list::ListInForce;
 use andromeda_ngsi_ld_lexicon::{
@@ -85,6 +85,25 @@ pub struct CompiledCsrSubscription {
     /// Parsed context-source filter, evaluated against the registration's
     /// Context Source Properties (clause 4.9).
     pub compiled_csf: Option<Expr>,
+}
+
+impl CompiledCsrSubscription {
+    /// How this subscription comes to notify: on its `timeInterval` grid, or
+    /// on change under its `throttling`.
+    #[must_use]
+    pub const fn cadence(&self) -> NotificationCadence {
+        cadence(self.time_interval_secs, self.throttling_secs)
+    }
+}
+
+/// The cadence a subscription's `timeInterval` and `throttling` members give
+/// it; a `timeInterval` makes it periodic whatever `throttling` says, since
+/// Table 5.2.12-1 does not let the two coexist.
+const fn cadence(time_interval_secs: Option<f64>, throttling_secs: Option<f64>) -> NotificationCadence {
+    match time_interval_secs {
+        Some(_) => NotificationCadence::Periodic,
+        None => NotificationCadence::OnChange { throttling_secs },
+    }
 }
 
 /// Pre-compiled subscription for in-memory matching.
@@ -201,5 +220,29 @@ impl CompiledSubscription {
     #[must_use]
     pub fn filters_hop(&self) -> bool {
         self.hopping_filters().next().is_some()
+    }
+
+    /// How this subscription comes to notify: on its `timeInterval` grid, or
+    /// on change under its `throttling`.
+    #[must_use]
+    pub const fn cadence(&self) -> NotificationCadence {
+        cadence(self.time_interval_secs, self.throttling_secs)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{compiled::cadence, notification_slot::NotificationCadence};
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn a_time_interval_makes_a_subscription_periodic() {
+        assert_eq!(cadence(Some(10.0), None), NotificationCadence::Periodic);
+    }
+
+    #[test]
+    fn a_subscription_without_a_time_interval_notifies_on_change_under_its_throttling() {
+        assert_eq!(cadence(None, Some(5.0)), NotificationCadence::OnChange { throttling_secs: Some(5.0) });
+        assert_eq!(cadence(None, None), NotificationCadence::OnChange { throttling_secs: None });
     }
 }

@@ -57,6 +57,8 @@ mod interval_payload;
 pub mod notification_event;
 /// The invariants notification delivery relies on.
 pub mod notification_invariant;
+/// The outcome a delivery result records on its subscription.
+mod notification_outcome;
 /// The registrations each context source subscription was notified of.
 pub mod notified_registration_store;
 /// Entity event notification evaluation.

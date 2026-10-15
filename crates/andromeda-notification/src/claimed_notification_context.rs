@@ -11,12 +11,16 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::notification_context::NotificationContext;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_subscription::store::SubscriptionStore;
+use andromeda_subscription::{
+    notification_slot::{NotificationOutcome, OutcomeRecord},
+    store::SubscriptionStore,
+};
 use iri_rs::IriBuf;
 use tracing::{debug, warn};
 
 /// The notification `@context` of the subscription `subscription_id`, whose
-/// `jsonldContext` is `jsonld_context` and whose slot on `target` is claimed.
+/// `jsonldContext` is `jsonld_context` and whose slot on `target` is claimed,
+/// its outcome to be recorded with `record`.
 ///
 /// Answers `None` when the `jsonldContext` names a document that cannot be
 /// loaded (clause 5.5.6), after recording the claimed notification as failed.
@@ -26,12 +30,13 @@ pub(crate) async fn claimed_notification_context(
     sub_repo: &dyn SubscriptionStore,
     target: &ContextTarget,
     subscription_id: &Identifier,
+    record: OutcomeRecord,
 ) -> Option<NotificationContext> {
     match NotificationContext::resolve(jsonld_context, engine).await {
         Ok(context) => Some(context),
         Err(error) => {
             warn!(subscription = %subscription_id, %error, "the jsonldContext of the subscription cannot be loaded");
-            if let Err(error) = sub_repo.mark_failure(target, subscription_id).await {
+            if let Err(error) = sub_repo.record_outcome(target, subscription_id, NotificationOutcome::Failure, record).await {
                 debug!(subscription = %subscription_id, %error, "failed to record the notification failure");
             }
             None
@@ -49,7 +54,7 @@ mod tests {
     use andromeda_ngsi_ld_query::page_window::PageWindow;
     use andromeda_subscription::{
         error::SubscriptionError,
-        notification_slot::{NotificationSlot, NotificationSlotGate},
+        notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
         store::{SubscriptionFields, SubscriptionStore},
         stored_subscription::StoredSubscription,
     };
@@ -58,15 +63,15 @@ mod tests {
     use iri_rs::IriBuf;
     use std::sync::Mutex;
 
-    /// A store whose only exercised operation is `mark_failure`, which it
+    /// A store whose only exercised operation is `record_outcome`, which it
     /// records; every other operation answers a saturated store.
     #[derive(Default)]
     struct FailureRecordingStore {
-        failures: Mutex<Vec<Identifier>>,
+        failures: Mutex<Vec<(Identifier, NotificationOutcome, OutcomeRecord)>>,
     }
 
     impl FailureRecordingStore {
-        fn failures(&self) -> Vec<Identifier> {
+        fn failures(&self) -> Vec<(Identifier, NotificationOutcome, OutcomeRecord)> {
             self.failures.lock().expect("the failure record is never poisoned").clone() // clone: the assertion reads a snapshot
         }
     }
@@ -102,12 +107,17 @@ mod tests {
             Err(SubscriptionError::StoreSaturated)
         }
 
-        async fn mark_success(&self, _target: &ContextTarget, _id: &Identifier) -> Result<(), SubscriptionError> {
-            Err(SubscriptionError::StoreSaturated)
-        }
-
-        async fn mark_failure(&self, _target: &ContextTarget, id: &Identifier) -> Result<(), SubscriptionError> {
-            self.failures.lock().expect("the failure record is never poisoned").push(id.clone()); // clone: the record owns what it saw
+        async fn record_outcome(
+            &self,
+            _target: &ContextTarget,
+            id: &Identifier,
+            outcome: NotificationOutcome,
+            record: OutcomeRecord,
+        ) -> Result<(), SubscriptionError> {
+            self.failures
+                .lock()
+                .expect("the failure record is never poisoned")
+                .push((id.clone(), outcome, record)); // clone: the record owns what it saw
             Ok(())
         }
 
@@ -156,18 +166,32 @@ mod tests {
         "urn:ngsi-ld:Subscription:periodic".parse().expect("a valid identifier")
     }
 
+    fn counting_record() -> OutcomeRecord {
+        OutcomeRecord::CountingNotification {
+            notified_at: DateTime::<Utc>::UNIX_EPOCH,
+        }
+    }
+
     /// Clause 5.5.6: a claimed notification whose `jsonldContext` cannot be
     /// loaded is not sent, and it is recorded on the subscription as a failed
-    /// notification.
+    /// notification, with what its claim left the outcome to record.
     #[tokio::test]
     async fn an_unloadable_jsonld_context_records_the_claimed_notification_as_failed() {
         let store = FailureRecordingStore::default();
         let unreachable = IriBuf::new("https://example.com/unreachable.jsonld".to_owned()).expect("a valid IRI");
 
-        let context = claimed_notification_context(&offline_engine(), Some(&unreachable), &store, &ContextTarget::Live, &subscription()).await;
+        let context = claimed_notification_context(
+            &offline_engine(),
+            Some(&unreachable),
+            &store,
+            &ContextTarget::Live,
+            &subscription(),
+            counting_record(),
+        )
+        .await;
 
         assert!(context.is_none());
-        pretty_assertions::assert_eq!(store.failures(), vec![subscription()]);
+        pretty_assertions::assert_eq!(store.failures(), vec![(subscription(), NotificationOutcome::Failure, counting_record())]);
     }
 
     /// A readable `jsonldContext` records nothing: the delivery outcome is
@@ -176,9 +200,9 @@ mod tests {
     async fn a_readable_jsonld_context_records_nothing() {
         let store = FailureRecordingStore::default();
 
-        let context = claimed_notification_context(&offline_engine(), None, &store, &ContextTarget::Live, &subscription()).await;
+        let context = claimed_notification_context(&offline_engine(), None, &store, &ContextTarget::Live, &subscription(), counting_record()).await;
 
         assert!(context.is_some());
-        pretty_assertions::assert_eq!(store.failures(), Vec::<Identifier>::new());
+        pretty_assertions::assert_eq!(store.failures(), Vec::new());
     }
 }

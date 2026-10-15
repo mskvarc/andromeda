@@ -6,10 +6,13 @@
 //! recorded on it. The concurrent fan-out over the matched subscriptions
 //! therefore has a single body to run.
 
-use crate::processor::{
-    NotificationProcessor,
-    compiled_transport,
-    payload::{NotificationBuildParams, build_notification_data, cache::NotificationCompactionCache},
+use crate::{
+    notification_outcome::notification_outcome,
+    processor::{
+        NotificationProcessor,
+        compiled_transport,
+        payload::{NotificationBuildParams, build_notification_data, cache::NotificationCompactionCache},
+    },
 };
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_context_space::{context_target::ContextTarget, snapshot_target::SnapshotTarget};
@@ -59,22 +62,22 @@ impl NotificationProcessor {
     /// notification.
     pub(super) async fn notify_subscription(&self, compiled_sub: &CompiledSubscription, change: &NotifiedChange<'_>) -> Option<DeliveryResult> {
         let subscription_id = &compiled_sub.id;
-        match self
+        let record = match self
             .sub_repo
             .claim_notification_slot(
                 change.target,
                 subscription_id,
-                NotificationSlotGate::at(Utc::now(), compiled_sub.throttling_secs, compiled_sub.endpoint_cooldown),
+                NotificationSlotGate::at(Utc::now(), compiled_sub.cadence(), compiled_sub.endpoint_cooldown),
             )
             .await
         {
-            Ok(NotificationSlot::Claimed) => {}
+            Ok(NotificationSlot::Claimed(record)) => record,
             Ok(NotificationSlot::Suppressed) => return None,
             Err(error) => {
                 debug!("Failed to claim notification slot for {}: {}", subscription_id, error);
                 return Some(DeliveryResult::RetryableFailure);
             }
-        }
+        };
 
         let Some(notified) = change.notified else {
             return Some(DeliveryResult::TerminalFailure);
@@ -136,12 +139,12 @@ impl NotificationProcessor {
         };
         let delivery = self.transport.deliver(&endpoint_transport, &request).await;
 
-        if delivery.is_delivered() {
-            if let Err(error) = self.sub_repo.mark_success(change.target, subscription_id).await {
-                debug!("Failed to mark notification success for {}: {}", subscription_id, error);
-            }
-        } else if let Err(error) = self.sub_repo.mark_failure(change.target, subscription_id).await {
-            debug!("Failed to mark notification failure for {}: {}", subscription_id, error);
+        if let Err(error) = self
+            .sub_repo
+            .record_outcome(change.target, subscription_id, notification_outcome(&delivery), record)
+            .await
+        {
+            debug!("Failed to record the notification outcome for {}: {}", subscription_id, error);
         }
         Some(delivery)
     }

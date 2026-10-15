@@ -6,7 +6,7 @@
 
 use crate::{
     error::SubscriptionError,
-    notification_slot::{NotificationSlot, NotificationSlotGate},
+    notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
     stored_subscription::StoredSubscription,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -158,10 +158,16 @@ pub trait SubscriptionStore: Send + Sync + 'static {
         'life0: 'async_trait,
         'life1: 'async_trait,
         Self: 'async_trait;
-    /// Atomically claim a notification slot, gated on the ceilings the policy
-    /// layer computed from the subscription's `throttling` and its endpoint's
-    /// `cooldown`: each ceiling that is present narrows the claim to a state
-    /// row whose corresponding instant is null or at or before it.
+    /// Atomically claim a notification slot of an active subscription, gated
+    /// on the ceilings the policy layer computed from the subscription's
+    /// `throttling` and its endpoint's `cooldown`: each ceiling that is present
+    /// narrows the claim to a state row whose corresponding instant is null or
+    /// at or before it.
+    ///
+    /// A gate stamping at the claim moves `timesSent` and `lastNotification`
+    /// with it and answers [`OutcomeRecord::OutcomeOnly`]; any other gate
+    /// moves nothing and answers [`OutcomeRecord::CountingNotification`] with
+    /// the claim's instant, so the outcome counts the notification.
     fn claim_notification_slot<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
@@ -173,22 +179,14 @@ pub trait SubscriptionStore: Send + Sync + 'static {
         'life1: 'async_trait,
         'life2: 'async_trait,
         Self: 'async_trait;
-    /// Record a successful notification delivery.
-    fn mark_success<'life0, 'life1, 'life2, 'async_trait>(
+    /// Record the outcome of one notification, whatever the subscription's
+    /// status is by then, with what `record` adds to it.
+    fn record_outcome<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
         id: &'life2 Identifier,
-    ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        'life2: 'async_trait,
-        Self: 'async_trait;
-    /// Record a failed notification delivery.
-    fn mark_failure<'life0, 'life1, 'life2, 'async_trait>(
-        &'life0 self,
-        target: &'life1 ContextTarget,
-        id: &'life2 Identifier,
+        outcome: NotificationOutcome,
+        record: OutcomeRecord,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
     where
         'life0: 'async_trait,
