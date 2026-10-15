@@ -18,6 +18,15 @@
 //! table into its branches, but not a join clause: a correlation written
 //! beside the source would become one once the planner turned the enclosing
 //! `EXISTS` into a join, and the union would be read whole.
+//!
+//! A source of recorded rows alone has no union to protect, and there the
+//! Entity named inside costs the other way: a derived table referring to an
+//! enclosing row keeps the `EXISTS` around it a subplan, so every candidate
+//! Entity probes the source on its own even when a semi-join over the
+//! source's few matching rows would answer at once. Such a source is a plain
+//! join PostgreSQL pulls up, so the Entity is compared beside it
+//! ([`HistoryBranch::entity_history`]) and the planner chooses between the
+//! semi-join and the per-Entity probe by its estimates.
 
 /// The rows of attribute history and the streams they extend.
 pub mod attribute_rows;
@@ -115,6 +124,34 @@ impl HistoryBranch {
     pub const fn pending(&self) -> PendingEntries {
         self.pending
     }
+
+    /// How a source of this branch is read for the Entity `entity` names:
+    /// taken inside every branch of a source that unions queued entries,
+    /// compared beside a source of recorded rows alone.
+    #[must_use]
+    pub const fn entity_history(&self, entity: SimpleExpr) -> EntityHistory {
+        match self.pending {
+            PendingEntries::Unioned => EntityHistory {
+                of: HistoryOf::Entity(entity),
+                beside: None,
+            },
+            PendingEntries::Absent => EntityHistory {
+                of: HistoryOf::EveryEntity,
+                beside: Some(entity),
+            },
+        }
+    }
+}
+
+/// A source read for one Entity: whose history the source reads, and the
+/// Entity its rows are compared to beside it.
+#[derive(Clone, Debug)]
+pub struct EntityHistory {
+    /// Whose history the source reads.
+    pub of: HistoryOf,
+    /// The Entity the source's [`grain::HistoryGrain::EntityId`] is compared
+    /// to beside the source, `None` when the source takes it inside.
+    pub beside: Option<SimpleExpr>,
 }
 
 /// Whose history a source reads.
@@ -137,6 +174,39 @@ impl HistoryOf {
                 // clone: every branch of the source names the Entity.
                 branch.and_where(entity_id.eq(id.clone()));
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::history_source::{HistoryBranch, HistoryOf};
+    use sea_query::{Alias, Expr, IntoIden, PostgresQueryBuilder, Query};
+
+    fn entity() -> sea_query::SimpleExpr {
+        Expr::col((Alias::new("e"), Alias::new("id")))
+    }
+
+    fn rendered(expr: sea_query::SimpleExpr) -> String {
+        Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
+    }
+
+    #[test]
+    fn a_branch_reading_its_queue_takes_the_entity_inside_its_source() {
+        let read = HistoryBranch::live().entity_history(entity());
+        assert!(
+            matches!(&read.of, HistoryOf::Entity(id) if rendered(id.clone()) == r#"SELECT "e"."id""#),
+            "{read:?}"
+        );
+        assert!(read.beside.is_none(), "{read:?}");
+    }
+
+    #[test]
+    fn a_branch_without_a_queue_compares_the_entity_beside_its_source() {
+        for branch in [HistoryBranch::live_recorded(), HistoryBranch::recorded_in(Alias::new("snap_1").into_iden())] {
+            let read = branch.entity_history(entity());
+            assert!(matches!(read.of, HistoryOf::EveryEntity), "{read:?}");
+            pretty_assertions::assert_eq!(read.beside.map(rendered).as_deref(), Some(r#"SELECT "e"."id""#));
         }
     }
 }

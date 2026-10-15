@@ -48,7 +48,6 @@ use andromeda_postgresql_query::{
     error::RenderError,
     history_source::{
         HistoryBranch,
-        HistoryOf,
         attribute_rows::{attribute_rows, stream_rows},
         entity_rows::{entity_rows, type_member_rows},
         grain::HistoryGrain,
@@ -163,18 +162,25 @@ pub fn build_stage1_entity_ids(
 /// Build the correlated stream or history predicate shared by result and
 /// count: a bounded window asks for an instance inside it, an unbounded one
 /// only for a stream of a concerned attribute.
+///
+/// Over a source without queued entries the Evolution is compared beside the
+/// source, so a window few Evolutions answer, or none, is found by a
+/// semi-join over its rows instead of one probe per candidate.
 fn temporal_match_subquery(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames) -> SelectStatement {
-    let of = HistoryOf::Entity(SeaExpr::col((E, TemporalEntities::Id)));
+    let read = branch.entity_history(SeaExpr::col((E, TemporalEntities::Id)));
     let (source, alias) = if compiled.window.interval.is_bounded() {
-        (attribute_rows(branch, &of, Ah), Ah.into_iden())
+        (attribute_rows(branch, &read.of, Ah), Ah.into_iden())
     } else {
-        (stream_rows(branch, &of, S), S.into_iden())
+        (stream_rows(branch, &read.of, S), S.into_iden())
     };
     let mut select = SelectStatement::new();
     select
         .expr(int_literal(1))
         .from(source)
         .cond_where(build_temporal_stage1_conditions(compiled, &alias, &names.attributes));
+    if let Some(entity) = read.beside {
+        select.and_where(SeaExpr::col((alias, HistoryGrain::EntityId)).eq(entity));
+    }
     select.take()
 }
 
@@ -1338,6 +1344,53 @@ mod tests {
         ] {
             assert!(!sql.contains("temporal_append"), "{sql}");
             assert!(sql.contains(r#"FROM "snap_7"."temporal_entities" AS "e""#), "{sql}");
+        }
+    }
+
+    /// The page and the count of a stage 1 over `branch` for a window opening
+    /// at `opening`, or never closing when `opening` is `None`.
+    fn page_and_count(branch: &HistoryBranch, opening: Option<&str>) -> [String; 2] {
+        let mut compiled = minimal_compiled();
+        if let Some(opening) = opening {
+            compiled.window.interval = TimeInterval::After(instant(opening));
+        }
+        let stage1 =
+            build_stage1_entity_ids(branch, &compiled, &PageWindow::offset(20, 0), CountPolicy::Emit, &QueryNames::default()).expect("valid temporal query");
+        [
+            stage1.select.to_string(PostgresQueryBuilder),
+            stage1.count.expect("count requested").to_string(PostgresQueryBuilder),
+        ]
+    }
+
+    #[test]
+    fn a_window_match_over_an_empty_queue_compares_the_evolution_beside_the_recorded_rows() {
+        for branch in [HistoryBranch::live_recorded(), HistoryBranch::recorded_in(Alias::new("snap_7").into_iden())] {
+            for sql in page_and_count(&branch, Some("2024-01-01T00:00:00Z")) {
+                assert!(
+                    sql.contains(r#") AS "ah" WHERE "ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00' AND "ah"."entity_id" = "e"."id")"#),
+                    "{sql}"
+                );
+                assert!(!sql.contains(r#""re"."id" = "e"."id""#), "{sql}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_stream_match_over_an_empty_queue_compares_the_evolution_beside_the_recorded_streams() {
+        for sql in page_and_count(&HistoryBranch::live_recorded(), None) {
+            assert!(sql.contains(r#") AS "s" WHERE TRUE AND "s"."entity_id" = "e"."id")"#), "{sql}");
+            assert!(!sql.contains(r#""re"."id" = "e"."id""#), "{sql}");
+        }
+    }
+
+    /// PostgreSQL pushes a restriction into the branches of a union, never a
+    /// join clause, so a source reading the queue names the Evolution in both.
+    #[test]
+    fn a_window_match_reading_the_queue_takes_the_evolution_inside_both_branches() {
+        for sql in page_and_count(&HistoryBranch::live(), Some("2024-01-01T00:00:00Z")) {
+            assert!(sql.contains(r#""re"."id" = "e"."id""#), "{sql}");
+            assert!(sql.contains(r#""pe"."entity_id" = "e"."id""#), "{sql}");
+            assert!(!sql.contains(r#""ah"."entity_id" = "e"."id""#), "{sql}");
         }
     }
 
