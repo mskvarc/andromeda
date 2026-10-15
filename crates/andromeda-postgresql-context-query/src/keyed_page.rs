@@ -2,98 +2,33 @@
 //! an equality on a sub-attribute, or a `~=` on an attribute's own value.
 //!
 //! The planner cannot price either term (it underestimates a broad one by
-//! orders of magnitude), so the statement does not leave it the
-//! choice between walking the selection and reading the index. It tries the
-//! three in the order that stops soonest, and a gate on what the previous step
-//! found switches each later one off:
+//! orders of magnitude), so the page is a [`gated_page`]:
 //!
-//! 1. a short walk: the first [`SHORT_WALK`] Entities of the selection in page
-//!    order, each probed for the whole `q`. A broad predicate fills the page
-//!    here in a few probes.
-//! 2. the index: at most [`CANDIDATE_BOUND`] + 1 rows through
+//! 1. the short walk probes the first [`SHORT_WALK`] Entities of the
+//!    selection in page order for the whole `q`;
+//! 2. the index reads at most [`CANDIDATE_BOUND`] + 1 rows through
 //!    `idx_ca_sub_eq_keys` or the trigram indexes
 //!    ([`keyed_candidates`](andromeda_postgresql_query::q_predicate::keyed_term::keyed_candidates)),
-//!    each rechecked, and the page cut from the selection narrowed to them,
-//!    when they number at most [`CANDIDATE_BOUND`];
-//! 3. the full walk: the selection in page order, each Entity probed, when
-//!    more candidates qualify.
-//!
-//! Each step is one branch of a `UNION ALL` behind a
-//! [`one_time_gate`](crate::one_time_gate). Every branch cuts the same window
-//! over the same order, so whichever runs returns the page the plain
-//! statement would.
+//!    each rechecked, and the page is cut from the selection narrowed to them
+//!    under the rest of `q`;
+//! 3. the full walk probes each Entity of the selection for the whole `q`.
 
 use crate::{
-    entity::{QFilter, build_entity_conditions, window_and_sort_keys},
-    entity_page::{ProjectedPage, projected_page},
-    entity_relations::EntityRelations,
-    one_time_gate::{Candidates, bounded, column_of, count_of, materialized, within},
+    entity::QFilter,
+    entity_page::ProjectedPage,
+    gated_page::{IndexOrWalk, PageSource, ShortWalk, gated_page, walked_rows},
 };
-use andromeda_ngsi_ld_query::{
-    count_policy::CountPolicy,
-    entity::compiled::CompiledEntityQuery,
-    filter::expression::Expr as QueryExpr,
-    page_window::{PageStart, PageWindow},
-    read_order::ReadOrder,
-};
+use andromeda_ngsi_ld_query::{filter::expression::Expr as QueryExpr, read_order::ReadOrder};
 use andromeda_postgresql_query::{
-    dictionary::query_names::QueryNames,
-    entity_row_refs::EntityRowRefs,
     error::RenderError,
     q_predicate::{instance_scan::InstanceScan, keyed_term::KeyedCandidates, projection::compile},
 };
-use sea_query::{Alias, Asterisk, Condition, DynIden, Expr, ExprTrait, Iden, Query, SelectStatement, UnionType, WithClause};
 
 /// How many Entities the short walk probes before the index is read.
 pub const SHORT_WALK: u32 = 200;
 
 /// The most candidates the index path hands to the page.
 pub const CANDIDATE_BOUND: u64 = 1000;
-
-/// The CTE holding the short walk's matches.
-#[derive(Iden, Clone, Copy)]
-#[iden = "short_walk"]
-struct ShortWalk;
-
-/// The name the short walk reads the Entities it probes under.
-#[derive(Iden, Clone, Copy)]
-#[iden = "walked"]
-struct Walked;
-
-/// The statement a page is cut from: its relations, in the branch they are
-/// read in, and the query and window it answers.
-pub(crate) struct PageSource<'a> {
-    /// The relations the statement reads.
-    pub(crate) relations: &'a EntityRelations,
-    /// The branch schema, `None` for the live branch.
-    pub(crate) schema: Option<&'a DynIden>,
-    /// How the statement's fragments reach the rows.
-    pub(crate) rows: &'a EntityRowRefs,
-    /// The query.
-    pub(crate) query: &'a CompiledEntityQuery,
-    /// The window the page is.
-    pub(crate) window: &'a PageWindow,
-    /// The dictionary keys the query reads.
-    pub(crate) names: &'a QueryNames,
-}
-
-impl PageSource<'_> {
-    /// The page cut from the selection filtered by `condition` over `window`,
-    /// projected, with the order it is read in.
-    fn page(&self, condition: Condition, window: &PageWindow) -> Result<(ProjectedPage, ReadOrder), RenderError> {
-        let mut page = Query::select();
-        self.relations.clone().apply_from(&mut page, self.schema);
-        page.cond_where(condition);
-        let (keys, read_order) = window_and_sort_keys(&mut page, self.rows, self.query, window, &self.names.attributes)?;
-        Ok((projected_page(page, self.rows, keys, CountPolicy::Omit), read_order))
-    }
-
-    /// The selection filtered as `q` says, the `q` term `keyed` answers left
-    /// out or kept.
-    fn condition(&self, q: QFilter<'_>) -> Result<Condition, RenderError> {
-        build_entity_conditions(self.query, self.names, self.rows, &self.relations.source, q)
-    }
-}
 
 /// The projected page of `source` for a `q` with a keyed term, and the order
 /// its rows come back in.
@@ -103,85 +38,20 @@ impl PageSource<'_> {
 /// Fails as rendering the plain page fails: a reference geometry with no EWKB
 /// spelling, or a query-language rule a renderer decides first.
 pub(crate) fn keyed_page(source: &PageSource<'_>, q_expr: &QueryExpr, keyed: KeyedCandidates<'_>) -> Result<(ProjectedPage, ReadOrder), RenderError> {
-    let need = match source.window.start {
-        PageStart::Offset(offset) => u64::from(offset) + u64::from(source.window.limit),
-        PageStart::Cursor(_) => u64::from(source.window.limit),
+    let walked = walked_rows(source.schema);
+    let short = ShortWalk {
+        source: *source,
+        walked: source.condition(QFilter::Omitted)?,
+        probe: compile(q_expr, &InstanceScan::Current(&walked), source.names),
+        length: SHORT_WALK,
     };
-    let short = short_walk(source, q_expr, need)?;
-    let walked_enough = count_of(ShortWalk).gte(need);
-    let walked_short = count_of(ShortWalk).lt(need);
-    let few_candidates = within(Candidates, CANDIDATE_BOUND);
-    let many_candidates = count_of(Candidates).gt(CANDIDATE_BOUND);
-
-    let (indexed, read_order) = source.page(
-        source
-            .condition(QFilter::Except(keyed.term))?
-            .add(source.rows.entity_key_column().in_subquery(column_of(Candidates)))
-            .add(walked_short.clone()) // clone: both later branches are gated on the short walk
-            .add(few_candidates),
-        source.window,
-    )?;
-    let (walk, _) = source.page(source.condition(QFilter::Whole)?.add(walked_short).add(many_candidates), source.window)?;
-    let order = indexed.order;
-
-    let mut answered = Query::select();
-    answered.column(Asterisk).from(ShortWalk).and_where(walked_enough);
-    for (column, key_order) in &order {
-        key_order.order_by(&mut answered, Expr::col(column.clone())); // clone: each branch orders by the same columns
-    }
-    match source.window.start {
-        PageStart::Offset(offset) => {
-            answered.offset(u64::from(offset));
-        }
-        PageStart::Cursor(_) => {}
-    }
-    answered.limit(u64::from(source.window.limit));
-
-    let mut union = wrapped(answered.take(), "answered");
-    union
-        .union(UnionType::All, wrapped(indexed.select, "indexed"))
-        .union(UnionType::All, wrapped(walk.select, "walk"))
-        .with_cte(
-            WithClause::new()
-                .cte(materialized(short, ShortWalk))
-                .cte(materialized(bounded(keyed.select, CANDIDATE_BOUND), Candidates))
-                .to_owned(),
-        );
-    Ok((ProjectedPage { select: union.take(), order }, read_order))
-}
-
-/// The short walk: the first [`SHORT_WALK`] Entities of the selection in page
-/// order, from where the window starts, that the whole `q` keeps, at most
-/// `need` of them.
-///
-/// The selection is walked without `q`, and `q` probes the Entities it yields,
-/// so the walk visits [`SHORT_WALK`] Entities at most whatever `q` matches.
-fn short_walk(source: &PageSource<'_>, q_expr: &QueryExpr, need: u64) -> Result<SelectStatement, RenderError> {
-    let start = match &source.window.start {
-        PageStart::Offset(_) => PageStart::Offset(0),
-        // clone: the walk starts where the window does
-        PageStart::Cursor(cursor) => PageStart::Cursor(cursor.clone()),
+    let rest = IndexOrWalk {
+        candidates: keyed.select,
+        bound: CANDIDATE_BOUND,
+        narrowed: source.condition(QFilter::Except(keyed.term))?,
+        whole: source.condition(QFilter::Whole)?,
     };
-    let window = PageWindow { limit: SHORT_WALK, start };
-    let (walked, _) = source.page(source.condition(QFilter::Omitted)?, &window)?;
-    let ProjectedPage { select: walked, order } = walked;
-    let walked_rows = EntityRowRefs::unaliased(source.schema.cloned()).keyed_by(Walked);
-    let mut short = Query::select();
-    short
-        .column((Walked, Asterisk))
-        .from_subquery(walked, Walked)
-        .cond_where(compile(q_expr, &InstanceScan::Current(&walked_rows), source.names));
-    for (column, key_order) in order {
-        key_order.order_by(&mut short, Expr::col((Walked, column)));
-    }
-    short.limit(need);
-    Ok(short.take())
-}
-
-/// `SELECT * FROM (<branch>) AS <alias>`, so the branch keeps its own order
-/// and window inside the union.
-fn wrapped(branch: SelectStatement, alias: &str) -> SelectStatement {
-    Query::select().column(Asterisk).from_subquery(branch, Alias::new(alias)).take()
+    gated_page(source, short, rest)
 }
 
 #[cfg(test)]
@@ -301,7 +171,7 @@ mod tests {
             &names(),
         )
         .expect("valid entity query");
-        assert_eq!(built.planning, StatementPlanning::BoundValues);
+        assert_eq!(built.planning, StatementPlanning::GatedBranches);
         let (sql, _) = built.select.build(PostgresQueryBuilder);
         let candidates = sql
             .split(r#""candidates" AS  MATERIALIZED ("#)
@@ -368,9 +238,10 @@ mod tests {
 
     /// Without the operand a generic plan cannot estimate the key overlap and
     /// reads the attribute's rows through its name index instead, so the
-    /// keyed page is planned with its bound values.
+    /// keyed page is planned with its bound values, and its gated-off
+    /// branches launch no parallel worker.
     #[test]
-    fn a_keyed_page_is_planned_with_its_bound_values() {
+    fn a_keyed_page_is_planned_with_its_bound_values_and_runs_serially() {
         let built = build_query(
             &ContextTarget::Live,
             &query("\"https://example.com/temperature\".\"https://example.com/source\"==\"uncalibrated\""),
@@ -379,7 +250,7 @@ mod tests {
             &names(),
         )
         .expect("valid entity query");
-        assert_eq!(built.planning, StatementPlanning::BoundValues);
+        assert_eq!(built.planning, StatementPlanning::GatedBranches);
     }
 
     #[test]

@@ -1,10 +1,13 @@
 //! SQL generation for entity queries using sea-query.
 
 use crate::{
+    carried_names::{attrs_condition, projected_member_condition},
+    carrier_page::{carrier_page, carriers},
     entity_page::{heads_of, heads_over},
     entity_relations::{EntityRelations, RowSource},
     entity_total::{EntityTotal, KeyedTotal, TotalSource, entity_total},
-    keyed_page::{PageSource, keyed_page},
+    gated_page::PageSource,
+    keyed_page::keyed_page,
     result_ordering,
     selector_predicate::condition as selector_condition,
 };
@@ -14,32 +17,29 @@ use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity::compiled::CompiledEntityQuery,
     entity_selection::ConsideredEntities,
-    filter::predicate::Predicate,
+    filter::{expression::Expr as QueryExpr, predicate::Predicate},
     page_window::{PageStart, PageWindow},
-    projection::projected_members::{ProjectedMembers, ScopeRetention},
     read_order::ReadOrder,
 };
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_query::{
-    attribute_name_key::AttributeNameKey,
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     entity_row_refs::EntityRowRefs,
     error::RenderError,
     geo_predicate as geo_sql,
     geo_predicate::GeometrySource,
     page_window::bound_to_window,
-    q_predicate::{instance_scan::InstanceScan, keyed_term::keyed_candidates, projection as q_filter},
+    q_predicate::{
+        instance_scan::InstanceScan,
+        keyed_term::{KeyedCandidates, keyed_candidates},
+        projection as q_filter,
+    },
     scope_predicate::{ScopeTarget, condition as scope_condition},
     sort_key::{KeyOrder, NullPlacement, SortKey},
 };
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
-use andromeda_postgresql_seaquery::{
-    literal::false_literal,
-    operator::{array_contained_by_keys, array_contains_key},
-    pg_array::has_elements,
-    statement_planning::StatementPlanning,
-};
-use sea_query::{Condition, ExprTrait, Query, SelectStatement};
+use andromeda_postgresql_seaquery::{literal::false_literal, statement_planning::StatementPlanning};
+use sea_query::{Condition, Query, SelectStatement};
 
 /// A compiled entity query: the paginated result statement and how the total
 /// it reports is read, each a statement tree the store binds and executes on
@@ -53,11 +53,26 @@ pub struct EntityQuery {
     /// The order the page's rows come back in, which the store presents
     /// ascending.
     pub read_order: ReadOrder,
-    /// How PostgreSQL may plan `select` and the statement `total` runs: a
-    /// keyed page and its count are planned with their bound values, since
-    /// only they let the planner price the key index against walking the
-    /// selection.
+    /// How PostgreSQL may plan and run `select`: a gated page, keyed or cut
+    /// from the carriers of its `attrs`, with its bound values, which alone
+    /// let the planner price an index against walking the selection, and
+    /// without the parallel workers a gated-off branch would launch.
     pub planning: StatementPlanning,
+    /// How PostgreSQL may plan the statement `total` runs: a keyed count with
+    /// its bound values, for the same pricing.
+    pub total_planning: StatementPlanning,
+}
+
+/// How a page is cut from its selection.
+enum PageShape<'q> {
+    /// One statement over the selection, ordered and windowed, the plan left
+    /// to the planner.
+    Plain,
+    /// The gated page of a `q` whose conjunct an index answers.
+    Keyed(&'q QueryExpr, KeyedCandidates<'q>),
+    /// The gated page of a selection by `attrs` alone, the statement reading
+    /// the Entities that carry one of the Attributes.
+    Carriers(SelectStatement),
 }
 
 /// A compiled identifier-only entity query.
@@ -101,27 +116,47 @@ pub fn build_query(
         .q_expr
         .as_ref()
         .and_then(|q_expr| keyed_candidates(q_expr, &rows, names).map(|keyed| (q_expr, keyed)));
+    let shape = match keyed {
+        Some((q_expr, keyed)) => PageShape::Keyed(q_expr, keyed),
+        None => carriers(query, names, schema.as_ref()).map_or(PageShape::Plain, PageShape::Carriers),
+    };
 
     // An offset page, and the first page of a cursor walk, piggyback a
     // requested total on every row; a continued cursor page cannot, since its
-    // rows are only those past the cursor, and neither can a keyed page, whose
+    // rows are only those past the cursor, and neither can a gated page, whose
     // first branch reads only the Entities the short walk visited.
-    let counted_on_page = match (count, &window.start, &keyed) {
-        (CountPolicy::Emit, PageStart::Offset(_) | PageStart::Cursor(None), None) => CountPolicy::Emit,
-        (CountPolicy::Emit, PageStart::Cursor(Some(_)), None)
-        | (CountPolicy::Emit, PageStart::Offset(_) | PageStart::Cursor(_), Some(_))
-        | (CountPolicy::Omit, PageStart::Offset(_) | PageStart::Cursor(_), None | Some(_)) => CountPolicy::Omit,
+    let counted_on_page = match (count, &window.start, &shape) {
+        (CountPolicy::Emit, PageStart::Offset(_) | PageStart::Cursor(None), PageShape::Plain) => CountPolicy::Emit,
+        (CountPolicy::Emit, PageStart::Cursor(Some(_)), PageShape::Plain)
+        | (CountPolicy::Emit, PageStart::Offset(_) | PageStart::Cursor(_), PageShape::Keyed(..) | PageShape::Carriers(_))
+        | (CountPolicy::Omit, PageStart::Offset(_) | PageStart::Cursor(_), PageShape::Plain | PageShape::Keyed(..) | PageShape::Carriers(_)) => {
+            CountPolicy::Omit
+        }
     };
-    let (select, read_order, planning, keyed_total) = match keyed {
-        None => {
+    let source = PageSource {
+        relations: &relations,
+        schema: schema.as_ref(),
+        rows: &rows,
+        query,
+        window,
+        names,
+    };
+    let (select, read_order, planning, total_planning, keyed_total) = match shape {
+        PageShape::Plain => {
             let mut page = Query::select();
             relations.apply_from(&mut page, schema.as_ref());
             // clone: the count statement filters on the same condition.
             page.cond_where(condition.clone());
             let (keys, read_order) = window_and_sort_keys(&mut page, &rows, query, window, &names.attributes)?;
-            (heads_of(page, &rows, keys, counted_on_page), read_order, StatementPlanning::Cached, None)
+            (
+                heads_of(page, &rows, keys, counted_on_page),
+                read_order,
+                StatementPlanning::Cached,
+                StatementPlanning::Cached,
+                None,
+            )
         }
-        Some((q_expr, keyed)) => {
+        PageShape::Keyed(q_expr, keyed) => {
             let keyed_total = match count {
                 CountPolicy::Emit => Some(KeyedTotal {
                     term: keyed.term,
@@ -130,20 +165,23 @@ pub fn build_query(
                 }),
                 CountPolicy::Omit => None,
             };
-            let source = PageSource {
-                relations: &relations,
-                schema: schema.as_ref(),
-                rows: &rows,
-                query,
-                window,
-                names,
-            };
             let (page, read_order) = keyed_page(&source, q_expr, keyed)?;
             (
                 heads_over(page, &rows, CountPolicy::Omit),
                 read_order,
+                StatementPlanning::GatedBranches,
                 StatementPlanning::BoundValues,
                 keyed_total,
+            )
+        }
+        PageShape::Carriers(carriers) => {
+            let (page, read_order) = carrier_page(&source, carriers)?;
+            (
+                heads_over(page, &rows, CountPolicy::Omit),
+                read_order,
+                StatementPlanning::GatedBranches,
+                StatementPlanning::Cached,
+                None,
             )
         }
     };
@@ -161,6 +199,7 @@ pub fn build_query(
         total,
         read_order,
         planning,
+        total_planning,
     })
 }
 
@@ -275,20 +314,8 @@ pub(crate) fn build_entity_conditions(
         condition = condition.add(selectors);
     }
 
-    // Attribute existence filter (clause 5.5.9 `attrs`): the entity carries a
-    // member of at least one of the named attributes. The names the entity
-    // carries are recorded as dictionary keys on the search row, so each term
-    // is a containment test the GIN index answers; a name the dictionary has
-    // never recorded is carried by no entity and its term is constant `FALSE`.
-    if !query.selection.attrs.is_empty() {
-        let mut attr_cond = Condition::any();
-        for attr in &query.selection.attrs {
-            attr_cond = attr_cond.add(match names.attributes.get_str(attr.as_str()) {
-                Some(id) => array_contains_key(rows.search_column(EntitySearch::AttributeNameKeys), id.get()),
-                None => false_literal(),
-            });
-        }
-        condition = condition.add(attr_cond);
+    if let Some(attrs) = attrs_condition(&query.selection, names, rows) {
+        condition = condition.add(attrs);
     }
 
     // Clauses 5.7.2.5 and 6.3.13: an entity the `pick` / `omit` projection
@@ -323,43 +350,6 @@ pub(crate) fn build_entity_conditions(
     }
 
     Ok(condition)
-}
-
-/// The clause 4.21 projection read as a selection: the entity keeps a member
-/// the projection leaves it. `None` when every entity does.
-///
-/// The Attributes are read off the search row's interned member names, as
-/// `attrs` is: a `pick` keeps an entity carrying one of the names it lists, and
-/// an `omit` one carrying a name outside those it and clause 5.2.4 set apart,
-/// which is the negation of the member keys being contained by them. A name the
-/// dictionary never recorded is carried by no entity, so it neither keeps one
-/// nor has to be set apart. The `scope` the projection keeps is read off the
-/// search row's scope paths.
-fn projected_member_condition(projected: &ProjectedMembers, names: &QueryNames, rows: &EntityRowRefs) -> Option<Condition> {
-    let (attribute, scope) = match projected {
-        ProjectedMembers::Unconditional => return None,
-        ProjectedMembers::AnyOf { scope, .. } => {
-            let carried = projected
-                .names()
-                .filter_map(|name| names.attributes.get_str(name))
-                .map(|key| array_contains_key(rows.search_column(EntitySearch::AttributeNameKeys), key.get()))
-                .fold(Condition::any().add(false_literal()), Condition::add);
-            (carried, *scope)
-        }
-        ProjectedMembers::AnyBesides { scope, .. } => {
-            let set_apart: Vec<i32> = projected
-                .names()
-                .filter_map(|name| names.attributes.get_str(name))
-                .map(AttributeNameKey::get)
-                .collect();
-            let other = array_contained_by_keys(rows.search_column(EntitySearch::AttributeNameKeys), &set_apart).not();
-            (Condition::all().add(other), *scope)
-        }
-    };
-    Some(match scope {
-        ScopeRetention::Kept => Condition::any().add(attribute).add(has_elements(rows.search_column(EntitySearch::ScopePaths))),
-        ScopeRetention::Removed => attribute,
-    })
 }
 
 #[cfg(test)]

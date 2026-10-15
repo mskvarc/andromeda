@@ -175,7 +175,7 @@ mod tests {
         let sql = empty_page.to_string(PostgresQueryBuilder);
         assert!(sql.starts_with("SELECT COUNT(*) FROM "), "{sql}");
         assert!(!sql.contains("candidates") && !sql.contains("CASE"), "{sql}");
-        assert_eq!(built.planning, StatementPlanning::Cached);
+        assert_eq!(built.total_planning, StatementPlanning::Cached);
     }
 
     #[test]
@@ -189,6 +189,6 @@ mod tests {
         )
         .expect("valid entity query");
         assert!(matches!(built.total, EntityTotal::Counted(_)));
-        assert_eq!(built.planning, StatementPlanning::BoundValues);
+        assert_eq!(built.total_planning, StatementPlanning::BoundValues);
     }
 }

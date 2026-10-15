@@ -21,7 +21,7 @@ use andromeda_postgresql_query::{
     projected_attribute_names::projected_attribute_names,
     projected_type_names::projected_type_names,
 };
-use andromeda_postgresql_seaquery::statement_planning::{StatementPlanning, begin_bound_value_planning};
+use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
 use iri_rs::IriBuf;
 use sea_query::{PostgresQueryBuilder, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
@@ -78,17 +78,17 @@ impl EntityRepository {
             EntityTotal::Omitted => None,
             EntityTotal::OnPageRows { empty_page } => match (window_count, rows.is_empty()) {
                 (Some(count), _) => Some(count),
-                (None, true) => Some(self.count_matches(&empty_page, built.planning).await?),
+                (None, true) => Some(self.count_matches(&empty_page, built.total_planning).await?),
                 (None, false) => None,
             },
-            EntityTotal::Counted(count) => Some(self.count_matches(&count, built.planning).await?),
+            EntityTotal::Counted(count) => Some(self.count_matches(&count, built.total_planning).await?),
         };
 
         Ok(planned.outcome(rows, total_count))
     }
 
     /// Run a statement of a page as `planning` asks: on the pool, or in a
-    /// transaction of its own that plans it with its bound values.
+    /// transaction of its own that sets how it is planned and run.
     ///
     /// # Errors
     ///
@@ -97,10 +97,10 @@ impl EntityRepository {
     async fn fetch_planned(&self, select: &SelectStatement, planning: StatementPlanning) -> Result<Vec<PgRow>, ContextStoreError> {
         let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
         let statement = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values);
-        match planning {
-            StatementPlanning::Cached => Ok(statement.fetch_all(&self.pool).await?),
-            StatementPlanning::BoundValues => {
-                let mut transaction = self.pool.begin_with(begin_bound_value_planning()).await?;
+        match planning.begin() {
+            None => Ok(statement.fetch_all(&self.pool).await?),
+            Some(begin) => {
+                let mut transaction = self.pool.begin_with(begin).await?;
                 let rows = statement.fetch_all(&mut *transaction).await?;
                 transaction.commit().await?;
                 Ok(rows)

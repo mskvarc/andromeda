@@ -12,12 +12,15 @@
 
 mod attribute_value_datatype;
 pub mod attribute_value_order;
+mod carried_names;
+pub mod carrier_page;
 pub mod csr;
 pub mod entity;
 pub mod entity_head;
 pub mod entity_page;
 pub mod entity_relations;
 pub mod entity_total;
+mod gated_page;
 pub mod keyed_count;
 pub mod keyed_page;
 mod one_time_gate;
