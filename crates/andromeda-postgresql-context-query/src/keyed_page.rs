@@ -1,5 +1,6 @@
 //! The page of an entity query whose `q` holds a conjunct an index answers:
-//! an equality on a sub-attribute, or a `~=` on an attribute's own value.
+//! an equality on a sub-attribute, a `~=` on an attribute's own value, or an
+//! ordering or a range on an attribute's own `DateTime` or `Date` value.
 //!
 //! The planner cannot price either term (it underestimates a broad one by
 //! orders of magnitude), so the page is a [`gated_page`]:
@@ -7,10 +8,11 @@
 //! 1. the short walk probes the first [`SHORT_WALK`] Entities of the
 //!    selection in page order for the whole `q`;
 //! 2. the index reads at most [`CANDIDATE_BOUND`] + 1 rows through
-//!    `idx_ca_sub_eq_keys` or the trigram indexes
+//!    `idx_ca_sub_eq_keys` or the trigram indexes, each rechecked, or at most
+//!    [`RANGED_CANDIDATE_BOUND`] + 1 from a range of a typed value index
 //!    ([`keyed_candidates`](andromeda_postgresql_query::q_predicate::keyed_term::keyed_candidates)),
-//!    each rechecked, and the page is cut from the selection narrowed to them
-//!    under the rest of `q`;
+//!    and the page is cut from the selection narrowed to them under the rest
+//!    of `q`;
 //! 3. the full walk probes each Entity of the selection for the whole `q`.
 
 use crate::{
@@ -21,14 +23,34 @@ use crate::{
 use andromeda_ngsi_ld_query::{filter::expression::Expr as QueryExpr, read_order::ReadOrder};
 use andromeda_postgresql_query::{
     error::RenderError,
-    q_predicate::{instance_scan::InstanceScan, keyed_term::KeyedCandidates, projection::compile},
+    q_predicate::{
+        instance_scan::InstanceScan,
+        keyed_term::{CandidateRead, KeyedCandidates},
+        projection::compile,
+    },
 };
 
 /// How many Entities the short walk probes before the index is read.
 pub const SHORT_WALK: u32 = 200;
 
-/// The most candidates the index path hands to the page.
+/// The most rechecked candidates the index path hands to the page.
 pub const CANDIDATE_BOUND: u64 = 1000;
+
+/// The most candidates a range of a typed value index hands to the page.
+///
+/// A ranged candidate costs an index entry and a heap visit, with no recheck,
+/// so the index answers a term whose matches cluster late in page order far
+/// sooner than the walk well past the rechecked bound.
+pub const RANGED_CANDIDATE_BOUND: u64 = 50_000;
+
+/// The most candidates the index path hands to the page, by what one costs to
+/// read.
+const fn page_bound(read: CandidateRead) -> u64 {
+    match read {
+        CandidateRead::Rechecked => CANDIDATE_BOUND,
+        CandidateRead::Ranged => RANGED_CANDIDATE_BOUND,
+    }
+}
 
 /// The projected page of `source` for a `q` with a keyed term, and the order
 /// its rows come back in.
@@ -47,7 +69,7 @@ pub(crate) fn keyed_page(source: &PageSource<'_>, q_expr: &QueryExpr, keyed: Key
     };
     let rest = IndexOrWalk {
         candidates: keyed.select,
-        bound: CANDIDATE_BOUND,
+        bound: page_bound(keyed.read),
         narrowed: source.condition(QFilter::Except(keyed.term))?,
         whole: source.condition(QFilter::Whole)?,
     };
@@ -138,6 +160,54 @@ mod tests {
             .map_or_else(|| panic!("the index path: {sql}"), |(_, rest)| rest);
         assert!(candidates.contains(r#") AS "matches" LIMIT $"#), "{candidates}");
         assert!(values.0.contains(&Value::BigUnsigned(Some(1001))), "{:?}", values.0);
+    }
+
+    /// A range of a typed value index is a match as it is read, so the page
+    /// reads more of them before it walks.
+    #[test]
+    fn a_date_time_ordering_reads_its_candidates_under_the_ranged_bound() {
+        let built = build_query(
+            &ContextTarget::Live,
+            &query("\"https://example.com/temperature\">2024-01-15T12:00:00Z"),
+            &PageWindow::offset(100, 0),
+            CountPolicy::Omit,
+            &names(),
+        )
+        .expect("valid entity query");
+        assert_eq!(built.planning, StatementPlanning::GatedBranches);
+        let (sql, values) = built.select.build(PostgresQueryBuilder);
+        let candidates = sql
+            .split(r#""candidates" AS  MATERIALIZED ("#)
+            .nth(1)
+            .and_then(|rest| rest.split(r#") AS "matches""#).next())
+            .unwrap_or_else(|| panic!("the index path: {sql}"));
+        assert!(candidates.contains(r#""ca"."value_date_time" > $"#), "{candidates}");
+        assert_eq!(candidates.matches("UNION ALL").count(), 1, "the typed and the language branch: {candidates}");
+        assert!(values.0.contains(&Value::BigUnsigned(Some(50_001))), "{:?}", values.0);
+        assert!(values.0.contains(&Value::BigUnsigned(Some(50_000))), "{:?}", values.0);
+    }
+
+    /// A Date is held as its fixed-width text, so its candidates range over the
+    /// string index, and the index branch leaves the ordering out.
+    #[test]
+    fn a_date_ordering_pages_through_the_string_index() {
+        let built = build_query(
+            &ContextTarget::Live,
+            &query("\"https://example.com/temperature\"<=2024-01-15"),
+            &PageWindow::offset(100, 0),
+            CountPolicy::Omit,
+            &names(),
+        )
+        .expect("valid entity query");
+        let (sql, _) = built.select.build(PostgresQueryBuilder);
+        let after_short = sql.split(r#"AS "answered""#).nth(1).expect("the index branch follows the short walk");
+        let (indexed, walk) = after_short.split_once(r#"AS "indexed""#).expect("the index branch");
+        assert!(
+            indexed.contains(r#""entities"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#),
+            "{indexed}"
+        );
+        assert!(!indexed.contains(r#""ca"."value_string" <= $"#), "{indexed}");
+        assert!(walk.contains(r#""ca"."value_string" <= $"#), "{walk}");
     }
 
     /// The index branch answers the keyed term with its candidates, so its

@@ -6,8 +6,13 @@ use crate::{
     entity_relations::EntityRelations,
     keyed_count::{KeyedCountFilters, keyed_count},
 };
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, filter::predicate::Predicate};
-use andromeda_postgresql_query::{dictionary::query_names::QueryNames, entity_row_refs::EntityRowRefs, error::RenderError};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery};
+use andromeda_postgresql_query::{
+    dictionary::query_names::QueryNames,
+    entity_row_refs::EntityRowRefs,
+    error::RenderError,
+    q_predicate::keyed_term::KeyedCandidates,
+};
 use sea_query::{Asterisk, Condition, DynIden, Expr, Func, Query, SelectStatement};
 
 /// How the store reads the total a counted entity query reports (clause
@@ -43,18 +48,11 @@ pub(crate) struct TotalSource<'a> {
     pub(crate) schema: Option<&'a DynIden>,
 }
 
-/// The term of `q` an index answers and its candidates, which a count reads
-/// in place of probing every Entity for the term.
-pub(crate) struct KeyedTotal<'q> {
-    /// The term the candidates answer.
-    pub(crate) term: &'q Predicate,
-    /// `SELECT "entity_key" …`, every candidate.
-    pub(crate) candidates: SelectStatement,
-}
-
 /// The total `count` asks for, carried on the page's rows when
 /// `counted_on_page` says the page can, counted over `whole`, the query's
-/// whole filter, or through `keyed` when a term of `q` has candidates.
+/// whole filter, or through `keyed`, the term of `q` an index answers and its
+/// candidates, which the count reads in place of probing every Entity for the
+/// term.
 ///
 /// # Errors
 ///
@@ -65,7 +63,7 @@ pub(crate) fn entity_total(
     count: CountPolicy,
     counted_on_page: CountPolicy,
     whole: Condition,
-    keyed: Option<KeyedTotal<'_>>,
+    keyed: Option<KeyedCandidates<'_>>,
 ) -> Result<EntityTotal, RenderError> {
     match count {
         CountPolicy::Omit => return Ok(EntityTotal::Omitted),
@@ -74,12 +72,12 @@ pub(crate) fn entity_total(
     let relations = EntityRelations::for_count(source.query, &source.names.types, source.schema);
     let count_select = match keyed {
         None => count_over(relations, source.schema, whole),
-        Some(KeyedTotal { term, candidates }) => {
+        Some(KeyedCandidates { term, select, read }) => {
             let filters = KeyedCountFilters {
                 remainder: build_entity_conditions(source.query, source.names, source.rows, &relations.source, QFilter::Except(term))?,
                 whole,
             };
-            keyed_count(&relations, source.schema, source.rows, filters, candidates)
+            keyed_count(&relations, source.schema, source.rows, filters, select, read)
         }
     };
     Ok(match counted_on_page {

@@ -5,7 +5,7 @@ use crate::{
     carrier_page::{carrier_page, carriers},
     entity_page::{heads_of, heads_over},
     entity_relations::{EntityRelations, RowSource},
-    entity_total::{EntityTotal, KeyedTotal, TotalSource, entity_total},
+    entity_total::{EntityTotal, TotalSource, entity_total},
     gated_page::PageSource,
     keyed_page::keyed_page,
     numbered_page::{NumberedOrder, numbered_order, numbered_page},
@@ -168,10 +168,10 @@ pub fn build_query(
         }
         PageShape::Keyed(q_expr, keyed) => {
             let keyed_total = match count {
-                CountPolicy::Emit => Some(KeyedTotal {
-                    term: keyed.term,
-                    // clone: the count reads the same candidates under its own bound
-                    candidates: keyed.select.clone(),
+                // clone: the count reads the same candidates under its own bound
+                CountPolicy::Emit => Some(KeyedCandidates {
+                    select: keyed.select.clone(),
+                    ..keyed
                 }),
                 CountPolicy::Omit => None,
             };

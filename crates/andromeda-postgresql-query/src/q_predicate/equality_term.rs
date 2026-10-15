@@ -7,6 +7,7 @@ use crate::{
         instance_row::InstanceRow,
         language_map::{LanguageMap, LanguageSelection},
         language_term::{StringComparability, some_string_in_range, string_comparability},
+        own_value_arms::OwnValueArms,
         structured_target::{StructuredTarget, carries_operand},
         typed_column::typed_column_condition,
         value_column::ValueColumn,
@@ -132,18 +133,24 @@ fn range_condition(target: StructuredTarget<'_>, min: &Scalar, max: &Scalar, mem
 }
 
 /// Whether the target value sits inside the interval, both bounds included
-/// (clause 4.9 `Range`): the typed column holding the operand kind, or — for an
-/// operand a string can compare with — one string of a `languageMap`.
+/// (clause 4.9 `Range`).
 fn within_range(min: &Scalar, max: &Scalar, row: InstanceRow) -> Condition {
-    let typed = Condition::all()
-        .add(typed_column_condition(min, CmpOp::GreaterEq, row))
-        .add(typed_column_condition(max, CmpOp::LessEq, row));
-    match string_comparability(min) {
-        StringComparability::Comparable => {
-            Condition::any()
-                .add(typed)
-                .add(some_string_in_range(&LanguageMap::of_instance(row), LanguageSelection::AnyLanguage, min, max))
-        }
-        StringComparability::Incomparable => typed,
+    range_arms(min, max, row).either()
+}
+
+/// The readings [`within_range`] disjoins: the typed column holding the
+/// operand kind, or (for an operand a string can compare with) one string of
+/// a `languageMap`.
+#[must_use]
+pub(crate) fn range_arms(min: &Scalar, max: &Scalar, row: InstanceRow) -> OwnValueArms {
+    let language = match string_comparability(min) {
+        StringComparability::Comparable => Some(some_string_in_range(&LanguageMap::of_instance(row), LanguageSelection::AnyLanguage, min, max)),
+        StringComparability::Incomparable => None,
+    };
+    OwnValueArms {
+        typed: Condition::all()
+            .add(typed_column_condition(min, CmpOp::GreaterEq, row))
+            .add(typed_column_condition(max, CmpOp::LessEq, row)),
+        language,
     }
 }

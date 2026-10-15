@@ -8,7 +8,8 @@
 //! by orders of magnitude while the candidates are few against the selection
 //! and loses once they approach it, and the planner cannot tell the two
 //! apart. The statement therefore reads at most [`COUNT_CANDIDATE_BOUND`] + 1
-//! candidates behind a [`one_time_gate`](crate::one_time_gate): when they
+//! rechecked candidates, or [`RANGED_COUNT_CANDIDATE_BOUND`] + 1 from a range
+//! of a typed value index, behind a [`one_time_gate`](crate::one_time_gate): when they
 //! number at most the bound they are every candidate, and the selection
 //! narrowed to them is counted; when more qualify, the selection is walked.
 
@@ -17,12 +18,25 @@ use crate::{
     entity_total::count_over,
     one_time_gate::{Candidates, bounded, column_of, materialized, within},
 };
-use andromeda_postgresql_query::entity_row_refs::EntityRowRefs;
+use andromeda_postgresql_query::{entity_row_refs::EntityRowRefs, q_predicate::keyed_term::CandidateRead};
 use sea_query::{Condition, DynIden, Expr, ExprTrait, Query, SelectStatement, WithClause};
 
-/// The most candidates a count reads from a keyed term's index before it
-/// walks the selection instead.
+/// The most rechecked candidates a count reads from a keyed term's index
+/// before it walks the selection instead.
 pub const COUNT_CANDIDATE_BOUND: u64 = 10_000;
+
+/// The most candidates a count reads from a range of a typed value index
+/// before it walks the selection instead; a ranged candidate needs no
+/// recheck.
+pub const RANGED_COUNT_CANDIDATE_BOUND: u64 = 50_000;
+
+/// The most candidates a count reads, by what one costs to read.
+const fn count_bound(read: CandidateRead) -> u64 {
+    match read {
+        CandidateRead::Rechecked => COUNT_CANDIDATE_BOUND,
+        CandidateRead::Ranged => RANGED_COUNT_CANDIDATE_BOUND,
+    }
+}
 
 /// What a keyed total filters the selection by, each way it counts.
 pub(crate) struct KeyedCountFilters {
@@ -33,27 +47,25 @@ pub(crate) struct KeyedCountFilters {
 }
 
 /// The count of the selection `relations` read in the branch `schema`
-/// (`None` for the live branch), from the keyed term's `candidates` when
-/// they are few, by walking otherwise.
+/// (`None` for the live branch), from the keyed term's `candidates`, which
+/// cost `read` each, when they are few, by walking otherwise.
 pub(crate) fn keyed_count(
     relations: &EntityRelations,
     schema: Option<&DynIden>,
     rows: &EntityRowRefs,
     filters: KeyedCountFilters,
     candidates: SelectStatement,
+    read: CandidateRead,
 ) -> SelectStatement {
+    let bound = count_bound(read);
     let narrowed = filters.remainder.add(rows.entity_key_column().in_subquery(column_of(Candidates)));
     // clone: both counts read the same relations
     let indexed = count_over(relations.clone(), schema, narrowed);
     let walked = count_over(relations.clone(), schema, filters.whole);
     let mut count = Query::select();
     count
-        .expr(Expr::case(within(Candidates, COUNT_CANDIDATE_BOUND), indexed).finally(walked))
-        .with_cte(
-            WithClause::new()
-                .cte(materialized(bounded(candidates, COUNT_CANDIDATE_BOUND), Candidates))
-                .to_owned(),
-        );
+        .expr(Expr::case(within(Candidates, bound), indexed).finally(walked))
+        .with_cte(WithClause::new().cte(materialized(bounded(candidates, bound), Candidates)).to_owned());
     count.take()
 }
 
@@ -121,6 +133,20 @@ mod tests {
         assert!(sql.contains(r#"SELECT (CASE WHEN ((SELECT COUNT(*) FROM "candidates") <= $"#), "{sql}");
         assert!(values.contains(&Value::BigUnsigned(Some(10_001))), "{values:?}");
         assert!(values.contains(&Value::BigUnsigned(Some(10_000))), "{values:?}");
+    }
+
+    /// A range of the date-time index is a match as it is read, so the count
+    /// reads more of them before it walks.
+    #[test]
+    fn a_date_time_ordering_counts_through_the_ranged_bound() {
+        let (sql, values) = count_of("\"https://example.com/temperature\">2024-01-15T12:00:00Z");
+        let (candidates, _) = sql.split_once(" SELECT (CASE WHEN ").unwrap_or_else(|| panic!("a gated count: {sql}"));
+        assert!(candidates.contains(r#""ca"."value_date_time" > $"#), "{candidates}");
+        assert!(values.contains(&Value::BigUnsigned(Some(50_001))), "{values:?}");
+        assert!(values.contains(&Value::BigUnsigned(Some(50_000))), "{values:?}");
+        let (indexed, walked) = arms(&sql);
+        assert!(!indexed.contains("value_date_time"), "the candidates answer the ordering: {indexed}");
+        assert!(walked.contains(r#""ca"."value_date_time" > $"#), "the walk probes the whole q: {walked}");
     }
 
     #[test]

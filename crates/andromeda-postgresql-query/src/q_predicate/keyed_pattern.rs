@@ -9,30 +9,23 @@
 //! `idx_ca_value_long_text_trgm`, both keyed by the attribute and the
 //! pattern's trigrams, and the `LanguageProperty` rows of the attribute
 //! through the attribute key of `idx_ca_value_object`, each map unnested and
-//! tested. The branches together keep exactly the rows the disjunction keeps,
-//! and a bounded read stops at the first branches that fill the bound.
+//! tested.
 
 use crate::{
     dictionary::query_names::QueryNames,
     entity_row_refs::EntityRowRefs,
     q_predicate::{
         instance_row::InstanceRow,
+        keyed_branches::{branch, language_property_rows, union_of},
         local_target::{LocalTarget, local_target},
         pattern_term::{PatternTarget, pattern_on, pattern_targets},
-        projection_probe::{Ca, of_attribute, projection_column, standing},
     },
 };
 use andromeda_ngsi_ld_query::filter::{
     path::QueryPath,
     predicate::{PatternPolarity, Predicate},
 };
-use andromeda_postgresql_codes::attribute_kind::AttributeKind;
-use andromeda_postgresql_schema::current::CurrentAttributes;
-use andromeda_postgresql_seaquery::literal::int_literal;
-use sea_query::{Alias, ExprTrait, Query, SelectStatement, SimpleExpr, UnionType};
-
-/// The name the union of the per-target branches is read under.
-const MATCHES: &str = "matches";
+use sea_query::{Condition, SelectStatement, SimpleExpr};
 
 /// `SELECT "entity_key"` over the rows of the attribute whose own value
 /// matches `pred`, `None` unless `pred` is a `~=` on a recorded attribute's
@@ -54,42 +47,21 @@ pub(crate) fn pattern_candidates(pred: &Predicate, rows: &EntityRowRefs, names: 
     }
     let attribute = names.attributes.get(&path.attr)?;
     let row = InstanceRow::Current;
-    let mut branches = pattern_targets(row).map(|target| {
-        let mut branch = Query::select();
-        branch
-            .expr(projection_column(CurrentAttributes::EntityKey))
-            .from(rows.table(CurrentAttributes::Table).alias(Ca))
-            .and_where(of_attribute(attribute))
-            .and_where(standing());
-        if let Some(rows_holding) = holds_target(target) {
-            branch.and_where(rows_holding);
-        }
-        branch.and_where(pattern_on(target, pred, pattern, PatternPolarity::Match, row));
-        branch.take()
-    });
-    let mut union = branches.next()?;
-    for branch in branches {
-        union.union(UnionType::All, branch);
-    }
-    let mut candidates = Query::select();
-    candidates.column(CurrentAttributes::EntityKey).from_subquery(union, Alias::new(MATCHES));
-    Some(candidates.take())
+    union_of(pattern_targets(row).map(|target| {
+        let test = Condition::all().add(pattern_on(target, pred, pattern, PatternPolarity::Match, row));
+        branch(rows, attribute, holds_target(target), test)
+    }))
 }
 
 /// The rows that can hold `target`, stated so the planner reaches them
 /// through an index when the target's own test gives it none.
 ///
 /// A String column's pattern implies the column is set, which the partial
-/// trigram index over it requires. A `languageMap` is a `LanguageProperty`
-/// row's `value_object`, which `idx_ca_value_object` keys by attribute.
+/// trigram index over it requires.
 fn holds_target(target: PatternTarget) -> Option<SimpleExpr> {
     match target {
         PatternTarget::Column(_) => None,
-        PatternTarget::LanguageMap => Some(
-            projection_column(CurrentAttributes::AttributeKind)
-                .eq(int_literal(i64::from(AttributeKind::LanguageProperty.code())))
-                .and(projection_column(CurrentAttributes::ValueObject).is_not_null()),
-        ),
+        PatternTarget::LanguageMap => Some(language_property_rows()),
     }
 }
 
