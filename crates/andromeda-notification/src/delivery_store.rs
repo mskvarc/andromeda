@@ -9,7 +9,8 @@
 //!
 //! Claiming touches deliveries only; the event payload each claimed delivery
 //! carries is joined in afterwards, so the queue scan never reads a snapshot it
-//! does not end up delivering.
+//! does not end up delivering, and an event the claiming pass already holds is
+//! not read at all.
 //!
 //! Deliveries live per context branch: the live branch and every Snapshot
 //! branch keep their own delivery queue. `claim_pending` drains across branches
@@ -23,6 +24,7 @@ use crate::{
     delivery_entry::DeliveryKey,
     delivery_lease::{DeliveryLeaseError, LeaseTerm},
     error::NotificationError,
+    held_events::HeldEvents,
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::context_target::ContextTarget;
@@ -35,6 +37,11 @@ pub trait DeliveryStore: Send + Sync + 'static {
     /// delivered nor exhausted — and claimable, meaning due and either unleased
     /// or held under an expired lease; lease each claimed delivery to
     /// `worker_id` for `lease`, and return it joined to its event.
+    ///
+    /// An event `held` already holds for the delivery's branch is handed over
+    /// as it is rather than read again, and every event the claim does read is
+    /// added to `held`, so the deliveries of one event share one payload across
+    /// the claims of a pass.
     ///
     /// The attempt ceiling is not the store's concern: the worker acknowledges
     /// the final failed attempt through [`DeliveryStore::mark_terminal`], which
@@ -50,15 +57,17 @@ pub trait DeliveryStore: Send + Sync + 'static {
     ///
     /// An `Err` means the queue itself could not be claimed from -- the
     /// database unreachable, a statement refused -- and ends the worker's pass.
-    fn claim_pending<'life0, 'life1, 'async_trait>(
+    fn claim_pending<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         worker_id: &'life1 LeaseHolder,
         lease: LeaseTerm,
         batch_size: i32,
+        held: &'life2 HeldEvents,
     ) -> BoxFuture<'async_trait, Result<Vec<DeliveryClaim>, NotificationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
+        'life2: 'async_trait,
         Self: 'async_trait;
 
     /// Mark a delivery delivered, provided `worker_id` still holds its lease.

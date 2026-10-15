@@ -24,7 +24,7 @@ use andromeda_ngsi_ld_entity::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
-use andromeda_notification::delivery_store::DeliveryStore;
+use andromeda_notification::{delivery_store::DeliveryStore, held_events::HeldEvents};
 use andromeda_postgresql_context_store::notification_delivery::rows::NewNotificationEvent;
 use chrono::Utc;
 use pretty_assertions::assert_eq;
@@ -186,7 +186,12 @@ async fn durable_queue_one_event_owes_exactly_one_delivery_per_matching_subscrip
 
     let queue = delivery_queue(&pool);
     let worker = delivery_worker();
-    let claimed = readable(queue.claim_pending(&worker, holding_lease(), 200).await.expect("claim the whole fan-out"));
+    let claimed = readable(
+        queue
+            .claim_pending(&worker, holding_lease(), 200, &HeldEvents::default())
+            .await
+            .expect("claim the whole fan-out"),
+    );
     assert_eq!(claimed.len(), HIGH_FAN_OUT + 1, "every owed delivery is claimable");
     let rendered = claimed.first().expect("a claimed delivery");
     assert_eq!(
@@ -299,7 +304,7 @@ async fn durable_queue_claiming_a_delivery_leaves_its_event_untouched() {
 
     let queue = delivery_queue(&pool);
     let worker = delivery_worker();
-    let claimed = readable(queue.claim_pending(&worker, holding_lease(), 10).await.expect("claim"));
+    let claimed = readable(queue.claim_pending(&worker, holding_lease(), 10, &HeldEvents::default()).await.expect("claim"));
     assert_eq!(claimed.len(), 1);
 
     let after: (String, String) = sqlx::query_as("SELECT xmin::text, entity_snapshot::text FROM notification_events WHERE write_id = $1")

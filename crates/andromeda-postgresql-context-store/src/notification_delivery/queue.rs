@@ -1,17 +1,12 @@
 //! The queue behind the notification-owned delivery store port.
 //!
 //! The port speaks one claimed delivery and the event it carries; storage keeps
-//! those as two rows, and a claim reads its deliveries and then each event they
-//! answer once. The statements below it know nothing of the port, and the
+//! those as two rows, and a claim reads its deliveries and then, once each, the
+//! events they answer that the claiming pass does not already hold. The statements below it know nothing of the port, and the
 //! delivery worker above it knows nothing of the two reads.
 
 use crate::{
-    notification_delivery::{
-        acknowledge,
-        claim::{self, ClaimDictionaries},
-        cleanup,
-        rows::UnreadableClaimedDelivery,
-    },
+    notification_delivery::{acknowledge, claim, claimed_event_read::ClaimDictionaries, cleanup, rows::UnreadableClaimedDelivery},
     store_fault::persistence_failure,
 };
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
@@ -23,6 +18,7 @@ use andromeda_notification::{
     delivery_lease::{DeliveryLeaseError, LeaseTerm},
     delivery_store::DeliveryStore,
     error::NotificationError,
+    held_events::HeldEvents,
 };
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use async_trait::async_trait;
@@ -62,12 +58,18 @@ impl NotificationDeliveryQueue {
 
 #[async_trait]
 impl DeliveryStore for NotificationDeliveryQueue {
-    async fn claim_pending(&self, worker_id: &LeaseHolder, lease: LeaseTerm, batch_size: i32) -> Result<Vec<DeliveryClaim>, NotificationError> {
+    async fn claim_pending(
+        &self,
+        worker_id: &LeaseHolder,
+        lease: LeaseTerm,
+        batch_size: i32,
+        held: &HeldEvents,
+    ) -> Result<Vec<DeliveryClaim>, NotificationError> {
         let dictionaries = ClaimDictionaries {
             attribute_names: self.attribute_names.as_ref(),
             entity_type_names: self.entity_type_names.as_ref(),
         };
-        let claimed = claim::claim_due(&self.pool, dictionaries, *worker_id, lease, batch_size)
+        let claimed = claim::claim_due(&self.pool, dictionaries, *worker_id, lease, batch_size, held)
             .await
             .map_err(|error| NotificationError::Persistence(persistence_failure(&error)))?;
         Ok(claimed.into_iter().map(delivery_claim).collect())

@@ -12,6 +12,7 @@ use crate::{
     delivery_lease::{DeliveryLeaseError, LeaseTerm},
     delivery_store::DeliveryStore,
     error::NotificationError,
+    held_events::HeldEvents,
     notification_invariant::NotificationInvariant,
 };
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder, lease_pass_clock::LeasePassClock};
@@ -194,6 +195,11 @@ impl NotificationDeliveryDrain {
     /// instead still be waiting to be sent when that lease ran out, and a
     /// second worker would claim and send it again.
     ///
+    /// The claims of one pass share the events they read: a claim hands over
+    /// the event a delivery still in flight already carries instead of reading
+    /// it again, so the deliveries of one event, claimed one slot at a time,
+    /// cost one event read between them.
+    ///
     /// Every claimed delivery is driven to its acknowledgement even when
     /// another one fails, so no lease this worker holds is abandoned
     /// mid-flight; the first persistence failure is then surfaced, and no
@@ -218,12 +224,13 @@ impl NotificationDeliveryDrain {
     /// [`DeliveryDrainOutcome::lease_lost`] rather than surfaced as an error.
     pub async fn execute(&self, now: DateTime<Utc>) -> Result<DeliveryDrainOutcome, NotificationError> {
         let clock = LeasePassClock::starting_at(now);
+        let held = HeldEvents::default();
         let mut budget = ClaimBudget::new(self.batch_size);
         let mut lease_lost = 0_usize;
         let mut failure: Option<NotificationError> = None;
         let mut slots: FuturesUnordered<BoxFuture<'_, SlotEvent>> = FuturesUnordered::new();
         let opening = budget.reserve(self.concurrency.get());
-        slots.push(self.claim(opening, &clock).boxed());
+        slots.push(self.claim(opening, &clock, &held).boxed());
         while let Some(event) = slots.next().await {
             match event {
                 SlotEvent::Claimed { asked, claims: Ok(claims) } => {
@@ -244,7 +251,7 @@ impl NotificationDeliveryDrain {
                     // The acknowledged delivery freed its slot.
                     if failure.is_none() && budget.can_claim_more() {
                         let refill = budget.reserve(1);
-                        slots.push(self.claim(refill, &clock).boxed());
+                        slots.push(self.claim(refill, &clock, &held).boxed());
                     }
                 }
             }
@@ -259,10 +266,11 @@ impl NotificationDeliveryDrain {
         }
     }
 
-    /// Claim up to `width` deliveries under a lease that starts now.
-    async fn claim(&self, width: usize, clock: &LeasePassClock) -> SlotEvent {
+    /// Claim up to `width` deliveries under a lease that starts now, reusing
+    /// the events the pass's in-flight deliveries hold.
+    async fn claim(&self, width: usize, clock: &LeasePassClock, held: &HeldEvents) -> SlotEvent {
         let claims = match i32::try_from(width) {
-            Ok(claim_width) => self.store.claim_pending(&self.worker_id, self.lease_term, claim_width).await,
+            Ok(claim_width) => self.store.claim_pending(&self.worker_id, self.lease_term, claim_width, held).await,
             Err(error) => Err(NotificationInvariant::ClaimWidth(error).into()),
         };
         if let Ok(claimed) = &claims {
@@ -379,6 +387,7 @@ mod tests {
         delivery_lease::{DeliveryLeaseError, LeaseTerm},
         delivery_store::DeliveryStore,
         error::NotificationError,
+        held_events::HeldEvents,
         notification_event::{NotificationEvent, NotificationEventKey},
     };
     use andromeda_configuration_scalars::human_duration::HumanDuration;
@@ -437,6 +446,9 @@ mod tests {
     #[derive(Default)]
     struct RecordingStore {
         entries: Mutex<VecDeque<DeliveryClaim>>,
+        /// Deliveries handed over with the event the pass already held, as a
+        /// queue skips reading it.
+        reused: Mutex<Vec<DeliveryKey>>,
         delivered: Mutex<Vec<DeliveryKey>>,
         failed: Mutex<Vec<(DeliveryKey, String, DateTime<Utc>)>>,
         terminal: Mutex<Vec<(DeliveryKey, String)>>,
@@ -492,6 +504,28 @@ mod tests {
             }
         }
 
+        /// Hand a claimed delivery over with the event the pass already holds,
+        /// or hold its own event for the claims after it.
+        fn hand_over(&self, claim: DeliveryClaim, held: &HeldEvents) -> DeliveryClaim {
+            match claim {
+                DeliveryClaim::Readable(mut entry) => {
+                    match held.get(&entry.target, entry.event.key) {
+                        Some(event) => {
+                            self.reused.lock().expect("the test lock is not poisoned").push(entry.key);
+                            entry.event = event;
+                        }
+                        None => held.hold(&entry.target, &entry.event),
+                    }
+                    DeliveryClaim::Readable(entry)
+                }
+                unreadable @ DeliveryClaim::Unreadable(_) => unreadable,
+            }
+        }
+
+        fn reused_keys(&self) -> Vec<DeliveryKey> {
+            self.reused.lock().expect("the test lock is not poisoned").clone()
+        }
+
         fn recorded_calls(&self) -> Vec<StoreCall> {
             self.calls.lock().expect("the call record lock is not poisoned").iter().copied().collect()
         }
@@ -514,7 +548,13 @@ mod tests {
 
     #[async_trait]
     impl DeliveryStore for RecordingStore {
-        async fn claim_pending(&self, _worker_id: &LeaseHolder, lease: LeaseTerm, batch_size: i32) -> Result<Vec<DeliveryClaim>, NotificationError> {
+        async fn claim_pending(
+            &self,
+            _worker_id: &LeaseHolder,
+            lease: LeaseTerm,
+            batch_size: i32,
+            held: &HeldEvents,
+        ) -> Result<Vec<DeliveryClaim>, NotificationError> {
             if self.claim_state == ClaimState::Refused {
                 return Err(NotificationError::Persistence(PersistenceFailure::Unavailable));
             }
@@ -523,7 +563,7 @@ mod tests {
             let width = usize::try_from(batch_size).expect("a non-negative claim width");
             let mut entries = self.entries.lock().expect("the test lock is not poisoned");
             let taken = width.min(entries.len());
-            Ok(entries.drain(..taken).collect())
+            Ok(entries.drain(..taken).map(|claim| self.hand_over(claim, held)).collect())
         }
 
         async fn mark_delivered(&self, key: DeliveryKey, worker_id: &LeaseHolder, _target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
@@ -1002,6 +1042,48 @@ mod tests {
                 Some(&DeliveryKey::from(1_i64)),
                 "the other deliveries were sent while the slow one was in flight: {acknowledged:?}"
             );
+            Ok(())
+        })
+    }
+
+    /// Every delivery claimed while delivery 1 is still in flight answers the
+    /// same event, so each later claim of the pass finds it held.
+    #[test]
+    fn the_claims_of_a_pass_find_the_event_a_delivery_in_flight_carries() -> Result<(), NotificationError> {
+        block_on(async {
+            let entries = (1..=5_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
+            let store = Arc::new(RecordingStore::with_entries(entries));
+            let config = DeliveryConfig {
+                batch_size: 5,
+                concurrency: 2,
+                ..config()
+            };
+            NotificationDeliveryDrain::new(store.clone(), Arc::new(SlowOnceTransport(DeliveryKey::from(1_i64))), &config)?
+                .execute(Utc::now())
+                .await?;
+            pretty_assertions::assert_eq!(store.reused_keys(), [2, 3, 4, 5].map(DeliveryKey::from));
+            Ok(())
+        })
+    }
+
+    /// With one slot, each delivery is acknowledged before the next is
+    /// claimed, so no delivery is left carrying the event and the pass holds
+    /// nothing for the next claim.
+    #[test]
+    fn a_pass_does_not_keep_an_event_once_no_delivery_carries_it() -> Result<(), NotificationError> {
+        block_on(async {
+            let entries = (1..=3_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
+            let store = Arc::new(RecordingStore::with_entries(entries));
+            let config = DeliveryConfig {
+                batch_size: 3,
+                concurrency: 1,
+                ..config()
+            };
+            NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), &config)?
+                .execute(Utc::now())
+                .await?;
+            pretty_assertions::assert_eq!(store.claim_widths(), vec![1, 1, 1]);
+            assert!(store.reused_keys().is_empty(), "{:?}", store.reused_keys());
             Ok(())
         })
     }

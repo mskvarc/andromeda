@@ -20,10 +20,12 @@ pub mod acknowledge;
 pub mod branches;
 /// The numbers `notification_events` stores one entity change as.
 pub(crate) mod change_code;
-/// Leasing due deliveries and reading the events they answer.
+/// Leasing due deliveries, then reading back the events they answer.
 pub mod claim;
 /// The events one delivery claim read back, each decoded once.
 pub mod claimed_event;
+/// Reading the events one claim's deliveries answer.
+pub mod claimed_event_read;
 /// Reaping delivered rows and the events they leave behind.
 pub mod cleanup;
 /// Writing one write's notification events and their deliveries.

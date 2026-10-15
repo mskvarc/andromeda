@@ -12,7 +12,7 @@ use crate::{
     queue_workers::{delivery_worker, holding_lease},
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_notification::{delivery_entry::DeliveryKey, delivery_store::DeliveryStore};
+use andromeda_notification::{delivery_entry::DeliveryKey, delivery_store::DeliveryStore, held_events::HeldEvents};
 use chrono::{Duration, Utc};
 use pretty_assertions::assert_eq;
 use serial_test::serial;
@@ -53,7 +53,12 @@ async fn durable_queue_a_delivery_stays_claimable_through_repeated_failures_unti
     let worker = delivery_worker();
 
     for attempt in 1..=MAX_ATTEMPTS {
-        let claimed = readable(queue.claim_pending(&worker, holding_lease(), BATCH_SIZE).await.expect("claim before the limit"));
+        let claimed = readable(
+            queue
+                .claim_pending(&worker, holding_lease(), BATCH_SIZE, &HeldEvents::default())
+                .await
+                .expect("claim before the limit"),
+        );
         assert_eq!(claimed.len(), 1, "attempt {attempt} must still find the delivery claimable");
         assert_eq!(claimed[0].attempt_count, attempt - 1, "the claim reports the attempts already made");
 
@@ -80,7 +85,12 @@ async fn durable_queue_a_delivery_stays_claimable_through_repeated_failures_unti
     // The queue does not enforce the ceiling: after five recorded failures the
     // row is still offered, because the ceiling is delivery policy the worker
     // owns and records through a terminal acknowledgement.
-    let still_offered = readable(queue.claim_pending(&worker, holding_lease(), BATCH_SIZE).await.expect("claim at the limit"));
+    let still_offered = readable(
+        queue
+            .claim_pending(&worker, holding_lease(), BATCH_SIZE, &HeldEvents::default())
+            .await
+            .expect("claim at the limit"),
+    );
     assert_eq!(still_offered.len(), 1, "the queue keeps offering a delivery the worker has not exhausted");
     assert_eq!(still_offered[0].attempt_count, MAX_ATTEMPTS);
     queue
@@ -89,7 +99,12 @@ async fn durable_queue_a_delivery_stays_claimable_through_repeated_failures_unti
         .expect("record the exhausting attempt");
     assert!(is_exhausted(&pool, delivery).await, "the worker's decision is recorded as exhausted_at");
 
-    let exhausted = readable(queue.claim_pending(&worker, holding_lease(), BATCH_SIZE).await.expect("claim after exhaustion"));
+    let exhausted = readable(
+        queue
+            .claim_pending(&worker, holding_lease(), BATCH_SIZE, &HeldEvents::default())
+            .await
+            .expect("claim after exhaustion"),
+    );
     assert!(exhausted.is_empty(), "an exhausted delivery is no longer claimable");
     pool.close().await;
 }
@@ -105,7 +120,7 @@ async fn durable_queue_a_terminal_failure_retires_the_delivery_and_releases_its_
 
     let claimed = readable(
         queue
-            .claim_pending(&worker, holding_lease(), BATCH_SIZE)
+            .claim_pending(&worker, holding_lease(), BATCH_SIZE, &HeldEvents::default())
             .await
             .expect("claim before the terminal failure"),
     );
@@ -123,7 +138,7 @@ async fn durable_queue_a_terminal_failure_retires_the_delivery_and_releases_its_
 
     let retired = readable(
         queue
-            .claim_pending(&worker, holding_lease(), BATCH_SIZE)
+            .claim_pending(&worker, holding_lease(), BATCH_SIZE, &HeldEvents::default())
             .await
             .expect("claim after the terminal failure"),
     );

@@ -4,7 +4,8 @@
 //! and a claim often holds several of them. The claim therefore reads each
 //! event it needs once, and the deliveries of one event share the decoded
 //! record, entity states included, instead of decoding the same state once
-//! per delivery.
+//! per delivery. An event the claiming pass already holds joins the claim's
+//! events unread.
 //!
 //! An event stores its states as `entity_state_record`s, every name a
 //! dictionary key. The claim decodes every event first, looks up the names of
@@ -20,6 +21,7 @@ use andromeda_context_commit::{
     write_id::WriteId,
     write_ordinal::{WriteOrdinal, WriteOrdinalOutOfRange},
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -30,7 +32,10 @@ use andromeda_ngsi_ld_model::{
     entity_change::{EntityChange, EntityLifecycle},
     notification::SysAttrsSnapshot,
 };
-use andromeda_notification::notification_event::{NotificationEvent, NotificationEventKey};
+use andromeda_notification::{
+    held_events::HeldEvents,
+    notification_event::{NotificationEvent, NotificationEventKey},
+};
 use andromeda_postgresql_attribute_instance::name_keys::{HeldKeys, KeyNames};
 use chrono::{DateTime, Utc};
 use std::{collections::HashMap, sync::Arc};
@@ -126,6 +131,25 @@ impl ClaimedEvents {
     /// The event under `key`, or `None` when the claim did not read it back.
     pub(crate) fn get(&self, key: NotificationEventKey) -> Option<&ClaimedEvent> {
         self.0.get(&key)
+    }
+
+    /// Hold every event that decoded in `held` under `target`'s branch, for the
+    /// claims after this one in the same pass.
+    ///
+    /// An event that does not decode is not held, so a later claim reads it
+    /// again and reports its deliveries unreadable for the reason it gives.
+    pub(crate) fn hold_into(&self, held: &HeldEvents, target: &ContextTarget) {
+        for event in self.0.values().filter_map(|event| event.as_ref().ok()) {
+            held.hold(target, event);
+        }
+    }
+
+    /// These events together with `reused`, the events the pass already held
+    /// that the claim's deliveries answer.
+    pub(crate) fn with_reused(self, reused: impl IntoIterator<Item = Arc<NotificationEvent>>) -> ClaimedEvents {
+        let ClaimedEvents(mut events) = self;
+        events.extend(reused.into_iter().map(|event| (event.key, Ok(event))));
+        ClaimedEvents(events)
     }
 }
 
@@ -271,10 +295,14 @@ pub(crate) mod tests {
         },
     };
     use andromeda_context_commit::write_ordinal::WriteOrdinal;
+    use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_entity::{entity_state::EntityState, reads::attribute_change::AttributeChangeKind};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::entity_change::EntityLifecycle;
-    use andromeda_notification::notification_event::{NotificationEvent, NotificationEventKey};
+    use andromeda_notification::{
+        held_events::HeldEvents,
+        notification_event::{NotificationEvent, NotificationEventKey},
+    };
     use andromeda_postgresql_attribute_instance::{name_keys::KeyNames, name_resolution::names_of, stored_members::StoredInstanceError};
     use andromeda_postgresql_name_dictionary::name_lookup::{NameLookup, NameLookupError};
     use andromeda_postgresql_query::dictionary::{interned_name::InternedName, resolved_names::ResolvedNames};
@@ -574,5 +602,46 @@ pub(crate) mod tests {
     fn an_event_the_claim_did_not_read_is_absent() {
         let events = ReadEvents::read([event_row()]).assemble(&KeyNames::default());
         assert!(events.get(NotificationEventKey::from(4_i64)).is_none());
+    }
+
+    #[test]
+    fn a_decoded_event_is_held_for_the_rest_of_the_pass() {
+        let events = ReadEvents::read([event_row()]).assemble(&KeyNames::default());
+        let held = HeldEvents::default();
+        events.hold_into(&held, &ContextTarget::Live);
+        let decoded = events
+            .get(NotificationEventKey::from(3_i64))
+            .and_then(|event| event.as_ref().ok())
+            .expect("the decoded event");
+        let found = held.get(&ContextTarget::Live, NotificationEventKey::from(3_i64)).expect("the held event");
+        assert!(Arc::ptr_eq(&found, decoded));
+    }
+
+    /// An event that does not decode is read again by the next claim, which
+    /// reports its deliveries unreadable for the same reason.
+    #[test]
+    fn an_event_that_does_not_decode_is_not_held() {
+        let mut raw = event_row();
+        raw.lifecycle = 99;
+        let events = ReadEvents::read([raw]).assemble(&KeyNames::default());
+        let held = HeldEvents::default();
+        events.hold_into(&held, &ContextTarget::Live);
+        assert!(held.get(&ContextTarget::Live, NotificationEventKey::from(3_i64)).is_none());
+    }
+
+    #[test]
+    fn a_reused_event_joins_the_events_the_claim_read() {
+        let mut raw = event_row();
+        raw.event_key = 9;
+        let reused = decoded(raw, &KeyNames::default()).expect("a valid claimed event");
+        let events = ReadEvents::read([event_row()])
+            .assemble(&KeyNames::default())
+            .with_reused([Arc::clone(&reused)]);
+        assert!(matches!(events.get(NotificationEventKey::from(3_i64)), Some(Ok(_))));
+        let joined = events
+            .get(NotificationEventKey::from(9_i64))
+            .and_then(|event| event.as_ref().ok())
+            .expect("the reused event");
+        assert!(Arc::ptr_eq(joined, &reused));
     }
 }

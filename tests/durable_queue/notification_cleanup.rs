@@ -12,7 +12,7 @@ use crate::{
     queue_workers::{delivery_worker, holding_lease},
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_notification::{delivery_entry::DeliveryKey, delivery_store::DeliveryStore};
+use andromeda_notification::{delivery_entry::DeliveryKey, delivery_store::DeliveryStore, held_events::HeldEvents};
 use chrono::{Duration, Utc};
 use pretty_assertions::assert_eq;
 use serial_test::serial;
@@ -55,7 +55,12 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
     let queue = delivery_queue(&pool);
     let worker = delivery_worker();
 
-    let claimed = readable(queue.claim_pending(&worker, holding_lease(), 10).await.expect("claim the fan-out"));
+    let claimed = readable(
+        queue
+            .claim_pending(&worker, holding_lease(), 10, &HeldEvents::default())
+            .await
+            .expect("claim the fan-out"),
+    );
     assert_eq!(claimed.len(), 4);
     // clone: Arc ref-count bump; the payload is compared again after the claimed batch is consumed.
     let payload = claimed.first().expect("a claimed delivery").event.entity_snapshot.clone();
@@ -121,7 +126,12 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
         .execute(&pool)
         .await
         .expect("make the retained delivery due");
-    let last = readable(queue.claim_pending(&worker, holding_lease(), 10).await.expect("claim the last delivery"));
+    let last = readable(
+        queue
+            .claim_pending(&worker, holding_lease(), 10, &HeldEvents::default())
+            .await
+            .expect("claim the last delivery"),
+    );
     assert_eq!(last.len(), 1);
     assert_eq!(
         last.first().expect("the last delivery").event.entity_snapshot.as_deref(),
@@ -158,7 +168,7 @@ async fn durable_queue_a_delivery_exhausted_by_repeated_retries_is_reaped() {
     for attempt in 0..MAX_ATTEMPTS {
         let claimed = readable(
             queue
-                .claim_pending(&worker, holding_lease(), 10)
+                .claim_pending(&worker, holding_lease(), 10, &HeldEvents::default())
                 .await
                 .unwrap_or_else(|_| panic!("claim attempt {attempt}")),
         );
@@ -184,7 +194,12 @@ async fn durable_queue_a_delivery_exhausted_by_repeated_retries_is_reaped() {
         }
     }
 
-    let claimed_after_ceiling = readable(queue.claim_pending(&worker, holding_lease(), 10).await.expect("claim past the ceiling"));
+    let claimed_after_ceiling = readable(
+        queue
+            .claim_pending(&worker, holding_lease(), 10, &HeldEvents::default())
+            .await
+            .expect("claim past the ceiling"),
+    );
     assert!(
         claimed_after_ceiling.is_empty(),
         "a delivery exhausted at the attempt ceiling is permanently unclaimable, exactly like a terminally failed one"

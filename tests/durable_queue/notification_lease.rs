@@ -12,7 +12,7 @@ use crate::{
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_notification::{delivery_entry::DeliveryKey, delivery_lease::DeliveryLeaseError, delivery_store::DeliveryStore};
+use andromeda_notification::{delivery_entry::DeliveryKey, delivery_lease::DeliveryLeaseError, delivery_store::DeliveryStore, held_events::HeldEvents};
 use chrono::{DateTime, Utc};
 use pretty_assertions::assert_eq;
 use serial_test::serial;
@@ -43,11 +43,21 @@ async fn durable_queue_a_due_delivery_is_leased_to_exactly_one_worker() {
 
     let first = delivery_worker();
     let second = delivery_worker();
-    let claimed = readable(queue.claim_pending(&first, holding_lease(), BATCH_SIZE).await.expect("first claim"));
+    let claimed = readable(
+        queue
+            .claim_pending(&first, holding_lease(), BATCH_SIZE, &HeldEvents::default())
+            .await
+            .expect("first claim"),
+    );
     assert_eq!(claimed.len(), 1, "the due delivery must be leased to the first worker");
     assert_eq!(claimed[0].key, DeliveryKey::from(delivery));
 
-    let contended = readable(queue.claim_pending(&second, holding_lease(), BATCH_SIZE).await.expect("second claim"));
+    let contended = readable(
+        queue
+            .claim_pending(&second, holding_lease(), BATCH_SIZE, &HeldEvents::default())
+            .await
+            .expect("second claim"),
+    );
     assert!(contended.is_empty(), "a live lease must exclude every other worker");
 
     let (claimed_at, claimed_by, lease_until) = claim_triple(&pool, delivery).await;
@@ -71,7 +81,12 @@ async fn durable_queue_a_stale_worker_cannot_acknowledge_a_reclaimed_delivery() 
     let queue = delivery_queue(&pool);
 
     let stale = delivery_worker();
-    let claimed = readable(queue.claim_pending(&stale, expiring_lease(), BATCH_SIZE).await.expect("first claim"));
+    let claimed = readable(
+        queue
+            .claim_pending(&stale, expiring_lease(), BATCH_SIZE, &HeldEvents::default())
+            .await
+            .expect("first claim"),
+    );
     assert_eq!(claimed.len(), 1);
 
     // The lease is the shortest the term type accepts, so waiting past it is
@@ -81,7 +96,7 @@ async fn durable_queue_a_stale_worker_cannot_acknowledge_a_reclaimed_delivery() 
     let reclaiming = delivery_worker();
     let reclaimed = readable(
         queue
-            .claim_pending(&reclaiming, holding_lease(), BATCH_SIZE)
+            .claim_pending(&reclaiming, holding_lease(), BATCH_SIZE, &HeldEvents::default())
             .await
             .expect("reclaim after expiry"),
     );

@@ -234,6 +234,7 @@ mod tests {
         delivery_lease::{DeliveryLeaseError, LeaseTerm},
         delivery_store::DeliveryStore,
         error::NotificationError,
+        held_events::HeldEvents,
     };
     use andromeda_postgresql_context_store::error::ContextStoreError;
     use andromeda_tenancy::state_factory::RuntimeActivity;
@@ -277,7 +278,13 @@ mod tests {
 
     #[async_trait]
     impl DeliveryStore for CountingQueue {
-        async fn claim_pending(&self, _worker_id: &LeaseHolder, _lease: LeaseTerm, _batch_size: i32) -> Result<Vec<DeliveryClaim>, NotificationError> {
+        async fn claim_pending(
+            &self,
+            _worker_id: &LeaseHolder,
+            _lease: LeaseTerm,
+            _batch_size: i32,
+            _held: &HeldEvents,
+        ) -> Result<Vec<DeliveryClaim>, NotificationError> {
             Ok(Vec::new())
         }
 

@@ -40,8 +40,9 @@ pub struct DeliveryEntry {
     pub attempt_count: i32,
     /// Earliest instant at which the next attempt may be made.
     pub next_attempt_at: DateTime<Utc>,
-    /// The immutable event this delivery carries, shared by every delivery of
-    /// one claim that answers it.
+    /// The immutable event this delivery carries, shared by every delivery
+    /// that answers it within one delivery pass while any of them is in
+    /// flight.
     pub event: Arc<NotificationEvent>,
 }
 

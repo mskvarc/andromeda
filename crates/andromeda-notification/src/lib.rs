@@ -43,6 +43,8 @@ pub mod delivery_lease;
 pub mod delivery_store;
 /// Focused notification failures.
 pub mod error;
+/// The events a delivery pass's in-flight deliveries already carry.
+pub mod held_events;
 /// Entity interval notification evaluation.
 pub mod interval;
 /// The entities a periodic notification considers.
