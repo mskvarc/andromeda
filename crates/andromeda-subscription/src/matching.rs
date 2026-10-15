@@ -6,7 +6,6 @@
 
 use crate::compiled::CompiledSubscription;
 use andromeda_context_commit::change_event::ChangeEvent;
-use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_model::{notification::ChangeOrigin, subscription::SubscriptionStatus};
 use andromeda_ngsi_ld_query::{
     filter::eval::evaluate,
@@ -75,8 +74,7 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
 
     if !sub.selectors.is_empty() {
         let any_selector_matches = sub.selectors.iter().any(|sel| {
-            let entity_types: Vec<&str> = event.entity_types.iter().map(EntityTypeName::as_str).collect();
-            if !sel.type_.matches(&entity_types) {
+            if !sel.type_.matches(&event.entity_types) {
                 debug!(
                     "Subscription {} selector type mismatch: selector={} event_types={:?}",
                     sub.id, sel.type_, event.entity_types

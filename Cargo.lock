@@ -2119,6 +2119,7 @@ dependencies = [
  "parking_lot",
  "pretty_assertions",
  "proptest",
+ "rustc-hash",
  "serde_json",
  "strum",
  "thiserror 2.0.21",

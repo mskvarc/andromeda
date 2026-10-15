@@ -9,7 +9,7 @@
 //! The durable path that queues a notification in the write's transaction and
 //! the live path that sends it at once both decide it here.
 
-use crate::{cache::SubscriptionCache, compiled::CompiledSubscription, matching::matches_entity_filters, spatial_narrowing::narrow_by_spatial_index};
+use crate::{cache::SubscriptionCache, compiled::CompiledSubscription, matching::matches_entity_filters, spatial_narrowing::SpatialReach};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, queried::linked_states::LinkedStates};
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
@@ -76,17 +76,14 @@ pub fn narrow_by_change_filters(
     }
     let now = Utc::now();
     let mut matching: Vec<Arc<CompiledSubscription>> = Vec::with_capacity(candidates.len());
+    let mut remaining = candidates;
     for state in filtered.into_iter().map(|state| state.standing_at(now)) {
-        let remaining: Vec<Arc<CompiledSubscription>> = candidates
-            .iter()
-            .filter(|candidate| !matching.iter().any(|kept| kept.key == candidate.key))
-            .map(Arc::clone)
-            .collect();
-        matching.extend(
-            narrow_by_spatial_index(cache, target, remaining, &state, entity_types)
-                .into_iter()
-                .filter(|subscription| admitted(subscription, &state, hops)),
-        );
+        let mut reach = SpatialReach::new(cache, target, &state, entity_types);
+        let (admitted_here, rest): (Vec<Arc<CompiledSubscription>>, Vec<Arc<CompiledSubscription>>) = remaining
+            .into_iter()
+            .partition(|subscription| reach.admits(subscription) && admitted(subscription, &state, hops));
+        matching.extend(admitted_here);
+        remaining = rest;
     }
     matching
 }
@@ -255,6 +252,51 @@ mod tests {
             admitted_keys(vec![subscription(1, COMMERCIAL_HOP)], HopResolution::Resolved(&residential)),
             Vec::<String>::new()
         );
+    }
+
+    /// The Vehicle as the write left it, its speed removed.
+    fn vehicle_without_speed() -> EntityState {
+        state(&json!([{
+            "@id": "urn:ngsi-ld:Vehicle:1",
+            "@type": ["https://example.com/Vehicle"],
+            "https://example.com/isParkedIn": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/Relationship"],
+                "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": PARKING}]
+            }]
+        }]))
+    }
+
+    /// Clause 5.8.6: the candidates the state the write left admits come
+    /// first, then those only the state before a removal admits, each once.
+    #[test]
+    fn a_removal_lists_what_the_state_left_admits_before_what_only_the_previous_state_admits() {
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
+        let current = vehicle_without_speed();
+        let previous = vehicle();
+        let removal = EntityChange::new(
+            EntityLifecycle::Modified,
+            vec![AttributeChange {
+                key: AttributeInstanceKey {
+                    attr: "https://example.com/speed".parse().expect("valid attribute name"),
+                    dataset_id: None,
+                },
+                kind: AttributeChangeKind::Deleted,
+            }],
+        );
+        let states = ChangedStates {
+            current: Some(&current),
+            previous: Some(&previous),
+        };
+        let candidates = vec![
+            subscription(1, "\"https://example.com/speed\">50"),
+            subscription(2, "\"https://example.com/isParkedIn\""),
+            subscription(3, "\"https://example.com/speed\">100"),
+        ];
+        let admitted: Vec<String> = narrow_by_change_filters(&cache, &ContextTarget::Live, candidates, &removal, states, &[], HopResolution::Deferred)
+            .into_iter()
+            .map(|subscription| subscription.id.to_string())
+            .collect();
+        pretty_assertions::assert_eq!(admitted, vec!["urn:ngsi-ld:Subscription:2".to_owned(), "urn:ngsi-ld:Subscription:1".to_owned()]);
     }
 
     /// A filter without a hop is decided wherever the change is filtered.

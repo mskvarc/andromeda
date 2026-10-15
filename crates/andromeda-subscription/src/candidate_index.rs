@@ -17,11 +17,8 @@ use andromeda_context_commit::{change_event::ChangeEvent, subscription_key::Subs
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
 use andromeda_telemetry::subscription::CandidateFunnel;
-use std::{
-    collections::{HashMap, HashSet},
-    hash::Hash,
-    sync::Arc,
-};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::{collections::HashMap, hash::Hash, sync::Arc};
 use strum::EnumCount;
 
 /// The routing buckets over one tenant's active subscriptions.
@@ -31,15 +28,15 @@ use strum::EnumCount;
 /// buckets that must move together.
 #[derive(Debug, Default)]
 pub struct CandidateIndex {
-    entries: HashMap<SubscriptionKey, Arc<CompiledSubscription>>,
+    entries: FxHashMap<SubscriptionKey, Arc<CompiledSubscription>>,
     keys_by_id: HashMap<Identifier, SubscriptionKey>,
-    by_type: HashMap<EntityTypeName, HashSet<SelectorRef>>,
-    by_entity_id: HashMap<Identifier, HashSet<SelectorRef>>,
-    wildcard: HashSet<SubscriptionKey>,
-    by_trigger: [HashSet<SubscriptionKey>; NotificationTrigger::COUNT],
-    by_watched_attribute: HashMap<AttributeName, HashSet<SubscriptionKey>>,
-    watch_all: HashSet<SubscriptionKey>,
-    membership: HashMap<SubscriptionKey, Membership>,
+    by_type: HashMap<EntityTypeName, FxHashSet<SelectorRef>>,
+    by_entity_id: HashMap<Identifier, FxHashSet<SelectorRef>>,
+    wildcard: FxHashSet<SubscriptionKey>,
+    by_trigger: [FxHashSet<SubscriptionKey>; NotificationTrigger::COUNT],
+    by_watched_attribute: HashMap<AttributeName, FxHashSet<SubscriptionKey>>,
+    watch_all: FxHashSet<SubscriptionKey>,
+    membership: FxHashMap<SubscriptionKey, Membership>,
 }
 
 /// The slot of a trigger in the per-trigger bucket array.
@@ -142,7 +139,7 @@ impl CandidateIndex {
         compiled
     }
 
-    fn drop_selectors<K: Hash + Eq>(buckets: &mut HashMap<K, HashSet<SelectorRef>>, bucket: &K, key: SubscriptionKey) {
+    fn drop_selectors<K: Hash + Eq>(buckets: &mut HashMap<K, FxHashSet<SelectorRef>>, bucket: &K, key: SubscriptionKey) {
         if let Some(refs) = buckets.get_mut(bucket) {
             refs.retain(|selector| selector.subscription != key);
             if refs.is_empty() {
@@ -151,7 +148,7 @@ impl CandidateIndex {
         }
     }
 
-    fn drop_member<K: Hash + Eq>(buckets: &mut HashMap<K, HashSet<SubscriptionKey>>, bucket: &K, key: SubscriptionKey) {
+    fn drop_member<K: Hash + Eq>(buckets: &mut HashMap<K, FxHashSet<SubscriptionKey>>, bucket: &K, key: SubscriptionKey) {
         if let Some(keys) = buckets.get_mut(bucket) {
             keys.remove(&key);
             if keys.is_empty() {
@@ -169,11 +166,17 @@ impl CandidateIndex {
     pub fn find_matching(&self, event: &ChangeEvent) -> MatchOutcome {
         let routed = self.route_selectors(event);
         let routed_count = routed.len();
-        let raised = event.change.triggers();
+        let listening: Vec<&FxHashSet<SubscriptionKey>> = event
+            .change
+            .triggers()
+            .into_iter()
+            .map(|trigger| &self.by_trigger[trigger_slot(trigger)])
+            .collect();
+        let watching = self.watching_changed_attributes(event);
         let watched: Vec<SubscriptionKey> = routed
             .into_iter()
-            .filter(|key| raised.iter().any(|trigger| self.by_trigger[trigger_slot(*trigger)].contains(key)))
-            .filter(|key| self.admits_changed_attributes(*key, event))
+            .filter(|key| listening.iter().any(|keys| keys.contains(key)))
+            .filter(|key| self.watch_all.contains(key) || watching.iter().any(|keys| keys.contains(key)))
             .collect();
         let candidates: Vec<&Arc<CompiledSubscription>> = watched.iter().filter_map(|key| self.entries.get(key)).collect();
         let evaluated = candidates.len();
@@ -196,8 +199,8 @@ impl CandidateIndex {
 
     /// Selector stage: the wildcard bucket, plus every selector whose indexed
     /// type and/or id the event hits in the combination its shape demands.
-    fn route_selectors(&self, event: &ChangeEvent) -> HashSet<SubscriptionKey> {
-        let mut routed: HashSet<SubscriptionKey> = self.wildcard.iter().copied().collect();
+    fn route_selectors(&self, event: &ChangeEvent) -> FxHashSet<SubscriptionKey> {
+        let mut routed: FxHashSet<SubscriptionKey> = self.wildcard.iter().copied().collect();
         let id_hits = self.by_entity_id.get(&event.entity_id);
         for selector in event.entity_types.iter().filter_map(|type_name| self.by_type.get(type_name)).flatten() {
             match selector.shape {
@@ -223,15 +226,16 @@ impl CandidateIndex {
         routed
     }
 
-    /// Watched-attribute stage: a subscription without `watchedAttributes`
-    /// admits every event; one with them admits an event that changed at least
-    /// one of them.
-    fn admits_changed_attributes(&self, key: SubscriptionKey, event: &ChangeEvent) -> bool {
-        self.watch_all.contains(&key)
-            || event
-                .change
-                .attributes()
-                .into_iter()
-                .any(|name| self.by_watched_attribute.get(name).is_some_and(|keys| keys.contains(&key)))
+    /// Watched-attribute stage, looked up once per event: the buckets of the
+    /// subscriptions watching an attribute the event changed. A subscription
+    /// without `watchedAttributes` admits every event; one with them admits an
+    /// event whose changed attributes land it in one of these buckets.
+    fn watching_changed_attributes(&self, event: &ChangeEvent) -> Vec<&FxHashSet<SubscriptionKey>> {
+        event
+            .change
+            .attributes()
+            .into_iter()
+            .filter_map(|name| self.by_watched_attribute.get(name))
+            .collect()
     }
 }
