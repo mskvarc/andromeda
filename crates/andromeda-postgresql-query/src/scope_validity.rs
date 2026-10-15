@@ -91,21 +91,6 @@ pub fn overlaps_window(axis: ScopeHistory, interval: TimeInterval, branch: &Hist
     condition
 }
 
-/// Whether the scope event was the one in force at `instant`.
-///
-/// The last event at or before `instant` decides what the entity's scope was
-/// then, which is the event that both started at or before it and had not been
-/// superseded by it.
-///
-/// `branch` is the branch the supersession probe reads the scope history of,
-/// as for [`overlaps_window`].
-#[must_use]
-pub fn valid_at(axis: ScopeHistory, instant: &SimpleExpr, branch: &HistoryBranch) -> Condition {
-    Condition::all()
-        .add(Expr::col((ScopeEvent, axis)).lte(instant.clone())) // clone: the instant is named twice and sea-query takes it by value.
-        .add(not_superseded_by(instant.clone(), axis, branch)) // clone: as above.
-}
-
 /// Whether no event of the same entity, later on `axis`, falls at or before
 /// `instant`.
 ///
@@ -133,13 +118,13 @@ fn not_superseded_by(instant: SimpleExpr, axis: ScopeHistory, branch: &HistoryBr
 mod tests {
     use crate::{
         history_source::HistoryBranch,
-        scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis, valid_at},
+        scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis},
     };
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
     use andromeda_postgresql_schema::temporal::ScopeHistory;
     use chrono::{DateTime, Utc};
-    use sea_query::{Alias, Condition, Expr, Iden, PostgresQueryBuilder, Query};
+    use sea_query::{Condition, Expr, Iden, PostgresQueryBuilder, Query};
 
     fn instant(raw: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&Utc)
@@ -233,16 +218,5 @@ mod tests {
     fn an_event_carrying_no_instant_on_the_axis_is_excluded() {
         let sql = render(Condition::all().add(positioned_on_axis(ScopeHistory::ObservedAt)));
         assert!(sql.contains("\"sh\".\"observed_at\" IS NOT NULL"), "{sql}");
-    }
-
-    /// Annex C clause C.5.16: only the Property values observed after the Scope
-    /// became valid are included, so an instant is tested against the event
-    /// that had started by then and had not been superseded by then.
-    #[test]
-    fn validity_at_an_instant_reads_the_event_in_force_then() {
-        let instant_expr = Expr::col((Alias::new("ah"), Alias::new("observed_at")));
-        let sql = render(valid_at(ScopeHistory::ObservedAt, &instant_expr, &HistoryBranch::live()));
-        assert!(sql.contains("\"sh\".\"observed_at\" <= \"ah\".\"observed_at\""), "{sql}");
-        assert!(sql.contains("\"sh_next\".\"observed_at\" <= \"ah\".\"observed_at\""), "{sql}");
     }
 }

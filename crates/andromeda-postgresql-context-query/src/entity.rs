@@ -264,10 +264,7 @@ pub(crate) fn build_entity_conditions(
     }
 
     if let Some(scope_q) = &query.selection.scope_q {
-        condition = condition.add(scope_condition(
-            scope_q,
-            &ScopeTarget::current_paths((EntitySearch::Table, EntitySearch::ScopePaths)),
-        ));
+        condition = condition.add(scope_condition(scope_q, &ScopeTarget::paths((EntitySearch::Table, EntitySearch::ScopePaths))));
     }
 
     Ok(condition)

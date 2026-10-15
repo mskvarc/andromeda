@@ -53,7 +53,9 @@ fn represented_attribute(branch: &HistoryBranch, compiled: &CompiledTemporalQuer
     let mut probe = Query::select();
     probe.expr(int_literal(1));
     base_history_source(&mut probe, branch, &of_selected_entity());
-    probe.cond_where(represented_instances(branch, compiled)).cond_where(kept_names);
+    probe
+        .cond_where(represented_instances(branch, &of_selected_entity(), compiled))
+        .cond_where(kept_names);
     probe.take()
 }
 

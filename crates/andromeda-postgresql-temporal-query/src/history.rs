@@ -23,7 +23,7 @@ use andromeda_ngsi_ld_query::{
 use andromeda_postgresql_query::{
     dataset_predicate::dataset_condition,
     history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, grain::HistoryGrain},
-    scope_predicate::{ScopeTarget, condition as scope_condition},
+    scope_intervals::held_at,
 };
 use andromeda_postgresql_schema::{name_dictionary::AttributeNames, temporal::AttributeHistory};
 use andromeda_postgresql_seaquery::{
@@ -44,7 +44,7 @@ pub fn build_temporal_history_query(branch: &HistoryBranch, entity_id: &Identifi
     // among the same represented instances, so none can reach a row the others
     // cannot.
     let of = HistoryOf::Entity(Expr::val(entity_id.as_str()));
-    let condition = represented_instances(branch, compiled);
+    let condition = represented_instances(branch, &of, compiled);
     match compiled.representation.format {
         // The grouped extension format runs the same aggregation pipeline; the
         // builder adds the group-key columns when `representation.grouping` is set.
@@ -53,15 +53,15 @@ pub fn build_temporal_history_query(branch: &HistoryBranch, entity_id: &Identifi
     }
 }
 
-/// The Attribute instances the temporal representation of an entity carries,
-/// over the rows of [`base_history_source`]: stage 2 reads them, and stage 1
-/// asks whether a projection leaves an entity any of them.
+/// The Attribute instances the temporal representation of the entity `of`
+/// names carries, over the rows of [`base_history_source`]: stage 2 reads
+/// them, and stage 1 asks whether a projection leaves an entity any of them.
 ///
 /// Clause 5.2.21: an instance is placed on the requested axis by the column that
 /// holds it. `deletedAt` exists only on a row that records a deletion, so asking
 /// for that axis asks for those rows and no others; the deletion is recognised
 /// by the axis itself rather than by a sentinel value.
-pub(crate) fn represented_instances(branch: &HistoryBranch, compiled: &CompiledTemporalQuery) -> Condition {
+pub(crate) fn represented_instances(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemporalQuery) -> Condition {
     let mut condition = Condition::all();
 
     if compiled.window.timeproperty == TimeProp::Deleted {
@@ -97,15 +97,10 @@ pub(crate) fn represented_instances(branch: &HistoryBranch, compiled: &CompiledT
     // A Scope query therefore bounds the instances as well as selecting the
     // Entity: an instance is admitted only while the query held at the instant
     // the instance is positioned on, which clause 4.18 answers from the scope
-    // event in force there.
+    // event in force there. The query is judged over the Entity's scope
+    // intervals once, so an instance costs a lookup among them.
     if let Some(scope_q) = &compiled.entities.scope_q {
-        let target = ScopeTarget::valid_at(
-            (Ah, HistoryGrain::EntityId),
-            compiled.window.timeproperty,
-            Expr::col((Ah, axis)),
-            branch.clone(), // clone: the target owns the branch its probe reads
-        );
-        condition = condition.add(scope_condition(scope_q, &target));
+        condition = condition.add(held_at(scope_q, of, compiled.window.timeproperty, Expr::col((Ah, axis)), branch));
     }
 
     condition
@@ -328,6 +323,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         dataset::DatasetSelector,
         entity_selection::EntitySelection,
+        scope::query::ScopeQuery,
         temporal::{aggregation_period::AggregationPeriod, instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -654,6 +650,30 @@ mod tests {
         let sql = sql_of(&compiled);
         assert!(sql.contains("agg_total_count"), "{sql}");
         assert!(sql.contains("GROUP BY"), "{sql}");
+    }
+
+    /// Annex C clause C.5.16 bounds the instances by the Scope in force at each
+    /// of them, which the statement reads as the Entity's scope intervals,
+    /// judged once for the Entity it names, rather than as a probe per
+    /// instance.
+    #[test]
+    fn a_temporal_scope_q_reads_the_scope_intervals_once_per_entity() {
+        let mut compiled = minimal_compiled();
+        compiled.entities.scope_q = Some(ScopeQuery::parse("/Madrid/#").expect("valid scope query"));
+        compiled.instances.page = InstancePage::Forward { size: 100 };
+        let sql = sql_of(&compiled);
+        assert_eq!(sql.matches(r#"FROM "scope_history""#).count(), 1, "{sql}");
+        assert!(!sql.contains("sh_next"), "{sql}");
+        assert!(
+            sql.contains(
+                r#""scope_intervals"."starts" <= "ah"."observed_at" AND ("scope_intervals"."ends" IS NULL OR "ah"."observed_at" < "scope_intervals"."ends")"#
+            ),
+            "{sql}"
+        );
+        assert!(
+            !sql.contains(r#""re"."id" = "ah"."entity_id""#),
+            "the intervals do not follow the instance: {sql}"
+        );
     }
 
     /// Clause 5.7.3: the evolution of one entity on the live branch is its

@@ -1,10 +1,10 @@
 //! SQL rendering of a `scopeQ` expression (clause 4.19).
 //!
-//! One walk of the grammar for three targets: entity queries test the current
-//! scope paths stored on `entities`, temporal queries test the clause 4.18
-//! validity intervals reconstructed from `scope_history`, and a temporal
-//! attribute window tests the scope that was valid at one instant. The boolean
-//! structure between them is identical.
+//! One walk of the grammar for two targets: an array of scope paths (an
+//! entity's or a registration's current scopes, or the scope one state of a
+//! Temporal Evolution holds), and the clause 4.18 validity intervals
+//! reconstructed from `scope_history`, asked whether one overlaps a temporal
+//! query's window. The boolean structure between them is identical.
 //!
 //! The interval reading itself lives in [`crate::scope_validity`], which the
 //! reified scope of clause 4.5.6 reads through as well, so the two cannot
@@ -13,7 +13,7 @@
 use crate::{
     history_source::{HistoryBranch, HistoryOf, scope_rows::scope_rows},
     ltree::pattern_to_lquery,
-    scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis, valid_at},
+    scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis},
 };
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_query::{
@@ -27,9 +27,11 @@ use sea_query::{Condition, Expr as SeaExpr, IntoIden, Query, SelectStatement, Si
 /// Which relation a scope predicate is evaluated against.
 #[derive(Debug, Clone)]
 pub enum ScopeTarget {
-    /// The `ltree[]` column carrying an entity's current scope paths.
-    CurrentPaths {
-        /// The column carrying an entity's current scope paths, named by its iden.
+    /// An `ltree[]` column carrying the scope paths an Entity holds: its
+    /// current ones, a registration's, or those in force over one state of its
+    /// Temporal Evolution.
+    Paths {
+        /// The column carrying the scope paths, named by its iden.
         column: ColumnReference,
     },
     /// `scope_history`, read as the clause 4.18 validity intervals a scope has
@@ -53,35 +55,18 @@ pub enum ScopeTarget {
         /// The branch whose scope history the probe reads.
         branch: HistoryBranch,
     },
-    /// `scope_history`, read as the scope that was valid at one instant.
-    ///
-    /// Annex C, clause C.5.16 closes with "Vehicle A8311 only entered the Scope
-    /// within the request interval. Thus in the latter case only Property
-    /// values are included that have been observed after the Scope has become
-    /// valid", so an attribute instance is admitted only while the scope query
-    /// held at the instant that instance is positioned on.
-    ValidAt {
-        /// The Entity identifier the probe correlates against, named by its iden.
-        entity_id_column: ColumnReference,
-        /// The Temporal Property the instant is measured on (clause 5.2.21).
-        timeproperty: TimeProp,
-        /// The instant the scope has to have been valid at.
-        instant: SimpleExpr,
-        /// The branch whose scope history the probe reads.
-        branch: HistoryBranch,
-    },
 }
 
 impl ScopeTarget {
-    /// The current-scope target reading an entity's scope paths from the
-    /// `(relation, column)` the driving statement declares.
+    /// The target reading the scope paths from the `(relation, column)` the
+    /// driving statement declares.
     ///
     /// The column is named by the idens the driving statement declares, so a
     /// rename moves this reference with it rather than leaving a hand-quoted
     /// string behind; it is qualified because the statement joins the search
     /// row beside the identity row and an unqualified name would be ambiguous.
-    pub fn current_paths(column: (impl IntoIden, impl IntoIden)) -> ScopeTarget {
-        ScopeTarget::CurrentPaths {
+    pub fn paths(column: (impl IntoIden, impl IntoIden)) -> ScopeTarget {
+        ScopeTarget::Paths {
             column: ColumnReference::qualified(column.0, column.1),
         }
     }
@@ -94,18 +79,6 @@ impl ScopeTarget {
             entity_id_column: ColumnReference::qualified(entity_id_column.0, entity_id_column.1),
             timeproperty,
             interval,
-            branch,
-        }
-    }
-
-    /// The scope-history target correlating on the `(alias, column)` Entity
-    /// identifier, asking whether the scope was valid at `instant` on the
-    /// `timeproperty` axis, reading the scope history of the given branch.
-    pub fn valid_at(entity_id_column: (impl IntoIden, impl IntoIden), timeproperty: TimeProp, instant: SimpleExpr, branch: HistoryBranch) -> ScopeTarget {
-        ScopeTarget::ValidAt {
-            entity_id_column: ColumnReference::qualified(entity_id_column.0, entity_id_column.1),
-            timeproperty,
-            instant,
             branch,
         }
     }
@@ -139,7 +112,7 @@ pub fn condition(scope_q: &ScopeQuery, target: &ScopeTarget) -> Condition {
 pub fn pattern_condition(pattern: &ScopePattern, target: &ScopeTarget) -> SimpleExpr {
     let lquery = pattern_to_lquery(pattern);
     match target {
-        ScopeTarget::CurrentPaths { column } => ltree_matches(column.column_expr(), SeaExpr::val(lquery)),
+        ScopeTarget::Paths { column } => ltree_matches(column.column_expr(), SeaExpr::val(lquery)),
         ScopeTarget::History {
             entity_id_column,
             timeproperty,
@@ -154,15 +127,6 @@ pub fn pattern_condition(pattern: &ScopePattern, target: &ScopeTarget) -> Simple
                 overlaps_window(axis, *interval, branch),
                 branch,
             ))
-        }
-        ScopeTarget::ValidAt {
-            entity_id_column,
-            timeproperty,
-            instant,
-            branch,
-        } => {
-            let axis = scope_history_axis(*timeproperty);
-            SeaExpr::exists(matching_scope_events(&lquery, entity_id_column, axis, valid_at(axis, instant, branch), branch))
         }
     }
 }
@@ -202,20 +166,11 @@ mod tests {
     }
 
     fn current() -> ScopeTarget {
-        ScopeTarget::current_paths((EntitySearch::Table, EntitySearch::ScopePaths))
+        ScopeTarget::paths((EntitySearch::Table, EntitySearch::ScopePaths))
     }
 
     fn history(interval: TimeInterval) -> ScopeTarget {
         ScopeTarget::history((Alias::new("e"), Alias::new("id")), TimeProp::Observed, interval, HistoryBranch::live())
-    }
-
-    fn instant_valid_at() -> ScopeTarget {
-        ScopeTarget::valid_at(
-            (Alias::new("ah"), Alias::new("entity_id")),
-            TimeProp::Observed,
-            SeaExpr::col((Alias::new("ah"), Alias::new("observed_at"))),
-            HistoryBranch::live(),
-        )
     }
 
     fn instant(raw: &str) -> chrono::DateTime<chrono::Utc> {
@@ -330,26 +285,14 @@ mod tests {
         assert!(sql.contains("\"sh\".\"scope_path\" ~ "), "{sql}");
     }
 
-    /// Annex C clause C.5.16: only the Property values observed after the Scope
-    /// became valid are included, so an attribute instant is tested against the
-    /// scope that was valid at exactly that instant.
-    #[test]
-    fn the_valid_at_target_tests_the_event_in_force_at_the_instant() {
-        let sql = render(condition(&scope("/A"), &instant_valid_at()));
-        assert!(sql.contains("\"sh\".\"observed_at\" <= \"ah\".\"observed_at\""), "{sql}");
-        assert!(sql.contains("\"sh_next\".\"observed_at\" <= \"ah\".\"observed_at\""), "{sql}");
-        assert!(sql.contains("\"re\".\"id\" = \"ah\".\"entity_id\""), "{sql}");
-    }
-
-    /// All three targets walk the same grammar, so a change to the precedence
+    /// Both targets walk the same grammar, so a change to the precedence
     /// of `,` and `;` cannot reach one and miss the others.
     #[test]
     fn every_target_renders_the_same_boolean_structure() {
         let scope_q = scope("(/A;/B),/C");
         let current_sql = render(condition(&scope_q, &current()));
         let history_sql = render(condition(&scope_q, &history(TimeInterval::Unbounded)));
-        let valid_at_sql = render(condition(&scope_q, &instant_valid_at()));
-        for sql in [&current_sql, &history_sql, &valid_at_sql] {
+        for sql in [&current_sql, &history_sql] {
             assert!(sql.contains(" AND "), "{sql}");
             assert!(sql.contains(" OR "), "{sql}");
             assert_eq!(sql.matches("::lquery").count(), 3, "{sql}");

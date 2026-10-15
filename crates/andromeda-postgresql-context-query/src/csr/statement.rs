@@ -129,7 +129,7 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
     // label paths current entities carry, so a `scopeQ` compiles to the same
     // `lquery` match.
     if let Some(scope_q) = &query.scope_q {
-        condition = condition.add(scope_condition(scope_q, &ScopeTarget::current_paths((Csr::Table, Csr::ScopePaths))));
+        condition = condition.add(scope_condition(scope_q, &ScopeTarget::paths((Csr::Table, Csr::ScopePaths))));
     }
 
     if !query.dataset_id.is_empty() {
