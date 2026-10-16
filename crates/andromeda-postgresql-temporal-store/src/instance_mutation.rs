@@ -4,7 +4,14 @@ use crate::{
     attribute_history_value::AttributeHistoryValue,
     error::TemporalStoreError,
     history_members::{HistoryMembers, mention},
-    instance_statements::{InstanceColumn, delete_instance_sql, release_verbatim_instance_claim_sql, select_instance_sql, update_instance_sql},
+    instance_statements::{
+        InstanceColumn,
+        attribute_stream_keys_sql,
+        delete_instance_sql,
+        release_verbatim_instance_claim_sql,
+        select_instance_sql,
+        update_instance_sql,
+    },
     repo::TemporalRepository,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -27,7 +34,7 @@ use andromeda_postgresql_encoding::{ewkb::EwkbError, ewkb_binding::geometry_byte
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use andromeda_temporal::{observed_instance::ObservedInstance, temporal_not_found_reason::TemporalNotFoundReason};
 use chrono::{DateTime, Utc};
-use sqlx::{AssertSqlSafe, postgres::PgRow, types::Json};
+use sqlx::{AssertSqlSafe, PgConnection, postgres::PgRow, types::Json};
 
 impl TemporalRepository {
     /// Replace one attribute instance with the observation `replacement`
@@ -60,18 +67,14 @@ impl TemporalRepository {
         attribute_name: &AttributeName,
     ) -> Result<(), TemporalStoreError> {
         let mut tx = self.pool.begin().await?;
+        let stream_keys = attribute_stream_keys(&mut tx, target, entity_id, attribute_name).await?;
         let generated_sql = delete_instance_sql(InstanceColumn::Generated, target);
         let verbatim_sql = delete_instance_sql(InstanceColumn::Verbatim, target);
         let statement = match instance {
             InstanceIdentity::Generated(uuid) => sqlx::query(AssertSqlSafe(generated_sql)).bind(uuid),
             InstanceIdentity::Verbatim(identifier) => sqlx::query(AssertSqlSafe(verbatim_sql)).bind(identifier.as_str()),
         };
-        let deleted = statement
-            .bind(entity_id.as_str())
-            .bind(attribute_name.as_str())
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
+        let deleted = statement.bind(&stream_keys).execute(&mut *tx).await?.rows_affected();
         if deleted == 0 {
             return Err(TemporalStoreError::NotFound(instance_not_found(instance)));
         }
@@ -125,6 +128,7 @@ impl TemporalRepository {
             .map(SubAttributeRecord::try_from)
             .collect::<Result<Vec<_>, EwkbError>>()?;
         let object_type_keys: Vec<i32> = object_type_keys.into_iter().map(EntityTypeNameKey::get).collect();
+        let stream_keys = attribute_stream_keys(&mut tx, target, entity_id, attribute_name).await?;
         let generated_sql = update_instance_sql(InstanceColumn::Generated, target);
         let verbatim_sql = update_instance_sql(InstanceColumn::Verbatim, target);
         let statement = match instance {
@@ -132,8 +136,7 @@ impl TemporalRepository {
             InstanceIdentity::Verbatim(identifier) => sqlx::query(AssertSqlSafe(verbatim_sql)).bind(identifier.as_str()),
         };
         let updated = statement
-            .bind(entity_id.as_str())
-            .bind(attribute_name.as_str())
+            .bind(&stream_keys)
             .bind(state.value.kind().code())
             .bind(state.value.number())
             .bind(state.value.string())
@@ -181,6 +184,21 @@ impl TemporalRepository {
             .fetch_optional(&self.pool)
             .await?)
     }
+}
+
+/// The stream keys of `entity_id`'s attribute `attribute_name`, which the
+/// instance statements bind as values.
+async fn attribute_stream_keys(
+    connection: &mut PgConnection,
+    target: &ContextTarget,
+    entity_id: &Identifier,
+    attribute_name: &AttributeName,
+) -> Result<Vec<i64>, TemporalStoreError> {
+    Ok(sqlx::query_scalar(AssertSqlSafe(attribute_stream_keys_sql(target)))
+        .bind(entity_id.as_str())
+        .bind(attribute_name.as_str())
+        .fetch_all(connection)
+        .await?)
 }
 
 /// Report an instance the addressed attribute does not hold.

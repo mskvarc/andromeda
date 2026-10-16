@@ -16,6 +16,8 @@ mod catalog_statements;
 mod history_statements;
 /// The intents an application reads, and their entries.
 pub mod intent_source;
+/// Removing the history rows an application's entries replace.
+mod replaced_rows;
 
 use crate::{
     duplicate_instance_claim::claim_write_failure,
@@ -31,6 +33,7 @@ use crate::{
             scope_history_statement,
         },
         intent_source::{EntryReads, IntentSource, rendered},
+        replaced_rows::{ReplacedHistory, remove_replaced},
     },
     stored_catalog_error::StoredCatalogError,
 };
@@ -51,6 +54,9 @@ enum StepRole {
     RefuseUntyped,
     /// Run it and refuse a duplicate `instanceId` claim as the client's own.
     Claim,
+    /// Read the rows of the history it names that the entries replace, then
+    /// remove exactly those rows.
+    Replace(ReplacedHistory),
 }
 
 /// One statement of the application, rendered.
@@ -109,7 +115,7 @@ fn application_steps(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Res
             &untyped_streams_statement(source, schema).map_err(build)?,
         ),
         Step::of(
-            StepRole::Write,
+            StepRole::Replace(ReplacedHistory::AttributeInstances),
             Some(TemporalIntentReach::VerbatimInstance),
             identities,
             &replaced_instances_statement(source, schema),
@@ -133,7 +139,7 @@ fn application_steps(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Res
             &history_statement(source, schema).map_err(build)?,
         ),
         Step::of(
-            StepRole::Write,
+            StepRole::Replace(ReplacedHistory::ScopeInstances),
             Some(TemporalIntentReach::ScopeEntry),
             identities,
             &replaced_scopes_statement(source, schema),
@@ -168,7 +174,7 @@ pub async fn apply_intents_in_tx(connection: &mut PgConnection, source: &IntentS
     let schema = schema_iden(target);
     for step in application_steps(source, schema.as_ref())? {
         if step.need.is_none_or(|need| source.may_meet(need)) {
-            run(connection, source, step).await?;
+            run(connection, source, schema.as_ref(), step).await?;
         }
     }
     Ok(())
@@ -186,13 +192,19 @@ pub(crate) async fn record_history_in_tx(connection: &mut PgConnection, source: 
     run(
         connection,
         source,
+        Some(schema),
         Step::of(StepRole::Write, Some(TemporalIntentReach::AttributeEntry), EntryReads::Everything, &statement),
     )
     .await
 }
 
-/// Run one step over `source`.
-async fn run(connection: &mut PgConnection, source: &IntentSource<'_>, Step { role, reads, sql, .. }: Step) -> Result<(), TemporalStoreError> {
+/// Run one step over `source` in the branch `schema` names.
+async fn run(
+    connection: &mut PgConnection,
+    source: &IntentSource<'_>,
+    schema: Option<&DynIden>,
+    Step { role, reads, sql, .. }: Step,
+) -> Result<(), TemporalStoreError> {
     let query = source.bind(sqlx::query(AssertSqlSafe(sql)), reads);
     match role {
         StepRole::Write => {
@@ -200,6 +212,10 @@ async fn run(connection: &mut PgConnection, source: &IntentSource<'_>, Step { ro
         }
         StepRole::Claim => {
             query.execute(&mut *connection).await.map_err(claim_write_failure)?;
+        }
+        StepRole::Replace(history) => {
+            let rows = query.fetch_all(&mut *connection).await?;
+            remove_replaced(connection, schema, history, &rows).await?;
         }
         StepRole::RefuseUntyped => {
             if let Some(row) = query.fetch_optional(&mut *connection).await? {

@@ -6,6 +6,13 @@
 //! supplied. Every statement here is therefore written twice, once per column,
 //! so each reads the partial index that covers it instead of an `OR` the
 //! planner has to resolve with a scan.
+//!
+//! The modification and the deletion bind the attribute's streams as values
+//! (`$2`) the caller resolved first, never as a subquery: on a converted chunk
+//! TimescaleDB narrows the compressed batches a statement decompresses only by
+//! bound values on the segmenting stream key and the identifier's bloom
+//! summary, and a subquery would have it decompress every batch whose bloom
+//! summary admits the identifier, across every stream of the chunk.
 
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
@@ -13,7 +20,7 @@ use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,
     temporal::{AttributeHistory, AttributeHistoryInstanceClaims, TemporalAttributeStreams, TemporalEntities},
 };
-use andromeda_postgresql_seaquery::{clock::now, placeholder::external_placeholder, postgis::validated_geom_from_ewkb};
+use andromeda_postgresql_seaquery::{clock::now, pg_array::any, placeholder::external_placeholder, postgis::validated_geom_from_ewkb};
 use sea_query::{CaseStatement, Expr, ExprTrait, Iden, JoinType, Keyword, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 
 /// The `temporal_attribute_streams` alias in the stream-scope subquery.
@@ -64,8 +71,9 @@ impl InstanceColumn {
 /// An `instanceId` is unique across the attribute, so the dataset dimension is
 /// not part of the address clause 5.6.15 defines; every stream of the named
 /// attribute is a candidate and the instance predicate selects within them. The
-/// entity id (`$2`) and attribute name (`$3`) are bound by the caller's chain.
-fn attribute_streams_subquery(target: &ContextTarget) -> SelectStatement {
+/// entity id and attribute name bind to the placeholders `entity` and
+/// `attribute` number.
+fn attribute_streams_query(target: &ContextTarget, entity: usize, attribute: usize) -> SelectStatement {
     Query::select()
         .column((S, TemporalAttributeStreams::StreamKey))
         .from(table_of(target, TemporalAttributeStreams::Table).alias(S))
@@ -81,9 +89,20 @@ fn attribute_streams_subquery(target: &ContextTarget) -> SelectStatement {
             An,
             Expr::col((An, AttributeNames::AttributeNameKey)).equals((S, TemporalAttributeStreams::AttributeNameKey)),
         )
-        .and_where(Expr::col((Te, TemporalEntities::Id)).eq(external_placeholder(2)))
-        .and_where(Expr::col((An, AttributeNames::Name)).eq(external_placeholder(3)))
+        .and_where(Expr::col((Te, TemporalEntities::Id)).eq(external_placeholder(entity)))
+        .and_where(Expr::col((An, AttributeNames::Name)).eq(external_placeholder(attribute)))
         .to_owned()
+}
+
+/// The stream keys of one entity's attribute: the entity id binds to `$1`, the
+/// attribute name to `$2`.
+pub(crate) fn attribute_stream_keys_sql(target: &ContextTarget) -> String {
+    attribute_streams_query(target, 1, 2).to_string(PostgresQueryBuilder)
+}
+
+/// `stream_key = ANY($2)`, the resolved streams the instance is sought in.
+fn within_resolved_streams() -> SimpleExpr {
+    Expr::col(AttributeHistory::StreamKey).eq(any(external_placeholder(2)))
 }
 
 /// The instance delete, removing the addressed row rather than tombstoning it.
@@ -91,7 +110,7 @@ pub(crate) fn delete_instance_sql(column: InstanceColumn, target: &ContextTarget
     Query::delete()
         .from_table(table_of(target, AttributeHistory::Table))
         .and_where(Expr::col(column.column()).eq(external_placeholder(1)))
-        .and_where(Expr::col(AttributeHistory::StreamKey).in_subquery(attribute_streams_subquery(target)))
+        .and_where(within_resolved_streams())
         .to_owned()
         .to_string(PostgresQueryBuilder)
 }
@@ -129,7 +148,7 @@ pub(crate) fn release_verbatim_instance_claim_sql(target: &ContextTarget) -> Str
         .to_string(PostgresQueryBuilder)
 }
 
-/// The geometry column's `CASE WHEN $8 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($8)) ELSE NULL END`.
+/// The geometry column's `CASE WHEN $7 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($7)) ELSE NULL END`.
 fn geometry_write(marker: usize) -> SimpleExpr {
     CaseStatement::new()
         .case(
@@ -142,7 +161,7 @@ fn geometry_write(marker: usize) -> SimpleExpr {
 
 /// The instance modification (clause 5.6.14 replacement).
 ///
-/// `$5` binds directly as the column's arbitrary-precision type, so a number
+/// `$4` binds directly as the column's arbitrary-precision type, so a number
 /// with no exact double is stored exactly as a creation stores it. `modified_at`
 /// advances the NGSI-LD axis while `recorded_at` is left alone.
 /// `attribute_kind` moves with the value columns so a replacement that changes
@@ -153,32 +172,36 @@ pub(crate) fn update_instance_sql(column: InstanceColumn, target: &ContextTarget
     Query::update()
         .table(table_of(target, AttributeHistory::Table))
         .values([
-            (AttributeHistory::ValueKind, external_placeholder(4)),
-            (AttributeHistory::ValueNumber, external_placeholder(5)),
-            (AttributeHistory::ValueString, external_placeholder(6)),
-            (AttributeHistory::ValueBoolean, external_placeholder(7)),
-            (AttributeHistory::ValueGeometry, geometry_write(8)),
-            (AttributeHistory::ValueObject, external_placeholder(9)),
-            (AttributeHistory::ValueDateTime, external_placeholder(10)),
-            (AttributeHistory::ValueUri, external_placeholder(11)),
-            (AttributeHistory::ObservedAt, external_placeholder(12)),
-            (AttributeHistory::ValueTypeKey, external_placeholder(13)),
-            (AttributeHistory::UnitCodeId, external_placeholder(14)),
-            (AttributeHistory::AttributeKind, external_placeholder(15)),
-            (AttributeHistory::ValueGeometryMembers, external_placeholder(16)),
-            (AttributeHistory::ObjectTypeKeys, external_placeholder(17)),
-            (AttributeHistory::ProofSeals, external_placeholder(18)),
-            (AttributeHistory::ExpiresAt, external_placeholder(19)),
-            (AttributeHistory::SubAttributes, external_placeholder(20)),
+            (AttributeHistory::ValueKind, external_placeholder(3)),
+            (AttributeHistory::ValueNumber, external_placeholder(4)),
+            (AttributeHistory::ValueString, external_placeholder(5)),
+            (AttributeHistory::ValueBoolean, external_placeholder(6)),
+            (AttributeHistory::ValueGeometry, geometry_write(7)),
+            (AttributeHistory::ValueObject, external_placeholder(8)),
+            (AttributeHistory::ValueDateTime, external_placeholder(9)),
+            (AttributeHistory::ValueUri, external_placeholder(10)),
+            (AttributeHistory::ObservedAt, external_placeholder(11)),
+            (AttributeHistory::ValueTypeKey, external_placeholder(12)),
+            (AttributeHistory::UnitCodeId, external_placeholder(13)),
+            (AttributeHistory::AttributeKind, external_placeholder(14)),
+            (AttributeHistory::ValueGeometryMembers, external_placeholder(15)),
+            (AttributeHistory::ObjectTypeKeys, external_placeholder(16)),
+            (AttributeHistory::ProofSeals, external_placeholder(17)),
+            (AttributeHistory::ExpiresAt, external_placeholder(18)),
+            (AttributeHistory::SubAttributes, external_placeholder(19)),
             (AttributeHistory::ModifiedAt, now()),
         ])
         .and_where(Expr::col(column.column()).eq(external_placeholder(1)))
-        .and_where(Expr::col(AttributeHistory::StreamKey).in_subquery(attribute_streams_subquery(target)))
+        .and_where(within_resolved_streams())
         .to_owned()
         .to_string(PostgresQueryBuilder)
 }
 
 /// The single-instance select used for policy validation.
+///
+/// A read narrows the compressed batches through the join itself, so it keeps
+/// the stream scope as a subquery bound by the entity id (`$2`) and attribute
+/// name (`$3`).
 pub(crate) fn select_instance_sql(column: InstanceColumn, target: &ContextTarget) -> String {
     Query::select()
         .column((Ah, AttributeHistory::RecordedAt))
@@ -191,7 +214,7 @@ pub(crate) fn select_instance_sql(column: InstanceColumn, target: &ContextTarget
         .column((Ah, AttributeHistory::DeletedAt))
         .from(table_of(target, AttributeHistory::Table).alias(Ah))
         .and_where(Expr::col((Ah, column.column())).eq(external_placeholder(1)))
-        .and_where(Expr::col((Ah, AttributeHistory::StreamKey)).in_subquery(attribute_streams_subquery(target)))
+        .and_where(Expr::col((Ah, AttributeHistory::StreamKey)).in_subquery(attribute_streams_query(target, 2, 3)))
         .limit(1)
         .to_owned()
         .to_string(PostgresQueryBuilder)
@@ -199,23 +222,16 @@ pub(crate) fn select_instance_sql(column: InstanceColumn, target: &ContextTarget
 
 #[cfg(test)]
 mod tests {
-    use crate::instance_statements::{InstanceColumn, delete_instance_sql, release_verbatim_instance_claim_sql, select_instance_sql, update_instance_sql};
+    use crate::instance_statements::{
+        InstanceColumn,
+        attribute_stream_keys_sql,
+        delete_instance_sql,
+        release_verbatim_instance_claim_sql,
+        select_instance_sql,
+        update_instance_sql,
+    };
     use andromeda_context_space::context_target::ContextTarget;
     use pretty_assertions::assert_eq;
-
-    /// The six identity-column statements, rendered.
-    fn all_statements() -> Vec<String> {
-        [InstanceColumn::Generated, InstanceColumn::Verbatim]
-            .into_iter()
-            .flat_map(|column| {
-                [
-                    delete_instance_sql(column, &ContextTarget::Live),
-                    update_instance_sql(column, &ContextTarget::Live),
-                    select_instance_sql(column, &ContextTarget::Live),
-                ]
-            })
-            .collect()
-    }
 
     #[test]
     fn each_statement_addresses_exactly_one_instance_identity_column() {
@@ -240,8 +256,33 @@ mod tests {
     }
 
     #[test]
-    fn every_statement_is_confined_to_the_named_entity_and_attribute() {
-        for statement in all_statements() {
+    fn the_stream_keys_are_resolved_from_the_named_entity_and_attribute() {
+        let statement = attribute_stream_keys_sql(&ContextTarget::Live);
+        assert!(
+            statement.starts_with(r#"SELECT "s"."stream_key" FROM "temporal_attribute_streams" AS "s""#),
+            "{statement}"
+        );
+        assert!(statement.contains(r#""te"."id" = ($1)"#), "{statement}");
+        assert!(statement.contains(r#""an"."name" = ($2)"#), "{statement}");
+    }
+
+    #[test]
+    fn a_modification_or_deletion_is_confined_to_the_resolved_streams_as_bound_values() {
+        for column in [InstanceColumn::Generated, InstanceColumn::Verbatim] {
+            for statement in [
+                delete_instance_sql(column, &ContextTarget::Live),
+                update_instance_sql(column, &ContextTarget::Live),
+            ] {
+                assert!(statement.contains(r#""stream_key" = ANY($2)"#), "{statement}");
+                assert!(!statement.contains("temporal_attribute_streams"), "{statement}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_policy_read_is_confined_to_the_named_entity_and_attribute() {
+        for column in [InstanceColumn::Generated, InstanceColumn::Verbatim] {
+            let statement = select_instance_sql(column, &ContextTarget::Live);
             assert!(statement.contains(r#"FROM "temporal_attribute_streams" AS "s""#), "{statement}");
             assert!(statement.contains(r#""te"."id" = ($2)"#), "{statement}");
             assert!(statement.contains(r#""an"."name" = ($3)"#), "{statement}");
@@ -254,15 +295,15 @@ mod tests {
             let statement = update_instance_sql(column, &ContextTarget::Live);
             assert!(statement.contains(r#""modified_at" = NOW()"#), "{statement}");
             assert!(!statement.contains(r#""recorded_at" ="#), "{statement}");
-            assert!(statement.contains(r#""value_kind" = $4"#), "{statement}");
-            assert!(statement.contains(r#""attribute_kind" = $15"#), "{statement}");
+            assert!(statement.contains(r#""value_kind" = $3"#), "{statement}");
+            assert!(statement.contains(r#""attribute_kind" = $14"#), "{statement}");
             for member in [
-                r#""value_type_key" = $13"#,
-                r#""unit_code_id" = $14"#,
-                r#""object_type_keys" = $17"#,
-                r#""proof_seals" = $18"#,
-                r#""expires_at" = $19"#,
-                r#""sub_attributes" = $20"#,
+                r#""value_type_key" = $12"#,
+                r#""unit_code_id" = $13"#,
+                r#""object_type_keys" = $16"#,
+                r#""proof_seals" = $17"#,
+                r#""expires_at" = $18"#,
+                r#""sub_attributes" = $19"#,
             ] {
                 assert!(statement.contains(member), "{member} missing: {statement}");
             }
@@ -292,7 +333,7 @@ mod tests {
     fn the_update_statement_binds_numeric_without_a_double_hop() {
         for column in [InstanceColumn::Generated, InstanceColumn::Verbatim] {
             let statement = update_instance_sql(column, &ContextTarget::Live);
-            assert!(statement.contains(r#""value_number" = $5"#), "{statement}");
+            assert!(statement.contains(r#""value_number" = $4"#), "{statement}");
             assert!(!statement.contains("double precision"), "{statement}");
         }
     }

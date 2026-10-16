@@ -4,20 +4,25 @@
 //! through current state, so an attribute whose entity was deleted (clause
 //! 5.6.6) still has its history removable.
 
-use crate::{error::TemporalStoreError, repo::TemporalRepository, temporal_catalog_read::stream_catalog_join, write_record_release::release_named};
+use crate::{
+    error::TemporalStoreError,
+    history_removal::{remove_stream_history, stream_key_array},
+    repo::TemporalRepository,
+    temporal_catalog_read::stream_catalog_join,
+    write_record_release::release_named,
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,
-    temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
+    temporal::{TemporalAttributeStreams, TemporalEntities},
 };
 use andromeda_postgresql_seaquery::{branch::qualified, pg_array::any};
 use andromeda_postgresql_temporal_query::alias::{An, S, Te};
 use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, LockType, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, Row};
-use uuid::Uuid;
+use sqlx::AssertSqlSafe;
 
 /// Which dataset instances of one attribute a deletion addresses.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -66,18 +71,13 @@ impl TemporalRepository {
             return Ok(0);
         }
         let schema = schema_iden(target);
-        let (history_sql, history_values) = delete_stream_history_query(schema.as_ref(), &stream_keys).build_sqlx(PostgresQueryBuilder);
-        let removed = sqlx::query_with(AssertSqlSafe(history_sql), history_values).fetch_all(&mut *tx).await?;
-        let touched_writes = removed
-            .iter()
-            .map(|row| row.try_get::<Uuid, _>("write_id"))
-            .collect::<Result<Vec<Uuid>, sqlx::Error>>()?;
+        let removed = remove_stream_history(&mut tx, schema.as_ref(), &stream_keys).await?;
         let (streams_sql, streams_values) = delete_streams_query(schema.as_ref(), &stream_keys).build_sqlx(PostgresQueryBuilder);
         let streams = sqlx::query_with(AssertSqlSafe(streams_sql), streams_values)
             .execute(&mut *tx)
             .await?
             .rows_affected();
-        release_named(&mut tx, &touched_writes).await?;
+        release_named(&mut tx, &removed.writes).await?;
         tx.commit().await?;
         Ok(streams)
     }
@@ -92,14 +92,6 @@ enum DatasetSelector<'a> {
     Named(&'a str),
     /// The default instance, whose `datasetId` is absent.
     Default,
-}
-
-/// A bound `bigint[]` value from a batch of stream keys.
-///
-/// The array value owns its elements, so the slice is copied: a bound parameter
-/// cannot borrow from the caller's slice across the round trip.
-fn stream_key_array(keys: &[i64]) -> sea_query::SimpleExpr {
-    Expr::val(keys.to_vec())
 }
 
 /// The identifiers of the streams a deletion addresses, locked for update.
@@ -126,16 +118,6 @@ fn select_attribute_streams_query(schema: Option<&DynIden>, entity_id: &str, att
     statement
 }
 
-/// Remove every observation of the addressed streams, returning the write
-/// identity each removed row belonged to.
-fn delete_stream_history_query(schema: Option<&DynIden>, stream_keys: &[i64]) -> DeleteStatement {
-    Query::delete()
-        .from_table(qualified(schema, AttributeHistory::Table))
-        .and_where(Expr::col(AttributeHistory::StreamKey).eq(any(stream_key_array(stream_keys))))
-        .returning_col(AttributeHistory::WriteId)
-        .to_owned()
-}
-
 /// Remove the addressed streams themselves.
 fn delete_streams_query(schema: Option<&DynIden>, stream_keys: &[i64]) -> DeleteStatement {
     Query::delete()
@@ -146,7 +128,8 @@ fn delete_streams_query(schema: Option<&DynIden>, stream_keys: &[i64]) -> Delete
 
 #[cfg(test)]
 mod tests {
-    use crate::attribute_stream_deletion::{DatasetSelector, delete_stream_history_query, delete_streams_query, select_attribute_streams_query};
+    use crate::attribute_stream_deletion::{DatasetSelector, delete_streams_query, select_attribute_streams_query};
+    use pretty_assertions::assert_eq;
     use sea_query::{Alias, DynIden, IntoIden, PostgresQueryBuilder};
 
     #[test]
@@ -169,12 +152,9 @@ mod tests {
     }
 
     #[test]
-    fn attribute_deletion_removes_the_observations_before_the_stream_holding_them() {
-        let history = delete_stream_history_query(None, &[1]).to_string(PostgresQueryBuilder);
+    fn attribute_deletion_removes_the_streams_by_their_bound_keys() {
         let streams = delete_streams_query(None, &[1]).to_string(PostgresQueryBuilder);
-        assert!(history.starts_with("DELETE FROM \"attribute_history\""), "{history}");
-        assert!(history.contains("RETURNING \"write_id\""), "{history}");
-        assert!(streams.starts_with("DELETE FROM \"temporal_attribute_streams\""), "{streams}");
+        assert_eq!(streams, r#"DELETE FROM "temporal_attribute_streams" WHERE "stream_key" = ANY(ARRAY [1])"#);
     }
 
     #[test]
@@ -182,18 +162,7 @@ mod tests {
         // A Snapshot branch's attribute deletion must remove the branch's own
         // rows, not the identically-keyed rows of the live default schema.
         let schema: DynIden = Alias::new("snap_7").into_iden();
-        let history = delete_stream_history_query(Some(&schema), &[1]).to_string(PostgresQueryBuilder);
         let streams = delete_streams_query(Some(&schema), &[1]).to_string(PostgresQueryBuilder);
-        assert!(history.starts_with("DELETE FROM \"snap_7\".\"attribute_history\""), "{history}");
         assert!(streams.starts_with("DELETE FROM \"snap_7\".\"temporal_attribute_streams\""), "{streams}");
-    }
-
-    #[test]
-    fn attribute_deletion_records_no_tombstone() {
-        for statement in [delete_stream_history_query(None, &[1]), delete_streams_query(None, &[1])] {
-            let sql = statement.to_string(PostgresQueryBuilder);
-            assert!(!sql.contains("INSERT"), "{sql}");
-            assert!(!sql.contains("deleted_at"), "{sql}");
-        }
     }
 }

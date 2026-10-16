@@ -13,7 +13,13 @@
 //! reach this module: it leaves temporal state standing and records the
 //! tombstones the specification requires instead.
 
-use crate::{error::TemporalStoreError, repo::TemporalRepository, stored_catalog_error::StoredCatalogError, write_record_release::release_named};
+use crate::{
+    error::TemporalStoreError,
+    history_removal::{remove_scope_history, remove_stream_history},
+    repo::TemporalRepository,
+    stored_catalog_error::StoredCatalogError,
+    write_record_release::release_named,
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::schema_iden;
@@ -118,8 +124,10 @@ impl TemporalRepository {
         let mut tx = self.pool.begin().await?;
         let schema = schema_iden(target);
         let entity_key = locate_temporal_entity(&mut tx, schema.as_ref(), entity_id).await?;
-        let attribute_writes = delete_returning_write_ids(&mut tx, delete_attribute_history_statement(schema.as_ref(), entity_key)).await?;
-        let scope_writes = delete_returning_write_ids(&mut tx, delete_scope_history_statement(schema.as_ref(), entity_key)).await?;
+        let (owned_sql, owned_values) = owned_streams_statement(schema.as_ref(), entity_key).build_sqlx(PostgresQueryBuilder);
+        let stream_keys: Vec<i64> = sqlx::query_scalar_with(AssertSqlSafe(owned_sql), owned_values).fetch_all(&mut *tx).await?;
+        let attribute = remove_stream_history(&mut tx, schema.as_ref(), &stream_keys).await?;
+        let scope = remove_scope_history(&mut tx, schema.as_ref(), entity_key).await?;
         let (streams_sql, streams_values) = delete_attribute_streams_statement(schema.as_ref(), entity_key).build_sqlx(PostgresQueryBuilder);
         let streams = sqlx::query_with(AssertSqlSafe(streams_sql), streams_values)
             .execute(&mut *tx)
@@ -127,14 +135,14 @@ impl TemporalRepository {
             .rows_affected();
         let (entity_sql, entity_values) = delete_temporal_entity_statement(schema.as_ref(), entity_key).build_sqlx(PostgresQueryBuilder);
         sqlx::query_with(AssertSqlSafe(entity_sql), entity_values).execute(&mut *tx).await?;
-        let touched_writes = attribute_writes.iter().chain(scope_writes.iter()).copied().collect::<BTreeSet<Uuid>>();
+        let touched_writes = attribute.writes.iter().chain(scope.writes.iter()).copied().collect::<BTreeSet<Uuid>>();
         let touched_writes = touched_writes.into_iter().collect::<Vec<Uuid>>();
         let released_write_records = release_named(&mut tx, &touched_writes).await?;
         tx.commit().await?;
         Ok(TemporalEvolutionDeletion {
             entity_key,
-            attribute_history_rows: attribute_writes.len() as u64,
-            scope_history_rows: scope_writes.len() as u64,
+            attribute_history_rows: attribute.rows,
+            scope_history_rows: scope.rows,
             streams,
             released_write_records,
         })
@@ -181,16 +189,6 @@ async fn locate_temporal_entity(
     Ok(TemporalEntityKey::try_from(stored).map_err(StoredCatalogError::EntityKey)?)
 }
 
-/// Run one deletion statement, collecting the write identity of every removed row.
-async fn delete_returning_write_ids(tx: &mut Transaction<'_, Postgres>, statement: DeleteStatement) -> Result<Vec<Uuid>, TemporalStoreError> {
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&mut **tx).await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| row.try_get("write_id"))
-        .collect::<Result<Vec<Uuid>, sqlx::Error>>()?)
-}
-
 /// Lock the addressed temporal entity before anything is removed.
 fn lock_temporal_entity_statement(schema: Option<&DynIden>, id: &str) -> SelectStatement {
     Query::select()
@@ -201,26 +199,13 @@ fn lock_temporal_entity_statement(schema: Option<&DynIden>, id: &str) -> SelectS
         .to_owned()
 }
 
-/// Remove one entity's attribute history, reporting each removed write identity.
-fn delete_attribute_history_statement(schema: Option<&DynIden>, entity_key: TemporalEntityKey) -> DeleteStatement {
-    let owned_streams = Query::select()
-        .column((S, TemporalAttributeStreams::StreamKey))
-        .from(qualified(schema, TemporalAttributeStreams::Table).alias(S))
-        .and_where(Expr::col((S, TemporalAttributeStreams::TemporalEntityKey)).eq(entity_key.get()))
-        .to_owned();
-    Query::delete()
-        .from_table(qualified(schema, AttributeHistory::Table))
-        .and_where(Expr::col(AttributeHistory::StreamKey).in_subquery(owned_streams))
-        .returning(Query::returning().column(AttributeHistory::WriteId))
-        .to_owned()
-}
-
-/// Remove one entity's scope history, reporting each removed write identity.
-fn delete_scope_history_statement(schema: Option<&DynIden>, entity_key: TemporalEntityKey) -> DeleteStatement {
-    Query::delete()
-        .from_table(qualified(schema, ScopeHistory::Table))
-        .and_where(Expr::col(ScopeHistory::TemporalEntityKey).eq(entity_key.get()))
-        .returning(Query::returning().column(ScopeHistory::WriteId))
+/// The streams of one temporal entity, whose history the deletion removes by
+/// their keys.
+fn owned_streams_statement(schema: Option<&DynIden>, entity_key: TemporalEntityKey) -> SelectStatement {
+    Query::select()
+        .column(TemporalAttributeStreams::StreamKey)
+        .from(qualified(schema, TemporalAttributeStreams::Table))
+        .and_where(Expr::col(TemporalAttributeStreams::TemporalEntityKey).eq(entity_key.get()))
         .to_owned()
 }
 
@@ -297,11 +282,10 @@ fn audit_orphaned_statement() -> SelectStatement {
 mod tests {
     use crate::temporal_entity_deletion::{
         audit_orphaned_statement,
-        delete_attribute_history_statement,
         delete_attribute_streams_statement,
-        delete_scope_history_statement,
         delete_temporal_entity_statement,
         lock_temporal_entity_statement,
+        owned_streams_statement,
     };
     use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
     use pretty_assertions::assert_eq;
@@ -319,31 +303,15 @@ mod tests {
     }
 
     #[test]
-    fn history_removal_reports_the_write_identity_of_every_removed_row() {
-        assert!(
-            delete_attribute_history_statement(None, key())
-                .to_string(PostgresQueryBuilder)
-                .contains(r#"RETURNING "write_id""#)
-        );
-        assert!(
-            delete_scope_history_statement(None, key())
-                .to_string(PostgresQueryBuilder)
-                .contains(r#"RETURNING "write_id""#)
+    fn the_history_is_addressed_through_the_keys_of_the_streams_the_entity_owns() {
+        assert_eq!(
+            owned_streams_statement(None, key()).to_string(PostgresQueryBuilder),
+            r#"SELECT "stream_key" FROM "temporal_attribute_streams" WHERE "temporal_entity_key" = 1"#
         );
     }
 
     #[test]
-    fn the_sequence_reaches_every_relation_the_evolution_occupies() {
-        assert!(
-            delete_attribute_history_statement(None, key())
-                .to_string(PostgresQueryBuilder)
-                .starts_with(r#"DELETE FROM "attribute_history""#)
-        );
-        assert!(
-            delete_scope_history_statement(None, key())
-                .to_string(PostgresQueryBuilder)
-                .starts_with(r#"DELETE FROM "scope_history""#)
-        );
+    fn the_sequence_removes_the_catalogue_rows_the_evolution_occupies() {
         assert!(
             delete_attribute_streams_statement(None, key())
                 .to_string(PostgresQueryBuilder)
@@ -368,8 +336,6 @@ mod tests {
     #[test]
     fn no_statement_records_a_tombstone_for_a_temporal_evolution_deletion() {
         for sql in [
-            delete_attribute_history_statement(None, key()).to_string(PostgresQueryBuilder),
-            delete_scope_history_statement(None, key()).to_string(PostgresQueryBuilder),
             delete_attribute_streams_statement(None, key()).to_string(PostgresQueryBuilder),
             delete_temporal_entity_statement(None, key()).to_string(PostgresQueryBuilder),
         ] {

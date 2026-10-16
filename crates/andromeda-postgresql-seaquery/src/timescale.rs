@@ -12,7 +12,7 @@ use crate::{
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
-use sea_query::{Alias, Expr, ExprTrait, Func, Iden, JoinType, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, CaseStatement, Expr, ExprTrait, Func, Iden, JoinType, Keyword, Query, SelectStatement, SimpleExpr};
 
 /// The `time_bucket(width, ts, origin)` bucketing function.
 #[derive(Iden, Clone, Copy)]
@@ -90,6 +90,32 @@ enum Hypertables {
     /// Whether the columnstore is enabled on the hypertable
     CompressionEnabled,
 }
+
+/// The `timescaledb_information.chunks` view.
+#[derive(Iden, Clone, Copy)]
+enum Chunks {
+    /// View name: `chunks`
+    #[iden = "chunks"]
+    Table,
+    /// The hypertable the chunk belongs to
+    HypertableName,
+    /// The first instant the chunk covers on the time dimension
+    RangeStart,
+    /// The first instant past the chunk on the time dimension
+    RangeEnd,
+    /// Whether the chunk is converted to the columnstore
+    IsCompressed,
+}
+
+/// The `compressed_until` projection of [`chunk_span_statement`].
+#[derive(Iden, Clone, Copy)]
+#[iden = "compressed_until"]
+pub struct CompressedUntil;
+
+/// The `history_from` projection of [`chunk_span_statement`].
+#[derive(Iden, Clone, Copy)]
+#[iden = "history_from"]
+pub struct HistoryFrom;
 
 /// The `_timescaledb_catalog` schema.
 #[derive(Iden, Clone, Copy)]
@@ -200,6 +226,26 @@ pub fn columnstore_settings_statement(hypertable: &str) -> SelectStatement {
         .to_owned()
 }
 
+/// Where the chunks of `hypertables` lie on their time dimension, together.
+///
+/// Projects `compressed_until`, the latest `range_end` of a converted chunk
+/// (NULL when none is converted), and `history_from`, the earliest
+/// `range_start` of any chunk (NULL when there is none), from
+/// `timescaledb_information.chunks`. The hypertable names are fixed catalogue
+/// names bound as values.
+#[must_use]
+pub fn chunk_span_statement(hypertables: &[&str]) -> SelectStatement {
+    let converted_end = CaseStatement::new()
+        .case(Expr::col(Chunks::IsCompressed), Expr::col(Chunks::RangeEnd))
+        .finally(Keyword::Null);
+    Query::select()
+        .expr_as(Func::max(converted_end), CompressedUntil)
+        .expr_as(Func::min(Expr::col(Chunks::RangeStart)), HistoryFrom)
+        .from((TimescaleInformation, Chunks::Table))
+        .and_where(Expr::col(Chunks::HypertableName).is_in(hypertables.iter().copied()))
+        .to_owned()
+}
+
 /// `TimescaleDB`: `set_chunk_time_interval(hypertable, make_interval(days => n))`
 /// - the interval every chunk created from now on spans.
 ///
@@ -212,7 +258,14 @@ pub fn set_chunk_time_interval(hypertable: &str, days: SimpleExpr) -> SimpleExpr
 
 #[cfg(test)]
 mod tests {
-    use crate::timescale::{chunk_interval_statement, columnstore_policy_statement, columnstore_settings_statement, drop_chunks, set_chunk_time_interval};
+    use crate::timescale::{
+        chunk_interval_statement,
+        chunk_span_statement,
+        columnstore_policy_statement,
+        columnstore_settings_statement,
+        drop_chunks,
+        set_chunk_time_interval,
+    };
     use pretty_assertions::assert_eq;
     use sea_query::{Expr, PostgresQueryBuilder, Query};
 
@@ -275,6 +328,15 @@ mod tests {
             .to_owned()
             .to_string(PostgresQueryBuilder);
         assert!(sql.contains("time_bucket('PT1H'::interval, \"observed_at\", \"origin\")"), "{sql}");
+    }
+
+    #[test]
+    fn the_chunk_span_reads_the_latest_converted_end_and_the_earliest_start_of_the_named_hypertables() {
+        let sql = chunk_span_statement(&["attribute_history", "scope_history"]).to_string(PostgresQueryBuilder);
+        assert_eq!(
+            sql,
+            r#"SELECT MAX((CASE WHEN ("is_compressed") THEN "range_end" ELSE NULL END)) AS "compressed_until", MIN("range_start") AS "history_from" FROM "timescaledb_information"."chunks" WHERE "hypertable_name" IN ('attribute_history', 'scope_history')"#
+        );
     }
 
     #[test]

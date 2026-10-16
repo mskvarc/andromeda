@@ -3,6 +3,7 @@ use crate::{
         StepRole,
         application_steps,
         intent_source::{EntryReads, IntentSource, reach_statement},
+        replaced_rows::ReplacedHistory,
     },
     temporal_entry_record::{
         TemporalIntentRecord,
@@ -98,6 +99,22 @@ fn common_table<'s>(sql: &'s str, name: &str) -> &'s str {
 }
 
 /// The position of the first statement whose text starts with `prefix`.
+/// The position of the drain's step in `role`.
+fn role_position(role: StepRole) -> usize {
+    rendered_steps()
+        .iter()
+        .position(|(step, _)| *step == role)
+        .unwrap_or_else(|| panic!("no step in {role:?}"))
+}
+
+/// The statement of the drain's step in `role`.
+fn in_role(role: StepRole) -> String {
+    rendered_steps()
+        .into_iter()
+        .find(|(step, _)| *step == role)
+        .map_or_else(|| panic!("no step in {role:?}"), |(_, sql)| sql)
+}
+
 fn position(prefix: &str) -> usize {
     rendered_steps()
         .iter()
@@ -360,7 +377,14 @@ fn missing_evolutions_and_streams_are_created_before_the_history() {
         rendered_steps()
     );
     assert!(position(r#"INSERT INTO "write_records""#) < history);
-    assert!(position(r#"DELETE FROM "attribute_history""#) < history, "the replaced instance goes first");
+    assert!(
+        role_position(StepRole::Replace(ReplacedHistory::AttributeInstances)) < history,
+        "the replaced instance goes first"
+    );
+    assert!(
+        role_position(StepRole::Replace(ReplacedHistory::ScopeInstances)) < scopes,
+        "the replaced Scope goes first"
+    );
     assert!(position(r#"INSERT INTO "attribute_history_instance_claims""#) < history);
 }
 
@@ -608,14 +632,34 @@ fn only_an_intent_stating_no_type_reaches_the_untyped_stream_insert() {
 /// every sibling stream, by that identifier and never by its instant.
 #[test]
 fn a_replaced_instance_is_sought_across_every_dataset_of_its_attribute() {
-    let (_, replaced) = rendered_steps()
-        .into_iter()
-        .find(|(_, sql)| sql.starts_with(r#"DELETE FROM "attribute_history""#))
-        .expect("the replacement");
+    let replaced = in_role(StepRole::Replace(ReplacedHistory::AttributeInstances));
     assert!(replaced.contains(r#""s2"."attribute_name_key" = "e"."attribute_name_key""#), "{replaced}");
     assert!(!replaced.contains(r#""s2"."dataset_id""#), "{replaced}");
     assert!(replaced.contains(r#""e"."verbatim_instance_id" IS NOT NULL"#), "{replaced}");
     assert!(!replaced.contains("observed_at") && !replaced.contains("generated_instance_id"), "{replaced}");
+}
+
+/// The replacement is read rather than deleted in place, so the delete that
+/// follows can bind each replaced row's stream and write identity.
+#[test]
+fn a_replacement_reads_the_segment_and_write_identity_of_each_replaced_row() {
+    let instances = in_role(StepRole::Replace(ReplacedHistory::AttributeInstances));
+    assert!(
+        instances.starts_with(
+            r#"SELECT "attribute_history"."stream_key", "attribute_history"."recorded_at", "attribute_history"."write_id", "attribute_history"."write_ordinal" FROM"#
+        ),
+        "{instances}"
+    );
+    let scopes = in_role(StepRole::Replace(ReplacedHistory::ScopeInstances));
+    assert!(
+        scopes.starts_with(
+            r#"SELECT "scope_history"."temporal_entity_key", "scope_history"."recorded_at", "scope_history"."write_id", "scope_history"."write_ordinal" FROM"#
+        ),
+        "{scopes}"
+    );
+    for sql in [instances, scopes] {
+        assert!(!sql.contains("DELETE"), "{sql}");
+    }
 }
 
 /// The claims' primary key is what refuses two instances naming one

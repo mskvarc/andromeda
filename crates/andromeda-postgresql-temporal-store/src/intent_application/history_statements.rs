@@ -68,23 +68,24 @@ fn verbatim_entries(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Sele
     select
 }
 
-/// Remove the history rows the entries replace: a client that
-/// supplied its own `instanceId` (clause 4.5.7) names one instance of the
-/// attribute across every `datasetId`, so the row holding it on any sibling
-/// stream goes first.
-pub(crate) fn replaced_instances_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> DeleteStatement {
+/// The history rows the entries replace, by stream and write identity: a
+/// client that supplied its own `instanceId` (clause 4.5.7) names one
+/// instance of the attribute across every `datasetId`, so the row holding it
+/// on any sibling stream goes first.
+pub(crate) fn replaced_instances_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
     let mut replaced = verbatim_entries(source, schema);
     replaced
-        .expr(Expr::val(1))
+        .column((AttributeHistory::Table, AttributeHistory::StreamKey))
+        .column((AttributeHistory::Table, AttributeHistory::RecordedAt))
+        .column((AttributeHistory::Table, AttributeHistory::WriteId))
+        .column((AttributeHistory::Table, AttributeHistory::WriteOrdinal))
         .from_as(qualified(schema, TemporalAttributeStreams::Table), S2)
+        .from(qualified(schema, AttributeHistory::Table))
         .and_where(Expr::col((S2, TemporalAttributeStreams::TemporalEntityKey)).equals((Te, TemporalEntities::TemporalEntityKey)))
         .and_where(Expr::col((S2, TemporalAttributeStreams::AttributeNameKey)).equals((E, TemporalEntry::AttributeNameKey)))
         .and_where(Expr::col((AttributeHistory::Table, AttributeHistory::StreamKey)).equals((S2, TemporalAttributeStreams::StreamKey)))
         .and_where(Expr::col((AttributeHistory::Table, AttributeHistory::VerbatimInstanceId)).equals((E, TemporalEntry::VerbatimInstanceId)));
-    Query::delete()
-        .from_table(qualified(schema, AttributeHistory::Table))
-        .and_where(Expr::exists(replaced))
-        .to_owned()
+    replaced
 }
 
 /// Release the instance claims the entries are about to stake again,
@@ -175,12 +176,16 @@ fn scope_entries(source: &IntentSource<'_>, schema: Option<&DynIden>) -> SelectS
     entries_with_evolution(source, schema, entry_kind_in(&[TemporalEntryKind::Scope.code()]))
 }
 
-/// Remove the Scope rows a Scope entry records again under its own
-/// instance identity.
-pub(crate) fn replaced_scopes_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> DeleteStatement {
+/// The Scope rows a Scope entry records again under its own instance
+/// identity, by temporal entity and write identity.
+pub(crate) fn replaced_scopes_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
     let mut replaced = scope_entries(source, schema);
     replaced
-        .expr(Expr::val(1))
+        .column((ScopeHistory::Table, ScopeHistory::TemporalEntityKey))
+        .column((ScopeHistory::Table, ScopeHistory::RecordedAt))
+        .column((ScopeHistory::Table, ScopeHistory::WriteId))
+        .column((ScopeHistory::Table, ScopeHistory::WriteOrdinal))
+        .from(qualified(schema, ScopeHistory::Table))
         .and_where(Expr::col((ScopeHistory::Table, ScopeHistory::TemporalEntityKey)).equals((Te, TemporalEntities::TemporalEntityKey)))
         .and_where(
             SimpleExpr::from(Expr::col((ScopeHistory::Table, ScopeHistory::GeneratedInstanceId))).not_distinct_from(entry(TemporalEntry::GeneratedInstanceId)),
@@ -188,10 +193,7 @@ pub(crate) fn replaced_scopes_statement(source: &IntentSource<'_>, schema: Optio
         .and_where(
             SimpleExpr::from(Expr::col((ScopeHistory::Table, ScopeHistory::VerbatimInstanceId))).not_distinct_from(entry(TemporalEntry::VerbatimInstanceId)),
         );
-    Query::delete()
-        .from_table(qualified(schema, ScopeHistory::Table))
-        .and_where(Expr::exists(replaced))
-        .to_owned()
+    replaced
 }
 
 /// The `scope_history` row of every Scope entry (clause 4.18), with the
