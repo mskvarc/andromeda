@@ -1,9 +1,12 @@
 //! Publishing a prepared Snapshot branch: promoting a staged capture or clone,
 //! and copying one Snapshot's published branch into a clone's staging branch.
 //!
-//! Every publication ends the same way -- the staging schema is renamed to the
-//! published schema and the preparation row leaves `preparing` -- in one short
-//! transaction, so the rename and the control-row update commit together.
+//! Every publication ends the same way -- the staging branch is analysed, the
+//! staging schema is renamed to the published schema and the preparation row
+//! leaves `preparing` -- in one transaction, so the first read of a published
+//! branch is planned on its statistics and the rename and the control-row
+//! update commit together. The analysis samples a bounded number of rows per
+//! relation, so the transaction stays short however large the branch.
 //!
 //! A clone's copy runs before that, in a transaction of its own: it can take as
 //! long as the source is large, and it must not hold for that long a lock that
@@ -11,7 +14,7 @@
 
 use crate::{
     snapshot::{
-        branch_schema::{promote_staging_schema, publish_empty_branch},
+        branch_schema::{analyze_branch_schema, promote_staging_schema, publish_empty_branch},
         branch_version::{condition_of, current_version},
         clone::clone_branch,
         json_value::optional_json,
@@ -36,8 +39,9 @@ use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Postgres, Transaction};
 
 /// Publish one prepared branch -- what a capture or a clone staged on success,
-/// an empty branch on failure, so a failed Snapshot stays addressable -- and
-/// record the terminal status, all in one transaction.
+/// its statistics gathered first, an empty branch on failure, so a failed
+/// Snapshot stays addressable -- and record the terminal status, all in one
+/// transaction.
 pub(crate) async fn promote_staged_branch(
     pool: &PgPool,
     id: &Identifier,
@@ -53,6 +57,9 @@ pub(crate) async fn promote_staged_branch(
             .await
             .map_err(|error| persistence_error(error))?;
     } else {
+        analyze_branch_schema(&mut transaction, snapshot_key, SnapshotBranch::Staging)
+            .await
+            .map_err(|error| persistence_error(error))?;
         promote_staging_schema(&mut transaction, snapshot_key)
             .await
             .map_err(|error| persistence_error(error))?;

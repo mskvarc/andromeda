@@ -138,8 +138,33 @@ pub(crate) async fn drop_branch_schema(conn: &mut PgConnection, key: SnapshotKey
 /// Returns [`ContextStoreError`] when the `TRUNCATE` fails.
 pub(crate) async fn truncate_branch_schema(conn: &mut PgConnection, key: SnapshotKey, branch: SnapshotBranch) -> Result<(), ContextStoreError> {
     let schema = snapshot_schema_name(key, branch);
-    let qualified: Vec<String> = BRANCH_TABLES.iter().map(|table| format!("{schema}.{table}")).collect();
-    exec_ddl(conn, format!("TRUNCATE {} RESTART IDENTITY CASCADE", qualified.join(", "))).await
+    exec_ddl(conn, format!("TRUNCATE {} RESTART IDENTITY CASCADE", qualified_branch_tables(&schema))).await
+}
+
+/// Gather the planner statistics of every relation in a branch.
+///
+/// A capture or a clone fills its staging branch in bulk, and autovacuum
+/// analyses a relation only once its naptime has passed and its changes cross
+/// the analyze threshold, so a branch read straight after its publication would
+/// be planned on default selectivities. `ANALYZE` samples a bounded number of
+/// rows per relation, so its cost does not grow with the branch.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError`] when the `ANALYZE` fails.
+pub(crate) async fn analyze_branch_schema(conn: &mut PgConnection, key: SnapshotKey, branch: SnapshotBranch) -> Result<(), ContextStoreError> {
+    exec_ddl(conn, analyze_sql(&snapshot_schema_name(key, branch))).await
+}
+
+/// The statement gathering the statistics of every relation in `schema`.
+fn analyze_sql(schema: &str) -> String {
+    format!("ANALYZE {}", qualified_branch_tables(schema))
+}
+
+/// Every branch relation qualified by `schema`, comma-separated, in
+/// [`BRANCH_TABLES`] order.
+fn qualified_branch_tables(schema: &str) -> String {
+    BRANCH_TABLES.iter().map(|table| format!("{schema}.{table}")).collect::<Vec<_>>().join(", ")
 }
 
 /// Publish a Snapshot's prepared branch by renaming its staging schema to the
@@ -172,9 +197,16 @@ pub(crate) async fn publish_empty_branch(conn: &mut PgConnection, key: SnapshotK
 mod tests {
     use crate::{
         migration_set::branch::branch_migrations,
-        snapshot::branch_schema::{BRANCH_TABLES, branch_search_path},
+        snapshot::branch_schema::{BRANCH_TABLES, analyze_sql, branch_search_path},
     };
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn the_branch_analyze_names_every_branch_relation_of_its_schema_and_nothing_else() {
+        let sql = analyze_sql("snap_7_stg");
+        let expected: Vec<String> = BRANCH_TABLES.iter().map(|table| format!("snap_7_stg.{table}")).collect();
+        assert_eq!(sql, format!("ANALYZE {}", expected.join(", ")));
+    }
 
     #[test]
     fn a_branch_migration_resolves_its_own_schema_before_the_tenant_globals() {
