@@ -230,6 +230,12 @@ fn stream_edge(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, conditi
 /// The instances the page of the stream under `st` keeps: every dated
 /// instance up to the edge `stream_edge` holds, and the undated ones when the
 /// page holds every dated instance.
+///
+/// The read ends in `OFFSET 0`, so PostgreSQL keeps it a subquery rather than
+/// pulling it up into the outer join. Pulled up, its bound on the edge becomes
+/// a join filter, and a planner that estimates a stream to hold a few rows in
+/// the window (most streams of a broker beside a few dense ones) reads the
+/// stream's rows first and finds the edge again for every one of them.
 fn kept_instances(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, condition: &Condition, walk: Walk) -> SelectStatement {
     let axis = axis_column(compiled.window.timeproperty);
     let edge = Expr::col((StreamEdge, Edge));
@@ -258,6 +264,7 @@ fn kept_instances(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, cond
         }
         UndatedInstances::Excluded => {}
     }
+    kept.offset(0);
     kept
 }
 

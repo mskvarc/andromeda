@@ -492,6 +492,25 @@ mod tests {
         assert!(!sql.contains("COUNT(*)"), "{sql}");
     }
 
+    /// The kept instances stay a subquery behind `OFFSET 0`, so the planner
+    /// finds a stream's edge once before reading the stream's rows, whatever
+    /// it estimates the stream to hold, rather than once per row.
+    #[test]
+    fn a_page_reads_its_kept_instances_behind_a_fence_after_the_edge() {
+        for page in [
+            InstancePage::Forward { size: 100 },
+            InstancePage::Backward {
+                size: 1000,
+                requested: count(5000),
+            },
+        ] {
+            let sql = recorded_sql_of(page, one_day());
+            let edge = sql.find(r#"AS "stream_edge""#).expect("the stream edge lateral");
+            let kept = sql.find(r#"OFFSET 0) AS "page""#).expect("the fenced page lateral");
+            assert!(edge < kept, "{sql}");
+        }
+    }
+
     /// The page keeps every instance up to its edge instant rather than a
     /// count of them, so the group sharing the instant at the edge stays on
     /// one page; the instances on the inclusive lower bound are the group the
