@@ -10,8 +10,14 @@ workspace = true
 
 [dependencies]
 andromeda-persistence-failure.workspace = true
+derive_more = { version = "2.1.1", features = ["deref", "deref_mut", "into"] }
+serde = { version = "1.0.229", features = ["derive"] }
 sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres"] }
+thiserror = "2.0.21"
+tokio = { version = "1.53.2", features = ["sync", "time"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"
+serde_json = "1.0.151"
+tokio = { version = "1.53.2", features = ["macros", "rt", "time"] }

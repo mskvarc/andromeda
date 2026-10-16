@@ -1,7 +1,7 @@
 //! The PostgreSQL entity store.
 //!
-//! Holds the tenant pool plus the two dictionaries every name is stored as a
-//! key of: the attribute-name dictionary the `current_attributes` rows are
+//! Holds the tenant pool, the read requests' share of it, and the two
+//! dictionaries every name is stored as a key of: the attribute-name dictionary the `current_attributes` rows are
 //! keyed on and the entity-type-name dictionary the `entity_type_name_keys`
 //! column and the rows' type keys are keyed on. A pushed-down predicate
 //! resolves names to keys through them and a read resolves the keys it reads
@@ -18,14 +18,20 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_ngsi_ld_query::ordering::compiled::ResultOrdering;
 use andromeda_postgresql_collation::provisioned_collations::ProvisionedCollations;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
-use sqlx::postgres::PgPool;
+use andromeda_postgresql_pool::read_share::{PoolLane, ReadShare};
+use sea_query::{PostgresQueryBuilder, SelectStatement};
+use sea_query_sqlx::SqlxBinder;
+use sqlx::postgres::{PgPool, PgRow};
 use std::sync::Arc;
 
 /// Repository for persisting and querying NGSI-LD entities.
 #[derive(Debug)]
 pub struct EntityRepository {
-    /// The tenant's connection pool.
+    /// The tenant's connection pool, which writes and the reads a write makes
+    /// run on.
     pub(super) pool: PgPool,
+    /// The connections of the pool read requests may hold.
+    pub(super) reads: ReadShare,
     /// The attribute-name dictionary, shared with the temporal store.
     pub(super) attribute_names: Arc<dyn NameLookup<AttributeName>>,
     /// The entity-type-name dictionary, shared with the temporal store.
@@ -40,13 +46,38 @@ impl EntityRepository {
     /// A constant rather than a probe: the tenant migrations create the `PostGIS` geometry columns and the `ltree` scope columns, so a pool that migrated has them and one that could not migrate never becomes a store. That is the difference between these axes and the `TimescaleDB` edition, which is genuinely per-pool runtime state.
     pub const PROFILE: StorageProfile = StorageProfile::POSTGIS_LTREE;
 
-    /// Create a new entity repository backed by the given connection pool.
-    pub fn new(pool: &PgPool, attribute_names: Arc<dyn NameLookup<AttributeName>>, entity_type_names: Arc<dyn NameLookup<EntityTypeName>>) -> EntityRepository {
+    /// Create a new entity repository backed by the given connection pool,
+    /// its read requests drawing on `reads`.
+    pub fn new(
+        pool: &PgPool,
+        reads: ReadShare,
+        attribute_names: Arc<dyn NameLookup<AttributeName>>,
+        entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
+    ) -> EntityRepository {
         EntityRepository {
             pool: pool.clone(), // clone: Arc ref-count bump
+            reads,
             attribute_names,
             entity_type_names,
             collations: ProvisionedCollations::of_pool(pool),
+        }
+    }
+
+    /// Run `statement` on a connection of `lane`.
+    ///
+    /// The connection is back in the pool when this returns, so the dictionary
+    /// reads that assemble the rows never hold a second connection beside it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the driver's error when no connection is free within the
+    /// acquire deadline or the statement fails.
+    pub(super) async fn fetch_on(&self, lane: PoolLane, statement: &SelectStatement) -> Result<Vec<PgRow>, sqlx::Error> {
+        let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+        let query = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values);
+        match lane {
+            PoolLane::Whole => query.fetch_all(&self.pool).await,
+            PoolLane::Reads => query.fetch_all(&mut **self.reads.acquire().await?).await,
         }
     }
 

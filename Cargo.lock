@@ -99,6 +99,7 @@ dependencies = [
  "andromeda-postgresql-codes",
  "andromeda-postgresql-context-store",
  "andromeda-postgresql-name-dictionary",
+ "andromeda-postgresql-pool",
  "andromeda-postgresql-query",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-temporal-query",
@@ -1860,8 +1861,13 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-persistence-failure",
+ "derive_more",
  "pretty_assertions",
+ "serde",
+ "serde_json",
  "sqlx",
+ "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]

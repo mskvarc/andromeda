@@ -21,6 +21,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_cache_config::NameCacheConfig};
+use andromeda_postgresql_pool::{read_share::ReadShare, write_reserve::WriteReserve};
 use andromeda_postgresql_temporal_store::{
     columnstore_capability::ColumnstoreSupport,
     repo::TemporalRepository,
@@ -112,6 +113,7 @@ async fn temporal_semantics_operator_retention_ages_storage_out_without_deletion
     let columnstore = ColumnstoreSupport::detect(&pool).await.expect("the columnstore capability probe runs");
     let repository = TemporalRepository::new(
         &pool,
+        ReadShare::of(&pool, WriteReserve::DEFAULT),
         Arc::new(NameCache::<AttributeName>::new(&pool, &NameCacheConfig::default())),
         Arc::new(NameCache::<EntityTypeName>::new(&pool, &NameCacheConfig::default())),
         columnstore,
@@ -175,6 +177,7 @@ async fn temporal_semantics_operator_retention_is_off_until_a_horizon_is_configu
     let columnstore = ColumnstoreSupport::detect(&pool).await.expect("the columnstore capability probe runs");
     let repository = TemporalRepository::new(
         &pool,
+        ReadShare::of(&pool, WriteReserve::DEFAULT),
         Arc::new(NameCache::<AttributeName>::new(&pool, &NameCacheConfig::default())),
         Arc::new(NameCache::<EntityTypeName>::new(&pool, &NameCacheConfig::default())),
         columnstore,

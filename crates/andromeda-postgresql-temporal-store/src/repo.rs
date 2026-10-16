@@ -4,14 +4,18 @@ use crate::columnstore_capability::ColumnstoreSupport;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_postgresql_collation::provisioned_collations::ProvisionedCollations;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
+use andromeda_postgresql_pool::read_share::ReadShare;
 use sqlx::postgres::PgPool;
 use std::sync::Arc;
 
 /// PostgreSQL/TimescaleDB-backed repository for NGSI-LD temporal entity data.
 #[derive(Debug)]
 pub struct TemporalRepository {
-    /// Tenant connection pool every temporal statement runs on.
+    /// Tenant connection pool every temporal write, and every read a write
+    /// makes, runs on.
     pub(crate) pool: PgPool,
+    /// The connections of the pool a temporal query may hold.
+    pub(crate) reads: ReadShare,
     /// Shared `attribute_names` dictionary cache.
     pub(crate) attribute_names: Arc<dyn NameLookup<AttributeName>>,
     /// Shared `entity_type_names` dictionary cache.
@@ -34,15 +38,18 @@ pub struct TemporalRepository {
 }
 
 impl TemporalRepository {
-    /// Wraps `pool` and the shared dictionary caches; the provisioned-collation set starts empty.
+    /// Wraps `pool`, the read requests' share `reads` of it and the shared
+    /// dictionary caches; the provisioned-collation set starts empty.
     pub fn new(
         pool: &PgPool,
+        reads: ReadShare,
         attribute_names: Arc<dyn NameLookup<AttributeName>>,
         entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
         columnstore: ColumnstoreSupport,
     ) -> TemporalRepository {
         TemporalRepository {
             pool: pool.clone(), // clone: `PgPool` shares its inner pool by reference count.
+            reads,
             attribute_names,
             entity_type_names,
             columnstore,

@@ -12,6 +12,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
+use andromeda_postgresql_pool::read_share::PoolLane;
 use andromeda_postgresql_schema::current::{E, Entities, EntitySearch};
 use andromeda_postgresql_seaquery::operator::array_contains_key;
 use sea_query::{Expr, Order, PostgresQueryBuilder, SelectStatement};
@@ -67,7 +68,7 @@ impl EntityRepository {
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
         let heads = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
         Ok(self
-            .entities_of_heads(target, &heads, &RowSelection::Every)
+            .entities_of_heads(PoolLane::Whole, target, &heads, &RowSelection::Every)
             .await?
             .into_iter()
             .map(|retrieved| Arc::unwrap_or_clone(retrieved.state))

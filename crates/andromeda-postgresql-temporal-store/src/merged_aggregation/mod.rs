@@ -52,7 +52,7 @@ use andromeda_temporal::error::TemporalError;
 use chrono::Utc;
 use sea_query::{DeleteStatement, InsertStatement, PostgresQueryBuilder, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, PgConnection, Row, postgres::PgRow};
+use sqlx::{AssertSqlSafe, Connection, PgConnection, Row, postgres::PgRow};
 use std::collections::HashSet;
 
 /// The key the staging counts its own catalogue and stream keys down from:
@@ -80,7 +80,8 @@ impl TemporalRepository {
         compiled: &CompiledTemporalQuery,
         answered: &[TemporalHistoryRow],
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
-        let mut tx = self.pool.begin().await.map_err(TemporalStoreError::from)?;
+        let mut connection = self.reads.acquire().await.map_err(TemporalStoreError::from)?;
+        let mut tx = connection.begin().await.map_err(TemporalStoreError::from)?;
         let branch = branch_schema(schema_iden(target));
         for statement in staging_tables(&branch) {
             sqlx::query(AssertSqlSafe(statement))

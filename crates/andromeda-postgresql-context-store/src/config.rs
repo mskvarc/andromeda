@@ -3,6 +3,7 @@
 use crate::maintenance_config::MaintenanceConfig;
 use andromeda_configuration_scalars::human_duration::HumanDuration;
 use andromeda_postgresql_name_dictionary::name_cache_config::{NameCacheConfig, NameCacheConfigError};
+use andromeda_postgresql_pool::write_reserve::WriteReserve;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use strum::{Display, EnumString};
@@ -127,6 +128,12 @@ pub struct DatabaseConfig {
     pub pooler: Option<PoolerConfig>,
     /// Maximum connections in the main pool.
     pub max_connections: u32,
+    /// Percentage of each tenant pool that read requests (queries, retrievals,
+    /// discovery and temporal reads) never hold, so writes keep connections
+    /// however many reads queue. Rounded down: a pool too small to spare a
+    /// whole connection keeps every one for reads. Below 100.
+    #[toml_comment(inline)]
+    pub write_reserve_percent: WriteReserve,
     /// How long a request-path connection checkout waits for a free connection
     /// before it is shed as backpressure, in human-readable form (`"5s"`). Kept
     /// below `http.request_timeout` so a saturated pool surfaces as a 503 with
@@ -160,6 +167,7 @@ impl Default for DatabaseConfig {
             // No proxy by default: the request path and the direct path are the same.
             pooler: None,
             max_connections: 32,
+            write_reserve_percent: WriteReserve::DEFAULT,
             acquire_timeout: HumanDuration::from_secs(5),
             synchronous_commit: SynchronousCommit::Off,
             preload_name_dictionaries: true,
@@ -259,6 +267,7 @@ mod tests {
     };
     use andromeda_configuration_scalars::{human_byte_size::HumanByteSize, human_duration::HumanDuration};
     use andromeda_postgresql_name_dictionary::name_cache_config::{NameCacheConfig, NameCacheConfigError};
+    use andromeda_postgresql_pool::write_reserve::WriteReserve;
     use std::str::FromStr;
 
     #[test]
@@ -274,6 +283,7 @@ mod tests {
                 tenant_max_connections,
             }),
             max_connections: 16,
+            write_reserve_percent: WriteReserve::DEFAULT,
             acquire_timeout: HumanDuration::from_secs(5),
             synchronous_commit: SynchronousCommit::Off,
             preload_name_dictionaries: true,
@@ -322,6 +332,7 @@ mod tests {
             url: "postgres://localhost/postgres".parse().expect("database URL"),
             pooler: None,
             max_connections: 1,
+            write_reserve_percent: WriteReserve::DEFAULT,
             acquire_timeout: HumanDuration::from_secs(5),
             synchronous_commit: SynchronousCommit::Off,
             preload_name_dictionaries: true,

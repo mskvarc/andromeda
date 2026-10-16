@@ -101,7 +101,9 @@ impl EntityRepository {
     /// no longer parses.
     pub async fn census_attribute_entity_types(&self, target: &ContextTarget) -> Result<Vec<AttributeEntityTypes>, ContextStoreError> {
         let (sql, values) = attribute_entity_types_statement(target).build_sqlx(PostgresQueryBuilder);
-        let rows: Vec<(String, Vec<String>)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
+        let rows: Vec<(String, Vec<String>)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_all(&mut **self.reads.acquire().await?)
+            .await?;
         rows.into_iter()
             .map(|(attribute, types)| {
                 Ok((
@@ -124,7 +126,9 @@ impl EntityRepository {
             return Ok(None);
         };
         let (sql, values) = attribute_summary_statement(target, attribute_key).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
+        let rows = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_all(&mut **self.reads.acquire().await?)
+            .await?;
         attribute_summary_of(attribute, &rows)
     }
 }

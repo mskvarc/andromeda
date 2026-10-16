@@ -136,7 +136,9 @@ impl EntityRepository {
     /// is no longer a valid entity type name.
     pub async fn census_types(&self, target: &ContextTarget) -> Result<Vec<EntityTypeName>, ContextStoreError> {
         let (sql, values) = types_statement(target).build_sqlx(PostgresQueryBuilder);
-        let names: Vec<String> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
+        let names: Vec<String> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_all(&mut **self.reads.acquire().await?)
+            .await?;
         names.iter().map(String::as_str).map(stored_type_name).collect()
     }
 
@@ -149,7 +151,9 @@ impl EntityRepository {
     /// no longer parses.
     pub async fn census_entity_type_attributes(&self, target: &ContextTarget) -> Result<Vec<EntityTypeAttributes>, ContextStoreError> {
         let (sql, values) = entity_type_attributes_statement(target).build_sqlx(PostgresQueryBuilder);
-        let rows: Vec<(String, Vec<String>)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
+        let rows: Vec<(String, Vec<String>)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_all(&mut **self.reads.acquire().await?)
+            .await?;
         rows.into_iter()
             .map(|(type_name, attributes)| {
                 Ok((
@@ -176,7 +180,9 @@ impl EntityRepository {
             return Ok(None);
         };
         let (sql, values) = entity_type_summary_statement(target, type_key).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
+        let rows = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_all(&mut **self.reads.acquire().await?)
+            .await?;
         type_summary_of(rows)
     }
 }

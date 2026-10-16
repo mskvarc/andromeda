@@ -16,6 +16,7 @@ use andromeda_ngsi_ld_query::{
     projection::returned_attributes::ReturnedAttributes,
 };
 use andromeda_postgresql_context_query::{entity as entity_sql, entity_page::TOTAL_COUNT_COLUMN, entity_total::EntityTotal};
+use andromeda_postgresql_pool::read_share::PoolLane;
 use andromeda_postgresql_query::{
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     projected_attribute_names::projected_attribute_names,
@@ -25,7 +26,7 @@ use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
 use iri_rs::IriBuf;
 use sea_query::{PostgresQueryBuilder, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
-use sqlx::{Row, postgres::PgRow};
+use sqlx::{Connection, Row, postgres::PgRow};
 
 impl EntityRepository {
     /// Execute a compiled entity query and return the matching stored states
@@ -70,7 +71,7 @@ impl EntityRepository {
         let window_count = page_total(&head_rows, matches!(built.total, EntityTotal::OnPageRows { .. }));
         let returned = ReturnedAttributes::of(&planned.query.projection, &planned.query.selection.attrs);
         let selection = RowSelection::of(&returned, &names.attributes);
-        let mut rows = self.entities_of_heads(target, &head_rows, &selection).await?;
+        let mut rows = self.entities_of_heads(PoolLane::Reads, target, &head_rows, &selection).await?;
         built.read_order.present(&mut rows);
         let rows = rows;
 
@@ -87,25 +88,26 @@ impl EntityRepository {
         Ok(planned.outcome(rows, total_count))
     }
 
-    /// Run a statement of a page as `planning` asks: on the pool, or in a
-    /// transaction of its own that sets how it is planned and run.
+    /// Run a statement of a page as `planning` asks, on a connection of the
+    /// read share: alone, or in a transaction of its own that sets how it is
+    /// planned and run.
     ///
     /// # Errors
     ///
-    /// Returns [`ContextStoreError`] when the statement fails, or the
-    /// transaction it runs in cannot begin or commit.
+    /// Returns [`ContextStoreError`] when no connection is free within the
+    /// acquire deadline, the statement fails, or the transaction it runs in
+    /// cannot begin or commit.
     async fn fetch_planned(&self, select: &SelectStatement, planning: StatementPlanning) -> Result<Vec<PgRow>, ContextStoreError> {
+        let Some(begin) = planning.begin() else {
+            return Ok(self.fetch_on(PoolLane::Reads, select).await?);
+        };
         let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
         let statement = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values);
-        match planning.begin() {
-            None => Ok(statement.fetch_all(&self.pool).await?),
-            Some(begin) => {
-                let mut transaction = self.pool.begin_with(begin).await?;
-                let rows = statement.fetch_all(&mut *transaction).await?;
-                transaction.commit().await?;
-                Ok(rows)
-            }
-        }
+        let mut connection = self.reads.acquire().await?;
+        let mut transaction = connection.begin_with(begin).await?;
+        let rows = statement.fetch_all(&mut *transaction).await?;
+        transaction.commit().await?;
+        Ok(rows)
     }
 
     /// Run a `COUNT` statement as `planning` asks and read back its one
@@ -144,8 +146,7 @@ impl EntityRepository {
         let names = self.resolve_names(&planned.query).await?;
         let statement = entity_sql::build_ids_query(target, &planned.query, &planned.window, &names)?;
 
-        let (sql, values) = statement.select.build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
+        let rows = self.fetch_on(PoolLane::Reads, &statement.select).await?;
         let mut ids: Vec<Identifier> = rows
             .iter()
             .map(|row| -> Result<Identifier, ContextStoreError> { stored_uri(row.try_get("id")?) })

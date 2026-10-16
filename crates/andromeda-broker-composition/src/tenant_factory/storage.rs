@@ -38,7 +38,7 @@ use andromeda_postgresql_context_store::{
     tenant_migration::{TenantSchemaState, migrate_single_tenant_db, tenant_schema_state, upgrade_single_tenant_snapshot_branches},
 };
 use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_lookup::NameLookup, schema_epoch::read_established_epoch};
-use andromeda_postgresql_pool::pool_options::configure_pool_options;
+use andromeda_postgresql_pool::{pool_options::configure_pool_options, read_share::ReadShare};
 use andromeda_postgresql_temporal_store::{columnstore_capability::ColumnstoreSupport, repo::TemporalRepository};
 use andromeda_registration::store::RegistrationStore;
 use andromeda_snapshot::store::SnapshotStore;
@@ -236,14 +236,23 @@ pub(super) async fn initialize_storage(
     // reconciler below enables the columnstore only where this finds one, so an
     // Apache tenant never calls a procedure its edition does not ship.
     let columnstore = ColumnstoreSupport::detect(&pool).await?;
+    // One share for the tenant: entity and temporal read requests together hold
+    // no more of the pool than the write reserve leaves them.
+    let reads = ReadShare::of(&pool, config.database.write_reserve_percent);
     let temporal_repo = Arc::new(TemporalRepository::new(
         &pool,
+        reads.clone(), // clone: the entity store's read requests draw on the same permits.
         Arc::clone(&attribute_names),
         Arc::clone(&entity_type_names),
         columnstore,
     ));
     reconcile_temporal_storage(&temporal_repo, &config.temporal).await?;
-    let entity_repository = Arc::new(EntityRepository::new(&pool, Arc::clone(&attribute_names), Arc::clone(&entity_type_names)));
+    let entity_repository = Arc::new(EntityRepository::new(
+        &pool,
+        reads,
+        Arc::clone(&attribute_names),
+        Arc::clone(&entity_type_names),
+    ));
     let entity_ports = EntityStoragePorts {
         reader: Arc::clone(&entity_repository) as Arc<dyn EntityReader>, // clone: every focused port shares one repository and pool.
         query: Arc::clone(&entity_repository) as Arc<dyn EntityQueryStore>, // clone: every focused port shares one repository and pool.

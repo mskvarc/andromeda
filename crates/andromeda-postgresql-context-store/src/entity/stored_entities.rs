@@ -33,10 +33,10 @@ use andromeda_postgresql_attribute_instance::{
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::entity_key::EntityKey;
 use andromeda_postgresql_context_query::entity_head::{EntityHead, select_head};
+use andromeda_postgresql_pool::read_share::PoolLane;
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use andromeda_postgresql_schema::current::{CurrentAttributes, E, Entities, EntitySearch};
-use sea_query::{Expr, ExprTrait, Iden, JoinType, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Expr, ExprTrait, Iden, JoinType, Query, SelectStatement};
 use sqlx::{Row, postgres::PgRow};
 use std::{collections::HashMap, sync::Arc};
 
@@ -218,8 +218,8 @@ impl EntityRepository {
     /// The Entities whose heads a statement read into `heads`, with the rows
     /// `selection` takes, in the order of their heads.
     ///
-    /// The rows are a second statement, by the keys of the heads; it is not
-    /// sent when there is no head or the selection takes no row.
+    /// The rows are a second statement on `lane`, by the keys of the heads; it
+    /// is not sent when there is no head or the selection takes no row.
     ///
     /// # Errors
     ///
@@ -227,14 +227,14 @@ impl EntityRepository {
     /// fails, or when a head or the rows of an Entity do not read back.
     pub(crate) async fn entities_of_heads(
         &self,
+        lane: PoolLane,
         target: &ContextTarget,
         heads: &[PgRow],
         selection: &RowSelection,
     ) -> Result<Vec<RetrievedEntity>, ContextStoreError> {
         let mut gathered = GatheredEntities::of_heads(heads)?;
         if !gathered.is_empty() && !selection.takes_none() {
-            let (sql, values) = rows_of(target, &gathered.keys(), selection).build_sqlx(PostgresQueryBuilder);
-            let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
+            let rows = self.fetch_on(lane, &rows_of(target, &gathered.keys(), selection)).await?;
             gathered.add_rows(&rows)?;
         }
         self.assembled(gathered).await

@@ -338,6 +338,7 @@ mod tests {
     use andromeda_entity::spatial_config::SpatialConsistency;
     use andromeda_http_stack::config::{compression::CompressionQuality, cors::CorsMode};
     use andromeda_ngsi_ld_request::pagination::paging_mode::PagingMode;
+    use andromeda_postgresql_pool::write_reserve::WriteReserve;
     use serial_test::serial;
     use std::{
         env,
@@ -595,6 +596,25 @@ lease = "30s"
             "{error}"
         );
         loaded.expect("a 10s side-effect lease over a 5s acquire timeout carries the margin");
+    }
+
+    /// The write reserve loads as a percentage below 100, defaults to a
+    /// quarter, and a reserve of the whole pool refuses to load.
+    #[test]
+    #[serial]
+    fn a_write_reserve_loads_below_the_whole_pool_and_the_whole_pool_is_refused() {
+        let set = write_temp_config("[database]\nwrite_reserve_percent = 40\n");
+        let loaded = RuntimeConfig::load(Some(&set), ServerOverrides::default());
+        fs::remove_file(set).expect("temp config should be removed");
+        let whole = write_temp_config("[database]\nwrite_reserve_percent = 100\n");
+        let refused = RuntimeConfig::load(Some(&whole), ServerOverrides::default());
+        fs::remove_file(whole).expect("temp config should be removed");
+
+        let loaded = loaded.expect("a 40 percent reserve loads");
+        assert_eq!(loaded.database.write_reserve_percent.read_connections(10), 6);
+        assert_eq!(RuntimeConfig::default().database.write_reserve_percent, WriteReserve::DEFAULT);
+        let error = refused.expect_err("a reserve of the whole pool leaves reads nothing");
+        assert!(error.to_string().contains("write_reserve_percent"), "{error}");
     }
 
     #[test]

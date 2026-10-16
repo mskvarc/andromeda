@@ -8,6 +8,10 @@
 //! by `attrs` or a clause 4.21 projection reads the rows of the Attributes it
 //! can return and no other. The compare-and-set token a read-modify-write
 //! states its precondition against is the head's `modified_at`.
+//!
+//! A read by identifier is a read request's (a retrieval, or the Entities a
+//! query page reads by identifier) or a write's (the state a mutation starts
+//! from), and runs on the [`PoolLane`] its caller names.
 
 use crate::{
     current_attribute::read::{RowSelection, Rows, select_row_columns},
@@ -22,6 +26,7 @@ use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::projection::returned_attributes::ReturnedAttributes;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_context_query::entity_head::select_head;
+use andromeda_postgresql_pool::read_share::PoolLane;
 use andromeda_postgresql_schema::current::{CurrentAttributes, E, Entities, EntitySearch};
 use andromeda_postgresql_seaquery::pg_array::{any, text_array};
 use sea_query::{Expr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
@@ -38,25 +43,30 @@ impl EntityRepository {
     /// when the stored rows no longer read back as an entity state.
     pub async fn get(&self, target: &ContextTarget, id: &Identifier) -> Result<Option<EntityState>, ContextStoreError> {
         Ok(self
-            .get_with_sys_attrs(target, id, &ReturnedAttributes::Every)
+            .get_with_sys_attrs(PoolLane::Whole, target, id, &ReturnedAttributes::Every)
             .await?
             .map(|retrieved| Arc::unwrap_or_clone(retrieved.state)))
     }
 
     /// Fetch the stored states of several entities, each with its clause 4.8
-    /// system attributes, in one statement.
+    /// system attributes, in one statement on `lane`.
     ///
     /// # Errors
     ///
     /// Returns [`ContextStoreError`] when the read or a name lookup fails, or
     /// when the stored rows no longer read back as entity states.
-    pub async fn get_batch(&self, target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, RetrievedEntity>, ContextStoreError> {
+    pub async fn get_batch(
+        &self,
+        lane: PoolLane,
+        target: &ContextTarget,
+        ids: &[Identifier],
+    ) -> Result<HashMap<Identifier, RetrievedEntity>, ContextStoreError> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
         let id_strs: Vec<&str> = ids.iter().map(Identifier::as_str).collect();
         let retrieved = self
-            .read_joined(entities_query(target, any(text_array(&id_strs)), &RowSelection::Every))
+            .read_joined(lane, entities_query(target, any(text_array(&id_strs)), &RowSelection::Every))
             .await?;
         // clone: the identifier keys the map and stays in the state it names
         Ok(retrieved.into_iter().map(|entity| (entity.state.id().clone(), entity)).collect())
@@ -69,7 +79,10 @@ impl EntityRepository {
     /// Returns [`ContextStoreError`] when the read or a name lookup fails, or
     /// when the stored rows no longer read back as an entity state.
     pub async fn get_snapshot(&self, target: &ContextTarget, id: &Identifier) -> Result<Option<EntitySnapshot>, ContextStoreError> {
-        Ok(self.get_with_sys_attrs(target, id, &ReturnedAttributes::Every).await?.map(snapshot_of))
+        Ok(self
+            .get_with_sys_attrs(PoolLane::Whole, target, id, &ReturnedAttributes::Every)
+            .await?
+            .map(snapshot_of))
     }
 
     /// Retrieve stored states and `modified_at` for several entities in one
@@ -81,7 +94,7 @@ impl EntityRepository {
     /// when the stored rows no longer read back as entity states.
     pub async fn get_snapshot_batch(&self, target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, EntitySnapshot>, ContextStoreError> {
         Ok(self
-            .get_batch(target, ids)
+            .get_batch(PoolLane::Whole, target, ids)
             .await?
             .into_iter()
             .map(|(id, retrieved)| (id, snapshot_of(retrieved)))
@@ -89,8 +102,8 @@ impl EntityRepository {
     }
 
     /// Retrieve an entity's stored state together with its clause 4.8 system
-    /// attributes, in one statement, holding the Attributes `returned` lets a
-    /// response hold and no other.
+    /// attributes, in one statement on `lane`, holding the Attributes
+    /// `returned` lets a response hold and no other.
     ///
     /// # Errors
     ///
@@ -98,12 +111,13 @@ impl EntityRepository {
     /// when the stored rows no longer read back as an entity state.
     pub async fn get_with_sys_attrs(
         &self,
+        lane: PoolLane,
         target: &ContextTarget,
         id: &Identifier,
         returned: &ReturnedAttributes<'_>,
     ) -> Result<Option<RetrievedEntity>, ContextStoreError> {
         let selection = self.row_selection(returned).await?;
-        Ok(self.read_joined(entities_query(target, Expr::val(id.as_str()), &selection)).await?.pop())
+        Ok(self.read_joined(lane, entities_query(target, Expr::val(id.as_str()), &selection)).await?.pop())
     }
 
     /// The rows holding the Attributes `returned` lets a response hold, its
@@ -152,11 +166,10 @@ impl EntityRepository {
             .collect()
     }
 
-    /// Run a statement built by [`entities_query`] and assemble the Entities
-    /// it read.
-    async fn read_joined(&self, statement: SelectStatement) -> Result<Vec<RetrievedEntity>, ContextStoreError> {
-        let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
+    /// Run a statement built by [`entities_query`] on `lane` and assemble the
+    /// Entities it read.
+    async fn read_joined(&self, lane: PoolLane, statement: SelectStatement) -> Result<Vec<RetrievedEntity>, ContextStoreError> {
+        let rows = self.fetch_on(lane, &statement).await?;
         self.assembled(GatheredEntities::of_joined(&rows)?).await
     }
 }

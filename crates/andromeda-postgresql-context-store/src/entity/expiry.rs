@@ -10,6 +10,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{entity_snapshot::EntitySnapshot, expiry::EntityExpiryBatchSize};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
+use andromeda_postgresql_pool::read_share::PoolLane;
 use andromeda_postgresql_schema::current::{E, Entities};
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, ExprTrait, Order, PostgresQueryBuilder, Query, SelectStatement};
@@ -49,7 +50,7 @@ impl EntityRepository {
         let (sql, values) = entities_with_expired_attributes_statement(target, cutoff, u64::from(batch_size.get())).build_sqlx(PostgresQueryBuilder);
         let heads = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
         Ok(self
-            .entities_of_heads(target, &heads, &RowSelection::Every)
+            .entities_of_heads(PoolLane::Whole, target, &heads, &RowSelection::Every)
             .await?
             .into_iter()
             .map(|retrieved| {

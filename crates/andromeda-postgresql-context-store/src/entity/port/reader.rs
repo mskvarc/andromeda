@@ -9,9 +9,13 @@ use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::projection::returned_attributes::ReturnedAttributes;
+use andromeda_postgresql_pool::read_share::PoolLane;
 use async_trait::async_trait;
 use std::{collections::HashMap, sync::Arc};
 
+/// A retrieval and the Entities a query page reads by identifier are read
+/// requests, and run on the read share; the states a mutation starts from are
+/// the write's, and run on the whole pool.
 #[async_trait]
 impl EntityReader for EntityRepository {
     async fn get(&self, target: &ContextTarget, id: &Identifier) -> Result<Option<Arc<EntityState>>, EntityError> {
@@ -22,7 +26,9 @@ impl EntityReader for EntityRepository {
     }
 
     async fn get_batch(&self, target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, RetrievedEntity>, EntityError> {
-        EntityRepository::get_batch(self, target, ids).await.map_err(|error| classify(&error))
+        EntityRepository::get_batch(self, PoolLane::Reads, target, ids)
+            .await
+            .map_err(|error| classify(&error))
     }
 
     async fn get_with_sys_attrs(
@@ -31,7 +37,7 @@ impl EntityReader for EntityRepository {
         id: &Identifier,
         returned: &ReturnedAttributes<'_>,
     ) -> Result<Option<RetrievedEntity>, EntityError> {
-        EntityRepository::get_with_sys_attrs(self, target, id, returned)
+        EntityRepository::get_with_sys_attrs(self, PoolLane::Reads, target, id, returned)
             .await
             .map_err(|error| classify(&error))
     }

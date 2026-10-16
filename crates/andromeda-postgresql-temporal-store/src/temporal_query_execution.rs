@@ -1,4 +1,5 @@
-//! Running one compiled temporal statement against the tenant pool.
+//! Running one compiled temporal statement on the read share of the tenant
+//! pool: every statement here answers a temporal query.
 
 use crate::{error::TemporalStoreError, repo::TemporalRepository};
 use andromeda_telemetry::statement::{StatementName, observe_statement};
@@ -43,14 +44,17 @@ impl TemporalStatement {
 }
 
 impl TemporalRepository {
-    /// Execute a compiled temporal statement tree, binding its values through
-    /// `sea-query-sqlx`, and observe it under `family`.
+    /// Execute a compiled temporal statement tree on a connection of the read
+    /// share, binding its values through `sea-query-sqlx`, and observe it
+    /// under `family`.
     ///
     /// # Errors
     ///
-    /// Returns [`TemporalStoreError::Database`] when the statement fails.
+    /// Returns [`TemporalStoreError::Database`] when no connection is free
+    /// within the acquire deadline or the statement fails.
     pub(crate) async fn execute_temporal_query(&self, family: TemporalStatement, statement: SelectStatement) -> Result<Vec<PgRow>, TemporalStoreError> {
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        Ok(observe_statement(family.name(), sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool)).await?)
+        let mut connection = self.reads.acquire().await?;
+        Ok(observe_statement(family.name(), sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&mut **connection)).await?)
     }
 }
