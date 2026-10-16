@@ -112,7 +112,7 @@ impl FederationService {
 
 /// The earliest instant any partial answer stopped at: every instance up to it
 /// has been answered on every page.
-fn least_range_end(ranges: &[NgsiLdContentRange]) -> Option<DateTime<Utc>> {
+pub(crate) fn least_range_end(ranges: &[NgsiLdContentRange]) -> Option<DateTime<Utc>> {
     ranges.iter().map(NgsiLdContentRange::end).min()
 }
 

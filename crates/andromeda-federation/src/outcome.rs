@@ -1,12 +1,19 @@
 //! Typed results of context-source federation attempts.
 
-use crate::{answer_body::AnswerBody, error::FederationError, source_continuation::SourceContinuation, source_read_warning::SourceReadWarning};
+use crate::{
+    answer_body::AnswerBody,
+    error::FederationError,
+    source_continuation::SourceContinuation,
+    source_read_warning::SourceReadWarning,
+    temporal_history_walk::least_range_end,
+};
 use andromeda_entity_map::contribution::SourceContribution;
 use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_warning::NgsiLdWarning};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{registration::forwarding_mode::ForwardingMode, temporal::temporal_history::TemporalHistory};
+use chrono::{DateTime, Utc};
 use std::{sync::Arc, time::Duration};
 use thiserror::Error;
 
@@ -193,6 +200,13 @@ impl ForwardedTemporalEntities {
             entity_ids: self.entities.iter().filter_map(|history| history.id().cloned()).collect(), // clone: the contribution owns the identifiers it names
             linked_map: self.linked_map.clone(),         // clone: same
         })
+    }
+    /// The earliest instant a page of the answer was cut at (clause 6.3.10),
+    /// up to which every instance of what the answer renders is held; `None`
+    /// when the answer is complete.
+    #[must_use]
+    pub fn least_range_end(&self) -> Option<DateTime<Utc>> {
+        least_range_end(&self.partial_ranges)
     }
 }
 

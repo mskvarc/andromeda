@@ -51,11 +51,12 @@ pub(crate) enum WalkProgress {
 /// Why the rest of a partial answer cannot be read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub(crate) enum WalkRefusal {
-    /// A `lastN` above the broker's maximum: clause 6.3.10 pages it backwards,
-    /// and the instances still missing differ from one attribute to the next,
-    /// which one resumed request cannot say.
+    /// A `lastN` above the maximum of the broker or of a Context Source:
+    /// clause 6.3.10 pages it backwards, and the instances still missing
+    /// differ from one attribute to the next, which one resumed request cannot
+    /// say.
     #[error(
-        "the temporal query asks for a lastN above the broker's instance maximum, whose remainder pages backwards, and a Snapshot cannot capture it completely"
+        "the temporal query asks for a lastN above the instance maximum of the broker or of a Context Source answering it, whose remainder pages backwards, and a Snapshot cannot capture it completely"
     )]
     Backward,
     /// The page was cut at an instant no later than the previous one: an
@@ -131,7 +132,7 @@ impl InstanceWalk {
 }
 
 /// Whether `name` is the reified Scope (clause 4.18).
-fn is_scope(name: &AttributeName) -> bool {
+pub(crate) fn is_scope(name: &AttributeName) -> bool {
     name.as_str() == properties::SCOPE.as_str()
 }
 

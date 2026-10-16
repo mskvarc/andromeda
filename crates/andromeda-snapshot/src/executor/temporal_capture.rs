@@ -5,7 +5,9 @@
 //! written while the capture runs neither shift a later page nor appear twice
 //! (clause 5.5.9.1); the context sources are paged by the offset their own
 //! brokers understand. The instances of each page of local entities are then
-//! read to the end of the window, page after page (clause 6.3.10).
+//! read to the end of the window, page after page (clause 6.3.10). What the
+//! sources cut short is read in further passes over every source page, each
+//! over the window resumed past the previous pass.
 //!
 //! A query's own failure is recorded in its execution result (clause 5.2.42).
 //! A transient store failure is not the query's: it is returned as an error
@@ -16,7 +18,8 @@ use crate::{
     executor::{
         SnapshotExecutor,
         execution_failure::ExecutionFailure,
-        instance_walk::{InstanceWalk, WalkProgress},
+        instance_walk::{InstanceWalk, WalkProgress, WalkRefusal},
+        source_instance_walk::SourceInstanceWalk,
         status::{failure_detail, success_detail},
         translation::temporal_parameters,
     },
@@ -96,6 +99,7 @@ impl SnapshotExecutor {
             start: PageStart::Cursor(None),
         };
         let mut source_offset = 0_u32;
+        let mut sources = SourceInstanceWalk::new(interval, params.timeproperty_or_default(), params.last_n);
         let mut captured = HashSet::new();
         loop {
             let entity_ids = match self.local_entity_page(&capture, &window).await {
@@ -108,8 +112,11 @@ impl SnapshotExecutor {
             let local_page_full = entity_ids.len() >= self.capture_page_size as usize;
             // clone: the cursor of the next page outlives the identifiers the page reads
             let last_local = entity_ids.last().cloned();
-            let forwarded = self.forwarded_page(&capture, source_offset).await;
-            let remote_page_full = forwarded.iter().any(|source| source.entities.len() >= self.capture_page_size as usize);
+            let mut forwarded = self.forwarded_page(&capture, capture.params, source_offset).await;
+            let remote_page_full = sources_page_on(&forwarded, self.capture_page_size);
+            if let Err(refusal) = sources.trim(&mut forwarded) {
+                return Ok(walk_refusal(&capture, refusal));
+            }
             if let Some(failure) = self.capture_temporal_page(&capture, entity_ids, forwarded, &mut captured).await? {
                 return Ok(failure);
             }
@@ -123,10 +130,55 @@ impl SnapshotExecutor {
             }
             source_offset = match source_offset.checked_add(self.capture_page_size) {
                 Some(offset) => offset,
-                None => return Ok(failure_detail("Snapshot temporal pagination offset overflowed")),
+                None => return Ok(offset_overflow()),
             };
         }
+        if let Some(failure) = self.capture_resumed_source_passes(&capture, sources, &mut captured).await? {
+            return Ok(failure);
+        }
         Ok(success_detail(captured.len()))
+    }
+
+    /// Walk every source page again over the window resumed past the least
+    /// cut of the previous pass, until a pass holds no partial answer.
+    ///
+    /// Returns the query's failure, or `None` once the sources answered the
+    /// whole window.
+    async fn capture_resumed_source_passes(
+        &self,
+        capture: &TemporalCapture<'_>,
+        mut sources: SourceInstanceWalk,
+        captured: &mut HashSet<Identifier>,
+    ) -> Result<Option<ExecutionResultDetails>, SnapshotError> {
+        let mut resumed: Option<TemporalQueryParameters> = None;
+        loop {
+            let interval = match sources.next_pass() {
+                Ok(Some(interval)) => interval,
+                Ok(None) => return Ok(None),
+                Err(refusal) => return Ok(Some(walk_refusal(capture, refusal))),
+            };
+            // clone: each pass asks the sources the query as asked, over a resumed window
+            let params = resumed.get_or_insert_with(|| capture.params.clone());
+            params.set_interval(interval);
+            let mut offset = 0_u32;
+            loop {
+                let mut forwarded = self.forwarded_page(capture, params, offset).await;
+                let page_on = sources_page_on(&forwarded, self.capture_page_size);
+                if let Err(refusal) = sources.trim(&mut forwarded) {
+                    return Ok(Some(walk_refusal(capture, refusal)));
+                }
+                if let Some(failure) = self.capture_temporal_page(capture, Vec::new(), forwarded, captured).await? {
+                    return Ok(Some(failure));
+                }
+                if !page_on {
+                    break;
+                }
+                offset = match offset.checked_add(self.capture_page_size) {
+                    Some(offset) => offset,
+                    None => return Ok(Some(offset_overflow())),
+                };
+            }
+        }
     }
 
     /// The identifiers of one keyset page of the local entities the query
@@ -149,17 +201,18 @@ impl SnapshotExecutor {
             .await
     }
 
-    /// One offset page of what the registered context sources answer; a
-    /// forwarding that failed leaves the capture with the local answer.
-    async fn forwarded_page(&self, capture: &TemporalCapture<'_>, offset: u32) -> Vec<ForwardedTemporalEntities> {
+    /// One offset page of what the registered context sources answer to
+    /// `params`; a forwarding that failed leaves the capture with the local
+    /// answer.
+    async fn forwarded_page(&self, capture: &TemporalCapture<'_>, params: &TemporalQueryParameters, offset: u32) -> Vec<ForwardedTemporalEntities> {
         let forwarded = self
             .sources
             .forwarding
             .forward_temporal_query(
                 &self.sources.live_target,
                 ForwardTemporalQueryRequest {
-                    client_query: capture.params,
-                    split: self.sources.forwarding.split_entities(capture.params.split_entities),
+                    client_query: params,
+                    split: self.sources.forwarding.split_entities(params.split_entities),
                     context: capture.context,
                     operation: ForwardingOperation::QueryTemporalEntity,
                     triggering: TriggeringRequest::default(),
@@ -234,10 +287,7 @@ impl SnapshotExecutor {
             match walk.advance(range.as_ref()) {
                 Ok(WalkProgress::Complete) => return Ok(None),
                 Ok(WalkProgress::Resumed) => {}
-                Err(refusal) => {
-                    warn!(snapshot_id = %capture.snapshot_id, query_index = capture.index, %refusal, "Snapshot temporal capture cannot read the rest of a partial answer");
-                    return Ok(Some(failure_detail(refusal.to_string())));
-                }
+                Err(refusal) => return Ok(Some(walk_refusal(capture, refusal))),
             }
         }
     }
@@ -302,6 +352,27 @@ fn instance_documents(histories: Vec<TemporalHistory>, capture: &TemporalCapture
         }
     }
     Ok(documents)
+}
+
+/// Whether the sources may hold another offset page: one answered a full page,
+/// or a partial one, which may leave out entities of a full page whose every
+/// instance lies past its cut.
+fn sources_page_on(forwarded: &[ForwardedTemporalEntities], page_size: u32) -> bool {
+    forwarded
+        .iter()
+        .any(|source| source.entities.len() >= page_size as usize || !source.partial_ranges.is_empty())
+}
+
+/// The query's failure when the rest of a partial answer cannot be read.
+fn walk_refusal(capture: &TemporalCapture<'_>, refusal: WalkRefusal) -> ExecutionResultDetails {
+    warn!(snapshot_id = %capture.snapshot_id, query_index = capture.index, %refusal, "Snapshot temporal capture cannot read the rest of a partial answer");
+    failure_detail(refusal.to_string())
+}
+
+/// The query's failure when its pages run past the offsets a source can be
+/// asked for.
+fn offset_overflow() -> ExecutionResultDetails {
+    failure_detail("Snapshot temporal pagination offset overflowed")
 }
 
 /// Which temporal operation of a snapshot query failed.
