@@ -86,9 +86,10 @@ const ENTITY_COLUMNS: [TemporalEntities; 5] = [
 ];
 
 /// The stream catalogue's columns, in table order.
-const STREAM_COLUMNS: [TemporalAttributeStreams; 4] = [
+const STREAM_COLUMNS: [TemporalAttributeStreams; 5] = [
     TemporalAttributeStreams::StreamKey,
     TemporalAttributeStreams::TemporalEntityKey,
+    TemporalAttributeStreams::Id,
     TemporalAttributeStreams::AttributeNameKey,
     TemporalAttributeStreams::DatasetId,
 ];
@@ -293,7 +294,8 @@ pub(crate) fn staged_streams() -> SelectStatement {
         .to_owned()
 }
 
-/// Stage one stream for a grain the branch holds none of.
+/// Stage one stream of the Entity `entity_id` for a grain the branch holds
+/// none of.
 ///
 /// # Errors
 ///
@@ -301,6 +303,7 @@ pub(crate) fn staged_streams() -> SelectStatement {
 pub(crate) fn stage_stream(
     stream_key: i64,
     entity_key: i64,
+    entity_id: &Identifier,
     attribute_name_key: i32,
     dataset_id: Option<&Identifier>,
 ) -> Result<InsertStatement, SeaQueryError> {
@@ -308,6 +311,7 @@ pub(crate) fn stage_stream(
     insert.into_table(temporary(TemporalAttributeStreams::Table)).columns(STREAM_COLUMNS).values([
         stream_key.into(),
         entity_key.into(),
+        entity_id.as_str().into(),
         attribute_name_key.into(),
         dataset_id.map(|dataset| dataset.as_str().to_owned()).into(),
     ])?;

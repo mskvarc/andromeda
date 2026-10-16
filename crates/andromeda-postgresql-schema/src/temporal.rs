@@ -53,6 +53,9 @@ pub enum TemporalAttributeStreams {
     StreamKey,
     /// Foreign key to `temporal_entities`
     TemporalEntityKey,
+    /// The Entity's identifier, copied from `temporal_entities` so the
+    /// streams of one attribute are walked in identifier order
+    Id,
     /// Foreign key to `attribute_names`
     AttributeNameKey,
     /// Optional dataset identifier (clause 4.5.5)

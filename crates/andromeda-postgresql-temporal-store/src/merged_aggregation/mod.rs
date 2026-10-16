@@ -149,7 +149,13 @@ impl TemporalRepository {
                 .ok_or_else(|| TemporalStoreInvariant::AttributeNameUnresolved(name.clone()))?; // clone: the invariant owns the name it failed on
             execute_insert(
                 tx,
-                stage_stream(staged_key(first_position.saturating_add(position)), entity_key, name_key.get(), dataset_id)?,
+                stage_stream(
+                    staged_key(first_position.saturating_add(position)),
+                    entity_key,
+                    entity_id,
+                    name_key.get(),
+                    dataset_id,
+                )?,
             )
             .await?;
         }
@@ -189,7 +195,13 @@ impl TemporalRepository {
                 .map_err(StoredCatalogError::StreamDatasetId)?;
             execute_insert(
                 tx,
-                stage_stream(staged_key(position.saturating_add(1)), entity_key, attribute_name_key, dataset_id.as_ref())?,
+                stage_stream(
+                    staged_key(position.saturating_add(1)),
+                    entity_key,
+                    entity_id,
+                    attribute_name_key,
+                    dataset_id.as_ref(),
+                )?,
             )
             .await?;
         }

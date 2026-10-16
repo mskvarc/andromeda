@@ -55,13 +55,15 @@ async fn seed_released_history(pool: &PgPool, prefix: &str) {
     let attribute_name_key = attribute_name_key(pool, RELEASE_ATTRIBUTE)
         .await
         .expect("attribute dictionary seed must succeed");
-    let stream_key: i64 =
-        sqlx::query_scalar("INSERT INTO temporal_attribute_streams (temporal_entity_key, attribute_name_key) VALUES ($1, $2) RETURNING stream_key")
-            .bind(entity_key)
-            .bind(attribute_name_key)
-            .fetch_one(pool)
-            .await
-            .expect("stream insert must succeed");
+    let stream_key: i64 = sqlx::query_scalar(
+        "INSERT INTO temporal_attribute_streams (temporal_entity_key, id, attribute_name_key) \
+             SELECT temporal_entity_key, id, $2 FROM temporal_entities WHERE temporal_entity_key = $1 RETURNING stream_key",
+    )
+    .bind(entity_key)
+    .bind(attribute_name_key)
+    .fetch_one(pool)
+    .await
+    .expect("stream insert must succeed");
 
     sqlx::query(
         "INSERT INTO write_records (recorded_at, accepted_at, write_id) \

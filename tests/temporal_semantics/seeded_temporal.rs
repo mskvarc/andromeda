@@ -100,8 +100,8 @@ RETURNING attribute_name_key
 ";
 
 const SEED_STREAM_SQL: &str = r"
-INSERT INTO temporal_attribute_streams (temporal_entity_key, attribute_name_key)
-SELECT temporal_entity_key, $2 FROM temporal_entities WHERE temporal_entity_key = $1
+INSERT INTO temporal_attribute_streams (temporal_entity_key, id, attribute_name_key)
+SELECT temporal_entity_key, id, $2 FROM temporal_entities WHERE temporal_entity_key = $1
 RETURNING stream_key
 ";
 

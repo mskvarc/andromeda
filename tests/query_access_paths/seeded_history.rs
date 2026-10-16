@@ -66,9 +66,10 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededHistory {
     .expect("temporal catalogue insert must succeed");
 
     let streams: Vec<i64> = sqlx::query_scalar(
-        "INSERT INTO temporal_attribute_streams (temporal_entity_key, attribute_name_key, dataset_id) \
-         SELECT $1, $2, 'urn:ngsi-ld:Dataset:' || lpad(g::text, 4, '0') \
-         FROM generate_series(1, $3::bigint) AS g \
+        "INSERT INTO temporal_attribute_streams (temporal_entity_key, id, attribute_name_key, dataset_id) \
+         SELECT e.temporal_entity_key, e.id, $2, 'urn:ngsi-ld:Dataset:' || lpad(g::text, 4, '0') \
+         FROM temporal_entities AS e, generate_series(1, $3::bigint) AS g \
+         WHERE e.temporal_entity_key = $1 \
          RETURNING stream_key",
     )
     .bind(entity_key)
@@ -198,9 +199,9 @@ pub async fn seed_window_and_prior(pool: &PgPool, prefix: &str, observations: i6
              INSERT INTO temporal_entities (created_at, modified_at, id, entity_type_name_keys) \
              SELECT now(), now(), $1::text || ':meter:' || lpad(g::text, 4, '0'), ARRAY[$2::integer] \
              FROM generate_series(1, $3::bigint) AS g \
-             RETURNING temporal_entity_key) \
-         INSERT INTO temporal_attribute_streams (temporal_entity_key, attribute_name_key) \
-         SELECT temporal_entity_key, $4 FROM meters",
+             RETURNING temporal_entity_key, id) \
+         INSERT INTO temporal_attribute_streams (temporal_entity_key, id, attribute_name_key) \
+         SELECT temporal_entity_key, id, $4 FROM meters",
     )
     .bind(prefix)
     .bind(type_key)

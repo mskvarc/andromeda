@@ -12,7 +12,8 @@
 //! still queued, so a write is selected the moment it is acknowledged. A
 //! selection by type alone walks the type memberships of the temporal
 //! catalogue instead, so a page of a type visits that type's Evolutions in
-//! identifier order and no other.
+//! identifier order and no other, and a selection by attribute with no type
+//! walks the streams of its attributes the same way.
 //!
 //! The `datasetId` parameter selects no Entity. Clause 5.7.4.4 applies it at
 //! step S8, after every selection step, to "filter the Attribute instances" and
@@ -49,7 +50,7 @@ use andromeda_postgresql_query::{
     history_source::{
         HistoryBranch,
         attribute_rows::{attribute_rows, stream_rows},
-        entity_rows::{entity_rows, type_member_rows},
+        entity_rows::{attribute_holder_rows, entity_rows, type_member_rows},
         grain::HistoryGrain,
     },
     page_window::apply_identifier_window,
@@ -100,7 +101,7 @@ pub fn build_stage1_entity_ids(
     count: CountPolicy,
     names: &QueryNames,
 ) -> Result<Stage1Query, RenderError> {
-    let (evolutions, type_test) = evolution_rows(branch, compiled, &names.types);
+    let (evolutions, type_test) = evolution_rows(branch, compiled, names);
     // Entity-level conditions, applied to the Evolutions under alias "e".
     let entity_conditions = build_entity_conditions_for_temporal(branch, compiled, names, type_test)?;
 
@@ -202,21 +203,24 @@ enum TypeTest {
 /// one already) and a type with a range to walk, and either there is one
 /// selector or none carries a pattern. The walk yields the union of the
 /// selectors' types, so it cannot tell which pattern goes with which type,
-/// and an Evolution only queued has no membership row to probe for it. A
-/// request that considers no Entity (clause 5.5.14) walks nothing. Otherwise
-/// the temporal catalogue, its types tested on its type keys.
-fn evolution_rows(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, types: &ResolvedNames<EntityTypeName>) -> (TableRef, TypeTest) {
+/// and an Evolution only queued has no membership row to probe for it.
+/// Otherwise, when the request names attributes and no selector names a type
+/// or an identifier, the walk of those attributes' streams: step S1 of clause
+/// 5.7.4.4 keeps only Evolutions with an instance of one of them, which hold
+/// a stream of it, and no type is tested on what it yields. A request that
+/// considers no Entity (clause 5.5.14) walks nothing. Otherwise the temporal
+/// catalogue, its types tested on its type keys.
+fn evolution_rows(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames) -> (TableRef, TypeTest) {
     let selection = &compiled.entities;
     let selectors = &selection.selectors;
-    let walkable = match selection.considered {
-        ConsideredEntities::Selected => {
-            !selectors.is_empty()
-                && selectors.iter().all(|selector| selector.ids.is_empty())
-                && (selectors.len() == 1 || selectors.iter().all(|selector| selector.id_pattern.is_none()))
-        }
-        ConsideredEntities::NoEntity => false,
-    };
-    let exprs: Option<Vec<&TypeExpr>> = walkable
+    match selection.considered {
+        ConsideredEntities::Selected => {}
+        ConsideredEntities::NoEntity => return (entity_rows(branch, E), TypeTest::TypeKeys),
+    }
+    let type_walkable = !selectors.is_empty()
+        && selectors.iter().all(|selector| selector.ids.is_empty())
+        && (selectors.len() == 1 || selectors.iter().all(|selector| selector.id_pattern.is_none()));
+    let exprs: Option<Vec<&TypeExpr>> = type_walkable
         .then(|| {
             selectors
                 .iter()
@@ -224,10 +228,30 @@ fn evolution_rows(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, type
                 .collect()
         })
         .flatten();
-    match exprs.and_then(|exprs| type_member_rows(branch, E, &exprs, types)) {
-        Some(walk) => (walk, TypeTest::Walked),
-        None => (entity_rows(branch, E), TypeTest::TypeKeys),
+    if let Some(walk) = exprs.and_then(|exprs| type_member_rows(branch, E, &exprs, &names.types)) {
+        return (walk, TypeTest::Walked);
     }
+    let holder_walkable =
+        !compiled.instances.attr_filter.is_empty() && selectors.iter().all(|selector| selector.ids.is_empty() && selector.type_expr.is_none());
+    if holder_walkable {
+        return (
+            attribute_holder_rows(branch, E, &concerned_attribute_keys(compiled, &names.attributes)),
+            TypeTest::TypeKeys,
+        );
+    }
+    (entity_rows(branch, E), TypeTest::TypeKeys)
+}
+
+/// The dictionary keys of the attributes the request concerns (clause
+/// 5.7.4.4 step S1); an attribute the dictionary never keyed has no history
+/// and no key.
+fn concerned_attribute_keys(compiled: &CompiledTemporalQuery, attributes: &ResolvedNames<AttributeName>) -> Vec<AttributeNameKey> {
+    compiled
+        .instances
+        .attr_filter
+        .iter()
+        .filter_map(|name| attributes.get_str(name.as_str()))
+        .collect()
 }
 
 /// Build entity-level conditions for temporal queries, over the Evolutions
@@ -320,13 +344,7 @@ fn build_temporal_stage1_conditions(compiled: &CompiledTemporalQuery, alias: &Dy
     let mut condition = Condition::all();
 
     if !compiled.instances.attr_filter.is_empty() {
-        let keys: Vec<i32> = compiled
-            .instances
-            .attr_filter
-            .iter()
-            .filter_map(|name| attributes.get_str(name.as_str()))
-            .map(AttributeNameKey::get)
-            .collect();
+        let keys: Vec<i32> = concerned_attribute_keys(compiled, attributes).into_iter().map(AttributeNameKey::get).collect();
         // clone: the alias is shared by every condition on the source.
         condition = condition.add(SeaExpr::col((alias.clone(), HistoryGrain::AttributeNameKey)).is_in(keys));
     }
@@ -607,6 +625,76 @@ mod tests {
         ]);
         let (sql, _) = built(&compiled, &vehicle_is_known());
         assert!(!sql.contains("temporal_entity_type_members"), "{sql}");
+    }
+
+    /// A query concerning `speed` alone over the window from 2024.
+    fn speed_only() -> CompiledTemporalQuery {
+        let mut compiled = minimal_compiled();
+        compiled.window.interval = TimeInterval::After(instant("2024-01-01T00:00:00Z"));
+        compiled.instances.attr_filter = vec![iri("https://example.com/speed")];
+        compiled
+    }
+
+    /// Clause 5.7.4.4 step S1 keeps only the Evolutions with an instance of a
+    /// concerned attribute, which hold a stream of it, so a selection by
+    /// `attrs` alone walks that attribute's streams in the clause 5.5.9 `id`
+    /// order and reads no other Evolution.
+    #[test]
+    fn a_temporal_attrs_only_selection_reads_the_attribute_streams() {
+        let (sql, _) = built(&speed_only(), &speed_and_address());
+        assert!(
+            sql.starts_with(r#"SELECT "e"."id" AS "entity_id" FROM (SELECT DISTINCT ON ("held"."id") "held"."id" FROM (SELECT "hr"."id" FROM (SELECT "id" FROM "temporal_attribute_streams" WHERE "attribute_name_key" = (7) ORDER BY "id" ASC) AS "hr""#),
+            "{sql}"
+        );
+        assert!(!sql.contains(r#"FROM "temporal_entities" AS "re" UNION ALL"#), "{sql}");
+        assert!(sql.contains(r#") AS "ah" WHERE "ah"."attribute_name_key" IN ($"#), "{sql}");
+        assert!(sql.ends_with(r#"ORDER BY "e"."id" ASC LIMIT $3 OFFSET $4"#), "{sql}");
+    }
+
+    /// The count totals the Evolutions the page walks.
+    #[test]
+    fn a_counted_attrs_only_selection_counts_the_attribute_walk() {
+        let count = built_count(&speed_only(), &speed_and_address());
+        assert!(count.starts_with(r#"SELECT COUNT("e"."id") FROM (SELECT DISTINCT ON ("held"."id")"#), "{count}");
+        assert!(count.contains(r#""temporal_attribute_streams" WHERE "attribute_name_key" = (7)"#), "{count}");
+    }
+
+    /// A pattern names no identifier the index could answer, so the walk
+    /// still reads the attribute's streams and the pattern filters what it
+    /// yields.
+    #[test]
+    fn an_attrs_selection_with_an_id_pattern_walks_the_streams_and_keeps_the_pattern() {
+        let mut compiled = speed_only();
+        compiled.entities.selectors = vec![
+            EntitySelector::builder()
+                .id_pattern(Some(Pattern::parse(".*:7$").expect("valid pattern")))
+                .build(),
+        ];
+        let (sql, _) = built(&compiled, &speed_and_address());
+        assert!(
+            sql.contains(r#""temporal_attribute_streams" WHERE "attribute_name_key" = (7) ORDER BY "id" ASC"#),
+            "{sql}"
+        );
+        assert!(sql.contains(r#""e"."id" ~ "#), "{sql}");
+    }
+
+    /// A type has its own walk, and identifiers their own index, so neither
+    /// selection walks the attribute's streams.
+    #[test]
+    fn an_attrs_selection_beside_a_type_or_identifiers_keeps_its_own_walk() {
+        let mut names = speed_and_address();
+        names.types = vehicle_is_known().types;
+        let mut typed = speed_only();
+        typed.entities.selectors = vec![vehicle_selector()];
+        let (sql, _) = built(&typed, &names);
+        assert!(sql.contains(r#""temporal_entity_type_members""#), "{sql}");
+        assert!(!sql.contains(r#"AS "held""#), "{sql}");
+
+        let mut identified = speed_only();
+        identified.entities.selectors = vec![EntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:1"])).build()];
+        let (sql, _) = built(&identified, &names);
+        assert!(sql.contains(r#"FROM "temporal_entities" AS "re" UNION ALL"#), "{sql}");
+        assert!(!sql.contains(r#"AS "held""#), "{sql}");
     }
 
     /// Clause 5.6.6 leaves the temporal evolution standing when the current

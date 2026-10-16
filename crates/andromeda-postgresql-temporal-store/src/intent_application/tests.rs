@@ -526,7 +526,8 @@ fn the_streams_of_an_evolution_the_statement_creates_are_inserted_without_arbitr
 }
 
 /// The streams of the Entities intents state types for take the evolution's
-/// key from what its insert returned, never from a read of the evolutions,
+/// key and identifier from what its insert returned, never from a read of
+/// the evolutions,
 /// so an evolution another writer committed while the statement ran still
 /// gets its streams, and every intent of such an Entity is read.
 #[test]
@@ -534,11 +535,11 @@ fn the_streams_of_a_typed_entity_take_the_key_its_evolution_insert_returned() {
     let evolving = evolving();
     let grains = common_table(&evolving, "grains");
     assert!(
-        grains.contains(r#"SELECT "evolved"."temporal_entity_key", "e"."attribute_name_key", "e"."dataset_id", "evolved"."created""#),
+        grains.contains(r#"SELECT "evolved"."temporal_entity_key", "evolved"."id", "e"."attribute_name_key", "e"."dataset_id", "evolved"."created""#),
         "{grains}"
     );
     assert!(
-        grains.contains(r#"GROUP BY "evolved"."temporal_entity_key", "e"."attribute_name_key", "e"."dataset_id", "evolved"."created""#),
+        grains.contains(r#"GROUP BY "evolved"."temporal_entity_key", "evolved"."id", "e"."attribute_name_key", "e"."dataset_id", "evolved"."created""#),
         "one row a grain: {grains}"
     );
     assert!(
@@ -574,6 +575,10 @@ fn the_streams_of_a_typed_entity_are_keyed_in_the_order_its_entries_are_recorded
 fn only_an_intent_stating_no_type_reaches_the_untyped_stream_insert() {
     let streams = writing("temporal_attribute_streams");
     assert!(streams.contains(r#"(NOT cardinality("i"."entity_type_name_keys") > 0)"#), "{streams}");
+    assert!(
+        streams.contains(r#"("temporal_entity_key", "id", "attribute_name_key", "dataset_id") SELECT DISTINCT "te"."temporal_entity_key", "te"."id","#),
+        "every stream carries its evolution's identifier: {streams}"
+    );
     assert!(
         streams.ends_with(r#"ON CONFLICT ("temporal_entity_key", "attribute_name_key", "dataset_id") DO NOTHING"#),
         "{streams}"

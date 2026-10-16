@@ -99,6 +99,13 @@ struct FirstIntent;
 #[iden = "first_ordinal"]
 struct FirstOrdinal;
 
+/// The grain a stream is unique on, which a stream insert arbitrates on.
+const GRAIN_COLUMNS: [TemporalAttributeStreams; 3] = [
+    TemporalAttributeStreams::TemporalEntityKey,
+    TemporalAttributeStreams::AttributeNameKey,
+    TemporalAttributeStreams::DatasetId,
+];
+
 /// The bookkeeping record of every write the intents belong to.
 ///
 /// The record persists `recorded_at` because the history rows deduplicate on
@@ -143,14 +150,16 @@ pub(crate) fn write_records_statement(source: &IntentSource<'_>) -> Result<Inser
 /// memberships a temporal type selection walks move in the same statement
 /// ([`membership_moves`]).
 pub(crate) fn evolutions_and_streams_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
-    let grain_columns = [
+    let stream_columns = [
         TemporalAttributeStreams::TemporalEntityKey,
+        TemporalAttributeStreams::Id,
         TemporalAttributeStreams::AttributeNameKey,
         TemporalAttributeStreams::DatasetId,
     ];
     let mut grains = Query::select();
     grains
         .column((Evolved, TemporalEntities::TemporalEntityKey))
+        .column((Evolved, TemporalEntities::Id))
         .expr(entry(TemporalEntry::AttributeNameKey))
         .expr(entry(TemporalEntry::DatasetId))
         .column((Evolved, Created))
@@ -163,6 +172,7 @@ pub(crate) fn evolutions_and_streams_statement(source: &IntentSource<'_>, schema
         .and_where(entry_kind_in(&[TemporalEntryKind::Observation.code(), TemporalEntryKind::Tombstone.code()]))
         .add_group_by([
             Expr::col((Evolved, TemporalEntities::TemporalEntityKey)),
+            Expr::col((Evolved, TemporalEntities::Id)),
             entry(TemporalEntry::AttributeNameKey),
             entry(TemporalEntry::DatasetId),
             Expr::col((Evolved, Created)),
@@ -170,7 +180,7 @@ pub(crate) fn evolutions_and_streams_statement(source: &IntentSource<'_>, schema
     let streams_of = |created: SimpleExpr| -> Result<InsertStatement, SeaQueryError> {
         let mut select = Query::select();
         select
-            .columns(grain_columns.map(|column| (Grains, column)))
+            .columns(stream_columns.map(|column| (Grains, column)))
             .from(Grains)
             .and_where(created)
             .order_by((Grains, FirstIntent), Order::Asc)
@@ -178,7 +188,7 @@ pub(crate) fn evolutions_and_streams_statement(source: &IntentSource<'_>, schema
         let mut insert = Query::insert();
         insert
             .into_table(qualified(schema, TemporalAttributeStreams::Table))
-            .columns(grain_columns)
+            .columns(stream_columns)
             .select_from(select)?;
         Ok(insert)
     };
@@ -204,7 +214,7 @@ pub(crate) fn evolutions_and_streams_statement(source: &IntentSource<'_>, schema
         CommonTableExpression::new()
             .table_name(Grains)
             .columns(
-                grain_columns
+                stream_columns
                     .map(IntoIden::into_iden)
                     .into_iter()
                     .chain([Created.into_iden(), FirstIntent.into_iden(), FirstOrdinal.into_iden()]),
@@ -214,7 +224,7 @@ pub(crate) fn evolutions_and_streams_statement(source: &IntentSource<'_>, schema
     )
     .cte(CommonTableExpression::new().table_name(CreatedStreams).query(streams_of(created())?).to_owned());
     let mut statement = streams_of(created().not())?;
-    statement.on_conflict(OnConflict::columns(grain_columns).do_nothing().to_owned()).with_cte(with);
+    statement.on_conflict(OnConflict::columns(GRAIN_COLUMNS).do_nothing().to_owned()).with_cte(with);
     Ok(statement)
 }
 
@@ -356,6 +366,7 @@ pub(crate) fn untyped_streams_statement(source: &IntentSource<'_>, schema: Optio
     select
         .distinct()
         .column((Te, TemporalEntities::TemporalEntityKey))
+        .column((Te, TemporalEntities::Id))
         .expr(entry(TemporalEntry::AttributeNameKey))
         .expr(entry(TemporalEntry::DatasetId));
     source_entries(&mut select, source);
@@ -369,18 +380,11 @@ pub(crate) fn untyped_streams_statement(source: &IntentSource<'_>, schema: Optio
         .into_table(qualified(schema, TemporalAttributeStreams::Table))
         .columns([
             TemporalAttributeStreams::TemporalEntityKey,
+            TemporalAttributeStreams::Id,
             TemporalAttributeStreams::AttributeNameKey,
             TemporalAttributeStreams::DatasetId,
         ])
         .select_from(select)?
-        .on_conflict(
-            OnConflict::columns([
-                TemporalAttributeStreams::TemporalEntityKey,
-                TemporalAttributeStreams::AttributeNameKey,
-                TemporalAttributeStreams::DatasetId,
-            ])
-            .do_nothing()
-            .to_owned(),
-        );
+        .on_conflict(OnConflict::columns(GRAIN_COLUMNS).do_nothing().to_owned());
     Ok(statement)
 }
