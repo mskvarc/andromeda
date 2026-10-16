@@ -6,7 +6,9 @@
 //! limited, so the stream-led axis index returns the page and stops: a page
 //! costs the instances it keeps, not every instance in the window. A stream's
 //! recorded rows and its queued entries are each read that way and only then
-//! joined, so the order and the limit reach the index.
+//! joined, so the order and the limit reach the index. On `createdAt` and
+//! `modifiedAt` the recorded rows are two parts, those stamped at their write
+//! instant and the rest, so each part has a stream-led index on its order.
 //!
 //! A forward or backward page keeps the group of instances sharing the instant
 //! at its edge whole, so a client resuming from the `Content-Range` end neither
@@ -145,24 +147,26 @@ fn wrapped(read: SelectStatement) -> SelectStatement {
     wrapped
 }
 
+/// The parts of the stream under `st` a read on the axis `compiled` names
+/// takes: the first, and every other after it.
+fn stream_parts(branch: &HistoryBranch, compiled: &CompiledTemporalQuery) -> (SelectStatement, impl Iterator<Item = SelectStatement>) {
+    stream_attribute_parts(branch, &HistoryStream::under(St), compiled.window.timeproperty).into_reads()
+}
+
 /// `read` of every part of the stream under `st`, the reads joined.
-fn over_parts(branch: &HistoryBranch, read: impl Fn(TableRef) -> SelectStatement) -> SelectStatement {
-    let parts = stream_attribute_parts(branch, &HistoryStream::under(St));
-    let mut joined = wrapped(read(under_ah(parts.recorded)));
-    if let Some(pending) = parts.pending {
-        joined.union(UnionType::All, wrapped(read(under_ah(pending))));
+fn over_parts(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, read: impl Fn(TableRef) -> SelectStatement) -> SelectStatement {
+    let (first, others) = stream_parts(branch, compiled);
+    let mut joined = wrapped(read(under_ah(first)));
+    for other in others {
+        joined.union(UnionType::All, wrapped(read(under_ah(other))));
     }
     joined
 }
 
 /// Whether `read` of any part of the stream under `st` returns a row.
-fn in_any_part(branch: &HistoryBranch, read: impl Fn(TableRef) -> SelectStatement) -> SimpleExpr {
-    let parts = stream_attribute_parts(branch, &HistoryStream::under(St));
-    let recorded = Expr::exists(read(under_ah(parts.recorded)));
-    match parts.pending {
-        Some(pending) => recorded.or(Expr::exists(read(under_ah(pending)))),
-        None => recorded,
-    }
+fn in_any_part(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, read: impl Fn(TableRef) -> SelectStatement) -> SimpleExpr {
+    let (first, others) = stream_parts(branch, compiled);
+    others.fold(Expr::exists(read(under_ah(first))), |any, other| any.or(Expr::exists(read(under_ah(other)))))
 }
 
 /// The instances of `part` that `condition` admits.
@@ -183,7 +187,7 @@ fn admitted(part: TableRef, condition: &Condition) -> SelectStatement {
 /// that one instant.
 fn stream_edge(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, condition: &Condition, walk: Walk, size: u32) -> SelectStatement {
     let axis = axis_column(compiled.window.timeproperty);
-    let candidates = over_parts(branch, |part| {
+    let candidates = over_parts(branch, compiled, |part| {
         let mut candidate = admitted(part, condition);
         candidate.expr_as(Expr::col((Ah, axis)), Edge).and_where(Expr::col((Ah, axis)).is_not_null());
         match (walk, compiled.window.interval) {
@@ -204,7 +208,7 @@ fn stream_edge(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, conditi
         .limit(1);
 
     let edge = Expr::col((EdgeRow, Edge));
-    let beyond = in_any_part(branch, |part| {
+    let beyond = in_any_part(branch, compiled, |part| {
         let mut beyond = admitted(part, condition);
         beyond.expr(int_literal(1)).and_where(match walk {
             // clone: the edge bounds every part's instances and is projected.
@@ -214,7 +218,7 @@ fn stream_edge(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, conditi
         beyond
     });
     let continues = match undated_instances(compiled) {
-        UndatedInstances::Admitted => beyond.or(in_any_part(branch, |part| {
+        UndatedInstances::Admitted => beyond.or(in_any_part(branch, compiled, |part| {
             let mut undated = admitted(part, condition);
             undated.expr(int_literal(1)).and_where(Expr::col((Ah, axis)).is_null());
             undated
@@ -239,7 +243,7 @@ fn stream_edge(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, conditi
 fn kept_instances(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, condition: &Condition, walk: Walk) -> SelectStatement {
     let axis = axis_column(compiled.window.timeproperty);
     let edge = Expr::col((StreamEdge, Edge));
-    let mut kept = over_parts(branch, |part| {
+    let mut kept = over_parts(branch, compiled, |part| {
         let mut dated = admitted(part, condition);
         project_base_columns(&mut dated);
         dated.and_where(match walk {
@@ -253,7 +257,7 @@ fn kept_instances(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, cond
         UndatedInstances::Admitted => {
             kept.union(
                 UnionType::All,
-                over_parts(branch, |part| {
+                over_parts(branch, compiled, |part| {
                     let mut undated = admitted(part, condition);
                     project_base_columns(&mut undated);
                     // clone: the edge gates every part's undated instances.
@@ -339,7 +343,7 @@ fn most_recent_first(select: &mut SelectStatement, alias: impl IntoIden, axis: O
 fn latest_instances(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, condition: &Condition, n: NonZeroU32) -> SelectStatement {
     let axis = axis_column(compiled.window.timeproperty);
     let limit = u64::from(n.get());
-    let mut candidates = over_parts(branch, |part| {
+    let mut candidates = over_parts(branch, compiled, |part| {
         let mut dated = admitted(part, condition);
         project_base_columns(&mut dated);
         dated.and_where(Expr::col((Ah, axis)).is_not_null());
@@ -351,7 +355,7 @@ fn latest_instances(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, co
         UndatedInstances::Admitted => {
             candidates.union(
                 UnionType::All,
-                over_parts(branch, |part| {
+                over_parts(branch, compiled, |part| {
                     let mut undated = admitted(part, condition);
                     project_base_columns(&mut undated);
                     undated.and_where(Expr::col((Ah, axis)).is_null());

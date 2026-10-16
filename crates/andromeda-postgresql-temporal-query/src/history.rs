@@ -634,6 +634,54 @@ mod tests {
         );
     }
 
+    /// The stage 2 statement of `page` over `interval` on the axis `axis`, on
+    /// the recorded rows alone.
+    fn recorded_sql_on(axis: TimeProp, page: InstancePage, interval: TimeInterval) -> String {
+        let mut compiled = minimal_compiled();
+        compiled.window.timeproperty = axis;
+        compiled.instances.page = page;
+        compiled.window.interval = interval;
+        build_temporal_history_query(&HistoryBranch::live_recorded(), &vehicle_id(), &compiled).to_string(PostgresQueryBuilder)
+    }
+
+    /// Clause 4.8: an appended instance is created and modified at its write
+    /// instant, so a page on `createdAt` or `modifiedAt` orders and limits
+    /// those rows on `recorded_at`, which the stream's write-clock index
+    /// returns in order, and the rest apart; neither part leaves the page to
+    /// the axis's BRIN index.
+    #[test]
+    fn a_system_time_page_reads_the_rows_stamped_at_their_write_instant_on_the_write_clock() {
+        for (axis, column) in [(TimeProp::Created, "created_at"), (TimeProp::Modified, "modified_at")] {
+            let sql = recorded_sql_on(axis, InstancePage::Forward { size: 100 }, one_day());
+            let limited = format!(r#"ORDER BY "ah"."{column}" ASC LIMIT 100"#);
+            assert_eq!(sql.matches(&limited).count(), 2, "an edge read per part: {sql}");
+            let stamped = format!(r#""rh"."recorded_at" AS "{column}""#);
+            let apart = format!(r#""rh"."{column}" IS DISTINCT FROM "rh"."recorded_at""#);
+            assert_eq!(sql.matches(&stamped).count(), 3, "edge, continuation and kept reads: {sql}");
+            assert_eq!(sql.matches(&apart).count(), 3, "edge, continuation and kept reads: {sql}");
+            assert!(sql.contains(") OR EXISTS(SELECT 1 FROM"), "the stream continues in either part: {sql}");
+        }
+    }
+
+    /// A `lastN` on a system-time axis takes the last `n` of each part and
+    /// then the last `n` of both.
+    #[test]
+    fn a_system_time_last_n_takes_the_last_instances_of_each_part() {
+        let sql = recorded_sql_on(TimeProp::Modified, InstancePage::LastN { n: count(5) }, one_day());
+        assert_eq!(sql.matches("LIMIT 5").count(), 3, "both parts and their join: {sql}");
+        assert!(sql.contains(r#""rh"."recorded_at" AS "modified_at""#), "{sql}");
+        assert!(sql.contains(r#""rh"."modified_at" IS DISTINCT FROM "rh"."recorded_at""#), "{sql}");
+    }
+
+    /// `observedAt` is the client's instant, so a page on it reads each
+    /// stream's recorded rows whole through the axis index.
+    #[test]
+    fn an_observed_page_reads_each_stream_in_one_recorded_part() {
+        let sql = recorded_sql_on(TimeProp::Observed, InstancePage::Forward { size: 100 }, one_day());
+        assert_eq!(sql.matches(r#"ORDER BY "ah"."observed_at" ASC LIMIT 100"#).count(), 1, "{sql}");
+        assert!(!sql.contains("DISTINCT FROM"), "{sql}");
+    }
+
     /// Every instance in the window is read when no page applies.
     #[test]
     fn the_whole_history_reads_every_instance() {

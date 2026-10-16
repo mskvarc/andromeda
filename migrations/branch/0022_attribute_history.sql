@@ -128,6 +128,22 @@ create index idx_attribute_history_stream_unobserved on attribute_history (strea
 where
     observed_at is null;
 
+-- The broker stamps `createdAt` and `modifiedAt` itself (clause 4.8), and an
+-- appended row records both at its write instant, so a stream's rows in
+-- `created_at` or `modified_at` order are, with few exceptions, its rows in
+-- `recorded_at` order. A page on either axis reads those rows through the
+-- write-clock index above, and the exceptions through these: a modified
+-- instance, a row a Snapshot captured from a Context Source with the
+-- source's own system times, or one recorded without them. On a write that
+-- appends, neither takes an entry.
+create index idx_attribute_history_stream_created_apart on attribute_history (stream_key, created_at desc)
+where
+    created_at is distinct from recorded_at;
+
+create index idx_attribute_history_stream_modified_apart on attribute_history (stream_key, modified_at desc)
+where
+    modified_at is distinct from recorded_at;
+
 create index idx_attribute_history_stream_generated_instance on attribute_history (stream_key, generated_instance_id)
 where
     generated_instance_id is not null;
