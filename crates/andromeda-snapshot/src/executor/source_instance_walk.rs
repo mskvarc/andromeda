@@ -116,8 +116,9 @@ impl SourceInstanceWalk {
     /// # Errors
     ///
     /// Returns [`WalkRefusal::Stalled`] when the pass was cut no later than
-    /// the instant it resumed at: an attribute holds more instances there than
-    /// a source answers on one page.
+    /// the instant it resumed at: a source carries fewer of the instances one
+    /// attribute holds there than it holds, or counts those on the inclusive
+    /// lower bound into its page.
     pub(crate) fn next_pass(&mut self) -> Result<Option<TimeInterval>, WalkRefusal> {
         let Some(cut) = self.pass_cut.take() else {
             return Ok(None);

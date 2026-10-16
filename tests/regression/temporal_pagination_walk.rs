@@ -462,11 +462,12 @@ async fn regression_temporal_pagination_a_temporal_values_page_keeps_an_emptied_
     scope.finish().await.expect("cleanup failed");
 }
 
-/// A page never splits the instances sharing the timestamp at its edge, so a
-/// group larger than the maximum could not be paged at all: it is refused with
-/// `TooManyResults` (clause 5.5.x, 403) rather than rendered without bound.
+/// A page never splits the instances sharing the timestamp at its edge, since
+/// a client resumes from a `range-end` `DateTime` that cannot point inside an
+/// instant (clause 6.3.10): a group larger than the maximum is carried whole,
+/// and the page resumed there runs on past it.
 #[tokio::test]
-async fn regression_temporal_pagination_a_simultaneous_group_above_the_maximum_is_too_many_results() {
+async fn regression_temporal_pagination_a_simultaneous_group_above_the_maximum_is_carried_whole() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let client = scope.client();
     let id = scope.id("PagedSeries:oversized-group");
@@ -476,9 +477,19 @@ async fn regression_temporal_pagination_a_simultaneous_group_above_the_maximum_i
     create_series(client, &id, "PagedSeries", &[("speed", speed)]).await;
 
     let response = retrieve(client, &id, "timerel=after&timeAt=2020-01-01T00:00:00Z").await;
-    assert_eq!(response.status, StatusCode::FORBIDDEN, "{:?}", response.body);
-    let problem = response.json_value().expect("a problem details body");
-    assert_eq!(problem["type"], json!("https://uri.etsi.org/ngsi-ld/errors/TooManyResults"), "{problem}");
+    assert_eq!(response.status, StatusCode::PARTIAL_CONTENT, "{:?}", response.body);
+    let range = content_range(&response);
+    let entity = response.json_value().expect("a temporal entity");
+    let values: BTreeSet<u64> = instances_of(&entity, "speed").into_iter().map(value_of).collect();
+    assert_eq!(values, (0..group).collect::<BTreeSet<u64>>());
+    assert_eq!(range.to_string(), format!("DateTime 2020-01-01T00:00:00Z-{}/*", sub_second(origin())));
+
+    let resumed = retrieve(client, &id, &format!("timerel=after&timeAt={}", sub_second(origin()))).await;
+    assert_eq!(resumed.status, StatusCode::PARTIAL_CONTENT, "{:?}", resumed.body);
+    let entity = resumed.json_value().expect("a temporal entity");
+    let values: BTreeSet<u64> = instances_of(&entity, "speed").into_iter().map(value_of).collect();
+    let page = u64::try_from(DEFAULT_PAGE).expect("small");
+    assert_eq!(values, (0..group).chain(1000..1000 + page).collect::<BTreeSet<u64>>());
 
     scope.finish().await.expect("cleanup failed");
 }

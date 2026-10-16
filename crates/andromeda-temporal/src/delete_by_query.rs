@@ -9,7 +9,7 @@
 //! local-only: [`selection_params`](TemporalDeleteParameters::selection_params)
 //! pins the local scope, so entity resolution never forwards.
 
-use crate::{error::TemporalError, port::read_scope::ScopeReach, service::TemporalService};
+use crate::{error::TemporalError, port::read_scope::ScopeReach, result_bound::ResultBound, service::TemporalService};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -83,7 +83,11 @@ impl TemporalService {
         // the delete runs, so an oversized delete is refused before any row goes.
         let matched = self.mutator.count_history_instances(target, &entity_ids, &scope).await?;
         if matched > self.limits.delete_by_query_max_matches {
-            return Err(TemporalError::too_many_results(matched, self.limits.delete_by_query_max_matches));
+            return Err(TemporalError::too_many_results(
+                matched,
+                self.limits.delete_by_query_max_matches,
+                ResultBound::DeleteByQueryMatches,
+            ));
         }
 
         if params.is_dry_run() {

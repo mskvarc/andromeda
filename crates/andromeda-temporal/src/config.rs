@@ -1,11 +1,15 @@
 //! Temporal policy configuration.
 
-use crate::{core_write_history::CoreWriteHistory, instance_limits::TemporalInstanceLimits, storage_policy::TemporalStoragePolicy};
+use crate::{
+    config_error::TemporalConfigError,
+    core_write_history::CoreWriteHistory,
+    instance_limits::TemporalInstanceLimits,
+    storage_policy::TemporalStoragePolicy,
+};
 use andromeda_configuration_scalars::human_duration::HumanDuration;
 use serde::{Deserialize, Serialize};
 use std::num::{NonZeroU32, NonZeroU64};
 use strum::{Display, EnumString};
-use thiserror::Error;
 use toml_comment::TomlComment;
 
 /// The chunk interval the tenant schema declares when no override is set.
@@ -27,6 +31,13 @@ pub const DEFAULT_COLUMNSTORE_AFTER: HumanDuration = HumanDuration::from_days(30
 /// of the broker regardless of how an operator tunes the maximum below it.
 pub const MAX_LAST_N_CEILING: u32 = 5000;
 
+/// The largest `temporal.max_edge_group` a deployment may configure.
+///
+/// A page carries the instances of one attribute sharing the instant at its
+/// edge whole, and renders and compacts them in memory before the response is
+/// written, so the ceiling bounds the one part of a page no page size bounds.
+pub const MAX_EDGE_GROUP_CEILING: u32 = 1_000_000;
+
 /// The largest `temporal.aggregation_instance_budget` a deployment may
 /// configure.
 ///
@@ -43,70 +54,6 @@ pub const DEFAULT_AGGREGATION_INSTANCE_BUDGET: NonZeroU64 = NonZeroU64::MIN.satu
 /// The number of seconds in one day, the grain the history-partition day fields
 /// are constrained to.
 const SECONDS_PER_DAY: u64 = 86_400;
-
-/// Invalid temporal policy configuration.
-#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
-pub enum TemporalConfigError {
-    /// The default `lastN` limit was configured as zero.
-    #[error("temporal.default_last_n must be at least 1")]
-    ZeroDefaultLastN,
-    /// The `lastN` maximum was configured below the default page.
-    ///
-    /// A read without `lastN` is paged at the default, and that page has to be
-    /// one a client could also ask for explicitly.
-    #[error("temporal.max_last_n must be at least temporal.default_last_n")]
-    MaxLastNBelowDefault,
-    /// The `lastN` maximum was configured above [`MAX_LAST_N_CEILING`].
-    #[error("temporal.max_last_n must not exceed {MAX_LAST_N_CEILING}")]
-    MaxLastNAboveCeiling,
-    /// The aggregation instance budget was configured above
-    /// [`AGGREGATION_INSTANCE_BUDGET_CEILING`].
-    #[error("temporal.aggregation_instance_budget must not exceed {AGGREGATION_INSTANCE_BUDGET_CEILING}")]
-    AggregationInstanceBudgetAboveCeiling,
-    /// Expiry reconciliation cadence was configured as zero.
-    #[error("temporal.expiration_check_interval must be greater than zero")]
-    ZeroExpirationCheckInterval,
-    /// Intent fallback cadence was configured as zero.
-    #[error("temporal.intent_fallback must be greater than zero")]
-    ZeroIntentFallback,
-    /// Intent fallback ceiling was configured below the fallback floor.
-    #[error("temporal.intent_fallback_max must be at least temporal.intent_fallback")]
-    IntentFallbackCeilingBelowFloor,
-    /// Intent batch size was configured as zero.
-    #[error("temporal.intent_batch_size must be at least 1")]
-    ZeroIntentBatchSize,
-    /// Intent lease duration was configured as zero.
-    #[error("temporal.intent_lease must be greater than zero")]
-    ZeroIntentLease,
-    /// Intent retry delay was configured as zero.
-    #[error("temporal.intent_retry must be greater than zero")]
-    ZeroIntentRetry,
-    /// Intent retry ceiling was configured below the base delay.
-    #[error("temporal.intent_retry_max must be at least temporal.intent_retry")]
-    IntentRetryCeilingBelowBase,
-    /// The stuck-intent warning threshold was configured as zero.
-    #[error("temporal.intent_stuck_after_attempts must be at least 1")]
-    ZeroIntentStuckThreshold,
-    /// The chunk interval override was not a positive whole number of days.
-    ///
-    /// The write-side history partitions are day-grained, so an override must
-    /// resolve to whole days: a fractional or sub-day span such as `"36h"` has
-    /// no partition boundary to land on.
-    #[error("temporal.chunk_interval must be a positive whole number of days")]
-    ChunkIntervalNotWholeDays,
-    /// The columnstore lag override was not a positive whole number of days.
-    #[error("temporal.columnstore_after must be a positive whole number of days")]
-    ColumnstoreAfterNotWholeDays,
-    /// The columnstore lag would convert a chunk that is still being written.
-    #[error("temporal.columnstore_after must be at least temporal.chunk_interval")]
-    ColumnstoreLagBelowChunkInterval,
-    /// A retention horizon was named but was not a positive whole number of days.
-    #[error("temporal.retention_horizon must be a positive whole number of days when retention is enabled")]
-    RetentionHorizonNotWholeDays,
-    /// Retention sweep cadence was configured as zero.
-    #[error("temporal.retention_sweep_interval must be greater than zero")]
-    ZeroRetentionSweepInterval,
-}
 
 /// How the PostgreSQL anchor lands temporal append consequences.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Display, EnumString, Eq, PartialEq, Serialize)]
@@ -148,14 +95,24 @@ pub struct TemporalConfig {
     /// `Content-Range` still reports the requested `lastN` (clause 6.3.10).
     ///
     /// Defaults to 1000, and may be raised to at most 5000; it must not fall
-    /// below `default_last_n`. The same number bounds the instances that share
-    /// one timestamp at the edge of a page: a page never splits them, and a
-    /// group larger than this is refused with `TooManyResults`.
+    /// below `default_last_n`.
     ///
     /// It is also the page of an aggregated read (clause 4.5.19): at most this
     /// many whole periods per attribute, paged forwards with a 206 whose
     /// `Content-Range` ends at the last period served.
     pub max_last_n: u32,
+    /// The most instances of one attribute sharing one instant on the
+    /// requested axis a temporal page carries.
+    ///
+    /// A page never splits the instances sharing the instant at its edge,
+    /// since a client resumes from a `range-end` `DateTime` that cannot point
+    /// inside an instant (clause 6.3.10), so it carries them whole however far
+    /// past its size that takes it; one temporal write stamps every instance it
+    /// records with one `createdAt` and `modifiedAt`. A group larger than this
+    /// is refused with `TooManyResults` (clause 5.5.6). Defaults to 100,000,
+    /// and may be raised to at most 1,000,000; it must not fall below
+    /// `max_last_n`.
+    pub max_edge_group: u32,
     /// The raw instances one page of an aggregated temporal read aggregates
     /// per attribute at most, beside its `max_last_n` periods.
     ///
@@ -252,6 +209,7 @@ impl Default for TemporalConfig {
             core_write_history: CoreWriteHistory::Recorded,
             default_last_n: 100,
             max_last_n: 1000,
+            max_edge_group: 100_000,
             aggregation_instance_budget: DEFAULT_AGGREGATION_INSTANCE_BUDGET,
             expiration_check_interval: HumanDuration::from_secs(30),
             intent_fallback: HumanDuration::from_secs(1),
@@ -293,7 +251,8 @@ impl TemporalConfig {
     ///
     /// Returns the [`TemporalConfigError`] variant naming the first setting
     /// that spans no time or no work: a zero default `lastN` page, a `lastN`
-    /// maximum below that page or above [`MAX_LAST_N_CEILING`], an
+    /// maximum below that page or above [`MAX_LAST_N_CEILING`], an edge group
+    /// bound below that maximum or above [`MAX_EDGE_GROUP_CEILING`], an
     /// aggregation instance budget above
     /// [`AGGREGATION_INSTANCE_BUDGET_CEILING`], expiry cadence,
     /// intent fallback cadence, batch size, lease, retry delay, stuck-attempt
@@ -310,6 +269,12 @@ impl TemporalConfig {
         }
         if self.max_last_n > MAX_LAST_N_CEILING {
             return Err(TemporalConfigError::MaxLastNAboveCeiling);
+        }
+        if self.max_edge_group < self.max_last_n {
+            return Err(TemporalConfigError::MaxEdgeGroupBelowMaxLastN);
+        }
+        if self.max_edge_group > MAX_EDGE_GROUP_CEILING {
+            return Err(TemporalConfigError::MaxEdgeGroupAboveCeiling);
         }
         if self.aggregation_instance_budget.get() > AGGREGATION_INSTANCE_BUDGET_CEILING {
             return Err(TemporalConfigError::AggregationInstanceBudgetAboveCeiling);
@@ -370,6 +335,7 @@ impl TemporalConfig {
         TemporalInstanceLimits {
             default_page: self.default_last_n,
             maximum: self.max_last_n,
+            edge_group: self.max_edge_group,
             aggregation_instances: self.aggregation_instance_budget,
         }
     }
@@ -402,11 +368,12 @@ mod config_tests {
             AGGREGATION_INSTANCE_BUDGET_CEILING,
             DEFAULT_AGGREGATION_INSTANCE_BUDGET,
             DEFAULT_COLUMNSTORE_AFTER,
+            MAX_EDGE_GROUP_CEILING,
             MAX_LAST_N_CEILING,
             TemporalAppendMode,
             TemporalConfig,
-            TemporalConfigError,
         },
+        config_error::TemporalConfigError,
         core_write_history::CoreWriteHistory,
         instance_limits::TemporalInstanceLimits,
         storage_policy::TemporalStoragePolicy,
@@ -424,6 +391,7 @@ mod config_tests {
             core_write_history: CoreWriteHistory::Recorded,
             default_last_n: 19,
             max_last_n: 19,
+            max_edge_group: 100_000,
             aggregation_instance_budget: DEFAULT_AGGREGATION_INSTANCE_BUDGET,
             expiration_check_interval: HumanDuration::from_secs(30),
             intent_fallback: HumanDuration::from_secs(1),
@@ -474,9 +442,60 @@ mod config_tests {
             TemporalInstanceLimits {
                 default_page: 100,
                 maximum: 1000,
+                edge_group: 100_000,
                 aggregation_instances: budget(1_000_000),
             }
         );
+    }
+
+    /// A page carries an edge group of up to a hundred thousand instances of
+    /// one attribute unless an operator says otherwise.
+    #[test]
+    fn the_edge_group_bound_is_one_hundred_thousand() {
+        assert_eq!(TemporalConfig::default().max_edge_group, 100_000);
+        assert_eq!(TemporalConfig::default().validate(), Ok(()));
+    }
+
+    /// A backward page may hold the maximum instances at one instant, so the
+    /// bound may equal the maximum and not fall below it.
+    #[test]
+    fn an_edge_group_bound_below_the_maximum_is_rejected() {
+        let below = TemporalConfig {
+            max_last_n: 1000,
+            max_edge_group: 999,
+            ..valid()
+        };
+        assert_eq!(below.validate(), Err(TemporalConfigError::MaxEdgeGroupBelowMaxLastN));
+        let equal = TemporalConfig {
+            max_last_n: 1000,
+            max_edge_group: 1000,
+            ..valid()
+        };
+        assert_eq!(equal.validate(), Ok(()));
+    }
+
+    #[test]
+    fn an_edge_group_bound_at_the_ceiling_is_accepted_and_one_above_is_rejected() {
+        let at_ceiling = TemporalConfig {
+            max_edge_group: MAX_EDGE_GROUP_CEILING,
+            ..valid()
+        };
+        assert_eq!(at_ceiling.validate(), Ok(()));
+        let above = TemporalConfig {
+            max_edge_group: MAX_EDGE_GROUP_CEILING + 1,
+            ..valid()
+        };
+        assert_eq!(above.validate(), Err(TemporalConfigError::MaxEdgeGroupAboveCeiling));
+    }
+
+    /// The bound reaches the instance limits the reads are cut under.
+    #[test]
+    fn the_configured_edge_group_bound_reaches_the_instance_limits() {
+        let config = TemporalConfig {
+            max_edge_group: 250_000,
+            ..valid()
+        };
+        assert_eq!(config.instance_limits().edge_group, 250_000);
     }
 
     /// `n` as an aggregation instance budget.

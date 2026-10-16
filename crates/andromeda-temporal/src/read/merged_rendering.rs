@@ -15,6 +15,7 @@ use crate::{
     grouping_depth::grouping_depth,
     port::read_scope::ScopeReach,
     query_warning_reason::TemporalQueryWarningReason,
+    result_bound::ResultBound,
     service::{TemporalQueryWarning, TemporalService},
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -101,7 +102,11 @@ impl TemporalService {
             if compiled.representation.format.is_grouped() {
                 let groups = aggregated.len() as u64;
                 if groups > self.limits.aggregation_grouping_max_groups {
-                    return Err(TemporalError::too_many_results(groups, self.limits.aggregation_grouping_max_groups));
+                    return Err(TemporalError::too_many_results(
+                        groups,
+                        self.limits.aggregation_grouping_max_groups,
+                        ResultBound::AggregationGroups,
+                    ));
                 }
             }
             if !aggregated.is_empty() {

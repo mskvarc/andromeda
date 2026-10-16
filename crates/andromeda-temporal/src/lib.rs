@@ -16,6 +16,8 @@ pub mod append_intent;
 mod attribute_instance_mutation;
 mod compilation;
 pub mod config;
+/// The ways a temporal policy configuration is refused as it is read.
+pub mod config_error;
 /// Whether Core API writes add to the Temporal Evolution of an Entity.
 pub mod core_write_history;
 pub mod delete_by_query;
@@ -46,6 +48,8 @@ mod reified_scope;
 pub mod remote_linked;
 /// Whether the identifiers a request specified narrow a listing of what it matches.
 pub mod requested_identifiers;
+/// The configured bounds a temporal operation is refused with `TooManyResults` over.
+pub mod result_bound;
 /// Whether one scope entry is an event or an assertion of the Scope in force.
 pub mod scope_entry_kind;
 pub mod scope_observation;

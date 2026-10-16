@@ -1,6 +1,7 @@
 //! Failures produced by temporal policy and its storage ports.
 
 use crate::{
+    result_bound::ResultBound,
     temporal_invariant::TemporalInvariant,
     temporal_not_found_reason::TemporalNotFoundReason,
     temporal_operation_unsupported::TemporalOperationUnsupported,
@@ -30,21 +31,24 @@ pub enum TemporalError {
     /// The selected history capability cannot safely answer the request.
     #[error("temporal operation is not supported: {0}")]
     OperationNotSupported(#[from] TemporalOperationUnsupported),
-    /// A bounded temporal extension would produce more results than its
-    /// configured maximum admits.
+    /// A temporal operation counts more than a configured bound admits.
     ///
-    /// Reported off a pre-count, so an oversized operation is refused whole
-    /// rather than partially executed. Two extensions raise it: the
+    /// The operation is refused whole rather than partially executed: the
     /// `temporal_delete_by_query` bound on the history instances a purge would
-    /// remove, and the `temporal_aggregation_grouping` bound on the distinct
-    /// groups a grouped aggregation would emit. Classified as `TooManyResults`
-    /// (403), mirroring the clause 5.6.21.4 bound the standard Purge raises.
-    #[error("temporal operation would produce {matched} results, over the configured maximum of {maximum}")]
+    /// remove, counted before any is removed; the
+    /// `temporal_aggregation_grouping` bound on the distinct groups a grouped
+    /// aggregation would emit; and `temporal.max_edge_group` on the instances
+    /// of one attribute sharing the instant at a page edge, which a page
+    /// carries whole. Classified as `TooManyResults` (403), the clause 5.5.6
+    /// refusal whose threshold is the implementation's.
+    #[error("temporal operation counts {matched} {bound}, over the configured maximum of {maximum}")]
     TooManyResults {
-        /// The number of results the operation matched (instances or groups).
+        /// The number the operation counted.
         matched: u64,
         /// The configured upper bound.
         maximum: u64,
+        /// What was counted, and the setting bounding it.
+        bound: ResultBound,
     },
     /// The written payload exceeds the budget an entity is admitted under
     /// before it is expanded (clause 6.3.2, "Request Entity too large").
@@ -253,10 +257,11 @@ impl From<CurrentStateFoldError> for TemporalError {
 }
 
 impl TemporalError {
-    /// Construct an over-the-bound temporal-extension failure.
+    /// Construct the refusal of an operation that counted `matched` against
+    /// the `bound` configured at `maximum`.
     #[must_use]
-    pub const fn too_many_results(matched: u64, maximum: u64) -> TemporalError {
-        TemporalError::TooManyResults { matched, maximum }
+    pub const fn too_many_results(matched: u64, maximum: u64, bound: ResultBound) -> TemporalError {
+        TemporalError::TooManyResults { matched, maximum, bound }
     }
 
     /// Classify a failed entity operation a temporal operation depends on.

@@ -13,6 +13,7 @@ use crate::{
     grouping_depth::grouping_depth,
     port::read_scope::TemporalReadScope,
     read::rendered_entity::{HistoryPresence, RenderedTemporalEntity, presence_of},
+    result_bound::ResultBound,
     service::TemporalService,
 };
 use andromeda_ngsi_ld_compaction::{aggregated_entity::aggregated_entity, name_compaction::NameCompaction};
@@ -118,7 +119,7 @@ pub(crate) fn render_aggregation_page(
     if compiled.representation.format.is_grouped() {
         let groups = page.rows.len() as u64;
         if groups > rendering.max_groups {
-            return Err(TemporalError::too_many_results(groups, rendering.max_groups));
+            return Err(TemporalError::too_many_results(groups, rendering.max_groups, ResultBound::AggregationGroups));
         }
     }
     let presence = page.presence();

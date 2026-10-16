@@ -16,7 +16,7 @@ use andromeda_task_runtime::{
     task_name::TaskNameError,
     wake_trigger::DrainFallbackPolicyError,
 };
-use andromeda_temporal::{config::TemporalConfigError, intent_retry_policy::RetryCeilingBelowBase};
+use andromeda_temporal::{config_error::TemporalConfigError, intent_retry_policy::RetryCeilingBelowBase};
 use thiserror::Error;
 
 /// A setting that must name a positive count.

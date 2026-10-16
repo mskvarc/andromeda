@@ -10,8 +10,11 @@
 //! would.
 //!
 //! The resumed window includes the instant, and a page never splits the
-//! instances one attribute holds at the instant it is cut at, so every instance
-//! at or before it is already captured and is left out of the resumed page.
+//! instances one attribute holds at the instant it is cut at, however many, so
+//! every instance at or before it is already captured and is left out of the
+//! resumed page. The broker leaves the instances on the inclusive lower bound
+//! of a resumed window out of its page size, so each resumed page ends past
+//! the instant it resumed at.
 //! Every page of an entity carries its Scope history whole, since a Scope has
 //! no position on the requested axis (clause 4.18), so the Scope of an entity
 //! an earlier page captured is left out too.
@@ -59,9 +62,19 @@ pub(crate) enum WalkRefusal {
         "the temporal query asks for a lastN above the instance maximum of the broker or of a Context Source answering it, whose remainder pages backwards, and a Snapshot cannot capture it completely"
     )]
     Backward,
-    /// The page was cut at an instant no later than the previous one: an
-    /// attribute holds more instances at it than one page carries.
-    #[error("an attribute holds more instances at {} than one page carries, so its history cannot be read past that instant", sub_second(*at))]
+    /// The answer was cut no later than the instant the walk resumed it at,
+    /// so asking again would answer the same page.
+    ///
+    /// A Context Source that counts the instances on the inclusive lower bound
+    /// of a resumed window into its page, or carries fewer of the instances
+    /// one attribute holds at one instant than it holds, stalls so. The
+    /// broker's own pages end past the instant they resume at; their walk
+    /// keeps the check so that a page that did not would end the capture
+    /// rather than repeat it.
+    #[error(
+        "a partial temporal answer was cut at {}, no later than the instant it was resumed at, so its history cannot be read past that instant",
+        sub_second(*at)
+    )]
     Stalled {
         /// The instant the page could not be read past.
         at: DateTime<Utc>,

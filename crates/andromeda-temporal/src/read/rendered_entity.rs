@@ -16,6 +16,7 @@ use crate::{
     error::TemporalError,
     port::read_scope::TemporalReadScope,
     read::aggregated_page::{AggregationRendering, render_aggregation_page, settle_aggregation_pages},
+    result_bound::ResultBound,
     service::TemporalService,
     temporal_invariant::TemporalInvariant,
 };
@@ -110,8 +111,8 @@ impl TemporalService {
     /// # Errors
     ///
     /// Returns [`TemporalError`] when the history cannot be read, a page would
-    /// carry more instances sharing one timestamp than the broker's maximum,
-    /// or an aggregate's names cannot be compacted. Each caller decides
+    /// carry more instances of one attribute sharing one instant than
+    /// `temporal.max_edge_group`, or an aggregate's names cannot be compacted. Each caller decides
     /// whether that ends the operation or merely drops one entity from it.
     pub(crate) async fn render_one_temporal_entity(
         &self,
@@ -150,24 +151,33 @@ impl TemporalService {
     /// The one cut every entity of a response is made at, or `None` when the
     /// response is complete (clause 6.3.10).
     ///
+    /// A page carries the instances of one attribute sharing the instant at
+    /// its edge whole, past its size if need be: a client resumes from a
+    /// `range-end` `DateTime`, which cannot point inside an instant.
+    ///
     /// # Errors
     ///
     /// Returns [`TemporalError::TooManyResults`] when a page would carry more
-    /// instances sharing one timestamp than the broker's maximum: a page never
-    /// splits such a group, so it is the one thing that could grow a page
-    /// without bound.
+    /// instances of one attribute sharing one instant than
+    /// `temporal.max_edge_group`: such a group is the one part of a page its
+    /// size does not bound (clause 5.5.6 leaves the threshold to the
+    /// implementation).
     pub(crate) fn common_page_cut(&self, compiled: &CompiledTemporalQuery, pages: &[EntityHistoryPage]) -> Result<Option<PageCut>, TemporalError> {
         let Some(direction) = compiled.instances.page.direction() else {
             return Ok(None);
         };
         let timeproperty = compiled.window.timeproperty;
         let cut = PageCut::common(pages.iter().filter_map(|page| PageCut::of_page(&page.rows, timeproperty, direction)));
-        let maximum = self.limits.instance_limits.maximum;
+        let bound = self.limits.instance_limits.edge_group;
         for page in pages {
             let kept = page.rows.iter().filter(|row| cut.is_none_or(|cut| cut.keeps(row, timeproperty)));
             let group = largest_simultaneous_group(kept, timeproperty);
-            if group > usize::try_from(maximum).unwrap_or(usize::MAX) {
-                return Err(TemporalError::too_many_results(u64::try_from(group).unwrap_or(u64::MAX), u64::from(maximum)));
+            if group > usize::try_from(bound).unwrap_or(usize::MAX) {
+                return Err(TemporalError::too_many_results(
+                    u64::try_from(group).unwrap_or(u64::MAX),
+                    u64::from(bound),
+                    ResultBound::EdgeGroup,
+                ));
             }
         }
         Ok(cut)
@@ -228,4 +238,196 @@ pub(crate) fn render_history_page(
         cut,
         time_range: built.time_range,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        error::TemporalError,
+        instance_limits::TemporalInstanceLimits,
+        read::rendered_entity::EntityHistoryPage,
+        result_bound::ResultBound,
+        service::TemporalService,
+        service_limits::TemporalServiceLimits,
+        stub_broker::{StubBroker, limits, service_under, uri},
+    };
+    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_identity::InstanceIdentity, temporal_format::TemporalFormat, time_prop::TimeProp};
+    use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, TemporalValue};
+    use andromeda_ngsi_ld_number::JsonNumber;
+    use andromeda_ngsi_ld_query::{
+        entity_selection::EntitySelection,
+        temporal::{
+            compiled::CompiledTemporalQuery,
+            instance_page::{InstancePage, PageDirection},
+            instance_selection::InstanceSelection,
+            representation::Representation,
+            window::{TemporalWindow, TimeInterval},
+        },
+    };
+    use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+    use chrono::{DateTime, Utc};
+    use std::{num::NonZeroU32, slice, sync::Arc};
+
+    fn at(raw: &str) -> DateTime<Utc> {
+        raw.parse().expect("a valid instant")
+    }
+
+    /// A service paging at 19 instances, answering a `lastN` of up to 19 in
+    /// full, and carrying edge groups of up to `edge_group` instances.
+    fn service(edge_group: u32) -> TemporalService {
+        let limits = limits();
+        service_under(
+            Arc::new(StubBroker::new([])),
+            None,
+            TemporalServiceLimits {
+                instance_limits: TemporalInstanceLimits {
+                    default_page: 19,
+                    maximum: 19,
+                    edge_group,
+                    ..limits.instance_limits
+                },
+                ..limits
+            },
+        )
+    }
+
+    /// The normalized representation of every instance observed after 2020,
+    /// read as `page`.
+    fn compiled(page: InstancePage) -> CompiledTemporalQuery {
+        CompiledTemporalQuery::builder()
+            .entities(EntitySelection::builder().build())
+            .window(
+                TemporalWindow::builder()
+                    .timeproperty(TimeProp::Observed)
+                    .interval(TimeInterval::After(at("2020-01-01T00:00:00Z")))
+                    .build(),
+            )
+            .instances(InstanceSelection::builder().page(page).build())
+            .representation(
+                Representation::builder()
+                    .format(TemporalFormat::Normalized)
+                    .aggr_methods(Vec::new())
+                    .aggr_period_duration(None)
+                    .sys_attrs(SysAttrsInclusion::Strip)
+                    .build(),
+            )
+            .build()
+    }
+
+    /// `count` instances of `speed` observed at `instant`, valued from `first`
+    /// on, in a stream read to `extent`.
+    fn simultaneous(count: i64, first: i64, instant: &str, extent: StreamExtent) -> Vec<TemporalHistoryRow> {
+        let instant = at(instant);
+        (first..first + count)
+            .map(|value| TemporalHistoryRow {
+                attribute_name: "https://example.com/speed".parse().expect("a valid attribute name"),
+                attribute_type: AttributeType::Property,
+                dataset_id: None,
+                value: TemporalValue::Number(JsonNumber::from(value)),
+                observed_at: Some(instant),
+                recorded_at: instant,
+                created_at: Some(instant),
+                modified_at: Some(instant),
+                instance: InstanceIdentity::Verbatim(uri(&format!("urn:ngsi-ld:Instance:{value}"))),
+                metadata: None,
+                stream_extent: extent,
+            })
+            .collect()
+    }
+
+    fn page(entity: &str, rows: Vec<TemporalHistoryRow>) -> EntityHistoryPage {
+        EntityHistoryPage {
+            entity_id: entity.parse().expect("a valid identifier"),
+            rows,
+        }
+    }
+
+    /// The `speed` values of `page` the response cut at `compiled` keeps.
+    fn kept(service: &TemporalService, compiled: &CompiledTemporalQuery, page: &EntityHistoryPage) -> usize {
+        let cut = service.common_page_cut(compiled, slice::from_ref(page)).expect("a page within the bound");
+        page.rows.iter().filter(|row| cut.is_none_or(|cut| cut.keeps(row, TimeProp::Observed))).count()
+    }
+
+    /// Clause 6.3.10 resumes a forward page from its `range-end` `DateTime`, which
+    /// cannot point inside an instant: 25 instances sharing the instant a page
+    /// of 19 ends at are carried whole, and the response is cut there.
+    #[test]
+    fn a_forward_page_carries_an_edge_group_larger_than_the_maximum_whole() {
+        let service = service(100);
+        let compiled = compiled(InstancePage::Forward { size: 19 });
+        let page = page("urn:ngsi-ld:Vehicle:1", simultaneous(25, 0, "2024-01-01T00:00:00Z", StreamExtent::Cut));
+        let cut = service.common_page_cut(&compiled, slice::from_ref(&page)).expect("a group within the bound");
+        pretty_assertions::assert_eq!(cut.map(|cut| cut.boundary), Some(at("2024-01-01T00:00:00Z")));
+        pretty_assertions::assert_eq!(kept(&service, &compiled, &page), 25);
+    }
+
+    /// A `lastN` of 21 above the maximum of 19 pages backwards: the 5 latest
+    /// instances and the 25 sharing the instant the page reaches into are
+    /// carried whole, the response starting at that instant.
+    #[test]
+    fn a_backward_page_carries_an_edge_group_larger_than_the_maximum_whole() {
+        let service = service(100);
+        let compiled = compiled(InstancePage::Backward {
+            size: 19,
+            requested: NonZeroU32::new(21).expect("a positive lastN"),
+        });
+        let mut rows = simultaneous(5, 100, "2024-01-02T00:00:00Z", StreamExtent::Cut);
+        rows.extend(simultaneous(25, 0, "2024-01-01T00:00:00Z", StreamExtent::Cut));
+        let page = page("urn:ngsi-ld:Vehicle:1", rows);
+        let cut = service
+            .common_page_cut(&compiled, slice::from_ref(&page))
+            .expect("a group within the bound")
+            .expect("the stream was cut");
+        assert!(matches!(cut.direction, PageDirection::Backward { .. }));
+        pretty_assertions::assert_eq!(cut.boundary, at("2024-01-01T00:00:00Z"));
+        pretty_assertions::assert_eq!(kept(&service, &compiled, &page), 30);
+    }
+
+    /// Clause 5.5.6 leaves the threshold of `TooManyResults` to the
+    /// implementation: a group of 25 over an edge group bound of 20 is refused,
+    /// and the refusal names the setting.
+    #[test]
+    fn an_edge_group_above_the_bound_is_too_many_results_naming_the_bound() {
+        let service = service(20);
+        let compiled = compiled(InstancePage::Forward { size: 19 });
+        let page = page("urn:ngsi-ld:Vehicle:1", simultaneous(25, 0, "2024-01-01T00:00:00Z", StreamExtent::Cut));
+        let refusal = service.common_page_cut(&compiled, slice::from_ref(&page)).expect_err("a group above the bound");
+        assert!(
+            matches!(
+                refusal,
+                TemporalError::TooManyResults {
+                    matched: 25,
+                    maximum: 20,
+                    bound: ResultBound::EdgeGroup,
+                }
+            ),
+            "{refusal:?}"
+        );
+        assert!(refusal.to_string().contains("temporal.max_edge_group"), "{refusal}");
+    }
+
+    /// One response is cut at one instant across its entities: vehicle 1 was
+    /// cut at its group of 25 on January 1st, so vehicle 2 keeps its 10
+    /// instances there whole and leaves out its 30 of January 2nd, which the
+    /// bound of 25 therefore does not refuse.
+    #[test]
+    fn the_common_cut_keeps_each_entity_s_edge_group_whole() {
+        let service = service(25);
+        let compiled = compiled(InstancePage::Forward { size: 19 });
+        let first = page("urn:ngsi-ld:Vehicle:1", simultaneous(25, 0, "2024-01-01T00:00:00Z", StreamExtent::Cut));
+        let mut rows = simultaneous(10, 0, "2024-01-01T00:00:00Z", StreamExtent::Cut);
+        rows.extend(simultaneous(30, 100, "2024-01-02T00:00:00Z", StreamExtent::Cut));
+        let second = page("urn:ngsi-ld:Vehicle:2", rows);
+        let pages = [first, second];
+        let cut = service
+            .common_page_cut(&compiled, &pages)
+            .expect("every kept group within the bound")
+            .expect("both streams were cut");
+        pretty_assertions::assert_eq!(cut.boundary, at("2024-01-01T00:00:00Z"));
+        let kept: Vec<usize> = pages
+            .iter()
+            .map(|page| page.rows.iter().filter(|row| cut.keeps(row, TimeProp::Observed)).count())
+            .collect();
+        pretty_assertions::assert_eq!(kept, vec![25, 10]);
+    }
 }

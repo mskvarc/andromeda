@@ -280,6 +280,7 @@ mod tests {
     const LIMITS: TemporalInstanceLimits = TemporalInstanceLimits {
         default_page: 100,
         maximum: 1000,
+        edge_group: 100_000,
         aggregation_instances: NonZeroU64::MIN.saturating_add(49_999),
     };
 

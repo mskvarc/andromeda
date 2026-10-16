@@ -11,7 +11,7 @@ use andromeda_ngsi_ld_request::pagination::policy::PaginationPolicyError;
 use andromeda_postgresql_context_store::config::DatabaseConfigError;
 use andromeda_server_tls::config::TlsConfigError;
 use andromeda_snapshot::config::SnapshotConfigError;
-use andromeda_temporal::config::TemporalConfigError;
+use andromeda_temporal::config_error::TemporalConfigError;
 use andromeda_tenancy::config::TenancyConfigError;
 use figment2::Error as FigmentError;
 use humantime::format_duration;

@@ -18,9 +18,9 @@ pub fn classify_temporal_error(error: &TemporalError) -> ClassifiedReport {
         TemporalError::Validation(reason) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, reason.to_string()),
         TemporalError::NotFound(reason) => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, reason.to_string()),
         TemporalError::OperationNotSupported(reason) => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, reason.to_string()),
-        // The clause 5.6.21.4 `TooManyResults` bound the standard Purge raises,
-        // applied to the delete-by-query extension: a 403 naming the count and
-        // the limit so the client can narrow its window or selectors.
+        // Clause 5.5.6 leaves the threshold to the implementation: a 403 naming
+        // the count, the limit and its setting so the client can narrow its
+        // window or selectors.
         TemporalError::TooManyResults { .. } => ClassifiedReport::public(NgsiLdErrorType::TooManyResults, error.to_string()),
         // Clause 6.3.2 raises "Request Entity too large" (413) for an input
         // too large to process, counted here in values and positions.
@@ -53,6 +53,7 @@ mod tests {
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_temporal::{
         error::TemporalError,
+        result_bound::ResultBound,
         temporal_invariant::TemporalInvariant,
         temporal_not_found_reason::TemporalNotFoundReason,
         temporal_operation_unsupported::TemporalOperationUnsupported,
@@ -87,7 +88,7 @@ mod tests {
             ),
             (
                 "TooManyResults",
-                TemporalError::too_many_results(500, 100),
+                TemporalError::too_many_results(500, 100, ResultBound::DeleteByQueryMatches),
                 NgsiLdErrorType::TooManyResults,
                 None,
             ),

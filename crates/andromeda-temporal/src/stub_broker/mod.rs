@@ -162,6 +162,28 @@ pub(crate) fn service(broker: StubBroker) -> TemporalService {
 /// A service whose history is the stubbed `broker` and whose non-local half is
 /// `remote`.
 pub(crate) fn service_over(broker: Arc<StubBroker>, remote: Option<Arc<dyn RemoteTemporalLinkedSource>>) -> TemporalService {
+    service_under(broker, remote, limits())
+}
+
+/// The bounds a stubbed service runs under unless a test narrows them.
+pub(crate) fn limits() -> TemporalServiceLimits {
+    TemporalServiceLimits {
+        instance_limits: TemporalInstanceLimits {
+            default_page: 100,
+            maximum: 1000,
+            edge_group: 100_000,
+            aggregation_instances: DEFAULT_AGGREGATION_INSTANCE_BUDGET,
+        },
+        delete_by_query_max_matches: 100,
+        aggregation_grouping_max_groups: 100,
+        payload_budget: EntityConfig::default().payload_budget(),
+        near_band: NearDistanceBand::Refused,
+    }
+}
+
+/// A service whose history is the stubbed `broker`, whose non-local half is
+/// `remote`, bounded by `limits`.
+pub(crate) fn service_under(broker: Arc<StubBroker>, remote: Option<Arc<dyn RemoteTemporalLinkedSource>>, limits: TemporalServiceLimits) -> TemporalService {
     TemporalService::new(
         TemporalServicePorts {
             entity_reader: Arc::clone(&broker) as Arc<dyn EntityReader>, // clone: one test double supplies every focused capability
@@ -173,17 +195,7 @@ pub(crate) fn service_over(broker: Arc<StubBroker>, remote: Option<Arc<dyn Remot
         },
         JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
         Arc::new(ChangeNotifier::new(None, SubscriptionMatching::Absent)),
-        TemporalServiceLimits {
-            instance_limits: TemporalInstanceLimits {
-                default_page: 100,
-                maximum: 1000,
-                aggregation_instances: DEFAULT_AGGREGATION_INSTANCE_BUDGET,
-            },
-            delete_by_query_max_matches: 100,
-            aggregation_grouping_max_groups: 100,
-            payload_budget: EntityConfig::default().payload_budget(),
-            near_band: NearDistanceBand::Refused,
-        },
+        limits,
         remote,
         TemporalJoin::Extended,
     )

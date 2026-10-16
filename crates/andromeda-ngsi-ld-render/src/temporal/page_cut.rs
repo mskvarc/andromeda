@@ -129,7 +129,7 @@ impl StreamPage {
 /// axis, among the rows a page kept.
 ///
 /// A page never splits such a group, so this is how far a page can overshoot
-/// its size; the service refuses a group larger than the broker's maximum
+/// its size; the service refuses a group larger than its configured bound
 /// rather than render it.
 #[must_use]
 pub fn largest_simultaneous_group<'a>(rows: impl IntoIterator<Item = &'a TemporalHistoryRow>, timeproperty: TimeProp) -> usize {
