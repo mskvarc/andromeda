@@ -121,3 +121,15 @@ fn the_span_is_the_least_and_most_recent_instant() {
     );
     pretty_assertions::assert_eq!(local.instant_span(TimeProp::Modified), None);
 }
+
+#[test]
+fn instances_are_kept_by_the_attribute_they_belong_to_and_an_emptied_attribute_keeps_its_family() {
+    let mut held = document(vec![instance("2024-01-01T00:00:00Z", None), instance("2024-01-02T00:00:00Z", None)]);
+    held.retain_instances(|name, _| name != &speed());
+    pretty_assertions::assert_eq!(held.instance_count(), 0);
+    pretty_assertions::assert_eq!(held.emptied().get(&speed()), Some(&AttributeType::Property));
+    let mut held = document(vec![instance("2024-01-01T00:00:00Z", None), instance("2024-01-02T00:00:00Z", None)]);
+    held.retain_instances(|name, kept| name == &speed() && kept.instant_on(TimeProp::Observed) > Some(at("2024-01-01T00:00:00Z")));
+    pretty_assertions::assert_eq!(held.instance_count(), 1);
+    assert!(held.emptied().is_empty());
+}

@@ -117,6 +117,33 @@ impl TimeInterval {
     pub const fn is_bounded(&self) -> bool {
         !matches!(self, TimeInterval::Unbounded)
     }
+
+    /// What remains of the interval from `instant` on, which is where the
+    /// rest of a forward page cut at `instant` is read (clause 6.3.10).
+    ///
+    /// `instant` itself stays in the interval: the instances sharing it may
+    /// lie on both sides of the cut, so they are read again rather than
+    /// skipped. A closing instant stays where it was, so what remains of a
+    /// `before` interval is the `between` interval from `instant` to it.
+    #[must_use]
+    pub const fn resumed_at(self, instant: DateTime<Utc>) -> TimeInterval {
+        match self {
+            TimeInterval::Unbounded | TimeInterval::After(_) => TimeInterval::After(instant),
+            TimeInterval::Before(to) | TimeInterval::Between { to, .. } => TimeInterval::Between { from: instant, to },
+        }
+    }
+
+    /// The `timerel`, `timeAt` and `endTimeAt` a request spells the interval
+    /// with, the three [`from_parts`](TimeInterval::from_parts) builds it from.
+    #[must_use]
+    pub const fn parts(self) -> (Option<TimeRel>, Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
+        match self {
+            TimeInterval::Unbounded => (None, None, None),
+            TimeInterval::Before(instant) => (Some(TimeRel::Before), Some(instant), None),
+            TimeInterval::After(instant) => (Some(TimeRel::After), Some(instant), None),
+            TimeInterval::Between { from, to } => (Some(TimeRel::Between), Some(from), Some(to)),
+        }
+    }
 }
 
 /// Whether an optional temporal bound arrived in the request.
@@ -235,6 +262,35 @@ mod tests {
             (Some(&reference), None)
         );
         assert_eq!((between.opening(), between.closing()), (Some(&reference), Some(&end)));
+    }
+
+    #[test]
+    fn a_resumed_interval_opens_at_the_cut_and_keeps_its_closing_instant() {
+        let start = instant("2024-01-01T00:00:00Z");
+        let cut = instant("2024-01-02T00:00:00Z");
+        let end = instant("2024-02-01T00:00:00Z");
+        assert_eq!(TimeInterval::After(start).resumed_at(cut), TimeInterval::After(cut));
+        assert_eq!(TimeInterval::Unbounded.resumed_at(cut), TimeInterval::After(cut));
+        assert_eq!(TimeInterval::Before(end).resumed_at(cut), TimeInterval::Between { from: cut, to: end });
+        assert_eq!(
+            TimeInterval::Between { from: start, to: end }.resumed_at(cut),
+            TimeInterval::Between { from: cut, to: end }
+        );
+    }
+
+    #[test]
+    fn an_interval_spells_back_the_parts_it_is_built_from() {
+        let from = instant("2024-01-01T00:00:00Z");
+        let to = instant("2024-02-01T00:00:00Z");
+        for interval in [
+            TimeInterval::Unbounded,
+            TimeInterval::Before(to),
+            TimeInterval::After(from),
+            TimeInterval::Between { from, to },
+        ] {
+            let (timerel, time_at, end_time_at) = interval.parts();
+            assert_eq!(TimeInterval::from_parts(timerel, time_at, end_time_at).expect("valid parts"), interval);
+        }
     }
 
     #[test]

@@ -13,8 +13,12 @@ mod execution;
 mod execution_failure;
 /// Turning the entities a capture merged with its sources into states.
 mod forwarded_capture;
+/// Reading the instances of a captured temporal answer to the end of its window.
+mod instance_walk;
 mod lease_renewal;
 mod status;
+/// Capturing the whole answer of one snapshot temporal query.
+mod temporal_capture;
 mod translation;
 
 use crate::{

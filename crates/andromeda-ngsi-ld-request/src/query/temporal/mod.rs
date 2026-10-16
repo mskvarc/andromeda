@@ -40,7 +40,10 @@ use andromeda_ngsi_ld_query::{
     pattern::Pattern,
     projection::grammar::RawProjectionTerm,
     scope::query::ScopeQuery,
-    temporal::aggregation_period::{AggregationPeriod, optional},
+    temporal::{
+        aggregation_period::{AggregationPeriod, optional},
+        window::TimeInterval,
+    },
     type_selection::grammar::TypeExprRaw,
 };
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
@@ -71,7 +74,7 @@ pub mod validation;
 /// Corresponds to the query parameters defined in NGSI-LD 5.7.4 (Query Temporal
 /// Evolution of Entities) and 5.7.3 (Retrieve Temporal Representation of an Entity).
 /// All values are in their raw (compact) form before context expansion.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TemporalQueryParameters {
     /// Entity identifiers to select, comma-separated (clause 6.3.x `id`).
@@ -224,22 +227,83 @@ impl_shared_query_params!(TemporalQueryParameters {
     dataset_id: dataset_id
 });
 
+impl TemporalQueryParameters {
+    /// Ask the query of `entities` alone, entities its selection has already
+    /// matched.
+    ///
+    /// The identifier list narrows the flat selector and every clause 5.2.33
+    /// selector alike; their type and pattern axes stay, which each listed
+    /// entity satisfies already, so the union selects exactly the list. They
+    /// also keep the narrowing clause 5.7.2.4 requires, which an identifier
+    /// list alone is not. The value, geo and scope filters stay, since they
+    /// also decide which instances are read.
+    pub fn select_only(&mut self, entities: Vec<Identifier>) {
+        for selector in &mut self.entity_selectors {
+            selector.id = Some(entities.clone()); // clone: every selector of the union is narrowed to the same list
+        }
+        self.id = Some(entities);
+    }
+
+    /// Read the query over `interval` instead of the window it was asked with.
+    pub const fn set_interval(&mut self, interval: TimeInterval) {
+        (self.timerel, self.time_at, self.end_time_at) = interval.parts();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
         error::ParameterError,
         pagination::cursor_request::CursorRequest,
         params_from_query,
-        query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation},
+        query::{
+            entity_selector::EntitySelectorParams,
+            temporal::{TemporalQueryParameters, operation::TemporalQueryOperation},
+        },
     };
     use andromeda_linked_retrieval::admission::{LinkedMember, LinkedOperation, ReachingMember, TemporalJoin};
-    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};
-    use andromeda_ngsi_ld_query::{cursor::PageCursor, error::QueryError, filter::serialize::serialize_attr_path, projection::exclusivity::ProjectionConflict};
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp, time_rel::TimeRel};
+    use andromeda_ngsi_ld_query::{
+        cursor::PageCursor,
+        error::QueryError,
+        filter::serialize::serialize_attr_path,
+        projection::exclusivity::ProjectionConflict,
+        temporal::window::TimeInterval,
+    };
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
     use std::num::NonZeroU32;
 
     fn params_from_query(query: &str) -> TemporalQueryParameters {
         params_from_query!(query, TemporalQueryParameters)
+    }
+
+    #[test]
+    fn a_query_asked_of_listed_entities_narrows_every_selector_and_keeps_its_narrowing() {
+        let mut params = params_from_query("type=Vehicle&idPattern=urn:ngsi-ld:Vehicle:.*&q=speed>10&timerel=after&timeAt=2024-01-01T00:00:00Z");
+        params.entity_selectors.push(EntitySelectorParams::default());
+        params.entity_selectors.push(EntitySelectorParams::default());
+        let listed: Vec<Identifier> = vec!["urn:ngsi-ld:Vehicle:A".parse().expect("a valid identifier")];
+        params.select_only(listed.clone());
+        pretty_assertions::assert_eq!(params.id.as_ref(), Some(&listed));
+        assert!(params.entity_selectors.iter().all(|selector| selector.id.as_ref() == Some(&listed)));
+        assert!(params.entity_type.is_some() && params.id_pattern.is_some() && params.q.is_some());
+        assert!(
+            params.validate(TemporalQueryOperation::Query, TemporalJoin::Spec).is_ok(),
+            "{:?}",
+            params.validate(TemporalQueryOperation::Query, TemporalJoin::Spec)
+        );
+    }
+
+    #[test]
+    fn a_query_read_over_another_interval_spells_it_in_its_window_parameters() {
+        let mut params = params_from_query("type=Vehicle&timerel=before&timeAt=2024-02-01T00:00:00Z");
+        let from = "2024-01-01T00:00:00Z".parse().expect("a valid instant");
+        let to = "2024-02-01T00:00:00Z".parse().expect("a valid instant");
+        params.set_interval(TimeInterval::Between { from, to });
+        pretty_assertions::assert_eq!(
+            (params.timerel, params.time_at, params.end_time_at),
+            (Some(TimeRel::Between), Some(from), Some(to))
+        );
     }
 
     #[test]

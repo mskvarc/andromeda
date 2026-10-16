@@ -47,6 +47,7 @@ url = "2.5.8"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+indexmap = "2.14.2"
 pretty_assertions = "1.4.1"
 strum = { version = "0.28.0", features = ["derive"] }
 tokio = { version = "1.53.2", features = ["macros", "rt", "sync", "test-util", "time"] }

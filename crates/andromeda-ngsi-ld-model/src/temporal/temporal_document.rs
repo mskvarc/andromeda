@@ -122,7 +122,14 @@ impl TemporalDocument {
     /// outside. An attribute left without an instance stays, with the family
     /// its instances recorded.
     pub fn retain_instants(&mut self, timeproperty: TimeProp, keep: impl Fn(DateTime<Utc>) -> bool) {
-        self.reshape_instances(|instances| instances.retain(|instance| instance.instant_on(timeproperty).is_none_or(&keep)));
+        self.reshape_instances(|_, instances| instances.retain(|instance| instance.instant_on(timeproperty).is_none_or(&keep)));
+    }
+
+    /// Keep only the instances `keep` admits, given the attribute each belongs
+    /// to. An attribute left without an instance stays, with the family its
+    /// instances recorded.
+    pub fn retain_instances(&mut self, keep: impl Fn(&AttributeName, &InstanceDocument) -> bool) {
+        self.reshape_instances(|name, instances| instances.retain(|instance| keep(name, instance)));
     }
 
     /// Keep, for every attribute, the `last_n` instances with the most recent
@@ -131,7 +138,7 @@ impl TemporalDocument {
     /// every response lists its instances oldest first.
     pub fn keep_last(&mut self, timeproperty: TimeProp, last_n: NonZeroU32) {
         let keep = usize::try_from(last_n.get()).unwrap_or(usize::MAX);
-        self.reshape_instances(|instances| {
+        self.reshape_instances(|_, instances| {
             instances.sort_by_key(|instance| Reverse(instance.instant_on(timeproperty)));
             instances.truncate(keep);
             instances.sort_by_key(|instance| instance.instant_on(timeproperty));
@@ -177,15 +184,15 @@ impl TemporalDocument {
         }
     }
 
-    /// Reshape the instances of every attribute with `reshape`, recording the
-    /// family of one that ends up with none.
-    fn reshape_instances(&mut self, mut reshape: impl FnMut(&mut Vec<InstanceDocument>)) {
+    /// Reshape the instances of every attribute with `reshape`, given the
+    /// attribute's name, recording the family of one that ends up with none.
+    fn reshape_instances(&mut self, mut reshape: impl FnMut(&AttributeName, &mut Vec<InstanceDocument>)) {
         for (name, member) in self.entity.attributes_mut() {
             let AttributeMember::Instances(instances) = member else {
                 continue;
             };
             let family = instances.iter().find_map(InstanceDocument::family);
-            reshape(instances);
+            reshape(name, instances);
             if let (true, Some(family)) = (instances.is_empty(), family) {
                 self.emptied.entry(name.clone()).or_insert(family); // clone: the record names the attribute the document keeps
             }

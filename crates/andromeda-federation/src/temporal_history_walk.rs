@@ -21,8 +21,9 @@ use crate::{
     request::HistoryBudget,
 };
 use andromeda_http_headers::ngsild_content_range::NgsiLdContentRange;
-use andromeda_ngsi_ld_lexicon::rfc3339::sub_second;
+use andromeda_ngsi_ld_lexicon::{rfc3339::sub_second, time_rel::TimeRel};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
 use chrono::{DateTime, Utc};
 use futures::{StreamExt, stream};
 use url::Url;
@@ -115,30 +116,24 @@ fn least_range_end(ranges: &[NgsiLdContentRange]) -> Option<DateTime<Utc>> {
     ranges.iter().map(NgsiLdContentRange::end).min()
 }
 
-/// `first` with its window resumed at `stopped_at`: what remained of a `before`
-/// or `between` window, or an `after` window opening there; `None` when the
-/// first request carried no window to resume.
-///
-/// The resumed window includes `stopped_at` itself: instances sharing that
-/// instant may lie on both sides of the cut, and an instance answered twice is
-/// the same instance, which the merge recognises by its `instanceId`.
+/// `first` with its window resumed at `stopped_at` (clause 6.3.10), or `None`
+/// when the first request carried no window to resume.
 fn resumed_window(first: &Url, stopped_at: DateTime<Utc>) -> Option<Url> {
     let pairs: Vec<(String, String)> = first.query_pairs().map(|(name, value)| (name.into_owned(), value.into_owned())).collect();
     let value_of = |name: &str| pairs.iter().find(|(key, _)| key == name).map(|(_, value)| value.as_str());
-    let resumed: Vec<(&str, String)> = match value_of("timerel")? {
-        "before" => vec![
-            ("timerel", "between".to_owned()),
-            ("timeAt", sub_second(stopped_at)),
-            ("endTimeAt", value_of("timeAt")?.to_owned()),
-        ],
-        "between" => vec![
-            ("timerel", "between".to_owned()),
-            ("timeAt", sub_second(stopped_at)),
-            ("endTimeAt", value_of("endTimeAt")?.to_owned()),
-        ],
-        "after" => vec![("timerel", "after".to_owned()), ("timeAt", sub_second(stopped_at))],
-        _other => return None,
+    let instant_of = |name: &str| {
+        value_of(name)
+            .map(|raw| DateTime::parse_from_rfc3339(raw).map(|instant| instant.with_timezone(&Utc)))
+            .transpose()
     };
+    let timerel = value_of("timerel")?.parse::<TimeRel>().ok()?;
+    let interval = TimeInterval::from_parts(Some(timerel), instant_of("timeAt").ok()?, instant_of("endTimeAt").ok()?).ok()?;
+    let (timerel, time_at, end_time_at) = interval.resumed_at(stopped_at).parts();
+    let resumed = [
+        ("timerel", timerel.map(|relation| relation.to_string())),
+        ("timeAt", time_at.map(sub_second)),
+        ("endTimeAt", end_time_at.map(sub_second)),
+    ];
     let mut url = first.clone(); // clone: the resumed request is the first one with another window
     {
         let mut query = url.query_pairs_mut();
@@ -146,7 +141,7 @@ fn resumed_window(first: &Url, stopped_at: DateTime<Utc>) -> Option<Url> {
         for (name, value) in pairs.iter().filter(|(name, _)| !WINDOW_PARAMETERS.contains(&name.as_str())) {
             query.append_pair(name, value);
         }
-        for (name, value) in &resumed {
+        for (name, value) in resumed.iter().filter_map(|(name, value)| value.as_deref().map(|value| (name, value))) {
             query.append_pair(name, value);
         }
     }
