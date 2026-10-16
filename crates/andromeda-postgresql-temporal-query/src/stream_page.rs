@@ -1,14 +1,9 @@
 //! A clause 6.3.10 page of one Entity's history, or its `lastN`, read stream
 //! by stream.
 //!
-//! Every attribute stream (an attribute and a `datasetId`) is read on its own
-//! in a LATERAL over the Entity's streams, ordered on the requested axis and
-//! limited, so the stream-led axis index returns the page and stops: a page
-//! costs the instances it keeps, not every instance in the window. A stream's
-//! recorded rows and its queued entries are each read that way and only then
-//! joined, so the order and the limit reach the index. On `createdAt` and
-//! `modifiedAt` the recorded rows are two parts, those stamped at their write
-//! instant and the rest, so each part has a stream-led index on its order.
+//! Every part of every attribute stream is read ordered on the requested axis
+//! and limited, so the stream-led axis index returns the page and stops: a
+//! page costs the instances it keeps, not every instance in the window.
 //!
 //! A forward or backward page keeps the group of instances sharing the instant
 //! at its edge whole, so a client resuming from the `Content-Range` end neither
@@ -25,36 +20,20 @@
 //! the axis index, which holds dated instances alone, still serves the page.
 
 use crate::{
-    alias::{Ah, An},
+    alias::Ah,
     axis::axis_column,
     history::project_base_columns,
+    stream_parts::{UndatedInstances, admitted, entity_streams, in_any_part, over_parts, undated_instances},
 };
-use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, window::TimeInterval};
-use andromeda_postgresql_query::history_source::{
-    HistoryBranch,
-    HistoryOf,
-    HistoryStream,
-    attribute_rows::{stream_attribute_parts, stream_rows},
-    grain::HistoryGrain,
-};
-use andromeda_postgresql_schema::{name_dictionary::AttributeNames, temporal::AttributeHistory};
+use andromeda_postgresql_query::history_source::{HistoryBranch, HistoryOf};
+use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
     literal::int_literal,
     open_instant::{or_end_of_time, or_start_of_time},
 };
-use sea_query::{Alias, Asterisk, Condition, Expr, ExprTrait, Iden, IntoIden, JoinType, Order, Query, SelectStatement, SimpleExpr, TableRef, UnionType};
+use sea_query::{Alias, Asterisk, Condition, Expr, ExprTrait, Iden, IntoIden, JoinType, Order, Query, SelectStatement, SimpleExpr, UnionType};
 use std::num::NonZeroU32;
-
-/// Alias `st`: the stream a lateral read narrows to.
-#[derive(Iden, Clone, Copy)]
-#[iden = "st"]
-struct St;
-
-/// Alias `part`: one part's read, joined with the other part's.
-#[derive(Iden, Clone, Copy)]
-#[iden = "part"]
-struct Part;
 
 /// Alias `edge_candidates`: the instants each part could place a page's edge
 /// at.
@@ -93,7 +72,7 @@ struct Edge;
 /// beyond its page.
 #[derive(Iden, Clone, Copy)]
 #[iden = "stream_continues"]
-struct StreamContinues;
+pub(crate) struct StreamContinues;
 
 /// The direction a page walks a stream in (clause 6.3.10).
 #[derive(Clone, Copy)]
@@ -106,75 +85,12 @@ pub(crate) enum Walk {
 
 impl Walk {
     /// The axis order the walk reads a stream in.
-    const fn order(self) -> Order {
+    pub(crate) const fn order(self) -> Order {
         match self {
             Walk::Forward => Order::Asc,
             Walk::Backward => Order::Desc,
         }
     }
-}
-
-/// Whether the window can hold instances with no instant on the axis.
-#[derive(Clone, Copy)]
-enum UndatedInstances {
-    /// An unbounded window on an axis an instance may lack.
-    Admitted,
-    /// A window bounded on the axis, or the `deletedAt` axis that only a
-    /// deletion carries and that selects those alone (clause 5.2.21).
-    Excluded,
-}
-
-/// Whether the window `compiled` reads can hold instances with no instant on
-/// its axis.
-const fn undated_instances(compiled: &CompiledTemporalQuery) -> UndatedInstances {
-    match (compiled.window.interval, compiled.window.timeproperty) {
-        (TimeInterval::Unbounded, TimeProp::Observed | TimeProp::Created | TimeProp::Modified) => UndatedInstances::Admitted,
-        (TimeInterval::Unbounded, TimeProp::Deleted) | (TimeInterval::Before(_) | TimeInterval::After(_) | TimeInterval::Between { .. }, _) => {
-            UndatedInstances::Excluded
-        }
-    }
-}
-
-/// One part of the history of the stream under `st`, read under `ah`.
-fn under_ah(part: SelectStatement) -> TableRef {
-    TableRef::SubQuery(Box::new(part), Ah.into_iden())
-}
-
-/// `read` of one part, its rows under `part` so it can join another read.
-fn wrapped(read: SelectStatement) -> SelectStatement {
-    let mut wrapped = Query::select();
-    wrapped.expr(Expr::col((Part, Asterisk))).from_subquery(read, Part);
-    wrapped
-}
-
-/// The parts of the stream under `st` a read on the axis `compiled` names
-/// takes: the first, and every other after it.
-fn stream_parts(branch: &HistoryBranch, compiled: &CompiledTemporalQuery) -> (SelectStatement, impl Iterator<Item = SelectStatement>) {
-    stream_attribute_parts(branch, &HistoryStream::under(St), compiled.window.timeproperty).into_reads()
-}
-
-/// `read` of every part of the stream under `st`, the reads joined.
-fn over_parts(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, read: impl Fn(TableRef) -> SelectStatement) -> SelectStatement {
-    let (first, others) = stream_parts(branch, compiled);
-    let mut joined = wrapped(read(under_ah(first)));
-    for other in others {
-        joined.union(UnionType::All, wrapped(read(under_ah(other))));
-    }
-    joined
-}
-
-/// Whether `read` of any part of the stream under `st` returns a row.
-fn in_any_part(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, read: impl Fn(TableRef) -> SelectStatement) -> SimpleExpr {
-    let (first, others) = stream_parts(branch, compiled);
-    others.fold(Expr::exists(read(under_ah(first))), |any, other| any.or(Expr::exists(read(under_ah(other)))))
-}
-
-/// The instances of `part` that `condition` admits.
-fn admitted(part: TableRef, condition: &Condition) -> SelectStatement {
-    let mut select = Query::select();
-    // clone: every read of the stream keeps the same represented instances.
-    select.from(part).cond_where(condition.clone());
-    select
 }
 
 /// The edge of the page of `size` the stream under `st` is walked to, and
@@ -272,17 +188,6 @@ fn kept_instances(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, cond
     kept
 }
 
-/// The Entity's streams under `st`, each beside the name of its attribute,
-/// which every instance of the stream carries.
-fn entity_streams(select: &mut SelectStatement, branch: &HistoryBranch, of: &HistoryOf) {
-    select.from(stream_rows(branch, of, St)).join_as(
-        JoinType::Join,
-        AttributeNames::Table,
-        An,
-        Expr::col((An, AttributeNames::AttributeNameKey)).equals((St, HistoryGrain::AttributeNameKey)),
-    );
-}
-
 /// Order the page rows under `page` as the reconstruction reads them: by
 /// attribute, then on the axis, ties broken on the hypertable's unique key.
 fn in_rendering_order(select: &mut SelectStatement, axis: AttributeHistory) {
@@ -327,7 +232,7 @@ pub(crate) fn walked_history(
 /// are kept or dropped the same way on every execution. An instance with no
 /// instant sorts first under the descending order, as it would in a single
 /// ranking over the window; `axis` is `None` for a read of those alone.
-fn most_recent_first(select: &mut SelectStatement, alias: impl IntoIden, axis: Option<AttributeHistory>) {
+pub(crate) fn most_recent_first(select: &mut SelectStatement, alias: impl IntoIden, axis: Option<AttributeHistory>) {
     let alias = alias.into_iden();
     if let Some(axis) = axis {
         // clone: every ordering key names the alias.
@@ -339,13 +244,20 @@ fn most_recent_first(select: &mut SelectStatement, alias: impl IntoIden, axis: O
         .order_by((alias, AttributeHistory::WriteOrdinal), Order::Desc);
 }
 
-/// The last `n` instances of the stream under `st`.
-fn latest_instances(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, condition: &Condition, n: NonZeroU32) -> SelectStatement {
+/// The last `n` instances of the stream under `st`, each with the columns
+/// `project` projects.
+pub(crate) fn latest_instances(
+    branch: &HistoryBranch,
+    compiled: &CompiledTemporalQuery,
+    condition: &Condition,
+    n: NonZeroU32,
+    project: fn(&mut SelectStatement),
+) -> SelectStatement {
     let axis = axis_column(compiled.window.timeproperty);
     let limit = u64::from(n.get());
     let mut candidates = over_parts(branch, compiled, |part| {
         let mut dated = admitted(part, condition);
-        project_base_columns(&mut dated);
+        project(&mut dated);
         dated.and_where(Expr::col((Ah, axis)).is_not_null());
         most_recent_first(&mut dated, Ah, Some(axis));
         dated.limit(limit);
@@ -357,7 +269,7 @@ fn latest_instances(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, co
                 UnionType::All,
                 over_parts(branch, compiled, |part| {
                     let mut undated = admitted(part, condition);
-                    project_base_columns(&mut undated);
+                    project(&mut undated);
                     undated.and_where(Expr::col((Ah, axis)).is_null());
                     most_recent_first(&mut undated, Ah, None);
                     undated.limit(limit);
@@ -386,7 +298,12 @@ pub(crate) fn last_n_history(
     let mut select = Query::select();
     select.expr(Expr::col((Page, Asterisk)));
     entity_streams(&mut select, branch, of);
-    select.join_lateral(JoinType::Join, latest_instances(branch, compiled, condition, n), Page, SimpleExpr::from(true));
+    select.join_lateral(
+        JoinType::Join,
+        latest_instances(branch, compiled, condition, n, project_base_columns),
+        Page,
+        SimpleExpr::from(true),
+    );
     in_rendering_order(&mut select, axis_column(compiled.window.timeproperty));
     select
 }

@@ -19,7 +19,7 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetFilter,
-    temporal::{compiled::CompiledTemporalQuery, instance_page::InstancePage, window::TimeInterval},
+    temporal::{compiled::CompiledTemporalQuery, instance_page::InstancePage, period_budget::PeriodBudget, window::TimeInterval},
 };
 use andromeda_postgresql_query::{
     dataset_predicate::dataset_condition,
@@ -45,7 +45,7 @@ pub fn build_temporal_history_query(branch: &HistoryBranch, entity_id: &Identifi
     match compiled.representation.format {
         // The grouped extension format runs the same aggregation pipeline; the
         // builder adds the group-key columns when `representation.grouping` is set.
-        TemporalFormat::AggregatedValues | TemporalFormat::GroupedValues => build_aggregation_query(branch, &of, compiled, condition),
+        TemporalFormat::AggregatedValues | TemporalFormat::GroupedValues => build_aggregation_query(branch, &of, compiled, &condition),
         TemporalFormat::Normalized | TemporalFormat::TemporalValues => build_history_query(branch, &of, compiled, condition),
     }
 }
@@ -157,13 +157,22 @@ pub(crate) fn project_base_columns(select: &mut SelectStatement) {
     select.expr(Expr::col((Ah, HistoryGrain::DatasetId)));
 }
 
-/// Build the history query, narrowed to the page the query compiled.
+/// Build the history query, narrowed to the page the query compiled; a page
+/// of periods, which an instance representation never compiles to, counts its
+/// periods as instances.
 fn build_history_query(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemporalQuery, condition: Condition) -> SelectStatement {
     match compiled.instances.page {
         InstancePage::Whole => whole_history(branch, of, compiled, condition),
         InstancePage::LastN { n } => last_n_history(branch, of, compiled, &condition, n),
-        InstancePage::Forward { size } => walked_history(branch, of, compiled, &condition, Walk::Forward, size),
-        InstancePage::Backward { size, .. } => walked_history(branch, of, compiled, &condition, Walk::Backward, size),
+        InstancePage::Forward { size }
+        | InstancePage::Periods {
+            budget: PeriodBudget { periods: size, .. },
+        } => walked_history(branch, of, compiled, &condition, Walk::Forward, size),
+        InstancePage::Backward { size, .. }
+        | InstancePage::PeriodsBackward {
+            budget: PeriodBudget { periods: size, .. },
+            ..
+        } => walked_history(branch, of, compiled, &condition, Walk::Backward, size),
     }
 }
 
@@ -406,7 +415,7 @@ mod tests {
         compiled.representation.aggr_methods = vec![AggrMethod::TotalCount];
         let sql = sql_of(&compiled);
         assert!(sql.contains("agg_total_count"), "{sql}");
-        assert!(sql.contains("GROUP BY"), "{sql}");
+        assert!(sql.contains("HAVING (COUNT(*)) > (0)"), "{sql}");
     }
 
     /// Annex C clause C.5.16 bounds the instances by the Scope in force at each

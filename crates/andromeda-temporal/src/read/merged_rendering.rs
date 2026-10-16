@@ -22,6 +22,7 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_compaction::{aggregated_entity::aggregated_entity, entity_compactor::EntityCompactor};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
+use andromeda_ngsi_ld_render::temporal::whole_range::WholeRange;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use chrono::Utc;
 
@@ -43,7 +44,9 @@ impl TemporalService {
     /// The scope query does not bound the instances here: the Scope events of
     /// a contributed entity may be held by a source, and the filters were
     /// decided over its gathered parts already (Annex C clause C.5.16, clause
-    /// 5.7.4.4).
+    /// 5.7.4.4). Nor does a page: the aggregate is over every part together,
+    /// so each entity is aggregated over its whole window, or the `lastN` it
+    /// asks for, and the response's common bound is applied to the merge.
     ///
     /// # Errors
     ///
@@ -60,6 +63,7 @@ impl TemporalService {
     ) -> Result<MergedRendering, TemporalError> {
         let mut compiled = self.compile_temporal_query(params, context).await?;
         compiled.entities.scope_q = None;
+        compiled.instances.page = compiled.instances.page.unpaged();
         let compiled = compiled;
         let entity_ids: Vec<Identifier> = parts.iter().map(|(entity_id, _)| entity_id.clone()).collect(); // clone: the catalogue read takes the identifiers by value
         let scope = self.reader.read_scope(target, ScopeReach::Every).await?;
@@ -68,6 +72,7 @@ impl TemporalService {
         let compactor = EntityCompactor::new(&compactor);
         let recorded_at = Utc::now();
         let mut rendering = MergedRendering::default();
+        let mut aggregated_entities = Vec::with_capacity(parts.len());
         for (entity_id, answers) in parts {
             let mut rows = Vec::new();
             let mut answered_types = Vec::new();
@@ -99,9 +104,19 @@ impl TemporalService {
                     return Err(TemporalError::too_many_results(groups, self.limits.aggregation_grouping_max_groups));
                 }
             }
-            if aggregated.is_empty() {
-                continue;
+            if !aggregated.is_empty() {
+                aggregated_entities.push((entity_id, entity_types, aggregated));
             }
+        }
+        // Clause 4.5.19.1: an absent period is one whole range for every stream
+        // these entities answer with.
+        if compiled.representation.aggr_period_duration.is_none() {
+            let range = WholeRange::of_response(aggregated_entities.iter().flat_map(|(_, _, rows)| rows.iter()));
+            for row in aggregated_entities.iter_mut().flat_map(|(_, _, rows)| rows.iter_mut()) {
+                range.close(row);
+            }
+        }
+        for (entity_id, entity_types, aggregated) in aggregated_entities {
             match compactor.names().await {
                 Ok(names) => rendering.entities.push(TemporalHistory::Aggregates(aggregated_entity(
                     entity_id,

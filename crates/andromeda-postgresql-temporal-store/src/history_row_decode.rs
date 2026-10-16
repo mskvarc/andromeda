@@ -164,7 +164,7 @@ fn decode_attribute_kind(row: &PgRow) -> Result<AttributeKind, TemporalStoreErro
 /// Only a page the remainder of which a client pages through projects
 /// `stream_continues`, true when the stream holds instances beyond the page;
 /// a row of any other read holds its whole stream.
-fn decode_stream_extent(row: &PgRow) -> Result<StreamExtent, TemporalStoreError> {
+pub(crate) fn decode_stream_extent(row: &PgRow) -> Result<StreamExtent, TemporalStoreError> {
     match row.try_get::<Option<bool>, _>("stream_continues") {
         Ok(Some(true)) => Ok(StreamExtent::Cut),
         Ok(Some(false) | None) | Err(sqlx::Error::ColumnNotFound(_)) => Ok(StreamExtent::Whole),

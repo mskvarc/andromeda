@@ -20,6 +20,7 @@ use andromeda_ngsi_ld_model::{
         AggregationAverage,
         AggregationMinMax,
         GroupKeyValue,
+        StreamExtent,
         TemporalAggregationRow,
         aggregated_entity::AggregatedTemporalEntity,
         temporal_attribute::TemporalAttribute,
@@ -317,6 +318,7 @@ fn bucket(bucket_start: Option<&str>, bucket_end: Option<&str>) -> TemporalAggre
         total_count: None,
         distinct_count: None,
         group_keys: Vec::new(),
+        stream_extent: StreamExtent::Whole,
     }
 }
 

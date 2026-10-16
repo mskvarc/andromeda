@@ -272,11 +272,13 @@ pub struct TemporalAggregationRow {
     pub attribute_type: AttributeType,
     /// Multi-attribute discriminator, absent for the default instance.
     pub dataset_id: Option<Identifier>,
-    /// Start of the aggregation bucket. `None` only for the whole-range period
-    /// of a query that sets no opening instant.
+    /// Start of the aggregation bucket. The whole-range period of a query
+    /// that sets no opening instant starts at the least recent instant its
+    /// stream holds, and is `None` only when no instance of it carries one.
     pub bucket_start: Option<DateTime<Utc>>,
-    /// End of the aggregation bucket. `None` only for the whole-range period
-    /// of a query that sets no closing instant.
+    /// End of the aggregation bucket. The whole-range period of a query that
+    /// sets no closing instant ends at the most recent instant its stream
+    /// holds, and is `None` only when no instance of it carries one.
     pub bucket_end: Option<DateTime<Utc>>,
     /// Arithmetic mean, or the mean time of day for a `Time`-valued Property.
     pub avg: Option<AggregationAverage>,
@@ -297,4 +299,7 @@ pub struct TemporalAggregationRow {
     /// The rendered group-key values this row falls under, one per grouping term
     /// in order (`aggrGroupBy` extension). Empty for an ungrouped aggregation.
     pub group_keys: Vec<GroupKeyValue>,
+    /// Whether the page the period was read in left periods of its stream
+    /// out (clause 6.3.10).
+    pub stream_extent: StreamExtent,
 }

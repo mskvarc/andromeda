@@ -146,12 +146,22 @@ mod tests {
     };
     use andromeda_federation::{entity_budget::EntityBudget, outcome::ForwardedTemporalEntities};
     use andromeda_http_headers::ngsild_content_range::NgsiLdContentRange;
-    use andromeda_ngsi_ld_lexicon::{time_prop::TimeProp, time_rel::TimeRel};
-    use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
+    use andromeda_ngsi_ld_lexicon::{
+        aggr_method::AggrMethod,
+        attribute_name::AttributeName,
+        attribute_type::AttributeType,
+        time_prop::TimeProp,
+        time_rel::TimeRel,
+    };
+    use andromeda_ngsi_ld_model::{
+        entity_type::EntityTypeValue,
+        registration::forwarding_mode::ForwardingMode,
+        temporal::{StreamExtent, TemporalAggregationRow, aggregated_entity::AggregatedTemporalEntity, temporal_history::TemporalHistory},
+    };
     use andromeda_ngsi_ld_query::temporal::{instance_page::PageDirection, window::TimeInterval};
     use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
     use andromeda_temporal::service::TemporalRange;
-    use chrono::{DateTime, Utc};
+    use chrono::{DateTime, Duration, Utc};
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use std::num::NonZeroU32;
@@ -282,5 +292,50 @@ mod tests {
         assert_eq!(reported.observed, Some((at("2020-01-01T12:00:00Z"), at("2020-01-02T00:00:00Z"))));
         assert_eq!(reported.interval, after_2020());
         assert_eq!(reported.direction, PageDirection::Forward);
+    }
+
+    /// One hourly period of an aggregate from `hour` 2020-01-01, counting one
+    /// instance.
+    fn hourly(hour: i64) -> TemporalAggregationRow {
+        let start = at("2020-01-01T00:00:00Z") + Duration::hours(hour);
+        TemporalAggregationRow {
+            attribute_name: "https://example.com/speed".parse().expect("valid attribute name"),
+            attribute_type: AttributeType::Property,
+            dataset_id: None,
+            bucket_start: Some(start),
+            bucket_end: Some(start + Duration::hours(1)),
+            avg: None,
+            min: None,
+            max: None,
+            sum: None,
+            sumsq: None,
+            stddev: None,
+            total_count: Some(1),
+            distinct_count: None,
+            group_keys: Vec::new(),
+            stream_extent: StreamExtent::Whole,
+        }
+    }
+
+    /// Clause 6.3.10 over an aggregated merge: a source that stopped at 03:00
+    /// leaves out the periods ending after it, and the range ends at the end
+    /// of the last period kept.
+    #[tokio::test]
+    async fn an_aggregated_merge_keeps_the_whole_periods_up_to_the_bound() {
+        let history = forwarded(vec![source(&[range("2020-01-01T00:00:00Z", "2020-01-01T03:00:00Z")]).await]);
+        let completeness = HistoryCompleteness::of(&params(None), None, Some(&history)).expect("a readable window");
+        let rows: Vec<TemporalAggregationRow> = (0..6).map(hourly).collect();
+        let aggregated = AggregatedTemporalEntity::from_rows(
+            "urn:ngsi-ld:Vehicle:local".parse().expect("an identifier"),
+            EntityTypeValue::Single("Vehicle".parse().expect("a type")),
+            &rows,
+            &[AggrMethod::TotalCount],
+            0,
+            AttributeName::clone,
+        );
+        let mut page = vec![TemporalHistory::Aggregates(aggregated)];
+        completeness.trim(&mut page, TimeProp::Observed);
+        let reported = completeness.range(&page, TimeProp::Observed).expect("a partial response");
+        assert_eq!(reported.observed, Some((at("2020-01-01T00:00:00Z"), at("2020-01-01T03:00:00Z"))));
     }
 }

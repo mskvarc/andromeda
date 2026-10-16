@@ -14,12 +14,12 @@
 
 use crate::{
     error::TemporalError,
-    grouping_depth::grouping_depth,
     port::read_scope::TemporalReadScope,
+    read::aggregated_page::{AggregationRendering, render_aggregation_page, settle_aggregation_pages},
     service::TemporalService,
     temporal_invariant::TemporalInvariant,
 };
-use andromeda_ngsi_ld_compaction::{aggregated_entity::aggregated_entity, entity_compactor::EntityCompactor};
+use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, temporal_history::TemporalHistory};
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
@@ -32,7 +32,7 @@ use std::slice;
 
 /// Name what an empty row set means, so the presence is read off a variant
 /// rather than off a bare emptiness test at each use site.
-const fn presence_of(is_empty: bool) -> HistoryPresence {
+pub(crate) const fn presence_of(is_empty: bool) -> HistoryPresence {
     if is_empty { HistoryPresence::Absent } else { HistoryPresence::Present }
 }
 
@@ -97,7 +97,7 @@ impl TemporalService {
     /// aggregates themselves, which carry the names of the request context
     /// already, because the aggregation keys are not IRIs; that path is taken
     /// here so both callers get the same treatment rather than one of them
-    /// silently supporting fewer formats. Any other representation is the
+    /// silently supporting fewer formats. Either representation is the
     /// entity's page, cut on its own (clause 6.3.10): a caller reading several
     /// entities into one response reads their pages and cuts them together
     /// instead.
@@ -173,7 +173,8 @@ impl TemporalService {
         Ok(cut)
     }
 
-    /// Read the clause 4.5.19 aggregated representation of one entity.
+    /// Read the clause 4.5.19 aggregated representation of one entity, cut on
+    /// its own at a period boundary (clause 6.3.10).
     ///
     /// # Errors
     ///
@@ -188,33 +189,19 @@ impl TemporalService {
         compiled: &CompiledTemporalQuery,
         compactor: &EntityCompactor<'_>,
     ) -> Result<RenderedTemporalEntity, TemporalError> {
-        let rows = self.reader.query_entity_aggregation(scope, entity_id, compiled).await?;
-        // The grouped extension refuses a runaway grouping off the count of
-        // distinct groups it produced -- one per row -- mirroring the
-        // delete-by-query bound. `TooManyResults` is fatal
-        // to the whole operation, so the query loop must not demote it to a
-        // per-entity warning.
-        if compiled.representation.format.is_grouped() {
-            let groups = rows.len() as u64;
-            if groups > self.limits.aggregation_grouping_max_groups {
-                return Err(TemporalError::too_many_results(groups, self.limits.aggregation_grouping_max_groups));
-            }
-        }
-        let presence = presence_of(rows.is_empty());
-        let aggregates = aggregated_entity(
-            entity_id.clone(), // clone: the aggregated entity owns the identifier it names
+        let mut pages = [self.read_aggregation_page(scope, entity_id, compiled).await?];
+        let cut = settle_aggregation_pages(compiled, &mut pages);
+        let [page] = pages;
+        render_aggregation_page(
+            page,
             entity_types,
-            &rows,
-            &compiled.representation.aggr_methods,
-            grouping_depth(compiled),
-            compactor.names().await?,
-        );
-        Ok(RenderedTemporalEntity {
-            history: TemporalHistory::Aggregates(aggregates),
-            presence,
-            cut: None,
-            time_range: None,
-        })
+            AggregationRendering {
+                compiled,
+                names: compactor.names().await?,
+                max_groups: self.limits.aggregation_grouping_max_groups,
+                cut,
+            },
+        )
     }
 }
 

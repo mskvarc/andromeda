@@ -54,7 +54,7 @@ mod tests {
     use crate::{aggregated_entity::aggregated_entity, name_compaction::NameCompaction};
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, attribute_type::AttributeType};
-    use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
+    use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalAggregationRow};
 
     /// A row of one attribute, every aggregate absent.
     fn row(attribute: &str) -> TemporalAggregationRow {
@@ -73,6 +73,7 @@ mod tests {
             total_count: Some(1),
             distinct_count: None,
             group_keys: Vec::new(),
+            stream_extent: StreamExtent::Whole,
         }
     }
 

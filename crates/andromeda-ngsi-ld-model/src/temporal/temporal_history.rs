@@ -55,22 +55,24 @@ impl TemporalHistory {
         }
     }
 
-    /// Keep only the instances whose instant on `timeproperty` `keep` admits.
-    /// An aggregate has no instance to keep.
+    /// Keep only the instances whose instant on `timeproperty` `keep` admits,
+    /// or of an aggregate the periods both of whose bounds it admits.
     pub fn retain_instants(&mut self, timeproperty: TimeProp, keep: impl Fn(DateTime<Utc>) -> bool) {
         match self {
             TemporalHistory::Instances(document) => document.retain_instants(timeproperty, keep),
-            TemporalHistory::Aggregates(_) => {}
+            TemporalHistory::Aggregates(entity) => entity.retain_periods(keep),
         }
     }
 
     /// The least and most recent instants any instance carries on
-    /// `timeproperty`; an aggregate carries none.
+    /// `timeproperty`, or of an aggregate the least recent start and the most
+    /// recent end of its periods, which clause 6.3.10 reports an aggregated
+    /// page by.
     #[must_use]
     pub fn instant_span(&self, timeproperty: TimeProp) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
         match self {
             TemporalHistory::Instances(document) => document.instant_span(timeproperty),
-            TemporalHistory::Aggregates(_) => None,
+            TemporalHistory::Aggregates(entity) => entity.period_span(),
         }
     }
 

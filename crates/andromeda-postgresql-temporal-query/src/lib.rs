@@ -13,19 +13,23 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+mod aggregated_page;
 pub mod aggregated_value;
 pub mod aggregation;
+pub mod aggregation_grid;
 pub mod aggregation_group;
 pub mod aggregation_grouping;
 pub mod alias;
 pub mod axis;
 pub mod history;
+mod period_edge;
 pub mod projected_members;
 pub mod recorded_shape;
 pub mod scope_history;
 pub mod split_filter_leaves;
 pub mod stage1;
 mod stream_page;
+mod stream_parts;
 pub mod structured_json;
 mod value_filters;
 

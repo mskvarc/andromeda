@@ -19,11 +19,13 @@ use andromeda_ngsi_ld_query::{
         projected_members::ProjectedMembers,
     },
     temporal::{
+        aggregation_period::AggregationPeriod,
         compiled::CompiledTemporalQuery,
         grouping::{AggregationGrouping, GroupingTerm, group_key::GroupKey},
         instance_page::InstancePage,
         instance_selection::InstanceSelection,
         ordering::TemporalEntityOrdering,
+        period_budget::PeriodBudget,
         representation::Representation,
         window::{TemporalWindow, TimeInterval},
     },
@@ -73,7 +75,7 @@ impl TemporalService {
         let geo = self.compile_geo_query(params, &prepared_context).await?;
 
         let format = params.parse_format()?;
-        let page = compile_instance_page(params.last_n, format, self.limits.instance_limits);
+        let page = compile_instance_page(params.last_n, format, params.aggr_period_duration, self.limits.instance_limits);
         let grouping = compile_grouping(params, format, &expander).await?;
 
         Ok(CompiledTemporalQuery::builder()
@@ -167,22 +169,38 @@ async fn compile_q_filter(params: &TemporalQueryParameters, expander: &impl Term
 
 /// Resolve `lastN` against the broker's page sizes (clause 6.3.10).
 ///
-/// An aggregated representation is already bounded by its aggregation period
-/// (clause 4.5.19), so it keeps every instance in the window. Otherwise a read
-/// without `lastN` is the forward default page; a `lastN` within the maximum is
-/// answered in full; and one above it is narrowed to the maximum and paged
-/// backwards, the `Content-Range` still reporting the requested number.
-const fn compile_instance_page(last_n: Option<NonZeroU32>, format: TemporalFormat, limits: TemporalInstanceLimits) -> InstancePage {
-    if format.is_aggregated() {
-        return InstancePage::Whole;
-    }
-    match last_n {
-        None => InstancePage::Forward { size: limits.default_page },
-        Some(requested) if requested.get() > limits.maximum => InstancePage::Backward {
+/// A read without `lastN` is the forward default page; a `lastN` within the
+/// maximum is answered in full; and one above it is narrowed to the maximum and
+/// paged backwards, the `Content-Range` still reporting the requested number.
+///
+/// An aggregated representation pages by whole periods instead (clause
+/// 4.5.19), at most the maximum of them and the instance budget per attribute,
+/// forwards without `lastN` and backwards with one above the maximum. `lastN`
+/// keeps its meaning of Table 5.2.21-1, the last n instances per attribute,
+/// so the periods aggregate those alone, and a `lastN` within the maximum
+/// yields at most that many periods and is answered in full. An aggregation
+/// over the whole time range is one period (clause 4.5.19.1) and is never
+/// paged.
+const fn compile_instance_page(
+    last_n: Option<NonZeroU32>,
+    format: TemporalFormat,
+    period: Option<AggregationPeriod>,
+    limits: TemporalInstanceLimits,
+) -> InstancePage {
+    let budget = PeriodBudget {
+        periods: limits.maximum,
+        instances: limits.aggregation_instances,
+    };
+    match (format.is_aggregated(), period, last_n) {
+        (true, None, None) => InstancePage::Whole,
+        (true, Some(_), None) => InstancePage::Periods { budget },
+        (false, _, None) => InstancePage::Forward { size: limits.default_page },
+        (true, Some(_), Some(requested)) if requested.get() > limits.maximum => InstancePage::PeriodsBackward { budget, requested },
+        (false, _, Some(requested)) if requested.get() > limits.maximum => InstancePage::Backward {
             size: limits.maximum,
             requested,
         },
-        Some(n) => InstancePage::LastN { n },
+        (_, _, Some(n)) => InstancePage::LastN { n },
     }
 }
 
@@ -251,8 +269,8 @@ pub(crate) async fn compile_projection(params: &TemporalQueryParameters, expande
 mod tests {
     use crate::{compilation::compile_instance_page, instance_limits::TemporalInstanceLimits};
     use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
-    use andromeda_ngsi_ld_query::temporal::instance_page::InstancePage;
-    use std::num::NonZeroU32;
+    use andromeda_ngsi_ld_query::temporal::{aggregation_period::AggregationPeriod, instance_page::InstancePage, period_budget::PeriodBudget};
+    use std::num::{NonZeroU32, NonZeroU64};
 
     /// `n` as a client `lastN`.
     fn count(n: u32) -> NonZeroU32 {
@@ -262,7 +280,22 @@ mod tests {
     const LIMITS: TemporalInstanceLimits = TemporalInstanceLimits {
         default_page: 100,
         maximum: 1000,
+        aggregation_instances: NonZeroU64::MIN.saturating_add(49_999),
     };
+
+    /// The budget of an aggregated page under [`LIMITS`]: the maximum in
+    /// periods, and the instance budget.
+    fn budget() -> PeriodBudget {
+        PeriodBudget {
+            periods: 1000,
+            instances: NonZeroU64::new(50_000).expect("a positive budget"),
+        }
+    }
+
+    /// An hour, the period these aggregated reads bucket by.
+    fn hourly() -> Option<AggregationPeriod> {
+        AggregationPeriod::parse("PT1H").expect("a valid period")
+    }
 
     /// Clause 6.3.10: without `lastN` the read pages forwards, at the default
     /// page, rather than returning the most recent instances as an implicit
@@ -270,11 +303,11 @@ mod tests {
     #[test]
     fn a_read_without_last_n_is_a_forward_default_page() {
         pretty_assertions::assert_eq!(
-            compile_instance_page(None, TemporalFormat::Normalized, LIMITS),
+            compile_instance_page(None, TemporalFormat::Normalized, None, LIMITS),
             InstancePage::Forward { size: 100 }
         );
         pretty_assertions::assert_eq!(
-            compile_instance_page(None, TemporalFormat::TemporalValues, LIMITS),
+            compile_instance_page(None, TemporalFormat::TemporalValues, None, LIMITS),
             InstancePage::Forward { size: 100 }
         );
     }
@@ -283,7 +316,10 @@ mod tests {
     #[test]
     fn a_last_n_within_the_maximum_is_answered_in_full() {
         for n in [1, 150, 1000].map(count) {
-            pretty_assertions::assert_eq!(compile_instance_page(Some(n), TemporalFormat::Normalized, LIMITS), InstancePage::LastN { n });
+            pretty_assertions::assert_eq!(
+                compile_instance_page(Some(n), TemporalFormat::Normalized, None, LIMITS),
+                InstancePage::LastN { n }
+            );
         }
     }
 
@@ -292,7 +328,7 @@ mod tests {
     #[test]
     fn a_last_n_above_the_maximum_is_a_backward_page_of_the_maximum() {
         pretty_assertions::assert_eq!(
-            compile_instance_page(Some(count(5000)), TemporalFormat::Normalized, LIMITS),
+            compile_instance_page(Some(count(5000)), TemporalFormat::Normalized, None, LIMITS),
             InstancePage::Backward {
                 size: 1000,
                 requested: count(5000)
@@ -300,11 +336,54 @@ mod tests {
         );
     }
 
-    /// Clause 4.5.19 bounds an aggregation by its period, so no page applies.
+    /// Clauses 4.5.19 and 6.3.10: a period is the element of the aggregated
+    /// representation, so a read without `lastN` pages forwards by whole
+    /// periods, at most the maximum of them and the instance budget per
+    /// attribute, in the grouped format as in the standard one.
     #[test]
-    fn an_aggregated_read_keeps_every_instance() {
-        for last_n in [None, Some(count(5)), Some(count(5000))] {
-            pretty_assertions::assert_eq!(compile_instance_page(last_n, TemporalFormat::AggregatedValues, LIMITS), InstancePage::Whole);
+    fn an_aggregated_read_compiles_a_period_page() {
+        for format in [TemporalFormat::AggregatedValues, TemporalFormat::GroupedValues] {
+            pretty_assertions::assert_eq!(
+                compile_instance_page(None, format, hourly(), LIMITS),
+                InstancePage::Periods { budget: budget() },
+                "{format:?}"
+            );
+        }
+    }
+
+    /// Table 5.2.21-1: `lastN` keeps the last n instances per attribute, which
+    /// the periods then aggregate. Within the maximum they are at most that
+    /// many periods and answered in full; above it the periods are paged
+    /// backwards under the same budget, the `Content-Range` reporting the
+    /// requested number.
+    #[test]
+    fn an_aggregated_read_with_last_n_narrows_its_instances() {
+        for n in [1, 5, 1000].map(count) {
+            pretty_assertions::assert_eq!(
+                compile_instance_page(Some(n), TemporalFormat::AggregatedValues, hourly(), LIMITS),
+                InstancePage::LastN { n }
+            );
+        }
+        pretty_assertions::assert_eq!(
+            compile_instance_page(Some(count(5000)), TemporalFormat::AggregatedValues, hourly(), LIMITS),
+            InstancePage::PeriodsBackward {
+                budget: budget(),
+                requested: count(5000)
+            }
+        );
+    }
+
+    /// Clause 4.5.19.1: an aggregation over the whole time range is one
+    /// period, so it is never paged, and a `lastN` of any size narrows the
+    /// instances it aggregates.
+    #[test]
+    fn a_whole_range_aggregation_is_never_paged() {
+        pretty_assertions::assert_eq!(compile_instance_page(None, TemporalFormat::AggregatedValues, None, LIMITS), InstancePage::Whole);
+        for n in [5, 5000].map(count) {
+            pretty_assertions::assert_eq!(
+                compile_instance_page(Some(n), TemporalFormat::AggregatedValues, None, LIMITS),
+                InstancePage::LastN { n }
+            );
         }
     }
 }

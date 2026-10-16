@@ -245,6 +245,8 @@ fn ensure_aggregation_supported(reader: &dyn TemporalHistoryReader, requested: &
     }
 }
 
+/// Reading the aggregated periods of a response and cutting them together.
+mod aggregated_page;
 /// Compacting the histories one read gathered under its request context.
 pub(crate) mod compacted_history;
 /// Whether a temporal read carries the `datasetId` step.

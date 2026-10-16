@@ -1,6 +1,7 @@
 //! How many instances of each attribute a temporal read returns, and in which
 //! direction clause 6.3.10 pages through the rest.
 
+use crate::temporal::period_budget::PeriodBudget;
 use std::num::NonZeroU32;
 
 /// The direction a partial temporal response is paged in (clause 6.3.10).
@@ -26,14 +27,21 @@ pub enum PageDirection {
 
 /// Which instances of every attribute stream a temporal read keeps.
 ///
-/// Four readings, because they differ in more than a number: a complete answer
+/// Six readings, because they differ in more than a number: a complete answer
 /// is never a 206, and only a page whose remainder the client must fetch keeps
 /// the instances that share the timestamp at its edge together, so the resumed
 /// request neither skips nor splits them.
+///
+/// An instance representation pages by instances and an aggregated one by
+/// whole periods (clause 4.5.19), the element each of them holds. A period
+/// page read in an instance representation counts its `periods` as instances,
+/// and an instance page read in the aggregated one counts its `size` as
+/// periods with no bound on the instances they aggregate, so every reading is
+/// total over both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InstancePage {
-    /// Every instance in the window. Aggregated representations are bounded by
-    /// their aggregation period (clause 4.5.19) rather than by a count.
+    /// Every instance in the window: an aggregation over the whole time range
+    /// (clause 4.5.19.1), which is one period and so never paged.
     #[default]
     Whole,
     /// A client `lastN` within the broker's maximum: exactly the last `n`
@@ -57,6 +65,23 @@ pub enum InstancePage {
         /// The `lastN` the client asked for.
         requested: NonZeroU32,
     },
+    /// An aggregated representation without `lastN`: the least recent whole
+    /// periods of every attribute the budget admits, the rest reached by
+    /// paging forwards.
+    Periods {
+        /// The periods and instances one page holds at most per stream.
+        budget: PeriodBudget,
+    },
+    /// An aggregated representation with a `lastN` above the broker's maximum:
+    /// the most recent whole periods of the last `requested` instances of
+    /// every attribute the budget admits, the rest reached by paging
+    /// backwards.
+    PeriodsBackward {
+        /// The periods and instances one page holds at most per stream.
+        budget: PeriodBudget,
+        /// The `lastN` the client asked for.
+        requested: NonZeroU32,
+    },
 }
 
 impl InstancePage {
@@ -66,16 +91,34 @@ impl InstancePage {
     pub const fn direction(self) -> Option<PageDirection> {
         match self {
             InstancePage::Whole | InstancePage::LastN { .. } => None,
-            InstancePage::Forward { .. } => Some(PageDirection::Forward),
-            InstancePage::Backward { requested, .. } => Some(PageDirection::Backward { requested }),
+            InstancePage::Forward { .. } | InstancePage::Periods { .. } => Some(PageDirection::Forward),
+            InstancePage::Backward { requested, .. } | InstancePage::PeriodsBackward { requested, .. } => Some(PageDirection::Backward { requested }),
+        }
+    }
+
+    /// The same selection read as one complete answer: every instance, or the
+    /// last `lastN` of them.
+    ///
+    /// A read whose result is aggregated again with instances held elsewhere
+    /// cannot stop at a page of its own, since the aggregate is over every
+    /// part together (clause 5.7.4.4).
+    #[must_use]
+    pub const fn unpaged(self) -> InstancePage {
+        match self {
+            InstancePage::Whole | InstancePage::Forward { .. } | InstancePage::Periods { .. } => InstancePage::Whole,
+            InstancePage::LastN { n } => InstancePage::LastN { n },
+            InstancePage::Backward { requested, .. } | InstancePage::PeriodsBackward { requested, .. } => InstancePage::LastN { n: requested },
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::temporal::instance_page::{InstancePage, PageDirection};
-    use std::num::NonZeroU32;
+    use crate::temporal::{
+        instance_page::{InstancePage, PageDirection},
+        period_budget::PeriodBudget,
+    };
+    use std::num::{NonZeroU32, NonZeroU64};
 
     /// `n` as a client `lastN`.
     fn count(n: u32) -> NonZeroU32 {
@@ -96,6 +139,49 @@ mod tests {
             }
             .direction(),
             Some(PageDirection::Backward { requested: count(5000) })
+        );
+        pretty_assertions::assert_eq!(InstancePage::Periods { budget: budget() }.direction(), Some(PageDirection::Forward));
+        pretty_assertions::assert_eq!(
+            InstancePage::PeriodsBackward {
+                budget: budget(),
+                requested: count(5000)
+            }
+            .direction(),
+            Some(PageDirection::Backward { requested: count(5000) })
+        );
+    }
+
+    /// One thousand periods of at most a million instances.
+    fn budget() -> PeriodBudget {
+        PeriodBudget {
+            periods: 1000,
+            instances: NonZeroU64::new(1_000_000).expect("a positive budget"),
+        }
+    }
+
+    /// Clause 5.7.4.4 aggregates an entity held in parts over every part
+    /// together, so the read of one part keeps the whole selection: a forward
+    /// page becomes the window and a backward one the `lastN` it pages.
+    #[test]
+    fn an_unpaged_read_keeps_the_window_or_the_requested_last_n() {
+        pretty_assertions::assert_eq!(InstancePage::Periods { budget: budget() }.unpaged(), InstancePage::Whole);
+        pretty_assertions::assert_eq!(InstancePage::Forward { size: 100 }.unpaged(), InstancePage::Whole);
+        pretty_assertions::assert_eq!(InstancePage::LastN { n: count(5) }.unpaged(), InstancePage::LastN { n: count(5) });
+        pretty_assertions::assert_eq!(
+            InstancePage::PeriodsBackward {
+                budget: budget(),
+                requested: count(5000)
+            }
+            .unpaged(),
+            InstancePage::LastN { n: count(5000) }
+        );
+        pretty_assertions::assert_eq!(
+            InstancePage::Backward {
+                size: 1000,
+                requested: count(5000)
+            }
+            .unpaged(),
+            InstancePage::LastN { n: count(5000) }
         );
     }
 }

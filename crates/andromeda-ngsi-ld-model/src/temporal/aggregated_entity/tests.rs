@@ -4,6 +4,7 @@ use crate::{
         AggregationAverage,
         AggregationMinMax,
         GroupKeyValue,
+        StreamExtent,
         TemporalAggregationRow,
         aggregated_entity::{AggregateValue, AggregatedTemporalEntity, AggregatedTriple, AggregatedValues},
     },
@@ -39,6 +40,7 @@ fn bucket(start: &str, end: &str) -> TemporalAggregationRow {
         total_count: None,
         distinct_count: None,
         group_keys: Vec::new(),
+        stream_extent: StreamExtent::Whole,
     }
 }
 
@@ -141,4 +143,44 @@ fn two_datasets_are_two_aggregated_instances() {
     let aggregated = entity(&[default_instance, named], &[AggrMethod::TotalCount], 0);
     pretty_assertions::assert_eq!(aggregated.attrs[&weight()].len(), 2);
     assert!(aggregated.attrs[&weight()][0].dataset_id.is_none());
+}
+
+/// Hourly periods of the weight attribute from midnight, `from..to` hours,
+/// each counting one instance.
+fn hours(from: u32, to: u32) -> Vec<TemporalAggregationRow> {
+    (from..to)
+        .map(|hour| {
+            let mut row = bucket(&format!("2026-01-01T{hour:02}:00:00Z"), &format!("2026-01-01T{:02}:00:00Z", hour + 1));
+            row.total_count = Some(1);
+            row
+        })
+        .collect()
+}
+
+/// Clause 6.3.10 reports an aggregated page by its periods: the least recent
+/// start and the most recent end of any of them.
+#[test]
+fn the_period_span_runs_from_the_first_start_to_the_last_end() {
+    let aggregated = entity(&hours(2, 7), &[AggrMethod::TotalCount], 0);
+    pretty_assertions::assert_eq!(
+        aggregated.period_span(),
+        Some((instant("2026-01-01T02:00:00Z"), instant("2026-01-01T07:00:00Z")))
+    );
+    pretty_assertions::assert_eq!(entity(&[], &[AggrMethod::TotalCount], 0).period_span(), None);
+}
+
+/// A merged page complete up to 05:00 keeps the periods lying wholly before
+/// it, at whatever depth a grouping nests them.
+#[test]
+fn only_the_periods_wholly_on_the_admitted_side_are_retained() {
+    let bound = instant("2026-01-01T05:00:00Z");
+    for depth in [0, 1] {
+        let mut rows = hours(2, 7);
+        for row in &mut rows {
+            row.group_keys = vec![GroupKeyValue::Value("KGM".to_owned())];
+        }
+        let mut aggregated = entity(&rows, &[AggrMethod::TotalCount], depth);
+        aggregated.retain_periods(|at| at <= bound);
+        pretty_assertions::assert_eq!(aggregated.period_span(), Some((instant("2026-01-01T02:00:00Z"), bound)), "depth {depth}");
+    }
 }

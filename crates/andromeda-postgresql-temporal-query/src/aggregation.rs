@@ -1,5 +1,5 @@
-//! Aggregated temporal values: `time_bucket` windows and the aggregate
-//! expressions of clause 4.5.19.
+//! Aggregated temporal values: the periods and the aggregate expressions of
+//! clause 4.5.19.
 //!
 //! Clause 4.5.19 gives one aggregate value per attribute, `datasetId` and
 //! period, so the statement groups on exactly those three and on nothing else.
@@ -14,76 +14,77 @@
 //! therefore projected as their own extrema over the group, and
 //! [`crate::aggregation_group`] decides from that span whether the group is
 //! answerable at all.
+//!
+//! Every attribute stream is aggregated on its own, in a LATERAL over the
+//! Entity's streams, so the stream's axis index serves the read and a page of
+//! whole periods ([`crate::aggregated_page`]) bounds it per stream.
 
 use crate::{
+    aggregated_page::aggregated_stream_read,
     aggregated_value::{arithmetic_numeric_expr, average_time_expr, distinct_value_expr, ordered_instant_expr, ordered_text_expr, sized_numeric_expr},
+    aggregation_grid::{AggregationGrid, BucketEnd, BucketStart},
     aggregation_grouping::apply_grouping,
     alias::{Ah, An},
     axis::axis_column,
-    history::base_history_source,
+    period_edge::StreamEdge,
     recorded_shape::recorded_shape,
+    stream_page::StreamContinues,
+    stream_parts::{St, entity_streams},
 };
 use andromeda_ngsi_ld_lexicon::aggr_method::AggrMethod;
-use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, period_grid::PeriodGrid};
+use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, window::TimeInterval};
 use andromeda_postgresql_query::history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, grain::HistoryGrain};
 use andromeda_postgresql_schema::{name_dictionary::AttributeNames, temporal::AttributeHistory};
 use andromeda_postgresql_seaquery::{
-    aggregate::{bool_or, count_all, count_distinct, stddev},
-    calendar_period::{calendar_period_estimate, calendar_period_index, calendar_period_start},
-    cast::{cast, typed_null},
+    aggregate::{bool_or, count_all, count_distinct, row_number, stddev},
+    cast::cast,
     literal::int_literal,
     pg_type::PostgresType,
-    timescale::time_bucket,
 };
-use chrono::{DateTime, Utc};
-use sea_query::{Alias, Condition, Expr, ExprTrait, Func, Iden, JoinType, Order, Query, SelectStatement, SimpleExpr};
+use sea_query::{
+    Alias,
+    Asterisk,
+    CommonTableExpression,
+    Condition,
+    Expr,
+    ExprTrait,
+    Func,
+    Iden,
+    JoinType,
+    Order,
+    Query,
+    QueryStatementBuilder,
+    SelectStatement,
+    SimpleExpr,
+    WindowStatement,
+    WithClause,
+};
 
-/// Lateral projection that computes one bucket boundary per history row.
+/// Lateral projection that computes one period per history row.
 #[derive(Iden, Clone, Copy)]
 #[iden = "bucket"]
 struct Bucket;
 
-/// Start instant projected by [`Bucket`].
-#[derive(Iden, Clone, Copy)]
-#[iden = "bucket_start"]
-struct BucketStart;
-
-/// Lateral projection of the implicit per-entity bucket origin.
+/// The CTE of the implicit per-entity period origin.
 #[derive(Iden, Clone, Copy)]
 #[iden = "bucket_origin"]
 struct BucketOrigin;
 
-/// Origin instant projected by [`BucketOrigin`] and by [`CalendarGrid`].
+/// Origin instant projected by [`BucketOrigin`].
 #[derive(Iden, Clone, Copy)]
 #[iden = "origin"]
 struct Origin;
 
-/// End instant of a period, projected by [`Bucket`] for a calendar period and
-/// by the statement for every period.
+/// Alias `page`: the aggregated periods of one stream.
 #[derive(Iden, Clone, Copy)]
-#[iden = "bucket_end"]
-struct BucketEnd;
+#[iden = "page"]
+struct Page;
 
-/// The inputs of a calendar grid, projected once for the expressions that read
-/// them several times.
+/// Column `period_order`: the position of a period among its stream's, in
+/// the order the representation lists them.
 #[derive(Iden, Clone, Copy)]
-#[iden = "calendar_grid"]
-struct CalendarGrid;
-
-/// The period projected by [`CalendarGrid`].
-#[derive(Iden, Clone, Copy)]
-#[iden = "period"]
-struct GridPeriod;
-
-/// The estimated period index of a history row on a calendar grid.
-#[derive(Iden, Clone, Copy)]
-#[iden = "period_estimate"]
-struct PeriodEstimate;
-
-/// The corrected period index of a history row on a calendar grid.
-#[derive(Iden, Clone, Copy)]
-#[iden = "period_index"]
-struct PeriodIndex;
+#[iden = "period_order"]
+struct PeriodOrder;
 
 /// The span of registry codes and unit identities one aggregation group covered.
 ///
@@ -168,162 +169,142 @@ fn origin_subquery(branch: &HistoryBranch, of: &HistoryOf, axis: AttributeHistor
     origin.take()
 }
 
-/// Project a history row's bucket start exactly once.
-///
-/// The outer aggregation groups on the projected column instead of repeating
-/// the expression over `ah.<axis>` in its select list. PostgreSQL can therefore
-/// validate the grouped statement without treating the time-axis column as an
-/// ungrouped outer projection.
-fn bucket_subquery(axis: AttributeHistory, width: SimpleExpr, origin: SimpleExpr) -> SelectStatement {
-    Query::select()
-        .expr_as(time_bucket(width, Expr::col((Ah, axis)), origin), BucketStart)
-        .to_owned()
+/// The origin of the period grid: the reference instant of the query's
+/// window (clause 4.5.19) or, absent one, the earliest instant of the
+/// Entity's history on the axis, read once for the statement in the CTE the
+/// second element names, rather than from epoch.
+fn grid_origin(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemporalQuery) -> (SimpleExpr, Option<CommonTableExpression>) {
+    if let Some(reference) = compiled.window.interval.reference() {
+        return (Expr::val(*reference), None);
+    }
+    let origin = CommonTableExpression::new()
+        .query(origin_subquery(branch, of, axis_column(compiled.window.timeproperty)))
+        .table_name(BucketOrigin)
+        .materialized(true)
+        .to_owned();
+    let mut read = Query::select();
+    read.column((BucketOrigin, Origin)).from(BucketOrigin);
+    (SimpleExpr::SubQuery(None, Box::new(read.into_sub_query_statement())), Some(origin))
 }
 
-/// Project a history row's calendar period, start and end, exactly once.
-///
-/// `time_bucket` keeps only the year and month of its origin for a period with a
-/// month part and refuses one that also carries days or time, so the period
-/// index is computed from the origin instead (clause 4.5.19.1): the grid inputs
-/// are projected once, the index estimated, then corrected, and the period runs
-/// from its start to the next period's start, which a month-end clamp makes
-/// differ from the start plus the period.
-fn calendar_bucket_subquery(axis: AttributeHistory, width: SimpleExpr, origin: SimpleExpr) -> SelectStatement {
-    let instant = || SimpleExpr::from(Expr::col((Ah, axis)));
-    let grid_period = || SimpleExpr::from(Expr::col((CalendarGrid, GridPeriod)));
-    let grid_origin = || SimpleExpr::from(Expr::col((CalendarGrid, Origin)));
-    let mut grid = Query::select();
-    grid.expr_as(width, GridPeriod).expr_as(cast(origin, PostgresType::Timestamptz), Origin);
-    let mut estimated = Query::select();
-    estimated
-        .column((CalendarGrid, GridPeriod))
-        .column((CalendarGrid, Origin))
-        .expr_as(calendar_period_estimate(grid_period(), grid_origin(), instant()), PeriodEstimate)
-        .from_subquery(grid, CalendarGrid);
-    let mut indexed = Query::select();
-    indexed
-        .column((CalendarGrid, GridPeriod))
-        .column((CalendarGrid, Origin))
-        .expr_as(
-            calendar_period_index(grid_period(), grid_origin(), instant(), Expr::col((CalendarGrid, PeriodEstimate))),
-            PeriodIndex,
-        )
-        .from_subquery(estimated, CalendarGrid);
-    let index = || SimpleExpr::from(Expr::col((CalendarGrid, PeriodIndex)));
-    Query::select()
-        .expr_as(calendar_period_start(grid_period(), grid_origin(), index()), BucketStart)
-        .expr_as(calendar_period_start(grid_period(), grid_origin(), index().add(int_literal(1))), BucketEnd)
-        .from_subquery(indexed, CalendarGrid)
-        .to_owned()
-}
-
-/// One bound of the whole-range period, typed so the column decodes the same
-/// whether the query set that bound or left it open.
-fn whole_range_bound(instant: Option<&DateTime<Utc>>) -> SimpleExpr {
-    match instant {
-        Some(instant) => cast(Expr::val(*instant), PostgresType::Timestamptz),
-        None => typed_null(PostgresType::Timestamptz),
+/// One bound of the whole-range period: the bound the query sets, or for a
+/// side it leaves open the extreme instant the stream holds on the axis, the
+/// least recent for an open start and the most recent for an open end
+/// (clause 4.5.19.1).
+fn whole_range_bound(bound: Option<SimpleExpr>, extreme: SimpleExpr) -> SimpleExpr {
+    match bound {
+        Some(instant) => cast(instant, PostgresType::Timestamptz),
+        None => extreme,
     }
 }
 
-/// Build the aggregation query with `time_bucket` windows over the rows `of`
-/// reads.
-#[must_use]
-pub fn build_aggregation_query(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemporalQuery, condition: Condition) -> SelectStatement {
-    // Clause 4.5.19: an absent period aggregates the whole range into one
-    // bucket rather than bucketing at all. A zero period is absent by
-    // construction, so there is nothing to test for here.
-    let period = compiled.representation.aggr_period_duration;
-    // Bucket on the same time axis the WHERE clause filters on, which for the
-    // default selector of clause 4.11 is `observed_at` alone. Bucketing on the
-    // operational write clock would assign a backfilled observation to a
-    // different period than the one its window filter selected.
+/// The periods of one stream's `rows`, each with its aggregates, numbered in
+/// the order the representation lists them.
+///
+/// Clause 4.5.19: the fixed key is the attribute and `datasetId`, which the
+/// stream is; the `aggrGroupBy` extension adds its own keys ahead of the
+/// period, and an absent period is the whole range: one period rather than no
+/// grouping at all. An instance with no instant on the axis has no period, so a
+/// read by period leaves it out.
+fn grouped_page(
+    rows: SelectStatement,
+    grid: Option<&AggregationGrid>,
+    compiled: &CompiledTemporalQuery,
+    branch: &HistoryBranch,
+    of: &HistoryOf,
+) -> SelectStatement {
     let axis = axis_column(compiled.window.timeproperty);
-
     let mut select = Query::select();
-    select.expr_as(Expr::col((An, AttributeNames::Name)), Alias::new("attribute_name"));
-    select.expr(Expr::col((Ah, HistoryGrain::DatasetId)));
     project_group_span(&mut select);
-    base_history_source(&mut select, branch, of);
+    select.from_subquery(rows, Ah);
 
-    if let Some(period) = period {
-        let iso = period.as_iso8601();
-        // The reference instant of clause 4.5.19 aligns the periods on either
-        // grid; absent, they align to the actual data range (not epoch).
-        let origin = if let Some(reference) = compiled.window.interval.reference() {
-            Expr::val(*reference)
-        } else {
-            select.join_lateral(JoinType::Join, origin_subquery(branch, of, axis), BucketOrigin, SimpleExpr::from(true));
-            Expr::col((BucketOrigin, Origin))
-        };
-        let bucket_start = Expr::col((Bucket, BucketStart));
-        match period.grid() {
-            PeriodGrid::Exact => {
-                select.join_lateral(
-                    JoinType::Join,
-                    bucket_subquery(axis, cast(Expr::val(iso.clone()), PostgresType::Interval), origin),
-                    Bucket,
-                    SimpleExpr::from(true),
-                );
-                let bucket_end = bucket_start.clone().add(cast(Expr::val(iso), PostgresType::Interval));
-                select.expr_as(bucket_start, BucketStart);
-                select.expr_as(bucket_end, BucketEnd);
-            }
-            PeriodGrid::Calendar => {
-                select.join_lateral(
-                    JoinType::Join,
-                    calendar_bucket_subquery(axis, cast(Expr::val(iso), PostgresType::Interval), origin),
-                    Bucket,
-                    SimpleExpr::from(true),
-                );
-                select.expr_as(bucket_start, BucketStart);
-                select.expr_as(Expr::col((Bucket, BucketEnd)), BucketEnd);
-            }
-        }
+    let mut keys: Vec<SimpleExpr> = match &compiled.representation.grouping {
+        Some(grouping) => apply_grouping(&mut select, grouping, axis, branch, of),
+        None => Vec::new(),
+    };
+    let mut order = keys.clone(); // clone: the periods are numbered in the order of their group keys
+    if let Some(grid) = grid {
+        select
+            .join_lateral(JoinType::Join, grid.period_of(Expr::col((Ah, axis))), Bucket, SimpleExpr::from(true))
+            .expr_as(AggregationGrid::start_under(Bucket), BucketStart)
+            .expr_as(grid.end_under(Bucket), BucketEnd)
+            .and_where(Expr::col((Ah, axis)).is_not_null());
+        keys.extend(grid.keys_under(Bucket));
+        order.push(AggregationGrid::start_under(Bucket));
     } else {
-        // Clause 4.5.19.1: the one period spans the whole time range of the
-        // temporal query, so its start and end DateTimes are the query bounds.
-        // A side the query leaves open names no instant.
-        let interval = compiled.window.interval;
-        select.expr_as(whole_range_bound(interval.opening()), BucketStart);
-        select.expr_as(whole_range_bound(interval.closing()), BucketEnd);
+        let interval: TimeInterval = compiled.window.interval;
+        select
+            .expr_as(
+                whole_range_bound(interval.opening().map(|instant| Expr::val(*instant)), Func::min(Expr::col((Ah, axis))).into()),
+                BucketStart,
+            )
+            .expr_as(
+                whole_range_bound(interval.closing().map(|instant| Expr::val(*instant)), Func::max(Expr::col((Ah, axis))).into()),
+                BucketEnd,
+            );
     }
 
     for (expr, alias) in aggregate_columns(&compiled.representation.aggr_methods) {
         select.expr_as(expr, Alias::new(alias));
     }
+    if keys.is_empty() {
+        // An aggregate without a group key answers one row even over no rows;
+        // a stream with nothing to aggregate has no period instead.
+        select.and_having(count_all().gt(int_literal(0)));
+    }
+    select.add_group_by(keys);
+    let mut window = WindowStatement::new();
+    for key in order {
+        window.order_by_expr(key, Order::Asc);
+    }
+    select.expr_window_as(row_number(), window, PeriodOrder);
+    select
+}
 
-    // Clause 4.5.7: a tombstone records a deletion and carries no value, so the
-    // rows that record one are outside every aggregate rather than counted.
-    select.cond_where(condition.add(Expr::col((Ah, AttributeHistory::ValueKind)).ne(int_literal(0))));
+/// Build the aggregation statement over the streams of the Entity `of`
+/// names, each stream aggregated on its own over the rows the compiled page
+/// reads of it.
+///
+/// `condition` admits the represented instances. Clause 4.5.7: a tombstone
+/// records a deletion and carries no value, so the rows that record one are
+/// outside every aggregate rather than counted.
+#[must_use]
+pub fn build_aggregation_query(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemporalQuery, condition: &Condition) -> SelectStatement {
+    let (grid, origin) = match compiled.representation.aggr_period_duration {
+        Some(period) => {
+            let (origin_expr, origin) = grid_origin(branch, of, compiled);
+            (Some(AggregationGrid::new(period, origin_expr)), origin)
+        }
+        None => (None, None),
+    };
+    // clone: the edge places the page on every represented instance, the aggregates fold the valued ones.
+    let aggregated = condition.clone().add(Expr::col((Ah, AttributeHistory::ValueKind)).ne(int_literal(0)));
+    let read = aggregated_stream_read(branch, compiled, condition, &aggregated, grid.as_ref());
 
-    // Clause 4.5.19: the fixed key is the attribute and `datasetId`. The
-    // `aggrGroupBy` extension inserts its own keys between that fixed key and
-    // the period, and an absent period is the whole range: one bucket rather
-    // than no grouping at all.
-    select.add_group_by([
-        SimpleExpr::from(Expr::col((An, AttributeNames::Name))),
-        SimpleExpr::from(Expr::col((Ah, HistoryGrain::DatasetId))),
-    ]);
+    let mut select = Query::select();
+    select
+        .expr_as(Expr::col((An, AttributeNames::Name)), Alias::new("attribute_name"))
+        .expr_as(Expr::col((St, HistoryGrain::DatasetId)), HistoryGrain::DatasetId)
+        .expr(Expr::col((Page, Asterisk)));
+    entity_streams(&mut select, branch, of);
+    if let Some(edge) = read.edge {
+        select
+            .expr_as(Expr::col((StreamEdge, StreamContinues)), StreamContinues)
+            .join_lateral(JoinType::Join, edge, StreamEdge, SimpleExpr::from(true));
+    }
+    select.join_lateral(
+        JoinType::Join,
+        grouped_page(read.rows, grid.as_ref(), compiled, branch, of),
+        Page,
+        SimpleExpr::from(true),
+    );
     select
         .order_by((An, AttributeNames::Name), Order::Asc)
-        .order_by((Ah, HistoryGrain::DatasetId), Order::Asc);
-
-    if let Some(grouping) = &compiled.representation.grouping {
-        apply_grouping(&mut select, grouping, axis, branch, of);
+        .order_by((St, HistoryGrain::DatasetId), Order::Asc)
+        .order_by((Page, PeriodOrder), Order::Asc);
+    if let Some(origin) = origin {
+        select.with_cte(WithClause::new().cte(origin).to_owned());
     }
-
-    if let Some(period) = period {
-        select.add_group_by([SimpleExpr::from(Expr::col((Bucket, BucketStart)))]);
-        match period.grid() {
-            PeriodGrid::Exact => {}
-            PeriodGrid::Calendar => {
-                select.add_group_by([SimpleExpr::from(Expr::col((Bucket, BucketEnd)))]);
-            }
-        }
-        select.order_by((Bucket, BucketStart), Order::Asc);
-    }
-
     select.take()
 }
 
@@ -386,11 +367,19 @@ mod tests {
     }
 
     fn sql_of(compiled: &CompiledTemporalQuery) -> String {
-        build_aggregation_query(&HistoryBranch::live(), &vehicle(), compiled, Condition::all()).to_string(PostgresQueryBuilder)
+        build_aggregation_query(&HistoryBranch::live(), &vehicle(), compiled, &Condition::all()).to_string(PostgresQueryBuilder)
     }
 
     fn bound_sql_of(compiled: &CompiledTemporalQuery) -> (String, sea_query::Values) {
-        build_aggregation_query(&HistoryBranch::live(), &vehicle(), compiled, Condition::all()).build(PostgresQueryBuilder)
+        build_aggregation_query(&HistoryBranch::live(), &vehicle(), compiled, &Condition::all()).build(PostgresQueryBuilder)
+    }
+
+    /// The keys one stream's periods are grouped by, empty when the statement
+    /// groups by none.
+    fn group_keys(sql: &str) -> &str {
+        sql.split("GROUP BY")
+            .nth(1)
+            .map_or("", |keys| keys.split(") AS \"page\"").next().unwrap_or_default().trim())
     }
 
     #[test]
@@ -406,7 +395,9 @@ mod tests {
         assert!(sql.contains("JOIN LATERAL (SELECT time_bucket("), "{sql}");
         assert!(sql.contains("AS \"bucket_start\") AS \"bucket\""), "{sql}");
         assert!(sql.contains("\"bucket\".\"bucket_start\" +"), "{sql}");
-        pretty_assertions::assert_eq!(sql.matches("\"ah\".\"observed_at\"").count(), 1, "{sql}");
+        // Once for the period, once to leave out an instance with no instant on
+        // the axis, which has no period.
+        pretty_assertions::assert_eq!(sql.matches("\"ah\".\"observed_at\"").count(), 2, "{sql}");
         // The bound width, not every interval cast in the statement: an `avg`
         // also projects the Table 4.5.19.1-2 mean time of day, which casts a
         // time column to an interval for reasons unrelated to bucketing. A
@@ -429,7 +420,7 @@ mod tests {
         assert!(sql.contains("time_bucket('PT1H'::interval, \"ah\".\"observed_at\""), "{sql}");
         assert!(sql.contains("MIN(\"ah2\".\"observed_at\")"), "{sql}");
         assert!(!sql.contains("\"ah\".\"recorded_at\""), "{sql}");
-        pretty_assertions::assert_eq!(sql.matches("SELECT MIN(").count(), 1, "{sql}");
+        pretty_assertions::assert_eq!(sql.matches("MIN(\"ah2\"").count(), 1, "the origin is read once: {sql}");
     }
 
     /// The bucket origin is measured over the same entity's streams, reached
@@ -455,18 +446,21 @@ mod tests {
     /// Clause 4.5.19 gives one aggregate value per attribute, `datasetId` and
     /// period. A fourth group column would answer one period with one entry per
     /// value the rows happened to disagree on, so the key holds those three and
-    /// no others.
+    /// no others: each stream, an attribute and a `datasetId`, is aggregated on
+    /// its own, and its rows are grouped by the period alone.
     #[test]
     fn the_group_key_is_the_attribute_the_dataset_and_the_period_alone() {
         let sql = sql_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
-        let group_by = sql.split("GROUP BY").nth(1).expect("a GROUP BY clause");
-        let group_by = group_by.split("ORDER BY").next().expect("a clause before ORDER BY").trim();
-        pretty_assertions::assert_eq!(group_by, "\"an\".\"name\", \"ah\".\"dataset_id\", \"bucket\".\"bucket_start\"", "{sql}");
+        assert!(sql.starts_with("WITH \"bucket_origin\""), "{sql}");
+        assert!(
+            sql.contains(r#"SELECT "an"."name" AS "attribute_name", "st"."dataset_id" AS "dataset_id", "page".* FROM"#),
+            "{sql}"
+        );
+        pretty_assertions::assert_eq!(group_keys(&sql), "\"bucket\".\"bucket_start\"", "{sql}");
 
         let sql = sql_of(&aggregated(vec![AggrMethod::Avg], None));
-        let group_by = sql.split("GROUP BY").nth(1).expect("a GROUP BY clause");
-        let group_by = group_by.split("ORDER BY").next().expect("a clause before ORDER BY").trim();
-        pretty_assertions::assert_eq!(group_by, "\"an\".\"name\", \"ah\".\"dataset_id\"", "{sql}");
+        pretty_assertions::assert_eq!(group_keys(&sql), "", "{sql}");
+        assert!(sql.contains("HAVING (COUNT(*)) > (0)"), "a stream with no instance has no period: {sql}");
     }
 
     /// Keying the group on the unit, the attribute family or the value shape
@@ -476,9 +470,8 @@ mod tests {
     fn no_unit_or_registry_code_keys_the_group() {
         for period in [Some("PT1H"), None] {
             let sql = sql_of(&aggregated(vec![AggrMethod::Avg, AggrMethod::Min, AggrMethod::TotalCount], period));
-            let group_by = sql.split("GROUP BY").nth(1).expect("a GROUP BY clause");
             for column in ["unit_code_id", "value_kind", "attribute_kind"] {
-                assert!(!group_by.contains(column), "{column} still keys the group: {sql}");
+                assert!(!group_keys(&sql).contains(column), "{column} still keys the group: {sql}");
             }
         }
     }
@@ -559,13 +552,15 @@ mod tests {
 
     /// Clause 4.5.19: an empty or zero period aggregates the whole range into one
     /// bucket, which is what an absent period means, so no `time_bucket` is
-    /// emitted for any of them.
+    /// emitted for any of them. An unbounded query sets neither bound, so each
+    /// side of its period is the extreme instant the stream holds.
     #[test]
     fn an_aggregation_period_of_zero_covers_the_whole_range() {
         for period in ["", "PT0S", "P0D"] {
             let sql = sql_of(&aggregated(vec![AggrMethod::TotalCount], Some(period)));
             assert!(!sql.contains("time_bucket"), "{period}: {sql}");
-            assert!(sql.contains("NULL::timestamptz AS \"bucket_start\""), "{period}: {sql}");
+            assert!(sql.contains("MIN(\"ah\".\"observed_at\") AS \"bucket_start\""), "{period}: {sql}");
+            assert!(sql.contains("MAX(\"ah\".\"observed_at\") AS \"bucket_end\""), "{period}: {sql}");
         }
     }
 
@@ -584,15 +579,16 @@ mod tests {
         assert!(sql.contains("'2024-01-01 03:00:00.000000 +00:00'::timestamptz AS \"bucket_end\""), "{sql}");
     }
 
-    /// A `before` query opens without limit, so only the end of its one period
-    /// is an instant.
+    /// A `before` query opens without limit, so its one period ends at
+    /// `timeAt` and starts at the least recent instant the stream holds, which
+    /// the response then widens to its own (clause 4.5.19.1).
     #[test]
-    fn a_whole_range_period_over_a_before_query_names_only_its_closing_instant() {
+    fn a_whole_range_period_over_a_before_query_opens_at_the_least_recent_instant_its_stream_holds() {
         let to = DateTime::parse_from_rfc3339("2024-01-01T03:00:00Z").expect("valid instant").with_timezone(&Utc);
         let mut compiled = aggregated(vec![AggrMethod::Avg], None);
         compiled.window.interval = TimeInterval::Before(to);
         let sql = sql_of(&compiled);
-        assert!(sql.contains("NULL::timestamptz AS \"bucket_start\""), "{sql}");
+        assert!(sql.contains("MIN(\"ah\".\"observed_at\") AS \"bucket_start\""), "{sql}");
         assert!(sql.contains("'2024-01-01 03:00:00.000000 +00:00'::timestamptz AS \"bucket_end\""), "{sql}");
     }
 
@@ -618,7 +614,7 @@ mod tests {
             let sql = sql_of(&from_the_fifteenth(period));
             assert!(
                 sql.contains(&format!(
-                    "time_bucket('{period}'::interval, \"ah\".\"observed_at\", '2026-03-15 00:00:00.000000 +00:00')"
+                    "time_bucket('{period}'::interval, \"ah\".\"observed_at\", '2026-03-15 00:00:00.000000 +00:00'::timestamptz)"
                 )),
                 "{period}: {sql}"
             );
@@ -665,13 +661,7 @@ mod tests {
             "{sql}"
         );
         assert!(sql.contains(r#""bucket"."bucket_end" AS "bucket_end""#), "{sql}");
-        let group_by = sql.split("GROUP BY").nth(1).expect("a GROUP BY clause");
-        let group_by = group_by.split("ORDER BY").next().expect("a clause before ORDER BY").trim();
-        pretty_assertions::assert_eq!(
-            group_by,
-            "\"an\".\"name\", \"ah\".\"dataset_id\", \"bucket\".\"bucket_start\", \"bucket\".\"bucket_end\"",
-            "{sql}"
-        );
+        pretty_assertions::assert_eq!(group_keys(&sql), "\"bucket\".\"bucket_start\", \"bucket\".\"bucket_end\"", "{sql}");
     }
 
     /// A retrieval without `timeAt` anchors a calendar grid where it anchors an
@@ -680,7 +670,10 @@ mod tests {
     fn a_calendar_period_without_time_at_numbers_from_the_entitys_earliest_instant() {
         let sql = sql_of(&aggregated(vec![AggrMethod::TotalCount], Some("P1M")));
         assert!(sql.contains("MIN(\"ah2\".\"observed_at\") AS \"origin\""), "{sql}");
-        assert!(sql.contains("\"bucket_origin\".\"origin\"::timestamptz AS \"origin\""), "{sql}");
+        assert!(
+            sql.contains("(SELECT \"bucket_origin\".\"origin\" FROM \"bucket_origin\")::timestamptz AS \"origin\""),
+            "{sql}"
+        );
     }
 
     #[test]
@@ -691,14 +684,19 @@ mod tests {
 
     /// The renderer emits one triple per row, so the rows of one attribute and
     /// dataset have to arrive in period order rather than in whatever order the
-    /// plan produced them.
+    /// plan produced them: each stream numbers its periods, and the statement
+    /// orders by stream and number.
     #[test]
     fn the_rows_arrive_ordered_by_attribute_dataset_and_period() {
         let sql = sql_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
-        let order_by = sql.split("ORDER BY").nth(1).expect("an ORDER BY clause").trim();
+        assert!(
+            sql.contains(r#"ROW_NUMBER() OVER (  ORDER BY "bucket"."bucket_start" ASC ) AS "period_order""#),
+            "{sql}"
+        );
+        let order_by = sql.rsplit("ORDER BY").next().expect("an ORDER BY clause").trim();
         pretty_assertions::assert_eq!(
             order_by,
-            "\"an\".\"name\" ASC, \"ah\".\"dataset_id\" ASC, \"bucket\".\"bucket_start\" ASC",
+            "\"an\".\"name\" ASC, \"st\".\"dataset_id\" ASC, \"page\".\"period_order\" ASC",
             "{sql}"
         );
     }
@@ -709,9 +707,7 @@ mod tests {
     #[test]
     fn grouping_by_unit_code_adds_the_unit_column_to_the_group_by() {
         let sql = sql_of(&grouped(vec![AggrMethod::Avg], None, "unitCode"));
-        let group_by = sql.split("GROUP BY").nth(1).expect("a GROUP BY clause");
-        let group_by = group_by.split("ORDER BY").next().expect("a clause before ORDER BY");
-        assert!(group_by.contains("\"ah\".\"unit_code_id\""), "unit_code_id must key the group: {sql}");
+        assert!(group_keys(&sql).contains("\"ah\".\"unit_code_id\""), "unit_code_id must key the group: {sql}");
         // The span projection survives so the reader still reads the group's unit.
         assert!(sql.contains("AS \"unit_code_id_lowest\""), "{sql}");
     }
@@ -723,8 +719,7 @@ mod tests {
     fn a_calendar_bucket_truncates_the_axis_in_the_group_by() {
         let sql = sql_of(&grouped(vec![AggrMethod::Avg], None, "observedAt;month"));
         assert!(sql.contains("date_trunc('month', \"ah\".\"observed_at\")"), "{sql}");
-        let group_by = sql.split("GROUP BY").nth(1).expect("a GROUP BY clause");
-        assert!(group_by.contains("date_trunc('month'"), "the bucket keys the group: {sql}");
+        assert!(group_keys(&sql).contains("date_trunc('month'"), "the bucket keys the group: {sql}");
     }
 
     /// `aggrGroupBy=observedAt;hourOfDay` folds the axis onto the hour of day,
@@ -751,8 +746,7 @@ mod tests {
     fn grouping_combines_with_the_aggregation_period() {
         let sql = sql_of(&grouped(vec![AggrMethod::Avg], Some("PT1H"), "unitCode"));
         assert!(sql.contains("time_bucket"), "the period bucket survives grouping: {sql}");
-        let group_by = sql.split("GROUP BY").nth(1).expect("a GROUP BY clause");
-        let group_by = group_by.split("ORDER BY").next().expect("a clause before ORDER BY");
+        let group_by = group_keys(&sql);
         let unit_at = group_by.find("unit_code_id").expect("the unit keys the group");
         let period_at = group_by.find("bucket_start").expect("the period keys the group");
         assert!(unit_at < period_at, "the group key must precede the period: {group_by}");
@@ -772,8 +766,12 @@ mod tests {
     #[test]
     fn aggregation_reads_the_pending_rows() {
         let sql = sql_of(&aggregated(vec![AggrMethod::Sum, AggrMethod::Max], None));
-        let source = sql.split(r#") AS "ah" JOIN "attribute_names""#).next().expect("the attribute source");
-        assert!(source.contains(r#"UNION ALL (SELECT "pe"."entity_id" AS "entity_id""#), "{sql}");
-        assert!(source.contains(r#""pe"."entity_id" = 'urn:ngsi-ld:Vehicle:1'"#), "{sql}");
+        let streams = sql.split(r#") AS "st""#).next().expect("the streams");
+        assert!(streams.contains(r#"UNION ALL (SELECT DISTINCT "pe"."entity_id" AS "entity_id""#), "{sql}");
+        assert!(streams.contains(r#""pe"."entity_id" = 'urn:ngsi-ld:Vehicle:1'"#), "{sql}");
+        assert!(
+            sql.contains(r#""pe"."entity_id" = "st"."entity_id" AND "pe"."attribute_name_key" = "st"."attribute_name_key""#),
+            "the queued part of each stream: {sql}"
+        );
     }
 }

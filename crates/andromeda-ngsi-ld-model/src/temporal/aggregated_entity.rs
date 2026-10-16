@@ -77,6 +77,24 @@ pub enum AggregatedValues {
     Grouped(IndexMap<GroupKeyValue, AggregatedValues>),
 }
 
+impl AggregatedValues {
+    /// Every triple, at whatever depth the grouping nests it.
+    fn triples(&self) -> Box<dyn Iterator<Item = &AggregatedTriple> + '_> {
+        match self {
+            AggregatedValues::Triples(triples) => Box::new(triples.iter()),
+            AggregatedValues::Grouped(groups) => Box::new(groups.values().flat_map(AggregatedValues::triples)),
+        }
+    }
+
+    /// Keep only the triples `admits` admits, at whatever depth.
+    fn retain(&mut self, admits: &impl Fn(&AggregatedTriple) -> bool) {
+        match self {
+            AggregatedValues::Triples(triples) => triples.retain(admits),
+            AggregatedValues::Grouped(groups) => groups.values_mut().for_each(|values| values.retain(admits)),
+        }
+    }
+}
+
 /// One method of one aggregated attribute and what it aggregates to.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MethodAggregate {
@@ -158,6 +176,38 @@ impl AggregatedTemporalEntity {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.attrs.is_empty()
+    }
+
+    /// The least recent start and the most recent end of any period the
+    /// entity holds an aggregate of.
+    #[must_use]
+    pub fn period_span(&self) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+        let mut triples = self.triples();
+        let first = triples.next()?;
+        let (start, end) = triples.fold((first.start, first.end), |(start, end), triple| {
+            ([start, triple.start].into_iter().flatten().min(), [end, triple.end].into_iter().flatten().max())
+        });
+        start.zip(end)
+    }
+
+    /// Keep only the periods both of whose bounds `keep` admits: the periods
+    /// lying wholly on the admitted side of a bound.
+    pub fn retain_periods(&mut self, keep: impl Fn(DateTime<Utc>) -> bool) {
+        let admits = |triple: &AggregatedTriple| triple.start.is_none_or(&keep) && triple.end.is_none_or(&keep);
+        for attribute in self.attrs.values_mut().flatten() {
+            for aggregate in &mut attribute.aggregates {
+                aggregate.values.retain(&admits);
+            }
+        }
+    }
+
+    /// Every triple of every method of every attribute.
+    fn triples(&self) -> impl Iterator<Item = &AggregatedTriple> {
+        self.attrs
+            .values()
+            .flatten()
+            .flat_map(|attribute| attribute.aggregates.iter())
+            .flat_map(|aggregate| aggregate.values.triples())
     }
 
     /// Put `other`'s aggregates of the same entity beside this one, as `mode`

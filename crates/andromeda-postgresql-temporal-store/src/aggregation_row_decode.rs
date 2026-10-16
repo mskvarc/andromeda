@@ -15,7 +15,7 @@
 
 use crate::{
     error::TemporalStoreError,
-    history_row_decode::{decode_attribute_name, decode_dataset_id, decode_unit_code},
+    history_row_decode::{decode_attribute_name, decode_dataset_id, decode_stream_extent, decode_unit_code},
     stored_aggregation_error::{AggregationColumn, StoredAggregationError},
     stored_history_error::UnitCodeColumn,
 };
@@ -69,6 +69,7 @@ pub(crate) fn decode_aggregation_row(row: &PgRow, span: &AggregationGroupSpan) -
         // Populated by the caller, which holds the grouping and the entity the
         // row belongs to; an ungrouped aggregation leaves it empty.
         group_keys: Vec::new(),
+        stream_extent: decode_stream_extent(row)?,
     })
 }
 

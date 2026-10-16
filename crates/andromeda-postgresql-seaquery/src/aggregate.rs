@@ -31,6 +31,11 @@ struct Lead;
 #[iden = "LAG"]
 struct Lag;
 
+/// The `ROW_NUMBER()` window function, the position of a row in its frame.
+#[derive(Iden, Clone, Copy)]
+#[iden = "ROW_NUMBER"]
+struct RowNumber;
+
 /// `STDDEV(value)` - the sample standard deviation of a group's values.
 #[must_use]
 pub fn stddev(value: SimpleExpr) -> SimpleExpr {
@@ -61,6 +66,14 @@ pub fn lead(value: SimpleExpr) -> SimpleExpr {
 #[must_use]
 pub fn lag(value: SimpleExpr) -> SimpleExpr {
     Func::cust(Lag).args([value]).into()
+}
+
+/// `ROW_NUMBER()` - the position of the row in its window frame, counted from
+/// one. The `OVER (…)` frame is supplied through
+/// [`sea_query::SelectStatement::expr_window_as`].
+#[must_use]
+pub fn row_number() -> SimpleExpr {
+    Func::cust(RowNumber).into()
 }
 
 /// `array_agg(value ORDER BY order_by)` - collect `value` into an array in the
@@ -150,11 +163,12 @@ mod tests {
 
     #[test]
     fn the_group_aggregates_render_their_own_function_names() {
-        use crate::aggregate::{bool_or, lag, lead, stddev};
+        use crate::aggregate::{bool_or, lag, lead, row_number, stddev};
         let render = |expr| Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder);
         assert!(render(stddev(Expr::col(Alias::new("v")))).contains(r#"STDDEV("v")"#));
         assert!(render(bool_or(Expr::col(Alias::new("u")).is_null())).contains(r#"BOOL_OR("u" IS NULL)"#));
         assert!(render(lead(Expr::col(Alias::new("s")))).contains(r#"LEAD("s")"#));
         assert!(render(lag(Expr::col(Alias::new("s")))).contains(r#"LAG("s")"#));
+        assert!(render(row_number()).contains("ROW_NUMBER()"));
     }
 }

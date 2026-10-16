@@ -7,6 +7,7 @@ use andromeda_ngsi_ld_model::{
     received::ReceivedElement,
     temporal::{
         AggregationAverage,
+        StreamExtent,
         TemporalAggregationRow,
         TemporalValue,
         aggregated_entity::{AggregateValue, AggregatedValues},
@@ -65,6 +66,7 @@ fn aggregate_of_the_merged_instances(average: i64) -> TemporalAggregationRow {
         total_count: None,
         distinct_count: None,
         group_keys: Vec::new(),
+        stream_extent: StreamExtent::Whole,
     }
 }
 

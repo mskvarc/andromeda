@@ -4,9 +4,10 @@
 use crate::{
     error::TemporalError,
     outcome::TemporalEntityIdOutcome,
-    port::read_scope::ScopeReach,
+    port::read_scope::{ScopeReach, TemporalReadScope},
     query_warning_reason::TemporalQueryWarningReason,
     read::{
+        aggregated_page::{AggregationRendering, render_aggregation_page, settle_aggregation_pages},
         dataset_step::DatasetStep,
         ensure_aggregation_supported,
         rendered_entity::{HistoryPresence, RenderedTemporalEntity, render_history_page},
@@ -94,39 +95,11 @@ impl TemporalService {
             let compactor = EntityCompactor::new(&compactor);
             let mut warnings = Vec::new();
             let rendered = if compiled.representation.format.is_aggregated() {
-                let mut rendered = Vec::with_capacity(entity_ids.len());
-                for entity_id in entity_ids {
-                    let entity_types = entity_types_map.get(&entity_id).map(Vec::as_slice).unwrap_or_default();
-                    let entity_compiled = contributed_reading.query_for(&entity_id);
-                    let outcome = self
-                        .render_one_temporal_entity(&scope, &entity_id, entity_types, entity_compiled, &compactor)
-                        .await;
-                    rendered.extend(settle_entity(entity_id, outcome, &mut warnings)?);
-                }
-                rendered
+                self.render_aggregated_pages(&scope, entity_ids, &contributed_reading, &entity_types_map, &compactor, &mut warnings)
+                    .await?
             } else {
-                // Clause 6.3.10: one response carries one `Content-Range`, so every
-                // entity of the page is cut at the same instant. Every page is read
-                // before any is rendered, because the cut depends on all of them.
-                let mut pages = Vec::with_capacity(entity_ids.len());
-                for entity_id in entity_ids {
-                    match self.read_history_page(&scope, &entity_id, contributed_reading.query_for(&entity_id)).await {
-                        Ok(page) => pages.push(page),
-                        Err(error) => {
-                            settle_entity(entity_id, Err(error), &mut warnings)?;
-                        }
-                    }
-                }
-                let cut = self.common_page_cut(&compiled, &pages)?;
-                let mut rendered = Vec::with_capacity(pages.len());
-                for page in pages {
-                    let entity_types = entity_types_map.get(&page.entity_id).map(Vec::as_slice).unwrap_or_default();
-                    // clone: a render failure names the entity the page was consumed for.
-                    let entity_id = page.entity_id.clone();
-                    let outcome = render_history_page(page, entity_types, &compiled, cut);
-                    rendered.extend(settle_entity(entity_id, outcome, &mut warnings)?);
-                }
-                rendered
+                self.render_instance_pages(&scope, entity_ids, &contributed_reading, &entity_types_map, &mut warnings)
+                    .await?
             };
 
             let mut entities = Vec::with_capacity(rendered.len());
@@ -178,6 +151,97 @@ impl TemporalService {
         .await;
         timer.finish_result(&result);
         result
+    }
+}
+
+impl TemporalService {
+    /// Read the aggregated page of every entity of the response, then render
+    /// each at the response's common cut.
+    ///
+    /// Clause 6.3.10: one response carries one `Content-Range`, so every
+    /// entity of the page is cut at the same period boundary, and an absent
+    /// period is one whole range for the whole response (clause 4.5.19.1).
+    /// Every page is read before any is rendered, because the cut depends on
+    /// all of them.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`TemporalError::TooManyResults`] an entity raised, or the
+    /// failure to resolve the names the request context gives.
+    async fn render_aggregated_pages(
+        &self,
+        scope: &TemporalReadScope<'_>,
+        entity_ids: Vec<Identifier>,
+        reading: &ContributedReading<'_>,
+        entity_types_map: &HashMap<Identifier, Vec<EntityTypeName>>,
+        compactor: &EntityCompactor<'_>,
+        warnings: &mut Vec<TemporalQueryWarning>,
+    ) -> Result<Vec<RenderedTemporalEntity>, TemporalError> {
+        let mut pages = Vec::with_capacity(entity_ids.len());
+        for entity_id in entity_ids {
+            match self.read_aggregation_page(scope, &entity_id, reading.query_for(&entity_id)).await {
+                Ok(page) => pages.push(page),
+                Err(error) => {
+                    settle_entity(entity_id, Err(error), warnings)?;
+                }
+            }
+        }
+        let cut = settle_aggregation_pages(reading.compiled, &mut pages);
+        let rendering = AggregationRendering {
+            compiled: reading.compiled,
+            names: compactor.names().await?,
+            max_groups: self.limits.aggregation_grouping_max_groups,
+            cut,
+        };
+        let mut rendered = Vec::with_capacity(pages.len());
+        for page in pages {
+            let entity_types = entity_types_map.get(&page.entity_id).map(Vec::as_slice).unwrap_or_default();
+            // clone: a render failure names the entity the page was consumed for.
+            let entity_id = page.entity_id.clone();
+            let outcome = render_aggregation_page(page, entity_types, rendering);
+            rendered.extend(settle_entity(entity_id, outcome, warnings)?);
+        }
+        Ok(rendered)
+    }
+
+    /// Read the instance page of every entity of the response, then render
+    /// each at the response's common cut.
+    ///
+    /// Clause 6.3.10: one response carries one `Content-Range`, so every
+    /// entity of the page is cut at the same instant. Every page is read
+    /// before any is rendered, because the cut depends on all of them.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`TemporalError::TooManyResults`] an entity or the common
+    /// cut raised.
+    async fn render_instance_pages(
+        &self,
+        scope: &TemporalReadScope<'_>,
+        entity_ids: Vec<Identifier>,
+        reading: &ContributedReading<'_>,
+        entity_types_map: &HashMap<Identifier, Vec<EntityTypeName>>,
+        warnings: &mut Vec<TemporalQueryWarning>,
+    ) -> Result<Vec<RenderedTemporalEntity>, TemporalError> {
+        let mut pages = Vec::with_capacity(entity_ids.len());
+        for entity_id in entity_ids {
+            match self.read_history_page(scope, &entity_id, reading.query_for(&entity_id)).await {
+                Ok(page) => pages.push(page),
+                Err(error) => {
+                    settle_entity(entity_id, Err(error), warnings)?;
+                }
+            }
+        }
+        let cut = self.common_page_cut(reading.compiled, &pages)?;
+        let mut rendered = Vec::with_capacity(pages.len());
+        for page in pages {
+            let entity_types = entity_types_map.get(&page.entity_id).map(Vec::as_slice).unwrap_or_default();
+            // clone: a render failure names the entity the page was consumed for.
+            let entity_id = page.entity_id.clone();
+            let outcome = render_history_page(page, entity_types, reading.compiled, cut);
+            rendered.extend(settle_entity(entity_id, outcome, warnings)?);
+        }
+        Ok(rendered)
     }
 }
 

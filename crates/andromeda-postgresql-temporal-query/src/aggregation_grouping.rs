@@ -112,54 +112,46 @@ fn history_value_as_text(history: &Alias) -> SimpleExpr {
     .into()
 }
 
-/// Project, group and order the statement by each `aggrGroupBy` term.
+/// Project each `aggrGroupBy` term and return the keys it groups by, in term
+/// order.
 ///
-/// Called after the attribute, `datasetId` and span projections and before the
-/// period column, so the group-key columns sit between the fixed key and the
-/// period in both `GROUP BY` and `ORDER BY`. Returns which facets were promoted
-/// to keys, for the mixed-group guard.
+/// The caller groups and orders by the keys between the fixed key and the
+/// period, so a group's periods stay contiguous. A term that adds no key
+/// column (`datasetId`, `id`, `scope`) returns none.
 pub fn apply_grouping(
     select: &mut SelectStatement,
     grouping: &AggregationGrouping,
     axis: AttributeHistory,
     branch: &HistoryBranch,
     of: &HistoryOf,
-) -> PromotedGroupFacets {
+) -> Vec<SimpleExpr> {
+    let mut keys = Vec::with_capacity(grouping.terms().len());
     for (index, term) in grouping.terms().iter().enumerate() {
         match (&term.key, term.bucket) {
             (GroupKey::Member(EntityMember::DatasetId | EntityMember::Id | EntityMember::Scope), _) => {
                 // datasetId already keys the group; id and scope are per-entity
                 // constants. None adds a key column; the reader supplies the value.
             }
-            (GroupKey::Member(EntityMember::UnitCode), _) => {
-                add_group_key(select, Expr::col((Ah, AttributeHistory::UnitCodeId)));
-            }
-            (GroupKey::Member(EntityMember::Type), _) => {
-                add_group_key(select, Expr::col((Ah, AttributeHistory::AttributeKind)));
-            }
+            (GroupKey::Member(EntityMember::UnitCode), _) => keys.push(Expr::col((Ah, AttributeHistory::UnitCodeId))),
+            (GroupKey::Member(EntityMember::Type), _) => keys.push(Expr::col((Ah, AttributeHistory::AttributeKind))),
             (GroupKey::Path(_), Some(bucket)) => {
                 let axis_value = Expr::col((Ah, axis));
                 let expr = match bucket.kind() {
                     BucketKind::Calendar => date_trunc(bucket_field(bucket), axis_value),
                     BucketKind::Cyclic => date_part(bucket_field(bucket), axis_value),
                 };
+                // clone: the key is projected and grouped by.
                 select.expr_as(expr.clone(), group_key_alias(index));
-                add_group_key(select, expr);
+                keys.push(expr);
             }
             (GroupKey::Path(path), None) => {
                 project_value_in_effect(select, index, path.attr.as_str(), axis, branch, of);
                 select.expr_as(Expr::col((value_key_alias(index), group_key_alias(index))), group_key_alias(index));
-                add_group_key(select, SimpleExpr::from(Expr::col((value_key_alias(index), group_key_alias(index)))));
+                keys.push(Expr::col((value_key_alias(index), group_key_alias(index))));
             }
         }
     }
-    promoted_facets(grouping)
-}
-
-/// Add one already-projected group-key expression to `GROUP BY` and `ORDER BY`.
-fn add_group_key(select: &mut SelectStatement, expr: SimpleExpr) {
-    select.add_group_by([expr.clone()]);
-    select.order_by_expr(expr, Order::Asc);
+    keys
 }
 
 /// Join the value in effect at each aggregated instant for one value key.

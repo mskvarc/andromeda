@@ -7,6 +7,7 @@
 //! test that reaches it says so.
 
 use crate::{
+    config::DEFAULT_AGGREGATION_INSTANCE_BUDGET,
     instance_limits::TemporalInstanceLimits,
     port::{history_reader::TemporalHistoryReader, mutation_barrier::TemporalMutationBarrier, mutator::TemporalMutator, service_ports::TemporalServicePorts},
     remote_linked::RemoteTemporalLinkedSource,
@@ -176,6 +177,7 @@ pub(crate) fn service_over(broker: Arc<StubBroker>, remote: Option<Arc<dyn Remot
             instance_limits: TemporalInstanceLimits {
                 default_page: 100,
                 maximum: 1000,
+                aggregation_instances: DEFAULT_AGGREGATION_INSTANCE_BUDGET,
             },
             delete_by_query_max_matches: 100,
             aggregation_grouping_max_groups: 100,

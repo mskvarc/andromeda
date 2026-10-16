@@ -3,7 +3,7 @@
 use crate::{core_write_history::CoreWriteHistory, instance_limits::TemporalInstanceLimits, storage_policy::TemporalStoragePolicy};
 use andromeda_configuration_scalars::human_duration::HumanDuration;
 use serde::{Deserialize, Serialize};
-use std::num::NonZeroU32;
+use std::num::{NonZeroU32, NonZeroU64};
 use strum::{Display, EnumString};
 use thiserror::Error;
 use toml_comment::TomlComment;
@@ -27,6 +27,19 @@ pub const DEFAULT_COLUMNSTORE_AFTER: HumanDuration = HumanDuration::from_days(30
 /// of the broker regardless of how an operator tunes the maximum below it.
 pub const MAX_LAST_N_CEILING: u32 = 5000;
 
+/// The largest `temporal.aggregation_instance_budget` a deployment may
+/// configure.
+///
+/// The budget bounds the raw instances one page of an aggregated temporal read
+/// aggregates per attribute stream, so the ceiling bounds the rows one request
+/// can make the database fold for each stream, as [`MAX_LAST_N_CEILING`] bounds
+/// what it can make the broker render.
+pub const AGGREGATION_INSTANCE_BUDGET_CEILING: u64 = 100_000_000;
+
+/// The aggregation instance budget the broker reads under when no other is
+/// configured.
+pub const DEFAULT_AGGREGATION_INSTANCE_BUDGET: NonZeroU64 = NonZeroU64::MIN.saturating_add(999_999);
+
 /// The number of seconds in one day, the grain the history-partition day fields
 /// are constrained to.
 const SECONDS_PER_DAY: u64 = 86_400;
@@ -46,6 +59,10 @@ pub enum TemporalConfigError {
     /// The `lastN` maximum was configured above [`MAX_LAST_N_CEILING`].
     #[error("temporal.max_last_n must not exceed {MAX_LAST_N_CEILING}")]
     MaxLastNAboveCeiling,
+    /// The aggregation instance budget was configured above
+    /// [`AGGREGATION_INSTANCE_BUDGET_CEILING`].
+    #[error("temporal.aggregation_instance_budget must not exceed {AGGREGATION_INSTANCE_BUDGET_CEILING}")]
+    AggregationInstanceBudgetAboveCeiling,
     /// Expiry reconciliation cadence was configured as zero.
     #[error("temporal.expiration_check_interval must be greater than zero")]
     ZeroExpirationCheckInterval,
@@ -134,7 +151,21 @@ pub struct TemporalConfig {
     /// below `default_last_n`. The same number bounds the instances that share
     /// one timestamp at the edge of a page: a page never splits them, and a
     /// group larger than this is refused with `TooManyResults`.
+    ///
+    /// It is also the page of an aggregated read (clause 4.5.19): at most this
+    /// many whole periods per attribute, paged forwards with a 206 whose
+    /// `Content-Range` ends at the last period served.
     pub max_last_n: u32,
+    /// The raw instances one page of an aggregated temporal read aggregates
+    /// per attribute at most, beside its `max_last_n` periods.
+    ///
+    /// A page that would aggregate more ends at the start of the period the
+    /// first instance beyond the budget falls in; a first period holding more
+    /// than the budget alone is read whole, since a period is never split.
+    /// Defaults to 1,000,000, and may be raised to at most 100,000,000; zero
+    /// is refused as the configuration is read.
+    #[toml_comment(inline)]
+    pub aggregation_instance_budget: NonZeroU64,
     /// Cadence of every `expiresAt` sweep the broker schedules per tenant:
     /// entities (clause 5.2.4), subscriptions (clause 5.8.1.4), context source
     /// registrations (clause 5.9.2.4), snapshots and entity maps, in
@@ -221,6 +252,7 @@ impl Default for TemporalConfig {
             core_write_history: CoreWriteHistory::Recorded,
             default_last_n: 100,
             max_last_n: 1000,
+            aggregation_instance_budget: DEFAULT_AGGREGATION_INSTANCE_BUDGET,
             expiration_check_interval: HumanDuration::from_secs(30),
             intent_fallback: HumanDuration::from_secs(1),
             intent_fallback_max: HumanDuration::from_secs(30),
@@ -261,7 +293,9 @@ impl TemporalConfig {
     ///
     /// Returns the [`TemporalConfigError`] variant naming the first setting
     /// that spans no time or no work: a zero default `lastN` page, a `lastN`
-    /// maximum below that page or above [`MAX_LAST_N_CEILING`], expiry cadence,
+    /// maximum below that page or above [`MAX_LAST_N_CEILING`], an
+    /// aggregation instance budget above
+    /// [`AGGREGATION_INSTANCE_BUDGET_CEILING`], expiry cadence,
     /// intent fallback cadence, batch size, lease, retry delay, stuck-attempt
     /// threshold, chunk interval, columnstore lag, retention horizon or
     /// retention sweep cadence; a retry ceiling below the retry delay; or a
@@ -276,6 +310,9 @@ impl TemporalConfig {
         }
         if self.max_last_n > MAX_LAST_N_CEILING {
             return Err(TemporalConfigError::MaxLastNAboveCeiling);
+        }
+        if self.aggregation_instance_budget.get() > AGGREGATION_INSTANCE_BUDGET_CEILING {
+            return Err(TemporalConfigError::AggregationInstanceBudgetAboveCeiling);
         }
         if self.expiration_check_interval.is_zero() {
             return Err(TemporalConfigError::ZeroExpirationCheckInterval);
@@ -333,6 +370,7 @@ impl TemporalConfig {
         TemporalInstanceLimits {
             default_page: self.default_last_n,
             maximum: self.max_last_n,
+            aggregation_instances: self.aggregation_instance_budget,
         }
     }
 
@@ -360,14 +398,25 @@ impl TemporalConfig {
 #[cfg(test)]
 mod config_tests {
     use crate::{
-        config::{DEFAULT_COLUMNSTORE_AFTER, MAX_LAST_N_CEILING, TemporalAppendMode, TemporalConfig, TemporalConfigError},
+        config::{
+            AGGREGATION_INSTANCE_BUDGET_CEILING,
+            DEFAULT_AGGREGATION_INSTANCE_BUDGET,
+            DEFAULT_COLUMNSTORE_AFTER,
+            MAX_LAST_N_CEILING,
+            TemporalAppendMode,
+            TemporalConfig,
+            TemporalConfigError,
+        },
         core_write_history::CoreWriteHistory,
         instance_limits::TemporalInstanceLimits,
         storage_policy::TemporalStoragePolicy,
     };
     use andromeda_configuration_scalars::human_duration::HumanDuration;
     use pretty_assertions::assert_eq;
-    use std::{num::NonZeroU32, time::Duration};
+    use std::{
+        num::{NonZeroU32, NonZeroU64},
+        time::Duration,
+    };
 
     fn valid() -> TemporalConfig {
         TemporalConfig {
@@ -375,6 +424,7 @@ mod config_tests {
             core_write_history: CoreWriteHistory::Recorded,
             default_last_n: 19,
             max_last_n: 19,
+            aggregation_instance_budget: DEFAULT_AGGREGATION_INSTANCE_BUDGET,
             expiration_check_interval: HumanDuration::from_secs(30),
             intent_fallback: HumanDuration::from_secs(1),
             intent_fallback_max: HumanDuration::from_secs(30),
@@ -423,9 +473,57 @@ mod config_tests {
             config.instance_limits(),
             TemporalInstanceLimits {
                 default_page: 100,
-                maximum: 1000
+                maximum: 1000,
+                aggregation_instances: budget(1_000_000),
             }
         );
+    }
+
+    /// `n` as an aggregation instance budget.
+    fn budget(n: u64) -> NonZeroU64 {
+        NonZeroU64::new(n).expect("a positive budget")
+    }
+
+    /// An aggregated page aggregates at most a million raw instances per
+    /// attribute unless an operator says otherwise.
+    #[test]
+    fn the_aggregation_instance_budget_is_one_million() {
+        assert_eq!(TemporalConfig::default().aggregation_instance_budget, budget(1_000_000));
+        assert_eq!(TemporalConfig::default().validate(), Ok(()));
+    }
+
+    /// A page always holds a whole period, so a budget of no instances
+    /// describes no page at all and the configuration is refused as it is
+    /// read.
+    #[test]
+    fn a_zero_aggregation_instance_budget_is_refused_as_the_configuration_is_read() {
+        let mut document = serde_json::to_value(TemporalConfig::default()).expect("the default configuration serialises");
+        document["aggregation_instance_budget"] = serde_json::json!(0);
+        assert!(serde_json::from_value::<TemporalConfig>(document).is_err());
+    }
+
+    #[test]
+    fn an_aggregation_instance_budget_at_the_ceiling_is_accepted_and_one_above_is_rejected() {
+        let at_ceiling = TemporalConfig {
+            aggregation_instance_budget: budget(AGGREGATION_INSTANCE_BUDGET_CEILING),
+            ..valid()
+        };
+        assert_eq!(at_ceiling.validate(), Ok(()));
+        let above = TemporalConfig {
+            aggregation_instance_budget: budget(AGGREGATION_INSTANCE_BUDGET_CEILING + 1),
+            ..valid()
+        };
+        assert_eq!(above.validate(), Err(TemporalConfigError::AggregationInstanceBudgetAboveCeiling));
+    }
+
+    /// The budget reaches the instance limits the reads are compiled under.
+    #[test]
+    fn the_configured_aggregation_instance_budget_reaches_the_instance_limits() {
+        let config = TemporalConfig {
+            aggregation_instance_budget: budget(50_000),
+            ..valid()
+        };
+        assert_eq!(config.instance_limits().aggregation_instances, budget(50_000));
     }
 
     #[test]
