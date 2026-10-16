@@ -24,11 +24,12 @@ use crate::{
     recorded_shape::recorded_shape,
 };
 use andromeda_ngsi_ld_lexicon::aggr_method::AggrMethod;
-use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
+use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, period_grid::PeriodGrid};
 use andromeda_postgresql_query::history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, grain::HistoryGrain};
 use andromeda_postgresql_schema::{name_dictionary::AttributeNames, temporal::AttributeHistory};
 use andromeda_postgresql_seaquery::{
     aggregate::{bool_or, count_all, count_distinct, stddev},
+    calendar_period::{calendar_period_estimate, calendar_period_index, calendar_period_start},
     cast::{cast, typed_null},
     literal::int_literal,
     pg_type::PostgresType,
@@ -52,10 +53,37 @@ struct BucketStart;
 #[iden = "bucket_origin"]
 struct BucketOrigin;
 
-/// Origin instant projected by [`BucketOrigin`].
+/// Origin instant projected by [`BucketOrigin`] and by [`CalendarGrid`].
 #[derive(Iden, Clone, Copy)]
 #[iden = "origin"]
 struct Origin;
+
+/// End instant of a period, projected by [`Bucket`] for a calendar period and
+/// by the statement for every period.
+#[derive(Iden, Clone, Copy)]
+#[iden = "bucket_end"]
+struct BucketEnd;
+
+/// The inputs of a calendar grid, projected once for the expressions that read
+/// them several times.
+#[derive(Iden, Clone, Copy)]
+#[iden = "calendar_grid"]
+struct CalendarGrid;
+
+/// The period projected by [`CalendarGrid`].
+#[derive(Iden, Clone, Copy)]
+#[iden = "period"]
+struct GridPeriod;
+
+/// The estimated period index of a history row on a calendar grid.
+#[derive(Iden, Clone, Copy)]
+#[iden = "period_estimate"]
+struct PeriodEstimate;
+
+/// The corrected period index of a history row on a calendar grid.
+#[derive(Iden, Clone, Copy)]
+#[iden = "period_index"]
+struct PeriodIndex;
 
 /// The span of registry codes and unit identities one aggregation group covered.
 ///
@@ -152,6 +180,43 @@ fn bucket_subquery(axis: AttributeHistory, width: SimpleExpr, origin: SimpleExpr
         .to_owned()
 }
 
+/// Project a history row's calendar period, start and end, exactly once.
+///
+/// `time_bucket` keeps only the year and month of its origin for a period with a
+/// month part and refuses one that also carries days or time, so the period
+/// index is computed from the origin instead (clause 4.5.19.1): the grid inputs
+/// are projected once, the index estimated, then corrected, and the period runs
+/// from its start to the next period's start, which a month-end clamp makes
+/// differ from the start plus the period.
+fn calendar_bucket_subquery(axis: AttributeHistory, width: SimpleExpr, origin: SimpleExpr) -> SelectStatement {
+    let instant = || SimpleExpr::from(Expr::col((Ah, axis)));
+    let grid_period = || SimpleExpr::from(Expr::col((CalendarGrid, GridPeriod)));
+    let grid_origin = || SimpleExpr::from(Expr::col((CalendarGrid, Origin)));
+    let mut grid = Query::select();
+    grid.expr_as(width, GridPeriod).expr_as(cast(origin, PostgresType::Timestamptz), Origin);
+    let mut estimated = Query::select();
+    estimated
+        .column((CalendarGrid, GridPeriod))
+        .column((CalendarGrid, Origin))
+        .expr_as(calendar_period_estimate(grid_period(), grid_origin(), instant()), PeriodEstimate)
+        .from_subquery(grid, CalendarGrid);
+    let mut indexed = Query::select();
+    indexed
+        .column((CalendarGrid, GridPeriod))
+        .column((CalendarGrid, Origin))
+        .expr_as(
+            calendar_period_index(grid_period(), grid_origin(), instant(), Expr::col((CalendarGrid, PeriodEstimate))),
+            PeriodIndex,
+        )
+        .from_subquery(estimated, CalendarGrid);
+    let index = || SimpleExpr::from(Expr::col((CalendarGrid, PeriodIndex)));
+    Query::select()
+        .expr_as(calendar_period_start(grid_period(), grid_origin(), index()), BucketStart)
+        .expr_as(calendar_period_start(grid_period(), grid_origin(), index().add(int_literal(1))), BucketEnd)
+        .from_subquery(indexed, CalendarGrid)
+        .to_owned()
+}
+
 /// One bound of the whole-range period, typed so the column decodes the same
 /// whether the query set that bound or left it open.
 fn whole_range_bound(instant: Option<&DateTime<Utc>>) -> SimpleExpr {
@@ -183,31 +248,45 @@ pub fn build_aggregation_query(branch: &HistoryBranch, of: &HistoryOf, compiled:
 
     if let Some(period) = period {
         let iso = period.as_iso8601();
-        // The reference instant of clause 4.5.19 aligns the buckets; absent,
-        // they align to the actual data range (not epoch).
+        // The reference instant of clause 4.5.19 aligns the periods on either
+        // grid; absent, they align to the actual data range (not epoch).
         let origin = if let Some(reference) = compiled.window.interval.reference() {
             Expr::val(*reference)
         } else {
             select.join_lateral(JoinType::Join, origin_subquery(branch, of, axis), BucketOrigin, SimpleExpr::from(true));
             Expr::col((BucketOrigin, Origin))
         };
-        select.join_lateral(
-            JoinType::Join,
-            bucket_subquery(axis, cast(Expr::val(iso.clone()), PostgresType::Interval), origin),
-            Bucket,
-            SimpleExpr::from(true),
-        );
         let bucket_start = Expr::col((Bucket, BucketStart));
-        let bucket_end = bucket_start.clone().add(cast(Expr::val(iso), PostgresType::Interval));
-        select.expr_as(bucket_start, BucketStart);
-        select.expr_as(bucket_end, Alias::new("bucket_end"));
+        match period.grid() {
+            PeriodGrid::Exact => {
+                select.join_lateral(
+                    JoinType::Join,
+                    bucket_subquery(axis, cast(Expr::val(iso.clone()), PostgresType::Interval), origin),
+                    Bucket,
+                    SimpleExpr::from(true),
+                );
+                let bucket_end = bucket_start.clone().add(cast(Expr::val(iso), PostgresType::Interval));
+                select.expr_as(bucket_start, BucketStart);
+                select.expr_as(bucket_end, BucketEnd);
+            }
+            PeriodGrid::Calendar => {
+                select.join_lateral(
+                    JoinType::Join,
+                    calendar_bucket_subquery(axis, cast(Expr::val(iso), PostgresType::Interval), origin),
+                    Bucket,
+                    SimpleExpr::from(true),
+                );
+                select.expr_as(bucket_start, BucketStart);
+                select.expr_as(Expr::col((Bucket, BucketEnd)), BucketEnd);
+            }
+        }
     } else {
         // Clause 4.5.19.1: the one period spans the whole time range of the
         // temporal query, so its start and end DateTimes are the query bounds.
         // A side the query leaves open names no instant.
         let interval = compiled.window.interval;
         select.expr_as(whole_range_bound(interval.opening()), BucketStart);
-        select.expr_as(whole_range_bound(interval.closing()), Alias::new("bucket_end"));
+        select.expr_as(whole_range_bound(interval.closing()), BucketEnd);
     }
 
     for (expr, alias) in aggregate_columns(&compiled.representation.aggr_methods) {
@@ -234,8 +313,14 @@ pub fn build_aggregation_query(branch: &HistoryBranch, of: &HistoryOf, compiled:
         apply_grouping(&mut select, grouping, axis, branch, of);
     }
 
-    if period.is_some() {
+    if let Some(period) = period {
         select.add_group_by([SimpleExpr::from(Expr::col((Bucket, BucketStart)))]);
+        match period.grid() {
+            PeriodGrid::Exact => {}
+            PeriodGrid::Calendar => {
+                select.add_group_by([SimpleExpr::from(Expr::col((Bucket, BucketEnd)))]);
+            }
+        }
         select.order_by((Bucket, BucketStart), Order::Asc);
     }
 
@@ -244,12 +329,13 @@ pub fn build_aggregation_query(branch: &HistoryBranch, of: &HistoryOf, compiled:
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp};
+    use crate::aggregation::build_aggregation_query;
+    use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         temporal::{
             aggregation_period::AggregationPeriod,
+            compiled::CompiledTemporalQuery,
             instance_selection::InstanceSelection,
             representation::Representation,
             window::{TemporalWindow, TimeInterval},
@@ -257,7 +343,8 @@ mod tests {
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_postgresql_query::history_source::{HistoryBranch, HistoryOf};
-    use sea_query::PostgresQueryBuilder;
+    use chrono::{DateTime, Utc};
+    use sea_query::{Condition, Expr, PostgresQueryBuilder};
 
     fn aggregated(methods: Vec<AggrMethod>, period: Option<&str>) -> CompiledTemporalQuery {
         CompiledTemporalQuery::builder()
@@ -507,6 +594,93 @@ mod tests {
         let sql = sql_of(&compiled);
         assert!(sql.contains("NULL::timestamptz AS \"bucket_start\""), "{sql}");
         assert!(sql.contains("'2024-01-01 03:00:00.000000 +00:00'::timestamptz AS \"bucket_end\""), "{sql}");
+    }
+
+    fn instant(text: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(text).expect("valid instant").with_timezone(&Utc)
+    }
+
+    /// The aggregation of `period` between 2026-03-15 and 2026-06-15.
+    fn from_the_fifteenth(period: &str) -> CompiledTemporalQuery {
+        let mut compiled = aggregated(vec![AggrMethod::TotalCount], Some(period));
+        compiled.window.interval = TimeInterval::Between {
+            from: instant("2026-03-15T00:00:00Z"),
+            to: instant("2026-06-15T00:00:00Z"),
+        };
+        compiled
+    }
+
+    /// Clause 4.5.19.1: a duration of days and time keeps `time_bucket`, anchored
+    /// at `timeAt`, its end the start plus the duration.
+    #[test]
+    fn an_exact_period_buckets_with_time_bucket_at_the_origin() {
+        for period in ["PT1H", "P1D", "PT1H30M"] {
+            let sql = sql_of(&from_the_fifteenth(period));
+            assert!(
+                sql.contains(&format!(
+                    "time_bucket('{period}'::interval, \"ah\".\"observed_at\", '2026-03-15 00:00:00.000000 +00:00')"
+                )),
+                "{period}: {sql}"
+            );
+            assert!(
+                sql.contains(&format!("\"bucket\".\"bucket_start\" + ('{period}'::interval) AS \"bucket_end\"")),
+                "{period}: {sql}"
+            );
+            assert!(!sql.contains("calendar_grid"), "{period}: {sql}");
+        }
+    }
+
+    /// Clause 4.5.19.1 admits a duration with a year or month part, mixed with
+    /// days or time too. `time_bucket` would keep only the year and month of
+    /// `timeAt` and refuse the mixed ones, so period k is counted from `timeAt`
+    /// in UTC instead, the period written into the statement once.
+    #[test]
+    fn a_calendar_period_numbers_its_periods_from_the_origin_in_utc() {
+        for period in ["P1M", "P1Y", "P1M1D", "P1MT2H"] {
+            let sql = sql_of(&from_the_fifteenth(period));
+            assert!(!sql.contains("time_bucket"), "{period}: {sql}");
+            assert!(
+                sql.contains(&format!(
+                    "SELECT '{period}'::interval AS \"period\", '2026-03-15 00:00:00.000000 +00:00'::timestamptz AS \"origin\""
+                )),
+                "{period}: {sql}"
+            );
+            pretty_assertions::assert_eq!(sql.matches(&format!("'{period}'::interval")).count(), 1, "{period}: {sql}");
+            assert!(sql.contains("* 2629746"), "{period}: {sql}");
+            assert!(sql.contains("AS \"period_estimate\""), "{period}: {sql}");
+            assert!(sql.contains("AS \"period_index\""), "{period}: {sql}");
+            assert!(sql.contains("AT TIME ZONE 'UTC'"), "{period}: {sql}");
+        }
+    }
+
+    /// A month-end clamp makes a period end at the next period's start rather
+    /// than at its own start plus the duration (from 31 January: 28 February to
+    /// 31 March, where 28 February plus a month is 28 March), so the end is
+    /// projected beside the start and keys the group with it.
+    #[test]
+    fn a_calendar_period_ends_at_the_next_periods_start() {
+        let sql = sql_of(&from_the_fifteenth("P1M"));
+        assert!(
+            sql.contains(r#"("calendar_grid"."period_index" + (1)) * ("calendar_grid"."period")) AT TIME ZONE 'UTC' AS "bucket_end""#),
+            "{sql}"
+        );
+        assert!(sql.contains(r#""bucket"."bucket_end" AS "bucket_end""#), "{sql}");
+        let group_by = sql.split("GROUP BY").nth(1).expect("a GROUP BY clause");
+        let group_by = group_by.split("ORDER BY").next().expect("a clause before ORDER BY").trim();
+        pretty_assertions::assert_eq!(
+            group_by,
+            "\"an\".\"name\", \"ah\".\"dataset_id\", \"bucket\".\"bucket_start\", \"bucket\".\"bucket_end\"",
+            "{sql}"
+        );
+    }
+
+    /// A retrieval without `timeAt` anchors a calendar grid where it anchors an
+    /// exact one: at the earliest instant of the Entity's history on the axis.
+    #[test]
+    fn a_calendar_period_without_time_at_numbers_from_the_entitys_earliest_instant() {
+        let sql = sql_of(&aggregated(vec![AggrMethod::TotalCount], Some("P1M")));
+        assert!(sql.contains("MIN(\"ah2\".\"observed_at\") AS \"origin\""), "{sql}");
+        assert!(sql.contains("\"bucket_origin\".\"origin\"::timestamptz AS \"origin\""), "{sql}");
     }
 
     #[test]

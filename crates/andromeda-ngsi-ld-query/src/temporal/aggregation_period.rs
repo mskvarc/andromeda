@@ -1,7 +1,7 @@
 //! The `aggrPeriodDuration` bucket width of an aggregated temporal query
 //! (clause 4.5.19).
 
-use crate::error::QueryError;
+use crate::{error::QueryError, temporal::period_grid::PeriodGrid};
 use iso8601_duration::Duration;
 
 /// A non-zero aggregation bucket width.
@@ -45,6 +45,18 @@ impl AggregationPeriod {
     #[must_use]
     pub fn as_iso8601(&self) -> String {
         self.0.to_string()
+    }
+
+    /// How the periods of this duration lie on the timeline: exact for a
+    /// duration of days and time, calendar for one with a year or month part,
+    /// fractional ones included.
+    #[must_use]
+    pub const fn grid(&self) -> PeriodGrid {
+        if self.0.year == 0.0 && self.0.month == 0.0 {
+            PeriodGrid::Exact
+        } else {
+            PeriodGrid::Calendar
+        }
     }
 }
 
@@ -106,7 +118,10 @@ fn is_zero(duration: &Duration) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        error::QueryError,
+        temporal::{aggregation_period::AggregationPeriod, period_grid::PeriodGrid},
+    };
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -134,5 +149,23 @@ mod tests {
     fn a_calendar_period_survives_parsing() {
         let period = AggregationPeriod::parse("P1M").expect("parses").expect("non-zero");
         assert_eq!(period.as_iso8601(), "P1M");
+    }
+
+    /// Clause 4.5.19.1 admits a duration mixing years or months with days or
+    /// time; a period of any of them lasts as long as the months it covers.
+    #[test]
+    fn a_duration_with_a_year_or_month_part_has_a_calendar_grid() {
+        for raw in ["P1M", "P1Y", "P1M1D", "P1MT2H", "P0.5M", "P2Y6M"] {
+            let period = AggregationPeriod::parse(raw).expect("parses").expect("non-zero");
+            assert_eq!(period.grid(), PeriodGrid::Calendar, "{raw}");
+        }
+    }
+
+    #[test]
+    fn a_duration_of_days_and_time_has_an_exact_grid() {
+        for raw in ["PT1H", "P1D", "PT1H30M", "P1DT12H", "PT0.5S"] {
+            let period = AggregationPeriod::parse(raw).expect("parses").expect("non-zero");
+            assert_eq!(period.grid(), PeriodGrid::Exact, "{raw}");
+        }
     }
 }
