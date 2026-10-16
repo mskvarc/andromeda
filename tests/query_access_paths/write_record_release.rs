@@ -110,7 +110,7 @@ async fn seed_released_history(pool: &PgPool, prefix: &str) {
     }
 }
 
-/// The number of distinct weekly chunks one history hypertable was split into.
+/// The number of distinct weekly chunks a history hypertable was split into.
 async fn chunk_count(pool: &PgPool, hypertable: &str) -> i64 {
     sqlx::query_scalar("SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_name = $1")
         .bind(hypertable)
@@ -124,12 +124,10 @@ async fn write_record_release_seeks_the_history_write_index_instead_of_scanning_
     let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
     seed_released_history(pool, SEED_PREFIX).await;
-    for hypertable in ["attribute_history", "scope_history"] {
-        assert!(
-            chunk_count(pool, hypertable).await >= SEEDED_WEEKS,
-            "the seeded {hypertable} must span one chunk per week for the plan to mean anything"
-        );
-    }
+    assert!(
+        chunk_count(pool, "attribute_history").await >= SEEDED_WEEKS,
+        "the seeded attribute_history must span one chunk per week for the plan to mean anything"
+    );
 
     let released: Vec<Uuid> = sqlx::query_scalar("SELECT write_id FROM write_records ORDER BY write_id LIMIT $1")
         .bind(RELEASED_WRITES)
@@ -153,7 +151,7 @@ async fn write_record_release_seeks_the_history_write_index_instead_of_scanning_
     // rollback keeps that true whatever the plan does.
     let plan = explain_rolled_back(pool, PlannerPaths::Unrestricted, &statement).await;
     for index in ["uq_attribute_history_write_identity", "uq_scope_history_write_identity"] {
-        assert!(plan.contains(index), "the release must seek {index} in each chunk: {plan}");
+        assert!(plan.contains(index), "the release must seek {index}: {plan}");
     }
     assert!(!plan.contains("Seq Scan on _hyper_"), "the release must not scan a history chunk: {plan}");
 

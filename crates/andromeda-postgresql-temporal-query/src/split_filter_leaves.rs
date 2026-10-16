@@ -193,7 +193,7 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#"FROM "temporal_append_entries" AS "pe" WHERE "pe"."entry_kind" IN (3)"#),
+            sql.contains(r#"FROM "temporal_append_entries" AS "pe" WHERE "pe"."entry_kind" IN (3, 4)"#),
             "{sql}"
         );
     }

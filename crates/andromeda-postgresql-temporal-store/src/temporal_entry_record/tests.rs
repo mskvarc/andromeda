@@ -19,12 +19,14 @@ use andromeda_postgresql_codes::{
     attribute_kind::AttributeKind,
     scope_value_kind::ScopeValueKind,
     temporal_entry_kind::TemporalEntryKind,
+    temporal_intent_reach::TemporalIntentReach,
     value_kind::ValueKind,
 };
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey};
 use andromeda_postgresql_schema::{temporal::AttributeHistory, temporal_intent::TemporalEntry};
 use andromeda_temporal::{
     append_intent::{TemporalAppendEntry, TemporalAppendIntent},
+    scope_entry_kind::ScopeEntryKind,
     scope_observation::ScopeObservation,
 };
 use bigdecimal::BigDecimal;
@@ -172,6 +174,7 @@ fn a_tombstone_entry_holds_its_family_and_deletion_instant() {
 fn a_scope_entry_holds_its_path() {
     let entry = only_entry(&intent(vec![TemporalAppendEntry::Scope {
         observation: ScopeObservation::Path("/Madrid".parse::<ScopePath>().expect("a scope path")),
+        kind: ScopeEntryKind::Event,
         observed_at: Some(observed_at()),
         instance: InstanceIdentity::generate(),
     }]));
@@ -184,12 +187,32 @@ fn a_scope_entry_holds_its_path() {
     assert_eq!(entry.deleted_at, None);
 }
 
+/// A Scope the write only stated the Entity is in waits under its own kind,
+/// which the application judges, and a Scope entry of either kind reaches the
+/// Scope statements alone.
+#[test]
+fn a_scope_assertion_waits_under_its_own_kind() {
+    let asserted = intent(vec![TemporalAppendEntry::Scope {
+        observation: ScopeObservation::Path("/Madrid".parse::<ScopePath>().expect("a scope path")),
+        kind: ScopeEntryKind::Assertion,
+        observed_at: Some(recorded_at()),
+        instance: InstanceIdentity::generate(),
+    }]);
+    let entry = only_entry(&asserted);
+    assert_eq!(entry.entry_kind, TemporalEntryKind::ScopeAssertion.code());
+    assert_eq!(entry.verbatim_scope_path.as_deref(), Some("/Madrid"));
+    let record = TemporalIntentRecord::of(&asserted, &keys(&asserted)).expect("the intent is storable");
+    assert!(record.reaches(TemporalIntentReach::ScopeEntry));
+    assert!(!record.reaches(TemporalIntentReach::AttributeEntry));
+}
+
 /// Clause 4.18 reserves the NGSI-LD Null for a deleted Scope, recorded as the
 /// deletion instant and no path.
 #[test]
 fn a_scope_deletion_holds_no_path() {
     let entry = only_entry(&intent(vec![TemporalAppendEntry::Scope {
         observation: ScopeObservation::Deleted,
+        kind: ScopeEntryKind::Event,
         observed_at: Some(recorded_at()),
         instance: InstanceIdentity::generate(),
     }]));

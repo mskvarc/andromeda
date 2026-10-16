@@ -7,8 +7,7 @@
 --
 --   postgis: geometry and geography types, GiST indexes and the spatial
 --     predicates behind geo-queries (clause 4.10)
---   timescaledb: hypertable partitioning of `attribute_history` and
---     `scope_history`
+--   timescaledb: hypertable partitioning of `attribute_history`
 --   ltree: label paths for Scopes (clause 4.18) and their `lquery`
 --     matching (clause 4.19)
 --   pg_trgm: trigram GIN indexes for unanchored clause 4.9 patterns

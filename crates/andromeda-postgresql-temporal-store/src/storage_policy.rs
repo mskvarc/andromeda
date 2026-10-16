@@ -1,8 +1,8 @@
 //! Reconciling the temporal hypertables' physical storage policy with the
 //! broker's configuration.
 //!
-//! The migrations declare a default chunk interval for `attribute_history` and
-//! `scope_history`, and nothing about the columnstore: on an edition that has
+//! The migrations declare a default chunk interval for `attribute_history`,
+//! and nothing about the columnstore: on an edition that has
 //! one, [`crate::columnstore_enablement`] enables it when a tenant is opened.
 //! The chunk interval and the columnstore lag are operator tunables, and a
 //! tunable that needed a migration to change would not be one, so when a tenant
@@ -108,7 +108,7 @@ impl TemporalRepository {
     /// [`TemporalStoreError::ColumnstoreSettingsDrift`] when a hypertable
     /// already carries the columnstore under other settings.
     pub async fn reconcile_storage_policy(&self, policy: &TemporalStoragePolicy) -> Result<TemporalStoragePolicyOutcome, TemporalStoreError> {
-        let mut hypertables = Vec::with_capacity(2);
+        let mut hypertables = Vec::new();
         for hypertable in HypertableName::iter() {
             let chunk_interval = match policy.chunk_interval_days {
                 Some(days) => reconcile_chunk_interval(&self.pool, hypertable, days).await?,
@@ -265,7 +265,7 @@ mod tests {
         assert!(untouched.is_unchanged());
         let adjusted = TemporalStoragePolicyOutcome {
             hypertables: vec![HypertableReconciliation {
-                hypertable: HypertableName::ScopeHistory,
+                hypertable: HypertableName::AttributeHistory,
                 chunk_interval: PolicyReconciliation::Unchanged,
                 columnstore_enabled: PolicyReconciliation::Unchanged,
                 columnstore_after: PolicyReconciliation::Adjusted,
@@ -320,7 +320,7 @@ mod tests {
     fn enabling_the_columnstore_is_a_write() {
         let enabled = TemporalStoragePolicyOutcome {
             hypertables: vec![HypertableReconciliation {
-                hypertable: HypertableName::ScopeHistory,
+                hypertable: HypertableName::AttributeHistory,
                 chunk_interval: PolicyReconciliation::Unchanged,
                 columnstore_enabled: PolicyReconciliation::Adjusted,
                 columnstore_after: PolicyReconciliation::Unchanged,

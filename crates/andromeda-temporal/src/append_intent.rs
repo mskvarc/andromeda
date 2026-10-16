@@ -1,6 +1,12 @@
 //! Typed durable temporal append intents.
 
-use crate::{error::TemporalError, intent_preparation::prepare, scope_observation::ScopeObservation, write_purpose::TemporalWritePurpose};
+use crate::{
+    error::TemporalError,
+    intent_preparation::prepare,
+    scope_entry_kind::ScopeEntryKind,
+    scope_observation::ScopeObservation,
+    write_purpose::TemporalWritePurpose,
+};
 use andromeda_context_commit::{history_record::HistoryRecord, write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -90,6 +96,8 @@ pub enum TemporalAppendEntry {
     Scope {
         /// What the observation records about the entity's scope.
         observation: ScopeObservation,
+        /// Whether the entry is an event or an assertion of the Scope in force.
+        kind: ScopeEntryKind,
         /// When the scope was observed (clause 4.5.6: the reified temporal
         /// scope carries `observedAt`); absent when the client declared none.
         observed_at: Option<DateTime<Utc>>,
@@ -214,6 +222,7 @@ impl TemporalAppendIntent {
 mod tests {
     use crate::{
         append_intent::{TemporalAppendEntry, TemporalAppendIntent, TemporalObservationIdentity},
+        scope_entry_kind::ScopeEntryKind,
         scope_observation::ScopeObservation,
         write_purpose::TemporalWritePurpose,
     };
@@ -398,6 +407,7 @@ mod tests {
             entity_id,
             entries: vec![TemporalAppendEntry::Scope {
                 observation: ScopeObservation::Path("/Madrid".parse::<ScopePath>().expect("a valid scope path")),
+                kind: ScopeEntryKind::Event,
                 observed_at: Some(recorded_at),
                 instance: InstanceIdentity::generate(),
             }],

@@ -1,6 +1,12 @@
 //! The intent the history consequences of one write prepare.
 
-use crate::{append_intent::TemporalAppendEntry, error::TemporalError, intent_preparation::prepare, scope_observation::ScopeObservation};
+use crate::{
+    append_intent::TemporalAppendEntry,
+    error::TemporalError,
+    intent_preparation::prepare,
+    scope_entry_kind::ScopeEntryKind,
+    scope_observation::ScopeObservation,
+};
 use andromeda_context_commit::{
     history_record::{HistoryRecord, tombstone},
     write_id::WriteId,
@@ -10,6 +16,7 @@ use andromeda_context_commit::{
 use andromeda_ngsi_ld_entity::{
     document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument},
     entity_state::EntityState,
+    scopes::Scopes,
 };
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -117,20 +124,119 @@ fn scopes_are_prepared_with_their_observed_at_or_dated_at_the_write() {
     ];
     let observed_at = Utc.with_ymd_and_hms(2020, 6, 1, 0, 0, 0).single().expect("valid instant");
 
-    let scopes: Vec<(ScopeObservation, Option<DateTime<Utc>>)> = prepared(&history)
+    pretty_assertions::assert_eq!(
+        scope_entries(&history),
+        vec![
+            (path("/Madrid"), ScopeEntryKind::Event, Some(recorded_at())),
+            (path("/Barcelona"), ScopeEntryKind::Event, Some(observed_at)),
+            (ScopeObservation::Deleted, ScopeEntryKind::Event, Some(observed_at)),
+        ]
+    );
+}
+
+/// What each scope entry of the intent `history` prepares records, of which
+/// kind, and when it was observed.
+fn scope_entries(history: &[HistoryRecord]) -> Vec<(ScopeObservation, ScopeEntryKind, Option<DateTime<Utc>>)> {
+    prepared(history)
         .into_iter()
         .filter_map(|entry| match entry {
-            TemporalAppendEntry::Scope { observation, observed_at, .. } => Some((observation, observed_at)),
+            TemporalAppendEntry::Scope {
+                observation,
+                kind,
+                observed_at,
+                ..
+            } => Some((observation, kind, observed_at)),
             TemporalAppendEntry::Observation { .. } | TemporalAppendEntry::Tombstone { .. } => None,
         })
-        .collect();
-    let path = |raw: &str| ScopeObservation::Path(raw.parse::<ScopePath>().expect("a valid scope path"));
+        .collect()
+}
+
+fn path(raw: &str) -> ScopeObservation {
+    ScopeObservation::Path(raw.parse::<ScopePath>().expect("a valid scope path"))
+}
+
+/// The Temporal Evolution document holding the reified scope `instance`.
+fn reified_document(instance: InstanceDocument) -> HistoryRecord {
+    let scope: AttributeName = expanded_properties::SCOPE.as_str().parse().expect("valid attribute name");
+    HistoryRecord::EvolutionInstances(Arc::new(EntityDocument::new(
+        None,
+        Vec::new(),
+        None,
+        None,
+        IndexMap::from([(scope, AttributeMember::Instances(vec![instance]))]),
+    )))
+}
+
+/// A non-reified `scope` has no instant of its own: it states the Entity is
+/// in that Scope at the write, which the history judges.
+#[test]
+fn a_non_reified_temporal_scope_is_an_assertion_at_the_write() {
+    let history = [written(&json!([{
+        "@id": entity_id(),
+        "@type": [VEHICLE],
+        "https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/Madrid"}, {"@value": "Madrid/Centro"}]
+    }]))];
+
     pretty_assertions::assert_eq!(
-        scopes,
+        scope_entries(&history),
         vec![
-            (path("/Madrid"), Some(recorded_at())),
-            (path("/Barcelona"), Some(observed_at)),
-            (ScopeObservation::Deleted, Some(observed_at)),
+            (path("/Madrid"), ScopeEntryKind::Assertion, Some(recorded_at())),
+            (path("Madrid/Centro"), ScopeEntryKind::Assertion, Some(recorded_at())),
+        ]
+    );
+}
+
+/// Clauses 4.5.6 and 4.5.7: a reified scope instance carries its own
+/// `observedAt`, so it is an event dated there.
+#[test]
+fn a_reified_temporal_scope_is_an_instance_at_its_observed_at() {
+    let history = [reified_document(reified_scope(&json!([{"@value": "/Madrid"}]), "2026-03-01T00:00:00Z"))];
+    let observed_at = Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).single().expect("valid instant");
+
+    pretty_assertions::assert_eq!(scope_entries(&history), vec![(path("/Madrid"), ScopeEntryKind::Event, Some(observed_at))]);
+}
+
+#[test]
+fn an_undated_reified_temporal_scope_is_an_instance_at_the_write() {
+    let scope: AttributeName = expanded_properties::SCOPE.as_str().parse().expect("valid attribute name");
+    let undated = json!({"@type": [PROPERTY], expanded_properties::VALUE.as_str(): [{"@value": "/Madrid"}]});
+    let instance = InstanceDocument::from_slice(&scope, &serde_json::to_vec(&undated).expect("JSON")).expect("a reified scope instance decodes");
+
+    pretty_assertions::assert_eq!(
+        scope_entries(&[reified_document(instance)]),
+        vec![(path("/Madrid"), ScopeEntryKind::Event, Some(recorded_at()))]
+    );
+}
+
+/// Clause 4.18 reserves the NGSI-LD Null for a deleted Scope, so a Temporal
+/// API write setting the non-reified `scope` to it removes the Scope, an event
+/// whatever the history holds.
+#[test]
+fn a_non_reified_temporal_scope_set_to_the_ngsi_ld_null_is_a_removal() {
+    let history = [written(&json!([{
+        "@id": entity_id(),
+        "@type": [VEHICLE],
+        "https://uri.etsi.org/ngsi-ld/scope": [{"@value": "urn:ngsi-ld:null"}]
+    }]))];
+
+    pretty_assertions::assert_eq!(
+        scope_entries(&history),
+        vec![(ScopeObservation::Deleted, ScopeEntryKind::Event, Some(recorded_at()))]
+    );
+}
+
+/// A Core write restating the Scope the Entity held asserts each path at the
+/// write; its removal of a Scope is an event.
+#[test]
+fn a_restated_core_scope_is_an_assertion_and_a_removal_an_event() {
+    let restated = "/Madrid".parse::<ScopePath>().expect("a valid scope path");
+    let scopes = Scopes::try_from_paths([restated]).expect("one path");
+
+    pretty_assertions::assert_eq!(
+        scope_entries(&[HistoryRecord::ScopeAssertion(scopes), HistoryRecord::ScopeRemoval]),
+        vec![
+            (path("/Madrid"), ScopeEntryKind::Assertion, Some(recorded_at())),
+            (ScopeObservation::Deleted, ScopeEntryKind::Event, Some(recorded_at())),
         ]
     );
 }

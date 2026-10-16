@@ -1,8 +1,9 @@
 //! Removing the history rows an application's entries replace.
 //!
 //! An entry naming an instance that history already holds (a client-supplied
-//! `instanceId`, clause 4.5.7, or a replayed Scope instance) replaces that row,
-//! which may sit in a converted chunk. TimescaleDB narrows the compressed
+//! `instanceId`, clause 4.5.7, or a replayed Scope instance) replaces that row.
+//! An attribute history row may sit in a converted chunk, and TimescaleDB
+//! narrows the compressed
 //! batches an `UPDATE` or `DELETE` decompresses only by bound values on the
 //! segmenting column and on the order column's min/max summary; a delete
 //! correlated to the entries would have it decompress every batch of every
@@ -49,7 +50,7 @@ struct ReplacedWriteOrdinal;
 pub(crate) enum ReplacedHistory {
     /// `attribute_history`, segmented by stream.
     AttributeInstances,
-    /// `scope_history`, segmented by temporal entity.
+    /// `scope_history`, a plain table, by temporal entity.
     ScopeInstances,
 }
 
@@ -146,9 +147,10 @@ fn identity_columns() -> [UnnestColumn; 3] {
 
 /// Remove the rows the identity read `rows` returned from `history`.
 ///
-/// A replaced row's batch is decompressed whole, so the transaction lifts the
-/// decompression limit before the delete: the bound values already confine it
-/// to the batches holding the replaced rows.
+/// A replaced attribute row's batch is decompressed whole, so the transaction
+/// lifts the decompression limit before the delete: the bound values already
+/// confine it to the batches holding the replaced rows. `scope_history` holds
+/// no converted chunk.
 ///
 /// # Errors
 ///
@@ -164,7 +166,10 @@ pub(crate) async fn remove_replaced(
     if replaced.is_empty() {
         return Ok(());
     }
-    allow_confined_decompression(connection).await?;
+    match history {
+        ReplacedHistory::AttributeInstances => allow_confined_decompression(connection).await?,
+        ReplacedHistory::ScopeInstances => {}
+    }
     let (sql, values) = history.delete_statement(schema, &replaced);
     sqlx::query_with(AssertSqlSafe(sql), values).execute(connection).await?;
     Ok(())

@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn the_columnstore_lag_is_read_from_the_compression_policy_job_as_an_interval() {
-        let (sql, values) = columnstore_policy_statement("scope_history").build(PostgresQueryBuilder);
+        let (sql, values) = columnstore_policy_statement("attribute_history").build(PostgresQueryBuilder);
         assert_eq!(
             sql,
             r#"SELECT ("config" ->> $1)::interval FROM "timescaledb_information"."jobs" WHERE "hypertable_name" = $2 AND "proc_name" = $3"#
@@ -332,10 +332,10 @@ mod tests {
 
     #[test]
     fn the_chunk_span_reads_the_latest_converted_end_and_the_earliest_start_of_the_named_hypertables() {
-        let sql = chunk_span_statement(&["attribute_history", "scope_history"]).to_string(PostgresQueryBuilder);
+        let sql = chunk_span_statement(&["attribute_history"]).to_string(PostgresQueryBuilder);
         assert_eq!(
             sql,
-            r#"SELECT MAX((CASE WHEN ("is_compressed") THEN "range_end" ELSE NULL END)) AS "compressed_until", MIN("range_start") AS "history_from" FROM "timescaledb_information"."chunks" WHERE "hypertable_name" IN ('attribute_history', 'scope_history')"#
+            r#"SELECT MAX((CASE WHEN ("is_compressed") THEN "range_end" ELSE NULL END)) AS "compressed_until", MIN("range_start") AS "history_from" FROM "timescaledb_information"."chunks" WHERE "hypertable_name" IN ('attribute_history')"#
         );
     }
 

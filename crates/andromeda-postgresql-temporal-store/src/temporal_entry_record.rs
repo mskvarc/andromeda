@@ -222,6 +222,10 @@ impl TemporalIntentRecord {
     }
 }
 
+/// The entry codes a Scope entry is stored under: an event, or an assertion
+/// of the Scope in force.
+const SCOPE_KINDS: [i16; 2] = [TemporalEntryKind::Scope.code(), TemporalEntryKind::ScopeAssertion.code()];
+
 /// Whether an intent stating `entity_type_name_keys` and holding `entries`
 /// meets `need`.
 ///
@@ -229,7 +233,7 @@ impl TemporalIntentRecord {
 /// an instance: clause 4.5.1 requires only `id` and `type` of an Entity, so a
 /// write observing one with no attribute still extends its evolution.
 fn meets(entity_type_name_keys: &[i32], entries: &[TemporalEntryRecord], need: TemporalIntentReach) -> bool {
-    let is_attribute = |entry: &TemporalEntryRecord| entry.entry_kind != TemporalEntryKind::Scope.code();
+    let is_attribute = |entry: &TemporalEntryRecord| !SCOPE_KINDS.contains(&entry.entry_kind);
     match need {
         TemporalIntentReach::TypedIntent => !entity_type_name_keys.is_empty(),
         TemporalIntentReach::UntypedObservation => {
@@ -277,6 +281,7 @@ fn entry_record(entry: &TemporalAppendEntry, recorded_at: DateTime<Utc>, keys: &
         )),
         TemporalAppendEntry::Scope {
             observation,
+            kind,
             observed_at,
             instance,
         } => {
@@ -288,7 +293,7 @@ fn entry_record(entry: &TemporalAppendEntry, recorded_at: DateTime<Utc>, keys: &
                 ScopeObservation::Deleted => ScopeHistoryValue::Tombstone { deleted_at: recorded_at },
             };
             let mut entry = record(
-                Grain::scope(),
+                Grain::scope(*kind),
                 ValueColumns::of_scope(&value),
                 MemberColumns::of(HistoryMembers::default())?,
                 // Clause 4.5.6: the temporal Scope carries `observedAt`,

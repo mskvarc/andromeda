@@ -1,14 +1,18 @@
 -- ============================================================================
 -- 0030: Temporal hypertables
 -- ============================================================================
--- Converts the live `attribute_history` and `scope_history` into TimescaleDB
--- hypertables partitioned on `recorded_at`. A Snapshot schema keeps both as
--- plain tables: a bounded, read-mostly captured history gains nothing from
--- chunking. Both tables are still empty when they are converted, so no row
--- moves, and every index they already carry is created on each chunk.
+-- Converts the live `attribute_history` into a TimescaleDB hypertable
+-- partitioned on `recorded_at`. A Snapshot schema keeps it a plain table: a
+-- bounded, read-mostly captured history gains nothing from chunking. The table
+-- is still empty when it is converted, so no row moves, and every index it
+-- already carries is created on each chunk.
+--
+-- `scope_history` stays a plain table. It holds one event per change of an
+-- Entity's Scope, not one per write, and retention keeps the Scope in force at
+-- its cutoff, which a dropped chunk would take with it (clause 4.18).
 --
 -- The default partition-column index is not created. TimescaleDB requires
--- every unique index on a hypertable to contain the partition column, so each
+-- every unique index on a hypertable to contain the partition column, so the
 -- table's one unique constraint already leads with `recorded_at` and serves
 -- every `recorded_at`-led scan. The default index would duplicate it at the
 -- cost of one more index write per row.
@@ -19,7 +23,3 @@
 -- ============================================================================
 select
     create_hypertable('attribute_history', by_range('recorded_at', interval '7 days'), create_default_indexes => false);
-
-select
-    create_hypertable('scope_history', by_range('recorded_at', interval '7 days'), create_default_indexes => false);
-

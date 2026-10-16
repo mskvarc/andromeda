@@ -18,6 +18,8 @@ mod history_statements;
 pub mod intent_source;
 /// Removing the history rows an application's entries replace.
 mod replaced_rows;
+/// Which Scope entries an application records.
+mod scope_judgement;
 
 use crate::{
     duplicate_instance_claim::claim_write_failure,

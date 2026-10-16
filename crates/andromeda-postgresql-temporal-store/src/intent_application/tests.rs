@@ -17,6 +17,7 @@ use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_codes::temporal_intent_reach::TemporalIntentReach;
 use andromeda_temporal::{
     append_intent::{TemporalAppendEntry, TemporalAppendIntent},
+    scope_entry_kind::ScopeEntryKind,
     scope_observation::ScopeObservation,
 };
 use pretty_assertions::assert_eq;
@@ -167,13 +168,32 @@ fn the_application_reads_the_entries_from_the_queue_rows_it_holds() {
     }
 }
 
+/// The source relation `relation` names under `i`, as the Scope judgement
+/// reads it again under `sj`.
+fn earlier(relation: &str) -> String {
+    relation.replace(r#"AS "i""#, r#"AS "sj""#)
+}
+
+/// The part of the guard of a Scope assertion only the drain renders: the
+/// queued intents it holds claimed are in its source, and every intent queued
+/// when a commit records its own came before it.
+const DRAIN_GUARD: &str = r#" AND "sq"."intent_key" < "i"."intent_key" AND "sq"."intent_key" <> ALL($1::bigint[])"#;
+
 #[test]
 fn the_commit_and_the_drain_render_one_statement_shape() {
     let drain: Vec<(StepRole, String)> = rendered_steps()
         .into_iter()
-        .map(|(role, sql)| (role, sql.replace(QUEUED, "<source>")))
+        .map(|(role, sql)| {
+            (
+                role,
+                sql.replace(QUEUED, "<source>").replace(&earlier(QUEUED), "<source>").replace(DRAIN_GUARD, ""),
+            )
+        })
         .collect();
-    let commit: Vec<(StepRole, String)> = commit_steps().into_iter().map(|(role, sql)| (role, sql.replace(BOUND, "<source>"))).collect();
+    let commit: Vec<(StepRole, String)> = commit_steps()
+        .into_iter()
+        .map(|(role, sql)| (role, sql.replace(BOUND, "<source>").replace(&earlier(BOUND), "<source>")))
+        .collect();
     assert_eq!(drain, commit);
     assert!(drain.iter().all(|(_, sql)| sql.contains("<source>")), "{drain:?}");
 }
@@ -182,9 +202,110 @@ fn the_commit_and_the_drain_render_one_statement_shape() {
 fn a_commit_binds_its_intents_as_one_typed_array() {
     for (_, sql) in commit_steps() {
         assert!(sql.contains(BOUND), "{sql}");
-        assert_eq!(sql.matches("$1::temporal_intent[]").count(), sql.matches(BOUND).count(), "{sql}");
-        assert!(!sql.contains("temporal_append_intents"), "{sql}");
+        assert_eq!(
+            sql.matches("$1::temporal_intent[]").count(),
+            sql.matches(BOUND).count() + sql.matches(&earlier(BOUND)).count(),
+            "{sql}"
+        );
+        let queue_reads = sql.matches("temporal_append_intents").count();
+        assert_eq!(queue_reads, sql.matches(r#"FROM "temporal_append_intents" AS "sq""#).count(), "{sql}");
     }
+}
+
+/// The Scope insert of the drain.
+fn scope_insert() -> String {
+    writing("scope_history")
+}
+
+/// Clause 4.18: an assertion of the Scope already in force sets nothing, so
+/// it is inserted only when the state at the newest event at or before its
+/// write differs on the `recorded_at` or the `observed_at` axis; the other
+/// two axes order every event as `recorded_at` does.
+#[test]
+fn an_assertion_is_inserted_only_when_either_head_differs() {
+    let sql = scope_insert();
+    for axis in ["recorded_at", "observed_at"] {
+        assert!(
+            sql.contains(&format!(r#"WHERE "sah"."{axis}" <= "i"."recorded_at" ORDER BY "sah"."{axis}" DESC LIMIT 1"#)),
+            "{axis}: {sql}"
+        );
+    }
+    assert!(
+        sql.contains(r#"FROM "scope_history" AS "sr" WHERE "sr"."temporal_entity_key" = "te"."temporal_entity_key""#),
+        "{sql}"
+    );
+    assert!(
+        sql.contains(r#"FROM UNNEST("i"."entries") AS "sa" WHERE "sa"."entry_kind" = 4 ORDER BY ("sa"."verbatim_scope_path") COLLATE "C" ASC"#),
+        "{sql}"
+    );
+    assert_eq!(sql.matches(r#"COLLATE "C") = ((ARRAY("#).count(), 2, "{sql}");
+}
+
+/// A change of Scope, a reified instance and a removal are events whatever
+/// the history holds: only the assertion kind is judged.
+#[test]
+fn a_change_an_instance_and_a_removal_are_inserted_unconditionally() {
+    let sql = scope_insert();
+    assert!(sql.contains(r#""e"."entry_kind" IN (3, 4)"#), "{sql}");
+    assert!(
+        sql.contains(r#"("e"."entry_kind" <> 4 OR EXISTS(SELECT 1 FROM "temporal_append_intents" AS "sq""#),
+        "{sql}"
+    );
+}
+
+/// The statement cannot see the rows it inserts, so an assertion is judged
+/// against the Scope entries of its Entity's intents before its own in the
+/// batch as well as the recorded events: one equal to the Scope an earlier
+/// entry of the batch set is dropped, and one an earlier entry changed is
+/// recorded.
+#[test]
+fn an_assertion_is_judged_against_the_earlier_scope_entries_of_its_entity_in_the_batch() {
+    let sql = scope_insert();
+    assert!(
+        sql.contains(&format!(
+            r#"UNION ALL (SELECT "sj"."recorded_at" AS "recorded_at", "se"."observed_at" AS "observed_at", "se"."verbatim_scope_path" AS "verbatim_scope_path" FROM {}, UNNEST("sj"."entries") AS "se" WHERE "sj"."entity_id" = "i"."entity_id" AND "sj"."intent_key" < "i"."intent_key" AND "se"."entry_kind" IN (3, 4))"#,
+            earlier(QUEUED)
+        )),
+        "{sql}"
+    );
+}
+
+/// Both heads read the recorded events and the earlier entries of the batch
+/// together, so the first assertion of an Entity in a batch is judged against
+/// the recorded heads alone.
+#[test]
+fn the_first_assertion_of_an_entity_in_the_batch_is_judged_against_both_heads() {
+    let sql = scope_insert();
+    let union = r#"FROM "scope_history" AS "sr" WHERE "sr"."temporal_entity_key" = "te"."temporal_entity_key" UNION ALL"#;
+    assert_eq!(sql.matches(union).count(), 4, "two reads of each of two axes: {sql}");
+}
+
+/// Intents are claimed in key order across workers and a retry reschedules
+/// one, so an earlier intent of the Entity may still be queued outside the
+/// batch, or applied by a transaction not yet committed: the assertion is
+/// inserted unjudged. A commit recording its own intents treats every queued
+/// intent of its Entity as earlier, and a Snapshot branch has no queue.
+#[test]
+fn an_assertion_with_an_earlier_intent_of_its_entity_still_queued_is_inserted() {
+    let drain = scope_insert();
+    assert!(
+        drain.contains(&format!(
+            r#"OR EXISTS(SELECT 1 FROM "temporal_append_intents" AS "sq" WHERE "sq"."entity_id" = "i"."entity_id"{DRAIN_GUARD}) OR"#
+        )),
+        "{drain}"
+    );
+    let commit = writing_in(commit_steps(), "scope_history");
+    assert!(
+        commit.contains(r#"OR EXISTS(SELECT 1 FROM "temporal_append_intents" AS "sq" WHERE "sq"."entity_id" = "i"."entity_id") OR"#),
+        "{commit}"
+    );
+    let record = WriteRecord::restored(WriteId::mint(), recorded_at());
+    let schema = Alias::new("snap_1").into_iden();
+    let snapshot = writing_in(
+        steps_over(&IntentSource::Bound { record: &record, intents: &[] }, Some(&schema)),
+        r#"snap_1"."scope_history"#,
+    );
+    assert!(!snapshot.contains("temporal_append_intents"), "{snapshot}");
 }
 
 #[test]
@@ -256,6 +377,7 @@ fn a_commit_runs_only_the_statements_its_entries_reach() {
     )]));
     let scoped = record_of(&intent(vec![TemporalAppendEntry::Scope {
         observation: ScopeObservation::Path("/Madrid".parse::<ScopePath>().expect("a scope path")),
+        kind: ScopeEntryKind::Event,
         observed_at: None,
         instance: InstanceIdentity::generate(),
     }]));
@@ -617,6 +739,7 @@ fn only_an_intent_stating_no_type_reaches_the_untyped_stream_insert() {
     assert!(!reaches(&[untyped(Vec::new())]));
     assert!(!reaches(&[untyped(vec![TemporalAppendEntry::Scope {
         observation: ScopeObservation::Deleted,
+        kind: ScopeEntryKind::Event,
         observed_at: None,
         instance: InstanceIdentity::generate(),
     }])]));

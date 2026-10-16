@@ -412,13 +412,16 @@ mod tests {
     /// Annex C clause C.5.16 bounds the instances by the Scope in force at each
     /// of them, which the statement reads as the Entity's scope intervals,
     /// judged once for the Entity it names, rather than as a probe per
-    /// instance.
+    /// instance. The recorded events are read once; the other reads of
+    /// `scope_history` judge a queued Scope assertion, two axes each read for
+    /// the head and for its state.
     #[test]
     fn a_temporal_scope_q_reads_the_scope_intervals_once_per_entity() {
         let mut compiled = minimal_compiled();
         compiled.entities.scope_q = Some(ScopeQuery::parse("/Madrid/#").expect("valid scope query"));
         let sql = sql_of(&compiled);
-        assert_eq!(sql.matches(r#"FROM "scope_history""#).count(), 1, "{sql}");
+        assert_eq!(sql.matches(r#"FROM "scope_history" AS "rsh""#).count(), 1, "{sql}");
+        assert_eq!(sql.matches(r#"FROM "scope_history" AS "pj""#).count(), 4, "{sql}");
         assert!(!sql.contains("sh_next"), "{sql}");
         assert!(
             sql.contains(

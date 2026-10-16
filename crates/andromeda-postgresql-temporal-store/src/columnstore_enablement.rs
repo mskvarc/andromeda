@@ -10,9 +10,7 @@
 //! Segmentation. `attribute_history` is segmented by `stream_key`: a temporal
 //! query names streams, so a segment holds exactly the rows one stream
 //! contributed to the chunk and a stream-led scan touches only its own
-//! segments. `scope_history` has no stream, so its segment is the temporal
-//! entity -- a scope query names entities, and one entity's scope rows in a
-//! chunk are the rows it reads.
+//! segments.
 //!
 //! Ordering. Within a segment rows are ordered by `recorded_at DESC, write_id,
 //! write_ordinal`, the write-deduplication key of each hypertable's `uq_*_write`
@@ -245,9 +243,10 @@ mod tests {
 
     #[test]
     fn a_hypertable_carrying_the_expected_settings_is_left_alone() {
-        for hypertable in [HypertableName::AttributeHistory, HypertableName::ScopeHistory] {
-            assert_eq!(plan_enablement(hypertable, &expected(hypertable)), EnablementPlan::Unchanged, "{hypertable}");
-        }
+        assert_eq!(
+            plan_enablement(HypertableName::AttributeHistory, &expected(HypertableName::AttributeHistory)),
+            EnablementPlan::Unchanged
+        );
     }
 
     #[test]
@@ -259,12 +258,12 @@ mod tests {
 
     #[test]
     fn a_hypertable_enabled_under_another_order_is_drift() {
-        let mut ascending = expected(HypertableName::ScopeHistory);
+        let mut ascending = expected(HypertableName::AttributeHistory);
         ascending.order_by[0].direction = SortDirection::Ascending;
-        assert_eq!(plan_enablement(HypertableName::ScopeHistory, &ascending), EnablementPlan::Drift);
-        let mut shorter = expected(HypertableName::ScopeHistory);
+        assert_eq!(plan_enablement(HypertableName::AttributeHistory, &ascending), EnablementPlan::Drift);
+        let mut shorter = expected(HypertableName::AttributeHistory);
         shorter.order_by.pop();
-        assert_eq!(plan_enablement(HypertableName::ScopeHistory, &shorter), EnablementPlan::Drift);
+        assert_eq!(plan_enablement(HypertableName::AttributeHistory, &shorter), EnablementPlan::Drift);
     }
 
     /// A drift names every setting the catalogue reports, so an operator can

@@ -64,9 +64,11 @@ pub enum AddressedInstances<'a> {
 /// [`OverwritePolicy::Preserve`] an instance the entity already held is kept
 /// as it was (clause 5.6.3.4), and an instance the write deleted, or never
 /// stored because clause 5.6.2.4 has it ignored, is not in `current`. The
-/// scope is observed as `current` holds it, and under
-/// [`OverwritePolicy::Preserve`] only when the write changed it. An attribute
-/// observed exactly as `current` holds it is shared with `current`, not copied.
+/// scope is observed as `current` holds it, and only when the write changed
+/// it: a write restating the Scope the entity held sets no new validity
+/// (clause 4.18), and [`restated_scope`] names that Scope instead. An
+/// attribute observed exactly as `current` holds it is shared with `current`,
+/// not copied.
 #[must_use]
 pub fn written_observation(addressed: AddressedInstances<'_>, previous: Option<&EntityState>, current: &EntityState) -> Option<EntityState> {
     let mut observed = Attributes::new();
@@ -75,7 +77,7 @@ pub fn written_observation(addressed: AddressedInstances<'_>, previous: Option<&
         AddressedInstances::EntityFragment { fragment, overwrite } => {
             if fragment.scope().is_some() {
                 // clone: the observation owns its copy of the scope the entity holds.
-                scope = written_scope(current, previous, overwrite).cloned();
+                scope = changed_scope(scope_write(current, previous, overwrite)).cloned();
             }
             for (name, member) in fragment.attributes() {
                 if let Some(instances) = written_instances(name, member.instances(), current, previous, overwrite) {
@@ -104,7 +106,7 @@ pub fn written_observation(addressed: AddressedInstances<'_>, previous: Option<&
         }
         AddressedInstances::Replacement => {
             // clone: the observation owns its copy of the scope the entity holds.
-            scope = current.scope().cloned();
+            scope = changed_scope(scope_write(current, previous, OverwritePolicy::Overwrite)).cloned();
             // clone: reference-count bumps; the observation shares every attribute the replacement holds.
             observed = current.attributes().clone();
         }
@@ -158,15 +160,68 @@ fn written_instances(
     Some(Arc::new(observed))
 }
 
-/// The scope the write left on the entity, when it is one the write applied.
-fn written_scope<'a>(current: &'a EntityState, previous: Option<&EntityState>, overwrite: OverwritePolicy) -> Option<&'a Scopes> {
-    let scope = current.scope()?;
-    let unchanged = previous.and_then(EntityState::scope) == Some(scope);
+/// The Scope a write named restated unchanged, when it overwrote or replaced
+/// the entity's Scope with the one the entity already held.
+///
+/// Clause 4.18 makes a Scope valid "from the time it has been set", and a write
+/// restating the Scope already in force sets nothing new, so the write records
+/// no change of Scope. It still states that the entity is in that Scope, which
+/// the Temporal Evolution may not hold: Delete Temporal Evolution (clause
+/// 5.6.16), retention and Temporal API writes all edit history apart from
+/// current state. `None` when the write named no Scope, changed it, left the
+/// entity without one, or did not overwrite it (clause 5.6.3.4).
+#[must_use]
+pub fn restated_scope<'a>(addressed: AddressedInstances<'_>, previous: Option<&EntityState>, current: &'a EntityState) -> Option<&'a Scopes> {
+    let write = match addressed {
+        AddressedInstances::EntityFragment { fragment, overwrite } => {
+            fragment.scope()?;
+            scope_write(current, previous, overwrite)
+        }
+        AddressedInstances::AttributeFragment { .. } => return None,
+        AddressedInstances::Replacement => scope_write(current, previous, OverwritePolicy::Overwrite),
+    };
+    match write {
+        ScopeWrite::Restated(scope) => Some(scope),
+        ScopeWrite::Changed(_) | ScopeWrite::Untouched => None,
+    }
+}
+
+/// What a write that named the entity's Scope did to it.
+#[derive(Clone, Copy, Debug)]
+enum ScopeWrite<'a> {
+    /// The write left the entity in a Scope it did not hold before.
+    Changed(&'a Scopes),
+    /// The write overwrote the Scope with the one the entity already held.
+    Restated(&'a Scopes),
+    /// The write left no Scope, or applied none.
+    Untouched,
+}
+
+/// What the write left of the entity's Scope, `previous` being `None` when
+/// the write created the entity.
+fn scope_write<'a>(current: &'a EntityState, previous: Option<&EntityState>, overwrite: OverwritePolicy) -> ScopeWrite<'a> {
+    let Some(scope) = current.scope() else {
+        return ScopeWrite::Untouched;
+    };
+    if previous.and_then(EntityState::scope) != Some(scope) {
+        return ScopeWrite::Changed(scope);
+    }
     // Clause 5.6.3.4 appends only "the Scopes in the Fragment that are not part
     // of the value of scope of the target Entity" when overwriting is
     // disabled, so a scope that came out unchanged is one the write did not
     // apply.
-    (overwrite == OverwritePolicy::Overwrite || !unchanged).then_some(scope)
+    match overwrite {
+        OverwritePolicy::Overwrite => ScopeWrite::Restated(scope),
+        OverwritePolicy::Preserve => ScopeWrite::Untouched,
+    }
+}
+
+/// The Scope a write changed, when it changed one.
+const fn changed_scope(write: ScopeWrite<'_>) -> Option<&Scopes> {
+    match write {
+        ScopeWrite::Changed(scope) => Some(scope),
+        ScopeWrite::Restated(_) | ScopeWrite::Untouched => None,
+    }
 }
 
 #[cfg(test)]
@@ -178,7 +233,7 @@ mod tests {
         entity_state::EntityState,
         entity_types::EntityTypes,
         family_value::FamilyValue,
-        history::written_observation::{AddressedInstances, written_observation},
+        history::written_observation::{AddressedInstances, restated_scope, written_observation},
         instance::Instance,
         non_empty::NonEmpty,
         operation::{
@@ -542,5 +597,79 @@ mod tests {
 
         let shared = |state: &EntityState| Arc::clone(state.attributes().get_shared(TEMPERATURE).expect("the attribute"));
         assert!(Arc::ptr_eq(&shared(&current), &shared(&observed)));
+    }
+
+    /// Clause 4.18: a merge restating the Scope the entity held sets nothing
+    /// new, so the observation carries no Scope and the Scope is named as
+    /// restated instead.
+    #[test]
+    fn an_overwriting_merge_restating_the_held_scope_observes_no_scope_and_restates_it() {
+        let written = EntityDocument::new(None, Vec::new(), Some(Slot::Set(scope(&["/Madrid"]))), None, IndexMap::new());
+        let mut held = building(Vec::new());
+        held.set_scope(Some(scope(&["/Madrid"])));
+        let addressed = entity_fragment(&written, OverwritePolicy::Overwrite);
+
+        pretty_assertions::assert_eq!(written_observation(addressed, Some(&held), &held), None);
+        pretty_assertions::assert_eq!(restated_scope(addressed, Some(&held), &held), Some(&scope(&["/Madrid"])));
+    }
+
+    /// A merge changing the Scope observes the new one and restates nothing.
+    #[test]
+    fn an_overwriting_merge_changing_the_scope_observes_it_and_restates_nothing() {
+        let written = EntityDocument::new(None, Vec::new(), Some(Slot::Set(scope(&["/Madrid"]))), None, IndexMap::new());
+        let mut before = building(Vec::new());
+        before.set_scope(Some(scope(&["/Berlin"])));
+        let mut after = building(Vec::new());
+        after.set_scope(Some(scope(&["/Madrid"])));
+        let addressed = entity_fragment(&written, OverwritePolicy::Overwrite);
+
+        let observed = written_observation(addressed, Some(&before), &after);
+        pretty_assertions::assert_eq!(observed.as_ref().and_then(EntityState::scope), Some(&scope(&["/Madrid"])));
+        pretty_assertions::assert_eq!(restated_scope(addressed, Some(&before), &after), None);
+    }
+
+    /// Clause 5.6.3.4: a no-overwrite append adding no path applied nothing,
+    /// so it neither observes nor restates the Scope.
+    #[test]
+    fn a_no_overwrite_append_adding_no_scope_path_restates_nothing() {
+        let written = EntityDocument::new(None, Vec::new(), Some(Slot::Set(scope(&["/Madrid"]))), None, IndexMap::new());
+        let mut held = building(Vec::new());
+        held.set_scope(Some(scope(&["/Madrid"])));
+
+        pretty_assertions::assert_eq!(restated_scope(entity_fragment(&written, OverwritePolicy::Preserve), Some(&held), &held), None);
+    }
+
+    /// A replacement holding the Scope the entity held restates it and
+    /// observes only its attributes; one changing it observes the new Scope.
+    #[test]
+    fn a_replacement_restates_an_unchanged_scope_and_observes_a_changed_one() {
+        let mut current = building(vec![(NAME, vec![(None, property(text("lobby")))])]);
+        current.set_scope(Some(scope(&["/Madrid"])));
+        let mut same = building(Vec::new());
+        same.set_scope(Some(scope(&["/Madrid"])));
+        let mut other = building(Vec::new());
+        other.set_scope(Some(scope(&["/Berlin"])));
+
+        let restated = written_observation(AddressedInstances::Replacement, Some(&same), &current).expect("an observation");
+        pretty_assertions::assert_eq!(restated.scope(), None);
+        pretty_assertions::assert_eq!(
+            restated_scope(AddressedInstances::Replacement, Some(&same), &current),
+            Some(&scope(&["/Madrid"]))
+        );
+
+        let changed = written_observation(AddressedInstances::Replacement, Some(&other), &current).expect("an observation");
+        pretty_assertions::assert_eq!(changed.scope(), Some(&scope(&["/Madrid"])));
+        pretty_assertions::assert_eq!(restated_scope(AddressedInstances::Replacement, Some(&other), &current), None);
+    }
+
+    /// An attribute fragment names no Scope.
+    #[test]
+    fn an_attribute_fragment_restates_no_scope() {
+        let mut held = building(vec![(TEMPERATURE, vec![(None, property(number(1)))])]);
+        held.set_scope(Some(scope(&["/Madrid"])));
+        let written = property_document(number(2), None);
+        let attribute = name(TEMPERATURE);
+
+        pretty_assertions::assert_eq!(restated_scope(attribute_fragment(&written, &attribute), Some(&held), &held), None);
     }
 }

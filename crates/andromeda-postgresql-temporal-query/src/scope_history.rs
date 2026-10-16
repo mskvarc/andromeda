@@ -276,7 +276,7 @@ mod tests {
     fn the_scope_history_read_unions_pending_scope_entries() {
         let sql = sql_of(&minimal_compiled());
         assert!(
-            sql.contains(r#"FROM "temporal_append_entries" AS "pe" WHERE "pe"."entry_kind" IN (3)"#),
+            sql.contains(r#"FROM "temporal_append_entries" AS "pe" WHERE "pe"."entry_kind" IN (3, 4)"#),
             "{sql}"
         );
         assert!(sql.contains(&format!(r#""pe"."entity_id" = '{}'"#, vehicle_id())), "{sql}");

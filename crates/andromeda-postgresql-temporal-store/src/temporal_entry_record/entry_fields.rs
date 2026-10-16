@@ -24,6 +24,7 @@ use andromeda_postgresql_codes::{
     value_kind::ValueKind,
 };
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
+use andromeda_temporal::scope_entry_kind::ScopeEntryKind;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::value::RawValue;
@@ -63,11 +64,14 @@ impl Grain {
         })
     }
 
-    /// The grain of a Scope entry, which names no stream (clause 4.18 gives a
-    /// Scope no dataset and no attribute family).
-    pub(super) const fn scope() -> Grain {
+    /// The grain of a Scope entry of `kind`, which names no stream (clause
+    /// 4.18 gives a Scope no dataset and no attribute family).
+    pub(super) const fn scope(kind: ScopeEntryKind) -> Grain {
         Grain {
-            entry_kind: TemporalEntryKind::Scope,
+            entry_kind: match kind {
+                ScopeEntryKind::Event => TemporalEntryKind::Scope,
+                ScopeEntryKind::Assertion => TemporalEntryKind::ScopeAssertion,
+            },
             attribute_name_key: None,
             dataset_id: None,
             attribute_kind: None,

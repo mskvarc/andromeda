@@ -29,7 +29,7 @@ pub const REQUIRED_POSTGIS_VERSION: ExtensionVersion = ExtensionVersion::new(3, 
 
 /// The `TimescaleDB` version the tenant schema requires.
 ///
-/// `attribute_history` and `scope_history` are hypertables created with
+/// `attribute_history` is a hypertable created with
 /// `create_hypertable(..., by_range(...))`, chunk-managed with
 /// `set_chunk_time_interval` and aged out with `drop_chunks`, all Apache-2.0
 /// core surface. The floor is 2.18 because the TSL columnstore path the TSL

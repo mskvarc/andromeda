@@ -22,7 +22,7 @@ use andromeda_postgresql_seaquery::{
     placeholder::external_placeholder,
     unnest::{Ordinality, apply_record_ordinality, unnest_of},
 };
-use sea_query::{Asterisk, Expr, ExprTrait, Iden, PostgresQueryBuilder, Query, QueryStatementWriter, SelectStatement, SimpleExpr};
+use sea_query::{Asterisk, Expr, ExprTrait, Iden, IntoIden, PostgresQueryBuilder, Query, QueryStatementWriter, SelectStatement, SimpleExpr};
 use sqlx::{AssertSqlSafe, PgConnection, Postgres, postgres::PgArguments, query::Query as SqlxQuery};
 
 /// The source relation's alias, `i`.
@@ -171,7 +171,13 @@ impl<'a> IntentSource<'a> {
 
 /// Read the intents of `source` in `select`, under `i`.
 pub(crate) fn source_intents(select: &mut SelectStatement, source: &IntentSource<'_>) {
-    select.from_subquery(source.relation(), I);
+    source_intents_as(select, source, I);
+}
+
+/// Read the intents of `source` in `select` under `alias`, beside the ones
+/// under `i`, for a statement that compares one intent with the others.
+pub(crate) fn source_intents_as(select: &mut SelectStatement, source: &IntentSource<'_>, alias: impl IntoIden) {
+    select.from_subquery(source.relation(), alias);
 }
 
 /// Read every entry of the intents of `source` in `select`: the intents

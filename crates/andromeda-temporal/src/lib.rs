@@ -46,6 +46,8 @@ mod reified_scope;
 pub mod remote_linked;
 /// Whether the identifiers a request specified narrow a listing of what it matches.
 pub mod requested_identifiers;
+/// Whether one scope entry is an event or an assertion of the Scope in force.
+pub mod scope_entry_kind;
 pub mod scope_observation;
 pub mod service;
 /// The bounds one temporal service applies to what a request may ask of it.

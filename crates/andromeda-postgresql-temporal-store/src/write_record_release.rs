@@ -12,10 +12,12 @@
 //! A release considers only records whose instant it can prove unprotected
 //! without reading a converted chunk: those after the latest converted chunk,
 //! where the write-identity index answers the proof, and, for the sweep, those
-//! before the earliest chunk, where no history row can exist. A record inside a
-//! converted chunk stays until its chunk is dropped; keeping a record whose
-//! effects are gone changes nothing a replay does, while proving it there would
-//! read every compressed batch of the chunk.
+//! before the earliest chunk, where no attribute history row can exist. A
+//! record inside a converted chunk stays until its chunk is dropped; keeping a
+//! record whose effects are gone changes nothing a replay does, while proving
+//! it there would read every compressed batch of the chunk. `scope_history` is
+//! a plain table whose write-identity index answers the proof at any instant,
+//! and the Scope event retention keeps however old it is protects its record.
 
 use crate::{error::TemporalStoreError, history_chunk_span::HistoryChunkSpan};
 use andromeda_postgresql_schema::{
@@ -164,11 +166,10 @@ fn base_release(window: ReleaseWindow) -> DeleteStatement {
 /// intent of that commit is refused unless it carries it, and neither replay
 /// nor instance modification rewrites it -- so the extra equality selects no
 /// fewer rows. What it buys is the access path: the only index on either
-/// hypertable that carries `write_id` is `uq_*_write (recorded_at, write_id,
-/// write_ordinal)`, which a probe on `write_id` alone cannot seek into, so every
-/// clause 5.6.16 deletion and every retention sweep probed every chunk. Leading
-/// with `recorded_at` seeks that index and lets the planner exclude every other
-/// chunk. An append intent's protection needs no instant:
+/// history table that carries `write_id` is `uq_*_write_identity (recorded_at,
+/// write_id, write_ordinal)`, which a probe on `write_id` alone cannot seek
+/// into. Leading with `recorded_at` seeks that index and lets the planner
+/// exclude every other chunk of the attribute history hypertable. An append intent's protection needs no instant:
 /// `uq_temporal_append_intents_write_identity` already leads with `write_id`.
 fn unprotected(window: ReleaseWindow) -> Cond {
     Cond::all()

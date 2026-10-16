@@ -17,6 +17,10 @@
 //!   lands on nothing, the history insert ignoring the conflict.
 //! - A Scope entry replaces the recorded Scope row of its own instance
 //!   identity.
+//! - A Scope assertion is written only where the Scope in force at its write
+//!   differs, judged against the recorded Scope events and the earlier queued
+//!   ones by the judgement the application applies
+//!   ([`crate::scope_assertion`]).
 //!
 //! The visible types of an Entity are those of its latest queued intent
 //! stating types, which the application writes over the recorded ones.
@@ -25,11 +29,14 @@
 //! an entry is judged against are named in the schema the caller gives, which
 //! is `None` unless the statement's unqualified names resolve elsewhere.
 
-use crate::history_source::{
-    HistoryOf,
-    HistoryStream,
-    entry_values::{attribute_entry_values, scope_entry_values},
-    grain::HistoryGrain,
+use crate::{
+    history_source::{
+        HistoryOf,
+        HistoryStream,
+        entry_values::{attribute_entry_values, scope_entry_values},
+        grain::HistoryGrain,
+    },
+    scope_assertion::{EVENT_COLUMNS, held_in_force, path_set},
 };
 use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
 use andromeda_postgresql_schema::{
@@ -45,7 +52,7 @@ use andromeda_postgresql_seaquery::{
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
-use sea_query::{Condition, DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, Order, Query, SelectStatement, SimpleExpr};
+use sea_query::{Condition, DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, Order, Query, SelectStatement, SimpleExpr, UnionType};
 
 /// Alias `pe`: the queued entry a source row is projected from.
 #[derive(Iden, Clone, Copy)]
@@ -82,6 +89,27 @@ struct RecordedRow;
 #[iden = "pl"]
 struct LatestTypedIntent;
 
+/// Alias `pj`: a recorded Scope event a queued assertion is judged against.
+#[derive(Iden, Clone, Copy)]
+#[iden = "pj"]
+struct JudgingEvent;
+
+/// Alias `pjv`: the recorded Temporal Evolution of a judging event.
+#[derive(Iden, Clone, Copy)]
+#[iden = "pjv"]
+struct JudgingEvolution;
+
+/// Alias `pq`: an earlier queued Scope entry a queued assertion is judged
+/// against.
+#[derive(Iden, Clone, Copy)]
+#[iden = "pq"]
+struct EarlierEntry;
+
+/// Alias `pa`: one path of the queued assertion being judged.
+#[derive(Iden, Clone, Copy)]
+#[iden = "pa"]
+struct AssertedPath;
+
 /// One column of the entry under `pe`.
 fn entry(column: impl IntoIden) -> SimpleExpr {
     Expr::col((PendingEntry, column.into_iden()))
@@ -94,6 +122,9 @@ fn entry_kind_in(alias: impl IntoIden, kinds: &[TemporalEntryKind]) -> SimpleExp
 
 /// The two attribute entry kinds.
 const ATTRIBUTE_KINDS: [TemporalEntryKind; 2] = [TemporalEntryKind::Observation, TemporalEntryKind::Tombstone];
+
+/// The two Scope entry kinds: an event, and an assertion of the Scope in force.
+const SCOPE_KINDS: [TemporalEntryKind; 2] = [TemporalEntryKind::Scope, TemporalEntryKind::ScopeAssertion];
 
 /// Whether the Entity `entity_id` names has a queued intent stating types.
 pub(crate) fn types_queued_for(entity_id: SimpleExpr) -> SimpleExpr {
@@ -159,7 +190,7 @@ pub(crate) fn recorded_scope_row_kept(entity_id: SimpleExpr, generated: SimpleEx
         .expr(int_literal(1))
         .from_as(TemporalAppendEntries::Table, ReplacingEntry)
         .and_where(Expr::col((ReplacingEntry, TemporalAppendEntries::EntityId)).eq(entity_id))
-        .and_where(entry_kind_in(ReplacingEntry, &[TemporalEntryKind::Scope]))
+        .and_where(entry_kind_in(ReplacingEntry, &SCOPE_KINDS))
         .and_where(SimpleExpr::from(Expr::col((ReplacingEntry, TemporalEntry::GeneratedInstanceId))).not_distinct_from(generated))
         .and_where(SimpleExpr::from(Expr::col((ReplacingEntry, TemporalEntry::VerbatimInstanceId))).not_distinct_from(verbatim));
     Expr::exists(naming).not()
@@ -267,7 +298,7 @@ pub(crate) fn scope_rows(schema: Option<&DynIden>, of: &HistoryOf) -> SelectStat
         .expr(int_literal(1))
         .from_as(TemporalAppendEntries::Table, ReplacingEntry)
         .and_where(Expr::col((ReplacingEntry, TemporalAppendEntries::EntityId)).equals((PendingEntry, TemporalAppendEntries::EntityId)))
-        .and_where(entry_kind_in(ReplacingEntry, &[TemporalEntryKind::Scope]))
+        .and_where(entry_kind_in(ReplacingEntry, &SCOPE_KINDS))
         .and_where(Expr::col((ReplacingEntry, TemporalAppendEntries::IntentKey)).gt(entry(TemporalAppendEntries::IntentKey)))
         .and_where(
             SimpleExpr::from(Expr::col((ReplacingEntry, TemporalEntry::GeneratedInstanceId))).not_distinct_from(entry(TemporalEntry::GeneratedInstanceId)),
@@ -286,11 +317,55 @@ pub(crate) fn scope_rows(schema: Option<&DynIden>, of: &HistoryOf) -> SelectStat
     }
     select
         .from_as(TemporalAppendEntries::Table, PendingEntry)
-        .and_where(entry_kind_in(PendingEntry, &[TemporalEntryKind::Scope]))
+        .and_where(entry_kind_in(PendingEntry, &SCOPE_KINDS))
         .cond_where(applied(schema))
-        .and_where(Expr::exists(replaced).not());
+        .and_where(Expr::exists(replaced).not())
+        .cond_where(
+            Condition::any()
+                .add(entry(TemporalEntry::EntryKind).ne(SimpleExpr::Constant(TemporalEntryKind::ScopeAssertion.code().into())))
+                .add(held_in_force(&judging_events(schema), &queued_assertion(), &entry(TemporalAppendEntries::RecordedAt)).not()),
+        );
     of.narrow(&mut select, entry(TemporalAppendEntries::EntityId));
     select
+}
+
+/// The Scope events a queued assertion under `pe` is judged against: the
+/// Scope events of its Entity recorded in `schema`, and its Entity's Scope
+/// entries queued before it, which the drain applies first.
+fn judging_events(schema: Option<&DynIden>) -> SelectStatement {
+    let mut recorded = Query::select();
+    recorded
+        .exprs(EVENT_COLUMNS.map(|column| Expr::col((JudgingEvent, column))))
+        .from(qualified(schema, ScopeHistory::Table).alias(JudgingEvent))
+        .join_as(
+            JoinType::Join,
+            qualified(schema, TemporalEntities::Table),
+            JudgingEvolution,
+            Expr::col((JudgingEvolution, TemporalEntities::TemporalEntityKey)).equals((JudgingEvent, ScopeHistory::TemporalEntityKey)),
+        )
+        .and_where(Expr::col((JudgingEvolution, TemporalEntities::Id)).equals((PendingEntry, TemporalAppendEntries::EntityId)));
+    let mut earlier = Query::select();
+    earlier
+        .expr_as(Expr::col((EarlierEntry, TemporalAppendEntries::RecordedAt)), ScopeHistory::RecordedAt)
+        .expr_as(Expr::col((EarlierEntry, TemporalEntry::ObservedAt)), ScopeHistory::ObservedAt)
+        .expr_as(Expr::col((EarlierEntry, TemporalEntry::VerbatimScopePath)), ScopeHistory::VerbatimScopePath)
+        .from_as(TemporalAppendEntries::Table, EarlierEntry)
+        .and_where(Expr::col((EarlierEntry, TemporalAppendEntries::EntityId)).equals((PendingEntry, TemporalAppendEntries::EntityId)))
+        .and_where(Expr::col((EarlierEntry, TemporalAppendEntries::IntentKey)).lt(entry(TemporalAppendEntries::IntentKey)))
+        .and_where(entry_kind_in(EarlierEntry, &SCOPE_KINDS));
+    recorded.union(UnionType::All, earlier);
+    recorded
+}
+
+/// The paths the queued assertion under `pe` states: the assertion entries of
+/// its intent.
+fn queued_assertion() -> SimpleExpr {
+    let mut paths = Query::select();
+    paths
+        .from_as(TemporalAppendEntries::Table, AssertedPath)
+        .and_where(Expr::col((AssertedPath, TemporalAppendEntries::IntentKey)).equals((PendingEntry, TemporalAppendEntries::IntentKey)))
+        .and_where(entry_kind_in(AssertedPath, &[TemporalEntryKind::ScopeAssertion]));
+    path_set(paths, Expr::col((AssertedPath, TemporalEntry::VerbatimScopePath)))
 }
 
 /// The Entities a queued intent states types for, each with the types of its

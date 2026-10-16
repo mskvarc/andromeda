@@ -75,7 +75,7 @@ pub(super) fn register_temporal_retention(
                     tracing::info!(
                         cutoff = %sweep.cutoff,
                         attribute_history_chunks = sweep.attribute_history_chunks,
-                        scope_history_chunks = sweep.scope_history_chunks,
+                        scope_events = sweep.scope_events,
                         streams = sweep.streams,
                         temporal_entities = sweep.temporal_entities,
                         released_write_records = sweep.released_write_records,

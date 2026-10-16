@@ -5,7 +5,10 @@
 //! entry of an Entity without one records nothing; the catalogue statements
 //! ran first and refused the only entries that would have needed one.
 
-use crate::intent_application::intent_source::{E, I, IntentSource, S, Te, entry, entry_kind_in, intent, source_entries, write_ordinal};
+use crate::intent_application::{
+    intent_source::{E, I, IntentSource, S, Te, entry, entry_kind_in, intent, source_entries, write_ordinal},
+    scope_judgement::recorded_scope_entry,
+};
 use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
 use andromeda_postgresql_query::history_source::entry_values::{attribute_entry_values, scope_entry_values};
 use andromeda_postgresql_schema::{
@@ -171,9 +174,14 @@ pub(crate) fn history_statement(source: &IntentSource<'_>, schema: Option<&DynId
     Ok(statement)
 }
 
-/// The Scope entries of Entities with a Temporal Evolution.
+/// The Scope entries of Entities with a Temporal Evolution, events and
+/// assertions alike.
 fn scope_entries(source: &IntentSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
-    entries_with_evolution(source, schema, entry_kind_in(&[TemporalEntryKind::Scope.code()]))
+    entries_with_evolution(
+        source,
+        schema,
+        entry_kind_in(&[TemporalEntryKind::Scope.code(), TemporalEntryKind::ScopeAssertion.code()]),
+    )
 }
 
 /// The Scope rows a Scope entry records again under its own instance
@@ -196,13 +204,15 @@ pub(crate) fn replaced_scopes_statement(source: &IntentSource<'_>, schema: Optio
     replaced
 }
 
-/// The `scope_history` row of every Scope entry (clause 4.18), with the
-/// values a temporal read of the live branch projects from the entry while it
-/// is still queued.
+/// The `scope_history` row of every Scope entry the application records
+/// (clause 4.18), with the values a temporal read of the live branch projects
+/// from the entry while it is still queued: every event, and every assertion
+/// of a Scope not already in force at its write.
 pub(crate) fn scope_history_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
     let (value_columns, values): (Vec<ScopeHistory>, Vec<SimpleExpr>) = scope_entry_values(entry).into_iter().unzip();
     let mut select = scope_entries(source, schema);
     select
+        .cond_where(recorded_scope_entry(source, schema))
         .expr(intent(TemporalAppendIntents::RecordedAt))
         .column((Te, TemporalEntities::TemporalEntityKey))
         .expr(intent(TemporalAppendIntents::WriteId))

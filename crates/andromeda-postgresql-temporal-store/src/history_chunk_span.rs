@@ -1,8 +1,8 @@
-//! Where the history hypertables' chunks lie, as the write-record release
-//! needs to know it.
+//! Where the attribute history hypertable's chunks lie, as the write-record
+//! release needs to know it.
 //!
 //! A write record's history rows all carry the record's own `recorded_at`, so
-//! they sit in the one chunk of each hypertable that covers that instant.
+//! they sit in the one chunk that covers that instant.
 //! Proving that a record protects nothing is an index probe in a row-store
 //! chunk, but a converted chunk keeps no index on the write identity, so the
 //! same proof there reads every compressed batch of the chunk. The span read
@@ -18,7 +18,7 @@ use sea_query_sqlx::SqlxBinder;
 use sqlx::{AssertSqlSafe, PgConnection, Row};
 use strum::IntoEnumIterator;
 
-/// Where the chunks of both history hypertables lie on the write clock.
+/// Where the chunks of the history hypertables lie on the write clock.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct HistoryChunkSpan {
     /// The first instant past the latest converted chunk; `None` when no chunk
@@ -30,9 +30,8 @@ pub(crate) struct HistoryChunkSpan {
 }
 
 impl HistoryChunkSpan {
-    /// Read the span of the hypertables named `attribute_history` and
-    /// `scope_history`, as every catalogue read of the storage policy names
-    /// them.
+    /// Read the span of the history hypertables, as every catalogue read of
+    /// the storage policy names them.
     ///
     /// # Errors
     ///
@@ -48,7 +47,7 @@ impl HistoryChunkSpan {
     }
 }
 
-/// The catalogue names of both history hypertables.
+/// The catalogue names of the history hypertables.
 fn history_hypertables() -> Vec<&'static str> {
     HypertableName::iter().map(<&'static str>::from).collect()
 }
@@ -59,7 +58,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn the_span_covers_both_history_hypertables() {
-        assert_eq!(history_hypertables(), vec!["attribute_history", "scope_history"]);
+    fn the_span_covers_the_attribute_history_hypertable_alone() {
+        assert_eq!(history_hypertables(), vec!["attribute_history"]);
     }
 }

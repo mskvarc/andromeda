@@ -68,7 +68,42 @@ mod tests {
         let sql = rendered(scope_rows(&HistoryBranch::live(), &HistoryOf::EveryEntity, Alias::new("sh")));
         assert!(sql.contains(r#"FROM "scope_history" AS "rsh""#), "{sql}");
         assert!(sql.contains(r#""pe"."scope_path"::ltree AS "scope_path""#), "{sql}");
-        assert!(sql.contains(r#""pe"."entry_kind" IN (3)"#), "{sql}");
+        assert!(sql.contains(r#""pe"."entry_kind" IN (3, 4)"#), "{sql}");
+    }
+
+    /// Clause 4.18: a queued assertion of the Scope already in force sets
+    /// nothing, so the read leaves it out exactly as the application will not
+    /// record it: judged on both axes against the recorded Scope events of its
+    /// Entity and the Scope entries queued before it.
+    #[test]
+    fn a_queued_assertion_of_the_scope_in_force_is_left_out_of_the_read() {
+        let sql = rendered(scope_rows(&HistoryBranch::live(), &HistoryOf::EveryEntity, Alias::new("sh")));
+        assert!(
+            sql.contains(r#"FROM "scope_history" AS "pj" JOIN "temporal_entities" AS "pjv" ON "pjv"."temporal_entity_key" = "pj"."temporal_entity_key" WHERE "pjv"."id" = "pe"."entity_id""#),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(r#"FROM "temporal_append_entries" AS "pq" WHERE "pq"."entity_id" = "pe"."entity_id" AND "pq"."intent_key" < "pe"."intent_key" AND "pq"."entry_kind" IN (3, 4)"#),
+            "{sql}"
+        );
+        for axis in ["recorded_at", "observed_at"] {
+            assert!(
+                sql.contains(&format!(r#"WHERE "sah"."{axis}" <= "pe"."recorded_at" ORDER BY "sah"."{axis}" DESC LIMIT"#)),
+                "{axis}: {sql}"
+            );
+        }
+        assert!(
+            sql.contains(r#"FROM "temporal_append_entries" AS "pa" WHERE "pa"."intent_key" = "pe"."intent_key" AND "pa"."entry_kind" IN (4)"#),
+            "{sql}"
+        );
+    }
+
+    /// A Change, an Instance and a Removal are events whatever the history
+    /// holds, so only the assertion kind is judged.
+    #[test]
+    fn a_queued_change_an_instance_and_a_removal_are_read_unconditionally() {
+        let sql = rendered(scope_rows(&HistoryBranch::live(), &HistoryOf::EveryEntity, Alias::new("sh")));
+        assert!(sql.contains(r#"("pe"."entry_kind" <> 4 OR (NOT ("#), "{sql}");
     }
 
     #[test]

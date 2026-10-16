@@ -147,7 +147,9 @@ create type pending_change_event as (
 --
 -- `entry_kind` is 1 for an attribute observation, 2 for the end of an
 -- attribute instance (clauses 4.5.7 and 4.5.8: `value_kind` 0 and
--- `deleted_at` the write's instant) and 3 for a Scope entry (clause 4.18).
+-- `deleted_at` the write's instant), 3 for a Scope event (clause 4.18) and 4
+-- for a Scope assertion, recorded only where the Scope in force at the write
+-- differs.
 -- `attribute_name_key` is an `attribute_names` key and with `dataset_id`
 -- names the stream an attribute entry extends. A Scope entry has no
 -- `attribute_name_key`, `dataset_id` or `attribute_kind`; its `value_kind` is

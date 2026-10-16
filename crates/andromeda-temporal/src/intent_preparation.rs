@@ -5,6 +5,7 @@ use crate::{
     error::TemporalError,
     observed_instance::ObservedInstance,
     reified_scope::scope_observations,
+    scope_entry_kind::ScopeEntryKind,
     scope_observation::ScopeObservation,
 };
 use andromeda_context_commit::{history_record::HistoryRecord, submission_refusal::SubmissionRefusal, write_ordinal::WriteOrdinal, write_record::WriteRecord};
@@ -52,14 +53,19 @@ pub(crate) fn prepare(
             HistoryRecord::Observations(state) => {
                 // History rows own what they record, so the observed state is
                 // read as the written document whose instances they take over,
-                // the one form every observation is read in.
-                append_document_entries(EntityDocument::from(state.as_ref()), recorded_at, &mut entries)?;
+                // the one form every observation is read in. A Core write's
+                // observation carries a Scope only when the write changed it.
+                append_document_entries(EntityDocument::from(state.as_ref()), recorded_at, ScopeEntryKind::Event, &mut entries)?;
             }
             HistoryRecord::EvolutionInstances(document) => {
                 // clone: every history row owns the values it records, while the
                 // written document stays shared with the write it belongs to.
-                append_document_entries(EntityDocument::clone(document), recorded_at, &mut entries)?;
+                append_document_entries(EntityDocument::clone(document), recorded_at, ScopeEntryKind::Assertion, &mut entries)?;
             }
+            HistoryRecord::ScopeAssertion(scopes) => entries.extend(scopes.as_slice().iter().map(|path| {
+                // clone: the durable intent owns its paths.
+                scope_entry(ScopeObservation::Path(path.clone()), ScopeEntryKind::Assertion, recorded_at)
+            })),
             HistoryRecord::Tombstone(removed) => entries.push(TemporalAppendEntry::Tombstone {
                 attribute_name: removed.key.attr.clone(),   // clone: the durable intent owns the instance identity.
                 dataset_id: removed.key.dataset_id.clone(), // clone: the durable intent owns the dataset identity.
@@ -72,11 +78,7 @@ pub(crate) fn prepare(
             // dated at the write — which is also what clause 4.5.6 asks of a
             // Scope changed through the Core API, "the observedAt sub-Property
             // should be set as a copy of the modifiedAt sub-Property".
-            HistoryRecord::ScopeRemoval => entries.push(TemporalAppendEntry::Scope {
-                observation: ScopeObservation::Deleted,
-                observed_at: Some(recorded_at),
-                instance: InstanceIdentity::generate(),
-            }),
+            HistoryRecord::ScopeRemoval => entries.push(scope_entry(ScopeObservation::Deleted, ScopeEntryKind::Event, recorded_at)),
         }
     }
     Ok(Some(TemporalAppendIntent {
@@ -88,14 +90,25 @@ pub(crate) fn prepare(
     }))
 }
 
-/// Append the attribute and scope entries of one observed document.
-fn append_document_entries(document: EntityDocument, recorded_at: DateTime<Utc>, entries: &mut Vec<TemporalAppendEntry>) -> Result<(), TemporalError> {
+/// Append the attribute and scope entries of one observed document, its
+/// non-reified `scope` being of `stated` kind.
+///
+/// The non-reified `scope` carries no instant of its own and is dated at the
+/// write. Its NGSI-LD Null removes the Scope (clause 4.18), which is an event
+/// whatever the Scope stated; a reified scope instance is an event dated by
+/// its own `observedAt`.
+fn append_document_entries(
+    document: EntityDocument,
+    recorded_at: DateTime<Utc>,
+    stated: ScopeEntryKind,
+    entries: &mut Vec<TemporalAppendEntry>,
+) -> Result<(), TemporalError> {
     let EntityDocumentParts { scope, attributes, .. } = document.into_parts();
     match scope {
         Some(Slot::Set(scopes)) => entries.extend(scopes.as_slice().iter().map(|path| {
-            scope_entry(ScopeObservation::Path(path.clone()), recorded_at) // clone: the durable intent owns its paths.
+            scope_entry(ScopeObservation::Path(path.clone()), stated, recorded_at) // clone: the durable intent owns its paths.
         })),
-        Some(Slot::Remove) => entries.push(scope_entry(ScopeObservation::Deleted, recorded_at)),
+        Some(Slot::Remove) => entries.push(scope_entry(ScopeObservation::Deleted, ScopeEntryKind::Event, recorded_at)),
         None => {}
     }
     for (attribute_name, member) in attributes {
@@ -153,9 +166,10 @@ fn observation_entry(attribute_name: &AttributeName, observed: ObservedInstance,
 }
 
 /// One scope entry, minted its own stable identity.
-fn scope_entry(observation: ScopeObservation, observed_at: DateTime<Utc>) -> TemporalAppendEntry {
+fn scope_entry(observation: ScopeObservation, kind: ScopeEntryKind, observed_at: DateTime<Utc>) -> TemporalAppendEntry {
     TemporalAppendEntry::Scope {
         observation,
+        kind,
         observed_at: Some(observed_at),
         instance: InstanceIdentity::generate(),
     }
@@ -178,7 +192,11 @@ fn append_reified_scope(instance: &InstanceDocument, recorded_at: DateTime<Utc>,
         Some(Slot::Remove) | None => recorded_at,
     };
     let observations = scope_observations(instance.value()).map_err(|refusal| TemporalError::from(EntityRefusal::Scope(refusal)))?;
-    entries.extend(observations.into_iter().map(|observation| scope_entry(observation, observed_at)));
+    entries.extend(
+        observations
+            .into_iter()
+            .map(|observation| scope_entry(observation, ScopeEntryKind::Event, observed_at)),
+    );
     Ok(())
 }
 

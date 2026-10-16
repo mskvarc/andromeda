@@ -2,8 +2,8 @@
 //!
 //! This crate owns the persistence layer for Temporal Evolution: the
 //! `temporal_entities` and `temporal_attribute_streams` catalogue, the
-//! `attribute_history` and `scope_history` hypertables, and the `write_records`
-//! idempotency relation. It provides the [`TemporalRepository`] concrete adapter
+//! `attribute_history` hypertable, the `scope_history` table, and the
+//! `write_records` idempotency relation. It provides the [`TemporalRepository`] concrete adapter
 //! and the [`TemporalRecorder`] a commit records its history with, while
 //! implementing the ports owned by `andromeda-temporal`.
 //!

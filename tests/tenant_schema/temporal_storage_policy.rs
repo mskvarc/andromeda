@@ -1,12 +1,11 @@
-//! The physical storage policy of the temporal hypertables.
+//! The physical storage policy of the temporal hypertable.
 //!
-//! Migration 0028 declares seven-day chunks and nothing about the columnstore.
+//! The migrations declare seven-day chunks and nothing about the columnstore.
 //! The broker's storage-policy reconciler enables the columnstore when a tenant
-//! is opened -- segmented by stream (attribute history) or temporal entity
-//! (scope history) and ordered by the write-deduplication key -- with a
-//! conversion policy that lags thirty days. Both intervals are operator
+//! is opened, segmented by stream and ordered by the write-deduplication key,
+//! with a conversion policy that lags thirty days. Both intervals are operator
 //! tunables the broker reconciles on the same open, so a fresh tenant must
-//! carry the defaults, an override must move both hypertables, a second
+//! carry the defaults, an override must move the hypertable, a second
 //! reconciliation of the same override must write nothing, and a hypertable
 //! that lost its columnstore must regain it on the next open. These run against
 //! the TSL edition of the image, which is the one with a columnstore.
@@ -36,8 +35,9 @@ use serial_test::serial;
 use sqlx::PgPool;
 use std::{num::NonZeroU32, sync::Arc};
 
-/// The two hypertables and the column each segments its columnstore by.
-const HYPERTABLES: &[(&str, &str)] = &[("attribute_history", "stream_key"), ("scope_history", "temporal_entity_key")];
+/// The temporal hypertables and the column each segments its columnstore by;
+/// `scope_history` is a plain table.
+const HYPERTABLES: &[(&str, &str)] = &[("attribute_history", "stream_key")];
 
 /// Assert a policy day count, which Timescale reports as a float built from an
 /// interval rather than as the integer the policy declared.
@@ -118,7 +118,7 @@ async fn columnstore_enabled(pool: &PgPool, hypertable: &str) -> bool {
 }
 
 /// A fresh tenant carries the migration's seven-day chunks, and the columnstore
-/// the reconciler enabled when the broker opened it: both hypertables segment
+/// the reconciler enabled when the broker opened it: the hypertable segments
 /// and order rows the way `columnstore_enablement` states, under a thirty-day
 /// conversion lag.
 #[tokio::test]
@@ -171,19 +171,19 @@ async fn tenant_schema_the_columnstore_is_enabled_by_the_reconciler_on_a_fresh_t
     scope.finish().await.expect("cleanup failed");
 }
 
-/// An operator override moves both hypertables' chunk interval and policy lag,
+/// An operator override moves the hypertable's chunk interval and policy lag,
 /// a second reconciliation of the same override is a read and no write, and
-/// restating the defaults moves both back.
+/// restating the defaults moves it back.
 #[tokio::test]
 #[serial(temporal_storage_policy)]
-async fn an_override_moves_both_hypertables_once_and_the_defaults_move_them_back() {
+async fn an_override_moves_the_hypertable_once_and_the_defaults_move_it_back() {
     let scope = TenantScopedEnvironment::from_suite(SUITE).await.expect("private tenant environment");
     let tenant_pool = opened_tenant_pool(&scope).await;
     let pool = &tenant_pool;
     let repository = repository(pool).await;
 
     let overridden = repository.reconcile_storage_policy(&policy(1, 3)).await.expect("the override reconciles");
-    assert_eq!(overridden.hypertables.len(), 2, "both hypertables are reconciled");
+    assert_eq!(overridden.hypertables.len(), 1, "the hypertable is reconciled");
     for reconciliation in &overridden.hypertables {
         assert_eq!(reconciliation.chunk_interval, PolicyReconciliation::Adjusted, "{:?}", reconciliation.hypertable);
         assert_eq!(
@@ -199,7 +199,7 @@ async fn an_override_moves_both_hypertables_once_and_the_defaults_move_them_back
             .iter()
             .map(|reconciliation| reconciliation.hypertable)
             .collect::<Vec<_>>(),
-        vec![HypertableName::AttributeHistory, HypertableName::ScopeHistory]
+        vec![HypertableName::AttributeHistory]
     );
     for (hypertable, _) in HYPERTABLES {
         assert_days(

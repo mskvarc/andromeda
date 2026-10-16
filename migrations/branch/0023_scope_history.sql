@@ -5,9 +5,11 @@
 --
 -- The recorded Scopes of each temporal entity, in the shape of attribute
 -- history: the `recorded_at` write clock, the write identity, the four
--- semantic time axes, the two-column instance identity and the tombstone. The
--- live copy is a hypertable partitioned on `recorded_at`; a Snapshot's copy
--- stays a plain table.
+-- semantic time axes, the two-column instance identity and the tombstone. A
+-- row opens a validity interval that runs until the entity's next event on
+-- the same axis (clause 4.18), so the table holds one event per change of
+-- Scope: a write restating the Scope already in force adds none. It is a plain
+-- table in every branch.
 --
 -- Codes:
 --

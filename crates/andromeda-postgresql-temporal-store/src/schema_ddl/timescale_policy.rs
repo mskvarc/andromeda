@@ -6,6 +6,10 @@ use strum::{Display, EnumIter, IntoStaticStr};
 /// The hypertables of the temporal schema whose storage policy the broker
 /// reconciles.
 ///
+/// `scope_history` is not one: it holds one event per change of an Entity's
+/// Scope, and retention keeps the Scope in force at its cutoff, which a
+/// dropped chunk would take with it (clause 4.18).
+///
 /// The name renders as the catalogue relation name, which is what every
 /// `TimescaleDB` procedure and information view takes.
 #[derive(Clone, Copy, Debug, Display, EnumIter, Eq, Hash, IntoStaticStr, PartialEq)]
@@ -13,8 +17,6 @@ use strum::{Display, EnumIter, IntoStaticStr};
 pub enum HypertableName {
     /// `attribute_history`, segmented by stream.
     AttributeHistory,
-    /// `scope_history`, segmented by temporal entity.
-    ScopeHistory,
 }
 
 /// The order-by columns of every temporal hypertable's columnstore, and
@@ -46,13 +48,11 @@ impl HypertableName {
     ///
     /// `attribute_history` is segmented by stream: a temporal query names
     /// streams, so a segment holds exactly the rows one stream contributed to a
-    /// chunk. `scope_history` has no stream, so its segment is the temporal
-    /// entity, whose scope rows are what a scope query reads.
+    /// chunk.
     #[must_use]
     pub const fn segment_by(self) -> &'static str {
         match self {
             HypertableName::AttributeHistory => "stream_key",
-            HypertableName::ScopeHistory => "temporal_entity_key",
         }
     }
 }
@@ -99,11 +99,11 @@ mod tests {
     use crate::schema_ddl::timescale_policy::{HypertableName, add_columnstore_policy, enable_columnstore, remove_columnstore_policy};
     use pretty_assertions::assert_eq;
     use std::num::NonZeroU32;
+    use strum::IntoEnumIterator;
 
     #[test]
     fn the_hypertable_renders_as_its_catalogue_name() {
         assert_eq!(HypertableName::AttributeHistory.to_string(), "attribute_history");
-        assert_eq!(HypertableName::ScopeHistory.to_string(), "scope_history");
     }
 
     #[test]
@@ -120,17 +120,21 @@ mod tests {
             enable_columnstore(HypertableName::AttributeHistory),
             "ALTER TABLE attribute_history SET (timescaledb.enable_columnstore, timescaledb.segmentby = 'stream_key', timescaledb.orderby = 'recorded_at DESC, write_id, write_ordinal', timescaledb.compress_chunk_time_interval = '28 days')"
         );
+    }
+
+    #[test]
+    fn scope_history_is_no_hypertable() {
         assert_eq!(
-            enable_columnstore(HypertableName::ScopeHistory),
-            "ALTER TABLE scope_history SET (timescaledb.enable_columnstore, timescaledb.segmentby = 'temporal_entity_key', timescaledb.orderby = 'recorded_at DESC, write_id, write_ordinal', timescaledb.compress_chunk_time_interval = '28 days')"
+            HypertableName::iter().map(|hypertable| hypertable.to_string()).collect::<Vec<_>>(),
+            vec!["attribute_history"]
         );
     }
 
     #[test]
     fn the_policy_is_removed_idempotently() {
         assert_eq!(
-            remove_columnstore_policy(HypertableName::ScopeHistory),
-            "CALL remove_columnstore_policy('scope_history', if_exists => true)"
+            remove_columnstore_policy(HypertableName::AttributeHistory),
+            "CALL remove_columnstore_policy('attribute_history', if_exists => true)"
         );
     }
 }
