@@ -17,15 +17,18 @@
 //!
 //! Every attribute stream is aggregated on its own, in a LATERAL over the
 //! Entity's streams, so the stream's axis index serves the read and a page of
-//! whole periods ([`crate::aggregated_page`]) bounds it per stream.
+//! whole periods ([`crate::aggregated_page`]) bounds it per stream. A page on
+//! a calendar grid takes its periods from its edge
+//! ([`crate::listed_period_page`]) rather than placing each row on the grid.
 
 use crate::{
-    aggregated_page::aggregated_stream_read,
+    aggregated_page::{StreamRows, aggregated_stream_read},
     aggregated_value::{arithmetic_numeric_expr, average_time_expr, distinct_value_expr, ordered_instant_expr, ordered_text_expr, sized_numeric_expr},
     aggregation_grid::{AggregationGrid, BucketEnd, BucketStart},
     aggregation_grouping::apply_grouping,
     alias::{Ah, An},
     axis::axis_column,
+    listed_period_page::{each_listed_period, placed_among_listed_periods},
     period_edge::StreamEdge,
     recorded_shape::recorded_shape,
     stream_page::StreamContinues,
@@ -84,7 +87,7 @@ struct Page;
 /// the order the representation lists them.
 #[derive(Iden, Clone, Copy)]
 #[iden = "period_order"]
-struct PeriodOrder;
+pub(crate) struct PeriodOrder;
 
 /// The span of registry codes and unit identities one aggregation group covered.
 ///
@@ -198,14 +201,49 @@ fn whole_range_bound(bound: Option<SimpleExpr>, extreme: SimpleExpr) -> SimpleEx
     }
 }
 
-/// The periods of one stream's `rows`, each with its aggregates, numbered in
-/// the order the representation lists them.
+/// The aggregates of `rows` under `ah` clause 4.5.19 asks for, beside the span
+/// of each group, and the `aggrGroupBy` keys the caller groups them by.
 ///
 /// Clause 4.5.19: the fixed key is the attribute and `datasetId`, which the
 /// stream is; the `aggrGroupBy` extension adds its own keys ahead of the
-/// period, and an absent period is the whole range: one period rather than no
-/// grouping at all. An instance with no instant on the axis has no period, so a
-/// read by period leaves it out.
+/// period.
+fn aggregated_rows(rows: SelectStatement, compiled: &CompiledTemporalQuery, branch: &HistoryBranch, of: &HistoryOf) -> (SelectStatement, Vec<SimpleExpr>) {
+    let axis = axis_column(compiled.window.timeproperty);
+    let mut select = Query::select();
+    project_group_span(&mut select);
+    select.from_subquery(rows, Ah);
+    let keys: Vec<SimpleExpr> = match &compiled.representation.grouping {
+        Some(grouping) => apply_grouping(&mut select, grouping, axis, branch, of),
+        None => Vec::new(),
+    };
+    for (expr, alias) in aggregate_columns(&compiled.representation.aggr_methods) {
+        select.expr_as(expr, Alias::new(alias));
+    }
+    (select, keys)
+}
+
+/// The periods of one stream's page, each with its aggregates, numbered in the
+/// order the representation lists them.
+fn stream_page(rows: StreamRows, grid: Option<&AggregationGrid>, compiled: &CompiledTemporalQuery, branch: &HistoryBranch, of: &HistoryOf) -> SelectStatement {
+    match rows {
+        StreamRows::OnTheGrid(rows) => grouped_page(rows, grid, compiled, branch, of),
+        StreamRows::AmongListedPeriods(rows) => {
+            let (aggregate, keys) = aggregated_rows(rows, compiled, branch, of);
+            placed_among_listed_periods(aggregate, keys, axis_column(compiled.window.timeproperty))
+        }
+        StreamRows::OfEachListedPeriod(rows) => {
+            let (aggregate, keys) = aggregated_rows(rows, compiled, branch, of);
+            each_listed_period(aggregate, keys)
+        }
+    }
+}
+
+/// The periods of one stream's `rows`, each row placed on `grid`, numbered in
+/// the order the representation lists them.
+///
+/// An absent period is the whole range: one period rather than no grouping at
+/// all. An instance with no instant on the axis has no period, so a read by
+/// period leaves it out.
 fn grouped_page(
     rows: SelectStatement,
     grid: Option<&AggregationGrid>,
@@ -214,14 +252,7 @@ fn grouped_page(
     of: &HistoryOf,
 ) -> SelectStatement {
     let axis = axis_column(compiled.window.timeproperty);
-    let mut select = Query::select();
-    project_group_span(&mut select);
-    select.from_subquery(rows, Ah);
-
-    let mut keys: Vec<SimpleExpr> = match &compiled.representation.grouping {
-        Some(grouping) => apply_grouping(&mut select, grouping, axis, branch, of),
-        None => Vec::new(),
-    };
+    let (mut select, mut keys) = aggregated_rows(rows, compiled, branch, of);
     let mut order = keys.clone(); // clone: the periods are numbered in the order of their group keys
     if let Some(grid) = grid {
         select
@@ -244,9 +275,6 @@ fn grouped_page(
             );
     }
 
-    for (expr, alias) in aggregate_columns(&compiled.representation.aggr_methods) {
-        select.expr_as(expr, Alias::new(alias));
-    }
     if keys.is_empty() {
         // An aggregate without a group key answers one row even over no rows;
         // a stream with nothing to aggregate has no period instead.
@@ -294,7 +322,7 @@ pub fn build_aggregation_query(branch: &HistoryBranch, of: &HistoryOf, compiled:
     }
     select.join_lateral(
         JoinType::Join,
-        grouped_page(read.rows, grid.as_ref(), compiled, branch, of),
+        stream_page(read.rows, grid.as_ref(), compiled, branch, of),
         Page,
         SimpleExpr::from(true),
     );

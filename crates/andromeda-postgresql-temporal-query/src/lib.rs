@@ -22,6 +22,7 @@ pub mod aggregation_grouping;
 pub mod alias;
 pub mod axis;
 pub mod history;
+mod listed_period_page;
 mod period_edge;
 pub mod projected_members;
 pub mod recorded_shape;
@@ -30,6 +31,7 @@ pub mod split_filter_leaves;
 pub mod stage1;
 mod stream_page;
 mod stream_parts;
+mod stream_probes;
 pub mod structured_json;
 mod value_filters;
 

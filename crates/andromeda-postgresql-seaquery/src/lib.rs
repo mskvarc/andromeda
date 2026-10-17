@@ -39,6 +39,7 @@ pub mod placeholder;
 pub mod postgis;
 pub mod queue;
 pub mod returning_image;
+pub mod scalar_subquery;
 pub mod setting;
 pub mod spherical_distance;
 pub mod statement_planning;

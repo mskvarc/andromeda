@@ -74,6 +74,11 @@ impl AggregationGrid {
         AggregationGrid { period, origin }
     }
 
+    /// Whether the periods tile an exact grid or a calendar one.
+    pub(crate) const fn grid(&self) -> PeriodGrid {
+        self.period.grid()
+    }
+
     /// The period bound as an interval.
     pub(crate) fn width(&self) -> SimpleExpr {
         cast(Expr::val(self.period.as_iso8601()), PostgresType::Interval)

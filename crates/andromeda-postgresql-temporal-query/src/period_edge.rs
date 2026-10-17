@@ -20,6 +20,12 @@
 //!
 //! Paging backwards runs the same reads from the most recent instance.
 //!
+//! The probes place every period of the page that holds an instance, one
+//! computation each. On a calendar grid, where placing an instant costs
+//! several interval products, the edge also lists those periods, ascending, so
+//! the read that aggregates the page groups its rows by them instead of
+//! placing every row again.
+//!
 //! The probes read the represented instances as the window and the filters
 //! admit them, deletion records included: they place the edge, which is a
 //! period boundary whatever the instances it counted were, and reading only
@@ -27,34 +33,16 @@
 
 use crate::{
     aggregation_grid::AggregationGrid,
-    alias::Ah,
-    axis::axis_column,
     stream_page::{StreamContinues, Walk},
-    stream_parts::{admitted, over_parts},
+    stream_probes::{Found, Instant, StreamProbes},
 };
-use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
-use andromeda_postgresql_query::history_source::HistoryBranch;
-use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
+    aggregate::array_agg_ordered,
     literal::int_literal,
     open_instant::{or_end_of_time, or_start_of_time},
+    scalar_subquery::scalar_subquery,
 };
-use sea_query::{
-    CommonTableExpression,
-    Condition,
-    Expr,
-    ExprTrait,
-    Func,
-    Iden,
-    IntoIden,
-    JoinType,
-    Query,
-    QueryStatementBuilder,
-    SelectStatement,
-    SimpleExpr,
-    UnionType,
-    WithClause,
-};
+use sea_query::{CommonTableExpression, Expr, ExprTrait, Func, Iden, IntoIden, JoinType, Query, SelectStatement, SimpleExpr, UnionType, WithClause};
 use std::num::{NonZeroU32, NonZeroU64};
 
 /// Alias `stream_edge`: the edge of a stream's page of periods and whether
@@ -90,16 +78,6 @@ struct PeriodStart;
 #[iden = "period_end"]
 struct PeriodEnd;
 
-/// Alias `found`: the instance a probe found.
-#[derive(Iden, Clone, Copy)]
-#[iden = "found"]
-struct Found;
-
-/// Column `instant`: the instant on the axis of the instance a probe found.
-#[derive(Iden, Clone, Copy)]
-#[iden = "instant"]
-struct Instant;
-
 /// Alias `found_period`: the period of the instance a probe found.
 #[derive(Iden, Clone, Copy)]
 #[iden = "found_period"]
@@ -128,6 +106,28 @@ struct BudgetBound;
 #[iden = "bound"]
 struct Bound;
 
+/// Column `period_starts`: the starts of the periods a stream's probes found,
+/// ascending, the period one past the page's count included.
+#[derive(Iden, Clone, Copy)]
+#[iden = "period_starts"]
+struct PeriodStarts;
+
+/// Column `period_ends`: the ends of the periods a stream's probes found, in
+/// the order of their starts.
+#[derive(Iden, Clone, Copy)]
+#[iden = "period_ends"]
+struct PeriodEnds;
+
+/// Whether the edge of a stream's page lists the periods its probes found.
+#[derive(Clone, Copy)]
+pub(crate) enum ProbedPeriods {
+    /// Listed beside the edge, read through [`listed_starts`] and
+    /// [`listed_ends`].
+    Listed,
+    /// Not listed: the page's rows are placed on the grid.
+    Unlisted,
+}
+
 /// How one stream's page of periods is walked: the direction, the periods
 /// it holds at most, the instances when the page bounds them, and the
 /// `lastN` a backward page keeps.
@@ -143,108 +143,6 @@ pub(crate) struct PagedWalk {
     /// The last instances a backward page keeps of what lies from its edge
     /// on.
     pub(crate) last_n: Option<NonZeroU32>,
-}
-
-/// What a probe of the stream under `st` reads: the represented instances of
-/// its parts on the requested axis.
-#[derive(Clone, Copy)]
-pub(crate) struct StreamProbes<'q> {
-    /// The branch the stream is read in.
-    pub(crate) branch: &'q HistoryBranch,
-    /// The query, which names the axis and the parts.
-    pub(crate) compiled: &'q CompiledTemporalQuery,
-    /// The represented instances.
-    pub(crate) condition: &'q Condition,
-}
-
-impl StreamProbes<'_> {
-    /// The axis column the probes read.
-    const fn axis(&self) -> AttributeHistory {
-        axis_column(self.compiled.window.timeproperty)
-    }
-
-    /// The instant of the instance `offset` places past the first one `walk`
-    /// reaches among those `bound` admits, every part read in that order and
-    /// limited on its own before the parts are joined; no row when there are
-    /// not that many.
-    fn instant(&self, walk: Walk, bound: Option<&SimpleExpr>, offset: u64) -> SelectStatement {
-        let axis = self.axis();
-        let candidates = over_parts(self.branch, self.compiled, |part| {
-            let mut candidate = admitted(part, self.condition);
-            candidate.expr_as(Expr::col((Ah, axis)), Instant).and_where(Expr::col((Ah, axis)).is_not_null());
-            if let Some(bound) = bound {
-                // clone: every part is bounded by the same instant.
-                candidate.and_where(bound.clone());
-            }
-            candidate.order_by((Ah, axis), walk.order()).limit(offset + 1);
-            candidate
-        });
-        let mut instant = Query::select();
-        instant
-            .expr(Expr::col((Found, Instant)))
-            .from_subquery(candidates, Found)
-            .order_by((Found, Instant), walk.order())
-            .offset(offset)
-            .limit(1);
-        instant
-    }
-
-    /// The bound a probe walking `walk` from `from` reads beyond: forwards the
-    /// instants at or after it, backwards the instants before it.
-    fn beyond(&self, walk: Walk, from: SimpleExpr) -> SimpleExpr {
-        let axis = Expr::col((Ah, self.axis()));
-        match walk {
-            Walk::Forward => axis.gte(from),
-            Walk::Backward => axis.lt(from),
-        }
-    }
-
-    /// The first instant `walk` reaches beyond `from`, NULL when there is
-    /// none.
-    ///
-    /// The search runs first among the instants within one period of `from`
-    /// and only then beyond: either way it finds the first instant past
-    /// `from`, whatever bound splits the two searches. On an uncompressed
-    /// chunk each search is one descent of the stream's axis index. A
-    /// compressed chunk has no such index, but summarises each batch by its
-    /// least and most recent instant, and a search bounded on both sides
-    /// decompresses only the batches overlapping it, where one bounded on a
-    /// single side would decompress every batch beyond `from`. `COALESCE`
-    /// runs the search beyond only when the nearer one finds nothing.
-    fn next_instant(&self, walk: Walk, from: &SimpleExpr, width: SimpleExpr) -> SelectStatement {
-        let axis = || Expr::col((Ah, self.axis()));
-        // clone: the bound one period on is read by both searches.
-        let step = match walk {
-            Walk::Forward => from.clone().add(width),
-            Walk::Backward => from.clone().sub(width),
-        };
-        let near = match walk {
-            // clone: the near search is bounded by both instants.
-            Walk::Forward => axis().gte(from.clone()).and(axis().lt(step.clone())),
-            Walk::Backward => axis().lt(from.clone()).and(axis().gte(step.clone())),
-        };
-        let near = scalar(self.instant(walk, Some(&near), 0));
-        let far = scalar(self.instant(walk, Some(&self.beyond(walk, step)), 0));
-        let mut next = Query::select();
-        // `OFFSET 0` keeps the read a subquery: pulled up, each use of the
-        // instant would run the searches again.
-        next.expr_as(Func::coalesce([near, far]), Instant).offset(0);
-        next
-    }
-
-    /// The instants on the kept side of `bound`, an edge as [`open_bound`]
-    /// writes it: forwards those before it, backwards those at or after it.
-    ///
-    /// The comparison names the bound as a column, not the expression that
-    /// opens it, so a compressed chunk compares it with each batch's least
-    /// and most recent instant and decompresses only the batches it admits.
-    pub(crate) fn kept_side(&self, walk: Walk, bound: SimpleExpr) -> SimpleExpr {
-        let axis = Expr::col((Ah, self.axis()));
-        match walk {
-            Walk::Forward => axis.lt(bound),
-            Walk::Backward => axis.gte(bound),
-        }
-    }
 }
 
 /// The skip-scan's probes: the first instance `walk` reaches, then from each
@@ -291,7 +189,7 @@ fn probe_bound(position: i64, bound: impl Iden + 'static) -> SimpleExpr {
         .expr(Expr::col((Probes, bound)))
         .from(Probes)
         .and_where(Expr::col((Probes, Probe)).eq(int_literal(position)));
-    scalar(probe)
+    scalar_subquery(probe)
 }
 
 /// `edge` as a bound on the instants a page walking `walk` keeps: the end of
@@ -303,11 +201,6 @@ fn open_bound(walk: Walk, edge: SimpleExpr) -> SimpleExpr {
     }
 }
 
-/// `select` as a scalar subquery.
-fn scalar(select: SelectStatement) -> SimpleExpr {
-    SimpleExpr::SubQuery(None, Box::new(select.into_sub_query_statement()))
-}
-
 /// The edge of the stream's page of periods, and whether the stream runs on
 /// beyond it.
 ///
@@ -317,8 +210,9 @@ fn scalar(select: SelectStatement) -> SimpleExpr {
 /// in, read on the kept side of the count edge, or the first period when that
 /// one alone holds more; the edge is the nearer of the two. A backward page
 /// keeping the last `lastN` instances is complete when it already holds that
-/// many.
-pub(crate) fn page_edge(probes: &StreamProbes<'_>, grid: &AggregationGrid, paged: PagedWalk) -> SelectStatement {
+/// many. `periods` says whether the edge also lists the periods the probes
+/// found.
+pub(crate) fn page_edge(probes: &StreamProbes<'_>, grid: &AggregationGrid, paged: PagedWalk, periods: ProbedPeriods) -> SelectStatement {
     let walk = paged.walk;
     let beyond_count = i64::from(paged.periods) + 1;
     let count_edge = match walk {
@@ -349,8 +243,8 @@ pub(crate) fn page_edge(probes: &StreamProbes<'_>, grid: &AggregationGrid, paged
                 )
                 .join_lateral(JoinType::Join, grid.period_of(Expr::col((Found, Instant))), FoundPeriod, SimpleExpr::from(true));
             match walk {
-                Walk::Forward => Func::least([count_edge, scalar(budget)]).into(),
-                Walk::Backward => Func::greatest([count_edge, scalar(budget)]).into(),
+                Walk::Forward => Func::least([count_edge, scalar_subquery(budget)]).into(),
+                Walk::Backward => Func::greatest([count_edge, scalar_subquery(budget)]).into(),
             }
         }
     };
@@ -361,10 +255,16 @@ pub(crate) fn page_edge(probes: &StreamProbes<'_>, grid: &AggregationGrid, paged
             .cte(probes_of_stream(probes, grid, walk, paged.periods))
             .to_owned(),
     );
-
     let mut edge_bound = Query::select();
+    edge_bound.column((EdgeCut, Cut));
+    match periods {
+        ProbedPeriods::Listed => {
+            edge_cut.expr_as(listed(PeriodStart), PeriodStarts).expr_as(listed(PeriodEnd), PeriodEnds);
+            edge_bound.column((EdgeCut, PeriodStarts)).column((EdgeCut, PeriodEnds));
+        }
+        ProbedPeriods::Unlisted => {}
+    }
     edge_bound
-        .column((EdgeCut, Cut))
         .expr_as(open_bound(walk, Expr::col((EdgeCut, Cut))), Bound)
         .from_subquery(edge_cut, EdgeCut)
         .offset(0);
@@ -384,7 +284,34 @@ pub(crate) fn page_edge(probes: &StreamProbes<'_>, grid: &AggregationGrid, paged
         .column((EdgeBound, Bound))
         .expr_as(continues, StreamContinues)
         .from_subquery(edge_bound, EdgeBound);
+    match periods {
+        ProbedPeriods::Listed => {
+            select.column((EdgeBound, PeriodStarts)).column((EdgeBound, PeriodEnds));
+        }
+        ProbedPeriods::Unlisted => {}
+    }
     select
+}
+
+/// `bound` of every period the probes found, as an array in the order of the
+/// periods' starts.
+fn listed(bound: impl Iden + 'static) -> SimpleExpr {
+    let mut periods = Query::select();
+    periods
+        .expr(array_agg_ordered(Expr::col((Probes, bound)), Expr::col((Probes, PeriodStart))))
+        .from(Probes);
+    scalar_subquery(periods)
+}
+
+/// The starts of the periods the edge under [`StreamEdge`] listed, ascending.
+pub(crate) fn listed_starts() -> SimpleExpr {
+    Expr::col((StreamEdge, PeriodStarts))
+}
+
+/// The ends of the periods the edge under [`StreamEdge`] listed, in the order
+/// of their starts.
+pub(crate) fn listed_ends() -> SimpleExpr {
+    Expr::col((StreamEdge, PeriodEnds))
 }
 
 /// The bound the lateral under [`StreamEdge`] sets on the instants of the

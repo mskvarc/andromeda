@@ -87,6 +87,38 @@ pub fn array_append(array: SimpleExpr, element: SimpleExpr) -> SimpleExpr {
     Func::cust(ArrayAppend).args([array, element]).into()
 }
 
+/// The `width_bucket` function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "width_bucket"]
+struct WidthBucket;
+
+/// `width_bucket(operand, thresholds)`: the position in the ascending array
+/// `thresholds` of the last element at or before `operand`, 0 when every
+/// element lies after it.
+///
+/// A binary search over the array, so placing a value among n bounds costs
+/// about log n comparisons whatever the bounds are.
+#[must_use]
+pub fn width_bucket(operand: SimpleExpr, thresholds: SimpleExpr) -> SimpleExpr {
+    Func::cust(WidthBucket).args([operand, thresholds]).into()
+}
+
+/// The `generate_subscripts` function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "generate_subscripts"]
+struct GenerateSubscripts;
+
+/// `generate_subscripts(array, 1)`: the positions of a one-dimensional
+/// array's elements, a set-returning function.
+///
+/// Projected beside `unnest(array)` it yields each element's position in step
+/// with the element, which an array subscript cannot do here: a sea-query
+/// template reads `[…]` as a quoted identifier.
+#[must_use]
+pub fn array_positions(array: SimpleExpr) -> SimpleExpr {
+    Func::cust(GenerateSubscripts).args([array, SimpleExpr::Constant(1.into())]).into()
+}
+
 /// `array_cat(left, right)`: the elements of `left`, then those of `right`.
 #[must_use]
 pub fn array_cat(left: SimpleExpr, right: SimpleExpr) -> SimpleExpr {
@@ -169,7 +201,18 @@ pub fn nullable_text_array(values: &[Option<&str>]) -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use crate::pg_array::{all, any, array_append, array_position, array_subquery, elements_or_null, has_elements, nullable_text_array};
+    use crate::pg_array::{
+        all,
+        any,
+        array_append,
+        array_position,
+        array_positions,
+        array_subquery,
+        elements_or_null,
+        has_elements,
+        nullable_text_array,
+        width_bucket,
+    };
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query, SimpleExpr};
 
@@ -196,6 +239,18 @@ mod tests {
             Expr::col(Alias::new("entity_type_name_key")),
         ));
         assert_eq!(sql, "SELECT array_position(\"entity_type_name_keys\", \"entity_type_name_key\")");
+    }
+
+    #[test]
+    fn a_value_is_placed_among_ascending_thresholds_by_width_bucket() {
+        let sql = render_expr(width_bucket(Expr::col(Alias::new("at")), Expr::col(Alias::new("starts"))));
+        assert_eq!(sql, "SELECT width_bucket(\"at\", \"starts\")");
+    }
+
+    #[test]
+    fn the_positions_of_an_array_are_its_first_dimension_subscripts() {
+        let sql = render_expr(array_positions(Expr::col(Alias::new("starts"))));
+        assert_eq!(sql, "SELECT generate_subscripts(\"starts\", 1)");
     }
 
     #[test]

@@ -9,15 +9,23 @@
 //! instances of what lies from the edge on. A read that is one complete
 //! answer, a whole-range aggregation or a `lastN` within the maximum, reads
 //! every instance or the last `lastN` without an edge.
+//!
+//! On a calendar grid the edge lists the periods its probes found, and the
+//! page is grouped by those ([`crate::listed_period_page`]): a page of whole
+//! periods reads the rows of each listed period on its own, and a page keeping
+//! the last `lastN` instances reads them as on the exact grid.
 
 use crate::{
     aggregation_grid::AggregationGrid,
     alias::Ah,
-    period_edge::{PagedWalk, StreamProbes, page_edge, stream_bound},
+    axis::axis_column,
+    listed_period_page::within_page_period,
+    period_edge::{PagedWalk, ProbedPeriods, page_edge, stream_bound},
     stream_page::{Walk, latest_instances},
     stream_parts::{admitted, over_parts},
+    stream_probes::StreamProbes,
 };
-use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, instance_page::InstancePage};
+use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, instance_page::InstancePage, period_grid::PeriodGrid};
 use andromeda_postgresql_query::history_source::HistoryBranch;
 use sea_query::{Asterisk, Condition, Expr, SelectStatement};
 use std::num::NonZeroU32;
@@ -29,7 +37,18 @@ pub(crate) struct AggregatedStreamRead {
     /// before the rows; `None` when the read is one complete answer.
     pub(crate) edge: Option<SelectStatement>,
     /// The rows the page aggregates, read laterally under `ah`.
-    pub(crate) rows: SelectStatement,
+    pub(crate) rows: StreamRows,
+}
+
+/// The rows one stream's page aggregates, and how they reach their periods.
+pub(crate) enum StreamRows {
+    /// Every row, placed in its period on the grid, or in the one whole-range
+    /// period when there is no grid.
+    OnTheGrid(SelectStatement),
+    /// Every row, placed among the periods the page's edge listed.
+    AmongListedPeriods(SelectStatement),
+    /// The rows of one period the page's edge listed, read for each of them.
+    OfEachListedPeriod(SelectStatement),
 }
 
 /// What an aggregated read of the stream under `st` joins, for the page the
@@ -80,7 +99,7 @@ pub(crate) fn aggregated_stream_read(
         (Some(grid), Paging::Paged(paged)) => paged_read(&probes, aggregated, grid, paged),
         (None, Paging::Paged(PagedWalk { last_n, .. }) | Paging::Unpaged(last_n)) | (Some(_), Paging::Unpaged(last_n)) => AggregatedStreamRead {
             edge: None,
-            rows: unpaged_rows(branch, compiled, aggregated, last_n),
+            rows: StreamRows::OnTheGrid(unpaged_rows(branch, compiled, aggregated, last_n)),
         },
     }
 }
@@ -107,20 +126,37 @@ fn unpaged_rows(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, aggreg
 }
 
 /// The edge and the rows of one stream's page of periods.
+///
+/// The last `lastN` instances are counted across periods, so a page keeping
+/// them reads them whole whatever the grid.
 fn paged_read(probes: &StreamProbes<'_>, aggregated: &Condition, grid: &AggregationGrid, paged: PagedWalk) -> AggregatedStreamRead {
     let StreamProbes { branch, compiled, .. } = *probes;
     // clone: the page's rows are the aggregated instances on the kept side of the edge.
     let kept = aggregated.clone().add(probes.kept_side(paged.walk, stream_bound()));
-    let rows = match paged.last_n {
-        Some(n) => latest_instances(branch, compiled, &kept, n, every_column),
-        None => over_parts(branch, compiled, |part| {
-            let mut rows = admitted(part, &kept);
+    let every_kept = |kept: &Condition| {
+        over_parts(branch, compiled, |part| {
+            let mut rows = admitted(part, kept);
             every_column(&mut rows);
             rows
-        }),
+        })
+    };
+    let (periods, rows) = match (grid.grid(), paged.last_n) {
+        (PeriodGrid::Exact, Some(n)) => (
+            ProbedPeriods::Unlisted,
+            StreamRows::OnTheGrid(latest_instances(branch, compiled, &kept, n, every_column)),
+        ),
+        (PeriodGrid::Exact, None) => (ProbedPeriods::Unlisted, StreamRows::OnTheGrid(every_kept(&kept))),
+        (PeriodGrid::Calendar, Some(n)) => (
+            ProbedPeriods::Listed,
+            StreamRows::AmongListedPeriods(latest_instances(branch, compiled, &kept, n, every_column)),
+        ),
+        (PeriodGrid::Calendar, None) => (
+            ProbedPeriods::Listed,
+            StreamRows::OfEachListedPeriod(every_kept(&kept.add(within_page_period(axis_column(compiled.window.timeproperty))))),
+        ),
     };
     AggregatedStreamRead {
-        edge: Some(page_edge(probes, grid, paged)),
+        edge: Some(page_edge(probes, grid, paged, periods)),
         rows,
     }
 }
@@ -235,6 +271,61 @@ mod tests {
         assert!(edge.contains(r#""found_period"."bucket_end" AS "period_end""#), "{sql}");
         assert!(edge.contains(r#""calendar_grid"."period_index" + (1)"#), "{sql}");
         assert!(edge.contains(r#""ah"."observed_at" >= "probes"."period_end""#), "{sql}");
+    }
+
+    /// On the calendar grid the edge lists the periods its probes found, and
+    /// the page reads the rows of each listed period on its own, bounded on
+    /// both sides, placing none of them on the grid.
+    #[test]
+    fn a_calendar_page_of_whole_periods_reads_each_listed_period_on_its_own() {
+        let sql = sql_of(&aggregated("P1M", TimeProp::Observed, InstancePage::Periods { budget: budget() }));
+        let edge = edge_of(&sql);
+        assert!(
+            edge.contains(r#"(SELECT array_agg("probes"."period_start" ORDER BY "probes"."period_start") FROM "probes") AS "period_starts""#),
+            "{sql}"
+        );
+        assert!(
+            edge.contains(r#"(SELECT array_agg("probes"."period_end" ORDER BY "probes"."period_start") FROM "probes") AS "period_ends""#),
+            "{sql}"
+        );
+        assert!(edge.contains(r#""edge_bound"."period_starts", "edge_bound"."period_ends""#), "{sql}");
+        let rows = sql.split(r#"AS "stream_edge""#).nth(1).expect("the rows after the edge");
+        assert!(rows.contains(r#"UNNEST("stream_edge"."period_starts") AS "bucket_start""#), "{sql}");
+        assert!(
+            rows.contains(r#""ah"."observed_at" < "stream_edge"."bound" AND ("ah"."observed_at" >= "page_period"."bucket_start" AND "ah"."observed_at" < "page_period"."bucket_end")"#),
+            "{sql}"
+        );
+        assert!(!rows.contains("calendar_grid"), "{sql}");
+        assert!(!rows.contains("GROUP BY"), "{sql}");
+    }
+
+    /// A calendar page keeping its last `lastN` instances counts them across
+    /// periods, so it reads them whole and places each among the periods the
+    /// edge listed rather than on the grid.
+    #[test]
+    fn a_calendar_page_keeping_its_last_n_places_its_instances_among_the_listed_periods() {
+        let page = InstancePage::PeriodsBackward {
+            budget: budget(),
+            requested: NonZeroU32::new(5000).expect("a positive count"),
+        };
+        let sql = sql_of(&aggregated("P1M", TimeProp::Observed, page));
+        assert!(edge_of(&sql).contains(r#"AS "period_starts""#), "{sql}");
+        let rows = sql.split(r#"AS "stream_edge""#).nth(1).expect("the rows after the edge");
+        assert!(rows.contains("LIMIT 5000"), "{sql}");
+        assert!(
+            rows.contains(r#"width_bucket("ah"."observed_at", "stream_edge"."period_starts") AS "period_position""#),
+            "{sql}"
+        );
+        assert!(!rows.contains("calendar_grid"), "{sql}");
+    }
+
+    /// On the exact grid `time_bucket` places the rows in the order the axis
+    /// index returns them, so the edge lists no period.
+    #[test]
+    fn an_exact_page_lists_no_period() {
+        let sql = sql_of(&aggregated("PT1H", TimeProp::Observed, InstancePage::Periods { budget: budget() }));
+        assert!(!sql.contains("period_starts"), "{sql}");
+        assert!(!sql.contains("page_period"), "{sql}");
     }
 
     /// The budget probe reads the instance one past the budget before the count
