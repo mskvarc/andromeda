@@ -139,6 +139,7 @@ for key in autovacuum_work_mem io_workers temp_file_limit wal_buffers random_pag
 	expect "derived $key from andromeda-derived.conf" "${file##*/}" andromeda-derived.conf
 done
 expect 'reserved_connections' "$(sql limits-2g 'SHOW reserved_connections')" 3
+expect 'idle_session_timeout' "$(sql limits-2g 'SHOW idle_session_timeout')" 1h
 for key in synchronous_commit wal_log_hints autovacuum_vacuum_cost_delay; do
 	expect "$key left at default" "$(sql limits-2g "SELECT source FROM pg_settings WHERE name = '$key'")" default
 done
