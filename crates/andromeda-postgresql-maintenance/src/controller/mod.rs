@@ -235,14 +235,15 @@ impl MaintenanceController {
             }
         };
         let contract = current_tenant_schema_contract()?;
-        if let Err(error) = verify_schema_contract(&tenant_pool, &contract).await {
+        let mut connection = tenant_pool.acquire().await?;
+        connection.close_on_drop();
+        if let Err(error) = verify_schema_contract(&mut connection, &contract).await {
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::SchemaBehind).await?;
             warn!(tenant = tenant.log_name(), database = %tenant.database, error = %error, decision = "schema-behind", "PostgreSQL maintenance does not migrate idle tenant schemas");
+            drop(connection);
             tenant_pool.close().await;
             return Ok(ControlFlow::Break(PassOutcome::SchemaBehind));
         }
-        let mut connection = tenant_pool.acquire().await?;
-        connection.close_on_drop();
         inspection::configure_session(&mut connection).await?;
         Ok(ControlFlow::Continue(connection))
     }

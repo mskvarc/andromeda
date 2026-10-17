@@ -1,6 +1,6 @@
 //! The server and extension versions the tenant schema depends on.
 
-use crate::schema_contract::{error::SchemaContractError, server_encoding::ServerEncoding};
+use crate::schema_contract::{error::SchemaContractError, server_encoding::ServerEncoding, versioned_extension::VersionedExtension};
 use andromeda_postgresql_seaquery::{
     cast::cast,
     introspection::{current_setting, extension_version},
@@ -8,7 +8,7 @@ use andromeda_postgresql_seaquery::{
 };
 use sea_query::{Alias, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
-use sqlx::{PgPool, Row};
+use sqlx::{Executor, Postgres, Row};
 use std::{num::ParseIntError, str::FromStr};
 
 /// The PostgreSQL version the tenant schema requires.
@@ -25,16 +25,16 @@ pub const REQUIRED_POSTGRES_VERSION: PostgresVersion = PostgresVersion::new(150_
 /// The schema stores `geometry(PointZ, 4326)` and casts to `geography` for
 /// distance predicates, and the compiled `georel` predicates call
 /// `ST_MakeValid`; all of that is `PostGIS` 3.0 surface.
-pub const REQUIRED_POSTGIS_VERSION: ExtensionVersion = ExtensionVersion::new(3, 0);
+pub const REQUIRED_POSTGIS_VERSION: ExtensionVersion = ExtensionVersion::new(3, 0, 0);
 
 /// The `TimescaleDB` version the tenant schema requires.
 ///
-/// `attribute_history` is a hypertable created with
-/// `create_hypertable(..., by_range(...))`, chunk-managed with
-/// `set_chunk_time_interval` and aged out with `drop_chunks`, all Apache-2.0
-/// core surface. The floor is 2.18 because the TSL columnstore path the TSL
-/// edition additionally takes (`enable_columnstore`, `add_columnstore_policy`)
-/// is 2.18 surface, and both editions ship the same package version, so one
+/// The floor is the release the PostgreSQL image ships, patch included, so a
+/// tenant runs the version the broker was built and tested against and the
+/// broker carries no path conditional on an older one. A tenant created on an
+/// earlier image is brought up to the shipped version by
+/// [`update_extensions`](crate::extension_update::update_extensions) before
+/// this floor is checked. Both editions ship the same package version, so one
 /// floor covers both.
 ///
 /// The floor is a version floor only, never a license floor. The Apache-2.0
@@ -42,7 +42,7 @@ pub const REQUIRED_POSTGIS_VERSION: ExtensionVersion = ExtensionVersion::new(3, 
 /// columnstore only behind a `pg_proc` capability probe, and on the core the
 /// hypertables run uncompressed, so no edition is refused here. The columnstore
 /// is a TSL benefit that rides along where present, not a requirement.
-pub const REQUIRED_TIMESCALEDB_VERSION: ExtensionVersion = ExtensionVersion::new(2, 18);
+pub const REQUIRED_TIMESCALEDB_VERSION: ExtensionVersion = ExtensionVersion::new(2, 30, 2);
 
 /// The `server_encoding` the tenant schema requires.
 ///
@@ -68,35 +68,41 @@ impl PostgresVersion {
     }
 }
 
-/// The `major.minor` prefix of an installed extension's version.
+/// The `major.minor.patch` numbers of an extension version.
 ///
-/// Field order is the comparison order: `Ord` is derived, so major dominates.
+/// Field order is the comparison order: `Ord` is derived, so major dominates,
+/// then minor, then patch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display)]
-#[display("{major}.{minor}")]
+#[display("{major}.{minor}.{patch}")]
 pub struct ExtensionVersion {
     /// The major component, compared first.
     pub major: u32,
     /// The minor component, compared second.
     pub minor: u32,
+    /// The patch component, compared last.
+    pub patch: u32,
 }
 
 impl ExtensionVersion {
-    /// Name a `major.minor` version.
+    /// Name a `major.minor.patch` version.
     #[must_use]
-    pub const fn new(major: u32, minor: u32) -> ExtensionVersion {
-        ExtensionVersion { major, minor }
+    pub const fn new(major: u32, minor: u32, patch: u32) -> ExtensionVersion {
+        ExtensionVersion { major, minor, patch }
     }
 }
 
 impl TryFrom<&str> for ExtensionVersion {
     type Error = ExtensionVersionError;
 
-    /// Read what `pg_extension.extversion` holds.
+    /// Read what `pg_extension.extversion` or
+    /// `pg_available_extensions.default_version` holds.
     ///
     /// Only the leading digit run of each component is read, because a
-    /// development build reports a component such as `18-dev`; a component with
+    /// development build reports a component such as `0-dev`; a component with
     /// no leading digit is refused rather than assumed to be zero, since a
-    /// version that cannot be read cannot be shown to meet a floor.
+    /// version that cannot be read cannot be shown to meet a floor. A version
+    /// of two components (`3.0`) is the first release of that minor line, so
+    /// its patch is zero.
     fn try_from(value: &str) -> Result<ExtensionVersion, ExtensionVersionError> {
         let mut components = value.split('.');
         let (Some(major), Some(minor)) = (components.next(), components.next()) else {
@@ -105,6 +111,7 @@ impl TryFrom<&str> for ExtensionVersion {
         Ok(ExtensionVersion {
             major: leading_number(major)?,
             minor: leading_number(minor)?,
+            patch: components.next().map(leading_number).transpose()?.unwrap_or_default(),
         })
     }
 }
@@ -174,20 +181,23 @@ pub enum ExtensionVersionError {
 /// [`SchemaContractError::PostGisBelowMinimum`] or
 /// [`SchemaContractError::TimescaleDbBelowMinimum`] when the server or one of
 /// the two versioned extensions is below the floor the schema depends on.
-pub async fn verify_server_requirements(pool: &PgPool) -> Result<(), SchemaContractError> {
+pub async fn verify_server_requirements<'e, E>(executor: E) -> Result<(), SchemaContractError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     let (sql, values) = server_requirements_statement().build_sqlx(PostgresQueryBuilder);
-    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(pool).await?;
+    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(executor).await?;
 
     check_postgres(PostgresVersion::new(row.try_get("server_version_num")?))?;
     check_server_encoding(row.try_get::<&str, _>("server_encoding")?)?;
     check_extension(
         REQUIRED_POSTGIS_VERSION,
-        ExtensionPresence::try_from(row.try_get::<Option<String>, _>("postgis_version")?)?,
+        ExtensionPresence::try_from(row.try_get::<Option<String>, _>(VersionedExtension::PostGis.installed_column())?)?,
         |required, found| SchemaContractError::PostGisBelowMinimum { required, found },
     )?;
     check_extension(
         REQUIRED_TIMESCALEDB_VERSION,
-        ExtensionPresence::try_from(row.try_get::<Option<String>, _>("timescaledb_version")?)?,
+        ExtensionPresence::try_from(row.try_get::<Option<String>, _>(VersionedExtension::TimescaleDb.installed_column())?)?,
         |required, found| SchemaContractError::TimescaleDbBelowMinimum { required, found },
     )
 }
@@ -205,8 +215,14 @@ fn server_requirements_statement() -> SelectStatement {
             Alias::new("server_version_num"),
         )
         .expr_as(current_setting("server_encoding"), Alias::new("server_encoding"))
-        .expr_as(extension_version("postgis"), Alias::new("postgis_version"))
-        .expr_as(extension_version("timescaledb"), Alias::new("timescaledb_version"))
+        .expr_as(
+            extension_version(VersionedExtension::PostGis.catalog_name()),
+            Alias::new(VersionedExtension::PostGis.installed_column()),
+        )
+        .expr_as(
+            extension_version(VersionedExtension::TimescaleDb.catalog_name()),
+            Alias::new(VersionedExtension::TimescaleDb.installed_column()),
+        )
         .to_owned()
 }
 
@@ -317,7 +333,7 @@ mod tests {
 
     #[test]
     fn an_absent_postgis_is_refused_the_same_way_as_one_below_the_minimum() {
-        let refusals = [ExtensionPresence::Absent, ExtensionPresence::Installed(ExtensionVersion::new(2, 5))];
+        let refusals = [ExtensionPresence::Absent, ExtensionPresence::Installed(ExtensionVersion::new(2, 5, 0))];
         for found in refusals {
             let outcome = check_extension(REQUIRED_POSTGIS_VERSION, found, |required, found| SchemaContractError::PostGisBelowMinimum {
                 required,
@@ -335,24 +351,53 @@ mod tests {
     }
 
     #[test]
-    fn a_timescaledb_below_the_columnstore_floor_is_refused_naming_both_versions() {
-        let found = ExtensionPresence::Installed(ExtensionVersion::new(2, 17));
-        let outcome = check_extension(REQUIRED_TIMESCALEDB_VERSION, found, |required, found| {
-            SchemaContractError::TimescaleDbBelowMinimum { required, found }
-        });
-        match outcome {
-            Err(SchemaContractError::TimescaleDbBelowMinimum { required, found: reported }) => {
-                pretty_assertions::assert_eq!(required, REQUIRED_TIMESCALEDB_VERSION);
-                pretty_assertions::assert_eq!(reported, found);
+    fn the_timescaledb_floor_is_the_release_the_image_ships() {
+        pretty_assertions::assert_eq!(REQUIRED_TIMESCALEDB_VERSION, ExtensionVersion::new(2, 30, 2));
+    }
+
+    #[test]
+    fn a_timescaledb_below_the_floor_is_refused_naming_both_versions_down_to_an_earlier_patch() {
+        let refusals = [
+            ExtensionVersion::new(2, 30, 1),
+            ExtensionVersion::new(2, 29, 2),
+            ExtensionVersion::new(2, 18, 0),
+            ExtensionVersion::new(1, 99, 99),
+        ];
+        for version in refusals {
+            let found = ExtensionPresence::Installed(version);
+            let outcome = check_extension(REQUIRED_TIMESCALEDB_VERSION, found, |required, found| {
+                SchemaContractError::TimescaleDbBelowMinimum { required, found }
+            });
+            match outcome {
+                Err(SchemaContractError::TimescaleDbBelowMinimum { required, found: reported }) => {
+                    pretty_assertions::assert_eq!(required, REQUIRED_TIMESCALEDB_VERSION);
+                    pretty_assertions::assert_eq!(reported, found);
+                }
+                Err(other) => panic!("unexpected refusal: {other}"),
+                Ok(()) => panic!("TimescaleDB {version} is below the floor"),
             }
-            Err(other) => panic!("unexpected refusal: {other}"),
-            Ok(()) => panic!("TimescaleDB 2.17 is below the floor"),
+        }
+    }
+
+    #[test]
+    fn a_timescaledb_at_the_floor_or_any_later_version_is_accepted() {
+        let accepted = [
+            ExtensionVersion::new(2, 30, 2),
+            ExtensionVersion::new(2, 30, 3),
+            ExtensionVersion::new(2, 31, 0),
+            ExtensionVersion::new(3, 0, 0),
+        ];
+        for version in accepted {
+            let outcome = check_extension(REQUIRED_TIMESCALEDB_VERSION, ExtensionPresence::Installed(version), |required, found| {
+                SchemaContractError::TimescaleDbBelowMinimum { required, found }
+            });
+            assert!(outcome.is_ok(), "TimescaleDB {version} meets the floor");
         }
     }
 
     #[test]
     fn an_installed_extension_at_or_above_its_floor_is_accepted() {
-        let accepted = [ExtensionVersion::new(3, 0), ExtensionVersion::new(3, 4), ExtensionVersion::new(4, 0)];
+        let accepted = [ExtensionVersion::new(3, 0, 0), ExtensionVersion::new(3, 4, 2), ExtensionVersion::new(4, 0, 0)];
         for version in accepted {
             let outcome = check_extension(REQUIRED_POSTGIS_VERSION, ExtensionPresence::Installed(version), |required, found| {
                 SchemaContractError::PostGisBelowMinimum { required, found }
@@ -362,11 +407,13 @@ mod tests {
     }
 
     #[test]
-    fn an_extension_version_reads_its_major_and_minor_including_a_development_suffix() {
+    fn an_extension_version_reads_its_three_components_including_a_development_suffix() {
         let readable = [
-            ("3.4.2", ExtensionVersion::new(3, 4)),
-            ("2.17.2", ExtensionVersion::new(2, 17)),
-            ("2.18-dev", ExtensionVersion::new(2, 18)),
+            ("3.6.4", ExtensionVersion::new(3, 6, 4)),
+            ("2.30.2", ExtensionVersion::new(2, 30, 2)),
+            ("2.31.0-dev", ExtensionVersion::new(2, 31, 0)),
+            ("2.18-dev", ExtensionVersion::new(2, 18, 0)),
+            ("3.0", ExtensionVersion::new(3, 0, 0)),
         ];
         for (raw, expected) in readable {
             match ExtensionVersion::try_from(raw) {
@@ -378,7 +425,7 @@ mod tests {
 
     #[test]
     fn an_unreadable_extension_version_is_refused_rather_than_assumed_to_be_zero() {
-        for raw in ["x.y", "3.x", ".4"] {
+        for raw in ["x.y", "3.x", ".4", "3.6.x"] {
             assert!(
                 matches!(ExtensionVersion::try_from(raw), Err(ExtensionVersionError::Component(_))),
                 "{raw:?} must be refused"
@@ -394,6 +441,11 @@ mod tests {
                 "{raw:?} must be refused"
             );
         }
+    }
+
+    #[test]
+    fn an_extension_version_renders_all_three_components() {
+        pretty_assertions::assert_eq!(ExtensionVersion::new(2, 30, 2).to_string(), "2.30.2");
     }
 
     #[test]

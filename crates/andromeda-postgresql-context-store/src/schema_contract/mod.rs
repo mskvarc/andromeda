@@ -25,3 +25,5 @@ pub mod schema_version;
 pub mod server_encoding;
 /// The server and extension versions the tenant schema depends on.
 pub mod server_requirements;
+/// The extensions whose installed version the tenant schema depends on.
+pub mod versioned_extension;

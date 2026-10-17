@@ -15,6 +15,12 @@ use sea_query::{Alias, Expr, ExprTrait, Func, Iden, QueryStatementBuilder, Selec
 #[iden = "pg_extension"]
 struct PgExtension;
 
+/// The `pg_available_extensions` system view of the extensions the server's
+/// installation ships.
+#[derive(Iden, Clone, Copy)]
+#[iden = "pg_available_extensions"]
+struct PgAvailableExtensions;
+
 /// The `pg_proc` system catalog of registered routines.
 #[derive(Iden, Clone, Copy)]
 #[iden = "pg_proc"]
@@ -54,6 +60,23 @@ pub fn extension_version(name: &str) -> SimpleExpr {
         .expr(Expr::col(Alias::new("extversion")))
         .from(PgExtension)
         .and_where(Expr::col(Alias::new("extname")).eq(name.to_owned()))
+        .to_owned();
+    SimpleExpr::SubQuery(None, Box::new(subquery.into_sub_query_statement()))
+}
+
+/// `(SELECT default_version FROM pg_available_extensions WHERE name = name)` -
+/// the version of one extension the server's installation ships, which
+/// `CREATE EXTENSION` installs and `ALTER EXTENSION ... UPDATE` updates to, or
+/// `NULL` when the installation does not ship it.
+///
+/// The extension name is bound. The scalar subquery yields a single row because
+/// the view lists one row per extension control file.
+#[must_use]
+pub fn extension_shipped_version(name: &str) -> SimpleExpr {
+    let subquery = SelectStatement::new()
+        .expr(Expr::col(Alias::new("default_version")))
+        .from(PgAvailableExtensions)
+        .and_where(Expr::col(Alias::new("name")).eq(name.to_owned()))
         .to_owned();
     SimpleExpr::SubQuery(None, Box::new(subquery.into_sub_query_statement()))
 }
@@ -140,7 +163,14 @@ struct PgDatabaseSize;
 
 #[cfg(test)]
 mod tests {
-    use crate::introspection::{current_setting, current_setting_missing_ok, extension_version, function_exists, transaction_has_not_written};
+    use crate::introspection::{
+        current_setting,
+        current_setting_missing_ok,
+        extension_shipped_version,
+        extension_version,
+        function_exists,
+        transaction_has_not_written,
+    };
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, PostgresQueryBuilder, Query};
 
@@ -211,5 +241,18 @@ mod tests {
             .to_string(PostgresQueryBuilder);
         assert!(sql.contains("SELECT \"extversion\" FROM \"pg_extension\""), "{sql}");
         assert!(sql.contains("\"extname\" = 'postgis'"), "{sql}");
+    }
+
+    #[test]
+    fn a_shipped_extension_version_reads_the_installation_by_name() {
+        let (sql, values) = Query::select()
+            .expr_as(extension_shipped_version("timescaledb"), Alias::new("v"))
+            .to_owned()
+            .build(PostgresQueryBuilder);
+        assert!(
+            sql.contains("SELECT \"default_version\" FROM \"pg_available_extensions\" WHERE \"name\" = $1"),
+            "{sql}"
+        );
+        assert_eq!(values.0.len(), 1, "{sql}");
     }
 }

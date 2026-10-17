@@ -13,14 +13,19 @@ RUN set -eux; \
     apt-get purge -y --auto-remove curl gnupg; \
     rm -rf /var/lib/apt/lists/*
 
+# The release's versions. The broker's TimescaleDB floor equals
+# TIMESCALEDB_VERSION, and it updates each tenant database's extensions to
+# these versions when it opens the tenant.
+ARG TIMESCALEDB_VERSION=2.30.2
+ARG POSTGIS_VERSION=3.6.4
 RUN set -eux; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        postgresql-18-postgis-3 \
-        postgresql-18-postgis-3-scripts \
+        "postgresql-18-postgis-3=${POSTGIS_VERSION}+*" \
+        "postgresql-18-postgis-3-scripts=${POSTGIS_VERSION}+*" \
         postgresql-18-repack \
-        timescaledb-2-postgresql-18 \
-        timescaledb-2-loader-postgresql-18 \
+        "timescaledb-2-postgresql-18=${TIMESCALEDB_VERSION}~*" \
+        "timescaledb-2-loader-postgresql-18=${TIMESCALEDB_VERSION}~*" \
         timescaledb-tools; \
     rm -rf /var/lib/apt/lists/*
 

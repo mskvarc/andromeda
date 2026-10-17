@@ -25,7 +25,7 @@ use sea_query::{
     error::Error as SeaQueryError,
 };
 use sea_query_sqlx::SqlxBinder;
-use sqlx::{PgPool, Row};
+use sqlx::{Executor, PgConnection, PgPool, Postgres, Row};
 
 /// Refuse a tenant whose schema is not the one this binary was built against,
 /// stamping a database that has never carried a stamp and re-stamping one
@@ -148,10 +148,10 @@ async fn applied_migrations_digest_up_to(pool: &PgPool, up_to_version: SchemaVer
 /// [`SchemaContractError::Unstamped`] when the tenant carries no stamp at all,
 /// and a version or digest mismatch when the stamp names a different schema
 /// version or migration set than this binary requires.
-pub async fn verify_schema_contract(pool: &PgPool, contract: &SchemaContract) -> Result<(), SchemaContractError> {
-    verify_server_requirements(pool).await?;
+pub async fn verify_schema_contract(connection: &mut PgConnection, contract: &SchemaContract) -> Result<(), SchemaContractError> {
+    verify_server_requirements(&mut *connection).await?;
 
-    let Some(stamped) = read_stamp(pool).await? else {
+    let Some(stamped) = read_stamp(&mut *connection).await? else {
         return Err(SchemaContractError::Unstamped {
             expected_version: contract.version(),
             expected_digest: contract.digest(),
@@ -211,9 +211,12 @@ async fn restamp(pool: &PgPool, contract: &SchemaContract) -> Result<(), SchemaC
 }
 
 /// Read the singleton, if the tenant carries one.
-async fn read_stamp(pool: &PgPool) -> Result<Option<StampedContract>, SchemaContractError> {
+async fn read_stamp<'e, E>(executor: E) -> Result<Option<StampedContract>, SchemaContractError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     let (sql, values) = read_stamp_statement().build_sqlx(PostgresQueryBuilder);
-    let Some(row) = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(pool).await? else {
+    let Some(row) = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(executor).await? else {
         return Ok(None);
     };
     let version = SchemaVersion::try_from(i64::from(row.try_get::<i32, _>("schema_version")?))?;

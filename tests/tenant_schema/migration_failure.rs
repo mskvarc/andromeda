@@ -83,7 +83,9 @@ async fn under_partial_cutover(pool: &PgPool, applied_version: i32) -> Result<()
         .execute(pool)
         .await
         .expect("the partial-cutover stamp must apply");
-    let verified = verify_schema_contract(pool, &embedded_contract()).await;
+    let mut connection = pool.acquire().await.expect("a connection to verify the contract over");
+    let verified = verify_schema_contract(&mut connection, &embedded_contract()).await;
+    drop(connection);
 
     if let Some((version, digest)) = stamped {
         sqlx::query("UPDATE schema_metadata SET schema_version = $1, migrations_sha256 = $2 WHERE singleton")

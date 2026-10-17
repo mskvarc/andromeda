@@ -32,6 +32,9 @@ pub mod entity_map;
 pub mod entity_state_record;
 /// Error types for the context store crate.
 pub mod error;
+/// Updating a tenant database's versioned extensions to the versions the
+/// server ships.
+pub mod extension_update;
 /// The platform route from minted subscription identifiers to tenants (clause 5.8.1.4).
 pub mod forwarded_subscription_routes;
 /// What the database pool reports to `/health`.

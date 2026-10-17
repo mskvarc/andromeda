@@ -88,7 +88,9 @@ async fn under_drift(pool: &PgPool, drift: &str) -> Result<(), SchemaContractErr
         .execute(pool)
         .await
         .expect("the drift statement must apply");
-    let verified = verify_schema_contract(pool, &embedded_contract()).await;
+    let mut connection = pool.acquire().await.expect("a connection to verify the contract over");
+    let verified = verify_schema_contract(&mut connection, &embedded_contract()).await;
+    drop(connection);
 
     sqlx::query("DELETE FROM schema_metadata")
         .execute(pool)
@@ -158,7 +160,7 @@ async fn a_tenant_stamped_by_this_binary_is_accepted_and_reports_the_version_it_
         "the tenant was migrated along a different path"
     );
 
-    verify_schema_contract(&pool, &contract)
+    verify_schema_contract(&mut pool.acquire().await.expect("a connection to verify the contract over"), &contract)
         .await
         .expect("a tenant stamped by this binary must serve normally");
 

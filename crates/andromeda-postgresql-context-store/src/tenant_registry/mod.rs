@@ -6,6 +6,7 @@ pub mod status_code;
 
 use crate::{
     error::ContextStoreError,
+    extension_update::update_extensions,
     store_fault::{persistence_failure, undecodable},
     tenant_database::{DatabaseUrl, create_database_if_missing, generate_database_name},
     tenant_migration::{configure_platform_database, migrate_platform_db, migrate_single_tenant_db},
@@ -105,8 +106,10 @@ impl PostgresTenantRegistry {
 
         // Migrate the platform database over a direct, one-connection pool: the
         // migrator's session advisory lock is unsafe through a pooler, so it
-        // never runs on `main_pool`.
+        // never runs on `main_pool`. Its extensions are updated first, before
+        // any statement loads the installed TimescaleDB into a connection.
         let platform_url = registry.direct_url.with_database_name(&registry.default_database);
+        update_extensions(&platform_url).await?;
         let platform_migration_pool = configure_pool_options(1, registry.acquire_timeout).connect(platform_url.as_str()).await?;
         let migration_result = match configure_platform_database(
             &platform_migration_pool,

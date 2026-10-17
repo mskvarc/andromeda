@@ -1,12 +1,15 @@
 //! Migrating the database behind one tenant to the schema this binary embeds.
 //!
 //! The platform database carries the platform set and the tenant set; every
-//! other tenant database carries the tenant set. Each run stamps and verifies
-//! the schema contract and then brings every Snapshot's branch schemas up to
-//! the branch version, quarantining a Snapshot whose upgrade fails.
+//! other tenant database carries the tenant set. Each run first updates the
+//! database's versioned extensions to the versions the server ships, then
+//! migrates, stamps and verifies the schema contract, and finally brings every
+//! Snapshot's branch schemas up to the branch version, quarantining a Snapshot
+//! whose upgrade fails.
 
 use crate::{
     error::ContextStoreError,
+    extension_update::{begin_without_timescaledb, pending_extension_updates, update_extensions},
     migration_set::{branch::BranchMigrationSet, platform::platform_migrator, tenant::tenant_migrator},
     schema_contract::{
         contract::current_tenant_schema_contract,
@@ -154,20 +157,24 @@ fn report_branch_upgrade(report: BranchUpgradeReport) {
     }
 }
 
-/// Connect to a single tenant database over a one-connection pool, migrate it,
-/// and close the pool.
+/// Update a single tenant database's extensions, then connect to it over a
+/// one-connection pool, migrate it, and close the pool.
 ///
 /// `database_url` must reach PostgreSQL directly, never a transaction-pooling
 /// proxy: the migrator holds a session advisory lock across the run, which a
 /// per-transaction backend assignment would break. Migration is single-threaded,
-/// so the pool holds exactly one connection.
+/// so the pool holds exactly one connection. The extensions are updated before
+/// the pool opens, so the migrations and the floor check run against the
+/// versions the server ships.
 ///
 /// # Errors
 ///
-/// Returns [`ContextStoreError::Database`] when the pool cannot connect, and
-/// the errors [`migrate_tenant_db`] returns when the migration or the schema
-/// contract check fails.
+/// Returns the errors [`update_extensions`] returns,
+/// [`ContextStoreError::Database`] when the pool cannot connect, and the errors
+/// [`migrate_tenant_db`] returns when the migration or the schema contract
+/// check fails.
 pub async fn migrate_single_tenant_db(database_url: &Url, acquire_timeout: Duration) -> Result<(), ContextStoreError> {
+    update_extensions(database_url).await?;
     let pool = configure_pool_options(1, acquire_timeout).connect(database_url.as_str()).await?;
     migrate_tenant_db(&pool).await?;
     pool.close().await;
@@ -188,24 +195,42 @@ pub enum TenantSchemaState {
 /// Decide whether a tenant's schema is current or must be migrated, without
 /// running the migrator.
 ///
-/// Built on the read-only [`verify_schema_contract`], which issues only single
-/// statements and so is safe over a transaction pooler. A schema that is simply
+/// Built on the read-only [`verify_schema_contract`] and
+/// [`pending_extension_updates`], run in one transaction that keeps
+/// `TimescaleDB` unloaded: the transaction stays on one backend through a
+/// transaction pooler, and the serving connection it borrows has not loaded an
+/// extension version the migrator is about to replace, which `TimescaleDB`
+/// would close at its next statement. The versions are read first, because a
+/// failed contract read aborts the transaction.
+///
+/// A versioned extension below the version the server ships reads as
+/// [`TenantSchemaState::NeedsMigration`], and so does a schema that is simply
 /// not there yet -- unstamped, a version behind, its `schema_metadata` relation
-/// undefined, or its versioned extensions not yet installed -- reads as
-/// [`TenantSchemaState::NeedsMigration`], so the caller runs the migrator over a
-/// direct connection. Genuine drift the migrator cannot resolve -- a digest
-/// mismatch at the same version, a stamp ahead of the contract, or a server or
-/// installed extension below the floor -- is returned as the refusal it is,
-/// rather than migrated over.
+/// undefined, or its versioned extensions not yet installed -- so the caller
+/// runs the migrator over a direct connection. Genuine drift the migrator
+/// cannot resolve -- a digest mismatch at the same version, a stamp ahead of
+/// the contract, or a server or installed extension below the floor with no
+/// newer version shipped -- is returned as the refusal it is, rather than
+/// migrated over.
 ///
 /// # Errors
 ///
 /// Returns [`ContextStoreError::SchemaContract`] for the drift cases above, and
-/// when the embedded migration set has no contract or the read itself fails for
-/// a reason other than an undefined relation.
+/// when the embedded migration set has no contract, a reported extension
+/// version cannot be read, or the contract read fails for a reason other than
+/// an undefined relation; [`ContextStoreError::Database`] or
+/// [`ContextStoreError::Saturated`] when the transaction or the version read
+/// fails.
 pub async fn tenant_schema_state(pool: &PgPool) -> Result<TenantSchemaState, ContextStoreError> {
     let contract = current_tenant_schema_contract()?;
-    match verify_schema_contract(pool, &contract).await {
+    let mut probe = begin_without_timescaledb(pool).await?;
+    let pending = pending_extension_updates(&mut probe).await?;
+    let verified = verify_schema_contract(&mut probe, &contract).await;
+    probe.rollback().await?;
+    if !pending.is_empty() {
+        return Ok(TenantSchemaState::NeedsMigration);
+    }
+    match verified {
         Ok(()) => Ok(TenantSchemaState::Current),
         Err(error) if schema_error_is_migratable(&error) => Ok(TenantSchemaState::NeedsMigration),
         Err(error) => Err(error.into()),
@@ -311,7 +336,8 @@ mod tests {
     }
 
     /// An extension a migration installs (absent) needs migrating; one that is
-    /// installed but below the floor is a server upgrade and stays a refusal.
+    /// installed below the floor, with no newer version shipped to update it
+    /// to, is a server upgrade and stays a refusal.
     #[test]
     fn an_absent_extension_needs_migration_but_one_below_the_floor_is_refused() {
         let absent = SchemaContractError::PostGisBelowMinimum {
@@ -322,7 +348,7 @@ mod tests {
 
         let too_old = SchemaContractError::PostGisBelowMinimum {
             required: REQUIRED_POSTGIS_VERSION,
-            found: ExtensionPresence::Installed(ExtensionVersion::new(2, 5)),
+            found: ExtensionPresence::Installed(ExtensionVersion::new(2, 5, 0)),
         };
         assert!(!schema_error_is_migratable(&too_old), "an installed-but-too-old extension is a server upgrade");
     }
