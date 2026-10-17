@@ -29,7 +29,7 @@
 -- delivery, or by write identity when a replay checks whether its events are
 -- already there.
 create table notification_events (
-    event_key bigint generated always as identity,
+    event_key bigint generated always as identity (cache 32),
     created_at timestamptz not null,
     -- The event's deterministic position within its write. With `write_id`
     -- it makes a replayed write insert nothing rather than announce a change
@@ -72,7 +72,10 @@ create table notification_events (
     constraint chk_notification_events_entity_id_length check (octet_length(entity_id) <= 1024)
 )
 with (
-    autovacuum_vacuum_scale_factor = 0.005,
+    vacuum_truncate = false,
+    autovacuum_vacuum_insert_scale_factor = 0,
+    autovacuum_vacuum_insert_threshold = 500,
+    autovacuum_vacuum_scale_factor = 0,
     autovacuum_vacuum_threshold = 500,
     autovacuum_analyze_scale_factor = 0.02,
     autovacuum_analyze_threshold = 500,
@@ -82,7 +85,7 @@ with (
 -- The queue state, one row per matched Subscription, and the only relation a
 -- claim scans, locks or updates.
 create table notification_deliveries (
-    delivery_key bigint generated always as identity,
+    delivery_key bigint generated always as identity (cache 32),
     event_key bigint not null,
     subscription_key bigint not null,
     next_attempt_at timestamptz not null,
@@ -102,8 +105,9 @@ create table notification_deliveries (
     constraint chk_notification_deliveries_last_error_length check (last_error is null or char_length(last_error) <= 2048)
 )
 with (
+    vacuum_truncate = false,
     fillfactor = 80,
-    autovacuum_vacuum_scale_factor = 0.005,
+    autovacuum_vacuum_scale_factor = 0,
     autovacuum_vacuum_threshold = 500,
     autovacuum_analyze_scale_factor = 0.02,
     autovacuum_analyze_threshold = 500,

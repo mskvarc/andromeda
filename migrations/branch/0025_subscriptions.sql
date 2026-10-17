@@ -159,8 +159,9 @@ create table subscription_delivery_state (
     constraint chk_subscription_delivery_state_times_failed_non_negative check (times_failed >= 0)
 )
 with (
+    vacuum_truncate = false,
     fillfactor = 50,
-    autovacuum_vacuum_scale_factor = 0.005,
+    autovacuum_vacuum_scale_factor = 0,
     autovacuum_vacuum_threshold = 100,
     autovacuum_analyze_scale_factor = 0.02,
     autovacuum_analyze_threshold = 100,

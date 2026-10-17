@@ -18,6 +18,9 @@
 -- transaction, and no worker drains a branch.
 -- ============================================================================
 create table temporal_append_intents (
+    -- No sequence cache. The intents of one Entity take their keys in the
+    -- order its writes commit, and the latest intent is read by key; a block
+    -- of keys cached per session would hand a later write a smaller key.
     intent_key bigint generated always as identity,
     created_at timestamptz not null default now(),
     next_attempt_at timestamptz not null default now(),
@@ -55,8 +58,9 @@ create table temporal_append_intents (
     constraint chk_temporal_append_intents_entity_id_length check (octet_length(entity_id) <= 1024)
 )
 with (
+    vacuum_truncate = false,
     fillfactor = 70,
-    autovacuum_vacuum_scale_factor = 0.005,
+    autovacuum_vacuum_scale_factor = 0,
     autovacuum_vacuum_threshold = 500,
     autovacuum_analyze_scale_factor = 0.02,
     autovacuum_analyze_threshold = 500,

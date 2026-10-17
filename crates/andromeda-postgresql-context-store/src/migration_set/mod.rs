@@ -54,6 +54,9 @@ mod naming_tests;
 /// The byte bounds the migrations state, tied to the Rust constants.
 #[cfg(test)]
 mod storage_bound_tests;
+/// The vacuum, BRIN and sequence-cache parameters of the hot relations.
+#[cfg(test)]
+mod storage_parameter_tests;
 /// The temporal catalogue's attribute walk index.
 #[cfg(test)]
 mod temporal_catalog_tests;

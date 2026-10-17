@@ -19,7 +19,7 @@
 -- truncate, so an insert is the only change either dictionary admits.
 -- ============================================================================
 create table attribute_names (
-    attribute_name_key integer generated always as identity,
+    attribute_name_key integer generated always as identity (cache 32),
     name text compression lz4 collate "C" not null,
     constraint pk_attribute_names primary key (attribute_name_key),
     constraint uq_attribute_names_name unique (name),
@@ -27,7 +27,7 @@ create table attribute_names (
 );
 
 create table entity_type_names (
-    entity_type_name_key integer generated always as identity,
+    entity_type_name_key integer generated always as identity (cache 32),
     name text compression lz4 collate "C" not null,
     constraint pk_entity_type_names primary key (entity_type_name_key),
     constraint uq_entity_type_names_name unique (name),

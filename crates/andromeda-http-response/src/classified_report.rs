@@ -164,9 +164,12 @@ impl ClassifiedReport {
 mod tests {
     use crate::classified_report::ClassifiedReport;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        thread::yield_now,
     };
     use tracing::{
         Event,
@@ -177,6 +180,10 @@ mod tests {
         span::{Attributes, Id, Record},
         subscriber::with_default,
     };
+
+    /// How many times the callsite interest cache is rebuilt before an error
+    /// that never arrives fails the test.
+    const INTEREST_REBUILD_ATTEMPTS: usize = 1_000;
 
     struct CountingSubscriber {
         errors: Arc<AtomicUsize>,
@@ -250,10 +257,25 @@ mod tests {
         let report = with_default(subscriber, || {
             // Other tests log through the same callsite on threads with no
             // subscriber, and a callsite first registered there caches that
-            // no one listens; the cache is rebuilt now that one does.
-            rebuild_interest_cache();
-            ClassifiedReport::internal(&"database db-7.internal failed", InternalFailureSummary::ENTITY_STORE_FAULT)
-        });
+            // no one listens. A registration still in flight on such a thread
+            // stores that answer after any rebuild that ran before it
+            // finished, so the cache is rebuilt until the error reaches this
+            // subscriber.
+            let mut report = None;
+            for _ in 0..INTEREST_REBUILD_ATTEMPTS {
+                rebuild_interest_cache();
+                report = Some(ClassifiedReport::internal(
+                    &"database db-7.internal failed",
+                    InternalFailureSummary::ENTITY_STORE_FAULT,
+                ));
+                if errors.load(Ordering::SeqCst) > 0 {
+                    break;
+                }
+                yield_now();
+            }
+            report
+        })
+        .expect("at least one report was built");
         pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::InternalError);
         pretty_assertions::assert_eq!(report.detail(), "the entity store could not complete the operation");
         assert!(!report.detail().contains("db-7.internal"));

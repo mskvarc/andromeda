@@ -32,8 +32,9 @@ create table entities (
     constraint chk_entities_id_length check (octet_length(id) <= 1024)
 )
 with (
+    vacuum_truncate = false,
     fillfactor = 80,
-    autovacuum_vacuum_scale_factor = 0.005,
+    autovacuum_vacuum_scale_factor = 0,
     autovacuum_vacuum_threshold = 500,
     autovacuum_analyze_scale_factor = 0.02,
     autovacuum_analyze_threshold = 500,
@@ -111,7 +112,8 @@ create table entity_search (
     constraint chk_entity_search_operation_space_zm check (operation_space is null or st_zmflag(operation_space) in (0, 2))
 )
 with (
-    autovacuum_vacuum_scale_factor = 0.02,
+    vacuum_truncate = false,
+    autovacuum_vacuum_scale_factor = 0,
     autovacuum_vacuum_threshold = 500,
     autovacuum_analyze_scale_factor = 0.02,
     autovacuum_analyze_threshold = 500,
@@ -162,9 +164,10 @@ create table entity_type_members (
     constraint fk_entity_type_members_entity foreign key (entity_key) references entities (entity_key) on delete cascade
 )
 with (
-    autovacuum_vacuum_insert_scale_factor = 0.01,
+    vacuum_truncate = false,
+    autovacuum_vacuum_insert_scale_factor = 0,
     autovacuum_vacuum_insert_threshold = 500,
-    autovacuum_vacuum_scale_factor = 0.02,
+    autovacuum_vacuum_scale_factor = 0,
     autovacuum_vacuum_threshold = 500,
     autovacuum_analyze_scale_factor = 0.02,
     autovacuum_analyze_threshold = 500,

@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Shellcheck the entrypoint and its checks
-        run: shellcheck docker/images/postgresql/docker-entrypoint.sh docker/images/postgresql/tests/settings-check.sh docker/images/postgresql/tests/extension-update-check.sh
+        run: shellcheck docker/images/postgresql/docker-entrypoint.sh docker/images/postgresql/tests/settings-check.sh docker/images/postgresql/tests/extension-update-check.sh docker/images/postgresql/tests/schema-storage-check.sh
 
   build:
     needs: lint

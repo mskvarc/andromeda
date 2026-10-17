@@ -51,6 +51,10 @@
 -- against concurrent upserts on the referenced table. `unit_code_id`
 -- references nothing in the database: the identity is the `cefact-units`
 -- assignment.
+--
+-- An insert-driven vacuum runs once a twentieth of the rows are new rather
+-- than the default fifth. A hypertable chunk copies the parameter when it is
+-- created, so the chunk receiving appends is vacuumed in smaller steps.
 -- ============================================================================
 create table attribute_history (
     recorded_at timestamptz not null,
@@ -104,6 +108,9 @@ create table attribute_history (
     constraint chk_attribute_history_tombstone_members check (value_kind <> 0 or num_nonnulls (value_type_key, object_type_keys, unit_code_id, expires_at, proof_seals, sub_attributes) = 0),
     constraint chk_attribute_history_object_type_keys_present check (object_type_keys is null or cardinality(object_type_keys) > 0),
     constraint chk_attribute_history_sub_attributes_present check (sub_attributes is null or cardinality(sub_attributes) > 0)
+)
+with (
+    autovacuum_vacuum_insert_scale_factor = 0.05
 );
 
 create index idx_attribute_history_stream_recorded_at on attribute_history (stream_key, recorded_at desc);
@@ -169,16 +176,20 @@ where
 -- summary keeps the outlier in its own range.
 --
 -- Not partial. BRIN summarises NULLs per block rather than indexing them one
--- by one, so a `WHERE ... IS NOT NULL` predicate saves nothing, and
--- TimescaleDB's columnstore skips partial indexes when it chooses which
--- columns get a min/max summary on a compressed chunk.
-create index idx_attribute_history_observed_at_brin on attribute_history using brin (observed_at timestamptz_minmax_multi_ops);
+-- by one, so a `WHERE ... IS NOT NULL` predicate saves nothing.
+--
+-- A range covers 32 pages rather than 128, so a one-day window reads fewer
+-- blocks beside its own for an index still a small fraction of the heap.
+-- `autosummarize` summarises a range as soon as appends move past it. An
+-- unsummarised range matches every query, so without it the newest history
+-- would stay unskippable until a vacuum reached the table.
+create index idx_attribute_history_observed_at_brin on attribute_history using brin (observed_at timestamptz_minmax_multi_ops) with (pages_per_range = 32, autosummarize = on);
 
-create index idx_attribute_history_created_at_brin on attribute_history using brin (created_at timestamptz_minmax_multi_ops);
+create index idx_attribute_history_created_at_brin on attribute_history using brin (created_at timestamptz_minmax_multi_ops) with (pages_per_range = 32, autosummarize = on);
 
-create index idx_attribute_history_modified_at_brin on attribute_history using brin (modified_at timestamptz_minmax_multi_ops);
+create index idx_attribute_history_modified_at_brin on attribute_history using brin (modified_at timestamptz_minmax_multi_ops) with (pages_per_range = 32, autosummarize = on);
 
-create index idx_attribute_history_deleted_at_brin on attribute_history using brin (deleted_at timestamptz_minmax_multi_ops);
+create index idx_attribute_history_deleted_at_brin on attribute_history using brin (deleted_at timestamptz_minmax_multi_ops) with (pages_per_range = 32, autosummarize = on);
 
 -- Clauses 5.6.14 and 5.6.15 name an instance by Entity, attribute and
 -- `instanceId` only, so a client-supplied one must be unique across one

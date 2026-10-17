@@ -148,6 +148,7 @@ mod tests {
     use std::{
         fmt::Debug,
         sync::{Arc, Mutex},
+        thread::yield_now,
     };
     use tracing::{
         Event,
@@ -198,6 +199,10 @@ mod tests {
         ));
         assert!(matches!(persistence_error(sqlx::Error::RowNotFound), RegistrationError::Persistence(_)));
     }
+
+    /// How many times the callsite interest cache is rebuilt before a
+    /// recording that never arrives fails the test.
+    const INTEREST_REBUILD_ATTEMPTS: usize = 1_000;
 
     /// Every location the classification is recorded with.
     struct RecordedLocations {
@@ -250,12 +255,23 @@ mod tests {
         let subscriber = RecordedLocations {
             locations: Arc::clone(&locations),
         };
+        // Other tests reach the same callsite on threads with no subscriber,
+        // and a callsite first registered there caches that no one listens.
+        // A registration still in flight on such a thread stores that answer
+        // after any rebuild that ran before it finished, so the cache is
+        // rebuilt until the event reaches this subscriber.
         with_default(subscriber, || {
-            rebuild_interest_cache();
-            let failed: Result<(), sqlx::Error> = Err(sqlx::Error::RowNotFound);
-            failed.map_err(|error| persistence_error(error))
-        })
-        .expect_err("the statement failed");
+            (0..INTEREST_REBUILD_ATTEMPTS).any(|_| {
+                rebuild_interest_cache();
+                let failed: Result<(), sqlx::Error> = Err(sqlx::Error::RowNotFound);
+                assert!(failed.map_err(|error| persistence_error(error)).is_err(), "the statement failed");
+                let recorded = locations.lock().is_ok_and(|locations| !locations.is_empty());
+                if !recorded {
+                    yield_now();
+                }
+                recorded
+            })
+        });
         let locations = locations.lock().expect("the test lock is not poisoned");
         assert!(!locations.is_empty(), "the failure was not recorded");
         assert!(locations.iter().all(|location| location.contains("registration_store.rs")), "{locations:?}");

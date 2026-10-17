@@ -34,6 +34,61 @@ pub const COLUMNSTORE_ORDER_BY: [(&str, SortDirection); 3] = [
 /// requires of the merge span.
 pub const COLUMNSTORE_MERGE_DAYS: u32 = 28;
 
+/// The summary one sparse index keeps of each columnstore batch, spelled as
+/// `timescaledb.sparse_index` and the catalogue spell it.
+#[derive(Clone, Copy, Debug, Display, Eq, Hash, IntoStaticStr, PartialEq)]
+#[strum(serialize_all = "lowercase")]
+pub enum SparseIndexKind {
+    /// The smallest and largest value in the batch, which a range predicate
+    /// is checked against.
+    Minmax,
+    /// A bloom filter of the batch's values, which an equality predicate is
+    /// checked against.
+    Bloom,
+}
+
+/// One sparse index a hypertable's columnstore declares.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, derive_more::Display)]
+#[display("{kind}({})", columns.join(", "))]
+pub struct SparseIndex {
+    /// The summary kept.
+    pub kind: SparseIndexKind,
+    /// The columns summarised, in order; more than one for a composite bloom.
+    pub columns: &'static [&'static str],
+}
+
+/// The sparse indexes of `attribute_history`'s columnstore.
+const ATTRIBUTE_HISTORY_SPARSE_INDEXES: [SparseIndex; 7] = [
+    SparseIndex {
+        kind: SparseIndexKind::Minmax,
+        columns: &["observed_at"],
+    },
+    SparseIndex {
+        kind: SparseIndexKind::Minmax,
+        columns: &["created_at"],
+    },
+    SparseIndex {
+        kind: SparseIndexKind::Minmax,
+        columns: &["modified_at"],
+    },
+    SparseIndex {
+        kind: SparseIndexKind::Minmax,
+        columns: &["deleted_at"],
+    },
+    SparseIndex {
+        kind: SparseIndexKind::Bloom,
+        columns: &["generated_instance_id"],
+    },
+    SparseIndex {
+        kind: SparseIndexKind::Bloom,
+        columns: &["verbatim_instance_id"],
+    },
+    SparseIndex {
+        kind: SparseIndexKind::Bloom,
+        columns: &["recorded_at", "write_id", "write_ordinal"],
+    },
+];
+
 /// The direction one columnstore order-by column sorts in.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum SortDirection {
@@ -55,13 +110,33 @@ impl HypertableName {
             HypertableName::AttributeHistory => "stream_key",
         }
     }
+
+    /// The sparse indexes the hypertable's columnstore declares.
+    ///
+    /// For `attribute_history`: a `minmax` on each of the four semantic time
+    /// axes clause 5.2.21 admits as a `timeproperty`, so a time filter skips
+    /// batches outside its window; a `bloom` on each instance identifier,
+    /// which clauses 5.6.14 and 5.6.15 address an instance by, so a
+    /// modification or deletion decompresses only the batches that may hold
+    /// it; and a composite `bloom` on the write identity. A replayed write
+    /// reuses its original `recorded_at`, which may lie in a converted chunk,
+    /// and its conflict check on the write identity cannot narrow by segment,
+    /// since `stream_key` is not part of that key: without the bloom it
+    /// decompresses every batch whose `recorded_at` range covers the instant.
+    #[must_use]
+    pub const fn sparse_indexes(self) -> &'static [SparseIndex] {
+        match self {
+            HypertableName::AttributeHistory => &ATTRIBUTE_HISTORY_SPARSE_INDEXES,
+        }
+    }
 }
 
-/// `ALTER TABLE hypertable SET (timescaledb.enable_columnstore, segmentby, orderby, compress_chunk_time_interval)`.
+/// `ALTER TABLE hypertable SET (timescaledb.enable_columnstore, segmentby, orderby, compress_chunk_time_interval, sparse_index)`.
 ///
-/// Every value is fixed per hypertable -- [`HypertableName::segment_by`],
-/// [`COLUMNSTORE_ORDER_BY`] and [`COLUMNSTORE_MERGE_DAYS`] -- so nothing is
-/// interpolated from outside the crate.
+/// Every value is fixed per hypertable ([`HypertableName::segment_by`],
+/// [`COLUMNSTORE_ORDER_BY`], [`COLUMNSTORE_MERGE_DAYS`] and
+/// [`HypertableName::sparse_indexes`]), so nothing is interpolated from
+/// outside the crate.
 #[must_use]
 pub fn enable_columnstore(hypertable: HypertableName) -> String {
     let order_by = COLUMNSTORE_ORDER_BY
@@ -72,8 +147,9 @@ pub fn enable_columnstore(hypertable: HypertableName) -> String {
         })
         .collect::<Vec<String>>()
         .join(", ");
+    let sparse_index = hypertable.sparse_indexes().iter().map(ToString::to_string).collect::<Vec<String>>().join(", ");
     format!(
-        "ALTER TABLE {hypertable} SET (timescaledb.enable_columnstore, timescaledb.segmentby = '{segment_by}', timescaledb.orderby = '{order_by}', timescaledb.compress_chunk_time_interval = '{COLUMNSTORE_MERGE_DAYS} days')",
+        "ALTER TABLE {hypertable} SET (timescaledb.enable_columnstore, timescaledb.segmentby = '{segment_by}', timescaledb.orderby = '{order_by}', timescaledb.compress_chunk_time_interval = '{COLUMNSTORE_MERGE_DAYS} days', timescaledb.sparse_index = '{sparse_index}')",
         segment_by = hypertable.segment_by(),
     )
 }
@@ -96,7 +172,14 @@ pub fn remove_columnstore_policy(hypertable: HypertableName) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::schema_ddl::timescale_policy::{HypertableName, add_columnstore_policy, enable_columnstore, remove_columnstore_policy};
+    use crate::schema_ddl::timescale_policy::{
+        HypertableName,
+        SparseIndex,
+        SparseIndexKind,
+        add_columnstore_policy,
+        enable_columnstore,
+        remove_columnstore_policy,
+    };
     use pretty_assertions::assert_eq;
     use std::num::NonZeroU32;
     use strum::IntoEnumIterator;
@@ -118,7 +201,43 @@ mod tests {
     fn enabling_the_columnstore_names_the_segment_and_order_of_each_hypertable() {
         assert_eq!(
             enable_columnstore(HypertableName::AttributeHistory),
-            "ALTER TABLE attribute_history SET (timescaledb.enable_columnstore, timescaledb.segmentby = 'stream_key', timescaledb.orderby = 'recorded_at DESC, write_id, write_ordinal', timescaledb.compress_chunk_time_interval = '28 days')"
+            concat!(
+                "ALTER TABLE attribute_history SET (timescaledb.enable_columnstore, timescaledb.segmentby = 'stream_key', ",
+                "timescaledb.orderby = 'recorded_at DESC, write_id, write_ordinal', timescaledb.compress_chunk_time_interval = '28 days', ",
+                "timescaledb.sparse_index = 'minmax(observed_at), minmax(created_at), minmax(modified_at), minmax(deleted_at), ",
+                "bloom(generated_instance_id), bloom(verbatim_instance_id), bloom(recorded_at, write_id, write_ordinal)')"
+            )
+        );
+    }
+
+    #[test]
+    fn a_sparse_index_renders_its_kind_over_its_columns_in_order() {
+        let composite = SparseIndex {
+            kind: SparseIndexKind::Bloom,
+            columns: &["recorded_at", "write_id", "write_ordinal"],
+        };
+        assert_eq!(composite.to_string(), "bloom(recorded_at, write_id, write_ordinal)");
+        let single = SparseIndex {
+            kind: SparseIndexKind::Minmax,
+            columns: &["observed_at"],
+        };
+        assert_eq!(single.to_string(), "minmax(observed_at)");
+    }
+
+    #[test]
+    fn attribute_history_summarises_the_four_time_axes_both_instance_identifiers_and_the_write_identity() {
+        let declared: Vec<String> = HypertableName::AttributeHistory.sparse_indexes().iter().map(ToString::to_string).collect();
+        assert_eq!(
+            declared,
+            vec![
+                "minmax(observed_at)",
+                "minmax(created_at)",
+                "minmax(modified_at)",
+                "minmax(deleted_at)",
+                "bloom(generated_instance_id)",
+                "bloom(verbatim_instance_id)",
+                "bloom(recorded_at, write_id, write_ordinal)",
+            ]
         );
     }
 

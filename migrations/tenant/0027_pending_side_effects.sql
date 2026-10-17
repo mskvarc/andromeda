@@ -51,8 +51,9 @@ create table pending_side_effects (
     constraint uq_pse_write_identity unique (write_id)
 )
 with (
+    vacuum_truncate = false,
     fillfactor = 50,
-    autovacuum_vacuum_scale_factor = 0.005,
+    autovacuum_vacuum_scale_factor = 0,
     autovacuum_vacuum_threshold = 500,
     autovacuum_analyze_scale_factor = 0.02,
     autovacuum_analyze_threshold = 500,

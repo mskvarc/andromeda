@@ -122,6 +122,17 @@ pub(crate) struct DeclaredIndex {
     pub(crate) definition: String,
 }
 
+/// One storage parameter a `CREATE TABLE ... WITH (...)` sets.
+#[derive(Debug)]
+pub(crate) struct DeclaredStorageParameter {
+    /// The table the parameter is set on.
+    pub(crate) table: String,
+    /// The parameter name.
+    pub(crate) name: String,
+    /// The value as written.
+    pub(crate) value: String,
+}
+
 /// One `CREATE [OR REPLACE] FUNCTION`.
 #[derive(Debug)]
 pub(crate) struct DeclaredFunction {
@@ -158,6 +169,8 @@ pub(crate) struct DeclaredSchema {
     pub(crate) composite_fields: Vec<DeclaredColumn>,
     /// Every named constraint.
     pub(crate) constraints: Vec<DeclaredConstraint>,
+    /// Every table storage parameter, in declaration order.
+    pub(crate) storage_parameters: Vec<DeclaredStorageParameter>,
     /// Every index and statistics object.
     pub(crate) indexes: Vec<DeclaredIndex>,
     /// Every function.
@@ -226,11 +239,23 @@ impl DeclaredSchema {
             return;
         };
         let table = table.trim().to_owned();
-        let body = &body[..closing_parenthesis(body)];
-        for item in top_level_items(body) {
+        let body_end = closing_parenthesis(body);
+        for item in top_level_items(&body[..body_end]) {
             match strip_prefix_ci(item, "CONSTRAINT ") {
                 Some(constraint) => self.read_constraint(&table, constraint),
                 None => self.read_column(&table, item),
+            }
+        }
+        let after_body = body.get(body_end + 1..).unwrap_or_default().trim_start();
+        if let Some(parameters) = strip_prefix_ci(after_body, "WITH").map(str::trim_start).and_then(|rest| rest.strip_prefix('(')) {
+            for parameter in top_level_items(&parameters[..closing_parenthesis(parameters)]) {
+                if let Some((name, value)) = parameter.split_once('=') {
+                    self.storage_parameters.push(DeclaredStorageParameter {
+                        table: table.clone(),
+                        name: name.trim().to_owned(),
+                        value: value.trim().to_owned(),
+                    });
+                }
             }
         }
         self.tables.push(table);
@@ -361,6 +386,19 @@ impl DeclaredSchema {
 mod tests {
     use crate::migration_set::declared_schema::{DeclaredColumn, DeclaredSchema};
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn a_table_is_read_with_its_storage_parameters() {
+        let mut schema = DeclaredSchema::default();
+        schema.read_statement("create table t (\n    id bigint not null\n)\nwith (\n    fillfactor = 80,\n    vacuum_truncate = false\n)");
+        let parameters: Vec<(&str, &str, &str)> = schema
+            .storage_parameters
+            .iter()
+            .map(|parameter| (parameter.table.as_str(), parameter.name.as_str(), parameter.value.as_str()))
+            .collect();
+        assert_eq!(parameters, [("t", "fillfactor", "80"), ("t", "vacuum_truncate", "false")]);
+        assert_eq!(schema.tables, ["t"]);
+    }
 
     #[test]
     fn a_composite_type_is_read_field_by_field_under_its_name() {

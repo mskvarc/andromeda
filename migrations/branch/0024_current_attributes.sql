@@ -134,8 +134,9 @@ create table current_attributes (
     constraint chk_current_attributes_dataset_id_length check (octet_length(dataset_id) <= 1024)
 )
 with (
+    vacuum_truncate = false,
     fillfactor = 80,
-    autovacuum_vacuum_scale_factor = 0.005,
+    autovacuum_vacuum_scale_factor = 0,
     autovacuum_vacuum_threshold = 500,
     autovacuum_analyze_scale_factor = 0.02,
     autovacuum_analyze_threshold = 500,

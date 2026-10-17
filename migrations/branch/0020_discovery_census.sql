@@ -35,9 +35,10 @@ create table entity_type_census (
     constraint chk_entity_type_census_entity_delta check (entity_delta <> 0)
 )
 with (
-    autovacuum_vacuum_insert_scale_factor = 0.01,
+    vacuum_truncate = false,
+    autovacuum_vacuum_insert_scale_factor = 0,
     autovacuum_vacuum_insert_threshold = 500,
-    autovacuum_vacuum_scale_factor = 0.01,
+    autovacuum_vacuum_scale_factor = 0,
     autovacuum_vacuum_threshold = 200,
     autovacuum_analyze_scale_factor = 0.02,
     autovacuum_analyze_threshold = 200,
@@ -55,9 +56,10 @@ create table entity_type_attribute_census (
     constraint chk_entity_type_attribute_census_instance_delta check (instance_delta <> 0)
 )
 with (
-    autovacuum_vacuum_insert_scale_factor = 0.01,
+    vacuum_truncate = false,
+    autovacuum_vacuum_insert_scale_factor = 0,
     autovacuum_vacuum_insert_threshold = 500,
-    autovacuum_vacuum_scale_factor = 0.01,
+    autovacuum_vacuum_scale_factor = 0,
     autovacuum_vacuum_threshold = 200,
     autovacuum_analyze_scale_factor = 0.02,
     autovacuum_analyze_threshold = 200,
@@ -73,9 +75,10 @@ create table attribute_census (
     constraint chk_attribute_census_instance_delta check (instance_delta <> 0)
 )
 with (
-    autovacuum_vacuum_insert_scale_factor = 0.01,
+    vacuum_truncate = false,
+    autovacuum_vacuum_insert_scale_factor = 0,
     autovacuum_vacuum_insert_threshold = 500,
-    autovacuum_vacuum_scale_factor = 0.01,
+    autovacuum_vacuum_scale_factor = 0,
     autovacuum_vacuum_threshold = 200,
     autovacuum_analyze_scale_factor = 0.02,
     autovacuum_analyze_threshold = 200,

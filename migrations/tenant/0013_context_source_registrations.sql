@@ -165,8 +165,9 @@ create table registration_delivery_state (
     constraint chk_registration_delivery_state_status check (status between 1 and 2)
 )
 with (
+    vacuum_truncate = false,
     fillfactor = 50,
-    autovacuum_vacuum_scale_factor = 0.005,
+    autovacuum_vacuum_scale_factor = 0,
     autovacuum_vacuum_threshold = 100,
     autovacuum_analyze_scale_factor = 0.02,
     autovacuum_analyze_threshold = 100,

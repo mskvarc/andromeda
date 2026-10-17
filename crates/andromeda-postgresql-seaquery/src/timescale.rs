@@ -8,8 +8,10 @@
 
 use crate::{
     cast::{cast, cast_compound},
+    jsonb::{jsonb_array_elements_text, jsonb_path_query, jsonb_path_query_array},
     literal::text_literal,
     maintenance::total_relation_size,
+    pg_array::array_of_subquery,
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
@@ -156,7 +158,25 @@ enum CompressionSettings {
     Orderby,
     /// Whether each order-by column sorts descending
     OrderbyDesc,
+    /// The sparse indexes, as a JSONB array of entries with `type`,
+    /// `column` (one name, or an array of names for a composite) and `source`
+    Index,
 }
+
+/// The `kind` projection of [`columnstore_sparse_index_statement`].
+#[derive(Iden, Clone, Copy)]
+#[iden = "kind"]
+pub struct SparseIndexKindColumn;
+
+/// The `columns` projection of [`columnstore_sparse_index_statement`].
+#[derive(Iden, Clone, Copy)]
+#[iden = "columns"]
+pub struct SparseIndexColumns;
+
+/// Alias `entry` for one configured sparse index.
+#[derive(Iden, Clone, Copy)]
+#[iden = "entry"]
+struct Entry;
 
 /// Alias `ht` for the hypertables view.
 #[derive(Iden, Clone, Copy)]
@@ -241,6 +261,36 @@ pub fn columnstore_settings_statement(hypertable: &str) -> SelectStatement {
         .to_owned()
 }
 
+/// The sparse indexes declared on `hypertable`'s columnstore, one row each.
+///
+/// Reads the `index` array of the hypertable's own
+/// `_timescaledb_catalog.compression_settings` row and keeps the entries whose
+/// `source` is `config`: the ones `timescaledb.sparse_index` declared, not the
+/// summaries the order-by columns get regardless. Each row projects `kind`, the
+/// summary type, and `columns`, its column names in declared order as a
+/// `text[]`, one element for a single-column index. The lax `$.column[*]` path
+/// reads a single name and a composite's array alike. The hypertable name is a
+/// fixed catalogue name bound as a value.
+#[must_use]
+pub fn columnstore_sparse_index_statement(hypertable: &str) -> SelectStatement {
+    let columns = Query::select()
+        .expr(SimpleExpr::from(jsonb_array_elements_text(jsonb_path_query_array(
+            Expr::col(Entry),
+            "$.column[*]",
+        ))))
+        .to_owned();
+    Query::select()
+        .expr_as(SimpleExpr::from(Expr::col(Entry)).json_get_text(Expr::val("type")), SparseIndexKindColumn)
+        .expr_as(array_of_subquery(columns), SparseIndexColumns)
+        .from_as((TimescaleCatalog, CompressionSettings::Table), Cs)
+        .from_function(
+            jsonb_path_query(Expr::col((Cs, CompressionSettings::Index)), r#"$[*] ? (@.source == "config")"#),
+            Entry,
+        )
+        .and_where(Expr::col((Cs, CompressionSettings::Relid)).eq(cast(Expr::val(hypertable), PostgresType::Regclass)))
+        .to_owned()
+}
+
 /// Where the chunks of `hypertables` lie on their time dimension, together.
 ///
 /// Projects `compressed_until`, the latest `range_end` of a converted chunk
@@ -312,6 +362,7 @@ mod tests {
         chunk_span_statement,
         columnstore_policy_statement,
         columnstore_settings_statement,
+        columnstore_sparse_index_statement,
         drop_chunks,
         rowstore_chunk_size_statement,
         set_chunk_time_interval,
@@ -350,6 +401,22 @@ mod tests {
                 r#"FROM "timescaledb_information"."hypertables" AS "ht" "#,
                 r#"LEFT JOIN "_timescaledb_catalog"."compression_settings" AS "cs" ON "cs"."relid" = ($1::regclass) "#,
                 r#"WHERE "ht"."hypertable_name" = $2"#
+            )
+        );
+        assert_eq!(values.0.len(), 2, "{sql}");
+    }
+
+    #[test]
+    fn the_declared_sparse_indexes_are_read_from_the_configured_entries_of_the_catalogue_array() {
+        let (sql, values) = columnstore_sparse_index_statement("attribute_history").build(PostgresQueryBuilder);
+        assert_eq!(
+            sql,
+            concat!(
+                r#"SELECT "entry" ->> $1 AS "kind", "#,
+                r#"ARRAY((SELECT jsonb_array_elements_text(jsonb_path_query_array("entry", '$.column[*]')))) AS "columns" "#,
+                r#"FROM "_timescaledb_catalog"."compression_settings" AS "cs", "#,
+                r#"jsonb_path_query("cs"."index", '$[*] ? (@.source == "config")') AS "entry" "#,
+                r#"WHERE "cs"."relid" = ($2::regclass)"#
             )
         );
         assert_eq!(values.0.len(), 2, "{sql}");

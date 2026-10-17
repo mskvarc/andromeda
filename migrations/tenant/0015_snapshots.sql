@@ -79,8 +79,9 @@ create table snapshot_preparation (
     constraint chk_snapshot_preparation_branch_upgrade_error_length check (branch_upgrade_error is null or char_length(branch_upgrade_error) <= 2048)
 )
 with (
+    vacuum_truncate = false,
     fillfactor = 50,
-    autovacuum_vacuum_scale_factor = 0.005,
+    autovacuum_vacuum_scale_factor = 0,
     autovacuum_vacuum_threshold = 100,
     autovacuum_analyze_scale_factor = 0.02,
     autovacuum_analyze_threshold = 100,

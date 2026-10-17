@@ -33,6 +33,9 @@
 -- Each semantic axis has a BRIN summary and no B-tree: the entity-led B-trees
 -- answer entity-scoped reads, and a broad `observedAt`, `createdAt`,
 -- `modifiedAt` or `deletedAt` window that names no entity reads the summary.
+-- Each summary covers 32 pages and summarises a range as soon as appends move
+-- past it, as attribute history's do, and the table takes an insert-driven
+-- vacuum once a twentieth of its rows are new.
 -- ============================================================================
 create table scope_history (
     recorded_at timestamptz not null,
@@ -53,6 +56,9 @@ create table scope_history (
     constraint chk_scope_history_instance_identity check (num_nonnulls (generated_instance_id, verbatim_instance_id) = 1),
     constraint chk_scope_history_verbatim_instance_id_length check (octet_length(verbatim_instance_id) <= 1024),
     constraint chk_scope_history_value_presence check ((value_kind = 0 and deleted_at is not null and scope_path is null and verbatim_scope_path is null) or (value_kind = 1 and scope_path is not null and verbatim_scope_path is not null))
+)
+with (
+    autovacuum_vacuum_insert_scale_factor = 0.05
 );
 
 create index idx_scope_history_entity_recorded_at on scope_history (temporal_entity_key, recorded_at desc);
@@ -74,11 +80,11 @@ create index idx_scope_history_scope_path on scope_history using gist (scope_pat
 where
     scope_path is not null;
 
-create index idx_scope_history_observed_at_brin on scope_history using brin (observed_at timestamptz_minmax_multi_ops);
+create index idx_scope_history_observed_at_brin on scope_history using brin (observed_at timestamptz_minmax_multi_ops) with (pages_per_range = 32, autosummarize = on);
 
-create index idx_scope_history_created_at_brin on scope_history using brin (created_at timestamptz_minmax_multi_ops);
+create index idx_scope_history_created_at_brin on scope_history using brin (created_at timestamptz_minmax_multi_ops) with (pages_per_range = 32, autosummarize = on);
 
-create index idx_scope_history_modified_at_brin on scope_history using brin (modified_at timestamptz_minmax_multi_ops);
+create index idx_scope_history_modified_at_brin on scope_history using brin (modified_at timestamptz_minmax_multi_ops) with (pages_per_range = 32, autosummarize = on);
 
-create index idx_scope_history_deleted_at_brin on scope_history using brin (deleted_at timestamptz_minmax_multi_ops);
+create index idx_scope_history_deleted_at_brin on scope_history using brin (deleted_at timestamptz_minmax_multi_ops) with (pages_per_range = 32, autosummarize = on);
 
