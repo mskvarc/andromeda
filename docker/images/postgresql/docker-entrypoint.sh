@@ -444,7 +444,7 @@ andromeda_write_derived() {
 	local tune_mb="$1" cpus="$2"
 	shift 2
 
-	local workers autovacuum_mb io_workers data_kb
+	local workers autovacuum_mb io_workers data_kb block_size shared_kb tuned_wal_kb wal_kb
 	workers="$(postgres -D "$PGDATA" "$@" -C autovacuum_max_workers)"
 	# Five percent of memory across every autovacuum worker, within 32MB..1GB each.
 	autovacuum_mb=$(( tune_mb * 5 / 100 / workers ))
@@ -462,6 +462,19 @@ andromeda_write_derived() {
 	fi
 	# One spilling query fails instead of filling the data volume.
 	data_kb="$(andromeda_filesystem_kb "$PGDATA")"
+	# The tuner, like PostgreSQL's own sizing, stops at 16MB; WAL-heavy batch
+	# writes then wait on WALWrite. A 32nd of shared_buffers, up to 64MB, and
+	# never below the tuner's value.
+	block_size="$(postgres -D "$PGDATA" "$@" -C block_size)"
+	shared_kb=$(( $(postgres -D "$PGDATA" "$@" -C shared_buffers) * block_size / 1024 ))
+	tuned_wal_kb=$(( $(postgres -D "$PGDATA" "$@" -C wal_buffers) * block_size / 1024 ))
+	wal_kb=$(( shared_kb / 32 ))
+	if [ "$wal_kb" -gt 65536 ]; then
+		wal_kb=65536
+	fi
+	if [ "$wal_kb" -lt "$tuned_wal_kb" ]; then
+		wal_kb="$tuned_wal_kb"
+	fi
 
 	local storage
 	case "${ANDROMEDA_PG_STORAGE:-ssd}" in
@@ -482,6 +495,7 @@ io_combine_limit = 128kB'
 		autovacuum_work_mem = ${autovacuum_mb}MB
 		io_workers = ${io_workers}
 		temp_file_limit = $(( data_kb * 5 / 100 ))kB
+		wal_buffers = ${wal_kb}kB
 		${storage}
 	EOF
 }

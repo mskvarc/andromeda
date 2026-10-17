@@ -111,6 +111,8 @@ expect '2g max_parallel_workers' "$(sql limits-2g 'SHOW max_parallel_workers')" 
 expect '2g io_workers' "$(sql limits-2g 'SHOW io_workers')" 3
 # 5% of 2048MB over the tuner's 10 workers is 10MB, below the 32MB floor.
 expect '2g autovacuum_work_mem' "$(setting_mb limits-2g autovacuum_work_mem)" 32
+# A 32nd of 512MB shared_buffers, the tuner's 16MB.
+expect '2g wal_buffers' "$(setting_mb limits-2g wal_buffers)" 16
 expect '2g timescaledb.max_background_workers default' \
 	"$(sql limits-2g 'SHOW timescaledb.max_background_workers')" 64
 # The tuner sizes work_mem without hash_mem_multiplier or autovacuum:
@@ -131,7 +133,7 @@ for key in $policy_keys; do
 	file="$(sourcefile limits-2g "$key")"
 	expect "policy $key from 10-andromeda.conf" "${file##*/}" 10-andromeda.conf
 done
-for key in autovacuum_work_mem io_workers temp_file_limit random_page_cost effective_io_concurrency \
+for key in autovacuum_work_mem io_workers temp_file_limit wal_buffers random_page_cost effective_io_concurrency \
 	maintenance_io_concurrency io_combine_limit; do
 	file="$(sourcefile limits-2g "$key")"
 	expect "derived $key from andromeda-derived.conf" "${file##*/}" andromeda-derived.conf
@@ -154,6 +156,8 @@ expect 'the memory budget counts ALTER SYSTEM values' \
 start limits-8g --memory 8g --cpus 4 --
 expect '8g shared_buffers' "$(setting_mb limits-8g shared_buffers)" 2048
 expect '8g max_parallel_workers' "$(sql limits-8g 'SHOW max_parallel_workers')" 4
+# A 32nd of 2048MB shared_buffers, above the tuner's 16MB.
+expect '8g wal_buffers' "$(setting_mb limits-8g wal_buffers)" 64
 expect '8g logs no memory budget warning' "$(logs_mention limits-8g "$budget_warning")" no
 
 start no-limits --
