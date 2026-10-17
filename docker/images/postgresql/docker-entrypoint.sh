@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# docker-library/postgres entrypoint + timescaledb-tune + apply_andromeda_overrides.
+# docker-library/postgres entrypoint + timescaledb-tune fed the container's limits (andromeda_tune).
 set -Eeo pipefail
 # TODO swap to -Eeuo pipefail above (after handling all potentially-unset variables)
 
@@ -172,6 +172,8 @@ docker_error_old_databases() {
 # process initializer files, based on file extensions and permissions
 docker_process_init_files() {
 	# psql here for backwards compatibility "${psql[@]}"
+	# Read by init scripts that are sourced below, which shellcheck cannot see.
+	# shellcheck disable=SC2034
 	psql=( docker_process_sql )
 
 	printf '\n'
@@ -186,6 +188,8 @@ docker_process_init_files() {
 					"$f"
 				else
 					printf '%s: sourcing %s\n' "$0" "$f"
+					# An init script mounted at run time; there is nothing to follow.
+					# shellcheck source=/dev/null
 					. "$f"
 				fi
 				;;
@@ -210,20 +214,21 @@ docker_process_sql() {
 		query_runner+=( --dbname "$POSTGRES_DB" )
 	fi
 
-	PGHOST= PGHOSTADDR= "${query_runner[@]}" "$@"
+	PGHOST='' PGHOSTADDR='' "${query_runner[@]}" "$@"
 }
 
 # create initial database
 # uses environment variables for input: POSTGRES_DB
 docker_setup_db() {
+	local db="$POSTGRES_DB"
 	local dbAlreadyExists
 	dbAlreadyExists="$(
-		POSTGRES_DB= docker_process_sql --dbname postgres --set db="$POSTGRES_DB" --tuples-only <<-'EOSQL'
+		POSTGRES_DB='' docker_process_sql --dbname postgres --set db="$db" --tuples-only <<-'EOSQL'
 			SELECT 1 FROM pg_database WHERE datname = :'db' ;
 		EOSQL
 	)"
 	if [ -z "$dbAlreadyExists" ]; then
-		POSTGRES_DB= docker_process_sql --dbname postgres --set db="$POSTGRES_DB" <<-'EOSQL'
+		POSTGRES_DB='' docker_process_sql --dbname postgres --set db="$db" <<-'EOSQL'
 			CREATE DATABASE :"db" ;
 		EOSQL
 		printf '\n'
@@ -294,7 +299,7 @@ docker_temp_server_start() {
 
 	# unset NOTIFY_SOCKET so the temporary server doesn't prematurely notify
 	# any process supervisor.
-	NOTIFY_SOCKET= \
+	NOTIFY_SOCKET='' \
 	PGUSER="${PGUSER:-$POSTGRES_USER}" \
 	pg_ctl -D "$PGDATA" \
 		-o "$(printf '%q ' "$@")" \
@@ -336,7 +341,7 @@ _main() {
 		docker_create_db_directories
 		if [ "$(id -u)" = '0' ]; then
 			# then restart script as postgres user
-			exec gosu postgres "$BASH_SOURCE" "$@"
+			exec gosu postgres "${BASH_SOURCE[0]}" "$@"
 		fi
 
 		# only run initialization on an empty data directory
@@ -373,55 +378,222 @@ _main() {
 
 			EOM
 		fi
-	fi
 
-	timescaledb-tune --wal-disk-size="32GB" --yes
-	apply_andromeda_overrides
+		andromeda_tune "$@"
+	fi
 
 	exec "$@"
 }
 
-# Idempotent: replaces the marked block each start.
-apply_andromeda_overrides() {
+# Directory of the image's fixed policy files, included after the tuner's values.
+ANDROMEDA_POLICY_DIR=/etc/postgresql/andromeda.conf.d
+
+# usage: andromeda_tune postgres [server-args...]
+# Runs timescaledb-tune on the container's limits rather than the host's, writes
+# the values it does not derive, includes the fixed policy after both, and warns
+# when the resulting memory ceilings exceed the container.
+andromeda_tune() {
+	shift
 	local conf="$PGDATA/postgresql.conf"
-	local begin="# --- andromeda overrides BEGIN ---"
-	local end="# --- andromeda overrides END ---"
-	if [ ! -f "$conf" ]; then
-		return 0
+	local begin='# --- andromeda overrides BEGIN ---'
+	local end='# --- andromeda overrides END ---'
+
+	# The tuner appends keys it finds missing after whatever ends the file,
+	# so the include block is removed first and appended last.
+	sed -i "/^${begin}\$/,/^${end}\$/d" "$conf"
+
+	local limit_mb tune_mb cpus wal_kb max_conns
+	limit_mb="$(andromeda_memory_mb)"
+	tune_mb="$limit_mb"
+	if [ -n "${TS_TUNE_MEMORY:-}" ]; then
+		tune_mb="$(andromeda_size_mb TS_TUNE_MEMORY)"
 	fi
-	if grep -qF "$begin" "$conf"; then
-		sed -i "/^${begin}\$/,/^${end}\$/d" "$conf"
+	cpus="${TS_TUNE_NUM_CPUS:-}"
+	if [ -z "$cpus" ]; then
+		cpus="$(andromeda_cpus)"
 	fi
-	cat >> "$conf" <<-EOF
-		${begin}
-		# Resource usage
-		work_mem = 64MB
+	wal_kb="$(andromeda_filesystem_kb "$PGDATA/pg_wal/")"
+	max_conns="$(andromeda_command_line_max_connections "$@")"
+	: "${max_conns:=${TS_TUNE_MAX_CONNS:-}}"
 
-		# Write-ahead log
-		synchronous_commit = off
-		wal_compression = on
-		wal_log_hints = on
-		wal_buffers = 64MB
+	local tune_args=(
+		--conf-path="$conf"
+		--memory="${tune_mb}MB"
+		--cpus="$cpus"
+		--max-bg-workers="${TS_TUNE_MAX_BG_WORKERS:-64}"
+		--wal-disk-size="${TS_TUNE_WAL_DISK_SIZE:-$(( wal_kb / 1024 ))MB}"
+		--color=false
+		--yes
+	)
+	# Without --max-conns the tuner recommends max_connections from memory.
+	if [ -n "$max_conns" ]; then
+		tune_args+=( --max-conns="$max_conns" )
+	fi
+	timescaledb-tune "${tune_args[@]}"
 
-		# Query planner
-		cpu_tuple_cost = 0.03
+	andromeda_write_derived "$tune_mb" "$cpus" "$@"
+	printf '%s\n' "$begin" "include_dir '$ANDROMEDA_POLICY_DIR'" "include 'andromeda-derived.conf'" "$end" >> "$conf"
 
-		# Autovacuum
-		autovacuum_vacuum_cost_delay = 2ms
-		autovacuum_vacuum_cost_limit = 3000
-		log_autovacuum_min_duration = 0
+	andromeda_check_memory_budget "$limit_mb" "$@"
+}
 
-		# Reporting and logging
-		log_checkpoints = on
-		log_lock_waits = on
-		log_temp_files = 0
-		log_min_duration_statement = 1000
+# usage: andromeda_write_derived TUNE_MB CPUS [server-args...]
+# Writes $PGDATA/andromeda-derived.conf with the hardware-dependent values the
+# tuner does not compute. Rewritten on every start.
+andromeda_write_derived() {
+	local tune_mb="$1" cpus="$2"
+	shift 2
 
-		# Client connection defaults
-		idle_in_transaction_session_timeout = 600000
-		lc_messages = 'C'
-		${end}
+	local workers autovacuum_mb io_workers data_kb
+	workers="$(postgres -D "$PGDATA" "$@" -C autovacuum_max_workers)"
+	# Five percent of memory across every autovacuum worker, within 32MB..1GB each.
+	autovacuum_mb=$(( tune_mb * 5 / 100 / workers ))
+	if [ "$autovacuum_mb" -lt 32 ]; then
+		autovacuum_mb=32
+	elif [ "$autovacuum_mb" -gt 1024 ]; then
+		autovacuum_mb=1024
+	fi
+	# PostgreSQL 18 accepts 1..32 I/O workers and defaults to 3.
+	io_workers=$(( (cpus + 1) / 2 ))
+	if [ "$io_workers" -lt 3 ]; then
+		io_workers=3
+	elif [ "$io_workers" -gt 32 ]; then
+		io_workers=32
+	fi
+	# One spilling query fails instead of filling the data volume.
+	data_kb="$(andromeda_filesystem_kb "$PGDATA")"
+
+	local storage
+	case "${ANDROMEDA_PG_STORAGE:-ssd}" in
+		ssd)
+			storage='random_page_cost = 1.1
+effective_io_concurrency = 256
+maintenance_io_concurrency = 256
+io_combine_limit = 128kB'
+			;;
+		*)
+			printf >&2 "error: ANDROMEDA_PG_STORAGE must be 'ssd', got '%s'\n" "$ANDROMEDA_PG_STORAGE"
+			exit 1
+			;;
+	esac
+
+	cat > "$PGDATA/andromeda-derived.conf" <<-EOF
+		# Written by the entrypoint on every start; edits are lost. Override with ALTER SYSTEM.
+		autovacuum_work_mem = ${autovacuum_mb}MB
+		io_workers = ${io_workers}
+		temp_file_limit = $(( data_kb * 5 / 100 ))kB
+		${storage}
 	EOF
+}
+
+# usage: andromeda_check_memory_budget LIMIT_MB [server-args...]
+# The sum is of ceilings, not allocations, so exceeding the limit warns.
+andromeda_check_memory_budget() {
+	local limit_mb="$1"
+	shift
+	local name
+	local -A setting
+	for name in block_size shared_buffers max_connections work_mem hash_mem_multiplier \
+		autovacuum_max_workers autovacuum_work_mem maintenance_work_mem; do
+		setting[$name]="$(postgres -D "$PGDATA" "$@" -C "$name")"
+	done
+	awk \
+		-v limit_mb="$limit_mb" \
+		-v block_size="${setting[block_size]}" \
+		-v shared_buffers="${setting[shared_buffers]}" \
+		-v max_connections="${setting[max_connections]}" \
+		-v work_mem="${setting[work_mem]}" \
+		-v hash_mem_multiplier="${setting[hash_mem_multiplier]}" \
+		-v autovacuum_max_workers="${setting[autovacuum_max_workers]}" \
+		-v autovacuum_work_mem="${setting[autovacuum_work_mem]}" \
+		-v maintenance_work_mem="${setting[maintenance_work_mem]}" \
+		'BEGIN {
+			if (autovacuum_work_mem < 0) autovacuum_work_mem = maintenance_work_mem
+			total_kb = shared_buffers * block_size / 1024 \
+				+ max_connections * work_mem * hash_mem_multiplier \
+				+ autovacuum_max_workers * autovacuum_work_mem \
+				+ maintenance_work_mem
+			if (total_kb / 1024 > limit_mb)
+				printf "warning: memory ceilings of %dMB exceed the %dMB available: shared_buffers + max_connections x work_mem x hash_mem_multiplier + autovacuum_max_workers x autovacuum_work_mem + maintenance_work_mem\n", total_kb / 1024, limit_mb > "/dev/stderr"
+		}'
+}
+
+# Memory in MB: the cgroup v2 or v1 limit, or MemTotal when that is lower or there is none.
+andromeda_memory_mb() {
+	local total limit=''
+	total="$(awk '$1 == "MemTotal:" { print int($2 / 1024) }' /proc/meminfo)"
+	if [ -r /sys/fs/cgroup/memory.max ]; then
+		limit="$(< /sys/fs/cgroup/memory.max)"
+	elif [ -r /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
+		limit="$(< /sys/fs/cgroup/memory/memory.limit_in_bytes)"
+	fi
+	# cgroup v1 spells "unlimited" as a near-2^63 byte count, which fits a signed 64-bit integer.
+	if [ -n "$limit" ] && [ "$limit" != max ] && [ $(( limit / 1048576 )) -lt "$total" ]; then
+		total=$(( limit / 1048576 ))
+	fi
+	printf '%s\n' "$total"
+}
+
+# CPUs: the cgroup v2 or v1 quota over its period, rounded up, capped by the CPUs this process may run on.
+andromeda_cpus() {
+	local cpus quota='' period=''
+	cpus="$(nproc)"
+	if [ -r /sys/fs/cgroup/cpu.max ]; then
+		read -r quota period < /sys/fs/cgroup/cpu.max
+	elif [ -r /sys/fs/cgroup/cpu/cpu.cfs_quota_us ]; then
+		quota="$(< /sys/fs/cgroup/cpu/cpu.cfs_quota_us)"
+		period="$(< /sys/fs/cgroup/cpu/cpu.cfs_period_us)"
+	fi
+	if [ -n "$quota" ] && [ "$quota" != max ] && [ "$quota" -gt 0 ]; then
+		quota=$(( (quota + period - 1) / period ))
+		if [ "$quota" -lt "$cpus" ]; then
+			cpus="$quota"
+		fi
+	fi
+	printf '%s\n' "$cpus"
+}
+
+# usage: andromeda_size_mb VAR
+# Converts the PostgreSQL-format size in $VAR (for example 4GB) to whole MB.
+andromeda_size_mb() {
+	local var="$1"
+	if [[ ! "${!var}" =~ ^([0-9]+)(kB|MB|GB|TB)$ ]]; then
+		printf >&2 'error: %s must be a size such as 4GB, got %s\n' "$var" "${!var}"
+		exit 1
+	fi
+	local value="${BASH_REMATCH[1]}"
+	case "${BASH_REMATCH[2]}" in
+		kB) printf '%s\n' $(( value / 1024 )) ;;
+		MB) printf '%s\n' "$value" ;;
+		GB) printf '%s\n' $(( value * 1024 )) ;;
+		TB) printf '%s\n' $(( value * 1048576 )) ;;
+	esac
+}
+
+# usage: andromeda_filesystem_kb PATH
+# Size in kB of the filesystem holding PATH; a trailing slash follows a symlinked pg_wal.
+andromeda_filesystem_kb() {
+	df -Pk "$1" | awk 'NR == 2 { print $2 }'
+}
+
+# usage: andromeda_command_line_max_connections [server-args...]
+# Prints the max_connections the server arguments set, the last one winning as
+# it does for postgres, or nothing when they set none.
+andromeda_command_line_max_connections() {
+	local arg value='' pending=''
+	for arg; do
+		case "$pending" in
+			c) arg="-c$arg" ;;
+			N) arg="-N$arg" ;;
+		esac
+		pending=
+		case "$arg" in
+			-c | -N) pending="${arg#-}" ;;
+			-cmax_connections=* | --max_connections=* | --max-connections=*) value="${arg#*=}" ;;
+			-N?*) value="${arg#-N}" ;;
+		esac
+	done
+	printf '%s' "$value"
 }
 
 if ! _is_sourced; then

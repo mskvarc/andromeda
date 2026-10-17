@@ -51,6 +51,8 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
+      # A TimescaleDB scheduler per tenant database, plus their running policy jobs.
+      TS_TUNE_MAX_BG_WORKERS: "128"
     ports:
       - "5501:5432"
     healthcheck:

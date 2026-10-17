@@ -7,7 +7,16 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Shellcheck the entrypoint and its settings check
+        run: shellcheck docker/images/postgresql/docker-entrypoint.sh docker/images/postgresql/tests/settings-check.sh
+
   build:
+    needs: lint
     strategy:
       fail-fast: false
       matrix:
@@ -76,6 +85,20 @@ jobs:
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v4
+
+      - name: Build for the settings check
+        uses: docker/build-push-action@v7
+        with:
+          context: docker/images/postgresql
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            TIMESCALEDB_EDITION=${{ matrix.edition }}
+          cache-from: type=gha,scope=${{ matrix.edition }}-${{ env.PLATFORM_SLUG }}
+          load: true
+          tags: postgresql-settings-check:${{ matrix.edition }}
+
+      - name: Check the tuned settings under container limits
+        run: bash docker/images/postgresql/tests/settings-check.sh postgresql-settings-check:${{ matrix.edition }}
 
       - name: Login to GHCR
         uses: docker/login-action@v4

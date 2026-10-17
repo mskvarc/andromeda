@@ -50,16 +50,10 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
+      # A TimescaleDB scheduler per tenant database, plus their running policy jobs.
+      TS_TUNE_MAX_BG_WORKERS: "400"
       POSTGRES_HOST_AUTH_METHOD: trust
-    # One Timescale scheduler per tenant database.
-    command:
-      - "postgres"
-      - "-c"
-      - "max_connections=300"
-      - "-c"
-      - "max_worker_processes=512"
-      - "-c"
-      - "timescaledb.max_background_workers=400"
+    command: ["postgres", "-c", "max_connections=300"]
     ports:
       - "5467:5432"
     healthcheck:

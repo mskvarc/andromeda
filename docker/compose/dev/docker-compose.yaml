@@ -6,6 +6,8 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
+      # A TimescaleDB scheduler per tenant database, plus their running policy jobs.
+      TS_TUNE_MAX_BG_WORKERS: "128"
     # ETSI keeps many tenant pools alive.
     command: ["postgres", "-c", "max_connections=300"]
     ports:

@@ -18,12 +18,15 @@ RUN set -eux; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         postgresql-18-postgis-3 \
         postgresql-18-postgis-3-scripts \
+        postgresql-18-repack \
         timescaledb-2-postgresql-18 \
         timescaledb-2-loader-postgresql-18 \
         timescaledb-tools; \
     rm -rf /var/lib/apt/lists/*
 
-# apache: strip the TSL module and skip the TSL-licensed toolkit.
+# apache: strip the TSL module and skip the TSL-licensed toolkit. The license
+# setting defaults to the TSL one, whose module is then missing, so the edition
+# sets it in its own policy file.
 ARG TIMESCALEDB_EDITION=tsl
 RUN set -eux; \
     case "$TIMESCALEDB_EDITION" in \
@@ -33,7 +36,11 @@ RUN set -eux; \
                 timescaledb-toolkit-postgresql-18; \
             rm -rf /var/lib/apt/lists/* \
             ;; \
-        apache) rm -f "$(pg_config --pkglibdir)"/timescaledb-tsl-*.so ;; \
+        apache) \
+            rm -f "$(pg_config --pkglibdir)"/timescaledb-tsl-*.so; \
+            mkdir -p /etc/postgresql/andromeda.conf.d; \
+            echo "timescaledb.license = 'apache'" > /etc/postgresql/andromeda.conf.d/05-edition.conf \
+            ;; \
         *) echo "TIMESCALEDB_EDITION must be 'tsl' or 'apache', got '$TIMESCALEDB_EDITION'" >&2; exit 1 ;; \
     esac
 
@@ -41,6 +48,7 @@ RUN set -eux; \
 RUN sed -ri "s/^[#]?\s*(shared_preload_libraries)\s*=\s*'(.*)'/\1 = 'timescaledb,pg_stat_statements,\2'/;s/,'/'/" \
     /usr/share/postgresql/postgresql.conf.sample
 
+COPY andromeda.conf /etc/postgresql/andromeda.conf.d/10-andromeda.conf
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
