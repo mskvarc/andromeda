@@ -9,7 +9,6 @@
 //! rather than being skipped.
 
 use andromeda_postgresql_context_store::{
-    config::SynchronousCommit,
     migration_set::{platform::platform_migrations, tenant::tenant_migrator},
     tenant_database::{DatabaseUrl, create_database_if_missing},
     tenant_migration::migrate_platform_db,
@@ -46,9 +45,7 @@ async fn drop_ledger_database(base: &DatabaseUrl) {
 async fn fresh_platform_database(base: &DatabaseUrl) -> PgPool {
     drop_ledger_database(base).await;
     let name = TenantDatabaseName::from(LEDGER_DATABASE.to_owned());
-    create_database_if_missing(base, &name, SynchronousCommit::Off.as_postgres_setting())
-        .await
-        .expect("scratch database");
+    create_database_if_missing(base, &name).await.expect("scratch database");
     let pool = PgPoolOptions::new()
         .max_connections(2)
         .connect(base.with_database_name(&name).as_str())

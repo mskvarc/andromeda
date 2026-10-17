@@ -6,6 +6,11 @@
 //! migrates, stamps and verifies the schema contract, and finally brings every
 //! Snapshot's branch schemas up to the branch version, quarantining a Snapshot
 //! whose upgrade fails.
+//!
+//! Every connection that changes the schema is opened by
+//! [`open_schema_change_pool`]: it waits at most a bounded time for each lock
+//! and never has a statement cut short, and a migration refused a lock runs
+//! again a bounded number of times.
 
 use crate::{
     error::ContextStoreError,
@@ -17,57 +22,19 @@ use crate::{
         schema_metadata::{ensure_schema_contract, verify_schema_contract},
         server_requirements::ExtensionPresence,
     },
-    schema_ddl::database_settings::set_database_synchronous_commit,
     snapshot::branch_upgrade::{BranchUpgradeReport, upgrade_snapshot_branches},
 };
-use andromeda_postgresql_pool::pool_options::configure_pool_options;
-use andromeda_postgresql_seaquery::advisory_lock::advisory_xact_lock;
-use sea_query::{Expr, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{Executor, PgPool, error::DatabaseError};
+use andromeda_postgresql_pool::{
+    lock_retry::{SCHEMA_CHANGE_LOCK_RETRY, is_lock_not_available, schema_change_connect_options},
+    pool_options::configure_pool_options,
+};
+use sqlx::{
+    PgPool,
+    error::DatabaseError,
+    migrate::{MigrateError, Migrator},
+};
 use std::time::Duration;
 use url::Url;
-
-/// Install the broker's durability on the platform database.
-///
-/// Every other tenant database receives it when
-/// [`create_database_if_missing`](crate::tenant_database::create_database_if_missing)
-/// creates it; the platform database is created by the operator, so the broker
-/// installs the setting when it connects. `ALTER DATABASE ... SET` makes every
-/// later request-path session -- including one a transaction-pooling proxy
-/// opens -- inherit it without a per-connection `SET`.
-///
-/// Several brokers start against one platform database at once, and PostgreSQL
-/// does not let two sessions write the same `pg_db_role_setting` row
-/// concurrently: the loser fails with a unique violation on the first insert or
-/// "tuple concurrently updated" afterwards. The statement therefore runs in a
-/// transaction that first takes an advisory lock keyed on the database, so the
-/// brokers apply it one after another.
-///
-/// # Errors
-///
-/// Returns [`ContextStoreError::Database`] when the transaction, the lock or
-/// the `ALTER DATABASE` fails.
-pub async fn configure_platform_database(pool: &PgPool, platform_database_name: &str, synchronous_commit_setting: &str) -> Result<(), ContextStoreError> {
-    let mut transaction = pool.begin().await?;
-    let (lock_sql, lock_values) = platform_configuration_lock(platform_database_name).build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(lock_sql.as_str()), lock_values)
-        .execute(&mut *transaction)
-        .await?;
-    let alter = set_database_synchronous_commit(platform_database_name, synchronous_commit_setting);
-    transaction.execute(sqlx::AssertSqlSafe(alter)).await?;
-    transaction.commit().await?;
-    Ok(())
-}
-
-/// The transaction advisory lock that serializes configuring one platform database.
-fn platform_configuration_lock(platform_database_name: &str) -> SelectStatement {
-    Query::select()
-        .expr(advisory_xact_lock(Expr::val(format!(
-            "andromeda:platform-configuration:{platform_database_name}"
-        ))))
-        .to_owned()
-}
 
 /// Run the platform and tenant migrations against the platform database, in
 /// that order.
@@ -88,8 +55,34 @@ fn platform_configuration_lock(platform_database_name: &str) -> SelectStatement 
 /// Returns [`ContextStoreError::Migration`] when a platform migration fails,
 /// and every failure [`migrate_tenant_db`] returns.
 pub async fn migrate_platform_db(pool: &PgPool) -> Result<(), ContextStoreError> {
-    platform_migrator().run(pool).await?;
+    run_migrator(&platform_migrator(), pool).await?;
     migrate_tenant_db(pool).await
+}
+
+/// Run `migrator`, running it again while a migration is refused a lock.
+///
+/// A migration that waited out its `lock_timeout` rolled back, so running the
+/// migrator again resumes at that migration with nothing half-applied.
+async fn run_migrator(migrator: &Migrator, pool: &PgPool) -> Result<(), MigrateError> {
+    SCHEMA_CHANGE_LOCK_RETRY.run(migration_lock_not_available, || migrator.run(pool)).await
+}
+
+/// Whether a migration failed because a statement was refused a lock.
+fn migration_lock_not_available(error: &MigrateError) -> bool {
+    matches!(error, MigrateError::Execute(source) | MigrateError::ExecuteMigration(source, _) if is_lock_not_available(source))
+}
+
+/// A one-connection pool straight to PostgreSQL at `database_url` whose
+/// session waits a bounded time for each lock and never has a statement cut
+/// short.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Database`] when the URL is not a PostgreSQL URL
+/// or the pool cannot connect.
+pub async fn open_schema_change_pool(database_url: &Url, acquire_timeout: Duration) -> Result<PgPool, ContextStoreError> {
+    let options = schema_change_connect_options(database_url.as_str())?;
+    Ok(configure_pool_options(1, acquire_timeout).connect_with(options).await?)
 }
 
 /// Run the tenant migrations against the given pool, stamp and verify the
@@ -117,7 +110,7 @@ pub async fn migrate_platform_db(pool: &PgPool) -> Result<(), ContextStoreError>
 /// [`ContextStoreError::BranchVersion`] when the Snapshot branches cannot be
 /// listed or an upgrade outcome cannot be recorded.
 pub async fn migrate_tenant_db(pool: &PgPool) -> Result<(), ContextStoreError> {
-    tenant_migrator().run(pool).await?;
+    run_migrator(tenant_migrator(), pool).await?;
 
     let contract = current_tenant_schema_contract()?;
     ensure_schema_contract(pool, &contract).await?;
@@ -138,7 +131,7 @@ pub async fn migrate_tenant_db(pool: &PgPool) -> Result<(), ContextStoreError> {
 /// Returns [`ContextStoreError::Database`] when the pool cannot connect, and
 /// the errors [`upgrade_snapshot_branches`] returns.
 pub async fn upgrade_single_tenant_snapshot_branches(database_url: &Url, acquire_timeout: Duration) -> Result<(), ContextStoreError> {
-    let pool = configure_pool_options(1, acquire_timeout).connect(database_url.as_str()).await?;
+    let pool = open_schema_change_pool(database_url, acquire_timeout).await?;
     let outcome = upgrade_snapshot_branches(&pool, &BranchMigrationSet::embedded()).await;
     pool.close().await;
     report_branch_upgrade(outcome?);
@@ -175,7 +168,7 @@ fn report_branch_upgrade(report: BranchUpgradeReport) {
 /// check fails.
 pub async fn migrate_single_tenant_db(database_url: &Url, acquire_timeout: Duration) -> Result<(), ContextStoreError> {
     update_extensions(database_url).await?;
-    let pool = configure_pool_options(1, acquire_timeout).connect(database_url.as_str()).await?;
+    let pool = open_schema_change_pool(database_url, acquire_timeout).await?;
     migrate_tenant_db(&pool).await?;
     pool.close().await;
     Ok(())
@@ -276,26 +269,20 @@ mod tests {
             schema_version::SchemaVersion,
             server_requirements::{ExtensionPresence, ExtensionVersion, REQUIRED_POSTGIS_VERSION},
         },
-        tenant_migration::{code_is_undefined_relation, platform_configuration_lock, schema_error_is_migratable},
+        tenant_migration::{code_is_undefined_relation, migration_lock_not_available, schema_error_is_migratable},
     };
-    use pretty_assertions::{assert_eq, assert_ne};
-    use sea_query::PostgresQueryBuilder;
+    use sqlx::migrate::MigrateError;
 
-    /// Every broker configuring one platform database takes the same
-    /// transaction lock, and brokers configuring different ones do not contend.
+    /// The lock classification itself is the pool crate's; what is decided
+    /// here is which migration failures carry a statement error to classify.
     #[test]
-    fn configuring_a_platform_database_takes_a_transaction_lock_keyed_on_it() {
-        let (sql, values) = platform_configuration_lock("andromeda").build(PostgresQueryBuilder);
-        assert!(sql.contains("pg_advisory_xact_lock(hashtext("), "{sql}");
-        assert_eq!(values, platform_configuration_lock("andromeda").build(PostgresQueryBuilder).1);
-        assert_ne!(values, platform_configuration_lock("other").build(PostgresQueryBuilder).1);
+    fn a_migration_failure_without_a_refused_lock_is_not_run_again() {
+        assert!(!migration_lock_not_available(&MigrateError::Execute(sqlx::Error::PoolTimedOut)));
+        assert!(!migration_lock_not_available(&MigrateError::ExecuteMigration(sqlx::Error::RowNotFound, 30)));
+        assert!(!migration_lock_not_available(&MigrateError::VersionMismatch(30)));
+        assert!(!migration_lock_not_available(&MigrateError::Dirty(30)));
     }
 
-    /// The contention a burst of tenant provisioning meets is retried: 55006
-    /// (template in use), 40001, 40P01 and 53300. Every other failure, and the
-    /// absence of a SQLSTATE, is returned at once.
-    /// A create that lost the race to a concurrent create of the same database
-    /// name is a success, not a failure, so 42P04 (and only 42P04) is a duplicate.
     /// A version behind the contract is a completed-migration-away, so the cold
     /// path migrates; a version ahead is a downgrade the migrator cannot make,
     /// so it stays a refusal.

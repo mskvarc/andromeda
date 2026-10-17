@@ -21,11 +21,6 @@ struct PgExtension;
 #[iden = "pg_available_extensions"]
 struct PgAvailableExtensions;
 
-/// The `pg_proc` system catalog of registered routines.
-#[derive(Iden, Clone, Copy)]
-#[iden = "pg_proc"]
-struct PgProc;
-
 /// `current_setting(name)` - the value of a runtime configuration setting.
 ///
 /// The setting name is bound rather than interpolated. This form errors if the
@@ -81,22 +76,33 @@ pub fn extension_shipped_version(name: &str) -> SimpleExpr {
     SimpleExpr::SubQuery(None, Box::new(subquery.into_sub_query_statement()))
 }
 
-/// `EXISTS (SELECT 1 FROM pg_proc WHERE proname = name)` - whether a routine of
-/// that name is registered in the current database.
-///
-/// The routine name is bound. A `TimescaleDB` edition ships a TSL-only procedure
-/// exactly when it is the licensed build, so probing one procedure's presence
-/// distinguishes the edition without reading any license marker; that is a
-/// different question, and a different catalog, from
-/// [`current_setting_missing_ok`] over `timescaledb.license`.
+/// `(SELECT rolsuper FROM pg_roles WHERE rolname = current_user)` - whether
+/// the session's role is a superuser.
 #[must_use]
-pub fn function_exists(name: &str) -> SimpleExpr {
+pub fn current_role_is_superuser() -> SimpleExpr {
     let subquery = SelectStatement::new()
-        .expr(Expr::val(1))
-        .from(PgProc)
-        .and_where(Expr::col(Alias::new("proname")).eq(name.to_owned()))
+        .expr(Expr::col(Alias::new("rolsuper")))
+        .from(Alias::new("pg_roles"))
+        .and_where(Expr::col(Alias::new("rolname")).eq(Expr::cust("current_user")))
         .to_owned();
-    Expr::exists(subquery)
+    SimpleExpr::SubQuery(None, Box::new(subquery.into_sub_query_statement()))
+}
+
+/// `(SELECT pg_has_role(current_user, oid, 'MEMBER') FROM pg_roles WHERE
+/// rolname = role)` - whether the session's role is a member of `role`,
+/// directly or through another role, or `NULL` when no role of that name
+/// exists on this server.
+///
+/// The role is looked up by name first, so a predefined role a server release
+/// does not have reads as `NULL` rather than failing the statement.
+#[must_use]
+pub fn current_role_is_member_of(role: &str) -> SimpleExpr {
+    let subquery = SelectStatement::new()
+        .expr(Func::cust(Alias::new("pg_has_role")).args([Expr::cust("current_user"), Expr::col(Alias::new("oid")), Expr::val("MEMBER")]))
+        .from(Alias::new("pg_roles"))
+        .and_where(Expr::col(Alias::new("rolname")).eq(role.to_owned()))
+        .to_owned();
+    SimpleExpr::SubQuery(None, Box::new(subquery.into_sub_query_statement()))
 }
 
 /// `to_regnamespace(name) IS NOT NULL` - whether a schema of that name exists.
@@ -164,15 +170,36 @@ struct PgDatabaseSize;
 #[cfg(test)]
 mod tests {
     use crate::introspection::{
+        current_role_is_member_of,
+        current_role_is_superuser,
         current_setting,
         current_setting_missing_ok,
         extension_shipped_version,
         extension_version,
-        function_exists,
         transaction_has_not_written,
     };
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, PostgresQueryBuilder, Query};
+
+    #[test]
+    fn the_session_role_is_read_from_pg_roles_by_its_own_name() {
+        assert_eq!(
+            Query::select().expr(current_role_is_superuser()).to_string(PostgresQueryBuilder),
+            r#"SELECT (SELECT "rolsuper" FROM "pg_roles" WHERE "rolname" = (current_user))"#
+        );
+    }
+
+    #[test]
+    fn a_role_membership_probe_looks_the_role_up_by_bound_name_first() {
+        let (sql, values) = Query::select()
+            .expr(current_role_is_member_of("pg_use_reserved_connections"))
+            .build(PostgresQueryBuilder);
+        assert_eq!(
+            sql,
+            r#"SELECT (SELECT pg_has_role(current_user, "oid", $1) FROM "pg_roles" WHERE "rolname" = $2)"#
+        );
+        assert_eq!(values.0.len(), 2, "{sql}");
+    }
 
     #[test]
     fn the_unwritten_transaction_test_asks_for_a_null_transaction_id() {
@@ -201,18 +228,6 @@ mod tests {
             .to_owned()
             .to_string(PostgresQueryBuilder);
         assert!(sql.contains("current_setting('timescaledb.license', TRUE)"), "{sql}");
-    }
-
-    #[test]
-    fn a_function_presence_probe_binds_the_routine_name_over_pg_proc() {
-        let sql = Query::select()
-            .expr_as(function_exists("add_columnstore_policy"), Alias::new("present"))
-            .to_owned()
-            .to_string(PostgresQueryBuilder);
-        assert!(
-            sql.contains("EXISTS(SELECT 1 FROM \"pg_proc\" WHERE \"proname\" = 'add_columnstore_policy')"),
-            "{sql}"
-        );
     }
 
     #[test]

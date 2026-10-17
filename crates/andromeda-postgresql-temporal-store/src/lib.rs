@@ -21,8 +21,12 @@ pub(crate) mod aggregation_rows_read;
 pub mod attribute_history_value;
 /// Deleting the Temporal Evolution of one attribute.
 pub mod attribute_stream_deletion;
+/// Running one storage-policy write without stalling the tenant behind it.
+pub(crate) mod bounded_lock_wait;
 /// Whether the attached `TimescaleDB` edition provides the hypercore columnstore.
 pub mod columnstore_capability;
+/// Converting aged history chunks to the columnstore, by the broker itself.
+pub mod columnstore_conversion;
 /// Enabling the hypercore columnstore on the temporal hypertables.
 pub mod columnstore_enablement;
 /// Letting a transaction decompress what its own confined statements must.
@@ -72,6 +76,8 @@ pub mod scope_history_value;
 pub mod semantic_time_axes;
 /// Reading the leaves of a split temporal query's filters (clause 5.7.4.4).
 pub(crate) mod split_filter_leaf_read;
+/// Letting one transaction of work no request waits for run to its end.
+pub(crate) mod statement_timeout_allowance;
 /// Reconciling the temporal hypertables' storage policy with configuration.
 pub mod storage_policy;
 /// What an aggregation row that does not read back looks like.

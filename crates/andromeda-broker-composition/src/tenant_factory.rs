@@ -29,7 +29,7 @@ use andromeda_http_headers::link::field_layout::LinkFieldLayout;
 use andromeda_http_source_identity::config::InfoConfig;
 use andromeda_jsonld::config::JsonLdConfig;
 use andromeda_postgresql_atomic_write::committer::PostgresAtomicCommitter;
-use andromeda_postgresql_context_store::{config::DatabaseConfig, tenant_database::DatabaseUrl};
+use andromeda_postgresql_context_store::{config::DatabaseConfig, database_defaults::DatabaseDefaults, tenant_database::DatabaseUrl};
 use andromeda_snapshot::config::SnapshotConfig;
 use andromeda_subscription_forwarding::mapping::ForwardedSubscriptionRouter;
 use andromeda_task_runtime::{supervisor::TaskSupervisor, wake_trigger::wake_channel};
@@ -90,6 +90,8 @@ pub struct BrokerTenantFactory {
 /// Focused owner configuration retained by tenant construction.
 struct TenantFactoryConfig {
     database: DatabaseConfig,
+    /// The session defaults reconciled on each tenant database it opens.
+    database_defaults: DatabaseDefaults,
     entity: EntityConfig,
     federation: FederationConfig,
     identity: InfoConfig,
@@ -109,6 +111,7 @@ impl From<&RuntimeConfig> for TenantFactoryConfig {
     fn from(config: &RuntimeConfig) -> Self {
         Self {
             database: config.database.clone(),
+            database_defaults: config.database_defaults(),
             entity: config.entity.clone(),
             federation: config.federation.clone(),
             identity: config.identity.clone(),

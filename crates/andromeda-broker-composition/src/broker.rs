@@ -80,7 +80,7 @@ use tracing::{error, info};
 /// A maintenance pass is fleet-serialized and holds exactly one platform
 /// connection across its sweep, so two is ample headroom while a lapsed pass's
 /// connection is being reclaimed.
-const MAINTENANCE_PLATFORM_POOL_CONNECTIONS: u32 = 2;
+pub(crate) const MAINTENANCE_PLATFORM_POOL_CONNECTIONS: u32 = 2;
 
 /// HTTP API and process resources whose shutdown begins after traffic drains.
 struct BrokerExecution {
@@ -248,15 +248,12 @@ async fn construct(
     // and provisioning holds one of them across `CREATE DATABASE`, which queues
     // every cold load's registry read behind it. It is served directly, bounded
     // by `database.max_connections`.
-    let main_pool = configure_pool_options(config.database.max_connections, config.database.acquire_timeout())
-        .connect(config.database.direct_url().as_str())
-        .await?;
     let registry = Arc::new(
         PostgresTenantRegistry::connect(
-            main_pool,
+            configure_pool_options(config.database.max_connections, config.database.acquire_timeout()),
             direct_url.clone(),     // clone: the registry provisions and migrates over the direct base
             config.tenancy.clone(), // clone: registry owns its runtime tenancy policy
-            config.database.synchronous_commit.as_postgres_setting(),
+            &config.database_defaults(),
             config.database.acquire_timeout(),
         )
         .await?,
@@ -308,7 +305,7 @@ async fn construct(
     drop(tenants.resolve_state(&TenantRef::UnnamedDefault, TenantCreationPolicy::MustExist).await?);
 
     let health = broker_health(&registry, &factory);
-    let component_reports = collect_component_reports(registry.main_pool()).await?;
+    let component_reports = collect_component_reports(registry.main_pool(), &config).await?;
 
     let enabled_extensions = config.extensions.resolve();
     log_conformance_override(&config.extensions);

@@ -26,7 +26,6 @@ use andromeda_postgresql_attribute_instance::{
 };
 use andromeda_postgresql_codes::{subscription_kind::SubscriptionKindCode, subscription_status::SubscriptionStatusCode};
 use andromeda_postgresql_context_store::{
-    config::SynchronousCommit,
     error::ContextStoreError,
     notification_delivery::{event_insert::insert_events_in_tx, queue::NotificationDeliveryQueue, rows::NewNotificationEvent},
     pending_side_effects::{
@@ -58,9 +57,7 @@ pub async fn queue_database() -> PgPool {
     // clone: `DatabaseUrl` owns the endpoint it derives per-database URLs from.
     let base = DatabaseUrl::new(configuration.database().url().clone());
     let name = TenantDatabaseName::from(QUEUE_DATABASE.to_owned());
-    create_database_if_missing(&base, &name, SynchronousCommit::Off.as_postgres_setting())
-        .await
-        .expect("queue verification database");
+    create_database_if_missing(&base, &name).await.expect("queue verification database");
     let pool = PgPoolOptions::new()
         .max_connections(8)
         .connect(base.with_database_name(&name).as_str())

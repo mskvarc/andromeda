@@ -13,7 +13,8 @@
 //!
 //! Brokers starting together serialize on a transaction advisory lock keyed on
 //! the database and read the versions again under it, so one of them updates
-//! and the others find nothing left to do.
+//! and the others find nothing left to do. Every connection here waits a
+//! bounded time for each lock, and an update refused a lock runs again.
 
 use crate::{
     error::ContextStoreError,
@@ -24,6 +25,7 @@ use crate::{
     },
     schema_ddl::extension::{DEFER_TIMESCALEDB_LOAD, update_extension},
 };
+use andromeda_postgresql_pool::lock_retry::{SCHEMA_CHANGE_LOCK_RETRY, is_lock_not_available, schema_change_connect_options};
 use andromeda_postgresql_seaquery::{
     advisory_lock::advisory_xact_lock,
     introspection::{extension_shipped_version, extension_version},
@@ -32,7 +34,6 @@ use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{
     Acquire,
-    ConnectOptions,
     Connection,
     Executor,
     PgConnection,
@@ -126,7 +127,7 @@ pub async fn pending_extension_updates(connection: &mut PgConnection) -> Result<
 /// than privilege, and [`ContextStoreError::SchemaContract`] when a reported
 /// version cannot be read.
 pub async fn update_extensions(database_url: &Url) -> Result<(), ContextStoreError> {
-    let options = PgConnectOptions::from_url(database_url)?;
+    let options = schema_change_connect_options(database_url.as_str())?;
     let mut lock_holder = PgConnection::connect_with(&options).await?;
     let outcome = update_under_lock(&mut lock_holder, &options).await;
     lock_holder.close().await?;
@@ -149,11 +150,18 @@ async fn update_under_lock(lock_holder: &mut PgConnection, options: &PgConnectOp
     Ok(())
 }
 
-/// Run one update as the first statement of a connection opened for it.
+/// Run one update as the first statement of a connection opened for it,
+/// opening another and running it again while it is refused a lock.
 async fn apply_update(options: &PgConnectOptions, pending: PendingExtensionUpdate) -> Result<(), ContextStoreError> {
-    let mut connection = PgConnection::connect_with(options).await?;
-    let outcome = connection.execute(sqlx::AssertSqlSafe(update_extension(pending.extension))).await;
-    connection.close().await?;
+    let extension = pending.extension;
+    let outcome = SCHEMA_CHANGE_LOCK_RETRY
+        .run(is_lock_not_available, || async move {
+            let mut connection = PgConnection::connect_with(options).await?;
+            let outcome = connection.execute(sqlx::AssertSqlSafe(update_extension(extension))).await;
+            connection.close().await?;
+            outcome
+        })
+        .await;
     match outcome {
         Ok(_) => {
             tracing::info!(

@@ -24,6 +24,8 @@ pub mod csource_registration;
 pub mod csource_subscription;
 /// The `current_attributes` rows an Entity's attributes are stored as.
 pub mod current_attribute;
+/// The session defaults installed on every database the broker serves from.
+pub mod database_defaults;
 /// Persistence layer for NGSI-LD entities.
 pub mod entity;
 /// Entity Map persistence (clauses 5.2.39 and 5.5.14).

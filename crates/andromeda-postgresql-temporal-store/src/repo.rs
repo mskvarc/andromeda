@@ -23,9 +23,9 @@ pub struct TemporalRepository {
     /// Whether this tenant's `TimescaleDB` edition provides the hypercore
     /// columnstore, probed once when the tenant was opened.
     ///
-    /// The storage-policy reconciler consults it so the columnstore policy is
-    /// only reconciled where the edition can hold one; the Apache-2.0 core runs
-    /// the hypertables uncompressed.
+    /// The storage-policy reconciler and the conversion sweep consult it so
+    /// the columnstore is only enabled and converted to where the edition can
+    /// hold one; the Apache-2.0 core runs the hypertables uncompressed.
     pub(crate) columnstore: ColumnstoreSupport,
     /// ICU collations already provisioned on this tenant's database.
     ///
@@ -55,5 +55,11 @@ impl TemporalRepository {
             columnstore,
             collations: ProvisionedCollations::of_pool(pool),
         }
+    }
+
+    /// Whether this tenant's edition provides the columnstore.
+    #[must_use]
+    pub const fn columnstore(&self) -> ColumnstoreSupport {
+        self.columnstore
     }
 }

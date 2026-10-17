@@ -11,7 +11,9 @@
 //! horizon are dropped, the Scope events no instance retained after the
 //! horizon is read under are deleted, the catalogue rows whose history left
 //! with them are garbage-collected, and the idempotency records that are fully
-//! behind the horizon and protect nothing are released.
+//! behind the horizon and protect nothing are released. Each statement runs in
+//! a transaction of its own with no statement timeout: it removes however much
+//! has aged out, and no request waits on it.
 //!
 //! Scope history is not dropped by age. Clause 4.18 keeps a Scope valid "from
 //! the time it has been set until the time it has been explicitly removed", so
@@ -25,7 +27,12 @@
 //! instance to read under a Scope, so its Scope events go once all of them lie
 //! behind the cutoff.
 
-use crate::{error::TemporalStoreError, repo::TemporalRepository, write_record_release::release_behind_horizon};
+use crate::{
+    error::TemporalStoreError,
+    repo::TemporalRepository,
+    statement_timeout_allowance::allow_unbounded_statements,
+    write_record_release::release_behind_horizon,
+};
 use andromeda_postgresql_schema::temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams, TemporalEntities};
 use andromeda_postgresql_seaquery::timescale::drop_chunks;
 use chrono::{DateTime, TimeDelta, Utc};
@@ -164,17 +171,26 @@ impl TemporalRepository {
         }))
     }
 
-    /// Run one sweep delete, reporting how many rows it removed.
+    /// Run one sweep delete in a transaction of its own, reporting how many
+    /// rows it removed.
     async fn delete(&self, statement: &DeleteStatement) -> Result<u64, TemporalStoreError> {
+        let mut transaction = self.pool.begin().await?;
+        allow_unbounded_statements(&mut transaction).await?;
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        Ok(sqlx::query_with(AssertSqlSafe(sql), values).execute(&self.pool).await?.rows_affected())
+        let removed = sqlx::query_with(AssertSqlSafe(sql), values).execute(&mut *transaction).await?.rows_affected();
+        transaction.commit().await?;
+        Ok(removed)
     }
 
     /// Drop one hypertable's chunks that lie entirely before the cutoff.
     async fn drop_chunks(&self, hypertable: &str, cutoff: DateTime<Utc>) -> Result<usize, TemporalStoreError> {
+        let mut transaction = self.pool.begin().await?;
+        allow_unbounded_statements(&mut transaction).await?;
         let statement = Query::select().expr(drop_chunks(hypertable, Expr::val(cutoff))).to_owned();
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        Ok(sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?.len())
+        let dropped = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&mut *transaction).await?.len();
+        transaction.commit().await?;
+        Ok(dropped)
     }
 }
 

@@ -4,21 +4,27 @@
 //! The migrations declare a default chunk interval for `attribute_history`,
 //! and nothing about the columnstore: on an edition that has
 //! one, [`crate::columnstore_enablement`] enables it when a tenant is opened.
-//! The chunk interval and the columnstore lag are operator tunables, and a
-//! tunable that needed a migration to change would not be one, so when a tenant
-//! is opened the stored values are read back from the TimescaleDB information
-//! views and moved to what the configuration names — only when they differ, so
-//! an unchanged configuration is a read and no write.
+//! The chunk interval is an operator tunable, and a tunable that needed a
+//! migration to change would not be one, so when a tenant is opened the stored
+//! value is read back from the TimescaleDB information views and moved to what
+//! the configuration names, only when they differ, so an unchanged
+//! configuration is a read and no write. Each write waits a bounded time for
+//! its lock ([`crate::bounded_lock_wait`]).
+//!
+//! When chunks are converted is not stored in the database at all: the
+//! broker's own sweep converts them past `temporal.columnstore_after`
+//! ([`crate::columnstore_conversion`]).
 
 use crate::{
+    bounded_lock_wait::execute_with_bounded_lock_wait,
     columnstore_capability::ColumnstoreSupport,
     columnstore_enablement::reconcile_columnstore_enablement,
     error::TemporalStoreError,
     repo::TemporalRepository,
-    schema_ddl::timescale_policy::{HypertableName, add_columnstore_policy, remove_columnstore_policy},
+    schema_ddl::timescale_policy::HypertableName,
     temporal_store_invariant::TemporalStoreInvariant,
 };
-use andromeda_postgresql_seaquery::timescale::{chunk_interval_statement, columnstore_policy_statement, set_chunk_time_interval};
+use andromeda_postgresql_seaquery::timescale::{chunk_interval_statement, set_chunk_time_interval};
 use andromeda_temporal::storage_policy::TemporalStoragePolicy;
 use sea_query::{Expr, PostgresQueryBuilder, Query};
 use sea_query_sqlx::SqlxBinder;
@@ -26,10 +32,10 @@ use sqlx::{AssertSqlSafe, PgPool, postgres::types::PgInterval};
 use std::num::NonZeroU32;
 use strum::IntoEnumIterator;
 
-/// Seconds in one day, the unit both policy values are configured in.
+/// Seconds in one day, the unit the chunk interval is configured in.
 const SECONDS_PER_DAY: i64 = 86_400;
 
-/// Days `TimescaleDB` counts one interval month as when it stores a policy.
+/// Days `TimescaleDB` counts one interval month as when it stores an interval.
 const DAYS_PER_MONTH: i64 = 30;
 
 /// Whether one stored policy value was already what the configuration names.
@@ -40,8 +46,8 @@ pub enum PolicyReconciliation {
     /// The stored value was moved to the configured one.
     Adjusted,
     /// The value has no bearing on this edition: the Apache-2.0 core holds no
-    /// columnstore, so neither it nor its lag is read or written. Only the
-    /// columnstore axes ever report this; the chunk interval is core surface.
+    /// columnstore, so it is neither read nor written. Only the columnstore
+    /// ever reports this; the chunk interval is core surface.
     Unsupported,
 }
 
@@ -70,8 +76,6 @@ pub struct HypertableReconciliation {
     pub chunk_interval: PolicyReconciliation,
     /// Whether its columnstore was enabled.
     pub columnstore_enabled: PolicyReconciliation,
-    /// What happened to its columnstore lag.
-    pub columnstore_after: PolicyReconciliation,
 }
 
 /// What reconciling every temporal hypertable did.
@@ -83,27 +87,25 @@ pub struct TemporalStoragePolicyOutcome {
 
 impl TemporalStoragePolicyOutcome {
     /// Whether nothing was written: every stored value already matched, or the
-    /// edition holds no columnstore to enable or move.
+    /// edition holds no columnstore to enable.
     #[must_use]
     pub fn is_unchanged(&self) -> bool {
-        self.hypertables.iter().all(|reconciliation| {
-            reconciliation.chunk_interval.wrote_nothing()
-                && reconciliation.columnstore_enabled.wrote_nothing()
-                && reconciliation.columnstore_after.wrote_nothing()
-        })
+        self.hypertables
+            .iter()
+            .all(|reconciliation| reconciliation.chunk_interval.wrote_nothing() && reconciliation.columnstore_enabled.wrote_nothing())
     }
 }
 
 impl TemporalRepository {
     /// Move every temporal hypertable's chunk interval to what `policy` names,
-    /// leaving it untouched when the policy is silent on it, and -- on an
-    /// edition with a columnstore -- enable the columnstore and move its lag to
-    /// the policy's.
+    /// leaving it untouched when the policy is silent on it, and, on an
+    /// edition with a columnstore, enable the columnstore.
     ///
     /// # Errors
     ///
     /// Returns [`TemporalStoreError::Database`] when an information view cannot
-    /// be read or a policy statement fails, [`TemporalStoreError::Invariant`] when
+    /// be read or a policy statement fails or waits out its lock on every
+    /// attempt, [`TemporalStoreError::Invariant`] when
     /// a stored interval does not decode, and
     /// [`TemporalStoreError::ColumnstoreSettingsDrift`] when a hypertable
     /// already carries the columnstore under other settings.
@@ -114,20 +116,14 @@ impl TemporalRepository {
                 Some(days) => reconcile_chunk_interval(&self.pool, hypertable, days).await?,
                 None => PolicyReconciliation::Unchanged,
             };
-            // The lag is a policy on the columnstore, so the columnstore is
-            // enabled first: a policy on a hypertable without one is refused.
-            let (columnstore_enabled, columnstore_after) = match plan_columnstore_reconciliation(self.columnstore, policy.columnstore_after_days) {
-                ColumnstoreReconciliation::Unsupported => (PolicyReconciliation::Unsupported, PolicyReconciliation::Unsupported),
-                ColumnstoreReconciliation::Reconcile(days) => (
-                    reconcile_columnstore_enablement(&self.pool, hypertable).await?,
-                    reconcile_columnstore_lag(&self.pool, hypertable, days).await?,
-                ),
+            let columnstore_enabled = match plan_columnstore_reconciliation(self.columnstore) {
+                ColumnstoreReconciliation::Unsupported => PolicyReconciliation::Unsupported,
+                ColumnstoreReconciliation::Reconcile => reconcile_columnstore_enablement(&self.pool, hypertable).await?,
             };
             hypertables.push(HypertableReconciliation {
                 hypertable,
                 chunk_interval,
                 columnstore_enabled,
-                columnstore_after,
             });
         }
         Ok(TemporalStoragePolicyOutcome { hypertables })
@@ -140,19 +136,17 @@ impl TemporalRepository {
 enum ColumnstoreReconciliation {
     /// The edition holds no columnstore: nothing is read or written.
     Unsupported,
-    /// The columnstore is to be enabled, and its stored lag compared against,
-    /// and moved to, this configured day count.
-    Reconcile(NonZeroU32),
+    /// The columnstore is to be enabled under the declared settings.
+    Reconcile,
 }
 
 /// Decide what the columnstore means for one hypertable before any statement
 /// runs: [`Unsupported`](ColumnstoreReconciliation::Unsupported) on the
-/// Apache-2.0 core, whatever the configuration names, and reconciled against
-/// the configured lag on the TSL edition.
-const fn plan_columnstore_reconciliation(support: ColumnstoreSupport, configured: NonZeroU32) -> ColumnstoreReconciliation {
+/// Apache-2.0 core and reconciled on the TSL edition.
+const fn plan_columnstore_reconciliation(support: ColumnstoreSupport) -> ColumnstoreReconciliation {
     match support {
         ColumnstoreSupport::Absent => ColumnstoreReconciliation::Unsupported,
-        ColumnstoreSupport::Present => ColumnstoreReconciliation::Reconcile(configured),
+        ColumnstoreSupport::Present => ColumnstoreReconciliation::Reconcile,
     }
 }
 
@@ -167,30 +161,13 @@ async fn reconcile_chunk_interval(pool: &PgPool, hypertable: HypertableName, day
     let (sql, values) = Query::select()
         .expr(set_chunk_time_interval(hypertable.into(), Expr::val(day_count(days))))
         .to_owned()
-        .build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(AssertSqlSafe(sql), values).execute(pool).await?;
-    Ok(PolicyReconciliation::Adjusted)
-}
-
-/// Set the columnstore lag of `hypertable` to `days` unless it already is.
-///
-/// A policy's lag cannot be edited in place, so a differing one is removed and
-/// re-added; a missing one is simply added.
-async fn reconcile_columnstore_lag(pool: &PgPool, hypertable: HypertableName, days: NonZeroU32) -> Result<PolicyReconciliation, TemporalStoreError> {
-    let (sql, values) = columnstore_policy_statement(hypertable.into()).build_sqlx(PostgresQueryBuilder);
-    let stored: Option<PgInterval> = sqlx::query_scalar_with(AssertSqlSafe(sql), values).fetch_optional(pool).await?;
-    if stored.is_some_and(|lag| interval_seconds(&lag) == day_seconds(days)) {
-        return Ok(PolicyReconciliation::Unchanged);
-    }
-    if stored.is_some() {
-        sqlx::query(AssertSqlSafe(remove_columnstore_policy(hypertable))).execute(pool).await?;
-    }
-    sqlx::query(AssertSqlSafe(add_columnstore_policy(hypertable, days))).execute(pool).await?;
+        .build(PostgresQueryBuilder);
+    execute_with_bounded_lock_wait(pool, &sql, &values).await?;
     Ok(PolicyReconciliation::Adjusted)
 }
 
 /// The whole seconds an interval spans, counting a month as thirty days as
-/// `TimescaleDB` does when it stores a day-denominated policy.
+/// `TimescaleDB` does when it stores a day-denominated interval.
 const fn interval_seconds(interval: &PgInterval) -> i64 {
     (interval.months as i64 * DAYS_PER_MONTH + interval.days as i64) * SECONDS_PER_DAY + interval.microseconds / 1_000_000
 }
@@ -259,16 +236,14 @@ mod tests {
                 hypertable: HypertableName::AttributeHistory,
                 chunk_interval: PolicyReconciliation::Unchanged,
                 columnstore_enabled: PolicyReconciliation::Unchanged,
-                columnstore_after: PolicyReconciliation::Unchanged,
             }],
         };
         assert!(untouched.is_unchanged());
         let adjusted = TemporalStoragePolicyOutcome {
             hypertables: vec![HypertableReconciliation {
                 hypertable: HypertableName::AttributeHistory,
-                chunk_interval: PolicyReconciliation::Unchanged,
+                chunk_interval: PolicyReconciliation::Adjusted,
                 columnstore_enabled: PolicyReconciliation::Unchanged,
-                columnstore_after: PolicyReconciliation::Adjusted,
             }],
         };
         assert!(!adjusted.is_unchanged());
@@ -281,16 +256,14 @@ mod tests {
                 hypertable: HypertableName::AttributeHistory,
                 chunk_interval: PolicyReconciliation::Unchanged,
                 columnstore_enabled: PolicyReconciliation::Unsupported,
-                columnstore_after: PolicyReconciliation::Unsupported,
             }],
         };
-        assert!(apache.is_unchanged(), "the Apache core holds no columnstore to enable or move");
+        assert!(apache.is_unchanged(), "the Apache core holds no columnstore to enable");
         let apache_with_adjusted_interval = TemporalStoragePolicyOutcome {
             hypertables: vec![HypertableReconciliation {
                 hypertable: HypertableName::AttributeHistory,
                 chunk_interval: PolicyReconciliation::Adjusted,
                 columnstore_enabled: PolicyReconciliation::Unsupported,
-                columnstore_after: PolicyReconciliation::Unsupported,
             }],
         };
         assert!(!apache_with_adjusted_interval.is_unchanged(), "the Apache-safe chunk interval was still moved");
@@ -298,21 +271,18 @@ mod tests {
 
     #[test]
     fn the_apache_edition_resolves_the_columnstore_to_unsupported_without_a_statement() {
-        let three_days = NonZeroU32::new(3).expect("positive");
         assert_eq!(
-            plan_columnstore_reconciliation(ColumnstoreSupport::Absent, three_days),
+            plan_columnstore_reconciliation(ColumnstoreSupport::Absent),
             ColumnstoreReconciliation::Unsupported,
-            "an Apache tenant issues no columnstore statement whatever lag is configured"
+            "an Apache tenant issues no columnstore statement"
         );
     }
 
     #[test]
-    fn the_tsl_edition_reconciles_the_configured_lag() {
-        let five_days = NonZeroU32::new(5).expect("positive");
+    fn the_tsl_edition_reconciles_the_columnstore() {
         assert_eq!(
-            plan_columnstore_reconciliation(ColumnstoreSupport::Present, five_days),
-            ColumnstoreReconciliation::Reconcile(five_days),
-            "the columnstore is enabled and its lag reconciled against the stored policy"
+            plan_columnstore_reconciliation(ColumnstoreSupport::Present),
+            ColumnstoreReconciliation::Reconcile
         );
     }
 
@@ -323,7 +293,6 @@ mod tests {
                 hypertable: HypertableName::AttributeHistory,
                 chunk_interval: PolicyReconciliation::Unchanged,
                 columnstore_enabled: PolicyReconciliation::Adjusted,
-                columnstore_after: PolicyReconciliation::Unchanged,
             }],
         };
         assert!(!enabled.is_unchanged());

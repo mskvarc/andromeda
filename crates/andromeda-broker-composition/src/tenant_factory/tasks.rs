@@ -1,5 +1,6 @@
 //! Construction and supervision of one tenant's background tasks.
 
+mod columnstore_conversion;
 mod csource_notification;
 mod discovery_census;
 mod entity_notification;
@@ -13,6 +14,7 @@ mod retention;
 mod snapshot;
 mod table_size_gauges;
 mod temporal_retention;
+mod temporal_sweep_failure;
 
 use crate::tenant_factory::{
     TenantFactoryConfig,
@@ -21,6 +23,7 @@ use crate::tenant_factory::{
     services::ConstructedServices,
     storage::TenantStorage,
     tasks::{
+        columnstore_conversion::register_columnstore_conversion,
         csource_notification::{CsourceNotificationStreams, register_csource_notification_workers},
         discovery_census::register_discovery_census_fold,
         entity_notification::{
@@ -218,6 +221,7 @@ pub(super) fn supervise_tasks(
         Arc::clone(&pacer), // clone: every background pass of the tenant consults its one pacer.
     )?;
     register_temporal_retention(&task_supervisor, Arc::clone(&storage.temporal_repo), &config.temporal)?; // clone: the sweep and the read stores share one repository.
+    register_columnstore_conversion(&task_supervisor, Arc::clone(&storage.temporal_repo), &config.temporal)?; // clone: the sweep and the read stores share one repository.
     register_snapshot_workers(
         &task_supervisor,
         &storage.pool,

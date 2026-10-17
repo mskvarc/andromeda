@@ -17,7 +17,10 @@ use andromeda_http_stack::config::HttpStackConfig;
 use andromeda_http3_server::config::Http3Config;
 use andromeda_jsonld::config::JsonLdConfig;
 use andromeda_ngsi_ld_request::pagination::config::PaginationConfig;
-use andromeda_postgresql_context_store::config::DatabaseConfig;
+use andromeda_postgresql_context_store::{
+    config::DatabaseConfig,
+    database_defaults::{DatabaseDefaults, StatementTimeout},
+};
 use andromeda_server_tls::config::TlsConfig;
 use andromeda_snapshot::config::SnapshotConfig;
 use andromeda_temporal::config::TemporalConfig;
@@ -134,6 +137,17 @@ pub struct RuntimeConfig {
 }
 
 impl RuntimeConfig {
+    /// The session defaults installed on every database the broker serves
+    /// from: the configured commit durability, and a statement timeout just
+    /// past the HTTP request deadline.
+    #[must_use]
+    pub const fn database_defaults(&self) -> DatabaseDefaults {
+        DatabaseDefaults {
+            synchronous_commit: self.database.synchronous_commit,
+            statement_timeout: StatementTimeout::past_request_deadline(self.http.request_timeout.duration()),
+        }
+    }
+
     /// Load, normalize, and validate the configured broker resources.
     ///
     /// The layers, in increasing precedence, are the built-in defaults, the

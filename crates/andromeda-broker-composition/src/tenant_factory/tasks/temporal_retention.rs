@@ -10,15 +10,14 @@
 use crate::tenant_factory::{
     assembly_invariant::{AssemblyInvariant, RetentionSetting},
     error::TenantAssemblyError,
+    tasks::temporal_sweep_failure::classify_sweep_failure,
 };
 use andromeda_postgresql_temporal_store::{
-    error::TemporalStoreError,
     repo::TemporalRepository,
     retention_sweep::{TemporalRetention, TemporalRetentionHorizon, TemporalRetentionOutcome},
 };
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
-    failure::{FailureClass, TaskFailure},
     periodic_trigger::{InitialExecution, MissedTickPolicy, PeriodicSchedule},
     registration::TaskRegistration,
     restart_policy::RestartPolicy,
@@ -68,7 +67,7 @@ pub(super) fn register_temporal_retention(
     let task = ScheduledTask::new(registration, schedule, move |_execution| {
         let repository = Arc::clone(&repository); // clone: each bounded pass owns the repository handle while running.
         async move {
-            let outcome = repository.sweep_retention(retention, Utc::now()).await.map_err(classify_retention_failure)?;
+            let outcome = repository.sweep_retention(retention, Utc::now()).await.map_err(classify_sweep_failure)?;
             match outcome {
                 TemporalRetentionOutcome::Disabled => Ok(()),
                 TemporalRetentionOutcome::Swept(sweep) => {
@@ -90,42 +89,4 @@ pub(super) fn register_temporal_retention(
         .register_scheduled(task)
         .map(drop)
         .map_err(|error| AssemblyInvariant::from(error).into())
-}
-
-/// Classify exhaustive temporal-store failures at the composition boundary.
-const fn classify_retention_failure(error: TemporalStoreError) -> TaskFailure<TemporalStoreError> {
-    let class = match &error {
-        // A collation object is created on demand by a read that orders under
-        // it (clause 4.23.1); the statement fails for the same reasons any
-        // other one does, so a retry is worth taking.
-        TemporalStoreError::Database(_) | TemporalStoreError::NameLookup(_) | TemporalStoreError::Collation(_) => FailureClass::Transient,
-        TemporalStoreError::WriteOrdinal(_)
-        | TemporalStoreError::StatementBuild(_)
-        | TemporalStoreError::RetentionHorizon(_)
-        | TemporalStoreError::StoredTime(_)
-        | TemporalStoreError::StoredJson(_)
-        | TemporalStoreError::ScopeHasNoAttributeRow
-        | TemporalStoreError::StoredHistory(_)
-        | TemporalStoreError::StoredCatalog(_)
-        | TemporalStoreError::StoredAggregation(_)
-        | TemporalStoreError::Render(_)
-        | TemporalStoreError::Encoding(_)
-        | TemporalStoreError::HistoryMembers(_)
-        | TemporalStoreError::Invariant(_)
-        | TemporalStoreError::MixedAggregationGroup(_)
-        | TemporalStoreError::WriteRecordMismatch { .. }
-        | TemporalStoreError::ColumnstoreSettingsDrift { .. }
-        // Retention only deletes aged rows and records no intent, so a
-        // failure naming the entity whose intent it recorded cannot reach it.
-        | TemporalStoreError::EntityIntent { .. } => FailureClass::InvariantViolation,
-        TemporalStoreError::Refused(_)
-        | TemporalStoreError::NotFound(_)
-        | TemporalStoreError::TimestampPrecision(_)
-        // Retention only deletes aged rows and never claims an instanceId, so
-        // this variant cannot actually reach this classifier; it is grouped
-        // with the other client-input refusals because that is what it would
-        // mean if it somehow did.
-        | TemporalStoreError::DuplicateInstanceClaim(_) => FailureClass::Permanent,
-    };
-    TaskFailure::new(class, error)
 }

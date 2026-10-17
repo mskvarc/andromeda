@@ -27,6 +27,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_postgresql_context_store::{
     context_space::resolve_live_target,
     csource_registration::{pattern_forms_refresh::refresh_stale_pattern_forms, registration_store::PostgresRegistrationStore},
+    database_defaults::{DefaultsReconciliation, reconcile_database_defaults},
     entity::repo::EntityRepository,
     entity_map::repo::EntityMapRepository,
     jsonld_context::repo::JsonLdContextRepository,
@@ -126,6 +127,25 @@ async fn bring_schema_current(pool: &PgPool, migration_url: &Url, acquire_timeou
     Ok(())
 }
 
+/// Open the tenant's serving pool with its database's session defaults in
+/// force.
+///
+/// The defaults are reconciled over the pool itself, which works through a
+/// pooler as well; when they had to be written, the pool's own sessions
+/// started under the values they replaced, so the pool is closed and opened
+/// again before it serves anything.
+async fn open_serving_pool(config: &TenantFactoryConfig, serving_url: &Url, max_connections: u32) -> Result<PgPool, TenantAssemblyError> {
+    let options = configure_pool_options(max_connections, config.database.acquire_timeout());
+    let pool = options.clone().connect(serving_url.as_str()).await?; // clone: the options are needed again when the pool is reopened.
+    match reconcile_database_defaults(&pool, &config.database_defaults).await? {
+        DefaultsReconciliation::Unchanged => Ok(pool),
+        DefaultsReconciliation::Adjusted => {
+            pool.close().await;
+            Ok(options.connect(serving_url.as_str()).await?)
+        }
+    }
+}
+
 /// Render again the stored restatements of registered identifier patterns an
 /// older rendering produced.
 ///
@@ -181,9 +201,7 @@ pub(super) async fn initialize_storage(
     // load then never opens the direct migrator connection or takes its session
     // advisory lock, which a transaction-pooling proxy would break; the pooler
     // is left to serve every warm reopen.
-    let pool = configure_pool_options(max_connections, config.database.acquire_timeout())
-        .connect(serving_url.as_str())
-        .await?;
+    let pool = open_serving_pool(config, serving_url, max_connections).await?;
     bring_schema_current(&pool, migration_url, config.database.acquire_timeout()).await?;
     bring_pattern_forms_current(&pool).await?;
     let live_target = resolve_live_target();

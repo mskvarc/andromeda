@@ -28,7 +28,7 @@ impl ComponentReportRoutes {
 #[cfg(test)]
 mod tests {
     use crate::routes::ComponentReportRoutes;
-    use andromeda_component_report::{ComponentReport, ComponentVersion};
+    use andromeda_component_report::{ComponentReport, ComponentVersion, ConnectionCapacity};
     use axum::{
         body::Body,
         http::{Request, StatusCode},
@@ -40,6 +40,7 @@ mod tests {
     async fn component_report_fragment_owns_the_version_path() -> Result<(), Box<dyn Error>> {
         let response = ComponentReportRoutes::new(vec![ComponentReport::PostgreSql {
             version: ComponentVersion::from("16.2".to_owned()),
+            connections: ConnectionCapacity::new(200, 3, 150),
         }])
         .into_router()
         .oneshot(Request::get("/version").body(Body::empty())?)

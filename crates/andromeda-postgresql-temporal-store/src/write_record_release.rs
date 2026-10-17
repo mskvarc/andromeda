@@ -19,7 +19,7 @@
 //! a plain table whose write-identity index answers the proof at any instant,
 //! and the Scope event retention keeps however old it is protects its record.
 
-use crate::{error::TemporalStoreError, history_chunk_span::HistoryChunkSpan};
+use crate::{error::TemporalStoreError, history_chunk_span::HistoryChunkSpan, statement_timeout_allowance::allow_unbounded_statements};
 use andromeda_postgresql_schema::{
     queue::{TemporalAppendIntents, WriteRecords},
     temporal::{AttributeHistory, ScopeHistory},
@@ -28,7 +28,7 @@ use andromeda_postgresql_seaquery::{cast::cast, pg_array::any, pg_type::Postgres
 use chrono::{DateTime, Utc};
 use sea_query::{Cond, DeleteStatement, Expr, ExprTrait, Iden, IntoColumnRef, IntoIden, IntoTableRef, PostgresQueryBuilder, Query, SimpleExpr};
 use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, PgConnection, Postgres, Transaction, postgres::PgPool};
+use sqlx::{AssertSqlSafe, Connection, PgConnection, Postgres, Transaction, postgres::PgPool};
 use uuid::Uuid;
 
 /// The `attribute_history` alias inside a protection subquery.
@@ -135,7 +135,7 @@ pub(crate) async fn release_behind_horizon(pool: &PgPool, cutoff: DateTime<Utc>)
     let span = HistoryChunkSpan::read(&mut connection).await?;
     let mut released = 0;
     for window in sweep_windows(span, cutoff) {
-        released += execute(&mut connection, &base_release(window)).await?;
+        released += execute_unbounded(&mut connection, &base_release(window)).await?;
     }
     Ok(released)
 }
@@ -144,6 +144,17 @@ pub(crate) async fn release_behind_horizon(pool: &PgPool, cutoff: DateTime<Utc>)
 async fn execute(connection: &mut PgConnection, statement: &DeleteStatement) -> Result<u64, TemporalStoreError> {
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
     Ok(sqlx::query_with(AssertSqlSafe(sql), values).execute(connection).await?.rows_affected())
+}
+
+/// Run one sweep release statement in a transaction of its own, with no
+/// statement timeout, reporting how many records it removed.
+async fn execute_unbounded(connection: &mut PgConnection, statement: &DeleteStatement) -> Result<u64, TemporalStoreError> {
+    let mut transaction = connection.begin().await?;
+    allow_unbounded_statements(&mut transaction).await?;
+    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+    let released = sqlx::query_with(AssertSqlSafe(sql), values).execute(&mut *transaction).await?.rows_affected();
+    transaction.commit().await?;
+    Ok(released)
 }
 
 /// The delete of the `write_records` inside `window` guarded by the three

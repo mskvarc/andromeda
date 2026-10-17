@@ -183,11 +183,16 @@ pub struct TemporalConfig {
     /// The age past which a history partition is converted to the columnstore,
     /// as a whole number of days in human-readable form (`"30days"`).
     ///
-    /// Enabled and reconciled when a tenant is opened on an edition that has a
-    /// columnstore; ignored on one that does not. Must not fall below the chunk
-    /// interval, or a partition still receiving rows would be converted.
+    /// The broker's own conversion sweep converts every partition that ended
+    /// this long ago, on an edition that has a columnstore; ignored on one that
+    /// does not. Must not fall below the chunk interval, or a partition still
+    /// receiving rows would be converted.
     #[toml_comment(inline)]
     pub columnstore_after: HumanDuration,
+    /// Cadence of the columnstore conversion sweep, in human-readable form
+    /// (`"1h"`). The first sweep runs when a tenant is opened.
+    #[toml_comment(inline)]
+    pub columnstore_sweep_interval: HumanDuration,
     /// Operator retention horizon as a whole number of days in human-readable
     /// form (`"365days"`), absent while retention is off.
     ///
@@ -221,6 +226,7 @@ impl Default for TemporalConfig {
             intent_stuck_after_attempts: 10,
             chunk_interval: None,
             columnstore_after: DEFAULT_COLUMNSTORE_AFTER,
+            columnstore_sweep_interval: HumanDuration::from_secs(3600),
             retention_horizon: None,
             retention_sweep_interval: HumanDuration::from_secs(3600),
         }
@@ -256,8 +262,8 @@ impl TemporalConfig {
     /// aggregation instance budget above
     /// [`AGGREGATION_INSTANCE_BUDGET_CEILING`], expiry cadence,
     /// intent fallback cadence, batch size, lease, retry delay, stuck-attempt
-    /// threshold, chunk interval, columnstore lag, retention horizon or
-    /// retention sweep cadence; a retry ceiling below the retry delay; or a
+    /// threshold, chunk interval, columnstore lag, retention horizon,
+    /// retention sweep cadence or columnstore sweep cadence; a retry ceiling below the retry delay; or a
     /// columnstore lag below the chunk interval, which would convert a
     /// partition that is still being written.
     pub const fn validate(&self) -> Result<(), TemporalConfigError> {
@@ -325,6 +331,9 @@ impl TemporalConfig {
         }
         if self.retention_sweep_interval.is_zero() {
             return Err(TemporalConfigError::ZeroRetentionSweepInterval);
+        }
+        if self.columnstore_sweep_interval.is_zero() {
+            return Err(TemporalConfigError::ZeroColumnstoreSweepInterval);
         }
         Ok(())
     }
@@ -403,9 +412,20 @@ mod config_tests {
             intent_stuck_after_attempts: 10,
             chunk_interval: None,
             columnstore_after: DEFAULT_COLUMNSTORE_AFTER,
+            columnstore_sweep_interval: HumanDuration::from_secs(3600),
             retention_horizon: None,
             retention_sweep_interval: HumanDuration::from_secs(3600),
         }
+    }
+
+    #[test]
+    fn the_columnstore_sweep_runs_hourly_unless_configured_and_never_at_a_zero_cadence() {
+        assert_eq!(TemporalConfig::default().columnstore_sweep_interval.duration(), Duration::from_secs(3600));
+        let zero = TemporalConfig {
+            columnstore_sweep_interval: HumanDuration::from_secs(0),
+            ..valid()
+        };
+        assert_eq!(zero.validate(), Err(TemporalConfigError::ZeroColumnstoreSweepInterval));
     }
 
     /// The shipped broker commits temporal history synchronously inside the

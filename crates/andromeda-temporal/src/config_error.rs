@@ -75,6 +75,9 @@ pub enum TemporalConfigError {
     /// Retention sweep cadence was configured as zero.
     #[error("temporal.retention_sweep_interval must be greater than zero")]
     ZeroRetentionSweepInterval,
+    /// Columnstore conversion sweep cadence was configured as zero.
+    #[error("temporal.columnstore_sweep_interval must be greater than zero")]
+    ZeroColumnstoreSweepInterval,
 }
 
 #[cfg(test)]

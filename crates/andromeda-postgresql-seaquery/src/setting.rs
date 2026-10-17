@@ -37,9 +37,22 @@ pub fn set_config(name: &str, value: &str, scope: SettingScope) -> SimpleExpr {
         .into()
 }
 
+/// `set_config('statement_timeout', '0', true)`: no statement of the current
+/// transaction is cut short by the database's `statement_timeout`.
+///
+/// The broker installs a `statement_timeout` on each database just past the
+/// request deadline, so a statement no request waits for any more stops. Work
+/// no request bounds (copying a Snapshot, converting or dropping history
+/// chunks, reading every location when a tenant opens) lifts it for its own
+/// transaction.
+#[must_use]
+pub fn lift_statement_timeout() -> SimpleExpr {
+    set_config("statement_timeout", "0", SettingScope::Transaction)
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::setting::{SettingScope, set_config};
+    use crate::setting::{SettingScope, lift_statement_timeout, set_config};
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
 
@@ -59,5 +72,13 @@ mod tests {
             .expr(set_config("search_path", "snap_7, public", SettingScope::Session))
             .build(PostgresQueryBuilder);
         assert!(format!("{:?}", values.0[2]).contains("false"), "{values:?}");
+    }
+
+    #[test]
+    fn lifting_the_statement_timeout_lasts_until_the_transaction_ends() {
+        assert_eq!(
+            Query::select().expr(lift_statement_timeout()).to_string(PostgresQueryBuilder),
+            "SELECT set_config('statement_timeout', '0', TRUE)"
+        );
     }
 }

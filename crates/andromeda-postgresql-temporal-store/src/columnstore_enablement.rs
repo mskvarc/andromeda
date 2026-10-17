@@ -31,11 +31,11 @@
 //!
 //! Conversion horizon. Chunks older than thirty days by default are converted
 //! (`temporal.columnstore_after`): thirty days is the horizon within which
-//! history is expected to be mutated in place -- instance modification and
+//! history is expected to be mutated in place (instance modification and
 //! deletion, clauses 5.6.14 and 5.6.15, and the verbatim `instanceId` dedup that
-//! precedes a replacing write -- and past which it is read as an immutable
-//! archive. The lag is reconciled by [`crate::storage_policy`] once the
-//! columnstore is enabled.
+//! precedes a replacing write) and past which it is read as an immutable
+//! archive. The broker converts them itself ([`crate::columnstore_conversion`]);
+//! no `TimescaleDB` job is installed.
 //!
 //! A hypertable already carrying the columnstore under other segment or order
 //! columns, or another set of sparse indexes, is refused rather than
@@ -43,13 +43,14 @@
 //! chunks is not a change to make silently at startup.
 
 use crate::{
+    bounded_lock_wait::execute_with_bounded_lock_wait,
     error::TemporalStoreError,
     schema_ddl::timescale_policy::{COLUMNSTORE_ORDER_BY, HypertableName, SortDirection, SparseIndex, enable_columnstore},
     storage_policy::PolicyReconciliation,
     temporal_store_invariant::TemporalStoreInvariant,
 };
 use andromeda_postgresql_seaquery::timescale::{SparseIndexColumns, SparseIndexKindColumn, columnstore_settings_statement, columnstore_sparse_index_statement};
-use sea_query::{Iden, PostgresQueryBuilder};
+use sea_query::{Iden, PostgresQueryBuilder, Values};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{AssertSqlSafe, PgPool, Row};
 
@@ -206,7 +207,7 @@ pub(crate) async fn reconcile_columnstore_enablement(pool: &PgPool, hypertable: 
     match plan_enablement(hypertable, &stored) {
         EnablementPlan::Unchanged => Ok(PolicyReconciliation::Unchanged),
         EnablementPlan::Enable => {
-            sqlx::query(AssertSqlSafe(enable_columnstore(hypertable))).execute(pool).await?;
+            execute_with_bounded_lock_wait(pool, &enable_columnstore(hypertable), &Values(Vec::new())).await?;
             Ok(PolicyReconciliation::Adjusted)
         }
         EnablementPlan::Drift => Err(TemporalStoreError::ColumnstoreSettingsDrift {

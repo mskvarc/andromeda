@@ -107,7 +107,7 @@ mod tests {
         management::ManagementRoutes,
         routes::ApiRoutes,
     };
-    use andromeda_component_report::{ComponentReport, ComponentVersion};
+    use andromeda_component_report::{ComponentReport, ComponentVersion, ConnectionCapacity};
     use andromeda_extensions::enabled::EnabledExtensions;
     use andromeda_health::aggregate::Health;
     use andromeda_http_component_report::routes::ComponentReportRoutes;
@@ -322,6 +322,7 @@ mod tests {
             .health(HealthRoutes::new(Health::builder().build()))
             .component_report(ComponentReportRoutes::new(vec![ComponentReport::PostgreSql {
                 version: ComponentVersion::from("16.2".to_owned()),
+                connections: ConnectionCapacity::new(200, 3, 150),
             }]))
             .advertised_api_root(None)
             .pagination(PaginationPolicy::CursorDefault)

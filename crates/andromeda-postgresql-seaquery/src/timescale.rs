@@ -7,7 +7,7 @@
 //! caller-supplied value passed as a bound expression rather than interpolated.
 
 use crate::{
-    cast::{cast, cast_compound},
+    cast::cast,
     jsonb::{jsonb_array_elements_text, jsonb_path_query, jsonb_path_query_array},
     literal::text_literal,
     maintenance::total_relation_size,
@@ -15,7 +15,7 @@ use crate::{
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
-use sea_query::{Alias, CaseStatement, Expr, ExprTrait, Func, Iden, JoinType, Keyword, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, CaseStatement, Expr, ExprTrait, Func, Iden, JoinType, Keyword, Order, Query, SelectStatement, SimpleExpr};
 
 /// The `time_bucket(width, ts, origin)` bucketing function.
 #[derive(Iden, Clone, Copy)]
@@ -68,20 +68,6 @@ enum Dimensions {
     TimeInterval,
 }
 
-/// The `timescaledb_information.jobs` view.
-#[derive(Iden, Clone, Copy)]
-enum Jobs {
-    /// View name: `jobs`
-    #[iden = "jobs"]
-    Table,
-    /// The hypertable the job acts on
-    HypertableName,
-    /// The procedure the job runs
-    ProcName,
-    /// The job's JSONB configuration
-    Config,
-}
-
 /// The `timescaledb_information.hypertables` view.
 #[derive(Iden, Clone, Copy)]
 enum Hypertables {
@@ -128,6 +114,22 @@ pub struct HistoryFrom;
 #[derive(Iden, Clone, Copy)]
 #[iden = "largest_rowstore_bytes"]
 pub struct LargestRowstoreBytes;
+
+/// The `chunk` projection of [`chunk_states_statement`]: the chunk relation
+/// as a schema-qualified, quoted name.
+#[derive(Iden, Clone, Copy)]
+#[iden = "chunk"]
+pub struct ChunkRelationColumn;
+
+/// The `range_end` projection of [`chunk_states_statement`].
+#[derive(Iden, Clone, Copy)]
+#[iden = "range_end"]
+pub struct ChunkRangeEnd;
+
+/// The `is_compressed` projection of [`chunk_states_statement`].
+#[derive(Iden, Clone, Copy)]
+#[iden = "is_compressed"]
+pub struct ChunkIsCompressed;
 
 /// Alias `ch` for the chunks view.
 #[derive(Iden, Clone, Copy)]
@@ -188,12 +190,6 @@ struct Ht;
 #[iden = "cs"]
 struct Cs;
 
-/// The procedure name a columnstore policy job runs under.
-const COLUMNSTORE_POLICY_PROC: &str = "policy_compression";
-
-/// The `config` key that carries a columnstore policy's lag.
-const COMPRESS_AFTER_KEY: &str = "compress_after";
-
 /// The interval one chunk of `hypertable` spans on its time dimension.
 ///
 /// Reads `timescaledb_information.dimensions` for the first dimension, which is
@@ -207,24 +203,6 @@ pub fn chunk_interval_statement(hypertable: &str) -> SelectStatement {
         .from((TimescaleInformation, Dimensions::Table))
         .and_where(Expr::col(Dimensions::HypertableName).eq(hypertable))
         .and_where(Expr::col(Dimensions::DimensionNumber).eq(1))
-        .to_owned()
-}
-
-/// The lag of the columnstore policy on `hypertable`, as an `interval`.
-///
-/// Reads `timescaledb_information.jobs` for the compression-policy job of the
-/// hypertable and projects `config ->> 'compress_after'` cast to `interval`;
-/// no row means no policy is installed.
-#[must_use]
-pub fn columnstore_policy_statement(hypertable: &str) -> SelectStatement {
-    Query::select()
-        .expr(cast_compound(
-            SimpleExpr::from(Expr::col(Jobs::Config)).json_get_text(Expr::val(COMPRESS_AFTER_KEY)),
-            PostgresType::Interval,
-        ))
-        .from((TimescaleInformation, Jobs::Table))
-        .and_where(Expr::col(Jobs::HypertableName).eq(hypertable))
-        .and_where(Expr::col(Jobs::ProcName).eq(COLUMNSTORE_POLICY_PROC))
         .to_owned()
 }
 
@@ -345,6 +323,29 @@ pub fn rowstore_chunk_size_statement(hypertables: &[&str]) -> SelectStatement {
         .to_owned()
 }
 
+/// Every chunk of `hypertable`, oldest first: its relation, where it ends on
+/// the time dimension and whether it is converted to the columnstore.
+///
+/// Projects `chunk`, the relation as `format('%I.%I', chunk_schema,
+/// chunk_name)` so it names the relation however its schema or name would
+/// need quoting, `range_end` and `is_compressed` from
+/// `timescaledb_information.chunks`, ordered by `range_start`. The hypertable
+/// name is a fixed catalogue name bound as a value.
+#[must_use]
+pub fn chunk_states_statement(hypertable: &str) -> SelectStatement {
+    Query::select()
+        .expr_as(
+            Expr::cust_with_exprs("format('%I.%I', $1, $2)", [Expr::col(Chunks::ChunkSchema), Expr::col(Chunks::ChunkName)]),
+            ChunkRelationColumn,
+        )
+        .expr_as(Expr::col(Chunks::RangeEnd), ChunkRangeEnd)
+        .expr_as(Expr::col(Chunks::IsCompressed), ChunkIsCompressed)
+        .from((TimescaleInformation, Chunks::Table))
+        .and_where(Expr::col(Chunks::HypertableName).eq(hypertable))
+        .order_by(Chunks::RangeStart, Order::Asc)
+        .to_owned()
+}
+
 /// `TimescaleDB`: `set_chunk_time_interval(hypertable, make_interval(days => n))`
 /// - the interval every chunk created from now on spans.
 ///
@@ -360,7 +361,7 @@ mod tests {
     use crate::timescale::{
         chunk_interval_statement,
         chunk_span_statement,
-        columnstore_policy_statement,
+        chunk_states_statement,
         columnstore_settings_statement,
         columnstore_sparse_index_statement,
         drop_chunks,
@@ -381,13 +382,16 @@ mod tests {
     }
 
     #[test]
-    fn the_columnstore_lag_is_read_from_the_compression_policy_job_as_an_interval() {
-        let (sql, values) = columnstore_policy_statement("attribute_history").build(PostgresQueryBuilder);
+    fn the_chunk_states_name_each_chunk_relation_oldest_first() {
+        let (sql, values) = chunk_states_statement("attribute_history").build(PostgresQueryBuilder);
         assert_eq!(
             sql,
-            r#"SELECT ("config" ->> $1)::interval FROM "timescaledb_information"."jobs" WHERE "hypertable_name" = $2 AND "proc_name" = $3"#
+            concat!(
+                r#"SELECT format('%I.%I', "chunk_schema", "chunk_name") AS "chunk", "range_end" AS "range_end", "is_compressed" AS "is_compressed" "#,
+                r#"FROM "timescaledb_information"."chunks" WHERE "hypertable_name" = $1 ORDER BY "range_start" ASC"#
+            )
         );
-        assert_eq!(values.0.len(), 3, "{sql}");
+        assert_eq!(values.0.len(), 1, "{sql}");
     }
 
     #[test]

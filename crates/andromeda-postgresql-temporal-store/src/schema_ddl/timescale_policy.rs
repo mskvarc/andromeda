@@ -1,6 +1,5 @@
-//! The columnstore DDL and policy procedures of the temporal hypertables.
+//! The columnstore DDL and conversion procedure of the temporal hypertables.
 
-use std::num::NonZeroU32;
 use strum::{Display, EnumIter, IntoStaticStr};
 
 /// The hypertables of the temporal schema whose storage policy the broker
@@ -154,34 +153,24 @@ pub fn enable_columnstore(hypertable: HypertableName) -> String {
     )
 }
 
-/// `CALL add_columnstore_policy(hypertable, after => INTERVAL 'n days', if_not_exists => true)`.
+/// `CALL convert_to_columnstore('chunk'::regclass, if_not_columnstore => true)`.
 ///
-/// The lag is rendered as an interval literal: it is a validated positive day
-/// count from configuration, not caller data, and a procedure argument cannot
-/// be a bound parameter of a `CALL` executed through this driver.
+/// `chunk` is the schema-qualified relation name `TimescaleDB`'s own chunk
+/// catalogue reported, embedded as a string literal with any single quote
+/// doubled: a procedure argument cannot be a bound parameter of a `CALL`
+/// executed through this driver. A chunk already converted is left as it is.
 #[must_use]
-pub fn add_columnstore_policy(hypertable: HypertableName, after_days: NonZeroU32) -> String {
-    format!("CALL add_columnstore_policy('{hypertable}', after => INTERVAL '{after_days} days', if_not_exists => true)")
-}
-
-/// `CALL remove_columnstore_policy(hypertable, if_exists => true)`.
-#[must_use]
-pub fn remove_columnstore_policy(hypertable: HypertableName) -> String {
-    format!("CALL remove_columnstore_policy('{hypertable}', if_exists => true)")
+pub fn convert_to_columnstore(chunk: &str) -> String {
+    format!(
+        "CALL convert_to_columnstore('{}'::regclass, if_not_columnstore => true)",
+        chunk.replace('\'', "''")
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::schema_ddl::timescale_policy::{
-        HypertableName,
-        SparseIndex,
-        SparseIndexKind,
-        add_columnstore_policy,
-        enable_columnstore,
-        remove_columnstore_policy,
-    };
+    use crate::schema_ddl::timescale_policy::{HypertableName, SparseIndex, SparseIndexKind, convert_to_columnstore, enable_columnstore};
     use pretty_assertions::assert_eq;
-    use std::num::NonZeroU32;
     use strum::IntoEnumIterator;
 
     #[test]
@@ -190,10 +179,18 @@ mod tests {
     }
 
     #[test]
-    fn the_policy_is_added_idempotently_with_a_day_interval() {
+    fn a_chunk_is_converted_by_its_catalogue_name_and_a_converted_one_is_left_alone() {
         assert_eq!(
-            add_columnstore_policy(HypertableName::AttributeHistory, NonZeroU32::new(3).expect("positive")),
-            "CALL add_columnstore_policy('attribute_history', after => INTERVAL '3 days', if_not_exists => true)"
+            convert_to_columnstore("_timescaledb_internal._hyper_1_2_chunk"),
+            "CALL convert_to_columnstore('_timescaledb_internal._hyper_1_2_chunk'::regclass, if_not_columnstore => true)"
+        );
+    }
+
+    #[test]
+    fn a_quote_in_a_chunk_name_cannot_end_the_literal() {
+        assert_eq!(
+            convert_to_columnstore(r#""odd'schema"."c""#),
+            r#"CALL convert_to_columnstore('"odd''schema"."c"'::regclass, if_not_columnstore => true)"#
         );
     }
 
@@ -246,14 +243,6 @@ mod tests {
         assert_eq!(
             HypertableName::iter().map(|hypertable| hypertable.to_string()).collect::<Vec<_>>(),
             vec!["attribute_history"]
-        );
-    }
-
-    #[test]
-    fn the_policy_is_removed_idempotently() {
-        assert_eq!(
-            remove_columnstore_policy(HypertableName::AttributeHistory),
-            "CALL remove_columnstore_policy('attribute_history', if_exists => true)"
         );
     }
 }

@@ -32,7 +32,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::snapshot::{ExecutionResultDetails, SnapshotStatus};
 use andromeda_postgresql_branch::snapshot_schema_name;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
-use andromeda_postgresql_seaquery::{clock::now, transaction::repeatable_read};
+use andromeda_postgresql_seaquery::{clock::now, setting::lift_statement_timeout, transaction::repeatable_read};
 use andromeda_snapshot::{branch_condition::BranchCondition, error::SnapshotError, snapshot_invariant::SnapshotInvariant};
 use sea_query::{Expr, ExprTrait, JoinType, Keyword, LockType, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 use sea_query_sqlx::SqlxBinder;
@@ -97,6 +97,13 @@ pub(crate) async fn promote_context_clone(pool: &PgPool, source_id: &Identifier,
 async fn copy_clone_source(pool: &PgPool, source_id: &Identifier, target_id: &Identifier, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
     let mut transaction = pool.begin().await.map_err(|error| persistence_error(error))?;
     sqlx::query(repeatable_read())
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| persistence_error(error))?;
+    // The copy takes as long as the source is large and no request waits on
+    // it, so the database's statement timeout does not bound it.
+    let (sql, values) = Query::select().expr(lift_statement_timeout()).build_sqlx(PostgresQueryBuilder);
+    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(&mut *transaction)
         .await
         .map_err(|error| persistence_error(error))?;

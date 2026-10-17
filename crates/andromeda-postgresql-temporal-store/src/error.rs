@@ -1,6 +1,7 @@
 //! Error types for the temporal store crate.
 
 use crate::{
+    columnstore_conversion::ColumnstoreHorizonOutOfRange,
     columnstore_enablement::StoredColumnstore,
     duplicate_instance_claim::DuplicateInstanceClaimError,
     history_members::HistoryMembersError,
@@ -76,6 +77,10 @@ pub enum TemporalStoreError {
     /// The configured retention horizon reaches before the representable range.
     #[error("temporal store retention: {0}")]
     RetentionHorizon(#[from] TemporalRetentionHorizonInvalid),
+    /// The configured columnstore horizon reaches before the representable
+    /// range.
+    #[error("temporal store columnstore conversion: {0}")]
+    ColumnstoreHorizon(#[from] ColumnstoreHorizonOutOfRange),
     /// A stored mean `Time` does not normalise to a clause 4.6.3 `Time`.
     #[error("temporal store aggregation time: {0}")]
     StoredTime(#[source] NgsiLdTimeError),
@@ -164,6 +169,7 @@ impl TemporalStoreError {
             )
             | TemporalStoreError::WriteRecordMismatch { .. }
             | TemporalStoreError::RetentionHorizon(_)
+            | TemporalStoreError::ColumnstoreHorizon(_)
             | TemporalStoreError::ScopeHasNoAttributeRow
             | TemporalStoreError::HistoryMembers(HistoryMembersError::Flatten(_) | HistoryMembersError::UnresolvedType(_)) => {
                 Some(PersistenceFailure::ContractBroken)
@@ -221,6 +227,7 @@ impl From<TemporalStoreError> for TemporalError {
             | TemporalStoreError::WriteOrdinal(_)
             | TemporalStoreError::StatementBuild(_)
             | TemporalStoreError::RetentionHorizon(_)
+            | TemporalStoreError::ColumnstoreHorizon(_)
             | TemporalStoreError::StoredTime(_)
             | TemporalStoreError::StoredJson(_)
             | TemporalStoreError::HistoryMembers(_)

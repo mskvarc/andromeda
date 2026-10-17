@@ -28,6 +28,7 @@ use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
     cast::{cast, typed_null},
     pg_type::PostgresType,
+    setting::lift_statement_timeout,
     transaction_id::{as_transaction_id, snapshot_xmin},
 };
 use async_trait::async_trait;
@@ -85,11 +86,33 @@ fn locations_statement(filter: LocationFilter) -> SelectStatement {
 }
 
 impl EntityRepository {
-    /// Run one location read and decode its rows.
-    async fn read_locations(&self, filter: LocationFilter) -> Result<LocationRead, EntityError> {
+    /// Run one location read, in a transaction of its own.
+    async fn location_rows(&self, filter: LocationFilter) -> Result<Vec<LocationRow>, sqlx::Error> {
+        let mut transaction = self.pool.begin().await?;
+        match filter {
+            LocationFilter::Located => {
+                let (sql, values) = Query::select().expr(lift_statement_timeout()).build_sqlx(PostgresQueryBuilder);
+                sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut *transaction).await?;
+            }
+            LocationFilter::WrittenSince(_) => {}
+        }
         let (sql, values) = locations_statement(filter).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_as_with::<_, LocationRow, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *transaction)
+            .await?;
+        transaction.commit().await?;
+        Ok(rows)
+    }
+
+    /// Run one location read and decode its rows.
+    ///
+    /// Reading every location builds a tenant's index when it opens, which no
+    /// request waits for and which takes as long as the tenant is large, so
+    /// that read lifts the statement timeout for its own transaction; a
+    /// catch-up read is bounded by the writes since the previous one.
+    async fn read_locations(&self, filter: LocationFilter) -> Result<LocationRead, EntityError> {
+        let rows = self
+            .location_rows(filter)
             .await
             .map_err(|error| EntityError::from(persistence_failure(&error)))?;
 

@@ -5,11 +5,12 @@ mod statements;
 pub mod status_code;
 
 use crate::{
+    database_defaults::{DatabaseDefaults, reconcile_database_defaults},
     error::ContextStoreError,
     extension_update::update_extensions,
     store_fault::{persistence_failure, undecodable},
     tenant_database::{DatabaseUrl, create_database_if_missing, generate_database_name},
-    tenant_migration::{configure_platform_database, migrate_platform_db, migrate_single_tenant_db},
+    tenant_migration::{migrate_platform_db, migrate_single_tenant_db, open_schema_change_pool},
     tenant_registry::{
         statements::{
             advisory_lock_query,
@@ -27,7 +28,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
-use andromeda_postgresql_pool::{pool_options::configure_pool_options, saturation::is_pool_saturated};
+use andromeda_postgresql_pool::saturation::is_pool_saturated;
 use andromeda_tenancy::{
     config::TenancyConfig,
     database::TenantDatabase,
@@ -43,7 +44,11 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sea_query::PostgresQueryBuilder;
 use sea_query_sqlx::SqlxBinder;
-use sqlx::{PgPool, Row, postgres::PgRow};
+use sqlx::{
+    PgPool,
+    Row,
+    postgres::{PgPoolOptions, PgRow},
+};
 use std::time::Duration;
 
 /// The tenant registry, backed by the platform database's `tenants` table.
@@ -52,9 +57,8 @@ use std::time::Duration;
 /// tenant runtime and is the only thing that can answer which tenants exist
 /// after they have all been evicted.
 pub struct PostgresTenantRegistry {
-    /// The platform database's pool, where the registry lives. The composition
-    /// root connects it straight to PostgreSQL even when a pooler is
-    /// configured: the platform is one database, so a pooler has nothing to
+    /// The platform database's pool, where the registry lives, connected
+    /// straight to PostgreSQL even when a pooler is configured: the platform is one database, so a pooler has nothing to
     /// multiplex for it, and provisioning holds a transaction on it across
     /// `CREATE DATABASE`.
     main_pool: PgPool,
@@ -67,17 +71,17 @@ pub struct PostgresTenantRegistry {
     default_database: TenantDatabaseName,
     /// Prefix and pool size for provisioning.
     tenancy: TenancyConfig,
-    /// The PostgreSQL `synchronous_commit` value installed on each database with
-    /// `ALTER DATABASE ... SET` at creation (e.g. `"on"`, `"off"`, `"local"`).
-    synchronous_commit_setting: &'static str,
     /// How long a checkout waits for a connection before the migration and
     /// provisioning pools give up, matching the request path's acquire deadline.
     acquire_timeout: Duration,
 }
 
 impl PostgresTenantRegistry {
-    /// Open the platform database, migrate it, and register the unnamed
-    /// default tenant.
+    /// Open the platform database, install its session defaults, migrate it,
+    /// open the platform pool, and register the unnamed default tenant.
+    ///
+    /// The platform pool opens after the defaults are installed, so none of its
+    /// sessions starts with the values they replace.
     ///
     /// # Errors
     ///
@@ -86,44 +90,38 @@ impl PostgresTenantRegistry {
     /// default-tenant upsert cannot be assembled,
     /// [`ContextStoreError::Migration`] or [`ContextStoreError::SchemaContract`]
     /// when the platform database cannot be migrated to this binary's contract,
-    /// and [`ContextStoreError::Database`] when the upsert fails.
+    /// and [`ContextStoreError::Database`] when the defaults cannot be
+    /// installed, the platform pool cannot connect or the upsert fails.
     pub async fn connect(
-        main_pool: PgPool,
+        main_pool_options: PgPoolOptions,
         direct_url: DatabaseUrl,
         tenancy: TenancyConfig,
-        synchronous_commit_setting: &'static str,
+        defaults: &DatabaseDefaults,
         acquire_timeout: Duration,
     ) -> Result<PostgresTenantRegistry, ContextStoreError> {
         let default_database = direct_url.database_name()?;
-        let registry = PostgresTenantRegistry {
-            main_pool,
-            direct_url,
-            default_database,
-            tenancy,
-            synchronous_commit_setting,
-            acquire_timeout,
-        };
 
         // Migrate the platform database over a direct, one-connection pool: the
         // migrator's session advisory lock is unsafe through a pooler, so it
         // never runs on `main_pool`. Its extensions are updated first, before
         // any statement loads the installed TimescaleDB into a connection.
-        let platform_url = registry.direct_url.with_database_name(&registry.default_database);
+        let platform_url = direct_url.with_database_name(&default_database);
         update_extensions(&platform_url).await?;
-        let platform_migration_pool = configure_pool_options(1, registry.acquire_timeout).connect(platform_url.as_str()).await?;
-        let migration_result = match configure_platform_database(
-            &platform_migration_pool,
-            registry.default_database.as_str(),
-            registry.synchronous_commit_setting,
-        )
-        .await
-        {
-            Ok(()) => migrate_platform_db(&platform_migration_pool).await,
+        let platform_migration_pool = open_schema_change_pool(&platform_url, acquire_timeout).await?;
+        let migration_result = match reconcile_database_defaults(&platform_migration_pool, defaults).await {
+            Ok(_) => migrate_platform_db(&platform_migration_pool).await,
             Err(error) => Err(error),
         };
         platform_migration_pool.close().await;
         migration_result?;
 
+        let registry = PostgresTenantRegistry {
+            main_pool: main_pool_options.connect(platform_url.as_str()).await?,
+            direct_url,
+            default_database,
+            tenancy,
+            acquire_timeout,
+        };
         registry.register_default_tenant().await?;
         Ok(registry)
     }
@@ -288,7 +286,7 @@ impl PostgresTenantRegistry {
         }
 
         let database_name = generate_database_name(&self.tenancy.tenant_db_prefix, name);
-        create_database_if_missing(&self.direct_url, &database_name, self.synchronous_commit_setting).await?;
+        create_database_if_missing(&self.direct_url, &database_name).await?;
 
         let statement = tenant_insert(name.as_str(), database_name.as_str(), stored_status(TenantStatus::Active))?;
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);

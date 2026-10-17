@@ -1,19 +1,20 @@
 //! Configuring the platform database when several brokers start at once.
 //!
-//! Every broker installs its durability on the platform database with
+//! Every broker installs its session defaults on the platform database with
 //! `ALTER DATABASE ... SET` as it starts. On a database that has no setting row
 //! yet, concurrent brokers race to insert it; the race must not fail a
 //! broker's startup.
 
 use andromeda_postgresql_context_store::{
     config::SynchronousCommit,
+    database_defaults::{DatabaseDefaults, StatementTimeout, reconcile_database_defaults},
     tenant_database::{DatabaseUrl, create_database_if_missing},
-    tenant_migration::configure_platform_database,
 };
 use andromeda_tenancy::database_name::TenantDatabaseName;
 use andromeda_test_harness::configuration::TestRunConfiguration;
 use futures::future::join_all;
 use sqlx::{Connection, PgConnection, postgres::PgPoolOptions};
+use std::time::Duration;
 
 /// The scratch database the concurrent configuration targets.
 const CONFIGURATION_DATABASE: &str = "andromeda_verification_platform_configuration";
@@ -27,9 +28,7 @@ async fn concurrent_brokers_configuring_a_fresh_platform_database_all_succeed() 
     // clone: `DatabaseUrl` owns the endpoint it derives per-database URLs from.
     let base = DatabaseUrl::new(configuration.database().url().clone());
     let name = TenantDatabaseName::from(CONFIGURATION_DATABASE.to_owned());
-    create_database_if_missing(&base, &name, SynchronousCommit::Off.as_postgres_setting())
-        .await
-        .expect("scratch database");
+    create_database_if_missing(&base, &name).await.expect("scratch database");
 
     // Remove the setting row, so the database is as fresh as an operator-created one.
     let admin = base.with_database_name(&TenantDatabaseName::from("postgres".to_owned()));
@@ -44,9 +43,11 @@ async fn concurrent_brokers_configuring_a_fresh_platform_database_all_succeed() 
         .connect(base.with_database_name(&name).as_str())
         .await
         .expect("scratch database connection");
-    let outcomes =
-        join_all((0..CONCURRENT_BROKERS).map(|_| configure_platform_database(&pool, CONFIGURATION_DATABASE, SynchronousCommit::Off.as_postgres_setting())))
-            .await;
+    let defaults = DatabaseDefaults {
+        synchronous_commit: SynchronousCommit::On,
+        statement_timeout: StatementTimeout::past_request_deadline(Duration::from_secs(30)),
+    };
+    let outcomes = join_all((0..CONCURRENT_BROKERS).map(|_| reconcile_database_defaults(&pool, &defaults))).await;
     for outcome in outcomes {
         assert!(outcome.is_ok(), "a concurrent configuration must not fail: {outcome:?}");
     }

@@ -79,14 +79,22 @@ impl Default for PoolerConfig {
 /// a transaction-pooling proxy that binds a different backend to each transaction;
 /// a per-connection `SET` would instead be carried by a pooled backend to the
 /// next client that borrows it.
+///
+/// The default is [`On`](SynchronousCommit::On): a write is acknowledged only
+/// once its WAL is flushed, so an Entity a client was told was created, and a
+/// change a notification announced, survive a crash of the server.
+/// [`Off`](SynchronousCommit::Off) is an operator's choice to trade that for
+/// ingest throughput: a server crash then loses the transactions of up to three
+/// times `wal_writer_delay` that were already acknowledged, and their
+/// notifications may already have been sent.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
 pub enum SynchronousCommit {
     /// Wait for local WAL flush.
+    #[default]
     On,
     /// Acknowledge before WAL flush.
-    #[default]
     Off,
     /// Wait for local WAL flush without synchronous standbys.
     Local,
@@ -141,7 +149,7 @@ pub struct DatabaseConfig {
     /// 500 after a long stall.
     #[toml_comment(inline)]
     pub acquire_timeout: HumanDuration,
-    /// Commit durability installed on each database with `ALTER DATABASE ... SET`.
+    /// Commit durability installed on each database with `ALTER DATABASE ... SET`: `on` by default; `off` trades the durability of acknowledged writes for ingest throughput.
     #[toml_comment(inline)]
     pub synchronous_commit: SynchronousCommit,
     /// Populate the attribute-name and entity-type-name caches at tenant
@@ -169,7 +177,7 @@ impl Default for DatabaseConfig {
             max_connections: 32,
             write_reserve_percent: WriteReserve::DEFAULT,
             acquire_timeout: HumanDuration::from_secs(5),
-            synchronous_commit: SynchronousCommit::Off,
+            synchronous_commit: SynchronousCommit::On,
             preload_name_dictionaries: true,
             name_cache: NameCacheConfig::default(),
             context_hit_flush: HumanDuration::from_secs(5),
@@ -323,7 +331,12 @@ mod tests {
             assert_eq!(parsed.as_postgres_setting(), setting);
         }
         assert!(SynchronousCommit::from_str("enabled").is_err());
-        assert_eq!(SynchronousCommit::default(), SynchronousCommit::Off);
+    }
+
+    #[test]
+    fn an_acknowledged_write_is_flushed_unless_an_operator_opts_out() {
+        assert_eq!(SynchronousCommit::default(), SynchronousCommit::On);
+        assert_eq!(DatabaseConfig::default().synchronous_commit, SynchronousCommit::On);
     }
 
     #[test]

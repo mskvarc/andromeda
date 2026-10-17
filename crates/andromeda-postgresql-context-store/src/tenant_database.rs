@@ -1,13 +1,11 @@
 //! Reaching and creating the database behind one tenant.
 //!
-//! Every database the broker creates comes from here so that durability
-//! settings and identifier limits are decided once rather than per call site.
-//! Migrating a database is [`crate::tenant_migration`]'s concern.
+//! Every database the broker creates comes from here so that identifier limits
+//! are decided once rather than per call site. Migrating a database is
+//! [`crate::tenant_migration`]'s concern, and its session defaults are
+//! [`crate::database_defaults`]'s.
 
-use crate::{
-    error::ContextStoreError,
-    schema_ddl::{database::create_database, database_settings::set_database_synchronous_commit},
-};
+use crate::{error::ContextStoreError, schema_ddl::database::create_database};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_tenancy::{database_name::TenantDatabaseName, db_name_prefix::DbNamePrefix};
 use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query};
@@ -98,21 +96,12 @@ pub fn generate_database_name(prefix: &DbNamePrefix, tenant_name: &TenantName) -
 /// declaration on databases Andromeda creates while leaving it live on every
 /// database an operator, a managed service or a restore provisions.
 ///
-/// `synchronous_commit_setting` is installed on the freshly created database
-/// with `ALTER DATABASE ... SET` so every session the request path later opens
-/// through a transaction-pooling proxy inherits the broker's durability without
-/// a per-connection `SET`.
-///
 /// # Errors
 ///
 /// Returns [`ContextStoreError::Database`] when the administrative connection
-/// cannot be opened, when the existence probe, the `CREATE DATABASE` or the
-/// `ALTER DATABASE` fails, or when the connection cannot be closed cleanly.
-pub async fn create_database_if_missing(
-    base_url: &DatabaseUrl,
-    database_name: &TenantDatabaseName,
-    synchronous_commit_setting: &str,
-) -> Result<(), ContextStoreError> {
+/// cannot be opened, when the existence probe or the `CREATE DATABASE` fails,
+/// or when the connection cannot be closed cleanly.
+pub async fn create_database_if_missing(base_url: &DatabaseUrl, database_name: &TenantDatabaseName) -> Result<(), ContextStoreError> {
     let admin_database = TenantDatabaseName::from("postgres".to_owned());
     let admin_url = base_url.with_database_name(&admin_database);
     let database_name = database_name.as_str();
@@ -125,11 +114,6 @@ pub async fn create_database_if_missing(
     if !exists {
         let sql = create_database(database_name);
         create_database_with_retry(&mut conn, &sql).await?;
-        // `ALTER DATABASE ... SET` records the durability default on the new
-        // database. It runs from the admin connection, targeting the database by
-        // name, and takes effect for every session opened against it afterwards.
-        let alter = set_database_synchronous_commit(database_name, synchronous_commit_setting);
-        conn.execute(sqlx::AssertSqlSafe(alter)).await?;
     }
     conn.close().await?;
     Ok(())

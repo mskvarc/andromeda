@@ -17,6 +17,8 @@
 /// A database error the tests can construct without a live driver connection.
 #[cfg(test)]
 mod fake_database_error;
+/// Bounded waiting on the locks a schema change takes.
+pub mod lock_retry;
 /// How a `sqlx` error is classified into the failure a port carries.
 pub mod persistence_classification;
 /// The broker's shared pool tuning.

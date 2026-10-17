@@ -237,7 +237,7 @@ mod tests {
     fn no_branch_migration_calls_timescaledb() {
         for migration in branch_migrations() {
             let sql = migration.sql.as_str();
-            for forbidden in ["create_hypertable", "timescaledb", "add_columnstore_policy"] {
+            for forbidden in ["create_hypertable", "timescaledb", "convert_to_columnstore"] {
                 assert!(
                     !sql.contains(forbidden),
                     "branch migration {} ({}) names `{forbidden}`, which a Snapshot's plain tables cannot take",

@@ -4,8 +4,10 @@
 # reconciler leave in a tenant database the broker creates on IMAGE: the
 # declared columnstore sparse indexes, the history BRIN parameters on the
 # hypertable and its chunk, the vacuum parameters of the queue and
-# current-state tables and of the history tables, and the cached identity
-# sequences. IMAGE is the TSL edition, whose columnstore the reconciler enables.
+# current-state tables and of the history tables, the cached identity
+# sequences, the absence of any TimescaleDB conversion job, and the session
+# defaults the broker installs on the tenant and the platform database. IMAGE
+# is the TSL edition, whose columnstore the reconciler enables.
 set -Eeuo pipefail
 
 image="$1"
@@ -107,6 +109,16 @@ for column in notification_events.event_key notification_deliveries.delivery_key
 	expect "$column sequence cache" "$expected" \
 		"$(sql "$db" "SELECT cache_size FROM pg_sequences WHERE format('%I.%I', schemaname, sequencename)::regclass = pg_get_serial_sequence('public.${column%%.*}', '${column#*.}')::regclass")"
 done
+
+expect "TimescaleDB jobs on attribute_history" 0 \
+	"$(sql "$db" "SELECT count(*) FROM timescaledb_information.jobs WHERE hypertable_name = 'attribute_history'")"
+
+# The default request timeout of 30 s plus the 5 s margin.
+for database_name in "$db" postgres; do
+	expect "$database_name session defaults" "statement_timeout=35000ms synchronous_commit=on" \
+		"$(sql postgres "SELECT string_agg(setting, ' ' ORDER BY setting) FROM pg_db_role_setting, unnest(setconfig) AS setting WHERE setrole = 0 AND setdatabase = (SELECT oid FROM pg_database WHERE datname = '$database_name')")"
+done
+expect "a tenant session runs under the installed defaults" "on 35s" "$(sql "$db" "SELECT current_setting('synchronous_commit') || ' ' || current_setting('statement_timeout')")"
 
 # Reopening the tenant runs the reconciler against the columnstore it enabled,
 # which it must find unchanged rather than drifted.

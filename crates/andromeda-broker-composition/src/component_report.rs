@@ -2,12 +2,14 @@
 
 #![expect(clippy::absolute_paths, reason = "shadow generates absolute standard-library paths")]
 
+use crate::{broker::MAINTENANCE_PLATFORM_POOL_CONNECTIONS, config::runtime::RuntimeConfig};
 use andromeda_component_report::{
     BuildBranch,
     BuildCommit,
     BuildOperatingSystem,
     BuildTarget,
     BuildTimestamp,
+    CapacityVerdict,
     CargoVersion,
     ComponentReport,
     ComponentVersion,
@@ -29,11 +31,68 @@ pub(crate) enum ComponentReportError {
     PostgreSql(#[from] sqlx::Error),
 }
 
-/// Collect build metadata and reports from the selected PostgreSQL adapter.
-pub(crate) async fn collect(pool: &PgPool) -> Result<Vec<ComponentReport>, ComponentReportError> {
-    let mut reports = component_report::discover(pool).await?;
+/// The connection the maintenance controller opens into the tenant it visits.
+const MAINTENANCE_TENANT_CONNECTIONS: u32 = 1;
+
+/// The one-connection pools the dormant-tenant probes open on the request
+/// path: the pending-work probe and the usage probe.
+const REQUEST_PROBE_CONNECTIONS: u32 = 2;
+
+/// The connections one cold tenant build holds at its peak: the extension
+/// update's lock holder beside the connection running an update; the
+/// migrator's connection opens after both close.
+const BUILD_CONNECTIONS: u32 = 2;
+
+/// Collect build metadata and reports from the selected PostgreSQL adapter,
+/// warning when the broker's pools could need more connections than the
+/// server lets it open.
+pub(crate) async fn collect(pool: &PgPool, config: &RuntimeConfig) -> Result<Vec<ComponentReport>, ComponentReportError> {
+    let ceiling = broker_connection_ceiling(config);
+    let mut reports = component_report::discover(pool, ceiling).await?;
+    for report in &reports {
+        if let ComponentReport::PostgreSql { connections, .. } = report
+            && connections.verdict == CapacityVerdict::Exceeded
+        {
+            tracing::warn!(
+                server_max_connections = connections.server_max_connections,
+                reserved_for_others = connections.reserved_for_others,
+                broker_ceiling = connections.broker_ceiling,
+                event = "database_connection_capacity_exceeded",
+                "the broker's pools, all full at once, need more connections than the server lets its role open"
+            );
+        }
+    }
     reports.insert(0, andromeda_report());
     Ok(reports)
+}
+
+/// The connections the broker holds against PostgreSQL when every pool it
+/// may open is full at once.
+///
+/// Straight to PostgreSQL, always: the platform pool and the maintenance
+/// controller's platform pool, its connection into the tenant it visits, and
+/// the peak of every cold build that may run at once. On the request path,
+/// unless a transaction pooler fronts it: the default tenant's serving pool,
+/// one serving pool per tenant the runtime cache holds, and the
+/// dormant-tenant probes. Behind a pooler those reach the pooler, whose own
+/// server connections are the pooler's to size.
+fn broker_connection_ceiling(config: &RuntimeConfig) -> u32 {
+    let database = &config.database;
+    let tenancy = &config.tenancy;
+    let builds = u32::try_from(tenancy.max_concurrent_builds).unwrap_or(u32::MAX);
+    let direct = database
+        .max_connections
+        .saturating_add(MAINTENANCE_PLATFORM_POOL_CONNECTIONS)
+        .saturating_add(MAINTENANCE_TENANT_CONNECTIONS)
+        .saturating_add(builds.saturating_mul(BUILD_CONNECTIONS));
+    if database.is_pooled() {
+        return direct;
+    }
+    let cached = u32::try_from(tenancy.runtime_max_cached).unwrap_or(u32::MAX);
+    direct
+        .saturating_add(database.max_connections)
+        .saturating_add(cached.saturating_mul(tenancy.tenant_max_connections))
+        .saturating_add(REQUEST_PROBE_CONNECTIONS)
 }
 
 /// Construct the report for the running Andromeda build.
@@ -54,9 +113,40 @@ fn andromeda_report() -> ComponentReport {
 
 #[cfg(test)]
 mod tests {
-    use crate::component_report::{andromeda_report, build};
+    use crate::{
+        component_report::{andromeda_report, broker_connection_ceiling, build},
+        config::runtime::RuntimeConfig,
+    };
     use andromeda_component_report::ComponentReport;
-    use pretty_assertions::assert_ne;
+    use andromeda_postgresql_context_store::config::PoolerConfig;
+    use pretty_assertions::{assert_eq, assert_ne};
+
+    /// A configuration with small, distinct pool sizes.
+    fn sized() -> RuntimeConfig {
+        let mut config = RuntimeConfig::default();
+        config.database.max_connections = 10;
+        config.tenancy.max_concurrent_builds = 4;
+        config.tenancy.runtime_max_cached = 20;
+        config.tenancy.tenant_max_connections = 3;
+        config
+    }
+
+    /// Direct: platform 10, maintenance 2 plus its tenant connection 1,
+    /// builds 4 x 2; request path: default tenant 10, cached tenants 20 x 3,
+    /// probes 2.
+    #[test]
+    fn a_direct_broker_counts_every_pool_it_opens_against_postgresql() {
+        assert_eq!(broker_connection_ceiling(&sized()), 10 + 2 + 1 + 8 + 10 + 60 + 2);
+    }
+
+    /// Behind a pooler the request path reaches the pooler, so only the
+    /// direct pools count.
+    #[test]
+    fn behind_a_pooler_only_the_direct_pools_count() {
+        let mut config = sized();
+        config.database.pooler = Some(PoolerConfig::default());
+        assert_eq!(broker_connection_ceiling(&config), 10 + 2 + 1 + 8);
+    }
 
     #[test]
     fn andromeda_report_uses_build_constants() {
