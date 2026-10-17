@@ -31,6 +31,11 @@ pub const DB_TABLE_INDEX_BYTES: &str = "andromeda_db_table_index_bytes";
 /// Gauge of the share, from 0 to 1, of one live-schema base table's updates
 /// since its statistics reset that were heap-only (touched no index).
 pub const DB_TABLE_HOT_UPDATE_RATIO: &str = "andromeda_db_table_hot_update_ratio";
+/// Gauge of total on-disk bytes, indexes and TOAST included, of one history
+/// hypertable's largest chunk the columnstore has not yet converted: the chunk
+/// whose conversion blocks writes to it, and to the chunk it merges into, for
+/// about 20 to 25 s per GB.
+pub const DB_HISTORY_LARGEST_ROWSTORE_CHUNK_BYTES: &str = "andromeda_db_history_largest_rowstore_chunk_bytes";
 /// Counter of durable-queue item outcomes.
 pub const QUEUE_OUTCOMES_TOTAL: &str = "andromeda_queue_outcomes_total";
 /// Counter of entity-service operations, labelled by operation and outcome.

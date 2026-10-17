@@ -31,6 +31,8 @@ mod fleet_triage;
 mod freeze_policy;
 mod freeze_report;
 mod gin_density;
+/// On-disk size of the history chunk each temporal hypertable converts next.
+pub mod history_chunk_size;
 mod inspection;
 /// Threshold and safety-gate decision policy.
 pub mod policy;

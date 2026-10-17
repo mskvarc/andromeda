@@ -1,8 +1,9 @@
-//! Periodic sampling of one tenant's base-table sizes and heap-only update
-//! shares into the metrics gauges.
+//! Periodic sampling of one tenant's base-table sizes, heap-only update shares
+//! and the history chunk each temporal hypertable converts next into the
+//! metrics gauges.
 
 use crate::tenant_factory::{assembly_invariant::AssemblyInvariant, background_pacer::BackgroundPacer, error::TenantAssemblyError};
-use andromeda_postgresql_maintenance::{error::MaintenanceError, table_size::table_sizes};
+use andromeda_postgresql_maintenance::{error::MaintenanceError, history_chunk_size::rowstore_chunk_sizes, table_size::table_sizes};
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
     failure::TaskFailure,
@@ -28,9 +29,10 @@ use std::{
 /// so a minute keeps the load negligible.
 const SAMPLE_CADENCE: Duration = Duration::from_secs(60);
 
-/// Register the task that publishes the tenant's base-table sizes each minute.
+/// Register the task that publishes the tenant's base-table sizes and the size
+/// of each history hypertable's largest unconverted chunk each minute.
 ///
-/// The sizes are a bounded catalog read over a fixed table allowlist, so the
+/// The sizes are bounded catalog reads over fixed table allowlists, so the
 /// task is merely observed: its failure never degrades the tenant. Sizes move
 /// only when something writes, so a tick samples only when the tenant has been
 /// used or a background pass has run since the last sample.
@@ -79,6 +81,9 @@ pub(super) fn register_table_size_gauges(
                                 hot_updated_tuples: sample.hot_updated_tuples,
                             },
                         );
+                    }
+                    for sample in rowstore_chunk_sizes(&mut connection).await.map_err(TaskFailure::transient)? {
+                        gauges.record_largest_rowstore_chunk(sample.table.relation_name(), sample.largest_bytes);
                     }
                     Ok(())
                 })

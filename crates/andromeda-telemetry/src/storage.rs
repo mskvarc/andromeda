@@ -1,8 +1,9 @@
-//! Gauges describing the on-disk size of the live schema's base tables and the
-//! share of their updates that were heap-only.
+//! Gauges describing the on-disk size of the live schema's base tables, the
+//! share of their updates that were heap-only, and the size of the history
+//! chunk each temporal hypertable converts next.
 
 use crate::{
-    names::{DB_TABLE_BYTES, DB_TABLE_HOT_UPDATE_RATIO, DB_TABLE_INDEX_BYTES, LABEL_TABLE, LABEL_TENANT},
+    names::{DB_HISTORY_LARGEST_ROWSTORE_CHUNK_BYTES, DB_TABLE_BYTES, DB_TABLE_HOT_UPDATE_RATIO, DB_TABLE_INDEX_BYTES, LABEL_TABLE, LABEL_TENANT},
     sample_value::SampleValue,
 };
 use metrics::{IntoF64, gauge};
@@ -61,16 +62,50 @@ impl StorageGauges {
         gauge!(DB_TABLE_INDEX_BYTES, LABEL_TENANT => self.tenant.clone(), LABEL_TABLE => table).set(SampleValue::from(sample.index_bytes));
         gauge!(DB_TABLE_HOT_UPDATE_RATIO, LABEL_TENANT => self.tenant.clone(), LABEL_TABLE => table).set(sample.hot_update_ratio());
     }
+
+    /// Publish the `bytes` of the largest chunk of history hypertable `table`
+    /// still in the rowstore.
+    ///
+    /// The `table` label is a fixed hypertable name the caller supplies from a
+    /// closed set, not free-form input.
+    pub fn record_largest_rowstore_chunk(&self, table: &'static str, bytes: u64) {
+        // clone: the metrics facade owns each label value it stores.
+        gauge!(DB_HISTORY_LARGEST_ROWSTORE_CHUNK_BYTES, LABEL_TENANT => self.tenant.clone(), LABEL_TABLE => table).set(SampleValue::from(bytes));
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
         error::TelemetryError,
-        names::{DB_TABLE_BYTES, DB_TABLE_HOT_UPDATE_RATIO, DB_TABLE_INDEX_BYTES},
+        names::{DB_HISTORY_LARGEST_ROWSTORE_CHUNK_BYTES, DB_TABLE_BYTES, DB_TABLE_HOT_UPDATE_RATIO, DB_TABLE_INDEX_BYTES},
         recorder::TelemetryRecorder,
         storage::{StorageGauges, TableSizeSample},
     };
+
+    #[test]
+    fn the_largest_rowstore_chunk_is_published_under_the_tenant_and_hypertable_labels() -> Result<(), TelemetryError> {
+        let recorder = TelemetryRecorder::detached()?;
+        recorder.record_locally(|| {
+            let gauges = StorageGauges::for_tenant("default");
+            gauges.record_largest_rowstore_chunk("attribute_history", 600_000_000);
+            gauges.record_largest_rowstore_chunk("scope_history", 0);
+        });
+        let rendered = recorder.render();
+        assert!(
+            rendered.contains(&format!(
+                "{DB_HISTORY_LARGEST_ROWSTORE_CHUNK_BYTES}{{tenant=\"default\",table=\"attribute_history\"}} 600000000"
+            )),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(&format!(
+                "{DB_HISTORY_LARGEST_ROWSTORE_CHUNK_BYTES}{{tenant=\"default\",table=\"scope_history\"}} 0"
+            )),
+            "{rendered}"
+        );
+        Ok(())
+    }
 
     #[test]
     fn a_sample_sets_every_gauge_under_the_tenant_and_table_labels() -> Result<(), TelemetryError> {

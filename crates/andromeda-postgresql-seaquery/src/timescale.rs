@@ -9,6 +9,7 @@
 use crate::{
     cast::{cast, cast_compound},
     literal::text_literal,
+    maintenance::total_relation_size,
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
@@ -99,6 +100,10 @@ enum Chunks {
     Table,
     /// The hypertable the chunk belongs to
     HypertableName,
+    /// The schema the chunk relation lives in
+    ChunkSchema,
+    /// The chunk relation's name
+    ChunkName,
     /// The first instant the chunk covers on the time dimension
     RangeStart,
     /// The first instant past the chunk on the time dimension
@@ -116,6 +121,16 @@ pub struct CompressedUntil;
 #[derive(Iden, Clone, Copy)]
 #[iden = "history_from"]
 pub struct HistoryFrom;
+
+/// The `largest_rowstore_bytes` projection of [`rowstore_chunk_size_statement`].
+#[derive(Iden, Clone, Copy)]
+#[iden = "largest_rowstore_bytes"]
+pub struct LargestRowstoreBytes;
+
+/// Alias `ch` for the chunks view.
+#[derive(Iden, Clone, Copy)]
+#[iden = "ch"]
+struct Ch;
 
 /// The `_timescaledb_catalog` schema.
 #[derive(Iden, Clone, Copy)]
@@ -246,6 +261,40 @@ pub fn chunk_span_statement(hypertables: &[&str]) -> SelectStatement {
         .to_owned()
 }
 
+/// The largest chunk of each of `hypertables` still in the rowstore, in total
+/// bytes with indexes and TOAST.
+///
+/// Projects `hypertable_name` and `largest_rowstore_bytes` from
+/// `timescaledb_information.chunks`, grouped by hypertable, over the chunks not
+/// yet converted of hypertables whose columnstore is enabled; a hypertable with
+/// no such chunk, or without the columnstore, has no row. The hypertable names
+/// are fixed catalogue names bound as values.
+#[must_use]
+pub fn rowstore_chunk_size_statement(hypertables: &[&str]) -> SelectStatement {
+    let chunk = cast(
+        Expr::cust_with_exprs(
+            "format('%I.%I', $1, $2)",
+            [Expr::col((Ch, Chunks::ChunkSchema)), Expr::col((Ch, Chunks::ChunkName))],
+        ),
+        PostgresType::Regclass,
+    );
+    Query::select()
+        .column((Ch, Chunks::HypertableName))
+        .expr_as(Func::max(total_relation_size(chunk)), LargestRowstoreBytes)
+        .from_as((TimescaleInformation, Chunks::Table), Ch)
+        .join_as(
+            JoinType::InnerJoin,
+            (TimescaleInformation, Hypertables::Table),
+            Ht,
+            Expr::col((Ht, Hypertables::HypertableName)).equals((Ch, Chunks::HypertableName)),
+        )
+        .and_where(Expr::col((Ch, Chunks::HypertableName)).is_in(hypertables.iter().copied()))
+        .and_where(Expr::col((Ch, Chunks::IsCompressed)).not())
+        .and_where(Expr::col((Ht, Hypertables::CompressionEnabled)))
+        .group_by_col((Ch, Chunks::HypertableName))
+        .to_owned()
+}
+
 /// `TimescaleDB`: `set_chunk_time_interval(hypertable, make_interval(days => n))`
 /// - the interval every chunk created from now on spans.
 ///
@@ -264,6 +313,7 @@ mod tests {
         columnstore_policy_statement,
         columnstore_settings_statement,
         drop_chunks,
+        rowstore_chunk_size_statement,
         set_chunk_time_interval,
     };
     use pretty_assertions::assert_eq;
@@ -337,6 +387,22 @@ mod tests {
             sql,
             r#"SELECT MAX((CASE WHEN ("is_compressed") THEN "range_end" ELSE NULL END)) AS "compressed_until", MIN("range_start") AS "history_from" FROM "timescaledb_information"."chunks" WHERE "hypertable_name" IN ('attribute_history')"#
         );
+    }
+
+    #[test]
+    fn the_largest_rowstore_chunk_is_read_per_hypertable_over_unconverted_chunks_of_columnstore_hypertables() {
+        let (sql, values) = rowstore_chunk_size_statement(&["attribute_history", "scope_history"]).build(PostgresQueryBuilder);
+        assert_eq!(
+            sql,
+            concat!(
+                r#"SELECT "ch"."hypertable_name", MAX(pg_total_relation_size(format('%I.%I', "ch"."chunk_schema", "ch"."chunk_name")::regclass)) AS "largest_rowstore_bytes" "#,
+                r#"FROM "timescaledb_information"."chunks" AS "ch" "#,
+                r#"INNER JOIN "timescaledb_information"."hypertables" AS "ht" ON "ht"."hypertable_name" = "ch"."hypertable_name" "#,
+                r#"WHERE "ch"."hypertable_name" IN ($1, $2) AND (NOT "ch"."is_compressed") AND "ht"."compression_enabled" "#,
+                r#"GROUP BY "ch"."hypertable_name""#
+            )
+        );
+        assert_eq!(values.0.len(), 2, "{sql}");
     }
 
     #[test]
