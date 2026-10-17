@@ -1,6 +1,6 @@
 //! The number a maintenance target is stored as.
 
-use crate::candidate::{MaintenanceTarget, heap_target::HeapTarget, index_target::IndexTarget};
+use crate::candidate::{MaintenanceTarget, heap_target::HeapTarget, history_table::HistoryTable, index_target::IndexTarget};
 use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;
 
 /// The registry member the platform database stores for a target.
@@ -40,6 +40,7 @@ pub(crate) const fn stored_target(target: MaintenanceTarget) -> MaintenanceTarge
         MaintenanceTarget::Index(IndexTarget::IdxNotificationDeliveriesEvent) => MaintenanceTargetCode::IdxNotificationDeliveriesEvent,
         MaintenanceTarget::Index(IndexTarget::IdxNotificationDeliveriesSubscription) => MaintenanceTargetCode::IdxNotificationDeliveriesSubscription,
         MaintenanceTarget::Index(IndexTarget::PkNotificationDeliveries) => MaintenanceTargetCode::PkNotificationDeliveries,
+        MaintenanceTarget::Columnstore(HistoryTable::AttributeHistory) => MaintenanceTargetCode::AttributeHistoryColumnstore,
     }
 }
 
@@ -80,13 +81,14 @@ pub(crate) const fn target_of(code: MaintenanceTargetCode) -> MaintenanceTarget 
         MaintenanceTargetCode::IdxNotificationDeliveriesEvent => MaintenanceTarget::Index(IndexTarget::IdxNotificationDeliveriesEvent),
         MaintenanceTargetCode::IdxNotificationDeliveriesSubscription => MaintenanceTarget::Index(IndexTarget::IdxNotificationDeliveriesSubscription),
         MaintenanceTargetCode::PkNotificationDeliveries => MaintenanceTarget::Index(IndexTarget::PkNotificationDeliveries),
+        MaintenanceTargetCode::AttributeHistoryColumnstore => MaintenanceTarget::Columnstore(HistoryTable::AttributeHistory),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        candidate::{MaintenanceTarget, heap_target::HeapTarget, index_target::IndexTarget},
+        candidate::{MaintenanceTarget, heap_target::HeapTarget, history_table::HistoryTable, index_target::IndexTarget},
         evidence::target_code::{stored_target, target_of},
     };
     use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;
@@ -98,7 +100,8 @@ mod tests {
             .into_iter()
             .map(MaintenanceTarget::Index)
             .chain(HeapTarget::ALL.into_iter().map(MaintenanceTarget::Heap))
-            .chain(HeapTarget::ALL.into_iter().map(MaintenanceTarget::Statistics));
+            .chain(HeapTarget::ALL.into_iter().map(MaintenanceTarget::Statistics))
+            .chain(HistoryTable::ALL.into_iter().map(MaintenanceTarget::Columnstore));
         for target in targets {
             assert_eq!(target_of(stored_target(target)), target);
         }
@@ -108,7 +111,8 @@ mod tests {
     }
 
     /// The registry's label is the relation name the controller inspects, with
-    /// a suffix for a heap's statistics, since a label names one target.
+    /// a suffix for a heap's statistics and a hypertable's columnstore, since a
+    /// label names one target.
     #[test]
     fn the_stored_label_of_a_target_is_its_relation_name() {
         for code in MaintenanceTargetCode::ALL {
@@ -116,6 +120,7 @@ mod tests {
             let expected = match target {
                 MaintenanceTarget::Index(_) | MaintenanceTarget::Heap(_) => target.relation_name().to_owned(),
                 MaintenanceTarget::Statistics(heap) => format!("{}_statistics", heap.relation_name()),
+                MaintenanceTarget::Columnstore(table) => format!("{}_columnstore", table.relation_name()),
             };
             assert_eq!(code.label(), expected);
         }

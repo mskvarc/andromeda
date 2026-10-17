@@ -17,6 +17,7 @@ use crate::{
         POSTGRESQL_MAINTENANCE_REMOVED_DEAD_TUPLES,
         POSTGRESQL_MULTIXACT_AGE_MAX,
         POSTGRESQL_OVERDUE_RELATIONS,
+        POSTGRESQL_REPLICATION_SLOT_RETAINED_WAL_BYTES_MAX,
     },
     sample_value::SampleValue,
 };
@@ -70,6 +71,8 @@ pub enum MaintenanceAction {
     Analyze,
     /// One documented invalid-index artifact drop.
     Recovery,
+    /// One recompression of a partially converted history chunk.
+    Recompress,
 }
 
 /// Stable maintenance action outcomes.
@@ -135,6 +138,12 @@ pub fn record_overdue_relations(relations: usize) {
     gauge!(POSTGRESQL_OVERDUE_RELATIONS).set(SampleValue::from(relations));
 }
 
+/// Record the most WAL any replication slot keeps on disk, zero without a
+/// slot.
+pub fn record_replication_slot_wal(retained_bytes_max: u64) {
+    gauge!(POSTGRESQL_REPLICATION_SLOT_RETAINED_WAL_BYTES_MAX).set(SampleValue::from(retained_bytes_max));
+}
+
 /// Count one bounded pass decision without a tenant label.
 pub fn record_decision(decision: MaintenanceDecision) {
     let decision: &'static str = decision.into();
@@ -174,6 +183,7 @@ mod tests {
             record_decision,
             record_fleet_freeze,
             record_overdue_relations,
+            record_replication_slot_wal,
         },
         names::{
             POSTGRESQL_AUTOVACUUM_WORKERS_BUSY,
@@ -186,6 +196,7 @@ mod tests {
             POSTGRESQL_MAINTENANCE_REMOVED_DEAD_TUPLES,
             POSTGRESQL_MULTIXACT_AGE_MAX,
             POSTGRESQL_OVERDUE_RELATIONS,
+            POSTGRESQL_REPLICATION_SLOT_RETAINED_WAL_BYTES_MAX,
         },
         recorder::TelemetryRecorder,
     };
@@ -256,11 +267,16 @@ mod tests {
         recorder.record_locally(|| {
             record_autovacuum_workers(3, 3);
             record_overdue_relations(2);
+            record_replication_slot_wal(4_096);
         });
         let rendered = recorder.render();
         assert!(rendered.contains(&format!("{POSTGRESQL_AUTOVACUUM_WORKERS_BUSY} 3")), "{rendered}");
         assert!(rendered.contains(&format!("{POSTGRESQL_AUTOVACUUM_WORKERS_MAX} 3")), "{rendered}");
         assert!(rendered.contains(&format!("{POSTGRESQL_OVERDUE_RELATIONS} 2")), "{rendered}");
+        assert!(
+            rendered.contains(&format!("{POSTGRESQL_REPLICATION_SLOT_RETAINED_WAL_BYTES_MAX} 4096")),
+            "{rendered}"
+        );
         assert!(!rendered.contains("tenant="), "{rendered}");
         Ok(())
     }

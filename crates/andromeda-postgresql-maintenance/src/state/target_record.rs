@@ -177,7 +177,7 @@ pub(crate) async fn record_decision(
     execute_update(connection, statement.clone()).await?;
     let paired_gin = match target.target() {
         MaintenanceTarget::Index(index) => index.paired_gin(),
-        MaintenanceTarget::Heap(_) | MaintenanceTarget::Statistics(_) => None,
+        MaintenanceTarget::Heap(_) | MaintenanceTarget::Statistics(_) | MaintenanceTarget::Columnstore(_) => None,
     };
     if decision == PolicyDecision::Queued
         && let Some(gin) = paired_gin
@@ -213,8 +213,8 @@ pub(crate) async fn record_action_completion(
 }
 
 /// Build the completed-action update, recording the readings of the kind the
-/// action is measured by and clearing the other kind. An analyze records
-/// neither.
+/// action is measured by and clearing the other kind. An analyze and a
+/// recompression record neither.
 fn action_completion_update(
     tenant: TenantKey,
     target: BranchTarget,
@@ -235,7 +235,7 @@ fn action_completion_update(
             Some(persisted_count(before.dead, CatalogCounter::BeforeDeadTuples)?),
             Some(persisted_count(after.dead, CatalogCounter::AfterDeadTuples)?),
         ),
-        ActionComparison::Statistics { .. } => (None, None, None, None),
+        ActionComparison::Statistics { .. } | ActionComparison::Columnstore { .. } => (None, None, None, None),
     };
     Ok(Query::update()
         .table(PostgresqlMaintenanceTargets::Table)

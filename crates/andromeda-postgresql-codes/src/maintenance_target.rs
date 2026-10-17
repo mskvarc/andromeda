@@ -8,7 +8,9 @@ compact_code_registry! {
     /// The labels are the relation names the controller inspects, which is how an
     /// operator recognises a target in the platform tables. A heap's planner
     /// statistics, refreshed by `ANALYZE` rather than by vacuum, are a target of
-    /// their own, labelled with the heap's name and a `_statistics` suffix.
+    /// their own, labelled with the heap's name and a `_statistics` suffix, and
+    /// a history hypertable's columnstore is labelled with its name and a
+    /// `_columnstore` suffix.
     MaintenanceTargetCode {
         frozen_prefix: 13,
         frozen_digest: 0xe988_1329_b9bc_1c59,
@@ -81,6 +83,8 @@ compact_code_registry! {
             IdxNotificationDeliveriesSubscription = 33, "idx_notification_deliveries_subscription";
             /// The notification deliveries' primary key index.
             PkNotificationDeliveries = 34, "pk_notification_deliveries";
+            /// The attribute history hypertable's partially converted chunks.
+            AttributeHistoryColumnstore = 35, "attribute_history_columnstore";
         }
     }
 }
@@ -92,7 +96,7 @@ mod tests {
 
     #[test]
     fn the_members_are_numbered_as_the_migration_documents_them() {
-        assert_eq!(MaintenanceTargetCode::ALL.len(), 34);
+        assert_eq!(MaintenanceTargetCode::ALL.len(), 35);
         assert_eq!(MaintenanceTargetCode::UqCurrentAttributesGrain.code(), 1);
         assert_eq!(MaintenanceTargetCode::IdxCaSubEqKeys.code(), 10);
         assert_eq!(MaintenanceTargetCode::SubscriptionDeliveryState.code(), 13);
@@ -105,11 +109,12 @@ mod tests {
         assert_eq!(MaintenanceTargetCode::EntitySearchStatistics.code(), 30);
         assert_eq!(MaintenanceTargetCode::IdxNotificationDeliveriesClaim.code(), 31);
         assert_eq!(MaintenanceTargetCode::PkNotificationDeliveries.code(), 34);
+        assert_eq!(MaintenanceTargetCode::AttributeHistoryColumnstore.code(), 35);
     }
 
     #[test]
     fn zero_and_the_number_after_the_last_member_fail_to_decode() {
         assert!(MaintenanceTargetCode::try_from(0).is_err());
-        assert!(MaintenanceTargetCode::try_from(35).is_err());
+        assert!(MaintenanceTargetCode::try_from(36).is_err());
     }
 }

@@ -52,7 +52,7 @@ pub fn drop_chunks(hypertable: &str, cutoff: SimpleExpr) -> SimpleExpr {
 /// The `timescaledb_information` schema every catalogue view below lives in.
 #[derive(Iden, Clone, Copy)]
 #[iden = "timescaledb_information"]
-struct TimescaleInformation;
+pub(crate) struct TimescaleInformation;
 
 /// The `timescaledb_information.dimensions` view.
 #[derive(Iden, Clone, Copy)]
@@ -82,7 +82,7 @@ enum Hypertables {
 
 /// The `timescaledb_information.chunks` view.
 #[derive(Iden, Clone, Copy)]
-enum Chunks {
+pub(crate) enum Chunks {
     /// View name: `chunks`
     #[iden = "chunks"]
     Table,

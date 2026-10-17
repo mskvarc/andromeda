@@ -12,6 +12,8 @@ use crate::{
     candidate::heap_target::HeapTarget,
     catalog_counter::{CatalogCounter, non_negative},
     error::MaintenanceError,
+    observation::{Finding, ObservationDecision},
+    observed_heap::WatchedHeap,
 };
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use sea_query::{ExprTrait, Func, Iden, PostgresQueryBuilder, SelectStatement};
@@ -46,7 +48,7 @@ pub(crate) enum StatisticsFreshness {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct HeapStatistics {
     /// The heap.
-    pub(crate) heap: HeapTarget,
+    pub(crate) heap: WatchedHeap,
     /// `n_mod_since_analyze`.
     pub(crate) modified_since_analyze: u64,
     /// Modified tuples past which autovacuum analyzes the heap.
@@ -70,9 +72,18 @@ impl HeapStatistics {
             (false, _, _) | (true, true, _) | (true, false, AnalyzeProgress::Running) => StatisticsFreshness::Fresh,
         }
     }
+
+    /// The finding stale statistics of an observed heap report. A target's
+    /// stale statistics report none: they queue its catch-up `ANALYZE`.
+    pub(crate) fn observation(self, now: DateTime<Utc>) -> Option<Finding> {
+        match (self.heap, self.freshness(now)) {
+            (WatchedHeap::Observed(_), StatisticsFreshness::Stale) => Some(Finding::warning(ObservationDecision::StatisticsStale)),
+            (WatchedHeap::Observed(_), StatisticsFreshness::Fresh) | (WatchedHeap::Target(_), StatisticsFreshness::Stale | StatisticsFreshness::Fresh) => None,
+        }
+    }
 }
 
-/// Read every heap of `branch` against its analyze trigger.
+/// Read every watched heap of `branch` against its analyze trigger.
 pub(crate) async fn heap_statistics(connection: &mut PgConnection, branch: Branch) -> Result<Vec<HeapStatistics>, MaintenanceError> {
     let (sql, values) = heap_statistics_statement(branch).build_sqlx(PostgresQueryBuilder);
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
@@ -100,9 +111,9 @@ enum FreshnessColumn {
     AnalyzeRunning,
 }
 
-/// Every heap of `branch` with its modified tuples, its analyze trigger, its
-/// last analyze and whether an analyze of it is running in the tenant's
-/// database.
+/// Every watched heap of `branch` with its modified tuples, its analyze
+/// trigger, its last analyze and whether an analyze of it is running in the
+/// tenant's database.
 fn heap_statistics_statement(branch: Branch) -> SelectStatement {
     autovacuum_triggers_statement(branch)
         .expr_as(statistics_column("n_mod_since_analyze"), FreshnessColumn::ModifiedSinceAnalyze)
@@ -119,7 +130,7 @@ fn heap_statistics_of(row: &PgRow) -> Result<HeapStatistics, MaintenanceError> {
     let name = row.try_get::<String, _>(TriggerColumn::Relname.to_string().as_str())?;
     let running = row.try_get::<bool, _>(FreshnessColumn::AnalyzeRunning.to_string().as_str())?;
     Ok(HeapStatistics {
-        heap: HeapTarget::from_str(&name).map_err(MaintenanceError::UnknownTarget)?,
+        heap: WatchedHeap::from_str(&name).map_err(MaintenanceError::UnknownTarget)?,
         modified_since_analyze: non_negative(
             row.try_get(FreshnessColumn::ModifiedSinceAnalyze.to_string().as_str())?,
             CatalogCounter::ModifiedSinceAnalyze,
@@ -135,6 +146,8 @@ mod tests {
     use crate::{
         branch::Branch,
         candidate::heap_target::HeapTarget,
+        observation::{Finding, ObservationDecision},
+        observed_heap::{ObservedHeap, WatchedHeap},
         statistics_freshness::{AnalyzeProgress, HeapStatistics, StatisticsFreshness, heap_statistics_statement},
     };
     use chrono::{DateTime, Duration, Utc};
@@ -143,7 +156,7 @@ mod tests {
 
     fn heap(modified_since_analyze: u64, analyze_trigger: u64, last_analyzed: Option<DateTime<Utc>>) -> HeapStatistics {
         HeapStatistics {
-            heap: HeapTarget::CurrentAttributes,
+            heap: WatchedHeap::Target(HeapTarget::CurrentAttributes),
             modified_since_analyze,
             analyze_trigger,
             last_analyzed,
@@ -167,6 +180,27 @@ mod tests {
         let now = Utc::now();
         assert_eq!(heap(200_099, 100_050, None).freshness(now), StatisticsFreshness::Fresh);
         assert_eq!(heap(200_100, 100_050, None).freshness(now), StatisticsFreshness::Stale);
+    }
+
+    /// Twice a trigger of 20,500 is 41,000.
+    #[test]
+    fn stale_statistics_of_an_observed_heap_report_statistics_stale_and_a_targets_report_nothing() {
+        let now = Utc::now();
+        let observed = HeapStatistics {
+            heap: WatchedHeap::Observed(ObservedHeap::WriteRecords),
+            ..heap(41_000, 20_500, None)
+        };
+        assert_eq!(observed.observation(now), Some(Finding::warning(ObservationDecision::StatisticsStale)));
+        assert_eq!(
+            HeapStatistics {
+                modified_since_analyze: 40_999,
+                ..observed
+            }
+            .observation(now),
+            None
+        );
+        assert_eq!(heap(41_000, 20_500, None).freshness(now), StatisticsFreshness::Stale);
+        assert_eq!(heap(41_000, 20_500, None).observation(now), None);
     }
 
     #[test]

@@ -270,6 +270,7 @@ async fn construct(
         direct_url.clone(), // clone: the process task derives tenant URLs over the direct base
         config.database.maintenance,
         config.database.acquire_timeout(),
+        config.expected_deployment(),
     )?;
     // The platform route from minted subscription identifiers to tenants is
     // shared by every tenant's forwarding service and by the receiver.

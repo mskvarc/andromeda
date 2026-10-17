@@ -86,6 +86,8 @@ pub const POSTGRESQL_AUTOVACUUM_WORKERS_BUSY: &str = "andromeda_postgresql_autov
 pub const POSTGRESQL_AUTOVACUUM_WORKERS_MAX: &str = "andromeda_postgresql_autovacuum_workers_max";
 /// Gauge of relations whose dead tuples exceed twice their autovacuum trigger with no vacuum running, in the most recent tenant visit.
 pub const POSTGRESQL_OVERDUE_RELATIONS: &str = "andromeda_postgresql_overdue_relations";
+/// Gauge of the most WAL any replication slot keeps on disk, in bytes, when a maintenance pass last looked; zero without a slot.
+pub const POSTGRESQL_REPLICATION_SLOT_RETAINED_WAL_BYTES_MAX: &str = "andromeda_postgresql_replication_slot_retained_wal_bytes_max";
 /// Gauge of tenant runtimes currently held in the bounded runtime cache.
 pub const TENANT_RUNTIMES_CACHED: &str = "andromeda_tenant_runtimes_cached";
 /// Counter of cold tenant-runtime builds, labelled by outcome.

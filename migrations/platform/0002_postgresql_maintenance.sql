@@ -42,7 +42,8 @@
 -- A heap's planner statistics are a target of their own (targets 22 to 30),
 -- refreshed by `ANALYZE`: an analyze row records no sample evidence and
 -- neither reading pair, only its decision, its pending action and its
--- cooldown.
+-- cooldown. So does the columnstore of a history hypertable (target 35),
+-- whose partially converted chunks are recompressed one at a time.
 --
 -- A target row belongs to one context branch of its tenant: `snapshot_key`
 -- is the Snapshot whose published branch schema holds the relation, NULL for
@@ -83,7 +84,7 @@
 --     30 entity_search_statistics, 31 idx_notification_deliveries_claim,
 --     32 idx_notification_deliveries_event,
 --     33 idx_notification_deliveries_subscription,
---     34 pk_notification_deliveries
+--     34 pk_notification_deliveries, 35 attribute_history_columnstore
 --   last_action_result: 1 succeeded, 2 failed, 3 ineffective
 -- ============================================================================
 create table postgresql_maintenance_tenants (
@@ -120,7 +121,7 @@ create table postgresql_maintenance_targets (
     constraint uq_postgresql_maintenance_targets_grain unique nulls not distinct (tenant_key, snapshot_key, target),
     constraint fk_postgresql_maintenance_targets_tenant foreign key (tenant_key) references tenants (tenant_key) on delete cascade,
     constraint chk_postgresql_maintenance_targets_snapshot_key_positive check (snapshot_key is null or snapshot_key > 0),
-    constraint chk_postgresql_maintenance_targets_target check (target between 1 and 34),
+    constraint chk_postgresql_maintenance_targets_target check (target between 1 and 35),
     constraint chk_postgresql_maintenance_targets_last_action_result check (last_action_result is null or last_action_result between 1 and 3),
     constraint chk_postgresql_maintenance_targets_breach_run check (breach_samples >= 0 and (first_breach_at is null) = (breach_samples = 0)),
     constraint chk_postgresql_maintenance_targets_failures_non_negative check (consecutive_failures >= 0),

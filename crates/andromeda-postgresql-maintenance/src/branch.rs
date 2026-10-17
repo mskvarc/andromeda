@@ -12,6 +12,7 @@ use crate::{
         heap_target::{HeapTarget, RelationPresence},
     },
     error::MaintenanceError,
+    observed_heap::WatchedHeap,
 };
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
 use andromeda_postgresql_branch::{published_snapshot_key, snapshot_schema_name};
@@ -58,13 +59,25 @@ impl Branch {
         format!("{}.{relation}", self.schema_name())
     }
 
-    /// The heap targets this branch's schema holds: every one in the live
-    /// branch, the branch relations in a Snapshot branch.
-    pub(crate) fn heaps(self) -> impl Iterator<Item = HeapTarget> {
-        HeapTarget::ALL.into_iter().filter(move |heap| match (self, heap.presence()) {
+    /// Whether this branch's schema holds a relation present in `presence`:
+    /// the live branch holds every relation, a Snapshot branch only the branch
+    /// relations.
+    const fn holds(self, presence: RelationPresence) -> bool {
+        match (self, presence) {
             (Branch::Live, RelationPresence::EveryBranch | RelationPresence::LiveOnly) | (Branch::Snapshot(_), RelationPresence::EveryBranch) => true,
             (Branch::Snapshot(_), RelationPresence::LiveOnly) => false,
-        })
+        }
+    }
+
+    /// The heap targets this branch's schema holds.
+    pub(crate) fn heaps(self) -> impl Iterator<Item = HeapTarget> {
+        HeapTarget::ALL.into_iter().filter(move |heap| self.holds(heap.presence()))
+    }
+
+    /// The heaps whose autovacuum and statistics health a visit reads in this
+    /// branch: its heap targets and the heaps it only observes.
+    pub(crate) fn watched_heaps(self) -> impl Iterator<Item = WatchedHeap> {
+        WatchedHeap::all().filter(move |heap| self.holds(heap.presence()))
     }
 
     /// The Snapshot whose branch this is, `None` for the live branch.
@@ -91,9 +104,9 @@ impl BranchTarget {
     /// # Errors
     ///
     /// Returns [`MaintenanceError::LiveOnlyTarget`] when `branch` is a
-    /// Snapshot branch and the target's heap exists only in the live branch.
+    /// Snapshot branch and the target exists only in the live branch.
     pub(crate) const fn new(branch: Branch, target: MaintenanceTarget) -> Result<BranchTarget, MaintenanceError> {
-        match (branch, target.heap().presence()) {
+        match (branch, target.presence()) {
             (Branch::Snapshot(snapshot), RelationPresence::LiveOnly) => Err(MaintenanceError::LiveOnlyTarget { target, snapshot }),
             (Branch::Live, RelationPresence::EveryBranch | RelationPresence::LiveOnly) | (Branch::Snapshot(_), RelationPresence::EveryBranch) => {
                 Ok(BranchTarget { branch, target })
@@ -116,8 +129,9 @@ impl BranchTarget {
 mod tests {
     use crate::{
         branch::{Branch, BranchTarget},
-        candidate::{MaintenanceTarget, heap_target::HeapTarget, index_target::IndexTarget},
+        candidate::{MaintenanceTarget, heap_target::HeapTarget, history_table::HistoryTable, index_target::IndexTarget},
         error::MaintenanceError,
+        observed_heap::WatchedHeap,
     };
     use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
     use andromeda_postgresql_branch::snapshot_schema_name;
@@ -166,6 +180,16 @@ mod tests {
     }
 
     #[test]
+    fn a_history_hypertable_is_never_recompressed_in_a_snapshot_branch() {
+        let target = MaintenanceTarget::Columnstore(HistoryTable::AttributeHistory);
+        assert!(matches!(
+            BranchTarget::new(Branch::Snapshot(key(7)), target),
+            Err(MaintenanceError::LiveOnlyTarget { target: rejected, snapshot }) if rejected == target && snapshot == key(7)
+        ));
+        assert!(BranchTarget::new(Branch::Live, target).is_ok());
+    }
+
+    #[test]
     fn a_snapshot_branch_holds_only_the_branch_heaps() {
         assert_eq!(Branch::Live.heaps().collect::<Vec<_>>(), HeapTarget::ALL);
         assert_eq!(
@@ -180,6 +204,11 @@ mod tests {
             ]
         );
         assert_eq!(Branch::Snapshot(key(7)).qualified("entities"), "snap_7.entities");
+        let watched = Branch::Snapshot(key(7)).watched_heaps().map(WatchedHeap::relation_name).collect::<Vec<_>>();
+        assert!(watched.contains(&"attribute_census"), "{watched:?}");
+        assert!(!watched.contains(&"write_records"), "{watched:?}");
+        assert!(!watched.contains(&"pending_side_effects"), "{watched:?}");
+        assert!(Branch::Live.watched_heaps().any(|heap| heap.relation_name() == "write_records"));
         assert_eq!(Branch::Live.qualified("entities"), "public.entities");
     }
 

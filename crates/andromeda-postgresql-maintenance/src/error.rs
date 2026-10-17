@@ -4,7 +4,7 @@ use crate::{candidate::MaintenanceTarget, catalog_counter::CatalogCounter};
 use andromeda_context_space::snapshot_key::{SnapshotKey, SnapshotKeyError};
 use andromeda_ngsi_ld_lexicon::tenant::InvalidTenantName;
 use andromeda_postgresql_codes::{maintenance_target::MaintenanceTargetCode, registry::UnknownCompactCode};
-use andromeda_postgresql_context_store::schema_contract::error::SchemaContractError;
+use andromeda_postgresql_context_store::{error::ContextStoreError, schema_contract::error::SchemaContractError};
 use sea_query::error::Error as SeaQueryError;
 use thiserror::Error;
 
@@ -45,6 +45,13 @@ pub enum MaintenanceError {
     /// Durable state holds a code no release assigned.
     #[error("platform maintenance state is unreadable: {0}")]
     UnreadableCode(#[from] UnknownCompactCode),
+    /// A replication slot reported a `wal_status` this binary does not know.
+    #[error("PostgreSQL reported an unknown replication slot WAL status: {0}")]
+    UnknownWalStatus(#[source] strum::ParseError),
+    /// The installed and shipped versions of a tenant's extensions could not
+    /// be read.
+    #[error("PostgreSQL extension versions could not be read: {0}")]
+    ExtensionVersions(#[source] ContextStoreError),
     /// The vacuum horizon report named a holder kind this binary never asks for.
     #[error("PostgreSQL vacuum horizon report named an unknown holder kind: {0}")]
     UnknownHorizonHolder(#[source] strum::ParseError),

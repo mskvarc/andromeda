@@ -13,7 +13,7 @@ use crate::{
     error::MaintenanceError,
     inspection::{self, IndexSize},
     policy::{DeferralReason, PolicyDecision, PolicyProfile, decide, safety_deferral},
-    safety_gate_inspection,
+    safety_gate_inspection::{self, GateScope},
     state::{RegisteredTenant, target_record},
 };
 use andromeda_postgresql_context_store::maintenance_config::MaintenanceMode;
@@ -108,7 +108,7 @@ pub(crate) async fn probe_indexes(
         let started = Instant::now();
         let target = MaintenanceTarget::Index(size.target);
         let row = BranchTarget::new(size.branch, target)?;
-        let gates = safety_gate_inspection::safety_gates(connection, row).await?;
+        let gates = safety_gate_inspection::safety_gates(connection, GateScope::Target(row)).await?;
         if let Some(reason) = safety_deferral(profile, gates) {
             info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?size.branch, target = target.relation_name(), decision = "deferred", reason = ?reason, "PostgreSQL maintenance probe deferred");
             return Ok(match run {

@@ -6,6 +6,7 @@ use crate::{
     autovacuum_health,
     branch::Branch,
     btree_estimate,
+    columnstore_partiality,
     controller::{
         PassOutcome,
         catalog_sampling::{self, CatalogSample},
@@ -15,9 +16,11 @@ use crate::{
     error::MaintenanceError,
     gin_density,
     inspection::{self, IndexSize},
+    observation::ObservationLevel,
+    observed_heap::WatchedHeap,
     policy::PolicyProfile,
     state::{RegisteredTenant, target_record},
-    statistics_freshness,
+    statistics_freshness::{self, HeapStatistics},
 };
 use andromeda_postgresql_context_store::maintenance_config::MaintenanceMode;
 use andromeda_telemetry::maintenance::record_overdue_relations;
@@ -57,14 +60,20 @@ pub(crate) async fn sample_branches(
         let estimates = btree_estimate::btree_estimates(connection, branch).await?;
         let heap_samples = inspection::heap_samples(connection, branch, profile).await?;
         let statistics = statistics_freshness::heap_statistics(connection, branch).await?;
+        let partiality = columnstore_partiality::partiality_samples(connection, branch).await?;
         let coverage = gin_density::gin_coverage(connection, branch).await?;
         let probe_states = target_record::index_probe_states(platform, tenant, branch).await?;
         let density_samples = density_sampling::density_samples(platform, tenant, branch, &index_sizes, &coverage, profile).await?;
+        report_stale_observed_heaps(tenant, branch, &statistics);
         let samples = heap_samples
             .iter()
             .map(CatalogSample::of_heap)
-            .chain(statistics.into_iter().map(CatalogSample::of_statistics))
+            .chain(statistics.into_iter().filter_map(|statistics| match statistics.heap {
+                WatchedHeap::Target(heap) => Some(CatalogSample::of_statistics(heap, statistics)),
+                WatchedHeap::Observed(_) => None,
+            }))
             .chain(density_samples)
+            .chain(partiality.into_iter().map(CatalogSample::of_partiality))
             .collect::<Vec<_>>();
         let flagged = catalog_sampling::record_catalog_samples(mode, platform, tenant, branch, &samples, profile).await?;
         sampling.flagged = strongest(sampling.flagged, flagged);
@@ -74,6 +83,17 @@ pub(crate) async fn sample_branches(
     }
     record_overdue_relations(overdue_relations);
     Ok(sampling)
+}
+
+/// Log every heap of `branch` the controller only observes whose planner
+/// statistics autoanalyze has missed.
+fn report_stale_observed_heaps(tenant: &RegisteredTenant, branch: Branch, statistics: &[HeapStatistics]) {
+    let now = Utc::now();
+    for heap in statistics {
+        if let Some(finding) = heap.observation(now) {
+            observation_event!(finding, tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, relation = heap.heap.relation_name(), modified_since_analyze = heap.modified_since_analyze, analyze_trigger = heap.analyze_trigger, last_analyzed = ?heap.last_analyzed, "PostgreSQL autoanalyze has not analyzed a relation past twice its trigger");
+        }
+    }
 }
 
 /// The flag of two branches' samples together: queued work outranks work

@@ -88,11 +88,32 @@ pub enum CatalogCounter {
     AnalyzeTrigger,
     /// `n_mod_since_analyze`: tuples a table modified since its last analyze.
     ModifiedSinceAnalyze,
+    /// History chunks still in the rowstore past the columnstore horizon.
+    OverdueChunks,
+    /// Runs of a `TimescaleDB` job that failed.
+    JobFailures,
+    /// WAL bytes a replication slot keeps, or may still take before it is
+    /// lost.
+    SlotWalBytes,
+    /// Partially converted chunks of a history hypertable.
+    PartialChunks,
+    /// Bytes of a converted chunk's own heap, where its rows outside the
+    /// compressed batches live.
+    UncompressedBytes,
+    /// The OID of a history chunk.
+    ChunkOid,
+    /// Entries `pg_stat_statements` evicted, or the entries it may hold.
+    StatementEvictions,
 }
 
 /// Convert one PostgreSQL counter that the catalog guarantees is non-negative.
 pub(crate) fn non_negative(value: i64, counter: CatalogCounter) -> Result<u64, MaintenanceError> {
     u64::try_from(value).map_err(|_| MaintenanceError::NegativeCatalogValue { counter, value })
+}
+
+/// Convert an object identifier PostgreSQL reported as a `bigint`.
+pub(crate) fn object_id(value: i64, counter: CatalogCounter) -> Result<u32, MaintenanceError> {
+    u32::try_from(value).map_err(|_| MaintenanceError::NegativeCatalogValue { counter, value })
 }
 
 /// Convert a count to the platform schema's signed `bigint` storage type.

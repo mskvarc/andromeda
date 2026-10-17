@@ -67,6 +67,10 @@ pub enum PostgresType {
     /// `regclass`, the relation-identity type a catalogue row keys a table by.
     #[iden = "regclass"]
     Regclass,
+    /// `oid`, the object identifier a `regclass` is, and which casts between it
+    /// and an integer.
+    #[iden = "oid"]
+    Oid,
     /// `xid8`, the 64-bit transaction identifier a write is stamped with.
     #[iden = "xid8"]
     Xid8,

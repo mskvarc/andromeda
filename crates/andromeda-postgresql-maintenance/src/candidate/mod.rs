@@ -1,9 +1,14 @@
 //! The closed set of relations that maintenance may inspect or mutate.
 
 pub mod heap_target;
+pub mod history_table;
 pub mod index_target;
 
-use crate::candidate::{heap_target::HeapTarget, index_target::IndexTarget};
+use crate::candidate::{
+    heap_target::{HeapTarget, RelationPresence},
+    history_table::HistoryTable,
+    index_target::IndexTarget,
+};
 
 /// A persistable allowlisted maintenance target.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -14,6 +19,9 @@ pub enum MaintenanceTarget {
     Heap(HeapTarget),
     /// The planner statistics of one heap.
     Statistics(HeapTarget),
+    /// The partially converted chunks of one history hypertable, recompressed
+    /// one chunk at a time, the oldest first.
+    Columnstore(HistoryTable),
 }
 
 impl MaintenanceTarget {
@@ -24,17 +32,19 @@ impl MaintenanceTarget {
         match self {
             MaintenanceTarget::Index(target) => target.relation_name(),
             MaintenanceTarget::Heap(target) | MaintenanceTarget::Statistics(target) => target.relation_name(),
+            MaintenanceTarget::Columnstore(table) => table.relation_name(),
         }
     }
 
-    /// The heap whose load and lock gates apply to the target: the target
-    /// itself, the heap an index belongs to, or the heap whose statistics it
-    /// is.
+    /// The context branches whose schema holds the target: those holding its
+    /// heap, or the heap of the index, or only the live branch for a history
+    /// hypertable, since a Snapshot branch holds its history as a plain table.
     #[must_use]
-    pub const fn heap(self) -> HeapTarget {
+    pub const fn presence(self) -> RelationPresence {
         match self {
-            MaintenanceTarget::Index(target) => target.heap(),
-            MaintenanceTarget::Heap(target) | MaintenanceTarget::Statistics(target) => target,
+            MaintenanceTarget::Index(target) => target.heap().presence(),
+            MaintenanceTarget::Heap(target) | MaintenanceTarget::Statistics(target) => target.presence(),
+            MaintenanceTarget::Columnstore(_) => RelationPresence::LiveOnly,
         }
     }
 }
@@ -43,7 +53,12 @@ impl MaintenanceTarget {
 mod tests {
     use crate::{
         branch::Branch,
-        candidate::{MaintenanceTarget, heap_target::HeapTarget, index_target::IndexTarget},
+        candidate::{
+            MaintenanceTarget,
+            heap_target::{HeapTarget, RelationPresence},
+            history_table::HistoryTable,
+            index_target::IndexTarget,
+        },
     };
     use andromeda_context_space::snapshot_key::SnapshotKey;
     use pretty_assertions::assert_eq;
@@ -87,11 +102,19 @@ mod tests {
         ];
         assert_eq!(IndexTarget::ALL.map(|target| (target, target.heap())), expected);
         for (index, heap) in expected {
-            assert_eq!(MaintenanceTarget::Index(index).heap(), heap, "{index}");
+            assert_eq!(MaintenanceTarget::Index(index).presence(), heap.presence(), "{index}");
         }
         for heap in HeapTarget::ALL {
-            assert_eq!(MaintenanceTarget::Heap(heap).heap(), heap);
-            assert_eq!(MaintenanceTarget::Statistics(heap).heap(), heap);
+            assert_eq!(MaintenanceTarget::Heap(heap).presence(), heap.presence());
+            assert_eq!(MaintenanceTarget::Statistics(heap).presence(), heap.presence());
+        }
+    }
+
+    #[test]
+    fn a_history_hypertable_is_a_target_of_the_live_branch_alone() {
+        for table in HistoryTable::ALL {
+            assert_eq!(MaintenanceTarget::Columnstore(table).presence(), RelationPresence::LiveOnly);
+            assert_eq!(MaintenanceTarget::Columnstore(table).relation_name(), table.relation_name());
         }
     }
 }

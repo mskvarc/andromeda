@@ -1,14 +1,16 @@
 //! Cheap catalog evidence recorded on every visit: each heap's dead-tuple
-//! estimate, each density-measured GIN's density and the freshness of each
-//! heap's planner statistics.
+//! estimate, each density-measured GIN's density, the freshness of each
+//! heap's planner statistics and the partial chunks of each history
+//! hypertable.
 
 use crate::{
     branch::{Branch, BranchTarget},
-    candidate::MaintenanceTarget,
+    candidate::{MaintenanceTarget, heap_target::HeapTarget},
+    columnstore_partiality::ColumnstorePartiality,
     controller::{PassOutcome, idle_gates},
     error::MaintenanceError,
     inspection::HeapSample,
-    policy::{DeferralReason, DegradationSample, PolicyDecision, PolicyProfile, decide, decide_analyze},
+    policy::{DeferralReason, DegradationSample, PolicyDecision, PolicyProfile, decide, decide_analyze, decide_recompression},
     state::{RegisteredTenant, target_record},
     statistics_freshness::HeapStatistics,
 };
@@ -33,6 +35,8 @@ pub(crate) enum SampleEvidence {
     Degradation(DegradationSample),
     /// A heap's modified tuples against its analyze trigger.
     Statistics(HeapStatistics),
+    /// A history hypertable's partial chunks.
+    Partiality(ColumnstorePartiality),
 }
 
 impl CatalogSample {
@@ -44,11 +48,19 @@ impl CatalogSample {
         }
     }
 
-    /// A heap's planner statistics against its analyze trigger.
-    pub(crate) const fn of_statistics(statistics: HeapStatistics) -> CatalogSample {
+    /// A heap target's planner statistics against its analyze trigger.
+    pub(crate) const fn of_statistics(heap: HeapTarget, statistics: HeapStatistics) -> CatalogSample {
         CatalogSample {
-            target: MaintenanceTarget::Statistics(statistics.heap),
+            target: MaintenanceTarget::Statistics(heap),
             evidence: SampleEvidence::Statistics(statistics),
+        }
+    }
+
+    /// A history hypertable's partial chunks.
+    pub(crate) const fn of_partiality(partiality: ColumnstorePartiality) -> CatalogSample {
+        CatalogSample {
+            target: MaintenanceTarget::Columnstore(partiality.table),
+            evidence: SampleEvidence::Partiality(partiality),
         }
     }
 }
@@ -81,6 +93,12 @@ pub(crate) async fn record_catalog_samples(
                 let decision = decide_analyze(mode, profile, target_state, freshness, idle_gates(), now);
                 target_record::record_decision(platform, tenant, row, None, decision, target_state.breach, now).await?;
                 info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), modified_since_analyze = statistics.modified_since_analyze, analyze_trigger = statistics.analyze_trigger, last_analyzed = ?statistics.last_analyzed, freshness = ?freshness, decision = ?decision, "PostgreSQL maintenance statistics sample completed");
+                decision
+            }
+            SampleEvidence::Partiality(partiality) => {
+                let decision = decide_recompression(mode, profile, target_state, partiality.state(), idle_gates(), now);
+                target_record::record_decision(platform, tenant, row, None, decision, target_state.breach, now).await?;
+                info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), partial_chunks = partiality.partial_chunks, oldest_uncompressed_bytes = partiality.oldest_uncompressed_bytes, decision = ?decision, "PostgreSQL maintenance columnstore sample completed");
                 decision
             }
         };

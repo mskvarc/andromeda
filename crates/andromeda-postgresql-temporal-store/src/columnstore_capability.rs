@@ -1,7 +1,7 @@
 //! Whether the attached `TimescaleDB` edition provides the hypercore columnstore.
 //!
-//! Hypercore -- `ALTER TABLE ... SET (timescaledb.enable_columnstore, ...)` and
-//! `convert_to_columnstore` -- is a TSL-licensed capability. The runtime
+//! Hypercore (`ALTER TABLE ... SET (timescaledb.enable_columnstore, ...)` and
+//! `convert_to_columnstore`) is a TSL-licensed capability. The runtime
 //! reconciler and the conversion sweep gate every columnstore statement on
 //! this probe and run the temporal hypertables as plain hypertables where it is
 //! absent: they never issue a statement the edition cannot answer. No migration
@@ -12,13 +12,10 @@
 //! every columnstore procedure in `pg_proc` and refuses each call with
 //! "functionality not supported under the current "apache" license".
 
-use andromeda_postgresql_seaquery::introspection::current_setting_missing_ok;
+use andromeda_postgresql_seaquery::columnstore_chunk::columnstore_licensed;
 use sea_query::{Alias, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{AssertSqlSafe, PgPool};
-
-/// The `timescaledb.license` value of the TSL edition.
-const TIMESCALE_LICENSE: &str = "timescale";
 
 /// Whether the attached `TimescaleDB` edition provides the hypercore columnstore.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -41,26 +38,19 @@ impl ColumnstoreSupport {
     /// Returns [`sqlx::Error`] when the probe cannot be executed against the pool.
     pub async fn detect(pool: &PgPool) -> Result<ColumnstoreSupport, sqlx::Error> {
         let (sql, values) = detect_statement().build_sqlx(PostgresQueryBuilder);
-        let license: Option<String> = sqlx::query_scalar_with(AssertSqlSafe(sql), values).fetch_one(pool).await?;
-        Ok(ColumnstoreSupport::of_license(license.as_deref()))
+        let licensed: bool = sqlx::query_scalar_with(AssertSqlSafe(sql), values).fetch_one(pool).await?;
+        Ok(ColumnstoreSupport::of_license(licensed))
     }
 
-    /// The support a `timescaledb.license` value grants; `None` when the
-    /// setting is undefined.
-    fn of_license(license: Option<&str>) -> ColumnstoreSupport {
-        if license == Some(TIMESCALE_LICENSE) {
-            ColumnstoreSupport::Present
-        } else {
-            ColumnstoreSupport::Absent
-        }
+    /// The support the license probe's answer grants.
+    const fn of_license(licensed: bool) -> ColumnstoreSupport {
+        if licensed { ColumnstoreSupport::Present } else { ColumnstoreSupport::Absent }
     }
 }
 
-/// The probe reading `timescaledb.license`, `NULL` when it is undefined.
+/// The probe reading whether `timescaledb.license` names the TSL edition.
 fn detect_statement() -> SelectStatement {
-    Query::select()
-        .expr_as(current_setting_missing_ok("timescaledb.license"), Alias::new("license"))
-        .to_owned()
+    Query::select().expr_as(columnstore_licensed(), Alias::new("licensed")).to_owned()
 }
 
 #[cfg(test)]
@@ -73,14 +63,13 @@ mod tests {
     fn the_probe_reads_the_license_setting_without_failing_when_it_is_undefined() {
         assert_eq!(
             detect_statement().to_string(PostgresQueryBuilder),
-            r#"SELECT current_setting('timescaledb.license', TRUE) AS "license""#
+            r#"SELECT COALESCE(current_setting('timescaledb.license', TRUE) = 'timescale', FALSE) AS "licensed""#
         );
     }
 
     #[test]
     fn only_the_timescale_license_provides_the_columnstore() {
-        assert_eq!(ColumnstoreSupport::of_license(Some("timescale")), ColumnstoreSupport::Present);
-        assert_eq!(ColumnstoreSupport::of_license(Some("apache")), ColumnstoreSupport::Absent);
-        assert_eq!(ColumnstoreSupport::of_license(None), ColumnstoreSupport::Absent);
+        assert_eq!(ColumnstoreSupport::of_license(true), ColumnstoreSupport::Present);
+        assert_eq!(ColumnstoreSupport::of_license(false), ColumnstoreSupport::Absent);
     }
 }

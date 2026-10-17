@@ -1,6 +1,6 @@
 //! Pure profile thresholds and maintenance decision policy.
 
-use crate::{statistics_freshness::StatisticsFreshness, vacuum_horizon::HorizonHolderKind};
+use crate::{columnstore_partiality::ChunkPartiality, statistics_freshness::StatisticsFreshness, vacuum_horizon::HorizonHolderKind};
 use andromeda_postgresql_context_store::maintenance_config::{MaintenanceMode, MaintenanceProfile};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use std::time::Duration;
@@ -276,6 +276,31 @@ pub(crate) fn decide_analyze(
     }
 }
 
+/// Apply cooldown, load gates and the breach duration to a history
+/// hypertable's partial chunks, which qualify for recompression once one has
+/// stayed partial for the profile's qualifying duration over at least
+/// [`MINIMUM_BREACH_SAMPLES`] samples, so a burst of corrections is
+/// recompressed once. The size floors do not apply: recompression rewrites
+/// only the segments a write reached, so its cost follows the writes, not the
+/// chunk.
+pub(crate) fn decide_recompression(
+    mode: MaintenanceMode,
+    profile: PolicyProfile,
+    state: TargetState,
+    partiality: ChunkPartiality,
+    gates: SafetyGates,
+    now: DateTime<Utc>,
+) -> PolicyDecision {
+    if let Some(decision) = gated_decision(mode, profile, state, gates, now) {
+        return decision;
+    }
+    match partiality {
+        ChunkPartiality::Whole => PolicyDecision::Deferred(DeferralReason::BelowThreshold),
+        ChunkPartiality::Partial if BreachRun::extended(state.breach, now).qualifies(profile, now) => newly_qualified(mode),
+        ChunkPartiality::Partial => PolicyDecision::Deferred(DeferralReason::ConsecutiveSamples),
+    }
+}
+
 /// The decision every target takes before its own qualification: deferred in
 /// its cooldown or by a load gate, and acted on once pending. `None` leaves
 /// the target to its qualification.
@@ -330,7 +355,20 @@ pub fn breach_after(breach: Option<BreachRun>, decision: PolicyDecision, sample:
 #[cfg(test)]
 mod tests {
     use crate::{
-        policy::{BreachRun, DeferralReason, DegradationSample, PolicyDecision, PolicyProfile, SafetyGates, TargetState, breach_after, decide, decide_analyze},
+        columnstore_partiality::ChunkPartiality,
+        policy::{
+            BreachRun,
+            DeferralReason,
+            DegradationSample,
+            PolicyDecision,
+            PolicyProfile,
+            SafetyGates,
+            TargetState,
+            breach_after,
+            decide,
+            decide_analyze,
+            decide_recompression,
+        },
         statistics_freshness::StatisticsFreshness,
         vacuum_horizon::HorizonHolderKind,
     };
@@ -648,6 +686,67 @@ mod tests {
         };
         assert_eq!(
             decide_analyze(MaintenanceMode::Automatic, profile, pending, StatisticsFreshness::Fresh, idle_gates(), now),
+            PolicyDecision::Act
+        );
+    }
+
+    #[test]
+    fn a_partial_chunk_qualifies_for_recompression_once_partial_for_the_qualifying_duration() {
+        let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
+        let now = Utc::now();
+        let recompression = |state| decide_recompression(MaintenanceMode::Automatic, profile, state, ChunkPartiality::Partial, idle_gates(), now);
+        assert_eq!(
+            recompression(TargetState::default()),
+            PolicyDecision::Deferred(DeferralReason::ConsecutiveSamples)
+        );
+        assert_eq!(
+            recompression(breached_minutes_ago(2, now)),
+            PolicyDecision::Deferred(DeferralReason::ConsecutiveSamples)
+        );
+        assert_eq!(recompression(breached_minutes_ago(3, now)), PolicyDecision::Queued);
+        let decision = recompression(TargetState::default());
+        assert_eq!(breach_after(None, decision, None, now), Some(BreachRun { since: now, samples: 1 }));
+    }
+
+    #[test]
+    fn a_partial_chunk_reports_would_act_in_observe_mode() {
+        let profile = PolicyProfile::from_profile(MaintenanceProfile::Conservative);
+        let now = Utc::now();
+        assert_eq!(
+            decide_recompression(
+                MaintenanceMode::Observe,
+                profile,
+                breached_minutes_ago(10, now),
+                ChunkPartiality::Partial,
+                idle_gates(),
+                now
+            ),
+            PolicyDecision::WouldAct
+        );
+    }
+
+    #[test]
+    fn a_whole_columnstore_closes_the_breach_and_gates_still_defer_a_pending_recompression() {
+        let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
+        let now = Utc::now();
+        let state = breached_minutes_ago(5, now);
+        let decision = decide_recompression(MaintenanceMode::Automatic, profile, state, ChunkPartiality::Whole, idle_gates(), now);
+        assert_eq!(decision, PolicyDecision::Deferred(DeferralReason::BelowThreshold));
+        assert_eq!(breach_after(state.breach, decision, None, now), None);
+        let pending = TargetState {
+            is_action_pending: true,
+            ..TargetState::default()
+        };
+        let locked = SafetyGates {
+            waiting_relation_lock: true,
+            ..idle_gates()
+        };
+        assert_eq!(
+            decide_recompression(MaintenanceMode::Automatic, profile, pending, ChunkPartiality::Partial, locked, now),
+            PolicyDecision::Deferred(DeferralReason::WaitingRelationLock)
+        );
+        assert_eq!(
+            decide_recompression(MaintenanceMode::Automatic, profile, pending, ChunkPartiality::Partial, idle_gates(), now),
             PolicyDecision::Act
         );
     }

@@ -1,7 +1,7 @@
 //! How a completed or failed maintenance action is judged, and how long its
 //! target cools down afterwards.
 
-use crate::{action_measurement::ActionComparison, candidate::MaintenanceTarget, policy::PolicyProfile};
+use crate::{action_measurement::ActionComparison, candidate::MaintenanceTarget, columnstore_partiality::ChunkPartiality, policy::PolicyProfile};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 
 /// Cooldown after a completed `ANALYZE`, whatever the profile. An analyze
@@ -9,15 +9,22 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 /// autoanalyze keeps missing a heap.
 const ANALYZE_COOLDOWN: ChronoDuration = ChronoDuration::hours(1);
 
+/// Cooldown after a completed recompression, whatever the profile: none. It
+/// recompresses the oldest partial chunk only, and the next partial chunk
+/// opens a breach run of its own, which already spaces recompressions by the
+/// qualifying duration.
+const RECOMPRESSION_COOLDOWN: ChronoDuration = ChronoDuration::zero();
+
 /// Whether a completed action achieved what it was queued for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ActionVerdict {
     /// The action achieved its purpose.
     Effective,
     /// A vacuum left the dead share at or above the threshold that queued it,
-    /// because something held the horizon; or a rebuild of a density-measured
+    /// because something held the horizon; a rebuild of a density-measured
     /// GIN reclaimed less than the reclaim floor, because its density grew
-    /// with its values rather than with bloat.
+    /// with its values rather than with bloat; or a write reached a chunk
+    /// while it was recompressed and left it partial.
     Ineffective,
 }
 
@@ -25,20 +32,27 @@ pub enum ActionVerdict {
 ///
 /// A vacuum of a heap left empty is effective. A rebuild of an index probed or
 /// queued through a canary is always effective: its free space was measured,
-/// not inferred. A completed analyze is effective.
+/// not inferred. A completed analyze is effective, and so is a recompression
+/// that left its chunk whole.
 pub(crate) fn action_verdict(profile: PolicyProfile, target: MaintenanceTarget, comparison: ActionComparison) -> ActionVerdict {
     match comparison {
         ActionComparison::Index { before_bytes, after_bytes } => match target {
             MaintenanceTarget::Index(index) if index.density_column().is_some() && before_bytes.saturating_sub(after_bytes) < profile.minimum_reclaim_bytes => {
                 ActionVerdict::Ineffective
             }
-            MaintenanceTarget::Index(_) | MaintenanceTarget::Heap(_) | MaintenanceTarget::Statistics(_) => ActionVerdict::Effective,
+            MaintenanceTarget::Index(_) | MaintenanceTarget::Heap(_) | MaintenanceTarget::Statistics(_) | MaintenanceTarget::Columnstore(_) => {
+                ActionVerdict::Effective
+            }
         },
         ActionComparison::Heap { after, .. } => match after.dead_percent() {
             Some(dead_percent) if dead_percent >= profile.heap_dead_percent => ActionVerdict::Ineffective,
             Some(_) | None => ActionVerdict::Effective,
         },
         ActionComparison::Statistics { .. } => ActionVerdict::Effective,
+        ActionComparison::Columnstore { after } => match after {
+            ChunkPartiality::Whole => ActionVerdict::Effective,
+            ChunkPartiality::Partial => ActionVerdict::Ineffective,
+        },
     }
 }
 
@@ -56,19 +70,22 @@ pub enum ActionEnding {
 
 /// The cooldown deadline an action's ending sets on its target.
 ///
-/// A completed analyze cools down for [`ANALYZE_COOLDOWN`] in every profile. A
-/// failure backs off exponentially from the ineffective cooldown, doubling
-/// with each consecutive failure up to 24 hours, so a rebuild that keeps
-/// failing stops leaving an artifact to recover on every visit.
+/// A completed analyze cools down for [`ANALYZE_COOLDOWN`] and a completed
+/// recompression for [`RECOMPRESSION_COOLDOWN`] in every profile. A failure
+/// backs off exponentially from the ineffective cooldown, doubling with each
+/// consecutive failure up to 24 hours, so a rebuild that keeps failing stops
+/// leaving an artifact to recover on every visit.
 #[must_use]
 pub fn cooldown_after(profile: PolicyProfile, target: MaintenanceTarget, ending: ActionEnding, now: DateTime<Utc>) -> DateTime<Utc> {
     now + match (target, ending) {
         (MaintenanceTarget::Statistics(_), ActionEnding::Completed(_)) => ANALYZE_COOLDOWN,
+        (MaintenanceTarget::Columnstore(_), ActionEnding::Completed(_)) => RECOMPRESSION_COOLDOWN,
         (MaintenanceTarget::Index(_) | MaintenanceTarget::Heap(_), ActionEnding::Completed(ActionVerdict::Effective)) => profile.successful_cooldown,
         (MaintenanceTarget::Index(_) | MaintenanceTarget::Heap(_), ActionEnding::Completed(ActionVerdict::Ineffective)) => profile.ineffective_cooldown,
-        (MaintenanceTarget::Index(_) | MaintenanceTarget::Heap(_) | MaintenanceTarget::Statistics(_), ActionEnding::Failed { consecutive_failures }) => {
-            failure_backoff(profile.ineffective_cooldown, consecutive_failures)
-        }
+        (
+            MaintenanceTarget::Index(_) | MaintenanceTarget::Heap(_) | MaintenanceTarget::Statistics(_) | MaintenanceTarget::Columnstore(_),
+            ActionEnding::Failed { consecutive_failures },
+        ) => failure_backoff(profile.ineffective_cooldown, consecutive_failures),
     }
 }
 
@@ -87,7 +104,8 @@ mod tests {
     use crate::{
         action_measurement::{ActionComparison, TupleCounts},
         action_policy::{ActionEnding, ActionVerdict, action_verdict, cooldown_after},
-        candidate::{MaintenanceTarget, heap_target::HeapTarget},
+        candidate::{MaintenanceTarget, heap_target::HeapTarget, history_table::HistoryTable},
+        columnstore_partiality::ChunkPartiality,
         policy::PolicyProfile,
     };
     use andromeda_postgresql_context_store::maintenance_config::MaintenanceProfile;
@@ -167,5 +185,25 @@ mod tests {
                 now + profile.ineffective_cooldown * 2
             );
         }
+    }
+
+    #[test]
+    fn a_recompression_is_ineffective_when_a_write_left_its_chunk_partial_and_never_cools_down() {
+        let profile = PolicyProfile::from_profile(MaintenanceProfile::Conservative);
+        let recompression = MaintenanceTarget::Columnstore(HistoryTable::AttributeHistory);
+        let after = |after| ActionComparison::Columnstore { after };
+        assert_eq!(action_verdict(profile, recompression, after(ChunkPartiality::Whole)), ActionVerdict::Effective);
+        assert_eq!(
+            action_verdict(profile, recompression, after(ChunkPartiality::Partial)),
+            ActionVerdict::Ineffective
+        );
+        let now = Utc::now();
+        for verdict in [ActionVerdict::Effective, ActionVerdict::Ineffective] {
+            assert_eq!(cooldown_after(profile, recompression, ActionEnding::Completed(verdict), now), now);
+        }
+        assert_eq!(
+            cooldown_after(profile, recompression, ActionEnding::Failed { consecutive_failures: 1 }, now),
+            now + profile.ineffective_cooldown
+        );
     }
 }

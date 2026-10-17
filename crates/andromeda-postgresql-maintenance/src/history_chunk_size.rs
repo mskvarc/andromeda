@@ -10,6 +10,7 @@
 //! to convert, reports zero bytes.
 
 use crate::{
+    candidate::history_table::HistoryTable,
     catalog_counter::{CatalogCounter, non_negative},
     error::MaintenanceError,
 };
@@ -18,32 +19,6 @@ use sea_query::{Iden, PostgresQueryBuilder};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgConnection, Row};
 use std::str::FromStr;
-use strum::{Display, EnumString, IntoStaticStr};
-
-/// A temporal history hypertable whose chunks the columnstore converts.
-///
-/// The variant names render, in `snake_case`, to the exact `public` hypertable
-/// identifiers tenant migrations create, so the same value is both the SQL
-/// filter term and the metric label.
-#[derive(Clone, Copy, Debug, Display, EnumString, Eq, Hash, IntoStaticStr, PartialEq)]
-#[strum(serialize_all = "snake_case")]
-pub enum HistoryTable {
-    /// Attribute instance history.
-    AttributeHistory,
-    /// Scope history.
-    ScopeHistory,
-}
-
-impl HistoryTable {
-    /// Every history hypertable sampled.
-    pub const ALL: [HistoryTable; 2] = [HistoryTable::AttributeHistory, HistoryTable::ScopeHistory];
-
-    /// The exact hypertable identifier created by tenant migrations.
-    #[must_use]
-    pub fn relation_name(self) -> &'static str {
-        self.into()
-    }
-}
 
 /// The chunk of one history hypertable the columnstore converts next, by size.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -98,38 +73,19 @@ fn every_table(measured: &[RowstoreChunkSize]) -> Vec<RowstoreChunkSize> {
 
 #[cfg(test)]
 mod tests {
-    use crate::history_chunk_size::{HistoryTable, RowstoreChunkSize, every_table};
+    use crate::{
+        candidate::history_table::HistoryTable,
+        history_chunk_size::{RowstoreChunkSize, every_table},
+    };
     use pretty_assertions::assert_eq;
-    use std::str::FromStr;
 
     #[test]
-    fn each_history_table_name_round_trips_and_is_the_hypertable_identifier() {
-        for table in HistoryTable::ALL {
-            assert_eq!(HistoryTable::from_str(table.relation_name()), Ok(table));
-        }
-        assert_eq!(HistoryTable::AttributeHistory.relation_name(), "attribute_history");
-        assert_eq!(HistoryTable::ScopeHistory.relation_name(), "scope_history");
-    }
-
-    #[test]
-    fn a_history_table_without_a_rowstore_chunk_reports_zero_bytes() {
+    fn a_history_table_with_a_rowstore_chunk_reports_its_bytes() {
         let measured = [RowstoreChunkSize {
-            table: HistoryTable::ScopeHistory,
+            table: HistoryTable::AttributeHistory,
             largest_bytes: 4096,
         }];
-        assert_eq!(
-            every_table(&measured),
-            vec![
-                RowstoreChunkSize {
-                    table: HistoryTable::AttributeHistory,
-                    largest_bytes: 0,
-                },
-                RowstoreChunkSize {
-                    table: HistoryTable::ScopeHistory,
-                    largest_bytes: 4096,
-                },
-            ]
-        );
+        assert_eq!(every_table(&measured), measured.to_vec());
     }
 
     #[test]

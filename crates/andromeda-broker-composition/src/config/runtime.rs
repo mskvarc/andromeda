@@ -21,6 +21,7 @@ use andromeda_postgresql_context_store::{
     config::DatabaseConfig,
     database_defaults::{DatabaseDefaults, StatementTimeout},
 };
+use andromeda_postgresql_maintenance::expected_deployment::{ColumnstoreConversion, ExpectedDeployment};
 use andromeda_server_tls::config::TlsConfig;
 use andromeda_snapshot::config::SnapshotConfig;
 use andromeda_temporal::config::TemporalConfig;
@@ -145,6 +146,20 @@ impl RuntimeConfig {
         DatabaseDefaults {
             synchronous_commit: self.database.synchronous_commit,
             statement_timeout: StatementTimeout::past_request_deadline(self.http.request_timeout.duration()),
+        }
+    }
+
+    /// What the maintenance controller checks the cluster against: the prefix
+    /// of every tenant database name, and how temporal history is converted
+    /// to the columnstore.
+    #[must_use]
+    pub fn expected_deployment(&self) -> ExpectedDeployment {
+        ExpectedDeployment {
+            tenant_database_prefix: self.tenancy.tenant_db_prefix.clone(), // clone: the controller keeps its own copy of the prefix
+            columnstore_conversion: ColumnstoreConversion {
+                after: self.temporal.columnstore_after.duration(),
+                sweep_interval: self.temporal.columnstore_sweep_interval.duration(),
+            },
         }
     }
 

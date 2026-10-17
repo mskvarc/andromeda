@@ -46,6 +46,24 @@ pub fn analyze(schema: &dyn Iden, relation: &dyn Iden) -> MaintenanceStatement {
     MaintenanceStatement(format!("ANALYZE {}.{}", quoted(schema), quoted(relation)))
 }
 
+/// Build the recompression of one partially converted `TimescaleDB` chunk,
+/// named by its OID: `SET LOCAL timescaledb.compress_truncate_behaviour =
+/// 'truncate_disabled'; CALL convert_to_columnstore(<oid>::regclass,
+/// if_not_columnstore => true)`.
+///
+/// The two statements run as one implicit transaction, so the setting lasts for
+/// the call alone. `if_not_columnstore` turns a chunk recompressed meanwhile
+/// into a notice rather than an error; a partial chunk is still recompressed.
+/// With truncation disabled a write waiting on the chunk cannot deadlock the
+/// call should it fall back from recompressing segment by segment to converting
+/// the whole chunk.
+#[must_use]
+pub fn recompress_chunk(chunk_oid: u32) -> MaintenanceStatement {
+    MaintenanceStatement(format!(
+        "SET LOCAL timescaledb.compress_truncate_behaviour = 'truncate_disabled'; CALL convert_to_columnstore({chunk_oid}::regclass, if_not_columnstore => true)"
+    ))
+}
+
 /// Build the fixed settings for one short-lived maintenance session.
 #[must_use]
 pub fn session_settings() -> [MaintenanceStatement; 4] {
@@ -107,6 +125,15 @@ pub fn current_user_has_table_privilege(relation: SimpleExpr, privilege: SimpleE
 #[must_use]
 pub fn pgstattuple(relation: SimpleExpr) -> FunctionCall {
     Func::cust(MaintenanceFunction::Pgstattuple).args([relation])
+}
+
+/// `pg_wal_lsn_diff(pg_current_wal_lsn(), lsn)::bigint`: the bytes of WAL
+/// written since `lsn`, which a replication slot whose `restart_lsn` it is
+/// keeps on disk.
+#[must_use]
+pub fn wal_written_since(lsn: SimpleExpr) -> SimpleExpr {
+    let current = Func::cust(MaintenanceFunction::PgCurrentWalLsn).into();
+    cast(Func::cust(MaintenanceFunction::PgWalLsnDiff).args([current, lsn]).into(), PostgresType::Bigint)
 }
 
 /// `pg_backend_pid()` for excluding the maintenance session from load gates.
@@ -180,6 +207,10 @@ enum MaintenanceFunction {
     MxidAge,
     /// `pg_options_to_table`.
     PgOptionsToTable,
+    /// `pg_current_wal_lsn`.
+    PgCurrentWalLsn,
+    /// `pg_wal_lsn_diff`.
+    PgWalLsnDiff,
 }
 
 #[cfg(test)]
@@ -188,11 +219,13 @@ mod tests {
         analyze,
         drop_index_concurrently,
         multixact_age,
+        recompress_chunk,
         reindex_index_concurrently,
         session_settings,
         storage_parameter,
         transaction_age,
         vacuum_non_truncating,
+        wal_written_since,
     };
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
@@ -248,6 +281,23 @@ mod tests {
             "VACUUM (TRUNCATE FALSE, PARALLEL 0) \"public\".\"current_attributes\""
         );
         assert_eq!(analyze(&schema, &table).as_sql(), "ANALYZE \"public\".\"current_attributes\"");
+    }
+
+    #[test]
+    fn a_partial_chunk_is_recompressed_by_oid_with_truncation_disabled_for_the_call_alone() {
+        assert_eq!(
+            recompress_chunk(16_384).as_sql(),
+            "SET LOCAL timescaledb.compress_truncate_behaviour = 'truncate_disabled'; CALL convert_to_columnstore(16384::regclass, if_not_columnstore => true)"
+        );
+    }
+
+    #[test]
+    fn the_wal_a_slot_keeps_is_measured_from_the_current_position() {
+        let sql = Query::select()
+            .expr(wal_written_since(Expr::col(Alias::new("restart_lsn"))))
+            .to_owned()
+            .to_string(PostgresQueryBuilder);
+        assert_eq!(sql, "SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), \"restart_lsn\")::bigint");
     }
 
     #[test]

@@ -14,12 +14,17 @@ use crate::{
     capability::{self, CapabilityStatus, MutationPrivilege},
     error::MaintenanceError,
     evidence::inspection_result::InspectionResult,
+    expected_deployment::ExpectedDeployment,
+    extension_observation,
     fleet_observation,
     fleet_triage,
     freeze_report,
     inspection::{self, InvalidIndex},
     policy::{PolicyProfile, SafetyGates},
+    replication_slot,
     state::{self, RegisteredTenant, branch_rows, open_breach, pending_action, tenant_inspection},
+    statement_statistics,
+    timescale_observation,
 };
 use andromeda_postgresql_context_store::{
     maintenance_config::{MaintenanceConfig, MaintenanceMode},
@@ -83,17 +88,26 @@ pub struct MaintenanceController {
     /// How long a per-tenant inspection pool waits for its connection before it
     /// gives up, matching the request path's acquire deadline.
     acquire_timeout: Duration,
+    /// What the observations compare the cluster against.
+    expected: ExpectedDeployment,
 }
 
 impl MaintenanceController {
     /// Construct a controller over the shared platform registry.
     #[must_use]
-    pub const fn new(platform_pool: PgPool, direct_url: DatabaseUrl, config: MaintenanceConfig, acquire_timeout: Duration) -> MaintenanceController {
+    pub const fn new(
+        platform_pool: PgPool,
+        direct_url: DatabaseUrl,
+        config: MaintenanceConfig,
+        acquire_timeout: Duration,
+        expected: ExpectedDeployment,
+    ) -> MaintenanceController {
         MaintenanceController {
             platform_pool,
             direct_url,
             config,
             acquire_timeout,
+            expected,
         }
     }
 
@@ -144,6 +158,8 @@ impl MaintenanceController {
         }
         let fleet = fleet_observation::observe_fleet(platform).await?;
         fleet.record_telemetry();
+        fleet.report_unvisited(&self.expected.tenant_database_prefix);
+        replication_slot::observe_replication_slots(platform).await?;
         autovacuum_health::observe_workers(platform).await?;
         let now = Utc::now();
         let records = tenant_inspection::inspection_records(platform).await?;
@@ -163,6 +179,9 @@ impl MaintenanceController {
         if let Some(database) = observed {
             freeze_report::report_freeze_pressure(&mut connection, tenant, database.freeze).await?;
         }
+        timescale_observation::report_timescale_state(&mut connection, tenant, self.expected.columnstore_conversion, Utc::now()).await?;
+        extension_observation::report_extension_updates(&mut connection, tenant).await?;
+        statement_statistics::report_statement_statistics(&mut connection, tenant).await?;
         let mutation = match self.config.mode {
             MaintenanceMode::Disabled | MaintenanceMode::Observe => MutationPrivilege::NotRequired,
             MaintenanceMode::Automatic => MutationPrivilege::Required,

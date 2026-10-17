@@ -1,10 +1,16 @@
 //! Process-scoped PostgreSQL maintenance task registration.
 
 use andromeda_postgresql_context_store::{
+    error::ContextStoreError,
     maintenance_config::{MaintenanceConfig, MaintenanceMode},
     tenant_database::DatabaseUrl,
 };
-use andromeda_postgresql_maintenance::{controller::MaintenanceController, error::MaintenanceError, policy::PolicyProfile};
+use andromeda_postgresql_maintenance::{
+    controller::MaintenanceController,
+    error::MaintenanceError,
+    expected_deployment::ExpectedDeployment,
+    policy::PolicyProfile,
+};
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
     failure::{FailureClass, TaskFailure},
@@ -42,6 +48,7 @@ pub(crate) fn register_postgresql_maintenance(
     direct_url: DatabaseUrl,
     config: MaintenanceConfig,
     acquire_timeout: Duration,
+    expected: ExpectedDeployment,
 ) -> Result<(), MaintenanceRegistrationError> {
     if config.mode == MaintenanceMode::Disabled {
         return Ok(());
@@ -54,7 +61,7 @@ pub(crate) fn register_postgresql_maintenance(
         RestartPolicy::transient(u32::MAX, profile.cadence, profile.cadence),
         ShutdownPolicy::new(Duration::from_secs(30)),
     );
-    let controller = Arc::new(MaintenanceController::new(platform_pool, direct_url, config, acquire_timeout));
+    let controller = Arc::new(MaintenanceController::new(platform_pool, direct_url, config, acquire_timeout, expected));
     let task = ScheduledTask::new(registration, schedule, move |execution| {
         let controller = Arc::clone(&controller); // clone: each bounded pass owns the process controller while executing
         async move {
@@ -69,13 +76,15 @@ pub(crate) fn register_postgresql_maintenance(
 /// Classify platform failures; per-tenant capability and action failures are pass outcomes.
 const fn classify_failure(error: MaintenanceError) -> TaskFailure<MaintenanceError> {
     let class = match &error {
-        MaintenanceError::Database(_) => FailureClass::Transient,
+        MaintenanceError::Database(_) | MaintenanceError::ExtensionVersions(ContextStoreError::Database(_)) => FailureClass::Transient,
         MaintenanceError::SchemaContract(_)
         | MaintenanceError::NegativeCatalogValue { .. }
         | MaintenanceError::CatalogValueOverflow { .. }
         | MaintenanceError::Statement(_)
         | MaintenanceError::TenantName(_)
         | MaintenanceError::UnknownTarget(_)
+        | MaintenanceError::UnknownWalStatus(_)
+        | MaintenanceError::ExtensionVersions(_)
         | MaintenanceError::UnknownHorizonHolder(_)
         | MaintenanceError::UnreadableCode(_)
         | MaintenanceError::ProbeTargetNotAnIndex(_)

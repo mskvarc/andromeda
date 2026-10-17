@@ -1,9 +1,10 @@
 //! Measuring the execution safety gates before a maintenance action.
 
 use crate::{
-    branch::BranchTarget,
-    candidate::MaintenanceTarget,
+    branch::{Branch, BranchTarget},
+    candidate::{MaintenanceTarget, history_table::HistoryTable},
     catalog_counter::{CatalogCounter, non_negative, percent},
+    columnstore_partiality::HistoryChunk,
     error::MaintenanceError,
     policy::SafetyGates,
     scalar_query::{select_bool, select_i64, select_optional_instant},
@@ -19,23 +20,53 @@ use chrono::Utc;
 use sea_query::{Alias, Asterisk, Expr, ExprTrait, Func, Query, SelectStatement};
 use sqlx::PgConnection;
 
+/// The relations an action's gates read.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum GateScope<'c> {
+    /// A fixed target in its branch: an index with its heap, a heap, a heap's
+    /// statistics, or a whole history hypertable.
+    Target(BranchTarget),
+    /// The one chunk of a history hypertable an action works on.
+    Chunk {
+        /// The hypertable.
+        table: HistoryTable,
+        /// The chunk.
+        chunk: &'c HistoryChunk,
+    },
+}
+
 /// Measure load, long transactions, the vacuum horizon of a heap target,
-/// and active maintenance and waiting locks on the target's relations in its
-/// branch.
+/// and active maintenance and waiting locks on the relations of `scope`.
 ///
-/// Only a vacuum is gated on the horizon: a rebuild produces a compact index
-/// and an analyze samples live rows whatever the horizon, so its holders are
-/// read for neither.
-pub(crate) async fn safety_gates(connection: &mut PgConnection, row: BranchTarget) -> Result<SafetyGates, MaintenanceError> {
-    let branch = row.branch();
-    let heap = branch.qualified(row.target().heap().relation_name());
-    let (relation, held_horizon) = match row.target() {
-        MaintenanceTarget::Index(index) => (Some(branch.qualified(index.relation_name())), None),
-        MaintenanceTarget::Heap(_) => (
+/// Only a vacuum is gated on the horizon: a rebuild produces a compact index,
+/// an analyze samples live rows whatever the horizon, and a recompression
+/// rewrites the live rows of the segments it touches, so its holders are read
+/// for none of them. A chunk is gated on its own operations and locks and on
+/// waiting locks of its hypertable.
+pub(crate) async fn safety_gates(connection: &mut PgConnection, scope: GateScope<'_>) -> Result<SafetyGates, MaintenanceError> {
+    let (heap, relation, held_horizon) = match scope {
+        GateScope::Target(row) => {
+            let branch = row.branch();
+            match row.target() {
+                MaintenanceTarget::Index(index) => (
+                    branch.qualified(index.heap().relation_name()),
+                    Some(branch.qualified(index.relation_name())),
+                    None,
+                ),
+                MaintenanceTarget::Heap(target) => (
+                    branch.qualified(target.relation_name()),
+                    None,
+                    vacuum_horizon::horizon_held_by(&vacuum_horizon::horizon_holders(connection, HorizonScope::TenantDatabase).await?),
+                ),
+                MaintenanceTarget::Statistics(target) => (branch.qualified(target.relation_name()), None, None),
+                MaintenanceTarget::Columnstore(table) => (branch.qualified(table.relation_name()), None, None),
+            }
+        }
+        GateScope::Chunk { table, chunk } => (
+            chunk.relation.clone(), // clone: the gate statements bind the chunk's name as their own value
+            Some(Branch::Live.qualified(table.relation_name())),
             None,
-            vacuum_horizon::horizon_held_by(&vacuum_horizon::horizon_holders(connection, HorizonScope::TenantDatabase).await?),
         ),
-        MaintenanceTarget::Statistics(_) => (None, None),
     };
     let active = select_i64(connection, active_backend_statement()).await?;
     let maximum = select_i64(connection, maximum_connections_statement()).await?;
@@ -127,7 +158,8 @@ fn active_maintenance_statement(relation: &str) -> SelectStatement {
         .to_owned()
 }
 
-/// Whether another backend in this database waits for a relation lock.
+/// Whether another backend in this database waits for a lock on `heap` or on
+/// the second relation of the action, its index or its chunk's hypertable.
 ///
 /// `pg_locks.relation` is an OID unique only within one database, so the
 /// lock's database is pinned to the current one.

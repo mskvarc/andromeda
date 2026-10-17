@@ -5,11 +5,13 @@
 //! runs without truncation and never shrinks its heap's file, so bytes would
 //! report nothing for every vacuum; its dead-tuple count measures it instead.
 //! An analyze is measured by the tuples modified since the heap's last
-//! analyze, which it resets; it reclaims nothing.
+//! analyze, which it resets; it reclaims nothing. A recompression is measured
+//! by whether its chunk is still partial after it.
 
 use crate::{
     candidate::{heap_target::HeapTarget, index_target::IndexTarget},
     catalog_counter::percent,
+    columnstore_partiality::ChunkPartiality,
 };
 use andromeda_telemetry::maintenance::ActionEffect;
 
@@ -56,6 +58,11 @@ pub(crate) enum ActionBaseline {
         /// Tuples modified since the last analyze, before this one.
         before_modified: u64,
     },
+    /// A partial history chunk about to be recompressed.
+    Columnstore {
+        /// The chunk's OID.
+        chunk: u32,
+    },
 }
 
 /// One action's target read immediately before and after it.
@@ -82,25 +89,31 @@ pub(crate) enum ActionComparison {
         /// Modified tuples after the analyze, those written while it ran.
         after_modified: u64,
     },
+    /// A recompression, compared by whether its chunk is still partial.
+    Columnstore {
+        /// The chunk's partiality after the recompression; a write reaching it
+        /// while the recompression ran leaves it partial.
+        after: ChunkPartiality,
+    },
 }
 
 impl ActionComparison {
-    /// What the action achieved, `None` for an analyze, which reclaims
-    /// nothing. A counter that rose, because writes outran the action, reports
-    /// zero.
+    /// What the action achieved, `None` for an analyze and a recompression,
+    /// which reclaim nothing a byte or tuple count measures. A counter that
+    /// rose, because writes outran the action, reports zero.
     pub(crate) const fn effect(self) -> Option<ActionEffect> {
         match self {
             ActionComparison::Index { before_bytes, after_bytes } => Some(ActionEffect::ReclaimedBytes(before_bytes.saturating_sub(after_bytes))),
             ActionComparison::Heap { before, after } => Some(ActionEffect::RemovedDeadTuples(before.dead.saturating_sub(after.dead))),
-            ActionComparison::Statistics { .. } => None,
+            ActionComparison::Statistics { .. } | ActionComparison::Columnstore { .. } => None,
         }
     }
 
-    /// The dead share a vacuum left behind, `None` for a rebuild, an analyze
-    /// and an empty heap.
+    /// The dead share a vacuum left behind, `None` for a rebuild, an analyze,
+    /// a recompression and an empty heap.
     pub(crate) fn post_vacuum_dead_percent(self) -> Option<u8> {
         match self {
-            ActionComparison::Index { .. } | ActionComparison::Statistics { .. } => None,
+            ActionComparison::Index { .. } | ActionComparison::Statistics { .. } | ActionComparison::Columnstore { .. } => None,
             ActionComparison::Heap { after, .. } => after.dead_percent(),
         }
     }
@@ -108,7 +121,10 @@ impl ActionComparison {
 
 #[cfg(test)]
 mod tests {
-    use crate::action_measurement::{ActionComparison, TupleCounts};
+    use crate::{
+        action_measurement::{ActionComparison, TupleCounts},
+        columnstore_partiality::ChunkPartiality,
+    };
     use andromeda_telemetry::maintenance::ActionEffect;
     use pretty_assertions::assert_eq;
 
@@ -148,6 +164,13 @@ mod tests {
             before_modified: 50_000,
             after_modified: 12,
         };
+        assert_eq!(comparison.effect(), None);
+        assert_eq!(comparison.post_vacuum_dead_percent(), None);
+    }
+
+    #[test]
+    fn a_recompression_has_no_reclaim_effect() {
+        let comparison = ActionComparison::Columnstore { after: ChunkPartiality::Whole };
         assert_eq!(comparison.effect(), None);
         assert_eq!(comparison.post_vacuum_dead_percent(), None);
     }
