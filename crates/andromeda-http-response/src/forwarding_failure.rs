@@ -84,7 +84,7 @@ pub fn registration_store_failure(error: &RegistrationError) -> ClassifiedReport
         RegistrationError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
         RegistrationError::StoreUnavailable => ClassifiedReport::store_unavailable(error.to_string()),
         RegistrationError::Persistence(_) | RegistrationError::Internal(_) => {
-            ClassifiedReport::internal(error, InternalFailureSummary::new("the registration store is unavailable"))
+            ClassifiedReport::internal(error, InternalFailureSummary::REGISTRATION_STORE_FAULT)
         }
         RegistrationError::Validation(_)
         | RegistrationError::NotFound { .. }
@@ -186,7 +186,7 @@ mod tests {
                 RegistrationError::Persistence(PersistenceFailure::StatementRejected),
                 ProblemClassification::Category(NgsiLdErrorType::InternalError),
                 None,
-                "the registration store is unavailable",
+                "the registration store could not complete the operation",
             ),
         ] {
             let report = classify_forwarding_error(&FederationError::Registration(failure));

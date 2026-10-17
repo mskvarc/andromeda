@@ -36,7 +36,7 @@ pub fn classify_snapshot_error(error: &SnapshotError) -> ClassifiedReport {
         SnapshotError::StoreSaturated | SnapshotError::Contended => ClassifiedReport::store_saturated(error.to_string()),
         SnapshotError::StoreUnavailable => ClassifiedReport::store_unavailable(error.to_string()),
         SnapshotError::Representation(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to render the snapshot")),
-        SnapshotError::Persistence(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("the snapshot store is unavailable")),
+        SnapshotError::Persistence(_) => ClassifiedReport::internal(error, InternalFailureSummary::SNAPSHOT_STORE_FAULT),
         SnapshotError::Internal(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("internal snapshot error")),
     }
 }
@@ -112,7 +112,7 @@ mod tests {
             pretty_assertions::assert_eq!(report.error_type(), expected);
             match &error {
                 SnapshotError::Persistence(failure) => {
-                    pretty_assertions::assert_eq!(report.detail(), "the snapshot store is unavailable");
+                    pretty_assertions::assert_eq!(report.detail(), "the snapshot store could not complete the operation");
                     assert!(!report.detail().contains(&failure.to_string()), "the raw cause leaked: {}", report.detail());
                 }
                 SnapshotError::Internal(invariant) => {

@@ -39,7 +39,7 @@ impl SubscriptionHttpClassify for SubscriptionError {
             // Backpressure, not a fault: shed as 503 with `Retry-After`, not a 500.
             SubscriptionError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
             SubscriptionError::StoreUnavailable => ClassifiedReport::store_unavailable(self.to_string()),
-            SubscriptionError::Persistence(_) => ClassifiedReport::internal(self, InternalFailureSummary::new("the subscription store is unavailable")),
+            SubscriptionError::Persistence(_) => ClassifiedReport::internal(self, InternalFailureSummary::SUBSCRIPTION_STORE_FAULT),
             SubscriptionError::Representation(_) | SubscriptionError::Internal(_) => {
                 ClassifiedReport::internal(self, InternalFailureSummary::new("internal subscription error"))
             }
@@ -141,7 +141,7 @@ mod tests {
             let report = error.classify_for_subscription_http();
             pretty_assertions::assert_eq!(report.error_type(), expected);
             if expected == NgsiLdErrorType::InternalError {
-                pretty_assertions::assert_eq!(report.detail(), "the subscription store is unavailable");
+                pretty_assertions::assert_eq!(report.detail(), "the subscription store could not complete the operation");
                 assert!(
                     !report.detail().contains(&PersistenceFailure::StatementRejected.to_string()),
                     "the raw cause leaked: {}",

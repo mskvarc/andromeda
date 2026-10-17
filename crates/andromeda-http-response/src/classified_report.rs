@@ -252,10 +252,10 @@ mod tests {
             // subscriber, and a callsite first registered there caches that
             // no one listens; the cache is rebuilt now that one does.
             rebuild_interest_cache();
-            ClassifiedReport::internal(&"database db-7.internal failed", InternalFailureSummary::new("the entity store is unavailable"))
+            ClassifiedReport::internal(&"database db-7.internal failed", InternalFailureSummary::ENTITY_STORE_FAULT)
         });
         pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::InternalError);
-        pretty_assertions::assert_eq!(report.detail(), "the entity store is unavailable");
+        pretty_assertions::assert_eq!(report.detail(), "the entity store could not complete the operation");
         assert!(!report.detail().contains("db-7.internal"));
         pretty_assertions::assert_eq!(errors.load(Ordering::SeqCst), 1);
     }

@@ -19,7 +19,8 @@ impl InternalFailureSummary {
     /// The broker failed to resolve one of its own internal identifiers.
     ///
     /// A phrase that recurs across crates gets a shared constant so the wording
-    /// is written and vetted once. Subsystem-specific phrases are passed inline.
+    /// is written and vetted once, as does a store-fault phrase. Other
+    /// subsystem-specific phrases are passed inline.
     pub const IDENTIFIER_RESOLUTION: InternalFailureSummary = InternalFailureSummary::new("the broker could not resolve an internal identifier");
     /// The negotiated response representation could not be rendered.
     pub const RESPONSE_RENDERING: InternalFailureSummary = InternalFailureSummary::new("failed to render the response representation");
@@ -30,6 +31,20 @@ impl InternalFailureSummary {
     /// A context source could not be reached, or its response could not be used.
     pub const CONTEXT_FEDERATION: InternalFailureSummary =
         InternalFailureSummary::new("a context source could not be reached or its response could not be used");
+    /// The entity store failed an operation for a reason no retry mends.
+    ///
+    /// The store-fault phrases are kept together because each answers a 500:
+    /// a saturated or unreachable store is the retryable 503 and is named so
+    /// there, so no fault phrase may read as an outage (clause 5.5.6).
+    pub const ENTITY_STORE_FAULT: InternalFailureSummary = InternalFailureSummary::new("the entity store could not complete the operation");
+    /// The temporal store failed an operation for a reason no retry mends.
+    pub const TEMPORAL_STORE_FAULT: InternalFailureSummary = InternalFailureSummary::new("the temporal store could not complete the operation");
+    /// The registration store failed an operation for a reason no retry mends.
+    pub const REGISTRATION_STORE_FAULT: InternalFailureSummary = InternalFailureSummary::new("the registration store could not complete the operation");
+    /// The subscription store failed an operation for a reason no retry mends.
+    pub const SUBSCRIPTION_STORE_FAULT: InternalFailureSummary = InternalFailureSummary::new("the subscription store could not complete the operation");
+    /// The snapshot store failed an operation for a reason no retry mends.
+    pub const SNAPSHOT_STORE_FAULT: InternalFailureSummary = InternalFailureSummary::new("the snapshot store could not complete the operation");
 
     /// Wrap a vetted, client-safe literal.
     #[must_use]
@@ -58,5 +73,31 @@ mod tests {
             InternalFailureSummary::CONTEXT_FEDERATION.to_string(),
             "a context source could not be reached or its response could not be used"
         );
+    }
+
+    #[test]
+    fn no_store_fault_summary_reads_as_an_outage() {
+        for (summary, expected) in [
+            (InternalFailureSummary::ENTITY_STORE_FAULT, "the entity store could not complete the operation"),
+            (
+                InternalFailureSummary::TEMPORAL_STORE_FAULT,
+                "the temporal store could not complete the operation",
+            ),
+            (
+                InternalFailureSummary::REGISTRATION_STORE_FAULT,
+                "the registration store could not complete the operation",
+            ),
+            (
+                InternalFailureSummary::SUBSCRIPTION_STORE_FAULT,
+                "the subscription store could not complete the operation",
+            ),
+            (
+                InternalFailureSummary::SNAPSHOT_STORE_FAULT,
+                "the snapshot store could not complete the operation",
+            ),
+        ] {
+            pretty_assertions::assert_eq!(summary.to_string(), expected);
+            assert!(!expected.contains("unavailable"), "{expected}");
+        }
     }
 }

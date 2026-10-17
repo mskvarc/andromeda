@@ -134,7 +134,7 @@ mod tests {
             pretty_assertions::assert_eq!(report.error_type(), expected);
             if expected == NgsiLdErrorType::InternalError {
                 // Both internal Entity Map variants disclose the store summary and never their operator diagnostic.
-                pretty_assertions::assert_eq!(report.detail(), "the entity store is unavailable");
+                pretty_assertions::assert_eq!(report.detail(), "the entity store could not complete the operation");
                 assert!(!report.detail().contains("database host"), "the raw cause leaked: {}", report.detail());
                 assert!(!report.detail().contains("broken"), "the raw cause leaked: {}", report.detail());
             }

@@ -50,7 +50,7 @@ impl RegistrationHttpClassify for RegistrationError {
             // Backpressure, not a fault: shed as 503 with `Retry-After`, not a 500.
             RegistrationError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
             RegistrationError::StoreUnavailable => ClassifiedReport::store_unavailable(self.to_string()),
-            RegistrationError::Persistence(_) => ClassifiedReport::internal(self, InternalFailureSummary::new("the registration store is unavailable")),
+            RegistrationError::Persistence(_) => ClassifiedReport::internal(self, InternalFailureSummary::REGISTRATION_STORE_FAULT),
             RegistrationError::Internal(_) => ClassifiedReport::internal(self, InternalFailureSummary::new("internal registration error")),
         }
     }
@@ -150,7 +150,7 @@ mod tests {
             let report = error.classify_for_registration_http();
             pretty_assertions::assert_eq!(report.error_type(), expected);
             if expected == NgsiLdErrorType::InternalError {
-                pretty_assertions::assert_eq!(report.detail(), "the registration store is unavailable");
+                pretty_assertions::assert_eq!(report.detail(), "the registration store could not complete the operation");
                 assert!(
                     !report.detail().contains(&PersistenceFailure::StatementRejected.to_string()),
                     "the raw cause leaked: {}",

@@ -35,7 +35,7 @@ pub fn classify_temporal_error(error: &TemporalError) -> ClassifiedReport {
         TemporalError::TransactionContended => ClassifiedReport::transaction_contended(error.to_string()),
         TemporalError::StoreUnavailable => ClassifiedReport::store_unavailable(error.to_string()),
         TemporalError::Commit(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to persist temporal history")),
-        TemporalError::Persistence(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("the temporal store is unavailable")),
+        TemporalError::Persistence(_) => ClassifiedReport::internal(error, InternalFailureSummary::TEMPORAL_STORE_FAULT),
         TemporalError::Internal(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("internal temporal error")),
     }
 }
@@ -115,7 +115,7 @@ mod tests {
                 "Persistence",
                 TemporalError::Persistence(PersistenceFailure::StatementRejected),
                 NgsiLdErrorType::InternalError,
-                Some(("the temporal store is unavailable", "the store rejected a statement")),
+                Some(("the temporal store could not complete the operation", "the store rejected a statement")),
             ),
             (
                 "Internal",
@@ -173,6 +173,20 @@ mod tests {
             pretty_assertions::assert_eq!(classification.status_code(), StatusCode::SERVICE_UNAVAILABLE, "{error}");
             pretty_assertions::assert_eq!(report.retry_after(), Some(retry_after), "{error}");
         }
+    }
+
+    /// Clause 5.5.6: a statement the store refused on a valid request is an
+    /// `InternalError` the client cannot mend by retrying, so it carries no
+    /// `Retry-After` and its detail is not the outage the 503 names.
+    #[test]
+    fn a_temporal_store_fault_is_a_500_that_does_not_read_as_an_outage() {
+        let fault = classify_temporal_error(&TemporalError::from(PersistenceFailure::StatementRejected));
+        let outage = classify_temporal_error(&TemporalError::from(PersistenceFailure::Unavailable));
+        pretty_assertions::assert_eq!(fault.classification().status_code(), StatusCode::INTERNAL_SERVER_ERROR);
+        pretty_assertions::assert_eq!(fault.retry_after(), None);
+        pretty_assertions::assert_eq!(outage.classification().status_code(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(!fault.detail().contains("unavailable"), "{}", fault.detail());
+        assert_ne!(fault.detail(), outage.detail());
     }
 
     /// Clause 6.3.2: a temporal write past the payload budget is "Request

@@ -47,7 +47,7 @@ pub fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
         // have persisted, and it can be sent again once the store is back.
         EntityError::StoreUnavailable => ClassifiedReport::store_unavailable(error.to_string()),
         EntityError::Commit(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to commit the entity write")),
-        EntityError::Persistence(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("the entity store is unavailable")),
+        EntityError::Persistence(_) => ClassifiedReport::internal(error, InternalFailureSummary::ENTITY_STORE_FAULT),
         EntityError::Internal(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("internal entity error")),
     }
 }
@@ -130,7 +130,7 @@ mod tests {
             (
                 EntityError::Persistence(PersistenceFailure::StatementRejected),
                 "rejected",
-                "the entity store is unavailable",
+                "the entity store could not complete the operation",
             ),
             (
                 EntityError::from(EntityInvariant::BatchPreparationFailed),

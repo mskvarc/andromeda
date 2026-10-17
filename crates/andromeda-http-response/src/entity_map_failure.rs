@@ -15,9 +15,7 @@ pub fn classify_entity_map_error(error: &EntityMapError) -> ClassifiedReport {
         EntityMapError::RequestChanged { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
         EntityMapError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
         EntityMapError::StoreUnavailable => ClassifiedReport::store_unavailable(error.to_string()),
-        EntityMapError::Persistence(_) | EntityMapError::Invariant(_) => {
-            ClassifiedReport::internal(error, InternalFailureSummary::new("the entity store is unavailable"))
-        }
+        EntityMapError::Persistence(_) | EntityMapError::Invariant(_) => ClassifiedReport::internal(error, InternalFailureSummary::ENTITY_STORE_FAULT),
     }
 }
 
@@ -45,6 +43,7 @@ mod tests {
     fn a_map_store_fault_is_masked_as_an_internal_error() {
         let report = classify_entity_map_error(&EntityMapError::Persistence(PersistenceFailure::StatementRejected));
         pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::InternalError);
-        pretty_assertions::assert_eq!(report.detail(), "the entity store is unavailable");
+        pretty_assertions::assert_eq!(report.detail(), "the entity store could not complete the operation");
+        pretty_assertions::assert_eq!(report.retry_after(), None);
     }
 }
