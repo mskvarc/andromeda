@@ -585,7 +585,7 @@ mod tests {
         let EntityTotal::Counted(count) = built.total else {
             panic!("a numbered page carries no total on its rows");
         };
-        let count = count.to_string(PostgresQueryBuilder);
+        let count = count.count.to_string(PostgresQueryBuilder);
         assert!(count.starts_with("SELECT COUNT(*) FROM "), "{count}");
         assert!(!count.contains("numbered") && !count.contains("current_attributes"), "{count}");
         assert!(!built.select.to_string(PostgresQueryBuilder).contains("total_count"));

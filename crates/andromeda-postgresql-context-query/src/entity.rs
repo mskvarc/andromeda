@@ -338,7 +338,7 @@ mod tests {
         let (sql, values) = entity_query.select.build(PostgresQueryBuilder);
         let count_sql = match entity_query.total {
             EntityTotal::Omitted => None,
-            EntityTotal::OnPageRows { empty_page: count } | EntityTotal::Counted(count) => Some(count.build(PostgresQueryBuilder).0),
+            EntityTotal::OnPageRows { uncounted: count } | EntityTotal::Counted(count) => Some(count.count.build(PostgresQueryBuilder).0),
         };
         Built {
             sql,
@@ -1029,7 +1029,7 @@ mod tests {
             EntityTotal::Omitted | EntityTotal::OnPageRows { .. } => None,
         }
         .expect("a counted keyset page is counted separately");
-        let (count_sql, _) = count.build(PostgresQueryBuilder);
+        let (count_sql, _) = count.count.build(PostgresQueryBuilder);
         assert!(count_sql.contains("COUNT(*)"), "{count_sql}");
         assert!(!count_sql.contains(r#""id" >"#), "the count carries no boundary predicate: {count_sql}");
     }

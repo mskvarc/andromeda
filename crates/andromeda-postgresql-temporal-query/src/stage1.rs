@@ -49,8 +49,9 @@ use andromeda_postgresql_query::{
     error::RenderError,
     history_source::{
         HistoryBranch,
+        PendingEntries,
         attribute_rows::{attribute_rows, stream_rows},
-        entity_rows::{attribute_holder_rows, entity_rows, type_member_rows},
+        entity_rows::{attribute_holder_rows, attribute_holder_rows_by_key, entity_rows, type_member_rows},
         grain::HistoryGrain,
     },
     page_window::apply_identifier_window,
@@ -101,14 +102,14 @@ pub fn build_stage1_entity_ids(
     count: CountPolicy,
     names: &QueryNames,
 ) -> Result<Stage1Query, RenderError> {
-    let (evolutions, type_test) = evolution_rows(branch, compiled, names);
+    let Evolutions { paged, counted, type_test } = evolution_rows(branch, compiled, names);
     // Entity-level conditions, applied to the Evolutions under alias "e".
     let entity_conditions = build_entity_conditions_for_temporal(branch, compiled, names, type_test)?;
 
     let mut select = SelectStatement::new();
     select
         .expr_as(SeaExpr::col((E, TemporalEntities::Id)), EntityIdColumn)
-        .from(evolutions.clone()) // clone: the count query reads the same Evolutions
+        .from(paged)
         .cond_where(entity_conditions.clone()) // clone: the count query applies the same entity predicate
         .cond_where(SeaExpr::exists(temporal_match_subquery(branch, compiled, names)));
 
@@ -145,7 +146,7 @@ pub fn build_stage1_entity_ids(
             let mut count_select = SelectStatement::new();
             count_select
                 .expr(Func::count(SeaExpr::col((E, TemporalEntities::Id))))
-                .from(evolutions)
+                .from(counted)
                 .cond_where(entity_conditions)
                 .cond_where(SeaExpr::exists(temporal_match_subquery(branch, compiled, names)));
             Some(count_select.take())
@@ -195,6 +196,28 @@ enum TypeTest {
     Walked,
 }
 
+/// The Evolutions stage 1 reads under `e`.
+struct Evolutions {
+    /// The Evolutions the page is cut from.
+    paged: TableRef,
+    /// The same Evolutions, in the order the count probes them best.
+    counted: TableRef,
+    /// How a selector's type is tested on them.
+    type_test: TypeTest,
+}
+
+impl Evolutions {
+    /// Evolutions the page and the count read in the same order.
+    fn read_alike(rows: TableRef, type_test: TypeTest) -> Evolutions {
+        Evolutions {
+            // clone: the count reads the same Evolutions
+            counted: rows.clone(),
+            paged: rows,
+            type_test,
+        }
+    }
+}
+
 /// The Evolutions stage 1 reads under `e`, and how a selector's type is
 /// tested on them.
 ///
@@ -207,15 +230,18 @@ enum TypeTest {
 /// Otherwise, when the request names attributes and no selector names a type
 /// or an identifier, the walk of those attributes' streams: step S1 of clause
 /// 5.7.4.4 keeps only Evolutions with an instance of one of them, which hold
-/// a stream of it, and no type is tested on what it yields. A request that
+/// a stream of it, and no type is tested on what it yields. Its count probes
+/// the same holders in the order of their surrogate keys when the queue is
+/// read: each probe then reads the history of one Evolution inside the
+/// union, and in key order those reads follow the indexes. A request that
 /// considers no Entity (clause 5.5.14) walks nothing. Otherwise the temporal
 /// catalogue, its types tested on its type keys.
-fn evolution_rows(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames) -> (TableRef, TypeTest) {
+fn evolution_rows(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Evolutions {
     let selection = &compiled.entities;
     let selectors = &selection.selectors;
     match selection.considered {
         ConsideredEntities::Selected => {}
-        ConsideredEntities::NoEntity => return (entity_rows(branch, E), TypeTest::TypeKeys),
+        ConsideredEntities::NoEntity => return Evolutions::read_alike(entity_rows(branch, E), TypeTest::TypeKeys),
     }
     let type_walkable = !selectors.is_empty()
         && selectors.iter().all(|selector| selector.ids.is_empty())
@@ -229,17 +255,23 @@ fn evolution_rows(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, name
         })
         .flatten();
     if let Some(walk) = exprs.and_then(|exprs| type_member_rows(branch, E, &exprs, &names.types)) {
-        return (walk, TypeTest::Walked);
+        return Evolutions::read_alike(walk, TypeTest::Walked);
     }
     let holder_walkable =
         !compiled.instances.attr_filter.is_empty() && selectors.iter().all(|selector| selector.ids.is_empty() && selector.type_expr.is_none());
     if holder_walkable {
-        return (
-            attribute_holder_rows(branch, E, &concerned_attribute_keys(compiled, &names.attributes)),
-            TypeTest::TypeKeys,
-        );
+        let keys = concerned_attribute_keys(compiled, &names.attributes);
+        let paged = attribute_holder_rows(branch, E, &keys);
+        return match branch.pending() {
+            PendingEntries::Unioned => Evolutions {
+                paged,
+                counted: attribute_holder_rows_by_key(branch, E, &keys),
+                type_test: TypeTest::TypeKeys,
+            },
+            PendingEntries::Absent => Evolutions::read_alike(paged, TypeTest::TypeKeys),
+        };
     }
-    (entity_rows(branch, E), TypeTest::TypeKeys)
+    Evolutions::read_alike(entity_rows(branch, E), TypeTest::TypeKeys)
 }
 
 /// The dictionary keys of the attributes the request concerns (clause
@@ -651,12 +683,42 @@ mod tests {
         assert!(sql.ends_with(r#"ORDER BY "e"."id" ASC LIMIT $3 OFFSET $4"#), "{sql}");
     }
 
-    /// The count totals the Evolutions the page walks.
+    /// The count totals the Evolutions the page walks; reading the queue, it
+    /// probes them in the order of their surrogate keys.
     #[test]
     fn a_counted_attrs_only_selection_counts_the_attribute_walk() {
         let count = built_count(&speed_only(), &speed_and_address());
-        assert!(count.starts_with(r#"SELECT COUNT("e"."id") FROM (SELECT DISTINCT ON ("held"."id")"#), "{count}");
-        assert!(count.contains(r#""temporal_attribute_streams" WHERE "attribute_name_key" = (7)"#), "{count}");
+        assert!(
+            count.starts_with(
+                r#"SELECT COUNT("e"."id") FROM (SELECT "hm"."id" FROM (SELECT DISTINCT ON ("held"."id") "held"."id", "held"."temporal_entity_key""#
+            ),
+            "{count}"
+        );
+        assert!(
+            count.contains(r#"(SELECT "id", "temporal_entity_key" FROM "temporal_attribute_streams" WHERE "attribute_name_key" = (7) ORDER BY "id" ASC)"#),
+            "{count}"
+        );
+        assert!(count.contains(r#"ORDER BY "hm"."temporal_entity_key" ASC) AS "e""#), "{count}");
+    }
+
+    /// Over recorded rows alone the probe is compared beside its source, and
+    /// the count reads the holders as the page does.
+    #[test]
+    fn a_counted_attrs_only_selection_over_recorded_rows_counts_the_page_walk() {
+        let stage1 = build_stage1_entity_ids(
+            &HistoryBranch::live_recorded(),
+            &speed_only(),
+            &PageWindow::offset(20, 0),
+            CountPolicy::Emit,
+            &speed_and_address(),
+        )
+        .expect("valid temporal query");
+        let count = stage1.count.expect("count requested").to_string(PostgresQueryBuilder);
+        assert!(
+            count.starts_with(r#"SELECT COUNT("e"."id") FROM (SELECT DISTINCT ON ("held"."id") "held"."id" FROM"#),
+            "{count}"
+        );
+        assert!(!count.contains(r#""hm""#), "{count}");
     }
 
     /// A pattern names no identifier the index could answer, so the walk

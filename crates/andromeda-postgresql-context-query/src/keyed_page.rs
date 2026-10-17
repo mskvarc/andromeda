@@ -12,18 +12,19 @@
 //!    `idx_ca_sub_eq_keys` or the trigram indexes, each rechecked, at most
 //!    [`RANGED_CANDIDATE_BOUND`] + 1 from a range of a typed value index, or
 //!    at most [`PROBED_CANDIDATE_BOUND`] + 1 carriers of an attribute name,
-//!    each probed for a standing instance, or at most
-//!    [`LINKED_CANDIDATE_BOUND`] + 1 Entities naming a linked entity the
-//!    hop's inner term keeps
+//!    each probed for a standing instance, or every Entity naming a linked
+//!    entity the hop's inner term keeps
 //!    ([`keyed_candidates`](andromeda_postgresql_query::q_predicate::keyed_term::keyed_candidates)),
 //!    and the page is cut from the selection narrowed to them under the rest
 //!    of `q`;
-//! 3. the full walk probes each Entity of the selection for the whole `q`.
+//! 3. the full walk probes each Entity of the selection for the whole `q`,
+//!    when more candidates than the bound qualify. A hop has no full walk.
 
 use crate::{
     entity::QFilter,
     entity_page::ProjectedPage,
-    gated_page::{IndexOrWalk, PageSource, ShortWalk, gated_page, walked_rows},
+    gated_page::{GatedColumns, IndexOrWalk, PageSource, ShortWalk, gated_page, walked_rows},
+    one_time_gate::CandidateBound,
 };
 use andromeda_ngsi_ld_query::{filter::expression::Expr as QueryExpr, read_order::ReadOrder};
 use andromeda_postgresql_query::{
@@ -56,34 +57,38 @@ pub const RANGED_CANDIDATE_BOUND: u64 = 50_000;
 /// a selection mostly without it is reached through the index, not the walk.
 pub const PROBED_CANDIDATE_BOUND: u64 = 10_000;
 
-/// The most Entities naming a linked entity the index path hands to the page.
-///
-/// A linked candidate costs an entry of the object's index and a heap visit,
-/// with no recheck. Past the bound the page walks the selection serially and
-/// probes each Entity's Relationship outward, which costs several times the
-/// candidates of a hop matching tens of thousands of Entities, so the bound
-/// sits at the ranged one.
-pub const LINKED_CANDIDATE_BOUND: u64 = 50_000;
-
 /// The most candidates the index path hands to the page, by what one costs to
 /// read.
-const fn page_bound(read: CandidateRead) -> u64 {
+///
+/// A Linked Entity hop's candidates are read whole. Each costs an entry of
+/// the object's index and a heap visit, read from the linked entities its
+/// inner term keeps through that term's own index, so the read grows with the
+/// matches alone. The outward walk has no such bound: the planner estimates
+/// the linked entities an inner term keeps from statistics that rarely hold
+/// their values, and believing a few, it probes every Relationship instance
+/// once per linked entity, which with thousands of them never finishes.
+pub(crate) const fn page_bound(read: CandidateRead) -> CandidateBound {
     match read {
-        CandidateRead::Rechecked => CANDIDATE_BOUND,
-        CandidateRead::Ranged => RANGED_CANDIDATE_BOUND,
-        CandidateRead::Probed => PROBED_CANDIDATE_BOUND,
-        CandidateRead::Linked => LINKED_CANDIDATE_BOUND,
+        CandidateRead::Rechecked => CandidateBound::AtMost(CANDIDATE_BOUND),
+        CandidateRead::Ranged => CandidateBound::AtMost(RANGED_CANDIDATE_BOUND),
+        CandidateRead::Probed => CandidateBound::AtMost(PROBED_CANDIDATE_BOUND),
+        CandidateRead::Linked => CandidateBound::Whole,
     }
 }
 
 /// The projected page of `source` for a `q` with a keyed term, and the order
-/// its rows come back in.
+/// its rows come back in, its rows carrying what `columns` asks for.
 ///
 /// # Errors
 ///
 /// Fails as rendering the plain page fails: a reference geometry with no EWKB
 /// spelling, or a query-language rule a renderer decides first.
-pub(crate) fn keyed_page(source: &PageSource<'_>, q_expr: &QueryExpr, keyed: KeyedCandidates<'_>) -> Result<(ProjectedPage, ReadOrder), RenderError> {
+pub(crate) fn keyed_page(
+    source: &PageSource<'_>,
+    q_expr: &QueryExpr,
+    keyed: KeyedCandidates<'_>,
+    columns: GatedColumns,
+) -> Result<(ProjectedPage, ReadOrder), RenderError> {
     let walked = walked_rows(source.schema);
     let short = ShortWalk {
         source: *source,
@@ -97,7 +102,7 @@ pub(crate) fn keyed_page(source: &PageSource<'_>, q_expr: &QueryExpr, keyed: Key
         narrowed: source.condition(QFilter::Except(keyed.term))?,
         whole: source.condition(QFilter::Whole)?,
     };
-    gated_page(source, short, rest)
+    gated_page(source, short, rest, columns)
 }
 
 #[cfg(test)]
@@ -162,10 +167,54 @@ mod tests {
         assert!(sql.contains(r#""entities"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#), "{sql}");
         assert_eq!(sql.matches("UNION ALL").count(), 2, "{sql}");
         assert!(sql.contains("OFFSET"), "the full walk probes each Entity: {sql}");
+    }
+
+    /// Clause 6.3.13: the index branch reads every candidate before it cuts
+    /// the window, so its rows carry the total; the short walk sees part of
+    /// the selection and the full walk stops at the page, so theirs carry
+    /// none and the count runs on its own.
+    #[test]
+    fn a_counted_keyed_page_carries_its_total_on_the_index_branch_alone() {
+        let built = build_query(
+            &ContextTarget::Live,
+            &query("\"https://example.com/temperature\"~=\"text-71.*\""),
+            &PageWindow::offset(100, 0),
+            CountPolicy::Emit,
+            &names(),
+        )
+        .expect("valid entity query");
+        assert!(matches!(built.total, EntityTotal::OnPageRows { .. }), "the page carries the total it can");
+        let sql = built.select.to_string(PostgresQueryBuilder);
+        let (answered, rest) = sql.split_once(r#"AS "answered""#).expect("the short walk branch");
+        let (indexed, walk) = rest.split_once(r#"AS "indexed""#).expect("the index branch");
         assert!(
-            matches!(built.total, EntityTotal::Counted(_)),
-            "the total is counted on its own, since the short walk sees part of the selection"
+            answered.contains(r#"SELECT *, NULL AS "total_count", 1 AS "gated_step" FROM "short_walk""#),
+            "{answered}"
         );
+        assert!(indexed.contains(r#"COUNT(*) OVER () AS "total_count", 2 AS "gated_step""#), "{indexed}");
+        assert!(
+            walk.contains(r#"NULL AS "total_count", 3 AS "gated_step""#) && !walk.contains("OVER ()"),
+            "{walk}"
+        );
+        assert!(sql.contains(r#""page"."total_count" AS "total_count""#), "the heads read it back: {sql}");
+        assert!(sql.contains(r#""page"."gated_step" AS "gated_step""#), "the heads read the step back: {sql}");
+    }
+
+    #[test]
+    fn an_uncounted_or_continued_keyed_page_carries_no_total() {
+        let q = query("\"https://example.com/temperature\"~=\"text-71.*\"");
+        let uncounted = build_query(&ContextTarget::Live, &q, &PageWindow::offset(100, 0), CountPolicy::Omit, &names()).expect("valid entity query");
+        assert!(!uncounted.select.to_string(PostgresQueryBuilder).contains("total_count"));
+        let continued = build_query(
+            &ContextTarget::Live,
+            &q,
+            &PageWindow::after(100, "urn:ngsi-ld:Building:001".parse().expect("valid URI")),
+            CountPolicy::Emit,
+            &names(),
+        )
+        .expect("valid entity query");
+        assert!(!continued.select.to_string(PostgresQueryBuilder).contains("total_count"));
+        assert!(matches!(continued.total, EntityTotal::Counted(_)), "past a cursor the total is its own count");
     }
 
     #[test]
@@ -241,9 +290,9 @@ mod tests {
         assert!(walk.contains(r#"FROM "current_attributes" AS "ca""#), "{walk}");
     }
 
-    /// The hop is read from the linked entities inward, and the index branch
-    /// leaves it out of the filter it applies to the candidates, while the
-    /// walk past the bound probes it outward.
+    /// The hop is read from the linked entities inward, every one of them,
+    /// and the index branch leaves it out of the filter it applies to the
+    /// candidates; the page has no full walk to probe it outward.
     #[test]
     fn a_linked_entity_hop_pages_through_the_instances_naming_its_linked_matches() {
         let built = build_query(
@@ -266,12 +315,17 @@ mod tests {
             "{candidates}"
         );
         assert!(candidates.contains(r#""ca_ln1"."value_uri" = "le1"."id""#), "{candidates}");
-        assert!(values.0.contains(&Value::BigUnsigned(Some(50_001))), "{:?}", values.0);
-        assert!(values.0.contains(&Value::BigUnsigned(Some(50_000))), "{:?}", values.0);
+        assert!(!sql.contains(r#") AS "matches" LIMIT"#), "the candidates are read whole: {sql}");
+        assert!(!values.0.contains(&Value::BigUnsigned(Some(50_001))), "{:?}", values.0);
         let after_short = sql.split(r#"AS "answered""#).nth(1).expect("the index branch follows the short walk");
-        let (indexed, walk) = after_short.split_once(r#"AS "indexed""#).expect("the index branch");
+        let (indexed, rest) = after_short.split_once(r#"AS "indexed""#).expect("the index branch");
         assert!(!indexed.contains("ca_ln1"), "the candidates answer the hop: {indexed}");
-        assert!(walk.contains("JOIN jsonb_array_elements_text("), "the walk probes the hop outward: {walk}");
+        assert!(
+            !indexed.contains(r#"(SELECT COUNT(*) FROM "candidates")"#),
+            "no bound gates the index branch: {indexed}"
+        );
+        assert!(!rest.contains("UNION ALL"), "the short walk and the index branch alone: {rest}");
+        assert!(!rest.contains("JOIN jsonb_array_elements_text("), "no walk probes the hop outward: {rest}");
     }
 
     /// A Date is held as its fixed-width text, so its candidates range over the

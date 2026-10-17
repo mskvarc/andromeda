@@ -1708,6 +1708,7 @@ dependencies = [
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
  "chrono",
+ "derive_more",
  "iri-rs",
  "pretty_assertions",
  "sea-query",

@@ -85,5 +85,8 @@ create table temporal_attribute_streams (
 -- every Evolution whose identifier sorts ahead of the attribute's last holder.
 -- The key lives on the stream itself, so whatever deletes a stream (an
 -- attribute, a window of history, the Evolution) takes its entry with it.
-create index idx_temporal_attribute_streams_attribute_name_key_id on temporal_attribute_streams (attribute_name_key, id);
+-- The Evolution's surrogate key rides along so a count can re-order the
+-- holders by it from the index alone: probed in that order, their history
+-- reads follow the indexes, where in identifier order they read at random.
+create index idx_temporal_attribute_streams_attribute_name_key_id on temporal_attribute_streams (attribute_name_key, id) include (temporal_entity_key);
 

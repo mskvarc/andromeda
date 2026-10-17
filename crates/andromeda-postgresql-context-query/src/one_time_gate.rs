@@ -46,6 +46,37 @@ pub(crate) fn within(cte: impl Iden + 'static, bound: u64) -> SimpleExpr {
     count_of(cte).lte(bound)
 }
 
+/// How many candidates a keyed statement reads before it walks the selection
+/// instead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CandidateBound {
+    /// At most this many: one more tells the statement to walk.
+    AtMost(u64),
+    /// Every candidate: the statement never walks, because a walk's plan
+    /// cannot be trusted against the term.
+    Whole,
+}
+
+impl CandidateBound {
+    /// The candidates `query` yields, read as far as the bound needs.
+    pub(crate) fn read(self, query: SelectStatement) -> SelectStatement {
+        match self {
+            CandidateBound::AtMost(bound) => bounded(query, bound),
+            CandidateBound::Whole => query,
+        }
+    }
+
+    /// Whether a statement past `self` never reads more candidates than one
+    /// past `other` would.
+    pub(crate) const fn reads_no_more_than(self, other: CandidateBound) -> bool {
+        match (self, other) {
+            (CandidateBound::AtMost(mine), CandidateBound::AtMost(theirs)) => mine <= theirs,
+            (CandidateBound::AtMost(_) | CandidateBound::Whole, CandidateBound::Whole) => true,
+            (CandidateBound::Whole, CandidateBound::AtMost(_)) => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::one_time_gate::{Candidates, bounded, within};

@@ -51,6 +51,12 @@ pub enum StoreInvariant {
         /// The position that does not fit.
         position: usize,
     },
+    /// A gated page's rows named a step its statement has no branch for.
+    #[error("a gated page named step {step}, which none of its branches is")]
+    UnknownGatedStep {
+        /// The value the rows carried.
+        step: i16,
+    },
 }
 
 #[cfg(test)]
@@ -65,5 +71,11 @@ mod tests {
             rows: 3,
         };
         pretty_assertions::assert_eq!(invariant.to_string(), "entity delete given 2 expectations for 3 rows");
+    }
+
+    #[test]
+    fn an_unknown_gated_step_names_the_value_the_rows_carried() {
+        let invariant = StoreInvariant::UnknownGatedStep { step: 7 };
+        pretty_assertions::assert_eq!(invariant.to_string(), "a gated page named step 7, which none of its branches is");
     }
 }

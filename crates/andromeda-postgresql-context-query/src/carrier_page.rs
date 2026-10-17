@@ -22,11 +22,12 @@
 use crate::{
     carried_names::attrs_condition,
     entity::{QFilter, build_entity_conditions},
-    entity_page::ProjectedPage,
+    entity_page::{ProjectedPage, StepColumn},
     entity_relations::{Demand, EntityRelations, RowSource},
-    gated_page::{IndexOrWalk, PageSource, ShortWalk, Walked, gated_page},
+    gated_page::{GatedColumns, IndexOrWalk, PageSource, ShortWalk, Walked, gated_page},
+    one_time_gate::CandidateBound,
 };
-use andromeda_ngsi_ld_query::{entity::compiled::CompiledEntityQuery, entity_selection::ConsideredEntities, read_order::ReadOrder};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, entity_selection::ConsideredEntities, read_order::ReadOrder};
 use andromeda_postgresql_query::{dictionary::query_names::QueryNames, entity_row_refs::EntityRowRefs, error::RenderError};
 use andromeda_postgresql_schema::current::EntitySearch;
 use sea_query::{Condition, DynIden, Expr, ExprTrait, Iden, Query, SelectStatement};
@@ -79,12 +80,13 @@ pub(crate) fn carriers(query: &CompiledEntityQuery, names: &QueryNames, schema: 
 }
 
 /// The projected page of `source`, a selection by `attrs` alone, cut from its
-/// `carriers`, and the order its rows come back in.
+/// `carriers`, and the order its rows come back in, the carriers branch's
+/// rows carrying the total when `carried` asks for it.
 ///
 /// # Errors
 ///
 /// Fails as rendering the plain page fails.
-pub(crate) fn carrier_page(source: &PageSource<'_>, carriers: SelectStatement) -> Result<(ProjectedPage, ReadOrder), RenderError> {
+pub(crate) fn carrier_page(source: &PageSource<'_>, carriers: SelectStatement, carried: CountPolicy) -> Result<(ProjectedPage, ReadOrder), RenderError> {
     let identity = EntityRelations {
         source: RowSource::Entities,
         search: Demand::NotJoined,
@@ -107,12 +109,18 @@ pub(crate) fn carrier_page(source: &PageSource<'_>, carriers: SelectStatement) -
     let whole = source.condition(QFilter::Whole)?;
     let rest = IndexOrWalk {
         candidates: carriers,
-        bound: CARRIER_BOUND,
+        bound: CandidateBound::AtMost(CARRIER_BOUND),
         // clone: the carriers are rechecked by the filter the full walk applies
         narrowed: whole.clone(),
         whole,
     };
-    gated_page(source, short, rest)
+    // The total is the plain count over the carriers whichever step answers,
+    // so the rows name none.
+    let columns = GatedColumns {
+        total: carried,
+        step: StepColumn::Unnamed,
+    };
+    gated_page(source, short, rest, columns)
 }
 
 #[cfg(test)]
@@ -215,10 +223,12 @@ mod tests {
         assert_eq!(built.planning, StatementPlanning::GatedBranches);
     }
 
-    /// Clause 6.3.13: the short walk sees part of the selection, so the total
-    /// is its own count over every carrier.
+    /// Clause 6.3.13: the carriers branch reads every carrier, so it carries
+    /// the total; the short walk sees part of the selection and the full walk
+    /// stops at the page, so when either answers the total is its own count
+    /// over every carrier.
     #[test]
-    fn a_counted_carrier_page_counts_the_whole_selection_on_its_own() {
+    fn a_counted_carrier_page_carries_its_total_on_the_carriers_branch_alone() {
         let built = build_query(
             &ContextTarget::Live,
             &by_attrs(&["headSign"]),
@@ -227,15 +237,20 @@ mod tests {
             &names(),
         )
         .expect("valid entity query");
-        let EntityTotal::Counted(count) = built.total else {
-            panic!("a carrier page carries no total on its rows");
+        let EntityTotal::OnPageRows { uncounted } = built.total else {
+            panic!("a first carrier page carries its total when the carriers answer");
         };
-        let count = count.to_string(PostgresQueryBuilder);
+        let count = uncounted.count.to_string(PostgresQueryBuilder);
         assert!(count.starts_with("SELECT COUNT(*) FROM "), "{count}");
         assert!(count.contains(r#""entity_search"."attribute_name_keys" @> (ARRAY[28])"#), "{count}");
         assert!(!count.contains("candidates") && !count.contains("short_walk"), "{count}");
         assert_eq!(built.total_planning, StatementPlanning::Cached);
-        assert!(!built.select.to_string(PostgresQueryBuilder).contains("total_count"));
+        let page = built.select.to_string(PostgresQueryBuilder);
+        let (answered, rest) = page.split_once(r#"AS "answered""#).expect("the short walk branch");
+        let (indexed, walk) = rest.split_once(r#"AS "indexed""#).expect("the carriers branch");
+        assert!(answered.contains(r#"SELECT *, NULL AS "total_count" FROM "short_walk""#), "{answered}");
+        assert!(indexed.contains(r#"COUNT(*) OVER () AS "total_count""#), "{indexed}");
+        assert!(walk.contains(r#"NULL AS "total_count""#) && !walk.contains("OVER ()"), "{walk}");
     }
 
     /// Clause 5.7.2.4: an Entity carrying any one of the Attributes matches,

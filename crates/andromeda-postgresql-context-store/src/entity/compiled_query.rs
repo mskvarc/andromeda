@@ -5,6 +5,7 @@ use crate::{
     current_attribute::read::RowSelection,
     entity::{mapper::stored_uri, pushdown, repo::EntityRepository},
     error::ContextStoreError,
+    store_invariant::StoreInvariant,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{port::retrieved_entity::RetrievedEntity, query_outcome::QueryOutcome};
@@ -15,7 +16,11 @@ use andromeda_ngsi_ld_query::{
     page_window::PageWindow,
     projection::returned_attributes::ReturnedAttributes,
 };
-use andromeda_postgresql_context_query::{entity as entity_sql, entity_page::TOTAL_COUNT_COLUMN, entity_total::EntityTotal};
+use andromeda_postgresql_context_query::{
+    entity as entity_sql,
+    entity_page::{GATED_STEP_COLUMN, GatedStep, TOTAL_COUNT_COLUMN},
+    entity_total::EntityTotal,
+};
 use andromeda_postgresql_pool::read_share::PoolLane;
 use andromeda_postgresql_query::{
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
@@ -68,7 +73,11 @@ impl EntityRepository {
         let built = entity_sql::build_query(target, &planned.query, &planned.window, planned.count, &names)?;
 
         let head_rows = self.fetch_planned(&built.select, built.planning).await?;
-        let window_count = page_total(&head_rows, matches!(built.total, EntityTotal::OnPageRows { .. }));
+        let window_count = page_total(&head_rows, matches!(built.total, EntityTotal::OnPageRows { .. }))?;
+        let step = match &built.total {
+            EntityTotal::OnPageRows { uncounted: total } | EntityTotal::Counted(total) if total.walked.is_some() => page_step(&head_rows)?,
+            EntityTotal::Omitted | EntityTotal::OnPageRows { .. } | EntityTotal::Counted(_) => None,
+        };
         let returned = ReturnedAttributes::of(&planned.query.projection, &planned.query.selection.attrs);
         let selection = RowSelection::of(&returned, &names.attributes);
         let mut rows = self.entities_of_heads(PoolLane::Reads, target, &head_rows, &selection).await?;
@@ -77,12 +86,11 @@ impl EntityRepository {
 
         let total_count = match built.total {
             EntityTotal::Omitted => None,
-            EntityTotal::OnPageRows { empty_page } => match (window_count, rows.is_empty()) {
-                (Some(count), _) => Some(count),
-                (None, true) => Some(self.count_matches(&empty_page, built.total_planning).await?),
-                (None, false) => None,
+            EntityTotal::OnPageRows { uncounted } => match window_count {
+                Some(count) => Some(count),
+                None => Some(self.count_matches(&uncounted.for_step(step), built.total_planning).await?),
             },
-            EntityTotal::Counted(count) => Some(self.count_matches(&count, built.total_planning).await?),
+            EntityTotal::Counted(count) => Some(self.count_matches(&count.for_step(step), built.total_planning).await?),
         };
 
         Ok(planned.outcome(rows, total_count))
@@ -211,10 +219,31 @@ impl EntityRepository {
 }
 
 /// The piggybacked total of a page, read off its first row when the page
-/// carries one (`COUNT(*) OVER ()` is constant across the set).
-fn page_total(rows: &[PgRow], read_total_count: bool) -> Option<i64> {
+/// carries one (`COUNT(*) OVER ()` is constant across the set). A gated page
+/// whose index branch did not answer carries a null total.
+///
+/// # Errors
+///
+/// Returns [`sqlx::Error`] when the page's rows have no total column.
+fn page_total(rows: &[PgRow], read_total_count: bool) -> Result<Option<i64>, sqlx::Error> {
     match (read_total_count, rows.first()) {
-        (true, Some(first)) => first.try_get::<i64, _>(TOTAL_COUNT_COLUMN).ok(),
-        (true, None) | (false, _) => None,
+        (true, Some(first)) => first.try_get::<Option<i64>, _>(TOTAL_COUNT_COLUMN),
+        (true, None) | (false, _) => Ok(None),
     }
+}
+
+/// The gated step that answered a page whose rows name it, read off its
+/// first row; `None` for an empty page.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError`] when the rows have no step column or name a
+/// step no gated page has.
+fn page_step(rows: &[PgRow]) -> Result<Option<GatedStep>, ContextStoreError> {
+    rows.first()
+        .map(|first| -> Result<GatedStep, ContextStoreError> {
+            let step: i16 = first.try_get(GATED_STEP_COLUMN)?;
+            GatedStep::try_from(step).map_err(|_| ContextStoreError::from(StoreInvariant::UnknownGatedStep { step }))
+        })
+        .transpose()
 }

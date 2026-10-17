@@ -20,7 +20,8 @@ use crate::{
     entity::QFilter,
     entity_page::{ProjectedPage, sort_column},
     entity_relations::{EntityRelations, RowSource},
-    gated_page::{IndexOrWalk, PageSource, ShortWalk, Walked, gated_page},
+    gated_page::{GatedColumns, IndexOrWalk, PageSource, ShortWalk, Walked, gated_page},
+    one_time_gate::CandidateBound,
 };
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
@@ -106,12 +107,12 @@ pub(crate) fn pattern_matches<'q>(query: &'q CompiledEntityQuery, relations: &En
 
 /// The projected page of `source`, a type selection filtered by an
 /// `idPattern` alone, cut from the pattern's `matches`, and the order its
-/// rows come back in.
+/// rows come back in, its rows carrying what `columns` asks for.
 ///
 /// # Errors
 ///
 /// Fails as rendering the plain page fails.
-pub(crate) fn id_pattern_page(source: &PageSource<'_>, matches: PatternMatches<'_>) -> Result<(ProjectedPage, ReadOrder), RenderError> {
+pub(crate) fn id_pattern_page(source: &PageSource<'_>, matches: PatternMatches<'_>, columns: GatedColumns) -> Result<(ProjectedPage, ReadOrder), RenderError> {
     // Ordered by nothing but the identifier, the walk projects it as its
     // first sort key.
     let walked_identifier = Expr::col((Walked, sort_column(0)));
@@ -123,13 +124,13 @@ pub(crate) fn id_pattern_page(source: &PageSource<'_>, matches: PatternMatches<'
     };
     let rest = IndexOrWalk {
         candidates: matches.select,
-        bound: ID_PATTERN_CANDIDATE_BOUND,
+        bound: CandidateBound::AtMost(ID_PATTERN_CANDIDATE_BOUND),
         // The pattern is the one filter, and every match the index yields is
         // rechecked against it.
         narrowed: Condition::all(),
         whole: source.condition(QFilter::Whole)?,
     };
-    gated_page(source, short, rest)
+    gated_page(source, short, rest, columns)
 }
 
 #[cfg(test)]
@@ -277,15 +278,29 @@ mod tests {
         }
     }
 
-    /// Clause 6.3.13: the short walk sees part of the selection, so the total
-    /// is its own count, read from the matches while they are few.
+    /// Clause 6.3.13: the matches branch carries the total on its rows; when
+    /// another branch answers, the total is its own count, read from the
+    /// matches while they are few, or walked at once when the short walk
+    /// filled the page.
     #[test]
     fn a_counted_id_pattern_page_counts_the_members_among_the_matches_under_the_rechecked_bound() {
         let built = built(&by_pattern(".*_1196287$"), CountPolicy::Emit);
-        let EntityTotal::Counted(count) = built.total else {
-            panic!("a gated page carries no total on its rows");
+        let EntityTotal::OnPageRows { uncounted } = built.total else {
+            panic!("a first gated page carries its total when the matches answer");
         };
-        let (sql, values) = count.build(PostgresQueryBuilder);
+        let page = built.select.to_string(PostgresQueryBuilder);
+        assert!(page.contains(r#"COUNT(*) OVER () AS "total_count""#), "{page}");
+        assert!(page.contains(r#""page"."gated_step" AS "gated_step""#), "{page}");
+        let walked_at_once = uncounted
+            .walked
+            .expect("a page the short walk filled is counted by walking")
+            .select
+            .to_string(PostgresQueryBuilder);
+        assert!(
+            walked_at_once.contains(r#""selected"."id" ~ "#) && !walked_at_once.contains("candidates"),
+            "{walked_at_once}"
+        );
+        let (sql, values) = uncounted.count.build(PostgresQueryBuilder);
         assert!(
             sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED (SELECT "entities"."entity_key" FROM "entities" WHERE "entities"."id" ~ $1 LIMIT $2)"#),
             "{sql}"

@@ -25,6 +25,7 @@ use andromeda_postgresql_query::{
 };
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{aggregate::count_over_all, branch::qualified};
+use derive_more::TryFrom;
 use sea_query::{Alias, Condition, Expr, ExprTrait, JoinType, Query, SelectStatement};
 
 /// Column name the total of a counted query is read back under.
@@ -35,6 +36,34 @@ use sea_query::{Alias, Condition, Expr, ExprTrait, JoinType, Query, SelectStatem
 /// The entity repository reads it back under this name, so the two have to
 /// agree; it is a constant rather than a literal for exactly that reason.
 pub const TOTAL_COUNT_COLUMN: &str = "total_count";
+
+/// Column name a gated page's rows name the step that answered it under.
+pub const GATED_STEP_COLUMN: &str = "gated_step";
+
+/// The step of a gated page that answered it, as its rows name it under
+/// [`GATED_STEP_COLUMN`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFrom)]
+#[try_from(repr)]
+#[repr(i16)]
+pub enum GatedStep {
+    /// The short walk filled the page: the matches are dense where the
+    /// selection starts.
+    ShortWalk = 1,
+    /// The candidates numbered at most the bound and the page was cut from
+    /// them.
+    Candidates = 2,
+    /// More candidates qualified and the selection was walked.
+    FullWalk = 3,
+}
+
+/// Whether a page's rows name the step of a gated page that answered it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StepColumn {
+    /// Each row carries the step under [`GATED_STEP_COLUMN`].
+    Named,
+    /// The rows carry no step.
+    Unnamed,
+}
 
 /// The name the head statement reads the page under.
 const PAGE: &str = "page";
@@ -59,7 +88,7 @@ const LOOKUP: &str = "stored";
 /// back through the page.
 #[must_use]
 pub fn heads_of(page: SelectStatement, rows: &EntityRowRefs, keys: Vec<SortKey>, count: CountPolicy) -> SelectStatement {
-    heads_over(projected_page(page, rows, keys, count), rows, count)
+    heads_over(projected_page(page, rows, keys, count), rows, count, StepColumn::Unnamed)
 }
 
 /// A page projecting its entity key and its sort keys, and the order it is
@@ -104,9 +133,11 @@ pub fn sort_column(position: usize) -> Alias {
     Alias::new(format!("sort_{position}"))
 }
 
-/// Read the head of every Entity a projected `page` keeps, in its order.
+/// Read the head of every Entity a projected `page` keeps, in its order,
+/// with the total `count` says the page carries and the gated step `step`
+/// says it names.
 #[must_use]
-pub fn heads_over(page: ProjectedPage, rows: &EntityRowRefs, count: CountPolicy) -> SelectStatement {
+pub fn heads_over(page: ProjectedPage, rows: &EntityRowRefs, count: CountPolicy, step: StepColumn) -> SelectStatement {
     let ProjectedPage { select: page, order } = page;
     let mut heads = Query::select();
     // The page carries no search row of its own beyond what its filters
@@ -119,6 +150,12 @@ pub fn heads_over(page: ProjectedPage, rows: &EntityRowRefs, count: CountPolicy)
             heads.expr_as(Expr::col((Alias::new(PAGE), Alias::new(TOTAL_COUNT_COLUMN))), Alias::new(TOTAL_COUNT_COLUMN));
         }
         CountPolicy::Omit => {}
+    }
+    match step {
+        StepColumn::Named => {
+            heads.expr_as(Expr::col((Alias::new(PAGE), Alias::new(GATED_STEP_COLUMN))), Alias::new(GATED_STEP_COLUMN));
+        }
+        StepColumn::Unnamed => {}
     }
     heads
         .from_subquery(page, Alias::new(PAGE))

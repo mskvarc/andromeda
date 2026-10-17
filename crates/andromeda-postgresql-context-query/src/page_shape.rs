@@ -5,10 +5,10 @@
 use crate::{
     carrier_page::{carrier_page, carriers},
     entity::window_and_sort_keys,
-    entity_page::{heads_of, heads_over},
+    entity_page::{StepColumn, heads_of, heads_over},
     entity_relations::EntityRelations,
     entity_total::TotalCandidates,
-    gated_page::PageSource,
+    gated_page::{GatedColumns, PageSource},
     id_pattern_page::{PatternMatches, id_pattern_page, pattern_matches},
     keyed_page::keyed_page,
     numbered_page::{NumberedOrder, numbered_order, numbered_page},
@@ -58,7 +58,8 @@ pub(crate) struct CutPage<'q> {
     /// How PostgreSQL may plan the statement the total runs.
     pub(crate) total_planning: StatementPlanning,
     /// The candidates the total reads its matches from, `None` when it
-    /// counts the selection under the whole filter.
+    /// counts the selection under the whole filter. A page with candidates
+    /// names on its rows the gated step that answered it.
     pub(crate) total_candidates: Option<TotalCandidates<'q>>,
 }
 
@@ -92,18 +93,20 @@ impl<'q> PageShape<'q> {
     /// Whether the page's rows carry the total `count` asks for.
     ///
     /// An offset page, and the first page of a cursor walk, piggyback a
-    /// requested total on every row; a continued cursor page cannot, since its
-    /// rows are only those past the cursor, and neither can a gated page,
-    /// whose first branch reads only the Entities the short walk visited.
+    /// requested total on their rows: every row of a plain page, the rows of
+    /// a gated page whose index branch answered, which read every candidate.
+    /// A continued cursor page cannot, since its rows are only those past the
+    /// cursor, and neither can a numbered page, whose branches each read part
+    /// of the selection.
     pub(crate) const fn counted_on_page(&self, count: CountPolicy, window: &PageWindow) -> CountPolicy {
         match (count, &window.start, self) {
-            (CountPolicy::Emit, PageStart::Offset(_) | PageStart::Cursor(None), PageShape::Plain) => CountPolicy::Emit,
-            (CountPolicy::Emit, PageStart::Cursor(Some(_)), PageShape::Plain)
-            | (
+            (
                 CountPolicy::Emit,
-                PageStart::Offset(_) | PageStart::Cursor(_),
-                PageShape::Keyed(..) | PageShape::Carriers(_) | PageShape::Numbered(_) | PageShape::IdPattern(_),
-            )
+                PageStart::Offset(_) | PageStart::Cursor(None),
+                PageShape::Plain | PageShape::Keyed(..) | PageShape::Carriers(_) | PageShape::IdPattern(_),
+            ) => CountPolicy::Emit,
+            (CountPolicy::Emit, PageStart::Cursor(Some(_)), PageShape::Plain | PageShape::Keyed(..) | PageShape::Carriers(_) | PageShape::IdPattern(_))
+            | (CountPolicy::Emit, PageStart::Offset(_) | PageStart::Cursor(_), PageShape::Numbered(_))
             | (
                 CountPolicy::Omit,
                 PageStart::Offset(_) | PageStart::Cursor(_),
@@ -153,11 +156,11 @@ impl<'q> PageShape<'q> {
                     })),
                     CountPolicy::Omit => None,
                 };
-                let (page, read_order) = keyed_page(source, q_expr, keyed)?;
+                let (page, read_order) = keyed_page(source, q_expr, keyed, gated_columns(count, counted_on_page))?;
                 (page, read_order, StatementPlanning::BoundValues, keyed_total)
             }
             PageShape::Carriers(carriers) => {
-                let (page, read_order) = carrier_page(source, carriers)?;
+                let (page, read_order) = carrier_page(source, carriers, counted_on_page)?;
                 (page, read_order, StatementPlanning::Cached, None)
             }
             PageShape::Numbered(order) => {
@@ -170,16 +173,34 @@ impl<'q> PageShape<'q> {
                     CountPolicy::Emit => Some(TotalCandidates::IdPattern(matches.select.clone())),
                     CountPolicy::Omit => None,
                 };
-                let (page, read_order) = id_pattern_page(source, matches)?;
+                let (page, read_order) = id_pattern_page(source, matches, gated_columns(count, counted_on_page))?;
                 (page, read_order, StatementPlanning::BoundValues, matches_total)
             }
         };
+        let step = match total_candidates {
+            Some(_) => StepColumn::Named,
+            None => StepColumn::Unnamed,
+        };
         Ok(CutPage {
-            select: heads_over(page, source.rows, CountPolicy::Omit),
+            select: heads_over(page, source.rows, counted_on_page, step),
             read_order,
             planning: StatementPlanning::GatedBranches,
             total_planning,
             total_candidates,
         })
+    }
+}
+
+/// What the rows of a gated page whose total reads candidates carry: the
+/// total when `counted_on_page` says the page can, and the step that answered
+/// it whenever `count` asks for a total, so a count run on its own skips the
+/// candidates of a page the short walk filled.
+const fn gated_columns(count: CountPolicy, counted_on_page: CountPolicy) -> GatedColumns {
+    GatedColumns {
+        total: counted_on_page,
+        step: match count {
+            CountPolicy::Emit => StepColumn::Named,
+            CountPolicy::Omit => StepColumn::Unnamed,
+        },
     }
 }
