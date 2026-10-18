@@ -6,28 +6,25 @@ use crate::csr::{
     entity_specification::EntitySpecification,
     expiry_predicate::not_expired,
     filter::csr_expr_to_condition,
+    geometry_parts::{GeometryParts, geometry_parts},
     information_row::some_information_row,
     preselect::attribute_name_candidate,
     registration_select::registration_select,
     temporal_partition::temporal_partition,
 };
-use andromeda_ngsi_ld_query::{
-    csr::compiled::CompiledCsrQuery,
-    geo::{query::GeoQuery, registration_area::RegistrationGeometry},
-    page_window::PageWindow,
-    read_order::ReadOrder,
-};
+use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, page_window::PageWindow, read_order::ReadOrder};
 use andromeda_postgresql_query::{
-    dictionary::resolved_names::ResolvedNames,
     error::RenderError,
-    geo_predicate as geo_sql,
-    geo_predicate::GeometrySource,
     page_window::apply_identifier_window,
     scope_predicate::{ScopeTarget, condition as scope_condition},
 };
 use andromeda_postgresql_schema::csr::Csr;
-use andromeda_postgresql_seaquery::aggregate::count_all;
-use sea_query::{Condition, Expr as SeaExpr, Query, SelectStatement};
+use andromeda_postgresql_seaquery::{
+    aggregate::count_all,
+    pg_array::{any, array_cat, array_of_subquery},
+    scalar_subquery::scalar_subquery,
+};
+use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Query, SelectStatement, SimpleExpr};
 
 /// A compiled CSR discovery query: the paginated result statement and its count,
 /// each a statement tree the store binds and executes on its own.
@@ -57,36 +54,66 @@ pub struct CsrQuery {
 /// # Errors
 ///
 /// Returns [`RenderError::ReferenceGeometryEncoding`] when the geoquery's
-/// reference geometry has no EWKB spelling the store can bind, and
-/// [`RenderError::Query`] when `georel=near` names neither `maxDistance` nor
-/// `minDistance`, which clause 4.10 requires at least one of. A discovery
-/// carries no ordering terms, so no other fragment of the statement can fail
-/// to render.
+/// reference geometry has no EWKB spelling the store can bind. A registration
+/// geometry is tested against a `near` relation's `maxDistance` alone, and a
+/// discovery carries no ordering terms, so no other fragment of the statement
+/// can fail to render.
 pub fn build_csr_query(query: &CompiledCsrQuery, window: &PageWindow) -> Result<CsrQuery, RenderError> {
-    let condition = build_csr_conditions(query)?;
+    let condition = build_csr_conditions(query);
+    let parts = query.geo.as_ref().map(geometry_parts).transpose()?.flatten();
 
     let mut select = registration_select();
-    select
-        // clone: the count statement filters on the same condition
-        .cond_where(condition.clone());
+    let count = match parts {
+        None => {
+            // clone: the count statement filters on the same condition
+            select.cond_where(condition.clone());
+            count_where(condition)
+        }
+        Some(GeometryParts { absent, present }) => {
+            // clone: both parts narrow the same condition
+            let absent = condition.clone().add(absent);
+            let present = condition.add(present);
+            let members = array_cat(part_page(&absent, window), part_page(&present, window));
+            select.and_where(SeaExpr::col(Csr::Id).eq(any(members)));
+            let mut count = Query::select();
+            count.expr(scalar_subquery(count_where(absent)).add(scalar_subquery(count_where(present))));
+            count.take()
+        }
+    };
     // Clause 5.5.9: the registrations are paged in identifier order in either
     // pagination mode. The identifier is unique, so an offset page is
     // deterministic across executions, and a cursor continues from the very
     // order its first page was read in.
     let read_order = apply_identifier_window(&mut select, SeaExpr::col(Csr::Id), window);
 
-    let mut count = Query::select();
-    count.expr(count_all()).from(Csr::Table).cond_where(condition);
-
     Ok(CsrQuery {
         select: select.take(),
-        count: count.take(),
+        count,
         read_order,
     })
 }
 
-/// Builds sea-query Condition from compiled CSR query filters.
-fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderError> {
+/// The identifiers of the registrations `part` keeps that can fall on the page
+/// `window` selects, as one array: the part read in identifier order through
+/// the window widened to reach the page's end, so the page cut from the merged
+/// parts is the page of their union.
+fn part_page(part: &Condition, window: &PageWindow) -> SimpleExpr {
+    let mut select = Query::select();
+    // clone: both the page and the count read the part
+    select.column(Csr::Id).from(Csr::Table).cond_where(part.clone());
+    apply_identifier_window(&mut select, SeaExpr::col(Csr::Id), &window.through_page_end());
+    array_of_subquery(select.take())
+}
+
+/// `SELECT count(*)` over the registrations `condition` keeps.
+fn count_where(condition: Condition) -> SelectStatement {
+    Query::select().expr(count_all()).from(Csr::Table).cond_where(condition).take()
+}
+
+/// The condition every registration on the answer meets: each filter of the
+/// query except the geoquery, which splits the statement into two parts
+/// instead of narrowing it.
+fn build_csr_conditions(query: &CompiledCsrQuery) -> Condition {
     // Clause 5.9.2.4: an expired registration is deleted the moment its
     // `expiresAt` is reached, so discovery never reports one.
     let mut condition = Condition::all().add(not_expired());
@@ -113,18 +140,6 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
         condition = condition.add(csr_expr_to_condition(expr));
     }
 
-    // Geo filter: a registration that declares no location still matches, and
-    // one that possibly contains a matching location does (clause 5.10.2.4).
-    if let Some(geo) = &query.geo {
-        condition = condition.add(geo_sql::condition(
-            geo,
-            GeometrySource::Registration {
-                column: registration_geometry_column(geo),
-            },
-            &ResolvedNames::default(),
-        )?);
-    }
-
     // Clause 4.19: a registration's scopes are stored as the same `ltree`
     // label paths current entities carry, so a `scopeQ` compiles to the same
     // `lquery` match.
@@ -142,17 +157,7 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
 
     condition = condition.add(temporal_partition(query.temporal.as_ref()));
 
-    Ok(condition)
-}
-
-/// The column holding the registration geometry a geoquery is matched against
-/// (Table 5.2.9-1).
-fn registration_geometry_column(geo: &GeoQuery) -> &'static str {
-    match RegistrationGeometry::of(geo) {
-        RegistrationGeometry::Location => "location",
-        RegistrationGeometry::ObservationSpace => "observation_space",
-        RegistrationGeometry::OperationSpace => "operation_space",
-    }
+    condition
 }
 
 #[cfg(test)]
@@ -532,6 +537,78 @@ mod tests {
         // location within it.
         assert!(built.sql.contains("\"location\" IS NULL"), "{}", built.sql);
         assert!(built.sql.contains("ST_Intersects"), "{}", built.sql);
+    }
+
+    /// Each part of the page is read through the window widened to reach the
+    /// page's end, so every registration of the page is among what its part
+    /// returns, and the page is cut once more from the merged parts.
+    #[test]
+    fn a_geo_discovery_pages_the_two_parts_and_cuts_the_page_from_their_union() {
+        let mut q = empty_query();
+        q.geo = Some(geo_query("https://uri.etsi.org/ngsi-ld/location"));
+        let built = build_paged(&q, &PageWindow::offset(10, 30));
+        assert!(
+            built
+                .sql
+                .contains(r#""id" = ANY(array_cat(ARRAY((SELECT "id" FROM "context_source_registrations" WHERE "#),
+            "{}",
+            built.sql
+        );
+        assert_eq!(built.sql.matches(r#"ORDER BY "id" ASC LIMIT 40 OFFSET 0)"#).count(), 2, "{}", built.sql);
+        assert!(built.sql.ends_with(r#"ORDER BY "id" ASC LIMIT 10 OFFSET 30"#), "{}", built.sql);
+        assert!(!built.sql.contains(r#""location" IS NULL OR ST_"#), "{}", built.sql);
+    }
+
+    #[test]
+    fn a_geo_discovery_cursor_page_bounds_each_part_by_the_cursor() {
+        let mut q = empty_query();
+        q.geo = Some(geo_query("https://uri.etsi.org/ngsi-ld/location"));
+        let window = PageWindow::after(5, "urn:ngsi-ld:ContextSourceRegistration:7".parse().expect("valid URI"));
+        let built = build_paged(&q, &window);
+        assert_eq!(
+            built.sql.matches(r#""id" > 'urn:ngsi-ld:ContextSourceRegistration:7'"#).count(),
+            3,
+            "both parts and the page: {}",
+            built.sql
+        );
+        assert_eq!(built.sql.matches(r#"ORDER BY "id" ASC LIMIT 5"#).count(), 3, "{}", built.sql);
+    }
+
+    /// The parts are disjoint, so the total is their sum, and each part keeps
+    /// every other filter of the query.
+    #[test]
+    fn a_geo_discovery_counts_the_sum_of_the_two_parts() {
+        let mut q = empty_query();
+        q.geo = Some(geo_query("https://uri.etsi.org/ngsi-ld/location"));
+        q.ids = ids(&["urn:ngsi-ld:Vehicle:1"]);
+        let built = build(&q);
+        assert!(
+            built
+                .count_sql
+                .starts_with(r#"SELECT (SELECT COUNT(*) FROM "context_source_registrations" WHERE "#),
+            "{}",
+            built.count_sql
+        );
+        assert!(built.count_sql.contains(r#"AND "location" IS NULL) + (SELECT COUNT(*)"#), "{}", built.count_sql);
+        assert!(built.count_sql.contains(r#""location" IS NOT NULL AND ST_Intersects("#), "{}", built.count_sql);
+        assert_eq!(built.count_sql.matches("registration_information").count(), 2, "{}", built.count_sql);
+    }
+
+    /// A geoquery whose reduction constrains no geometry keeps every
+    /// registration, so the statement is not split.
+    #[test]
+    fn a_minimum_distance_only_geo_discovery_is_not_split() {
+        let mut q = empty_query();
+        q.geo = Some(GeoQuery {
+            georel: GeoRel::Near {
+                max_distance: None,
+                min_distance: Some("100".parse().expect("positive distance")),
+            },
+            ..geo_query("https://uri.etsi.org/ngsi-ld/location")
+        });
+        let built = build(&q);
+        assert!(!built.sql.contains("array_cat"), "{}", built.sql);
+        assert!(!built.count_sql.contains('+'), "{}", built.count_sql);
     }
 
     /// Table 5.2.9-1: `observationSpace` and `operationSpace` are geometries of

@@ -25,7 +25,6 @@ use andromeda_postgresql_query::{
     entity_row_refs::EntityRowRefs,
     error::RenderError,
     geo_predicate as geo_sql,
-    geo_predicate::GeometrySource,
     page_window::bound_to_window,
     q_predicate::{instance_scan::InstanceScan, projection as q_filter},
     scope_predicate::{ScopeTarget, condition as scope_condition},
@@ -256,11 +255,7 @@ pub(crate) fn build_entity_conditions(
     }
 
     if let Some(geo) = &query.selection.geo {
-        let source = GeometrySource::Entity {
-            rows,
-            default_location: &query.selection.default_location,
-        };
-        condition = condition.add(geo_sql::condition(geo, source, &names.attributes)?);
+        condition = condition.add(geo_sql::condition(geo, rows, &query.selection.default_location, &names.attributes)?);
     }
 
     if let Some(scope_q) = &query.selection.scope_q {

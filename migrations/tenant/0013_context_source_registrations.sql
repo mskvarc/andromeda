@@ -122,19 +122,33 @@ create table context_source_registrations (
     constraint chk_csr_scope_spelling check ((scope_paths is null) = (verbatim_scope_paths is null) and (scope_paths is null or cardinality(scope_paths) = cardinality(verbatim_scope_paths)))
 );
 
--- The three spatial indexes preselect registrations by geography for
--- distributed operations and discovery.
+-- A geoquery keeps the registrations whose geometry meets it and those that
+-- declare none, so discovery reads the two as separate parts: the spatial
+-- indexes hold the declared geometries, and the identifier indexes beside them
+-- hold the registrations without one, in the identifier order a page is cut in.
 create index idx_csr_location on context_source_registrations using gist (location)
 where
     location is not null;
+
+create index idx_csr_without_location on context_source_registrations (id)
+where
+    location is null;
 
 create index idx_csr_observation_space on context_source_registrations using gist (observation_space)
 where
     observation_space is not null;
 
+create index idx_csr_without_observation_space on context_source_registrations (id)
+where
+    observation_space is null;
+
 create index idx_csr_operation_space on context_source_registrations using gist (operation_space)
 where
     operation_space is not null;
+
+create index idx_csr_without_operation_space on context_source_registrations (id)
+where
+    operation_space is null;
 
 create index idx_csr_scope_paths on context_source_registrations using gist (scope_paths);
 

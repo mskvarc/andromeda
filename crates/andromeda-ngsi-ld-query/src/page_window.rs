@@ -59,6 +59,21 @@ impl PageWindow {
         }
     }
 
+    /// The window that reaches this page's last element when read from the start of the collection: an offset page widened to begin at the first element, a cursor page unchanged.
+    ///
+    /// A collection a store reads as several disjoint parts is cut by reading each part through this window and cutting the merged rows by this page again: whatever part an element of the page comes from, it is among the elements its part returns.
+    #[must_use]
+    pub fn through_page_end(&self) -> PageWindow {
+        match &self.start {
+            PageStart::Offset(offset) => PageWindow::offset(self.limit.saturating_add(*offset), 0),
+            PageStart::Cursor(_) => PageWindow {
+                limit: self.limit,
+                // clone: the part is read from where the page starts
+                start: self.start.clone(),
+            },
+        }
+    }
+
     /// The window a reader reads for this page: one element more, the one past the page in the direction it is read, whose presence is what tells whether the collection continues there (clause 5.5.9.1). [`PageWindow::settle`] takes it off again.
     #[must_use]
     pub fn with_lookahead(&self) -> PageWindow {
@@ -324,5 +339,45 @@ mod tests {
     #[test]
     fn an_after_window_continues_past_its_boundary() {
         assert_eq!(PageWindow::after(2, uri("urn:e:6")).cut(collection(), String::as_str), ids(&[7, 8]));
+    }
+
+    #[test]
+    fn an_offset_page_reaches_its_end_from_the_start_of_the_collection() {
+        assert_eq!(PageWindow::offset(3, 4).through_page_end(), PageWindow::offset(7, 0));
+    }
+
+    #[test]
+    fn an_offset_page_near_the_largest_offset_saturates_its_reach() {
+        assert_eq!(PageWindow::offset(3, u32::MAX).through_page_end(), PageWindow::offset(u32::MAX, 0));
+    }
+
+    #[test]
+    fn a_cursor_page_reaches_its_end_unchanged() {
+        let page = PageWindow::after(3, uri("urn:e:4"));
+        assert_eq!(page.through_page_end(), page);
+    }
+
+    /// Each part read through the widened window, merged and cut by the page,
+    /// gives exactly the page the whole collection gives.
+    #[test]
+    fn a_page_cut_from_two_disjoint_parts_equals_the_page_of_the_whole() {
+        let starts = [
+            PageStart::Offset(0),
+            PageStart::Offset(3),
+            PageStart::Offset(9),
+            PageStart::Cursor(None),
+            PageStart::Cursor(Some(PageCursor::After(uri("urn:e:2")))),
+            PageStart::Cursor(Some(PageCursor::Before(uri("urn:e:7")))),
+            PageStart::Cursor(Some(PageCursor::End)),
+        ];
+        for start in starts {
+            let page = PageWindow { limit: 3, start };
+            let (even, odd): (Vec<String>, Vec<String>) = collection().into_iter().partition(|id| id.ends_with(['0', '2', '4', '6', '8']));
+            let reach = page.through_page_end();
+            let mut merged = reach.cut(even, String::as_str);
+            merged.extend(reach.cut(odd, String::as_str));
+            merged.sort();
+            assert_eq!(page.cut(merged, String::as_str), page.cut(collection(), String::as_str), "{page:?}");
+        }
     }
 }

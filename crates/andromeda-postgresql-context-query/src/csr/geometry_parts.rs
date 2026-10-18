@@ -1,0 +1,202 @@
+//! The two disjoint parts a geoquery splits registration discovery into
+//! (clause 5.10.2.4).
+//!
+//! A registration matches a geoquery when the geometry the query names
+//! possibly contains a location the query would match, and also when the
+//! registration declares no such geometry, since it may still serve the area.
+//! As one disjunction the two reach no index together: the spatial `GiST`
+//! indexes hold only declared geometries, and a row without one is found only
+//! by reading every row. Discovery therefore reads the registrations without
+//! the geometry and those whose geometry meets the reduced relation as two
+//! parts, each through its own partial index, and merges them. The parts are
+//! disjoint, so a registration is never counted twice.
+
+use andromeda_ngsi_ld_query::geo::{query::GeoQuery, registration_area::RegistrationGeometry};
+use andromeda_postgresql_query::{
+    error::RenderError,
+    geo_predicate::{near_envelope_prefilter, registration_area},
+};
+use andromeda_postgresql_schema::csr::Csr;
+use sea_query::{Condition, Expr as SeaExpr, ExprTrait};
+
+/// The registrations a geoquery keeps, as two disjoint conditions over the
+/// registration's own columns.
+pub struct GeometryParts {
+    /// The registrations that declare no geometry of the kind the query names.
+    pub absent: Condition,
+    /// The registrations whose geometry meets the relation the query reduces
+    /// to, together with the bounding-box prefilter a `near` relation needs to
+    /// reach the spatial index.
+    pub present: Condition,
+}
+
+/// The two parts `geo` splits discovery into, or `None` when its reduction
+/// constrains no geometry and every registration is kept.
+///
+/// # Errors
+///
+/// Returns [`RenderError::ReferenceGeometryEncoding`] when the reference
+/// geometry has no EWKB spelling the store can bind.
+pub fn geometry_parts(geo: &GeoQuery) -> Result<Option<GeometryParts>, RenderError> {
+    let geometry = SeaExpr::col(registration_geometry_column(geo));
+    let Some(area) = registration_area(geo, &geometry)? else {
+        return Ok(None);
+    };
+    // clone: the null test, the box and the relation each read the column
+    let mut present = Condition::all().add(geometry.clone().is_not_null());
+    // A registration geometry is reduced to a `near` with the query's own
+    // `maxDistance`, so the box around the query bounds it as well.
+    if let Some(prefilter) = near_envelope_prefilter(geo, &geometry) {
+        present = present.add(prefilter);
+    }
+    Ok(Some(GeometryParts {
+        absent: Condition::all().add(geometry.is_null()),
+        present: present.add(area),
+    }))
+}
+
+/// The column holding the registration geometry a geoquery is matched against
+/// (Table 5.2.9-1).
+fn registration_geometry_column(geo: &GeoQuery) -> Csr {
+    match RegistrationGeometry::of(geo) {
+        RegistrationGeometry::Location => Csr::Location,
+        RegistrationGeometry::ObservationSpace => Csr::ObservationSpace,
+        RegistrationGeometry::OperationSpace => Csr::OperationSpace,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::csr::geometry_parts::{GeometryParts, geometry_parts};
+    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
+    use andromeda_ngsi_ld_query::geo::query::GeoQuery;
+    use andromeda_postgresql_schema::csr::Csr;
+    use sea_query::{Condition, PostgresQueryBuilder, Query};
+    use std::str::FromStr;
+
+    const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
+
+    fn query(georel: GeoRel, geoproperty: &str, coordinates: &serde_json::Value) -> GeoQuery {
+        GeoQuery {
+            georel,
+            geometry: serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": coordinates })).expect("point parses"),
+            geoproperty: geoproperty.parse().expect("valid attribute name"),
+        }
+    }
+
+    fn near(max_distance: Option<&str>, min_distance: Option<&str>) -> GeoRel {
+        GeoRel::Near {
+            max_distance: max_distance.map(|metres| PositiveDistance::from_str(metres).expect("positive distance")),
+            min_distance: min_distance.map(|metres| PositiveDistance::from_str(metres).expect("positive distance")),
+        }
+    }
+
+    fn render(condition: Condition) -> String {
+        Query::select()
+            .column(Csr::Id)
+            .from(Csr::Table)
+            .cond_where(condition)
+            .to_string(PostgresQueryBuilder)
+    }
+
+    fn parts(geo: &GeoQuery) -> (String, String) {
+        let GeometryParts { absent, present } = geometry_parts(geo).expect("renders").expect("constrains the geometry");
+        (render(absent), render(present))
+    }
+
+    /// Clause 5.10.2.4: a registration that declares no location may still
+    /// serve the area, so it forms a part of its own.
+    #[test]
+    fn a_registration_without_the_geometry_forms_its_own_part() {
+        let (absent, present) = parts(&query(GeoRel::Within, LOCATION, &serde_json::json!([1.0, 2.0])));
+        assert!(absent.ends_with(r#"WHERE "location" IS NULL"#), "{absent}");
+        assert!(present.contains(r#""location" IS NOT NULL AND ST_Intersects("location""#), "{present}");
+        assert!(!present.contains(" OR "), "the parts are separate statements, not alternatives: {present}");
+    }
+
+    #[test]
+    fn each_space_is_split_on_its_own_column() {
+        for (iri, column) in [
+            ("https://uri.etsi.org/ngsi-ld/observationSpace", "observation_space"),
+            ("https://uri.etsi.org/ngsi-ld/operationSpace", "operation_space"),
+            ("https://example.com/customGeo", "location"),
+        ] {
+            let (absent, present) = parts(&query(GeoRel::Intersects, iri, &serde_json::json!([1.0, 2.0])));
+            assert!(absent.ends_with(&format!(r#"WHERE "{column}" IS NULL"#)), "{iri}: {absent}");
+            assert!(present.contains(&format!(r#""{column}" IS NOT NULL"#)), "{iri}: {present}");
+        }
+    }
+
+    /// The geometry a registration declares bounds where its Entities are, so
+    /// it is tested with the weakest relation it has to meet to possibly
+    /// contain a location the geoquery matches.
+    #[test]
+    fn every_georel_is_tested_through_its_reduction() {
+        let cases = [
+            (GeoRel::Within, "ST_Intersects"),
+            (GeoRel::Contains, "ST_Contains"),
+            (GeoRel::Intersects, "ST_Intersects"),
+            (GeoRel::Disjoint, "NOT ST_Within"),
+            (GeoRel::Equals, "ST_Contains"),
+            (GeoRel::Overlaps, "ST_Intersects"),
+            (near(Some("500"), Some("100")), "ST_DWithin"),
+        ];
+        for (georel, function) in cases {
+            let geo = query(georel, LOCATION, &serde_json::json!([1.0, 2.0]));
+            let (_, present) = parts(&geo);
+            assert!(present.contains(function), "{:?}: {present}", geo.georel);
+        }
+    }
+
+    /// A registration's area reaches arbitrarily far from its nearest point, so
+    /// a minimum distance excludes none, and only a maximum distance bounds it.
+    #[test]
+    fn a_near_relation_is_tested_against_its_maximum_distance_only() {
+        let (_, bounded) = parts(&query(near(Some("500"), Some("100")), LOCATION, &serde_json::json!([13.4, 52.5])));
+        assert!(!bounded.contains("ST_Distance"), "{bounded}");
+        assert!(
+            geometry_parts(&query(near(None, Some("100")), LOCATION, &serde_json::json!([13.4, 52.5])))
+                .expect("renders")
+                .is_none(),
+            "a minimum distance alone keeps every registration"
+        );
+    }
+
+    /// `near` measures the column cast to `geography`, which reaches no index,
+    /// so a box the geometry `GiST` index answers prefilters it.
+    #[test]
+    fn a_near_relation_is_prefiltered_by_a_box_the_spatial_index_answers() {
+        let (_, present) = parts(&query(near(Some("500"), None), LOCATION, &serde_json::json!([13.4, 52.5])));
+        assert!(present.contains(r#""location" && ST_MakeEnvelope("#), "{present}");
+        assert!(present.contains(r#""location"::geography"#), "{present}");
+    }
+
+    #[test]
+    fn a_topological_relation_renders_no_box() {
+        let (_, present) = parts(&query(GeoRel::Within, LOCATION, &serde_json::json!([13.4, 52.5])));
+        assert!(!present.contains("&&"), "{present}");
+    }
+
+    /// Clause 4.10 defines every `georel` on the horizontal plane, so an
+    /// altitude on the reference leaves the statement unchanged.
+    #[test]
+    fn a_three_dimensional_reference_renders_the_same_parts_as_a_two_dimensional_one() {
+        for georel in [GeoRel::Within, GeoRel::Contains, GeoRel::Disjoint, near(Some("500"), Some("10"))] {
+            let flat = geometry_parts(&query(georel.clone(), LOCATION, &serde_json::json!([1.0, 2.0])))
+                .expect("renders")
+                .expect("constrains the geometry");
+            let elevated = geometry_parts(&query(georel, LOCATION, &serde_json::json!([1.0, 2.0, 3.0])))
+                .expect("renders")
+                .expect("constrains the geometry");
+            let shape = |condition: Condition| {
+                Query::select()
+                    .column(Csr::Id)
+                    .from(Csr::Table)
+                    .cond_where(condition)
+                    .build(PostgresQueryBuilder)
+                    .0
+            };
+            pretty_assertions::assert_eq!(shape(elevated.present), shape(flat.present));
+        }
+    }
+}
