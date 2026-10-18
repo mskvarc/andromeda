@@ -1,5 +1,6 @@
 //! None of these is the client's doing: each is a property of a registration the broker admitted or of the broker's own configuration, so a broken one is answered `InternalError`.
 
+use crate::config::FederationConfigError;
 use andromeda_http_headers::received_protocol::ReceivedProtocolError;
 use andromeda_ngsi_ld_lexicon::{
     identifier::{Identifier, IdentifierParseError},
@@ -67,4 +68,8 @@ pub enum FederationInvariant {
     /// The protocol the broker forwards over is not a `Via` protocol token.
     #[error("the forwarding protocol is not a Via protocol: {0}")]
     ForwardingProtocol(#[source] ReceivedProtocolError),
+    /// The cooldown policy does not hold, although configuration loading
+    /// validates it before any forwarding service is built.
+    #[error("the context source cooldown policy is invalid: {0}")]
+    CooldownPolicy(#[source] FederationConfigError),
 }

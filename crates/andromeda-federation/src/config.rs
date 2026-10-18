@@ -33,6 +33,21 @@ impl SplitEntitiesDefault {
     }
 }
 
+/// How the broker holds back a context source after a failed forwarded
+/// request, beside any `management.cooldown` the registration sets (Table
+/// 5.2.34-1, clause 6.3.17).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::Display, strum::EnumString)]
+#[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case")]
+pub enum CooldownMode {
+    /// Only a registration's own `management.cooldown` holds it back.
+    Off,
+    /// Every failure episode holds the source back for the same window.
+    Constant,
+    /// Each failure of an unbroken episode doubles the window, up to a cap.
+    Exponential,
+}
+
 /// What one request or subscription resolved `splitEntities` to (clauses
 /// 4.3.6.7, 5.7.2.4 and 5.7.4.4).
 ///
@@ -70,6 +85,12 @@ pub enum FederationConfigError {
     /// Connecting to a source needs a positive deadline.
     #[error("federation.connect_timeout must be greater than zero")]
     ZeroConnectTimeout,
+    /// A cooldown that holds sources back needs a positive window.
+    #[error("federation.cooldown_window must be greater than zero unless federation.cooldown_mode is off")]
+    ZeroCooldownWindow,
+    /// An exponential cooldown cannot be capped below its first window.
+    #[error("federation.cooldown_max must not be below federation.cooldown_window when federation.cooldown_mode is exponential")]
+    CooldownMaxBelowWindow,
 }
 
 /// The default of [`FederationConfig::max_query_entities`]: ten times the
@@ -111,6 +132,15 @@ pub struct FederationConfig {
     /// `TooManyResults` (403, clause 4.12).
     #[toml_comment(inline)]
     pub max_query_instances: NonZeroU32,
+    /// How a context source is held back after a failed forwarded request: `off` (only the registration's own `management.cooldown`), `constant` or `exponential` (Table 5.2.34-1). The registration's own cooldown is always a floor.
+    #[toml_comment(inline)]
+    pub cooldown_mode: CooldownMode,
+    /// The `constant` cooldown window, or the first `exponential` one, in human-readable form (`"1s"`).
+    #[toml_comment(inline)]
+    pub cooldown_window: HumanDuration,
+    /// The longest `exponential` cooldown window, in human-readable form (`"24h"`).
+    #[toml_comment(inline)]
+    pub cooldown_max: HumanDuration,
 }
 
 impl Default for FederationConfig {
@@ -123,6 +153,9 @@ impl Default for FederationConfig {
             split_entities_default: SplitEntitiesDefault::Complete,
             max_query_entities: DEFAULT_MAX_QUERY_ENTITIES,
             max_query_instances: DEFAULT_MAX_QUERY_INSTANCES,
+            cooldown_mode: CooldownMode::Exponential,
+            cooldown_window: HumanDuration::from_secs(1),
+            cooldown_max: HumanDuration::from_days(1),
         }
     }
 }
@@ -136,7 +169,7 @@ impl FederationConfig {
     /// forwarding slot is allowed, [`FederationConfigError::ZeroRequestTimeout`]
     /// when the per-request deadline is zero, and
     /// [`FederationConfigError::ZeroConnectTimeout`] when the connection
-    /// deadline is zero.
+    /// deadline is zero, and the errors of [`Self::validate_cooldown`].
     pub const fn validate(&self) -> Result<(), FederationConfigError> {
         if self.forward_concurrency == 0 {
             return Err(FederationConfigError::ZeroForwardConcurrency);
@@ -147,7 +180,25 @@ impl FederationConfig {
         if self.connect_timeout.is_zero() {
             return Err(FederationConfigError::ZeroConnectTimeout);
         }
-        Ok(())
+        self.validate_cooldown()
+    }
+
+    /// Validate the broker cooldown policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FederationConfigError::ZeroCooldownWindow`] when a mode other
+    /// than `off` has a zero window, and
+    /// [`FederationConfigError::CooldownMaxBelowWindow`] when an `exponential`
+    /// cap is below its first window.
+    pub const fn validate_cooldown(&self) -> Result<(), FederationConfigError> {
+        match self.cooldown_mode {
+            CooldownMode::Constant | CooldownMode::Exponential if self.cooldown_window.is_zero() => Err(FederationConfigError::ZeroCooldownWindow),
+            CooldownMode::Exponential if self.cooldown_max.duration().as_nanos() < self.cooldown_window.duration().as_nanos() => {
+                Err(FederationConfigError::CooldownMaxBelowWindow)
+            }
+            CooldownMode::Off | CooldownMode::Constant | CooldownMode::Exponential => Ok(()),
+        }
     }
 
     /// The connection deadline.
@@ -166,6 +217,7 @@ impl FederationConfig {
 #[cfg(test)]
 mod tests {
     use crate::config::{
+        CooldownMode,
         DEFAULT_MAX_QUERY_ENTITIES,
         DEFAULT_MAX_QUERY_INSTANCES,
         FederationConfig,
@@ -174,6 +226,7 @@ mod tests {
         SplitEntitiesDefault,
     };
     use andromeda_configuration_scalars::human_duration::HumanDuration;
+    use std::time::Duration;
 
     fn config() -> FederationConfig {
         FederationConfig {
@@ -184,6 +237,9 @@ mod tests {
             split_entities_default: SplitEntitiesDefault::Complete,
             max_query_entities: DEFAULT_MAX_QUERY_ENTITIES,
             max_query_instances: DEFAULT_MAX_QUERY_INSTANCES,
+            cooldown_mode: CooldownMode::Exponential,
+            cooldown_window: HumanDuration::from_secs(1),
+            cooldown_max: HumanDuration::from_days(1),
         }
     }
 
@@ -232,5 +288,49 @@ mod tests {
         };
         assert_eq!(connect.validate(), Err(FederationConfigError::ZeroConnectTimeout));
         assert!(config().validate().is_ok());
+    }
+
+    #[test]
+    fn the_default_cooldown_is_exponential_from_one_second_to_a_day() {
+        let config = FederationConfig::default();
+        pretty_assertions::assert_eq!(config.cooldown_mode, CooldownMode::Exponential);
+        pretty_assertions::assert_eq!(config.cooldown_window.duration(), Duration::from_secs(1));
+        pretty_assertions::assert_eq!(config.cooldown_max.duration(), Duration::from_hours(24));
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn a_zero_cooldown_window_is_rejected_unless_the_mode_is_off() {
+        let zero = |cooldown_mode| FederationConfig {
+            cooldown_mode,
+            cooldown_window: HumanDuration::from_millis(0),
+            ..config()
+        };
+        assert_eq!(zero(CooldownMode::Constant).validate(), Err(FederationConfigError::ZeroCooldownWindow));
+        assert_eq!(zero(CooldownMode::Exponential).validate(), Err(FederationConfigError::ZeroCooldownWindow));
+        assert!(zero(CooldownMode::Off).validate().is_ok());
+    }
+
+    #[test]
+    fn an_exponential_cap_below_its_first_window_is_rejected() {
+        let config = FederationConfig {
+            cooldown_window: HumanDuration::from_secs(10),
+            cooldown_max: HumanDuration::from_secs(5),
+            ..config()
+        };
+        assert_eq!(config.validate(), Err(FederationConfigError::CooldownMaxBelowWindow));
+    }
+
+    #[test]
+    fn the_cooldown_mode_reads_its_kebab_case_names() {
+        #[derive(Debug, serde::Deserialize)]
+        struct Probe {
+            cooldown_mode: CooldownMode,
+        }
+        let read = |name: &str| toml::from_str::<Probe>(&format!("cooldown_mode = \"{name}\"")).map(|probe| probe.cooldown_mode);
+        pretty_assertions::assert_eq!(read("exponential").expect("exponential"), CooldownMode::Exponential);
+        pretty_assertions::assert_eq!(read("constant").expect("constant"), CooldownMode::Constant);
+        pretty_assertions::assert_eq!(read("off").expect("off"), CooldownMode::Off);
+        assert!(read("Exponential").is_err());
     }
 }

@@ -485,6 +485,7 @@ dependencies = [
  "andromeda-registration",
  "andromeda-telemetry",
  "andromeda-test-mocks",
+ "backon",
  "bytes",
  "chrono",
  "dashmap",

@@ -1,7 +1,11 @@
 //! Sending one forwarded request and reading what it answered with, beside
 //! the registration's clause 5.2.34 health members the attempt is recorded on.
 
-use crate::{FederationService, outcome::TransportFailure};
+use crate::{
+    FederationService,
+    cooldown::{AnswerKind, FailureScope},
+    outcome::TransportFailure,
+};
 use andromeda_http_headers::{
     link::{header::Link, relation_type::RelationType},
     ngsild_content_range::NgsiLdContentRange,
@@ -43,6 +47,26 @@ pub(crate) struct SentResponse {
     pub(crate) partial_range: Option<NgsiLdContentRange>,
     /// The raw body.
     pub(crate) body: Vec<u8>,
+}
+
+/// What one forwarded attempt does to the cooldown registry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RegistryEffect {
+    /// The source answered with an HTTP status.
+    Answered(AnswerKind),
+    /// The source gave no usable answer: the endpoint failed.
+    Failed,
+}
+
+/// Sort an attempt's outcome for the cooldown registry: a 404 is an answer
+/// clause 6.3.17 does not count as abnormal, and a transport failure is the
+/// endpoint's.
+fn registry_effect(outcome: &Result<SentResponse, TransportFailure>) -> RegistryEffect {
+    match outcome {
+        Ok(sent) if sent.status.is_success() || sent.status == reqwest::StatusCode::NOT_FOUND => RegistryEffect::Answered(AnswerKind::Succeeded),
+        Ok(_) => RegistryEffect::Answered(AnswerKind::ErrorStatus),
+        Err(_) => RegistryEffect::Failed,
+    }
 }
 
 impl FederationService {
@@ -89,9 +113,20 @@ impl FederationService {
             }
             Err(error) => Err(classify_transport_failure(error, timeout)),
         };
-        let health = match &outcome {
-            Ok(sent) if sent.status.is_success() || sent.status == reqwest::StatusCode::NOT_FOUND => ForwardingOutcome::Succeeded,
-            Ok(_) | Err(_) => ForwardingOutcome::Failed,
+        let health = match registry_effect(&outcome) {
+            RegistryEffect::Answered(AnswerKind::Succeeded) => {
+                self.cooldowns.record_answer(registration, AnswerKind::Succeeded);
+                ForwardingOutcome::Succeeded
+            }
+            RegistryEffect::Answered(AnswerKind::ErrorStatus) => {
+                self.cooldowns.record_answer(registration, AnswerKind::ErrorStatus);
+                self.cooldowns.record_failure(registration, FailureScope::Registration);
+                ForwardingOutcome::Failed
+            }
+            RegistryEffect::Failed => {
+                self.cooldowns.record_failure(registration, FailureScope::Endpoint);
+                ForwardingOutcome::Failed
+            }
         };
         self.record_health(&registration.id, health).await;
         outcome
@@ -101,10 +136,6 @@ impl FederationService {
     /// 5.2.34) before the response is handed back, so a client reading the
     /// registration right after the forwarded call observes the attempt.
     async fn record_health(&self, registration: &Identifier, outcome: ForwardingOutcome) {
-        match outcome {
-            ForwardingOutcome::Succeeded => self.cooldowns.record_success(registration),
-            ForwardingOutcome::Failed => self.cooldowns.record_failure(registration),
-        }
         if let Err(error) = self.csr_repo.record_forwarding_outcome(registration, outcome, Utc::now()).await {
             warn!(%registration, %error, "failed to record the forwarding outcome on the registration");
         }
@@ -117,5 +148,61 @@ fn classify_transport_failure(error: reqwest::Error, timeout: Duration) -> Trans
         TransportFailure::TimedOut { after: timeout }
     } else {
         TransportFailure::Undelivered(Arc::new(error))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        cooldown::AnswerKind,
+        outcome::TransportFailure,
+        source_exchange::{RegistryEffect, SentResponse, classify_transport_failure, registry_effect},
+    };
+    use std::{net::TcpListener, time::Duration};
+
+    fn answered(status: reqwest::StatusCode) -> SentResponse {
+        SentResponse {
+            status,
+            warning: None,
+            ngsild_warnings: Vec::new(),
+            returned_version: None,
+            entity_map: None,
+            next_page: None,
+            partial_range: None,
+            body: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_refused_connection_cools_down_the_endpoint() {
+        let port = TcpListener::bind("127.0.0.1:0")
+            .and_then(|listener| listener.local_addr())
+            .expect("a free port")
+            .port();
+        let timeout = Duration::from_secs(5);
+        let refused = reqwest::Client::new()
+            .get(format!("http://127.0.0.1:{port}/"))
+            .timeout(timeout)
+            .send()
+            .await
+            .expect_err("nothing listens on the released port");
+        let outcome: Result<SentResponse, TransportFailure> = Err(classify_transport_failure(refused, timeout));
+        pretty_assertions::assert_eq!(registry_effect(&outcome), RegistryEffect::Failed);
+    }
+
+    #[test]
+    fn a_500_cools_down_only_the_registration() {
+        pretty_assertions::assert_eq!(
+            registry_effect(&Ok(answered(reqwest::StatusCode::INTERNAL_SERVER_ERROR))),
+            RegistryEffect::Answered(AnswerKind::ErrorStatus)
+        );
+    }
+
+    #[test]
+    fn a_404_records_success() {
+        pretty_assertions::assert_eq!(
+            registry_effect(&Ok(answered(reqwest::StatusCode::NOT_FOUND))),
+            RegistryEffect::Answered(AnswerKind::Succeeded)
+        );
     }
 }

@@ -14,8 +14,10 @@ mod attribute_coverage;
 pub mod cache;
 /// Federation operation configuration.
 pub mod config;
-/// Per-registration cooldown after failures (clause 5.2.34).
+/// Cooldown windows after failed forwarded requests, by endpoint and by registration (Table 5.2.34-1).
 pub mod cooldown;
+/// The broker's own cooldown after a failed forwarded request (Table 5.2.34-1, clause 6.3.17).
+mod cooldown_policy;
 /// Context-source discovery request execution.
 pub mod discovery;
 /// The warnings of a discovery answer that is not merged in full.
@@ -147,6 +149,7 @@ use crate::{
     cache::ForwardedGetCache,
     config::{FederationConfig, SplitEntities, SplitEntitiesDefault},
     cooldown::CooldownRegistry,
+    cooldown_policy::CooldownPolicy,
     error::FederationError,
     federation_invariant::FederationInvariant,
     local_entity_type::LocalEntityTypeResolver,
@@ -192,7 +195,7 @@ pub struct FederationService {
     csr_concurrency: usize,
     /// The deadline a forwarded request gets when its registration sets none.
     default_timeout: Duration,
-    /// When each registration last failed, for clause 5.2.34 cooldowns.
+    /// The open cooldown windows that decline forwarded requests (clause 6.3.17).
     cooldowns: CooldownRegistry,
     /// Forwarded GET responses reused within a registration's `cacheDuration`.
     cache: ForwardedGetCache,
@@ -213,8 +216,9 @@ impl FederationService {
     /// # Errors
     ///
     /// Returns [`FederationError::Internal`] when the forwarding HTTP client
-    /// cannot be built from `config`, or when the `Received-Protocol` token
-    /// the forwarded `Via` header carries cannot be constructed.
+    /// cannot be built from `config`, when the `Received-Protocol` token the
+    /// forwarded `Via` header carries cannot be constructed, or when the
+    /// cooldown policy of `config` does not validate.
     pub fn new(
         csr_repo: Arc<dyn RegistrationStore>,
         local_entity_types: Arc<dyn LocalEntityTypeResolver>,
@@ -241,7 +245,9 @@ impl FederationService {
             received_protocol,
             csr_concurrency: config.forward_concurrency.max(1),
             default_timeout: config.request_timeout(),
-            cooldowns: CooldownRegistry::default(),
+            cooldowns: CooldownRegistry::new(
+                CooldownPolicy::try_from(config).map_err(|error| FederationError::from(FederationInvariant::CooldownPolicy(error)))?,
+            ),
             cache: ForwardedGetCache::new(config.cache_max_entries),
             source_identities: SourceIdentityCache::default(),
             split_entities_default: config.split_entities_default,
