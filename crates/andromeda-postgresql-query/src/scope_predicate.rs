@@ -27,9 +27,10 @@ use sea_query::{Condition, Expr as SeaExpr, IntoIden, Query, SelectStatement, Si
 /// Which relation a scope predicate is evaluated against.
 #[derive(Debug, Clone)]
 pub enum ScopeTarget {
-    /// An `ltree[]` column carrying the scope paths an Entity holds: its
+    /// An `ltree[]` column carrying the scope paths an Entity holds (its
     /// current ones, a registration's, or those in force over one state of its
-    /// Temporal Evolution.
+    /// Temporal Evolution), or the `ltree` column of one recorded Scope event,
+    /// which `~` matches alike.
     Paths {
         /// The column carrying the scope paths, named by its iden.
         column: ColumnReference,

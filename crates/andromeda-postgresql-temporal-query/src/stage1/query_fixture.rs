@@ -8,6 +8,7 @@ use andromeda_ngsi_ld_query::{
     entity_selection::{EntitySelection, EntitySelector},
     page_window::PageWindow,
     pattern::Pattern,
+    scope::query::ScopeQuery,
     temporal::{
         compiled::CompiledTemporalQuery,
         instance_selection::InstanceSelection,
@@ -172,6 +173,14 @@ pub(super) fn id_pattern(ty: Option<&str>, raw: &str) -> CompiledTemporalQuery {
             .id_pattern(Some(Pattern::parse(raw).expect("valid pattern")))
             .build(),
     ];
+    compiled
+}
+
+/// A query of the `Sensor` type with `scopeQ=<raw>`, over the window of
+/// [`sensors`].
+pub(super) fn scope_query(raw: &str) -> CompiledTemporalQuery {
+    let mut compiled = sensors();
+    compiled.entities.scope_q = Some(ScopeQuery::parse(raw).expect("valid scope query"));
     compiled
 }
 

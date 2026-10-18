@@ -35,6 +35,7 @@ mod pattern_candidates;
 #[cfg(test)]
 mod query_fixture;
 mod queued_candidates;
+mod scope_candidates;
 mod window_match;
 
 use crate::{

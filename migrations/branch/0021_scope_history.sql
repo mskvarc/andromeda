@@ -29,14 +29,19 @@
 -- Clause 4.18 makes the leading `/` optional and the label path forgets it,
 -- while clause 4.6.4 has the broker "return the original content".
 --
--- Every read of the table is the Scope of one Entity, so the entity-led
--- B-trees are its only indexes. Clause 5.7.4.4 selects Entities by their
--- Attribute instances and only then keeps those whose Scope instances match a
--- `scopeQ`, and clause 4.18 makes that match an overlap of validity intervals
--- rather than an event inside the window, so no statement reads the table by
--- path or by time across Entities. An index over the whole table, a GiST on
--- the path or a BRIN on an axis, is only ever ANDed into the lookup of an
+-- Clause 5.7.4.4 keeps the Entities whose Scope instances match a `scopeQ`,
+-- and clause 4.18 makes that match an overlap of validity intervals rather
+-- than an event inside the window, so the per-Entity probe reads the Scope of
+-- one Entity through the entity-led B-trees. An index over the whole table, a
+-- GiST on the path or a BRIN on an axis, would be ANDed into the lookup of an
 -- Entity's few rows, and its bitmap costs far more than filtering them.
+--
+-- The one read across Entities is the candidate read of a `scopeQ`: the
+-- Entities with a Scope row whose path matches a path the query names, a
+-- superset the per-Entity probe rechecks. Its GiST is partial on
+-- `value_kind = 1`, which the candidate read states and the per-Entity probe
+-- never does, so PostgreSQL cannot prove the predicate for the probe and never
+-- ANDs the index into it.
 --
 -- The table takes an insert-driven vacuum once a twentieth of its rows are
 -- new.
@@ -66,4 +71,8 @@ create index idx_scope_history_entity_recorded_at on scope_history (temporal_ent
 create index idx_scope_history_entity_observed_at on scope_history (temporal_entity_key, observed_at desc)
 where
     observed_at is not null;
+
+create index idx_scope_history_live_scope_path on scope_history using gist (scope_path)
+where
+    value_kind = 1;
 

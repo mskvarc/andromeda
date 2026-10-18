@@ -8,8 +8,17 @@
 //! before. A `q` term gets no step: history holds no index of its values that
 //! a numeric write could afford to keep.
 
-use crate::stage1::{entity_conditions::PatternTest, pattern_candidates::pattern_candidates};
-use andromeda_ngsi_ld_query::{entity_selection::ConsideredEntities, pattern::Pattern, temporal::compiled::CompiledTemporalQuery};
+use crate::stage1::{
+    entity_conditions::PatternTest,
+    pattern_candidates::pattern_candidates,
+    scope_candidates::{SCOPE_CANDIDATE_BOUND, SCOPE_SHORT_WALK, scope_candidates},
+};
+use andromeda_ngsi_ld_query::{
+    entity_selection::ConsideredEntities,
+    pattern::Pattern,
+    scope::query::ScopeQuery,
+    temporal::{compiled::CompiledTemporalQuery, contributed_entities::ContributedEntities},
+};
 use andromeda_postgresql_query::{
     history_source::HistoryBranch,
     id_pattern_trigrams::{ID_PATTERN_CANDIDATE_BOUND, ID_PATTERN_SHORT_WALK, trigram_pattern},
@@ -24,16 +33,22 @@ pub(super) enum CandidateStep<'q> {
     /// identifier's start open: the catalogue's trigram index yields the
     /// identifiers it matches, each rechecked against it.
     IdPattern(&'q Pattern),
+    /// The `scopeQ` (clause 4.19): the Scope path index yields the Evolutions
+    /// with a recorded Scope matching one of its paths, beside the Entities a
+    /// Context Source contributed to a split query, which the Scope query
+    /// does not decide locally.
+    ScopePaths(&'q ScopeQuery, &'q ContributedEntities),
 }
 
 impl<'q> CandidateStep<'q> {
     /// The step stage 1 takes for `compiled`, `None` when the walk answers
     /// alone.
     ///
-    /// The identifier pattern applies when one selector carries it and no
-    /// ordering is requested: several selectors pair each pattern with its own
-    /// type, which one read of the trigrams cannot, and a requested ordering
-    /// cuts the page in an order the candidates are not read in.
+    /// The cheapest bounded read that applies is taken: the identifier
+    /// pattern, then the Scope paths. A requested ordering cuts the page in an
+    /// order no candidates are read in, so it keeps the walk. The identifier
+    /// pattern applies when one selector carries it: several selectors pair
+    /// each pattern with its own type, which one read of the trigrams cannot.
     pub(super) fn chosen(compiled: &'q CompiledTemporalQuery) -> Option<CandidateStep<'q>> {
         match compiled.entities.considered {
             ConsideredEntities::Selected => {}
@@ -42,10 +57,17 @@ impl<'q> CandidateStep<'q> {
         if compiled.ordering.is_some() {
             return None;
         }
-        let [selector] = compiled.entities.selectors.as_slice() else {
-            return None;
+        let pattern = match compiled.entities.selectors.as_slice() {
+            [selector] => trigram_pattern(selector.identifier_axis()),
+            _ => None,
         };
-        trigram_pattern(selector.identifier_axis()).map(CandidateStep::IdPattern)
+        pattern.map(CandidateStep::IdPattern).or_else(|| {
+            compiled
+                .entities
+                .scope_q
+                .as_ref()
+                .map(|scope_q| CandidateStep::ScopePaths(scope_q, &compiled.contributed))
+        })
     }
 
     /// How many Evolutions the short walk visits before the candidates are
@@ -53,6 +75,7 @@ impl<'q> CandidateStep<'q> {
     pub(super) const fn short_walk(self) -> u32 {
         match self {
             CandidateStep::IdPattern(_) => ID_PATTERN_SHORT_WALK,
+            CandidateStep::ScopePaths(..) => SCOPE_SHORT_WALK,
         }
     }
 
@@ -60,13 +83,14 @@ impl<'q> CandidateStep<'q> {
     pub(super) const fn bound(self) -> u64 {
         match self {
             CandidateStep::IdPattern(_) => ID_PATTERN_CANDIDATE_BOUND,
+            CandidateStep::ScopePaths(..) => SCOPE_CANDIDATE_BOUND,
         }
     }
 
     /// The most candidates a count reads before it walks instead.
     pub(super) const fn count_bound(self) -> u64 {
         match self {
-            CandidateStep::IdPattern(_) => COUNT_CANDIDATE_BOUND,
+            CandidateStep::IdPattern(_) | CandidateStep::ScopePaths(..) => COUNT_CANDIDATE_BOUND,
         }
     }
 
@@ -74,6 +98,7 @@ impl<'q> CandidateStep<'q> {
     pub(super) const fn pattern_test(self) -> PatternTest {
         match self {
             CandidateStep::IdPattern(_) => PatternTest::Answered,
+            CandidateStep::ScopePaths(..) => PatternTest::Tested,
         }
     }
 
@@ -82,6 +107,7 @@ impl<'q> CandidateStep<'q> {
     pub(super) fn candidates(self, branch: &HistoryBranch) -> SelectStatement {
         match self {
             CandidateStep::IdPattern(pattern) => pattern_candidates(branch, pattern),
+            CandidateStep::ScopePaths(scope_q, contributed) => scope_candidates(branch, scope_q, contributed),
         }
     }
 }
@@ -90,9 +116,9 @@ impl<'q> CandidateStep<'q> {
 mod tests {
     use crate::stage1::{
         build_stage1_entity_ids,
-        query_fixture::{sensor_names, sensors},
+        query_fixture::{PageBranches, id_pattern, recorded_stage1, sensor_names, sensors},
     };
-    use andromeda_ngsi_ld_query::{count_policy::CountPolicy, filter::parser, page_window::PageWindow};
+    use andromeda_ngsi_ld_query::{count_policy::CountPolicy, filter::parser, page_window::PageWindow, scope::query::ScopeQuery};
     use andromeda_postgresql_query::history_source::HistoryBranch;
     use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
     use pretty_assertions::assert_eq;
@@ -115,5 +141,19 @@ mod tests {
         let count = stage1.count.expect("count requested").to_string(PostgresQueryBuilder);
         assert!(!count.contains("candidates"), "{count}");
         assert_eq!(stage1.planning, StatementPlanning::Cached);
+    }
+
+    #[test]
+    fn the_identifier_pattern_takes_precedence_over_the_scope_paths() {
+        let mut compiled = id_pattern(Some("Sensor"), ".*:0123.*");
+        compiled.entities.scope_q = Some(ScopeQuery::parse("/city/moved1").expect("valid scope query"));
+        let sql = recorded_stage1(&compiled).select.to_string(PostgresQueryBuilder);
+        let branches = PageBranches::of(&sql);
+        assert!(
+            branches.candidates.contains(r#"FROM "temporal_entities" WHERE "temporal_entities"."id" ~"#),
+            "{sql}"
+        );
+        assert!(!branches.candidates.contains("scope_history"), "{sql}");
+        assert!(branches.indexed.contains(r#"FROM "scope_history" AS "rsh""#), "{sql}");
     }
 }

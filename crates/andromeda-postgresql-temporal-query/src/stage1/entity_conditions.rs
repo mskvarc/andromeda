@@ -116,13 +116,18 @@ fn temporal_selector_condition(selector: &EntitySelector, types: &ResolvedNames<
 
 #[cfg(test)]
 mod tests {
-    use crate::stage1::query_fixture::{built, built_count, ids, instant, minimal_compiled, point, speed_and_address};
+    use crate::stage1::{
+        build_stage1_entity_ids,
+        query_fixture::{PageBranches, built, built_count, ids, instant, minimal_compiled, point, speed_and_address},
+    };
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use andromeda_ngsi_ld_query::{
+        count_policy::CountPolicy,
         entity_selection::EntitySelector,
         filter::parser,
         geo::query::GeoQuery,
+        page_window::PageWindow,
         scope::query::ScopeQuery,
         temporal::{
             compiled::CompiledTemporalQuery,
@@ -133,8 +138,9 @@ mod tests {
     use andromeda_postgresql_query::{
         attribute_name_key::AttributeNameKey,
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
+        history_source::HistoryBranch,
     };
-    use sea_query::Value;
+    use sea_query::{PostgresQueryBuilder, Value};
     use std::str::FromStr;
 
     /// The attribute dictionary keying one `GeoProperty`, as 9.
@@ -192,7 +198,8 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.entities.scope_q = Some(ScopeQuery::parse("(/A;/B),/C").expect("valid scope query"));
         compiled.window.interval = TimeInterval::Before(instant("2024-06-01T00:00:00Z"));
-        let (sql, _) = built(&compiled, &QueryNames::default());
+        let (page, _) = built(&compiled, &QueryNames::default());
+        let sql = PageBranches::of(&page).walk;
         // /A;/B -> AND, ,/C -> OR
         assert!(sql.contains("AND"), "Semicolon scopes produce AND: {sql}");
         assert!(sql.contains("OR"), "Comma scopes produce OR: {sql}");
@@ -230,12 +237,23 @@ mod tests {
     /// Clause 5.7.4.4: the value, geo and scope filters of a split query apply
     /// after aggregation, so an entity a source contributed a part of is exempt
     /// from them locally -- and only from them: the identifier selector and the
-    /// window still select it.
+    /// window still select it. The Scope query gates the page, whose full walk
+    /// carries every filter.
     #[test]
     fn contributed_identifiers_exempt_only_the_value_filters() {
         let mut compiled = filtered_compiled();
         compiled.contributed = two_contributed();
-        let (sql, values) = built(&compiled, &speed_and_address());
+        let page = build_stage1_entity_ids(
+            &HistoryBranch::live(),
+            &compiled,
+            &PageWindow::offset(20, 0),
+            CountPolicy::Omit,
+            &speed_and_address(),
+        )
+        .expect("valid temporal query")
+        .select
+        .to_string(PostgresQueryBuilder);
+        let sql = PageBranches::of(&page).walk;
         let exemption = sql.find(r#" OR "e"."id" IN ("#).expect("the contributed identifiers are exempt");
         let selector = sql.find(r#""e"."id" IN ("#).expect("the selector");
         let q = sql.find(r#"AS "qh""#).expect("the q probe");
@@ -244,12 +262,11 @@ mod tests {
         let catalogue = sql.find(r#") AS "ah" WHERE"#).expect("the window match");
         assert!(selector < q && q < exemption && geo < exemption && scope < exemption, "{sql}");
         assert!(catalogue > exemption, "the window match stays outside the exemption: {sql}");
-        let bound = values
-            .0
-            .iter()
-            .filter(|value| matches!(value, Value::String(Some(text)) if text.starts_with("urn:ngsi-ld:Vehicle:")))
-            .count();
-        pretty_assertions::assert_eq!(bound, 3, "the selector id and the two contributed ids: {values:?}");
+        pretty_assertions::assert_eq!(
+            sql.matches("'urn:ngsi-ld:Vehicle:").count(),
+            3,
+            "the selector id and the two contributed ids: {sql}"
+        );
     }
 
     /// Without a contributed entity the statement is exactly the one a query
