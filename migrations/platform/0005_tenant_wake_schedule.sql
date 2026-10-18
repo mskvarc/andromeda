@@ -16,7 +16,9 @@ create table tenant_wake_schedule (
     wake_at timestamptz,
     -- When the row was last written. Crash-recovery reconciliation re-probes
     -- the least recently probed tenants first, so every tenant is eventually
-    -- re-probed.
+    -- re-probed. No index serves that order: the sweep reads every tenant
+    -- beside its row, those without one first, which an index on this column
+    -- cannot order.
     probed_at timestamptz not null,
     constraint pk_tenant_wake_schedule primary key (tenant_key),
     constraint fk_tenant_wake_schedule_tenant foreign key (tenant_key) references tenants (tenant_key) on delete cascade
@@ -27,7 +29,4 @@ create table tenant_wake_schedule (
 create index idx_tenant_wake_schedule_wake_at on tenant_wake_schedule (wake_at)
 where
     wake_at is not null;
-
--- Reconciliation's least-recently-probed ordering.
-create index idx_tenant_wake_schedule_probed_at on tenant_wake_schedule (probed_at);
 
