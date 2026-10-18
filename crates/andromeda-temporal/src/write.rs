@@ -292,3 +292,50 @@ impl TemporalService {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        error::TemporalError,
+        reified_scope_fixture::{evolution_with_scope, refused_scopes},
+        stub_broker::{StubBroker, live_target, service, uri},
+        temporal_validation_reason::TemporalValidationReason,
+    };
+    use andromeda_jsonld::context_spec::ContextSpec;
+    use andromeda_ngsi_ld_entity::{refusal::EntityRefusal, scope_refusal::ScopeRefusal};
+
+    /// Whether `refused` is the clause 5.5.4 `BadRequestData` naming `expected`.
+    fn is_scope_refusal(refused: &TemporalError, expected: &ScopeRefusal) -> bool {
+        matches!(refused, TemporalError::Validation(TemporalValidationReason::Representation(EntityRefusal::Scope(refusal))) if refusal == expected)
+    }
+
+    /// Clauses 4.5.6 and 5.6.11.3: a temporal create whose reified Scope
+    /// carries a member beyond the four Temporal Properties is refused before
+    /// anything is recorded.
+    #[tokio::test]
+    async fn a_temporal_create_refuses_a_reified_scope_carrying_a_forbidden_member() {
+        let service = service(StubBroker::new([]));
+        for (scope, expected) in refused_scopes() {
+            let refused = service
+                .create_or_update(&live_target(), evolution_with_scope(&scope), &ContextSpec::core_only())
+                .await
+                .expect_err("the reified Scope carries a forbidden member");
+            assert!(is_scope_refusal(&refused, &expected), "{scope}: {refused:?}");
+        }
+    }
+
+    /// Clauses 4.5.6 and 5.6.12.3: appending to an existing Temporal
+    /// Evolution holds its reified Scope to the same members.
+    #[tokio::test]
+    async fn a_temporal_append_refuses_a_reified_scope_carrying_a_forbidden_member() {
+        let entity_id = uri("urn:ngsi-ld:Vehicle:1");
+        let service = service(StubBroker::new([(uri("urn:ngsi-ld:Vehicle:1"), Vec::new())]));
+        for (scope, expected) in refused_scopes() {
+            let refused = service
+                .add_attrs(&live_target(), &entity_id, evolution_with_scope(&scope), &ContextSpec::core_only())
+                .await
+                .expect_err("the reified Scope carries a forbidden member");
+            assert!(is_scope_refusal(&refused, &expected), "{scope}: {refused:?}");
+        }
+    }
+}

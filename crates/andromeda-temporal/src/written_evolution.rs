@@ -160,7 +160,7 @@ impl WrittenEvolution {
 
 /// Expand each reified Scope instance as the attribute instance it is, into a
 /// document holding them under the scope IRI alone, refusing an instance that
-/// states no Scope.
+/// states no Scope or carries a member clause 4.5.6 does not give it.
 pub(crate) async fn expand_reified_scope(expansion: &EntityExpansion<'_>, instances: Vec<Attribute>) -> Result<EntityDocument, TemporalError> {
     let written_name = compact_properties::SCOPE
         .parse::<AttributeName>()
@@ -169,7 +169,7 @@ pub(crate) async fn expand_reified_scope(expansion: &EntityExpansion<'_>, instan
     for instance in instances {
         let member = AttributeValue::Single(Box::new(instance));
         let instance = expansion.attribute(&written_name, &member).await?.into_parts().1;
-        scope_observations(instance.value()).map_err(|refusal| TemporalError::from(EntityRefusal::Scope(refusal)))?;
+        scope_observations(&instance).map_err(|refusal| TemporalError::from(EntityRefusal::Scope(refusal)))?;
         expanded.push(instance);
     }
     let scope = expanded_properties::SCOPE
@@ -187,7 +187,12 @@ pub(crate) async fn expand_reified_scope(expansion: &EntityExpansion<'_>, instan
 
 #[cfg(test)]
 mod tests {
-    use crate::{error::TemporalError, temporal_validation_reason::TemporalValidationReason, written_evolution::WrittenEvolution};
+    use crate::{
+        error::TemporalError,
+        reified_scope_fixture::admitted_scope,
+        temporal_validation_reason::TemporalValidationReason,
+        written_evolution::WrittenEvolution,
+    };
     use andromeda_entity::config::EntityConfig;
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
@@ -195,6 +200,7 @@ mod tests {
     use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{request_body::RequestBody, temporal::written_temporal_entity::WrittenTemporalEntity};
+    use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use indexmap::IndexMap;
     use serde_json::{Value, json};
     use std::sync::Arc;
@@ -301,6 +307,18 @@ mod tests {
         let payload = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "config": [observed, deleted]});
         let evolution = expanded(payload).await.expect("a dated deletion is the temporal representation of a deletion");
         fold_into_current_state(None, evolution.document(), chrono::Utc::now()).expect("the fold takes the deletion beside the observation");
+    }
+
+    /// Clause 4.5.6: a reified Scope carrying only the four Temporal
+    /// Properties beside its `value` is the history the write dates.
+    #[tokio::test]
+    async fn a_reified_scope_carrying_the_four_temporal_properties_is_admitted() {
+        let payload = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "scope": admitted_scope()});
+        let evolution = expanded(payload)
+            .await
+            .expect("the four Temporal Properties are a reified Scope's sub-Properties");
+        let scope = evolution.reified_scope.expect("the Scope history is carried");
+        pretty_assertions::assert_eq!(scope.attributes()[expanded_properties::SCOPE.as_str()].instances().len(), 2);
     }
 
     /// The deleted instance clause 5.5.4 lets a temporal evolution represent

@@ -8,7 +8,7 @@
 //! history of the paths the entity is in, not an attribute, so it is read as
 //! the paths it dates.
 
-use crate::{reified_scope::scope_observations, scope_observation::ScopeObservation};
+use crate::{reified_scope::value_observations, scope_observation::ScopeObservation};
 use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument};
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::path::ScopePath};
@@ -45,7 +45,7 @@ fn reified_paths(scope: &AttributeMember) -> Vec<ScopePath> {
     scope
         .instances()
         .iter()
-        .filter_map(|instance| scope_observations(instance.value()).ok())
+        .filter_map(|instance| value_observations(instance.value()).ok())
         .flatten()
         .filter_map(|observation| match observation {
             ScopeObservation::Path(path) => Some(path),

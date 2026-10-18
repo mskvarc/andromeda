@@ -96,8 +96,14 @@ impl TemporalService {
 
 #[cfg(test)]
 mod tests {
-    use crate::stub_broker::{StubBroker, service};
+    use crate::{
+        error::TemporalError,
+        reified_scope_fixture::{admitted_scope, evolution_with_scope, refused_scopes},
+        stub_broker::{StubBroker, service},
+        temporal_validation_reason::TemporalValidationReason,
+    };
     use andromeda_jsonld::context_spec::ContextSpec;
+    use andromeda_ngsi_ld_entity::refusal::EntityRefusal;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_model::{request_body::RequestBody, temporal::written_temporal_entity::WrittenTemporalEntity};
     use serde_json::json;
@@ -138,25 +144,11 @@ mod tests {
         assert!(document.scope_history().is_none());
     }
 
-    fn evolution_with_scope(scope: &serde_json::Value) -> WrittenTemporalEntity {
-        let text = json!({
-            "id": "urn:ngsi-ld:Vehicle:1",
-            "type": "Vehicle",
-            "scope": scope,
-            "speed": [{"type": "Property", "value": 1, "observedAt": "2025-01-01T00:00:00Z"}]
-        })
-        .to_string();
-        WrittenTemporalEntity::from_request_text(text.as_bytes()).expect("a written evolution")
-    }
-
     /// Clauses 4.5.6 and 5.6.11.4: both instances of a reified Scope, the
     /// ended one included, are forwarded with their temporal sub-properties.
     #[tokio::test]
     async fn a_reified_scope_is_forwarded_as_both_its_instances() {
-        let written = evolution_with_scope(&json!([
-            {"type": "Property", "value": "/Madrid", "observedAt": "2025-01-01T00:00:00Z", "createdAt": "2025-01-01T00:00:01Z"},
-            {"type": "Property", "value": "urn:ngsi-ld:null", "observedAt": "2025-01-02T00:00:00Z", "deletedAt": "2025-01-02T00:00:00Z"}
-        ]));
+        let written = evolution_with_scope(&admitted_scope());
         let service = service(StubBroker::new([]));
         let forwardable = service
             .forwardable_document(&written, &ContextSpec::core_only())
@@ -170,6 +162,24 @@ mod tests {
         pretty_assertions::assert_eq!(scope.instances().len(), 2);
         assert!(forwardable.document().scope().is_none());
         pretty_assertions::assert_eq!(forwardable.document().attributes().len(), 1);
+    }
+
+    /// Clause 4.5.6: a reified Scope carrying a member beyond the four
+    /// Temporal Properties is refused before it is forwarded, answered with
+    /// `BadRequestData` (clause 5.5.4).
+    #[tokio::test]
+    async fn a_reified_scope_carrying_a_forbidden_member_is_refused_before_it_is_forwarded() {
+        let service = service(StubBroker::new([]));
+        for (scope, expected) in refused_scopes() {
+            let refused = service
+                .forwardable_document(&evolution_with_scope(&scope), &ContextSpec::core_only())
+                .await
+                .expect_err("the reified Scope carries a forbidden member");
+            assert!(
+                matches!(&refused, TemporalError::Validation(TemporalValidationReason::Representation(EntityRefusal::Scope(refusal))) if *refusal == expected),
+                "{scope}: {refused:?}"
+            );
+        }
     }
 
     /// A Scope written as paths stays on the document, and no

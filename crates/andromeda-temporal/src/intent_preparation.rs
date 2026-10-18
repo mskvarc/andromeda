@@ -176,8 +176,8 @@ const fn scope_entry(observation: ScopeObservation, kind: ScopeEntryKind, observ
 /// Clause 4.5.6 represents the Scope of a Temporal Evolution as "a temporal
 /// representation of a Property", whose `value` holds the paths and whose
 /// `observedAt` dates them; one the client did not date is dated at the write.
-/// What the `value` states is read by `crate::reified_scope`, which the write
-/// already held the instance to.
+/// An instance carrying a member beyond the four Temporal Properties clause
+/// 4.5.6 gives a reified Scope is refused, as it is on the client's write.
 fn append_reified_scope(instance: &InstanceDocument, recorded_at: DateTime<Utc>, entries: &mut Vec<TemporalAppendEntry>) -> Result<(), TemporalError> {
     let observed_at = match instance.observed_at() {
         Some(Slot::Set(text)) => text
@@ -187,7 +187,7 @@ fn append_reified_scope(instance: &InstanceDocument, recorded_at: DateTime<Utc>,
             .map_err(|source| TemporalError::from(SubmissionRefusal::ObservedAt(source)))?,
         Some(Slot::Remove) | None => recorded_at,
     };
-    let observations = scope_observations(instance.value()).map_err(|refusal| TemporalError::from(EntityRefusal::Scope(refusal)))?;
+    let observations = scope_observations(instance).map_err(|refusal| TemporalError::from(EntityRefusal::Scope(refusal)))?;
     entries.extend(
         observations
             .into_iter()

@@ -6,6 +6,7 @@ use crate::{
     intent_preparation::prepare,
     scope_entry_kind::ScopeEntryKind,
     scope_observation::ScopeObservation,
+    temporal_validation_reason::TemporalValidationReason,
 };
 use andromeda_context_commit::{
     history_record::{HistoryRecord, tombstone},
@@ -16,6 +17,9 @@ use andromeda_context_commit::{
 use andromeda_ngsi_ld_entity::{
     document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument},
     entity_state::EntityState,
+    member_shape::MemberShape,
+    refusal::EntityRefusal,
+    scope_refusal::ScopeRefusal,
     scopes::Scopes,
 };
 use andromeda_ngsi_ld_lexicon::{
@@ -381,4 +385,29 @@ fn a_reified_scope_outside_the_scope_grammar_is_refused() {
     )
     .expect_err("`/a-b` is no scope path");
     assert!(matches!(error, TemporalError::Validation { .. }), "{error:?}");
+}
+
+/// Clause 4.5.6: a reified Scope whose instance carries a `datasetId` holds a
+/// member it cannot have, so recording a history that holds one is refused as
+/// a client's write of it is.
+#[test]
+fn a_reified_scope_carrying_a_dataset_id_is_refused() {
+    let scope: AttributeName = expanded_properties::SCOPE.as_str().parse().expect("valid attribute name");
+    let instance = json!({
+        "@type": [PROPERTY],
+        expanded_properties::VALUE.as_str(): [{"@value": "/Madrid"}],
+        expanded_properties::DATASET_ID.as_str(): [{"@id": "urn:ngsi-ld:Dataset:a"}]
+    });
+    let instance = InstanceDocument::from_slice(&scope, &serde_json::to_vec(&instance).expect("JSON")).expect("a reified scope instance decodes");
+    let error =
+        prepare(&entity_id(), &[], &[reified_document(instance)], record(recorded_at()), WriteOrdinal::at(0)).expect_err("a reified Scope has no datasetId");
+    assert!(
+        matches!(
+            error,
+            TemporalError::Validation(TemporalValidationReason::Representation(EntityRefusal::Scope(ScopeRefusal::MemberForbidden {
+                member: MemberShape::DatasetId
+            })))
+        ),
+        "{error:?}"
+    );
 }

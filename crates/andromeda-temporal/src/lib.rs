@@ -44,6 +44,9 @@ pub mod query_warning_reason;
 mod read;
 /// What one reified Scope instance of a Temporal Evolution states.
 mod reified_scope;
+/// The reified Scopes a Temporal Evolution is written with, refused and admitted.
+#[cfg(test)]
+mod reified_scope_fixture;
 /// The non-local half of Linked Entity resolution for the temporal API.
 pub mod remote_linked;
 /// Whether the identifiers a request specified narrow a listing of what it matches.
