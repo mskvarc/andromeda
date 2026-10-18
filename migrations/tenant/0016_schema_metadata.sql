@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0018: Schema contract stamp
+-- 0016: Schema contract stamp
 -- ============================================================================
 -- With a database per tenant, the schema exists in as many copies as there
 -- are tenants, and any copy can drift: a migration that failed part-way

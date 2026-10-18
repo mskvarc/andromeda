@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0013: Context source registrations and their delivery state
+-- 0011: Context source registrations and their delivery state
 -- ============================================================================
 -- Spec: ETSI GS CIM 009 v1.9.1 clauses 4.3.6, 4.5.5, 4.19, 4.20, 5.2.9, 5.9,
 --   5.10

@@ -394,7 +394,7 @@ mod tests {
     use sea_query::PostgresQueryBuilder;
 
     /// The view the entries are read from.
-    const MIGRATION: &str = include_str!("../../../../migrations/tenant/0028_temporal_append_intents.sql");
+    const MIGRATION: &str = include_str!("../../../../migrations/tenant/0026_temporal_append_intents.sql");
 
     fn rendered() -> String {
         attribute_rows(None, &HistoryOf::EveryEntity).to_string(PostgresQueryBuilder)

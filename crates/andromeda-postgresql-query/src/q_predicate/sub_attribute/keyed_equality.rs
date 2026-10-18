@@ -138,7 +138,7 @@ mod tests {
     use sea_query::{PostgresQueryBuilder, Query};
 
     /// The `current_attributes` migration, which declares `idx_ca_sub_eq_keys`.
-    const MIGRATION: &str = include_str!("../../../../../migrations/branch/0024_current_attributes.sql");
+    const MIGRATION: &str = include_str!("../../../../../migrations/branch/0022_current_attributes.sql");
 
     fn names() -> QueryNames {
         QueryNames {

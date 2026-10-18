@@ -118,7 +118,7 @@ mod tests {
     use sea_query::{PostgresQueryBuilder, Query};
 
     /// The migration that declares the indexes the tests here must hit.
-    const MIGRATION: &str = include_str!("../../../../migrations/tenant/0014_registration_information.sql");
+    const MIGRATION: &str = include_str!("../../../../migrations/tenant/0012_registration_information.sql");
 
     fn iri(value: &str) -> IriBuf {
         IriBuf::new(value.to_string()).expect("valid IRI")

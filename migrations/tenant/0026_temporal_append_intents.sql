@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0028: Temporal append intents
+-- 0026: Temporal append intents
 -- ============================================================================
 -- Temporal history appends the broker accepted together with current Entity
 -- state but has not yet applied to the temporal catalog and history. A

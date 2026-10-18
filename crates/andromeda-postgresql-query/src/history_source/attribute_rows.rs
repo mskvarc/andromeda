@@ -367,7 +367,7 @@ mod tests {
 
     /// The `attribute_history` migration, which declares the partial stream
     /// indexes of the two system-time axes.
-    const MIGRATION: &str = include_str!("../../../../migrations/branch/0022_attribute_history.sql");
+    const MIGRATION: &str = include_str!("../../../../migrations/branch/0020_attribute_history.sql");
 
     /// Every read of the stream under `st` on `axis` in `branch`, rendered.
     fn reads(branch: &HistoryBranch, axis: TimeProp) -> Vec<String> {
