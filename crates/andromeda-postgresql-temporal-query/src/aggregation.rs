@@ -242,8 +242,7 @@ fn stream_page(rows: StreamRows, grid: Option<&AggregationGrid>, compiled: &Comp
 /// the order the representation lists them.
 ///
 /// An absent period is the whole range: one period rather than no grouping at
-/// all. An instance with no instant on the axis has no period, so a read by
-/// period leaves it out.
+/// all.
 fn grouped_page(
     rows: SelectStatement,
     grid: Option<&AggregationGrid>,
@@ -258,8 +257,7 @@ fn grouped_page(
         select
             .join_lateral(JoinType::Join, grid.period_of(Expr::col((Ah, axis))), Bucket, SimpleExpr::from(true))
             .expr_as(AggregationGrid::start_under(Bucket), BucketStart)
-            .expr_as(grid.end_under(Bucket), BucketEnd)
-            .and_where(Expr::col((Ah, axis)).is_not_null());
+            .expr_as(grid.end_under(Bucket), BucketEnd);
         keys.extend(grid.keys_under(Bucket));
         order.push(AggregationGrid::start_under(Bucket));
     } else {
@@ -295,7 +293,10 @@ fn grouped_page(
 ///
 /// `condition` admits the represented instances. Clause 4.5.7: a tombstone
 /// records a deletion and carries no value, so the rows that record one are
-/// outside every aggregate rather than counted.
+/// outside every aggregate rather than counted. Clause 4.5.19 places every
+/// aggregate in a period of the time range, the whole range included, and an
+/// instance with no instant on the axis lies in none, so it is outside every
+/// aggregate too.
 #[must_use]
 pub fn build_aggregation_query(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemporalQuery, condition: &Condition) -> SelectStatement {
     let (grid, origin) = match compiled.representation.aggr_period_duration {
@@ -305,8 +306,11 @@ pub fn build_aggregation_query(branch: &HistoryBranch, of: &HistoryOf, compiled:
         }
         None => (None, None),
     };
-    // clone: the edge places the page on every represented instance, the aggregates fold the valued ones.
-    let aggregated = condition.clone().add(Expr::col((Ah, AttributeHistory::ValueKind)).ne(int_literal(0)));
+    // clone: the edge places the page on every represented instance, the aggregates fold the valued, dated ones.
+    let aggregated = condition
+        .clone()
+        .add(Expr::col((Ah, AttributeHistory::ValueKind)).ne(int_literal(0)))
+        .add(Expr::col((Ah, axis_column(compiled.window.timeproperty))).is_not_null());
     let read = aggregated_stream_read(branch, compiled, condition, &aggregated, grid.as_ref());
 
     let mut select = Query::select();
@@ -423,9 +427,10 @@ mod tests {
         assert!(sql.contains("JOIN LATERAL (SELECT time_bucket("), "{sql}");
         assert!(sql.contains("AS \"bucket_start\") AS \"bucket\""), "{sql}");
         assert!(sql.contains("\"bucket\".\"bucket_start\" +"), "{sql}");
-        // Once for the period, once to leave out an instance with no instant on
-        // the axis, which has no period.
-        pretty_assertions::assert_eq!(sql.matches("\"ah\".\"observed_at\"").count(), 2, "{sql}");
+        // Once for the period, and once in each part of the live stream (its
+        // recorded rows and its queued entries) to leave out an instance with
+        // no instant on the axis, which has no period.
+        pretty_assertions::assert_eq!(sql.matches("\"ah\".\"observed_at\"").count(), 3, "{sql}");
         // The bound width, not every interval cast in the statement: an `avg`
         // also projects the Table 4.5.19.1-2 mean time of day, which casts a
         // time column to an interval for reasons unrelated to bucketing. A
@@ -469,6 +474,23 @@ mod tests {
     fn tombstone_rows_are_excluded_from_every_aggregate() {
         let sql = sql_of(&aggregated(vec![AggrMethod::TotalCount], None));
         assert!(sql.contains("\"ah\".\"value_kind\" <> (0)"), "{sql}");
+    }
+
+    /// Clause 4.5.19 places every aggregate in a period of the time range, and
+    /// with no `aggrPeriodDuration` that period spans the whole range; an
+    /// instance with no instant on the axis lies in no period, the whole range
+    /// included, so no aggregate folds it, over a window unbounded on the axis
+    /// as well as over a period grid.
+    #[test]
+    fn no_aggregate_folds_an_instance_without_an_instant_on_the_axis() {
+        for period in [None, Some("PT1H")] {
+            let sql = sql_of(&aggregated(vec![AggrMethod::TotalCount], period));
+            assert!(
+                sql.contains("\"ah\".\"value_kind\" <> (0) AND \"ah\".\"observed_at\" IS NOT NULL"),
+                "{period:?}: {sql}"
+            );
+            assert!(!sql.contains("\"ah\".\"observed_at\" IS NULL"), "{period:?}: {sql}");
+        }
     }
 
     /// Clause 4.5.19 gives one aggregate value per attribute, `datasetId` and

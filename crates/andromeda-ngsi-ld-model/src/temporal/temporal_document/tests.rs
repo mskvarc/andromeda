@@ -100,6 +100,40 @@ fn last_n_after_a_merge_keeps_the_most_recent_in_ascending_order() {
     );
 }
 
+/// An instance carrying no `observedAt`, held by any holder.
+fn undated(id: &str) -> InstanceDocument {
+    InstanceDocument::builder()
+        .family(Some(AttributeType::Property))
+        .instance_id(Some(id.parse::<Identifier>().expect("an identifier")))
+        .build()
+}
+
+/// Clause 5.7.3.4: `lastN` is "the last n timestamps [...] of the temporal
+/// property", so an instance with no `observedAt` is neither counted nor kept,
+/// even when fewer dated instances than `n` remain.
+#[test]
+fn last_n_after_a_merge_leaves_out_the_instances_with_no_instant() {
+    let mut local = document(vec![
+        undated("urn:ngsi-ld:i:u1"),
+        instance("2020-01-02T00:00:00Z", Some("urn:ngsi-ld:i:2")),
+        instance("2020-01-03T00:00:00Z", Some("urn:ngsi-ld:i:3")),
+    ]);
+    let remote = document(vec![instance("2020-01-01T00:00:00Z", Some("urn:ngsi-ld:i:1")), undated("urn:ngsi-ld:i:u2")]);
+    local.merge(remote, MergeMode::Inclusive, TimeProp::Observed);
+
+    let mut two = local.clone();
+    two.keep_last(TimeProp::Observed, NonZeroU32::new(2).expect("two"));
+    pretty_assertions::assert_eq!(observed(&two), vec![at("2020-01-02T00:00:00Z"), at("2020-01-03T00:00:00Z")]);
+    pretty_assertions::assert_eq!(two.instance_count(), 2);
+
+    local.keep_last(TimeProp::Observed, NonZeroU32::new(10).expect("ten"));
+    pretty_assertions::assert_eq!(
+        observed(&local),
+        vec![at("2020-01-01T00:00:00Z"), at("2020-01-02T00:00:00Z"), at("2020-01-03T00:00:00Z")]
+    );
+    pretty_assertions::assert_eq!(local.instance_count(), 3);
+}
+
 /// Trimming to a bound leaves an attribute that lost every instance in place,
 /// with the family it recorded, and reports the span the rest carries.
 #[test]

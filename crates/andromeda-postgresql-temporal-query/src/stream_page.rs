@@ -13,18 +13,22 @@
 //! beside its rows as `stream_continues`.
 //!
 //! An instance carrying no instant on the requested axis has no position on
-//! it. A window bounded on the axis holds none; an unbounded window holds them
-//! after every dated instance as one group, so a page keeps them only when it
-//! keeps every dated instance, and a `lastN`, most recent first, takes them
-//! ahead of the dated ones. They are read apart from the dated instances, so
-//! the axis index, which holds dated instances alone, still serves the page.
+//! it. A window bounded on the axis holds none. Clauses 5.7.3.4 and 5.7.4.4
+//! make a `lastN` "correspond to the last n timestamps (in descending
+//! ordering) of the temporal property", so neither the last `n` instances nor
+//! a backward page holds one either. A forward page over an unbounded window
+//! holds them after every dated instance as one group, so it keeps them only
+//! when it keeps every dated instance. They are read apart from the dated
+//! instances, so the axis index, which holds dated instances alone, still
+//! serves the page.
 
 use crate::{
     alias::Ah,
     axis::axis_column,
     history::project_base_columns,
-    stream_parts::{UndatedInstances, admitted, entity_streams, in_any_part, over_parts, undated_instances},
+    stream_parts::{admitted, entity_streams, in_any_part, over_parts},
 };
+use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, window::TimeInterval};
 use andromeda_postgresql_query::history_source::{HistoryBranch, HistoryOf};
 use andromeda_postgresql_schema::temporal::AttributeHistory;
@@ -91,6 +95,34 @@ impl Walk {
             Walk::Backward => Order::Desc,
         }
     }
+
+    /// Whether the walk over the window `compiled` reads reaches instances
+    /// with no instant on its axis.
+    const fn undated_instances(self, compiled: &CompiledTemporalQuery) -> UndatedInstances {
+        match self {
+            Walk::Backward => UndatedInstances::Excluded,
+            Walk::Forward => match (compiled.window.interval, compiled.window.timeproperty) {
+                (TimeInterval::Unbounded, TimeProp::Observed | TimeProp::Created | TimeProp::Modified) => UndatedInstances::Admitted,
+                (TimeInterval::Unbounded, TimeProp::Deleted)
+                | (
+                    TimeInterval::Before(_) | TimeInterval::After(_) | TimeInterval::Between { .. },
+                    TimeProp::Observed | TimeProp::Created | TimeProp::Modified | TimeProp::Deleted,
+                ) => UndatedInstances::Excluded,
+            },
+        }
+    }
+}
+
+/// Whether a walk reaches instances with no instant on the axis.
+#[derive(Clone, Copy)]
+enum UndatedInstances {
+    /// A forward walk over a window unbounded on an axis an instance may
+    /// lack: the undated instances follow every dated one.
+    Admitted,
+    /// A backward walk, which pages a `lastN` (clauses 5.7.3.4 and 6.3.10); a
+    /// window bounded on the axis; or the `deletedAt` axis that only a
+    /// deletion carries and that selects those alone (clause 5.2.21).
+    Excluded,
 }
 
 /// The edge of the page of `size` the stream under `st` is walked to, and
@@ -133,7 +165,7 @@ fn stream_edge(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, conditi
         });
         beyond
     });
-    let continues = match undated_instances(compiled) {
+    let continues = match walk.undated_instances(compiled) {
         UndatedInstances::Admitted => beyond.or(in_any_part(branch, compiled, |part| {
             let mut undated = admitted(part, condition);
             undated.expr(int_literal(1)).and_where(Expr::col((Ah, axis)).is_null());
@@ -148,8 +180,8 @@ fn stream_edge(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, conditi
 }
 
 /// The instances the page of the stream under `st` keeps: every dated
-/// instance up to the edge `stream_edge` holds, and the undated ones when the
-/// page holds every dated instance.
+/// instance up to the edge `stream_edge` holds, and, walking forward, the
+/// undated ones when the page holds every dated instance.
 ///
 /// The read ends in `OFFSET 0`, so PostgreSQL keeps it a subquery rather than
 /// pulling it up into the outer join. Pulled up, its bound on the edge becomes
@@ -169,7 +201,7 @@ fn kept_instances(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, cond
         });
         dated
     });
-    match undated_instances(compiled) {
+    match walk.undated_instances(compiled) {
         UndatedInstances::Admitted => {
             kept.union(
                 UnionType::All,
@@ -227,25 +259,23 @@ pub(crate) fn walked_history(
     select
 }
 
-/// Order `select` most recent first over the columns under `alias`, ties
-/// broken on the hypertable's unique key so two instances sharing an instant
-/// are kept or dropped the same way on every execution. An instance with no
-/// instant sorts first under the descending order, as it would in a single
-/// ranking over the window; `axis` is `None` for a read of those alone.
-pub(crate) fn most_recent_first(select: &mut SelectStatement, alias: impl IntoIden, axis: Option<AttributeHistory>) {
+/// Order `select` most recent first on `axis` over the columns under `alias`,
+/// ties broken on the hypertable's unique key so two instances sharing an
+/// instant are kept or dropped the same way on every execution.
+fn most_recent_first(select: &mut SelectStatement, alias: impl IntoIden, axis: AttributeHistory) {
     let alias = alias.into_iden();
-    if let Some(axis) = axis {
-        // clone: every ordering key names the alias.
-        select.order_by((alias.clone(), axis), Order::Desc);
-    }
+    // clone: every ordering key names the alias.
     select
+        .order_by((alias.clone(), axis), Order::Desc)
         .order_by((alias.clone(), AttributeHistory::RecordedAt), Order::Desc)
         .order_by((alias.clone(), AttributeHistory::WriteId), Order::Desc)
         .order_by((alias, AttributeHistory::WriteOrdinal), Order::Desc);
 }
 
-/// The last `n` instances of the stream under `st`, each with the columns
-/// `project` projects.
+/// The last `n` dated instances of the stream under `st`, each with the
+/// columns `project` projects. An instance with no instant on the axis is
+/// none of "the last n timestamps" clauses 5.7.3.4 and 5.7.4.4 select, so it
+/// is neither counted nor kept.
 pub(crate) fn latest_instances(
     branch: &HistoryBranch,
     compiled: &CompiledTemporalQuery,
@@ -255,33 +285,17 @@ pub(crate) fn latest_instances(
 ) -> SelectStatement {
     let axis = axis_column(compiled.window.timeproperty);
     let limit = u64::from(n.get());
-    let mut candidates = over_parts(branch, compiled, |part| {
+    let candidates = over_parts(branch, compiled, |part| {
         let mut dated = admitted(part, condition);
         project(&mut dated);
         dated.and_where(Expr::col((Ah, axis)).is_not_null());
-        most_recent_first(&mut dated, Ah, Some(axis));
+        most_recent_first(&mut dated, Ah, axis);
         dated.limit(limit);
         dated
     });
-    match undated_instances(compiled) {
-        UndatedInstances::Admitted => {
-            candidates.union(
-                UnionType::All,
-                over_parts(branch, compiled, |part| {
-                    let mut undated = admitted(part, condition);
-                    project(&mut undated);
-                    undated.and_where(Expr::col((Ah, axis)).is_null());
-                    most_recent_first(&mut undated, Ah, None);
-                    undated.limit(limit);
-                    undated
-                }),
-            );
-        }
-        UndatedInstances::Excluded => {}
-    }
     let mut latest = Query::select();
     latest.expr(Expr::col((Latest, Asterisk))).from_subquery(candidates, Latest);
-    most_recent_first(&mut latest, Latest, Some(axis));
+    most_recent_first(&mut latest, Latest, axis);
     latest.limit(limit);
     latest
 }

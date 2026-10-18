@@ -135,10 +135,13 @@ impl TemporalDocument {
     /// Keep, for every attribute, the `last_n` instances with the most recent
     /// instant on `timeproperty`, in ascending order of it: clause 5.7.3.4
     /// fixes which instants are kept, never the order of the response, and
-    /// every response lists its instances oldest first.
+    /// every response lists its instances oldest first. An instance with no
+    /// instant there is left out: clause 5.7.3.4 has `lastN` "correspond to
+    /// the last n timestamps [...] of the temporal property", and it has none.
     pub fn keep_last(&mut self, timeproperty: TimeProp, last_n: NonZeroU32) {
         let keep = usize::try_from(last_n.get()).unwrap_or(usize::MAX);
         self.reshape_instances(|_, instances| {
+            instances.retain(|instance| instance.instant_on(timeproperty).is_some());
             instances.sort_by_key(|instance| Reverse(instance.instant_on(timeproperty)));
             instances.truncate(keep);
             instances.sort_by_key(|instance| instance.instant_on(timeproperty));

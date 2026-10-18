@@ -10,8 +10,7 @@
 //! rest.
 
 use crate::alias::{Ah, An};
-use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
-use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, window::TimeInterval};
+use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_postgresql_query::history_source::{
     HistoryBranch,
     HistoryOf,
@@ -31,27 +30,6 @@ pub(crate) struct St;
 #[derive(Iden, Clone, Copy)]
 #[iden = "part"]
 struct Part;
-
-/// Whether the window can hold instances with no instant on the axis.
-#[derive(Clone, Copy)]
-pub(crate) enum UndatedInstances {
-    /// An unbounded window on an axis an instance may lack.
-    Admitted,
-    /// A window bounded on the axis, or the `deletedAt` axis that only a
-    /// deletion carries and that selects those alone (clause 5.2.21).
-    Excluded,
-}
-
-/// Whether the window `compiled` reads can hold instances with no instant on
-/// its axis.
-pub(crate) const fn undated_instances(compiled: &CompiledTemporalQuery) -> UndatedInstances {
-    match (compiled.window.interval, compiled.window.timeproperty) {
-        (TimeInterval::Unbounded, TimeProp::Observed | TimeProp::Created | TimeProp::Modified) => UndatedInstances::Admitted,
-        (TimeInterval::Unbounded, TimeProp::Deleted) | (TimeInterval::Before(_) | TimeInterval::After(_) | TimeInterval::Between { .. }, _) => {
-            UndatedInstances::Excluded
-        }
-    }
-}
 
 /// One part of the history of the stream under `st`, read under `ah`.
 pub(crate) fn under_ah(part: SelectStatement) -> TableRef {

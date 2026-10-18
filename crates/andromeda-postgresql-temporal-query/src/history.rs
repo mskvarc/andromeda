@@ -600,23 +600,52 @@ mod tests {
         assert!(!bounded.contains(r#""ah"."observed_at" IS NULL"#), "{bounded}");
     }
 
-    /// Over an unbounded window a `lastN`, most recent first, takes the
-    /// undated instances ahead of the dated ones, as a single descending
-    /// ranking over the window orders them; `deletedAt` is carried by every
-    /// row it selects.
+    /// A backward page over `lastN` above the broker's maximum, 5000 asked
+    /// and 1000 kept.
+    fn backward_page() -> InstancePage {
+        InstancePage::Backward {
+            size: 1000,
+            requested: count(5000),
+        }
+    }
+
+    /// Clauses 5.7.3.4 and 5.7.4.4: `lastN` is "the last n timestamps (in
+    /// descending ordering) of the temporal property", so over an unbounded
+    /// window neither the last `n` instances nor a backward page reads an
+    /// instance with no instant on the axis, which has no timestamp to rank.
     #[test]
-    fn an_unbounded_last_n_takes_the_undated_instances_first() {
-        let sql = recorded_sql_of(InstancePage::LastN { n: count(3) }, TimeInterval::Unbounded);
+    fn an_unbounded_last_n_reads_no_instance_without_an_instant_on_the_axis() {
+        let last_n = recorded_sql_of(InstancePage::LastN { n: count(3) }, TimeInterval::Unbounded);
+        assert!(!last_n.contains(r#""ah"."observed_at" IS NULL"#), "{last_n}");
         assert!(
-            sql.contains(r#""ah"."observed_at" IS NULL ORDER BY "ah"."recorded_at" DESC, "ah"."write_id" DESC, "ah"."write_ordinal" DESC LIMIT 3"#),
-            "{sql}"
+            last_n.contains(r#""ah"."observed_at" IS NOT NULL ORDER BY "ah"."observed_at" DESC, "ah"."recorded_at" DESC"#),
+            "{last_n}"
         );
-        assert!(sql.contains(r#"ORDER BY "latest"."observed_at" DESC"#), "{sql}");
-        let mut compiled = minimal_compiled();
-        compiled.instances.page = InstancePage::LastN { n: count(3) };
-        compiled.window.timeproperty = TimeProp::Deleted;
-        let deleted = build_temporal_history_query(&HistoryBranch::live_recorded(), &vehicle_id(), &compiled).to_string(PostgresQueryBuilder);
-        assert!(!deleted.contains(r#""ah"."deleted_at" IS NULL"#), "{deleted}");
+        let backward = recorded_sql_of(backward_page(), TimeInterval::Unbounded);
+        assert!(!backward.contains(r#""ah"."observed_at" IS NULL"#), "{backward}");
+        assert!(
+            backward.contains(r#""ah"."observed_at" >= COALESCE("stream_edge"."edge", '-infinity'::timestamptz)"#),
+            "{backward}"
+        );
+    }
+
+    /// An aggregation over the last `n` instances folds dated instances alone,
+    /// whether it is one complete answer or a backward page of periods, with
+    /// a period grid or over the whole range (clauses 4.5.19 and 5.7.3.4).
+    #[test]
+    fn an_unbounded_aggregated_last_n_folds_no_instance_without_an_instant_on_the_axis() {
+        for period in ["PT1H", "PT0S"] {
+            for page in [InstancePage::LastN { n: count(3) }, backward_page()] {
+                let mut compiled = minimal_compiled();
+                compiled.representation.format = TemporalFormat::AggregatedValues;
+                compiled.representation.aggr_methods = vec![AggrMethod::Sum];
+                compiled.representation.aggr_period_duration = AggregationPeriod::parse(period).expect("valid period");
+                compiled.instances.page = page;
+                let sql = build_temporal_history_query(&HistoryBranch::live_recorded(), &vehicle_id(), &compiled).to_string(PostgresQueryBuilder);
+                assert!(!sql.contains(r#""ah"."observed_at" IS NULL"#), "{period}: {sql}");
+                assert!(sql.contains(r#""ah"."observed_at" IS NOT NULL"#), "{period}: {sql}");
+            }
+        }
     }
 
     /// On the live branch a stream's recorded rows and its queued entries are
