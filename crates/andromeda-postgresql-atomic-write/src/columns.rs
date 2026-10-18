@@ -6,7 +6,7 @@ use andromeda_context_commit::{
     commit_invariant::{CommitInvariant, NameDictionary},
     entity_mutation::EntityMutation,
     error::CommitError,
-    hoisted_geometries::GeometryChange,
+    hoisted_location::GeometryChange,
     precondition::Precondition,
     projected_attributes::ProjectedAttributes,
 };
@@ -52,7 +52,6 @@ pub(crate) fn columns_for<'a>(writes: &[IndexedWrite<'a>], keys: &NameKeys) -> R
         let projection = &record.projection;
         let state = &record.state;
         let row = StoredRow::of(write);
-        let changes = &record.geometry_changes;
         columns.ids.push(write.entity_id.as_ref().clone()); // clone: the SQL column set owns identifiers borrowed from the writes.
         columns.push_entity_type_name_keys(key_array(&projection.types, |name| keys.entity_type(name), NameDictionary::EntityType)?);
         let attribute_keys = key_array(projection.attributes.names(), |name| keys.attribute(name), NameDictionary::AttributeName)?;
@@ -64,11 +63,7 @@ pub(crate) fn columns_for<'a>(writes: &[IndexedWrite<'a>], keys: &NameKeys) -> R
             .map_err(|error| CommitError::Persistence(PersistenceFailure::Unencodable.record(&error)))?;
         grains.push(write.entity_id.as_ref(), &edit, keys).map_err(|error| flatten_failure(&error))?;
         columns
-            .push_geometries(
-                row.staged(changes.location, state.location_geometry()),
-                row.staged(changes.observation_space, state.observation_space_geometry()),
-                row.staged(changes.operation_space, state.operation_space_geometry()),
-            )
+            .push_location(row.staged(record.location_change, state.location_geometry()))
             .map_err(|error| CommitError::Persistence(PersistenceFailure::Unencodable.record(&error)))?;
         columns.location_expires_ats.push(projection.location_expires_at);
         columns.expires_ats.push(record.expires_at);
@@ -119,7 +114,7 @@ impl StoredRow {
         }
     }
 
-    /// How the row stages one hoisted geometry: kept when the stored row is
+    /// How the row stages the hoisted geometry: kept when the stored row is
     /// the one the write read and the write leaves the geometry as that row
     /// holds it, encoded otherwise. A kept geometry costs the statement
     /// nothing in proportion to its positions.
@@ -409,8 +404,6 @@ mod tests {
             columns.entities.attribute_instance_kinds.len(),
             columns.entities.scopes.len(),
             columns.entities.locations.len(),
-            columns.entities.obs_spaces.len(),
-            columns.entities.op_spaces.len(),
             columns.entities.location_expires_ats.len(),
             columns.entities.expires_ats.len(),
             columns.entities.min_attribute_expires_ats.len(),
@@ -450,7 +443,6 @@ mod tests {
         let indexed: Vec<_> = writes.iter().enumerate().collect();
         let columns = columns_for(&indexed, &located_names()).expect("valid columns");
         pretty_assertions::assert_eq!(columns.entities.locations, vec![StagedGeometry::Kept]);
-        pretty_assertions::assert_eq!(columns.entities.obs_spaces, vec![StagedGeometry::Kept], "neither state holds one");
     }
 
     /// An update that overwrites whatever is stored cannot know the stored row
@@ -461,7 +453,6 @@ mod tests {
         let indexed: Vec<_> = writes.iter().enumerate().collect();
         let columns = columns_for(&indexed, &located_names()).expect("valid columns");
         assert!(columns.entities.locations[0].ewkb().is_some(), "{:?}", columns.entities.locations);
-        pretty_assertions::assert_eq!(columns.entities.obs_spaces, vec![StagedGeometry::Written(None)]);
     }
 
     /// An update that states the state it read stages only what differs from

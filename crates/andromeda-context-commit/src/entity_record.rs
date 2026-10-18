@@ -1,7 +1,7 @@
 //! The current-state row an atomic write stores for one entity, in NGSI-LD
 //! terms rather than backend columns.
 
-use crate::{commit_invariant::CommitInvariant, error::CommitError, hoisted_geometries::HoistedGeometryChanges, projected_attributes::ProjectedAttributes};
+use crate::{commit_invariant::CommitInvariant, error::CommitError, hoisted_location::GeometryChange, projected_attributes::ProjectedAttributes};
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, reads::member_name::MemberName};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::path::ScopePath};
 use chrono::{DateTime, Utc};
@@ -89,8 +89,9 @@ pub struct EntityRecord {
     pub replaces: Option<Arc<EntityState>>,
     /// The members a query filters on.
     pub projection: SearchProjection,
-    /// Which hoisted geometries differ from the state this record replaces.
-    pub geometry_changes: HoistedGeometryChanges,
+    /// Whether the hoisted `location` geometry differs from the state this
+    /// record replaces.
+    pub location_change: GeometryChange,
     /// Entity `expiresAt` value from clause 4.22, when present.
     pub expires_at: Option<DateTime<Utc>>,
     /// The earliest `expiresAt` any attribute instance carries, when one does
@@ -100,7 +101,7 @@ pub struct EntityRecord {
 
 impl EntityRecord {
     /// Extract the backend-neutral state required to persist an entity that
-    /// replaces no state the writer read: every hoisted geometry is changed.
+    /// replaces no state the writer read: the hoisted geometry is changed.
     ///
     /// # Errors
     ///
@@ -109,7 +110,7 @@ impl EntityRecord {
     pub fn from_state(state: Arc<EntityState>) -> Result<EntityRecord, CommitError> {
         Ok(EntityRecord {
             projection: SearchProjection::from_state(&state)?,
-            geometry_changes: HoistedGeometryChanges::all_changed(),
+            location_change: GeometryChange::Changed,
             expires_at: state.entity_expiry(),
             min_attribute_expires_at: state.min_attribute_expiry(),
             state,
@@ -118,8 +119,8 @@ impl EntityRecord {
     }
 
     /// Extract the state required to persist `state` in place of `previous`,
-    /// the state the write was computed from, recording which hoisted
-    /// geometries the write leaves as `previous` held them.
+    /// the state the write was computed from, recording whether the write
+    /// leaves the hoisted geometry as `previous` held it.
     ///
     /// # Errors
     ///
@@ -127,14 +128,14 @@ impl EntityRecord {
     /// [`SearchProjection::from_state`].
     pub fn replacing(previous: &Arc<EntityState>, state: Arc<EntityState>) -> Result<EntityRecord, CommitError> {
         let mut record = EntityRecord::from_state(state)?;
-        record.geometry_changes = HoistedGeometryChanges::between(previous, &record.state);
+        record.location_change = GeometryChange::of_location(previous, &record.state);
         record.replaces = Some(Arc::clone(previous)); // clone: Arc ref-count bump; the writer keeps the state it read
         Ok(record)
     }
 
     /// Assemble a record from members a preparation pass already extracted,
     /// so a batch that validated the state does not extract them twice. The
-    /// record replaces no state its writer read: every hoisted geometry is
+    /// record replaces no state its writer read: the hoisted geometry is
     /// changed.
     #[must_use]
     pub const fn from_parts(
@@ -147,7 +148,7 @@ impl EntityRecord {
             state,
             replaces: None,
             projection,
-            geometry_changes: HoistedGeometryChanges::all_changed(),
+            location_change: GeometryChange::Changed,
             expires_at,
             min_attribute_expires_at,
         }
@@ -158,7 +159,7 @@ impl EntityRecord {
 mod tests {
     use crate::{
         entity_record::{EntityRecord, SearchProjection},
-        hoisted_geometries::GeometryChange,
+        hoisted_location::GeometryChange,
     };
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_geometry::form::GeometryForm;
@@ -296,8 +297,6 @@ mod tests {
             | None => None,
         };
         pretty_assertions::assert_eq!(longitude(entity.location_geometry()), Some(13.4));
-        pretty_assertions::assert_eq!(longitude(entity.operation_space_geometry()), Some(2.0));
-        assert!(entity.observation_space_geometry().is_none());
         pretty_assertions::assert_eq!(projection.location_expires_at, Some(instant("2031-01-01T00:00:00Z")));
     }
 
@@ -307,7 +306,7 @@ mod tests {
         let record = EntityRecord::from_parts(Arc::clone(&entity), SearchProjection::default(), None, None);
         assert!(Arc::ptr_eq(&entity, &record.state));
         assert_eq!(record.projection.types, [] as [EntityTypeName; 0]);
-        assert_eq!(record.geometry_changes.location, GeometryChange::Changed);
+        assert_eq!(record.location_change, GeometryChange::Changed);
     }
 
     /// A record replacing the state it was computed from records the geometry
@@ -328,11 +327,11 @@ mod tests {
         }])));
         let current = Arc::new(EntityState::clone(&previous)); // clone: shares every attribute, as a read-modify-write does
         let replacing = EntityRecord::replacing(&previous, Arc::clone(&current)).expect("a projection");
-        assert_eq!(replacing.geometry_changes.location, GeometryChange::Unchanged);
+        assert_eq!(replacing.location_change, GeometryChange::Unchanged);
         assert!(Arc::ptr_eq(&replacing.state, &current));
         assert!(replacing.replaces.as_ref().is_some_and(|replaced| Arc::ptr_eq(replaced, &previous)));
         let fresh = EntityRecord::from_state(current).expect("a projection");
-        assert_eq!(fresh.geometry_changes.location, GeometryChange::Changed);
+        assert_eq!(fresh.location_change, GeometryChange::Changed);
         assert!(fresh.replaces.is_none());
     }
 }

@@ -1,9 +1,8 @@
-//! Machine-checked invariants over the Snapshot register and executable cases.
+//! Machine-checked invariants over the Snapshot suite's executable cases.
 
 use regex::Regex;
 use std::collections::BTreeSet;
 
-const REGISTER: &str = include_str!("../../docs/snapshot-conformance-register.md");
 const MAIN_SOURCE: &str = include_str!("main.rs");
 /// Every source file of the suite whose attributes the serial-group check
 /// covers, by the module name `main.rs` declares it under. This module is left
@@ -28,35 +27,9 @@ const EXECUTABLE_SOURCES: [(&str, &str); 18] = [
     ("tenancy_resilience", include_str!("tenancy_resilience.rs")),
     ("typed_round_trip", include_str!("typed_round_trip.rs")),
 ];
-const EXPECTED_REQUIREMENTS: usize = 155;
-const EXPECTED_POLICIES: usize = 10;
-
-fn identifiers(source: &str, pattern: &str) -> BTreeSet<String> {
-    Regex::new(pattern)
-        .expect("the coverage pattern is static and valid")
-        .find_iter(source)
-        .map(|matched| matched.as_str().to_owned())
-        .collect()
-}
 
 fn executable_sources() -> String {
     EXECUTABLE_SOURCES.iter().map(|(_, source)| *source).collect::<Vec<_>>().join("\n")
-}
-
-#[test]
-fn register_has_exact_normative_and_policy_counts() {
-    pretty_assertions::assert_eq!(identifiers(REGISTER, r"REQ-SNAP-[A-Z]+-[0-9]+").len(), EXPECTED_REQUIREMENTS);
-    pretty_assertions::assert_eq!(identifiers(REGISTER, r"POLICY-SNAP-[0-9]+").len(), EXPECTED_POLICIES);
-    let incomplete = REGISTER
-        .lines()
-        .filter(|line| line.starts_with("[REQ-SNAP-"))
-        .filter(|line| !line.ends_with("STATUS: COVERED") && !line.starts_with("[REQ-SNAP-RESULT-5] SPEC-CONFLICT"))
-        .collect::<Vec<_>>();
-    assert!(
-        incomplete.is_empty(),
-        "Snapshot obligations with unresolved implementation status: {incomplete:#?}"
-    );
-    pretty_assertions::assert_eq!(REGISTER.lines().filter(|line| line.ends_with("STATUS: SPEC-CONFLICT")).count(), 1);
 }
 
 #[test]

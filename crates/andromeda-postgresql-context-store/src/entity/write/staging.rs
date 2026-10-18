@@ -107,11 +107,11 @@ pub(super) struct Doomed;
 /// `attribute_instance_name_keys_literal`, `attribute_instance_kinds_literal`)
 /// and are cast to `integer[]`/`smallint[]` in the projection; the scopes
 /// arrive as JSONB (`scope_paths_json`, `verbatim_scope_paths_json`) and are
-/// expanded to `ltree[]` and `text[]` there; the geometries arrive as EWKB
-/// (`loc`, `obs`, `ops`) and are validated there. Not every statement uses
+/// expanded to `ltree[]` and `text[]` there; the default `location` geometry
+/// arrives as EWKB (`loc`) and is validated there. Not every statement uses
 /// every column: the delete stages only `id` and the expectation, and only the
-/// update stages the expectation and which geometries a row keeps
-/// (`loc_kept`, `obs_kept`, `ops_kept`).
+/// update stages the expectation and whether a row keeps its geometry
+/// (`loc_kept`).
 #[derive(Iden, Clone, Copy)]
 pub(super) enum StagedColumn {
     /// Entity identifier.
@@ -131,10 +131,6 @@ pub(super) enum StagedColumn {
     VerbatimScopePathsJson,
     /// Default `GeoProperty` geometry as EWKB.
     Loc,
-    /// `observationSpace` geometry as EWKB.
-    Obs,
-    /// `operationSpace` geometry as EWKB.
-    Ops,
     /// The instant after which every `location` instance has expired.
     LocExpiresAt,
     /// Expiration timestamp.
@@ -145,13 +141,9 @@ pub(super) enum StagedColumn {
     ExpectedModifiedAt,
     /// Whether the row keeps its stored `location` geometry.
     LocKept,
-    /// Whether the row keeps its stored `observationSpace` geometry.
-    ObsKept,
-    /// Whether the row keeps its stored `operationSpace` geometry.
-    OpsKept,
 }
 
-/// One hoisted geometry column of the search row, with the staging columns
+/// The hoisted geometry column of the search row, with the staging columns
 /// that carry it.
 #[derive(Clone, Copy)]
 pub(super) struct HoistedColumn {
@@ -163,24 +155,14 @@ pub(super) struct HoistedColumn {
     pub(super) kept: StagedColumn,
 }
 
-/// The three hoisted geometry columns, in bind order.
-pub(super) const HOISTED_COLUMNS: [HoistedColumn; 3] = [
-    HoistedColumn {
-        stored: EntitySearch::Location,
-        ewkb: StagedColumn::Loc,
-        kept: StagedColumn::LocKept,
-    },
-    HoistedColumn {
-        stored: EntitySearch::ObservationSpace,
-        ewkb: StagedColumn::Obs,
-        kept: StagedColumn::ObsKept,
-    },
-    HoistedColumn {
-        stored: EntitySearch::OperationSpace,
-        ewkb: StagedColumn::Ops,
-        kept: StagedColumn::OpsKept,
-    },
-];
+/// The default `location` instance's geometry, the one geometry the search row
+/// hoists: every other `GeoProperty` is matched through its attribute instance
+/// rows, whose index is keyed by attribute name.
+pub(super) const HOISTED_LOCATION: HoistedColumn = HoistedColumn {
+    stored: EntitySearch::Location,
+    ewkb: StagedColumn::Loc,
+    kept: StagedColumn::LocKept,
+};
 
 /// A staging column reference, `d.<column>`.
 pub(super) fn staged(column: StagedColumn) -> SimpleExpr {
@@ -221,9 +203,9 @@ fn array_of(column: StagedColumn, element_type: PostgresType) -> SimpleExpr {
     array_subquery(&Query::select().expr(cast(element, element_type)).to_owned())
 }
 
-/// The thirteen projected staging columns every insert and update stages, in
+/// The eleven projected staging columns every insert and update stages, in
 /// bind order.
-const fn value_staging_columns() -> [(StagedColumn, PostgresType); 13] {
+const fn value_staging_columns() -> [(StagedColumn, PostgresType); 11] {
     [
         (StagedColumn::Id, PostgresType::TextArray),
         (StagedColumn::EntityTypeNameKeysLiteral, PostgresType::TextArray),
@@ -233,15 +215,13 @@ const fn value_staging_columns() -> [(StagedColumn, PostgresType); 13] {
         (StagedColumn::ScopePathsJson, PostgresType::JsonbArray),
         (StagedColumn::VerbatimScopePathsJson, PostgresType::JsonbArray),
         (StagedColumn::Loc, PostgresType::ByteaArray),
-        (StagedColumn::Obs, PostgresType::ByteaArray),
-        (StagedColumn::Ops, PostgresType::ByteaArray),
         (StagedColumn::LocExpiresAt, PostgresType::TimestamptzArray),
         (StagedColumn::ExpiresAt, PostgresType::TimestamptzArray),
         (StagedColumn::MinAttributeExpiresAt, PostgresType::TimestamptzArray),
     ]
 }
 
-/// The thirteen projected staging columns of the insert, in bind order.
+/// The eleven projected staging columns of the insert, in bind order.
 pub(super) fn insert_staging_columns() -> Vec<UnnestColumn> {
     value_staging_columns()
         .into_iter()
@@ -249,12 +229,12 @@ pub(super) fn insert_staging_columns() -> Vec<UnnestColumn> {
         .collect()
 }
 
-/// The seventeen projected staging columns of the update: the insert's
-/// thirteen, whether each hoisted geometry is kept, and the expectation the
+/// The thirteen projected staging columns of the update: the insert's eleven,
+/// whether the hoisted geometry is kept, and the expectation the
 /// compare-and-set holds.
 pub(super) fn update_staging_columns() -> Vec<UnnestColumn> {
     let mut columns = insert_staging_columns();
-    columns.extend(HOISTED_COLUMNS.map(|column| UnnestColumn::new(column.kept, PostgresType::BooleanArray)));
+    columns.push(UnnestColumn::new(HOISTED_LOCATION.kept, PostgresType::BooleanArray));
     columns.push(UnnestColumn::new(StagedColumn::ExpectedModifiedAt, PostgresType::TimestamptzArray));
     columns
 }
@@ -275,8 +255,8 @@ pub(super) fn staging_source(columns: &[UnnestColumn]) -> FunctionCall {
 /// The projection CTE `proj` over the staged `columns`, whose output columns
 /// carry the names of the relation columns they land in.
 ///
-/// What only an update stages -- whether each geometry is kept, and the
-/// expectation -- is projected for the update alone, so the insert and the
+/// What only an update stages (whether the geometry is kept, and the
+/// expectation) is projected for the update alone, so the insert and the
 /// update share this one builder. A kept geometry stages no EWKB, so its
 /// projection validates nothing.
 pub(super) fn projection_cte(columns: &[UnnestColumn], write: ProjectedWrite) -> CommonTableExpression {
@@ -303,20 +283,14 @@ pub(super) fn projection_cte(columns: &[UnnestColumn], write: ProjectedWrite) ->
         .expr_as(
             array_of(StagedColumn::VerbatimScopePathsJson, PostgresType::Text),
             EntitySearch::VerbatimScopePaths,
-        );
-    for column in HOISTED_COLUMNS {
-        select.expr_as(geometry(column.ewkb), column.stored);
-    }
-    select
+        )
+        .expr_as(geometry(HOISTED_LOCATION.ewkb), HOISTED_LOCATION.stored)
         .expr_as(staged(StagedColumn::LocExpiresAt), EntitySearch::LocationExpiresAt)
         .expr_as(staged(StagedColumn::ExpiresAt), Entities::ExpiresAt)
         .expr_as(staged(StagedColumn::MinAttributeExpiresAt), Entities::MinAttributeExpiresAt);
     match write {
         ProjectedWrite::Update => {
-            for column in HOISTED_COLUMNS {
-                select.expr(staged(column.kept));
-            }
-            select.expr(staged(StagedColumn::ExpectedModifiedAt));
+            select.expr(staged(HOISTED_LOCATION.kept)).expr(staged(StagedColumn::ExpectedModifiedAt));
         }
         ProjectedWrite::Insert => {}
     }
@@ -333,7 +307,7 @@ pub(super) fn apply_staged_alias(sql: String, columns: &[UnnestColumn]) -> Strin
 /// Which set-write a projection serves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ProjectedWrite {
-    /// The update: whether each geometry is kept, and the expectation, are
+    /// The update: whether the geometry is kept, and the expectation, are
     /// staged and projected.
     Update,
     /// The insert: nothing to compare against and no stored row to keep from.

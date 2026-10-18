@@ -52,8 +52,10 @@ where
 create index idx_entities_id_trgm on entities using gin (id gin_trgm_ops);
 
 -- The query axes: types (clause 4.17), the names of the attributes the
--- Entity carries (clause 5.2.23 `attrs`), scopes (clause 4.18) and the three
--- hoisted geometries (clauses 4.7.1 and 4.10). Every index that finds
+-- Entity carries (clause 5.2.23 `attrs`), scopes (clause 4.18) and the
+-- hoisted default `location` instance (clauses 4.7.1 and 4.10); every other
+-- `GeoProperty` is found through its `current_attributes` rows, whose
+-- geometry index is keyed by attribute name. Every index that finds
 -- entities is here, and a row is rewritten only when one of these columns
 -- changes. It keeps the default fillfactor: its updates are rare, and they
 -- rewrite indexed columns anyway.
@@ -93,8 +95,6 @@ create table entity_search (
     verbatim_scope_paths text[] compression lz4 collate "C",
     location geometry compression lz4,
     location_geography geography compression lz4 generated always as (geom_to_geog(location)) stored,
-    observation_space geometry compression lz4,
-    operation_space geometry compression lz4,
     constraint pk_entity_search primary key (entity_key),
     constraint fk_entity_search_entity foreign key (entity_key) references entities (entity_key) on delete cascade,
     constraint chk_entity_search_entity_type_name_keys_present check (cardinality(entity_type_name_keys) > 0),
@@ -103,13 +103,7 @@ create table entity_search (
     constraint chk_entity_search_scope_spelling check ((scope_paths is null) = (verbatim_scope_paths is null) and (scope_paths is null or cardinality(scope_paths) = cardinality(verbatim_scope_paths))),
     constraint chk_entity_search_location_valid check (location is null or st_isvalid(location)),
     constraint chk_entity_search_location_srid check (location is null or st_srid(location) = 4326),
-    constraint chk_entity_search_location_zm check (location is null or st_zmflag(location) in (0, 2)),
-    constraint chk_entity_search_observation_space_valid check (observation_space is null or st_isvalid(observation_space)),
-    constraint chk_entity_search_observation_space_srid check (observation_space is null or st_srid(observation_space) = 4326),
-    constraint chk_entity_search_observation_space_zm check (observation_space is null or st_zmflag(observation_space) in (0, 2)),
-    constraint chk_entity_search_operation_space_valid check (operation_space is null or st_isvalid(operation_space)),
-    constraint chk_entity_search_operation_space_srid check (operation_space is null or st_srid(operation_space) = 4326),
-    constraint chk_entity_search_operation_space_zm check (operation_space is null or st_zmflag(operation_space) in (0, 2))
+    constraint chk_entity_search_location_zm check (location is null or st_zmflag(location) in (0, 2))
 )
 with (
     vacuum_truncate = false,
@@ -133,14 +127,6 @@ where
 create index idx_entity_search_location_geography on entity_search using gist (location_geography)
 where
     location_geography is not null;
-
-create index idx_entity_search_observation_space on entity_search using gist (observation_space)
-where
-    observation_space is not null;
-
-create index idx_entity_search_operation_space on entity_search using gist (operation_space)
-where
-    operation_space is not null;
 
 -- The spatial index catch-up: a range scan over recently written rows.
 create index idx_entity_search_written_xid on entity_search (written_xid);

@@ -23,8 +23,7 @@ use crate::{
                 Dropped,
                 Ents,
                 Gone,
-                HOISTED_COLUMNS,
-                HoistedColumn,
+                HOISTED_LOCATION,
                 Moved,
                 Proj,
                 ProjectedWrite,
@@ -69,7 +68,7 @@ static ENTITY_UPDATE_STATEMENT: BranchStatement = BranchStatement::new(entity_up
 /// Build the batch update.
 ///
 /// ```sql
-/// WITH proj AS (SELECT … FROM UNNEST($1::text[], …, $17::timestamptz[]) AS d(…)),
+/// WITH proj AS (SELECT … FROM UNNEST($1::text[], …, $13::timestamptz[]) AS d(…)),
 ///      ents AS (UPDATE entities SET modified_at = NOW(), expires_at = proj.expires_at,
 ///                                   min_attribute_expires_at = proj.min_attribute_expires_at
 ///               FROM proj
@@ -87,9 +86,9 @@ static ENTITY_UPDATE_STATEMENT: BranchStatement = BranchStatement::new(entity_up
 ///      strays AS (DELETE FROM entity_type_members WHERE (entity_type_name_key, id) IN
 ///                 (SELECT <old type the new row lacks>, srch.id FROM srch …)),
 ///      mbrs AS (INSERT INTO entity_type_members (…) SELECT srch.entity_key, <new type the old row lacked>, srch.id FROM srch …),
-///      instances AS (SELECT r.id, r.attribute_name_key, … FROM UNNEST($18::text[], …) AS r(…)),
-///      grains AS (SELECT g.id, g.attribute_name_key, g.dataset_id, g.ordinal FROM UNNEST($45::text[], …) AS g(…)),
-///      gone AS (DELETE FROM current_attributes WHERE entity_key IN (SELECT entity_key FROM ents WHERE id = ANY($49::text[]))
+///      instances AS (SELECT r.id, r.attribute_name_key, … FROM UNNEST($14::text[], …) AS r(…)),
+///      grains AS (SELECT g.id, g.attribute_name_key, g.dataset_id, g.ordinal FROM UNNEST($41::text[], …) AS g(…)),
+///      gone AS (DELETE FROM current_attributes WHERE entity_key IN (SELECT entity_key FROM ents WHERE id = ANY($45::text[]))
 ///               AND NOT EXISTS (<a staged row of the same grain>)),
 ///      dropped AS (DELETE FROM current_attributes WHERE entity_key IN (<ents removing a grain>) AND EXISTS (<a removed grain of the row>)),
 ///      moved AS (UPDATE current_attributes SET ordinal = grains.ordinal FROM ents, grains WHERE grains.ordinal IS NOT NULL AND <the row's grain>),
@@ -151,18 +150,14 @@ pub(super) fn entity_update_sql(target: &ContextTarget) -> Result<String, Contex
     for column in SCALAR_SEARCH_COLUMNS {
         search.value(column, projected(column));
     }
-    for column in HOISTED_COLUMNS {
-        search.value(column.stored, hoisted_value(column));
-    }
+    search.value(HOISTED_LOCATION.stored, hoisted_value());
     // A rewritten search row is a changed type, attribute name, scope or
     // geometry, which a spatial index catching up from the store must find.
     search.value(EntitySearch::WrittenXid, current_transaction_id());
     let scalar_changed = SCALAR_SEARCH_COLUMNS.into_iter().fold(Cond::any(), |changed, column| {
         changed.add(SimpleExpr::from(Expr::col((EntitySearch::Table, column))).distinct_from(projected(column)))
     });
-    let changed = HOISTED_COLUMNS
-        .into_iter()
-        .fold(scalar_changed, |changed, column| changed.add(hoisted_changed(column)));
+    let changed = scalar_changed.add(hoisted_changed());
     search.from(Ents).from(Proj).cond_where(
         Cond::all()
             .add(Expr::col((Proj, Entities::Id)).equals((Ents, Entities::Id)))
@@ -245,9 +240,9 @@ fn entity_write(target: &ContextTarget) -> UpdateStatement {
 
 /// The seven scalar `entity_search` columns the update projects, each written
 /// and guarded by the same list so no column can be rewritten without being
-/// compared, or compared without being written. The three hoisted geometries
-/// ([`HOISTED_COLUMNS`]) are written and guarded the same way, unless the row
-/// keeps them.
+/// compared, or compared without being written. The hoisted geometry
+/// ([`HOISTED_LOCATION`]) is written and guarded the same way, unless the row
+/// keeps it.
 const SCALAR_SEARCH_COLUMNS: [EntitySearch; 7] = [
     EntitySearch::EntityTypeNameKeys,
     EntitySearch::AttributeNameKeys,
@@ -258,24 +253,24 @@ const SCALAR_SEARCH_COLUMNS: [EntitySearch; 7] = [
     EntitySearch::LocationExpiresAt,
 ];
 
-/// The value a rewritten search row takes for one hoisted geometry:
-/// `CASE WHEN proj.<kept> THEN entity_search.<column> ELSE proj.<column> END`.
+/// The value a rewritten search row takes for the hoisted geometry:
+/// `CASE WHEN proj.loc_kept THEN entity_search.location ELSE proj.location END`.
 ///
 /// A kept geometry is the stored column itself, so a row rewritten for another
 /// column keeps the geometry's stored value rather than a re-projection of it.
-fn hoisted_value(column: HoistedColumn) -> SimpleExpr {
+fn hoisted_value() -> SimpleExpr {
     CaseStatement::new()
-        .case(projected(column.kept), Expr::col((EntitySearch::Table, column.stored)))
-        .finally(projected(column.stored))
+        .case(projected(HOISTED_LOCATION.kept), Expr::col((EntitySearch::Table, HOISTED_LOCATION.stored)))
+        .finally(projected(HOISTED_LOCATION.stored))
         .into()
 }
 
-/// Whether one hoisted geometry changes the search row:
-/// `NOT proj.<kept> AND entity_search.<column> IS DISTINCT FROM proj.<column>`.
-fn hoisted_changed(column: HoistedColumn) -> Cond {
+/// Whether the hoisted geometry changes the search row:
+/// `NOT proj.loc_kept AND entity_search.location IS DISTINCT FROM proj.location`.
+fn hoisted_changed() -> Cond {
     Cond::all()
-        .add(projected(column.kept).not())
-        .add(SimpleExpr::from(Expr::col((EntitySearch::Table, column.stored))).distinct_from(projected(column.stored)))
+        .add(projected(HOISTED_LOCATION.kept).not())
+        .add(SimpleExpr::from(Expr::col((EntitySearch::Table, HOISTED_LOCATION.stored))).distinct_from(projected(HOISTED_LOCATION.stored)))
 }
 
 impl EntityRepository {
@@ -314,9 +309,8 @@ impl EntityRepository {
         types_present(entities)?;
 
         let ids = entities.ids.iter().map(Identifier::as_str).collect::<Vec<_>>();
-        let geometries = [&entities.locations, &entities.obs_spaces, &entities.op_spaces];
-        let [locations, observation_spaces, operation_spaces] = geometries.map(|column| staged_column(column));
-        let [locations_kept, observation_spaces_kept, operation_spaces_kept] = geometries.map(|column| kept_column(column));
+        let locations = staged_column(&entities.locations);
+        let locations_kept = kept_column(&entities.locations);
         let sql = ENTITY_UPDATE_STATEMENT.text(target)?;
         let query = sqlx::query_as(sqlx::AssertSqlSafe(&*sql))
             .bind(&ids)
@@ -327,14 +321,10 @@ impl EntityRepository {
             .bind(entities.scope_paths_bind())
             .bind(entities.verbatim_scope_paths_bind())
             .bind(&locations)
-            .bind(&observation_spaces)
-            .bind(&operation_spaces)
             .bind(&entities.location_expires_ats)
             .bind(&entities.expires_ats)
             .bind(&entities.min_attribute_expires_ats)
             .bind(&locations_kept)
-            .bind(&observation_spaces_kept)
-            .bind(&operation_spaces_kept)
             .bind(expected_modified_at);
         let rows = grains.bind_to(rows.bind_to(query)).fetch_all(&mut **tx);
         let rows: Vec<(String,)> = observe_statement(ENTITY_UPDATE, rows).await.map_err(entity_write_failure)?;
@@ -388,7 +378,7 @@ mod tests {
         );
         assert!(
             sql.contains(
-                " AS d(id, entity_type_name_keys_literal, attribute_name_keys_literal, attribute_instance_name_keys_literal, attribute_instance_kinds_literal, scope_paths_json, verbatim_scope_paths_json, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at, loc_kept, obs_kept, ops_kept, expected_modified_at)"
+                " AS d(id, entity_type_name_keys_literal, attribute_name_keys_literal, attribute_instance_name_keys_literal, attribute_instance_kinds_literal, scope_paths_json, verbatim_scope_paths_json, loc, loc_expires_at, expires_at, min_attribute_expires_at, loc_kept, expected_modified_at)"
             ),
             "{sql}"
         );
@@ -441,11 +431,11 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#""gone" AS (DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "entity_key" FROM "ents" WHERE "id" = ANY($49::text[]))"#),
+            sql.contains(r#""gone" AS (DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "entity_key" FROM "ents" WHERE "id" = ANY($45::text[]))"#),
             "{sql}"
         );
         assert!(
-            sql.contains(r"$45::text[], $46::integer[], $47::text[], $48::integer[]) AS g(id, attribute_name_key, dataset_id, ordinal)"),
+            sql.contains(r"$41::text[], $42::integer[], $43::text[], $44::integer[]) AS g(id, attribute_name_key, dataset_id, ordinal)"),
             "{sql}"
         );
     }
@@ -467,20 +457,23 @@ mod tests {
     #[test]
     fn a_kept_geometry_keeps_the_stored_column_and_is_not_compared() {
         let sql = update();
-        for (column, kept) in [("location", "loc_kept"), ("observation_space", "obs_kept"), ("operation_space", "ops_kept")] {
-            assert!(
-                sql.contains(&format!(
-                    r#""{column}" = (CASE WHEN ("proj"."{kept}") THEN "entity_search"."{column}" ELSE "proj"."{column}" END)"#
-                )),
-                "{column}: {sql}"
-            );
-            assert!(
-                sql.contains(&format!(
-                    r#"((NOT "proj"."{kept}") AND ("entity_search"."{column}" IS DISTINCT FROM "proj"."{column}"))"#
-                )),
-                "{column}: {sql}"
-            );
-        }
+        assert!(
+            sql.contains(r#""location" = (CASE WHEN ("proj"."loc_kept") THEN "entity_search"."location" ELSE "proj"."location" END)"#),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(r#"((NOT "proj"."loc_kept") AND ("entity_search"."location" IS DISTINCT FROM "proj"."location"))"#),
+            "{sql}"
+        );
+    }
+
+    /// Only the default `location` is hoisted; every other `GeoProperty` is
+    /// matched through its attribute instance rows.
+    #[test]
+    fn the_update_hoists_no_space_geometry() {
+        let sql = update();
+        assert!(!sql.contains("observation_space"), "{sql}");
+        assert!(!sql.contains("operation_space"), "{sql}");
     }
 
     #[test]
@@ -491,7 +484,7 @@ mod tests {
             "{sql}"
         );
         let (search, _) = sql.split_once(r#""strays" AS"#).expect("the search write precedes the memberships");
-        pretty_assertions::assert_eq!(search.matches("IS DISTINCT FROM").count(), 10, "ten search columns are guarded: {sql}");
+        pretty_assertions::assert_eq!(search.matches("IS DISTINCT FROM").count(), 8, "eight search columns are guarded: {sql}");
         for column in [
             "entity_type_name_keys",
             "attribute_name_keys",
@@ -500,8 +493,6 @@ mod tests {
             "scope_paths",
             "verbatim_scope_paths",
             "location",
-            "observation_space",
-            "operation_space",
             "location_expires_at",
         ] {
             assert!(
@@ -571,7 +562,7 @@ mod tests {
     #[test]
     fn the_projection_validates_each_geometry_once() {
         let sql = update();
-        pretty_assertions::assert_eq!(sql.matches("ST_MakeValid").count(), 4, "{sql}");
+        pretty_assertions::assert_eq!(sql.matches("ST_MakeValid").count(), 2, "{sql}");
         assert!(sql.starts_with(r#"WITH "proj" AS ("#), "{sql}");
     }
 }

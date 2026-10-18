@@ -36,18 +36,6 @@ impl EntityState {
         self.geo_property_geometry(properties::LOCATION.as_str())
     }
 
-    /// The default `observationSpace` geometry.
-    #[must_use]
-    pub fn observation_space_geometry(&self) -> Option<&GeometryForm> {
-        self.geo_property_geometry(properties::OBSERVATION_SPACE.as_str())
-    }
-
-    /// The default `operationSpace` geometry.
-    #[must_use]
-    pub fn operation_space_geometry(&self) -> Option<&GeometryForm> {
-        self.geo_property_geometry(properties::OPERATION_SPACE.as_str())
-    }
-
     /// The expiry of the default `location` instance (clause 4.22): the same
     /// instance the hoisted geometry is read from.
     #[must_use]

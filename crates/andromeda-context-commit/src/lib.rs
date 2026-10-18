@@ -37,7 +37,7 @@ pub mod failure_summary;
 /// Temporal-history consequences carried by a write.
 pub mod history_record;
 /// Which hoisted geometries of an entity a write changes.
-pub mod hoisted_geometries;
+pub mod hoisted_location;
 /// The side-effect job lease a replayed commit settles.
 pub mod job_lease;
 /// Whether a lease-guarded acknowledgement reached the row it targeted.

@@ -40,7 +40,7 @@ static ENTITY_INSERT_STATEMENT: BranchStatement = BranchStatement::new(entity_in
 /// Build the batch insert.
 ///
 /// ```sql
-/// WITH proj AS (SELECT … FROM UNNEST($1::text[], …, $13::timestamptz[]) AS d(…)),
+/// WITH proj AS (SELECT … FROM UNNEST($1::text[], …, $11::timestamptz[]) AS d(…)),
 ///      ins AS (INSERT INTO entities (id, expires_at, min_attribute_expires_at)
 ///              SELECT … FROM proj ON CONFLICT (id) DO NOTHING RETURNING entity_key, id),
 ///      srch(entity_key, new_types, new_instance_names, new_instance_kinds) AS
@@ -50,7 +50,7 @@ static ENTITY_INSERT_STATEMENT: BranchStatement = BranchStatement::new(entity_in
 ///      mbrs AS (INSERT INTO entity_type_members (entity_key, entity_type_name_key, id)
 ///               SELECT ins.entity_key, carried.entity_type_name_key, ins.id FROM ins JOIN proj ON proj.id = ins.id
 ///               INNER JOIN LATERAL (SELECT UNNEST(proj.entity_type_name_keys) …) AS carried ON TRUE),
-///      instances AS (SELECT r.id, r.attribute_name_key, … FROM UNNEST($14::text[], …) AS r(…)),
+///      instances AS (SELECT r.id, r.attribute_name_key, … FROM UNNEST($12::text[], …) AS r(…)),
 ///      attrs AS (INSERT INTO current_attributes (entity_key, …)
 ///                SELECT ins.entity_key, instances.… FROM ins JOIN instances ON instances.id = ins.id),
 ///      census_types AS (INSERT INTO entity_type_census … FROM srch …),
@@ -110,8 +110,6 @@ pub(super) fn entity_insert_sql(target: &ContextTarget) -> Result<String, Contex
             EntitySearch::ScopePaths,
             EntitySearch::VerbatimScopePaths,
             EntitySearch::Location,
-            EntitySearch::ObservationSpace,
-            EntitySearch::OperationSpace,
         ])
         .select_from(
             from_inserted()
@@ -124,8 +122,6 @@ pub(super) fn entity_insert_sql(target: &ContextTarget) -> Result<String, Contex
                 .expr(projected(EntitySearch::ScopePaths))
                 .expr(projected(EntitySearch::VerbatimScopePaths))
                 .expr(projected(EntitySearch::Location))
-                .expr(projected(EntitySearch::ObservationSpace))
-                .expr(projected(EntitySearch::OperationSpace))
                 .take(),
         )?;
     search.returning(Query::returning().columns([
@@ -185,8 +181,6 @@ impl EntityRepository {
 
         let ids = entities.ids.iter().map(Identifier::as_str).collect::<Vec<_>>();
         let locations = written_column(&entities.locations)?;
-        let observation_spaces = written_column(&entities.obs_spaces)?;
-        let operation_spaces = written_column(&entities.op_spaces)?;
         let sql = ENTITY_INSERT_STATEMENT.text(target)?;
         let query = sqlx::query_as(sqlx::AssertSqlSafe(&*sql))
             .bind(&ids)
@@ -197,8 +191,6 @@ impl EntityRepository {
             .bind(entities.scope_paths_bind())
             .bind(entities.verbatim_scope_paths_bind())
             .bind(&locations)
-            .bind(&observation_spaces)
-            .bind(&operation_spaces)
             .bind(&entities.location_expires_ats)
             .bind(&entities.expires_ats)
             .bind(&entities.min_attribute_expires_ats);
@@ -233,7 +225,7 @@ mod tests {
         );
         assert!(
             sql.contains(
-                " AS d(id, entity_type_name_keys_literal, attribute_name_keys_literal, attribute_instance_name_keys_literal, attribute_instance_kinds_literal, scope_paths_json, verbatim_scope_paths_json, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at)"
+                " AS d(id, entity_type_name_keys_literal, attribute_name_keys_literal, attribute_instance_name_keys_literal, attribute_instance_kinds_literal, scope_paths_json, verbatim_scope_paths_json, loc, loc_expires_at, expires_at, min_attribute_expires_at)"
             ),
             "{sql}"
         );
@@ -252,8 +244,8 @@ mod tests {
             "{sql}"
         );
         assert!(sql.contains(r#""instances" AS (SELECT "r"."id" AS "id""#), "{sql}");
-        assert!(sql.contains(r"FROM UNNEST($14::text[]"), "{sql}");
-        assert!(sql.contains(r"$40::sub_attribute_tree[]) AS r("), "{sql}");
+        assert!(sql.contains(r"FROM UNNEST($12::text[]"), "{sql}");
+        assert!(sql.contains(r"$38::sub_attribute_tree[]) AS r("), "{sql}");
         assert!(sql.contains(r#""r"."sub_attributes" AS "sub_attributes""#), "{sql}");
         assert!(!sql.contains("WITH RECURSIVE"), "{sql}");
     }
@@ -276,7 +268,7 @@ mod tests {
             sql.contains(r#""ins" AS (INSERT INTO "entities" ("id", "expires_at", "min_attribute_expires_at")"#),
             "{sql}"
         );
-        assert!(sql.contains(r#""srch" ("entity_key", "new_types", "new_instance_names", "new_instance_kinds") AS (INSERT INTO "entity_search" ("entity_key", "location_expires_at", "entity_type_name_keys", "attribute_name_keys", "attribute_instance_name_keys", "attribute_instance_kinds", "scope_paths", "verbatim_scope_paths", "location", "observation_space", "operation_space")"#), "{sql}");
+        assert!(sql.contains(r#""srch" ("entity_key", "new_types", "new_instance_names", "new_instance_kinds") AS (INSERT INTO "entity_search" ("entity_key", "location_expires_at", "entity_type_name_keys", "attribute_name_keys", "attribute_instance_name_keys", "attribute_instance_kinds", "scope_paths", "verbatim_scope_paths", "location")"#), "{sql}");
         assert!(
             sql.contains(r#"RETURNING "entity_key", "entity_type_name_keys", "attribute_instance_name_keys", "attribute_instance_kinds")"#),
             "{sql}"
@@ -284,8 +276,8 @@ mod tests {
         assert!(sql.ends_with(r#"SELECT "id" FROM "ins""#), "{sql}");
         pretty_assertions::assert_eq!(
             sql.matches("ST_MakeValid").count(),
-            4,
-            "each hoisted geometry is validated once, in the projection, and each instance geometry once, in the row staging: {sql}"
+            2,
+            "the hoisted geometry is validated once, in the projection, and each instance geometry once, in the row staging: {sql}"
         );
     }
 
@@ -328,7 +320,7 @@ mod tests {
     #[test]
     fn the_insert_validates_every_geometry_from_its_embedded_srid() {
         let sql = insert();
-        for column in [r#""d"."loc""#, r#""d"."obs""#, r#""d"."ops""#, r#""r"."value_geometry""#] {
+        for column in [r#""d"."loc""#, r#""r"."value_geometry""#] {
             assert!(sql.contains(&format!("ST_MakeValid(ST_GeomFromEWKB({column}))")), "{column}: {sql}");
         }
         assert!(!sql.contains("ST_SetSRID"), "{sql}");

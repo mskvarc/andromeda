@@ -39,12 +39,8 @@ pub struct PreparedEntityColumns {
     pub attribute_instance_kinds: Vec<IntegerArrayLiteral>,
     /// Scope arrays, as label paths and as written.
     pub scopes: Vec<StagedScopes>,
-    /// Location geometries, as EWKB or kept.
+    /// Default `location` geometries, as EWKB or kept.
     pub locations: Vec<StagedGeometry<Vec<u8>>>,
-    /// Observation-space geometries, as EWKB or kept.
-    pub obs_spaces: Vec<StagedGeometry<Vec<u8>>>,
-    /// Operation-space geometries, as EWKB or kept.
-    pub op_spaces: Vec<StagedGeometry<Vec<u8>>>,
     /// The instant after which every `location` instance has expired, when
     /// every instance carries one.
     pub location_expires_ats: Vec<Option<DateTime<Utc>>>,
@@ -66,8 +62,6 @@ impl PreparedEntityColumns {
             attribute_instance_kinds: Vec::with_capacity(len),
             scopes: Vec::with_capacity(len),
             locations: Vec::with_capacity(len),
-            obs_spaces: Vec::with_capacity(len),
-            op_spaces: Vec::with_capacity(len),
             location_expires_ats: Vec::with_capacity(len),
             expires_ats: Vec::with_capacity(len),
             min_attribute_expires_ats: Vec::with_capacity(len),
@@ -115,24 +109,16 @@ impl PreparedEntityColumns {
             .push(IntegerArrayLiteral::of(instances.iter().map(|(_, kind)| i64::from(kind.code()))));
     }
 
-    /// Encode one row's three hoisted geometries into the parallel EWKB bind
-    /// vectors. This is the only way to append them, so the vectors cannot
-    /// fall out of step with each other and EWKB stays inside the store. A
-    /// kept geometry is not encoded at all.
+    /// Encode one row's hoisted `location` geometry into its EWKB bind
+    /// vector, so EWKB stays inside the store. A kept geometry is not encoded
+    /// at all.
     ///
     /// # Errors
     ///
-    /// Returns [`ContextStoreError::Encoding`] when one of the three geometries
-    /// cannot be encoded as EWKB.
-    pub fn push_geometries(
-        &mut self,
-        location: StagedGeometry<&GeometryForm>,
-        observation_space: StagedGeometry<&GeometryForm>,
-        operation_space: StagedGeometry<&GeometryForm>,
-    ) -> Result<(), ContextStoreError> {
+    /// Returns [`ContextStoreError::Encoding`] when the geometry cannot be
+    /// encoded as EWKB.
+    pub fn push_location(&mut self, location: StagedGeometry<&GeometryForm>) -> Result<(), ContextStoreError> {
         self.locations.push(location.encoded()?);
-        self.obs_spaces.push(observation_space.encoded()?);
-        self.op_spaces.push(operation_space.encoded()?);
         Ok(())
     }
 }
