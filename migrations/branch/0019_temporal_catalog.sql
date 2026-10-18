@@ -6,7 +6,8 @@
 -- The catalog temporal history is recorded against: `temporal_entities` names
 -- the Entity a Temporal Evolution belongs to, and `temporal_attribute_streams`
 -- names the grain history is recorded at, one row per temporal entity,
--- attribute name and `datasetId` (clause 4.5.5).
+-- attribute name and `datasetId` (clause 4.5.5), beside the extent of the
+-- geometries each stream recorded.
 --
 -- Neither table references `entities`. Core Entity deletion (clause 5.6.6)
 -- leaves temporal state standing, so a cascade from current state would delete
@@ -82,6 +83,12 @@ create table temporal_attribute_streams (
     id text compression lz4 collate "C" not null,
     attribute_name_key integer not null,
     dataset_id text compression lz4 collate "C",
+    -- The bounding box of every geometry the stream ever recorded, null until
+    -- it records one. The write path grows it when a recorded geometry falls
+    -- outside it and never shrinks it, so after a deletion, an instance
+    -- modification or a dropped chunk it still holds every geometry the
+    -- stream holds.
+    value_extent geometry compression lz4,
     constraint pk_temporal_attribute_streams primary key (stream_key),
     -- `INCLUDE (stream_key)` makes stream resolution index-only: every append
     -- resolves its grain to a stream key, the hottest catalog read there is.
@@ -102,4 +109,14 @@ create table temporal_attribute_streams (
 -- holders by it from the index alone: probed in that order, their history
 -- reads follow the indexes, where in identifier order they read at random.
 create index idx_temporal_attribute_streams_attribute_name_key_id on temporal_attribute_streams (attribute_name_key, id) include (temporal_entity_key);
+
+-- A temporal geo query (clause 5.7.4.4 S3) reads its candidate Evolutions
+-- here: a stream whose extent misses the relation's box holds no geometry
+-- that can meet the relation, whatever the window. The extents are one row a
+-- stream, where the history's geometries sit in converted chunks no spatial
+-- index reaches. Partial, so a stream that never recorded a geometry costs
+-- the index nothing.
+create index idx_temporal_attribute_streams_value_extent on temporal_attribute_streams using gist (value_extent)
+where
+    value_extent is not null;
 

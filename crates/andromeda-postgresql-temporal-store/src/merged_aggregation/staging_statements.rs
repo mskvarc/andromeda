@@ -85,7 +85,9 @@ const ENTITY_COLUMNS: [TemporalEntities; 5] = [
     TemporalEntities::EntityTypeNameKeys,
 ];
 
-/// The stream catalogue's columns, in table order.
+/// The stream catalogue's columns an aggregation reads, in table order; a
+/// staged stream leaves its extent empty, since no candidate read reaches the
+/// staging.
 const STREAM_COLUMNS: [TemporalAttributeStreams; 5] = [
     TemporalAttributeStreams::StreamKey,
     TemporalAttributeStreams::TemporalEntityKey,

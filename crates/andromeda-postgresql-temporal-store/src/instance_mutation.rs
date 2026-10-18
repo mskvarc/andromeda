@@ -8,6 +8,7 @@ use crate::{
         InstanceColumn,
         attribute_stream_keys_sql,
         delete_instance_sql,
+        grow_stream_extent_sql,
         release_verbatim_instance_claim_sql,
         select_instance_sql,
         update_instance_sql,
@@ -132,16 +133,17 @@ impl TemporalRepository {
         let generated_sql = update_instance_sql(InstanceColumn::Generated, target);
         let verbatim_sql = update_instance_sql(InstanceColumn::Verbatim, target);
         let statement = match instance {
-            InstanceIdentity::Generated(uuid) => sqlx::query(AssertSqlSafe(generated_sql)).bind(uuid),
-            InstanceIdentity::Verbatim(identifier) => sqlx::query(AssertSqlSafe(verbatim_sql)).bind(identifier.as_str()),
+            InstanceIdentity::Generated(uuid) => sqlx::query_scalar(AssertSqlSafe(generated_sql)).bind(uuid),
+            InstanceIdentity::Verbatim(identifier) => sqlx::query_scalar(AssertSqlSafe(verbatim_sql)).bind(identifier.as_str()),
         };
-        let updated = statement
+        let geometry = geometry_bytes(state.value.geometry())?;
+        let modified: Vec<i64> = statement
             .bind(&stream_keys)
             .bind(state.value.kind().code())
             .bind(state.value.number())
             .bind(state.value.string())
             .bind(state.value.boolean())
-            .bind(geometry_bytes(state.value.geometry())?)
+            .bind(geometry.as_deref())
             .bind(state.value.object().map(Json))
             .bind(state.value.date_time())
             .bind(state.value.uri().map(Uri::as_str))
@@ -154,11 +156,17 @@ impl TemporalRepository {
             .bind(proof_seals.map(StoredJson::into_json))
             .bind(expires_at)
             .bind((!elements.is_empty()).then_some(elements))
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        if updated == 0 {
+            .fetch_all(&mut *tx)
+            .await?;
+        if modified.is_empty() {
             return Err(TemporalStoreError::NotFound(instance_not_found(instance)));
+        }
+        if let Some(geometry) = geometry.as_deref() {
+            sqlx::query(AssertSqlSafe(grow_stream_extent_sql(target)))
+                .bind(&modified)
+                .bind(geometry)
+                .execute(&mut *tx)
+                .await?;
         }
         tx.commit().await?;
         Ok(())

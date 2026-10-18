@@ -60,6 +60,10 @@ pub enum TemporalAttributeStreams {
     AttributeNameKey,
     /// Optional dataset identifier (clause 4.5.5)
     DatasetId,
+    /// The bounding box of every geometry the stream ever recorded, `NULL`
+    /// until it records one; it only grows, so it holds every geometry the
+    /// stream holds now
+    ValueExtent,
 }
 
 /// The `attribute_history` hypertable - stores historical attribute instances.

@@ -36,6 +36,12 @@ pub struct Te;
 #[iden = "ahg"]
 pub struct Ahg;
 
+/// Alias `rs` for the `temporal_attribute_streams` rows a candidate read
+/// names the Evolutions of.
+#[derive(Iden, Clone, Copy)]
+#[iden = "rs"]
+pub struct Rs;
+
 /// The `entity_id` name stage 1 projects the selected entity URI under.
 #[derive(Iden, Clone, Copy)]
 #[iden = "entity_id"]
@@ -43,7 +49,7 @@ pub struct EntityIdColumn;
 
 #[cfg(test)]
 mod tests {
-    use crate::alias::{Ah, Ahg, An, EntityIdColumn, S, Te};
+    use crate::alias::{Ah, Ahg, An, EntityIdColumn, Rs, S, Te};
     use sea_query::Iden;
 
     #[test]
@@ -53,6 +59,7 @@ mod tests {
         pretty_assertions::assert_eq!(An.to_string(), "an");
         pretty_assertions::assert_eq!(Te.to_string(), "te");
         pretty_assertions::assert_eq!(Ahg.to_string(), "ahg");
+        pretty_assertions::assert_eq!(Rs.to_string(), "rs");
         pretty_assertions::assert_eq!(EntityIdColumn.to_string(), "entity_id");
     }
 }

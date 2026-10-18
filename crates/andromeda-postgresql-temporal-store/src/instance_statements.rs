@@ -20,8 +20,13 @@ use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,
     temporal::{AttributeHistory, AttributeHistoryInstanceClaims, TemporalAttributeStreams, TemporalEntities},
 };
-use andromeda_postgresql_seaquery::{clock::now, pg_array::any, placeholder::external_placeholder, postgis::validated_geom_from_ewkb};
-use sea_query::{CaseStatement, Expr, ExprTrait, Iden, JoinType, Keyword, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+use andromeda_postgresql_seaquery::{
+    clock::now,
+    pg_array::any,
+    placeholder::external_placeholder,
+    postgis::{bounding_box_contains, st_collect, st_envelope, validated_geom_from_ewkb},
+};
+use sea_query::{CaseStatement, Condition, Expr, ExprTrait, Iden, JoinType, Keyword, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 
 /// The `temporal_attribute_streams` alias in the stream-scope subquery.
 #[derive(Iden, Clone, Copy)]
@@ -167,7 +172,8 @@ fn geometry_write(marker: usize) -> SimpleExpr {
 /// `attribute_kind` moves with the value columns so a replacement that changes
 /// family keeps the row's declared family in agreement with its value shape,
 /// and every member the replacement carries beside its value replaces the
-/// row's, so none of the replaced instance's survives.
+/// row's, so none of the replaced instance's survives. It returns the stream
+/// of the row it replaced, which [`grow_stream_extent_sql`] grows.
 pub(crate) fn update_instance_sql(column: InstanceColumn, target: &ContextTarget) -> String {
     Query::update()
         .table(table_of(target, AttributeHistory::Table))
@@ -193,6 +199,28 @@ pub(crate) fn update_instance_sql(column: InstanceColumn, target: &ContextTarget
         ])
         .and_where(Expr::col(column.column()).eq(external_placeholder(1)))
         .and_where(within_resolved_streams())
+        .returning_col(AttributeHistory::StreamKey)
+        .to_owned()
+        .to_string(PostgresQueryBuilder)
+}
+
+/// Grow the extent of the streams `$1` names to cover the replacing
+/// geometry, the EWKB `$2`, made valid as the modification stores it.
+///
+/// An extent already covering it is left alone, and none shrinks: the
+/// geometry replaced stays inside an extent too large, which still holds
+/// every geometry of its stream.
+pub(crate) fn grow_stream_extent_sql(target: &ContextTarget) -> String {
+    let extent = || Expr::col(TemporalAttributeStreams::ValueExtent);
+    let geometry = || validated_geom_from_ewkb(external_placeholder(2));
+    Query::update()
+        .table(table_of(target, TemporalAttributeStreams::Table))
+        .value(
+            TemporalAttributeStreams::ValueExtent,
+            st_envelope(st_collect(extent(), st_envelope(geometry()))),
+        )
+        .and_where(Expr::col(TemporalAttributeStreams::StreamKey).eq(any(external_placeholder(1))))
+        .cond_where(Condition::any().add(extent().is_null()).add(bounding_box_contains(extent(), geometry()).not()))
         .to_owned()
         .to_string(PostgresQueryBuilder)
 }
@@ -226,12 +254,29 @@ mod tests {
         InstanceColumn,
         attribute_stream_keys_sql,
         delete_instance_sql,
+        grow_stream_extent_sql,
         release_verbatim_instance_claim_sql,
         select_instance_sql,
         update_instance_sql,
     };
     use andromeda_context_space::context_target::ContextTarget;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn an_instance_modification_grows_its_stream_by_the_replacing_geometry() {
+        for column in [InstanceColumn::Generated, InstanceColumn::Verbatim] {
+            let modification = update_instance_sql(column, &ContextTarget::Live);
+            assert!(modification.ends_with(r#"RETURNING "stream_key""#), "{modification}");
+        }
+        let growth = grow_stream_extent_sql(&ContextTarget::Live);
+        assert_eq!(
+            growth,
+            concat!(
+                r#"UPDATE "temporal_attribute_streams" SET "value_extent" = ST_Envelope(ST_Collect("value_extent", ST_Envelope(ST_MakeValid(ST_GeomFromEWKB($2)))))"#,
+                r#" WHERE "stream_key" = ANY($1) AND ("value_extent" IS NULL OR (NOT ("value_extent" ~ ST_MakeValid(ST_GeomFromEWKB($2)))))"#
+            )
+        );
+    }
 
     #[test]
     fn each_statement_addresses_exactly_one_instance_identity_column() {

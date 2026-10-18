@@ -1,5 +1,5 @@
-//! The history rows, Scope rows and instance claims an application records
-//! from the entries of its source.
+//! The history rows, stream extents, Scope rows and instance claims an
+//! application records from the entries of its source.
 //!
 //! Each statement joins the entries to their Entity's Temporal Evolution, so an
 //! entry of an Entity without one records nothing; the catalogue statements
@@ -10,24 +10,32 @@ use crate::intent_application::{
     scope_judgement::recorded_scope_entry,
 };
 use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
-use andromeda_postgresql_query::history_source::entry_values::{attribute_entry_values, scope_entry_values};
+use andromeda_postgresql_query::history_source::entry_values::{attribute_entry_values, recorded_geometry, scope_entry_values};
 use andromeda_postgresql_schema::{
     queue::TemporalAppendIntents,
     temporal::{AttributeHistory, AttributeHistoryInstanceClaims, ScopeHistory, TemporalAttributeStreams, TemporalEntities},
     temporal_intent::TemporalEntry,
 };
-use andromeda_postgresql_seaquery::{branch::qualified, pg_operator::PgBinaryOperator};
+use andromeda_postgresql_seaquery::{
+    branch::qualified,
+    pg_operator::PgBinaryOperator,
+    postgis::{bounding_box_contains, st_collect, st_collect_rows, st_envelope},
+};
 use sea_query::{
+    Condition,
     DeleteStatement,
     DynIden,
     Expr,
     ExprTrait,
     Iden,
     InsertStatement,
+    IntoIden,
     OnConflict,
     Query,
     SelectStatement,
     SimpleExpr,
+    TableRef,
+    UpdateStatement,
     error::Error as SeaQueryError,
 };
 
@@ -35,6 +43,16 @@ use sea_query::{
 #[derive(Iden, Clone, Copy)]
 #[iden = "s2"]
 struct S2;
+
+/// The alias of the box each stream's entries span, `grown`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "grown"]
+struct Grown;
+
+/// The box one stream's entries span, `extent`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "extent"]
+struct Extent;
 
 /// The two attribute entry kinds.
 fn attribute_entries() -> SimpleExpr {
@@ -172,6 +190,33 @@ pub(crate) fn history_statement(source: &IntentSource<'_>, schema: Option<&DynId
                 .to_owned(),
         );
     Ok(statement)
+}
+
+/// Grow the extent of every stream an entry of the source records a geometry
+/// on to cover it.
+///
+/// The box each stream's entries span is taken from the geometry the history
+/// row stores, so the extent covers exactly what was recorded. A stream whose
+/// extent already covers the box is left alone, so a write inside it updates
+/// no row. An extent never shrinks: one too large still holds every geometry
+/// of its stream.
+pub(crate) fn extent_growth_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> UpdateStatement {
+    let geometry = recorded_geometry(entry);
+    let mut grown = entries_with_stream(source, schema);
+    grown
+        .column((S, TemporalAttributeStreams::StreamKey))
+        .expr_as(st_envelope(st_collect_rows(geometry)), Extent)
+        .and_where(entry(TemporalEntry::ValueGeometry).is_not_null())
+        .group_by_col((S, TemporalAttributeStreams::StreamKey));
+    let extent = || Expr::col((TemporalAttributeStreams::Table, TemporalAttributeStreams::ValueExtent));
+    let box_of = || Expr::col((Grown, Extent));
+    Query::update()
+        .table(qualified(schema, TemporalAttributeStreams::Table))
+        .value(TemporalAttributeStreams::ValueExtent, st_envelope(st_collect(extent(), box_of())))
+        .from(TableRef::SubQuery(Box::new(grown), Grown.into_iden()))
+        .and_where(Expr::col((TemporalAttributeStreams::Table, TemporalAttributeStreams::StreamKey)).equals((Grown, TemporalAttributeStreams::StreamKey)))
+        .cond_where(Condition::any().add(extent().is_null()).add(bounding_box_contains(extent(), box_of()).not()))
+        .to_owned()
 }
 
 /// The Scope entries of Entities with a Temporal Evolution, events and

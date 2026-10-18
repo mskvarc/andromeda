@@ -27,8 +27,10 @@
 //! leaves it a member depends on the instances S8 kept.
 
 mod candidate_step;
+mod contributed_candidates;
 mod entity_conditions;
 mod evolution_walk;
+mod extent_candidates;
 mod gated_count;
 mod gated_walk;
 mod pattern_candidates;
@@ -106,10 +108,10 @@ pub fn build_stage1_entity_ids(
     count: CountPolicy,
     names: &QueryNames,
 ) -> Result<Stage1Query, RenderError> {
-    if let Some(step) = CandidateStep::chosen(compiled) {
-        let (select, read_order) = gated_walk(branch, compiled, window, names, step)?;
+    if let Some(step) = CandidateStep::chosen(compiled, names)? {
+        let (select, read_order) = gated_walk(branch, compiled, window, names, &step)?;
         let count = match count {
-            CountPolicy::Emit => Some(gated_count(branch, compiled, names, step)?),
+            CountPolicy::Emit => Some(gated_count(branch, compiled, names, &step)?),
             CountPolicy::Omit => None,
         };
         // A gated statement's branches each take their own access path, and

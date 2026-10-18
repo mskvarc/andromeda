@@ -34,6 +34,9 @@ impl Recorded {
     }
 }
 
+/// How an entry's geometry is recorded in `value_geometry`.
+const GEOMETRY_RECORDED: Recorded = Recorded::MadeValid;
+
 /// The `attribute_history` value columns, each beside the entry field it is
 /// recorded from and how, in the table's column order.
 const ATTRIBUTE_FIELDS: [(AttributeHistory, TemporalEntry, Recorded); 22] = [
@@ -52,7 +55,7 @@ const ATTRIBUTE_FIELDS: [(AttributeHistory, TemporalEntry, Recorded); 22] = [
     (AttributeHistory::VerbatimInstanceId, TemporalEntry::VerbatimInstanceId, Recorded::AsHeld),
     (AttributeHistory::ValueNumber, TemporalEntry::ValueNumber, Recorded::AsHeld),
     (AttributeHistory::ValueString, TemporalEntry::ValueString, Recorded::AsHeld),
-    (AttributeHistory::ValueGeometry, TemporalEntry::ValueGeometry, Recorded::MadeValid),
+    (AttributeHistory::ValueGeometry, TemporalEntry::ValueGeometry, GEOMETRY_RECORDED),
     (AttributeHistory::ValueGeometryMembers, TemporalEntry::ValueGeometryMembers, Recorded::AsHeld),
     (AttributeHistory::ValueObject, TemporalEntry::ValueObject, Recorded::AsHeld),
     (AttributeHistory::ValueUri, TemporalEntry::ValueUri, Recorded::AsHeld),
@@ -96,6 +99,12 @@ pub fn attribute_entry_values(field: impl Fn(TemporalEntry) -> SimpleExpr) -> [(
     ATTRIBUTE_FIELDS.map(|(column, entry, recorded)| (column, recorded.of(field(entry))))
 }
 
+/// The geometry an attribute entry records in `value_geometry`, `field`
+/// reading one field of the entry: `NULL` for an entry holding no geometry.
+pub fn recorded_geometry(field: impl Fn(TemporalEntry) -> SimpleExpr) -> SimpleExpr {
+    GEOMETRY_RECORDED.of(field(TemporalEntry::ValueGeometry))
+}
+
 /// Every `scope_history` value column beside the value a Scope entry records
 /// in it, `field` reading one field of the entry.
 ///
@@ -106,7 +115,7 @@ pub fn scope_entry_values(field: impl Fn(TemporalEntry) -> SimpleExpr) -> [(Scop
 
 #[cfg(test)]
 mod tests {
-    use crate::history_source::entry_values::{attribute_entry_values, scope_entry_values};
+    use crate::history_source::entry_values::{attribute_entry_values, recorded_geometry, scope_entry_values};
     use andromeda_postgresql_schema::temporal_intent::TemporalEntry;
     use sea_query::{Alias, Expr, Iden, PostgresQueryBuilder, Query};
 
@@ -128,6 +137,16 @@ mod tests {
         );
         assert!(values.contains(&r#"sub_attributes <- SELECT "e"."sub_attributes""#.to_owned()), "{values:?}");
         pretty_assertions::assert_eq!(values.len(), 22);
+    }
+
+    #[test]
+    fn the_recorded_geometry_is_the_one_the_history_row_stores() {
+        let entry = |field: TemporalEntry| Expr::col((Alias::new("e"), field));
+        let values = rendered(attribute_entry_values(entry).map(|(column, value)| (column.to_string(), value)));
+        let [geometry] = rendered([("value_geometry".to_owned(), recorded_geometry(entry))])
+            .try_into()
+            .expect("one rendering");
+        assert!(values.contains(&geometry), "{geometry} in {values:?}");
     }
 
     /// Clause 4.5.6 gives the temporal Scope no `instanceId`, so a Scope row

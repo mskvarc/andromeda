@@ -53,11 +53,21 @@ enum PostgisFunction {
     /// `ST_MakeEnvelope(xmin, ymin, xmax, ymax, srid)`.
     #[iden = "ST_MakeEnvelope"]
     MakeEnvelope,
+    /// `ST_Envelope(geom)`.
+    #[iden = "ST_Envelope"]
+    Envelope,
+    /// `ST_Collect(a, b)`, and the aggregate `ST_Collect(geom)`.
+    #[iden = "ST_Collect"]
+    Collect,
 }
 
 /// The `PostGIS` bounding-box overlap operator `&&`, true when two geometries'
 /// 2D bounding boxes share a point -- the test a geometry `GiST` index answers.
 const BOUNDING_BOXES_OVERLAP: &str = "&&";
+
+/// The `PostGIS` bounding-box containment operator `~`, true when the first
+/// geometry's 2D bounding box contains the second's.
+const BOUNDING_BOX_CONTAINS: &str = "~";
 
 /// The spatial reference system every stored geometry is in (WGS 84).
 const WGS84_SRID: i32 = 4326;
@@ -161,6 +171,36 @@ pub fn unindexed_bounding_boxes_overlap(geometry: SimpleExpr, envelope: SimpleEx
     )
 }
 
+/// `PostGIS`: `geometry ~ other` - whether the bounding box of `geometry`
+/// contains the bounding box of `other`.
+#[must_use]
+pub fn bounding_box_contains(geometry: SimpleExpr, other: SimpleExpr) -> SimpleExpr {
+    geometry.binary(BinOper::Custom(BOUNDING_BOX_CONTAINS), other)
+}
+
+/// `PostGIS`: `ST_Envelope(geom)` - the bounding box of `geom` as a geometry
+/// in its spatial reference system: a polygon, or a point or line where the
+/// box has no area.
+#[must_use]
+pub fn st_envelope(geom: SimpleExpr) -> SimpleExpr {
+    Func::cust(PostgisFunction::Envelope).args([geom]).into()
+}
+
+/// `PostGIS`: `ST_Collect(a, b)` - the collection of two geometries; a `NULL`
+/// operand contributes nothing, so a `NULL` beside a geometry yields that
+/// geometry.
+#[must_use]
+pub fn st_collect(a: SimpleExpr, b: SimpleExpr) -> SimpleExpr {
+    binary_spatial(PostgisFunction::Collect, a, b)
+}
+
+/// `PostGIS`: the aggregate `ST_Collect(geom)` - the collection of the
+/// geometries of every row of a group, `NULL` ones left out.
+#[must_use]
+pub fn st_collect_rows(geom: SimpleExpr) -> SimpleExpr {
+    Func::cust(PostgisFunction::Collect).args([geom]).into()
+}
+
 /// `PostGIS`: `ST_GeomFromEWKB(bytes)` - creates geometry from EWKB (SRID embedded).
 fn st_geom_from_ewkb(ewkb: SimpleExpr) -> SimpleExpr {
     Func::cust(PostgisFunction::GeomFromEwkb).args([ewkb]).into()
@@ -227,6 +267,24 @@ mod tests {
             .build(PostgresQueryBuilder);
         pretty_assertions::assert_eq!(sql, r#"SELECT "c"."value_geometry"::box2d && ST_MakeEnvelope($1, $2, $3, $4, $5)::box2d"#);
         pretty_assertions::assert_eq!(values.0.len(), 5);
+    }
+
+    #[test]
+    fn an_extent_grows_by_the_envelope_of_its_collection_with_a_geometry() {
+        let sql = render(st_envelope(st_collect(
+            Expr::col(("s", "value_extent")),
+            st_envelope(st_collect_rows(Expr::col(("e", "value_geometry")))),
+        )));
+        pretty_assertions::assert_eq!(
+            sql,
+            r#"SELECT ST_Envelope(ST_Collect("s"."value_extent", ST_Envelope(ST_Collect("e"."value_geometry"))))"#
+        );
+    }
+
+    #[test]
+    fn a_bounding_box_containment_renders_the_tilde_operator() {
+        let sql = render(bounding_box_contains(Expr::col(("s", "value_extent")), Expr::col(("g", "extent"))));
+        pretty_assertions::assert_eq!(sql, r#"SELECT "s"."value_extent" ~ "g"."extent""#);
     }
 
     #[test]

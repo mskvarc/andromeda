@@ -33,7 +33,7 @@ pub(super) fn gated_count(
     branch: &HistoryBranch,
     compiled: &CompiledTemporalQuery,
     names: &QueryNames,
-    step: CandidateStep<'_>,
+    step: &CandidateStep<'_>,
 ) -> Result<SelectStatement, RenderError> {
     let window_match = || temporal_match_subquery(branch, compiled, names, BesideComparison::Key);
     let walked = evolution_rows(branch, compiled, names, Among::Every);

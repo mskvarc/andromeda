@@ -798,6 +798,81 @@ fn a_duplicate_claim_fails_the_claim_insert() {
     assert!(!claims.contains("ON CONFLICT"), "{claims}");
 }
 
+/// The prefix of the extent growth, in the live branch.
+const GROWTH: &str = r#"UPDATE "temporal_attribute_streams" SET "value_extent" = "#;
+
+/// The extent growth of the drain.
+fn growth() -> String {
+    rendered_steps()
+        .into_iter()
+        .map(|(_, sql)| sql)
+        .find(|sql| sql.starts_with(GROWTH))
+        .expect("an extent growth")
+}
+
+#[test]
+fn an_application_grows_the_extent_after_recording_the_history() {
+    let history = position(r#"INSERT INTO "attribute_history""#);
+    assert!(history < position(GROWTH), "{:?}", rendered_steps());
+}
+
+#[test]
+fn the_extent_grows_from_the_geometry_the_history_row_stores() {
+    let sql = growth();
+    assert!(
+        sql.starts_with(concat!(
+            r#"UPDATE "temporal_attribute_streams" SET "value_extent" = "#,
+            r#"ST_Envelope(ST_Collect("temporal_attribute_streams"."value_extent", "grown"."extent")) FROM (SELECT "s"."stream_key", "#,
+            r#"ST_Envelope(ST_Collect(ST_MakeValid("e"."value_geometry"))) AS "extent" FROM "#
+        )),
+        "{sql}"
+    );
+    assert!(writing("attribute_history").contains(r#"ST_MakeValid("e"."value_geometry")"#));
+    assert!(sql.contains(r#" GROUP BY "s"."stream_key") AS "grown""#), "{sql}");
+    assert!(sql.contains(r#""temporal_attribute_streams"."stream_key" = "grown"."stream_key""#), "{sql}");
+}
+
+#[test]
+fn an_extent_covering_the_write_is_left_alone() {
+    let sql = growth();
+    assert!(
+        sql.ends_with(concat!(
+            r#"AND ("temporal_attribute_streams"."value_extent" IS NULL"#,
+            r#" OR (NOT ("temporal_attribute_streams"."value_extent" ~ "grown"."extent")))"#
+        )),
+        "{sql}"
+    );
+}
+
+/// A tombstone records no value, and a value of another kind no geometry, so
+/// neither has a box to grow an extent by.
+#[test]
+fn a_tombstone_or_a_non_geometry_entry_never_grows_an_extent() {
+    let sql = growth();
+    let grouped = &sql[sql.find(r"FROM (SELECT").expect("the grouped entries")..sql.find(r#") AS "grown""#).expect("the grouped entries end")];
+    assert!(grouped.contains(r#"AND "e"."value_geometry" IS NOT NULL GROUP BY"#), "{grouped}");
+    assert!(grouped.contains(r#""e"."entry_kind" IN (1, 2)"#), "{grouped}");
+}
+
+#[test]
+fn a_snapshot_application_grows_its_own_streams() {
+    let schema = Alias::new("snap_4").into_iden();
+    let steps = steps_over(
+        &IntentSource::Queued {
+            keys: &[3, 5],
+            reach: TemporalIntentReach::ALL.to_vec(),
+        },
+        Some(&schema),
+    );
+    let growth = steps
+        .into_iter()
+        .map(|(_, sql)| sql)
+        .find(|sql| sql.starts_with(r#"UPDATE "snap_4"."temporal_attribute_streams" SET "value_extent" = "#))
+        .expect("an extent growth in the Snapshot");
+    assert!(growth.contains(r#""snap_4"."temporal_attribute_streams" AS "s""#), "{growth}");
+    assert!(!growth.contains(r#"FROM "temporal_attribute_streams""#), "{growth}");
+}
+
 #[test]
 fn the_rows_land_once_under_their_write_identity() {
     for table in ["attribute_history", "scope_history"] {

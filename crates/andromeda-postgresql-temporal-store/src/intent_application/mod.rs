@@ -6,13 +6,15 @@
 //! queue for the drain, the commit's own intents bound as one array for a
 //! commit that records natively. The statements write the write records, the
 //! Temporal Evolutions and streams, the instance replacements and claims, the
-//! history and Scope rows; nothing is read back into the broker. The drain
+//! history rows and the stream extents covering their geometries, and the
+//! Scope rows; nothing is read back into the broker. The drain
 //! runs the sequence in the transaction that also removes the intents, so a
 //! reader sees each entry queued or recorded, never both.
 
 /// The write records and catalogue an application establishes first.
 mod catalog_statements;
-/// The history and Scope rows and the instance claims an application records.
+/// The history and Scope rows, the stream extents and the instance claims an
+/// application records.
 mod history_statements;
 /// The intents an application reads, and their entries.
 pub mod intent_source;
@@ -26,7 +28,14 @@ use crate::{
     error::TemporalStoreError,
     intent_application::{
         catalog_statements::{evolutions_and_streams_statement, untyped_observations_statement, untyped_streams_statement, write_records_statement},
-        history_statements::{claims_statement, history_statement, released_claims_statement, replaced_instances_statement, scope_history_statement},
+        history_statements::{
+            claims_statement,
+            extent_growth_statement,
+            history_statement,
+            released_claims_statement,
+            replaced_instances_statement,
+            scope_history_statement,
+        },
         intent_source::{EntryReads, IntentSource, rendered},
         replaced_rows::remove_replaced,
     },
@@ -85,7 +94,8 @@ impl Step {
 /// the history that references them, the refusal of an untyped observation
 /// after the evolutions the source itself creates, the streams of the intents
 /// stating no type after that refusal, the instance replacements before the
-/// claims and rows that take their place.
+/// claims and rows that take their place, the stream extents after the
+/// history rows whose geometries they grow to cover.
 fn application_steps(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<Vec<Step>, TemporalStoreError> {
     let build = TemporalStoreError::StatementBuild;
     let (nothing, identities, everything) = (EntryReads::Nothing, EntryReads::Identities, EntryReads::Everything);
@@ -132,6 +142,12 @@ fn application_steps(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Res
             Some(TemporalIntentReach::AttributeEntry),
             everything,
             &history_statement(source, schema).map_err(build)?,
+        ),
+        Step::of(
+            StepRole::Write,
+            Some(TemporalIntentReach::AttributeEntry),
+            everything,
+            &extent_growth_statement(source, schema),
         ),
         Step::of(
             StepRole::Write,

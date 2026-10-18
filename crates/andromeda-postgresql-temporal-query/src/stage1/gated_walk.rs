@@ -57,7 +57,7 @@ pub(super) fn gated_walk(
     compiled: &CompiledTemporalQuery,
     window: &PageWindow,
     names: &QueryNames,
-    step: CandidateStep<'_>,
+    step: &CandidateStep<'_>,
 ) -> Result<(SelectStatement, ReadOrder), RenderError> {
     let need = match window.start {
         PageStart::Offset(offset) => u64::from(offset) + u64::from(window.limit),

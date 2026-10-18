@@ -1,11 +1,12 @@
 //! The queries, dictionaries and renderings the stage 1 tests share.
 
 use crate::stage1::{Stage1Query, build_stage1_entity_ids};
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity_selection::{EntitySelection, EntitySelector},
+    geo::query::GeoQuery,
     page_window::PageWindow,
     pattern::Pattern,
     scope::query::ScopeQuery,
@@ -27,6 +28,7 @@ use andromeda_postgresql_query::{
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use sea_query::{PostgresQueryBuilder, Values};
+use std::str::FromStr;
 
 /// The UTC instant `raw` spells in RFC 3339.
 pub(super) fn instant(raw: &str) -> DateTime<Utc> {
@@ -182,6 +184,30 @@ pub(super) fn scope_query(raw: &str) -> CompiledTemporalQuery {
     let mut compiled = sensors();
     compiled.entities.scope_q = Some(ScopeQuery::parse(raw).expect("valid scope query"));
     compiled
+}
+
+/// A query of the `Sensor` type with the geoquery `georel` around the point
+/// `coordinates` on `location`, over the window of [`sensors`].
+pub(super) fn geo_query(georel: GeoRel, coordinates: &serde_json::Value) -> CompiledTemporalQuery {
+    let mut compiled = sensors();
+    compiled.entities.geo = Some(GeoQuery {
+        georel,
+        geometry: point(coordinates),
+        geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
+    });
+    compiled
+}
+
+/// A query of the `Sensor` type with `georel=near;maxDistance==<metres>`
+/// around `longitude`, 52.5 on `location`, over the window of [`sensors`].
+pub(super) fn near_query(longitude: f64, metres: &str) -> CompiledTemporalQuery {
+    geo_query(
+        GeoRel::Near {
+            max_distance: Some(PositiveDistance::from_str(metres).expect("positive distance")),
+            min_distance: None,
+        },
+        &serde_json::json!([longitude, 52.5]),
+    )
 }
 
 /// The counted stage 1 of `compiled` over `branch` and `window`, under

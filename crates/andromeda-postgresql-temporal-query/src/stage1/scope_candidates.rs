@@ -15,7 +15,7 @@
 //! parts from the Context Sources are aggregated, so an Entity a source
 //! contributed is a candidate whatever its local Scope rows hold.
 
-use crate::stage1::queued_candidates::queued_candidates;
+use crate::stage1::{contributed_candidates::contributed_candidates, queued_candidates::queued_candidates};
 use andromeda_ngsi_ld_query::{scope::query::ScopeQuery, temporal::contributed_entities::ContributedEntities};
 use andromeda_postgresql_codes::scope_value_kind::ScopeValueKind;
 use andromeda_postgresql_query::{
@@ -39,21 +39,9 @@ pub(super) const SCOPE_CANDIDATE_BOUND: u64 = 10_000;
 /// over recorded rows alone; where the branch reads its queue, their
 /// identifiers beside every queued Entity, whose queued Scope no index holds.
 pub(super) fn scope_candidates(branch: &HistoryBranch, scope_q: &ScopeQuery, contributed: &ContributedEntities) -> SelectStatement {
-    let column = match branch.pending() {
-        PendingEntries::Absent => TemporalEntities::TemporalEntityKey,
-        PendingEntries::Unioned => TemporalEntities::Id,
-    };
     let mut candidates = recorded_scope_matches(branch, scope_q);
-    if !contributed.is_empty() {
-        let ids: Vec<&str> = contributed.as_slice().iter().map(AsRef::as_ref).collect();
-        candidates.union(
-            UnionType::All,
-            Query::select()
-                .column((TemporalEntities::Table, column))
-                .from(qualified(branch.schema(), TemporalEntities::Table))
-                .and_where(Expr::col((TemporalEntities::Table, TemporalEntities::Id)).is_in(ids))
-                .take(),
-        );
+    if let Some(contributed) = contributed_candidates(branch, contributed) {
+        candidates.union(UnionType::All, contributed);
     }
     match branch.pending() {
         PendingEntries::Absent => {}

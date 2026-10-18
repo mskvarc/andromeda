@@ -5,7 +5,8 @@
 //! read from and what a row without one means; the relations themselves do not
 //! vary. [`relation_expression`] and [`near_envelope_prefilter`] are that one
 //! reading, with [`near_envelope_unindexed_prefilter`] the same envelope for a
-//! per-Evolution probe; [`condition`] applies it to an entity's `GeoProperty` instances,
+//! per-Evolution probe and [`bounding_box_prefilter`] the box every relation
+//! admitting one reduces to; [`condition`] applies it to an entity's `GeoProperty` instances,
 //! and [`registration_area`] to the geometry a registration declares, with the
 //! relation [`AreaCondition`] reduces the geoquery to, since that geometry bounds
 //! where the source's Entities are rather than where one of them is (clause
@@ -153,6 +154,35 @@ pub fn near_envelope_prefilter(geo: &GeoQuery, geometry: &SimpleExpr) -> Option<
     near_envelope_test(geo, geometry, bounding_boxes_overlap)
 }
 
+/// A bounding-box test a geometry `GiST` index answers that every geometry
+/// meeting the relation of `geo` passes, or `None` when the relation admits
+/// no box.
+///
+/// `near` with a `maxDistance` tests the [`near_envelope_prefilter`]
+/// envelope. `within`, `contains`, `intersects`, `overlaps` and `equals` each
+/// need the two geometries to share a point, so their boxes overlap: the test
+/// is the overlap with the reference geometry as the relation reads it.
+/// `disjoint` and a `near` with only a `minDistance` match geometries
+/// arbitrarily far from the reference.
+///
+/// # Errors
+///
+/// Returns [`RenderError::ReferenceGeometryEncoding`] when the reference
+/// geometry has no EWKB spelling the store can bind.
+pub fn bounding_box_prefilter(geo: &GeoQuery, geometry: SimpleExpr) -> Result<Option<SimpleExpr>, RenderError> {
+    match &geo.georel {
+        GeoRel::Near { .. } => Ok(near_envelope_prefilter(geo, &geometry)),
+        GeoRel::Within | GeoRel::Contains | GeoRel::Intersects | GeoRel::Overlaps | GeoRel::Equals => {
+            let reference = encode(geo.geometry.form())?;
+            Ok(Some(bounding_boxes_overlap(
+                geometry,
+                validated_geom_from_ewkb(SeaExpr::val(reference.to_vec())),
+            )))
+        }
+        GeoRel::Disjoint => Ok(None),
+    }
+}
+
 /// The box test of [`near_envelope_prefilter`] over boxes no geometry index
 /// stores, or `None` for any relation that admits no box.
 ///
@@ -262,7 +292,7 @@ mod tests {
         dictionary::resolved_names::ResolvedNames,
         entity_row_refs::EntityRowRefs,
         error::RenderError,
-        geo_predicate::{condition, near_envelope_prefilter, near_envelope_unindexed_prefilter},
+        geo_predicate::{bounding_box_prefilter, condition, near_envelope_prefilter, near_envelope_unindexed_prefilter},
     };
     use andromeda_ngsi_ld_geometry::{
         dimension::GeometryDimension,
@@ -642,6 +672,34 @@ mod tests {
         let entity = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).expect("renders"));
         assert!(entity.contains("\"geo_instance\".\"value_geometry\" && ST_MakeEnvelope("), "{entity}");
         assert!(!entity.contains("::box2d"), "{entity}");
+    }
+
+    /// Each of the five area relations needs the two geometries to share a
+    /// point, so each admits the overlap of the boxes, with the reference made
+    /// valid as the relation reads it.
+    #[test]
+    fn an_area_relation_admits_the_reference_bounding_box() {
+        for georel in [GeoRel::Within, GeoRel::Contains, GeoRel::Intersects, GeoRel::Overlaps, GeoRel::Equals] {
+            let geo = point_query(georel, CUSTOM_GEOPROPERTY);
+            let (sql, values) = render_box_test(bounding_box_prefilter(&geo, instance_geometry()).expect("renders").expect("an area box"));
+            assert_eq!(
+                sql, r#"SELECT "geo_instance"."value_geometry" && ST_MakeValid(ST_GeomFromEWKB($1))"#,
+                "{:?}",
+                geo.georel
+            );
+            assert_eq!(bound_bytes(&values), [encode(geo.geometry.form()).expect("encodes").to_vec()]);
+        }
+    }
+
+    #[test]
+    fn a_near_box_is_the_near_envelope_and_disjoint_admits_none() {
+        let geo = near_query(4.5, 52.5, Some("2000"), None);
+        let near = render_box_test(bounding_box_prefilter(&geo, instance_geometry()).expect("renders").expect("a near box"));
+        assert_eq!(near, render_box_test(near_envelope_prefilter(&geo, &instance_geometry()).expect("a near box")));
+        let far = near_query(4.5, 52.5, None, Some("10"));
+        assert!(bounding_box_prefilter(&far, instance_geometry()).expect("renders").is_none());
+        let disjoint = point_query(GeoRel::Disjoint, CUSTOM_GEOPROPERTY);
+        assert!(bounding_box_prefilter(&disjoint, instance_geometry()).expect("renders").is_none());
     }
 
     #[test]
