@@ -24,11 +24,11 @@ use crate::{
     entity::QFilter,
     entity_page::ProjectedPage,
     gated_page::{GatedColumns, IndexOrWalk, PageSource, ShortWalk, gated_page, walked_rows},
-    one_time_gate::CandidateBound,
 };
 use andromeda_ngsi_ld_query::{filter::expression::Expr as QueryExpr, read_order::ReadOrder};
 use andromeda_postgresql_query::{
     error::RenderError,
+    one_time_gate::CandidateBound,
     q_predicate::{
         instance_scan::InstanceScan,
         keyed_term::{CandidateRead, KeyedCandidates},

@@ -32,7 +32,6 @@ use crate::{
     entity::QFilter,
     entity_page::{ProjectedPage, projected_page},
     gated_page::{PageSource, wrapped},
-    one_time_gate::{count_of, materialized},
     result_ordering::{RankedValue, identifier_tiebreak, ranked_keys},
 };
 use andromeda_ngsi_ld_query::{
@@ -50,6 +49,7 @@ use andromeda_postgresql_query::{
     entity_row_refs::EntityRowRefs,
     error::RenderError,
     instance_expiry::instance_stands,
+    one_time_gate::{count_of, materialized},
     q_predicate::projection_probe::{Ca, of_attribute, projection_column, standing},
     sort_key::SortKey,
 };

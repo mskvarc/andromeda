@@ -25,10 +25,9 @@ use crate::{
     entity_page::{ProjectedPage, StepColumn},
     entity_relations::{Demand, EntityRelations, RowSource},
     gated_page::{GatedColumns, IndexOrWalk, PageSource, ShortWalk, Walked, gated_page},
-    one_time_gate::CandidateBound,
 };
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, entity_selection::ConsideredEntities, read_order::ReadOrder};
-use andromeda_postgresql_query::{dictionary::query_names::QueryNames, entity_row_refs::EntityRowRefs, error::RenderError};
+use andromeda_postgresql_query::{dictionary::query_names::QueryNames, entity_row_refs::EntityRowRefs, error::RenderError, one_time_gate::CandidateBound};
 use andromeda_postgresql_schema::current::EntitySearch;
 use sea_query::{Condition, DynIden, Expr, ExprTrait, Iden, Query, SelectStatement};
 

@@ -7,7 +7,12 @@ use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity_selection::{EntitySelection, EntitySelector},
     page_window::PageWindow,
-    temporal::{compiled::CompiledTemporalQuery, instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
+    temporal::{
+        compiled::CompiledTemporalQuery,
+        instance_selection::InstanceSelection,
+        representation::Representation,
+        window::{TemporalWindow, TimeInterval},
+    },
     type_selection::grammar::TypeExpr,
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -119,4 +124,39 @@ pub(super) fn speed_and_address() -> QueryNames {
         ]),
         types: ResolvedNames::default(),
     }
+}
+
+/// The names the step tests resolve: the type `Sensor` at key 1,
+/// `temperature` at 1 and `location` at 2.
+pub(super) fn sensor_names() -> QueryNames {
+    QueryNames {
+        attributes: ResolvedNames::from_pairs([
+            (
+                "https://uri.etsi.org/ngsi-ld/default-context/temperature"
+                    .parse()
+                    .expect("valid attribute name"),
+                AttributeNameKey::from(1),
+            ),
+            (
+                "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
+                AttributeNameKey::from(2),
+            ),
+        ]),
+        types: ResolvedNames::from_pairs([(
+            "https://uri.etsi.org/ngsi-ld/default-context/Sensor".parse().expect("valid type name"),
+            EntityTypeNameKey::from(1),
+        )]),
+    }
+}
+
+/// A query of the `Sensor` type over the window `before
+/// 2030-01-01T00:00:00Z` on `observedAt`, every other filter absent.
+pub(super) fn sensors() -> CompiledTemporalQuery {
+    let mut compiled = typed(vec![
+        EntitySelector::builder()
+            .type_expr(Some(TypeExpr::Type(iri("https://uri.etsi.org/ngsi-ld/default-context/Sensor"))))
+            .build(),
+    ]);
+    compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
+    compiled
 }

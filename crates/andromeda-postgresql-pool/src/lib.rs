@@ -5,11 +5,13 @@
 //! from [`configure_pool_options`](crate::pool_options::configure_pool_options)
 //! so durability-neutral tuning (idle reclaim, no warm minimum, the acquire
 //! deadline) is decided once rather than per call site, and so is the share of
-//! a tenant pool read requests may hold beside its writes. The crate also decides
-//! which driver errors are retryable store conditions (saturation, a rolled
-//! back transaction, an unreachable store) rather than faults. It is a leaf
-//! below the context and temporal stores: it knows `sqlx` and `tokio` and no store, so
-//! both stores can share it without either depending on the other.
+//! a tenant pool read requests may hold beside its writes and how a read runs a
+//! statement as its planning asks. The crate also decides which driver errors
+//! are retryable store conditions (saturation, a rolled back transaction, an
+//! unreachable store) rather than faults. It is a leaf below the context and
+//! temporal stores: it knows `sqlx`, `tokio` and the statement trees both stores
+//! build, and no store, so both stores can share it without either depending on
+//! the other.
 
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
@@ -36,9 +38,9 @@ pub mod write_reserve;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
-    allow_workspace_dependencies: ["andromeda-persistence-failure"],
+    allow_workspace_dependencies: ["andromeda-persistence-failure", "andromeda-postgresql-seaquery"],
     allow_workspace_dev_dependencies: [],
-    allow_production_dependencies: ["sqlx", "tokio"],
+    allow_production_dependencies: ["sea-query", "sea-query-sqlx", "sqlx", "tokio"],
 }
 
 #[cfg(test)]

@@ -16,7 +16,7 @@
 //!    more candidates qualify.
 //!
 //! Each step is one branch of a `UNION ALL` behind a
-//! [`one_time_gate`](crate::one_time_gate). Every branch cuts the same window
+//! [`one_time_gate`](andromeda_postgresql_query::one_time_gate). Every branch cuts the same window
 //! over the same order, so whichever runs returns the page the plain
 //! statement would.
 //!
@@ -32,7 +32,6 @@ use crate::{
     entity::{QFilter, build_entity_conditions, window_and_sort_keys},
     entity_page::{GATED_STEP_COLUMN, GatedStep, ProjectedPage, StepColumn, TOTAL_COUNT_COLUMN, projected_page},
     entity_relations::EntityRelations,
-    one_time_gate::{CandidateBound, Candidates, column_of, count_of, materialized, within},
 };
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
@@ -40,7 +39,13 @@ use andromeda_ngsi_ld_query::{
     page_window::{PageStart, PageWindow},
     read_order::ReadOrder,
 };
-use andromeda_postgresql_query::{dictionary::query_names::QueryNames, entity_row_refs::EntityRowRefs, error::RenderError};
+use andromeda_postgresql_query::{
+    dictionary::query_names::QueryNames,
+    entity_row_refs::EntityRowRefs,
+    error::RenderError,
+    one_time_gate::{CandidateBound, Candidates, column_of, count_of, materialized, within},
+};
+use andromeda_postgresql_schema::current::Entities;
 use andromeda_postgresql_seaquery::aggregate::count_over_all;
 use sea_query::{Alias, Asterisk, Condition, DynIden, Expr, ExprTrait, Iden, Query, SelectStatement, SimpleExpr, UnionType, Value, WithClause};
 
@@ -162,7 +167,7 @@ pub(crate) fn gated_page(
 
     let mut narrowed = rest
         .narrowed
-        .add(source.rows.entity_key_column().in_subquery(column_of(Candidates)))
+        .add(source.rows.entity_key_column().in_subquery(column_of(Candidates, Entities::EntityKey)))
         .add(walked_short.clone()); // clone: both later branches are gated on the short walk
     let mut walk = match rest.bound {
         CandidateBound::AtMost(bound) => {

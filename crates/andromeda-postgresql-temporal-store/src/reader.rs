@@ -23,6 +23,7 @@ use andromeda_postgresql_query::{
     projected_attribute_names::projected_attribute_names,
     projected_type_names::projected_type_names,
 };
+use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
 use andromeda_postgresql_temporal_query::{
     history::build_temporal_history_query,
     recorded_shape::RecordedShape,
@@ -143,7 +144,9 @@ impl TemporalRepository {
             return Ok(Vec::new());
         }
         let statement = build_scope_history_query(branch, entity_id, compiled);
-        let pg_rows = self.execute_temporal_query(TemporalStatement::ScopeHistory, statement).await?;
+        let pg_rows = self
+            .execute_temporal_query(TemporalStatement::ScopeHistory, &statement, StatementPlanning::Cached)
+            .await?;
         decode_scope_history(&pg_rows).map_err(TemporalError::from)
     }
 }
@@ -204,7 +207,7 @@ impl TemporalHistoryReader for TemporalRepository {
 
         let stage1 = build_stage1_entity_ids(&branch_of(scope), compiled, window, count, &names).map_err(TemporalStoreError::Render)?;
 
-        let entity_id_rows = self.execute_temporal_query(TemporalStatement::Stage1, stage1.select).await?;
+        let entity_id_rows = self.execute_temporal_query(TemporalStatement::Stage1, &stage1.select, stage1.planning).await?;
 
         let mut entity_ids = entity_id_rows
             .into_iter()
@@ -223,7 +226,9 @@ impl TemporalHistoryReader for TemporalRepository {
             let count = stage1
                 .count
                 .ok_or(TemporalStoreError::Invariant(TemporalStoreInvariant::CountStatementMissing))?;
-            let count_rows = self.execute_temporal_query(TemporalStatement::Stage1Count, count).await?;
+            let count_rows = self
+                .execute_temporal_query(TemporalStatement::Stage1Count, &count, stage1.count_planning)
+                .await?;
             count_rows.first().and_then(|r| r.try_get::<i64, _>("count").ok())
         } else {
             None
@@ -252,7 +257,9 @@ impl TemporalHistoryReader for TemporalRepository {
     ) -> Result<TemporalHistoryOutcome, TemporalError> {
         let branch = branch_of(scope);
         let stage2 = build_temporal_history_query(&branch, entity_id, compiled);
-        let pg_rows = self.execute_temporal_query(TemporalStatement::History, stage2).await?;
+        let pg_rows = self
+            .execute_temporal_query(TemporalStatement::History, &stage2, StatementPlanning::Cached)
+            .await?;
 
         // Clause 4.18 reifies the Scope in the temporal representation, and it
         // is stored apart from attribute history because clause 4.5.4 gives it
@@ -288,7 +295,9 @@ impl TemporalHistoryReader for TemporalRepository {
         compiled: &CompiledTemporalQuery,
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
         let stage2 = build_temporal_history_query(&branch_of(scope), entity_id, compiled);
-        let pg_rows = self.execute_temporal_query(TemporalStatement::Aggregation, stage2).await?;
+        let pg_rows = self
+            .execute_temporal_query(TemporalStatement::Aggregation, &stage2, StatementPlanning::Cached)
+            .await?;
 
         decode_aggregation_rows(&pg_rows, entity_id, compiled)
     }

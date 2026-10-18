@@ -25,7 +25,6 @@ pub mod id_pattern_page;
 pub mod keyed_count;
 pub mod keyed_page;
 pub mod numbered_page;
-mod one_time_gate;
 pub mod order_geography;
 mod page_shape;
 pub mod result_ordering;

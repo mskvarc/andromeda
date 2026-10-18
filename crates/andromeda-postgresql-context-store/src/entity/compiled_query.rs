@@ -29,9 +29,8 @@ use andromeda_postgresql_query::{
 };
 use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
 use iri_rs::IriBuf;
-use sea_query::{PostgresQueryBuilder, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{Connection, Row, postgres::PgRow};
+use sea_query::SelectStatement;
+use sqlx::{Row, postgres::PgRow};
 
 impl EntityRepository {
     /// Execute a compiled entity query and return the matching stored states
@@ -72,7 +71,7 @@ impl EntityRepository {
         let names = self.resolve_names(&planned.query).await?;
         let built = entity_sql::build_query(target, &planned.query, &planned.window, planned.count, &names)?;
 
-        let head_rows = self.fetch_planned(&built.select, built.planning).await?;
+        let head_rows = self.reads.acquire().await?.fetch_planned(&built.select, built.planning).await?;
         let window_count = page_total(&head_rows, matches!(built.total, EntityTotal::OnPageRows { .. }))?;
         let step = match &built.total {
             EntityTotal::OnPageRows { uncounted: total } | EntityTotal::Counted(total) if total.walked.is_some() => page_step(&head_rows)?,
@@ -96,37 +95,16 @@ impl EntityRepository {
         Ok(planned.outcome(rows, total_count))
     }
 
-    /// Run a statement of a page as `planning` asks, on a connection of the
-    /// read share: alone, or in a transaction of its own that sets how it is
-    /// planned and run.
+    /// Run a `COUNT` statement as `planning` asks, on a connection of the
+    /// read share, and read back its one value.
     ///
     /// # Errors
     ///
     /// Returns [`ContextStoreError`] when no connection is free within the
-    /// acquire deadline, the statement fails, or the transaction it runs in
-    /// cannot begin or commit.
-    async fn fetch_planned(&self, select: &SelectStatement, planning: StatementPlanning) -> Result<Vec<PgRow>, ContextStoreError> {
-        let Some(begin) = planning.begin() else {
-            return Ok(self.fetch_on(PoolLane::Reads, select).await?);
-        };
-        let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-        let statement = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values);
-        let mut connection = self.reads.acquire().await?;
-        let mut transaction = connection.begin_with(begin).await?;
-        let rows = statement.fetch_all(&mut *transaction).await?;
-        transaction.commit().await?;
-        Ok(rows)
-    }
-
-    /// Run a `COUNT` statement as `planning` asks and read back its one
-    /// value.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ContextStoreError`] when the statement fails or returns no
-    /// row, or the transaction it runs in cannot begin or commit.
+    /// acquire deadline, the statement fails or returns no row, or the
+    /// transaction it runs in cannot begin or commit.
     async fn count_matches(&self, count: &SelectStatement, planning: StatementPlanning) -> Result<i64, ContextStoreError> {
-        let rows = self.fetch_planned(count, planning).await?;
+        let rows = self.reads.acquire().await?.fetch_planned(count, planning).await?;
         let total = rows.first().ok_or(sqlx::Error::RowNotFound)?;
         Ok(total.try_get(0)?)
     }

@@ -5,16 +5,16 @@ use crate::{
     entity::{QFilter, build_entity_conditions},
     entity_page::GatedStep,
     entity_relations::EntityRelations,
-    id_pattern_page::ID_PATTERN_CANDIDATE_BOUND,
     keyed_count::{KeyedCountFilters, count_bound, keyed_count},
     keyed_page::page_bound as keyed_page_bound,
-    one_time_gate::CandidateBound,
 };
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery};
 use andromeda_postgresql_query::{
     dictionary::query_names::QueryNames,
     entity_row_refs::EntityRowRefs,
     error::RenderError,
+    id_pattern_trigrams::ID_PATTERN_CANDIDATE_BOUND,
+    one_time_gate::CandidateBound,
     q_predicate::keyed_term::{CandidateRead, KeyedCandidates},
 };
 use sea_query::{Asterisk, Condition, DynIden, Expr, Func, Query, SelectStatement};

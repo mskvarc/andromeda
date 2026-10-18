@@ -7,10 +7,17 @@
 //! directly too. Waiting for the permit and for the connection share one
 //! acquire deadline, the pool's own, so a saturated share is shed as the same
 //! [`sqlx::Error::PoolTimedOut`] a saturated pool is.
+//!
+//! A read runs its statement on the connection it holds as the statement's
+//! [`StatementPlanning`] asks, so every store plans a gated or value-dependent
+//! statement the same way.
 
 use crate::write_reserve::WriteReserve;
+use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
 use derive_more::{Deref, DerefMut};
-use sqlx::{PgPool, Postgres, pool::PoolConnection};
+use sea_query::{PostgresQueryBuilder, SelectStatement};
+use sea_query_sqlx::SqlxBinder;
+use sqlx::{AssertSqlSafe, Connection, PgPool, Postgres, pool::PoolConnection, postgres::PgRow};
 use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::{OwnedSemaphorePermit, Semaphore},
@@ -83,6 +90,27 @@ impl ReadShare {
         let permit = Arc::clone(&self.permits).acquire_owned().await.map_err(|_closed| sqlx::Error::PoolClosed)?;
         let connection = self.pool.acquire().await?;
         Ok(ReadConnection { connection, _permit: permit })
+    }
+}
+
+impl ReadConnection {
+    /// Run `statement` as `planning` asks: alone, or in a transaction of its
+    /// own that sets how it is planned and run.
+    ///
+    /// # Errors
+    ///
+    /// Returns the driver's error when the statement fails, or the
+    /// transaction it runs in cannot begin or commit.
+    pub async fn fetch_planned(&mut self, statement: &SelectStatement, planning: StatementPlanning) -> Result<Vec<PgRow>, sqlx::Error> {
+        let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+        let query = sqlx::query_with(AssertSqlSafe(sql.as_str()), values);
+        let Some(begin) = planning.begin() else {
+            return query.fetch_all(&mut *self.connection).await;
+        };
+        let mut transaction = self.connection.begin_with(begin).await?;
+        let rows = query.fetch_all(&mut *transaction).await?;
+        transaction.commit().await?;
+        Ok(rows)
     }
 }
 

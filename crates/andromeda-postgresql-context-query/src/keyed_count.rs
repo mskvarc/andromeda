@@ -10,17 +10,18 @@
 //! apart. The statement therefore reads at most [`COUNT_CANDIDATE_BOUND`] + 1
 //! rechecked or probed candidates, or [`RANGED_COUNT_CANDIDATE_BOUND`] + 1
 //! from a range of a typed value index, behind a
-//! [`one_time_gate`](crate::one_time_gate): when they number at most the
+//! [`one_time_gate`](andromeda_postgresql_query::one_time_gate): when they number at most the
 //! bound they are every candidate, and the selection narrowed to them is
 //! counted; when more qualify, the selection is walked. A Linked Entity hop's
 //! candidates are read whole, as its page reads them.
 
-use crate::{
-    entity_relations::EntityRelations,
-    entity_total::count_over,
+use crate::{entity_relations::EntityRelations, entity_total::count_over};
+use andromeda_postgresql_query::{
+    entity_row_refs::EntityRowRefs,
     one_time_gate::{CandidateBound, Candidates, column_of, materialized, within},
+    q_predicate::keyed_term::CandidateRead,
 };
-use andromeda_postgresql_query::{entity_row_refs::EntityRowRefs, q_predicate::keyed_term::CandidateRead};
+use andromeda_postgresql_schema::current::Entities;
 use sea_query::{Condition, DynIden, Expr, ExprTrait, Query, SelectStatement, WithClause};
 
 /// The most rechecked or probed candidates a count reads from a keyed term's
@@ -60,7 +61,9 @@ pub(crate) fn keyed_count(
     read: CandidateRead,
 ) -> SelectStatement {
     let bound = count_bound(read);
-    let narrowed = filters.remainder.add(rows.entity_key_column().in_subquery(column_of(Candidates)));
+    let narrowed = filters
+        .remainder
+        .add(rows.entity_key_column().in_subquery(column_of(Candidates, Entities::EntityKey)));
     // clone: both counts read the same relations
     let indexed = count_over(relations.clone(), schema, narrowed);
     let mut count = Query::select();

@@ -21,37 +21,23 @@ use crate::{
     entity_page::{ProjectedPage, sort_column},
     entity_relations::{EntityRelations, RowSource},
     gated_page::{GatedColumns, IndexOrWalk, PageSource, ShortWalk, Walked, gated_page},
-    one_time_gate::CandidateBound,
 };
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_selection::ConsideredEntities,
-    identifier_axis::IdentifierAxis,
     pattern::Pattern,
     projection::projected_members::ProjectedMembers,
     read_order::ReadOrder,
-    subject_start::SubjectStart,
 };
-use andromeda_postgresql_query::{entity_row_refs::EntityRowRefs, error::RenderError};
+use andromeda_postgresql_query::{
+    entity_row_refs::EntityRowRefs,
+    error::RenderError,
+    id_pattern_trigrams::{ID_PATTERN_CANDIDATE_BOUND, ID_PATTERN_SHORT_WALK, trigram_pattern},
+    one_time_gate::CandidateBound,
+};
 use andromeda_postgresql_schema::current::Entities;
 use andromeda_postgresql_seaquery::operator::regex_match;
 use sea_query::{Condition, DynIden, Expr, Query, SelectStatement};
-
-/// How many members the short walk tests before the index is read.
-///
-/// A visit reads one entry of the membership relation's primary key and
-/// tests the pattern on the identifier it holds, with no other relation, so
-/// the walk is far longer than a keyed page's: a pattern one member in fifty
-/// matches fills a page here, and walking it costs a few milliseconds.
-pub const ID_PATTERN_SHORT_WALK: u32 = 5_000;
-
-/// The most matches of the trigram index the page reads.
-///
-/// The index is a GIN, whose matches are gathered in full before the first
-/// is returned, so a bound of more matches saves no read; past it, the
-/// pattern is dense enough that the walk fills the page sooner than the
-/// matches are sorted.
-pub const ID_PATTERN_CANDIDATE_BOUND: u64 = 1_000;
 
 /// An `idPattern` and the Entities of any type whose identifier it matches.
 pub(crate) struct PatternMatches<'q> {
@@ -83,14 +69,8 @@ pub(crate) fn pattern_matches<'q>(query: &'q CompiledEntityQuery, relations: &En
     let [selector] = selection.selectors.as_slice() else {
         return None;
     };
-    let IdentifierAxis::Pattern(pattern) = selector.identifier_axis() else {
-        return None;
-    };
-    let open = match pattern.subject_start() {
-        SubjectStart::Open => true,
-        SubjectStart::Fixed => false,
-    };
-    if !(walked && alone && open) {
+    let pattern = trigram_pattern(selector.identifier_axis())?;
+    if !(walked && alone) {
         return None;
     }
     let rows = EntityRowRefs::unaliased(schema.cloned());

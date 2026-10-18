@@ -54,6 +54,7 @@ use andromeda_postgresql_query::{
     page_window::apply_identifier_window,
 };
 use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
+use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
 use sea_query::{Expr as SeaExpr, Func, SelectStatement};
 
 /// The Stage 1 statement and its optional count, each a statement tree the store
@@ -71,6 +72,10 @@ pub struct Stage1Query {
     /// The order the page's identifiers come back in, which the store presents
     /// ascending.
     pub read_order: ReadOrder,
+    /// How PostgreSQL may plan `select`.
+    pub planning: StatementPlanning,
+    /// How PostgreSQL may plan `count`.
+    pub count_planning: StatementPlanning,
 }
 
 /// Build Stage 1 query: find the identifiers `window` selects of the entities
@@ -144,10 +149,14 @@ pub fn build_stage1_entity_ids(
         CountPolicy::Omit => None,
     };
 
+    // A walk of the Evolutions takes one access path whatever values are
+    // bound to it, so any plan the cache holds serves the page and the count.
     Ok(Stage1Query {
         select: select.take(),
         count: count_statement,
         read_order,
+        planning: StatementPlanning::Cached,
+        count_planning: StatementPlanning::Cached,
     })
 }
 
@@ -155,7 +164,7 @@ pub fn build_stage1_entity_ids(
 mod tests {
     use crate::stage1::{
         build_stage1_entity_ids,
-        query_fixture::{built, built_count, built_windowed, ids, instant, minimal_compiled, point, speed_and_address},
+        query_fixture::{built, built_count, built_windowed, ids, instant, minimal_compiled, point, sensor_names, sensors, speed_and_address},
     };
     use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -171,6 +180,8 @@ mod tests {
         temporal::{compiled::CompiledTemporalQuery, ordering::TemporalEntityOrdering, window::TimeInterval},
     };
     use andromeda_postgresql_query::{dictionary::query_names::QueryNames, history_source::HistoryBranch};
+    use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
+    use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Value, Values};
 
     /// The count statement of a counted query over the page `window` selects.
@@ -185,6 +196,20 @@ mod tests {
 
     fn has_timestamp(values: &Values) -> bool {
         values.0.iter().any(|value| matches!(value, Value::ChronoDateTimeUtc(_)))
+    }
+
+    #[test]
+    fn a_plain_stage1_is_planned_by_the_cache() {
+        let stage1 = build_stage1_entity_ids(
+            &HistoryBranch::live_recorded(),
+            &sensors(),
+            &PageWindow::offset(20, 0),
+            CountPolicy::Emit,
+            &sensor_names(),
+        )
+        .expect("valid temporal query");
+        assert_eq!(stage1.planning, StatementPlanning::Cached);
+        assert_eq!(stage1.count_planning, StatementPlanning::Cached);
     }
 
     #[test]
@@ -416,6 +441,6 @@ mod tests {
                 .unwrap_or(sql.len());
             sql[from..tail].to_owned()
         };
-        pretty_assertions::assert_eq!(source(&page), source(&count));
+        assert_eq!(source(&page), source(&count));
     }
 }
