@@ -106,6 +106,25 @@ mod tests {
         pretty_assertions::assert_eq!(text.as_str(), "2024-01-01T01:00:00.25+01:00");
     }
 
+    /// Clause 4.6.3 caps the fraction at six digits; an `observedAt` or
+    /// `expiresAt` finer than that is refused, never cut to the microsecond.
+    #[test]
+    fn more_than_six_fractional_digits_are_refused_rather_than_truncated() {
+        pretty_assertions::assert_eq!("2026-03-04T05:06:07.123456789Z".parse::<DateTimeText>(), Err(DateTimeTextError));
+        pretty_assertions::assert_eq!("2026-03-04T05:06:07.1234567Z".parse::<DateTimeText>(), Err(DateTimeTextError));
+        pretty_assertions::assert_eq!(DateTimeText::try_from(String::from("2026-03-04T05:06:07.123456789Z")), Err(DateTimeTextError));
+    }
+
+    #[test]
+    fn six_fractional_digits_are_kept_as_written() {
+        let text: DateTimeText = "2026-03-04T05:06:07.123456Z".parse().expect("six fractional digits");
+        pretty_assertions::assert_eq!(text.as_str(), "2026-03-04T05:06:07.123456Z");
+        pretty_assertions::assert_eq!(
+            text.instant(),
+            Utc.with_ymd_and_hms(2026, 3, 4, 5, 6, 7).single().expect("a valid instant") + chrono::Duration::microseconds(123_456)
+        );
+    }
+
     #[test]
     fn a_text_that_is_not_rfc_3339_is_refused() {
         pretty_assertions::assert_eq!("yesterday".parse::<DateTimeText>(), Err(DateTimeTextError));

@@ -22,7 +22,7 @@ use crate::{
     representation_parameter::{WrittenValue, supported_option},
 };
 use andromeda_http_headers::language::LanguageFilter;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time_prop::TimeProp, time_rel::TimeRel};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, rfc3339, time_prop::TimeProp, time_rel::TimeRel};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     filter::expression::Expr,
@@ -95,10 +95,10 @@ pub struct CsrQueryParameters {
     #[serde(default, deserialize_with = "crate::query::temporal::deserialization::deserialize_option_timerel")]
     pub timerel: Option<TimeRel>,
     /// The instant the window is anchored at (`timeAt`).
-    #[serde(rename = "timeAt")]
+    #[serde(rename = "timeAt", default, deserialize_with = "rfc3339::optional_datetime::deserialize")]
     pub time_at: Option<DateTime<Utc>>,
     /// The closing instant, required by `timerel=between` (`endTimeAt`).
-    #[serde(rename = "endTimeAt")]
+    #[serde(rename = "endTimeAt", default, deserialize_with = "rfc3339::optional_datetime::deserialize")]
     pub end_time_at: Option<DateTime<Utc>>,
     /// The temporal property the window applies to (clause 4.8 `timeproperty`).
     #[serde(default, deserialize_with = "crate::query::temporal::deserialization::deserialize_option_timeproperty")]
@@ -241,6 +241,17 @@ mod tests {
             serde_urlencoded::from_str::<CsrQueryParameters>("id=urn:ngsi-ld:ContextSourceRegistration:one,,urn:ngsi-ld:ContextSourceRegistration:two")
                 .is_err()
         );
+    }
+
+    /// Clause 4.6.3 admits at most six fractional-second digits.
+    #[test]
+    fn deserialization_rejects_an_instant_beyond_six_fractional_digits() {
+        assert!(serde_urlencoded::from_str::<CsrQueryParameters>("type=Vehicle&timerel=after&timeAt=2024-01-01T00:00:00.123456789Z").is_err());
+        assert!(
+            serde_urlencoded::from_str::<CsrQueryParameters>("type=Vehicle&timerel=between&timeAt=2024-01-01T00:00:00Z&endTimeAt=2024-02-01T00:00:00.1234567Z")
+                .is_err()
+        );
+        assert!(serde_urlencoded::from_str::<CsrQueryParameters>("type=Vehicle&timerel=after&timeAt=2024-01-01T00:00:00.123456Z").is_ok());
     }
 
     #[test]

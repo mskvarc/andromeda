@@ -10,7 +10,7 @@
 //! notification, and no JSON tree is built on the way.
 
 use andromeda_json_literal::piece::{JsonKind, JsonPiece};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, rfc3339::RequestInstant};
 use andromeda_ngsi_ld_model::{
     notification::CsrTriggerReason,
     received::{ReceivedElement, ReceivedEntities, decoded_elements},
@@ -135,9 +135,9 @@ struct Envelope<'a> {
     /// `subscriptionId`.
     #[serde(default)]
     subscription_id: Option<Identifier>,
-    /// `notifiedAt`.
+    /// `notifiedAt`, read as every instant a request carries (clause 4.6.3).
     #[serde(default)]
-    notified_at: Option<DateTime<Utc>>,
+    notified_at: Option<RequestInstant>,
     /// `data`, as written.
     #[serde(borrow, default)]
     data: Option<&'a RawValue>,
@@ -159,7 +159,7 @@ impl Inbound {
         let kind = envelope.type_.as_deref().ok_or(InboundError::MissingType)?;
         let id = envelope.id.ok_or(InboundError::MissingMember(EnvelopeMember::Id))?;
         let subscription_id = envelope.subscription_id.ok_or(InboundError::MissingMember(EnvelopeMember::SubscriptionId))?;
-        let notified_at = envelope.notified_at.ok_or(InboundError::MissingMember(EnvelopeMember::NotifiedAt))?;
+        let notified_at = envelope.notified_at.ok_or(InboundError::MissingMember(EnvelopeMember::NotifiedAt))?.get();
         match kind {
             NOTIFICATION => {
                 let data = envelope.data.map(JsonPiece::new).ok_or(InboundError::MissingMember(EnvelopeMember::Data))?;
@@ -227,6 +227,19 @@ mod tests {
             panic!("an entity array");
         };
         assert!(matches!(entities.0.as_slice(), [ReceivedElement::Read(_), ReceivedElement::Read(_)]));
+    }
+
+    /// Clause 4.6.3 admits at most six fractional-second digits.
+    #[test]
+    fn a_notified_at_beyond_six_fractional_digits_is_refused() {
+        let text = |notified_at: &str| {
+            format!(
+                r#"{{"type":"Notification","id":"urn:ngsi-ld:Notification:1","subscriptionId":"urn:ngsi-ld:Subscription:1","notifiedAt":"{notified_at}","data":[{VEHICLE}]}}"#
+            )
+        };
+        assert!(inbound(&text("2024-06-15T12:30:00.123456789Z")).is_err());
+        assert!(inbound(&text("2024-06-15T12:30:00.1234567Z")).is_err());
+        assert!(inbound(&text("2024-06-15T12:30:00.123456Z")).is_ok());
     }
 
     #[test]

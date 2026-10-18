@@ -1,5 +1,6 @@
 //! HTTP request model for updating an `EntityMap`.
 
+use andromeda_ngsi_ld_lexicon::rfc3339;
 use andromeda_ngsi_ld_model::request_body::RequestBody;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, de::IgnoredAny};
@@ -11,8 +12,8 @@ use serde::{Deserialize, de::IgnoredAny};
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateEntityMapBody {
-    /// New expiration time.
-    #[serde(rename = "expiresAt")]
+    /// New expiration time, read as every instant a request carries (clause 4.6.3).
+    #[serde(rename = "expiresAt", default, deserialize_with = "rfc3339::optional_datetime::deserialize")]
     pub expires_at: Option<DateTime<Utc>>,
     /// Output-only member accepted and ignored as clause 5.14.2.4 requires.
     #[serde(rename = "entityMap")]
@@ -47,6 +48,19 @@ mod tests {
         }))
         .expect("output-only members are ignored");
         assert!(body.expires_at.is_some());
+    }
+
+    /// Clause 4.6.3 admits at most six fractional-second digits.
+    #[test]
+    fn an_expires_at_beyond_six_fractional_digits_is_refused() {
+        assert!(UpdateEntityMapBody::from_request_text(br#"{"expiresAt": "2030-01-01T00:00:00.123456789Z"}"#).is_err());
+        assert!(UpdateEntityMapBody::from_request_text(br#"{"expiresAt": "2030-01-01T00:00:00.1234567Z"}"#).is_err());
+        assert!(UpdateEntityMapBody::from_request_text(br#"{"expiresAt": "2030-01-01T00:00:00.123456Z"}"#).is_ok());
+    }
+
+    #[test]
+    fn an_absent_expires_at_reads_as_none() {
+        pretty_assertions::assert_eq!(UpdateEntityMapBody::from_request_text(b"{}").expect("an empty update").expires_at, None);
     }
 
     #[test]

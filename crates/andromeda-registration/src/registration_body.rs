@@ -27,6 +27,7 @@ use andromeda_ngsi_ld_lexicon::{
     dereferenceable_uri::DereferenceableUri,
     identifier::Identifier,
     non_empty_text::NonEmptyText,
+    rfc3339::RequestInstant,
     scope::path::ScopePath,
     tenant::TenantName,
 };
@@ -38,7 +39,6 @@ use andromeda_ngsi_ld_model::{
     time_interval::TimeInterval,
 };
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
-use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;
@@ -71,8 +71,8 @@ pub struct RegistrationBody {
     pub(crate) observation_space: NullableMember<RegistrationGeometry>,
     /// `operationSpace`.
     pub(crate) operation_space: NullableMember<RegistrationGeometry>,
-    /// `expiresAt`.
-    pub(crate) expires_at: NullableMember<DateTime<Utc>>,
+    /// `expiresAt`, read as every instant a request carries (clause 4.6.3).
+    pub(crate) expires_at: NullableMember<RequestInstant>,
     /// `endpoint`: cardinality 1 on creation.
     pub(crate) endpoint: NullableMember<DereferenceableUri>,
     /// `accept`.
@@ -188,7 +188,7 @@ impl RegistrationBody {
             location: stored_geometry(location).present(CsrMember::Location)?,
             observation_space: stored_geometry(observation_space).present(CsrMember::ObservationSpace)?,
             operation_space: stored_geometry(operation_space).present(CsrMember::OperationSpace)?,
-            expires_at: expires_at.present(CsrMember::ExpiresAt)?,
+            expires_at: expires_at.map(RequestInstant::get).present(CsrMember::ExpiresAt)?,
             endpoint: endpoint.required(CsrMember::Endpoint)?,
             accept: accept.present(CsrMember::Accept)?,
             mode,
@@ -252,7 +252,7 @@ impl RegistrationBody {
             location: stored_geometry(location),
             observation_space: stored_geometry(observation_space),
             operation_space: stored_geometry(operation_space),
-            expires_at,
+            expires_at: expires_at.map(RequestInstant::get),
             endpoint: endpoint.present(CsrMember::Endpoint)?,
             accept,
             mode: mode.present(CsrMember::Mode)?,
@@ -339,6 +339,8 @@ mod tests {
             ("registrationName", json!("")),
             ("datasetId", json!(["not a uri"])),
             ("expiresAt", json!("not-a-date")),
+            ("expiresAt", json!("2099-03-04T05:06:07.123456789Z")),
+            ("expiresAt", json!("2099-03-04T05:06:07.1234567Z")),
             ("location", json!({"type": "Point", "coordinates": "nope"})),
             ("observationSpace", json!({"type": "Polygon", "coordinates": 5})),
             ("operationSpace", json!({"type": "Point"})),
@@ -370,6 +372,7 @@ mod tests {
         payload["management"] = json!({"localOnly": true, "timeout": 3000, "cooldown": 500, "cacheDuration": "PT10S"});
         payload["managementInterval"] = json!({"startAt": "2020-01-01T00:00:00Z"});
         payload["refreshRate"] = json!("PT5M");
+        payload["expiresAt"] = json!("2099-03-04T05:06:07.123456Z");
         payload["scope"] = json!(["/Madrid/Gardens"]);
         payload["contextSourceAlias"] = json!("broker-alias-x");
         payload["location"] = json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0]}});
@@ -378,6 +381,10 @@ mod tests {
         let params = create_of(&payload).expect("valid registration");
         pretty_assertions::assert_eq!(params.dataset_id.as_ref().map(Vec::len), Some(2));
         assert!(params.management.is_some());
+        pretty_assertions::assert_eq!(
+            params.expires_at.map(|instant| instant.to_rfc3339()),
+            Some(String::from("2099-03-04T05:06:07.123456+00:00"))
+        );
         assert!(params.location.is_some());
         assert!(params.management_interval.is_some_and(|interval| interval.end_at.is_none()));
         let extras: Vec<(&str, &str)> = params.additional_properties.iter().map(|(name, value)| (name.as_str(), value.text())).collect();

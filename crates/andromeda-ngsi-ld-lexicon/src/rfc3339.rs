@@ -30,7 +30,7 @@
 //! like any other broker-held instant. The serde adapters below are that same
 //! rendering reached through `#[serde(with = …)]`.
 
-use crate::fractional_seconds::{FractionalSecondsError, accept_comma_decimal_separator};
+use crate::fractional_seconds::{FractionalSecondsError, accept_comma_decimal_separator, reject_excess_fractional_digits};
 use chrono::{DateTime, ParseError, SecondsFormat, SubsecRound, Utc};
 use serde::Deserialize;
 use std::borrow::Cow;
@@ -64,9 +64,10 @@ pub fn sub_second(dt: DateTime<Utc>) -> String {
 /// Why a client-supplied RFC 3339 instant is unusable.
 #[derive(Debug, Error)]
 pub enum InstantError {
-    /// The fractional-seconds separator is ambiguous (clause 4.6.3).
+    /// The fractional-seconds part breaks clause 4.6.3: more than one comma
+    /// separator, or more than six fractional digits.
     #[error("instant {0}")]
-    Separator(#[from] FractionalSecondsError),
+    Fraction(#[from] FractionalSecondsError),
     /// The text is not an RFC 3339 date-time.
     #[error("not an RFC 3339 date-time: {0}")]
     Malformed(#[source] ParseError),
@@ -89,15 +90,18 @@ pub struct ClientInstant<'a> {
 /// comma is accepted for an instant that may carry a numeric offset
 /// (`observedAt`, `expiresAt`, `timeAt`); the `DateTime` and `Time` values of
 /// clause 4.6.3 share the same rewrite through
-/// [`accept_comma_decimal_separator`]. The digit count is left to the RFC 3339
-/// parser.
+/// [`accept_comma_decimal_separator`]. The same clause caps the fraction at
+/// "a maximum of six" digits, so a finer instant is refused rather than cut to
+/// the microsecond: the broker never substitutes an instant for the one written.
 ///
 /// # Errors
 ///
-/// Returns [`InstantError::Separator`] for more than one comma and
-/// [`InstantError::Malformed`] when the rewritten text is not RFC 3339.
+/// Returns [`InstantError::Fraction`] for more than one comma or more than six
+/// fractional digits, and [`InstantError::Malformed`] when the rewritten text
+/// is not RFC 3339.
 pub fn parse_client_instant(text: &str) -> Result<ClientInstant<'_>, InstantError> {
     let canonical = accept_comma_decimal_separator(text)?;
+    reject_excess_fractional_digits(&canonical)?;
     let instant = DateTime::parse_from_rfc3339(&canonical).map_err(InstantError::Malformed)?.with_timezone(&Utc);
     Ok(ClientInstant { canonical, instant })
 }
@@ -192,7 +196,10 @@ pub mod optional_datetime {
 
 #[cfg(test)]
 mod tests {
-    use crate::rfc3339::{parse_client_instant, sub_second};
+    use crate::{
+        fractional_seconds::FractionalSecondsError,
+        rfc3339::{InstantError, parse_client_instant, sub_second},
+    };
     use chrono::{DateTime, TimeZone, Utc};
     use serde::{Deserialize, Serialize};
 
@@ -291,6 +298,42 @@ mod tests {
             parsed.instant,
             Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).single().expect("instant") + chrono::Duration::milliseconds(250)
         );
+    }
+
+    /// Clause 4.6.3 admits "one or more fractional digits, up to a maximum of
+    /// six".
+    #[test]
+    fn six_fractional_digits_are_the_accepted_maximum() {
+        let parsed = parse_client_instant("2026-03-04T05:06:07.123456Z").expect("six fractional digits");
+        pretty_assertions::assert_eq!(parsed.canonical, "2026-03-04T05:06:07.123456Z");
+        pretty_assertions::assert_eq!(
+            parsed.instant,
+            Utc.with_ymd_and_hms(2026, 3, 4, 5, 6, 7).single().expect("instant") + chrono::Duration::microseconds(123_456)
+        );
+    }
+
+    #[test]
+    fn seven_fractional_digits_are_refused_rather_than_truncated() {
+        let error = parse_client_instant("2026-03-04T05:06:07.1234567Z").expect_err("seven digits exceed clause 4.6.3");
+        assert!(matches!(error, InstantError::Fraction(FractionalSecondsError::TooManyDigits)));
+    }
+
+    #[test]
+    fn nine_fractional_digits_are_refused_rather_than_truncated() {
+        let error = parse_client_instant("2026-03-04T05:06:07.123456789Z").expect_err("nine digits exceed clause 4.6.3");
+        assert!(matches!(error, InstantError::Fraction(FractionalSecondsError::TooManyDigits)));
+    }
+
+    #[test]
+    fn seven_fractional_digits_after_a_comma_and_before_an_offset_are_refused() {
+        let error = parse_client_instant("2026-03-04T06:06:07,1234567+01:00").expect_err("seven digits exceed clause 4.6.3");
+        assert!(matches!(error, InstantError::Fraction(FractionalSecondsError::TooManyDigits)));
+    }
+
+    #[test]
+    fn the_serde_adapters_refuse_more_than_six_fractional_digits() {
+        assert!(serde_json::from_str::<TestRequired>(r#"{"ts": "2026-03-04T05:06:07.123456789Z"}"#).is_err());
+        assert!(serde_json::from_str::<TestOptional>(r#"{"ts": "2026-03-04T05:06:07.1234567Z"}"#).is_err());
     }
 
     #[test]

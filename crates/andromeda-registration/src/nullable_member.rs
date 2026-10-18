@@ -69,6 +69,16 @@ impl<T> NullableMember<T> {
         }
     }
 
+    /// The member in the same state, its carried value converted by `convert`.
+    #[must_use]
+    pub fn map<U>(self, convert: impl FnOnce(T) -> U) -> NullableMember<U> {
+        match self {
+            NullableMember::Absent => NullableMember::Absent,
+            NullableMember::Cleared => NullableMember::Cleared,
+            NullableMember::Set(value) => NullableMember::Set(convert(value)),
+        }
+    }
+
     /// The value of a member a creation body must carry (clause 5.2.9
     /// cardinality 1).
     ///
@@ -122,6 +132,13 @@ mod tests {
     fn a_set_member_replaces_the_stored_value() {
         let member: NullableMember<u8> = NullableMember::Set(9);
         pretty_assertions::assert_eq!(member.resolve(Some(7)), Some(9));
+    }
+
+    #[test]
+    fn mapping_a_member_keeps_its_state_and_converts_its_value() {
+        pretty_assertions::assert_eq!(NullableMember::<u8>::Absent.map(u16::from), NullableMember::Absent);
+        pretty_assertions::assert_eq!(NullableMember::<u8>::Cleared.map(u16::from), NullableMember::Cleared);
+        pretty_assertions::assert_eq!(NullableMember::Set(3_u8).map(u16::from), NullableMember::Set(3_u16));
     }
 
     #[test]

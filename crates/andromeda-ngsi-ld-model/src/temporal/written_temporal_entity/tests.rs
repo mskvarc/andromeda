@@ -151,6 +151,17 @@ fn an_instant_that_is_no_string_is_refused() {
     assert!(matches!(refusal(&attribute), PluralMemberRefusal::InstantNotAString { .. }));
 }
 
+/// Clause 4.6.3 admits at most six fractional-second digits in the entity
+/// `expiresAt` a write carries.
+#[test]
+fn an_entity_expires_at_beyond_six_fractional_digits_is_refused() {
+    let body = |expires_at: &str| json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "expiresAt": expires_at});
+    assert!(written(&body("2099-03-04T05:06:07.123456789Z")).is_err());
+    assert!(written(&body("2099-03-04T05:06:07.1234567Z")).is_err());
+    let kept = written(&body("2099-03-04T05:06:07.123456Z")).expect("six digits");
+    pretty_assertions::assert_eq!(kept.expires_at.map(|instant| instant.timestamp_subsec_micros()), Some(123_456));
+}
+
 /// An object naming no family, or not holding its family's member, is an
 /// instance and is read as one.
 #[test]
