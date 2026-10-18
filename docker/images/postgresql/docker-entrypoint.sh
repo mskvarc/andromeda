@@ -478,6 +478,19 @@ andromeda_write_derived() {
 	if [ "$wal_kb" -lt "$tuned_wal_kb" ]; then
 		wal_kb="$tuned_wal_kb"
 	fi
+	# The tuner sizes WAL from the whole filesystem holding pg_wal, which on a
+	# shared disk is not WAL's to fill (154GB on a 251GB disk), and crash
+	# recovery replays up to max_wal_size, about 6 s per GB measured. The
+	# tuner's values are kept up to 16GB and 8GB, its own two-to-one ratio.
+	local max_wal_mb min_wal_mb
+	max_wal_mb="$(postgres -D "$PGDATA" "$@" -C max_wal_size)"
+	min_wal_mb="$(postgres -D "$PGDATA" "$@" -C min_wal_size)"
+	if [ "$max_wal_mb" -gt 16384 ]; then
+		max_wal_mb=16384
+	fi
+	if [ "$min_wal_mb" -gt 8192 ]; then
+		min_wal_mb=8192
+	fi
 
 	local storage
 	case "${ANDROMEDA_PG_STORAGE:-ssd}" in
@@ -499,6 +512,8 @@ io_combine_limit = 128kB'
 		io_workers = ${io_workers}
 		temp_file_limit = $(( data_kb * 5 / 100 ))kB
 		wal_buffers = ${wal_kb}kB
+		max_wal_size = ${max_wal_mb}MB
+		min_wal_size = ${min_wal_mb}MB
 		${storage}
 	EOF
 }

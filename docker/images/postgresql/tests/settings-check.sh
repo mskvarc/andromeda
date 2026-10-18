@@ -133,8 +133,8 @@ for key in $policy_keys; do
 	file="$(sourcefile limits-2g "$key")"
 	expect "policy $key from 10-andromeda.conf" "${file##*/}" 10-andromeda.conf
 done
-for key in autovacuum_work_mem io_workers temp_file_limit wal_buffers random_page_cost effective_io_concurrency \
-	maintenance_io_concurrency io_combine_limit; do
+for key in autovacuum_work_mem io_workers temp_file_limit wal_buffers max_wal_size min_wal_size random_page_cost \
+	effective_io_concurrency maintenance_io_concurrency io_combine_limit; do
 	file="$(sourcefile limits-2g "$key")"
 	expect "derived $key from andromeda-derived.conf" "${file##*/}" andromeda-derived.conf
 done
@@ -193,6 +193,11 @@ expect_true 'max_wal_size below a 4GB volume' "$(( $(setting_mb small-volume max
 data_kb="$(docker exec "$prefix-small-volume" sh -c 'df -Pk "$PGDATA" | awk "NR == 2 { print \$2 }"')"
 expect 'temp_file_limit is 5% of the data volume' \
 	"$(sql small-volume "SELECT setting FROM pg_settings WHERE name = 'temp_file_limit'")" $(( data_kb * 5 / 100 ))
+
+# The tuner derives about 39GB and 19GB from a 64GB volume; tmpfs reserves nothing up front.
+start large-volume --mount type=tmpfs,destination=/var/lib/postgresql,tmpfs-size=68719476736 --
+expect 'max_wal_size capped at 16GB' "$(setting_mb large-volume max_wal_size)" 16384
+expect 'min_wal_size capped at 8GB' "$(setting_mb large-volume min_wal_size)" 8192
 
 # The tuner alone stays within budget (128kB work_mem for 400 connections in 1GB);
 # a work_mem override undoes it.
