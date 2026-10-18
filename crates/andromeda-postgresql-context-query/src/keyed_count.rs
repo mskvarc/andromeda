@@ -18,15 +18,11 @@
 use crate::{entity_relations::EntityRelations, entity_total::count_over};
 use andromeda_postgresql_query::{
     entity_row_refs::EntityRowRefs,
-    one_time_gate::{CandidateBound, Candidates, column_of, materialized, within},
+    one_time_gate::{COUNT_CANDIDATE_BOUND, CandidateBound, Candidates, column_of, materialized, within},
     q_predicate::keyed_term::CandidateRead,
 };
 use andromeda_postgresql_schema::current::Entities;
 use sea_query::{Condition, DynIden, Expr, ExprTrait, Query, SelectStatement, WithClause};
-
-/// The most rechecked or probed candidates a count reads from a keyed term's
-/// index before it walks the selection instead.
-pub const COUNT_CANDIDATE_BOUND: u64 = 10_000;
 
 /// The most candidates a count reads from a range of a typed value index
 /// before it walks the selection instead; such a candidate needs no recheck.

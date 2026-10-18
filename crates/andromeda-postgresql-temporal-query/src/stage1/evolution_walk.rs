@@ -1,6 +1,7 @@
 //! The Evolutions stage 1 of a temporal query reads under `e`: the walk that
-//! yields them in identifier order, and how a selector's type is tested on
-//! what that walk yields.
+//! yields them in identifier order, narrowed to a candidate step's candidates
+//! when the page or the count is cut from them, and how a selector's type is
+//! tested on what that walk yields.
 
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{entity_selection::ConsideredEntities, temporal::compiled::CompiledTemporalQuery, type_selection::grammar::TypeExpr};
@@ -10,12 +11,13 @@ use andromeda_postgresql_query::{
     history_source::{
         HistoryBranch,
         PendingEntries,
-        entity_rows::{attribute_holder_rows, attribute_holder_rows_by_key, entity_rows, type_member_rows},
+        entity_rows::{WalkedKeys, attribute_holder_rows, attribute_holder_rows_by_key, entity_rows, type_member_rows},
     },
+    one_time_gate::{Candidates, column_of},
     type_membership::drives,
 };
-use andromeda_postgresql_schema::current::E;
-use sea_query::TableRef;
+use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
+use sea_query::{Asterisk, Expr, ExprTrait, IntoIden, Order, Query, TableRef};
 
 /// How a selector's type is tested on the Evolutions stage 1 reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +27,16 @@ pub(super) enum TypeTest {
     /// Nothing: the membership walk the Evolutions come from selected the
     /// type already.
     Walked,
+}
+
+/// Which Evolutions of its walk stage 1 reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Among {
+    /// Every Evolution the walk yields.
+    Every,
+    /// Those the `candidates` CTE names: by surrogate key over recorded rows
+    /// alone, by identifier where the branch reads its queue.
+    Candidates,
 }
 
 /// The Evolutions stage 1 reads under `e`.
@@ -67,12 +79,66 @@ impl Evolutions {
 /// union, and in key order those reads follow the indexes. A request that
 /// considers no Entity (clause 5.5.14) walks nothing. Otherwise the temporal
 /// catalogue, its types tested on its type keys.
-pub(super) fn evolution_rows(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Evolutions {
+///
+/// Read `among` the candidates, the walk is narrowed to them and yields them
+/// in identifier order before anything tests them: over recorded rows alone
+/// a membership or holder walk reads the candidates' rows of its own ranges,
+/// and the catalogue the candidates' rows; where the branch reads its queue,
+/// every walk keeps the Evolutions whose identifier the candidates name.
+pub(super) fn evolution_rows(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames, among: Among) -> Evolutions {
+    let walked = match (among, branch.pending()) {
+        (Among::Candidates, PendingEntries::Absent) => WalkedKeys::Among(Box::new(column_of(Candidates, TemporalEntities::TemporalEntityKey))),
+        (Among::Every, PendingEntries::Absent | PendingEntries::Unioned) | (Among::Candidates, PendingEntries::Unioned) => WalkedKeys::Every,
+    };
+    let (evolutions, source) = walk(branch, compiled, names, &walked);
+    match (among, branch.pending(), source) {
+        (Among::Every, PendingEntries::Absent | PendingEntries::Unioned, WalkSource::Ranges | WalkSource::Catalogue)
+        | (Among::Candidates, PendingEntries::Absent, WalkSource::Ranges) => evolutions,
+        (Among::Candidates, PendingEntries::Absent, WalkSource::Catalogue) => {
+            Evolutions::read_alike(narrowed(evolutions.paged, TemporalEntities::TemporalEntityKey), evolutions.type_test)
+        }
+        (Among::Candidates, PendingEntries::Unioned, WalkSource::Ranges | WalkSource::Catalogue) => Evolutions {
+            paged: narrowed(evolutions.paged, TemporalEntities::Id),
+            counted: narrowed(evolutions.counted, TemporalEntities::Id),
+            type_test: evolutions.type_test,
+        },
+    }
+}
+
+/// What a walk of the Evolutions reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WalkSource {
+    /// Ranges of the type memberships or of the attribute streams, which
+    /// narrow their recorded rows themselves.
+    Ranges,
+    /// The temporal catalogue.
+    Catalogue,
+}
+
+/// `walk` under `e` kept to the Evolutions whose `column` the candidates
+/// name, in identifier order behind `OFFSET 0`, so PostgreSQL neither merges
+/// it into the statement reading it nor tests the candidates before it orders
+/// them.
+fn narrowed(walk: TableRef, column: TemporalEntities) -> TableRef {
+    let mut narrowed = Query::select();
+    narrowed
+        .column(Asterisk)
+        .from(walk)
+        .and_where(Expr::col((E, column)).in_subquery(column_of(Candidates, column)))
+        .order_by(TemporalEntities::Id, Order::Asc)
+        .offset(0);
+    TableRef::SubQuery(Box::new(narrowed.take()), E.into_iden())
+}
+
+/// The Evolutions of the walk stage 1 reads, the recorded rows of a
+/// membership or holder walk narrowed to `walked`, and what the walk reads.
+fn walk(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames, walked: &WalkedKeys) -> (Evolutions, WalkSource) {
     let selection = &compiled.entities;
     let selectors = &selection.selectors;
+    let catalogue = || (Evolutions::read_alike(entity_rows(branch, E), TypeTest::TypeKeys), WalkSource::Catalogue);
     match selection.considered {
         ConsideredEntities::Selected => {}
-        ConsideredEntities::NoEntity => return Evolutions::read_alike(entity_rows(branch, E), TypeTest::TypeKeys),
+        ConsideredEntities::NoEntity => return catalogue(),
     }
     let type_walkable = !selectors.is_empty()
         && selectors.iter().all(|selector| selector.ids.is_empty())
@@ -85,15 +151,15 @@ pub(super) fn evolution_rows(branch: &HistoryBranch, compiled: &CompiledTemporal
                 .collect()
         })
         .flatten();
-    if let Some(walk) = exprs.and_then(|exprs| type_member_rows(branch, E, &exprs, &names.types)) {
-        return Evolutions::read_alike(walk, TypeTest::Walked);
+    if let Some(walk) = exprs.and_then(|exprs| type_member_rows(branch, E, &exprs, &names.types, walked)) {
+        return (Evolutions::read_alike(walk, TypeTest::Walked), WalkSource::Ranges);
     }
     let holder_walkable =
         !compiled.instances.attr_filter.is_empty() && selectors.iter().all(|selector| selector.ids.is_empty() && selector.type_expr.is_none());
     if holder_walkable {
         let keys = concerned_attribute_keys(compiled, &names.attributes);
-        let paged = attribute_holder_rows(branch, E, &keys);
-        return match branch.pending() {
+        let paged = attribute_holder_rows(branch, E, &keys, walked);
+        let evolutions = match branch.pending() {
             PendingEntries::Unioned => Evolutions {
                 paged,
                 counted: attribute_holder_rows_by_key(branch, E, &keys),
@@ -101,8 +167,9 @@ pub(super) fn evolution_rows(branch: &HistoryBranch, compiled: &CompiledTemporal
             },
             PendingEntries::Absent => Evolutions::read_alike(paged, TypeTest::TypeKeys),
         };
+        return (evolutions, WalkSource::Ranges);
     }
-    Evolutions::read_alike(entity_rows(branch, E), TypeTest::TypeKeys)
+    catalogue()
 }
 
 /// The dictionary keys of the attributes the request concerns (clause

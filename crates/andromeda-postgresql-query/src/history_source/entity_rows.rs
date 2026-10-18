@@ -21,6 +21,10 @@
 //! sorts ahead of the type's last. A selection by attribute alone reads them
 //! from the walk of the attribute's streams in the same order
 //! ([`attribute_holder_rows`]).
+//!
+//! Either walk can be narrowed to the recorded Evolutions a statement names by
+//! surrogate key ([`WalkedKeys`]), for a page cut from candidates an index
+//! yielded rather than from every member.
 
 use crate::{
     attribute_name_key::AttributeNameKey,
@@ -41,7 +45,7 @@ use andromeda_postgresql_seaquery::{
     literal::{false_literal, int_literal},
     pg_type::PostgresType,
 };
-use sea_query::{Condition, Expr, ExprTrait, Iden, IntoIden, Order, Query, SelectStatement, SimpleExpr, TableRef, UnionType};
+use sea_query::{Condition, DynIden, Expr, ExprTrait, Iden, IntoIden, Order, Query, SelectStatement, SimpleExpr, TableRef, UnionType};
 
 /// Alias `re`: a recorded Temporal Evolution.
 #[derive(Iden, Clone, Copy)]
@@ -93,6 +97,30 @@ struct QueuedGrain;
 #[iden = "queued"]
 struct Queued;
 
+/// The recorded Evolutions a membership or holder walk visits.
+#[derive(Clone, Debug)]
+pub enum WalkedKeys {
+    /// Every Evolution of the walk's ranges.
+    Every,
+    /// Those whose surrogate key the statement yields; an Evolution only
+    /// queued, which has no key, still joins the walk.
+    Among(Box<SelectStatement>),
+}
+
+impl WalkedKeys {
+    /// Narrow `range`, which carries the surrogate key in `key`, to the
+    /// Evolutions `self` names.
+    fn narrow(&self, range: &mut SelectStatement, key: DynIden) {
+        match self {
+            WalkedKeys::Every => {}
+            WalkedKeys::Among(keys) => {
+                // clone: every range of the walk reads the same keys
+                range.and_where(Expr::col(key).in_subquery(SelectStatement::clone(keys)));
+            }
+        }
+    }
+}
+
 /// The Temporal Evolutions of `branch` under `alias`, with the columns `id`
 /// and `entity_type_name_keys`, and `temporal_entity_key` where the branch
 /// reads no queue.
@@ -129,15 +157,34 @@ pub fn entity_rows(branch: &HistoryBranch, alias: impl IntoIden) -> TableRef {
 /// filtered by the same expressions over the types of their latest such
 /// intent, and a recorded Evolution such an intent retypes is left out of the
 /// walk, as [`entity_rows`] leaves it out.
+///
+/// Narrowed by `walked`, the recorded walk reads the named Evolutions in
+/// identifier order behind `OFFSET 0`, so PostgreSQL neither merges it into
+/// the statement reading it nor probes those Evolutions before it orders them.
 #[must_use]
-pub fn type_member_rows(branch: &HistoryBranch, alias: impl IntoIden, exprs: &[&TypeExpr], types: &ResolvedNames<EntityTypeName>) -> Option<TableRef> {
+pub fn type_member_rows(
+    branch: &HistoryBranch,
+    alias: impl IntoIden,
+    exprs: &[&TypeExpr],
+    types: &ResolvedNames<EntityTypeName>,
+    walked: &WalkedKeys,
+) -> Option<TableRef> {
     let memberships = Memberships {
         relation: TypeMembershipRelation::Temporal,
         schema: branch.schema(),
     };
     let mut walk = members_of_any(exprs.iter().copied(), types, memberships)?;
+    walked.narrow(&mut walk, memberships.relation.key());
     Some(match branch.pending() {
-        PendingEntries::Absent => TableRef::SubQuery(Box::new(walk), alias.into_iden()),
+        PendingEntries::Absent => {
+            match walked {
+                WalkedKeys::Every => {}
+                WalkedKeys::Among(_) => {
+                    walk.order_by(memberships.relation.id(), Order::Asc).offset(0);
+                }
+            }
+            TableRef::SubQuery(Box::new(walk), alias.into_iden())
+        }
         PendingEntries::Unioned => {
             // The walk filters its relation, so it is not flattened into the
             // union's append relation; it reaches the union as a subquery,
@@ -181,10 +228,11 @@ pub fn type_member_rows(branch: &HistoryBranch, alias: impl IntoIden, exprs: &[&
 /// join the merge. Every branch reaches the merge as a subquery stating its
 /// own order: beside the queued branch, which is no bare relation, a bare
 /// range is appended unordered and every holder sorted before the first is
-/// kept.
+/// kept. Narrowed by `walked`, each range reads the named Evolutions' streams
+/// alone.
 #[must_use]
-pub fn attribute_holder_rows(branch: &HistoryBranch, alias: impl IntoIden, keys: &[AttributeNameKey]) -> TableRef {
-    let walk = holder_merge(branch, keys).unwrap_or_else(|| no_holder(branch));
+pub fn attribute_holder_rows(branch: &HistoryBranch, alias: impl IntoIden, keys: &[AttributeNameKey], walked: &WalkedKeys) -> TableRef {
+    let walk = holder_merge(branch, keys, walked).unwrap_or_else(|| no_holder(branch));
     TableRef::SubQuery(Box::new(walk), alias.into_iden())
 }
 
@@ -200,7 +248,7 @@ pub fn attribute_holder_rows(branch: &HistoryBranch, alias: impl IntoIden, keys:
 /// is still yielded once; a queued holder, with no key yet, comes last.
 #[must_use]
 pub fn attribute_holder_rows_by_key(branch: &HistoryBranch, alias: impl IntoIden, keys: &[AttributeNameKey]) -> TableRef {
-    let Some(merge) = holder_merge(branch, keys) else {
+    let Some(merge) = holder_merge(branch, keys, &WalkedKeys::Every) else {
         return TableRef::SubQuery(Box::new(no_holder(branch)), alias.into_iden());
     };
     let mut by_key = Query::select();
@@ -211,10 +259,11 @@ pub fn attribute_holder_rows_by_key(branch: &HistoryBranch, alias: impl IntoIden
     TableRef::SubQuery(Box::new(by_key.take()), alias.into_iden())
 }
 
-/// The holders of `keys`' streams on `branch`, each once, in identifier
-/// order, with the identifier and the Evolution's surrogate key, null for a
-/// holder only queued; `None` when `keys` is empty.
-fn holder_merge(branch: &HistoryBranch, keys: &[AttributeNameKey]) -> Option<SelectStatement> {
+/// The holders of `keys`' streams on `branch` among the Evolutions `walked`
+/// names, each once, in identifier order, with the identifier and the
+/// Evolution's surrogate key, null for a holder only queued; `None` when
+/// `keys` is empty.
+fn holder_merge(branch: &HistoryBranch, keys: &[AttributeNameKey], walked: &WalkedKeys) -> Option<SelectStatement> {
     let schema = branch.schema();
     let mut ranges = keys.iter().map(|key| {
         let mut holders = Query::select();
@@ -226,8 +275,9 @@ fn holder_merge(branch: &HistoryBranch, keys: &[AttributeNameKey]) -> Option<Sel
             .column(TemporalAttributeStreams::Id)
             .column(TemporalAttributeStreams::TemporalEntityKey)
             .from(qualified(schema, TemporalAttributeStreams::Table))
-            .and_where(Expr::col(TemporalAttributeStreams::AttributeNameKey).eq(int_literal(i64::from(key.get()))))
-            .order_by(TemporalAttributeStreams::Id, Order::Asc);
+            .and_where(Expr::col(TemporalAttributeStreams::AttributeNameKey).eq(int_literal(i64::from(key.get()))));
+        walked.narrow(&mut range, TemporalAttributeStreams::TemporalEntityKey.into_iden());
+        range.order_by(TemporalAttributeStreams::Id, Order::Asc);
         holders.from_subquery(range.take(), RecordedHolder);
         holders
     });
@@ -292,7 +342,7 @@ mod tests {
         entity_type_name_key::EntityTypeNameKey,
         history_source::{
             HistoryBranch,
-            entity_rows::{attribute_holder_rows, attribute_holder_rows_by_key, entity_rows, type_member_rows},
+            entity_rows::{WalkedKeys, attribute_holder_rows, attribute_holder_rows_by_key, entity_rows, type_member_rows},
         },
     };
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
@@ -348,7 +398,7 @@ mod tests {
     }
 
     fn walked(branch: &HistoryBranch, expr: &TypeExpr) -> String {
-        rendered(type_member_rows(branch, Alias::new("e"), &[expr], &vehicle_is_known()).expect("the type has a range"))
+        rendered(type_member_rows(branch, Alias::new("e"), &[expr], &vehicle_is_known(), &WalkedKeys::Every).expect("the type has a range"))
     }
 
     /// Clause 4.17 on the live branch: the recorded Evolutions of the type come
@@ -381,7 +431,7 @@ mod tests {
 
     fn holders(branch: &HistoryBranch, keys: &[i32]) -> String {
         let keys: Vec<AttributeNameKey> = keys.iter().copied().map(AttributeNameKey::from).collect();
-        rendered(attribute_holder_rows(branch, Alias::new("e"), &keys))
+        rendered(attribute_holder_rows(branch, Alias::new("e"), &keys, &WalkedKeys::Every))
     }
 
     /// Each attribute's streams are one range of the attribute key in
@@ -464,9 +514,66 @@ mod tests {
         );
     }
 
+    fn among_candidates() -> WalkedKeys {
+        WalkedKeys::Among(Box::new(
+            Query::select().column(Alias::new("temporal_entity_key")).from(Alias::new("candidates")).take(),
+        ))
+    }
+
+    /// Narrowed, a type walk reads the named members of its range and
+    /// yields them in identifier order behind a fence.
+    #[test]
+    fn a_narrowed_type_walk_reads_the_named_members_in_identifier_order() {
+        let walk = type_member_rows(
+            &HistoryBranch::recorded_in(Alias::new("snap_1").into_iden()),
+            Alias::new("e"),
+            &[&vehicle()],
+            &vehicle_is_known(),
+            &among_candidates(),
+        )
+        .expect("the type has a range");
+        pretty_assertions::assert_eq!(
+            rendered(walk),
+            concat!(
+                r#"SELECT * FROM (SELECT "temporal_entity_key", "id" FROM "snap_1"."temporal_entity_type_members" WHERE "entity_type_name_key" = (3)"#,
+                r#" AND "temporal_entity_key" IN (SELECT "temporal_entity_key" FROM "candidates") ORDER BY "id" ASC OFFSET 0) AS "e""#
+            )
+        );
+    }
+
+    /// Narrowed, each range of a holder walk reads the named holders'
+    /// streams alone.
+    #[test]
+    fn a_narrowed_holder_walk_reads_the_named_holders_streams() {
+        let keys = [AttributeNameKey::from(7), AttributeNameKey::from(9)];
+        let sql = rendered(attribute_holder_rows(
+            &HistoryBranch::live_recorded(),
+            Alias::new("e"),
+            &keys,
+            &among_candidates(),
+        ));
+        for key in [7, 9] {
+            assert!(
+                sql.contains(&format!(
+                    r#"WHERE "attribute_name_key" = ({key}) AND "temporal_entity_key" IN (SELECT "temporal_entity_key" FROM "candidates") ORDER BY "id" ASC"#
+                )),
+                "{sql}"
+            );
+        }
+    }
+
     /// The wildcard selects every Evolution, so it has no range to walk.
     #[test]
     fn a_selection_without_a_range_has_no_member_rows() {
-        assert!(type_member_rows(&HistoryBranch::live(), Alias::new("e"), &[&TypeExpr::Wildcard], &vehicle_is_known()).is_none());
+        assert!(
+            type_member_rows(
+                &HistoryBranch::live(),
+                Alias::new("e"),
+                &[&TypeExpr::Wildcard],
+                &vehicle_is_known(),
+                &WalkedKeys::Every
+            )
+            .is_none()
+        );
     }
 }

@@ -26,17 +26,25 @@
 //! clause 5.7.4.5 reduces the Entity after step S8, so whether the projection
 //! leaves it a member depends on the instances S8 kept.
 
+mod candidate_step;
 mod entity_conditions;
 mod evolution_walk;
+mod gated_count;
+mod gated_walk;
+mod pattern_candidates;
 #[cfg(test)]
 mod query_fixture;
+mod queued_candidates;
 mod window_match;
 
 use crate::{
     alias::EntityIdColumn,
     stage1::{
-        entity_conditions::build_entity_conditions_for_temporal,
-        evolution_walk::{Evolutions, evolution_rows},
+        candidate_step::CandidateStep,
+        entity_conditions::{PatternTest, build_entity_conditions_for_temporal},
+        evolution_walk::{Among, Evolutions, evolution_rows},
+        gated_count::gated_count,
+        gated_walk::gated_walk,
         window_match::temporal_match_subquery,
     },
 };
@@ -55,7 +63,7 @@ use andromeda_postgresql_query::{
 };
 use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
 use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
-use sea_query::{Expr as SeaExpr, Func, SelectStatement};
+use sea_query::{Condition, Expr as SeaExpr, Func, SelectStatement, TableRef};
 
 /// The Stage 1 statement and its optional count, each a statement tree the store
 /// binds and executes on its own.
@@ -97,16 +105,31 @@ pub fn build_stage1_entity_ids(
     count: CountPolicy,
     names: &QueryNames,
 ) -> Result<Stage1Query, RenderError> {
-    let Evolutions { paged, counted, type_test } = evolution_rows(branch, compiled, names);
+    if let Some(step) = CandidateStep::chosen(compiled) {
+        let (select, read_order) = gated_walk(branch, compiled, window, names, step)?;
+        let count = match count {
+            CountPolicy::Emit => Some(gated_count(branch, compiled, names, step)?),
+            CountPolicy::Omit => None,
+        };
+        // A gated statement's branches each take their own access path, and
+        // the count's arm is chosen by a bound only its values decide.
+        return Ok(Stage1Query {
+            select,
+            count,
+            read_order,
+            planning: StatementPlanning::GatedBranches,
+            count_planning: StatementPlanning::BoundValues,
+        });
+    }
+    let Evolutions { paged, counted, type_test } = evolution_rows(branch, compiled, names, Among::Every);
     // Entity-level conditions, applied to the Evolutions under alias "e".
-    let entity_conditions = build_entity_conditions_for_temporal(branch, compiled, names, type_test)?;
+    let entity_conditions = build_entity_conditions_for_temporal(branch, compiled, names, type_test, PatternTest::Tested)?;
 
-    let mut select = SelectStatement::new();
-    select
-        .expr_as(SeaExpr::col((E, TemporalEntities::Id)), EntityIdColumn)
-        .from(paged)
-        .cond_where(entity_conditions.clone()) // clone: the count query applies the same entity predicate
-        .cond_where(SeaExpr::exists(temporal_match_subquery(branch, compiled, names, BesideComparison::Identifier)));
+    let mut select = selected_ids(
+        paged,
+        entity_conditions.clone(), // clone: the count query applies the same entity predicate
+        temporal_match_subquery(branch, compiled, names, BesideComparison::Identifier),
+    );
 
     // Clause 5.7.4.5: "If Entity ordering is specified (see clause 4.23), then
     // the JSON-LD array returned shall be ordered according to the member names
@@ -137,15 +160,11 @@ pub fn build_stage1_entity_ids(
     let read_order = apply_identifier_window(&mut select, SeaExpr::col((E, TemporalEntities::Id)), window);
 
     let count_statement = match count {
-        CountPolicy::Emit => {
-            let mut count_select = SelectStatement::new();
-            count_select
-                .expr(Func::count(SeaExpr::col((E, TemporalEntities::Id))))
-                .from(counted)
-                .cond_where(entity_conditions)
-                .cond_where(SeaExpr::exists(temporal_match_subquery(branch, compiled, names, BesideComparison::Key)));
-            Some(count_select.take())
-        }
+        CountPolicy::Emit => Some(counted_ids(
+            counted,
+            entity_conditions,
+            temporal_match_subquery(branch, compiled, names, BesideComparison::Key),
+        )),
         CountPolicy::Omit => None,
     };
 
@@ -158,6 +177,30 @@ pub fn build_stage1_entity_ids(
         planning: StatementPlanning::Cached,
         count_planning: StatementPlanning::Cached,
     })
+}
+
+/// The identifiers, as `entity_id`, of the Evolutions of `evolutions` that
+/// `conditions` and the step S1 `window_match` keep, unordered and unbounded.
+fn selected_ids(evolutions: TableRef, conditions: Condition, window_match: SelectStatement) -> SelectStatement {
+    let mut select = SelectStatement::new();
+    select
+        .expr_as(SeaExpr::col((E, TemporalEntities::Id)), EntityIdColumn)
+        .from(evolutions)
+        .cond_where(conditions)
+        .cond_where(SeaExpr::exists(window_match));
+    select
+}
+
+/// How many Evolutions of `evolutions` `conditions` and the step S1
+/// `window_match` keep.
+fn counted_ids(evolutions: TableRef, conditions: Condition, window_match: SelectStatement) -> SelectStatement {
+    let mut count = SelectStatement::new();
+    count
+        .expr(Func::count(SeaExpr::col((E, TemporalEntities::Id))))
+        .from(evolutions)
+        .cond_where(conditions)
+        .cond_where(SeaExpr::exists(window_match));
+    count
 }
 
 #[cfg(test)]

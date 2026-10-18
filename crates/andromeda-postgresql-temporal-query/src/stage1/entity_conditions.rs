@@ -19,6 +19,16 @@ use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
 use andromeda_postgresql_seaquery::{literal::false_literal, operator::regex_match};
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait};
 
+/// Whether the selectors' identifier patterns are tested on the Evolutions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PatternTest {
+    /// Each pattern is tested.
+    Tested,
+    /// The Evolutions were read from the identifiers the pattern matches,
+    /// each rechecked against it, so it is not tested again.
+    Answered,
+}
+
 /// Build entity-level conditions for temporal queries, over the Evolutions
 /// under the `e` alias.
 pub(super) fn build_entity_conditions_for_temporal(
@@ -26,6 +36,7 @@ pub(super) fn build_entity_conditions_for_temporal(
     compiled: &CompiledTemporalQuery,
     names: &QueryNames,
     type_test: TypeTest,
+    pattern_test: PatternTest,
 ) -> Result<Condition, RenderError> {
     let mut condition = Condition::all();
 
@@ -33,15 +44,21 @@ pub(super) fn build_entity_conditions_for_temporal(
     // each reached through the `e` alias stage 1 selects the Evolutions
     // under. Rendered only when every selector constrains, the reading
     // `EntitySelection::selectors_constrain` shares with the entity path, and
-    // a walk that selected the types leaves only a lone selector's pattern.
+    // a walk that selected the types leaves only a lone selector's pattern,
+    // which the walk's candidates may answer too.
     let selectors = &compiled.entities.selectors;
-    let walked_without_pattern = type_test == TypeTest::Walked && selectors.iter().all(|selector| selector.id_pattern.is_none());
-    if compiled.entities.selectors_constrain() && !walked_without_pattern {
-        let mut union = Condition::any();
-        for selector in selectors {
-            union = union.add(temporal_selector_condition(selector, &names.types, type_test));
+    let untested_pattern = pattern_test == PatternTest::Answered || selectors.iter().all(|selector| selector.id_pattern.is_none());
+    let nothing_left = type_test == TypeTest::Walked && untested_pattern;
+    if compiled.entities.selectors_constrain() && !nothing_left {
+        // A selector left with nothing to test admits every Evolution the
+        // walk yields, and so does the union holding it.
+        let tests: Option<Vec<Condition>> = selectors
+            .iter()
+            .map(|selector| Some(temporal_selector_condition(selector, &names.types, type_test, pattern_test)).filter(|test| !test.is_empty()))
+            .collect();
+        if let Some(tests) = tests {
+            condition = condition.add(tests.into_iter().fold(Condition::any(), Condition::add));
         }
-        condition = condition.add(union);
     }
 
     // Clause 5.5.14: "An EntityMap fixes the Entities to be considered." A
@@ -76,17 +93,17 @@ pub(super) fn build_entity_conditions_for_temporal(
 /// The entity path renders the same three axes against `entities`; the columns
 /// carry the same names on both relations, so the two cannot drift on what a
 /// selector means.
-fn temporal_selector_condition(selector: &EntitySelector, types: &ResolvedNames<EntityTypeName>, type_test: TypeTest) -> Condition {
+fn temporal_selector_condition(selector: &EntitySelector, types: &ResolvedNames<EntityTypeName>, type_test: TypeTest, pattern_test: PatternTest) -> Condition {
     let mut condition = Condition::all();
-    match selector.identifier_axis() {
-        IdentifierAxis::Ids(ids) => {
+    match (selector.identifier_axis(), pattern_test) {
+        (IdentifierAxis::Ids(ids), PatternTest::Tested | PatternTest::Answered) => {
             let ids: Vec<&str> = ids.iter().map(AsRef::as_ref).collect();
             condition = condition.add(SeaExpr::col((E, TemporalEntities::Id)).is_in(ids));
         }
-        IdentifierAxis::Pattern(pattern) => {
+        (IdentifierAxis::Pattern(pattern), PatternTest::Tested) => {
             condition = condition.add(regex_match(SeaExpr::col((E, TemporalEntities::Id)), SeaExpr::val(pattern.portable().as_str())));
         }
-        IdentifierAxis::Any => {}
+        (IdentifierAxis::Pattern(_), PatternTest::Answered) | (IdentifierAxis::Any, PatternTest::Tested | PatternTest::Answered) => {}
     }
     match (&selector.type_expr, type_test) {
         (Some(type_expr), TypeTest::TypeKeys) => {

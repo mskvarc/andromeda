@@ -43,16 +43,11 @@ use andromeda_postgresql_query::{
     dictionary::query_names::QueryNames,
     entity_row_refs::EntityRowRefs,
     error::RenderError,
-    one_time_gate::{CandidateBound, Candidates, column_of, count_of, materialized, within},
+    one_time_gate::{CandidateBound, Candidates, ShortWalkMatches, column_of, count_of, materialized, within, wrapped},
 };
 use andromeda_postgresql_schema::current::Entities;
 use andromeda_postgresql_seaquery::aggregate::count_over_all;
 use sea_query::{Alias, Asterisk, Condition, DynIden, Expr, ExprTrait, Iden, Query, SelectStatement, SimpleExpr, UnionType, Value, WithClause};
-
-/// The CTE holding the short walk's matches.
-#[derive(Iden, Clone, Copy)]
-#[iden = "short_walk"]
-struct ShortWalkMatches;
 
 /// The name the short walk reads the Entities it probes under.
 #[derive(Iden, Clone, Copy)]
@@ -262,10 +257,4 @@ fn short_walk(short: ShortWalk<'_>, window: &PageWindow, need: u64) -> Result<Se
     }
     matches.limit(need);
     Ok(matches.take())
-}
-
-/// `SELECT * FROM (<branch>) AS <alias>`, so the branch keeps its own order
-/// and window inside the union.
-pub(crate) fn wrapped(branch: SelectStatement, alias: &str) -> SelectStatement {
-    Query::select().column(Asterisk).from_subquery(branch, Alias::new(alias)).take()
 }

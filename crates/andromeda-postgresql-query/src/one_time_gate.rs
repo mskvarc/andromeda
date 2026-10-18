@@ -6,17 +6,33 @@
 //! the term. The bounded read is a `MATERIALIZED` CTE, so it runs once however
 //! many gates read it, and each gate an uncorrelated scalar subquery on it,
 //! which PostgreSQL evaluates once and turns into a one-time filter: a branch
-//! whose gate fails reads nothing. The Entity query and stage 1 of the
-//! temporal query gate their statements the same way, each over its own key
-//! column.
+//! whose gate fails reads nothing. Each branch of a gated page keeps its own
+//! order and window inside the `UNION ALL` that joins them. The Entity query
+//! and stage 1 of the temporal query gate their statements the same way, each
+//! over its own key column, and share the bound a count reads candidates to.
 
-use sea_query::{Asterisk, CommonTableExpression, Expr, ExprTrait, Func, Iden, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, Asterisk, CommonTableExpression, Expr, ExprTrait, Func, Iden, Query, SelectStatement, SimpleExpr};
 
 /// The CTE holding the candidates a keyed term's index yields, read up to
 /// one more than the statement's bound.
 #[derive(Iden, Clone, Copy)]
 #[iden = "candidates"]
 pub struct Candidates;
+
+/// The CTE holding what a gated page's short walk kept: the first rows of the
+/// selection in page order that every filter keeps, at most as many as the
+/// page needs.
+#[derive(Iden, Clone, Copy)]
+#[iden = "short_walk"]
+pub struct ShortWalkMatches;
+
+/// The most rechecked or probed candidates a count reads before it walks the
+/// selection instead.
+///
+/// A count needs every match, so its bound is the one past which counting
+/// the candidates, each rechecked or probed and looked up in the selection,
+/// costs more than walking the selection.
+pub const COUNT_CANDIDATE_BOUND: u64 = 10_000;
 
 /// `(SELECT COUNT(*) FROM <cte>)`.
 #[must_use]
@@ -36,6 +52,13 @@ pub fn column_of(cte: impl Iden + 'static, column: impl Iden + 'static) -> Selec
 #[must_use]
 pub fn materialized(query: SelectStatement, name: impl Iden + 'static) -> CommonTableExpression {
     CommonTableExpression::new().query(query).table_name(name).materialized(true).to_owned()
+}
+
+/// `SELECT * FROM (<branch>) AS <alias>`, so a branch of a `UNION ALL` keeps
+/// its own order and window inside the union.
+#[must_use]
+pub fn wrapped(branch: SelectStatement, alias: &str) -> SelectStatement {
+    Query::select().column(Asterisk).from_subquery(branch, Alias::new(alias)).take()
 }
 
 /// `<query> LIMIT <bound> + 1`: enough rows to tell whether more than `bound`
