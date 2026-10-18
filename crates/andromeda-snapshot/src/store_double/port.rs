@@ -135,20 +135,22 @@ impl SnapshotStore for StoreDouble {
         Box::pin(async move { Ok(deleted) })
     }
 
-    fn create<'life0, 'life1, 'async_trait>(&'life0 self, _params: InsertSnapshotParams<'life1>) -> BoxFuture<'async_trait, Result<(), SnapshotError>>
+    fn create<'life0, 'life1, 'async_trait>(&'life0 self, params: InsertSnapshotParams<'life1>) -> BoxFuture<'async_trait, Result<(), SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
     {
-        unused("create")
+        self.insert(&params);
+        Box::pin(async { Ok(()) })
     }
 
-    fn exists<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<bool, SnapshotError>>
+    fn exists<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<bool, SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
     {
-        unused("exists")
+        let held = self.entries().iter().any(|entry| entry.snapshot.id == *id);
+        Box::pin(async move { Ok(held) })
     }
 
     fn target<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<Option<SnapshotTarget>, SnapshotError>>

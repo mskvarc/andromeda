@@ -25,6 +25,7 @@ use crate::{
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{context_spec::ContextSpec, user_context_admission::AdmittedContext};
+use andromeda_ngsi_ld_entity::system_instant::SystemInstant;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::SnapshotId};
 use andromeda_ngsi_ld_model::{
     snapshot::{Snapshot, SnapshotStatus},
@@ -32,7 +33,7 @@ use andromeda_ngsi_ld_model::{
     snapshot_input::SnapshotInput,
     snapshot_patch::{MergePatchValue, SnapshotPatch},
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use std::{sync::Arc, time::Duration};
 use tracing::{info, warn};
 
@@ -147,7 +148,7 @@ impl SnapshotService {
 
         let priority = input.snapshot_priority.unwrap_or_default();
 
-        let now = Utc::now();
+        let now = system_now();
         let requested_lifetime = match input.snapshot_lifetime {
             Some(lifetime) => lifetime,
             None => iso8601_lifetime(self.config.default_lifetime)?,
@@ -304,7 +305,7 @@ impl SnapshotService {
             Some(lifetime) => lifetime,
             None => iso8601_lifetime(self.config.default_lifetime)?,
         };
-        let now = Utc::now();
+        let now = system_now();
         let (lifetime, expires_at) = effective_snapshot_lifetime(now, &requested_lifetime, self.config.maximum_lifetime)?;
         let cloned = Snapshot::builder()
             .id(new_id)
@@ -339,6 +340,13 @@ impl SnapshotService {
         }
         Ok(())
     }
+}
+
+/// The instant a Snapshot is stamped with, at the microsecond the stored
+/// record keeps, so the Snapshot a create or clone answers with carries the
+/// same `createdAt` and `modifiedAt` a later read returns.
+fn system_now() -> DateTime<Utc> {
+    SystemInstant::new(Utc::now()).get()
 }
 
 /// A fresh broker-minted Snapshot identifier.

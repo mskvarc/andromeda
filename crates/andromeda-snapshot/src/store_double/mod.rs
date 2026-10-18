@@ -15,12 +15,12 @@ use crate::{
     branch_condition::BranchCondition,
     error::SnapshotError,
     snapshot_invariant::SnapshotInvariant,
-    store::SnapshotPreparationJob,
+    store::{InsertSnapshotParams, SnapshotPreparationJob},
     store_double::entry::{Entry, Stage},
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::snapshot::{ExecutionResultDetails, Snapshot, SnapshotStatus};
+use andromeda_ngsi_ld_model::snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus};
 use std::{
     mem::take,
     sync::{
@@ -143,6 +143,24 @@ impl StoreDouble {
     }
 
     /// The stored Snapshots.
+    /// Hold the Snapshot a create inserts, as the record a later read returns.
+    fn insert(&self, params: &InsertSnapshotParams<'_>) {
+        let priority = u8::try_from(params.snapshot_priority)
+            .ok()
+            .and_then(|priority| SnapshotPriority::try_from(priority).ok())
+            .expect("the service inserts a priority within clause 5.2.41");
+        let snapshot = Snapshot::builder()
+            .id(params.id.clone()) // clone: the stored record owns its identifier.
+            .snapshot_priority(priority)
+            .status(params.status)
+            .created_at(params.created_at)
+            .modified_at(params.modified_at)
+            .expires_at(params.expires_at)
+            .last_used_at(params.last_used_at)
+            .build();
+        self.entries().push(Entry::new(snapshot, params.clone_source_id.cloned()));
+    }
+
     fn entries(&self) -> MutexGuard<'_, Vec<Entry>> {
         self.entries.lock().expect("the store double lock is not poisoned")
     }
