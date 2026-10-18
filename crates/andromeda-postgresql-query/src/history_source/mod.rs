@@ -19,6 +19,13 @@
 //! beside the source would become one once the planner turned the enclosing
 //! `EXISTS` into a join, and the union would be read whole.
 //!
+//! A source read for the Evolution an enclosing row names
+//! ([`HistoryOf::Evolution`]) takes it inside as well. Over recorded rows
+//! alone it compares the surrogate key every recorded stream and Scope event
+//! carries and reads no catalogue row, sparing each probe a lookup of the
+//! identifier; where the branch reads its queue it compares the identifier,
+//! which a queued entry carries and a surrogate key cannot name.
+//!
 //! A source of recorded rows alone has no union to protect, and there the
 //! Entity named inside costs the other way: a derived table referring to an
 //! enclosing row keeps the `EXISTS` around it a subplan, so every candidate
@@ -131,6 +138,18 @@ impl HistoryBranch {
         self.pending
     }
 
+    /// The surrogate key a source of this branch narrows to in place of the
+    /// identifier: the key of the Evolution `of` names, over recorded rows
+    /// alone; `None` where the branch reads its queue or `of` names no
+    /// Evolution by key.
+    pub(crate) const fn evolution_key<'o>(&self, of: &'o HistoryOf) -> Option<&'o SimpleExpr> {
+        match (self.pending, of) {
+            (PendingEntries::Absent, HistoryOf::Evolution(evolution)) => Some(&evolution.key),
+            (PendingEntries::Absent, HistoryOf::EveryEntity | HistoryOf::Entity(_))
+            | (PendingEntries::Unioned, HistoryOf::EveryEntity | HistoryOf::Entity(_) | HistoryOf::Evolution(_)) => None,
+        }
+    }
+
     /// How a source of this branch is read for the Temporal Evolution
     /// `evolution` names: taken inside every branch of a source that unions
     /// queued entries, by its identifier; compared beside a source of
@@ -204,18 +223,38 @@ pub enum HistoryOf {
     /// The Temporal Evolution of the Entity this expression names: a
     /// constant, or a column of an enclosing or lateral row.
     Entity(SimpleExpr),
+    /// The Temporal Evolution an enclosing row names by both its identifier
+    /// and its surrogate key: read by the key over recorded rows alone, by
+    /// the identifier where the branch reads its queue.
+    Evolution(EvolutionColumns),
 }
 
 impl HistoryOf {
-    /// Narrow one branch of a source to the Entity, the branch reading the
-    /// Entity identifier from `entity_id`.
+    /// Narrow one branch of a source to the Entity by its identifier, the
+    /// branch reading the Entity identifier from `entity_id`.
     pub(crate) fn narrow(&self, branch: &mut SelectStatement, entity_id: SimpleExpr) {
         match self {
             HistoryOf::EveryEntity => {}
-            HistoryOf::Entity(id) => {
+            HistoryOf::Entity(id) | HistoryOf::Evolution(EvolutionColumns { id, .. }) => {
                 // clone: every branch of the source names the Entity.
                 branch.and_where(entity_id.eq(id.clone()));
             }
+        }
+    }
+
+    /// The Evolution a row of the source this reads names, read under
+    /// `alias`: by what the source projects, the surrogate key where it reads
+    /// [`HistoryOf::Evolution`] and the identifier otherwise.
+    pub(crate) fn same_evolution_as(&self, alias: impl IntoIden) -> HistoryOf {
+        let alias = alias.into_iden();
+        // clone: the identifier and the key each name the row's alias.
+        let id = Expr::col((alias.clone(), HistoryGrain::EntityId));
+        match self {
+            HistoryOf::EveryEntity | HistoryOf::Entity(_) => HistoryOf::Entity(id),
+            HistoryOf::Evolution(_) => HistoryOf::Evolution(EvolutionColumns {
+                id,
+                key: Expr::col((alias, HistoryGrain::TemporalEntityKey)),
+            }),
         }
     }
 }

@@ -10,6 +10,9 @@
 //! effect when the window opens, the geo-query the in-window `GeoProperty`
 //! instances, a scope requirement the validity intervals overlapping the
 //! window.
+//!
+//! The leaves are read for a list of identifiers over the catalogue, so each
+//! probe names the Evolution by its identifier.
 
 use crate::value_filters::{scope_history_target, temporal_geo_existential, windowed_instances};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -21,7 +24,7 @@ use andromeda_ngsi_ld_query::{
 use andromeda_postgresql_query::{
     dictionary::query_names::QueryNames,
     error::RenderError,
-    history_source::{HistoryBranch, entity_rows::entity_rows},
+    history_source::{HistoryBranch, HistoryOf, entity_rows::entity_rows},
     q_predicate::{instance_scan::InstanceScan, projection as q_filter},
     scope_predicate::pattern_condition,
 };
@@ -57,15 +60,16 @@ pub fn build_filter_leaf_truths(
 
 /// One leaf rendered over the temporal entity `e` names.
 fn leaf_expression(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, leaf: FilterLeaf<'_>, names: &QueryNames) -> Result<SeaExpr, RenderError> {
+    let of = HistoryOf::Entity(SeaExpr::col((E, TemporalEntities::Id)));
     match leaf {
         FilterLeaf::Term(pred) => {
             // clone: the compilation reads an expression tree, and the Query
             // Term is borrowed from the query's own
             let term = Expr::Pred(pred.clone());
-            Ok(q_filter::compile(&term, &InstanceScan::History(&windowed_instances(branch, compiled)), names).into())
+            Ok(q_filter::compile(&term, &InstanceScan::History(&windowed_instances(branch, compiled, &of)), names).into())
         }
-        FilterLeaf::Geo(_) => Ok(temporal_geo_existential(branch, compiled)?.map_or_else(|| SeaExpr::val(false), SeaExpr::exists)),
-        FilterLeaf::ScopeRequirement(pattern) => Ok(pattern_condition(pattern, &scope_history_target(branch, compiled))),
+        FilterLeaf::Geo(_) => Ok(temporal_geo_existential(branch, compiled, names, &of)?.map_or_else(|| SeaExpr::val(false), SeaExpr::exists)),
+        FilterLeaf::ScopeRequirement(pattern) => Ok(pattern_condition(pattern, &scope_history_target(branch, compiled, &of))),
     }
 }
 

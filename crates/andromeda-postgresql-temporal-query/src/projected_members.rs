@@ -68,7 +68,7 @@ fn represented_scope(branch: &HistoryBranch, compiled: &CompiledTemporalQuery) -
         .expr(int_literal(1))
         .from(scope_rows(branch, &of_selected_entity(), ScopeEvent))
         .cond_where(positioned_on_axis(axis))
-        .cond_where(overlaps_window(axis, compiled.window.interval, branch));
+        .cond_where(overlaps_window(axis, compiled.window.interval, branch, &of_selected_entity()));
     probe.take()
 }
 

@@ -43,11 +43,12 @@ pub enum ScopeTarget {
     /// the window opened does not.
     ///
     /// Scope history hangs off the temporal catalogue rather than off current
-    /// entity state, so the probe correlates on the Entity identifier its
-    /// Temporal Evolution keeps after clause 5.6.6 deletion.
+    /// entity state, so the probe correlates on the Temporal Evolution, which
+    /// clause 5.6.6 deletion of the Entity leaves standing.
     History {
-        /// The Entity identifier the probe correlates against, named by its iden.
-        entity_id_column: ColumnReference,
+        /// The Temporal Evolution the probe reads the Scope events of, boxed
+        /// as it holds two expressions where the other variant holds a name.
+        of: Box<HistoryOf>,
         /// The Temporal Property the window is measured on (clause 5.2.21).
         timeproperty: TimeProp,
         /// The window a validity interval has to overlap.
@@ -71,12 +72,13 @@ impl ScopeTarget {
         }
     }
 
-    /// The scope-history target correlating on the `(alias, column)` Entity
-    /// identifier, asking whether a validity interval overlaps `interval` on
+    /// The scope-history target reading the Scope events of the Evolution
+    /// `of` names, asking whether a validity interval overlaps `interval` on
     /// the `timeproperty` axis.
-    pub fn history(entity_id_column: (impl IntoIden, impl IntoIden), timeproperty: TimeProp, interval: TimeInterval, branch: HistoryBranch) -> ScopeTarget {
+    #[must_use]
+    pub fn history(of: HistoryOf, timeproperty: TimeProp, interval: TimeInterval, branch: HistoryBranch) -> ScopeTarget {
         ScopeTarget::History {
-            entity_id_column: ColumnReference::qualified(entity_id_column.0, entity_id_column.1),
+            of: Box::new(of),
             timeproperty,
             interval,
             branch,
@@ -114,19 +116,13 @@ pub fn pattern_condition(pattern: &ScopePattern, target: &ScopeTarget) -> Simple
     match target {
         ScopeTarget::Paths { column } => ltree_matches(column.column_expr(), SeaExpr::val(lquery)),
         ScopeTarget::History {
-            entity_id_column,
+            of,
             timeproperty,
             interval,
             branch,
         } => {
             let axis = scope_history_axis(*timeproperty);
-            SeaExpr::exists(matching_scope_events(
-                &lquery,
-                entity_id_column,
-                axis,
-                overlaps_window(axis, *interval, branch),
-                branch,
-            ))
+            SeaExpr::exists(matching_scope_events(&lquery, of, axis, overlaps_window(axis, *interval, branch, of), branch))
         }
     }
 }
@@ -140,11 +136,11 @@ pub fn pattern_condition(pattern: &ScopePattern, target: &ScopeTarget) -> Simple
 /// that ends someone else's interval. That is also what makes a `scopeQ`
 /// measured on the `deletedAt` axis select nothing at all: `deletedAt` is
 /// carried by removals alone, and a removal names no scope to match.
-fn matching_scope_events(lquery: &str, entity_id_column: &ColumnReference, axis: ScopeHistory, validity: Condition, branch: &HistoryBranch) -> SelectStatement {
+fn matching_scope_events(lquery: &str, of: &HistoryOf, axis: ScopeHistory, validity: Condition, branch: &HistoryBranch) -> SelectStatement {
     let mut probe = Query::select();
     probe
         .expr(SeaExpr::val(1))
-        .from(scope_rows(branch, &HistoryOf::Entity(entity_id_column.column_expr()), ScopeEvent))
+        .from(scope_rows(branch, of, ScopeEvent))
         .and_where(positioned_on_axis(axis))
         .and_where(ltree_matches(
             SeaExpr::col((ScopeEvent, ScopeHistory::ScopePath)),
@@ -170,7 +166,12 @@ mod tests {
     }
 
     fn history(interval: TimeInterval) -> ScopeTarget {
-        ScopeTarget::history((Alias::new("e"), Alias::new("id")), TimeProp::Observed, interval, HistoryBranch::live())
+        ScopeTarget::history(
+            HistoryOf::Entity(SeaExpr::col((Alias::new("e"), Alias::new("id")))),
+            TimeProp::Observed,
+            interval,
+            HistoryBranch::live(),
+        )
     }
 
     fn instant(raw: &str) -> chrono::DateTime<chrono::Utc> {
@@ -265,7 +266,7 @@ mod tests {
         ];
         for (timeproperty, column) in expected {
             let target = ScopeTarget::history(
-                (Alias::new("e"), Alias::new("entity_key")),
+                HistoryOf::Entity(SeaExpr::col((Alias::new("e"), Alias::new("entity_key")))),
                 timeproperty,
                 TimeInterval::After(instant("2024-01-01T00:00:00Z")),
                 HistoryBranch::live(),

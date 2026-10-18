@@ -94,7 +94,7 @@ mod tests {
     use crate::{
         attribute_name_key::AttributeNameKey,
         entity_row_refs::EntityRowRefs,
-        history_source::HistoryBranch,
+        history_source::{HistoryBranch, HistoryOf},
         q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, instance_test::InstanceTest},
     };
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
@@ -104,7 +104,7 @@ mod tests {
     fn history() -> HistoryWindow {
         HistoryWindow::builder()
             .branch(HistoryBranch::live())
-            .entity_id(Expr::col((Alias::new("e"), Alias::new("id"))))
+            .of(HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id")))))
             .axis(AttributeHistory::ModifiedAt)
             .interval(TimeInterval::Unbounded)
             .build()

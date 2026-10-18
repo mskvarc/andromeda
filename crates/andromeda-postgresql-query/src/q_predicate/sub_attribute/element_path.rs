@@ -141,7 +141,7 @@ mod tests {
     use crate::{
         attribute_name_key::AttributeNameKey,
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-        history_source::HistoryBranch,
+        history_source::{HistoryBranch, HistoryOf},
         q_predicate::{
             history_window::HistoryWindow,
             instance_row::{ElementLevel, InstanceRow, ProbedRow},
@@ -185,7 +185,7 @@ mod tests {
     fn temporal(q: &str) -> String {
         let window = HistoryWindow::builder()
             .branch(HistoryBranch::live())
-            .entity_id(SeaExpr::col((Alias::new("e"), Alias::new("id"))))
+            .of(HistoryOf::Entity(SeaExpr::col((Alias::new("e"), Alias::new("id")))))
             .axis(AttributeHistory::ObservedAt)
             .interval(TimeInterval::Unbounded)
             .build();

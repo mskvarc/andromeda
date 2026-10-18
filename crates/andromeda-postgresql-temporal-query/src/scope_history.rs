@@ -98,10 +98,11 @@ pub fn build_scope_history_query(branch: &HistoryBranch, entity_id: &Identifier,
     // Clause 5.6.6 leaves the Temporal Evolution standing when the entity is
     // deleted, so the scope source reads the identity from the temporal
     // catalogue and never from current state.
+    let of = HistoryOf::Entity(Expr::val(entity_id.as_str()));
     select
-        .from(scope_rows(branch, &HistoryOf::Entity(Expr::val(entity_id.as_str())), ScopeEvent))
+        .from(scope_rows(branch, &of, ScopeEvent))
         .cond_where(positioned_on_axis(axis))
-        .cond_where(overlaps_window(axis, compiled.window.interval, branch))
+        .cond_where(overlaps_window(axis, compiled.window.interval, branch, &of))
         .order_by((ScopeEvent, axis), Order::Asc)
         .order_by((ScopeEvent, ScopeHistory::RecordedAt), Order::Asc)
         .order_by((ScopeEvent, ScopeHistory::WriteId), Order::Asc)

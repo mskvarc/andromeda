@@ -28,12 +28,6 @@ pub struct An;
 #[iden = "te"]
 pub struct Te;
 
-/// Alias `ang` for the `attribute_names` row the geo existential joins to name
-/// the target `GeoProperty`.
-#[derive(Iden, Clone, Copy)]
-#[iden = "ang"]
-pub struct Ang;
-
 /// Alias `ahg` for the attribute rows the geo existential filters: the
 /// `GeoProperty` instances within the temporal window (clause 5.7.4.4 S3), kept
 /// distinct from [`Ah`] so the probe nested beside the window match cannot
@@ -49,7 +43,7 @@ pub struct EntityIdColumn;
 
 #[cfg(test)]
 mod tests {
-    use crate::alias::{Ah, Ahg, An, Ang, EntityIdColumn, S, Te};
+    use crate::alias::{Ah, Ahg, An, EntityIdColumn, S, Te};
     use sea_query::Iden;
 
     #[test]
@@ -58,7 +52,6 @@ mod tests {
         pretty_assertions::assert_eq!(Ah.to_string(), "ah");
         pretty_assertions::assert_eq!(An.to_string(), "an");
         pretty_assertions::assert_eq!(Te.to_string(), "te");
-        pretty_assertions::assert_eq!(Ang.to_string(), "ang");
         pretty_assertions::assert_eq!(Ahg.to_string(), "ahg");
         pretty_assertions::assert_eq!(EntityIdColumn.to_string(), "entity_id");
     }

@@ -120,11 +120,23 @@ fn recorded_rows(schema: Option<&DynIden>, of: &HistoryOf, pending: PendingEntri
     select
 }
 
+/// The Evolution `key` names, compared on the recorded stream's own key.
+fn of_evolution_key(key: &SimpleExpr) -> SimpleExpr {
+    // clone: the key stays with the read, which every source of it shares.
+    Expr::col((RecordedStream, TemporalAttributeStreams::TemporalEntityKey)).eq(key.clone())
+}
+
 /// The attribute history `of` reads in `branch`, under `alias`: its recorded
 /// rows and, where the branch reads its queue, the queued entries the
-/// application would write.
+/// application would write. Read for an Evolution by key, the grain names it
+/// by [`HistoryGrain::TemporalEntityKey`] in place of the identifier.
 pub fn attribute_rows(branch: &HistoryBranch, of: &HistoryOf, alias: impl IntoIden) -> TableRef {
     let schema = branch.schema();
+    if let Some(key) = branch.evolution_key(of) {
+        let mut rows = keyed_recorded_rows(schema);
+        rows.and_where(of_evolution_key(key));
+        return TableRef::SubQuery(Box::new(rows), alias.into_iden());
+    }
     let mut rows = recorded_rows(schema, of, branch.pending());
     match branch.pending() {
         PendingEntries::Unioned => {
@@ -335,9 +347,15 @@ pub fn kept_beside_pending(pending: PendingEntries, entity_id: SimpleExpr, attri
 
 /// The streams `of` reads in `branch`, under `alias`, each with its grain and
 /// its recorded stream key, and where the branch reads its queue the grains
-/// only queued entries extend, their key NULL.
+/// only queued entries extend, their key NULL. Read for an Evolution by key,
+/// the grain names it by [`HistoryGrain::TemporalEntityKey`].
 pub fn stream_rows(branch: &HistoryBranch, of: &HistoryOf, alias: impl IntoIden) -> TableRef {
     let schema = branch.schema();
+    if let Some(key) = branch.evolution_key(of) {
+        let mut rows = keyed_stream_rows(schema);
+        rows.and_where(of_evolution_key(key));
+        return TableRef::SubQuery(Box::new(rows), alias.into_iden());
+    }
     let mut rows = Query::select();
     recorded_grain(&mut rows);
     rows.expr_as(Expr::col((RecordedStream, TemporalAttributeStreams::StreamKey)), HistoryGrain::StreamKey)
@@ -361,14 +379,19 @@ pub fn entity_stream_rows(branch: &HistoryBranch, read: &EntityHistory, alias: i
     match read {
         EntityHistory::Inside(of) => stream_rows(branch, of, alias),
         EntityHistory::BesideById(_) => stream_rows(branch, &HistoryOf::EveryEntity, alias),
-        EntityHistory::BesideByKey(_) => {
-            let mut rows = Query::select();
-            keyed_grain(&mut rows);
-            rows.expr_as(Expr::col((RecordedStream, TemporalAttributeStreams::StreamKey)), HistoryGrain::StreamKey)
-                .from(qualified(branch.schema(), TemporalAttributeStreams::Table).alias(RecordedStream));
-            TableRef::SubQuery(Box::new(rows), alias.into_iden())
-        }
+        EntityHistory::BesideByKey(_) => TableRef::SubQuery(Box::new(keyed_stream_rows(branch.schema())), alias.into_iden()),
     }
+}
+
+/// The recorded streams of the branch `schema` names, each with its grain
+/// naming its Evolution by surrogate key and its stream key, so no catalogue
+/// row of the Evolution is read.
+fn keyed_stream_rows(schema: Option<&DynIden>) -> SelectStatement {
+    let mut rows = Query::select();
+    keyed_grain(&mut rows);
+    rows.expr_as(Expr::col((RecordedStream, TemporalAttributeStreams::StreamKey)), HistoryGrain::StreamKey)
+        .from(qualified(schema, TemporalAttributeStreams::Table).alias(RecordedStream));
+    rows
 }
 
 #[cfg(test)]
@@ -550,6 +573,56 @@ mod tests {
         pretty_assertions::assert_eq!(
             rendered(entity_stream_rows(&branch, &read, Alias::new("s"))),
             rendered(stream_rows(&branch, &HistoryOf::EveryEntity, Alias::new("s")))
+        );
+    }
+
+    fn evolution() -> HistoryOf {
+        HistoryOf::Evolution(EvolutionColumns {
+            id: Expr::col((Alias::new("e"), Alias::new("id"))),
+            key: Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))),
+        })
+    }
+
+    /// Over recorded rows alone the rows and the streams of an Evolution are
+    /// narrowed inside by the key every recorded stream carries, with no
+    /// catalogue row read.
+    #[test]
+    fn the_history_of_an_evolution_over_recorded_rows_is_narrowed_by_key() {
+        for (branch, history) in [
+            (HistoryBranch::live_recorded(), r#"FROM "attribute_history" AS "rh""#),
+            (HistoryBranch::recorded_in(snapshot()), r#"FROM "snap_1"."attribute_history" AS "rh""#),
+        ] {
+            let rows = rendered(attribute_rows(&branch, &evolution(), Alias::new("ah")));
+            assert!(rows.contains(history), "{rows}");
+            assert!(
+                rows.ends_with(r#"WHERE "rs"."temporal_entity_key" = "e"."temporal_entity_key") AS "ah""#),
+                "{rows}"
+            );
+            let streams = rendered(stream_rows(&branch, &evolution(), Alias::new("qs")));
+            assert!(
+                streams.ends_with(r#"WHERE "rs"."temporal_entity_key" = "e"."temporal_entity_key") AS "qs""#),
+                "{streams}"
+            );
+            for sql in [rows, streams] {
+                assert!(sql.contains(r#""rs"."temporal_entity_key" AS "temporal_entity_key""#), "{sql}");
+                assert!(!sql.contains("temporal_entities") && !sql.contains("entity_id"), "{sql}");
+            }
+        }
+    }
+
+    /// A queued entry carries no surrogate key, so over a queue the history
+    /// of an Evolution is narrowed by its identifier in both parts.
+    #[test]
+    fn the_history_of_an_evolution_over_a_queue_is_narrowed_by_identifier() {
+        let branch = HistoryBranch::live();
+        let of = HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id"))));
+        pretty_assertions::assert_eq!(
+            rendered(attribute_rows(&branch, &evolution(), Alias::new("ah"))),
+            rendered(attribute_rows(&branch, &of, Alias::new("ah")))
+        );
+        pretty_assertions::assert_eq!(
+            rendered(stream_rows(&branch, &evolution(), Alias::new("qs"))),
+            rendered(stream_rows(&branch, &of, Alias::new("qs")))
         );
     }
 

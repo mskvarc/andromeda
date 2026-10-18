@@ -336,7 +336,7 @@ mod tests {
     use crate::{
         attribute_name_key::AttributeNameKey,
         dictionary::resolved_names::ResolvedNames,
-        history_source::HistoryBranch,
+        history_source::{HistoryBranch, HistoryOf},
         q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, traversal::LinkedHop},
     };
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
@@ -355,7 +355,7 @@ mod tests {
             .with_timezone(&Utc);
         let window = HistoryWindow::builder()
             .branch(HistoryBranch::live())
-            .entity_id(Expr::col((Alias::new("e"), Alias::new("id"))))
+            .of(HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id")))))
             .axis(AttributeHistory::ObservedAt)
             .interval(TimeInterval::After(start))
             .build();
@@ -386,7 +386,7 @@ mod tests {
             .with_timezone(&Utc);
         let window = HistoryWindow::builder()
             .branch(HistoryBranch::live())
-            .entity_id(Expr::col((Alias::new("e"), Alias::new("id"))))
+            .of(HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id")))))
             .axis(AttributeHistory::ObservedAt)
             .interval(TimeInterval::After(start))
             .build();

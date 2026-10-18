@@ -465,6 +465,14 @@ mod tests {
         serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": coordinates })).expect("point parses")
     }
 
+    /// The attribute dictionary keying one `GeoProperty`, as 9.
+    fn geoproperty_is_known(geoproperty: &str) -> QueryNames {
+        QueryNames {
+            attributes: ResolvedNames::from_pairs([(geoproperty.parse().expect("valid attribute name"), AttributeNameKey::from(9))]),
+            types: ResolvedNames::default(),
+        }
+    }
+
     /// A query with every filter absent, for tests that vary one part at a time.
     fn minimal_compiled() -> CompiledTemporalQuery {
         CompiledTemporalQuery::builder()
@@ -929,6 +937,29 @@ mod tests {
         assert!(sql.contains("\"re\".\"id\" = \"e\".\"id\""), "{sql}");
     }
 
+    /// Over recorded rows alone the page's window match compares the
+    /// identifier beside its source, so its matches merge with the walk in
+    /// identifier order; the count, which reads every match, compares the key.
+    #[test]
+    fn the_page_window_match_keeps_comparing_the_identifier() {
+        let mut compiled = typed(vec![vehicle_selector()]);
+        compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
+        let stage1 = build_stage1_entity_ids(
+            &HistoryBranch::live_recorded(),
+            &compiled,
+            &PageWindow::offset(20, 0),
+            CountPolicy::Emit,
+            &vehicle_is_known(),
+        )
+        .expect("valid temporal query");
+        let page = stage1.select.to_string(PostgresQueryBuilder);
+        assert!(page.contains(r#") AS "ah" WHERE "ah"."observed_at" < "#), "{page}");
+        assert!(page.contains(r#""ah"."entity_id" = "e"."id""#), "{page}");
+        let count = stage1.count.expect("count requested").to_string(PostgresQueryBuilder);
+        assert!(count.contains(r#""ah"."temporal_entity_key" = "e"."temporal_entity_key""#), "{count}");
+        assert!(!count.contains(r#""ah"."entity_id" = "e"."id""#), "{count}");
+    }
+
     #[test]
     fn stage1_scope_q_with_or_and_semantics() {
         let mut compiled = minimal_compiled();
@@ -1261,8 +1292,8 @@ mod tests {
             geometry: serde_json::from_value::<Geometry>(serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("point"),
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         });
-        let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(sql.contains(r#") AS "ahg" JOIN "attribute_names" AS "ang""#), "{sql}");
+        let (sql, _) = built(&compiled, &geoproperty_is_known("https://uri.etsi.org/ngsi-ld/location"));
+        assert!(sql.contains(r#") AS "ahg" WHERE "ahg"."attribute_name_key" = $"#), "{sql}");
         assert!(sql.contains(r#""ahg"."value_geometry""#), "{sql}");
         assert!(sql.contains(r#""re"."id" = "e"."id""#), "correlated to the temporal entity: {sql}");
         assert!(!sql.contains("entity_search"), "the geo restriction no longer reads current state: {sql}");
@@ -1308,12 +1339,13 @@ mod tests {
             geometry: point(&serde_json::json!([1.0, 2.0])),
             geoproperty: "https://example.com/customGeo".parse().expect("valid attribute name"),
         });
-        let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(sql.contains(r#") AS "ahg""#), "{sql}");
+        let (sql, values) = built(&compiled, &geoproperty_is_known("https://example.com/customGeo"));
         assert!(
-            sql.contains(r#"JOIN "attribute_names" AS "ang""#),
-            "the target GeoProperty is named through the dictionary: {sql}"
+            sql.contains(r#") AS "ahg" WHERE "ahg"."attribute_name_key" = $"#),
+            "the target GeoProperty is compared by its dictionary key: {sql}"
         );
+        assert!(values.0.contains(&Value::Int(Some(9))), "{values:?}");
+        assert!(!sql.contains("attribute_names"), "{sql}");
         assert!(sql.contains(r#""ahg"."value_geometry""#), "{sql}");
         assert!(
             !sql.contains("current_attributes"),

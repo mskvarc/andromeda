@@ -2,12 +2,14 @@
 //!
 //! A row carries the Entity identifier ([`HistoryGrain::EntityId`]) beside the
 //! `scope_history` columns under their own names, so the clause 4.18 validity
-//! reading treats a recorded event and a queued one alike.
+//! reading treats a recorded event and a queued one alike. Read for an
+//! Evolution by key, it carries the surrogate key
+//! ([`HistoryGrain::TemporalEntityKey`]) in place of the identifier.
 
 use crate::history_source::{HistoryBranch, HistoryOf, PendingEntries, entry_values::scope_value_columns, grain::HistoryGrain, pending};
 use andromeda_postgresql_schema::temporal::{ScopeHistory, TemporalEntities};
 use andromeda_postgresql_seaquery::branch::qualified;
-use sea_query::{Expr, ExprTrait, Iden, IntoIden, JoinType, Query, TableRef, UnionType};
+use sea_query::{DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, Query, SelectStatement, TableRef, UnionType};
 
 /// Alias `rsh`: a recorded scope event.
 #[derive(Iden, Clone, Copy)]
@@ -27,18 +29,24 @@ const IDENTITY_COLUMNS: [ScopeHistory; 3] = [ScopeHistory::RecordedAt, ScopeHist
 /// application would write.
 pub fn scope_rows(branch: &HistoryBranch, of: &HistoryOf, alias: impl IntoIden) -> TableRef {
     let schema = branch.schema();
+    if let Some(key) = branch.evolution_key(of) {
+        let mut rows = Query::select();
+        rows.expr_as(Expr::col((RecordedEvent, ScopeHistory::TemporalEntityKey)), HistoryGrain::TemporalEntityKey);
+        recorded_event_columns(&mut rows, schema);
+        // clone: the key stays with the read, which every source of it shares.
+        rows.and_where(Expr::col((RecordedEvent, ScopeHistory::TemporalEntityKey)).eq(key.clone()));
+        return TableRef::SubQuery(Box::new(rows.take()), alias.into_iden());
+    }
     let pending = branch.pending();
     let mut rows = Query::select();
-    rows.expr_as(Expr::col((RecordedEvolution, TemporalEntities::Id)), HistoryGrain::EntityId)
-        .exprs(IDENTITY_COLUMNS.map(|column| Expr::col((RecordedEvent, column))))
-        .exprs(scope_value_columns().map(|column| Expr::col((RecordedEvent, column))))
-        .from(qualified(schema, ScopeHistory::Table).alias(RecordedEvent))
-        .join_as(
-            JoinType::Join,
-            qualified(schema, TemporalEntities::Table),
-            RecordedEvolution,
-            Expr::col((RecordedEvolution, TemporalEntities::TemporalEntityKey)).equals((RecordedEvent, ScopeHistory::TemporalEntityKey)),
-        );
+    rows.expr_as(Expr::col((RecordedEvolution, TemporalEntities::Id)), HistoryGrain::EntityId);
+    recorded_event_columns(&mut rows, schema);
+    rows.join_as(
+        JoinType::Join,
+        qualified(schema, TemporalEntities::Table),
+        RecordedEvolution,
+        Expr::col((RecordedEvolution, TemporalEntities::TemporalEntityKey)).equals((RecordedEvent, ScopeHistory::TemporalEntityKey)),
+    );
     of.narrow(&mut rows, Expr::col((RecordedEvolution, TemporalEntities::Id)));
     match pending {
         PendingEntries::Unioned => {
@@ -49,10 +57,19 @@ pub fn scope_rows(branch: &HistoryBranch, of: &HistoryOf, alias: impl IntoIden) 
     TableRef::SubQuery(Box::new(rows.take()), alias.into_iden())
 }
 
+/// The identity and value columns of the recorded events of the branch
+/// `schema` names.
+fn recorded_event_columns(select: &mut SelectStatement, schema: Option<&DynIden>) {
+    select
+        .exprs(IDENTITY_COLUMNS.map(|column| Expr::col((RecordedEvent, column))))
+        .exprs(scope_value_columns().map(|column| Expr::col((RecordedEvent, column))))
+        .from(qualified(schema, ScopeHistory::Table).alias(RecordedEvent));
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::history_source::{HistoryBranch, HistoryOf, scope_rows::scope_rows};
-    use sea_query::{Alias, Asterisk, IntoIden, PostgresQueryBuilder, Query};
+    use crate::history_source::{EvolutionColumns, HistoryBranch, HistoryOf, scope_rows::scope_rows};
+    use sea_query::{Alias, Asterisk, Expr, IntoIden, PostgresQueryBuilder, Query};
 
     fn rendered(source: sea_query::TableRef) -> String {
         Query::select().column(Asterisk).from(source).to_owned().to_string(PostgresQueryBuilder)
@@ -99,6 +116,49 @@ mod tests {
     fn a_queued_change_an_instance_and_a_removal_are_read_unconditionally() {
         let sql = rendered(scope_rows(&HistoryBranch::live(), &HistoryOf::EveryEntity, Alias::new("sh")));
         assert!(sql.contains(r#"("pe"."entry_kind" <> 4 OR (NOT ("#), "{sql}");
+    }
+
+    fn evolution() -> HistoryOf {
+        HistoryOf::Evolution(EvolutionColumns {
+            id: Expr::col((Alias::new("e"), Alias::new("id"))),
+            key: Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))),
+        })
+    }
+
+    /// Over recorded rows alone the Scope events of an Evolution are narrowed
+    /// by the key each event carries, with no catalogue row read.
+    #[test]
+    fn the_scope_events_of_an_evolution_over_recorded_rows_are_narrowed_by_key() {
+        for (branch, events) in [
+            (HistoryBranch::live_recorded(), r#"FROM "scope_history" AS "rsh""#),
+            (
+                HistoryBranch::recorded_in(Alias::new("snap_1").into_iden()),
+                r#"FROM "snap_1"."scope_history" AS "rsh""#,
+            ),
+        ] {
+            let sql = rendered(scope_rows(&branch, &evolution(), Alias::new("sh")));
+            assert!(
+                sql.starts_with(r#"SELECT * FROM (SELECT "rsh"."temporal_entity_key" AS "temporal_entity_key", "rsh"."recorded_at""#),
+                "{sql}"
+            );
+            assert!(sql.contains(events), "{sql}");
+            assert!(
+                sql.ends_with(r#"WHERE "rsh"."temporal_entity_key" = "e"."temporal_entity_key") AS "sh""#),
+                "{sql}"
+            );
+            assert!(!sql.contains("temporal_entities") && !sql.contains("entity_id"), "{sql}");
+        }
+    }
+
+    /// Over a queue the Scope events of an Evolution are narrowed by its
+    /// identifier in both parts.
+    #[test]
+    fn the_scope_events_of_an_evolution_over_a_queue_are_narrowed_by_identifier() {
+        let of = HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id"))));
+        pretty_assertions::assert_eq!(
+            rendered(scope_rows(&HistoryBranch::live(), &evolution(), Alias::new("sh"))),
+            rendered(scope_rows(&HistoryBranch::live(), &of, Alias::new("sh")))
+        );
     }
 
     #[test]

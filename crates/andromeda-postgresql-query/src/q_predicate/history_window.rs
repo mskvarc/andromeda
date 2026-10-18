@@ -59,9 +59,9 @@ use typed_builder::TypedBuilder;
 pub struct HistoryWindow {
     /// The branch whose history the probes read.
     branch: HistoryBranch,
-    /// The enclosing statement's Entity identifier, which every probe is
-    /// correlated against.
-    entity_id: SimpleExpr,
+    /// The Temporal Evolution of the enclosing statement, which every source
+    /// of the probes reads.
+    of: HistoryOf,
     /// The `attribute_history` column holding the requested Temporal Property.
     axis: AttributeHistory,
     /// The interval the query selected on that axis.
@@ -278,19 +278,13 @@ impl HistoryWindow {
         }
     }
 
-    /// The Entity every source of the probes reads.
-    fn of_entity(&self) -> HistoryOf {
-        // clone: every source of the probes names the same enclosing Entity.
-        HistoryOf::Entity(self.entity_id.clone())
-    }
-
     /// The instances of the Entity, of every dataset, narrowed to those inside
     /// the interval that pass `test` and carry a value.
     fn inside_probe(&self, test: Condition, aliases: &HistoryAliases) -> SelectStatement {
         let mut probe = Query::select();
         probe
             .expr(int_literal(1))
-            .from(attribute_rows(&self.branch, &self.of_entity(), aliases.instance()))
+            .from(attribute_rows(&self.branch, &self.of, aliases.instance()))
             .cond_where(test)
             .and_where(Self::carries_a_value(aliases))
             .cond_where(within_interval(&aliases.instance_column(self.axis), &self.interval));
@@ -308,12 +302,12 @@ impl HistoryWindow {
         let mut placed = Query::select();
         placed
             .expr(SeaExpr::col((aliases.placed_instance(), Asterisk)))
-            .from(attribute_rows(&self.branch, &self.of_entity(), aliases.placed_instance()))
+            .from(attribute_rows(&self.branch, &self.of, aliases.placed_instance()))
             .cond_where(instance.placed_on_stream(aliases, &aliases.placed_instance()));
         let mut probe = Query::select();
         probe
             .expr(int_literal(1))
-            .from(stream_rows(&self.branch, &self.of_entity(), aliases.stream()))
+            .from(stream_rows(&self.branch, &self.of, aliases.stream()))
             .join_lateral(JoinType::Join, instance.placement_source(aliases), aliases.placement(), SimpleExpr::from(true))
             .join_lateral(JoinType::Join, placed.take(), aliases.instance(), SimpleExpr::from(true));
         if let Some(streams) = streams {
@@ -336,7 +330,7 @@ impl HistoryWindow {
 mod tests {
     use crate::{
         attribute_name_key::AttributeNameKey,
-        history_source::HistoryBranch,
+        history_source::{EvolutionColumns, HistoryBranch, HistoryOf},
         q_predicate::{
             history_window::{HistoryAliases, HistoryWindow},
             instance_test::{InstanceTest, non_empty},
@@ -354,7 +348,7 @@ mod tests {
     fn window_on(branch: HistoryBranch, axis: AttributeHistory, interval: TimeInterval) -> HistoryWindow {
         HistoryWindow::builder()
             .branch(branch)
-            .entity_id(Expr::col((Alias::new("e"), Alias::new("id"))))
+            .of(HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id")))))
             .axis(axis)
             .interval(interval)
             .build()
@@ -550,6 +544,29 @@ mod tests {
             sql.contains(r#"AS "qs_ln1""#) && sql.contains(r#"AS "qh_ln1""#) && sql.contains(r#"AS "qi_ln1""#),
             "{sql}"
         );
+    }
+
+    /// Read for an Evolution by key over recorded rows alone, every source of
+    /// both probes is narrowed by the key, with no catalogue row read.
+    #[test]
+    fn both_probes_read_an_evolution_by_key_over_recorded_rows() {
+        let window = HistoryWindow::builder()
+            .branch(HistoryBranch::live_recorded())
+            .of(HistoryOf::Evolution(EvolutionColumns {
+                id: Expr::col((Alias::new("e"), Alias::new("id"))),
+                key: Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))),
+            }))
+            .axis(AttributeHistory::ObservedAt)
+            .interval(after_2019())
+            .build();
+        let sql = render(window.exists(AttributeNameKey::from(7), above_100(), &HistoryAliases::top_level()));
+        for alias in ["qh", "qs", "qi"] {
+            assert!(
+                sql.contains(&format!(r#""rs"."temporal_entity_key" = "e"."temporal_entity_key") AS "{alias}""#)),
+                "{alias}: {sql}"
+            );
+        }
+        assert!(!sql.contains("temporal_entities") && !sql.contains("entity_id"), "{sql}");
     }
 
     /// A Snapshot reads its own branch: every history relation of both probes,
