@@ -11,6 +11,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, attribute_type::AttributeType};
 use andromeda_ngsi_ld_number::JsonNumber;
+use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
 use chrono::{DateTime, Utc};
 
 const WEIGHT: &str = "https://uri.etsi.org/ngsi-ld/default-context/weight";
@@ -183,4 +184,38 @@ fn only_the_periods_wholly_on_the_admitted_side_are_retained() {
         aggregated.retain_periods(|at| at <= bound);
         pretty_assertions::assert_eq!(aggregated.period_span(), Some((instant("2026-01-01T02:00:00Z"), bound)), "depth {depth}");
     }
+}
+
+/// Clause 4.11: a source's aggregate joins with only the periods lying wholly
+/// in the requested window, a period ending on the window's closing instant
+/// included, at whatever depth a grouping nests them.
+#[test]
+fn only_the_periods_lying_wholly_in_the_window_are_retained() {
+    let window = TimeInterval::Between {
+        from: instant("2026-01-01T03:00:00Z"),
+        to: instant("2026-01-01T05:00:00Z"),
+    };
+    for depth in [0, 1] {
+        let mut rows = hours(2, 7);
+        for row in &mut rows {
+            row.group_keys = vec![GroupKeyValue::Value("KGM".to_owned())];
+        }
+        let mut aggregated = entity(&rows, &[AggrMethod::TotalCount], depth);
+        aggregated.retain_periods_within(window);
+        pretty_assertions::assert_eq!(
+            aggregated.period_span(),
+            Some((instant("2026-01-01T03:00:00Z"), instant("2026-01-01T05:00:00Z"))),
+            "depth {depth}"
+        );
+    }
+    let mut outside = entity(&hours(2, 7), &[AggrMethod::TotalCount], 0);
+    outside.retain_periods_within(TimeInterval::After(instant("2026-01-02T00:00:00Z")));
+    assert!(outside.attrs.is_empty(), "an attribute left without a period is removed");
+    pretty_assertions::assert_eq!(outside.period_span(), None);
+    let mut unbounded = entity(&hours(2, 7), &[AggrMethod::TotalCount], 0);
+    unbounded.retain_periods_within(TimeInterval::Unbounded);
+    pretty_assertions::assert_eq!(
+        unbounded.period_span(),
+        Some((instant("2026-01-01T02:00:00Z"), instant("2026-01-01T07:00:00Z")))
+    );
 }

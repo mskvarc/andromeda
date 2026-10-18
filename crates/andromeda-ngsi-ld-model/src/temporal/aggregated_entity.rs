@@ -25,6 +25,7 @@ use andromeda_ngsi_ld_lexicon::{
     rfc3339::sub_second,
 };
 use andromeda_ngsi_ld_number::JsonNumber;
+use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::{Serialize, Serializer, ser::SerializeSeq};
@@ -193,7 +194,24 @@ impl AggregatedTemporalEntity {
     /// Keep only the periods both of whose bounds `keep` admits: the periods
     /// lying wholly on the admitted side of a bound.
     pub fn retain_periods(&mut self, keep: impl Fn(DateTime<Utc>) -> bool) {
-        let admits = |triple: &AggregatedTriple| triple.start.is_none_or(&keep) && triple.end.is_none_or(&keep);
+        self.retain_triples(|triple| triple.start.is_none_or(&keep) && triple.end.is_none_or(&keep));
+    }
+
+    /// Keep only the periods lying wholly in `interval` (clause 4.11). An
+    /// attribute instance left without a period is removed, and an attribute
+    /// left without an instance with it, as an aggregation of the window
+    /// answers no period for either.
+    pub fn retain_periods_within(&mut self, interval: TimeInterval) {
+        self.retain_triples(|triple| interval.holds_period(triple.start, triple.end));
+        self.attrs.retain(|_, instances| {
+            instances.retain(|instance| instance.aggregates.iter().any(|aggregate| aggregate.values.triples().next().is_some()));
+            !instances.is_empty()
+        });
+    }
+
+    /// Keep only the triples `admits` admits, of every method of every
+    /// attribute.
+    fn retain_triples(&mut self, admits: impl Fn(&AggregatedTriple) -> bool) {
         for attribute in self.attrs.values_mut().flatten() {
             for aggregate in &mut attribute.aggregates {
                 aggregate.values.retain(&admits);

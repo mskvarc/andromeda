@@ -81,7 +81,7 @@ impl HistoryCompleteness {
         };
         let interval = match local {
             Some(range) => range.interval,
-            None => TimeInterval::from_parts(params.timerel, params.time_at, params.end_time_at)?,
+            None => params.window()?.interval,
         };
         Ok(HistoryCompleteness::UpTo(HistoryBound { interval, direction, bound }))
     }

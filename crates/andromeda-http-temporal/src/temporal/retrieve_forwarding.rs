@@ -185,8 +185,8 @@ pub(crate) async fn distributed_retrieval(
 
     let had_remote_history = forwarded.results.iter().any(|result| !result.entities.is_empty());
     let local_id = local_entity.is_some().then(|| id.clone()); // clone: the map owns the entity identifiers it names
-    let timeproperty = params.timeproperty_or_default();
-    let merged = merge_temporal_retrieve_results(local_entity, forwarded.results, timeproperty);
+    let window = params.window().map_err(|error| temporal_problem(&TemporalError::from(error), instance))?;
+    let merged = merge_temporal_retrieve_results(local_entity, forwarded.results, window);
     let entity_map_uri = record_retrieve_map(entity_maps, map_use, contributions, local_id, instance).await?;
 
     let history = match merged {
@@ -194,7 +194,7 @@ pub(crate) async fn distributed_retrieval(
             // Clause 5.7.3.4: `lastN` bounds the instances of the merged
             // history, so it is applied once more over the aggregation.
             if let (true, Some(last_n)) = (had_remote_history, params.last_n) {
-                history.keep_last(timeproperty, last_n);
+                history.keep_last(window.timeproperty, last_n);
             }
             history
         }

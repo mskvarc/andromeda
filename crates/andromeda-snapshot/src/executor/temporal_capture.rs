@@ -42,7 +42,10 @@ use andromeda_ngsi_ld_query::{
     candidate_filters::CandidateFilters,
     count_policy::CountPolicy,
     page_window::{PageStart, PageWindow},
-    temporal::{contributed_entities::ContributedEntities, window::TimeInterval},
+    temporal::{
+        contributed_entities::ContributedEntities,
+        window::{TemporalWindow, TimeInterval},
+    },
 };
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_temporal::{
@@ -270,7 +273,11 @@ impl SnapshotExecutor {
                 (Vec::new(), None)
             };
             let histories = match forwarded.take() {
-                Some(forwarded) => merge_temporal_query_results(local, forwarded, timeproperty),
+                Some(forwarded) => merge_temporal_query_results(
+                    local,
+                    forwarded,
+                    TemporalWindow::builder().interval(walk.interval()).timeproperty(timeproperty).build(),
+                ),
                 None => local,
             };
             let mut documents = match instance_documents(histories, capture) {

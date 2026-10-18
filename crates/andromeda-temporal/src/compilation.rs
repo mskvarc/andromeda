@@ -27,7 +27,6 @@ use andromeda_ngsi_ld_query::{
         ordering::TemporalEntityOrdering,
         period_budget::PeriodBudget,
         representation::Representation,
-        window::{TemporalWindow, TimeInterval},
     },
     term_expander::TermExpander,
 };
@@ -95,12 +94,7 @@ impl TemporalService {
                     .projected_members(ProjectedMembers::of(&projection))
                     .build(),
             )
-            .window(
-                TemporalWindow::builder()
-                    .interval(TimeInterval::from_parts(params.timerel, params.time_at, params.end_time_at)?)
-                    .timeproperty(params.timeproperty_or_default())
-                    .build(),
-            )
+            .window(params.window()?)
             .instances(
                 InstanceSelection::builder()
                     .attr_filter(attr_filter)

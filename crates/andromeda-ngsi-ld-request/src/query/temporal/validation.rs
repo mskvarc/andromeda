@@ -15,11 +15,12 @@ use crate::{
 use andromeda_linked_retrieval::admission::{LinkedRequest, TemporalJoin, admit_request};
 use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
+    error::QueryError,
     projection::exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
     temporal::{
         grouping::{AggregationGrouping, group_key::GroupKey},
         ordering::TemporalEntityOrdering,
-        window::{BoundPresence, TimeInterval},
+        window::{BoundPresence, TemporalWindow, TimeInterval},
     },
     type_selection::grammar::TypeExprRaw,
 };
@@ -61,6 +62,20 @@ impl TemporalQueryParameters {
     #[must_use]
     pub fn timeproperty_or_default(&self) -> TimeProp {
         self.timeproperty.unwrap_or_default()
+    }
+
+    /// The slice of the time axis the request reads and the time property it
+    /// reads it on (clause 4.11).
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`QueryError`] of [`TimeInterval::from_parts`] when the
+    /// `timerel`, `timeAt` and `endTimeAt` group is incomplete.
+    pub fn window(&self) -> Result<TemporalWindow, QueryError> {
+        Ok(TemporalWindow::builder()
+            .interval(TimeInterval::from_parts(self.timerel, self.time_at, self.end_time_at)?)
+            .timeproperty(self.timeproperty_or_default())
+            .build())
     }
 
     /// Parses the temporal response format from `format` and `options` parameters.

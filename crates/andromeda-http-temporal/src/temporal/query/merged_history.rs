@@ -15,8 +15,8 @@ use andromeda_federation::{
     temporal_result::merge_temporal_query_results,
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
+use andromeda_ngsi_ld_query::temporal::window::TemporalWindow;
 use axum::http::Uri;
 
 /// Whether the entities the sources answered with join the local ones.
@@ -47,7 +47,9 @@ pub(crate) struct MergedTemporalHistory {
 /// entity the broker also holds, so its contribution joins the aggregation
 /// instead of only filling gaps.
 ///
-/// The instances of each merged entity are ordered by `timeproperty`.
+/// What each source answered is narrowed to the request's `window` as it
+/// joins, and the instances of each merged entity are ordered by its time
+/// property.
 ///
 /// # Errors
 ///
@@ -60,7 +62,7 @@ pub(crate) fn merge_forwarded_history(
     forwarded: Option<ForwardedHistory>,
     filtering: SplitEntities,
     remote: RemoteParts,
-    timeproperty: TimeProp,
+    window: TemporalWindow,
     instance: &Uri,
 ) -> Result<MergedTemporalHistory, ProblemResponse> {
     let Some(history) = forwarded else {
@@ -87,7 +89,7 @@ pub(crate) fn merge_forwarded_history(
         SplitEntities::Complete => sources,
     };
     let entities = match remote {
-        RemoteParts::Merged => merge_temporal_query_results(local_entities, sources, timeproperty),
+        RemoteParts::Merged => merge_temporal_query_results(local_entities, sources, window),
         RemoteParts::RenderedApart => local_entities,
     };
     if contributed {

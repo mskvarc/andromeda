@@ -12,6 +12,7 @@ use crate::temporal::{
     temporal_document::{MergeMode, TemporalDocument},
 };
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
+use andromeda_ngsi_ld_query::temporal::window::TemporalWindow;
 use chrono::{DateTime, Utc};
 use std::num::NonZeroU32;
 
@@ -46,12 +47,25 @@ impl TemporalHistory {
         }
     }
 
-    /// Keep only the instances that carry an instant on `timeproperty`. An
-    /// aggregate holds periods, never an instance without one.
-    pub fn retain_positioned(&mut self, timeproperty: TimeProp) {
+    /// Keep only what lies in `window`: the instances carrying an instant on
+    /// its time property inside its interval (clauses 4.5.7 and 4.11), or of
+    /// an aggregate the periods lying wholly inside it; an attribute left with
+    /// nothing is removed.
+    pub fn retain_window(&mut self, window: TemporalWindow) {
         match self {
-            TemporalHistory::Instances(document) => document.retain_positioned(timeproperty),
-            TemporalHistory::Aggregates(_) => {}
+            TemporalHistory::Instances(document) => document.retain_within(window),
+            TemporalHistory::Aggregates(entity) => entity.retain_periods_within(window.interval),
+        }
+    }
+
+    /// Whether any attribute holds an instance, or of an aggregate a period:
+    /// whether the time series include data at all (clauses 5.7.3.4 and
+    /// 5.7.4.4).
+    #[must_use]
+    pub fn holds_data(&self) -> bool {
+        match self {
+            TemporalHistory::Instances(document) => document.instance_count() > 0,
+            TemporalHistory::Aggregates(entity) => entity.period_span().is_some(),
         }
     }
 

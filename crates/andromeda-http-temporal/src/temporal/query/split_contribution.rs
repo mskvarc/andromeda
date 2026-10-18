@@ -25,7 +25,7 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
 use andromeda_ngsi_ld_query::temporal::contributed_entities::{ContributedEntities, ContributedRendering};
-use andromeda_temporal::{service::TemporalService, split_settlement::SplitSettlement};
+use andromeda_temporal::{error::TemporalError, service::TemporalService, split_settlement::SplitSettlement};
 use axum::http::Uri;
 
 /// How a split query gathers and renders the entities a source contributed to.
@@ -212,14 +212,8 @@ pub(crate) async fn merge_with_contributions(
     };
     let settlement = settle_contributions(service, settled, merge.contributed, instance).await?;
     let rendered = render_contributions(service, settled, merge.shape, settlement.as_ref(), instance).await?;
-    let mut merged = merge_forwarded_history(
-        local_entities,
-        forwarded,
-        merge.filtering,
-        merge.shape.remote_parts(),
-        merge.params.timeproperty_or_default(),
-        instance,
-    )?;
+    let window = merge.params.window().map_err(TemporalError::from).with_instance(instance)?;
+    let mut merged = merge_forwarded_history(local_entities, forwarded, merge.filtering, merge.shape.remote_parts(), window, instance)?;
     if let Some(settlement) = settlement {
         retain_settled(&mut merged.entities, merge.contributed, &settlement);
     }

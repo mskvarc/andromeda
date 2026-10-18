@@ -16,6 +16,7 @@ use andromeda_ngsi_ld_lexicon::{
     identifier::Identifier,
     time_prop::TimeProp,
 };
+use andromeda_ngsi_ld_query::temporal::window::TemporalWindow;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use std::{cmp::Reverse, num::NonZeroU32};
@@ -140,6 +141,22 @@ impl TemporalDocument {
     /// with the family its instances recorded.
     pub fn retain_positioned(&mut self, timeproperty: TimeProp) {
         self.reshape_instances(|_, instances| instances.retain(|instance| instance.instant_on(timeproperty).is_some()));
+    }
+
+    /// Keep only the instances lying in `window`: those carrying an instant
+    /// on its time property (clause 4.5.7) inside its interval (clause 4.11).
+    /// An attribute left without an instance is removed rather than kept
+    /// empty: clauses 5.7.3.4 and 5.7.4.4 represent "only the Attribute
+    /// instances [...] which meet the temporal [...] restrictions", and a
+    /// read of the window holds nothing of that attribute.
+    pub fn retain_within(&mut self, window: TemporalWindow) {
+        self.entity.attributes_mut().retain(|_, member| match member {
+            AttributeMember::Instances(instances) => {
+                instances.retain(|instance| instance.instant_on(window.timeproperty).is_some_and(|instant| window.interval.holds(instant)));
+                !instances.is_empty()
+            }
+            AttributeMember::Remove => false,
+        });
     }
 
     /// Keep, for every attribute, the `last_n` instances with the most recent

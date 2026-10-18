@@ -118,6 +118,36 @@ impl TimeInterval {
         !matches!(self, TimeInterval::Unbounded)
     }
 
+    /// Whether `instant` lies in the interval, with the bounds of clause 4.11:
+    /// `before` exclusive, `after` inclusive, `between` inclusive at its
+    /// opening and exclusive at its closing instant.
+    #[must_use]
+    pub fn holds(&self, instant: DateTime<Utc>) -> bool {
+        match self {
+            TimeInterval::Unbounded => true,
+            TimeInterval::Before(to) => instant < *to,
+            TimeInterval::After(from) => instant >= *from,
+            TimeInterval::Between { from, to } => instant >= *from && instant < *to,
+        }
+    }
+
+    /// Whether the period from `start` to `end` lies wholly in the interval.
+    /// A period's `end` closes it the way the interval's closing instant
+    /// closes the interval (clause 4.5.19), so a period ending on that
+    /// instant still lies in it; a side the period leaves open lies in it.
+    #[must_use]
+    pub fn holds_period(&self, start: Option<DateTime<Utc>>, end: Option<DateTime<Utc>>) -> bool {
+        let opens_inside = match (self.opening(), start) {
+            (Some(opening), Some(start)) => start >= *opening,
+            (None, _) | (_, None) => true,
+        };
+        let closes_inside = match (self.closing(), end) {
+            (Some(closing), Some(end)) => end <= *closing,
+            (None, _) | (_, None) => true,
+        };
+        opens_inside && closes_inside
+    }
+
     /// What remains of the interval from `instant` on, which is where the
     /// rest of a forward page cut at `instant` is read (clause 6.3.10).
     ///
@@ -291,6 +321,44 @@ mod tests {
             let (timerel, time_at, end_time_at) = interval.parts();
             assert_eq!(TimeInterval::from_parts(timerel, time_at, end_time_at).expect("valid parts"), interval);
         }
+    }
+
+    /// Clause 4.11: `before` is an exclusive bound, `after` an inclusive one,
+    /// and `between` includes its opening and excludes its closing instant.
+    #[test]
+    fn an_interval_holds_the_instants_of_clause_4_11() {
+        let from = instant("2024-01-01T00:00:00Z");
+        let to = instant("2024-01-02T00:00:00Z");
+        let earlier = instant("2023-12-31T23:59:59Z");
+        let inside = instant("2024-01-01T12:00:00Z");
+        assert!(TimeInterval::Unbounded.holds(earlier));
+        assert!(TimeInterval::Before(to).holds(inside));
+        assert!(!TimeInterval::Before(to).holds(to));
+        assert!(TimeInterval::After(from).holds(from));
+        assert!(!TimeInterval::After(from).holds(earlier));
+        let between = TimeInterval::Between { from, to };
+        assert!(between.holds(from));
+        assert!(between.holds(inside));
+        assert!(!between.holds(to));
+        assert!(!between.holds(earlier));
+    }
+
+    /// A period lies in the interval when it opens at or after its opening
+    /// instant and closes at or before its closing instant.
+    #[test]
+    fn an_interval_holds_the_periods_lying_wholly_in_it() {
+        let from = instant("2024-01-01T00:00:00Z");
+        let to = instant("2024-01-02T00:00:00Z");
+        let hour = |raw: &str| Some(instant(raw));
+        let between = TimeInterval::Between { from, to };
+        assert!(between.holds_period(hour("2024-01-01T00:00:00Z"), hour("2024-01-01T01:00:00Z")));
+        assert!(between.holds_period(hour("2024-01-01T23:00:00Z"), hour("2024-01-02T00:00:00Z")));
+        assert!(!between.holds_period(hour("2023-12-31T23:00:00Z"), hour("2024-01-01T00:00:00Z")));
+        assert!(!between.holds_period(hour("2024-01-01T23:00:00Z"), hour("2024-01-02T01:00:00Z")));
+        assert!(TimeInterval::After(from).holds_period(hour("2024-01-01T00:00:00Z"), hour("2030-01-01T00:00:00Z")));
+        assert!(!TimeInterval::Before(to).holds_period(hour("2024-01-01T23:00:00Z"), hour("2024-01-02T01:00:00Z")));
+        assert!(between.holds_period(None, hour("2024-01-01T01:00:00Z")));
+        assert!(TimeInterval::Unbounded.holds_period(hour("1990-01-01T00:00:00Z"), hour("2090-01-01T00:00:00Z")));
     }
 
     #[test]
