@@ -127,14 +127,6 @@ create index idx_attribute_history_stream_deletion on attribute_history (stream_
 where
     deleted_at is not null and observed_at is null;
 
--- An instance with no `observedAt` has no position on the default axis. A
--- temporal page over a window unbounded on that axis reads a stream's such
--- instances apart from the dated ones, most recent write first; the dated
--- ones come from the axis index, which holds none of them.
-create index idx_attribute_history_stream_unobserved on attribute_history (stream_key, recorded_at desc)
-where
-    observed_at is null;
-
 -- The broker stamps `createdAt` and `modifiedAt` itself (clause 4.8), and an
 -- appended row records both at its write instant, so a stream's rows in
 -- `created_at` or `modified_at` order are, with few exceptions, its rows in

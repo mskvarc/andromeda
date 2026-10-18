@@ -4,7 +4,9 @@
 //! two holders' parts of one entity are put together as the model puts
 //! histories together: instances are united, one carrying an `instanceId`
 //! already held counting once, and an auxiliary holder fills only the instants
-//! no other holder has (clauses 4.3.6.2 and 5.7.3.4).
+//! no other holder has (clauses 4.3.6.2 and 5.7.3.4). A source's instance that
+//! carries no instant on the requested Temporal Property is left out, as the
+//! local read leaves out its own (clause 4.5.7).
 
 use crate::outcome::ForwardedTemporalEntities;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
@@ -45,7 +47,8 @@ pub fn merge_temporal_query_results(
 
     for forwarded in remote_results {
         let mode = merge_mode(forwarded.mode);
-        for remote_entity in forwarded.entities {
+        for mut remote_entity in forwarded.entities {
+            remote_entity.retain_positioned(timeproperty);
             let Some(remote_id) = remote_entity.id().cloned() else {
                 continue; // clone: the map is keyed by the identifier the history names
             };
@@ -76,7 +79,8 @@ pub fn merge_temporal_retrieve_results(
 
     for forwarded in remote_results {
         let mode = merge_mode(forwarded.mode);
-        for remote_entity in forwarded.entities {
+        for mut remote_entity in forwarded.entities {
+            remote_entity.retain_positioned(timeproperty);
             match (&mut result, mode) {
                 (Some(existing), _) => existing.merge(remote_entity, mode, timeproperty),
                 (None, MergeMode::Inclusive) => result = Some(remote_entity),

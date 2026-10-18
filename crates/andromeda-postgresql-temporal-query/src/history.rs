@@ -16,7 +16,7 @@ use crate::{
     axis::axis_column,
     stream_page::{Walk, last_n_history, walked_history},
 };
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetFilter,
     temporal::{compiled::CompiledTemporalQuery, instance_page::InstancePage, period_budget::PeriodBudget, window::TimeInterval},
@@ -55,17 +55,19 @@ pub fn build_temporal_history_query(branch: &HistoryBranch, entity_id: &Identifi
 /// them, and stage 1 asks whether a projection leaves an entity any of them.
 ///
 /// Clause 5.2.21: an instance is placed on the requested axis by the column that
-/// holds it. `deletedAt` exists only on a row that records a deletion, so asking
-/// for that axis asks for those rows and no others; the deletion is recognised
-/// by the axis itself rather than by a sentinel value.
+/// holds it, and an instance that holds no instant there is represented by no
+/// read on that axis. Clause 4.5.7 places every instance of the representation
+/// "at a particular point in time, which is recorded as a Temporal Property of
+/// the instance"; clause 6.3.10 pages it by that instant and clause 4.5.9 pairs
+/// each value with it. Such an instance stays readable on `createdAt` and
+/// `modifiedAt`, which the broker stamps on every instance (clause 4.8).
+/// `deletedAt` exists only on a row that records a deletion, so asking for that
+/// axis asks for those rows and no others; the deletion is recognised by the
+/// axis itself rather than by a sentinel value.
 pub(crate) fn represented_instances(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemporalQuery) -> Condition {
-    let mut condition = Condition::all();
-
-    if compiled.window.timeproperty == TimeProp::Deleted {
-        condition = condition.add(Expr::col((Ah, AttributeHistory::DeletedAt)).is_not_null());
-    }
-
     let axis = axis_column(compiled.window.timeproperty);
+    let mut condition = Condition::all().add(Expr::col((Ah, axis)).is_not_null());
+
     match compiled.window.interval {
         TimeInterval::Unbounded => {}
         TimeInterval::Before(instant) => condition = condition.add(Expr::col((Ah, axis)).lt(instant)),
@@ -535,12 +537,13 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#""ah"."observed_at" IS NOT NULL AND "ah"."observed_at" > '2024-01-15 10:00:00.000000 +00:00' ORDER BY"#),
+            sql.contains(r#"AND "ah"."observed_at" > '2024-01-15 10:00:00.000000 +00:00' ORDER BY "ah"."observed_at" ASC LIMIT 100"#),
             "{sql}"
         );
         let unbounded = recorded_sql_of(InstancePage::Forward { size: 100 }, TimeInterval::Unbounded);
+        assert!(!unbounded.contains(r#""ah"."observed_at" > '"#), "{unbounded}");
         assert!(
-            unbounded.contains(r#""ah"."observed_at" IS NOT NULL ORDER BY "ah"."observed_at" ASC LIMIT 100"#),
+            unbounded.contains(r#"ORDER BY "ah"."observed_at" ASC LIMIT 100"#),
             "an unbounded window has no lower bound to leave uncounted: {unbounded}"
         );
     }
@@ -581,69 +584,58 @@ mod tests {
         assert!(backward.contains(r#""ah"."observed_at" < "edge_row"."edge""#), "{backward}");
     }
 
-    /// An instance with no instant on the axis falls in an unbounded window
-    /// only, after every dated instance, and the axis index holds none: a
-    /// page reads those instances apart, keeping them when its edge was never
-    /// reached.
-    #[test]
-    fn an_unbounded_page_reads_the_undated_instances_apart() {
-        let unbounded = recorded_sql_of(InstancePage::Forward { size: 100 }, TimeInterval::Unbounded);
-        assert!(
-            unbounded.contains(r#""ah"."observed_at" IS NULL AND "stream_edge"."edge" IS NULL"#),
-            "{unbounded}"
-        );
-        assert!(
-            unbounded.contains("EXISTS(SELECT 1 FROM") && unbounded.contains(r#""ah"."observed_at" IS NULL) AS "stream_continues""#),
-            "{unbounded}"
-        );
-        let bounded = recorded_sql_of(InstancePage::Forward { size: 100 }, one_day());
-        assert!(!bounded.contains(r#""ah"."observed_at" IS NULL"#), "{bounded}");
+    /// Every page shape a read compiles to, over a window unbounded on the
+    /// axis.
+    fn every_page() -> [InstancePage; 4] {
+        [
+            InstancePage::Whole,
+            InstancePage::Forward { size: 100 },
+            InstancePage::Backward {
+                size: 1000,
+                requested: count(5000),
+            },
+            InstancePage::LastN { n: count(3) },
+        ]
     }
 
-    /// A backward page over `lastN` above the broker's maximum, 5000 asked
-    /// and 1000 kept.
-    fn backward_page() -> InstancePage {
-        InstancePage::Backward {
-            size: 1000,
-            requested: count(5000),
+    /// Clause 4.5.7 places every instance of a temporal representation "at a
+    /// particular point in time, which is recorded as a Temporal Property of
+    /// the instance", so a read on any axis, whatever its page, represents
+    /// only the instances that carry an instant there, and none is read apart.
+    #[test]
+    fn every_read_on_an_axis_represents_only_the_instances_carrying_it() {
+        for (axis, column) in [
+            (TimeProp::Observed, "observed_at"),
+            (TimeProp::Created, "created_at"),
+            (TimeProp::Modified, "modified_at"),
+            (TimeProp::Deleted, "deleted_at"),
+        ] {
+            for page in every_page() {
+                let sql = recorded_sql_on(axis, page, TimeInterval::Unbounded);
+                let carried = format!(r#""ah"."{column}" IS NOT NULL"#);
+                let missing = format!(r#""ah"."{column}" IS NULL"#);
+                assert!(sql.contains(&carried), "{column}: {sql}");
+                assert!(!sql.contains(&missing), "{column}: {sql}");
+            }
         }
     }
 
-    /// Clauses 5.7.3.4 and 5.7.4.4: `lastN` is "the last n timestamps (in
-    /// descending ordering) of the temporal property", so over an unbounded
-    /// window neither the last `n` instances nor a backward page reads an
-    /// instance with no instant on the axis, which has no timestamp to rank.
+    /// Clause 4.5.19 places every aggregate in a period of the time range, the
+    /// whole-range period of an absent `aggrPeriodDuration` included, so an
+    /// aggregation of every instance or of the last `n`, over a grid or the
+    /// whole range, folds only instances that carry an instant on the axis.
     #[test]
-    fn an_unbounded_last_n_reads_no_instance_without_an_instant_on_the_axis() {
-        let last_n = recorded_sql_of(InstancePage::LastN { n: count(3) }, TimeInterval::Unbounded);
-        assert!(!last_n.contains(r#""ah"."observed_at" IS NULL"#), "{last_n}");
-        assert!(
-            last_n.contains(r#""ah"."observed_at" IS NOT NULL ORDER BY "ah"."observed_at" DESC, "ah"."recorded_at" DESC"#),
-            "{last_n}"
-        );
-        let backward = recorded_sql_of(backward_page(), TimeInterval::Unbounded);
-        assert!(!backward.contains(r#""ah"."observed_at" IS NULL"#), "{backward}");
-        assert!(
-            backward.contains(r#""ah"."observed_at" >= COALESCE("stream_edge"."edge", '-infinity'::timestamptz)"#),
-            "{backward}"
-        );
-    }
-
-    /// An aggregation over the last `n` instances folds dated instances alone,
-    /// whether it is one complete answer or a backward page of periods, with
-    /// a period grid or over the whole range (clauses 4.5.19 and 5.7.3.4).
-    #[test]
-    fn an_unbounded_aggregated_last_n_folds_no_instance_without_an_instant_on_the_axis() {
+    fn every_aggregation_folds_only_the_instances_carrying_the_axis() {
         for period in ["PT1H", "PT0S"] {
-            for page in [InstancePage::LastN { n: count(3) }, backward_page()] {
+            for page in every_page() {
                 let mut compiled = minimal_compiled();
                 compiled.representation.format = TemporalFormat::AggregatedValues;
                 compiled.representation.aggr_methods = vec![AggrMethod::Sum];
                 compiled.representation.aggr_period_duration = AggregationPeriod::parse(period).expect("valid period");
                 compiled.instances.page = page;
                 let sql = build_temporal_history_query(&HistoryBranch::live_recorded(), &vehicle_id(), &compiled).to_string(PostgresQueryBuilder);
-                assert!(!sql.contains(r#""ah"."observed_at" IS NULL"#), "{period}: {sql}");
                 assert!(sql.contains(r#""ah"."observed_at" IS NOT NULL"#), "{period}: {sql}");
+                assert!(!sql.contains(r#""ah"."observed_at" IS NULL"#), "{period}: {sql}");
             }
         }
     }

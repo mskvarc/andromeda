@@ -46,6 +46,15 @@ impl TemporalHistory {
         }
     }
 
+    /// Keep only the instances that carry an instant on `timeproperty`. An
+    /// aggregate holds periods, never an instance without one.
+    pub fn retain_positioned(&mut self, timeproperty: TimeProp) {
+        match self {
+            TemporalHistory::Instances(document) => document.retain_positioned(timeproperty),
+            TemporalHistory::Aggregates(_) => {}
+        }
+    }
+
     /// Keep, for every attribute, the `last_n` instances with the most recent
     /// instant on `timeproperty`. An aggregate has no instance to keep.
     pub fn keep_last(&mut self, timeproperty: TimeProp, last_n: NonZeroU32) {

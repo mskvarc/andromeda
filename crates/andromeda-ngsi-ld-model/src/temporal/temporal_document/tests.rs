@@ -134,6 +134,26 @@ fn last_n_after_a_merge_leaves_out_the_instances_with_no_instant() {
     pretty_assertions::assert_eq!(local.instance_count(), 3);
 }
 
+/// Clause 4.5.7: a read on `observedAt` keeps the instances observed and
+/// leaves the others out; an attribute left without an instance stays with
+/// the family it recorded.
+#[test]
+fn keeping_the_positioned_instances_leaves_out_the_unobserved_ones() {
+    let mut mixed = document(vec![
+        undated("urn:ngsi-ld:i:u1"),
+        instance("2020-01-01T00:00:00Z", None),
+        undated("urn:ngsi-ld:i:u2"),
+    ]);
+    mixed.retain_positioned(TimeProp::Observed);
+    pretty_assertions::assert_eq!(observed(&mixed), vec![at("2020-01-01T00:00:00Z")]);
+    pretty_assertions::assert_eq!(mixed.instance_count(), 1);
+
+    let mut unobserved = document(vec![undated("urn:ngsi-ld:i:u3")]);
+    unobserved.retain_positioned(TimeProp::Observed);
+    pretty_assertions::assert_eq!(unobserved.instance_count(), 0);
+    pretty_assertions::assert_eq!(unobserved.emptied().get(&speed()), Some(&AttributeType::Property));
+}
+
 /// Trimming to a bound leaves an attribute that lost every instance in place,
 /// with the family it recorded, and reports the span the rest carries.
 #[test]

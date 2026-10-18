@@ -142,6 +142,32 @@ async fn a_retrieval_answered_by_one_remote_holder_is_its_history() {
     assert!(merge_temporal_retrieve_results(None, vec![forwarded(ForwardingMode::Auxiliary, vec![entity])], TimeProp::Observed).is_none());
 }
 
+/// Clause 4.5.7: a source's instance with no `observedAt` has no place in a
+/// read on `observedAt`, whether the source's history joins a held one or is
+/// the only one, in a query and in a retrieval.
+#[tokio::test]
+async fn a_source_instance_without_the_requested_temporal_property_is_left_out() {
+    let unobserved = json!({"type": "Property", "value": 999});
+    let local = history(json!({"id": "urn:a", "type": "T", "speed": [observed(10, 1, None)]})).await;
+    let joining = history(json!({"id": "urn:a", "type": "T", "speed": [observed(20, 2, None), unobserved.clone()]})).await;
+    let alone = history(json!({"id": "urn:b", "type": "T", "speed": [unobserved.clone(), observed(30, 3, None)]})).await;
+
+    let result = merge_temporal_query_results(
+        vec![local.clone()],
+        vec![forwarded(ForwardingMode::Inclusive, vec![joining.clone(), alone.clone()])],
+        TimeProp::Observed,
+    );
+    assert_eq!(result.iter().map(id_of).collect::<Vec<_>>(), vec!["urn:a", "urn:b"]);
+    assert_eq!(instances(&result[0], SPEED), 2);
+    assert_eq!(instances(&result[1], SPEED), 1);
+
+    let merged =
+        merge_temporal_retrieve_results(Some(local), vec![forwarded(ForwardingMode::Inclusive, vec![joining])], TimeProp::Observed).expect("an entity");
+    assert_eq!(instances(&merged, SPEED), 2);
+    let only_remote = merge_temporal_retrieve_results(None, vec![forwarded(ForwardingMode::Inclusive, vec![alone])], TimeProp::Observed).expect("an entity");
+    assert_eq!(instances(&only_remote, SPEED), 1);
+}
+
 /// Clause 4.5.9 (T-D2): a read asked for `temporalValues` is gathered as
 /// instances, so what two holders answer for one `datasetId` is the instances
 /// of one dataset, which the writer then writes as one object of pairs.

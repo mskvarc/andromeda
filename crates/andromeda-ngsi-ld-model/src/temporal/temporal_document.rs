@@ -132,6 +132,16 @@ impl TemporalDocument {
         self.reshape_instances(|name, instances| instances.retain(|instance| keep(name, instance)));
     }
 
+    /// Keep only the instances that carry an instant on `timeproperty`. Clause
+    /// 4.5.7 places every instance of a temporal representation "at a
+    /// particular point in time, which is recorded as a Temporal Property of
+    /// the instance", so an instance with none on the requested property has
+    /// no place in a read on it. An attribute left without an instance stays,
+    /// with the family its instances recorded.
+    pub fn retain_positioned(&mut self, timeproperty: TimeProp) {
+        self.reshape_instances(|_, instances| instances.retain(|instance| instance.instant_on(timeproperty).is_some()));
+    }
+
     /// Keep, for every attribute, the `last_n` instances with the most recent
     /// instant on `timeproperty`, in ascending order of it: clause 5.7.3.4
     /// fixes which instants are kept, never the order of the response, and
@@ -140,8 +150,8 @@ impl TemporalDocument {
     /// the last n timestamps [...] of the temporal property", and it has none.
     pub fn keep_last(&mut self, timeproperty: TimeProp, last_n: NonZeroU32) {
         let keep = usize::try_from(last_n.get()).unwrap_or(usize::MAX);
+        self.retain_positioned(timeproperty);
         self.reshape_instances(|_, instances| {
-            instances.retain(|instance| instance.instant_on(timeproperty).is_some());
             instances.sort_by_key(|instance| Reverse(instance.instant_on(timeproperty)));
             instances.truncate(keep);
             instances.sort_by_key(|instance| instance.instant_on(timeproperty));
