@@ -42,6 +42,12 @@ pub struct Ahg;
 #[iden = "rs"]
 pub struct Rs;
 
+/// Alias `rh` for the `attribute_history` rows a candidate read names the
+/// Evolutions of.
+#[derive(Iden, Clone, Copy)]
+#[iden = "rh"]
+pub struct Rh;
+
 /// The `entity_id` name stage 1 projects the selected entity URI under.
 #[derive(Iden, Clone, Copy)]
 #[iden = "entity_id"]
@@ -49,7 +55,7 @@ pub struct EntityIdColumn;
 
 #[cfg(test)]
 mod tests {
-    use crate::alias::{Ah, Ahg, An, EntityIdColumn, Rs, S, Te};
+    use crate::alias::{Ah, Ahg, An, EntityIdColumn, Rh, Rs, S, Te};
     use sea_query::Iden;
 
     #[test]
@@ -60,6 +66,7 @@ mod tests {
         pretty_assertions::assert_eq!(Te.to_string(), "te");
         pretty_assertions::assert_eq!(Ahg.to_string(), "ahg");
         pretty_assertions::assert_eq!(Rs.to_string(), "rs");
+        pretty_assertions::assert_eq!(Rh.to_string(), "rh");
         pretty_assertions::assert_eq!(EntityIdColumn.to_string(), "entity_id");
     }
 }

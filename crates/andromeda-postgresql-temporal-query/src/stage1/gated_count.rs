@@ -3,10 +3,9 @@
 //! The count is exact, so it needs every match. Read from the step's index it
 //! costs the candidates, each tested for the filters the step does not answer;
 //! walked, it costs every Evolution of the walk, each tested for every filter.
-//! The statement reads at most the step's count bound plus one candidate
-//! behind a one-time gate: when they number at most the bound they are every
-//! candidate, and the walk narrowed to them is counted; when more qualify, the
-//! walk is.
+//! The statement reads at most `bound` plus one candidate behind a one-time
+//! gate: when they number at most the bound they are every candidate, and the
+//! walk narrowed to them is counted; when more qualify, the walk is.
 
 use crate::stage1::{
     candidate_step::CandidateStep,
@@ -24,7 +23,7 @@ use andromeda_postgresql_query::{
 };
 use sea_query::{Expr, Query, SelectStatement, WithClause};
 
-/// The count of stage 1 that `step` cuts.
+/// The count of stage 1 that `step` cuts from at most `bound` candidates.
 ///
 /// # Errors
 ///
@@ -34,6 +33,7 @@ pub(super) fn gated_count(
     compiled: &CompiledTemporalQuery,
     names: &QueryNames,
     step: &CandidateStep<'_>,
+    bound: u64,
 ) -> Result<SelectStatement, RenderError> {
     let window_match = || temporal_match_subquery(branch, compiled, names, BesideComparison::Key);
     let walked = evolution_rows(branch, compiled, names, Among::Every);
@@ -43,9 +43,9 @@ pub(super) fn gated_count(
     let indexed = counted_ids(narrowed.counted, residual, window_match());
     let walk = counted_ids(walked.counted, whole, window_match());
     let mut count = Query::select();
-    count.expr(Expr::case(within(Candidates, step.count_bound()), indexed).finally(walk)).with_cte(
+    count.expr(Expr::case(within(Candidates, bound), indexed).finally(walk)).with_cte(
         WithClause::new()
-            .cte(materialized(bounded(step.candidates(branch), step.count_bound()), Candidates))
+            .cte(materialized(bounded(step.candidates(branch), bound), Candidates))
             .to_owned(),
     );
     Ok(count.take())

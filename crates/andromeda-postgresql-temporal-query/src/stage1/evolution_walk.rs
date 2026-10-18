@@ -189,6 +189,7 @@ mod tests {
     use crate::stage1::{
         build_stage1_entity_ids,
         query_fixture::{
+            PageBranches,
             built,
             built_count,
             built_windowed,
@@ -372,16 +373,17 @@ mod tests {
     #[test]
     fn a_temporal_attrs_only_selection_reads_the_attribute_streams() {
         let (sql, _) = built(&speed_only(), &speed_and_address());
+        let walk = PageBranches::of(&sql).walk;
         assert!(
-            sql.starts_with(concat!(
-                r#"SELECT "e"."id" AS "entity_id" FROM (SELECT DISTINCT ON ("held"."id") "held"."id", "held"."temporal_entity_key" FROM "#,
+            walk.starts_with(concat!(
+                r#"AS "indexed") UNION ALL (SELECT * FROM (SELECT "e"."id" AS "entity_id" FROM (SELECT DISTINCT ON ("held"."id") "held"."id", "held"."temporal_entity_key" FROM "#,
                 r#"(SELECT "hr"."id", "hr"."temporal_entity_key" FROM (SELECT "id", "temporal_entity_key" FROM "temporal_attribute_streams" WHERE "attribute_name_key" = (7) ORDER BY "id" ASC) AS "hr""#
             )),
-            "{sql}"
+            "{walk}"
         );
         assert!(!sql.contains(r#"FROM "temporal_entities" AS "re" UNION ALL"#), "{sql}");
-        assert!(sql.contains(r#") AS "ah" WHERE "ah"."attribute_name_key" IN ($"#), "{sql}");
-        assert!(sql.ends_with(r#"ORDER BY "e"."id" ASC LIMIT $3 OFFSET $4"#), "{sql}");
+        assert!(walk.contains(r#") AS "ah" WHERE "ah"."attribute_name_key" IN ($"#), "{walk}");
+        assert!(walk.contains(r#"ORDER BY "e"."id" ASC LIMIT $"#), "{walk}");
     }
 
     /// The count totals the Evolutions the page walks; reading the queue, it

@@ -91,13 +91,16 @@ mod tests {
         assert!(!candidates.contains("lower(") && !candidates.contains("::"), "{candidates}");
     }
 
+    /// The identifier index answers an anchored pattern's start, so the query
+    /// takes the step of the window clause 5.7.4.4 makes every query carry,
+    /// and the pattern stays in the probe.
     #[test]
-    fn an_anchored_pattern_keeps_the_plain_walk() {
+    fn an_anchored_pattern_reads_no_trigrams() {
         for raw in ["^urn:ngsi-ld:Sensor:0123.*", "^urn:ngsi-ld:Sensor:012345$"] {
-            let stage1 = recorded_stage1(&id_pattern(None, raw));
-            let sql = stage1.select.to_string(PostgresQueryBuilder);
-            assert!(!sql.contains("candidates"), "{raw}: {sql}");
-            assert_eq!(stage1.planning, StatementPlanning::Cached, "{raw}");
+            let sql = recorded_stage1(&id_pattern(None, raw)).select.to_string(PostgresQueryBuilder);
+            let branches = PageBranches::of(&sql);
+            assert!(!branches.candidates.contains(r#""temporal_entities"."id" ~"#), "{raw}: {sql}");
+            assert!(branches.indexed.contains(r#""e"."id" ~ '^urn:ngsi-ld:Sensor:012"#), "{raw}: {sql}");
         }
     }
 
@@ -129,8 +132,10 @@ mod tests {
         );
     }
 
+    /// Paired selectors read no trigrams and take the window's step; a
+    /// requested ordering takes no step at all.
     #[test]
-    fn paired_selectors_or_an_ordering_keep_the_plain_walk() {
+    fn paired_selectors_read_no_trigrams_and_an_ordering_keeps_the_plain_walk() {
         let mut paired = id_pattern(Some("Sensor"), ".*:0123.*");
         paired.entities.selectors.push(
             EntitySelector::builder()
@@ -142,12 +147,14 @@ mod tests {
             direction: SortDirection::Ascending,
             collation: Some(IcuCollation::parse("de-u-co-phonebk").expect("valid collation")),
         });
-        for compiled in [paired, ordered] {
-            let stage1 = recorded_stage1(&compiled);
-            let sql = stage1.select.to_string(PostgresQueryBuilder);
-            assert!(!sql.contains("candidates"), "{sql}");
-            assert_eq!(stage1.planning, StatementPlanning::Cached);
-        }
+        let sql = recorded_stage1(&paired).select.to_string(PostgresQueryBuilder);
+        let branches = PageBranches::of(&sql);
+        assert!(!branches.candidates.contains(r#""temporal_entities"."id" ~"#), "{sql}");
+        assert!(branches.indexed.contains(r#""e"."id" ~ '.*:9.*'"#), "{sql}");
+        let stage1 = recorded_stage1(&ordered);
+        let sql = stage1.select.to_string(PostgresQueryBuilder);
+        assert!(!sql.contains("candidates"), "{sql}");
+        assert_eq!(stage1.planning, StatementPlanning::Cached);
     }
 
     #[test]

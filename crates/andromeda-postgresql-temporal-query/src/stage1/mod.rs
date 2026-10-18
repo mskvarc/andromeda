@@ -38,12 +38,13 @@ mod pattern_candidates;
 mod query_fixture;
 mod queued_candidates;
 mod scope_candidates;
+mod window_candidates;
 mod window_match;
 
 use crate::{
     alias::EntityIdColumn,
     stage1::{
-        candidate_step::CandidateStep,
+        candidate_step::{CandidateStep, CountRead},
         entity_conditions::{PatternTest, build_entity_conditions_for_temporal},
         evolution_walk::{Among, Evolutions, evolution_rows},
         gated_count::gated_count,
@@ -110,27 +111,28 @@ pub fn build_stage1_entity_ids(
 ) -> Result<Stage1Query, RenderError> {
     if let Some(step) = CandidateStep::chosen(compiled, names)? {
         let (select, read_order) = gated_walk(branch, compiled, window, names, &step)?;
-        let count = match count {
-            CountPolicy::Emit => Some(gated_count(branch, compiled, names, &step)?),
-            CountPolicy::Omit => None,
+        let count_read = step.count_read();
+        let count = match (count, count_read) {
+            (CountPolicy::Emit, CountRead::Gated(bound)) => Some(gated_count(branch, compiled, names, &step, bound)?),
+            (CountPolicy::Emit, CountRead::Walked) => Some(walked_count(branch, compiled, names)?),
+            (CountPolicy::Omit, CountRead::Gated(_) | CountRead::Walked) => None,
         };
-        // A gated statement's branches each take their own access path, and
-        // the count's arm is chosen by a bound only its values decide.
+        // A gated statement's branches each take their own access path.
         return Ok(Stage1Query {
             select,
             count,
             read_order,
             planning: StatementPlanning::GatedBranches,
-            count_planning: StatementPlanning::BoundValues,
+            count_planning: count_read.planning(),
         });
     }
-    let Evolutions { paged, counted, type_test } = evolution_rows(branch, compiled, names, Among::Every);
+    let Evolutions { paged, type_test, .. } = evolution_rows(branch, compiled, names, Among::Every);
     // Entity-level conditions, applied to the Evolutions under alias "e".
     let entity_conditions = build_entity_conditions_for_temporal(branch, compiled, names, type_test, PatternTest::Tested)?;
 
     let mut select = selected_ids(
         paged,
-        entity_conditions.clone(), // clone: the count query applies the same entity predicate
+        entity_conditions,
         temporal_match_subquery(branch, compiled, names, BesideComparison::Identifier),
     );
 
@@ -163,11 +165,7 @@ pub fn build_stage1_entity_ids(
     let read_order = apply_identifier_window(&mut select, SeaExpr::col((E, TemporalEntities::Id)), window);
 
     let count_statement = match count {
-        CountPolicy::Emit => Some(counted_ids(
-            counted,
-            entity_conditions,
-            temporal_match_subquery(branch, compiled, names, BesideComparison::Key),
-        )),
+        CountPolicy::Emit => Some(walked_count(branch, compiled, names)?),
         CountPolicy::Omit => None,
     };
 
@@ -180,6 +178,22 @@ pub fn build_stage1_entity_ids(
         planning: StatementPlanning::Cached,
         count_planning: StatementPlanning::Cached,
     })
+}
+
+/// How many Evolutions of the whole walk every filter and the step S1 window
+/// match keep.
+///
+/// # Errors
+///
+/// Fails as rendering the entity conditions fails.
+fn walked_count(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Result<SelectStatement, RenderError> {
+    let Evolutions { counted, type_test, .. } = evolution_rows(branch, compiled, names, Among::Every);
+    let conditions = build_entity_conditions_for_temporal(branch, compiled, names, type_test, PatternTest::Tested)?;
+    Ok(counted_ids(
+        counted,
+        conditions,
+        temporal_match_subquery(branch, compiled, names, BesideComparison::Key),
+    ))
 }
 
 /// The identifiers, as `entity_id`, of the Evolutions of `evolutions` that
@@ -210,7 +224,7 @@ fn counted_ids(evolutions: TableRef, conditions: Condition, window_match: Select
 mod tests {
     use crate::stage1::{
         build_stage1_entity_ids,
-        query_fixture::{built, built_count, built_windowed, ids, instant, minimal_compiled, point, sensor_names, sensors, speed_and_address},
+        query_fixture::{PageBranches, built, built_count, built_windowed, ids, instant, minimal_compiled, point, sensor_names, sensors, speed_and_address},
     };
     use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -244,11 +258,15 @@ mod tests {
         values.0.iter().any(|value| matches!(value, Value::ChronoDateTimeUtc(_)))
     }
 
+    /// A requested ordering cuts the page in an order no candidates are read
+    /// in, so the query takes no step.
     #[test]
     fn a_plain_stage1_is_planned_by_the_cache() {
+        let mut compiled = sensors();
+        compiled.ordering = Some(TemporalEntityOrdering::builder().direction(SortDirection::Ascending).build());
         let stage1 = build_stage1_entity_ids(
             &HistoryBranch::live_recorded(),
-            &sensors(),
+            &compiled,
             &PageWindow::offset(20, 0),
             CountPolicy::Emit,
             &sensor_names(),
@@ -470,23 +488,31 @@ mod tests {
     }
 
     /// Clause 6.3.13: the count is the number of entities the page is taken
-    /// from, so both read the same source.
+    /// from, so the count reads the walk the page falls to, with the same
+    /// window match.
     #[test]
     fn the_count_reads_the_same_source_as_the_page() {
         let mut compiled = minimal_compiled();
         compiled.window.interval = TimeInterval::After(instant("2024-01-01T00:00:00Z"));
-        let (page, _) = built(&compiled, &QueryNames::default());
-        let count = built_count(&compiled, &QueryNames::default());
-        let source = |sql: &str| {
-            let from = sql.find(" FROM ").expect("a FROM clause");
-            let entities = sql.rfind(r#") AS "e""#).expect("the entity source");
-            let tail = [" ORDER BY ", " LIMIT "]
-                .iter()
-                .filter_map(|clause| sql[entities..].find(clause).map(|at| entities + at))
-                .min()
-                .unwrap_or(sql.len());
+        let stage1 = build_stage1_entity_ids(
+            &HistoryBranch::live(),
+            &compiled,
+            &PageWindow::offset(20, 0),
+            CountPolicy::Emit,
+            &QueryNames::default(),
+        )
+        .expect("valid temporal query");
+        let page = stage1.select.to_string(PostgresQueryBuilder);
+        let count = stage1.count.expect("count requested").to_string(PostgresQueryBuilder);
+        let walk = PageBranches::of(&page).walk.replace(
+            r#"(SELECT COUNT(*) FROM "short_walk") < 20 AND (SELECT COUNT(*) FROM "candidates") > 10000 AND "#,
+            "",
+        );
+        let source = |sql: &str, head: &str| {
+            let from = sql.find(head).unwrap_or_else(|| panic!("{head} in {sql}")) + head.len();
+            let tail = sql[from..].find(r#" ORDER BY "e"."id""#).map_or(sql.len(), |at| from + at);
             sql[from..tail].to_owned()
         };
-        assert_eq!(source(&page), source(&count));
+        assert_eq!(source(&walk, r#"AS "entity_id" FROM "#), source(&count, r#"COUNT("e"."id") FROM "#));
     }
 }

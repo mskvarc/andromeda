@@ -5,14 +5,15 @@
 //!
 //! A statement takes one step at most. Every filter the step does not answer
 //! is tested on the narrowed walk, and a request no step applies to walks as
-//! before. A `q` term gets no step: history holds no index of its values that
-//! a numeric write could afford to keep.
+//! before. A `q` term gets no step of its own: history holds no index of its
+//! values that a numeric write could afford to keep.
 
 use crate::stage1::{
     entity_conditions::PatternTest,
     extent_candidates::{EXTENT_CANDIDATE_BOUND, EXTENT_SHORT_WALK, ExtentRead},
     pattern_candidates::pattern_candidates,
     scope_candidates::{SCOPE_CANDIDATE_BOUND, SCOPE_SHORT_WALK, scope_candidates},
+    window_candidates::{WINDOW_CANDIDATE_BOUND, WINDOW_SHORT_WALK, WindowRead},
 };
 use andromeda_ngsi_ld_query::{
     entity_selection::ConsideredEntities,
@@ -27,6 +28,7 @@ use andromeda_postgresql_query::{
     id_pattern_trigrams::{ID_PATTERN_CANDIDATE_BOUND, ID_PATTERN_SHORT_WALK, trigram_pattern},
     one_time_gate::COUNT_CANDIDATE_BOUND,
 };
+use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
 use sea_query::SelectStatement;
 
 /// The candidate step a stage 1 statement takes.
@@ -45,6 +47,32 @@ pub(super) enum CandidateStep<'q> {
     /// extent index yields the Evolutions holding a stream of the
     /// `GeoProperty` whose extent meets it, beside the contributed Entities.
     GeometryExtents(ExtentRead<'q>),
+    /// The window (clause 4.11) when it is bounded: the history rows inside
+    /// it yield the Evolutions with an instance of a concerned attribute
+    /// there.
+    Window(WindowRead<'q>),
+}
+
+/// How the count of a stage 1 statement with a candidate step is read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CountRead {
+    /// From the walk narrowed to the candidates while they number at most the
+    /// bound, else from the walk.
+    Gated(u64),
+    /// From the walk, whose window match already finds the Evolutions a
+    /// window answers by a semi-join over the time indexes.
+    Walked,
+}
+
+impl CountRead {
+    /// How PostgreSQL may plan the count.
+    pub(super) const fn planning(self) -> StatementPlanning {
+        match self {
+            // The count's arm is chosen by a bound only its values decide.
+            CountRead::Gated(_) => StatementPlanning::BoundValues,
+            CountRead::Walked => StatementPlanning::Cached,
+        }
+    }
 }
 
 impl<'q> CandidateStep<'q> {
@@ -52,9 +80,9 @@ impl<'q> CandidateStep<'q> {
     /// alone.
     ///
     /// The cheapest bounded read that applies is taken: the identifier
-    /// pattern, then the Scope paths, then the geometry extents. A requested
-    /// ordering cuts the page in an order no candidates are read in, so it
-    /// keeps the walk. The identifier pattern applies when one selector
+    /// pattern, then the Scope paths, then the geometry extents, then the
+    /// window. A requested ordering cuts the page in an order no candidates
+    /// are read in, so it keeps the walk. The identifier pattern applies when one selector
     /// carries it: several selectors pair each pattern with its own type,
     /// which one read of the trigrams cannot.
     ///
@@ -80,7 +108,10 @@ impl<'q> CandidateStep<'q> {
         if let Some(scope_q) = compiled.entities.scope_q.as_ref() {
             return Ok(Some(CandidateStep::ScopePaths(scope_q, &compiled.contributed)));
         }
-        Ok(ExtentRead::of(compiled, names)?.map(CandidateStep::GeometryExtents))
+        if let Some(extents) = ExtentRead::of(compiled, names)? {
+            return Ok(Some(CandidateStep::GeometryExtents(extents)));
+        }
+        Ok(WindowRead::of(compiled, names).map(CandidateStep::Window))
     }
 
     /// How many Evolutions the short walk visits before the candidates are
@@ -90,6 +121,7 @@ impl<'q> CandidateStep<'q> {
             CandidateStep::IdPattern(_) => ID_PATTERN_SHORT_WALK,
             CandidateStep::ScopePaths(..) => SCOPE_SHORT_WALK,
             CandidateStep::GeometryExtents(_) => EXTENT_SHORT_WALK,
+            CandidateStep::Window(_) => WINDOW_SHORT_WALK,
         }
     }
 
@@ -99,13 +131,15 @@ impl<'q> CandidateStep<'q> {
             CandidateStep::IdPattern(_) => ID_PATTERN_CANDIDATE_BOUND,
             CandidateStep::ScopePaths(..) => SCOPE_CANDIDATE_BOUND,
             CandidateStep::GeometryExtents(_) => EXTENT_CANDIDATE_BOUND,
+            CandidateStep::Window(_) => WINDOW_CANDIDATE_BOUND,
         }
     }
 
-    /// The most candidates a count reads before it walks instead.
-    pub(super) const fn count_bound(&self) -> u64 {
+    /// How the count is read.
+    pub(super) const fn count_read(&self) -> CountRead {
         match self {
-            CandidateStep::IdPattern(_) | CandidateStep::ScopePaths(..) | CandidateStep::GeometryExtents(_) => COUNT_CANDIDATE_BOUND,
+            CandidateStep::IdPattern(_) | CandidateStep::ScopePaths(..) | CandidateStep::GeometryExtents(_) => CountRead::Gated(COUNT_CANDIDATE_BOUND),
+            CandidateStep::Window(_) => CountRead::Walked,
         }
     }
 
@@ -113,7 +147,7 @@ impl<'q> CandidateStep<'q> {
     pub(super) const fn pattern_test(&self) -> PatternTest {
         match self {
             CandidateStep::IdPattern(_) => PatternTest::Answered,
-            CandidateStep::ScopePaths(..) | CandidateStep::GeometryExtents(_) => PatternTest::Tested,
+            CandidateStep::ScopePaths(..) | CandidateStep::GeometryExtents(_) | CandidateStep::Window(_) => PatternTest::Tested,
         }
     }
 
@@ -124,6 +158,7 @@ impl<'q> CandidateStep<'q> {
             CandidateStep::IdPattern(pattern) => pattern_candidates(branch, pattern),
             CandidateStep::ScopePaths(scope_q, contributed) => scope_candidates(branch, scope_q, contributed),
             CandidateStep::GeometryExtents(extents) => extents.candidates(branch),
+            CandidateStep::Window(window) => window.candidates(branch),
         }
     }
 }
@@ -132,16 +167,26 @@ impl<'q> CandidateStep<'q> {
 mod tests {
     use crate::stage1::{
         build_stage1_entity_ids,
-        query_fixture::{PageBranches, id_pattern, near_query, recorded_stage1, sensor_names, sensors},
+        query_fixture::{PageBranches, id_pattern, instant, near_query, recorded_stage1, sensor_names, sensors},
     };
-    use andromeda_ngsi_ld_query::{count_policy::CountPolicy, filter::parser, page_window::PageWindow, scope::query::ScopeQuery};
+    use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
+    use andromeda_ngsi_ld_query::{
+        count_policy::CountPolicy,
+        filter::parser,
+        page_window::PageWindow,
+        scope::query::ScopeQuery,
+        temporal::window::TimeInterval,
+    };
     use andromeda_postgresql_query::history_source::HistoryBranch;
     use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
+    /// Clause 5.7.4.4 refuses a query without a temporal query, so a `q`
+    /// query always carries a window, and the window's step is the one it
+    /// takes.
     #[test]
-    fn a_q_filter_keeps_the_walk() {
+    fn a_q_filter_takes_no_step_of_its_own() {
         let mut compiled = sensors();
         compiled.entities.q_expr = Some(parser::parse("\"https://uri.etsi.org/ngsi-ld/default-context/temperature\">99").expect("valid q"));
         let stage1 = build_stage1_entity_ids(
@@ -153,10 +198,13 @@ mod tests {
         )
         .expect("valid temporal query");
         let page = stage1.select.to_string(PostgresQueryBuilder);
-        assert!(!page.contains("candidates"), "{page}");
+        let branches = PageBranches::of(&page);
+        assert!(branches.candidates.contains(r#"FROM "attribute_history" AS "rh" JOIN"#), "{page}");
+        assert!(!branches.candidates.contains("value_number"), "{page}");
+        assert!(branches.indexed.contains("value_number"), "{page}");
         let count = stage1.count.expect("count requested").to_string(PostgresQueryBuilder);
         assert!(!count.contains("candidates"), "{count}");
-        assert_eq!(stage1.planning, StatementPlanning::Cached);
+        assert_eq!(stage1.planning, StatementPlanning::GatedBranches);
     }
 
     #[test]
@@ -182,5 +230,18 @@ mod tests {
         assert!(branches.candidates.contains(r#"FROM "scope_history" WHERE"#), "{sql}");
         assert!(!branches.candidates.contains("value_extent"), "{sql}");
         assert!(branches.indexed.contains("ST_DWithin("), "{sql}");
+    }
+
+    #[test]
+    fn another_step_takes_precedence_over_the_window() {
+        let mut compiled = sensors();
+        compiled.window.timeproperty = TimeProp::Modified;
+        compiled.window.interval = TimeInterval::After(instant("2026-10-18T03:00:00Z"));
+        compiled.entities.scope_q = Some(ScopeQuery::parse("/city/moved1").expect("valid scope query"));
+        let sql = recorded_stage1(&compiled).select.to_string(PostgresQueryBuilder);
+        let branches = PageBranches::of(&sql);
+        assert!(branches.candidates.contains(r#"FROM "scope_history" WHERE"#), "{sql}");
+        assert!(!branches.candidates.contains("attribute_history"), "{sql}");
+        assert!(branches.indexed.contains(r#""ah"."modified_at" >= "#), "{sql}");
     }
 }

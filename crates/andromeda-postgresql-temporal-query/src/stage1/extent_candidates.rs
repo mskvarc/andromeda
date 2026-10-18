@@ -226,8 +226,11 @@ mod tests {
         }
     }
 
+    /// Neither relation admits a box, so the query takes the step of the
+    /// window clause 5.7.4.4 makes every query carry, and the relation stays
+    /// in the probe.
     #[test]
-    fn a_disjoint_or_minimum_distance_query_keeps_the_walk() {
+    fn a_disjoint_or_minimum_distance_query_reads_no_extents() {
         let far = geo_query(
             GeoRel::Near {
                 max_distance: None,
@@ -236,10 +239,11 @@ mod tests {
             &serde_json::json!([4.5, 52.5]),
         );
         for compiled in [geo_query(GeoRel::Disjoint, &serde_json::json!([4.5, 52.5])), far] {
-            let stage1 = recorded_stage1(&compiled);
-            let sql = stage1.select.to_string(PostgresQueryBuilder);
-            assert!(!sql.contains("candidates"), "{sql}");
-            assert_eq!(stage1.planning, StatementPlanning::Cached);
+            let sql = type_page(&compiled);
+            let branches = PageBranches::of(&sql);
+            assert!(!sql.contains("value_extent"), "{sql}");
+            assert!(branches.candidates.contains(r#"FROM "attribute_history" AS "rh" JOIN"#), "{sql}");
+            assert!(branches.indexed.contains(r#""ahg"."value_geometry""#), "{sql}");
         }
     }
 
@@ -252,8 +256,10 @@ mod tests {
         }
     }
 
+    /// No stream records a `GeoProperty` the dictionary never keyed, so the
+    /// query reads no extent and takes the window's step.
     #[test]
-    fn an_unrecorded_geoproperty_keeps_the_plain_statement() {
+    fn an_unrecorded_geoproperty_reads_no_extents() {
         let types_alone = QueryNames {
             attributes: ResolvedNames::default(),
             types: ResolvedNames::from_pairs([(
@@ -270,8 +276,8 @@ mod tests {
         )
         .expect("valid temporal query");
         let sql = stage1.select.to_string(PostgresQueryBuilder);
-        assert!(!sql.contains("candidates"), "{sql}");
-        assert_eq!(stage1.planning, StatementPlanning::Cached);
+        assert!(!sql.contains("value_extent"), "{sql}");
+        assert!(PageBranches::of(&sql).candidates.contains(r#"FROM "attribute_history" AS "rh" JOIN"#), "{sql}");
     }
 
     #[test]
