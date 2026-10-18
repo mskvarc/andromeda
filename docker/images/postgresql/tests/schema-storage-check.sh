@@ -4,7 +4,8 @@
 # reconciler leave in a tenant database the broker creates on IMAGE: the
 # declared columnstore sparse indexes, the history BRIN parameters on the
 # hypertable and its chunk, the vacuum parameters of the queue and
-# current-state tables and of the history tables, the cached identity
+# current-state tables and of the history tables, the storage parameters of
+# the temporal Evolution table, the cached identity
 # sequences, the absence of any TimescaleDB conversion job, and the session
 # defaults the broker installs on the tenant and the platform database. IMAGE
 # is the TSL edition, whose columnstore the reconciler enables.
@@ -101,6 +102,10 @@ for table in entities entity_search entity_type_members entity_type_census entit
 	expect "$table vacuum parameters" "vacuum_truncate=false autovacuum_vacuum_scale_factor=0 threshold" \
 		"$(sql "$db" "SELECT string_agg(CASE WHEN option_name = 'autovacuum_vacuum_threshold' THEN 'threshold' ELSE option_name || '=' || option_value END, ' ' ORDER BY option_name <> 'vacuum_truncate', option_name) FROM pg_options_to_table((SELECT reloptions FROM pg_class WHERE oid = 'public.$table'::regclass)) WHERE option_name IN ('vacuum_truncate', 'autovacuum_vacuum_scale_factor') OR (option_name = 'autovacuum_vacuum_threshold' AND option_value::integer > 0)")"
 done
+
+expect "temporal_entities storage parameters" \
+	"{vacuum_truncate=false,fillfactor=70,autovacuum_vacuum_scale_factor=0,autovacuum_vacuum_threshold=500,autovacuum_analyze_scale_factor=0.02,autovacuum_analyze_threshold=500,autovacuum_vacuum_cost_delay=0}" \
+	"$(sql "$db" "SELECT reloptions FROM pg_class WHERE oid = 'public.temporal_entities'::regclass")"
 
 for column in notification_events.event_key notification_deliveries.delivery_key attribute_names.attribute_name_key entity_type_names.entity_type_name_key temporal_append_intents.intent_key; do
 	expected=32

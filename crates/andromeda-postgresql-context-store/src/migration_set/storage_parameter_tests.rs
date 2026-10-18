@@ -53,6 +53,31 @@ fn every_queue_and_current_state_table_keeps_its_tail_and_vacuums_by_the_rows_th
     }
 }
 
+/// Every write of an Entity updates its Evolution row, so the narrow row gets
+/// the high-volume profile and room for heap-only updates.
+#[test]
+fn the_temporal_catalogue_declares_the_high_volume_profile() {
+    let schema = DeclaredSchema::of_every_migration();
+    let declared: Vec<(&str, &str)> = schema
+        .storage_parameters
+        .iter()
+        .filter(|parameter| parameter.table == "temporal_entities")
+        .map(|parameter| (parameter.name.as_str(), parameter.value.as_str()))
+        .collect();
+    assert_eq!(
+        declared,
+        [
+            ("vacuum_truncate", "false"),
+            ("fillfactor", "70"),
+            ("autovacuum_vacuum_scale_factor", "0"),
+            ("autovacuum_vacuum_threshold", "500"),
+            ("autovacuum_analyze_scale_factor", "0.02"),
+            ("autovacuum_analyze_threshold", "500"),
+            ("autovacuum_vacuum_cost_delay", "0"),
+        ]
+    );
+}
+
 /// Notification events are never updated, only reaped, so their inserts are
 /// what leaves pages for a vacuum to mark all-visible.
 #[test]

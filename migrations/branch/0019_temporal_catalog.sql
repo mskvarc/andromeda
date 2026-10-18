@@ -13,6 +13,10 @@
 -- history the specification requires to survive; the Entity's URI is carried
 -- here independently.
 -- ============================================================================
+-- Every write of an Entity upserts its Evolution row with the same identifier
+-- and, almost always, the same types, so the update is heap-only while its
+-- page has room. The row is narrow, so the fillfactor reserves more room than
+-- `entities` does.
 create table temporal_entities (
     temporal_entity_key bigint generated always as identity (cache 32),
     created_at timestamptz not null,
@@ -24,6 +28,15 @@ create table temporal_entities (
     constraint uq_temporal_entities_id unique (id),
     constraint chk_temporal_entities_entity_type_name_keys_present check (cardinality(entity_type_name_keys) > 0),
     constraint chk_temporal_entities_id_length check (octet_length(id) <= 1024)
+)
+with (
+    vacuum_truncate = false,
+    fillfactor = 70,
+    autovacuum_vacuum_scale_factor = 0,
+    autovacuum_vacuum_threshold = 500,
+    autovacuum_analyze_scale_factor = 0.02,
+    autovacuum_analyze_threshold = 500,
+    autovacuum_vacuum_cost_delay = 0
 );
 
 create index idx_temporal_entities_entity_type_name_keys on temporal_entities using gin (entity_type_name_keys);
