@@ -18,7 +18,7 @@ use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
 use andromeda_postgresql_query::{
     dictionary::names_in_key_order::type_names_of,
-    history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, entity_rows::entity_rows, grain::HistoryGrain},
+    history_source::{HistoryBranch, attribute_rows::anonymous_attribute_rows, entity_rows::entity_rows, grain::HistoryGrain},
 };
 use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,
@@ -221,14 +221,15 @@ pub(crate) fn stream_catalog_join(statement: &mut SelectStatement, schema: Optio
 /// in the text column. The family is projected beside it because Table
 /// 4.5.19.1-3 is keyed on the family alone. Tombstone rows are excluded, which
 /// is also what makes the projection total — a deletion carries no value and so
-/// no shape.
+/// no shape. No Entity is named, so the rows are read without their
+/// Evolution's identifier.
 fn stored_attribute_shapes_query(branch: &HistoryBranch, names: &[&str]) -> SelectStatement {
     Query::select()
         .distinct()
         .column((An, AttributeNames::Name))
         .column((Ah, AttributeHistory::AttributeKind))
         .expr_as(recorded_shape(), RecordedShapeColumn)
-        .from(attribute_rows(branch, &HistoryOf::EveryEntity, Ah))
+        .from(anonymous_attribute_rows(branch, Ah))
         .join_as(
             JoinType::Join,
             AttributeNames::Table,
@@ -309,7 +310,7 @@ mod tests {
         temporal_entity_types_query,
     };
     use andromeda_postgresql_query::history_source::HistoryBranch;
-    use sea_query::PostgresQueryBuilder;
+    use sea_query::{Alias, IntoIden, PostgresQueryBuilder};
 
     #[test]
     fn no_catalogue_question_is_answered_from_current_state() {
@@ -332,6 +333,22 @@ mod tests {
         let sql = stored_attribute_shapes_query(&HistoryBranch::live(), &["https://ex/speed"]).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"UNION ALL (SELECT "pe"."entity_id" AS "entity_id""#), "{sql}");
         assert!(sql.contains(r#""ah"."value_kind" <> 0"#), "{sql}");
+    }
+
+    /// Over no queue the shapes are read from the history and its streams
+    /// alone: the shape read names no Entity, so no catalogue row of an
+    /// Evolution is joined.
+    #[test]
+    fn recorded_shapes_over_no_queue_read_no_evolution_row() {
+        for branch in [HistoryBranch::live_recorded(), HistoryBranch::recorded_in(Alias::new("snap_1").into_iden())] {
+            let sql = stored_attribute_shapes_query(&branch, &["https://ex/speed"]).to_string(PostgresQueryBuilder);
+            assert!(!sql.contains("temporal_entities"), "{sql}");
+            assert!(
+                sql.contains(r#"JOIN "attribute_names" AS "an" ON "an"."attribute_name_key" = "ah"."attribute_name_key""#),
+                "{sql}"
+            );
+            assert!(sql.contains(r#""ah"."value_kind" <> 0"#), "{sql}");
+        }
     }
 
     /// Clause 4.5.6: an Entity whose only history is a queued intent stating

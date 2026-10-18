@@ -91,6 +91,16 @@ fn recorded_row_columns(select: &mut SelectStatement, schema: Option<&DynIden>) 
         );
 }
 
+/// The recorded rows of the branch `schema` names, their grain naming the
+/// Evolution by the surrogate key the stream carries, so no catalogue row of
+/// the Evolution is read.
+fn keyed_recorded_rows(schema: Option<&DynIden>) -> SelectStatement {
+    let mut rows = Query::select();
+    keyed_grain(&mut rows);
+    recorded_row_columns(&mut rows, schema);
+    rows
+}
+
 /// The recorded rows of the branch `schema` names, less those a queued entry
 /// replaces when `pending` unions them.
 fn recorded_rows(schema: Option<&DynIden>, of: &HistoryOf, pending: PendingEntries) -> SelectStatement {
@@ -125,6 +135,20 @@ pub fn attribute_rows(branch: &HistoryBranch, of: &HistoryOf, alias: impl IntoId
     TableRef::SubQuery(Box::new(rows), alias.into_iden())
 }
 
+/// Every attribute history row `branch` holds, under `alias`, for a statement
+/// that reads no Evolution's identifier: where the branch reads no queue, its
+/// recorded rows named by surrogate key with no catalogue row read; where it
+/// reads its queue, the rows of [`attribute_rows`] over every Evolution.
+///
+/// A recorded row stays beside the queued entries by its Evolution's
+/// identifier, so a branch reading its queue keeps the catalogue join.
+pub fn anonymous_attribute_rows(branch: &HistoryBranch, alias: impl IntoIden) -> TableRef {
+    match branch.pending() {
+        PendingEntries::Absent => TableRef::SubQuery(Box::new(keyed_recorded_rows(branch.schema())), alias.into_iden()),
+        PendingEntries::Unioned => attribute_rows(branch, &HistoryOf::EveryEntity, alias),
+    }
+}
+
 /// The attribute history `branch` holds for the Evolution `read` is taken
 /// for, under `alias`: read for it inside, or every recorded row, named by
 /// what the comparison beside reads.
@@ -132,12 +156,7 @@ pub fn entity_attribute_rows(branch: &HistoryBranch, read: &EntityHistory, alias
     match read {
         EntityHistory::Inside(of) => attribute_rows(branch, of, alias),
         EntityHistory::BesideById(_) => attribute_rows(branch, &HistoryOf::EveryEntity, alias),
-        EntityHistory::BesideByKey(_) => {
-            let mut rows = Query::select();
-            keyed_grain(&mut rows);
-            recorded_row_columns(&mut rows, branch.schema());
-            TableRef::SubQuery(Box::new(rows), alias.into_iden())
-        }
+        EntityHistory::BesideByKey(_) => TableRef::SubQuery(Box::new(keyed_recorded_rows(branch.schema())), alias.into_iden()),
     }
 }
 
@@ -361,7 +380,7 @@ mod tests {
         HistoryBranch,
         HistoryOf,
         HistoryStream,
-        attribute_rows::{attribute_rows, entity_attribute_rows, entity_stream_rows, stream_attribute_parts, stream_rows},
+        attribute_rows::{anonymous_attribute_rows, attribute_rows, entity_attribute_rows, entity_stream_rows, stream_attribute_parts, stream_rows},
     };
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use sea_query::{Alias, Asterisk, DynIden, Expr, IntoIden, PostgresQueryBuilder, Query};
@@ -464,6 +483,39 @@ mod tests {
                 r#"SELECT * FROM (SELECT "rs"."temporal_entity_key" AS "temporal_entity_key", "rs"."attribute_name_key" AS "attribute_name_key", "#,
                 r#""rs"."dataset_id" AS "dataset_id", "rs"."stream_key" AS "stream_key" FROM "snap_1"."temporal_attribute_streams" AS "rs") AS "s""#
             )
+        );
+    }
+
+    /// Over no queue, every row a statement reads without an identifier names
+    /// its Evolution by the key its stream carries, with no catalogue row.
+    #[test]
+    fn every_recorded_row_read_without_an_identifier_names_its_evolution_by_key() {
+        for (branch, history) in [
+            (HistoryBranch::live_recorded(), r#"FROM "attribute_history" AS "rh""#),
+            (HistoryBranch::recorded_in(snapshot()), r#"FROM "snap_1"."attribute_history" AS "rh""#),
+        ] {
+            let sql = rendered(anonymous_attribute_rows(&branch, Alias::new("ah")));
+            assert!(
+                sql.starts_with(
+                    r#"SELECT * FROM (SELECT "rs"."temporal_entity_key" AS "temporal_entity_key", "rs"."attribute_name_key" AS "attribute_name_key""#
+                ),
+                "{sql}"
+            );
+            assert!(sql.contains(history), "{sql}");
+            assert!(sql.ends_with(r#"ON "rs"."stream_key" = "rh"."stream_key") AS "ah""#), "{sql}");
+            assert!(!sql.contains("temporal_entities") && !sql.contains("entity_id"), "{sql}");
+        }
+    }
+
+    /// Reading its queue, the branch keeps or leaves out a recorded row by its
+    /// Evolution's identifier, so the rows are those of every Evolution with
+    /// the catalogue joined.
+    #[test]
+    fn the_rows_read_without_an_identifier_over_a_queue_are_every_evolutions_rows() {
+        let branch = HistoryBranch::live();
+        pretty_assertions::assert_eq!(
+            rendered(anonymous_attribute_rows(&branch, Alias::new("ah"))),
+            rendered(attribute_rows(&branch, &HistoryOf::EveryEntity, Alias::new("ah")))
         );
     }
 
