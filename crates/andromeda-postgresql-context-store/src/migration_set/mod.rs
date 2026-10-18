@@ -51,6 +51,9 @@ mod dictionary_append_only_tests;
 /// The naming and storage conventions, checked against the declared schema.
 #[cfg(test)]
 mod naming_tests;
+/// The indexes of Scope history, read by Entity alone.
+#[cfg(test)]
+mod scope_history_index_tests;
 /// The byte bounds the migrations state, tied to the Rust constants.
 #[cfg(test)]
 mod storage_bound_tests;

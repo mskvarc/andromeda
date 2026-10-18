@@ -87,7 +87,7 @@ fn every_history_brin_index_covers_32_pages_and_summarises_as_appends_pass() {
             index.name.as_str()
         })
         .collect();
-    assert_eq!(brin.len(), 8, "one summary per semantic axis on each history table: {brin:?}");
+    assert_eq!(brin.len(), 4, "one summary per semantic axis of attribute history: {brin:?}");
 }
 
 #[test]

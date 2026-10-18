@@ -29,12 +29,17 @@
 -- Clause 4.18 makes the leading `/` optional and the label path forgets it,
 -- while clause 4.6.4 has the broker "return the original content".
 --
--- Each semantic axis has a BRIN summary and no B-tree: the entity-led B-trees
--- answer entity-scoped reads, and a broad `observedAt`, `createdAt`,
--- `modifiedAt` or `deletedAt` window that names no entity reads the summary.
--- Each summary covers 32 pages and summarises a range as soon as appends move
--- past it, as attribute history's do, and the table takes an insert-driven
--- vacuum once a twentieth of its rows are new.
+-- Every read of the table is the Scope of one Entity, so the entity-led
+-- B-trees are its only indexes. Clause 5.7.4.4 selects Entities by their
+-- Attribute instances and only then keeps those whose Scope instances match a
+-- `scopeQ`, and clause 4.18 makes that match an overlap of validity intervals
+-- rather than an event inside the window, so no statement reads the table by
+-- path or by time across Entities. An index over the whole table, a GiST on
+-- the path or a BRIN on an axis, is only ever ANDed into the lookup of an
+-- Entity's few rows, and its bitmap costs far more than filtering them.
+--
+-- The table takes an insert-driven vacuum once a twentieth of its rows are
+-- new.
 -- ============================================================================
 create table scope_history (
     recorded_at timestamptz not null,
@@ -61,17 +66,4 @@ create index idx_scope_history_entity_recorded_at on scope_history (temporal_ent
 create index idx_scope_history_entity_observed_at on scope_history (temporal_entity_key, observed_at desc)
 where
     observed_at is not null;
-
--- `scopeQ` matching over recorded Scopes (clause 4.19).
-create index idx_scope_history_scope_path on scope_history using gist (scope_path)
-where
-    scope_path is not null;
-
-create index idx_scope_history_observed_at_brin on scope_history using brin (observed_at timestamptz_minmax_multi_ops) with (pages_per_range = 32, autosummarize = on);
-
-create index idx_scope_history_created_at_brin on scope_history using brin (created_at timestamptz_minmax_multi_ops) with (pages_per_range = 32, autosummarize = on);
-
-create index idx_scope_history_modified_at_brin on scope_history using brin (modified_at timestamptz_minmax_multi_ops) with (pages_per_range = 32, autosummarize = on);
-
-create index idx_scope_history_deleted_at_brin on scope_history using brin (deleted_at timestamptz_minmax_multi_ops) with (pages_per_range = 32, autosummarize = on);
 

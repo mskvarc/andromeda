@@ -83,8 +83,7 @@ expect "history chunks" 1 "$(sql "$db" "SELECT count(*) FROM show_chunks('attrib
 expect "chunk statistics recorded for chunk skipping" 0 "$(sql "$db" "SELECT count(*) FROM _timescaledb_catalog.chunk_column_stats")"
 
 brin_options="{pages_per_range=32,autosummarize=on}"
-for index in idx_attribute_history_observed_at_brin idx_attribute_history_created_at_brin idx_attribute_history_modified_at_brin idx_attribute_history_deleted_at_brin \
-	idx_scope_history_observed_at_brin idx_scope_history_created_at_brin idx_scope_history_modified_at_brin idx_scope_history_deleted_at_brin; do
+for index in idx_attribute_history_observed_at_brin idx_attribute_history_created_at_brin idx_attribute_history_modified_at_brin idx_attribute_history_deleted_at_brin; do
 	expect "$index" "$brin_options" "$(sql "$db" "SELECT reloptions FROM pg_class WHERE oid = 'public.$index'::regclass")"
 done
 expect "BRIN indexes of the attribute_history chunk" "4 $brin_options" \
