@@ -146,6 +146,21 @@ pub fn bounding_boxes_overlap(geometry: SimpleExpr, envelope: SimpleExpr) -> Sim
     geometry.binary(BinOper::Custom(BOUNDING_BOXES_OVERLAP), envelope)
 }
 
+/// `PostGIS`: `geometry::box2d && envelope::box2d` - the same bounding-box
+/// overlap as [`bounding_boxes_overlap`], over boxes no geometry index stores.
+///
+/// A predicate that reads its rows through another index keeps the box test
+/// without letting the planner AND a geometry `GiST` into that lookup.
+#[must_use]
+pub fn unindexed_bounding_boxes_overlap(geometry: SimpleExpr, envelope: SimpleExpr) -> SimpleExpr {
+    // One fragment rather than a binary expression, whose operands sea-query
+    // would parenthesise: `::` already binds tighter than `&&`.
+    Expr::cust_with_exprs(
+        format!("$1 {BOUNDING_BOXES_OVERLAP} $2"),
+        [cast(geometry, PostgresType::Box2d), cast(envelope, PostgresType::Box2d)],
+    )
+}
+
 /// `PostGIS`: `ST_GeomFromEWKB(bytes)` - creates geometry from EWKB (SRID embedded).
 fn st_geom_from_ewkb(ewkb: SimpleExpr) -> SimpleExpr {
     Func::cust(PostgisFunction::GeomFromEwkb).args([ewkb]).into()
@@ -198,6 +213,19 @@ mod tests {
             .to_owned()
             .build(PostgresQueryBuilder);
         pretty_assertions::assert_eq!(sql, r#"SELECT "c"."value_geometry" && ST_MakeEnvelope($1, $2, $3, $4, $5)"#);
+        pretty_assertions::assert_eq!(values.0.len(), 5);
+    }
+
+    #[test]
+    fn an_unindexed_overlap_compares_both_operands_as_box2d() {
+        let (sql, values) = Query::select()
+            .expr(unindexed_bounding_boxes_overlap(
+                Expr::col(("c", "value_geometry")),
+                st_make_envelope([1.0, 2.0], [3.0, 4.0]),
+            ))
+            .to_owned()
+            .build(PostgresQueryBuilder);
+        pretty_assertions::assert_eq!(sql, r#"SELECT "c"."value_geometry"::box2d && ST_MakeEnvelope($1, $2, $3, $4, $5)::box2d"#);
         pretty_assertions::assert_eq!(values.0.len(), 5);
     }
 

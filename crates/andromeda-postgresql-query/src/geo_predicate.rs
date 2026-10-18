@@ -4,7 +4,8 @@
 //! filters on. What varies between callers is where the subject geometry is
 //! read from and what a row without one means; the relations themselves do not
 //! vary. [`relation_expression`] and [`near_envelope_prefilter`] are that one
-//! reading; [`condition`] applies it to an entity's `GeoProperty` instances,
+//! reading, with [`near_envelope_unindexed_prefilter`] the same envelope for a
+//! per-Evolution probe; [`condition`] applies it to an entity's `GeoProperty` instances,
 //! and [`registration_area`] to the geometry a registration declares, with the
 //! relation [`AreaCondition`] reduces the geoquery to, since that geometry bounds
 //! where the source's Entities are rather than where one of them is (clause
@@ -57,6 +58,7 @@ use andromeda_postgresql_seaquery::{
         st_make_envelope,
         st_overlaps,
         st_within,
+        unindexed_bounding_boxes_overlap,
         validated_geom_from_ewkb,
     },
 };
@@ -148,6 +150,23 @@ pub fn registration_area(geo: &GeoQuery, geometry: &SimpleExpr) -> Result<Option
 /// vertices only. A stored edge long enough for its great circle to bow past
 /// its vertices towards the reference can therefore still be discarded.
 pub fn near_envelope_prefilter(geo: &GeoQuery, geometry: &SimpleExpr) -> Option<SimpleExpr> {
+    near_envelope_test(geo, geometry, bounding_boxes_overlap)
+}
+
+/// The box test of [`near_envelope_prefilter`] over boxes no geometry index
+/// stores, or `None` for any relation that admits no box.
+///
+/// For a probe that reads one Evolution's rows through its stream index: an
+/// indexable test there lets the planner AND a geometry `GiST` into every
+/// probe, while this one only spares the spheroidal distance of the rows it
+/// discards.
+pub fn near_envelope_unindexed_prefilter(geo: &GeoQuery, geometry: &SimpleExpr) -> Option<SimpleExpr> {
+    near_envelope_test(geo, geometry, unindexed_bounding_boxes_overlap)
+}
+
+/// `overlap` of `geometry` with each rectangle of the [`NearEnvelope`] a
+/// `near` relation with a `maxDistance` admits, joined by `OR`.
+fn near_envelope_test(geo: &GeoQuery, geometry: &SimpleExpr, overlap: fn(SimpleExpr, SimpleExpr) -> SimpleExpr) -> Option<SimpleExpr> {
     let GeoRel::Near {
         max_distance: Some(max_distance),
         ..
@@ -160,7 +179,7 @@ pub fn near_envelope_prefilter(geo: &GeoQuery, geometry: &SimpleExpr) -> Option<
         .rects()
         .iter()
         // clone: each rectangle of a split envelope tests the same column
-        .map(|rect| bounding_boxes_overlap(geometry.clone(), st_make_envelope([rect.min().x, rect.min().y], [rect.max().x, rect.max().y])))
+        .map(|rect| overlap(geometry.clone(), st_make_envelope([rect.min().x, rect.min().y], [rect.max().x, rect.max().y])))
         .reduce(ExprTrait::or)
 }
 
@@ -243,9 +262,16 @@ mod tests {
         dictionary::resolved_names::ResolvedNames,
         entity_row_refs::EntityRowRefs,
         error::RenderError,
-        geo_predicate::condition,
+        geo_predicate::{condition, near_envelope_prefilter, near_envelope_unindexed_prefilter},
     };
-    use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
+    use andromeda_ngsi_ld_geometry::{
+        dimension::GeometryDimension,
+        geo_rel::GeoRel,
+        geometry::Geometry,
+        great_circle::great_circle_bounds,
+        near_envelope::NearEnvelope,
+        positive_distance::PositiveDistance,
+    };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::{
         error::QueryError,
@@ -254,7 +280,7 @@ mod tests {
     use andromeda_postgresql_encoding::ewkb::encode;
     use andromeda_postgresql_schema::current::Entities;
     use pretty_assertions::{assert_eq, assert_ne};
-    use sea_query::{Alias, Condition, PostgresQueryBuilder, Query, Value, Values};
+    use sea_query::{Alias, Condition, Expr, PostgresQueryBuilder, Query, SimpleExpr, Value, Values};
     use std::{str::FromStr, sync::LazyLock};
 
     /// The unaliased entity rows the entity path filters.
@@ -564,6 +590,58 @@ mod tests {
             .filter(|double| double.abs() <= 90.0)
             .fold(f64::NEG_INFINITY, f64::max);
         assert!(north >= 0.045_218, "the box reaches latitude {north}");
+    }
+
+    /// The instance geometry column a box test is rendered over.
+    fn instance_geometry() -> SimpleExpr {
+        Expr::col((Alias::new("geo_instance"), Alias::new("value_geometry")))
+    }
+
+    /// A box test alone, with its bound values.
+    fn render_box_test(test: SimpleExpr) -> (String, Values) {
+        Query::select().expr(test).build(PostgresQueryBuilder)
+    }
+
+    #[test]
+    fn the_unindexed_box_is_the_near_envelope() {
+        let geo = near_query(4.5, 52.5, Some("2000"), None);
+        let (sql, values) = render_box_test(near_envelope_unindexed_prefilter(&geo, &instance_geometry()).expect("a near box"));
+        assert_eq!(
+            sql.matches("\"geo_instance\".\"value_geometry\"::box2d && ST_MakeEnvelope(").count(),
+            1,
+            "{sql}"
+        );
+        assert!(sql.ends_with(")::box2d"), "{sql}");
+        let reference = great_circle_bounds(&geo.geometry.planar()).expect("a point has bounds");
+        let NearEnvelope::Single(rect) = NearEnvelope::around(reference, PositiveDistance::from_str("2000").expect("positive distance")) else {
+            panic!("a reference far from the antimeridian has one rectangle");
+        };
+        assert_eq!(bound_doubles(&values), [rect.min().x, rect.min().y, rect.max().x, rect.max().y]);
+
+        let across = near_query(179.99, 52.5, Some("2000"), None);
+        let (sql, _) = render_box_test(near_envelope_unindexed_prefilter(&across, &instance_geometry()).expect("a near box"));
+        assert_eq!(
+            sql.matches("\"geo_instance\".\"value_geometry\"::box2d && ST_MakeEnvelope(").count(),
+            2,
+            "{sql}"
+        );
+        assert!(
+            sql.contains(")::box2d) OR (\"geo_instance\".\"value_geometry\"::box2d && ST_MakeEnvelope("),
+            "{sql}"
+        );
+    }
+
+    /// The Entity geo-query and registration discovery read the geometry
+    /// through its `GiST` index, so their box test stays the indexable `&&`.
+    #[test]
+    fn the_entity_and_registration_prefilters_stay_indexable() {
+        let geo = near_query(4.5, 52.5, Some("2000"), None);
+        let (sql, _) = render_box_test(near_envelope_prefilter(&geo, &instance_geometry()).expect("a near box"));
+        assert!(sql.contains("\"geo_instance\".\"value_geometry\" && ST_MakeEnvelope("), "{sql}");
+        assert!(!sql.contains("::box2d"), "{sql}");
+        let entity = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).expect("renders"));
+        assert!(entity.contains("\"geo_instance\".\"value_geometry\" && ST_MakeEnvelope("), "{entity}");
+        assert!(!entity.contains("::box2d"), "{entity}");
     }
 
     #[test]

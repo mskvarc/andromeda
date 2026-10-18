@@ -33,6 +33,10 @@ pub enum PostgresType {
     /// `geography`, the spheroidal type `near`/distance operands cast to.
     #[iden = "geography"]
     Geography,
+    /// `box2d`, a geometry's planar bounding box, which no geometry index
+    /// stores.
+    #[iden = "box2d"]
+    Box2d,
     /// `integer`.
     #[iden = "integer"]
     Integer,
@@ -139,6 +143,7 @@ mod tests {
         assert_eq!(PostgresType::Time.to_string(), "time");
         assert_eq!(PostgresType::Text.to_string(), "text");
         assert_eq!(PostgresType::Geography.to_string(), "geography");
+        assert_eq!(PostgresType::Box2d.to_string(), "box2d");
         assert_eq!(PostgresType::Interval.to_string(), "interval");
         assert_eq!(PostgresType::Lquery.to_string(), "lquery");
         assert_eq!(PostgresType::Jsonb.to_string(), "jsonb");

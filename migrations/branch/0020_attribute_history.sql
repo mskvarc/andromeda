@@ -52,6 +52,12 @@
 -- references nothing in the database: the identity is the `cefact-units`
 -- assignment.
 --
+-- The table has no spatial index. Clause 5.7.4.4 checks a geoquery against
+-- the `GeoProperty` instances of each Entity it selects, so every spatial read
+-- is one Evolution's rows, reached through the stream indexes. A geometry
+-- index over the whole table is only ever ANDed into that lookup, and its
+-- bitmap costs far more than filtering the few rows.
+--
 -- An insert-driven vacuum runs once a twentieth of the rows are new rather
 -- than the default fifth. A hypertable chunk copies the parameter when it is
 -- created, so the chunk receiving appends is vacuumed in smaller steps.
@@ -151,10 +157,6 @@ where
 create index idx_attribute_history_stream_verbatim_instance on attribute_history (stream_key, verbatim_instance_id)
 where
     verbatim_instance_id is not null;
-
-create index idx_attribute_history_value_geometry on attribute_history using gist (value_geometry)
-where
-    value_geometry is not null;
 
 -- One BRIN summary per semantic time axis. A window on `recorded_at` is
 -- answered by chunk exclusion, and the B-trees above lead with `stream_key`,

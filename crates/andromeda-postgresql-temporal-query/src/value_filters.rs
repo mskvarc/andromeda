@@ -22,7 +22,7 @@ use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, contrib
 use andromeda_postgresql_query::{
     dictionary::query_names::QueryNames,
     error::RenderError,
-    geo_predicate::relation_expression,
+    geo_predicate::{near_envelope_unindexed_prefilter, relation_expression},
     history_source::{EvolutionColumns, HistoryBranch, HistoryOf, attribute_rows::attribute_rows, grain::HistoryGrain},
     q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, projection as q_filter},
     scope_predicate::{ScopeTarget, condition as scope_condition},
@@ -135,6 +135,13 @@ pub(crate) fn windowed_instances(branch: &HistoryBranch, compiled: &CompiledTemp
 /// the source; one the dictionary never keyed has no history and matches no
 /// instance.
 ///
+/// A `near` relation with a `maxDistance` first tests the near envelope as a
+/// box no geometry index serves: the probe reads one Evolution's rows through
+/// its stream index, and an indexable box would have the planner AND a
+/// geometry index into every probe. The spheroidal distance then runs only on
+/// the rows the box keeps. The area relations test the boxes inside their own
+/// functions.
+///
 /// # Errors
 ///
 /// Returns [`RenderError::ReferenceGeometryEncoding`] or [`RenderError::Query`]
@@ -151,6 +158,7 @@ pub(crate) fn temporal_geo_existential(
 
     let planar = SeaExpr::col((Ahg, AttributeHistory::ValueGeometry));
     let geographic = cast(SeaExpr::col((Ahg, AttributeHistory::ValueGeometry)), PostgresType::Geography);
+    let near_box = near_envelope_unindexed_prefilter(geo, &planar);
     let spatial = relation_expression(&geo.georel, planar, geographic, &geo.geometry)?;
     let geoproperty = names
         .attributes
@@ -163,8 +171,11 @@ pub(crate) fn temporal_geo_existential(
         .from(attribute_rows(branch, of, Ahg))
         .and_where(geoproperty)
         .and_where(SeaExpr::col((Ahg, AttributeHistory::ValueGeometry)).is_not_null())
-        .cond_where(geo_window_condition(compiled))
-        .cond_where(spatial);
+        .cond_where(geo_window_condition(compiled));
+    if let Some(near_box) = near_box {
+        probe.and_where(near_box);
+    }
+    probe.cond_where(spatial);
     Ok(Some(probe.take()))
 }
 
@@ -293,6 +304,20 @@ mod tests {
         compiled
     }
 
+    /// `georel` with a small square around 4.5, 52.5 on `location`.
+    fn area(georel: GeoRel, mut compiled: CompiledTemporalQuery) -> CompiledTemporalQuery {
+        compiled.entities.geo = Some(GeoQuery {
+            georel,
+            geometry: serde_json::from_value::<Geometry>(serde_json::json!({
+                "type": "Polygon",
+                "coordinates": [[[4.49, 52.49], [4.51, 52.49], [4.51, 52.51], [4.49, 52.51], [4.49, 52.49]]],
+            }))
+            .expect("polygon"),
+            geoproperty: LOCATION.parse().expect("valid attribute name"),
+        });
+        compiled
+    }
+
     /// `scopeQ=/city/moved1`.
     fn moved(mut compiled: CompiledTemporalQuery) -> CompiledTemporalQuery {
         compiled.entities.scope_q = Some(ScopeQuery::parse("/city/moved1").expect("valid scope query"));
@@ -341,6 +366,32 @@ mod tests {
         let (sql, values) = geo_probe(&HistoryBranch::live_recorded(), &names());
         assert_eq!(bound_after(&sql, &values, GEO_KEY), Some(Value::Int(Some(2))), "{sql}");
         assert!(!sql.contains("attribute_names"), "{sql}");
+    }
+
+    #[test]
+    fn the_temporal_near_probe_prefilters_by_an_unindexed_box() {
+        let (sql, _) = geo_probe(&HistoryBranch::live_recorded(), &names());
+        let unindexed = sql.find(r#""ahg"."value_geometry"::box2d && ST_MakeEnvelope("#).expect("the unindexed box");
+        let distance = sql.find("ST_DWithin").expect("the distance");
+        assert!(unindexed < distance, "{sql}");
+        assert!(sql[unindexed..distance].contains(")::box2d"), "{sql}");
+        assert!(!sql.contains(r#""ahg"."value_geometry" && ST_MakeEnvelope("#), "{sql}");
+    }
+
+    #[test]
+    fn an_area_relation_carries_no_box_prefilter() {
+        for georel in [GeoRel::Within, GeoRel::Intersects] {
+            let sql = temporal_geo_existential(
+                &HistoryBranch::live_recorded(),
+                &area(georel, compiled(before_2030())),
+                &names(),
+                &stage1_evolution(),
+            )
+            .expect("renders")
+            .expect("a geo query")
+            .to_string(PostgresQueryBuilder);
+            assert!(!sql.contains("::box2d"), "{sql}");
+        }
     }
 
     /// A `GeoProperty` the dictionary never keyed has no history, so the

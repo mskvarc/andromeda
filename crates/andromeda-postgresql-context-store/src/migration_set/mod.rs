@@ -32,6 +32,9 @@ pub mod platform;
 /// The tenant migration set: `tenant/` together with `branch/`.
 pub mod tenant;
 
+/// The indexes of attribute history, read by stream alone.
+#[cfg(test)]
+mod attribute_history_index_tests;
 /// The comment rules every migration's text keeps.
 #[cfg(test)]
 mod comment_tests;
