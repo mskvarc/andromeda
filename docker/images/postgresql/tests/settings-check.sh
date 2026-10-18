@@ -111,8 +111,8 @@ expect '2g max_parallel_workers' "$(sql limits-2g 'SHOW max_parallel_workers')" 
 expect '2g io_workers' "$(sql limits-2g 'SHOW io_workers')" 3
 # 5% of 2048MB over the tuner's 10 workers is 10MB, below the 32MB floor.
 expect '2g autovacuum_work_mem' "$(setting_mb limits-2g autovacuum_work_mem)" 32
-# A 32nd of 512MB shared_buffers, the tuner's 16MB.
-expect '2g wal_buffers' "$(setting_mb limits-2g wal_buffers)" 16
+# A 32nd of 512MB shared_buffers is 16MB, raised to the 32MB floor.
+expect '2g wal_buffers' "$(setting_mb limits-2g wal_buffers)" 32
 expect '2g timescaledb.max_background_workers default' \
 	"$(sql limits-2g 'SHOW timescaledb.max_background_workers')" 64
 # The tuner sizes work_mem without hash_mem_multiplier or autovacuum:

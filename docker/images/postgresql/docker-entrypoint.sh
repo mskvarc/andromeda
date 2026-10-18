@@ -463,14 +463,17 @@ andromeda_write_derived() {
 	# One spilling query fails instead of filling the data volume.
 	data_kb="$(andromeda_filesystem_kb "$PGDATA")"
 	# The tuner, like PostgreSQL's own sizing, stops at 16MB; WAL-heavy batch
-	# writes then wait on WALWrite. A 32nd of shared_buffers, up to 64MB, and
-	# never below the tuner's value.
+	# writes then wait on WALWrite. A 32nd of shared_buffers, within 32MB and
+	# 64MB, and never below the tuner's value. At 16MB a 2GB server ingests
+	# about 3% slower with twice the WALWrite waiters; 32MB matches 64MB there.
 	block_size="$(postgres -D "$PGDATA" "$@" -C block_size)"
 	shared_kb=$(( $(postgres -D "$PGDATA" "$@" -C shared_buffers) * block_size / 1024 ))
 	tuned_wal_kb=$(( $(postgres -D "$PGDATA" "$@" -C wal_buffers) * block_size / 1024 ))
 	wal_kb=$(( shared_kb / 32 ))
 	if [ "$wal_kb" -gt 65536 ]; then
 		wal_kb=65536
+	elif [ "$wal_kb" -lt 32768 ]; then
+		wal_kb=32768
 	fi
 	if [ "$wal_kb" -lt "$tuned_wal_kb" ]; then
 		wal_kb="$tuned_wal_kb"
