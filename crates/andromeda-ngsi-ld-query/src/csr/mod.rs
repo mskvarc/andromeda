@@ -5,3 +5,4 @@
 //! no location or no temporal interval still matches a geo or temporal filter.
 
 pub mod compiled;
+pub mod expanded_entity_specification;

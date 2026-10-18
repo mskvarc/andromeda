@@ -25,7 +25,11 @@ use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{entity_map::EntityMap, registration::ContextSourceRegistration};
-use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
+use andromeda_ngsi_ld_query::{
+    csr::expanded_entity_specification::ExpandedEntitySpecification,
+    pattern::Pattern,
+    type_selection::grammar::{TypeExpr, TypeExprRaw},
+};
 use chrono::Utc;
 use futures::{StreamExt, stream};
 use thiserror::Error;
@@ -77,6 +81,8 @@ pub struct ForwardEntityMapRequest<'a> {
     pub entity_type_compact: Option<&'a TypeExprRaw>,
     /// Optional entity identifiers for CSR matching.
     pub entity_ids: Option<&'a [Identifier]>,
+    /// Optional identifier pattern for CSR matching.
+    pub id_pattern: Option<&'a Pattern>,
     /// The query string forwarded to each source: the full query for a
     /// non-split query, the entity selectors alone when split entities apply
     /// (clause 5.14.4.4 strips the filters before forwarding).
@@ -115,6 +121,7 @@ impl FederationService {
             kind,
             entity_type_compact,
             entity_ids,
+            id_pattern,
             query_string,
             context,
             triggering,
@@ -124,15 +131,18 @@ impl FederationService {
         }
         let prepared_context = self.engine.prepare_term_context(context);
         let expanded_type = if let Some(t) = entity_type_compact.and_then(TypeExprRaw::as_single_type) {
-            Some(self.engine.expand_type(t.as_str(), &prepared_context).await?)
+            Some(TypeExpr::Type(self.engine.expand_type(t.as_str(), &prepared_context).await?))
         } else {
             None
         };
-        let first_id = entity_ids.and_then(|ids| ids.first());
         let operation = kind.operation();
         let registrations: Vec<_> = self
             .csr_repo
-            .find_matching(expanded_type.as_ref(), first_id)
+            .find_matching(ExpandedEntitySpecification {
+                entity_type: expanded_type.as_ref(),
+                ids: entity_ids.unwrap_or_default(),
+                id_pattern,
+            })
             .await?
             .into_iter()
             .filter(|csr| operation.matches(csr))

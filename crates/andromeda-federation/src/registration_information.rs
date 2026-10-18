@@ -76,13 +76,9 @@ pub(crate) fn information_matches_entity(information: &RegistrationInfo, entity_
         // match. An empty set places no type constraint -- an id-only read, or an
         // entity whose type this caller does not resolve -- and matches on id.
         let type_matches = entity_types.is_empty() || entity_types.iter().any(|requested| selector.type_.admits(requested.as_str()));
-        let id_matches = entity_id.is_none_or(|requested| match (&selector.id, &selector.id_pattern) {
-            (None, None) => true,
-            (Some(id), None) => id.as_str() == requested.as_str(),
-            (None, Some(pattern)) => pattern.is_match(requested.as_str()),
-            (Some(id), Some(pattern)) => id.as_str() == requested.as_str() || pattern.is_match(requested.as_str()),
-        });
-        type_matches && id_matches
+        // Clause 5.2.8: a registered `id` takes precedence over a registered
+        // `idPattern`.
+        type_matches && entity_id.is_none_or(|requested| selector.covers_id(requested))
     })
 }
 
@@ -135,6 +131,17 @@ mod tests {
         let csr = registration(&json!({"entities": [{"type": "https://example.org/Vehicle"}]}));
         let info = &csr.coverage.information[0];
         assert!(information_matches_entity(info, &[], Some(&vehicle_id())));
+    }
+
+    /// Clause 5.2.8: a registered `id` takes precedence over the `idPattern`
+    /// beside it, so the pattern does not widen what the entry covers.
+    #[test]
+    fn a_registered_id_takes_precedence_over_the_pattern_beside_it() {
+        let csr = registration(&json!({"entities": [{"type": "https://example.org/Vehicle", "id": "urn:ngsi-ld:Vehicle:7", "idPattern": ".*"}]}));
+        let info = &csr.coverage.information[0];
+        assert!(!information_matches_entity(info, &[], Some(&vehicle_id())));
+        let seven: Identifier = "urn:ngsi-ld:Vehicle:7".parse().expect("valid URI");
+        assert!(information_matches_entity(info, &[], Some(&seven)));
     }
 
     /// A known entity type that differs from the one a registration covers does not match it, so a registration scoped to another type stops covering the write.

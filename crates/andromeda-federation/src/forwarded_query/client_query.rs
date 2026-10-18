@@ -8,7 +8,7 @@
 //! it is looking at.
 
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
-use andromeda_ngsi_ld_query::{scope::query::ScopeQuery, type_selection::grammar::TypeExprRaw};
+use andromeda_ngsi_ld_query::{pattern::Pattern, scope::query::ScopeQuery, type_selection::grammar::TypeExprRaw};
 use andromeda_ngsi_ld_request::{
     entity::GetEntityParams,
     query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
@@ -49,6 +49,16 @@ impl ClientQuery<'_> {
         match self {
             ClientQuery::EntityQuery(params) => params.id.as_deref(),
             ClientQuery::Temporal(params) => params.id.as_deref(),
+            ClientQuery::EntityRetrieve { .. } => None,
+        }
+    }
+
+    /// The identifier pattern the client selected, if the operation has one.
+    #[must_use]
+    pub const fn id_pattern(&self) -> Option<&Pattern> {
+        match self {
+            ClientQuery::EntityQuery(params) => params.id_pattern.as_ref(),
+            ClientQuery::Temporal(params) => params.id_pattern.as_ref(),
             ClientQuery::EntityRetrieve { .. } => None,
         }
     }

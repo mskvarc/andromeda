@@ -5,7 +5,10 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::{csource_change_revision::CsourceChangeRevision, registration::ContextSourceRegistration};
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, page_window::PageWindow};
+use andromeda_ngsi_ld_query::{
+    csr::{compiled::CompiledCsrQuery, expanded_entity_specification::ExpandedEntitySpecification},
+    page_window::PageWindow,
+};
 use andromeda_registration::{
     error::RegistrationError,
     resolved_update::ResolvedCsrUpdate,
@@ -150,15 +153,13 @@ impl RegistrationStore for FixedRegistrationStore {
         Box::pin(async { Ok(RegistrationMutation::Missing) })
     }
 
-    fn find_matching<'life0, 'life1, 'life2, 'async_trait>(
+    fn find_matching<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        _entity_type: Option<&'life1 IriBuf>,
-        _entity_id: Option<&'life2 Identifier>,
+        _entities: ExpandedEntitySpecification<'life1>,
     ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
-        'life2: 'async_trait,
     {
         let registrations = self.registrations.clone(); // clone: every query answers its own copy of the fixed list
         Box::pin(async { Ok(registrations) })

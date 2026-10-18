@@ -3,7 +3,10 @@
 
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{csource_change_revision::CsourceChangeRevision, registration::ContextSourceRegistration};
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, page_window::PageWindow};
+use andromeda_ngsi_ld_query::{
+    csr::{compiled::CompiledCsrQuery, expanded_entity_specification::ExpandedEntitySpecification},
+    page_window::PageWindow,
+};
 use andromeda_registration::{
     error::RegistrationError,
     resolved_update::ResolvedCsrUpdate,
@@ -79,7 +82,7 @@ impl RegistrationStore for ScriptedRegistrations {
         Ok(RegistrationMutation::Missing)
     }
 
-    async fn find_matching(&self, _entity_type: Option<&IriBuf>, _entity_id: Option<&Identifier>) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
+    async fn find_matching(&self, _entities: ExpandedEntitySpecification<'_>) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
         let failing = self
             .failures_left
             .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1))

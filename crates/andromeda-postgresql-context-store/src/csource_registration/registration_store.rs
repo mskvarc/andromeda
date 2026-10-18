@@ -7,7 +7,10 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{csource_change_revision::CsourceChangeRevision, registration::ContextSourceRegistration};
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, page_window::PageWindow};
+use andromeda_ngsi_ld_query::{
+    csr::{compiled::CompiledCsrQuery, expanded_entity_specification::ExpandedEntitySpecification},
+    page_window::PageWindow,
+};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_registration::{
     error::RegistrationError,
@@ -117,8 +120,8 @@ impl RegistrationStore for PostgresRegistrationStore {
         registration_write::update(self, id, values).await
     }
 
-    async fn find_matching(&self, entity_type: Option<&IriBuf>, entity_id: Option<&Identifier>) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
-        registration_read::find_matching(self, entity_type, entity_id).await
+    async fn find_matching(&self, entities: ExpandedEntitySpecification<'_>) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
+        registration_read::find_matching(self, entities).await
     }
 
     async fn find_overlapping(&self, entity_id: Option<&Identifier>, attributes: &[IriBuf]) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {

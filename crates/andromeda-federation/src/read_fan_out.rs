@@ -26,11 +26,13 @@ use andromeda_ngsi_ld_model::{
     registration::{ContextSourceRegistration, context_source_properties::ContextSourceProperties, forwarding_mode::ForwardingMode},
 };
 use andromeda_ngsi_ld_query::{
+    csr::expanded_entity_specification::ExpandedEntitySpecification,
     filter::{eval::evaluate, expression::Expr},
     geo::query::GeoQuery,
+    pattern::Pattern,
     queried_entity::linked_entities::NoLinkedEntities,
     scope::query::ScopeQuery,
-    type_selection::grammar::TypeExprRaw,
+    type_selection::grammar::{TypeExpr, TypeExprRaw},
 };
 use futures::{StreamExt, stream};
 use http::StatusCode;
@@ -43,8 +45,12 @@ use url::Url;
 pub(crate) struct ReadSelection<'a> {
     /// The clause 4.17 type selector, whose single type is matched expanded.
     pub(crate) entity_type: Option<&'a TypeExprRaw>,
-    /// The entity identifiers; the first one drives the store's matching.
+    /// The entity identifiers, each matched against registered identifiers
+    /// and patterns (clause 5.12).
     pub(crate) entity_ids: Option<&'a [Identifier]>,
+    /// The identifier pattern, matched against registered identifiers
+    /// (clause 5.12).
+    pub(crate) id_pattern: Option<&'a Pattern>,
     /// A registration never contacted (clause 5.8.6 re-assembly).
     pub(crate) exclude_registration: Option<&'a Identifier>,
     /// The expanded context source filter, evaluated against each
@@ -63,6 +69,18 @@ pub(crate) struct ReadSelection<'a> {
     pub(crate) mode_filter: CsrModeFilter,
     /// The `EntityMap` the read runs under (clause 5.5.14).
     pub(crate) entity_map: EntityMapInUse<'a>,
+}
+
+impl<'a> ReadSelection<'a> {
+    /// The clause 5.12 specification the store preselects registrations by:
+    /// `expanded_type`, every identifier and the identifier pattern.
+    fn preselection(&self, expanded_type: Option<&'a TypeExpr>) -> ExpandedEntitySpecification<'a> {
+        ExpandedEntitySpecification {
+            entity_type: expanded_type,
+            ids: self.entity_ids.unwrap_or_default(),
+            id_pattern: self.id_pattern,
+        }
+    }
 }
 
 /// What a registration must be able to serve to be contacted for a read.
@@ -159,14 +177,13 @@ impl FederationService {
         let expanded_type = match selection.entity_type.and_then(TypeExprRaw::as_single_type) {
             Some(name) => {
                 let prepared = prepared_context.get_or_init(|| self.engine.prepare_term_context(context));
-                Some(self.engine.expand_type(name.as_str(), prepared).await?)
+                Some(TypeExpr::Type(self.engine.expand_type(name.as_str(), prepared).await?))
             }
             None => None,
         };
-        let first_id = selection.entity_ids.and_then(|ids| ids.first());
         let registrations = match selection.entity_map.referenced() {
             Some(map) => self.registrations_of_map(map).await?,
-            None => self.csr_repo.find_matching(expanded_type.as_ref(), first_id).await?,
+            None => self.csr_repo.find_matching(selection.preselection(expanded_type.as_ref())).await?,
         };
         let mut selected = Vec::with_capacity(registrations.len());
         for registration in registrations {
@@ -334,11 +351,15 @@ mod tests {
     };
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
     use andromeda_ngsi_ld_query::{
         filter::{expansion::expand_q_expr, json_key_attributes::JsonKeyAttributes, parser},
         geo::query::GeoQuery,
+        pattern::Pattern,
+        type_selection::grammar::TypeExpr,
     };
+    use iri_rs::IriBuf;
     use serde_json::json;
 
     fn registration(operations: Option<&[&str]>) -> ContextSourceRegistration {
@@ -363,6 +384,35 @@ mod tests {
             error_status,
             entry: None,
         }
+    }
+
+    /// Clause 5.12: every identifier a read names, and its pattern, narrow the
+    /// store's preselection, so a registration covering only the second
+    /// identifier is still read.
+    #[test]
+    fn the_store_preselects_by_the_type_every_identifier_and_the_pattern() {
+        let ids: Vec<Identifier> = ["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"]
+            .into_iter()
+            .map(|raw| raw.parse().expect("valid URI"))
+            .collect();
+        let pattern = Pattern::parse("urn:ngsi-ld:Vehicle:.*").expect("valid pattern");
+        let vehicle = TypeExpr::Type(IriBuf::new("https://example.org/Vehicle".to_owned()).expect("valid IRI"));
+        let selection = ReadSelection {
+            entity_type: None,
+            entity_ids: Some(&ids),
+            id_pattern: Some(&pattern),
+            exclude_registration: None,
+            csf: None,
+            scope_q: None,
+            geo: None,
+            serving: ReadServing::Operation(ForwardingOperation::QueryEntity),
+            mode_filter: CsrModeFilter::All,
+            entity_map: EntityMapInUse::None,
+        };
+        let preselection = selection.preselection(Some(&vehicle));
+        pretty_assertions::assert_eq!(preselection.ids, ids.as_slice());
+        pretty_assertions::assert_eq!(preselection.id_pattern.map(ToString::to_string), Some(pattern.to_string()));
+        assert!(matches!(preselection.entity_type, Some(TypeExpr::Type(named)) if named.as_str() == "https://example.org/Vehicle"));
     }
 
     /// Table 6.4.3.2-3: the 501 of the one exclusive source holding the data is
@@ -464,6 +514,7 @@ mod tests {
                         ReadSelection {
                             entity_type: None,
                             entity_ids: None,
+                            id_pattern: None,
                             exclude_registration: None,
                             csf: Some(&filter),
                             scope_q: None,
@@ -506,6 +557,7 @@ mod tests {
                 ReadSelection {
                     entity_type: None,
                     entity_ids: None,
+                    id_pattern: None,
                     exclude_registration: None,
                     csf: None,
                     scope_q: None,

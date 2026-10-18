@@ -490,6 +490,82 @@ mod tests {
         pretty_assertions::assert_eq!(forwarded[0].value_of(ForwardedParameter::Type), Some("Vehicle"));
     }
 
+    /// Clause 5.12, fourth bullet: a client pattern matches a block only
+    /// through an `id` it matches, so a block registering another `id` is not
+    /// asked, and one registering a matching `id` is asked with the pattern.
+    #[tokio::test]
+    async fn a_client_pattern_reaches_only_the_blocks_whose_registered_id_it_matches() {
+        let query = entity_query("type=Vehicle&idPattern=urn:ngsi-ld:Vehicle:1.*");
+        let other = registration(&json!([{"entities": [{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:7"}]}]));
+        let forwarded = narrow(ClientQuery::EntityQuery(&query), &other, SplitEntities::Complete).await;
+        pretty_assertions::assert_eq!(strings(&forwarded), Vec::<String>::new());
+
+        let matching = registration(&json!([{"entities": [{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:12"}]}]));
+        let forwarded = narrow(ClientQuery::EntityQuery(&query), &matching, SplitEntities::Complete).await;
+        pretty_assertions::assert_eq!(forwarded.len(), 1);
+        pretty_assertions::assert_eq!(forwarded[0].value_of(ForwardedParameter::IdPattern), Some("urn:ngsi-ld:Vehicle:1.*"));
+        pretty_assertions::assert_eq!(forwarded[0].value_of(ForwardedParameter::Type), Some("Vehicle"));
+    }
+
+    /// Clause 5.12, first and fifth bullets: a block constraining the
+    /// identifier not at all, by a pattern of its own, or naming no entity
+    /// selector at all may hold an entity any pattern matches.
+    #[tokio::test]
+    async fn a_client_pattern_reaches_a_block_registering_a_pattern_or_no_identifier() {
+        let query = entity_query("type=Vehicle&idPattern=urn:ngsi-ld:Vehicle:1.*");
+        for information in [
+            json!([{"entities": [{"type": VEHICLE, "idPattern": "urn:ngsi-ld:Fleet:.*"}]}]),
+            json!([{"entities": [{"type": VEHICLE}]}]),
+            json!([{"propertyNames": [SPEED]}]),
+        ] {
+            let block = registration(&information);
+            let forwarded = narrow(ClientQuery::EntityQuery(&query), &block, SplitEntities::Complete).await;
+            pretty_assertions::assert_eq!(forwarded.len(), 1, "{information}");
+            pretty_assertions::assert_eq!(
+                forwarded[0].value_of(ForwardedParameter::IdPattern),
+                Some("urn:ngsi-ld:Vehicle:1.*"),
+                "{information}"
+            );
+        }
+    }
+
+    /// Clause 5.12: one `EntityInfo` of a block matching is enough, and only
+    /// the blocks with one are asked.
+    #[tokio::test]
+    async fn a_client_pattern_is_decided_per_entity_selector_and_per_block() {
+        let query = entity_query("idPattern=urn:ngsi-ld:Vehicle:1.*");
+        let block = registration(&json!([
+            {"entities": [{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:7"}, {"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:12"}], "propertyNames": [SPEED]},
+            {"entities": [{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:8"}], "propertyNames": [FUEL]}
+        ]));
+        let forwarded = narrow(ClientQuery::EntityQuery(&query), &block, SplitEntities::Complete).await;
+        pretty_assertions::assert_eq!(forwarded.len(), 1);
+        pretty_assertions::assert_eq!(forwarded[0].value_of(ForwardedParameter::Attrs), Some("speed"));
+    }
+
+    /// Clause 5.2.8: a registered `id` takes precedence over the `idPattern`
+    /// beside it, so the client pattern is matched against the `id` alone.
+    #[tokio::test]
+    async fn a_client_pattern_is_matched_against_a_registered_id_before_the_pattern_beside_it() {
+        let query = entity_query("type=Vehicle&idPattern=urn:ngsi-ld:Vehicle:1.*");
+        let block = registration(&json!([{"entities": [{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:7", "idPattern": ".*"}]}]));
+        let forwarded = narrow(ClientQuery::EntityQuery(&query), &block, SplitEntities::Complete).await;
+        pretty_assertions::assert_eq!(strings(&forwarded), Vec::<String>::new());
+    }
+
+    /// Clause 5.7.4.4 matches a temporal query against registrations as clause
+    /// 5.7.2.4 does an entity query.
+    #[tokio::test]
+    async fn a_temporal_client_pattern_skips_a_block_whose_registered_id_it_does_not_match() {
+        let query = temporal_query("type=Vehicle&idPattern=urn:ngsi-ld:Vehicle:1.*&timerel=after&timeAt=2024-01-01T00:00:00Z");
+        let other = registration(&json!([{"entities": [{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:7"}]}]));
+        let forwarded = narrow(ClientQuery::Temporal(&query), &other, SplitEntities::Complete).await;
+        pretty_assertions::assert_eq!(strings(&forwarded), Vec::<String>::new());
+        let matching = registration(&json!([{"entities": [{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:12"}]}]));
+        let forwarded = narrow(ClientQuery::Temporal(&query), &matching, SplitEntities::Complete).await;
+        pretty_assertions::assert_eq!(forwarded.len(), 1);
+    }
+
     /// Clause 5.7.2.4: under split entities the client's value, geo, scope and
     /// attribute filters are removed before forwarding, but the block's declared
     /// attribute names still travel as a registration constraint.

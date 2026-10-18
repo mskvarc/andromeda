@@ -7,7 +7,7 @@
 
 use crate::{error::FederationError, forwarded_names::ForwardedNames};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::registration::info::RegistrationInfo;
+use andromeda_ngsi_ld_model::{registration::info::RegistrationInfo, registration_matching::EntitySpecification};
 use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
 
 /// The entity selection one block contributes to a forwarded request: the
@@ -28,7 +28,8 @@ impl BlockSelection {
     /// `id_pattern` and `entity_type`, or `None` when the block covers none of
     /// the entities the client selected.
     ///
-    /// The client's identifiers and type are narrowed to what the block covers;
+    /// The client's identifiers and type are narrowed to what the block covers,
+    /// and a client pattern is kept for a block it may match (clause 5.12);
     /// where the client constrained neither, the block supplies its own
     /// identifiers (or its id pattern) and its declared types, so a forwarded
     /// request always names the block's footprint even when the client's query
@@ -54,6 +55,9 @@ impl BlockSelection {
             selection.ids = covered;
             selection.id_pattern = id_pattern.map(ToString::to_string);
         } else if let Some(pattern) = id_pattern {
+            if !block_admits_pattern(block, pattern) {
+                return Ok(None);
+            }
             selection.id_pattern = Some(pattern.to_string());
         } else {
             let (block_ids, block_pattern) = block_identifiers(block);
@@ -145,6 +149,23 @@ pub(super) fn block_covers_id(block: &RegistrationInfo, id: &Identifier) -> bool
         None => true,
         Some(selectors) => selectors.iter().any(|selector| selector.covers_id(id)),
     }
+}
+
+/// Whether an entity `pattern` matches may be one the block covers (clause
+/// 5.12): the block names no entity selector, or one of its selectors names no
+/// `id` (constraining the identifier not at all, or by a pattern of its own,
+/// which clause 5.12 takes as matching), or names an `id` the pattern matches.
+fn block_admits_pattern(block: &RegistrationInfo, pattern: &Pattern) -> bool {
+    let specification = EntitySpecification {
+        type_selector: None,
+        ids: &[],
+        id_pattern: Some(pattern),
+    };
+    block
+        .entities
+        .as_deref()
+        .filter(|selectors| !selectors.is_empty())
+        .is_none_or(|selectors| selectors.iter().any(|selector| specification.matches_entity_info(selector)))
 }
 
 /// The identifiers among `ids` this block covers, or `None` when it covers none.

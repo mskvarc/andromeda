@@ -3,7 +3,7 @@
 use crate::csr::{
     dataset_rule::dataset_rule,
     encountered_sources::not_encountered,
-    entity_specification::EntitySpecification,
+    entity_specification::row_matches,
     expiry_predicate::not_expired,
     filter::csr_expr_to_condition,
     geometry_parts::{GeometryParts, geometry_parts},
@@ -12,7 +12,11 @@ use crate::csr::{
     registration_select::registration_select,
     temporal_partition::temporal_partition,
 };
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, page_window::PageWindow, read_order::ReadOrder};
+use andromeda_ngsi_ld_query::{
+    csr::{compiled::CompiledCsrQuery, expanded_entity_specification::ExpandedEntitySpecification},
+    page_window::PageWindow,
+    read_order::ReadOrder,
+};
 use andromeda_postgresql_query::{
     error::RenderError,
     page_window::apply_identifier_window,
@@ -121,13 +125,13 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Condition {
     // Clause 5.12: the entity specification and the attribute names must match
     // the same `RegistrationInfo`, and the type and identifier the same
     // `EntityInfo`: one `registration_information` row decides every axis.
-    let entities = EntitySpecification {
+    let entities = ExpandedEntitySpecification {
         entity_type: query.entity_type.as_ref(),
         ids: &query.ids,
         id_pattern: query.id_pattern.as_ref(),
     };
     let axes = [
-        entities.row_matches(),
+        row_matches(&entities),
         (!query.attrs.is_empty()).then(|| Condition::all().add(attribute_name_candidate(&query.attrs))),
     ];
     let row = axes.into_iter().flatten().fold(Condition::all(), Condition::add);

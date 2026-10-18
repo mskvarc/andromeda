@@ -19,7 +19,10 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, page_window::PageWindow};
+use andromeda_ngsi_ld_query::{
+    csr::{compiled::CompiledCsrQuery, expanded_entity_specification::ExpandedEntitySpecification},
+    page_window::PageWindow,
+};
 use andromeda_postgresql_context_query::csr::{
     coverage::Coverage,
     expiry_predicate::not_expired,
@@ -205,19 +208,14 @@ pub(super) async fn query_compiled(
     })
 }
 
-/// The unexpired registrations that may serve an entity type and/or identifier (clause 5.9.2.4), a superset decided by the caller.
+/// The unexpired registrations whose `information` may match `entities` (clauses 5.9.2.4, 5.12), a superset decided by the caller.
 pub(super) async fn find_matching(
     store: &PostgresRegistrationStore,
-    entity_type: Option<&IriBuf>,
-    entity_id: Option<&Identifier>,
+    entities: ExpandedEntitySpecification<'_>,
 ) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
     let mut select = registration_select();
     select.cond_where(not_expired());
-    let coverage = Coverage {
-        entity_type,
-        entity_id,
-        attributes: &[],
-    };
+    let coverage = Coverage { entities, attributes: &[] };
     if let Some(covered) = coverage.predicate() {
         select.and_where(covered);
     }
@@ -238,8 +236,10 @@ pub(super) async fn find_overlapping(
     // clause 4.3.6.3 overlap, where a whole-entity registration covers every
     // attribute. The typed residual in registration policy decides.
     let coverage = Coverage {
-        entity_type: None,
-        entity_id,
+        entities: ExpandedEntitySpecification {
+            ids: entity_id.map_or(&[], from_ref),
+            ..ExpandedEntitySpecification::default()
+        },
         attributes,
     };
     if let Some(covered) = coverage.predicate() {

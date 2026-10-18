@@ -20,7 +20,7 @@ use andromeda_http_response::{
 use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{entity_map::EntityMap, entity_map_fingerprint::RequestFingerprint};
-use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
+use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
 use andromeda_ngsi_ld_render::entity_map_body::EntityMapBody;
 use axum::{
     http::{StatusCode, Uri as HttpUri},
@@ -44,6 +44,8 @@ pub(crate) struct MapCreation<'a> {
     pub(crate) entity_type: Option<&'a TypeExprRaw>,
     /// Entity identifiers for registration matching.
     pub(crate) entity_ids: Option<&'a [Identifier]>,
+    /// The identifier pattern for registration matching.
+    pub(crate) id_pattern: Option<&'a Pattern>,
     /// The query string forwarded to each source.
     pub(crate) forwarded_query: String,
     /// Whether the request asked for local scope (clause 5.5.13).
@@ -88,6 +90,7 @@ pub(crate) async fn create_map(
                 kind: creation.kind,
                 entity_type_compact: creation.entity_type,
                 entity_ids: creation.entity_ids,
+                id_pattern: creation.id_pattern,
                 query_string: &creation.forwarded_query,
                 context: rendering.context,
                 triggering,

@@ -18,7 +18,10 @@ use andromeda_ngsi_ld_model::{
     csource_change_revision::CsourceChangeRevision,
     registration::{ContextSourceRegistration, info::RegistrationInfo},
 };
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, page_window::PageWindow};
+use andromeda_ngsi_ld_query::{
+    csr::{compiled::CompiledCsrQuery, expanded_entity_specification::ExpandedEntitySpecification},
+    page_window::PageWindow,
+};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use iri_rs::IriBuf;
@@ -175,15 +178,13 @@ impl RegistrationStore for FixedStore {
         Box::pin(async move { Ok(mutation) })
     }
 
-    fn find_matching<'life0, 'life1, 'life2, 'async_trait>(
+    fn find_matching<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        _entity_type: Option<&'life1 IriBuf>,
-        _entity_id: Option<&'life2 Identifier>,
+        _entities: ExpandedEntitySpecification<'life1>,
     ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
-        'life2: 'async_trait,
     {
         Box::pin(async { Ok(Vec::new()) })
     }

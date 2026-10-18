@@ -66,7 +66,10 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{csource_change_revision::CsourceChangeRevision, registration::ContextSourceRegistration};
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, page_window::PageWindow};
+use andromeda_ngsi_ld_query::{
+    csr::{compiled::CompiledCsrQuery, expanded_entity_specification::ExpandedEntitySpecification},
+    page_window::PageWindow,
+};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use iri_rs::IriBuf;
@@ -170,23 +173,22 @@ pub trait RegistrationStore: Send + Sync + 'static {
         'life2: 'async_trait,
         Self: 'async_trait;
 
-    /// Registrations that may serve an entity type and/or identifier, excluding
-    /// expired ones (clause 5.9.2.4).
+    /// Registrations whose `information` may match `entities` by clause 5.12,
+    /// excluding expired ones (clause 5.9.2.4).
     ///
-    /// This is the discovery preselect and the sole reader of the routing
-    /// projection. The result is a superset: callers evaluate the full typed
+    /// This is the forwarding preselect. Every member of `entities` narrows
+    /// it: the type selector, each of the identifiers and the identifier
+    /// pattern. The result is a superset: callers evaluate the full typed
     /// registration to decide actual membership, so returning a registration
     /// that turns out not to serve the request is permitted, while omitting one
     /// that does is a correctness defect.
-    fn find_matching<'life0, 'life1, 'life2, 'async_trait>(
+    fn find_matching<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        entity_type: Option<&'life1 IriBuf>,
-        entity_id: Option<&'life2 Identifier>,
+        entities: ExpandedEntitySpecification<'life1>,
     ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
-        'life2: 'async_trait,
         Self: 'async_trait;
 
     /// Non-expired proxied registrations — mode `exclusive` or `redirect` —

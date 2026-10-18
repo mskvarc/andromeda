@@ -86,6 +86,7 @@ impl FederationService {
                 ReadSelection {
                     entity_type: client.entity_type(),
                     entity_ids: client.entity_ids(),
+                    id_pattern: client.id_pattern(),
                     exclude_registration: None,
                     csf: csf_expr,
                     scope_q: client_query.scope_q.as_ref(),
@@ -180,6 +181,7 @@ impl FederationService {
                 ReadSelection {
                     entity_type: None,
                     entity_ids: Some(from_ref(entity_id)),
+                    id_pattern: None,
                     exclude_registration,
                     csf: None,
                     scope_q: None,

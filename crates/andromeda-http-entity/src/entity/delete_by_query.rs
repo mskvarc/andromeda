@@ -180,6 +180,7 @@ pub(crate) async fn delete_by_query(
                 ForwardPurgeRequest {
                     entity_type_compact: query.entity_type.as_ref(),
                     entity_ids: query.id.as_deref(),
+                    id_pattern: query.id_pattern.as_ref(),
                     local_ids: &entity_ids,
                     query_string: uri.query().unwrap_or(""),
                     entity_map: entity_map.in_use(),

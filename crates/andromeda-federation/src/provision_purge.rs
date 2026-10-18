@@ -23,7 +23,11 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
-use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
+use andromeda_ngsi_ld_query::{
+    csr::expanded_entity_specification::ExpandedEntitySpecification,
+    pattern::Pattern,
+    type_selection::grammar::{TypeExpr, TypeExprRaw},
+};
 use tracing::debug;
 use url::form_urlencoded;
 
@@ -33,6 +37,8 @@ pub struct ForwardPurgeRequest<'a> {
     pub entity_type_compact: Option<&'a TypeExprRaw>,
     /// The query's identifiers, used for registration preselection.
     pub entity_ids: Option<&'a [Identifier]>,
+    /// The query's identifier pattern, used for registration preselection.
+    pub id_pattern: Option<&'a Pattern>,
     /// The identifiers the query selected locally; a registration's failure is
     /// reported against the ones it covers.
     pub local_ids: &'a [Identifier],
@@ -133,16 +139,23 @@ impl FederationService {
         }
         let resolver = TermResolver::new(&self.engine, request.context);
         let expanded_type = match request.entity_type_compact.and_then(TypeExprRaw::as_single_type) {
-            Some(name) => Some(resolver.expand_type(name.as_str()).await?),
+            Some(name) => Some(TypeExpr::Type(resolver.expand_type(name.as_str()).await?)),
             None => None,
         };
-        let first_id = request.entity_ids.and_then(|ids| ids.first());
         // Clause 5.5.14 (and clause 5.12, last paragraph): a referenced map fixes
         // the sources this purge contacts to the map's own registrations, in
         // place of clause 5.12 matching, exactly as a forwarded query does.
         let csrs = match request.entity_map.referenced() {
             Some(map) => self.registrations_of_map(map).await?,
-            None => self.csr_repo.find_matching(expanded_type.as_ref(), first_id).await?,
+            None => {
+                self.csr_repo
+                    .find_matching(ExpandedEntitySpecification {
+                        entity_type: expanded_type.as_ref(),
+                        ids: request.entity_ids.unwrap_or_default(),
+                        id_pattern: request.id_pattern,
+                    })
+                    .await?
+            }
         };
         let query_string = match request.entity_map.referenced() {
             Some(_) => narrowed_query_string(request.query_string, request.entity_ids),

@@ -19,7 +19,11 @@ use crate::csr::{
     preselect::{entity_id_candidate, entity_id_pattern_candidate, entity_type_candidate},
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, pattern::Pattern, type_selection::grammar::TypeExpr};
+use andromeda_ngsi_ld_query::{
+    csr::expanded_entity_specification::ExpandedEntitySpecification,
+    identifier_axis::IdentifierAxis,
+    type_selection::grammar::TypeExpr,
+};
 use andromeda_postgresql_schema::csr::RegistrationInformation;
 use andromeda_postgresql_seaquery::{
     literal::int_literal,
@@ -31,51 +35,31 @@ use andromeda_postgresql_seaquery::{
 use iri_rs::IriBuf;
 use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, Query, SelectStatement, SimpleExpr};
 
-/// The entity axis of a discovery query, as clause 5.12 reads it.
-#[derive(Debug, Clone, Copy)]
-pub struct EntitySpecification<'query> {
-    /// The expanded clause 4.17 type selector, if any.
-    pub entity_type: Option<&'query TypeExpr>,
-    /// The entity identifiers asked for; empty when none were.
-    pub ids: &'query [Identifier],
-    /// The identifier pattern asked for, if any.
-    pub id_pattern: Option<&'query Pattern>,
+/// The condition a `registration_information` row meets when its `EntityInfo`
+/// matches `specification`, or `None` when every row does.
+///
+/// Each axis carries its indexed test, and beside it the residual the test does
+/// not decide exactly. The axes are conjuncts of one condition, so a caller
+/// adding a further axis narrows the row whichever axes are present.
+#[must_use]
+pub fn row_matches(specification: &ExpandedEntitySpecification<'_>) -> Option<Condition> {
+    let axes = [specification.entity_type.and_then(type_axis), identifier_axis(specification)];
+    let row = axes.into_iter().flatten().fold(Condition::all(), Condition::add);
+    (!row.is_empty()).then_some(row)
 }
 
-impl EntitySpecification<'_> {
-    /// Whether the specification constrains the entity axis at all.
-    #[must_use]
-    pub const fn constrains(&self) -> bool {
-        self.entity_type.is_some() || !self.ids.is_empty() || self.id_pattern.is_some()
-    }
-
-    /// The condition a `registration_information` row meets when its
-    /// `EntityInfo` matches the specification, or `None` when every row does.
-    ///
-    /// Each axis carries its indexed test, and beside it the residual the test
-    /// does not decide exactly. The axes are conjuncts of one condition, so a
-    /// caller adding a further axis narrows the row whichever axes are present.
-    #[must_use]
-    pub fn row_matches(&self) -> Option<Condition> {
-        let axes = [self.entity_type.and_then(type_axis), self.identifier_axis()];
-        let row = axes.into_iter().flatten().fold(Condition::all(), Condition::add);
-        (!row.is_empty()).then_some(row)
-    }
-
-    /// The clause 5.12 identifier conditions, or `None` when neither
-    /// identifiers nor a pattern were asked for.
-    fn identifier_axis(&self) -> Option<Condition> {
-        match IdentifierAxis::of(self.ids, self.id_pattern) {
-            IdentifierAxis::Any => None,
-            IdentifierAxis::Ids(ids) => Some(Condition::all().add(entity_id_candidate(ids)).add(identifiers_admitted(ids))),
-            // Fourth bullet: the asked-for pattern matches the row's `id`.
-            // First and fifth: a row constraining the identifier not at all,
-            // or by a pattern of its own, matches; whether two regular
-            // expressions admit a common identifier is not decidable cheaply,
-            // so a registered pattern is taken as matching. Both are the rows
-            // without an `id`.
-            IdentifierAxis::Pattern(pattern) => Some(Condition::all().add(entity_id_pattern_candidate(pattern))),
-        }
+/// The clause 5.12 identifier conditions, or `None` when neither identifiers
+/// nor a pattern were asked for.
+fn identifier_axis(specification: &ExpandedEntitySpecification<'_>) -> Option<Condition> {
+    match IdentifierAxis::of(specification.ids, specification.id_pattern) {
+        IdentifierAxis::Any => None,
+        IdentifierAxis::Ids(ids) => Some(Condition::all().add(entity_id_candidate(ids)).add(identifiers_admitted(ids))),
+        // Fourth bullet: the asked-for pattern matches the row's `id`. First
+        // and fifth: a row constraining the identifier not at all, or by a
+        // pattern of its own, matches; whether two regular expressions admit a
+        // common identifier is not decidable cheaply, so a registered pattern
+        // is taken as matching. Both are the rows without an `id`.
+        IdentifierAxis::Pattern(pattern) => Some(Condition::all().add(entity_id_pattern_candidate(pattern))),
     }
 }
 
@@ -196,6 +180,7 @@ fn some_identifier_matches_registered_pattern(ids: &[&str]) -> SelectStatement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use andromeda_ngsi_ld_query::pattern::Pattern;
     use sea_query::PostgresQueryBuilder;
 
     fn iri(value: &str) -> IriBuf {
@@ -206,13 +191,13 @@ mod tests {
         value.parse().expect("valid URI")
     }
 
-    fn render(specification: &EntitySpecification<'_>) -> String {
-        let row = specification.row_matches().expect("the specification constrains the entity axis");
+    fn render(specification: &ExpandedEntitySpecification<'_>) -> String {
+        let row = row_matches(specification).expect("the specification constrains the entity axis");
         Query::select().expr(int_literal(1)).cond_where(row).to_string(PostgresQueryBuilder)
     }
 
     fn types(selection: &TypeExpr) -> String {
-        render(&EntitySpecification {
+        render(&ExpandedEntitySpecification {
             entity_type: Some(selection),
             ids: &[],
             id_pattern: None,
@@ -282,18 +267,18 @@ mod tests {
     #[test]
     fn a_disjunction_with_the_wildcard_admits_every_row() {
         let selection = TypeExpr::Or(vec![TypeExpr::Type(iri("https://example.com/Home")), TypeExpr::Wildcard]);
-        let specification = EntitySpecification {
+        let specification = ExpandedEntitySpecification {
             entity_type: Some(&selection),
             ids: &[],
             id_pattern: None,
         };
-        assert!(specification.row_matches().is_none());
+        assert!(row_matches(&specification).is_none());
     }
 
     #[test]
     fn identifiers_admit_unconstrained_rows_exact_ids_and_pattern_only_rows_the_ids_match() {
         let ids = [uri("urn:ngsi-ld:Vehicle:1"), uri("urn:ngsi-ld:Vehicle:2")];
-        let sql = render(&EntitySpecification {
+        let sql = render(&ExpandedEntitySpecification {
             entity_type: None,
             ids: &ids,
             id_pattern: None,
@@ -317,7 +302,7 @@ mod tests {
     #[test]
     fn a_registered_pattern_is_consulted_only_on_rows_without_an_id() {
         let ids = [uri("urn:ngsi-ld:Vehicle:1")];
-        let sql = render(&EntitySpecification {
+        let sql = render(&ExpandedEntitySpecification {
             entity_type: None,
             ids: &ids,
             id_pattern: None,
@@ -331,7 +316,7 @@ mod tests {
     #[test]
     fn a_queried_pattern_is_matched_against_registered_ids_and_admits_rows_without_one() {
         let pattern = Pattern::parse("urn:ngsi-ld:Fleet.*").expect("valid pattern");
-        let sql = render(&EntitySpecification {
+        let sql = render(&ExpandedEntitySpecification {
             entity_type: None,
             ids: &[],
             id_pattern: Some(&pattern),
@@ -348,12 +333,11 @@ mod tests {
     #[test]
     fn a_pattern_without_a_type_is_a_conjunct_a_further_axis_narrows() {
         let pattern = Pattern::parse("urn:ngsi-ld:Fleet.*").expect("valid pattern");
-        let row = EntitySpecification {
+        let row = row_matches(&ExpandedEntitySpecification {
             entity_type: None,
             ids: &[],
             id_pattern: Some(&pattern),
-        }
-        .row_matches()
+        })
         .expect("a pattern constrains the entity axis")
         .add(ri_col(RegistrationInformation::PropertyNameKeys).is_not_null());
         let sql = Query::select().expr(int_literal(1)).cond_where(row).to_string(PostgresQueryBuilder);
@@ -369,7 +353,7 @@ mod tests {
     fn the_type_and_identifier_axes_are_one_row_condition() {
         let entity_type = TypeExpr::Type(iri("https://example.com/Vehicle"));
         let ids = [uri("urn:ngsi-ld:Vehicle:1")];
-        let sql = render(&EntitySpecification {
+        let sql = render(&ExpandedEntitySpecification {
             entity_type: Some(&entity_type),
             ids: &ids,
             id_pattern: None,
@@ -380,12 +364,6 @@ mod tests {
 
     #[test]
     fn a_specification_without_any_axis_constrains_nothing() {
-        let specification = EntitySpecification {
-            entity_type: None,
-            ids: &[],
-            id_pattern: None,
-        };
-        assert!(!specification.constrains());
-        assert!(specification.row_matches().is_none());
+        assert!(row_matches(&ExpandedEntitySpecification::default()).is_none());
     }
 }

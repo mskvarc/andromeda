@@ -144,6 +144,7 @@ impl FederationService {
                 ReadSelection {
                     entity_type: None,
                     entity_ids: Some(from_ref(entity_id)),
+                    id_pattern: None,
                     exclude_registration: None,
                     csf: None,
                     scope_q: None,

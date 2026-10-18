@@ -22,12 +22,19 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::term_expansion::ContextualExpander;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
-use andromeda_ngsi_ld_query::type_selection::{expansion::expand_type_expression, grammar::TypeExprRaw};
+use andromeda_ngsi_ld_query::{
+    csr::expanded_entity_specification::ExpandedEntitySpecification,
+    type_selection::{
+        expansion::expand_type_expression,
+        grammar::{TypeExpr, TypeExprRaw},
+    },
+};
 use andromeda_telemetry::{
     federation_ops::{self, FederationOperation},
     operation::OperationTimer,
 };
 use iri_rs::IriBuf;
+use std::slice::from_ref;
 
 /// The registrations one provision operation is forwarded to.
 pub struct ProvisionPlan {
@@ -136,8 +143,17 @@ impl FederationService {
                 [single] => Some(single),
                 _ => None,
             },
-        };
-        let csrs = self.csr_repo.find_matching(coarse_type, Some(request.entity_id)).await?;
+        }
+        .cloned() // clone: the store's specification holds a selector of its own, and the types stay for the precise match
+        .map(TypeExpr::Type);
+        let csrs = self
+            .csr_repo
+            .find_matching(ExpandedEntitySpecification {
+                entity_type: coarse_type.as_ref(),
+                ids: from_ref(request.entity_id),
+                id_pattern: None,
+            })
+            .await?;
 
         // Per spec 4.3.6.2: auxiliary CSRs only supplement retrieval, never receive writes.
         let mut settled = Vec::new();
