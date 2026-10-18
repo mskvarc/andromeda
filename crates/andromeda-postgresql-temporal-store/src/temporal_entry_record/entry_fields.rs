@@ -180,8 +180,24 @@ impl MemberColumns {
     }
 }
 
-/// Assemble one entry from its parts.
-pub(super) fn record(grain: Grain, value: ValueColumns, members: MemberColumns, axes: SemanticTimeAxes, instance: &InstanceIdentity) -> TemporalEntryRecord {
+/// Assemble one attribute entry from its parts and the instance it records.
+pub(super) fn attribute_record(
+    grain: Grain,
+    value: ValueColumns,
+    members: MemberColumns,
+    axes: SemanticTimeAxes,
+    instance: &InstanceIdentity,
+) -> TemporalEntryRecord {
+    TemporalEntryRecord {
+        generated_instance_id: generated_instance_id(instance),
+        verbatim_instance_id: verbatim_instance_id(instance).map(String::from),
+        ..record(grain, value, members, axes)
+    }
+}
+
+/// Assemble one entry from its parts, with no instance identity: an instance
+/// of the Scope has none (clause 4.5.6).
+pub(super) fn record(grain: Grain, value: ValueColumns, members: MemberColumns, axes: SemanticTimeAxes) -> TemporalEntryRecord {
     let Grain {
         entry_kind,
         attribute_name_key,
@@ -220,11 +236,11 @@ pub(super) fn record(grain: Grain, value: ValueColumns, members: MemberColumns, 
         deleted_at,
         value_date_time,
         expires_at,
-        generated_instance_id: generated_instance_id(instance),
+        generated_instance_id: None,
         value_type_key,
         unit_code_id,
         value_boolean,
-        verbatim_instance_id: verbatim_instance_id(instance).map(String::from),
+        verbatim_instance_id: None,
         value_number,
         value_string,
         value_geometry,

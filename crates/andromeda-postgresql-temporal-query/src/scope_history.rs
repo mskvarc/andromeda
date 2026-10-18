@@ -83,8 +83,6 @@ pub fn build_scope_history_query(branch: &HistoryBranch, entity_id: &Identifier,
         ScopeHistory::CreatedAt,
         ScopeHistory::ModifiedAt,
         ScopeHistory::DeletedAt,
-        ScopeHistory::GeneratedInstanceId,
-        ScopeHistory::VerbatimInstanceId,
         // The Scope as it was written: the `ltree` label path beside it forgets
         // the optional leading `/` of clause 4.18, and clause 4.6.4 has the
         // broker "return the original content".

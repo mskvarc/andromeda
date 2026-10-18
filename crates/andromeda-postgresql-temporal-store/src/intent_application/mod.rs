@@ -26,16 +26,9 @@ use crate::{
     error::TemporalStoreError,
     intent_application::{
         catalog_statements::{evolutions_and_streams_statement, untyped_observations_statement, untyped_streams_statement, write_records_statement},
-        history_statements::{
-            claims_statement,
-            history_statement,
-            released_claims_statement,
-            replaced_instances_statement,
-            replaced_scopes_statement,
-            scope_history_statement,
-        },
+        history_statements::{claims_statement, history_statement, released_claims_statement, replaced_instances_statement, scope_history_statement},
         intent_source::{EntryReads, IntentSource, rendered},
-        replaced_rows::{ReplacedHistory, remove_replaced},
+        replaced_rows::remove_replaced,
     },
     stored_catalog_error::StoredCatalogError,
 };
@@ -56,9 +49,9 @@ enum StepRole {
     RefuseUntyped,
     /// Run it and refuse a duplicate `instanceId` claim as the client's own.
     Claim,
-    /// Read the rows of the history it names that the entries replace, then
-    /// remove exactly those rows.
-    Replace(ReplacedHistory),
+    /// Read the attribute history rows the entries replace, then remove
+    /// exactly those rows.
+    Replace,
 }
 
 /// One statement of the application, rendered.
@@ -117,7 +110,7 @@ fn application_steps(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Res
             &untyped_streams_statement(source, schema).map_err(build)?,
         ),
         Step::of(
-            StepRole::Replace(ReplacedHistory::AttributeInstances),
+            StepRole::Replace,
             Some(TemporalIntentReach::VerbatimInstance),
             identities,
             &replaced_instances_statement(source, schema),
@@ -139,12 +132,6 @@ fn application_steps(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Res
             Some(TemporalIntentReach::AttributeEntry),
             everything,
             &history_statement(source, schema).map_err(build)?,
-        ),
-        Step::of(
-            StepRole::Replace(ReplacedHistory::ScopeInstances),
-            Some(TemporalIntentReach::ScopeEntry),
-            identities,
-            &replaced_scopes_statement(source, schema),
         ),
         Step::of(
             StepRole::Write,
@@ -215,9 +202,9 @@ async fn run(
         StepRole::Claim => {
             query.execute(&mut *connection).await.map_err(claim_write_failure)?;
         }
-        StepRole::Replace(history) => {
+        StepRole::Replace => {
             let rows = query.fetch_all(&mut *connection).await?;
-            remove_replaced(connection, schema, history, &rows).await?;
+            remove_replaced(connection, schema, &rows).await?;
         }
         StepRole::RefuseUntyped => {
             if let Some(row) = query.fetch_optional(&mut *connection).await? {

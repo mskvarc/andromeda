@@ -63,14 +63,12 @@ const ATTRIBUTE_FIELDS: [(AttributeHistory, TemporalEntry, Recorded); 22] = [
 
 /// The `scope_history` value columns, each beside the entry field it is
 /// recorded from and how, in the table's column order.
-const SCOPE_FIELDS: [(ScopeHistory, TemporalEntry, Recorded); 9] = [
+const SCOPE_FIELDS: [(ScopeHistory, TemporalEntry, Recorded); 7] = [
     (ScopeHistory::ValueKind, TemporalEntry::ValueKind, Recorded::AsHeld),
     (ScopeHistory::ObservedAt, TemporalEntry::ObservedAt, Recorded::AsHeld),
     (ScopeHistory::CreatedAt, TemporalEntry::CreatedAt, Recorded::AsHeld),
     (ScopeHistory::ModifiedAt, TemporalEntry::ModifiedAt, Recorded::AsHeld),
     (ScopeHistory::DeletedAt, TemporalEntry::DeletedAt, Recorded::AsHeld),
-    (ScopeHistory::GeneratedInstanceId, TemporalEntry::GeneratedInstanceId, Recorded::AsHeld),
-    (ScopeHistory::VerbatimInstanceId, TemporalEntry::VerbatimInstanceId, Recorded::AsHeld),
     (ScopeHistory::ScopePath, TemporalEntry::ScopePath, Recorded::AsLtree),
     (ScopeHistory::VerbatimScopePath, TemporalEntry::VerbatimScopePath, Recorded::AsHeld),
 ];
@@ -85,7 +83,7 @@ pub fn attribute_value_columns() -> [AttributeHistory; 22] {
 /// The `scope_history` value columns, in the table's column order, beside the
 /// identity and the temporal entity.
 #[must_use]
-pub fn scope_value_columns() -> [ScopeHistory; 9] {
+pub fn scope_value_columns() -> [ScopeHistory; 7] {
     SCOPE_FIELDS.map(|(column, ..)| column)
 }
 
@@ -102,7 +100,7 @@ pub fn attribute_entry_values(field: impl Fn(TemporalEntry) -> SimpleExpr) -> [(
 /// in it, `field` reading one field of the entry.
 ///
 /// The label path is cast to the `ltree` a `scopeQ` matches.
-pub fn scope_entry_values(field: impl Fn(TemporalEntry) -> SimpleExpr) -> [(ScopeHistory, SimpleExpr); 9] {
+pub fn scope_entry_values(field: impl Fn(TemporalEntry) -> SimpleExpr) -> [(ScopeHistory, SimpleExpr); 7] {
     SCOPE_FIELDS.map(|(column, entry, recorded)| (column, recorded.of(field(entry))))
 }
 
@@ -132,8 +130,10 @@ mod tests {
         pretty_assertions::assert_eq!(values.len(), 22);
     }
 
+    /// Clause 4.5.6 gives the temporal Scope no `instanceId`, so a Scope row
+    /// records no instance identity.
     #[test]
-    fn a_scope_entry_records_its_label_path_as_an_ltree() {
+    fn a_scope_entry_records_its_label_path_as_an_ltree_and_no_instance_identity() {
         let values =
             rendered(scope_entry_values(|field: TemporalEntry| Expr::col((Alias::new("e"), field))).map(|(column, value)| (column.to_string(), value)));
         assert!(values.contains(&r#"scope_path <- SELECT "e"."scope_path"::ltree"#.to_owned()), "{values:?}");
@@ -141,5 +141,7 @@ mod tests {
             values.contains(&r#"verbatim_scope_path <- SELECT "e"."verbatim_scope_path""#.to_owned()),
             "{values:?}"
         );
+        assert!(!values.iter().any(|value| value.contains("instance_id")), "{values:?}");
+        pretty_assertions::assert_eq!(values.len(), 7);
     }
 }

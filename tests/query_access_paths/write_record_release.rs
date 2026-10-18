@@ -91,8 +91,8 @@ async fn seed_released_history(pool: &PgPool, prefix: &str) {
 
     sqlx::query(
         "INSERT INTO scope_history \
-         (recorded_at, temporal_entity_key, write_id, write_ordinal, value_kind, observed_at, generated_instance_id, scope_path, verbatim_scope_path) \
-         SELECT w.recorded_at, $1, w.write_id, 0, 1, w.recorded_at, gen_random_uuid(), 'seed.release'::ltree, '/seed/release' \
+         (recorded_at, temporal_entity_key, write_id, write_ordinal, value_kind, observed_at, scope_path, verbatim_scope_path) \
+         SELECT w.recorded_at, $1, w.write_id, 0, 1, w.recorded_at, 'seed.release'::ltree, '/seed/release' \
          FROM write_records AS w",
     )
     .bind(entity_key)

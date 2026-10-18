@@ -24,7 +24,7 @@ use andromeda_entity::{
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_linked_retrieval::admission::TemporalJoin;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, instance_identity::InstanceIdentity};
-use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalAggregationRow, TemporalHistoryRow, TemporalValue};
+use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalAggregationRow, TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::{entity_selection::EntitySelection, geo::near_distance_band::NearDistanceBand};
 use async_trait::async_trait;
@@ -131,7 +131,7 @@ impl StubBroker {
             recorded_at: instant,
             created_at: Some(instant),
             modified_at: Some(instant),
-            instance: InstanceIdentity::Verbatim(uri(&format!("urn:ngsi-ld:Instance:{entity_id}:reading"))),
+            instance: EvolutionInstance::Attribute(InstanceIdentity::Verbatim(uri(&format!("urn:ngsi-ld:Instance:{entity_id}:reading")))),
             metadata: None,
             stream_extent: StreamExtent::Whole,
         };
@@ -145,7 +145,7 @@ impl StubBroker {
                 recorded_at: instant,
                 created_at: Some(instant),
                 modified_at: Some(instant),
-                instance: InstanceIdentity::Verbatim(uri(&format!("urn:ngsi-ld:Instance:{entity_id}:{target}"))),
+                instance: EvolutionInstance::Attribute(InstanceIdentity::Verbatim(uri(&format!("urn:ngsi-ld:Instance:{entity_id}:{target}")))),
                 metadata: None,
                 stream_extent: StreamExtent::Whole,
             }))

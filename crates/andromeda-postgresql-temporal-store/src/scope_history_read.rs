@@ -16,15 +16,15 @@
 
 use crate::{
     error::TemporalStoreError,
-    history_row_identity::{decode_instance_identity, decode_write_identity, nullable_instant, required_column},
+    history_row_identity::{decode_write_identity, nullable_instant, required_column},
     scope_history_value::ScopeHistoryValue,
     semantic_time_axes::SemanticTimeAxes,
     stored_history_error::{HistoryColumn, HistoryTable, StoredHistoryError},
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_identity::InstanceIdentity, scope::path::ScopePath};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, scope::path::ScopePath};
 use andromeda_ngsi_ld_model::{
     scope_instance_value::scope_instance_value,
-    temporal::{StreamExtent, TemporalHistoryRow, TemporalValue},
+    temporal::{StreamExtent, TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_postgresql_codes::scope_value_kind::ScopeValueKind;
@@ -50,8 +50,6 @@ struct StoredScopeRow {
     axes: SemanticTimeAxes,
     /// What the row records: one scope path, or the removal of the scope.
     value: ScopeHistoryValue,
-    /// The identifier the instance is published to clients under.
-    instance: InstanceIdentity,
 }
 
 /// Decode the scope statement's rows into the reified scope instances the
@@ -68,7 +66,7 @@ struct StoredScopeRow {
 /// # Errors
 ///
 /// Returns [`TemporalStoreError::StoredHistory`] when a row carries a value
-/// shape, a label path, an instance identity or a deletion instant that
+/// shape, a label path or a deletion instant that
 /// `scope_history` cannot have written, and [`TemporalStoreError::Database`]
 /// when a column cannot be read at all.
 pub(crate) fn decode_scope_history(rows: &[PgRow]) -> Result<Vec<TemporalHistoryObservation>, TemporalStoreError> {
@@ -100,9 +98,9 @@ pub(crate) fn decode_scope_history(rows: &[PgRow]) -> Result<Vec<TemporalHistory
 
 /// Fold the rows of one scope event into the one instance it recorded.
 ///
-/// The instance identity and the four Temporal Properties come from the event's
-/// first row: every row of an event shares them, because clause 4.5.6 has the
-/// broker set them from the write itself rather than per path.
+/// The four Temporal Properties come from the event's first row: every row of
+/// an event shares them, because clause 4.5.6 has the broker set them from the
+/// write itself rather than per path.
 fn fold_event(event: &[&StoredScopeRow], scope_attribute: &AttributeName) -> Result<TemporalHistoryObservation, TemporalStoreError> {
     let write = event;
     let first = write.first().ok_or(StoredHistoryError::EmptyScopeEvent)?;
@@ -121,7 +119,8 @@ fn fold_event(event: &[&StoredScopeRow], scope_attribute: &AttributeName) -> Res
         recorded_at: first.recorded_at,
         created_at: first.axes.created_at,
         modified_at: first.axes.modified_at,
-        instance: first.instance.clone(), // clone: the folded instance owns its published identity.
+        // Clause 4.5.6 gives the temporal Scope no `instanceId`.
+        instance: EvolutionInstance::Scope,
         // Clause 4.5.6 restricts the reified scope to the four non-reified
         // Temporal Properties, so it carries no sub-attributes to merge.
         metadata: None,
@@ -170,7 +169,6 @@ fn decode_scope_row(row: &PgRow) -> Result<StoredScopeRow, TemporalStoreError> {
             modified_at: nullable_instant(row, HistoryColumn::ModifiedAt)?,
         },
         value: decode_scope_value(row)?,
-        instance: decode_instance_identity(row, TABLE)?,
     })
 }
 
@@ -203,13 +201,8 @@ mod tests {
         stored_history_error::HistoryColumn,
     };
     use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
-    use andromeda_ngsi_ld_lexicon::{
-        attribute_name::AttributeName,
-        attribute_type::AttributeType,
-        instance_identity::InstanceIdentity,
-        scope::path::ScopePath,
-    };
-    use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalValue};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, scope::path::ScopePath};
+    use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalValue, evolution_instance::EvolutionInstance};
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use andromeda_postgresql_schema::temporal::ScopeHistory;
     use andromeda_postgresql_temporal_query::scope_history::SCOPE_EVENT_AT;
@@ -239,7 +232,6 @@ mod tests {
                 modified_at: Some(instant(1_533_121_200)),
             },
             value,
-            instance: InstanceIdentity::Generated(Uuid::from_u128(u128::from(ordinal) + 1)),
         }
     }
 
@@ -312,13 +304,12 @@ mod tests {
         pretty_assertions::assert_eq!(written, sea_query::Iden::to_string(&ScopeHistory::VerbatimScopePath));
     }
 
-    /// Clause 4.18 gives an Entity at most one instance of the scope Property,
-    /// so the several rows of one write publish one identifier rather than one
-    /// each.
+    /// Clause 4.5.6 gives the temporal Scope only the four non-reified
+    /// Temporal Properties, so a folded Scope instance carries no identity.
     #[test]
-    fn one_write_publishes_one_instance_identifier() {
+    fn a_folded_scope_instance_carries_no_instance_identity() {
         let rows = [stored(0, path("/Madrid/Centro")), stored(1, path("/Company123/UnitA"))];
         let folded = fold_event(&rows.iter().collect::<Vec<_>>(), &scope_attribute()).expect("a folded scope event");
-        pretty_assertions::assert_eq!(folded.row.instance, InstanceIdentity::Generated(Uuid::from_u128(1)));
+        pretty_assertions::assert_eq!(folded.row.instance, EvolutionInstance::Scope);
     }
 }

@@ -13,10 +13,13 @@ use crate::{
     history_members::{HistoryMembers, mention},
     scope_history_value::ScopeHistoryValue,
     semantic_time_axes::SemanticTimeAxes,
-    temporal_entry_record::entry_fields::{Grain, MemberColumns, ValueColumns, record},
+    temporal_entry_record::{
+        entry_fields::{Grain, MemberColumns, ValueColumns, attribute_record, record},
+        entry_needs::meets,
+    },
     temporal_store_invariant::TemporalStoreInvariant,
 };
-use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
+use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, evolution_instance::EvolutionInstance};
 use andromeda_postgresql_attribute_instance::{
     name_keys::{MentionedNames, NameKeys},
     sub_attribute::{EwkbGeometry, SubAttributeRecord},
@@ -222,30 +225,6 @@ impl TemporalIntentRecord {
     }
 }
 
-/// The entry codes a Scope entry is stored under: an event, or an assertion
-/// of the Scope in force.
-const SCOPE_KINDS: [i16; 2] = [TemporalEntryKind::Scope.code(), TemporalEntryKind::ScopeAssertion.code()];
-
-/// Whether an intent stating `entity_type_name_keys` and holding `entries`
-/// meets `need`.
-///
-/// An intent observes when it holds no entry or any entry that does not end
-/// an instance: clause 4.5.1 requires only `id` and `type` of an Entity, so a
-/// write observing one with no attribute still extends its evolution.
-fn meets(entity_type_name_keys: &[i32], entries: &[TemporalEntryRecord], need: TemporalIntentReach) -> bool {
-    let is_attribute = |entry: &TemporalEntryRecord| !SCOPE_KINDS.contains(&entry.entry_kind);
-    match need {
-        TemporalIntentReach::TypedIntent => !entity_type_name_keys.is_empty(),
-        TemporalIntentReach::UntypedObservation => {
-            entity_type_name_keys.is_empty() && (entries.is_empty() || entries.iter().any(|entry| entry.entry_kind != TemporalEntryKind::Tombstone.code()))
-        }
-        TemporalIntentReach::AttributeEntry => entries.iter().any(is_attribute),
-        TemporalIntentReach::VerbatimInstance => entries.iter().any(|entry| is_attribute(entry) && entry.verbatim_instance_id.is_some()),
-        TemporalIntentReach::ScopeEntry => !entries.iter().all(is_attribute),
-        TemporalIntentReach::UntypedAttributeEntry => entity_type_name_keys.is_empty() && entries.iter().any(is_attribute),
-    }
-}
-
 /// The record one entry waits in, its instants those of the write accepted at
 /// `recorded_at`.
 fn entry_record(entry: &TemporalAppendEntry, recorded_at: DateTime<Utc>, keys: &NameKeys) -> Result<TemporalEntryRecord, TemporalStoreError> {
@@ -264,7 +243,7 @@ fn entry_record(entry: &TemporalAppendEntry, recorded_at: DateTime<Utc>, keys: &
             dataset_id,
             attribute_type,
             instance,
-        } => Ok(record(
+        } => Ok(attribute_record(
             // The family the ended instance belonged to is what the render
             // synthesises the null member of (clauses 4.5.7 and 4.5.8).
             Grain::attribute(
@@ -283,7 +262,6 @@ fn entry_record(entry: &TemporalAppendEntry, recorded_at: DateTime<Utc>, keys: &
             observation,
             kind,
             observed_at,
-            instance,
         } => {
             let value = match observation {
                 // clone: the entry owns its validated path.
@@ -304,7 +282,6 @@ fn entry_record(entry: &TemporalAppendEntry, recorded_at: DateTime<Utc>, keys: &
                     created_at: Some(recorded_at),
                     modified_at: Some(recorded_at),
                 },
-                instance,
             );
             if let Some(stored) = value.path().map(StoredScopePath::from) {
                 entry.verbatim_scope_path = Some(String::from(stored.written));
@@ -368,8 +345,19 @@ impl TemporalEntryRecord {
 
 /// The entry `row` is recorded as, beside the `members` its metadata stores
 /// as.
+///
+/// # Errors
+///
+/// Returns [`TemporalStoreError`] when the attribute name has no key in
+/// `keys` or the value cannot be stored, and
+/// [`TemporalStoreError::ScopeHasNoAttributeRow`] for an instance of the Scope,
+/// which is recorded as a Scope entry and never as an attribute observation.
 fn observation_record(row: &TemporalHistoryRow, members: HistoryMembers, keys: &NameKeys) -> Result<TemporalEntryRecord, TemporalStoreError> {
-    Ok(record(
+    let instance = match &row.instance {
+        EvolutionInstance::Attribute(instance) => instance,
+        EvolutionInstance::Scope => return Err(TemporalStoreError::ScopeHasNoAttributeRow),
+    };
+    Ok(attribute_record(
         Grain::attribute(
             TemporalEntryKind::Observation,
             &row.attribute_name,
@@ -387,11 +375,13 @@ fn observation_record(row: &TemporalHistoryRow, members: HistoryMembers, keys: &
             created_at: row.created_at,
             modified_at: row.modified_at,
         },
-        &row.instance,
+        instance,
     ))
 }
 
 /// The field groups an entry is assembled from.
 mod entry_fields;
+/// Which application statements an intent's entries reach.
+mod entry_needs;
 #[cfg(test)]
 pub(crate) mod tests;

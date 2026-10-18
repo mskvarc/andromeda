@@ -7,7 +7,6 @@ use crate::{
         ForwardProvisionRequest,
         ForwardingOperation,
         Identifier,
-        InstanceFamily,
         InstanceIdentity,
         IntoResponse,
         JsonLd,
@@ -56,7 +55,7 @@ pub async fn update_attr_instance(
     // Clause 4.5.7 carries an `instanceId` as a URI; which of the two stored
     // shapes it names is decided here, at the edge, so the store addresses one
     // identity column rather than searching both.
-    let instance = InstanceIdentity::from_identifier(instance_id, InstanceFamily::Attribute);
+    let instance = InstanceIdentity::from_identifier(instance_id);
     // Clause 5.6.14.3: the body is an EntityTemporal Fragment naming one
     // Attribute with an Array of exactly one instance, screened before it is
     // forwarded, so a Context Source receives that shape and nothing else. The

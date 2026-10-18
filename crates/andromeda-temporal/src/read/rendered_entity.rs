@@ -252,7 +252,7 @@ mod tests {
         stub_broker::{StubBroker, limits, service_under, uri},
     };
     use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_identity::InstanceIdentity, temporal_format::TemporalFormat, time_prop::TimeProp};
-    use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, TemporalValue};
+    use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance};
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
@@ -328,7 +328,7 @@ mod tests {
                 recorded_at: instant,
                 created_at: Some(instant),
                 modified_at: Some(instant),
-                instance: InstanceIdentity::Verbatim(uri(&format!("urn:ngsi-ld:Instance:{value}"))),
+                instance: EvolutionInstance::Attribute(InstanceIdentity::Verbatim(uri(&format!("urn:ngsi-ld:Instance:{value}")))),
                 metadata: None,
                 stream_extent: extent,
             })

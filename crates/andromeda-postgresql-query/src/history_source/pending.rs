@@ -15,8 +15,8 @@
 //!   a later queued entry naming the same instance replaces it in turn.
 //! - An attribute entry without one whose write identity is already recorded
 //!   lands on nothing, the history insert ignoring the conflict.
-//! - A Scope entry replaces the recorded Scope row of its own instance
-//!   identity.
+//! - A Scope entry whose write identity is already recorded lands on
+//!   nothing, as an attribute entry without a client `instanceId` does.
 //! - A Scope assertion is written only where the Scope in force at its write
 //!   differs, judged against the recorded Scope events and the earlier queued
 //!   ones by the judgement the application applies
@@ -52,7 +52,7 @@ use andromeda_postgresql_seaquery::{
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
-use sea_query::{Condition, DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, Order, Query, SelectStatement, SimpleExpr, UnionType};
+use sea_query::{Condition, DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, Order, Query, SelectStatement, SimpleExpr, TableRef, UnionType};
 
 /// Alias `pe`: the queued entry a source row is projected from.
 #[derive(Iden, Clone, Copy)]
@@ -182,18 +182,17 @@ pub(crate) fn recorded_attribute_row_kept(entity_id: SimpleExpr, attribute_key: 
     Condition::any().add(verbatim.is_null()).add(Expr::exists(naming).not())
 }
 
-/// Whether a recorded Scope row stays beside the queued entries: no queued
-/// Scope entry of its Entity carries its instance identity.
-pub(crate) fn recorded_scope_row_kept(entity_id: SimpleExpr, generated: SimpleExpr, verbatim: SimpleExpr) -> SimpleExpr {
-    let mut naming = Query::select();
-    naming
+/// Whether `history` holds a row under the write identity of the entry under
+/// `pe`: the history insert ignores the entry then, so it lands on nothing.
+fn recorded_under_entry_identity(history: TableRef, [recorded_at, write_id, write_ordinal]: [DynIden; 3]) -> SimpleExpr {
+    let mut recorded = Query::select();
+    recorded
         .expr(int_literal(1))
-        .from_as(TemporalAppendEntries::Table, ReplacingEntry)
-        .and_where(Expr::col((ReplacingEntry, TemporalAppendEntries::EntityId)).eq(entity_id))
-        .and_where(entry_kind_in(ReplacingEntry, &SCOPE_KINDS))
-        .and_where(SimpleExpr::from(Expr::col((ReplacingEntry, TemporalEntry::GeneratedInstanceId))).not_distinct_from(generated))
-        .and_where(SimpleExpr::from(Expr::col((ReplacingEntry, TemporalEntry::VerbatimInstanceId))).not_distinct_from(verbatim));
-    Expr::exists(naming).not()
+        .from(history)
+        .and_where(Expr::col((RecordedRow, recorded_at)).equals((PendingEntry, TemporalAppendEntries::RecordedAt)))
+        .and_where(Expr::col((RecordedRow, write_id)).equals((PendingEntry, TemporalAppendEntries::WriteId)))
+        .and_where(Expr::col((RecordedRow, write_ordinal)).equals((PendingEntry, TemporalAppendEntries::WriteOrdinal)));
+    Expr::exists(recorded)
 }
 
 /// Whether the attribute entry under `pe` is the row its instance ends up
@@ -206,24 +205,21 @@ fn lands(schema: Option<&DynIden>) -> Condition {
         entry(TemporalEntry::VerbatimInstanceId),
     );
     replaced.and_where(Expr::col((ReplacingEntry, TemporalAppendEntries::IntentKey)).gt(entry(TemporalAppendEntries::IntentKey)));
-    let mut recorded = Query::select();
-    recorded
-        .expr(int_literal(1))
-        .from(qualified(schema, AttributeHistory::Table).alias(RecordedRow))
-        .and_where(Expr::col((RecordedRow, AttributeHistory::RecordedAt)).equals((PendingEntry, TemporalAppendEntries::RecordedAt)))
-        .and_where(Expr::col((RecordedRow, AttributeHistory::WriteId)).equals((PendingEntry, TemporalAppendEntries::WriteId)))
-        .and_where(Expr::col((RecordedRow, AttributeHistory::WriteOrdinal)).equals((PendingEntry, TemporalAppendEntries::WriteOrdinal)));
+    let recorded = recorded_under_entry_identity(
+        qualified(schema, AttributeHistory::Table).alias(RecordedRow),
+        [
+            AttributeHistory::RecordedAt.into_iden(),
+            AttributeHistory::WriteId.into_iden(),
+            AttributeHistory::WriteOrdinal.into_iden(),
+        ],
+    );
     Condition::any()
         .add(
             Condition::all()
                 .add(entry(TemporalEntry::VerbatimInstanceId).is_not_null())
                 .add(Expr::exists(replaced).not()),
         )
-        .add(
-            Condition::all()
-                .add(entry(TemporalEntry::VerbatimInstanceId).is_null())
-                .add(Expr::exists(recorded).not()),
-        )
+        .add(Condition::all().add(entry(TemporalEntry::VerbatimInstanceId).is_null()).add(recorded.not()))
 }
 
 /// The queued attribute entries the application would write, as rows of the
@@ -293,19 +289,14 @@ pub(crate) fn stream_rows(schema: Option<&DynIden>, of: &HistoryOf) -> SelectSta
 /// The queued Scope entries the application would write, as rows of the
 /// scope source: the Entity, the write identity, the value columns.
 pub(crate) fn scope_rows(schema: Option<&DynIden>, of: &HistoryOf) -> SelectStatement {
-    let mut replaced = Query::select();
-    replaced
-        .expr(int_literal(1))
-        .from_as(TemporalAppendEntries::Table, ReplacingEntry)
-        .and_where(Expr::col((ReplacingEntry, TemporalAppendEntries::EntityId)).equals((PendingEntry, TemporalAppendEntries::EntityId)))
-        .and_where(entry_kind_in(ReplacingEntry, &SCOPE_KINDS))
-        .and_where(Expr::col((ReplacingEntry, TemporalAppendEntries::IntentKey)).gt(entry(TemporalAppendEntries::IntentKey)))
-        .and_where(
-            SimpleExpr::from(Expr::col((ReplacingEntry, TemporalEntry::GeneratedInstanceId))).not_distinct_from(entry(TemporalEntry::GeneratedInstanceId)),
-        )
-        .and_where(
-            SimpleExpr::from(Expr::col((ReplacingEntry, TemporalEntry::VerbatimInstanceId))).not_distinct_from(entry(TemporalEntry::VerbatimInstanceId)),
-        );
+    let recorded = recorded_under_entry_identity(
+        qualified(schema, ScopeHistory::Table).alias(RecordedRow),
+        [
+            ScopeHistory::RecordedAt.into_iden(),
+            ScopeHistory::WriteId.into_iden(),
+            ScopeHistory::WriteOrdinal.into_iden(),
+        ],
+    );
     let mut select = Query::select();
     select
         .expr_as(entry(TemporalAppendEntries::EntityId), HistoryGrain::EntityId)
@@ -319,7 +310,7 @@ pub(crate) fn scope_rows(schema: Option<&DynIden>, of: &HistoryOf) -> SelectStat
         .from_as(TemporalAppendEntries::Table, PendingEntry)
         .and_where(entry_kind_in(PendingEntry, &SCOPE_KINDS))
         .cond_where(applied(schema))
-        .and_where(Expr::exists(replaced).not())
+        .and_where(recorded.not())
         .cond_where(
             Condition::any()
                 .add(entry(TemporalEntry::EntryKind).ne(SimpleExpr::Constant(TemporalEntryKind::ScopeAssertion.code().into())))

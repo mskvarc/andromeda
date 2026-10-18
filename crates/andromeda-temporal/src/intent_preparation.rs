@@ -17,11 +17,10 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     entity_type_name::EntityTypeName,
     identifier::Identifier,
-    instance_family::InstanceFamily,
     instance_identity::InstanceIdentity,
     ngsi_ld_date_time::NgsiLdDateTime,
 };
-use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow};
+use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, evolution_instance::EvolutionInstance};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::{DateTime, Utc};
 
@@ -156,22 +155,19 @@ fn observation_entry(attribute_name: &AttributeName, observed: ObservedInstance,
             // modified at the instant the write was accepted.
             created_at: Some(recorded_at),
             modified_at: Some(recorded_at),
-            instance: instance_id.map_or_else(InstanceIdentity::generate, |provided| {
-                InstanceIdentity::from_identifier(provided, InstanceFamily::Attribute)
-            }),
+            instance: EvolutionInstance::Attribute(instance_id.map_or_else(InstanceIdentity::generate, InstanceIdentity::from_identifier)),
             metadata,
             stream_extent: StreamExtent::Whole,
         },
     }
 }
 
-/// One scope entry, minted its own stable identity.
-fn scope_entry(observation: ScopeObservation, kind: ScopeEntryKind, observed_at: DateTime<Utc>) -> TemporalAppendEntry {
+/// One scope entry.
+const fn scope_entry(observation: ScopeObservation, kind: ScopeEntryKind, observed_at: DateTime<Utc>) -> TemporalAppendEntry {
     TemporalAppendEntry::Scope {
         observation,
         kind,
         observed_at: Some(observed_at),
-        instance: InstanceIdentity::generate(),
     }
 }
 

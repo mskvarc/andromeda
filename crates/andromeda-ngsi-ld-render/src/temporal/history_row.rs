@@ -18,12 +18,10 @@ use andromeda_ngsi_ld_entity::{
 use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
     identifier::{Identifier, IdentifierParseError},
-    instance_family::InstanceFamily,
-    instance_identity::InstanceIdentity,
     reference::{NgsiLdReference, NgsiLdReferenceError},
     rfc3339::sub_second,
 };
-use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue, observation_metadata::ObservationMetadata};
+use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance, observation_metadata::ObservationMetadata};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
 use chrono::{DateTime, Utc};
@@ -67,7 +65,7 @@ pub enum HistoryRowRenderError {
 /// the instance it recorded.
 pub fn neutral_row_to_instance(row: TemporalHistoryRow, sys_attrs: SysAttrsInclusion) -> Result<InstanceDocument, HistoryRowRenderError> {
     let TemporalHistoryRow {
-        attribute_name,
+        attribute_name: _,
         attribute_type,
         dataset_id,
         value,
@@ -79,7 +77,7 @@ pub fn neutral_row_to_instance(row: TemporalHistoryRow, sys_attrs: SysAttrsInclu
         metadata,
         stream_extent: _,
     } = row;
-    let (instance_id, dataset_id) = identity_members(&instance, InstanceFamily::of_attribute_name(&attribute_name), dataset_id)?;
+    let (instance_id, dataset_id) = identity_members(&instance, dataset_id)?;
     let deleted_at = value.deleted_at();
     let value = rendered_value(value, attribute_type)?;
     // A tombstone carries no observation of its own: its value member, its
@@ -196,22 +194,15 @@ fn rendered_instant(instant: DateTime<Utc>) -> String {
 /// The members that identify the instance: the `instanceId` clause 4.5.7 hands
 /// back, and the `datasetId` it belongs to when it names one.
 ///
-/// A Scope carries neither. Clause 4.5.6 restricts the temporal representation
-/// of a Scope to "the non-reified Temporal Properties createdAt, modifiedAt,
-/// deletedAt and observedAt as sub-Properties" -- `instanceId` is none of those
-/// and so has no place on it -- and clause 4.5.4 gives a Scope no dataset
-/// dimension, so no `datasetId` either.
-fn identity_members(
-    instance: &InstanceIdentity,
-    family: InstanceFamily,
-    dataset_id: Option<Identifier>,
-) -> Result<(Option<Identifier>, Option<Identifier>), HistoryRowRenderError> {
-    match family {
-        InstanceFamily::Scope => Ok((None, None)),
-        InstanceFamily::Attribute => Ok((
+/// An instance of the Scope carries neither: clause 4.5.6 gives it no
+/// `instanceId`, and clause 4.5.4 gives a Scope no dataset dimension.
+fn identity_members(instance: &EvolutionInstance, dataset_id: Option<Identifier>) -> Result<(Option<Identifier>, Option<Identifier>), HistoryRowRenderError> {
+    match instance {
+        EvolutionInstance::Scope => Ok((None, None)),
+        EvolutionInstance::Attribute(identity) => Ok((
             Some(
-                instance
-                    .rendered(family)
+                identity
+                    .rendered()
                     .to_string()
                     .parse::<Identifier>()
                     .map_err(HistoryRowRenderError::InstanceId)?,

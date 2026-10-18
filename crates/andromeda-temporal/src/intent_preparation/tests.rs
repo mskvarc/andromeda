@@ -22,11 +22,10 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     identifier::Identifier,
-    instance_family::InstanceFamily,
     instance_identity::InstanceIdentity,
     scope::path::ScopePath,
 };
-use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
+use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::{DateTime, TimeZone, Utc};
@@ -144,7 +143,6 @@ fn scope_entries(history: &[HistoryRecord]) -> Vec<(ScopeObservation, ScopeEntry
                 observation,
                 kind,
                 observed_at,
-                ..
             } => Some((observation, kind, observed_at)),
             TemporalAppendEntry::Observation { .. } | TemporalAppendEntry::Tombstone { .. } => None,
         })
@@ -306,10 +304,11 @@ fn every_written_instance_is_its_own_observation() {
     );
     assert!(rows.iter().all(|row| row.observed_at.is_some() && row.created_at == Some(recorded_at())));
     pretty_assertions::assert_eq!(
-        rows.iter()
-            .map(|row| row.instance.rendered(InstanceFamily::Attribute).to_string())
-            .collect::<Vec<_>>(),
-        vec!["urn:ngsi-ld:instance:1", "urn:ngsi-ld:instance:2"]
+        rows.iter().map(|row| &row.instance).collect::<Vec<_>>(),
+        ["urn:ngsi-ld:instance:1", "urn:ngsi-ld:instance:2"]
+            .map(|id| EvolutionInstance::Attribute(InstanceIdentity::Verbatim(id.parse().expect("valid URI"))))
+            .iter()
+            .collect::<Vec<_>>()
     );
 }
 
@@ -328,7 +327,11 @@ fn a_core_write_records_a_minted_instance_id_whatever_the_producer_wrote() {
 
     let rows = rows(&entries);
     pretty_assertions::assert_eq!(rows.len(), 1);
-    assert!(matches!(rows[0].instance, InstanceIdentity::Generated(_)), "{:?}", rows[0].instance);
+    assert!(
+        matches!(rows[0].instance, EvolutionInstance::Attribute(InstanceIdentity::Generated(_))),
+        "{:?}",
+        rows[0].instance
+    );
 }
 
 /// The entity state a Property holding a `DateTime`-typed `raw` value

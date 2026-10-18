@@ -5,11 +5,14 @@
 --
 -- The recorded Scopes of each temporal entity, in the shape of attribute
 -- history: the `recorded_at` write clock, the write identity, the four
--- semantic time axes, the two-column instance identity and the tombstone. A
--- row opens a validity interval that runs until the entity's next event on
--- the same axis (clause 4.18), so the table holds one event per change of
--- Scope: a write restating the Scope already in force adds none. It is a plain
--- table in every branch.
+-- semantic time axes and the tombstone. A row opens a validity interval that
+-- runs until the entity's next event on the same axis (clause 4.18), so the
+-- table holds one event per change of Scope: a write restating the Scope
+-- already in force adds none. It is a plain table in every branch.
+--
+-- A row carries no instance identity. Clause 4.5.6 gives the temporal Scope
+-- only the four non-reified Temporal Properties, so a Scope instance has no
+-- `instanceId` to keep, and the write identity is what names a row.
 --
 -- Codes:
 --
@@ -25,10 +28,6 @@
 -- Scope as it was written, which is what a Temporal Evolution reads back.
 -- Clause 4.18 makes the leading `/` optional and the label path forgets it,
 -- while clause 4.6.4 has the broker "return the original content".
---
--- A broker-minted instance identifier is rendered through the permanently
--- stable template `urn:ngsi-ld:scope:instance:{uuid}`; a client-supplied one
--- is kept exactly as received.
 --
 -- Each semantic axis has a BRIN summary and no B-tree: the entity-led B-trees
 -- answer entity-scoped reads, and a broad `observedAt`, `createdAt`,
@@ -47,14 +46,10 @@ create table scope_history (
     created_at timestamptz,
     modified_at timestamptz,
     deleted_at timestamptz,
-    generated_instance_id uuid,
-    verbatim_instance_id text compression lz4 collate "C",
     scope_path ltree compression lz4,
     verbatim_scope_path text compression lz4 collate "C",
     constraint uq_scope_history_write_identity unique (recorded_at, write_id, write_ordinal),
     constraint chk_scope_history_write_ordinal check (write_ordinal >= 0),
-    constraint chk_scope_history_instance_identity check (num_nonnulls (generated_instance_id, verbatim_instance_id) = 1),
-    constraint chk_scope_history_verbatim_instance_id_length check (octet_length(verbatim_instance_id) <= 1024),
     constraint chk_scope_history_value_presence check ((value_kind = 0 and deleted_at is not null and scope_path is null and verbatim_scope_path is null) or (value_kind = 1 and scope_path is not null and verbatim_scope_path is not null))
 )
 with (
@@ -66,14 +61,6 @@ create index idx_scope_history_entity_recorded_at on scope_history (temporal_ent
 create index idx_scope_history_entity_observed_at on scope_history (temporal_entity_key, observed_at desc)
 where
     observed_at is not null;
-
-create index idx_scope_history_entity_generated_instance on scope_history (temporal_entity_key, generated_instance_id)
-where
-    generated_instance_id is not null;
-
-create index idx_scope_history_entity_verbatim_instance on scope_history (temporal_entity_key, verbatim_instance_id)
-where
-    verbatim_instance_id is not null;
 
 -- `scopeQ` matching over recorded Scopes (clause 4.19).
 create index idx_scope_history_scope_path on scope_history using gist (scope_path)

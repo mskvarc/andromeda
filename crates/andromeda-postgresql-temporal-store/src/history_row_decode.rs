@@ -29,7 +29,13 @@ use andromeda_ngsi_ld_lexicon::{
     identifier::Identifier,
     uri::Uri,
 };
-use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, TemporalValue, structured_value::StructuredValue};
+use andromeda_ngsi_ld_model::temporal::{
+    StreamExtent,
+    TemporalHistoryRow,
+    TemporalValue,
+    evolution_instance::EvolutionInstance,
+    structured_value::StructuredValue,
+};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_attribute_instance::{
     name_keys::{HeldKeys, KeyNames},
@@ -140,7 +146,7 @@ fn decode_history_row(row: &PgRow) -> Result<DecodedHistoryRow, TemporalStoreErr
         recorded_at: required_column(row, TABLE, HistoryColumn::RecordedAt)?,
         created_at: nullable_instant(row, HistoryColumn::CreatedAt)?,
         modified_at: nullable_instant(row, HistoryColumn::ModifiedAt)?,
-        instance: decode_instance_identity(row, TABLE)?,
+        instance: EvolutionInstance::Attribute(decode_instance_identity(row, TABLE)?),
         metadata: None,
         stream_extent: decode_stream_extent(row)?,
     };
@@ -286,7 +292,7 @@ mod tests {
         stored_history_error::{StoredHistoryError, UnitCodeColumn},
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_identity::InstanceIdentity};
-    use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, TemporalValue};
+    use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance};
     use andromeda_postgresql_attribute_instance::{
         name_keys::KeyNames,
         stored_members::InstanceMembers,
@@ -342,7 +348,7 @@ mod tests {
                     recorded_at,
                     created_at: Some(recorded_at),
                     modified_at: Some(recorded_at),
-                    instance: InstanceIdentity::generate(),
+                    instance: EvolutionInstance::Attribute(InstanceIdentity::generate()),
                     metadata: None,
                     stream_extent: StreamExtent::Whole,
                 },

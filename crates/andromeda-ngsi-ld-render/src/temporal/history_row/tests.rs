@@ -9,6 +9,7 @@ use andromeda_ngsi_ld_model::temporal::{
     StreamExtent,
     TemporalHistoryRow,
     TemporalValue,
+    evolution_instance::EvolutionInstance,
     observation_metadata::ObservationMetadata,
     structured_value::StructuredValue,
 };
@@ -47,7 +48,7 @@ fn row(value: TemporalValue) -> TemporalHistoryRow {
         recorded_at: instant(1_700_000_900),
         created_at: Some(instant(1_700_000_100)),
         modified_at: Some(instant(1_700_000_200)),
-        instance: InstanceIdentity::Generated(minted()),
+        instance: EvolutionInstance::Attribute(InstanceIdentity::Generated(minted())),
         metadata: None,
         stream_extent: StreamExtent::Whole,
     }
@@ -313,7 +314,7 @@ fn unlist(list: &Value) -> Value {
 #[test]
 fn a_verbatim_identifier_renders_in_the_spelling_it_arrived_in() {
     let mut row = row(one());
-    row.instance = InstanceIdentity::Verbatim("https://example.org/instances/1".parse().expect("valid URI"));
+    row.instance = EvolutionInstance::Attribute(InstanceIdentity::Verbatim("https://example.org/instances/1".parse().expect("valid URI")));
     let rendered = rendered(row, SysAttrsInclusion::Strip);
     pretty_assertions::assert_eq!(
         member(&rendered, expanded_properties::INSTANCE_ID.as_str()),
@@ -327,6 +328,7 @@ fn a_verbatim_identifier_renders_in_the_spelling_it_arrived_in() {
 fn a_scope_instance_carries_no_identity_members() {
     let mut scope = row(TemporalValue::Scopes(vec!["/Madrid".parse().expect("a scope path")]));
     scope.attribute_name = expanded_properties::SCOPE.as_str().parse().expect("valid attribute name");
+    scope.instance = EvolutionInstance::Scope;
     scope.dataset_id = Some("urn:ngsi-ld:Dataset:a".parse().expect("a valid identifier"));
     let rendered = rendered(scope, SysAttrsInclusion::Strip);
     pretty_assertions::assert_eq!(member(&rendered, expanded_properties::INSTANCE_ID.as_str()), None);

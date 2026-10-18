@@ -30,7 +30,6 @@ pub mod entity_type_name;
 pub mod fractional_seconds;
 pub mod identifier;
 pub mod identifier_length;
-pub mod instance_family;
 pub mod instance_identity;
 pub mod name;
 pub mod ngsi_ld_date;

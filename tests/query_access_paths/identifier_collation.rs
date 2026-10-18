@@ -46,7 +46,6 @@ async fn identifier_columns_declare_byte_wise_collation() {
         ("attribute_history", "value_uri"),
         ("attribute_history", "verbatim_instance_id"),
         ("attribute_history_instance_claims", "verbatim_instance_id"),
-        ("scope_history", "verbatim_instance_id"),
         ("temporal_attribute_streams", "dataset_id"),
         ("registration_information", "entity_types"),
         ("registration_information", "entity_id"),

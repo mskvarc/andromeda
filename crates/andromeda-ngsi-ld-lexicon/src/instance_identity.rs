@@ -1,6 +1,6 @@
 //! The two shapes a temporal instance identifier is held in.
 
-use crate::{identifier::Identifier, instance_family::InstanceFamily, uri::NGSI_LD_URN_NID};
+use crate::{identifier::Identifier, uri::NGSI_LD_URN_NID};
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -15,7 +15,7 @@ use uuid::Uuid;
 /// apart and one instance carries exactly one of them.
 ///
 /// A broker-minted identifier keeps only its [`Uuid`] and is re-rendered
-/// through the family's permanently stable template. A client-supplied
+/// through the permanently stable template. A client-supplied
 /// identifier — and any older broker-minted spelling the template cannot
 /// reproduce byte for byte — is kept verbatim, because re-rendering it would
 /// hand a client a different identifier than the one it already holds.
@@ -39,12 +39,12 @@ impl InstanceIdentity {
     /// the mint time, and the instance already carries its own `createdAt` and
     /// `observedAt`.
     ///
-    /// The rendered identifier (`urn:ngsi-ld:attribute:instance:<uuid>` and
-    /// its scope twin) is also the one deliberate exception to the
-    /// `urn:ngsi-ld:<Kind>:<id>` shape: its kind is lowercase and two segments
-    /// deep. The exception is permanent. The [`InstanceFamily`] templates must
-    /// keep rendering an identifier already handed to a client byte for byte,
-    /// so they are never "fixed" to the `PascalCase`, single-segment shape.
+    /// The rendered identifier (`urn:ngsi-ld:attribute:instance:<uuid>`) is
+    /// also the one deliberate exception to the `urn:ngsi-ld:<Kind>:<id>`
+    /// shape: its kind is lowercase and two segments deep. The exception is
+    /// permanent. The template must keep rendering an identifier already handed
+    /// to a client byte for byte, so it is never "fixed" to the `PascalCase`,
+    /// single-segment shape.
     #[must_use]
     pub fn generate() -> InstanceIdentity {
         InstanceIdentity::Generated(Uuid::now_v7())
@@ -53,15 +53,15 @@ impl InstanceIdentity {
     /// Read an identifier back from the URI it was received or stored as.
     ///
     /// An identifier is taken as [`Generated`](InstanceIdentity::Generated)
-    /// only when rendering its UUID through the family's template reproduces
+    /// only when rendering its UUID through the template reproduces
     /// the input exactly. That test, rather than a prefix match, is what makes
     /// the split lossless: an identifier that merely resembles the template — a
     /// non-canonical UUID spelling, a URN carrying a resolution component, a
     /// trailing segment such as a write ordinal — is kept verbatim instead of
     /// being silently rewritten.
     #[must_use]
-    pub fn from_identifier(identifier: Identifier, family: InstanceFamily) -> InstanceIdentity {
-        match generated_uuid_of(&identifier, family) {
+    pub fn from_identifier(identifier: Identifier) -> InstanceIdentity {
+        match generated_uuid_of(&identifier) {
             Some(uuid) => InstanceIdentity::Generated(uuid),
             None => InstanceIdentity::Verbatim(identifier),
         }
@@ -73,9 +73,9 @@ impl InstanceIdentity {
     /// rather than reparsed, so no stored value can make an instance
     /// unrenderable.
     #[must_use]
-    pub const fn rendered(&self, family: InstanceFamily) -> RenderedInstanceId<'_> {
+    pub const fn rendered(&self) -> RenderedInstanceId<'_> {
         match self {
-            InstanceIdentity::Generated(uuid) => RenderedInstanceId::Generated(family, *uuid),
+            InstanceIdentity::Generated(uuid) => RenderedInstanceId::Generated(*uuid),
             InstanceIdentity::Verbatim(identifier) => RenderedInstanceId::Verbatim(identifier),
         }
     }
@@ -83,35 +83,37 @@ impl InstanceIdentity {
 
 /// One temporal instance identifier in the spelling a client receives.
 ///
-/// The generated arm carries the family's permanently stable template. Neither
-/// template is ever changed, and neither is stored: a generated identifier is
-/// spelled out from its UUID every time it is rendered.
+/// The generated arm carries the permanently stable template. The template is
+/// never changed and never stored: a generated identifier is spelled out from
+/// its UUID every time it is rendered.
 #[derive(Clone, Copy, Debug, Display, Eq, Hash, PartialEq)]
 pub enum RenderedInstanceId<'a> {
-    /// A broker-minted identifier, spelled through its family's template.
-    #[display("urn:{NGSI_LD_URN_NID}:{}{}", _0.nss_prefix(), _1.hyphenated())]
-    Generated(InstanceFamily, Uuid),
+    /// A broker-minted identifier, spelled through the template.
+    #[display("urn:{NGSI_LD_URN_NID}:{GENERATED_NSS_PREFIX}{}", _0.hyphenated())]
+    Generated(Uuid),
     /// A client-supplied identifier, in the exact spelling it arrived in.
     #[display("{_0}")]
     Verbatim(&'a Identifier),
 }
 
+/// The namespace-specific prefix a broker-minted identifier carries.
+const GENERATED_NSS_PREFIX: &str = "attribute:instance:";
+
 /// The UUID a generated identifier carries, when the template reproduces it exactly.
-fn generated_uuid_of(identifier: &Identifier, family: InstanceFamily) -> Option<Uuid> {
+fn generated_uuid_of(identifier: &Identifier) -> Option<Uuid> {
     let urn = identifier.as_urn()?;
     if urn.nid() != NGSI_LD_URN_NID {
         return None;
     }
-    let candidate = urn.nss().strip_prefix(family.nss_prefix())?;
+    let candidate = urn.nss().strip_prefix(GENERATED_NSS_PREFIX)?;
     let uuid = Uuid::try_parse(candidate).ok()?;
-    (RenderedInstanceId::Generated(family, uuid).to_string() == identifier.as_str()).then_some(uuid)
+    (RenderedInstanceId::Generated(uuid).to_string() == identifier.as_str()).then_some(uuid)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
         identifier::Identifier,
-        instance_family::InstanceFamily,
         instance_identity::{InstanceIdentity, RenderedInstanceId},
     };
     use uuid::Uuid;
@@ -122,44 +124,31 @@ mod tests {
     }
 
     /// Decode a fixture identifier and render it back out.
-    fn round_trip(text: &str, family: InstanceFamily) -> Result<String, String> {
-        uri(text).map(|identifier| InstanceIdentity::from_identifier(identifier, family).rendered(family).to_string())
+    fn round_trip(text: &str) -> Result<String, String> {
+        uri(text).map(|identifier| InstanceIdentity::from_identifier(identifier).rendered().to_string())
     }
 
     #[test]
-    fn a_generated_attribute_identifier_renders_through_the_permanent_template() {
+    fn a_generated_identifier_renders_through_the_permanent_template() {
         let uuid = Uuid::from_u128(0x0194_2f6c_7f00_7000_8000_0000_0000_0001);
         pretty_assertions::assert_eq!(
-            RenderedInstanceId::Generated(InstanceFamily::Attribute, uuid).to_string(),
+            RenderedInstanceId::Generated(uuid).to_string(),
             "urn:ngsi-ld:attribute:instance:01942f6c-7f00-7000-8000-000000000001"
-        );
-    }
-
-    #[test]
-    fn a_generated_scope_identifier_renders_through_its_own_template() {
-        let uuid = Uuid::from_u128(0x0194_2f6c_7f00_7000_8000_0000_0000_0001);
-        pretty_assertions::assert_eq!(
-            RenderedInstanceId::Generated(InstanceFamily::Scope, uuid).to_string(),
-            "urn:ngsi-ld:scope:instance:01942f6c-7f00-7000-8000-000000000001"
         );
     }
 
     #[test]
     fn a_minted_identifier_decodes_back_to_the_uuid_it_was_minted_from() {
         let minted = InstanceIdentity::generate();
-        for family in [InstanceFamily::Attribute, InstanceFamily::Scope] {
-            let rendered = minted.rendered(family).to_string();
-            let decoded = uri(&rendered).map(|identifier| InstanceIdentity::from_identifier(identifier, family));
-            pretty_assertions::assert_eq!(decoded, Ok(minted.clone()), "{rendered} must decode as generated");
-        }
+        let rendered = minted.rendered().to_string();
+        let decoded = uri(&rendered).map(InstanceIdentity::from_identifier);
+        pretty_assertions::assert_eq!(decoded, Ok(minted), "{rendered} must decode as generated");
     }
 
     #[test]
     fn a_client_supplied_identifier_is_kept_verbatim() {
         let identifier = uri("urn:ngsi-ld:my-own:instance:42");
-        let decoded = identifier
-            .clone()
-            .map(|identifier| InstanceIdentity::from_identifier(identifier, InstanceFamily::Attribute));
+        let decoded = identifier.clone().map(InstanceIdentity::from_identifier);
 
         pretty_assertions::assert_eq!(decoded, identifier.map(InstanceIdentity::Verbatim));
     }
@@ -167,19 +156,15 @@ mod tests {
     #[test]
     fn a_url_identifier_is_kept_verbatim() {
         let identifier = uri("https://example.org/instances/1");
-        let decoded = identifier
-            .clone()
-            .map(|identifier| InstanceIdentity::from_identifier(identifier, InstanceFamily::Attribute));
+        let decoded = identifier.clone().map(InstanceIdentity::from_identifier);
 
         pretty_assertions::assert_eq!(decoded, identifier.map(InstanceIdentity::Verbatim));
     }
 
     #[test]
-    fn a_scope_identifier_does_not_decode_as_an_attribute_identifier() {
+    fn an_identifier_under_another_template_is_kept_verbatim() {
         let identifier = uri("urn:ngsi-ld:scope:instance:01942f6c-7f00-7000-8000-000000000001");
-        let decoded = identifier
-            .clone()
-            .map(|identifier| InstanceIdentity::from_identifier(identifier, InstanceFamily::Attribute));
+        let decoded = identifier.clone().map(InstanceIdentity::from_identifier);
 
         pretty_assertions::assert_eq!(decoded, identifier.map(InstanceIdentity::Verbatim));
     }
@@ -196,7 +181,7 @@ mod tests {
             "urn:ngsi-ld:attribute:instance:01942F6C-7F00-7000-8000-000000000001",
             "urn:ngsi-ld:attribute:instance:01942f6c7f0070008000000000000001",
         ] {
-            pretty_assertions::assert_eq!(round_trip(text, InstanceFamily::Attribute), Ok(text.to_owned()), "{text} must not be rewritten");
+            pretty_assertions::assert_eq!(round_trip(text), Ok(text.to_owned()), "{text} must not be rewritten");
         }
     }
 

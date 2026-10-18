@@ -101,8 +101,6 @@ pub enum TemporalAppendEntry {
         /// When the scope was observed (clause 4.5.6: the reified temporal
         /// scope carries `observedAt`); absent when the client declared none.
         observed_at: Option<DateTime<Utc>>,
-        /// Stable scope observation identity.
-        instance: InstanceIdentity,
     },
 }
 
@@ -241,7 +239,7 @@ mod tests {
         instance_identity::InstanceIdentity,
         scope::path::ScopePath,
     };
-    use andromeda_ngsi_ld_model::temporal::TemporalValue;
+    use andromeda_ngsi_ld_model::temporal::{TemporalValue, evolution_instance::EvolutionInstance};
     use andromeda_ngsi_ld_number::JsonNumber;
     use chrono::{TimeZone, Utc};
     use serde_json::json;
@@ -292,7 +290,7 @@ mod tests {
         pretty_assertions::assert_eq!(row.value, TemporalValue::Number(JsonNumber::from(42)));
         pretty_assertions::assert_eq!(intent.record.recorded_at(), recorded_at);
         pretty_assertions::assert_eq!(row.recorded_at, recorded_at);
-        assert!(matches!(row.instance, InstanceIdentity::Generated(_)));
+        assert!(matches!(row.instance, EvolutionInstance::Attribute(InstanceIdentity::Generated(_))));
     }
 
     /// Clause 4.5.6 makes the Temporal Evolution "the Entity [...] as mandated
@@ -409,7 +407,6 @@ mod tests {
                 observation: ScopeObservation::Path("/Madrid".parse::<ScopePath>().expect("a valid scope path")),
                 kind: ScopeEntryKind::Event,
                 observed_at: Some(recorded_at),
-                instance: InstanceIdentity::generate(),
             }],
         };
         pretty_assertions::assert_eq!(intent.write_purpose(), TemporalWritePurpose::Observation);

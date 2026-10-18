@@ -5,11 +5,16 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     entity_type_name::EntityTypeName,
-    instance_family::InstanceFamily,
     instance_identity::InstanceIdentity,
     scope::path::ScopePath,
 };
-use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, TemporalValue, observation_metadata::ObservationMetadata};
+use andromeda_ngsi_ld_model::temporal::{
+    StreamExtent,
+    TemporalHistoryRow,
+    TemporalValue,
+    evolution_instance::EvolutionInstance,
+    observation_metadata::ObservationMetadata,
+};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_attribute_instance::{
     name_keys::{MentionedNames, NameKeys},
@@ -107,7 +112,7 @@ pub(crate) fn observation(value: TemporalValue, instance: InstanceIdentity, meta
             recorded_at: recorded_at(),
             created_at: Some(recorded_at()),
             modified_at: Some(recorded_at()),
-            instance,
+            instance: EvolutionInstance::Attribute(instance),
             metadata,
             stream_extent: StreamExtent::Whole,
         },
@@ -142,7 +147,7 @@ fn an_observation_entry_holds_the_history_columns_it_will_be_written_as() {
 fn a_client_instance_id_is_held_verbatim() {
     let entry = only_entry(&intent(vec![observation(
         TemporalValue::Number(JsonNumber::from(1)),
-        InstanceIdentity::from_identifier("urn:x".parse().expect("a URI"), InstanceFamily::Attribute),
+        InstanceIdentity::from_identifier("urn:x".parse().expect("a URI")),
         None,
     )]));
     assert_eq!(entry.verbatim_instance_id.as_deref(), Some("urn:x"));
@@ -176,7 +181,6 @@ fn a_scope_entry_holds_its_path() {
         observation: ScopeObservation::Path("/Madrid".parse::<ScopePath>().expect("a scope path")),
         kind: ScopeEntryKind::Event,
         observed_at: Some(observed_at()),
-        instance: InstanceIdentity::generate(),
     }]));
     assert_eq!(entry.entry_kind, TemporalEntryKind::Scope.code());
     assert_eq!(entry.value_kind, ScopeValueKind::ScopePath.code());
@@ -196,7 +200,6 @@ fn a_scope_assertion_waits_under_its_own_kind() {
         observation: ScopeObservation::Path("/Madrid".parse::<ScopePath>().expect("a scope path")),
         kind: ScopeEntryKind::Assertion,
         observed_at: Some(recorded_at()),
-        instance: InstanceIdentity::generate(),
     }]);
     let entry = only_entry(&asserted);
     assert_eq!(entry.entry_kind, TemporalEntryKind::ScopeAssertion.code());
@@ -214,7 +217,6 @@ fn a_scope_deletion_holds_no_path() {
         observation: ScopeObservation::Deleted,
         kind: ScopeEntryKind::Event,
         observed_at: Some(recorded_at()),
-        instance: InstanceIdentity::generate(),
     }]));
     assert_eq!(entry.entry_kind, TemporalEntryKind::Scope.code());
     assert_eq!(entry.value_kind, ScopeValueKind::Tombstone.code());

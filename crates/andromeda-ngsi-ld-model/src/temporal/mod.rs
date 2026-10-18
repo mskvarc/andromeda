@@ -1,12 +1,11 @@
 //! Backend-neutral temporal observations and aggregation values.
 
-use crate::temporal::{observation_metadata::ObservationMetadata, structured_value::StructuredValue};
+use crate::temporal::{evolution_instance::EvolutionInstance, observation_metadata::ObservationMetadata, structured_value::StructuredValue};
 use andromeda_ngsi_ld_entity::geometry_value::GeometryValue;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     identifier::Identifier,
-    instance_identity::InstanceIdentity,
     ngsi_ld_time::NgsiLdTime,
     scope::path::ScopePath,
     time_prop::TimeProp,
@@ -20,6 +19,8 @@ use chrono::{DateTime, Utc};
 pub mod aggregated_decoding;
 /// The aggregated representation of the Temporal Evolution of an Entity.
 pub mod aggregated_entity;
+/// What identifies one instance of a Temporal Evolution.
+pub mod evolution_instance;
 /// The members an observed instance carries beside its value.
 pub mod observation_metadata;
 /// Why a simplified temporal attribute is refused.
@@ -137,8 +138,9 @@ pub struct TemporalHistoryRow {
     pub created_at: Option<DateTime<Utc>>,
     /// The instant this instance was last modified at, absent when unrecorded.
     pub modified_at: Option<DateTime<Utc>>,
-    /// Stable temporal instance identifier, in the form it is held in.
-    pub instance: InstanceIdentity,
+    /// The instance's identity: an Attribute instance's stable identifier in
+    /// the form it is held in, or none for an instance of the Scope.
+    pub instance: EvolutionInstance,
     /// The members the instance carries beside its value: its sub-attributes
     /// and the companion members of its family.
     pub metadata: Option<ObservationMetadata>,

@@ -158,10 +158,6 @@ pub enum ScopeHistory {
     ModifiedAt,
     /// Deletion instant, present only on a tombstone row
     DeletedAt,
-    /// Bare UUID of a broker-minted `instanceId`
-    GeneratedInstanceId,
-    /// Verbatim text of a client-supplied `instanceId`
-    VerbatimInstanceId,
     /// The scope as an `ltree` label path, absent on a tombstone
     ScopePath,
     /// The scope as it was written, absent on a tombstone

@@ -16,13 +16,8 @@ use andromeda_ngsi_ld_entity::{
     document::{EntityDocumentParts, attribute_member::AttributeMember, instance_document::InstanceDocument},
     system_instant::SystemInstant,
 };
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    entity_type_name::EntityTypeName,
-    instance_family::InstanceFamily,
-    instance_identity::InstanceIdentity,
-};
-use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, temporal_document::TemporalDocument};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, instance_identity::InstanceIdentity};
+use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, evolution_instance::EvolutionInstance, temporal_document::TemporalDocument};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::{DateTime, Utc};
 
@@ -88,9 +83,7 @@ fn instance_row(attribute_name: AttributeName, document: InstanceDocument, recor
         recorded_at,
         created_at,
         modified_at,
-        instance: instance_id.map_or_else(InstanceIdentity::generate, |provided| {
-            InstanceIdentity::from_identifier(provided, InstanceFamily::Attribute)
-        }),
+        instance: EvolutionInstance::Attribute(instance_id.map_or_else(InstanceIdentity::generate, InstanceIdentity::from_identifier)),
         metadata,
         stream_extent: StreamExtent::Whole,
     }))

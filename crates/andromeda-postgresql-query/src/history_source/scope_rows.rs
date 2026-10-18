@@ -24,7 +24,7 @@ const IDENTITY_COLUMNS: [ScopeHistory; 3] = [ScopeHistory::RecordedAt, ScopeHist
 
 /// The scope history `of` reads in `branch`, under `alias`: its recorded
 /// events and, where the branch reads its queue, the queued Scope entries the
-/// application would write, the recorded events they replace left out.
+/// application would write.
 pub fn scope_rows(branch: &HistoryBranch, of: &HistoryOf, alias: impl IntoIden) -> TableRef {
     let schema = branch.schema();
     let pending = branch.pending();
@@ -42,12 +42,7 @@ pub fn scope_rows(branch: &HistoryBranch, of: &HistoryOf, alias: impl IntoIden) 
     of.narrow(&mut rows, Expr::col((RecordedEvolution, TemporalEntities::Id)));
     match pending {
         PendingEntries::Unioned => {
-            rows.and_where(pending::recorded_scope_row_kept(
-                Expr::col((RecordedEvolution, TemporalEntities::Id)),
-                Expr::col((RecordedEvent, ScopeHistory::GeneratedInstanceId)),
-                Expr::col((RecordedEvent, ScopeHistory::VerbatimInstanceId)),
-            ))
-            .union(UnionType::All, pending::scope_rows(schema, of));
+            rows.union(UnionType::All, pending::scope_rows(schema, of));
         }
         PendingEntries::Absent => {}
     }

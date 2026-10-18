@@ -1,10 +1,10 @@
-//! The identity and column reads the two history hypertables share.
+//! The identity and column reads the two history tables share.
 //!
-//! `attribute_history` and `scope_history` record an instance the same way: a
-//! write identity, an instance identifier split across two mutually exclusive
-//! columns, and the Temporal Property instants. Both decoders read those
-//! columns through here, naming the table in any failure so the two are told
-//! apart.
+//! `attribute_history` and `scope_history` record a write identity and the
+//! Temporal Property instants the same way, and an attribute instance also
+//! carries an identifier split across two mutually exclusive columns; a Scope
+//! instance has none (clause 4.5.6). Both decoders read those columns through
+//! here, naming the table in any failure so the two are told apart.
 
 use crate::{
     error::TemporalStoreError,

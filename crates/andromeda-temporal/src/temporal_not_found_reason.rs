@@ -5,7 +5,7 @@
 //! [`TemporalError::NotFound`](crate::error::TemporalError::NotFound) never holds
 //! an ad-hoc string. Each `#[error]` renders lowercase client prose.
 
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, instance_family::InstanceFamily, instance_identity::InstanceIdentity};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, instance_identity::InstanceIdentity};
 use thiserror::Error;
 
 /// Why a temporal resource could not be found.
@@ -47,7 +47,7 @@ pub enum TemporalNotFoundReason {
         entity: Identifier,
     },
     /// The attribute holds no instance with the requested `instanceId`.
-    #[error("attribute instance {} not found", .instance.rendered(InstanceFamily::Attribute))]
+    #[error("attribute instance {} not found", .instance.rendered())]
     AttributeInstance {
         /// The instance identifier that selected no instance.
         instance: InstanceIdentity,

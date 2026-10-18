@@ -9,7 +9,6 @@ use crate::temporal::{
     HeaderMap,
     Identifier,
     IncomingVia,
-    InstanceFamily,
     InstanceIdentity,
     IntoResponse,
     LocalOnlyParams,
@@ -52,7 +51,7 @@ pub async fn delete_attr_instance(
     // Clause 4.5.7 carries an `instanceId` as a URI; which of the two stored
     // shapes it names is decided here, at the edge, so the store addresses one
     // identity column rather than searching both.
-    let instance = InstanceIdentity::from_identifier(instance_id, InstanceFamily::Attribute);
+    let instance = InstanceIdentity::from_identifier(instance_id);
 
     if params.local.unwrap_or(false) {
         service

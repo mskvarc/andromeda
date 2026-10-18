@@ -184,30 +184,14 @@ fn scope_entries(source: &IntentSource<'_>, schema: Option<&DynIden>) -> SelectS
     )
 }
 
-/// The Scope rows a Scope entry records again under its own instance
-/// identity, by temporal entity and write identity.
-pub(crate) fn replaced_scopes_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
-    let mut replaced = scope_entries(source, schema);
-    replaced
-        .column((ScopeHistory::Table, ScopeHistory::TemporalEntityKey))
-        .column((ScopeHistory::Table, ScopeHistory::RecordedAt))
-        .column((ScopeHistory::Table, ScopeHistory::WriteId))
-        .column((ScopeHistory::Table, ScopeHistory::WriteOrdinal))
-        .from(qualified(schema, ScopeHistory::Table))
-        .and_where(Expr::col((ScopeHistory::Table, ScopeHistory::TemporalEntityKey)).equals((Te, TemporalEntities::TemporalEntityKey)))
-        .and_where(
-            SimpleExpr::from(Expr::col((ScopeHistory::Table, ScopeHistory::GeneratedInstanceId))).not_distinct_from(entry(TemporalEntry::GeneratedInstanceId)),
-        )
-        .and_where(
-            SimpleExpr::from(Expr::col((ScopeHistory::Table, ScopeHistory::VerbatimInstanceId))).not_distinct_from(entry(TemporalEntry::VerbatimInstanceId)),
-        );
-    replaced
-}
-
 /// The `scope_history` row of every Scope entry the application records
 /// (clause 4.18), with the values a temporal read of the live branch projects
 /// from the entry while it is still queued: every event, and every assertion
 /// of a Scope not already in force at its write.
+///
+/// The conflict target is the write identity, which is what names a Scope
+/// row: clause 4.5.6 gives the temporal Scope no `instanceId`. An entry
+/// recorded once is never recorded twice.
 pub(crate) fn scope_history_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
     let (value_columns, values): (Vec<ScopeHistory>, Vec<SimpleExpr>) = scope_entry_values(entry).into_iter().unzip();
     let mut select = scope_entries(source, schema);

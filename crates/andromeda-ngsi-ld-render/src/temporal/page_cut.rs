@@ -146,7 +146,7 @@ pub fn largest_simultaneous_group<'a>(rows: impl IntoIterator<Item = &'a Tempora
 mod tests {
     use crate::temporal::page_cut::{PageCut, largest_simultaneous_group};
     use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_identity::InstanceIdentity, time_prop::TimeProp};
-    use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, TemporalValue};
+    use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance};
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_ngsi_ld_query::temporal::instance_page::PageDirection;
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
@@ -170,7 +170,7 @@ mod tests {
             recorded_at: minute(offset),
             created_at: None,
             modified_at: None,
-            instance: InstanceIdentity::Generated(Uuid::new_v4()),
+            instance: EvolutionInstance::Attribute(InstanceIdentity::Generated(Uuid::new_v4())),
             metadata: None,
             stream_extent: extent,
         }
