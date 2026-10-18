@@ -37,9 +37,11 @@ use andromeda_postgresql_schema::{
 };
 use andromeda_postgresql_seaquery::{
     branch::qualified,
+    cast::typed_null,
     literal::{false_literal, int_literal},
+    pg_type::PostgresType,
 };
-use sea_query::{Condition, Expr, ExprTrait, Iden, IntoIden, Order, Query, SelectStatement, SimpleExpr, TableRef, UnionType, Value};
+use sea_query::{Condition, Expr, ExprTrait, Iden, IntoIden, Order, Query, SelectStatement, SimpleExpr, TableRef, UnionType};
 
 /// Alias `re`: a recorded Temporal Evolution.
 #[derive(Iden, Clone, Copy)]
@@ -92,7 +94,8 @@ struct QueuedGrain;
 struct Queued;
 
 /// The Temporal Evolutions of `branch` under `alias`, with the columns `id`
-/// and `entity_type_name_keys`.
+/// and `entity_type_name_keys`, and `temporal_entity_key` where the branch
+/// reads no queue.
 pub fn entity_rows(branch: &HistoryBranch, alias: impl IntoIden) -> TableRef {
     let schema = branch.schema();
     match branch.pending() {
@@ -117,8 +120,9 @@ pub fn entity_rows(branch: &HistoryBranch, alias: impl IntoIden) -> TableRef {
 }
 
 /// The Temporal Evolutions of `branch` any of `exprs` selects, under `alias`,
-/// with the column `id`, read by walking their type memberships in identifier
-/// order; `None` when an expression has no range to walk.
+/// with the column `id`, and `temporal_entity_key` where the branch reads no
+/// queue, read by walking their type memberships in identifier order; `None`
+/// when an expression has no range to walk.
 ///
 /// The membership relation holds the recorded Evolutions alone. On the live
 /// branch the Entities a queued intent states types for join the walk,
@@ -166,8 +170,9 @@ pub fn type_member_rows(branch: &HistoryBranch, alias: impl IntoIden, exprs: &[&
 }
 
 /// The Temporal Evolutions of `branch` holding a stream of any attribute
-/// `keys` names, under `alias`, with the column `id`, read by walking each
-/// attribute's streams in identifier order; no row when `keys` is empty.
+/// `keys` names, under `alias`, with the columns `id` and
+/// `temporal_entity_key` (null for an Evolution only queued), read by walking
+/// each attribute's streams in identifier order; no row when `keys` is empty.
 ///
 /// An Evolution holds one stream per `datasetId` of an attribute and may hold
 /// several of the attributes, so the ranges merge in identifier order with
@@ -179,7 +184,7 @@ pub fn type_member_rows(branch: &HistoryBranch, alias: impl IntoIden, exprs: &[&
 /// kept.
 #[must_use]
 pub fn attribute_holder_rows(branch: &HistoryBranch, alias: impl IntoIden, keys: &[AttributeNameKey]) -> TableRef {
-    let walk = holder_merge(branch, keys, HolderColumns::Id).unwrap_or_else(|| no_holder(branch));
+    let walk = holder_merge(branch, keys).unwrap_or_else(|| no_holder(branch));
     TableRef::SubQuery(Box::new(walk), alias.into_iden())
 }
 
@@ -195,7 +200,7 @@ pub fn attribute_holder_rows(branch: &HistoryBranch, alias: impl IntoIden, keys:
 /// is still yielded once; a queued holder, with no key yet, comes last.
 #[must_use]
 pub fn attribute_holder_rows_by_key(branch: &HistoryBranch, alias: impl IntoIden, keys: &[AttributeNameKey]) -> TableRef {
-    let Some(merge) = holder_merge(branch, keys, HolderColumns::IdAndKey) else {
+    let Some(merge) = holder_merge(branch, keys) else {
         return TableRef::SubQuery(Box::new(no_holder(branch)), alias.into_iden());
     };
     let mut by_key = Query::select();
@@ -206,33 +211,20 @@ pub fn attribute_holder_rows_by_key(branch: &HistoryBranch, alias: impl IntoIden
     TableRef::SubQuery(Box::new(by_key.take()), alias.into_iden())
 }
 
-/// What a walk of an attribute's streams yields of each holder.
-#[derive(Clone, Copy)]
-enum HolderColumns {
-    /// The identifier alone.
-    Id,
-    /// The identifier and the Evolution's surrogate key, null for a holder
-    /// only queued.
-    IdAndKey,
-}
-
 /// The holders of `keys`' streams on `branch`, each once, in identifier
-/// order, projecting `columns`; `None` when `keys` is empty.
-fn holder_merge(branch: &HistoryBranch, keys: &[AttributeNameKey], columns: HolderColumns) -> Option<SelectStatement> {
+/// order, with the identifier and the Evolution's surrogate key, null for a
+/// holder only queued; `None` when `keys` is empty.
+fn holder_merge(branch: &HistoryBranch, keys: &[AttributeNameKey]) -> Option<SelectStatement> {
     let schema = branch.schema();
     let mut ranges = keys.iter().map(|key| {
-        let mut range = Query::select();
-        range.column(TemporalAttributeStreams::Id);
         let mut holders = Query::select();
-        holders.column((RecordedHolder, TemporalEntities::Id));
-        match columns {
-            HolderColumns::Id => {}
-            HolderColumns::IdAndKey => {
-                range.column(TemporalAttributeStreams::TemporalEntityKey);
-                holders.column((RecordedHolder, TemporalAttributeStreams::TemporalEntityKey));
-            }
-        }
+        holders
+            .column((RecordedHolder, TemporalEntities::Id))
+            .column((RecordedHolder, TemporalAttributeStreams::TemporalEntityKey));
+        let mut range = Query::select();
         range
+            .column(TemporalAttributeStreams::Id)
+            .column(TemporalAttributeStreams::TemporalEntityKey)
             .from(qualified(schema, TemporalAttributeStreams::Table))
             .and_where(Expr::col(TemporalAttributeStreams::AttributeNameKey).eq(int_literal(i64::from(key.get()))))
             .order_by(TemporalAttributeStreams::Id, Order::Asc);
@@ -253,27 +245,18 @@ fn holder_merge(branch: &HistoryBranch, keys: &[AttributeNameKey], columns: Hold
                 .and_where(Expr::col((QueuedGrain, HistoryGrain::AttributeNameKey)).is_in(keys.iter().map(|key| int_literal(i64::from(key.get())))))
                 .order_by(TemporalEntities::Id, Order::Asc);
             let mut holders = Query::select();
-            holders.column((QueuedHolder, TemporalEntities::Id));
-            match columns {
-                HolderColumns::Id => {}
-                HolderColumns::IdAndKey => {
-                    holders.expr_as(Expr::val(Value::BigInt(None)), TemporalAttributeStreams::TemporalEntityKey);
-                }
-            }
-            holders.from_subquery(queued.take(), QueuedHolder);
+            holders
+                .column((QueuedHolder, TemporalEntities::Id))
+                .expr_as(typed_null(PostgresType::Bigint), TemporalAttributeStreams::TemporalEntityKey)
+                .from_subquery(queued.take(), QueuedHolder);
             union.union(UnionType::All, holders.take());
         }
     }
     let mut walk = Query::select();
     walk.distinct_on([(HeldStream, TemporalEntities::Id)])
-        .column((HeldStream, TemporalEntities::Id));
-    match columns {
-        HolderColumns::Id => {}
-        HolderColumns::IdAndKey => {
-            walk.column((HeldStream, TemporalAttributeStreams::TemporalEntityKey));
-        }
-    }
-    walk.from_subquery(union.take(), HeldStream)
+        .column((HeldStream, TemporalEntities::Id))
+        .column((HeldStream, TemporalAttributeStreams::TemporalEntityKey))
+        .from_subquery(union.take(), HeldStream)
         .order_by((HeldStream, TemporalEntities::Id), Order::Asc);
     Some(walk.take())
 }
@@ -283,6 +266,7 @@ fn holder_merge(branch: &HistoryBranch, keys: &[AttributeNameKey], columns: Hold
 fn no_holder(branch: &HistoryBranch) -> SelectStatement {
     let mut none = Query::select();
     none.column(TemporalAttributeStreams::Id)
+        .column(TemporalAttributeStreams::TemporalEntityKey)
         .from(qualified(branch.schema(), TemporalAttributeStreams::Table))
         .and_where(false_literal());
     none.take()
@@ -402,16 +386,17 @@ mod tests {
 
     /// Each attribute's streams are one range of the attribute key in
     /// identifier order, ordered on their own, and the ranges merge with each
-    /// Evolution once, however many streams it holds.
+    /// Evolution once, however many streams it holds, carrying its surrogate
+    /// key for a source compared by key.
     #[test]
     fn an_attribute_walk_merges_the_ordered_stream_ranges_of_each_attribute() {
         let sql = holders(&HistoryBranch::live_recorded(), &[7, 9]);
         pretty_assertions::assert_eq!(
             sql,
             concat!(
-                r#"SELECT * FROM (SELECT DISTINCT ON ("held"."id") "held"."id" FROM ("#,
-                r#"SELECT "hr"."id" FROM (SELECT "id" FROM "temporal_attribute_streams" WHERE "attribute_name_key" = (7) ORDER BY "id" ASC) AS "hr" UNION ALL "#,
-                r#"(SELECT "hr"."id" FROM (SELECT "id" FROM "temporal_attribute_streams" WHERE "attribute_name_key" = (9) ORDER BY "id" ASC) AS "hr")"#,
+                r#"SELECT * FROM (SELECT DISTINCT ON ("held"."id") "held"."id", "held"."temporal_entity_key" FROM ("#,
+                r#"SELECT "hr"."id", "hr"."temporal_entity_key" FROM (SELECT "id", "temporal_entity_key" FROM "temporal_attribute_streams" WHERE "attribute_name_key" = (7) ORDER BY "id" ASC) AS "hr" UNION ALL "#,
+                r#"(SELECT "hr"."id", "hr"."temporal_entity_key" FROM (SELECT "id", "temporal_entity_key" FROM "temporal_attribute_streams" WHERE "attribute_name_key" = (9) ORDER BY "id" ASC) AS "hr")"#,
                 r#") AS "held" ORDER BY "held"."id" ASC) AS "e""#
             )
         );
@@ -424,7 +409,9 @@ mod tests {
     fn a_live_attribute_walk_merges_the_grains_the_queued_entries_extend() {
         let sql = holders(&HistoryBranch::live(), &[7]);
         assert!(
-            sql.contains(r#"UNION ALL (SELECT "hq"."id" FROM (SELECT "hg"."entity_id" AS "id" FROM (SELECT DISTINCT "pe"."entity_id""#),
+            sql.contains(
+                r#"UNION ALL (SELECT "hq"."id", NULL::bigint AS "temporal_entity_key" FROM (SELECT "hg"."entity_id" AS "id" FROM (SELECT DISTINCT "pe"."entity_id""#
+            ),
             "{sql}"
         );
         assert!(sql.contains(r#"FROM "temporal_append_entries" AS "pe""#), "{sql}");
@@ -448,7 +435,7 @@ mod tests {
     /// of no key yields no Evolution.
     #[test]
     fn an_attribute_walk_of_no_key_yields_no_row() {
-        let none = r#"SELECT * FROM (SELECT "id" FROM "temporal_attribute_streams" WHERE FALSE) AS "e""#;
+        let none = r#"SELECT * FROM (SELECT "id", "temporal_entity_key" FROM "temporal_attribute_streams" WHERE FALSE) AS "e""#;
         pretty_assertions::assert_eq!(holders(&HistoryBranch::live(), &[]), none);
         pretty_assertions::assert_eq!(rendered(attribute_holder_rows_by_key(&HistoryBranch::live(), Alias::new("e"), &[])), none);
     }
@@ -468,7 +455,7 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#"(SELECT "hq"."id", NULL AS "temporal_entity_key" FROM (SELECT "hg"."entity_id" AS "id""#),
+            sql.contains(r#"(SELECT "hq"."id", NULL::bigint AS "temporal_entity_key" FROM (SELECT "hg"."entity_id" AS "id""#),
             "{sql}"
         );
         assert!(

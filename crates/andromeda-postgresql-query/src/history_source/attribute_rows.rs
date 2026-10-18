@@ -7,7 +7,16 @@
 //! alike. Ordering ties keep breaking on the write identity, which a queued
 //! entry carries exactly as its recorded row will.
 
-use crate::history_source::{HistoryBranch, HistoryOf, HistoryStream, PendingEntries, entry_values::attribute_value_columns, grain::HistoryGrain, pending};
+use crate::history_source::{
+    EntityHistory,
+    HistoryBranch,
+    HistoryOf,
+    HistoryStream,
+    PendingEntries,
+    entry_values::attribute_value_columns,
+    grain::HistoryGrain,
+    pending,
+};
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_postgresql_schema::temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities};
 use andromeda_postgresql_seaquery::{branch::qualified, pg_operator::PgBinaryOperator};
@@ -52,11 +61,24 @@ fn recorded_grain(select: &mut SelectStatement) {
         .expr_as(Expr::col((RecordedStream, TemporalAttributeStreams::DatasetId)), HistoryGrain::DatasetId);
 }
 
-/// The recorded rows of the branch `schema` names, less those a queued entry
-/// replaces when `pending` unions them.
-fn recorded_rows(schema: Option<&DynIden>, of: &HistoryOf, pending: PendingEntries) -> SelectStatement {
-    let mut select = Query::select();
-    recorded_grain(&mut select);
+/// The grain of a recorded stream naming its Evolution by surrogate key, under
+/// the source's names.
+fn keyed_grain(select: &mut SelectStatement) {
+    select
+        .expr_as(
+            Expr::col((RecordedStream, TemporalAttributeStreams::TemporalEntityKey)),
+            HistoryGrain::TemporalEntityKey,
+        )
+        .expr_as(
+            Expr::col((RecordedStream, TemporalAttributeStreams::AttributeNameKey)),
+            HistoryGrain::AttributeNameKey,
+        )
+        .expr_as(Expr::col((RecordedStream, TemporalAttributeStreams::DatasetId)), HistoryGrain::DatasetId);
+}
+
+/// The identity and value columns of the recorded rows of the branch `schema`
+/// names, each joined to the stream it extends.
+fn recorded_row_columns(select: &mut SelectStatement, schema: Option<&DynIden>) {
     select
         .exprs(IDENTITY_COLUMNS.map(|column| Expr::col((RecordedRow, column))))
         .exprs(attribute_value_columns().map(|column| Expr::col((RecordedRow, column))))
@@ -67,6 +89,14 @@ fn recorded_rows(schema: Option<&DynIden>, of: &HistoryOf, pending: PendingEntri
             RecordedStream,
             Expr::col((RecordedStream, TemporalAttributeStreams::StreamKey)).equals((RecordedRow, AttributeHistory::StreamKey)),
         );
+}
+
+/// The recorded rows of the branch `schema` names, less those a queued entry
+/// replaces when `pending` unions them.
+fn recorded_rows(schema: Option<&DynIden>, of: &HistoryOf, pending: PendingEntries) -> SelectStatement {
+    let mut select = Query::select();
+    recorded_grain(&mut select);
+    recorded_row_columns(&mut select, schema);
     joined_to_evolution(&mut select, schema);
     of.narrow(&mut select, Expr::col((RecordedEvolution, TemporalEntities::Id)));
     if let Some(kept) = kept_beside_pending(
@@ -93,6 +123,22 @@ pub fn attribute_rows(branch: &HistoryBranch, of: &HistoryOf, alias: impl IntoId
         PendingEntries::Absent => {}
     }
     TableRef::SubQuery(Box::new(rows), alias.into_iden())
+}
+
+/// The attribute history `branch` holds for the Evolution `read` is taken
+/// for, under `alias`: read for it inside, or every recorded row, named by
+/// what the comparison beside reads.
+pub fn entity_attribute_rows(branch: &HistoryBranch, read: &EntityHistory, alias: impl IntoIden) -> TableRef {
+    match read {
+        EntityHistory::Inside(of) => attribute_rows(branch, of, alias),
+        EntityHistory::BesideById(_) => attribute_rows(branch, &HistoryOf::EveryEntity, alias),
+        EntityHistory::BesideByKey(_) => {
+            let mut rows = Query::select();
+            keyed_grain(&mut rows);
+            recorded_row_columns(&mut rows, branch.schema());
+            TableRef::SubQuery(Box::new(rows), alias.into_iden())
+        }
+    }
 }
 
 /// The `attribute_history` column of the system time `axis` (clause 4.8),
@@ -288,16 +334,37 @@ pub fn stream_rows(branch: &HistoryBranch, of: &HistoryOf, alias: impl IntoIden)
     TableRef::SubQuery(Box::new(rows), alias.into_iden())
 }
 
+/// The streams `branch` holds for the Evolution `read` is taken for, under
+/// `alias`, each with its grain and its recorded stream key: read for it
+/// inside, or every recorded stream, named by what the comparison beside
+/// reads.
+pub fn entity_stream_rows(branch: &HistoryBranch, read: &EntityHistory, alias: impl IntoIden) -> TableRef {
+    match read {
+        EntityHistory::Inside(of) => stream_rows(branch, of, alias),
+        EntityHistory::BesideById(_) => stream_rows(branch, &HistoryOf::EveryEntity, alias),
+        EntityHistory::BesideByKey(_) => {
+            let mut rows = Query::select();
+            keyed_grain(&mut rows);
+            rows.expr_as(Expr::col((RecordedStream, TemporalAttributeStreams::StreamKey)), HistoryGrain::StreamKey)
+                .from(qualified(branch.schema(), TemporalAttributeStreams::Table).alias(RecordedStream));
+            TableRef::SubQuery(Box::new(rows), alias.into_iden())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::history_source::{
+        BesideComparison,
+        EntityHistory,
+        EvolutionColumns,
         HistoryBranch,
         HistoryOf,
         HistoryStream,
-        attribute_rows::{attribute_rows, stream_attribute_parts, stream_rows},
+        attribute_rows::{attribute_rows, entity_attribute_rows, entity_stream_rows, stream_attribute_parts, stream_rows},
     };
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
-    use sea_query::{Alias, Asterisk, DynIden, IntoIden, PostgresQueryBuilder, Query};
+    use sea_query::{Alias, Asterisk, DynIden, Expr, IntoIden, PostgresQueryBuilder, Query};
     use std::iter::once;
 
     fn rendered(source: sea_query::TableRef) -> String {
@@ -329,7 +396,7 @@ mod tests {
 
     #[test]
     fn the_entity_a_source_is_read_for_narrows_both_branches() {
-        let of = HistoryOf::Entity(sea_query::Expr::col((Alias::new("e"), Alias::new("id"))));
+        let of = HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id"))));
         let sql = rendered(attribute_rows(&HistoryBranch::live(), &of, Alias::new("ah")));
         assert!(sql.contains(r#""re"."id" = "e"."id""#), "{sql}");
         assert!(sql.contains(r#""pe"."entity_id" = "e"."id""#), "{sql}");
@@ -354,6 +421,84 @@ mod tests {
         assert!(sql.contains(r#"FROM "snap_1"."attribute_history" AS "rh""#), "{sql}");
         assert!(!sql.contains("temporal_append"), "{sql}");
         assert!(!sql.contains("UNION"), "{sql}");
+    }
+
+    fn read_for(branch: &HistoryBranch, compared: BesideComparison) -> EntityHistory {
+        branch.entity_history(
+            EvolutionColumns {
+                id: Expr::col((Alias::new("e"), Alias::new("id"))),
+                key: Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))),
+            },
+            compared,
+        )
+    }
+
+    /// Compared beside by the Evolution's key, which the stream carries, the
+    /// recorded rows need no catalogue row of their Evolution.
+    #[test]
+    fn the_rows_read_for_an_evolution_beside_name_it_by_key_without_the_catalogue() {
+        for (branch, history) in [
+            (HistoryBranch::live_recorded(), r#"FROM "attribute_history" AS "rh""#),
+            (HistoryBranch::recorded_in(snapshot()), r#"FROM "snap_1"."attribute_history" AS "rh""#),
+        ] {
+            let sql = rendered(entity_attribute_rows(&branch, &read_for(&branch, BesideComparison::Key), Alias::new("ah")));
+            assert!(
+                sql.starts_with(
+                    r#"SELECT * FROM (SELECT "rs"."temporal_entity_key" AS "temporal_entity_key", "rs"."attribute_name_key" AS "attribute_name_key""#
+                ),
+                "{sql}"
+            );
+            assert!(sql.contains(history), "{sql}");
+            assert!(sql.contains(r#""rs"."stream_key" = "rh"."stream_key""#), "{sql}");
+            assert!(!sql.contains("temporal_entities") && !sql.contains("entity_id"), "{sql}");
+        }
+    }
+
+    #[test]
+    fn the_streams_read_for_an_evolution_beside_name_it_by_key_without_the_catalogue() {
+        let branch = HistoryBranch::recorded_in(snapshot());
+        let sql = rendered(entity_stream_rows(&branch, &read_for(&branch, BesideComparison::Key), Alias::new("s")));
+        pretty_assertions::assert_eq!(
+            sql,
+            concat!(
+                r#"SELECT * FROM (SELECT "rs"."temporal_entity_key" AS "temporal_entity_key", "rs"."attribute_name_key" AS "attribute_name_key", "#,
+                r#""rs"."dataset_id" AS "dataset_id", "rs"."stream_key" AS "stream_key" FROM "snap_1"."temporal_attribute_streams" AS "rs") AS "s""#
+            )
+        );
+    }
+
+    /// Read inside, the source is the one the Evolution's identifier narrows.
+    #[test]
+    fn the_rows_read_for_an_evolution_inside_are_its_narrowed_source() {
+        let branch = HistoryBranch::live();
+        let read = read_for(&branch, BesideComparison::Key);
+        let EntityHistory::Inside(of) = &read else {
+            panic!("the live branch reads its queue inside")
+        };
+        pretty_assertions::assert_eq!(
+            rendered(entity_attribute_rows(&branch, &read, Alias::new("ah"))),
+            rendered(attribute_rows(&branch, of, Alias::new("ah")))
+        );
+        pretty_assertions::assert_eq!(
+            rendered(entity_stream_rows(&branch, &read, Alias::new("s"))),
+            rendered(stream_rows(&branch, of, Alias::new("s")))
+        );
+    }
+
+    /// Compared beside by identifier, the source is every recorded row with
+    /// the identifier joined from the catalogue.
+    #[test]
+    fn the_rows_read_for_an_evolution_beside_by_identifier_are_every_recorded_row() {
+        let branch = HistoryBranch::live_recorded();
+        let read = read_for(&branch, BesideComparison::Identifier);
+        pretty_assertions::assert_eq!(
+            rendered(entity_attribute_rows(&branch, &read, Alias::new("ah"))),
+            rendered(attribute_rows(&branch, &HistoryOf::EveryEntity, Alias::new("ah")))
+        );
+        pretty_assertions::assert_eq!(
+            rendered(entity_stream_rows(&branch, &read, Alias::new("s"))),
+            rendered(stream_rows(&branch, &HistoryOf::EveryEntity, Alias::new("s")))
+        );
     }
 
     #[test]

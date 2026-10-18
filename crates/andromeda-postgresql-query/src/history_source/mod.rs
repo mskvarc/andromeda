@@ -26,7 +26,12 @@
 //! source's few matching rows would answer at once. Such a source is a plain
 //! join PostgreSQL pulls up, so the Entity is compared beside it
 //! ([`HistoryBranch::entity_history`]) and the planner chooses between the
-//! semi-join and the per-Entity probe by its estimates.
+//! semi-join and the per-Entity probe by its estimates. Compared by the
+//! identifier, the source joins `temporal_entities` to turn each stream's key
+//! into it, and its matches merge with a page's walk in identifier order, so
+//! the page stops at its last Evolution. A statement reading every match, such
+//! as a count, compares the surrogate key every recorded stream carries
+//! instead and joins no catalogue row ([`BesideComparison`]).
 
 /// The rows of attribute history and the streams they extend.
 pub mod attribute_rows;
@@ -126,33 +131,69 @@ impl HistoryBranch {
         self.pending
     }
 
-    /// How a source of this branch is read for the Entity `entity` names:
-    /// taken inside every branch of a source that unions queued entries,
-    /// compared beside a source of recorded rows alone.
+    /// How a source of this branch is read for the Temporal Evolution
+    /// `evolution` names: taken inside every branch of a source that unions
+    /// queued entries, by its identifier; compared beside a source of
+    /// recorded rows alone, by what `compared` names.
     #[must_use]
-    pub const fn entity_history(&self, entity: SimpleExpr) -> EntityHistory {
-        match self.pending {
-            PendingEntries::Unioned => EntityHistory {
-                of: HistoryOf::Entity(entity),
-                beside: None,
-            },
-            PendingEntries::Absent => EntityHistory {
-                of: HistoryOf::EveryEntity,
-                beside: Some(entity),
-            },
+    pub fn entity_history(&self, evolution: EvolutionColumns, compared: BesideComparison) -> EntityHistory {
+        match (self.pending, compared) {
+            (PendingEntries::Unioned, BesideComparison::Identifier | BesideComparison::Key) => EntityHistory::Inside(HistoryOf::Entity(evolution.id)),
+            (PendingEntries::Absent, BesideComparison::Identifier) => EntityHistory::BesideById(evolution.id),
+            (PendingEntries::Absent, BesideComparison::Key) => EntityHistory::BesideByKey(evolution.key),
         }
     }
 }
 
-/// A source read for one Entity: whose history the source reads, and the
-/// Entity its rows are compared to beside it.
+/// What a source of recorded rows alone is compared beside by.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BesideComparison {
+    /// The Entity identifier, joined from `temporal_entities`: the matches
+    /// carry the order a page walks its Evolutions in.
+    Identifier,
+    /// The Evolution's surrogate key, which every recorded stream carries,
+    /// so no catalogue row is joined: for a statement reading every match.
+    Key,
+}
+
+/// The columns of an enclosing row naming a Temporal Evolution.
 #[derive(Clone, Debug)]
-pub struct EntityHistory {
-    /// Whose history the source reads.
-    pub of: HistoryOf,
-    /// The Entity the source's [`grain::HistoryGrain::EntityId`] is compared
-    /// to beside the source, `None` when the source takes it inside.
-    pub beside: Option<SimpleExpr>,
+pub struct EvolutionColumns {
+    /// The Entity identifier.
+    pub id: SimpleExpr,
+    /// The surrogate key of the recorded Evolution.
+    pub key: SimpleExpr,
+}
+
+/// How a source is read for one Temporal Evolution.
+#[derive(Clone, Debug)]
+pub enum EntityHistory {
+    /// The source unions queued entries and takes the Evolution inside
+    /// every branch.
+    Inside(HistoryOf),
+    /// The source holds every recorded row, each naming its Evolution by
+    /// [`HistoryGrain::EntityId`], which is compared beside it to the
+    /// expression.
+    BesideById(SimpleExpr),
+    /// The source holds every recorded row, each naming its Evolution by
+    /// [`HistoryGrain::TemporalEntityKey`], which is compared beside it to
+    /// the expression.
+    BesideByKey(SimpleExpr),
+}
+
+impl EntityHistory {
+    /// The comparison of the source under `alias` to the Evolution beside it,
+    /// `None` when the source takes the Evolution inside.
+    #[must_use]
+    pub fn compared_beside(&self, alias: &DynIden) -> Option<SimpleExpr> {
+        match self {
+            EntityHistory::Inside(_) => None,
+            // clone: the alias and the identifier stay with the read, which every source of it shares.
+            EntityHistory::BesideById(id) => Some(Expr::col((alias.clone(), HistoryGrain::EntityId)).eq(id.clone())),
+            // clone: the alias and the key stay with the read, which every source of it shares.
+            EntityHistory::BesideByKey(key) => Some(Expr::col((alias.clone(), HistoryGrain::TemporalEntityKey)).eq(key.clone())),
+        }
+    }
 }
 
 /// Whose history a source reads.
@@ -204,11 +245,14 @@ impl HistoryStream {
 
 #[cfg(test)]
 mod tests {
-    use crate::history_source::{HistoryBranch, HistoryOf};
+    use crate::history_source::{BesideComparison, EntityHistory, EvolutionColumns, HistoryBranch, HistoryOf};
     use sea_query::{Alias, Expr, IntoIden, PostgresQueryBuilder, Query};
 
-    fn entity() -> sea_query::SimpleExpr {
-        Expr::col((Alias::new("e"), Alias::new("id")))
+    fn evolution() -> EvolutionColumns {
+        EvolutionColumns {
+            id: Expr::col((Alias::new("e"), Alias::new("id"))),
+            key: Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))),
+        }
     }
 
     fn rendered(expr: sea_query::SimpleExpr) -> String {
@@ -216,21 +260,27 @@ mod tests {
     }
 
     #[test]
-    fn a_branch_reading_its_queue_takes_the_entity_inside_its_source() {
-        let read = HistoryBranch::live().entity_history(entity());
-        assert!(
-            matches!(&read.of, HistoryOf::Entity(id) if rendered(id.clone()) == r#"SELECT "e"."id""#),
-            "{read:?}"
-        );
-        assert!(read.beside.is_none(), "{read:?}");
+    fn a_branch_reading_its_queue_takes_the_evolution_inside_its_source_by_identifier() {
+        for compared in [BesideComparison::Identifier, BesideComparison::Key] {
+            let read = HistoryBranch::live().entity_history(evolution(), compared);
+            assert!(
+                matches!(&read, EntityHistory::Inside(HistoryOf::Entity(id)) if rendered(id.clone()) == r#"SELECT "e"."id""#),
+                "{read:?}"
+            );
+            assert!(read.compared_beside(&Alias::new("ah").into_iden()).is_none(), "{read:?}");
+        }
     }
 
     #[test]
-    fn a_branch_without_a_queue_compares_the_entity_beside_its_source() {
+    fn a_branch_without_a_queue_compares_the_evolution_beside_its_source_by_what_is_asked() {
         for branch in [HistoryBranch::live_recorded(), HistoryBranch::recorded_in(Alias::new("snap_1").into_iden())] {
-            let read = branch.entity_history(entity());
-            assert!(matches!(read.of, HistoryOf::EveryEntity), "{read:?}");
-            pretty_assertions::assert_eq!(read.beside.map(rendered).as_deref(), Some(r#"SELECT "e"."id""#));
+            for (compared, comparison) in [
+                (BesideComparison::Identifier, r#"SELECT "ah"."entity_id" = "e"."id""#),
+                (BesideComparison::Key, r#"SELECT "ah"."temporal_entity_key" = "e"."temporal_entity_key""#),
+            ] {
+                let read = branch.entity_history(evolution(), compared);
+                pretty_assertions::assert_eq!(read.compared_beside(&Alias::new("ah").into_iden()).map(rendered).as_deref(), Some(comparison));
+            }
         }
     }
 }

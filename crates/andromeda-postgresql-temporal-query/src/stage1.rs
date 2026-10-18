@@ -48,9 +48,11 @@ use andromeda_postgresql_query::{
     entity_ordering::{entity_identifier_key, ordering_collation},
     error::RenderError,
     history_source::{
+        BesideComparison,
+        EvolutionColumns,
         HistoryBranch,
         PendingEntries,
-        attribute_rows::{attribute_rows, stream_rows},
+        attribute_rows::{entity_attribute_rows, entity_stream_rows},
         entity_rows::{attribute_holder_rows, attribute_holder_rows_by_key, entity_rows, type_member_rows},
         grain::HistoryGrain,
     },
@@ -111,7 +113,7 @@ pub fn build_stage1_entity_ids(
         .expr_as(SeaExpr::col((E, TemporalEntities::Id)), EntityIdColumn)
         .from(paged)
         .cond_where(entity_conditions.clone()) // clone: the count query applies the same entity predicate
-        .cond_where(SeaExpr::exists(temporal_match_subquery(branch, compiled, names)));
+        .cond_where(SeaExpr::exists(temporal_match_subquery(branch, compiled, names, BesideComparison::Identifier)));
 
     // Clause 5.7.4.5: "If Entity ordering is specified (see clause 4.23), then
     // the JSON-LD array returned shall be ordered according to the member names
@@ -148,7 +150,7 @@ pub fn build_stage1_entity_ids(
                 .expr(Func::count(SeaExpr::col((E, TemporalEntities::Id))))
                 .from(counted)
                 .cond_where(entity_conditions)
-                .cond_where(SeaExpr::exists(temporal_match_subquery(branch, compiled, names)));
+                .cond_where(SeaExpr::exists(temporal_match_subquery(branch, compiled, names, BesideComparison::Key)));
             Some(count_select.take())
         }
         CountPolicy::Omit => None,
@@ -167,21 +169,31 @@ pub fn build_stage1_entity_ids(
 ///
 /// Over a source without queued entries the Evolution is compared beside the
 /// source, so a window few Evolutions answer, or none, is found by a
-/// semi-join over its rows instead of one probe per candidate.
-fn temporal_match_subquery(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames) -> SelectStatement {
-    let read = branch.entity_history(SeaExpr::col((E, TemporalEntities::Id)));
+/// semi-join over its rows instead of one probe per candidate. The page
+/// compares the identifier, so its matches merge with the walk in identifier
+/// order and the page stops at its last Evolution; the count, which reads
+/// every match, compares the surrogate key, so a window most Evolutions
+/// answer joins no catalogue row to its rows.
+fn temporal_match_subquery(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames, compared: BesideComparison) -> SelectStatement {
+    let read = branch.entity_history(
+        EvolutionColumns {
+            id: SeaExpr::col((E, TemporalEntities::Id)),
+            key: SeaExpr::col((E, TemporalEntities::TemporalEntityKey)),
+        },
+        compared,
+    );
     let (source, alias) = if compiled.window.interval.is_bounded() {
-        (attribute_rows(branch, &read.of, Ah), Ah.into_iden())
+        (entity_attribute_rows(branch, &read, Ah), Ah.into_iden())
     } else {
-        (stream_rows(branch, &read.of, S), S.into_iden())
+        (entity_stream_rows(branch, &read, S), S.into_iden())
     };
     let mut select = SelectStatement::new();
     select
         .expr(int_literal(1))
         .from(source)
         .cond_where(build_temporal_stage1_conditions(compiled, &alias, &names.attributes));
-    if let Some(entity) = read.beside {
-        select.and_where(SeaExpr::col((alias, HistoryGrain::EntityId)).eq(entity));
+    if let Some(compared) = read.compared_beside(&alias) {
+        select.and_where(compared);
     }
     select.take()
 }
@@ -675,7 +687,10 @@ mod tests {
     fn a_temporal_attrs_only_selection_reads_the_attribute_streams() {
         let (sql, _) = built(&speed_only(), &speed_and_address());
         assert!(
-            sql.starts_with(r#"SELECT "e"."id" AS "entity_id" FROM (SELECT DISTINCT ON ("held"."id") "held"."id" FROM (SELECT "hr"."id" FROM (SELECT "id" FROM "temporal_attribute_streams" WHERE "attribute_name_key" = (7) ORDER BY "id" ASC) AS "hr""#),
+            sql.starts_with(concat!(
+                r#"SELECT "e"."id" AS "entity_id" FROM (SELECT DISTINCT ON ("held"."id") "held"."id", "held"."temporal_entity_key" FROM "#,
+                r#"(SELECT "hr"."id", "hr"."temporal_entity_key" FROM (SELECT "id", "temporal_entity_key" FROM "temporal_attribute_streams" WHERE "attribute_name_key" = (7) ORDER BY "id" ASC) AS "hr""#
+            )),
             "{sql}"
         );
         assert!(!sql.contains(r#"FROM "temporal_entities" AS "re" UNION ALL"#), "{sql}");
@@ -715,7 +730,7 @@ mod tests {
         .expect("valid temporal query");
         let count = stage1.count.expect("count requested").to_string(PostgresQueryBuilder);
         assert!(
-            count.starts_with(r#"SELECT COUNT("e"."id") FROM (SELECT DISTINCT ON ("held"."id") "held"."id" FROM"#),
+            count.starts_with(r#"SELECT COUNT("e"."id") FROM (SELECT DISTINCT ON ("held"."id") "held"."id", "held"."temporal_entity_key" FROM"#),
             "{count}"
         );
         assert!(!count.contains(r#""hm""#), "{count}");
@@ -1512,24 +1527,76 @@ mod tests {
         ]
     }
 
+    /// The page's matches carry the identifier it walks the Evolutions in;
+    /// the count reads every match, by the key the recorded streams carry,
+    /// and reads no catalogue row of the Evolutions it holds.
     #[test]
-    fn a_window_match_over_an_empty_queue_compares_the_evolution_beside_the_recorded_rows() {
+    fn a_window_match_over_an_empty_queue_compares_the_page_by_identifier_and_the_count_by_key() {
         for branch in [HistoryBranch::live_recorded(), HistoryBranch::recorded_in(Alias::new("snap_7").into_iden())] {
-            for sql in page_and_count(&branch, Some("2024-01-01T00:00:00Z")) {
-                assert!(
-                    sql.contains(r#") AS "ah" WHERE "ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00' AND "ah"."entity_id" = "e"."id")"#),
-                    "{sql}"
-                );
-                assert!(!sql.contains(r#""re"."id" = "e"."id""#), "{sql}");
-            }
+            let [page, count] = page_and_count(&branch, Some("2024-01-01T00:00:00Z"));
+            assert!(
+                page.contains(r#") AS "ah" WHERE "ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00' AND "ah"."entity_id" = "e"."id")"#),
+                "{page}"
+            );
+            assert!(!page.contains(r#""re"."id" = "e"."id""#), "{page}");
+            assert!(
+                count.contains(
+                    r#") AS "ah" WHERE "ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00' AND "ah"."temporal_entity_key" = "e"."temporal_entity_key")"#
+                ),
+                "{count}"
+            );
+            assert!(!count.contains(r#"AS "re""#), "{count}");
         }
     }
 
     #[test]
-    fn a_stream_match_over_an_empty_queue_compares_the_evolution_beside_the_recorded_streams() {
-        for sql in page_and_count(&HistoryBranch::live_recorded(), None) {
-            assert!(sql.contains(r#") AS "s" WHERE TRUE AND "s"."entity_id" = "e"."id")"#), "{sql}");
-            assert!(!sql.contains(r#""re"."id" = "e"."id""#), "{sql}");
+    fn a_stream_match_over_an_empty_queue_compares_the_page_by_identifier_and_the_count_by_key() {
+        let [page, count] = page_and_count(&HistoryBranch::live_recorded(), None);
+        assert!(page.contains(r#") AS "s" WHERE TRUE AND "s"."entity_id" = "e"."id")"#), "{page}");
+        assert!(
+            count.contains(r#") AS "s" WHERE TRUE AND "s"."temporal_entity_key" = "e"."temporal_entity_key")"#),
+            "{count}"
+        );
+        assert!(!count.contains(r#"AS "re""#), "{count}");
+    }
+
+    /// Every Evolution source a count over an empty queue is compared to
+    /// carries the key it is compared by: the type walk, the attribute walk
+    /// and the catalogue.
+    #[test]
+    fn every_evolution_source_a_count_compares_by_key_carries_the_key() {
+        let mut typed = typed(vec![vehicle_selector()]);
+        typed.window.interval = TimeInterval::After(instant("2024-01-01T00:00:00Z"));
+        let mut attributed = speed_only();
+        attributed.window.interval = TimeInterval::After(instant("2024-01-01T00:00:00Z"));
+        let mut catalogued = minimal_compiled();
+        catalogued.window.interval = TimeInterval::After(instant("2024-01-01T00:00:00Z"));
+        for (compiled, names, evolutions) in [
+            (
+                typed,
+                vehicle_is_known(),
+                r#"(SELECT "temporal_entity_key", "id" FROM "temporal_entity_type_members""#,
+            ),
+            (
+                attributed,
+                speed_and_address(),
+                r#"SELECT DISTINCT ON ("held"."id") "held"."id", "held"."temporal_entity_key" FROM"#,
+            ),
+            (catalogued, QueryNames::default(), r#"FROM "temporal_entities" AS "e""#),
+        ] {
+            let count = build_stage1_entity_ids(
+                &HistoryBranch::live_recorded(),
+                &compiled,
+                &PageWindow::offset(20, 0),
+                CountPolicy::Emit,
+                &names,
+            )
+            .expect("valid temporal query")
+            .count
+            .expect("count requested")
+            .to_string(PostgresQueryBuilder);
+            assert!(count.contains(evolutions), "{count}");
+            assert!(count.contains(r#""ah"."temporal_entity_key" = "e"."temporal_entity_key""#), "{count}");
         }
     }
 
