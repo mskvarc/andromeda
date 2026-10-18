@@ -1,17 +1,31 @@
 //! Typed `NGSILD-Warning` response header (ETSI GS CIM 009 clause 6.3.17).
 //!
 //! Uses IANA Warning Codes to signal non-fatal issues encountered during
-//! distributed operations (forwarding to context sources).
+//! distributed operations (forwarding to context sources). An encoded header
+//! lists its warnings up to a byte budget and summarises the rest per code;
+//! the per-source record lives on each registration (`status`, `timesFailed`,
+//! `lastFailure`, clause 5.2.9).
 
 use crate::link::quoting::SplitAsciiUnquoted;
 use http::{HeaderName, HeaderValue};
-use std::iter;
+use indexmap::IndexMap;
+use std::{collections::HashSet, iter};
 
 /// The header name, as a `HeaderName` the `headers` trait can hand back.
 static NGSILD_WARNING: HeaderName = HeaderName::from_static("ngsild-warning");
 
+/// Summed encoded length of the warnings a header lists before it summarises
+/// the rest, which keeps the header inside a 4 KiB response-header buffer next
+/// to `Link`, `NGSILD-Results-Count` and the other response headers.
+const LISTED_WARNING_BYTES: usize = 2048;
+
+/// Bytes a listed value adds beyond its own text: the `, ` that joins it to the
+/// next value when a client or proxy folds the header into one line.
+const VALUE_SEPARATOR_BYTES: usize = 2;
+
 /// IANA warning codes for distributed operations (clause 6.3.17).
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, strum::EnumDiscriminants)]
+#[strum_discriminants(name(WarnCode), derive(Hash), doc = "The IANA warn-code of an [`NgsiLdWarning`], without its text.")]
 pub enum NgsiLdWarning {
     /// 110: Cached data reused; context source responded but stale data was served.
     #[display("110 - \"{_0}\"")]
@@ -27,6 +41,27 @@ pub enum NgsiLdWarning {
     MiscellaneousPersistentWarning(String),
 }
 
+impl NgsiLdWarning {
+    /// The warning with the given code and text.
+    const fn with_code(code: WarnCode, text: String) -> NgsiLdWarning {
+        match code {
+            WarnCode::ResponseIsStale => NgsiLdWarning::ResponseIsStale(text),
+            WarnCode::RevalidationFailed => NgsiLdWarning::RevalidationFailed(text),
+            WarnCode::MiscellaneousWarning => NgsiLdWarning::MiscellaneousWarning(text),
+            WarnCode::MiscellaneousPersistentWarning => NgsiLdWarning::MiscellaneousPersistentWarning(text),
+        }
+    }
+}
+
+/// The text of the summary that stands for the warnings of one code a header
+/// does not list.
+#[derive(Debug, thiserror::Error)]
+#[error("{count} further warnings with this code are not listed")]
+struct UnlistedWarnings {
+    /// Number of distinct warnings with the code that are left out.
+    count: usize,
+}
+
 /// Typed `NGSILD-Warning` response header (clause 6.3.17).
 ///
 /// Wraps multiple [`NgsiLdWarning`] values for multi-value header encoding.
@@ -34,10 +69,41 @@ pub enum NgsiLdWarning {
 pub struct NgsiLdWarningHeader(Vec<NgsiLdWarning>);
 
 impl NgsiLdWarningHeader {
-    /// Create a new `NGSILD-Warning` header from the given warnings.
+    /// The `NGSILD-Warning` header for the given warnings, bounded for the wire.
+    ///
+    /// Exact duplicates are dropped, keeping first occurrences. The remaining
+    /// warnings are listed in order while their encoded length fits 2 KiB;
+    /// from the first one that does not fit, every
+    /// warning is counted instead, and one summary per code with omissions
+    /// follows the listed ones, in order of first omission. Clause 6.3.17
+    /// requires the abnormal behaviour to be indicated with its code, not one
+    /// value per source.
     #[must_use]
-    pub const fn new(warnings: Vec<NgsiLdWarning>) -> NgsiLdWarningHeader {
-        NgsiLdWarningHeader(warnings)
+    pub fn new(warnings: Vec<NgsiLdWarning>) -> NgsiLdWarningHeader {
+        let first_occurrences: Vec<bool> = {
+            let mut seen = HashSet::with_capacity(warnings.len());
+            warnings.iter().map(|warning| seen.insert(warning)).collect()
+        };
+        let mut budget = LISTED_WARNING_BYTES;
+        let mut listed = Vec::new();
+        let mut omitted: IndexMap<WarnCode, usize> = IndexMap::new();
+        for warning in iter::zip(warnings, first_occurrences).filter_map(|(warning, first)| first.then_some(warning)) {
+            if omitted.is_empty() {
+                let cost = warning.to_string().len() + VALUE_SEPARATOR_BYTES;
+                if let Some(left) = budget.checked_sub(cost) {
+                    budget = left;
+                    listed.push(warning);
+                    continue;
+                }
+            }
+            *omitted.entry(WarnCode::from(&warning)).or_default() += 1;
+        }
+        listed.extend(
+            omitted
+                .into_iter()
+                .map(|(code, count)| NgsiLdWarning::with_code(code, UnlistedWarnings { count }.to_string())),
+        );
+        NgsiLdWarningHeader(listed)
     }
 
     /// The warnings the header carries, in wire order.
@@ -252,5 +318,115 @@ mod tests {
         let mut iter = iter::once(&val);
         let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode as one warning");
         pretty_assertions::assert_eq!(header.0.len(), 1);
+    }
+
+    fn unreachable_source(index: usize) -> NgsiLdWarning {
+        NgsiLdWarning::MiscellaneousWarning(format!(
+            "context source urn:ngsi-ld:ContextSourceRegistration:{index} did not respond: connection refused"
+        ))
+    }
+
+    fn encoded(header: &NgsiLdWarningHeader) -> Vec<String> {
+        let mut values = Vec::new();
+        header.encode(&mut values);
+        values.iter().map(|value| value.to_str().expect("valid str").to_owned()).collect()
+    }
+
+    fn listed_bytes(values: &[String]) -> usize {
+        values.iter().map(|value| value.len() + VALUE_SEPARATOR_BYTES).sum()
+    }
+
+    #[test]
+    fn warnings_within_the_budget_are_all_listed_in_order() {
+        let warnings = vec![
+            NgsiLdWarning::MiscellaneousWarning("context source s1 did not respond".to_owned()),
+            NgsiLdWarning::MiscellaneousPersistentWarning("context source s2 returned 403".to_owned()),
+            NgsiLdWarning::ResponseIsStale("context source s3 answered from cache".to_owned()),
+        ];
+        let header = NgsiLdWarningHeader::new(warnings.clone()); // clone: the expectation outlives the consumed input
+        pretty_assertions::assert_eq!(header.into_warnings(), warnings);
+    }
+
+    #[test]
+    fn exact_duplicates_are_listed_once() {
+        let header = NgsiLdWarningHeader::new(vec![
+            NgsiLdWarning::MiscellaneousWarning("a".to_owned()),
+            NgsiLdWarning::MiscellaneousPersistentWarning("b".to_owned()),
+            NgsiLdWarning::MiscellaneousWarning("a".to_owned()),
+        ]);
+        pretty_assertions::assert_eq!(encoded(&header), ["199 - \"a\"", "299 - \"b\""]);
+    }
+
+    #[test]
+    fn four_thousand_unreachable_sources_fit_the_budget_with_one_summary() {
+        let warnings: Vec<NgsiLdWarning> = (0..4000).map(unreachable_source).collect();
+        let values = encoded(&NgsiLdWarningHeader::new(warnings.clone())); // clone: the prefix check reads the input again
+        let (summary, listed) = values.split_last().expect("a summary");
+        assert!(listed_bytes(listed) <= LISTED_WARNING_BYTES);
+        assert!(listed.iter().zip(&warnings).all(|(value, warning)| *value == warning.to_string()));
+        pretty_assertions::assert_eq!(
+            summary.as_str(),
+            format!("199 - \"{} further warnings with this code are not listed\"", 4000 - listed.len())
+        );
+        pretty_assertions::assert_eq!(values.len(), listed.len() + 1);
+    }
+
+    #[test]
+    fn each_code_with_omitted_warnings_gets_its_own_summary() {
+        let text = |index: usize| format!("context source urn:ngsi-ld:ContextSourceRegistration:{index:04} failed its forwarded query");
+        let warnings: Vec<NgsiLdWarning> = (0..100)
+            .map(|index| NgsiLdWarning::MiscellaneousWarning(text(index)))
+            .chain((100..200).map(|index| NgsiLdWarning::MiscellaneousPersistentWarning(text(index))))
+            .collect();
+        let values = encoded(&NgsiLdWarningHeader::new(warnings));
+        let [listed @ .., first, second] = values.as_slice() else {
+            panic!("expected two summaries, got {values:?}");
+        };
+        let count = |summary: &str, code: &str| -> usize {
+            summary
+                .strip_prefix(&format!("{code} - \""))
+                .and_then(|rest| rest.strip_suffix(" further warnings with this code are not listed\""))
+                .and_then(|count| count.parse().ok())
+                .expect("a summary with a count")
+        };
+        pretty_assertions::assert_eq!(count(first, "199") + count(second, "299") + listed.len(), 200);
+    }
+
+    #[test]
+    fn a_code_seen_only_after_the_budget_is_spent_still_appears() {
+        let warnings: Vec<NgsiLdWarning> = (0..200)
+            .map(unreachable_source)
+            .chain(iter::once(NgsiLdWarning::RevalidationFailed("context source s answered garbage".to_owned())))
+            .collect();
+        let values = encoded(&NgsiLdWarningHeader::new(warnings));
+        assert!(values.iter().any(|value| value == "111 - \"1 further warnings with this code are not listed\""));
+    }
+
+    #[test]
+    fn a_first_warning_larger_than_the_budget_is_summarised_not_dropped() {
+        let header = NgsiLdWarningHeader::new(vec![NgsiLdWarning::MiscellaneousPersistentWarning("x".repeat(3000))]);
+        pretty_assertions::assert_eq!(encoded(&header), ["299 - \"1 further warnings with this code are not listed\""]);
+    }
+
+    #[test]
+    fn summaries_decode_with_their_codes() {
+        let warnings: Vec<NgsiLdWarning> = (0..100)
+            .map(unreachable_source)
+            .chain((0..100).map(|index| NgsiLdWarning::MiscellaneousPersistentWarning(format!("context source {index} returned HTTP 500"))))
+            .collect();
+        let mut values = Vec::new();
+        NgsiLdWarningHeader::new(warnings).encode(&mut values);
+        let decoded = NgsiLdWarningHeader::decode(&mut values.iter()).expect("should decode").into_warnings();
+        let [.., NgsiLdWarning::MiscellaneousWarning(_), NgsiLdWarning::MiscellaneousPersistentWarning(_)] = decoded.as_slice() else {
+            panic!("expected a 199 then a 299 summary, got {decoded:?}");
+        };
+    }
+
+    #[test]
+    fn decoding_does_not_bound() {
+        let combined = (0..300).map(|index| unreachable_source(index).to_string()).collect::<Vec<_>>().join(", ");
+        let value = HeaderValue::from_str(&combined).expect("valid header value");
+        let decoded = NgsiLdWarningHeader::decode(&mut iter::once(&value)).expect("should decode");
+        pretty_assertions::assert_eq!(decoded.into_warnings().len(), 300);
     }
 }

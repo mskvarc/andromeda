@@ -753,6 +753,7 @@ dependencies = [
  "headers",
  "http",
  "httpdate",
+ "indexmap 2.14.2",
  "iri-rs",
  "langtag",
  "mediatype",
