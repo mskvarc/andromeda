@@ -83,3 +83,7 @@ create index idx_registration_information_entity_id_pattern on registration_info
 where
     entity_id_pattern is not null;
 
+-- A queried `idPattern` against the registered `id` (clause 5.12): the
+-- portable pattern is unanchored, so the B-tree cannot serve it.
+create index idx_registration_information_entity_id_trgm on registration_information using gin (entity_id gin_trgm_ops);
+

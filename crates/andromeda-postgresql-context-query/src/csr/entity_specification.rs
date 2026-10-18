@@ -16,7 +16,7 @@
 
 use crate::csr::{
     information_row::ri_col,
-    preselect::{entity_id_candidate, entity_type_candidate},
+    preselect::{entity_id_candidate, entity_id_pattern_candidate, entity_type_candidate},
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, pattern::Pattern, type_selection::grammar::TypeExpr};
@@ -53,11 +53,13 @@ impl EntitySpecification<'_> {
     /// `EntityInfo` matches the specification, or `None` when every row does.
     ///
     /// Each axis carries its indexed test, and beside it the residual the test
-    /// does not decide exactly.
+    /// does not decide exactly. The axes are conjuncts of one condition, so a
+    /// caller adding a further axis narrows the row whichever axes are present.
     #[must_use]
     pub fn row_matches(&self) -> Option<Condition> {
         let axes = [self.entity_type.and_then(type_axis), self.identifier_axis()];
-        axes.into_iter().flatten().reduce(Condition::add)
+        let row = axes.into_iter().flatten().fold(Condition::all(), Condition::add);
+        (!row.is_empty()).then_some(row)
     }
 
     /// The clause 5.12 identifier conditions, or `None` when neither
@@ -72,10 +74,7 @@ impl EntitySpecification<'_> {
             // expressions admit a common identifier is not decidable cheaply,
             // so a registered pattern is taken as matching. Both are the rows
             // without an `id`.
-            IdentifierAxis::Pattern(pattern) => Some(Condition::any().add(ri_col(RegistrationInformation::EntityId).is_null()).add(regex_match(
-                ri_col(RegistrationInformation::EntityId),
-                SeaExpr::val(pattern.portable().as_str()),
-            ))),
+            IdentifierAxis::Pattern(pattern) => Some(Condition::all().add(entity_id_pattern_candidate(pattern))),
         }
     }
 }
@@ -338,10 +337,32 @@ mod tests {
             id_pattern: Some(&pattern),
         });
         assert!(
-            sql.contains("\"ri\".\"entity_id\" IS NULL OR (\"ri\".\"entity_id\" ~ 'urn:ngsi-ld:Fleet.*')"),
+            sql.contains("COALESCE(\"ri\".\"entity_id\", '') = ('') OR (\"ri\".\"entity_id\" ~ 'urn:ngsi-ld:Fleet.*')"),
             "{sql}"
         );
         assert!(!sql.contains("UNNEST"), "{sql}");
+    }
+
+    /// Clause 5.12: the identifier axis is one condition of the `EntityInfo`
+    /// beside any other, so whatever is added to the row narrows it.
+    #[test]
+    fn a_pattern_without_a_type_is_a_conjunct_a_further_axis_narrows() {
+        let pattern = Pattern::parse("urn:ngsi-ld:Fleet.*").expect("valid pattern");
+        let row = EntitySpecification {
+            entity_type: None,
+            ids: &[],
+            id_pattern: Some(&pattern),
+        }
+        .row_matches()
+        .expect("a pattern constrains the entity axis")
+        .add(ri_col(RegistrationInformation::PropertyNameKeys).is_not_null());
+        let sql = Query::select().expr(int_literal(1)).cond_where(row).to_string(PostgresQueryBuilder);
+        assert!(
+            sql.ends_with(
+                "WHERE (COALESCE(\"ri\".\"entity_id\", '') = ('') OR (\"ri\".\"entity_id\" ~ 'urn:ngsi-ld:Fleet.*')) AND \"ri\".\"property_name_keys\" IS NOT NULL"
+            ),
+            "{sql}"
+        );
     }
 
     #[test]

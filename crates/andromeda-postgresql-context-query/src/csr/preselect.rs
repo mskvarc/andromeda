@@ -14,6 +14,10 @@
 //! - **Entity identifier.** `coalesce(entity_id, '')` is one of the requested
 //!   identifiers or `''`, or the row carries a pattern. A pattern row is
 //!   admitted whatever its pattern; the residual evaluates it.
+//! - **Entity identifier pattern.** `coalesce(entity_id, '')` is `''`, or
+//!   `entity_id` matches the requested pattern through its trigram index. The
+//!   test is exact: a row without an `id` constrains the identifier not at all
+//!   or by a pattern of its own, and clause 5.12 takes either as matching.
 //! - **Attribute names.** The requested names resolve to their
 //!   `attribute_names` keys in the statement, and the keys overlap either axis
 //!   as stored, or the row's item declares no name on either axis. Each branch
@@ -25,9 +29,11 @@
 
 use crate::csr::information_row::ri_col;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_query::pattern::Pattern;
 use andromeda_postgresql_schema::{csr::RegistrationInformation, name_dictionary::AttributeNames};
 use andromeda_postgresql_seaquery::{
     literal::text_literal,
+    operator::regex_match,
     pg_array::{any, array_of_subquery, text_array},
     pg_operator::PgBinaryOperator,
 };
@@ -79,6 +85,20 @@ pub fn entity_id_candidate(entity_ids: &[Identifier]) -> SimpleExpr {
     entity_id_or_none()
         .is_in(named)
         .or(ri_col(RegistrationInformation::EntityIdPattern).is_not_null())
+}
+
+/// Whether the row admits `pattern`: it names no `id`, or its `id` matches the
+/// pattern's portable restatement.
+///
+/// The `id`-less branch is spelled as the identifier sentinel, so the B-tree
+/// the identifier test reads serves it and a `BitmapOr` with the trigram index
+/// can drive the whole disjunction.
+#[must_use]
+pub fn entity_id_pattern_candidate(pattern: &Pattern) -> SimpleExpr {
+    entity_id_or_none().eq(text_literal(ANY_IDENTIFIER)).or(regex_match(
+        ri_col(RegistrationInformation::EntityId),
+        SeaExpr::val(pattern.portable().as_str()),
+    ))
 }
 
 /// The alias of one requested attribute name's dictionary row, `an`.
@@ -182,6 +202,33 @@ mod tests {
         let (indexed, predicate) = undeclared_index.split_once("where").expect("the undeclared-names index is partial");
         pretty_assertions::assert_eq!(comparable(indexed), "registration_id");
         pretty_assertions::assert_eq!(comparable(predicate), comparable(&render(declares_no_name().into())));
+        let trigram_index = index_definition("idx_registration_information_entity_id_trgm");
+        let (indexed, opclass) = trigram_index.trim().split_once(' ').expect("the trigram index names its opclass");
+        pretty_assertions::assert_eq!(comparable(indexed), comparable(&render(ri_col(RegistrationInformation::EntityId))));
+        pretty_assertions::assert_eq!(comparable(opclass), "gin_trgm_ops");
+    }
+
+    /// Clause 5.12: a row without an `id` matches any queried pattern, whether
+    /// it constrains the identifier by no pattern or by one of its own; a row
+    /// with an `id` matches when the pattern matches it.
+    #[test]
+    fn the_pattern_test_names_the_identifier_sentinel_beside_the_match_on_the_trigram_indexed_column() {
+        let pattern = Pattern::parse("urn:ngsi-ld:Fleet.*").expect("valid pattern");
+        let sql = render(entity_id_pattern_candidate(&pattern));
+        pretty_assertions::assert_eq!(
+            sql,
+            "COALESCE(\"ri\".\"entity_id\", '') = ('') OR (\"ri\".\"entity_id\" ~ 'urn:ngsi-ld:Fleet.*')"
+        );
+    }
+
+    /// Clause 4.9: the store evaluates the portable restatement, so `(?i)`
+    /// reaches PostgreSQL with every option applied.
+    #[test]
+    fn the_pattern_test_matches_the_portable_restatement_not_the_written_pattern() {
+        let pattern = Pattern::parse("(?i)urn:ngsi-ld:fleet.*").expect("valid pattern");
+        let sql = render(entity_id_pattern_candidate(&pattern));
+        assert!(!sql.contains("(?i)"), "{sql}");
+        assert!(sql.contains(pattern.portable().as_str()), "{sql}");
     }
 
     #[test]

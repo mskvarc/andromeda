@@ -130,7 +130,8 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Condition {
         entities.row_matches(),
         (!query.attrs.is_empty()).then(|| Condition::all().add(attribute_name_candidate(&query.attrs))),
     ];
-    if let Some(row) = axes.into_iter().flatten().reduce(Condition::add) {
+    let row = axes.into_iter().flatten().fold(Condition::all(), Condition::add);
+    if !row.is_empty() {
         condition = condition.add(some_information_row(row));
     }
 
@@ -374,11 +375,32 @@ mod tests {
         q.id_pattern = Some(Pattern::parse("urn:ngsi-ld:.*").unwrap());
         let built = build(&q);
         assert!(
-            built.sql.contains("\"ri\".\"entity_id\" IS NULL OR (\"ri\".\"entity_id\" ~ 'urn:ngsi-ld:.*')"),
+            built
+                .sql
+                .contains("COALESCE(\"ri\".\"entity_id\", '') = ('') OR (\"ri\".\"entity_id\" ~ 'urn:ngsi-ld:.*')"),
             "{}",
             built.sql
         );
         assert!(!built.sql.contains("\"entity_id_pattern\" ="), "{}", built.sql);
+    }
+
+    /// Clause 5.12: the identifier pattern and the attribute names must both
+    /// hold for the same `RegistrationInfo`, with or without a type selector,
+    /// so the page and the count keep only rows meeting both.
+    #[test]
+    fn a_pattern_without_a_type_and_an_attribute_list_must_both_hold_on_the_row() {
+        let mut q = empty_query();
+        q.id_pattern = Some(Pattern::parse("urn:ngsi-ld:Fleet.*").unwrap());
+        q.attrs = vec![iri("https://example.com/speed")];
+        let built = build(&q);
+        for statement in [&built.sql, &built.count_sql] {
+            assert!(
+                statement.contains(
+                    "(COALESCE(\"ri\".\"entity_id\", '') = ('') OR (\"ri\".\"entity_id\" ~ 'urn:ngsi-ld:Fleet.*')) AND ((\"ri\".\"property_name_keys\" && "
+                ),
+                "{statement}"
+            );
+        }
     }
 
     /// Clause 5.12: an `EntityInfo` with neither `id` nor `idPattern` matches
