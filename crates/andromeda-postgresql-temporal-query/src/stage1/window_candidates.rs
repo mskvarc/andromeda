@@ -36,6 +36,15 @@ pub(super) const WINDOW_SHORT_WALK: u32 = 200;
 /// The most history rows a page reads before it walks instead.
 pub(super) const WINDOW_CANDIDATE_BOUND: u64 = 10_000;
 
+/// The most Evolutions a windowed page walks in place of reading the
+/// candidates, when the matches the short walk found project the page full
+/// within them.
+///
+/// A converted chunk keeps no rowstore index, so the candidate read reaches
+/// it only by scanning every batch summary it holds, a floor that grows with
+/// the archive whatever the window; a walk costs the Evolutions it visits.
+pub(super) const WINDOW_DENSE_WALK: u32 = 1_500;
+
 /// Whose instances a window read takes.
 #[derive(Debug, Clone)]
 enum ConcernedAttributes {
@@ -152,7 +161,7 @@ mod tests {
     #[test]
     fn a_window_over_a_type_walk_reads_the_axis_rows() {
         let stage1 = recorded_stage1(&modified_after());
-        assert_eq!(stage1.planning, StatementPlanning::GatedBranches);
+        assert_eq!(stage1.planning, StatementPlanning::BoundValues);
         let (sql, values) = stage1.select.build(PostgresQueryBuilder);
         let candidates = PageBranches::of(&sql).candidates;
         assert!(
@@ -262,6 +271,47 @@ mod tests {
         let branches = PageBranches::of(&sql);
         assert!(branches.short.contains("LIMIT 200 OFFSET 0"), "{}", branches.short);
         assert!(branches.walk.contains(r#"(SELECT COUNT(*) FROM "candidates") > 10000"#), "{}", branches.walk);
+    }
+
+    /// A page of 20 behind a short walk of 200 is projected full within the
+    /// 1,500-Evolution dense walk once the short walk finds 3 matches (20 *
+    /// 200 / 1,500, rounded up).
+    #[test]
+    fn a_short_walk_projecting_the_page_full_sends_it_to_the_walk_unread() {
+        let sql = recorded_stage1(&modified_after()).select.to_string(PostgresQueryBuilder);
+        let branches = PageBranches::of(&sql);
+        let filled = r#"CASE WHEN ((SELECT COUNT(*) FROM "short_walk") >= 20) THEN FALSE WHEN ((SELECT COUNT(*) FROM "short_walk") >= 3)"#;
+        assert!(
+            branches
+                .walk
+                .contains(&format!(r#"{filled} THEN TRUE ELSE (SELECT COUNT(*) FROM "candidates") > 10000 END"#)),
+            "{}",
+            branches.walk
+        );
+        assert!(
+            branches
+                .indexed
+                .contains(&format!(r#"{filled} THEN FALSE ELSE (SELECT COUNT(*) FROM "candidates") <= 10000 END"#)),
+            "{}",
+            branches.indexed
+        );
+    }
+
+    #[test]
+    fn a_page_beyond_the_short_walk_projects_nothing() {
+        let sql = stage1_on(&HistoryBranch::live_recorded(), &modified_after(), &PageWindow::offset(20, 250))
+            .select
+            .to_string(PostgresQueryBuilder);
+        let branches = PageBranches::of(&sql);
+        assert!(branches.short.contains("LIMIT 0 OFFSET 0"), "{}", branches.short);
+        assert!(!branches.walk.contains("CASE"), "{}", branches.walk);
+        assert!(
+            branches
+                .walk
+                .contains(r#"(SELECT COUNT(*) FROM "short_walk") < 270 AND (SELECT COUNT(*) FROM "candidates") > 10000"#),
+            "{}",
+            branches.walk
+        );
     }
 
     #[test]

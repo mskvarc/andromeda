@@ -117,12 +117,11 @@ pub fn build_stage1_entity_ids(
             (CountPolicy::Emit, CountRead::Walked) => Some(walked_count(branch, compiled, names)?),
             (CountPolicy::Omit, CountRead::Gated(_) | CountRead::Walked) => None,
         };
-        // A gated statement's branches each take their own access path.
         return Ok(Stage1Query {
             select,
             count,
             read_order,
-            planning: StatementPlanning::GatedBranches,
+            planning: step.page_planning(),
             count_planning: count_read.planning(),
         });
     }
@@ -505,7 +504,7 @@ mod tests {
         let page = stage1.select.to_string(PostgresQueryBuilder);
         let count = stage1.count.expect("count requested").to_string(PostgresQueryBuilder);
         let walk = PageBranches::of(&page).walk.replace(
-            r#"(SELECT COUNT(*) FROM "short_walk") < 20 AND (SELECT COUNT(*) FROM "candidates") > 10000 AND "#,
+            r#"(CASE WHEN ((SELECT COUNT(*) FROM "short_walk") >= 20) THEN FALSE WHEN ((SELECT COUNT(*) FROM "short_walk") >= 3) THEN TRUE ELSE (SELECT COUNT(*) FROM "candidates") > 10000 END) AND "#,
             "",
         );
         let source = |sql: &str, head: &str| {

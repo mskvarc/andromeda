@@ -13,7 +13,7 @@ use crate::stage1::{
     extent_candidates::{EXTENT_CANDIDATE_BOUND, EXTENT_SHORT_WALK, ExtentRead},
     pattern_candidates::pattern_candidates,
     scope_candidates::{SCOPE_CANDIDATE_BOUND, SCOPE_SHORT_WALK, scope_candidates},
-    window_candidates::{WINDOW_CANDIDATE_BOUND, WINDOW_SHORT_WALK, WindowRead},
+    window_candidates::{WINDOW_CANDIDATE_BOUND, WINDOW_DENSE_WALK, WINDOW_SHORT_WALK, WindowRead},
 };
 use andromeda_ngsi_ld_query::{
     entity_selection::ConsideredEntities,
@@ -135,6 +135,33 @@ impl<'q> CandidateStep<'q> {
         }
     }
 
+    /// The most Evolutions the full walk is trusted to visit in place of the
+    /// candidates when the short walk's matches project the page full within
+    /// them; `None` when the candidates are read whenever the short walk falls
+    /// short.
+    ///
+    /// Only the window's read has a floor of its own: it reaches converted
+    /// history through every batch summary, while the trigram, Scope path and
+    /// extent reads cost what they find.
+    pub(super) const fn dense_walk(&self) -> Option<u32> {
+        match self {
+            CandidateStep::IdPattern(_) | CandidateStep::ScopePaths(..) | CandidateStep::GeometryExtents(_) => None,
+            CandidateStep::Window(_) => Some(WINDOW_DENSE_WALK),
+        }
+    }
+
+    /// How PostgreSQL may plan the page.
+    pub(super) const fn page_planning(&self) -> StatementPlanning {
+        match self {
+            // A gated-off branch still launches the workers of a Gather under
+            // it, so the index reads run serially.
+            CandidateStep::IdPattern(_) | CandidateStep::ScopePaths(..) | CandidateStep::GeometryExtents(_) => StatementPlanning::GatedBranches,
+            // The window's read scans every batch summary of converted
+            // history, which workers split.
+            CandidateStep::Window(_) => StatementPlanning::BoundValues,
+        }
+    }
+
     /// How the count is read.
     pub(super) const fn count_read(&self) -> CountRead {
         match self {
@@ -204,7 +231,7 @@ mod tests {
         assert!(branches.indexed.contains("value_number"), "{page}");
         let count = stage1.count.expect("count requested").to_string(PostgresQueryBuilder);
         assert!(!count.contains("candidates"), "{count}");
-        assert_eq!(stage1.planning, StatementPlanning::GatedBranches);
+        assert_eq!(stage1.planning, StatementPlanning::BoundValues);
     }
 
     #[test]
