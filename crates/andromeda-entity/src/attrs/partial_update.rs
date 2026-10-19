@@ -10,7 +10,7 @@ use crate::{
 };
 use andromeda_context_commit::history_record::mutation_history;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_entity::{entity_state::EntityState, history::written_observation::AddressedInstances, system_instant::SystemInstant};
+use andromeda_ngsi_ld_entity::{entity_state::EntityState, system_instant::SystemInstant};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::Utc;
 use std::sync::Arc;
@@ -62,12 +62,8 @@ impl EntityService {
                 // its createdAt across the read-modify-write.
                 updated.settle(Some(previous), SystemInstant::new(Utc::now()));
                 let updated = Arc::new(updated);
-                let addressed = AddressedInstances::AttributeFragment {
-                    attribute: &attribute,
-                    fragment: &fragment,
-                };
-                let history = mutation_history(addressed, previous, &updated);
-                let (write, events) = self.fragment_write(target, id, previous, updated, history)?;
+                let history = mutation_history(previous, &updated);
+                let (write, events) = self.write_if_modified(target, id, previous, updated, history)?;
                 Ok((write, events))
             })
             .await?;

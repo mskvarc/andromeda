@@ -16,13 +16,7 @@ use crate::{
     side_effect::SideEffectPlacement,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_entity::{
-    document::EntityDocument,
-    entity_state::EntityState,
-    history::written_observation::AddressedInstances,
-    operation::selection::OverwritePolicy,
-    system_instant::SystemInstant,
-};
+use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState, system_instant::SystemInstant};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use std::sync::Arc;
 
@@ -186,18 +180,6 @@ impl EntityService {
         if let Err(error) = updated.update_attributes(fragment) {
             return Err(Box::new((id, EntityError::from(error))));
         }
-        self.chunk_fragment_update(
-            target,
-            id,
-            UpdatedStates {
-                previous,
-                current: updated,
-                addressed: AddressedInstances::EntityFragment {
-                    fragment,
-                    overwrite: OverwritePolicy::Overwrite,
-                },
-            },
-            now,
-        )
+        self.chunk_update(target, id, UpdatedStates { previous, current: updated }, now)
     }
 }

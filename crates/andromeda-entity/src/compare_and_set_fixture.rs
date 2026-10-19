@@ -102,7 +102,7 @@ pub(crate) fn tombstoned_terms(write: &AtomicWrite) -> Vec<String> {
         .iter()
         .filter_map(|record| match record {
             HistoryRecord::Tombstone(ended) => ended.key.attr.as_str().strip_prefix(DEFAULT_VOCABULARY).map(str::to_owned),
-            HistoryRecord::Observations(_) | HistoryRecord::EvolutionInstances(_) | HistoryRecord::ScopeRemoval | HistoryRecord::ScopeAssertion(_) => None,
+            HistoryRecord::Observations(_) | HistoryRecord::EvolutionInstances(_) | HistoryRecord::ScopeRemoval => None,
         })
         .collect();
     terms.sort_unstable();

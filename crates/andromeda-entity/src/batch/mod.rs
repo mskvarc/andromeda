@@ -44,7 +44,8 @@ mod merge;
 mod prepare;
 /// Ordering the instances an array repeats (clause 5.5.11).
 mod same_id_rounds;
-/// Tests that an entity whose fragment changes nothing stores no write.
+/// Tests that an entity whose fragment or replacement modifies nothing stores
+/// no write.
 #[cfg(test)]
 mod unchanged_fragments;
 /// Batch attribute update.

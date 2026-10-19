@@ -100,3 +100,66 @@ async fn replace_entity_records_every_stored_attribute_of_the_replacement() {
     let write = single_recorded_write(&recorded);
     assert_observes_stored_instances(&write, &[CATEGORY_IRI, NAME_IRI]);
 }
+
+/// The fixture Building restated whole: its type and its `category` with the
+/// `accuracy` sub-Property, as the store holds them.
+fn restated_building() -> Value {
+    json!({
+        "type": "Building",
+        "category": {"type": "Property", "value": "office", "accuracy": {"type": "Property", "value": "high"}}
+    })
+}
+
+/// Clauses 4.3.1, 4.8 and 5.8.6: a Replace Entity restating the held entity
+/// modifies nothing, so it stores no write and the entity keeps its
+/// `modifiedAt`.
+#[tokio::test]
+async fn replace_entity_restating_the_held_entity_stores_nothing() {
+    let (service, recorded) = recording_service().await;
+    let admitted = admitted_entity::<ReplaceEntity>(&service, &patch(restated_building()), &core_context()).await;
+    service
+        .replace_entity(&live_target(), WriteTarget::new(&entity_uri(), None), admitted)
+        .await
+        .expect("the replace lands");
+
+    assert!(recorded.lock().expect("the recording buffer").is_empty(), "a restatement stores no write");
+}
+
+/// A Replace Entity restating `category` beside a new `name` records `name`
+/// alone.
+#[tokio::test]
+async fn replace_entity_records_only_the_attribute_it_modified() {
+    let (service, recorded) = recording_service().await;
+    let mut replacement = restated_building();
+    replacement["name"] = json!({"type": "Property", "value": "lobby"});
+    let admitted = admitted_entity::<ReplaceEntity>(&service, &patch(replacement), &core_context()).await;
+    service
+        .replace_entity(&live_target(), WriteTarget::new(&entity_uri(), None), admitted)
+        .await
+        .expect("the replace lands");
+
+    let write = single_recorded_write(&recorded);
+    assert_observes_stored_instances(&write, &[NAME_IRI]);
+}
+
+/// Clause 5.5.12: a merge restating the held value modifies nothing, so it
+/// stores no write.
+#[tokio::test]
+async fn merge_restating_the_held_value_stores_nothing() {
+    let (service, recorded) = recording_service().await;
+    let fragment = patch(json!({"category": {"type": "Property", "value": "office"}}));
+    let admitted = admitted_entity::<MergeEntity>(&service, &fragment, &core_context()).await;
+    service
+        .merge(
+            &live_target(),
+            WriteTarget::new(&entity_uri(), None),
+            &fragment,
+            admitted,
+            &admitted_context(&service, &core_context()).await,
+            MergeOptions::default(),
+        )
+        .await
+        .expect("the merge lands");
+
+    assert!(recorded.lock().expect("the recording buffer").is_empty(), "a restatement stores no write");
+}

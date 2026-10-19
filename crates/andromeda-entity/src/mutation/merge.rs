@@ -13,12 +13,7 @@ use crate::{
 use andromeda_context_commit::history_record::mutation_history;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{engine::term_lookup::PreparedTermContext, user_context_admission::AdmittedContext};
-use andromeda_ngsi_ld_entity::{
-    entity_state::EntityState,
-    history::written_observation::AddressedInstances,
-    operation::selection::OverwritePolicy,
-    system_instant::SystemInstant,
-};
+use andromeda_ngsi_ld_entity::{entity_state::EntityState, system_instant::SystemInstant};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{attribute::merge_member::MergeMember, entity::EntityPatch};
 use andromeda_telemetry::entity::{self, EntityOperation};
@@ -93,12 +88,8 @@ impl EntityService {
                     // content changed, takes `now` for modifiedAt.
                     merged.settle(Some(previous), now);
                     let merged = Arc::new(merged);
-                    let addressed = AddressedInstances::EntityFragment {
-                        fragment: &fragment,
-                        overwrite: OverwritePolicy::Overwrite,
-                    };
-                    let history = mutation_history(addressed, previous, &merged);
-                    let (write, events) = self.fragment_write(target, id, previous, merged, history)?;
+                    let history = mutation_history(previous, &merged);
+                    let (write, events) = self.write_if_modified(target, id, previous, merged, history)?;
                     Ok((write, events))
                 })
                 .await?;

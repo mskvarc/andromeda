@@ -129,6 +129,12 @@ impl Instance {
     /// Whether two instances agree on everything but their system times
     /// (clause 4.8), at every depth: what decides whether a write modified an
     /// instance.
+    ///
+    /// Clause 5.8.6 has an attribute change "when any of the members
+    /// (including children) in its corresponding JSON-LD node is updated with
+    /// a value different than the existing one". The attribute-level
+    /// `modifiedAt`, the notification change and the Temporal Evolution
+    /// observation of a Core write all read a modification off this one test.
     #[must_use]
     pub fn same_content(&self, other: &Instance) -> bool {
         self.value == other.value
@@ -136,5 +142,69 @@ impl Instance {
             && self.expires_at == other.expires_at
             && self.proof_seals == other.proof_seals
             && self.sub_attributes.same_content(&other.sub_attributes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        attribute_instances::AttributeInstances,
+        instance::Instance,
+        operation::speed_entity::{date_time, name, number, property},
+        system_instant::SystemInstant,
+    };
+
+    const ACCURACY: &str = "https://example.org/accuracy";
+
+    /// A Property holding `value`, observed at `observed_at`, carrying an
+    /// `accuracy` sub-Property holding `accuracy`.
+    fn reading(value: i64, observed_at: &str, accuracy: i64) -> Instance {
+        let mut instance = property(number(value));
+        instance.set_observed_at(Some(date_time(observed_at)));
+        instance
+            .sub_attributes_mut()
+            .insert(name(ACCURACY), AttributeInstances::one(None, property(number(accuracy))));
+        instance
+    }
+
+    #[test]
+    fn an_equal_value_with_equal_members_is_the_same_content() {
+        assert!(reading(50, "2026-10-19T10:00:00Z", 1).same_content(&reading(50, "2026-10-19T10:00:00Z", 1)));
+    }
+
+    #[test]
+    fn a_changed_value_is_different_content() {
+        assert!(!reading(51, "2026-10-19T10:00:00Z", 1).same_content(&reading(50, "2026-10-19T10:00:00Z", 1)));
+    }
+
+    #[test]
+    fn a_changed_sub_attribute_is_different_content() {
+        assert!(!reading(50, "2026-10-19T10:00:00Z", 2).same_content(&reading(50, "2026-10-19T10:00:00Z", 1)));
+    }
+
+    #[test]
+    fn a_changed_observed_at_is_different_content() {
+        assert!(!reading(50, "2026-10-19T10:01:00Z", 1).same_content(&reading(50, "2026-10-19T10:00:00Z", 1)));
+    }
+
+    #[test]
+    fn a_removed_observed_at_is_different_content() {
+        let mut unobserved = reading(50, "2026-10-19T10:00:00Z", 1);
+        unobserved.set_observed_at(None);
+        assert!(!unobserved.same_content(&reading(50, "2026-10-19T10:00:00Z", 1)));
+    }
+
+    /// Clause 4.8: `createdAt` and `modifiedAt` are stamped by the broker on
+    /// every write that touches an instance, so they are not content.
+    #[test]
+    fn differing_system_times_are_the_same_content() {
+        let stamp = |at: &str| -> SystemInstant { at.parse().expect("a valid instant") };
+        let mut earlier = reading(50, "2026-10-19T10:00:00Z", 1);
+        earlier.set_created_at(Some(stamp("2026-10-19T10:00:00.000000Z")));
+        earlier.set_modified_at(Some(stamp("2026-10-19T10:00:00.000000Z")));
+        let mut later = reading(50, "2026-10-19T10:00:00Z", 1);
+        later.set_created_at(Some(stamp("2026-10-19T10:00:00.000000Z")));
+        later.set_modified_at(Some(stamp("2026-10-19T11:00:00.000000Z")));
+        assert!(earlier.same_content(&later));
     }
 }

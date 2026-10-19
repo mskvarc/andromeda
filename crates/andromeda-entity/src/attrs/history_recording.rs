@@ -302,3 +302,89 @@ async fn append_attrs_with_an_empty_fragment_stores_nothing() {
         );
     }
 }
+
+/// The fixture `category` restated whole: its value and its `accuracy`
+/// sub-Property as the Building holds them.
+fn restated_category() -> serde_json::Value {
+    json!({"type": "Property", "value": "office", "accuracy": {"type": "Property", "value": "high"}})
+}
+
+/// Clauses 4.3.1, 4.8 and 5.8.6: Update Attributes restating the held
+/// instance modifies nothing, so it stores no write.
+#[tokio::test]
+async fn update_attrs_restating_the_held_instance_stores_nothing() {
+    let (service, recorded) = recording_service().await;
+    let admitted = admitted_written::<UpdateAttributes>(&service, json!({"category": restated_category()}), &core_context()).await;
+    service
+        .update_attrs(&live_target(), WriteTarget::new(&entity_uri(), None), admitted)
+        .await
+        .expect("the update lands");
+
+    assert!(recorded.lock().expect("the recording buffer").is_empty(), "a restatement stores no write");
+}
+
+/// Clause 5.6.3.4 with overwriting: appending the held instance restated
+/// modifies nothing, so it stores no write.
+#[tokio::test]
+async fn append_attrs_with_overwrite_restating_the_held_instance_stores_nothing() {
+    let (service, recorded) = recording_service().await;
+    let admitted = admitted_written::<AppendAttributes>(&service, json!({"category": restated_category()}), &core_context()).await;
+    service
+        .append_attrs(&live_target(), WriteTarget::new(&entity_uri(), None), admitted, OverwritePolicy::Overwrite)
+        .await
+        .expect("the append lands");
+
+    assert!(recorded.lock().expect("the recording buffer").is_empty(), "a restatement stores no write");
+}
+
+/// Clause 5.5.8: a partial update restating the held value leaves the
+/// instance as it was, so it stores no write.
+#[tokio::test]
+async fn partial_update_attr_restating_the_held_value_stores_nothing() {
+    let (service, recorded) = recording_service().await;
+    let attribute = attribute_name("category");
+    let admitted = admitted_attribute::<PartialUpdateAttribute>(&service, &attribute, json!({"value": "office"}), &core_context()).await;
+    service
+        .partial_update_attr(&live_target(), WriteTarget::new(&entity_uri(), None), admitted)
+        .await
+        .expect("the partial update lands");
+
+    assert!(recorded.lock().expect("the recording buffer").is_empty(), "a restatement stores no write");
+}
+
+/// `observedAt` is a member of the instance (clause 4.5.1): the held value
+/// observed at an instant it did not carry is a modification and is recorded.
+#[tokio::test]
+async fn partial_update_attr_restating_the_held_value_at_a_new_observed_at_records_it() {
+    let (service, recorded) = recording_service().await;
+    let attribute = attribute_name("category");
+    let admitted = admitted_attribute::<PartialUpdateAttribute>(
+        &service,
+        &attribute,
+        json!({"value": "office", "observedAt": "2026-10-19T10:00:00Z"}),
+        &core_context(),
+    )
+    .await;
+    service
+        .partial_update_attr(&live_target(), WriteTarget::new(&entity_uri(), None), admitted)
+        .await
+        .expect("the partial update lands");
+
+    let write = single_recorded_write(&recorded);
+    assert_observes_stored_instances(&write, &[CATEGORY_IRI]);
+}
+
+/// Clause 5.6.19.4: replacing the held instance with itself modifies nothing,
+/// so it stores no write.
+#[tokio::test]
+async fn replace_attr_restating_the_held_instance_stores_nothing() {
+    let (service, recorded) = recording_service().await;
+    let attribute = attribute_name("category");
+    let admitted = admitted_attribute::<ReplaceAttribute>(&service, &attribute, restated_category(), &core_context()).await;
+    service
+        .replace_attr(&live_target(), WriteTarget::new(&entity_uri(), None), admitted)
+        .await
+        .expect("the replace lands");
+
+    assert!(recorded.lock().expect("the recording buffer").is_empty(), "a restatement stores no write");
+}

@@ -4,7 +4,8 @@
 //! (merge, replace, the five attribute-level operations and the clause 5.6.21
 //! purge) ends the same way: the state it computed is stored whole, its
 //! change against the state it read is classified, and both notification
-//! channels are planned from that one change (clause 5.2.12).
+//! channels are planned from that one change (clause 5.2.12). A write that
+//! modified nothing is not stored at all.
 
 use crate::{EntityService, error::EntityError, notification_plan::modification};
 use andromeda_context_commit::{
@@ -32,8 +33,12 @@ pub(crate) struct ModificationWrite {
 /// the entity exactly as it was: the state is the one that was read and
 /// nothing is recorded in the Temporal Evolution.
 ///
-/// Single-entity fragment operations and the batch operations that run them
-/// per entity share this test, so they cannot disagree on what a no-op is.
+/// Every write that may restate what the entity holds, single-entity and
+/// batch alike, shares this test, so they cannot disagree on what a no-op is.
+/// The history of a Core write observes only modified instances
+/// (`Instance::same_content`), and stamping keeps the system times of an
+/// instance restated unchanged, so a write restating every value the entity
+/// holds passes it just as an empty Fragment does.
 pub(crate) fn leaves_entity_unchanged(previous: &EntityState, current: &EntityState, history: &[HistoryRecord]) -> bool {
     history.is_empty() && previous == current
 }
@@ -75,22 +80,25 @@ impl EntityService {
         Ok(ModificationWrite { write, events: plan.events })
     }
 
-    /// The write a fragment operation owes for turning `previous` into
-    /// `current`, and the events it publishes, or no write and no events when
-    /// it changed nothing.
+    /// The write a modification owes for turning `previous` into `current`,
+    /// and the events it publishes, or no write and no events when it modified
+    /// nothing.
     ///
-    /// Clause 5.4 makes a Fragment an IETF RFC 7396 JSON Merge Patch, which
-    /// returns its target unchanged when it names nothing to change, and
-    /// clauses 5.5.8 and 5.5.12 iterate over the members of the Fragment. A
-    /// write whose state is the one it read and that records no history
-    /// therefore stores nothing: the entity keeps its `modifiedAt` (clause 4.8),
-    /// no subscriber is notified and no Temporal Evolution instance is
-    /// recorded.
+    /// Clause 4.8 moves `modifiedAt` when the Entity "was last modified",
+    /// clause 5.8.6 notifies a change only for a value "different than the
+    /// existing one", and clause 4.3.1 updates the Temporal Evolution when the
+    /// current state "is modified". A write whose state is the one it read and
+    /// that records no history therefore stores nothing: the entity keeps its
+    /// `modifiedAt`, no subscriber is notified and no Temporal Evolution
+    /// instance is recorded. That holds for an empty Fragment (clause 5.4 makes
+    /// a Fragment an IETF RFC 7396 JSON Merge Patch, which returns its target
+    /// unchanged when it names nothing to change) and for a fragment or a
+    /// replacement restating what the entity holds alike.
     ///
     /// # Errors
     ///
     /// Reports the [`EntityError`] of [`EntityService::modification_write`].
-    pub(crate) fn fragment_write(
+    pub(crate) fn write_if_modified(
         &self,
         target: &ContextTarget,
         id: &Identifier,

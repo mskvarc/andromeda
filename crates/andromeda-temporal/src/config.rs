@@ -76,11 +76,12 @@ pub struct TemporalConfig {
     /// Whether Core API writes add to the Temporal Evolution of the Entities
     /// they change: `"recorded"` (the default) or `"not-recorded"`.
     ///
-    /// With `"not-recorded"` only the Temporal API writes history, for a
-    /// producer that publishes its history there and restates its newest
-    /// reading through the Core API, which would otherwise record that reading
-    /// twice. Core writes still change current state, and Core queries still
-    /// see them.
+    /// Under `"recorded"` a Core write records the attribute instances it
+    /// modified and nothing for a restatement of what the Entity holds. With
+    /// `"not-recorded"` only the Temporal API writes history, for a producer
+    /// that publishes its history there alone: a Core write that modifies
+    /// current state adds no instance of its own. Core writes still change
+    /// current state, and Core queries still see them.
     #[toml_comment(inline)]
     pub core_write_history: CoreWriteHistory,
     /// Instances per attribute a temporal read without `lastN` returns before

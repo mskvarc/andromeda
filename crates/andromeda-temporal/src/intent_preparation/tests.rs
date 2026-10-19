@@ -20,7 +20,6 @@ use andromeda_ngsi_ld_entity::{
     member_shape::MemberShape,
     refusal::EntityRefusal,
     scope_refusal::ScopeRefusal,
-    scopes::Scopes,
 };
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -227,19 +226,13 @@ fn a_non_reified_temporal_scope_set_to_the_ngsi_ld_null_is_a_removal() {
     );
 }
 
-/// A Core write restating the Scope the Entity held asserts each path at the
-/// write; its removal of a Scope is an event.
+/// Clause 4.18: a Core write removing the Scope ends it with an event dated at
+/// the write.
 #[test]
-fn a_restated_core_scope_is_an_assertion_and_a_removal_an_event() {
-    let restated = "/Madrid".parse::<ScopePath>().expect("a valid scope path");
-    let scopes = Scopes::try_from_paths([restated]).expect("one path");
-
+fn a_core_scope_removal_is_an_event() {
     pretty_assertions::assert_eq!(
-        scope_entries(&[HistoryRecord::ScopeAssertion(scopes), HistoryRecord::ScopeRemoval]),
-        vec![
-            (path("/Madrid"), ScopeEntryKind::Assertion, Some(recorded_at())),
-            (ScopeObservation::Deleted, ScopeEntryKind::Event, Some(recorded_at())),
-        ]
+        scope_entries(&[HistoryRecord::ScopeRemoval]),
+        vec![(ScopeObservation::Deleted, ScopeEntryKind::Event, Some(recorded_at()))]
     );
 }
 

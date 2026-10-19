@@ -4,12 +4,11 @@ use crate::scope_presence::ScopePresence;
 use andromeda_ngsi_ld_entity::{
     document::EntityDocument,
     entity_state::EntityState,
-    history::written_observation::{AddressedInstances, restated_scope, written_observation},
+    history::written_observation::written_observation,
     reads::{
         attribute_instance_key::AttributeInstanceKey,
         removed_instance::{RemovedAttributeInstance, removed_attribute_instances},
     },
-    scopes::Scopes,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
 use derive_more::IsVariant;
@@ -54,18 +53,6 @@ pub enum HistoryRecord {
     /// end, and `chk_scope_history_value_presence` forbids the stored removal
     /// from naming it.
     ScopeRemoval,
-    /// A Scope a Core write restated unchanged: an overwrite, merge or
-    /// replacement naming the Scope the Entity already held.
-    ///
-    /// Clause 4.18 makes a Scope valid "from the time it has been set", and a
-    /// write restating the Scope in force sets nothing, so it is no change of
-    /// Scope and the write's observation carries none. It still states that
-    /// the Entity is in that Scope, which only the Temporal Evolution can say
-    /// whether it already holds: Delete Temporal Evolution (clause 5.6.16),
-    /// retention and Temporal API writes edit history apart from current
-    /// state. The history therefore judges it, and records it only where the
-    /// Scope in force at the write differs.
-    ScopeAssertion(Scopes),
 }
 
 /// Build a tombstone for one validated attribute-instance identity.
@@ -84,37 +71,28 @@ pub fn tombstone(attr: &AttributeName, dataset_id: Option<&Identifier>, attribut
     })
 }
 
-/// Build the observations and exact instance tombstones produced by a state
+/// Build the observation and exact instance tombstones produced by a state
 /// mutation.
 ///
 /// `previous` is the Entity before the write and `current` the Entity it
-/// stored. The observation is the [`written_observation`] of the instances
-/// `addressed` names: each as `current` holds it, never the request Fragment
-/// that produced it. Clauses 4.5.7 and 4.5.8 make every entry of the Temporal
-/// Evolution an instance "as mandated by clause 4.5.2", and a Fragment is only
-/// the part of one a request restated -- recording it would lose a `unitCode`
-/// clause 5.5.8 EXAMPLE 1 keeps, the value members clause 5.5.12 merges into,
-/// and the NGSI-LD Null deletion instructions would read as values. No
-/// observation is recorded when the write applied no instance and no Scope.
+/// stored. The observation is the [`written_observation`] of the two: every
+/// instance the write modified, as `current` holds it, and the Scope when the
+/// write changed it. A write that modified nothing records no observation
+/// (clause 4.3.1 updates the Temporal Evolution when the current state "is
+/// modified").
 ///
 /// A Scope the mutation left behind is recorded too. Clause 4.18 keeps a Scope
 /// valid "until the time it has been explicitly removed by an update or delete
 /// operation", and a Replace Entity that omits `scope` is such an operation:
 /// clause 5.6.18.4 replaces the Entity with the content provided, so the Scope
 /// is gone from current state and its temporal interval has to close with it.
-/// A mutation that names a different Scope needs no record of its own — the
-/// event it writes is itself what ends the interval before it. A mutation that
-/// restates the Scope the Entity held records it as a
-/// [`HistoryRecord::ScopeAssertion`].
+/// A mutation that names a different Scope needs no record of its own: the
+/// event it writes is itself what ends the interval before it.
 #[must_use]
-pub fn mutation_history(addressed: AddressedInstances<'_>, previous: &EntityState, current: &EntityState) -> Vec<HistoryRecord> {
-    let observation = written_observation(addressed, Some(previous), current);
-    // clone: the history record owns the restated Scope beside the stored entity.
-    let assertion = restated_scope(addressed, Some(previous), current).map(|scope| HistoryRecord::ScopeAssertion(scope.clone()));
-    observation
+pub fn mutation_history(previous: &EntityState, current: &EntityState) -> Vec<HistoryRecord> {
+    written_observation(Some(previous), current)
         .map(|observed| HistoryRecord::Observations(Arc::new(observed)))
         .into_iter()
-        .chain(assertion)
         .chain(removal_history(previous, current))
         .collect()
 }
@@ -199,14 +177,12 @@ mod tests {
         scope_presence::ScopePresence,
     };
     use andromeda_ngsi_ld_entity::{
-        document::{EntityDocument, instance_document::InstanceDocument},
         entity_state::EntityState,
-        history::written_observation::{AddressedInstances, written_observation},
-        operation::selection::OverwritePolicy,
+        history::written_observation::written_observation,
         reads::{attribute_instance_key::AttributeInstanceKey, removed_instance::RemovedAttributeInstance},
         scopes::Scopes,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
+    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier};
     use serde_json::{Value, json};
     use std::sync::Arc;
 
@@ -215,11 +191,6 @@ mod tests {
     /// Decode a stored document into a state.
     fn state(document: &Value) -> EntityState {
         EntityState::from_slice(&serde_json::to_vec(document).expect("JSON")).expect("a stored entity decodes")
-    }
-
-    /// Decode a written entity fragment.
-    fn fragment(document: &Value) -> EntityDocument {
-        EntityDocument::from_slice(&serde_json::to_vec(document).expect("JSON")).expect("a written fragment decodes")
     }
 
     /// An entity of the given members.
@@ -249,7 +220,6 @@ mod tests {
             .iter()
             .filter_map(|record| match record {
                 HistoryRecord::Observations(observed) => observed.scope().map(|scope| ("change", paths(scope))),
-                HistoryRecord::ScopeAssertion(scope) => Some(("assertion", paths(scope))),
                 HistoryRecord::ScopeRemoval => Some(("removal", Vec::new())),
                 HistoryRecord::EvolutionInstances(_) | HistoryRecord::Tombstone(_) => None,
             })
@@ -261,20 +231,15 @@ mod tests {
     }
 
     #[test]
-    fn a_replacement_tombstones_a_dropped_attribute() {
+    fn a_replacement_tombstones_a_dropped_attribute_and_observes_none_it_restated() {
         let previous = state(&entity(
             &json!({"https://example.org/speed": [property(1)], "https://example.org/colour": [property(2)]}),
         ));
-        let replacement_document = entity(&json!({"https://example.org/speed": [property(1)]}));
-        let replacement = state(&replacement_document);
-        let written = fragment(&replacement_document);
-        let addressed = AddressedInstances::EntityFragment {
-            fragment: &written,
-            overwrite: OverwritePolicy::Overwrite,
-        };
-        let history = mutation_history(addressed, &previous, &replacement);
-        assert!(history[0].is_observations());
-        assert!(history.iter().any(HistoryRecord::is_tombstone));
+        let replacement = state(&entity(&json!({"https://example.org/speed": [property(1)]})));
+
+        let history = mutation_history(&previous, &replacement);
+
+        assert!(matches!(history.as_slice(), [HistoryRecord::Tombstone(_)]), "{history:?}");
     }
 
     #[test]
@@ -290,22 +255,9 @@ mod tests {
         };
         let previous = state(&entity(&json!({"https://example.com/speed": [instance(dataset_a), instance(dataset_b)]})));
         let current = state(&entity(&json!({"https://example.com/speed": [instance(dataset_b)]})));
-        let deletion = fragment(&json!([{
-            "https://example.com/speed": [{
-                "@type": [PROPERTY],
-                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "urn:ngsi-ld:null"}],
-                "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": dataset_a}]
-            }]
-        }]));
-        let addressed = AddressedInstances::EntityFragment {
-            fragment: &deletion,
-            overwrite: OverwritePolicy::Overwrite,
-        };
 
-        let history = mutation_history(addressed, &previous, &current);
+        let history = mutation_history(&previous, &current);
 
-        // The deletion is recorded by its tombstone alone: the NGSI-LD Null is
-        // an instruction, and the instance it removed is not in current state.
         pretty_assertions::assert_eq!(history.len(), 1);
         let Some(HistoryRecord::Tombstone(removed)) = history.first() else {
             panic!("the only record is the tombstone: {history:?}");
@@ -328,18 +280,8 @@ mod tests {
         };
         let previous = state(&entity(&json!({"https://example.org/temperature": [temperature(25)]})));
         let current = state(&entity(&json!({"https://example.org/temperature": [temperature(100)]})));
-        let attribute: AttributeName = "https://example.org/temperature".parse().expect("a valid attribute name");
-        let written = InstanceDocument::from_slice(
-            &attribute,
-            &serde_json::to_vec(&json!({"@type": [PROPERTY], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 100}]})).expect("JSON"),
-        )
-        .expect("a written attribute fragment decodes");
-        let addressed = AddressedInstances::AttributeFragment {
-            attribute: &attribute,
-            fragment: &written,
-        };
 
-        let history = mutation_history(addressed, &previous, &current);
+        let history = mutation_history(&previous, &current);
 
         pretty_assertions::assert_eq!(history.len(), 1);
         let Some(HistoryRecord::Observations(observed)) = history.first() else {
@@ -348,18 +290,19 @@ mod tests {
         pretty_assertions::assert_eq!(**observed, current);
     }
 
-    /// A write that applied nothing -- a no-overwrite append of an attribute the
-    /// Entity already holds -- records no observation at all.
+    /// Clause 4.3.1: a write that left the Entity as it was, a no-overwrite
+    /// append of a held attribute or a restatement of its values alike,
+    /// modified nothing and records nothing.
     #[test]
-    fn a_write_that_applied_no_instance_records_no_observation() {
-        let held = state(&entity(&json!({"https://example.org/speed": [property(1)]})));
-        let append = fragment(&json!([{"https://example.org/speed": [property(2)]}]));
-        let addressed = AddressedInstances::EntityFragment {
-            fragment: &append,
-            overwrite: OverwritePolicy::Preserve,
-        };
+    fn a_write_that_modified_nothing_records_nothing() {
+        let held = state(&entity(
+            &json!({"https://example.org/speed": [property(1)], "https://example.org/colour": [property(2)]}),
+        ));
+        let restated = state(&entity(
+            &json!({"https://example.org/speed": [property(1)], "https://example.org/colour": [property(2)]}),
+        ));
 
-        let history = mutation_history(addressed, &held, &held);
+        let history = mutation_history(&held, &restated);
 
         assert!(history.is_empty(), "{history:?}");
     }
@@ -368,15 +311,9 @@ mod tests {
     #[test]
     fn a_replacement_without_scope_records_the_scope_removal() {
         let previous = state(&entity(&json!({"https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/Madrid"}]})));
-        let replacement_document = entity(&json!({}));
-        let replacement = state(&replacement_document);
-        let written = fragment(&replacement_document);
-        let addressed = AddressedInstances::EntityFragment {
-            fragment: &written,
-            overwrite: OverwritePolicy::Overwrite,
-        };
+        let replacement = state(&entity(&json!({})));
 
-        let history = mutation_history(addressed, &previous, &replacement);
+        let history = mutation_history(&previous, &replacement);
 
         assert!(matches!(history.as_slice(), [HistoryRecord::ScopeRemoval]), "{history:?}");
     }
@@ -399,9 +336,7 @@ mod tests {
             .into_iter()
             .map(|entry| match entry {
                 HistoryRecord::Tombstone(removed) => (removed.key.attr.as_str().to_owned(), removed.key.dataset_id.map(|id| id.as_str().to_owned())),
-                HistoryRecord::Observations(_) | HistoryRecord::EvolutionInstances(_) | HistoryRecord::ScopeRemoval | HistoryRecord::ScopeAssertion(_) => {
-                    (String::new(), None)
-                }
+                HistoryRecord::Observations(_) | HistoryRecord::EvolutionInstances(_) | HistoryRecord::ScopeRemoval => (String::new(), None),
             })
             .collect::<Vec<_>>();
 
@@ -436,7 +371,7 @@ mod tests {
             .map(|entry| match entry {
                 HistoryRecord::Tombstone(removed) => Ended::Instance(removed),
                 HistoryRecord::ScopeRemoval => Ended::Scope,
-                HistoryRecord::Observations(_) | HistoryRecord::EvolutionInstances(_) | HistoryRecord::ScopeAssertion(_) => {
+                HistoryRecord::Observations(_) | HistoryRecord::EvolutionInstances(_) => {
                     panic!("a deletion records no observation: {entry:?}")
                 }
             })
@@ -498,64 +433,40 @@ mod tests {
         assert!(!ended(deletion_tombstones(outline, ScopePresence::Absent)).contains(&Ended::Scope));
     }
 
-    /// Clause 4.18: an overwriting update restating the held Scope sets
-    /// nothing, so the observation carries no Scope and the Scope is asserted.
+    /// Clause 4.18: a write restating the held Scope sets nothing, so the
+    /// observation of the attribute it modified carries no Scope and nothing
+    /// else records one.
     #[test]
-    fn an_overwriting_update_restating_the_held_scope_observes_no_scope_change() {
+    fn a_write_restating_the_held_scope_records_no_scope() {
         let held = scoped(&["/Madrid"], &json!({"https://example.org/speed": [property(1)]}));
         let current = scoped(&["/Madrid"], &json!({"https://example.org/speed": [property(2)]}));
-        let written = fragment(&json!([{
-            "https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/Madrid"}],
-            "https://example.org/speed": [property(2)]
-        }]));
-        let addressed = AddressedInstances::EntityFragment {
-            fragment: &written,
-            overwrite: OverwritePolicy::Overwrite,
-        };
 
-        let history = mutation_history(addressed, &held, &current);
+        let history = mutation_history(&held, &current);
 
         assert!(
-            matches!(history.first(), Some(HistoryRecord::Observations(observed)) if observed.scope().is_none()),
+            matches!(history.as_slice(), [HistoryRecord::Observations(observed)] if observed.scope().is_none()),
             "{history:?}"
         );
-        pretty_assertions::assert_eq!(scope_records(&history), vec![("assertion", vec!["/Madrid".to_owned()])]);
+        pretty_assertions::assert_eq!(scope_records(&history), Vec::new());
+    }
+
+    /// A write restating the held Scope and every held value records nothing
+    /// at all.
+    #[test]
+    fn a_write_restating_the_held_scope_alone_records_nothing() {
+        let held = scoped(&["/Madrid"], &json!({"https://example.org/speed": [property(1)]}));
+        let restated = scoped(&["/Madrid"], &json!({"https://example.org/speed": [property(1)]}));
+
+        assert!(mutation_history(&held, &restated).is_empty());
     }
 
     #[test]
-    fn a_merge_changing_the_scope_records_a_change() {
-        let previous = scoped(&["/Berlin"], &json!({}));
-        let current = scoped(&["/Madrid"], &json!({}));
-        let written = fragment(&json!([{"https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/Madrid"}]}]));
-        let addressed = AddressedInstances::EntityFragment {
-            fragment: &written,
-            overwrite: OverwritePolicy::Overwrite,
-        };
-
-        pretty_assertions::assert_eq!(
-            scope_records(&mutation_history(addressed, &previous, &current)),
-            vec![("change", vec!["/Madrid".to_owned()])]
-        );
-    }
-
-    #[test]
-    fn a_replacement_restating_the_scope_asserts_it() {
-        let previous = scoped(&["/Madrid"], &json!({"https://example.org/speed": [property(1)]}));
-        let current = scoped(&["/Madrid"], &json!({"https://example.org/speed": [property(2)]}));
-
-        pretty_assertions::assert_eq!(
-            scope_records(&mutation_history(AddressedInstances::Replacement, &previous, &current)),
-            vec![("assertion", vec!["/Madrid".to_owned()])]
-        );
-    }
-
-    #[test]
-    fn a_replacement_changing_the_scope_records_a_change() {
+    fn a_write_changing_the_scope_records_a_change() {
         let previous = scoped(&["/Berlin"], &json!({}));
         let current = scoped(&["/Madrid"], &json!({}));
 
         pretty_assertions::assert_eq!(
-            scope_records(&mutation_history(AddressedInstances::Replacement, &previous, &current)),
+            scope_records(&mutation_history(&previous, &current)),
             vec![("change", vec!["/Madrid".to_owned()])]
         );
     }
@@ -565,29 +476,11 @@ mod tests {
     #[test]
     fn an_entity_creation_records_its_scope_as_a_change() {
         let created = scoped(&["/Madrid"], &json!({}));
-        let written = fragment(&json!([{"https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/Madrid"}]}]));
-        let addressed = AddressedInstances::EntityFragment {
-            fragment: &written,
-            overwrite: OverwritePolicy::Overwrite,
-        };
-        let observed = written_observation(addressed, None, &created).expect("a creation observes its Scope");
+        let observed = written_observation(None, &created).expect("a creation observes its Scope");
 
         pretty_assertions::assert_eq!(
             scope_records(&[HistoryRecord::Observations(Arc::new(observed))]),
             vec![("change", vec!["/Madrid".to_owned()])]
         );
-    }
-
-    /// Clause 5.6.3.4: a no-overwrite append adding no path applied nothing.
-    #[test]
-    fn a_no_overwrite_append_that_adds_no_path_records_nothing() {
-        let held = scoped(&["/Madrid"], &json!({}));
-        let written = fragment(&json!([{"https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/Madrid"}]}]));
-        let addressed = AddressedInstances::EntityFragment {
-            fragment: &written,
-            overwrite: OverwritePolicy::Preserve,
-        };
-
-        assert!(mutation_history(addressed, &held, &held).is_empty());
     }
 }

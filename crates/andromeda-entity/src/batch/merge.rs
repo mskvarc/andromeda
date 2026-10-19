@@ -24,12 +24,7 @@ use crate::{
     side_effect::SideEffectPlacement,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_entity::{
-    entity_state::EntityState,
-    history::written_observation::AddressedInstances,
-    operation::selection::OverwritePolicy,
-    system_instant::SystemInstant,
-};
+use andromeda_ngsi_ld_entity::{entity_state::EntityState, system_instant::SystemInstant};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 
 /// Merging each entity of a chunk into the entity as an attempt read it
@@ -64,17 +59,10 @@ impl ChunkRewrite for MergeRewrite<'_> {
         if let Err(error) = merged.merge(&entry.document, None) {
             return Err(Box::new((entry.id, EntityError::from(error))));
         }
-        let write = self.service.chunk_fragment_update(
+        let write = self.service.chunk_update(
             self.target,
             entry.id.clone(), // clone: the entry is kept to rebuild the write if the store refuses it
-            UpdatedStates {
-                previous,
-                current: merged,
-                addressed: AddressedInstances::EntityFragment {
-                    fragment: &entry.document,
-                    overwrite: OverwritePolicy::Overwrite,
-                },
-            },
+            UpdatedStates { previous, current: merged },
             now,
         )?;
         Ok(PlannedWrite { entry, write, alongside: None })

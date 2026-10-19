@@ -74,7 +74,7 @@ impl AtomicWrite {
                 .find_map(|consequence| match consequence {
                     HistoryRecord::Observations(observed) => Some(observed.types().as_slice().to_vec()),
                     HistoryRecord::EvolutionInstances(written) => Some(written.types().to_vec()),
-                    HistoryRecord::Tombstone(_) | HistoryRecord::ScopeRemoval | HistoryRecord::ScopeAssertion(_) => None,
+                    HistoryRecord::Tombstone(_) | HistoryRecord::ScopeRemoval => None,
                 })
                 .unwrap_or_default(),
         }

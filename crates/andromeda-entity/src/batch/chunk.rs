@@ -33,7 +33,7 @@ use andromeda_context_commit::{
     write_retry::WRITE_ATTEMPTS,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_entity::{entity_state::EntityState, history::written_observation::AddressedInstances, system_instant::SystemInstant};
+use andromeda_ngsi_ld_entity::{entity_state::EntityState, system_instant::SystemInstant};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use std::sync::Arc;
 
@@ -62,13 +62,12 @@ pub(super) struct GuardedWrite {
     pub precondition: Precondition,
 }
 
-/// The two states one entity update moves between, and what it addressed.
+/// The two states one entity update moves between.
 ///
-/// They belong together because each is read against the others: the tombstones
-/// clause 5.6.6 requires and the per-attribute triggers of clause 5.2.12 both
-/// come from the difference between the stored state and the state replacing
-/// it, and the observation is the resulting state of the instances the request
-/// addressed.
+/// They belong together because each is read against the other: the tombstones
+/// clause 5.6.6 requires, the per-attribute triggers of clause 5.2.12 and the
+/// observation of every modified instance all come from the difference between
+/// the stored state and the state replacing it.
 pub(super) struct UpdatedStates<'a> {
     /// The entity as the store holds it before the write. It is also the state
     /// a deletion filter and `showChanges` are evaluated against.
@@ -76,9 +75,6 @@ pub(super) struct UpdatedStates<'a> {
     /// The entity the write stores in its place, not yet stamped. It shares
     /// every attribute it did not change with `previous`.
     pub current: EntityState,
-    /// The instances the request addressed, whose resulting state the
-    /// Temporal Evolution records.
-    pub addressed: AddressedInstances<'a>,
 }
 
 /// An entity update once its instances carry the write instant: the state it
@@ -92,11 +88,7 @@ struct StampedUpdate<'a> {
 impl<'a> StampedUpdate<'a> {
     /// Stamp the states of `states` with `now` and derive the history.
     fn of(states: UpdatedStates<'a>, now: SystemInstant) -> StampedUpdate<'a> {
-        let UpdatedStates {
-            previous,
-            mut current,
-            addressed,
-        } = states;
+        let UpdatedStates { previous, mut current } = states;
         // Clause 4.8: an updated instance takes `now` for modifiedAt and keeps
         // its createdAt; an untouched one keeps both. Stamped before the columns
         // and the notification plan read the state, so both see it; only an
@@ -105,9 +97,8 @@ impl<'a> StampedUpdate<'a> {
         let current = Arc::new(current);
         // Clauses 5.6.8, 5.6.9 and 5.6.20 run the single-entity behaviours per
         // entity, so the batch records exactly what its single-entity sibling
-        // records: the resulting instances it addressed and the ends of what it
-        // removed.
-        let history = mutation_history(addressed, previous, &current);
+        // records: the instances it modified and the ends of what it removed.
+        let history = mutation_history(previous, &current);
         StampedUpdate { previous, current, history }
     }
 }
@@ -176,13 +167,20 @@ impl EntityService {
         })
     }
 
-    /// The write that overwrites an existing entity with the state replacing
-    /// it, whether or not the replacement differs from what is stored.
+    /// The write that stores the state `states` computed in place of the one
+    /// it was computed from, or no write when it modified nothing.
     ///
-    /// The per-attribute triggers of clause 5.2.12 are read off the difference
-    /// between the two states. The write is computed from `previous`, so the
-    /// version it holds against is stated by the read-modify-write driver
-    /// that read it.
+    /// The change test is the single-entity one
+    /// ([`leaves_entity_unchanged`](crate::modification_write::leaves_entity_unchanged)):
+    /// clause 5.6.8.4 runs Update Attributes or Replace Entity per entity, and
+    /// clauses 5.6.9.4 and 5.6.20.4 run Append Attributes and Merge Entity, so
+    /// an entity whose fragment or replacement modifies nothing keeps its
+    /// `modifiedAt` (clause 4.8), notifies no subscriber and records no
+    /// Temporal Evolution instance, exactly as the single-entity operation.
+    /// The entity is still settled as a success, because the operation it
+    /// stands for succeeded. The write is computed from `previous`, so the
+    /// version it holds against is stated by the read-modify-write driver that
+    /// read it.
     ///
     /// # Errors
     ///
@@ -190,34 +188,6 @@ impl EntityService {
     /// failure is the rare outcome, when the entity's search columns cannot be
     /// derived.
     pub(super) fn chunk_update(
-        &self,
-        target: &ContextTarget,
-        id: Identifier,
-        states: UpdatedStates<'_>,
-        now: SystemInstant,
-    ) -> Result<ChunkWrite, Box<(Identifier, EntityError)>> {
-        let StampedUpdate { previous, current, history } = StampedUpdate::of(states, now);
-        self.update_write(target, id, previous, current, history)
-    }
-
-    /// The write a fragment operation owes for turning an entity into the
-    /// state `states` computed, or no write when the fragment changed nothing.
-    ///
-    /// The change test is the single-entity one
-    /// ([`leaves_entity_unchanged`](crate::modification_write::leaves_entity_unchanged)):
-    /// clauses 5.6.8.4 (update mode), 5.6.9.4 and 5.6.20.4 run Update
-    /// Attributes, Append Attributes and Merge Entity per entity, so an entity
-    /// whose fragment names nothing to change keeps its `modifiedAt` (clause
-    /// 4.8), notifies no subscriber and records no Temporal Evolution
-    /// instance, exactly as the single-entity operation. The entity is still
-    /// settled as a success, because the operation it stands for succeeded.
-    ///
-    /// # Errors
-    ///
-    /// Answers the entity's identifier with the failure, boxed because a
-    /// failure is the rare outcome, when the entity's search columns cannot be
-    /// derived.
-    pub(super) fn chunk_fragment_update(
         &self,
         target: &ContextTarget,
         id: Identifier,

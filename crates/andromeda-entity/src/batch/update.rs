@@ -26,13 +26,7 @@ use crate::{
     side_effect::SideEffectPlacement,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_entity::{
-    document::EntityDocument,
-    entity_state::EntityState,
-    history::written_observation::AddressedInstances,
-    operation::selection::OverwritePolicy,
-    system_instant::SystemInstant,
-};
+use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState, operation::selection::OverwritePolicy, system_instant::SystemInstant};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 
 /// Whether a `noOverwrite` append of `fragment` onto `entity` can add nothing:
@@ -108,17 +102,10 @@ impl ChunkRewrite for UpdateRewrite<'_> {
             return Err(Box::new((entry.id, EntityError::from(error))));
         }
 
-        let write = self.service.chunk_fragment_update(
+        let write = self.service.chunk_update(
             self.target,
             entry.id.clone(), // clone: the entry is kept to rebuild the write if the store refuses it
-            UpdatedStates {
-                previous,
-                current: updated,
-                addressed: AddressedInstances::EntityFragment {
-                    fragment: &entry.document,
-                    overwrite: self.overwrite,
-                },
-            },
+            UpdatedStates { previous, current: updated },
             now,
         )?;
         Ok(PlannedWrite { entry, write, alongside })

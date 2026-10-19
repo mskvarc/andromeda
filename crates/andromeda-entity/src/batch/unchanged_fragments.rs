@@ -1,17 +1,18 @@
-//! A batch entity whose fragment changes nothing stores no write, and is still
-//! reported as a success.
+//! A batch entity whose fragment or replacement modifies nothing stores no
+//! write, and is still reported as a success.
 //!
-//! Clauses 5.6.8.4 (update mode), 5.6.9.4 and 5.6.20.4 run Update Attributes,
-//! Append Attributes and Merge Entity per entity, and clause 5.4 makes a
+//! Clauses 5.6.8.4, 5.6.9.4 and 5.6.20.4 run Update Attributes, Replace
+//! Entity, Append Attributes and Merge Entity per entity. Clause 5.4 makes a
 //! Fragment an IETF RFC 7396 JSON Merge Patch, which returns its target
-//! unchanged when it names nothing to change. The entity therefore keeps its
-//! `modifiedAt` (clause 4.8), notifies nobody and records no Temporal
-//! Evolution instance, while clauses 5.6.9.5 and 5.6.20.5 still list it among
-//! the entities successfully processed. A fragment that restates a value the
-//! entity holds names an instance, so it records that instance's observation
-//! exactly as the single-entity operation does and is therefore stored.
-//! Replace mode (clause 5.6.8.4 runs Replace Entity, clause 5.6.18) is a whole
-//! replacement and always writes.
+//! unchanged when it names nothing to change, and a fragment or a replacement
+//! restating every value the entity holds modifies nothing either: clause 4.8
+//! moves `modifiedAt` when the entity "was last modified", clause 5.8.6
+//! notifies a change only for a value "different than the existing one", and
+//! clause 4.3.1 updates the Temporal Evolution when the current state "is
+//! modified". The entity therefore keeps its `modifiedAt`, notifies nobody and
+//! records no Temporal Evolution instance, while clauses 5.6.9.5 and 5.6.20.5
+//! still list it among the entities successfully processed. A write modifying
+//! one attribute records that attribute alone.
 
 use crate::{
     admission_fixture::admitted_batch,
@@ -48,6 +49,17 @@ fn identical_fragment() -> Value {
 /// A fragment naming a Property the stored entity does not hold.
 fn new_attribute_fragment() -> Value {
     json!({"fresh": {"type": "Property", "value": 7}})
+}
+
+/// A fragment restating the stored `seed` value beside a new Property.
+fn identical_and_new_fragment() -> Value {
+    json!({"seed": {"type": "Property", "value": 1}, "fresh": {"type": "Property", "value": 7}})
+}
+
+/// A fragment restating the stored `seed` value with an `observedAt` the
+/// stored instance does not carry.
+fn observed_identical_fragment() -> Value {
+    json!({"seed": {"type": "Property", "value": 1, "observedAt": "2026-10-19T10:00:00Z"}})
 }
 
 /// The Building `id` as the store holds it after a write: its `seed` Property
@@ -129,12 +141,20 @@ fn assert_nothing_stored(contended: &ContendedService, id: &Identifier, version:
     );
 }
 
-/// Assert the batch stored exactly one write for `id`, recording an observation.
-fn assert_observation_recorded(contended: &ContendedService, id: &Identifier) {
+/// The attribute terms each observation of the one write the batch stored for
+/// `id` records.
+fn observed_terms(contended: &ContendedService, id: &Identifier) -> Vec<Vec<String>> {
     let submitted = contended.store.submitted_for(id);
     assert_eq!(submitted.len(), 1);
     let write = submitted.first().expect("one write was submitted");
-    assert!(write.history.iter().any(HistoryRecord::is_observations), "{:?}", write.history);
+    write
+        .history
+        .iter()
+        .filter_map(|record| match record {
+            HistoryRecord::Observations(observed) => Some(attribute_terms(observed)),
+            HistoryRecord::EvolutionInstances(_) | HistoryRecord::Tombstone(_) | HistoryRecord::ScopeRemoval => None,
+        })
+        .collect()
 }
 
 /// Assert the batch answered `id` as the one success, with no error.
@@ -163,17 +183,16 @@ async fn a_batch_update_with_an_empty_fragment_stores_nothing_and_reports_succes
     assert_nothing_stored(&contended, &id, version);
 }
 
-/// Clause 5.6.9.4: an overwriting update restating the stored value names an
-/// instance, whose observation the Temporal Evolution records as it does for
-/// the single Update Attributes.
+/// Clause 5.6.9.4: an overwriting update restating the stored value modifies
+/// nothing, as the single Update Attributes does not.
 #[tokio::test]
-async fn a_batch_update_restating_the_stored_value_still_records_the_observation() {
-    let (contended, id, _) = seeded().await;
+async fn a_batch_update_restating_the_stored_value_stores_nothing_and_reports_success() {
+    let (contended, id, version) = seeded().await;
 
     let result = batch_update(&contended, &id, &identical_fragment(), OverwritePolicy::Overwrite).await;
 
     assert_sole_success(&result, &id);
-    assert_observation_recorded(&contended, &id);
+    assert_nothing_stored(&contended, &id, version);
 }
 
 /// Clause 5.6.9.4 with `noOverwrite`: an empty fragment appends nothing and is
@@ -228,16 +247,15 @@ async fn a_batch_merge_with_an_empty_fragment_stores_nothing_and_reports_success
     assert_nothing_stored(&contended, &id, version);
 }
 
-/// Clause 5.6.20.4: a merge restating the stored value names an instance, whose
-/// observation is recorded as it is for the single Merge Entity.
+/// Clause 5.6.20.4: a merge restating the stored value modifies nothing.
 #[tokio::test]
-async fn a_batch_merge_restating_the_stored_value_still_records_the_observation() {
-    let (contended, id, _) = seeded().await;
+async fn a_batch_merge_restating_the_stored_value_stores_nothing_and_reports_success() {
+    let (contended, id, version) = seeded().await;
 
     let result = batch_merge(&contended, &id, &identical_fragment()).await;
 
     assert_sole_success(&result, &id);
-    assert_observation_recorded(&contended, &id);
+    assert_nothing_stored(&contended, &id, version);
 }
 
 /// A real merge still writes.
@@ -265,17 +283,17 @@ async fn a_batch_upsert_update_with_an_empty_fragment_stores_nothing_and_reports
     assert_nothing_stored(&contended, &id, version);
 }
 
-/// Clause 5.6.8.4 update mode: a fragment restating the stored value names an
-/// instance, whose observation is recorded.
+/// Clause 5.6.8.4 update mode: a fragment restating the stored value modifies
+/// nothing.
 #[tokio::test]
-async fn a_batch_upsert_update_restating_the_stored_value_still_records_the_observation() {
-    let (contended, id, _) = seeded().await;
+async fn a_batch_upsert_update_restating_the_stored_value_stores_nothing_and_reports_success() {
+    let (contended, id, version) = seeded().await;
 
     let (result, created) = batch_upsert(&contended, &id, &identical_fragment(), UpsertPolicy::Update).await;
 
     assert_sole_success(&result, &id);
     assert!(created.is_empty(), "{created:?}");
-    assert_observation_recorded(&contended, &id);
+    assert_nothing_stored(&contended, &id, version);
 }
 
 /// A real change in update mode still writes.
@@ -291,15 +309,48 @@ async fn a_batch_upsert_update_that_adds_an_attribute_still_writes() {
     assert!(contended.store.stored(&id).expect("the Building is stored").1 > version);
 }
 
-/// Clause 5.6.8.4 replace mode is the whole replacement of clause 5.6.18, not a
-/// Fragment: restating the stored entity still writes.
+/// Clause 5.6.8.4 replace mode runs the Replace Entity of clause 5.6.18: a
+/// replacement restating the stored entity exactly modifies nothing.
 #[tokio::test]
-async fn a_batch_upsert_replace_restating_the_stored_entity_still_writes() {
-    let (contended, id, _) = seeded().await;
+async fn a_batch_upsert_replace_restating_the_stored_entity_stores_nothing_and_reports_success() {
+    let (contended, id, version) = seeded().await;
 
     let (result, created) = batch_upsert(&contended, &id, &identical_fragment(), UpsertPolicy::Replace).await;
 
     assert_sole_success(&result, &id);
     assert!(created.is_empty(), "{created:?}");
-    assert_eq!(contended.store.submitted_for(&id).len(), 1);
+    assert_nothing_stored(&contended, &id, version);
+}
+
+/// A replacement restating `seed` beside a new `fresh` observes `fresh` alone.
+#[tokio::test]
+async fn a_batch_upsert_replace_observes_only_the_attribute_it_modified() {
+    let (contended, id, version) = seeded().await;
+
+    let (result, _) = batch_upsert(&contended, &id, &identical_and_new_fragment(), UpsertPolicy::Replace).await;
+
+    assert_sole_success(&result, &id);
+    assert_eq!(observed_terms(&contended, &id), vec![vec!["fresh".to_owned()]]);
+    assert!(
+        contended.store.stored(&id).expect("the Building is stored").1 > version,
+        "modifiedAt moves with a real change"
+    );
+}
+
+/// `observedAt` is a member of the instance (clause 4.5.1): the stored value
+/// observed at a new instant is a modification, and it is recorded.
+#[tokio::test]
+async fn a_batch_upsert_restating_a_value_at_a_new_observed_at_records_it() {
+    for policy in [UpsertPolicy::Replace, UpsertPolicy::Update] {
+        let (contended, id, version) = seeded().await;
+
+        let (result, _) = batch_upsert(&contended, &id, &observed_identical_fragment(), policy).await;
+
+        assert_sole_success(&result, &id);
+        assert_eq!(observed_terms(&contended, &id), vec![vec!["seed".to_owned()]]);
+        assert!(
+            contended.store.stored(&id).expect("the Building is stored").1 > version,
+            "modifiedAt moves with a real change"
+        );
+    }
 }

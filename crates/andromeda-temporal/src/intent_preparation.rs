@@ -61,10 +61,6 @@ pub(crate) fn prepare(
                 // written document stays shared with the write it belongs to.
                 append_document_entries(EntityDocument::clone(document), recorded_at, ScopeEntryKind::Assertion, &mut entries)?;
             }
-            HistoryRecord::ScopeAssertion(scopes) => entries.extend(scopes.as_slice().iter().map(|path| {
-                // clone: the durable intent owns its paths.
-                scope_entry(ScopeObservation::Path(path.clone()), ScopeEntryKind::Assertion, recorded_at)
-            })),
             HistoryRecord::Tombstone(removed) => entries.push(TemporalAppendEntry::Tombstone {
                 attribute_name: removed.key.attr.clone(),   // clone: the durable intent owns the instance identity.
                 dataset_id: removed.key.dataset_id.clone(), // clone: the durable intent owns the dataset identity.

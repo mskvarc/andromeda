@@ -5,7 +5,6 @@ use crate::{
     admitted_write::AdmittedEntity,
     entity_validation_reason::EntityValidationReason,
     error::EntityError,
-    modification_write::ModificationWrite,
     write_kind::ReplaceEntity,
     write_target::WriteTarget,
 };
@@ -14,7 +13,6 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::{
     document::{EntityDocument, EntityDocumentParts},
     entity_state::EntityState,
-    history::written_observation::AddressedInstances,
     system_instant::SystemInstant,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -54,16 +52,16 @@ impl EntityService {
                 .commit_computed_write(target, entity, |previous| {
                     // Clause 4.8: an attribute the replacement keeps (same datasetId)
                     // keeps its createdAt, matching the Entity-level createdAt column
-                    // that a replace does not rewrite; every instance takes `now` for
-                    // modifiedAt. Stamped per attempt against that attempt's stored
-                    // state, which overwrites every stamp an earlier attempt left;
-                    // the replacement is copied only while an earlier attempt's
-                    // write still shares it.
+                    // that a replace does not rewrite; an instance whose content
+                    // changed takes `now` for modifiedAt, one restated unchanged
+                    // keeps its own. Stamped per attempt against that attempt's
+                    // stored state, which overwrites every stamp an earlier attempt
+                    // left; the replacement is copied only while an earlier
+                    // attempt's write still shares it.
                     Arc::make_mut(&mut replacement).settle(Some(previous), now);
-                    let history = mutation_history(AddressedInstances::Replacement, previous, &replacement);
+                    let history = mutation_history(previous, &replacement);
                     // clone: Arc ref-count bump; the write stores the replacement
-                    let ModificationWrite { write, events } = self.modification_write(target, id, previous, Arc::clone(&replacement), history)?;
-                    Ok((Some(write), events))
+                    self.write_if_modified(target, id, previous, Arc::clone(&replacement), history)
                 })
                 .await?;
 

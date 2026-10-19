@@ -20,7 +20,7 @@ pub(crate) fn recorded_observation(write: &AtomicWrite) -> Option<Value> {
     let inline = write.history.iter().filter_map(|record| match record {
         HistoryRecord::Observations(observed) => Some(serde_json::to_value(observed.as_ref()).expect("an observation encodes")),
         HistoryRecord::EvolutionInstances(observed) => Some(serde_json::to_value(observed.as_ref()).expect("an observation encodes")),
-        HistoryRecord::Tombstone(_) | HistoryRecord::ScopeRemoval | HistoryRecord::ScopeAssertion(_) => None,
+        HistoryRecord::Tombstone(_) | HistoryRecord::ScopeRemoval => None,
     });
     let observations: Vec<Value> = inline.collect();
     assert!(observations.len() <= 1, "a write records at most one observation: {observations:?}");

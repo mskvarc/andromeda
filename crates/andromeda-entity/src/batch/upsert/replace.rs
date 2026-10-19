@@ -16,7 +16,7 @@ use crate::{
     side_effect::SideEffectPlacement,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_entity::{entity_state::EntityState, history::written_observation::AddressedInstances, system_instant::SystemInstant};
+use andromeda_ngsi_ld_entity::{entity_state::EntityState, system_instant::SystemInstant};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use std::sync::Arc;
 
@@ -68,17 +68,7 @@ impl ChunkRewrite for ReplaceRewrite<'_> {
             // clone: reference-count bumps only when the earlier attempt's write still shares the state
             Replacement::Built { id, state } => (id, Arc::unwrap_or_clone(state)),
         };
-        // Clause 5.6.8.4 replace mode is the Replace Entity of clause 5.6.18,
-        // a whole replacement and not a Fragment, so it always writes.
-        let write = self.service.replacement_write(self.target, id, replacement, snapshot, now)?;
-        Ok(PlannedWrite {
-            entry: Replacement::Built {
-                id: write.id.clone(), // clone: the entry is kept to rebuild the write if the store refuses it
-                state: stored_state(&write)?,
-            },
-            write: Some(write),
-            alongside: None,
-        })
+        self.service.replacement_write(self.target, id, replacement, snapshot, now)
     }
 }
 
@@ -118,8 +108,9 @@ impl EntityService {
     /// 5.6.8), or creates it when the attempt found it absent.
     ///
     /// Mirrors the single replace (clause 5.6.18): one precise event for every
-    /// created, updated, or deleted attribute instance, and every instance of
-    /// the replacement observed.
+    /// created, updated, or deleted attribute instance, every modified
+    /// instance observed, and no write at all when the replacement restates
+    /// the entity exactly.
     ///
     /// # Errors
     ///
@@ -132,19 +123,41 @@ impl EntityService {
         replacement: EntityState,
         snapshot: Option<&EntitySnapshot>,
         now: SystemInstant,
-    ) -> Result<ChunkWrite, Box<(Identifier, EntityError)>> {
-        match snapshot {
-            Some(snapshot) => self.chunk_update(
-                target,
-                id,
-                UpdatedStates {
-                    previous: &snapshot.state,
-                    current: replacement,
-                    addressed: AddressedInstances::Replacement,
+    ) -> Result<PlannedWrite<Replacement>, Box<(Identifier, EntityError)>> {
+        let Some(snapshot) = snapshot else {
+            let write = self.chunk_insert(target, id, replacement, now)?;
+            return built(write);
+        };
+        let entry_id = id.clone(); // clone: the entry is kept to rebuild the write if the store refuses it
+        let states = UpdatedStates {
+            previous: &snapshot.state,
+            current: replacement,
+        };
+        match self.chunk_update(target, id, states, now)? {
+            Some(write) => built(write),
+            // The replacement restated the entity this attempt read, so that
+            // state is the replacement.
+            None => Ok(PlannedWrite {
+                entry: Replacement::Built {
+                    id: entry_id,
+                    state: Arc::clone(&snapshot.state), // clone: Arc ref-count bump
                 },
-                now,
-            ),
-            None => self.chunk_insert(target, id, replacement, now),
+                write: None,
+                alongside: None,
+            }),
         }
     }
+}
+
+/// The planned write storing `write`, kept so a refused attempt rebuilds from
+/// the replacement it stored.
+fn built(write: ChunkWrite) -> Result<PlannedWrite<Replacement>, Box<(Identifier, EntityError)>> {
+    Ok(PlannedWrite {
+        entry: Replacement::Built {
+            id: write.id.clone(), // clone: the entry is kept to rebuild the write if the store refuses it
+            state: stored_state(&write)?,
+        },
+        write: Some(write),
+        alongside: None,
+    })
 }

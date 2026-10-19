@@ -16,7 +16,8 @@ use strum::{Display, EnumString};
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
 pub enum CoreWriteHistory {
     /// Every Core write that changes current state records the instances it
-    /// wrote, the instances it removed and the Scope it cleared.
+    /// modified, the instances it removed and the Scope it changed or
+    /// cleared; a write restating what the Entity holds records nothing.
     #[default]
     Recorded,
     /// Core writes leave the Temporal Evolution untouched: only the Temporal
