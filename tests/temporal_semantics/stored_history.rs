@@ -60,24 +60,24 @@ pub async fn stored_history(pool: &PgPool, entity_id: &str) -> Vec<StoredHistory
         .expect("stored attribute history")
         .into_iter()
         .map(|row| StoredHistoryRow {
-            attribute_name: row.get("attribute_name"),
-            stream_key: row.get("stream_key"),
-            dataset_id: row.get("dataset_id"),
-            attribute_kind: row.get("attribute_kind"),
-            value_kind: row.get("value_kind"),
-            recorded_at: row.get("recorded_at"),
-            write_id: row.get("write_id"),
-            write_ordinal: row.get("write_ordinal"),
-            observed_at: row.get("observed_at"),
-            created_at: row.get("created_at"),
-            modified_at: row.get("modified_at"),
-            deleted_at: row.get("deleted_at"),
-            generated_instance_id: row.get("generated_instance_id"),
-            verbatim_instance_id: row.get("verbatim_instance_id"),
-            value_number: row.get("value_number"),
-            value_string: row.get("value_string"),
-            value_uri: row.get("value_uri"),
-            populated_value_columns: row.get("populated_value_columns"),
+            attribute_name: row.try_get("attribute_name").expect("the attribute_name column decodes"),
+            stream_key: row.try_get("stream_key").expect("the stream_key column decodes"),
+            dataset_id: row.try_get("dataset_id").expect("the dataset_id column decodes"),
+            attribute_kind: row.try_get("attribute_kind").expect("the attribute_kind column decodes"),
+            value_kind: row.try_get("value_kind").expect("the value_kind column decodes"),
+            recorded_at: row.try_get("recorded_at").expect("the recorded_at column decodes"),
+            write_id: row.try_get("write_id").expect("the write_id column decodes"),
+            write_ordinal: row.try_get("write_ordinal").expect("the write_ordinal column decodes"),
+            observed_at: row.try_get("observed_at").expect("the observed_at column decodes"),
+            created_at: row.try_get("created_at").expect("the created_at column decodes"),
+            modified_at: row.try_get("modified_at").expect("the modified_at column decodes"),
+            deleted_at: row.try_get("deleted_at").expect("the deleted_at column decodes"),
+            generated_instance_id: row.try_get("generated_instance_id").expect("the generated_instance_id column decodes"),
+            verbatim_instance_id: row.try_get("verbatim_instance_id").expect("the verbatim_instance_id column decodes"),
+            value_number: row.try_get("value_number").expect("the value_number column decodes"),
+            value_string: row.try_get("value_string").expect("the value_string column decodes"),
+            value_uri: row.try_get("value_uri").expect("the value_uri column decodes"),
+            populated_value_columns: row.try_get("populated_value_columns").expect("the populated_value_columns column decodes"),
         })
         .collect()
 }
@@ -98,7 +98,8 @@ pub async fn current_projection_rows(pool: &PgPool, entity_id: &str) -> i64 {
         .fetch_one(pool)
         .await
         .expect("current projection count")
-        .get("rows")
+        .try_get("rows")
+        .expect("the rows column decodes")
 }
 
 /// Count the temporal catalogue rows of one Entity.
@@ -108,7 +109,10 @@ pub async fn temporal_catalog_rows(pool: &PgPool, entity_id: &str) -> (i64, i64)
         .fetch_one(pool)
         .await
         .expect("temporal catalogue counts");
-    (row.get("entities"), row.get("streams"))
+    (
+        row.try_get("entities").expect("the entities column decodes"),
+        row.try_get("streams").expect("the streams column decodes"),
+    )
 }
 
 /// Count the temporal rows whose owning catalogue row no longer exists.
@@ -118,9 +122,11 @@ pub async fn temporal_catalog_rows(pool: &PgPool, entity_id: &str) -> (i64, i64)
 pub async fn orphaned_temporal_rows(pool: &PgPool) -> (i64, i64, i64) {
     let row = sqlx::query(ORPHANED_TEMPORAL_ROWS_SQL).fetch_one(pool).await.expect("temporal orphan audit");
     (
-        row.get("orphaned_attribute_history_rows"),
-        row.get("orphaned_scope_history_rows"),
-        row.get("orphaned_streams"),
+        row.try_get("orphaned_attribute_history_rows")
+            .expect("the orphaned_attribute_history_rows column decodes"),
+        row.try_get("orphaned_scope_history_rows")
+            .expect("the orphaned_scope_history_rows column decodes"),
+        row.try_get("orphaned_streams").expect("the orphaned_streams column decodes"),
     )
 }
 

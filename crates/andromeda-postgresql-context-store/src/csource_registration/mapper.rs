@@ -63,12 +63,10 @@ fn read_json<T: DeserializeOwned>(
 /// Returns [`ContextStoreError::StoredRegistration`] when a stored column does
 /// not parse back into its domain type: the registration URI, the
 /// `registrationName` or `description` text, the tenant name, the coverage
-/// members, the endpoint, media type,
-/// forwarding mode code, operation codes, refresh rate and remaining access
-/// members, or the health status code, and [`ContextStoreError::Database`] when
-/// a column the projection carries is missing or does not decode into its
-/// stored type, or when the `context_source_alias` column exists but fails to
-/// read for a reason other than being absent or undecodable.
+/// members, the endpoint, media type, forwarding mode code, operation codes,
+/// refresh rate, `contextSourceAlias` and remaining access members, or the
+/// health status code, and [`ContextStoreError::Database`] when a column the
+/// projection carries is missing or does not decode into its stored type.
 pub fn row_to_csr(row: &PgRow, information: Vec<RegistrationInfo>) -> Result<ContextSourceRegistration, ContextStoreError> {
     let id_raw: String = row.try_get("id")?;
     let id: Identifier = id_raw.parse().map_err(StoredRegistrationError::Id)?;
@@ -271,20 +269,18 @@ fn context_source_info_of(keys: Option<Vec<String>>, values: Option<Vec<String>>
     }
 }
 
-/// The pseudonym a distributed operation attributes forwarded context to.
+/// The pseudonym a distributed operation attributes forwarded context to;
+/// `None` when the registration declares none.
 ///
-/// The column is absent from a projection that does not carry it and
-/// undecodable where the projection widened it, and neither case is a broken
-/// registration, so both read as "no alias declared".
+/// Every registration read selects the one shared projection, which carries the
+/// column, so a column that is missing or does not decode is a failed read, not
+/// a registration without an alias.
 fn row_to_alias(row: &PgRow) -> Result<Option<ContextSourcePseudonym>, ContextStoreError> {
-    match row.try_get::<Option<String>, _>("context_source_alias") {
-        Ok(value) => value
-            .map(ContextSourcePseudonym::try_from)
-            .transpose()
-            .map_err(|error| StoredRegistrationError::ContextSourceAlias(error).into()),
-        Err(sqlx::Error::ColumnNotFound(_) | sqlx::Error::ColumnDecode { .. }) => Ok(None),
-        Err(error) => Err(error.into()),
-    }
+    Ok(row
+        .try_get::<Option<String>, _>("context_source_alias")?
+        .map(ContextSourcePseudonym::try_from)
+        .transpose()
+        .map_err(StoredRegistrationError::ContextSourceAlias)?)
 }
 
 /// Rebuild the health members: the forwarding outcome counters and timestamps.

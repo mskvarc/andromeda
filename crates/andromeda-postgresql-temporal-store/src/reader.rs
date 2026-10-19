@@ -49,8 +49,19 @@ use andromeda_temporal::{
 };
 use async_trait::async_trait;
 use iri_rs::IriBuf;
-use sqlx::Row;
+use sqlx::{Row, postgres::PgRow};
 use std::collections::{HashMap, HashSet};
+
+/// The clause 6.3.13 total the stage 1 count statement answered.
+///
+/// The statement aggregates without grouping, so it answers exactly one row:
+/// no row is a broken contract, and a `count` that does not decode is a fault
+/// rather than an absent total, which would answer the page without the
+/// `NGSILD-Results-Count` the client asked for.
+fn stage1_total(rows: &[PgRow]) -> Result<i64, TemporalStoreError> {
+    let row = rows.first().ok_or(TemporalStoreError::Invariant(TemporalStoreInvariant::CountRowMissing))?;
+    Ok(row.try_get("count")?)
+}
 
 /// The neutral value shape one projected [`RecordedShape`] stands for.
 ///
@@ -229,7 +240,7 @@ impl TemporalHistoryReader for TemporalRepository {
             let count_rows = self
                 .execute_temporal_query(TemporalStatement::Stage1Count, &count, stage1.count_planning)
                 .await?;
-            count_rows.first().and_then(|r| r.try_get::<i64, _>("count").ok())
+            Some(stage1_total(&count_rows)?)
         } else {
             None
         };
@@ -300,5 +311,18 @@ impl TemporalHistoryReader for TemporalRepository {
             .await?;
 
         decode_aggregation_rows(&pg_rows, entity_id, compiled)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{error::TemporalStoreError, reader::stage1_total, temporal_store_invariant::TemporalStoreInvariant};
+
+    #[test]
+    fn a_count_statement_answering_no_row_is_a_broken_contract() {
+        assert!(matches!(
+            stage1_total(&[]),
+            Err(TemporalStoreError::Invariant(TemporalStoreInvariant::CountRowMissing))
+        ));
     }
 }

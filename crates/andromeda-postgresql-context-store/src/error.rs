@@ -9,7 +9,7 @@ use crate::{
     migration_set::branch::BranchVersionError,
     pending_side_effects::change_event_record::ChangeEventRecordError,
     schema_contract::error::SchemaContractError,
-    snapshot::stored_snapshot_error::StoredSnapshotError,
+    snapshot::{stored_snapshot_error::StoredSnapshotError, unencodable_snapshot_error::UnencodableSnapshotError},
     store_invariant::StoreInvariant,
     subscription_store::stored_subscription_error::StoredSubscriptionError,
 };
@@ -125,6 +125,9 @@ pub enum ContextStoreError {
     /// A stored Snapshot control record no longer reads back.
     #[error("context store snapshot row: {0}")]
     StoredSnapshot(#[from] StoredSnapshotError),
+    /// A Snapshot document the store built does not serialize to JSON.
+    #[error("context store snapshot document: {0}")]
+    UnencodableSnapshot(#[from] UnencodableSnapshotError),
     /// A stored Entity row or census ledger no longer reads back.
     #[error("context store entity row: {0}")]
     StoredEntity(#[from] StoredEntityError),
@@ -194,7 +197,8 @@ impl ContextStoreError {
             | ContextStoreError::CopyField(_)
             | ContextStoreError::ChangeEventRecord(_)
             | ContextStoreError::StateRecord(_)
-            | ContextStoreError::OrdinalOutOfRange(_) => PersistenceFailure::Unencodable,
+            | ContextStoreError::OrdinalOutOfRange(_)
+            | ContextStoreError::UnencodableSnapshot(_) => PersistenceFailure::Unencodable,
             ContextStoreError::Render(_) | ContextStoreError::StatementBuild(_) => PersistenceFailure::StatementUnbuildable,
             ContextStoreError::Migration(_) | ContextStoreError::SchemaContract(_) | ContextStoreError::BranchVersion(_) => PersistenceFailure::SchemaMismatch,
             ContextStoreError::Saturated => PersistenceFailure::Saturated,
@@ -241,6 +245,7 @@ impl ContextStoreError {
             | ContextStoreError::StoredRegistration(_)
             | ContextStoreError::StoredSubscription(_)
             | ContextStoreError::StoredSnapshot(_)
+            | ContextStoreError::UnencodableSnapshot(_)
             | ContextStoreError::StoredEntity(_)
             | ContextStoreError::StoredEntityMap(_)
             | ContextStoreError::CatalogueIdentityGeneration(_)
@@ -280,6 +285,7 @@ impl ContextStoreError {
             | ContextStoreError::StoredRegistration(_)
             | ContextStoreError::StoredSubscription(_)
             | ContextStoreError::StoredSnapshot(_)
+            | ContextStoreError::UnencodableSnapshot(_)
             | ContextStoreError::StoredEntity(_)
             | ContextStoreError::StoredEntityMap(_)
             | ContextStoreError::CatalogueIdentityGeneration(_)

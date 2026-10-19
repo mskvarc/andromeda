@@ -23,6 +23,7 @@ use crate::{
         record::status_is_preparing,
         status_code::stored_status,
         status_outbox::enqueue_terminal_notification,
+        unencodable_snapshot_error::UnencodableSnapshotError,
     },
     store_fault::undecodable,
 };
@@ -189,8 +190,14 @@ async fn finalize_preparation(
     let statement = Query::update()
         .table(SnapshotPreparation::Table)
         .value(SnapshotPreparation::Status, stored_status(status).code())
-        .value(SnapshotPreparation::QueriesDetails, optional_json(queries_details)?)
-        .value(SnapshotPreparation::TemporalQueriesDetails, optional_json(temporal_queries_details)?)
+        .value(
+            SnapshotPreparation::QueriesDetails,
+            optional_json(queries_details, UnencodableSnapshotError::QueriesDetails)?,
+        )
+        .value(
+            SnapshotPreparation::TemporalQueriesDetails,
+            optional_json(temporal_queries_details, UnencodableSnapshotError::TemporalQueriesDetails)?,
+        )
         .value(SnapshotPreparation::ModifiedAt, now())
         .value(SnapshotPreparation::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
         .value(SnapshotPreparation::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))

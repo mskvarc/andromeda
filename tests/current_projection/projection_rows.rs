@@ -60,7 +60,7 @@ pub async fn entity_key(pool: &PgPool, entity_id: &str) -> Option<i64> {
         .fetch_optional(pool)
         .await
         .expect("entity lookup must succeed")
-        .map(|row| row.get("entity_key"))
+        .map(|row| row.try_get("entity_key").expect("the entity_key column decodes"))
 }
 
 /// Count the projection rows carrying one surrogate key, including rows whose

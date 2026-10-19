@@ -76,7 +76,12 @@ async fn under_partial_cutover(pool: &PgPool, applied_version: i32) -> Result<()
         .fetch_optional(pool)
         .await
         .expect("the stamp must be readable")
-        .map(|row| (row.get::<i32, _>("schema_version"), row.get::<String, _>("migrations_sha256")));
+        .map(|row| {
+            (
+                row.try_get::<i32, _>("schema_version").expect("the schema_version column decodes"),
+                row.try_get::<String, _>("migrations_sha256").expect("the migrations_sha256 column decodes"),
+            )
+        });
 
     sqlx::query("UPDATE schema_metadata SET schema_version = $1 WHERE singleton")
         .bind(applied_version)

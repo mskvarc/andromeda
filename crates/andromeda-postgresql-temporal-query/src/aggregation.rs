@@ -31,7 +31,7 @@ use crate::{
     listed_period_page::{each_listed_period, placed_among_listed_periods},
     period_edge::StreamEdge,
     recorded_shape::recorded_shape,
-    stream_page::StreamContinues,
+    stream_page::{StreamContinues, project_whole_streams},
     stream_parts::{St, entity_streams},
 };
 use andromeda_ngsi_ld_lexicon::aggr_method::AggrMethod;
@@ -313,10 +313,13 @@ pub fn build_aggregation_query(branch: &HistoryBranch, of: &HistoryOf, compiled:
         .expr_as(Expr::col((St, HistoryGrain::DatasetId)), HistoryGrain::DatasetId)
         .expr(Expr::col((Page, Asterisk)));
     entity_streams(&mut select, branch, of);
-    if let Some(edge) = read.edge {
-        select
-            .expr_as(Expr::col((StreamEdge, StreamContinues)), StreamContinues)
-            .join_lateral(JoinType::Join, edge, StreamEdge, SimpleExpr::from(true));
+    match read.edge {
+        Some(edge) => {
+            select
+                .expr_as(Expr::col((StreamEdge, StreamContinues)), StreamContinues)
+                .join_lateral(JoinType::Join, edge, StreamEdge, SimpleExpr::from(true));
+        }
+        None => project_whole_streams(&mut select),
     }
     select.join_lateral(
         JoinType::Join,
@@ -479,7 +482,7 @@ mod tests {
         let sql = sql_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
         assert!(sql.starts_with("WITH \"bucket_origin\""), "{sql}");
         assert!(
-            sql.contains(r#"SELECT "an"."name" AS "attribute_name", "st"."dataset_id" AS "dataset_id", "page".* FROM"#),
+            sql.contains(r#"SELECT "an"."name" AS "attribute_name", "st"."dataset_id" AS "dataset_id", "page".*, FALSE AS "stream_continues" FROM"#),
             "{sql}"
         );
         pretty_assertions::assert_eq!(group_keys(&sql), "\"bucket\".\"bucket_start\"", "{sql}");

@@ -74,7 +74,12 @@ async fn read_stamp_row(pool: &PgPool) -> Option<(i32, String)> {
         .fetch_optional(pool)
         .await
         .expect("the stamp must be readable")
-        .map(|row| (row.get::<i32, _>("schema_version"), row.get::<String, _>("migrations_sha256")))
+        .map(|row| {
+            (
+                row.try_get::<i32, _>("schema_version").expect("the schema_version column decodes"),
+                row.try_get::<String, _>("migrations_sha256").expect("the migrations_sha256 column decodes"),
+            )
+        })
 }
 
 /// Rewrite the stamp to a drifted state, verify, and put the stamp back.
@@ -150,12 +155,12 @@ async fn a_tenant_stamped_by_this_binary_is_accepted_and_reports_the_version_it_
         .await
         .expect("a migrated tenant carries a stamp");
     assert_eq!(
-        row.get::<i32, _>("schema_version"),
+        row.try_get::<i32, _>("schema_version").expect("the schema_version column decodes"),
         contract.version().get(),
         "the tenant is not at the version this binary embeds"
     );
     assert_eq!(
-        row.get::<String, _>("migrations_sha256"),
+        row.try_get::<String, _>("migrations_sha256").expect("the migrations_sha256 column decodes"),
         contract.digest().to_string(),
         "the tenant was migrated along a different path"
     );
@@ -372,14 +377,16 @@ async fn the_server_and_extensions_meet_the_floors_the_schema_depends_on() {
     .await
     .expect("the server and extension versions must be readable");
 
-    let server: i32 = row.get("server");
+    let server: i32 = row.try_get("server").expect("the server column decodes");
     assert!(server >= 150_000, "NULLS NOT DISTINCT needs PostgreSQL 15, server reports {server}");
     assert!(
-        row.get::<Option<String>, _>("postgis").is_some(),
+        row.try_get::<Option<String>, _>("postgis").expect("the postgis column decodes").is_some(),
         "the schema stores geometries and needs PostGIS"
     );
     assert!(
-        row.get::<Option<String>, _>("timescaledb").is_some(),
+        row.try_get::<Option<String>, _>("timescaledb")
+            .expect("the timescaledb column decodes")
+            .is_some(),
         "the history relations are hypertables and need TimescaleDB"
     );
 

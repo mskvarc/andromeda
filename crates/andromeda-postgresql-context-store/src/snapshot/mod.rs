@@ -37,6 +37,8 @@ pub mod status_outbox;
 pub mod store;
 /// What a Snapshot control record that no longer reads back as a Snapshot looks like.
 pub mod stored_snapshot_error;
+/// A Snapshot document the store could not write as JSON.
+pub mod unencodable_snapshot_error;
 
 /// Erase an adapter failure into the snapshot policy's persistence category.
 ///

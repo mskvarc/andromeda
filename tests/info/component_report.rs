@@ -96,10 +96,10 @@ async fn info_component_report_storage_entries_match_active_database_components(
     .fetch_one(scope.database_pool())
     .await
     .expect("active database component query failed");
-    let postgresql_version: String = row.get("pg_version");
-    let postgis_version: Option<String> = row.get("postgis_version");
-    let timescaledb_version: Option<String> = row.get("timescaledb_version");
-    let timescaledb_license: Option<String> = row.get("timescaledb_license");
+    let postgresql_version: String = row.try_get("pg_version").expect("the pg_version column decodes");
+    let postgis_version: Option<String> = row.try_get("postgis_version").expect("the postgis_version column decodes");
+    let timescaledb_version: Option<String> = row.try_get("timescaledb_version").expect("the timescaledb_version column decodes");
+    let timescaledb_license: Option<String> = row.try_get("timescaledb_license").expect("the timescaledb_license column decodes");
 
     let mut expected_names = BTreeSet::from(["andromeda", "postgresql"]);
     assert_eq!(component(components, "postgresql")["version"], format!("v{postgresql_version}"));

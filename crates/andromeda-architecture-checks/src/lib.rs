@@ -25,6 +25,7 @@ mod source_scan;
 pub mod sql;
 pub mod state_codec_boundary;
 pub mod string_typed_error;
+pub mod swallowed_row_decode;
 pub mod type_erased_error;
 pub mod untyped_json;
 

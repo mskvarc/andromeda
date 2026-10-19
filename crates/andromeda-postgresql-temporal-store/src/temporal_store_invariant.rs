@@ -25,6 +25,9 @@ pub enum TemporalStoreInvariant {
     /// A count was requested but the count statement was not built.
     #[error("the temporal count statement was requested but not built")]
     CountStatementMissing,
+    /// The count statement, an aggregate without grouping, answered no row.
+    #[error("the temporal count statement answered no row")]
+    CountRowMissing,
     /// A count does not fit the width it is reported at.
     #[error("a temporal store count is out of range: {0}")]
     CountOutOfRange(#[source] TryFromIntError),

@@ -157,9 +157,9 @@ async fn churn(pool: &PgPool, relation: &str, statement: &str, entity_key: i64) 
     .fetch_one(&mut *transaction)
     .await
     .map(|row| ChurnOutcome {
-        updated: row.get::<i64, _>("updated") - before.0,
-        heap_only: row.get::<i64, _>("heap_only") - before.1,
-        pages: row.get::<i64, _>("pages"),
+        updated: row.try_get::<i64, _>("updated").expect("the updated column decodes") - before.0,
+        heap_only: row.try_get::<i64, _>("heap_only").expect("the heap_only column decodes") - before.1,
+        pages: row.try_get::<i64, _>("pages").expect("the pages column decodes"),
     })
     .expect("the transaction-local tuple counters must be readable");
     transaction.commit().await.expect("the churn transaction must commit");

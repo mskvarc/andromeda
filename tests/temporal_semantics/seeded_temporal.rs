@@ -35,7 +35,8 @@ pub async fn seed_temporal_entity(pool: &PgPool, entity_id: &str, entity_type: &
         .fetch_one(pool)
         .await
         .expect("seeded temporal entity")
-        .get("temporal_entity_key")
+        .try_get("temporal_entity_key")
+        .expect("the temporal_entity_key column decodes")
 }
 
 /// Resolve, creating if needed, the dictionary identity of one attribute name.
@@ -45,7 +46,8 @@ pub async fn attribute_name_key(pool: &PgPool, attribute_name: &str) -> i32 {
         .fetch_one(pool)
         .await
         .expect("attribute dictionary identity")
-        .get("attribute_name_key")
+        .try_get("attribute_name_key")
+        .expect("the attribute_name_key column decodes")
 }
 
 /// Insert one attribute stream and return the key the database generated for it.
@@ -56,7 +58,8 @@ pub async fn seed_stream(pool: &PgPool, temporal_entity_key: i64, attribute_name
         .fetch_one(pool)
         .await
         .expect("seeded attribute stream")
-        .get("stream_key")
+        .try_get("stream_key")
+        .expect("the stream_key column decodes")
 }
 
 /// Insert one history row and the idempotency record that protects it.

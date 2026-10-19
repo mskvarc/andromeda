@@ -58,7 +58,7 @@ pub async fn history_unit_identities(pool: &PgPool, entity_id: &str, attribute_i
     .await
     .expect("history rows must be readable")
     .into_iter()
-    .map(|row| row.get::<Option<i16>, _>("unit_code_id"))
+    .map(|row| row.try_get::<Option<i16>, _>("unit_code_id").expect("the unit_code_id column decodes"))
     .collect()
 }
 
@@ -80,7 +80,7 @@ pub async fn history_sub_attribute_counts(pool: &PgPool, entity_id: &str, attrib
     .await
     .expect("history rows must be readable")
     .into_iter()
-    .map(|row| row.get::<Option<i32>, _>("elements"))
+    .map(|row| row.try_get::<Option<i32>, _>("elements").expect("the elements column decodes"))
     .collect()
 }
 

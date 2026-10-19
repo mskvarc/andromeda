@@ -119,6 +119,15 @@ macro_rules! workspace_architecture {
                 );
             }
 
+            /// No production source off the baseline swallows a row decode failure.
+            #[test]
+            fn row_decode_failures_are_propagated_not_swallowed() {
+                $crate::swallowed_row_decode::assert_row_decode_failures_are_propagated(
+                    concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root),
+                    $crate::swallowed_row_decode::SWALLOWED_ROW_DECODE_BASELINE,
+                );
+            }
+
             /// The NGSI-LD Scope grammar is read by its one owner only.
             #[test]
             fn scope_grammar_has_one_owner() {

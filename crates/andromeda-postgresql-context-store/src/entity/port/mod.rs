@@ -57,6 +57,7 @@ fn classify(error: &ContextStoreError) -> EntityError {
         | ContextStoreError::StoredRegistration(_)
         | ContextStoreError::StoredSubscription(_)
         | ContextStoreError::StoredSnapshot(_)
+        | ContextStoreError::UnencodableSnapshot(_)
         | ContextStoreError::StoredEntity(_)
         | ContextStoreError::StoredEntityMap(_)
         | ContextStoreError::CatalogueIdentityGeneration(_)

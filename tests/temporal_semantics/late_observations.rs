@@ -32,7 +32,8 @@ async fn occupied_chunks(pool: &PgPool, entity_id: &str) -> i64 {
         .fetch_one(pool)
         .await
         .expect("occupied chunk count")
-        .get("chunks")
+        .try_get("chunks")
+        .expect("the chunks column decodes")
 }
 
 /// The configured range interval of the attribute-history hypertable, in microseconds.
@@ -41,7 +42,8 @@ async fn attribute_history_chunk_interval(pool: &PgPool) -> i64 {
         .fetch_one(pool)
         .await
         .expect("attribute history chunk interval")
-        .get("interval_us")
+        .try_get("interval_us")
+        .expect("the interval_us column decodes")
 }
 
 /// Late arrivals are written into the current ingestion chunk and stay exactly

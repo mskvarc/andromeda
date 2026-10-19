@@ -36,11 +36,11 @@ async fn information_rows(pool: &PgPool, registration_id: &str) -> Vec<Value> {
     .into_iter()
     .map(|row| {
         json!({
-            "entity_types": row.get::<Option<Vec<String>>, _>("entity_types"),
-            "entity_id": row.get::<Option<String>, _>("entity_id"),
-            "entity_id_pattern": row.get::<Option<String>, _>("entity_id_pattern"),
-            "property_name_keys": row.get::<Option<Vec<i32>>, _>("property_name_keys").map(|keys| keys.len()),
-            "relationship_name_keys": row.get::<Option<Vec<i32>>, _>("relationship_name_keys").map(|keys| keys.len()),
+            "entity_types": row.try_get::<Option<Vec<String>>, _>("entity_types").expect("the entity_types column decodes"),
+            "entity_id": row.try_get::<Option<String>, _>("entity_id").expect("the entity_id column decodes"),
+            "entity_id_pattern": row.try_get::<Option<String>, _>("entity_id_pattern").expect("the entity_id_pattern column decodes"),
+            "property_name_keys": row.try_get::<Option<Vec<i32>>, _>("property_name_keys").expect("the property_name_keys column decodes").map(|keys| keys.len()),
+            "relationship_name_keys": row.try_get::<Option<Vec<i32>>, _>("relationship_name_keys").expect("the relationship_name_keys column decodes").map(|keys| keys.len()),
         })
     })
     .collect()

@@ -165,6 +165,7 @@ impl TemporalStoreError {
                 TemporalStoreInvariant::AttributeNameUnresolved(_)
                 | TemporalStoreInvariant::EntityTypeUnresolved(_)
                 | TemporalStoreInvariant::CountStatementMissing
+                | TemporalStoreInvariant::CountRowMissing
                 | TemporalStoreInvariant::CountOutOfRange(_),
             )
             | TemporalStoreError::WriteRecordMismatch { .. }

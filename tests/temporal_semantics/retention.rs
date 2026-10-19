@@ -49,7 +49,8 @@ async fn write_records_present(pool: &PgPool, write_id: Uuid) -> i64 {
         .fetch_one(pool)
         .await
         .expect("idempotency record count")
-        .get("records")
+        .try_get("records")
+        .expect("the records column decodes")
 }
 
 /// Count every tombstone row in the tenant.
@@ -58,7 +59,8 @@ async fn tombstone_rows(pool: &PgPool) -> i64 {
         .fetch_one(pool)
         .await
         .expect("tombstone row count")
-        .get("rows")
+        .try_get("rows")
+        .expect("the rows column decodes")
 }
 
 /// A configured horizon ages storage out, collects what it emptied, and

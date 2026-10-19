@@ -34,7 +34,12 @@ async fn stored_keys(pool: &PgPool, prefix: &str) -> HashMap<String, i32> {
         .await
         .expect("the dictionary must be readable")
         .iter()
-        .map(|row| (row.get("name"), row.get("attribute_name_key")))
+        .map(|row| {
+            (
+                row.try_get("name").expect("the name column decodes"),
+                row.try_get("attribute_name_key").expect("the attribute_name_key column decodes"),
+            )
+        })
         .collect()
 }
 

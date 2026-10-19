@@ -51,10 +51,10 @@ async fn thirty_two_thousand_distinct_attribute_names_keep_positive_distinct_key
     .fetch_one(&pool)
     .await
     .expect("the dictionary must be readable");
-    let interned_rows: i64 = row.get("interned");
-    let distinct_keys: i64 = row.get("distinct_keys");
-    let lowest: i32 = row.get("lowest");
-    let highest: i32 = row.get("highest");
+    let interned_rows: i64 = row.try_get("interned").expect("the interned column decodes");
+    let distinct_keys: i64 = row.try_get("distinct_keys").expect("the distinct_keys column decodes");
+    let lowest: i32 = row.try_get("lowest").expect("the lowest column decodes");
+    let highest: i32 = row.try_get("highest").expect("the highest column decodes");
 
     assert_eq!(interned_rows, i64::from(GENERATED_NAMES), "one row per distinct name");
     assert_eq!(distinct_keys, interned_rows, "no two names may share a key");
@@ -75,8 +75,8 @@ async fn thirty_two_thousand_distinct_attribute_names_keep_positive_distinct_key
         .expect("an array-bound lookup of a large batch must not fail");
     assert_eq!(resolved.len(), batch.len(), "every requested name resolves to exactly one key");
     for resolved_row in &resolved {
-        let key: i32 = resolved_row.get("attribute_name_key");
-        let name: String = resolved_row.get("name");
+        let key: i32 = resolved_row.try_get("attribute_name_key").expect("the attribute_name_key column decodes");
+        let name: String = resolved_row.try_get("name").expect("the name column decodes");
         assert!(key > 0, "{name} resolved to a non-positive key");
     }
 

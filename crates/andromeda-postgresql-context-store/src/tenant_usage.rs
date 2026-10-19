@@ -7,6 +7,7 @@
 
 use crate::{store_fault::persistence_failure, tenant_database::DatabaseUrl};
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_pool::pool_options::configure_pool_options;
 use andromeda_postgresql_schema::{current::EntitySearch, snapshot::Snapshots};
@@ -19,7 +20,7 @@ use async_trait::async_trait;
 use sea_query::{Alias, Expr, ExprTrait, Func, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::PgPool;
-use std::time::Duration;
+use std::{num::TryFromIntError, time::Duration};
 
 /// Reads a tenant's own database for its operational usage.
 ///
@@ -78,17 +79,34 @@ impl TenantUsageProbe for PostgresTenantUsageProbe {
     }
 }
 
+/// A usage count the tenant database answered below zero.
+#[derive(Debug, thiserror::Error)]
+#[error("a tenant usage count read {value}, below zero")]
+struct NegativeUsageCount {
+    /// The count as the database answered it.
+    value: i64,
+    /// Why it does not widen to an unsigned count.
+    #[source]
+    source: TryFromIntError,
+}
+
 /// Run one single-scalar `bigint` count over the probe pool and widen it.
-///
-/// A negative value cannot arise from any of these counts, so a value that does
-/// not fit `u64` clamps to zero rather than propagating a nonsensical size.
 async fn fetch_count(pool: &PgPool, statement: SelectStatement) -> Result<u64, TenancyError> {
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
     let value: i64 = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_one(pool)
         .await
         .map_err(|error| usage_read_failure(&error))?;
-    Ok(u64::try_from(value).unwrap_or(0))
+    usage_count(value)
+}
+
+/// Widen one usage count.
+///
+/// A size, a backend count and a row count are never negative, so a negative
+/// answer is the store breaking its contract, not an empty tenant: reporting
+/// it as zero would hide the fault behind a plausible usage.
+fn usage_count(value: i64) -> Result<u64, TenancyError> {
+    u64::try_from(value).map_err(|source| TenancyError::RegistryUnavailable(PersistenceFailure::ContractBroken.record(&NegativeUsageCount { value, source })))
 }
 
 /// The failure a usage read becomes.
@@ -129,8 +147,24 @@ fn snapshot_count_query() -> SelectStatement {
 
 #[cfg(test)]
 mod tests {
-    use crate::tenant_usage::{backend_count_query, database_size_query, entity_count_query, snapshot_count_query};
+    use crate::tenant_usage::{backend_count_query, database_size_query, entity_count_query, snapshot_count_query, usage_count};
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+    use andromeda_tenancy::error::TenancyError;
     use sea_query::PostgresQueryBuilder;
+
+    #[test]
+    fn a_usage_count_widens_unchanged() {
+        assert!(matches!(usage_count(0), Ok(0)));
+        assert!(matches!(usage_count(4_096), Ok(4_096)));
+    }
+
+    #[test]
+    fn a_negative_usage_count_is_a_broken_contract_not_zero() {
+        assert!(matches!(
+            usage_count(-1),
+            Err(TenancyError::RegistryUnavailable(PersistenceFailure::ContractBroken))
+        ));
+    }
 
     #[test]
     fn the_database_size_reads_the_current_database() {

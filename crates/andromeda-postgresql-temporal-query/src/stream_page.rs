@@ -10,7 +10,9 @@
 //! skips nor splits it. The read finds the edge first, the instant of the
 //! page's last counted instance, and then keeps every instance up to it. A
 //! stream holding instances beyond the edge was cut, which the page reports
-//! beside its rows as `stream_continues`.
+//! beside its rows as `stream_continues`. A read that pages no stream projects
+//! the same column as `FALSE`, so every history row says whether its stream was
+//! cut and a reader never infers it from a column that is missing.
 //!
 //! Every represented instance carries an instant on the requested axis, so the
 //! axis index, which holds those instances alone, serves every read here, and
@@ -27,7 +29,7 @@ use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, window:
 use andromeda_postgresql_query::history_source::{HistoryBranch, HistoryOf};
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
-    literal::int_literal,
+    literal::{false_literal, int_literal},
     open_instant::{or_end_of_time, or_start_of_time},
 };
 use sea_query::{Alias, Asterisk, Condition, Expr, ExprTrait, Iden, IntoIden, JoinType, Order, Query, SelectStatement, SimpleExpr};
@@ -163,6 +165,12 @@ fn kept_instances(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, cond
     kept
 }
 
+/// Project that `select` answers every stream whole: a read that pages no
+/// stream cuts none.
+pub(crate) fn project_whole_streams(select: &mut SelectStatement) {
+    select.expr_as(false_literal(), StreamContinues);
+}
+
 /// Order the page rows under `page` as the reconstruction reads them: by
 /// attribute, then on the axis, ties broken on the hypertable's unique key.
 fn in_rendering_order(select: &mut SelectStatement, axis: AttributeHistory) {
@@ -252,6 +260,7 @@ pub(crate) fn last_n_history(
 ) -> SelectStatement {
     let mut select = Query::select();
     select.expr(Expr::col((Page, Asterisk)));
+    project_whole_streams(&mut select);
     entity_streams(&mut select, branch, of);
     select.join_lateral(
         JoinType::Join,

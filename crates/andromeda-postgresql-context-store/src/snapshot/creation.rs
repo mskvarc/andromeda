@@ -3,8 +3,14 @@
 
 use crate::{
     error::violates_unique_constraint,
-    json_text::optional_json_text,
-    snapshot::{branch_schema::create_branch_schema, branch_version::current_version, persistence_error, status_code::stored_status},
+    snapshot::{
+        branch_schema::create_branch_schema,
+        branch_version::current_version,
+        json_value::document_text,
+        persistence_error,
+        status_code::stored_status,
+        unencodable_snapshot_error::UnencodableSnapshotError,
+    },
     store_fault::undecodable,
 };
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
@@ -103,13 +109,16 @@ pub(crate) async fn create_snapshot(pool: &PgPool, params: InsertSnapshotParams<
     let control_sql = control_insert_sql()?;
     let snapshot_key_raw: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(control_sql.as_str()))
         .bind(params.id.as_str())
-        .bind(optional_json_text(params.snapshot_queries).map_err(|error| persistence_error(error))?)
-        .bind(optional_json_text(params.snapshot_temporal_queries).map_err(|error| persistence_error(error))?)
-        .bind(serde_json::to_string(&params.query_context).map_err(|error| persistence_error(error))?)
+        .bind(document_text(params.snapshot_queries, UnencodableSnapshotError::SnapshotQueries)?)
+        .bind(document_text(
+            params.snapshot_temporal_queries,
+            UnencodableSnapshotError::SnapshotTemporalQueries,
+        )?)
+        .bind(document_text(Some(&params.query_context), UnencodableSnapshotError::QueryContext)?)
         .bind(params.snapshot_lifetime.map(ToString::to_string))
         .bind(params.snapshot_priority)
         .bind(params.endpoint.map(Url::as_str))
-        .bind(optional_json_text(params.receiver_info).map_err(|error| persistence_error(error))?)
+        .bind(document_text(params.receiver_info, UnencodableSnapshotError::ReceiverInfo)?)
         .bind(params.clone_source_id.map(Identifier::as_str))
         .bind(params.created_at)
         .bind(params.expires_at)
@@ -123,8 +132,11 @@ pub(crate) async fn create_snapshot(pool: &PgPool, params: InsertSnapshotParams<
         .bind(stored_status(params.status).code())
         .bind(params.modified_at)
         .bind(params.last_used_at)
-        .bind(optional_json_text(params.queries_details).map_err(|error| persistence_error(error))?)
-        .bind(optional_json_text(params.temporal_queries_details).map_err(|error| persistence_error(error))?)
+        .bind(document_text(params.queries_details, UnencodableSnapshotError::QueriesDetails)?)
+        .bind(document_text(
+            params.temporal_queries_details,
+            UnencodableSnapshotError::TemporalQueriesDetails,
+        )?)
         .bind(branch_version.get())
         .execute(&mut *tx)
         .await

@@ -1,8 +1,15 @@
 //! Durable delivery queue for Snapshot lifecycle notifications.
 
 use crate::{
+    error::ContextStoreError,
     json_text::JsonText,
-    snapshot::{json_value::optional_json, mapper::row_to_snapshot, persistence_error, record::snapshot_select},
+    snapshot::{
+        json_value::optional_json,
+        mapper::row_to_snapshot,
+        persistence_error,
+        record::snapshot_select,
+        unencodable_snapshot_error::UnencodableSnapshotError,
+    },
     store_fault::undecodable,
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
@@ -237,7 +244,8 @@ pub(crate) async fn enqueue_terminal_notification(transaction: &mut Transaction<
         return Ok(());
     }
     let snapshot_key: i64 = row.try_get("snapshot_key").map_err(|error| persistence_error(error))?;
-    let payload = serde_json::to_string(&snapshot.build_notification())?;
+    let payload = serde_json::to_string(&snapshot.build_notification())
+        .map_err(|error| persistence_error(ContextStoreError::from(UnencodableSnapshotError::Notification(error))))?;
     let insert = outbox_insert(snapshot_key, endpoint, snapshot.receiver_info.as_deref(), payload)?;
     let (sql, values) = insert.build_sqlx(PostgresQueryBuilder);
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
@@ -264,7 +272,7 @@ fn outbox_insert(snapshot_key: i64, endpoint: &Url, receiver_info: Option<&[KeyV
             Expr::val(Uuid::new_v4()),
             Expr::val(snapshot_key),
             Expr::val(endpoint.as_str()),
-            optional_json(receiver_info)?,
+            optional_json(receiver_info, UnencodableSnapshotError::ReceiverInfo)?,
             cast(Expr::val(payload), PostgresType::Json),
         ])
         .map_err(|error| persistence_error(error))?;

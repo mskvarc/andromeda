@@ -6,12 +6,41 @@
 //! through [`sqlx::raw_sql`], which never prepares. Connections are short-lived
 //! by design: the admin console is not a pooled workload.
 
-use sqlx::{Connection, PgConnection, Row, postgres::PgRow};
+use sqlx::{Column, Connection, PgConnection, Row, TypeInfo, postgres::PgRow};
+use std::num::ParseIntError;
 
 /// A client for one `PgBouncer` admin console.
 pub struct PoolerConsole {
     /// The `postgres://.../pgbouncer` admin endpoint.
     admin_url: String,
+}
+
+/// Why a console read failed.
+#[derive(Debug, thiserror::Error)]
+pub enum PoolerConsoleError {
+    /// The console could not be reached, the statement failed, or a column is
+    /// missing or does not decode as the type it declares.
+    #[error("the pooler admin console read failed: {0}")]
+    Console(#[from] sqlx::Error),
+    /// A count column is declared with a type that holds no integer.
+    #[error("the pooler console column {column} is declared {declared}, which holds no integer")]
+    NotAnIntegerColumn {
+        /// The column read.
+        column: &'static str,
+        /// The type the console declared for it.
+        declared: String,
+    },
+    /// A count column sent as text does not hold an integer.
+    #[error("the pooler console column {column} holds {text:?}, which is not an integer: {source}")]
+    NotAnInteger {
+        /// The column read.
+        column: &'static str,
+        /// The text the console sent.
+        text: String,
+        /// Why the text does not parse.
+        #[source]
+        source: ParseIntError,
+    },
 }
 
 /// One row of `SHOW POOLS`: a per-(database, user) view of client and server
@@ -127,24 +156,26 @@ impl PoolerConsole {
     ///
     /// # Errors
     ///
-    /// Returns the [`sqlx::Error`] from connecting or reading.
-    pub async fn show_pools(&self) -> Result<Vec<PoolRow>, sqlx::Error> {
+    /// Returns [`PoolerConsoleError`] when connecting or reading fails, or when
+    /// a column of a row is missing or unreadable.
+    pub async fn show_pools(&self) -> Result<Vec<PoolRow>, PoolerConsoleError> {
         let mut connection = self.connect().await?;
         let rows = sqlx::raw_sql("SHOW POOLS").fetch_all(&mut connection).await;
         let _ = connection.close().await;
-        Ok(rows?.iter().map(pool_row).collect())
+        rows?.iter().map(pool_row).collect()
     }
 
     /// Read `SHOW CLIENTS`, one [`ClientRow`] per client connection.
     ///
     /// # Errors
     ///
-    /// Returns the [`sqlx::Error`] from connecting or reading.
-    pub async fn show_clients(&self) -> Result<Vec<ClientRow>, sqlx::Error> {
+    /// Returns [`PoolerConsoleError`] when connecting or reading fails, or when
+    /// a column of a row is missing or unreadable.
+    pub async fn show_clients(&self) -> Result<Vec<ClientRow>, PoolerConsoleError> {
         let mut connection = self.connect().await?;
         let rows = sqlx::raw_sql("SHOW CLIENTS").fetch_all(&mut connection).await;
         let _ = connection.close().await;
-        Ok(rows?.iter().map(client_row).collect())
+        Ok(rows?.iter().map(client_row).collect::<Result<_, sqlx::Error>>()?)
     }
 
     /// The total server connections `PgBouncer` holds against `PostgreSQL` across
@@ -152,8 +183,8 @@ impl PoolerConsole {
     ///
     /// # Errors
     ///
-    /// Returns the [`sqlx::Error`] from reading the pools.
-    pub async fn total_server_connections(&self) -> Result<i64, sqlx::Error> {
+    /// Returns [`PoolerConsoleError`] from reading the pools.
+    pub async fn total_server_connections(&self) -> Result<i64, PoolerConsoleError> {
         Ok(self
             .show_pools()
             .await?
@@ -164,40 +195,64 @@ impl PoolerConsole {
     }
 }
 
-/// Decode one `SHOW POOLS` row, defaulting any column `PgBouncer`'s build does not
-/// send in the expected shape rather than failing the whole read.
-fn pool_row(row: &PgRow) -> PoolRow {
-    PoolRow {
-        database: row.try_get::<String, _>("database").unwrap_or_default(),
-        sv_active: integer_column(row, "sv_active"),
-        sv_idle: integer_column(row, "sv_idle"),
-        sv_used: integer_column(row, "sv_used"),
-        cl_active: integer_column(row, "cl_active"),
-        cl_waiting: integer_column(row, "cl_waiting"),
+/// Decode one `SHOW POOLS` row.
+fn pool_row(row: &PgRow) -> Result<PoolRow, PoolerConsoleError> {
+    Ok(PoolRow {
+        database: row.try_get("database")?,
+        sv_active: integer_column(row, "sv_active")?,
+        sv_idle: integer_column(row, "sv_idle")?,
+        sv_used: integer_column(row, "sv_used")?,
+        cl_active: integer_column(row, "cl_active")?,
+        cl_waiting: integer_column(row, "cl_waiting")?,
+    })
+}
+
+/// Decode one `SHOW CLIENTS` row.
+fn client_row(row: &PgRow) -> Result<ClientRow, sqlx::Error> {
+    Ok(ClientRow {
+        database: row.try_get("database")?,
+        application_name: row.try_get("application_name")?,
+        state: row.try_get("state")?,
+    })
+}
+
+/// Read one count column as the type the console declares for it.
+///
+/// `PgBouncer` releases differ in declaring a count `int8`, `int4` or text, so
+/// the declared type picks the decoding; a column of any other type, or text
+/// that holds no integer, fails the read rather than counting as zero.
+fn integer_column(row: &PgRow, column: &'static str) -> Result<i64, PoolerConsoleError> {
+    match row.try_column(column)?.type_info().name() {
+        "INT8" => Ok(row.try_get::<i64, _>(column)?),
+        "INT4" => Ok(i64::from(row.try_get::<i32, _>(column)?)),
+        "INT2" => Ok(i64::from(row.try_get::<i16, _>(column)?)),
+        "TEXT" | "VARCHAR" | "NAME" => console_integer(column, row.try_get(column)?),
+        declared => Err(PoolerConsoleError::NotAnIntegerColumn {
+            column,
+            declared: declared.to_owned(),
+        }),
     }
 }
 
-/// Decode one `SHOW CLIENTS` row, defaulting any column `PgBouncer`'s build does
-/// not send as text rather than failing the whole read.
-fn client_row(row: &PgRow) -> ClientRow {
-    ClientRow {
-        database: row.try_get::<String, _>("database").unwrap_or_default(),
-        application_name: row.try_get::<String, _>("application_name").unwrap_or_default(),
-        state: row.try_get::<String, _>("state").unwrap_or_default(),
-    }
+/// The integer a count column sent as text holds.
+fn console_integer(column: &'static str, text: String) -> Result<i64, PoolerConsoleError> {
+    text.trim().parse().map_err(|source| PoolerConsoleError::NotAnInteger { column, text, source })
 }
 
-/// Read one integer column, tolerating whether `PgBouncer` sent it as `int8`,
-/// `int4`, or text.
-fn integer_column(row: &PgRow, column: &str) -> i64 {
-    if let Ok(value) = row.try_get::<i64, _>(column) {
-        return value;
+#[cfg(test)]
+mod tests {
+    use crate::pooler_probe::pooler_console::{PoolerConsoleError, console_integer};
+
+    #[test]
+    fn a_count_sent_as_text_reads_as_its_integer() {
+        assert!(matches!(console_integer("sv_idle", " 12 ".to_owned()), Ok(12)));
     }
-    if let Ok(value) = row.try_get::<i32, _>(column) {
-        return i64::from(value);
+
+    #[test]
+    fn a_count_sent_as_text_that_holds_no_integer_fails_the_read() {
+        assert!(matches!(
+            console_integer("sv_idle", "many".to_owned()),
+            Err(PoolerConsoleError::NotAnInteger { column: "sv_idle", .. })
+        ));
     }
-    row.try_get::<String, _>(column)
-        .ok()
-        .and_then(|text| text.trim().parse::<i64>().ok())
-        .unwrap_or(0)
 }

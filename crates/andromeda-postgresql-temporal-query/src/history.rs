@@ -14,7 +14,7 @@ use crate::{
     aggregation::build_aggregation_query,
     alias::{Ah, An},
     axis::axis_column,
-    stream_page::{Walk, last_n_history, walked_history},
+    stream_page::{Walk, last_n_history, project_whole_streams, walked_history},
 };
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat};
 use andromeda_ngsi_ld_query::{
@@ -183,6 +183,7 @@ fn whole_history(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemp
     let axis = axis_column(compiled.window.timeproperty);
     let mut select = Query::select();
     project_base_columns(&mut select);
+    project_whole_streams(&mut select);
     base_history_source(&mut select, branch, of);
     select.cond_where(condition);
     select
@@ -490,7 +491,7 @@ mod tests {
             "{sql}"
         );
         assert!(!sql.contains("OVER"), "{sql}");
-        assert!(!sql.contains("stream_continues"), "a complete answer reports no cut: {sql}");
+        assert!(sql.contains(r#"FALSE AS "stream_continues""#), "a complete answer reports no cut: {sql}");
     }
 
     /// Clause 6.3.10 forwards: the page is read through the axis index from

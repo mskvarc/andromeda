@@ -15,6 +15,7 @@ use crate::{
         persistence_error,
         status_code::stored_status,
         status_outbox::enqueue_terminal_notification,
+        unencodable_snapshot_error::UnencodableSnapshotError,
     },
     store_fault::undecodable,
 };
@@ -181,7 +182,10 @@ pub(crate) async fn update_snapshot_metadata(
             statement.value(Snapshots::ReceiverInfo, SimpleExpr::Keyword(Keyword::Null));
         }
         MetadataChange::Set(receiver_info) => {
-            statement.value(Snapshots::ReceiverInfo, optional_json(Some(receiver_info.as_slice()))?);
+            statement.value(
+                Snapshots::ReceiverInfo,
+                optional_json(Some(receiver_info.as_slice()), UnencodableSnapshotError::ReceiverInfo)?,
+            );
         }
     }
     statement.and_where(Expr::col(Snapshots::Id).eq(id.as_str()));
@@ -242,8 +246,14 @@ pub(crate) async fn update_status(
     let statement = Query::update()
         .table(SnapshotPreparation::Table)
         .value(SnapshotPreparation::Status, stored_status(status).code())
-        .value(SnapshotPreparation::QueriesDetails, optional_json(queries_details)?)
-        .value(SnapshotPreparation::TemporalQueriesDetails, optional_json(temporal_queries_details)?)
+        .value(
+            SnapshotPreparation::QueriesDetails,
+            optional_json(queries_details, UnencodableSnapshotError::QueriesDetails)?,
+        )
+        .value(
+            SnapshotPreparation::TemporalQueriesDetails,
+            optional_json(temporal_queries_details, UnencodableSnapshotError::TemporalQueriesDetails)?,
+        )
         .value(SnapshotPreparation::ModifiedAt, now())
         .value(SnapshotPreparation::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
         .value(SnapshotPreparation::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))

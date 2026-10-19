@@ -167,15 +167,16 @@ fn decode_attribute_kind(row: &PgRow) -> Result<AttributeKind, TemporalStoreErro
 
 /// Read whether the page the row was read in cut its stream.
 ///
-/// Only a page the remainder of which a client pages through projects
-/// `stream_continues`, true when the stream holds instances beyond the page;
-/// a row of any other read holds its whole stream.
+/// Every history statement projects `stream_continues`: true when the stream
+/// holds instances beyond the page, false on a read that pages no stream, and
+/// `NULL` for a stream that fills no page. A column that is missing or does not
+/// decode fails the read: answering it as a whole stream would answer a cut
+/// page as complete.
 pub(crate) fn decode_stream_extent(row: &PgRow) -> Result<StreamExtent, TemporalStoreError> {
-    match row.try_get::<Option<bool>, _>("stream_continues") {
-        Ok(Some(true)) => Ok(StreamExtent::Cut),
-        Ok(Some(false) | None) | Err(sqlx::Error::ColumnNotFound(_)) => Ok(StreamExtent::Whole),
-        Err(error) => Err(error.into()),
-    }
+    Ok(match row.try_get::<Option<bool>, _>("stream_continues")? {
+        Some(true) => StreamExtent::Cut,
+        Some(false) | None => StreamExtent::Whole,
+    })
 }
 
 /// Read the row's expanded attribute IRI.

@@ -31,7 +31,8 @@ async fn write_records_present(pool: &PgPool, write_ids: &[Uuid]) -> i64 {
         .fetch_one(pool)
         .await
         .expect("idempotency record count")
-        .get("records")
+        .try_get("records")
+        .expect("the records column decodes")
 }
 
 /// Read the instant one idempotency record persists.
@@ -41,7 +42,8 @@ async fn recorded_instant(pool: &PgPool, write_id: Uuid) -> DateTime<Utc> {
         .fetch_one(pool)
         .await
         .expect("the idempotency record of a committed write")
-        .get("recorded_at")
+        .try_get("recorded_at")
+        .expect("the recorded_at column decodes")
 }
 
 /// A replayed write reuses its persisted instant, so the hypertable's
