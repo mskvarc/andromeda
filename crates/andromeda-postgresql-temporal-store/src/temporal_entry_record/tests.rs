@@ -173,6 +173,29 @@ fn a_tombstone_entry_holds_its_family_and_deletion_instant() {
     assert!(entry.value_uri.is_none() && entry.observed_at.is_none() && entry.created_at.is_none());
 }
 
+/// Clause 4.5.7: a deletion a written Temporal Evolution states is an instance
+/// the write adds, so it waits as an observation holding no value, its
+/// `deletedAt` and the `observedAt` it declared, with the `instanceId` the
+/// client gave it; an untyped intent holding it still observes the Entity.
+#[test]
+fn a_written_deletion_waits_as_an_observation_holding_its_deletion_and_observed_at() {
+    let mut intent = intent(vec![observation(
+        TemporalValue::Tombstone { deleted_at: recorded_at() },
+        InstanceIdentity::from_identifier("urn:ngsi-ld:instance:deleted".parse().expect("a URI")),
+        None,
+    )]);
+    intent.entity_types = Vec::new();
+    let record = TemporalIntentRecord::of(&intent, &keys(&intent)).expect("the intent is storable");
+    assert!(record.reaches(TemporalIntentReach::UntypedObservation));
+    let entry = only_entry(&intent);
+    assert_eq!(entry.entry_kind, TemporalEntryKind::Observation.code());
+    assert_eq!(entry.value_kind, ValueKind::Tombstone.code());
+    assert_eq!(entry.deleted_at, Some(recorded_at()));
+    assert_eq!(entry.observed_at, Some(observed_at()));
+    assert_eq!(entry.verbatim_instance_id.as_deref(), Some("urn:ngsi-ld:instance:deleted"));
+    assert!(entry.value_number.is_none() && entry.value_string.is_none() && entry.value_object.is_none() && entry.value_uri.is_none());
+}
+
 /// Clause 4.18: a Scope is stored as its label path beside the Scope as
 /// written, and names no attribute stream.
 #[test]

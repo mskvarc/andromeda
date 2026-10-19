@@ -14,9 +14,12 @@ compact_code_registry! {
         frozen_prefix: 3,
         frozen_digest: 0xcd48_7b0f_6088_ecd4,
         codes: {
-            /// One attribute observation (clause 4.5.7).
+            /// One attribute instance a write adds to the Temporal
+            /// Evolution (clause 4.5.7): an observation, or a deletion a
+            /// written Temporal Evolution states.
             Observation = 1, "observation";
-            /// The end of one attribute instance (clauses 4.5.7 and 4.5.8).
+            /// The end of one attribute instance a write removed from the
+            /// current state (clauses 4.5.7 and 4.5.8).
             Tombstone = 2, "tombstone";
             /// One Scope event: a Scope set, or the end of the Scope
             /// (clause 4.18).

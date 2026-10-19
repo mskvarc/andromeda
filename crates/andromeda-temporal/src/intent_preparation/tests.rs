@@ -7,6 +7,7 @@ use crate::{
     scope_entry_kind::ScopeEntryKind,
     scope_observation::ScopeObservation,
     temporal_validation_reason::TemporalValidationReason,
+    write_purpose::TemporalWritePurpose,
 };
 use andromeda_context_commit::{
     history_record::{HistoryRecord, tombstone},
@@ -236,35 +237,109 @@ fn a_core_scope_removal_is_an_event() {
     );
 }
 
-/// An instance whose value is the NGSI-LD Null records a deletion, which the
-/// tombstone beside it carries; it is never decoded as an observation.
+/// Clauses 4.5.7 and 5.6.11.4: a deletion a written Temporal Evolution states
+/// is an instance of the evolution beside its observations, placed at its
+/// `observedAt` and keeping its `instanceId`. Clause 4.8 has the broker
+/// generate `deletedAt`, so it is the write's instant, whatever the client
+/// wrote.
 #[test]
-fn a_deletion_is_recorded_by_its_tombstone_alone() {
-    let attribute_name = "https://example.com/location".parse::<AttributeName>().expect("valid attribute name");
-    let dataset_id = "urn:ngsi-ld:Dataset:a".parse::<Identifier>().expect("valid dataset identifier");
-    let history = [
-        written(&json!([{
-            "@id": entity_id(),
-            "https://example.com/location": [{
-                "@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"],
+fn a_written_deletion_is_an_instance_of_the_evolution_at_its_observed_at() {
+    let entries = prepared(&[written(&json!([{
+        "@id": entity_id(),
+        "@type": [VEHICLE],
+        "https://example.com/speed": [
+            {
+                "@type": [PROPERTY],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}],
+                "https://uri.etsi.org/ngsi-ld/observedAt": [{"@value": "2024-01-01T00:00:00Z"}]
+            },
+            {
+                "@type": [PROPERTY],
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "urn:ngsi-ld:null"}],
-                "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": dataset_id}]
-            }]
-        }])),
-        tombstone(&attribute_name, Some(&dataset_id), AttributeType::GeoProperty),
-    ];
+                "https://uri.etsi.org/ngsi-ld/observedAt": [{"@value": "2024-01-02T00:00:00Z"}],
+                "https://uri.etsi.org/ngsi-ld/deletedAt": [{"@value": "2024-01-02T00:00:00Z"}],
+                "https://uri.etsi.org/ngsi-ld/instanceId": [{"@id": "urn:ngsi-ld:instance:deleted"}]
+            }
+        ]
+    }]))]);
 
-    let entries = prepared(&history);
+    let rows = rows(&entries);
+    pretty_assertions::assert_eq!(rows.len(), 2, "{entries:?}");
+    let deletion = rows[1];
+    pretty_assertions::assert_eq!(deletion.value, TemporalValue::Tombstone { deleted_at: recorded_at() });
+    pretty_assertions::assert_eq!(deletion.attribute_type, AttributeType::Property);
+    pretty_assertions::assert_eq!(
+        deletion.observed_at,
+        Some(Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).single().expect("valid instant"))
+    );
+    pretty_assertions::assert_eq!((deletion.created_at, deletion.modified_at), (None, None));
+    pretty_assertions::assert_eq!(deletion.metadata, None);
+    pretty_assertions::assert_eq!(
+        deletion.instance,
+        EvolutionInstance::Attribute(InstanceIdentity::Verbatim("urn:ngsi-ld:instance:deleted".parse().expect("valid URI")))
+    );
+}
 
-    pretty_assertions::assert_eq!(entries.len(), 1);
-    assert!(matches!(
-        &entries[0],
-        TemporalAppendEntry::Tombstone {
-            attribute_name: actual_attribute,
-            dataset_id: Some(actual_dataset),
-            ..
-        } if actual_attribute == &attribute_name && actual_dataset == &dataset_id
-    ));
+/// Clause 4.5.8 and clause 4.5.5: a written deletion keeps the family it
+/// deletes and the `datasetId` of the instance it names.
+#[test]
+fn a_written_deletion_keeps_its_family_and_dataset() {
+    let dataset_id = "urn:ngsi-ld:Dataset:a".parse::<Identifier>().expect("valid dataset identifier");
+    let entries = prepared(&[written(&json!([{
+        "@id": entity_id(),
+        "https://example.com/location": [{
+            "@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "urn:ngsi-ld:null"}],
+            "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": dataset_id}]
+        }]
+    }]))]);
+
+    let rows = rows(&entries);
+    pretty_assertions::assert_eq!(rows.len(), 1, "{entries:?}");
+    pretty_assertions::assert_eq!(rows[0].attribute_type, AttributeType::GeoProperty);
+    pretty_assertions::assert_eq!(rows[0].dataset_id.as_ref(), Some(&dataset_id));
+    pretty_assertions::assert_eq!(rows[0].observed_at, None);
+}
+
+/// Clause 5.6.11.4 creates the Temporal Evolution a client provides, so an
+/// evolution stating nothing but a deletion extends the evolution rather than
+/// recording nothing where none exists, which only the end of an instance a
+/// Core write deleted does.
+#[test]
+fn an_evolution_stating_only_a_deletion_is_an_observation() {
+    let history = [written(&json!([{
+        "@id": entity_id(),
+        "@type": [VEHICLE],
+        "https://example.com/speed": [{
+            "@type": [PROPERTY],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "urn:ngsi-ld:null"}],
+            "https://uri.etsi.org/ngsi-ld/deletedAt": [{"@value": "2024-01-02T00:00:00Z"}]
+        }]
+    }]))];
+    let intent = prepare(&entity_id(), &[], &history, record(recorded_at()), WriteOrdinal::at(0))
+        .expect("the history prepares")
+        .expect("the history produces an intent");
+    pretty_assertions::assert_eq!(intent.write_purpose(), TemporalWritePurpose::Observation);
+}
+
+/// The end of an instance a Core write deleted is recorded by its tombstone.
+#[test]
+fn a_core_deletion_is_recorded_by_its_tombstone() {
+    let attribute_name = "https://example.com/location".parse::<AttributeName>().expect("valid attribute name");
+    let entries = prepared(&[tombstone(&attribute_name, None, AttributeType::GeoProperty)]);
+
+    assert!(
+        matches!(
+            entries.as_slice(),
+            [TemporalAppendEntry::Tombstone {
+                attribute_name: actual,
+                dataset_id: None,
+                attribute_type: AttributeType::GeoProperty,
+                ..
+            }] if actual == &attribute_name
+        ),
+        "{entries:?}"
+    );
 }
 
 /// Clause 5.6.12: every instance a Temporal Evolution document adds is its own

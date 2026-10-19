@@ -1,18 +1,22 @@
 //! Reading one written attribute instance as the observation a temporal history
 //! row records.
 //!
-//! Every path that adds to a Temporal Evolution reads its instances here: the
-//! observations a Core write makes (clause 4.3.1), the instances a Temporal API
-//! write adds (clauses 5.6.11 and 5.6.12), and the replacement a clause 5.6.15
-//! instance modification carries. Each family keeps its value in one member
-//! (clause 4.5), and the value lands in the typed column its shape fits, or is
-//! kept structured when no column does; what the instance carries beside its
-//! value, identity and time axes is its metadata.
+//! Every path that adds to a Temporal Evolution reads its observations here:
+//! the observations a Core write makes (clause 4.3.1), the instances a Temporal
+//! API write adds (clauses 5.6.11 and 5.6.12), and the replacement a clause
+//! 5.6.15 instance modification carries. Each family keeps its value in one
+//! member (clause 4.5), and the value lands in the typed column its shape fits,
+//! or is kept structured when no column does; what the instance carries beside
+//! its value, identity and time axes is its metadata. A written instance
+//! holding its family's deletion encoding observes nothing: it ends an
+//! instance, which a Temporal API write records as a deletion beside its
+//! observations.
 
 use crate::error::TemporalError;
 use andromeda_context_commit::submission_refusal::SubmissionRefusal;
 use andromeda_json_literal::piece::{JsonKind, JsonPiece};
 use andromeda_ngsi_ld_entity::{
+    date_time_text::DateTimeText,
     document::{
         instance_document::{InstanceDocument, InstanceDocumentParts},
         slot::Slot,
@@ -103,15 +107,7 @@ impl ObservedInstance {
             (None, ValueSlot::Set(written)) => (written.carrier().implied_family(), written),
         };
         let value = family_value(family, written)?;
-        let observed_at = match observed_at {
-            Some(Slot::Set(text)) => Some(
-                text.as_str()
-                    .parse::<NgsiLdDateTime>()
-                    .map(NgsiLdDateTime::get)
-                    .map_err(|source| TemporalError::from(SubmissionRefusal::ObservedAt(source)))?,
-            ),
-            Some(Slot::Remove) | None => None,
-        };
+        let observed_at = declared_observed_at(observed_at.as_ref())?;
         let metadata = ObservationMetadata::admit(InstanceDocumentParts {
             family: None,
             dataset_id: None,
@@ -136,6 +132,24 @@ impl ObservedInstance {
             instance_id,
             metadata,
         }))
+    }
+}
+
+/// The instant the written `observedAt` declares, `None` when the instance
+/// declares none.
+///
+/// # Errors
+///
+/// Returns [`TemporalError::Validation`] when the `observedAt` is not a clause
+/// 4.6.3 `DateTime` in UTC.
+pub(crate) fn declared_observed_at(observed_at: Option<&Slot<DateTimeText>>) -> Result<Option<DateTime<Utc>>, TemporalError> {
+    match observed_at {
+        Some(Slot::Set(text)) => text
+            .as_str()
+            .parse::<NgsiLdDateTime>()
+            .map(|instant| Some(instant.get()))
+            .map_err(|source| SubmissionRefusal::ObservedAt(source).into()),
+        Some(Slot::Remove) | None => Ok(None),
     }
 }
 

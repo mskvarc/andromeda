@@ -3,24 +3,19 @@
 use crate::{
     append_intent::{TemporalAppendEntry, TemporalAppendIntent},
     error::TemporalError,
-    observed_instance::ObservedInstance,
+    observed_instance::{ObservedInstance, declared_observed_at},
     reified_scope::scope_observations,
     scope_entry_kind::ScopeEntryKind,
     scope_observation::ScopeObservation,
+    written_instance::{DeletedInstance, WrittenInstance},
 };
-use andromeda_context_commit::{history_record::HistoryRecord, submission_refusal::SubmissionRefusal, write_ordinal::WriteOrdinal, write_record::WriteRecord};
+use andromeda_context_commit::{history_record::HistoryRecord, write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_ngsi_ld_entity::{
     document::{EntityDocument, EntityDocumentParts, attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot},
     refusal::EntityRefusal,
 };
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    entity_type_name::EntityTypeName,
-    identifier::Identifier,
-    instance_identity::InstanceIdentity,
-    ngsi_ld_date_time::NgsiLdDateTime,
-};
-use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, evolution_instance::EvolutionInstance};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier, instance_identity::InstanceIdentity};
+use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::{DateTime, Utc};
 
@@ -117,8 +112,10 @@ fn append_document_entries(
             continue;
         }
         for instance in instances {
-            if let Some(observed) = ObservedInstance::read(instance)? {
-                entries.push(observation_entry(&attribute_name, observed, recorded_at));
+            match WrittenInstance::read(instance)? {
+                Some(WrittenInstance::Observation(observed)) => entries.push(observation_entry(&attribute_name, observed, recorded_at)),
+                Some(WrittenInstance::Deletion(deleted)) => entries.push(deletion_entry(&attribute_name, deleted, recorded_at)),
+                None => {}
             }
         }
     }
@@ -158,6 +155,40 @@ fn observation_entry(attribute_name: &AttributeName, observed: ObservedInstance,
     }
 }
 
+/// The entry one deletion a written Temporal Evolution states records.
+///
+/// The deletion is an instance the write adds to the evolution, so it is
+/// entered as one and the write that states it brings the evolution into
+/// being like any other (clause 5.6.11.4). Clause 4.8 has the broker generate
+/// `deletedAt`, so the deletion is recorded at the instant the write was
+/// accepted, and the `observedAt` the client declared places it on that axis.
+/// Like the end of an instance a Core write deleted, it carries no `createdAt`
+/// or `modifiedAt` and no metadata: clauses 4.5.7 and 4.5.8 render it as the
+/// Null member of its family beside `deletedAt`.
+fn deletion_entry(attribute_name: &AttributeName, deleted: DeletedInstance, recorded_at: DateTime<Utc>) -> TemporalAppendEntry {
+    let DeletedInstance {
+        attribute_type,
+        dataset_id,
+        observed_at,
+        instance_id,
+    } = deleted;
+    TemporalAppendEntry::Observation {
+        row: TemporalHistoryRow {
+            attribute_name: attribute_name.clone(), // clone: each entry owns its attribute name.
+            attribute_type,
+            dataset_id,
+            value: TemporalValue::Tombstone { deleted_at: recorded_at },
+            observed_at,
+            recorded_at,
+            created_at: None,
+            modified_at: None,
+            instance: EvolutionInstance::Attribute(instance_id.map_or_else(InstanceIdentity::generate, InstanceIdentity::from_identifier)),
+            metadata: None,
+            stream_extent: StreamExtent::Whole,
+        },
+    }
+}
+
 /// One scope entry.
 const fn scope_entry(observation: ScopeObservation, kind: ScopeEntryKind, observed_at: DateTime<Utc>) -> TemporalAppendEntry {
     TemporalAppendEntry::Scope {
@@ -175,14 +206,7 @@ const fn scope_entry(observation: ScopeObservation, kind: ScopeEntryKind, observ
 /// An instance carrying a member beyond the four Temporal Properties clause
 /// 4.5.6 gives a reified Scope is refused, as it is on the client's write.
 fn append_reified_scope(instance: &InstanceDocument, recorded_at: DateTime<Utc>, entries: &mut Vec<TemporalAppendEntry>) -> Result<(), TemporalError> {
-    let observed_at = match instance.observed_at() {
-        Some(Slot::Set(text)) => text
-            .as_str()
-            .parse::<NgsiLdDateTime>()
-            .map(NgsiLdDateTime::get)
-            .map_err(|source| TemporalError::from(SubmissionRefusal::ObservedAt(source)))?,
-        Some(Slot::Remove) | None => recorded_at,
-    };
+    let observed_at = declared_observed_at(instance.observed_at())?.unwrap_or(recorded_at);
     let observations = scope_observations(instance).map_err(|refusal| TemporalError::from(EntityRefusal::Scope(refusal)))?;
     entries.extend(
         observations

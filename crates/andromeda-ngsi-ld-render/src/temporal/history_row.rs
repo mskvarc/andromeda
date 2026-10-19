@@ -80,12 +80,14 @@ pub fn neutral_row_to_instance(row: TemporalHistoryRow, sys_attrs: SysAttrsInclu
     let (instance_id, dataset_id) = identity_members(&instance, dataset_id)?;
     let deleted_at = value.deleted_at();
     let value = rendered_value(value, attribute_type)?;
-    // A tombstone carries no observation of its own: its value member, its
-    // deletion instant and its identity are the whole rendering.
+    // A deletion carries no observation of its own: its value member, its
+    // deletion instant, the `observedAt` a written deletion declared and its
+    // identity are the whole rendering.
     if let Some(deleted_at) = deleted_at {
         return Ok(InstanceDocument::builder()
             .family(Some(attribute_type))
             .value(value)
+            .observed_at(observed_at.map(|instant| Slot::Set(DateTimeText::from_instant(instant))))
             .deleted_at(Some(DateTimeText::from_instant(deleted_at)))
             .instance_id(instance_id)
             .dataset_id(dataset_id)

@@ -77,6 +77,8 @@ mod write;
 pub mod write_purpose;
 /// The Temporal Evolution a client writes, from its compact form to the documents its write records.
 mod written_evolution;
+/// What one instance a written Temporal Evolution states records: an observation or a deletion.
+mod written_instance;
 
 #[cfg(test)]
 mod deferred_history_tests;

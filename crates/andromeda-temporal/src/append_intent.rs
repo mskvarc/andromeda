@@ -71,7 +71,9 @@ pub struct TemporalObservationIdentity {
 /// write shares the write's ingestion instant, which the intent holds once.
 #[derive(Clone, Debug, PartialEq)]
 pub enum TemporalAppendEntry {
-    /// One neutral NGSI-LD attribute observation.
+    /// One instance the write adds to the evolution: an attribute
+    /// observation, or a deletion a written Temporal Evolution states (clauses
+    /// 4.5.7 and 4.5.8), which extends the evolution like an observation.
     Observation {
         /// Fully interpreted neutral history row.
         row: TemporalHistoryRow,

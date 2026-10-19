@@ -91,6 +91,39 @@ fn a_tombstone_renders_the_synthesised_null_uri_and_its_deletion_instant() {
     );
 }
 
+/// Clause 4.5.7: a deletion a written Temporal Evolution stated renders the
+/// `observedAt` it declared beside its `deletedAt`, and no system time.
+#[test]
+fn a_written_deletion_renders_its_observed_at() {
+    let observed_at = instant(1_700_000_000);
+    let rendered = rendered(
+        row(TemporalValue::Tombstone {
+            deleted_at: instant(1_700_000_300),
+        }),
+        SysAttrsInclusion::Include,
+    );
+    pretty_assertions::assert_eq!(
+        member(&rendered, expanded_properties::OBSERVED_AT.as_str()),
+        Some(&json!([{"@value": sub_second(observed_at), "@type": DATE_TIME}]))
+    );
+    pretty_assertions::assert_eq!(member(&rendered, expanded_properties::CREATED_AT.as_str()), None);
+    pretty_assertions::assert_eq!(member(&rendered, expanded_properties::MODIFIED_AT.as_str()), None);
+}
+
+/// The end of an instance a Core write deleted declares no `observedAt`, and
+/// renders none.
+#[test]
+fn a_deletion_declaring_no_observed_at_renders_none() {
+    let mut row = row(TemporalValue::Tombstone {
+        deleted_at: instant(1_700_000_300),
+    });
+    row.observed_at = None;
+    pretty_assertions::assert_eq!(
+        member(&rendered(row, SysAttrsInclusion::Strip), expanded_properties::OBSERVED_AT.as_str()),
+        None
+    );
+}
+
 /// Clause 5.2.21 admits only the four Temporal Properties, so the operational
 /// write clock is absent from every rendering and a live observation carries no
 /// `deletedAt` at all.
