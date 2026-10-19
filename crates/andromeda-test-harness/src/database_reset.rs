@@ -243,6 +243,7 @@ mod tests {
             "temporal_entities",
             "temporal_entity_type_members",
             "temporal_attribute_streams",
+            "temporal_stream_shapes",
             "attribute_history",
             "attribute_history_instance_claims",
             "subscriptions",

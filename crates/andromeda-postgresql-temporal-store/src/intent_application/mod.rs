@@ -6,8 +6,9 @@
 //! queue for the drain, the commit's own intents bound as one array for a
 //! commit that records natively. The statements write the write records, the
 //! Temporal Evolutions and streams, the instance replacements and claims, the
-//! history rows and the stream extents covering their geometries, and the
-//! Scope rows; nothing is read back into the broker. The drain
+//! history rows, the stream extents covering their geometries and the stream
+//! shapes their values carry, and the Scope rows; nothing is read back into
+//! the broker beyond the rows a replacement removes. The drain
 //! runs the sequence in the transaction that also removes the intents, so a
 //! reader sees each entry queued or recorded, never both.
 
@@ -15,8 +16,8 @@
 mod catalog_statements;
 /// The Temporal Evolutions an application writes, and their type memberships.
 mod evolution_upsert;
-/// The history and Scope rows, the stream extents and the instance claims an
-/// application records.
+/// The history and Scope rows, the stream extents and shapes and the instance
+/// claims an application records.
 mod history_statements;
 /// The intents an application reads, and their entries.
 pub mod intent_source;
@@ -37,11 +38,13 @@ use crate::{
             released_claims_statement,
             replaced_instances_statement,
             scope_history_statement,
+            stream_shapes_statement,
         },
         intent_source::{EntryReads, IntentSource, rendered},
         replaced_rows::remove_replaced,
     },
     stored_catalog_error::StoredCatalogError,
+    stream_shape_pruning::prune_stream_shapes,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -61,7 +64,7 @@ enum StepRole {
     /// Run it and refuse a duplicate `instanceId` claim as the client's own.
     Claim,
     /// Read the attribute history rows the entries replace, then remove
-    /// exactly those rows.
+    /// exactly those rows and prune their streams' shapes.
     Replace,
 }
 
@@ -96,8 +99,8 @@ impl Step {
 /// the history that references them, the refusal of an untyped observation
 /// after the evolutions the source itself creates, the streams of the intents
 /// stating no type after that refusal, the instance replacements before the
-/// claims and rows that take their place, the stream extents after the
-/// history rows whose geometries they grow to cover.
+/// claims and rows that take their place, the stream extents and shapes after
+/// the history rows whose geometries and values they cover.
 fn application_steps(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<Vec<Step>, TemporalStoreError> {
     let build = TemporalStoreError::StatementBuild;
     let (nothing, identities, everything) = (EntryReads::Nothing, EntryReads::Identities, EntryReads::Everything);
@@ -150,6 +153,12 @@ fn application_steps(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Res
             Some(TemporalIntentReach::AttributeEntry),
             everything,
             &extent_growth_statement(source, schema),
+        ),
+        Step::of(
+            StepRole::Write,
+            Some(TemporalIntentReach::AttributeEntry),
+            everything,
+            &stream_shapes_statement(source, schema).map_err(build)?,
         ),
         Step::of(
             StepRole::Write,
@@ -222,7 +231,8 @@ async fn run(
         }
         StepRole::Replace => {
             let rows = query.fetch_all(&mut *connection).await?;
-            remove_replaced(connection, schema, &rows).await?;
+            let streams = remove_replaced(&mut *connection, schema, &rows).await?;
+            prune_stream_shapes(connection, schema, &streams).await?;
         }
         StepRole::RefuseUntyped => {
             if let Some(row) = query.fetch_optional(&mut *connection).await? {

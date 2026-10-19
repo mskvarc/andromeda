@@ -16,7 +16,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow};
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow, split_filter::LeafTruths, temporal::compiled::CompiledTemporalQuery};
-use andromeda_postgresql_codes::attribute_kind_code::attribute_type_of;
+use andromeda_postgresql_codes::{attribute_kind_code::attribute_type_of, recorded_shape::RecordedShape};
 use andromeda_postgresql_query::{
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     history_source::HistoryBranch,
@@ -26,7 +26,6 @@ use andromeda_postgresql_query::{
 use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
 use andromeda_postgresql_temporal_query::{
     history::build_temporal_history_query,
-    recorded_shape::RecordedShape,
     scope_history::{build_scope_history_query, scope_is_selected},
     stage1::build_stage1_entity_ids,
 };

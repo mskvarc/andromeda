@@ -48,6 +48,8 @@ pub mod entity_rows;
 pub mod entry_values;
 /// The grain columns every source projects.
 pub mod grain;
+/// The queued entries that replace a recorded instance.
+pub mod instance_replacement;
 /// The queued entries the application would write, as source rows.
 mod pending;
 /// The rows of scope history.

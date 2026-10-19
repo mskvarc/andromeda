@@ -9,11 +9,13 @@ use crate::{
         attribute_stream_keys_sql,
         delete_instance_sql,
         grow_stream_extent_sql,
+        record_instance_shape_sql,
         release_verbatim_instance_claim_sql,
         select_instance_sql,
         update_instance_sql,
     },
     repo::TemporalRepository,
+    stream_shape_pruning::{lock_stream_evolutions, prune_stream_shapes},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{
@@ -30,6 +32,7 @@ use andromeda_postgresql_attribute_instance::{
     stored_json::StoredJson,
     sub_attribute::SubAttributeRecord,
 };
+use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_codes::{attribute_kind_code::stored_attribute_kind, stored_unit_code::stored_unit_code};
 use andromeda_postgresql_encoding::{ewkb::EwkbError, ewkb_binding::geometry_bytes};
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
@@ -68,7 +71,9 @@ impl TemporalRepository {
         attribute_name: &AttributeName,
     ) -> Result<(), TemporalStoreError> {
         let mut tx = self.pool.begin().await?;
+        let schema = schema_iden(target);
         let stream_keys = attribute_stream_keys(&mut tx, target, entity_id, attribute_name).await?;
+        lock_stream_evolutions(&mut tx, schema.as_ref(), &stream_keys).await?;
         let generated_sql = delete_instance_sql(InstanceColumn::Generated, target);
         let verbatim_sql = delete_instance_sql(InstanceColumn::Verbatim, target);
         let statement = match instance {
@@ -92,6 +97,7 @@ impl TemporalRepository {
                 .execute(&mut *tx)
                 .await?;
         }
+        prune_stream_shapes(&mut tx, schema.as_ref(), &stream_keys).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -129,7 +135,9 @@ impl TemporalRepository {
             .map(SubAttributeRecord::try_from)
             .collect::<Result<Vec<_>, EwkbError>>()?;
         let object_type_keys: Vec<i32> = object_type_keys.into_iter().map(EntityTypeNameKey::get).collect();
+        let schema = schema_iden(target);
         let stream_keys = attribute_stream_keys(&mut tx, target, entity_id, attribute_name).await?;
+        lock_stream_evolutions(&mut tx, schema.as_ref(), &stream_keys).await?;
         let generated_sql = update_instance_sql(InstanceColumn::Generated, target);
         let verbatim_sql = update_instance_sql(InstanceColumn::Verbatim, target);
         let statement = match instance {
@@ -168,6 +176,14 @@ impl TemporalRepository {
                 .execute(&mut *tx)
                 .await?;
         }
+        prune_stream_shapes(&mut tx, schema.as_ref(), &modified).await?;
+        let generated_shape_sql = record_instance_shape_sql(InstanceColumn::Generated, target).map_err(TemporalStoreError::StatementBuild)?;
+        let verbatim_shape_sql = record_instance_shape_sql(InstanceColumn::Verbatim, target).map_err(TemporalStoreError::StatementBuild)?;
+        let shape = match instance {
+            InstanceIdentity::Generated(uuid) => sqlx::query(AssertSqlSafe(generated_shape_sql)).bind(uuid),
+            InstanceIdentity::Verbatim(identifier) => sqlx::query(AssertSqlSafe(verbatim_shape_sql)).bind(identifier.as_str()),
+        };
+        shape.bind(&modified).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
     }

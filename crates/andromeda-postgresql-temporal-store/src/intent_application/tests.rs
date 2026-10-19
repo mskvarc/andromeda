@@ -362,6 +362,7 @@ fn a_commit_to_a_snapshot_branch_records_in_its_schema() {
     for table in [
         "temporal_entities",
         "temporal_attribute_streams",
+        "temporal_stream_shapes",
         "attribute_history",
         "attribute_history_instance_claims",
         "scope_history",
@@ -515,6 +516,27 @@ fn missing_evolutions_and_streams_are_created_before_the_history() {
     assert!(position(r#"INSERT INTO "write_records""#) < history);
     assert!(role_position(StepRole::Replace) < history, "the replaced instance goes first");
     assert!(position(r#"INSERT INTO "attribute_history_instance_claims""#) < history);
+}
+
+/// Clause 5.7.4.4 decides eligibility from every family and shape a stream
+/// holds, so the application adds the combination of each recorded instance,
+/// as the aggregation projection refines it, once the history rows exist; a
+/// tombstone carries no value and adds none, and a combination the stream
+/// holds writes nothing.
+#[test]
+fn the_shapes_of_the_recorded_instances_are_added_to_their_streams() {
+    let shapes = writing("temporal_stream_shapes");
+    assert!(position(r#"INSERT INTO "attribute_history""#) < position(r#"INSERT INTO "temporal_stream_shapes""#));
+    assert!(
+        shapes.starts_with(r#"INSERT INTO "temporal_stream_shapes" ("stream_key", "attribute_name_key", "attribute_kind", "recorded_shape") SELECT DISTINCT "ah"."stream_key", "ah"."attribute_name_key", "ah"."attribute_kind", (CASE"#),
+        "{shapes}"
+    );
+    assert!(shapes.contains(r#""s"."stream_key", "s"."attribute_name_key""#), "{shapes}");
+    assert!(shapes.contains(r#"WHERE "ah"."value_kind" <> 0"#), "{shapes}");
+    assert!(
+        shapes.ends_with(r#"ON CONFLICT ("stream_key", "attribute_kind", "recorded_shape") DO NOTHING"#),
+        "{shapes}"
+    );
 }
 
 /// A source may hold several intents of one Entity, and a conflict action

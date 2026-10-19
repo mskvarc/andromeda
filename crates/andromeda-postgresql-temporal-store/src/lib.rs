@@ -90,6 +90,10 @@ pub mod stored_catalog_error;
 pub mod stored_history_error;
 /// Splitting one stored instance identity across its two history columns.
 pub mod stored_instance_columns;
+/// Removing the families and value shapes a stream no longer holds.
+pub(crate) mod stream_shape_pruning;
+/// Reading the families and value shapes each attribute has been recorded with.
+pub(crate) mod stream_shape_read;
 /// Reading the temporal catalogue.
 pub mod temporal_catalog_read;
 /// Temporal Evolution deletion and the orphan audit that checks it.

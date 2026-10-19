@@ -19,7 +19,8 @@
 //! transaction: lock the entities, resolve the streams, read the write
 //! identities of the rows in the window, delete them, optionally remove the
 //! now-empty streams (only for an unbounded `deleteAll`, the clause 5.6.13
-//! equivalent), and release the idempotency records the removed writes held.
+//! equivalent), prune the shapes no instance left in a stream carries, and
+//! release the idempotency records the removed writes held.
 //! A window that cuts through a compressed batch has that batch decompressed,
 //! in proportion to what the request removes, so the transaction lifts the
 //! decompression limit for itself.
@@ -30,6 +31,7 @@ use crate::{
     history_removal::stream_key_array,
     repo::TemporalRepository,
     stored_catalog_error::StoredCatalogError,
+    stream_shape_pruning::prune_stream_shapes,
     write_record_release::release_named,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -155,6 +157,7 @@ impl TemporalRepository {
             let (cleanup_sql, cleanup_values) = empty_stream_cleanup_statement(schema.as_ref(), &stream_keys).build_sqlx(PostgresQueryBuilder);
             sqlx::query_with(AssertSqlSafe(cleanup_sql), cleanup_values).execute(&mut *tx).await?;
         }
+        prune_stream_shapes(&mut tx, schema.as_ref(), &stream_keys).await?;
 
         release_named(&mut tx, &write_ids).await?;
         tx.commit().await?;

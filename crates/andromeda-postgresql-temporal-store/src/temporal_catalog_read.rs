@@ -7,35 +7,31 @@
 //! 5.6.6 leaves the Temporal Evolution standing when the entity is deleted, so
 //! an answer taken from `entities` would report history that exists as absent.
 //!
-//! The questions a read asks (existence, types, recorded shapes) read the
-//! history sources, so on the live branch they count the entries still queued;
-//! a mutation drains the Entity's queued entries before it asks its own.
+//! The questions a read asks (existence, types) read the history sources, so
+//! on the live branch they count the entries still queued; a mutation drains
+//! the Entity's queued entries before it asks its own.
 
-use crate::{error::TemporalStoreError, repo::TemporalRepository, stored_attribute_shape::StoredAttributeShape, stored_catalog_error::StoredCatalogError};
+use crate::{error::TemporalStoreError, repo::TemporalRepository, stored_catalog_error::StoredCatalogError};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_postgresql_branch::schema_iden;
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
 use andromeda_postgresql_query::{
     dictionary::names_in_key_order::type_names_of,
-    history_source::{HistoryBranch, attribute_rows::anonymous_attribute_rows, entity_rows::entity_rows, grain::HistoryGrain},
+    history_source::{HistoryBranch, entity_rows::entity_rows},
 };
 use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,
-    temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
+    temporal::{TemporalAttributeStreams, TemporalEntities},
 };
 use andromeda_postgresql_seaquery::{
     branch::qualified,
     pg_array::{any, text_array},
 };
-use andromeda_postgresql_temporal_query::{
-    alias::{Ah, An, S, Te},
-    recorded_shape::{RecordedShape, RecordedShapeColumn, recorded_shape},
-};
-use sea_query::{Alias, DynIden, Expr, ExprTrait, Iden, JoinType, PostgresQueryBuilder, Query, SelectStatement};
+use andromeda_postgresql_temporal_query::alias::{An, S, Te};
+use sea_query::{Alias, DynIden, Expr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{AssertSqlSafe, Row};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 impl TemporalRepository {
     /// Whether the entity has a Temporal Evolution at all.
@@ -84,48 +80,6 @@ impl TemporalRepository {
             types_by_entity.insert(entity_id, types);
         }
         Ok(types_by_entity)
-    }
-
-    /// The family-and-value-shape combinations each named attribute has been
-    /// recorded with across the whole history, tombstones excepted (they carry
-    /// no value).
-    ///
-    /// The family travels with the shape because Table 4.5.19.1-3 is keyed on
-    /// it alone: a Relationship and a `ListRelationship` have `distinctCount`
-    /// and `totalCount` and nothing else, whichever column their targets were
-    /// parked in. The shape itself is refined past the stored `value_kind`
-    /// code, because Tables 4.5.19.1-1 and 4.5.19.1-2 give a JSON Array methods
-    /// a JSON Object does not have and a `Time` an `avg` a `Date` does not
-    /// have, while one JSONB column holds both of the first pair and one text
-    /// column both of the second.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TemporalStoreError::Database`] when the statement fails and
-    /// [`TemporalStoreError::StoredCatalog`] when a stored name, family code or
-    /// projected shape code is not one the dictionary or the projection knows.
-    pub(crate) async fn stored_attribute_shapes(
-        &self,
-        branch: &HistoryBranch,
-        attributes: &[AttributeName],
-    ) -> Result<HashMap<AttributeName, HashSet<StoredAttributeShape>>, TemporalStoreError> {
-        if attributes.is_empty() {
-            return Ok(HashMap::new());
-        }
-        let names: Vec<&str> = attributes.iter().map(AttributeName::as_str).collect();
-        let (sql, values) = stored_attribute_shapes_query(branch, &names).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
-        let mut shapes_by_attribute: HashMap<AttributeName, HashSet<StoredAttributeShape>> = HashMap::new();
-        for row in rows {
-            let raw_name: String = row.try_get("name")?;
-            let name = raw_name.parse::<AttributeName>().map_err(StoredCatalogError::AttributeName)?;
-            let stored_kind: i16 = row.try_get(Iden::to_string(&AttributeHistory::AttributeKind).as_str())?;
-            let kind = AttributeKind::try_from(stored_kind).map_err(StoredCatalogError::AttributeKind)?;
-            let code: i16 = row.try_get(Iden::to_string(&RecordedShapeColumn).as_str())?;
-            let shape = RecordedShape::try_from(code).map_err(StoredCatalogError::RecordedShape)?;
-            shapes_by_attribute.entry(name).or_default().insert(StoredAttributeShape { kind, shape });
-        }
-        Ok(shapes_by_attribute)
     }
 
     /// Whether the entity records any stream for the named attribute.
@@ -212,35 +166,6 @@ pub(crate) fn stream_catalog_join(statement: &mut SelectStatement, schema: Optio
         );
 }
 
-/// The distinct `(name, recorded shape)` pairs recorded for the named
-/// attributes, tombstone rows excluded.
-///
-/// The shape is the refined one Tables 4.5.19.1-1 and 4.5.19.1-2 distinguish,
-/// not the stored `value_kind`: an array and an object share one JSONB column
-/// and admit different methods, and so do a `Time`, a `Date` and a plain string
-/// in the text column. The family is projected beside it because Table
-/// 4.5.19.1-3 is keyed on the family alone. Tombstone rows are excluded, which
-/// is also what makes the projection total — a deletion carries no value and so
-/// no shape. No Entity is named, so the rows are read without their
-/// Evolution's identifier.
-fn stored_attribute_shapes_query(branch: &HistoryBranch, names: &[&str]) -> SelectStatement {
-    Query::select()
-        .distinct()
-        .column((An, AttributeNames::Name))
-        .column((Ah, AttributeHistory::AttributeKind))
-        .expr_as(recorded_shape(), RecordedShapeColumn)
-        .from(anonymous_attribute_rows(branch, Ah))
-        .join_as(
-            JoinType::Join,
-            AttributeNames::Table,
-            An,
-            Expr::col((An, AttributeNames::AttributeNameKey)).equals((Ah, HistoryGrain::AttributeNameKey)),
-        )
-        .and_where(Expr::col((An, AttributeNames::Name)).eq(any(text_array(names))))
-        .and_where(Expr::col((Ah, AttributeHistory::ValueKind)).ne(ValueKind::Tombstone.code()))
-        .to_owned()
-}
-
 /// Whether the entity has a Temporal Evolution at all.
 fn temporal_entity_exists_query(branch: &HistoryBranch, entity_id: &str) -> SelectStatement {
     let mut inner = Query::select();
@@ -304,13 +229,12 @@ mod tests {
     use crate::temporal_catalog_read::{
         attribute_dataset_ids_query,
         attribute_stream_exists_query,
-        stored_attribute_shapes_query,
         temporal_attribute_names_query,
         temporal_entity_exists_query,
         temporal_entity_types_query,
     };
     use andromeda_postgresql_query::history_source::HistoryBranch;
-    use sea_query::{Alias, IntoIden, PostgresQueryBuilder};
+    use sea_query::PostgresQueryBuilder;
 
     #[test]
     fn no_catalogue_question_is_answered_from_current_state() {
@@ -322,32 +246,6 @@ mod tests {
         ] {
             assert!(!statement.contains("\"entities\""), "{statement}");
             assert!(!statement.contains("temporal_entity_attributes"), "{statement}");
-        }
-    }
-
-    /// Clause 5.7.4.4 refuses an aggregation over an ineligible attribute from
-    /// the shapes it has been recorded with, which on the live branch include
-    /// those of its queued entries.
-    #[test]
-    fn recorded_shapes_include_pending_entries() {
-        let sql = stored_attribute_shapes_query(&HistoryBranch::live(), &["https://ex/speed"]).to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#"UNION ALL (SELECT "pe"."entity_id" AS "entity_id""#), "{sql}");
-        assert!(sql.contains(r#""ah"."value_kind" <> 0"#), "{sql}");
-    }
-
-    /// Over no queue the shapes are read from the history and its streams
-    /// alone: the shape read names no Entity, so no catalogue row of an
-    /// Evolution is joined.
-    #[test]
-    fn recorded_shapes_over_no_queue_read_no_evolution_row() {
-        for branch in [HistoryBranch::live_recorded(), HistoryBranch::recorded_in(Alias::new("snap_1").into_iden())] {
-            let sql = stored_attribute_shapes_query(&branch, &["https://ex/speed"]).to_string(PostgresQueryBuilder);
-            assert!(!sql.contains("temporal_entities"), "{sql}");
-            assert!(
-                sql.contains(r#"JOIN "attribute_names" AS "an" ON "an"."attribute_name_key" = "ah"."attribute_name_key""#),
-                "{sql}"
-            );
-            assert!(sql.contains(r#""ah"."value_kind" <> 0"#), "{sql}");
         }
     }
 

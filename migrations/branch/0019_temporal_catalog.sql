@@ -7,7 +7,8 @@
 -- the Entity a Temporal Evolution belongs to, and `temporal_attribute_streams`
 -- names the grain history is recorded at, one row per temporal entity,
 -- attribute name and `datasetId` (clause 4.5.5), beside the extent of the
--- geometries each stream recorded.
+-- geometries each stream recorded; `temporal_stream_shapes` names the families
+-- and value shapes each stream holds.
 --
 -- Neither table references `entities`. Core Entity deletion (clause 5.6.6)
 -- leaves temporal state standing, so a cascade from current state would delete
@@ -119,4 +120,49 @@ create index idx_temporal_attribute_streams_attribute_name_key_id on temporal_at
 create index idx_temporal_attribute_streams_value_extent on temporal_attribute_streams using gist (value_extent)
 where
     value_extent is not null;
+
+-- Every combination of attribute family and value shape the instances of a
+-- stream hold, tombstones excepted (a deletion carries no value). Clause
+-- 5.7.4.4 refuses an aggregation over an attribute that is not eligible for a
+-- requested method, and Tables 4.5.19.1-1 to 4.5.19.1-3 decide eligibility
+-- from both: the family selects the table, the shape its column. Read here, the
+-- decision touches no history row, however long the history is.
+--
+-- The shape is finer than `attribute_history.value_kind`: an object and an
+-- array share one JSONB column, and a string, a `Date` and a `Time` one text
+-- column, while the tables give each a different set of methods.
+--
+-- The write path adds a row when it records an instance of a combination the
+-- stream does not hold yet; in the steady state the insert finds the row and
+-- writes nothing. A path that removes or modifies instances removes the rows of
+-- the combinations no instance of the stream holds any longer, holding the
+-- Temporal Evolution's row lock that every recording write takes first, so a
+-- concurrent write of the same combination either finds the row or adds it
+-- again. Removing the stream removes its rows.
+--
+-- `attribute_name_key` is the stream's own, copied when the row is written; it
+-- never changes, and the stream's reference to `attribute_names` covers it.
+--
+-- Codes:
+--
+--   attribute_kind: 1 Property, 2 Relationship, 3 GeoProperty,
+--     4 VocabProperty, 5 LanguageProperty, 6 JsonProperty, 7 ListProperty,
+--     8 ListRelationship
+--   recorded_shape: 1 number, 2 string, 3 boolean, 4 geometry, 5 object,
+--     6 array, 7 date-time, 8 date, 9 time, 10 uri
+create table temporal_stream_shapes (
+    stream_key bigint not null,
+    attribute_name_key integer not null,
+    attribute_kind smallint not null,
+    recorded_shape smallint not null,
+    constraint pk_temporal_stream_shapes primary key (stream_key, attribute_kind, recorded_shape),
+    constraint fk_temporal_stream_shapes_stream foreign key (stream_key) references temporal_attribute_streams (stream_key) on delete cascade,
+    constraint chk_temporal_stream_shapes_attribute_kind check (attribute_kind between 1 and 8),
+    constraint chk_temporal_stream_shapes_recorded_shape check (recorded_shape between 1 and 10)
+);
+
+-- Eligibility walks the range of an attribute from one combination to the
+-- next, one descent each, however many streams hold a combination; the stream
+-- key closes the key so the walk never visits the heap.
+create index idx_temporal_stream_shapes_attribute_name_shape on temporal_stream_shapes (attribute_name_key, attribute_kind, recorded_shape, stream_key);
 

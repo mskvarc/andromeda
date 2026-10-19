@@ -30,12 +30,7 @@
 //! aggregate over the few entries the queue holds for the Entity.
 
 use crate::{
-    history_source::{
-        HistoryBranch,
-        HistoryOf,
-        attribute_rows::{kept_beside_pending, pending_attribute_rows},
-        grain::HistoryGrain,
-    },
+    history_source::{HistoryBranch, HistoryOf, attribute_rows::pending_attribute_rows, grain::HistoryGrain, instance_replacement::kept_beside_pending},
     q_predicate::history_window::HistoryAliases,
 };
 use andromeda_postgresql_schema::temporal::AttributeHistory;

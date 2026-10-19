@@ -22,11 +22,13 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::ngsi_ld_time::NgsiLdTime;
 use andromeda_ngsi_ld_model::temporal::{AggregationAverage, AggregationMinMax, TemporalAggregationRow};
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, attribute_kind_code::attribute_type_of, registry::UnknownCompactCode};
-use andromeda_postgresql_temporal_query::{
-    aggregation_group::{AggregationGroupSpan, CodeSpan, ObservedUnits},
+use andromeda_postgresql_codes::{
+    attribute_kind::AttributeKind,
+    attribute_kind_code::attribute_type_of,
     recorded_shape::RecordedShape,
+    registry::UnknownCompactCode,
 };
+use andromeda_postgresql_temporal_query::aggregation_group::{AggregationGroupSpan, CodeSpan, ObservedUnits};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, NaiveTime, Utc};
 use sqlx::{Decode, Postgres, Row, Type, postgres::PgRow};
@@ -292,7 +294,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_model::temporal::AggregationMinMax;
     use andromeda_ngsi_ld_number::JsonNumber;
-    use andromeda_postgresql_temporal_query::recorded_shape::RecordedShape;
+    use andromeda_postgresql_codes::recorded_shape::RecordedShape;
     use bigdecimal::BigDecimal;
     use std::str::FromStr;
 

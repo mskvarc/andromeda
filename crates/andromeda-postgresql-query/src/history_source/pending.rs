@@ -37,6 +37,7 @@ use crate::{
         HistoryStream,
         entry_values::{attribute_entry_values, scope_entry_values},
         grain::HistoryGrain,
+        instance_replacement::{ReplacingEntry, naming_instance},
     },
     scope_assertion::{EVENT_COLUMNS, held_in_force, path_set},
     type_list_union::{TypeListColumn, type_list_union},
@@ -61,11 +62,6 @@ use sea_query::{Condition, DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, Q
 #[derive(Iden, Clone, Copy)]
 #[iden = "pe"]
 struct PendingEntry;
-
-/// Alias `pr`: a queued entry that replaces another row.
-#[derive(Iden, Clone, Copy)]
-#[iden = "pr"]
-struct ReplacingEntry;
 
 /// Alias `pt`: a queued intent stating types.
 #[derive(Iden, Clone, Copy)]
@@ -114,12 +110,12 @@ fn entry(column: impl IntoIden) -> SimpleExpr {
 }
 
 /// Whether the entry under `pe` is one of `kinds`.
-fn entry_kind_in(alias: impl IntoIden, kinds: &[TemporalEntryKind]) -> SimpleExpr {
+pub(crate) fn entry_kind_in(alias: impl IntoIden, kinds: &[TemporalEntryKind]) -> SimpleExpr {
     Expr::col((alias.into_iden(), TemporalEntry::EntryKind)).is_in(kinds.iter().map(|kind| SimpleExpr::Constant(kind.code().into())))
 }
 
 /// The two attribute entry kinds.
-const ATTRIBUTE_KINDS: [TemporalEntryKind; 2] = [TemporalEntryKind::Observation, TemporalEntryKind::Tombstone];
+pub(crate) const ATTRIBUTE_KINDS: [TemporalEntryKind; 2] = [TemporalEntryKind::Observation, TemporalEntryKind::Tombstone];
 
 /// The two Scope entry kinds: an event, and an assertion of the Scope in force.
 const SCOPE_KINDS: [TemporalEntryKind; 2] = [TemporalEntryKind::Scope, TemporalEntryKind::ScopeAssertion];
@@ -156,28 +152,6 @@ fn applied(schema: Option<&DynIden>) -> Condition {
                 .add(Expr::col((TypedIntent, TemporalAppendIntents::IntentKey)).lte(entry(TemporalAppendEntries::IntentKey))),
         );
     Condition::any().add(Expr::exists(recorded)).add(Expr::exists(typed))
-}
-
-/// The queued entries naming the client `instanceId` `verbatim` of the
-/// attribute `attribute_key` of the Entity `entity_id`.
-fn naming_instance(entity_id: SimpleExpr, attribute_key: SimpleExpr, verbatim: SimpleExpr) -> SelectStatement {
-    let mut naming = Query::select();
-    naming
-        .expr(int_literal(1))
-        .from_as(TemporalAppendEntries::Table, ReplacingEntry)
-        .and_where(Expr::col((ReplacingEntry, TemporalAppendEntries::EntityId)).eq(entity_id))
-        .and_where(Expr::col((ReplacingEntry, TemporalEntry::AttributeNameKey)).eq(attribute_key))
-        .and_where(Expr::col((ReplacingEntry, TemporalEntry::VerbatimInstanceId)).eq(verbatim))
-        .and_where(entry_kind_in(ReplacingEntry, &ATTRIBUTE_KINDS));
-    naming
-}
-
-/// Whether a recorded attribute row stays beside the queued entries: it
-/// carries no client `instanceId`, or no queued entry names its instance.
-pub(crate) fn recorded_attribute_row_kept(entity_id: SimpleExpr, attribute_key: SimpleExpr, verbatim: SimpleExpr) -> Condition {
-    // clone: the identifier is tested for absence and then compared.
-    let naming = naming_instance(entity_id, attribute_key, verbatim.clone());
-    Condition::any().add(verbatim.is_null()).add(Expr::exists(naming).not())
 }
 
 /// Whether `history` holds a row under the write identity of the entry under

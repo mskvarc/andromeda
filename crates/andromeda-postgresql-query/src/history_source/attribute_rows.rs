@@ -15,12 +15,13 @@ use crate::history_source::{
     PendingEntries,
     entry_values::attribute_value_columns,
     grain::HistoryGrain,
+    instance_replacement::kept_beside_pending,
     pending,
 };
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_postgresql_schema::temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities};
 use andromeda_postgresql_seaquery::{branch::qualified, pg_operator::PgBinaryOperator};
-use sea_query::{Condition, DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, Query, SelectStatement, SimpleExpr, TableRef, UnionType};
+use sea_query::{DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, Query, SelectStatement, SimpleExpr, TableRef, UnionType};
 
 /// Alias `rh`: a recorded history row.
 #[derive(Iden, Clone, Copy)]
@@ -330,17 +331,6 @@ pub fn stream_attribute_parts(branch: &HistoryBranch, stream: &HistoryStream, ax
 pub fn pending_attribute_rows(branch: &HistoryBranch, of: &HistoryOf, alias: impl IntoIden) -> Option<TableRef> {
     match branch.pending() {
         PendingEntries::Unioned => Some(TableRef::SubQuery(Box::new(pending::attribute_rows(branch.schema(), of)), alias.into_iden())),
-        PendingEntries::Absent => None,
-    }
-}
-
-/// Whether a recorded row of the attribute `attribute_key` of the Entity
-/// `entity_id` carrying the client `instanceId` `verbatim` stays beside the
-/// queued entries, or `None` when `pending` reads none.
-#[must_use]
-pub fn kept_beside_pending(pending: PendingEntries, entity_id: SimpleExpr, attribute_key: SimpleExpr, verbatim: SimpleExpr) -> Option<Condition> {
-    match pending {
-        PendingEntries::Unioned => Some(pending::recorded_attribute_row_kept(entity_id, attribute_key, verbatim)),
         PendingEntries::Absent => None,
     }
 }

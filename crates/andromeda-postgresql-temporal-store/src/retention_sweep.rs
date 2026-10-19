@@ -7,12 +7,13 @@
 //! afterwards finds nothing is answering about storage the operator chose not
 //! to keep. Retention is therefore off unless an operator turns it on.
 //!
-//! The sweep has four parts, in order: attribute history chunks older than the
-//! horizon are dropped, the Scope events no instance retained after the
-//! horizon is read under are deleted, the catalogue rows whose history left
-//! with them are garbage-collected, and the idempotency records that are fully
-//! behind the horizon and protect nothing are released. Each statement runs in
-//! a transaction of its own with no statement timeout: it removes however much
+//! The sweep has five parts, in order: attribute history chunks older than the
+//! horizon are dropped, the stream shapes no retained instance carries are
+//! pruned, the Scope events no instance retained after the horizon is read
+//! under are deleted, the catalogue rows whose history left with them are
+//! garbage-collected, and the idempotency records that are fully behind the
+//! horizon and protect nothing are released. Each statement runs in a
+//! transaction of its own with no statement timeout: it removes however much
 //! has aged out, and no request waits on it.
 //!
 //! Scope history is not dropped by age. Clause 4.18 keeps a Scope valid "from
@@ -136,6 +137,9 @@ pub struct TemporalRetentionSweep {
     pub scope_events: u64,
     /// Streams garbage-collected because no history row names them.
     pub streams: u64,
+    /// Combinations of family and value shape pruned from streams that keep
+    /// no instance carrying them, which clause 5.7.4.4 no longer judges.
+    pub stream_shapes: u64,
     /// Temporal entities garbage-collected because nothing hangs off them.
     pub temporal_entities: u64,
     /// Idempotency records released behind the horizon.
@@ -158,6 +162,13 @@ impl TemporalRepository {
         let cutoff = horizon.cutoff(now).map_err(TemporalStoreError::RetentionHorizon)?;
         let attribute_history_chunks = self.drop_chunks("attribute_history", cutoff).await?;
         let streams = self.delete(&collect_empty_streams()).await?;
+        // A sweep that dropped no chunk removed no instance, so every
+        // combination a stream holds is still carried by one.
+        let stream_shapes = if attribute_history_chunks == 0 {
+            0
+        } else {
+            self.prune_retained_stream_shapes().await?
+        };
         let scope_events = self.delete(&superseded_scope_events(cutoff)).await? + self.delete(&streamless_scope_events(cutoff)).await?;
         let temporal_entities = self.delete(&collect_empty_temporal_entities()).await?;
         let released_write_records = release_behind_horizon(&self.pool, cutoff).await?;
@@ -166,6 +177,7 @@ impl TemporalRepository {
             attribute_history_chunks,
             scope_events,
             streams,
+            stream_shapes,
             temporal_entities,
             released_write_records,
         }))

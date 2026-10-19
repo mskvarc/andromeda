@@ -1,5 +1,5 @@
-//! The history rows, stream extents, Scope rows and instance claims an
-//! application records from the entries of its source.
+//! The history rows, stream extents and shapes, Scope rows and instance claims
+//! an application records from the entries of its source.
 //!
 //! Each statement joins the entries to their Entity's Temporal Evolution, so an
 //! entry of an Entity without one records nothing; the catalogue statements
@@ -9,11 +9,11 @@ use crate::intent_application::{
     intent_source::{E, I, IntentSource, S, Te, entry, entry_kind_in, intent, source_entries, write_ordinal},
     scope_judgement::recorded_scope_entry,
 };
-use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
+use andromeda_postgresql_codes::{temporal_entry_kind::TemporalEntryKind, value_kind::ValueKind};
 use andromeda_postgresql_query::history_source::entry_values::{attribute_entry_values, recorded_geometry, scope_entry_values};
 use andromeda_postgresql_schema::{
     queue::TemporalAppendIntents,
-    temporal::{AttributeHistory, AttributeHistoryInstanceClaims, ScopeHistory, TemporalAttributeStreams, TemporalEntities},
+    temporal::{AttributeHistory, AttributeHistoryInstanceClaims, ScopeHistory, TemporalAttributeStreams, TemporalEntities, TemporalStreamShapes},
     temporal_intent::TemporalEntry,
 };
 use andromeda_postgresql_seaquery::{
@@ -21,6 +21,7 @@ use andromeda_postgresql_seaquery::{
     pg_operator::PgBinaryOperator,
     postgis::{bounding_box_contains, st_collect, st_collect_rows, st_envelope},
 };
+use andromeda_postgresql_temporal_query::{alias::Ah, recorded_shape::recorded_shape};
 use sea_query::{
     Condition,
     DeleteStatement,
@@ -217,6 +218,54 @@ pub(crate) fn extent_growth_statement(source: &IntentSource<'_>, schema: Option<
         .and_where(Expr::col((TemporalAttributeStreams::Table, TemporalAttributeStreams::StreamKey)).equals((Grown, TemporalAttributeStreams::StreamKey)))
         .cond_where(Condition::any().add(extent().is_null()).add(bounding_box_contains(extent(), box_of()).not()))
         .to_owned()
+}
+
+/// Add to the shapes of every stream an attribute entry of the source records
+/// an instance on the combination of family and value shape that instance
+/// carries.
+///
+/// The shape is projected from the values the history insert writes, through
+/// the projection an aggregation reads, so the catalogue names exactly the
+/// shapes the stream's rows carry. A combination the stream already holds
+/// conflicts and writes nothing, which is the steady state of a stream. A
+/// tombstone carries no value and adds no shape.
+pub(crate) fn stream_shapes_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
+    let mut entries = entries_with_stream(source, schema);
+    entries
+        .column((S, TemporalAttributeStreams::StreamKey))
+        .column((S, TemporalAttributeStreams::AttributeNameKey));
+    for (column, value) in attribute_entry_values(entry) {
+        entries.expr_as(value, column);
+    }
+    let mut select = Query::select();
+    select
+        .distinct()
+        .column((Ah, TemporalAttributeStreams::StreamKey))
+        .column((Ah, TemporalAttributeStreams::AttributeNameKey))
+        .column((Ah, AttributeHistory::AttributeKind))
+        .expr(recorded_shape())
+        .from_subquery(entries, Ah)
+        .and_where(Expr::col((Ah, AttributeHistory::ValueKind)).ne(ValueKind::Tombstone.code()));
+    let mut statement = Query::insert();
+    statement
+        .into_table(qualified(schema, TemporalStreamShapes::Table))
+        .columns([
+            TemporalStreamShapes::StreamKey,
+            TemporalStreamShapes::AttributeNameKey,
+            TemporalStreamShapes::AttributeKind,
+            TemporalStreamShapes::RecordedShape,
+        ])
+        .select_from(select)?
+        .on_conflict(
+            OnConflict::columns([
+                TemporalStreamShapes::StreamKey,
+                TemporalStreamShapes::AttributeKind,
+                TemporalStreamShapes::RecordedShape,
+            ])
+            .do_nothing()
+            .to_owned(),
+        );
+    Ok(statement)
 }
 
 /// The Scope entries of Entities with a Temporal Evolution, events and

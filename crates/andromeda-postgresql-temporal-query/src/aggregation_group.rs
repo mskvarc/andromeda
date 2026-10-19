@@ -13,9 +13,8 @@
 //! how many instances there were is the same question whatever the instances
 //! carried, so counting is answered over any span at all.
 
-use crate::recorded_shape::RecordedShape;
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName};
-use andromeda_postgresql_codes::attribute_kind::AttributeKind;
+use andromeda_postgresql_codes::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
 use cefact_units::UnitCode;
 use thiserror::Error;
 
@@ -134,7 +133,7 @@ pub enum MixedAggregationGroup {
         second: AttributeKind,
     },
     /// One aggregation group's rows recorded their values in two different shapes.
-    #[error("attribute '{attribute_name}' aggregates over {first} and {second} values, which have no common ordering or scale")]
+    #[error("attribute '{attribute_name}' aggregates over {} and {} values, which have no common ordering or scale", .first.label(), .second.label())]
     ConflictingValueShapes {
         /// Expanded name of the aggregated attribute.
         attribute_name: AttributeName,
@@ -231,21 +230,18 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        aggregation_group::{
-            AggregationGroupSpan,
-            CodeSpan,
-            MixedAggregationGroup,
-            MixingSensitivity,
-            ObservedUnits,
-            PromotedGroupFacets,
-            ensure_uniform_aggregation_groups,
-            mixing_sensitivity,
-        },
-        recorded_shape::RecordedShape,
+    use crate::aggregation_group::{
+        AggregationGroupSpan,
+        CodeSpan,
+        MixedAggregationGroup,
+        MixingSensitivity,
+        ObservedUnits,
+        PromotedGroupFacets,
+        ensure_uniform_aggregation_groups,
+        mixing_sensitivity,
     };
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName};
-    use andromeda_postgresql_codes::attribute_kind::AttributeKind;
+    use andromeda_postgresql_codes::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
     use cefact_units::UnitCode;
 
     const WEIGHT: &str = "https://uri.etsi.org/ngsi-ld/default-context/weight";

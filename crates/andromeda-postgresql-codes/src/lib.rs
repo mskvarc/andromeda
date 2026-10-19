@@ -67,6 +67,8 @@ pub mod maintenance_inspection_result;
 pub mod maintenance_target;
 /// The persisted trigger conditions a subscription listens for.
 pub mod notification_trigger;
+/// The persisted refined value shape of one attribute-history instance.
+pub mod recorded_shape;
 /// The one pattern every migration-owned compact code domain is declared with.
 pub mod registry;
 /// The persisted value shape of one scope-history row.

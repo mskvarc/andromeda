@@ -46,8 +46,7 @@ pub enum CompactCodeDomain {
     MaintenanceTargetCode,
     /// [`NotificationTriggerCode`](crate::notification_trigger::NotificationTriggerCode).
     NotificationTriggerCode,
-    /// The value shape a temporal aggregation projects for each row, decoded
-    /// by the temporal query adapter.
+    /// [`RecordedShape`](crate::recorded_shape::RecordedShape).
     RecordedShape,
     /// [`ScopeValueKind`](crate::scope_value_kind::ScopeValueKind).
     ScopeValueKind,

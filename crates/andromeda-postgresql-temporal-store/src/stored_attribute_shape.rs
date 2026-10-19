@@ -8,8 +8,7 @@
 //! Relationship", `ListRelationship` with them. Reading a shape without the
 //! family it was written under answers out of the wrong table.
 
-use andromeda_postgresql_codes::attribute_kind::AttributeKind;
-use andromeda_postgresql_temporal_query::recorded_shape::RecordedShape;
+use andromeda_postgresql_codes::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
 
 /// One combination of stored attribute family and refined value shape.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

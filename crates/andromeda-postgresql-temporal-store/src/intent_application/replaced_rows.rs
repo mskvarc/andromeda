@@ -119,7 +119,8 @@ fn identity_columns() -> [UnnestColumn; 3] {
     ]
 }
 
-/// Remove the rows the identity read `rows` returned from attribute history.
+/// Remove the rows the identity read `rows` returned from attribute history,
+/// returning the streams they were removed from, each once.
 ///
 /// A replaced row's batch is decompressed whole, so the transaction lifts the
 /// decompression limit before the delete: the bound values already confine it
@@ -129,20 +130,28 @@ fn identity_columns() -> [UnnestColumn; 3] {
 ///
 /// Returns [`TemporalStoreError::Database`] when a row does not decode or a
 /// statement fails.
-pub(crate) async fn remove_replaced(connection: &mut PgConnection, schema: Option<&DynIden>, rows: &[PgRow]) -> Result<(), TemporalStoreError> {
+pub(crate) async fn remove_replaced(connection: &mut PgConnection, schema: Option<&DynIden>, rows: &[PgRow]) -> Result<Vec<i64>, TemporalStoreError> {
     let replaced = rows.iter().map(ReplacedRow::of).collect::<Result<Vec<ReplacedRow>, sqlx::Error>>()?;
     if replaced.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     allow_confined_decompression(connection).await?;
     let (sql, values) = delete_statement(schema, &replaced);
     sqlx::query_with(AssertSqlSafe(sql), values).execute(connection).await?;
-    Ok(())
+    Ok(replaced_streams(&replaced))
+}
+
+/// The streams `rows` sit on, each once, in ascending order.
+fn replaced_streams(rows: &[ReplacedRow]) -> Vec<i64> {
+    let mut streams: Vec<i64> = rows.iter().map(|row| row.stream_key).collect();
+    streams.sort_unstable();
+    streams.dedup();
+    streams
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::intent_application::replaced_rows::{ReplacedRow, delete_statement};
+    use crate::intent_application::replaced_rows::{ReplacedRow, delete_statement, replaced_streams};
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, DynIden, IntoIden};
@@ -179,6 +188,13 @@ mod tests {
         let bound = format!("{values:?}");
         assert!(bound.contains("2026-04-01") && bound.contains("2026-05-02"), "{bound}");
         assert_eq!(values.0.0.len(), 6, "{bound}");
+    }
+
+    #[test]
+    fn each_stream_a_replacement_removed_rows_from_is_named_once() {
+        let mut replaced = rows();
+        replaced.push(replaced[0]);
+        assert_eq!(replaced_streams(&replaced), vec![11, 12]);
     }
 
     #[test]

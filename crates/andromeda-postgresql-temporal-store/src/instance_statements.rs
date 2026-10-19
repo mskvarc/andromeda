@@ -16,9 +16,10 @@
 
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
+use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,
-    temporal::{AttributeHistory, AttributeHistoryInstanceClaims, TemporalAttributeStreams, TemporalEntities},
+    temporal::{AttributeHistory, AttributeHistoryInstanceClaims, TemporalAttributeStreams, TemporalEntities, TemporalStreamShapes},
 };
 use andromeda_postgresql_seaquery::{
     clock::now,
@@ -26,7 +27,22 @@ use andromeda_postgresql_seaquery::{
     placeholder::external_placeholder,
     postgis::{bounding_box_contains, st_collect, st_envelope, validated_geom_from_ewkb},
 };
-use sea_query::{CaseStatement, Condition, Expr, ExprTrait, Iden, JoinType, Keyword, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+use andromeda_postgresql_temporal_query::{alias::Ah, recorded_shape::recorded_shape};
+use sea_query::{
+    CaseStatement,
+    Condition,
+    Expr,
+    ExprTrait,
+    Iden,
+    JoinType,
+    Keyword,
+    OnConflict,
+    PostgresQueryBuilder,
+    Query,
+    SelectStatement,
+    SimpleExpr,
+    error::Error as SeaQueryError,
+};
 
 /// The `temporal_attribute_streams` alias in the stream-scope subquery.
 #[derive(Iden, Clone, Copy)]
@@ -42,11 +58,6 @@ struct Te;
 #[derive(Iden, Clone, Copy)]
 #[iden = "an"]
 struct An;
-
-/// The `attribute_history` alias the single-instance select reads under.
-#[derive(Iden, Clone, Copy)]
-#[iden = "ah"]
-struct Ah;
 
 /// Which stored column carries the addressed `instanceId`.
 ///
@@ -225,6 +236,53 @@ pub(crate) fn grow_stream_extent_sql(target: &ContextTarget) -> String {
         .to_string(PostgresQueryBuilder)
 }
 
+/// Add the combination of family and value shape the modified instance `$1`
+/// carries to the shapes of its stream, among the streams `$2` the
+/// modification returned; a combination the stream holds is left alone.
+///
+/// # Errors
+///
+/// Returns [`SeaQueryError`] if the projection ever stops matching the column
+/// list, which the fixed shape here makes unreachable.
+pub(crate) fn record_instance_shape_sql(column: InstanceColumn, target: &ContextTarget) -> Result<String, SeaQueryError> {
+    let modified = Query::select()
+        .distinct()
+        .column((Ah, AttributeHistory::StreamKey))
+        .column((S, TemporalAttributeStreams::AttributeNameKey))
+        .column((Ah, AttributeHistory::AttributeKind))
+        .expr(recorded_shape())
+        .from(table_of(target, AttributeHistory::Table).alias(Ah))
+        .join_as(
+            JoinType::InnerJoin,
+            table_of(target, TemporalAttributeStreams::Table),
+            S,
+            Expr::col((S, TemporalAttributeStreams::StreamKey)).equals((Ah, AttributeHistory::StreamKey)),
+        )
+        .and_where(Expr::col((Ah, column.column())).eq(external_placeholder(1)))
+        .and_where(Expr::col((Ah, AttributeHistory::StreamKey)).eq(any(external_placeholder(2))))
+        .and_where(Expr::col((Ah, AttributeHistory::ValueKind)).ne(ValueKind::Tombstone.code()))
+        .to_owned();
+    let mut statement = Query::insert();
+    statement
+        .into_table(table_of(target, TemporalStreamShapes::Table))
+        .columns([
+            TemporalStreamShapes::StreamKey,
+            TemporalStreamShapes::AttributeNameKey,
+            TemporalStreamShapes::AttributeKind,
+            TemporalStreamShapes::RecordedShape,
+        ])
+        .on_conflict(
+            OnConflict::columns([
+                TemporalStreamShapes::StreamKey,
+                TemporalStreamShapes::AttributeKind,
+                TemporalStreamShapes::RecordedShape,
+            ])
+            .do_nothing()
+            .to_owned(),
+        );
+    Ok(statement.select_from(modified)?.to_string(PostgresQueryBuilder))
+}
+
 /// The single-instance select used for policy validation.
 ///
 /// A read narrows the compressed batches through the join itself, so it keeps
@@ -255,6 +313,7 @@ mod tests {
         attribute_stream_keys_sql,
         delete_instance_sql,
         grow_stream_extent_sql,
+        record_instance_shape_sql,
         release_verbatim_instance_claim_sql,
         select_instance_sql,
         update_instance_sql,
@@ -278,6 +337,25 @@ mod tests {
         );
     }
 
+    /// Clause 5.6.14 replaces the instance whole, so the modified row may
+    /// carry a family and shape its stream did not hold: the combination is
+    /// read off the stored row among the streams the modification returned.
+    #[test]
+    fn a_modified_instance_adds_its_combination_to_its_stream() {
+        for column in [InstanceColumn::Generated, InstanceColumn::Verbatim] {
+            let statement = record_instance_shape_sql(column, &ContextTarget::Live).expect("the fixed statement builds");
+            assert!(
+                statement.starts_with(r#"INSERT INTO "temporal_stream_shapes" ("stream_key", "attribute_name_key", "attribute_kind", "recorded_shape") SELECT DISTINCT "ah"."stream_key", "s"."attribute_name_key", "ah"."attribute_kind", (CASE"#),
+                "{statement}"
+            );
+            assert!(statement.contains(r#""ah"."stream_key" = ANY($2) AND "ah"."value_kind" <> 0"#), "{statement}");
+            assert!(
+                statement.ends_with(r#"ON CONFLICT ("stream_key", "attribute_kind", "recorded_shape") DO NOTHING"#),
+                "{statement}"
+            );
+        }
+    }
+
     #[test]
     fn each_statement_addresses_exactly_one_instance_identity_column() {
         for column in [InstanceColumn::Generated, InstanceColumn::Verbatim] {
@@ -285,6 +363,7 @@ mod tests {
                 delete_instance_sql(column, &ContextTarget::Live),
                 update_instance_sql(column, &ContextTarget::Live),
                 select_instance_sql(column, &ContextTarget::Live),
+                record_instance_shape_sql(column, &ContextTarget::Live).expect("the fixed statement builds"),
             ] {
                 match column {
                     InstanceColumn::Generated => {

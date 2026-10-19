@@ -63,6 +63,7 @@ DECLARE
         'subscriptions',
         'attribute_history_instance_claims',
         'attribute_history',
+        'temporal_stream_shapes',
         'temporal_attribute_streams',
         'temporal_entity_type_members',
         'temporal_entities',

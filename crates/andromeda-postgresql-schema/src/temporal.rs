@@ -66,6 +66,24 @@ pub enum TemporalAttributeStreams {
     ValueExtent,
 }
 
+/// The `temporal_stream_shapes` table - every combination of attribute family
+/// and refined value shape the instances of one stream hold, which clause
+/// 5.7.4.4 decides aggregation eligibility from.
+#[derive(Iden, Clone, Copy)]
+pub enum TemporalStreamShapes {
+    /// Table name: `temporal_stream_shapes`
+    Table,
+    /// Foreign key to `temporal_attribute_streams`
+    StreamKey,
+    /// The stream's `attribute_names` key, copied from the stream so the shapes
+    /// of one attribute are read without the stream rows
+    AttributeNameKey,
+    /// The family code the instances were written as (clause 5.2.4)
+    AttributeKind,
+    /// The refined value shape code the instances' values were recorded in
+    RecordedShape,
+}
+
 /// The `attribute_history` hypertable - stores historical attribute instances.
 #[derive(Iden, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AttributeHistory {
@@ -170,7 +188,7 @@ pub enum ScopeHistory {
 
 #[cfg(test)]
 mod tests {
-    use crate::temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities, TemporalEntityTypeMembers};
+    use crate::temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities, TemporalEntityTypeMembers, TemporalStreamShapes};
     use sea_query::Iden;
 
     #[test]
@@ -195,6 +213,21 @@ mod tests {
         pretty_assertions::assert_eq!(TemporalAttributeStreams::TemporalEntityKey.to_string(), "temporal_entity_key");
         pretty_assertions::assert_eq!(TemporalAttributeStreams::AttributeNameKey.to_string(), "attribute_name_key");
         pretty_assertions::assert_eq!(TemporalAttributeStreams::DatasetId.to_string(), "dataset_id");
+    }
+
+    #[test]
+    fn temporal_stream_shape_names() {
+        pretty_assertions::assert_eq!(
+            [
+                TemporalStreamShapes::Table,
+                TemporalStreamShapes::StreamKey,
+                TemporalStreamShapes::AttributeNameKey,
+                TemporalStreamShapes::AttributeKind,
+                TemporalStreamShapes::RecordedShape,
+            ]
+            .map(|column| column.to_string()),
+            ["temporal_stream_shapes", "stream_key", "attribute_name_key", "attribute_kind", "recorded_shape"]
+        );
     }
 
     #[test]
