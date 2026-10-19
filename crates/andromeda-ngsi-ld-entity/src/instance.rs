@@ -133,8 +133,9 @@ impl Instance {
     /// Clause 5.8.6 has an attribute change "when any of the members
     /// (including children) in its corresponding JSON-LD node is updated with
     /// a value different than the existing one". The attribute-level
-    /// `modifiedAt`, the notification change and the Temporal Evolution
-    /// observation of a Core write all read a modification off this one test.
+    /// `modifiedAt`, the notification change, the Temporal Evolution
+    /// observation of a Core write and the current-state fold of a Temporal
+    /// API write all read a modification off this one test.
     #[must_use]
     pub fn same_content(&self, other: &Instance) -> bool {
         self.value == other.value

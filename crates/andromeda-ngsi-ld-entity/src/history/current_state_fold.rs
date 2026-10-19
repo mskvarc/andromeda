@@ -9,6 +9,9 @@
 //! then the most recent `modifiedAt`. The instance being added is the newest
 //! write, so it stands whenever no `observedAt` pair says it is older, and a
 //! backfill of observations older than current state changes no attribute.
+//! Neither does the end of an instance current state does not hold, nor an
+//! instance restating a held one: a fold that changes nothing reports current
+//! state unchanged, so the entity keeps its `modifiedAt` (clause 4.8).
 //!
 //! Entity Type names carry no instant, so clause 4.5.5.3 never makes one the
 //! older: a type the fragment names that the entity lacks is added whether or
@@ -46,32 +49,15 @@ pub enum CurrentStateFoldError {
     Instance(#[from] MutationError),
 }
 
-/// Whether the fragment named a type current state did not hold.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum TypeGrowth {
-    /// The fragment named a type the entity lacked.
-    Grew,
-    /// Every type the fragment named was already the entity's.
-    Unchanged,
-}
-
-/// Whether a candidate instance stood over the instance current state held.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Standing {
-    /// The candidate is now current (or ended the current one).
-    Stood,
-    /// Clause 4.5.5.3 makes the held instance the more current one.
-    Older,
-}
-
 /// Fold the attribute instances of `evolution` into `current`, the entity's
 /// current state, or into a new entity when there is none, at the write
 /// instant `at` (clauses 4.5.5.3, 4.5.7, 5.6.11.4).
 ///
 /// Returns the entity's current state after the fold, or `None` when current
-/// state existed, no instance of the fragment stands over what it held and
-/// the fragment names no type it lacked. A new entity is always created, with
-/// the fragment's identifier, types and scope, even when no instance of the
+/// state existed and the fold left it as it was: the fragment names no type
+/// it lacked, and every attribute holds instances of the content it held
+/// ([`Attributes::same_content`]). A new entity is always created, with the
+/// fragment's identifier, types and scope, even when no instance of the
 /// fragment stands. The fragment's types are added to the entity's. The
 /// instances keep their members except `instanceId`, which identifies an
 /// instance of the Temporal Evolution and has no place in current state
@@ -93,27 +79,31 @@ pub fn fold_into_current_state(
         Some(current) => current.clone(),
         None => new_entity(evolution)?,
     };
-    let growth = if evolution.types().iter().any(|name| !state.types().contains(name)) {
-        TypeGrowth::Grew
-    } else {
-        TypeGrowth::Unchanged
-    };
     // clone: the entity owns the types it gains.
     state.types_mut().extend(evolution.types().iter().cloned());
-    let mut stood = Standing::Older;
     for (name, member) in evolution.attributes() {
         for candidate in member.instances().iter().filter(|candidate| !expired(candidate, at)) {
-            if stand(&mut state, name, candidate, at)? == Standing::Stood {
-                stood = Standing::Stood;
-            }
+            stand(&mut state, name, candidate, at)?;
         }
     }
-    Ok(match (current, stood, growth) {
-        (Some(_), Standing::Older, TypeGrowth::Unchanged) => None,
-        (Some(_), Standing::Stood, TypeGrowth::Grew | TypeGrowth::Unchanged)
-        | (Some(_), Standing::Older, TypeGrowth::Grew)
-        | (None, Standing::Stood | Standing::Older, TypeGrowth::Grew | TypeGrowth::Unchanged) => Some(state),
+    Ok(match current {
+        Some(current) if leaves_unchanged(current, &state) => None,
+        Some(_) | None => Some(state),
     })
+}
+
+/// Whether the fold turned `current` into a `folded` state holding the same
+/// types and attribute content, system times aside.
+///
+/// Clause 4.8 moves `modifiedAt` when an Entity "was last modified" and
+/// clause 5.8.6 notifies a change only for a value "different than the
+/// existing one". The end of an instance current state does not hold, a
+/// restatement of a held instance and a backfill older than it all leave
+/// current state as it was, and so does a fragment whose later instance
+/// undoes an earlier one, so the test reads the folded state whole rather
+/// than each candidate's standing.
+fn leaves_unchanged(current: &EntityState, folded: &EntityState) -> bool {
+    current.types() == folded.types() && current.attributes().same_content(folded.attributes())
 }
 
 /// Let `candidate` stand over the instance `state` holds under its identity
@@ -121,7 +111,7 @@ pub fn fold_into_current_state(
 ///
 /// A candidate recording a deletion (it carries `deletedAt`, clause 4.5.7)
 /// removes the held instance instead of replacing it.
-fn stand(state: &mut EntityState, name: &AttributeName, candidate: &InstanceDocument, at: DateTime<Utc>) -> Result<Standing, MutationError> {
+fn stand(state: &mut EntityState, name: &AttributeName, candidate: &InstanceDocument, at: DateTime<Utc>) -> Result<(), MutationError> {
     let dataset_id = candidate.dataset_id();
     let held = state.attributes().get(name).and_then(|instances| instances.get(dataset_id));
     let candidate_recency = InstanceRecency {
@@ -131,7 +121,7 @@ fn stand(state: &mut EntityState, name: &AttributeName, candidate: &InstanceDocu
         modified_at: Some(at),
     };
     if held.is_some_and(|held| recency_of(held).order(&candidate_recency) == Ordering::Greater) {
-        return Ok(Standing::Older);
+        return Ok(());
     }
     match (held, candidate.deleted_at()) {
         (Some(_), Some(_)) => {
@@ -154,7 +144,7 @@ fn stand(state: &mut EntityState, name: &AttributeName, candidate: &InstanceDocu
             }
         }
     }
-    Ok(Standing::Stood)
+    Ok(())
 }
 
 /// Whether a candidate is already past its `expiresAt` (clause 4.22).
@@ -247,6 +237,25 @@ mod tests {
             .iter()
             .filter_map(|(_, instance)| integer_of(instance))
             .collect()
+    }
+
+    /// Current state holding `V` = 5, observed and modified on 2021-01-01.
+    fn held_five() -> EntityState {
+        let mut held = property(number(5));
+        held.set_observed_at(Some(date_time("2021-01-01T00:00:00Z")));
+        held.set_modified_at(Some("2021-01-01T00:00:00Z".parse::<SystemInstant>().expect("a valid instant")));
+        entity(vec![(V, instances(vec![(None, held)]))])
+    }
+
+    /// A Property instance recording a deletion at `deleted_at`, observed
+    /// then (clause 4.5.7).
+    fn deletion(deleted_at: &str) -> InstanceDocument {
+        InstanceDocument::builder()
+            .family(Some(AttributeType::Property))
+            .value(ValueSlot::Remove(ValueCarrier::Value))
+            .observed_at(Some(Slot::Set(date_time(deleted_at))))
+            .deleted_at(Some(date_time(deleted_at)))
+            .build()
     }
 
     /// Clause 4.5.5: a new entity holds one default instance, the one with the
@@ -368,17 +377,102 @@ mod tests {
         let mut held: Instance = property(number(5));
         held.set_observed_at(Some(date_time("2021-01-01T00:00:00Z")));
         let current = entity(vec![(V, instances(vec![(None, held)]))]);
-        let deletion = InstanceDocument::builder()
-            .family(Some(AttributeType::Property))
-            .value(ValueSlot::Remove(ValueCarrier::Value))
-            .observed_at(Some(Slot::Set(date_time("2022-01-01T00:00:00Z"))))
-            .deleted_at(Some(date_time("2022-01-01T00:00:00Z")))
-            .build();
 
-        let fold = fold_into_current_state(Some(&current), &evolution(vec![deletion]), at("2026-01-01T00:00:00Z"))
+        let fold = fold_into_current_state(Some(&current), &evolution(vec![deletion("2022-01-01T00:00:00Z")]), at("2026-01-01T00:00:00Z"))
             .expect("foldable")
             .expect("the deletion stands");
 
         assert!(!fold.attributes().contains(V));
+    }
+
+    /// Clause 4.8: the end of an instance current state does not hold
+    /// modifies nothing there, so the entity keeps its `modifiedAt`.
+    #[test]
+    fn the_end_of_an_instance_current_state_does_not_hold_leaves_it_unchanged() {
+        let current = held_five();
+        let absent = EntityDocument::new(
+            Some("urn:ngsi-ld:TQ:1".parse().expect("a valid identifier")),
+            vec![VEHICLE.parse().expect("a valid type")],
+            None,
+            None,
+            [(
+                name("https://example.org/absent"),
+                AttributeMember::Instances(vec![deletion("2022-01-01T00:00:00Z")]),
+            )]
+            .into_iter()
+            .collect(),
+        );
+
+        let fold = fold_into_current_state(Some(&current), &absent, at("2026-01-01T00:00:00Z")).expect("foldable");
+
+        assert!(fold.is_none(), "{fold:?}");
+    }
+
+    /// Clause 5.8.6 changes an attribute only for "a value different than the
+    /// existing one": restating the held instance stands over it with itself.
+    #[test]
+    fn restating_the_held_instance_leaves_current_state_unchanged() {
+        let current = held_five();
+
+        let fold = fold_into_current_state(
+            Some(&current),
+            &evolution_of(VEHICLE, vec![instance(5, Some("2021-01-01T00:00:00Z"))]),
+            at("2026-01-01T00:00:00Z"),
+        )
+        .expect("foldable");
+
+        assert!(fold.is_none(), "{fold:?}");
+    }
+
+    /// Both instances tie on `observedAt` and take the write instant, so the
+    /// later one stands over the earlier and current state ends as it began.
+    #[test]
+    fn a_fragment_whose_later_instance_undoes_its_earlier_one_leaves_current_state_unchanged() {
+        let current = held_five();
+
+        let fold = fold_into_current_state(
+            Some(&current),
+            &evolution_of(
+                VEHICLE,
+                vec![instance(7, Some("2021-01-01T00:00:00Z")), instance(5, Some("2021-01-01T00:00:00Z"))],
+            ),
+            at("2026-01-01T00:00:00Z"),
+        )
+        .expect("foldable");
+
+        assert!(fold.is_none(), "{fold:?}");
+    }
+
+    /// A restatement naming a type the entity lacks still changes its types.
+    #[test]
+    fn restating_the_held_instance_under_a_new_type_adds_the_type() {
+        let current = held_five();
+
+        let fold = fold_into_current_state(
+            Some(&current),
+            &evolution(vec![instance(5, Some("2021-01-01T00:00:00Z"))]),
+            at("2026-01-01T00:00:00Z"),
+        )
+        .expect("foldable")
+        .expect("the new type changes current state");
+
+        assert_eq!(values(&fold), vec![5]);
+        assert!(fold.types().contains(&"https://example.org/TQ".parse().expect("a valid type")));
+    }
+
+    /// A restatement with a different value is a modification.
+    #[test]
+    fn an_instance_at_the_held_observed_at_with_another_value_stands() {
+        let current = held_five();
+
+        let fold = fold_into_current_state(
+            Some(&current),
+            &evolution_of(VEHICLE, vec![instance(6, Some("2021-01-01T00:00:00Z"))]),
+            at("2026-01-01T00:00:00Z"),
+        )
+        .expect("foldable")
+        .expect("the new value changes current state");
+
+        assert_eq!(values(&fold), vec![6]);
     }
 }

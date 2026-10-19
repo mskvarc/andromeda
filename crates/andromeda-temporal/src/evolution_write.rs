@@ -7,8 +7,11 @@
 //! (clause 4.5.5.3), so it takes only the instances that stand over what it
 //! held: a Temporal Evolution created for an unknown identifier brings the
 //! Entity into being with its most current instances, a newer observation
-//! advances it, and a backfill of older ones leaves it as it was. Current state
-//! changes in the transaction that records the history.
+//! advances it, and a backfill of older ones leaves it as it was. So does the
+//! end of an instance current state does not hold, or an instance restating a
+//! held one: the Entity row is not rewritten and keeps its `modifiedAt`
+//! (clause 4.8). Current state changes in the transaction that records the
+//! history.
 //!
 //! Subscriptions watch current state (clause 5.8.6 defines a change on it
 //! alone), so a change the fold makes owes the notifications a Core write
@@ -88,8 +91,10 @@ impl TemporalService {
 /// Clause 5.8.6 defines a change on current state alone, so the change is
 /// classified exactly as a Core write's: a fold that brings the Entity into
 /// being is its creation, one that advances it is a modification carrying the
-/// instances it replaced, added or removed, and a backfill that leaves current
-/// state as it was changes nothing a subscriber can see.
+/// instances it replaced, added or removed, and a fold that leaves current
+/// state as it was (a backfill, the end of an instance it does not hold, a
+/// restatement) changes nothing a subscriber can see and leaves the Entity
+/// row as it was, the version it read standing as the precondition.
 fn evolution_write(
     notifier: &ChangeNotifier,
     target: &ContextTarget,
@@ -156,7 +161,7 @@ mod tests {
         evolution_write::{EvolutionWrite, evolution_write},
         written_evolution::WrittenEvolution,
     };
-    use andromeda_context_commit::entity_mutation::EntityMutation;
+    use andromeda_context_commit::{entity_mutation::EntityMutation, precondition::Precondition};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_entity::{
         change_notifier::{ChangeNotifier, SubscriptionMatching},
@@ -327,14 +332,36 @@ mod tests {
 
     /// Clause 5.8.6: "An Attribute is considered to change when any of the
     /// members [...] is updated with a value different than the existing
-    /// one". Re-sending the standing observation replaces it with itself.
+    /// one". Re-sending the standing observation modifies nothing, so clause
+    /// 4.8 leaves the Entity's `modifiedAt` where it was.
     #[test]
-    fn restating_the_standing_observation_owes_no_notification() {
+    fn restating_the_standing_observation_leaves_the_entity_row_alone_and_owes_no_notification() {
         let current = standing();
         let evolution = vehicle(&json!({SPEED: [instance(1, "2024-01-01T00:00:00Z")]}));
 
         let write = written(&evolution, Some(&current));
 
+        assert!(matches!(write.write.entity, EntityMutation::None), "{:?}", write.write.entity);
+        assert!(matches!(write.write.precondition, Precondition::UnchangedSince(at) if at == current.modified_at));
+        assert!(write.write.subscription_matches.is_empty());
+        assert!(write.events.is_empty());
+    }
+
+    /// Clause 4.5.7 records the deletion in the Temporal Evolution, but
+    /// current state holds no instance for it to end, so the Entity row is
+    /// left alone while the history is still written.
+    #[test]
+    fn the_end_of_an_instance_current_state_does_not_hold_leaves_the_entity_row_alone() {
+        let current = standing();
+        let mut deletion = instance(1, "2024-06-01T00:00:00Z");
+        deletion["https://uri.etsi.org/ngsi-ld/deletedAt"] = json!([{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2024-06-01T00:00:00Z"}]);
+        let evolution = vehicle(&json!({HEADING: [deletion]}));
+
+        let write = written(&evolution, Some(&current));
+
+        assert!(matches!(write.write.entity, EntityMutation::None), "{:?}", write.write.entity);
+        assert!(matches!(write.write.precondition, Precondition::UnchangedSince(at) if at == current.modified_at));
+        assert!(!write.write.history.is_empty(), "the deletion is still recorded in the Temporal Evolution");
         assert!(write.events.is_empty());
     }
 
