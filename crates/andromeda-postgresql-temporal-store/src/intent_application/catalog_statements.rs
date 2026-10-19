@@ -2,6 +2,7 @@
 //! before it records history.
 
 use crate::intent_application::{
+    deletion_judgement::{created_by_application, ended_before_evolution},
     evolution_upsert::{Created, Evolved, with_evolutions},
     intent_source::{E, I, IntentSource, Te, entry, entry_kind_in, intent, source_entries, source_intents, write_ordinal},
 };
@@ -28,6 +29,7 @@ use sea_query::{
     SelectStatement,
     SimpleExpr,
     WithClause,
+    WithQuery,
     error::Error as SeaQueryError,
 };
 
@@ -41,6 +43,12 @@ struct Grains;
 #[derive(Iden, Clone, Copy)]
 #[iden = "created_streams"]
 struct CreatedStreams;
+
+/// The insert of the streams of the evolutions that existed,
+/// `existing_streams`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "existing_streams"]
+struct ExistingStreams;
 
 /// The first intent of the source holding an entry of a grain,
 /// `first_intent`, a column of `grains`.
@@ -89,7 +97,11 @@ pub(crate) fn write_records_statement(source: &IntentSource<'_>) -> Result<Inser
 /// The Temporal Evolution of every Entity an intent states types for, created
 /// when it is missing and given every type those intents state that it lacks,
 /// beside the stream of every attribute grain the entries of those Entities
-/// extend.
+/// extend, returning the keys of the evolutions it created.
+///
+/// The end of an instance of an evolution the statement created extends no
+/// stream when it comes before every intent of its Entity stating types: it
+/// records nothing ([`ended_before_evolution`]).
 ///
 /// Each evolution is returned with whether the statement created it. An
 /// evolution it created is invisible to every other transaction until this
@@ -106,7 +118,7 @@ pub(crate) fn write_records_statement(source: &IntentSource<'_>) -> Result<Inser
 /// writes its stream. The evolutions and the type memberships a temporal type
 /// selection walks are written first, in the same statement
 /// ([`with_evolutions`]).
-pub(crate) fn evolutions_and_streams_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
+pub(crate) fn evolutions_and_streams_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<WithQuery, SeaQueryError> {
     let stream_columns = [
         TemporalAttributeStreams::TemporalEntityKey,
         TemporalAttributeStreams::Id,
@@ -127,6 +139,7 @@ pub(crate) fn evolutions_and_streams_statement(source: &IntentSource<'_>, schema
         .from(Evolved)
         .and_where(Expr::col((Evolved, TemporalEntities::Id)).equals((I, TemporalAppendIntents::EntityId)))
         .and_where(entry_kind_in(&[TemporalEntryKind::Observation.code(), TemporalEntryKind::Tombstone.code()]))
+        .and_where(ended_before_evolution(source, created_evolution()).not())
         .add_group_by([
             Expr::col((Evolved, TemporalEntities::TemporalEntityKey)),
             Expr::col((Evolved, TemporalEntities::Id)),
@@ -165,9 +178,20 @@ pub(crate) fn evolutions_and_streams_statement(source: &IntentSource<'_>, schema
             .to_owned(),
     )
     .cte(CommonTableExpression::new().table_name(CreatedStreams).query(streams_of(created())?).to_owned());
-    let mut statement = streams_of(created().not())?;
-    statement.on_conflict(OnConflict::columns(GRAIN_COLUMNS).do_nothing().to_owned()).with_cte(with);
-    Ok(statement)
+    let mut existing_streams = streams_of(created().not())?;
+    existing_streams.on_conflict(OnConflict::columns(GRAIN_COLUMNS).do_nothing().to_owned());
+    with.cte(CommonTableExpression::new().table_name(ExistingStreams).query(existing_streams).to_owned());
+    let mut created_keys = Query::select();
+    created_keys
+        .column((Evolved, TemporalEntities::TemporalEntityKey))
+        .from(Evolved)
+        .and_where(created_evolution());
+    Ok(with.query(created_keys))
+}
+
+/// Whether the evolution under `evolved` is one the statement created.
+fn created_evolution() -> SimpleExpr {
+    Expr::col((Evolved, Created))
 }
 
 /// The intents that observe an Entity which has no Temporal Evolution and
@@ -213,7 +237,9 @@ pub(crate) fn untyped_observations_statement(source: &IntentSource<'_>, schema: 
 /// another writer committed in the meantime is found. An entry of an Entity
 /// with no Temporal Evolution reaches no stream: the join to
 /// `temporal_entities` drops it, which is how the end of an instance of an
-/// evolution clause 5.6.16 already deleted records nothing.
+/// evolution clause 5.6.16 already deleted records nothing. Neither does the
+/// end of an instance of an evolution the application created before every
+/// intent of its Entity stating types ([`ended_before_evolution`]).
 pub(crate) fn untyped_streams_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
     let mut select = Query::select();
     select
@@ -227,7 +253,8 @@ pub(crate) fn untyped_streams_statement(source: &IntentSource<'_>, schema: Optio
         .from_as(qualified(schema, TemporalEntities::Table), Te)
         .and_where(Expr::col((Te, TemporalEntities::Id)).equals((I, TemporalAppendIntents::EntityId)))
         .and_where(has_elements(intent(TemporalAppendIntents::EntityTypeNameKeys)).not())
-        .and_where(entry_kind_in(&[TemporalEntryKind::Observation.code(), TemporalEntryKind::Tombstone.code()]));
+        .and_where(entry_kind_in(&[TemporalEntryKind::Observation.code(), TemporalEntryKind::Tombstone.code()]))
+        .and_where(ended_before_evolution(source, created_by_application(source)).not());
     let mut statement = Query::insert();
     statement
         .into_table(qualified(schema, TemporalAttributeStreams::Table))

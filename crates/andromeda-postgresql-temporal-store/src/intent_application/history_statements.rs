@@ -3,9 +3,14 @@
 //!
 //! Each statement joins the entries to their Entity's Temporal Evolution, so an
 //! entry of an Entity without one records nothing; the catalogue statements
-//! ran first and refused the only entries that would have needed one.
+//! ran first and refused the only entries that would have needed one. An
+//! attribute entry is read only when the application records it: the end of
+//! an instance of an evolution the application created before every intent
+//! of its Entity stating types records nothing, as applying the intents one
+//! after the other leaves it.
 
 use crate::intent_application::{
+    deletion_judgement::{created_by_application, ended_before_evolution},
     intent_source::{E, I, IntentSource, S, Te, entry, entry_kind_in, intent, source_entries, write_ordinal},
     scope_judgement::recorded_scope_entry,
 };
@@ -72,9 +77,17 @@ fn entries_with_evolution(source: &IntentSource<'_>, schema: Option<&DynIden>, k
     select
 }
 
-/// The attribute entries beside the stream each extends, under `s`.
-fn entries_with_stream(source: &IntentSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
+/// The attribute entries the application records, the evolution under `te`.
+fn recorded_attribute_entries(source: &IntentSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
     let mut select = entries_with_evolution(source, schema, attribute_entries());
+    select.and_where(ended_before_evolution(source, created_by_application(source)).not());
+    select
+}
+
+/// The attribute entries the application records beside the stream each
+/// extends, under `s`.
+fn entries_with_stream(source: &IntentSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
+    let mut select = recorded_attribute_entries(source, schema);
     select
         .from_as(qualified(schema, TemporalAttributeStreams::Table), S)
         .and_where(Expr::col((S, TemporalAttributeStreams::TemporalEntityKey)).equals((Te, TemporalEntities::TemporalEntityKey)))
@@ -83,9 +96,10 @@ fn entries_with_stream(source: &IntentSource<'_>, schema: Option<&DynIden>) -> S
     select
 }
 
-/// The attribute entries carrying a client-supplied `instanceId`.
+/// The attribute entries the application records that carry a
+/// client-supplied `instanceId`.
 fn verbatim_entries(source: &IntentSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
-    let mut select = entries_with_evolution(source, schema, attribute_entries());
+    let mut select = recorded_attribute_entries(source, schema);
     select.and_where(entry(TemporalEntry::VerbatimInstanceId).is_not_null());
     select
 }

@@ -1,5 +1,6 @@
 use crate::{
     intent_application::{
+        CreatedKeys,
         StepRole,
         application_steps,
         intent_source::{EntryReads, IntentSource, reach_statement},
@@ -85,12 +86,16 @@ fn evolving() -> String {
         .expect("an evolution statement")
 }
 
+/// The query of the evolution statement, which returns the keys of the
+/// evolutions it created.
+const CREATED_KEYS: &str = r#") SELECT "evolved"."temporal_entity_key" FROM "evolved" WHERE "evolved"."created""#;
+
 /// The query `sql` names `name` in its `WITH` clause, up to the query that
 /// follows it.
 fn common_table<'s>(sql: &'s str, name: &str) -> &'s str {
     let start = sql.find(&format!(r#""{name}" "#)).unwrap_or_else(|| panic!("no {name} in {sql}"));
     let rest = &sql[start..];
-    let end = [") , ", ") INSERT "]
+    let end = [") , ", ") INSERT ", CREATED_KEYS]
         .iter()
         .filter_map(|follower| rest.find(follower))
         .min()
@@ -179,6 +184,20 @@ fn stating(relation: &str) -> String {
     relation.replace(r#"AS "i""#, r#"AS "si""#)
 }
 
+/// The source relation `relation` names under `i`, as the deletion judgement
+/// reads it again under `ai` for an intent stating types at or before one.
+fn anchoring(relation: &str) -> String {
+    relation.replace(r#"AS "i""#, r#"AS "ai""#)
+}
+
+/// The keys of the evolutions the application created, as the drain binds
+/// them after its claimed keys.
+const DRAIN_CREATED: &str = "$2::bigint[]";
+
+/// The keys of the evolutions the application created, as a commit binds
+/// them after its intents, write identity and instant.
+const COMMIT_CREATED: &str = "$4::bigint[]";
+
 /// The part of the guard of a Scope assertion only the drain renders: the
 /// queued intents it holds claimed are in its source, and every intent queued
 /// when a commit records its own came before it.
@@ -194,7 +213,9 @@ fn the_commit_and_the_drain_render_one_statement_shape() {
                 sql.replace(QUEUED, "<source>")
                     .replace(&earlier(QUEUED), "<source>")
                     .replace(&stating(QUEUED), "<source>")
-                    .replace(DRAIN_GUARD, ""),
+                    .replace(&anchoring(QUEUED), "<source>")
+                    .replace(DRAIN_GUARD, "")
+                    .replace(DRAIN_CREATED, "<created>"),
             )
         })
         .collect();
@@ -205,7 +226,9 @@ fn the_commit_and_the_drain_render_one_statement_shape() {
                 role,
                 sql.replace(BOUND, "<source>")
                     .replace(&earlier(BOUND), "<source>")
-                    .replace(&stating(BOUND), "<source>"),
+                    .replace(&stating(BOUND), "<source>")
+                    .replace(&anchoring(BOUND), "<source>")
+                    .replace(COMMIT_CREATED, "<created>"),
             )
         })
         .collect();
@@ -219,7 +242,7 @@ fn a_commit_binds_its_intents_as_one_typed_array() {
         assert!(sql.contains(BOUND), "{sql}");
         assert_eq!(
             sql.matches("$1::temporal_intent[]").count(),
-            sql.matches(BOUND).count() + sql.matches(&earlier(BOUND)).count() + sql.matches(&stating(BOUND)).count(),
+            sql.matches(BOUND).count() + sql.matches(&earlier(BOUND)).count() + sql.matches(&stating(BOUND)).count() + sql.matches(&anchoring(BOUND)).count(),
             "{sql}"
         );
         let queue_reads = sql.matches("temporal_append_intents").count();
@@ -711,13 +734,108 @@ fn the_streams_of_an_evolution_the_statement_creates_are_inserted_without_arbitr
         "{created}"
     );
     assert!(!created.contains("ON CONFLICT"), "{created}");
+    let existing = common_table(&evolving, "existing_streams");
+    assert!(existing.contains(r#"AS (INSERT INTO "temporal_attribute_streams""#), "{existing}");
     assert!(
-        evolving.ends_with(concat!(
+        existing.ends_with(concat!(
             r#"FROM "grains" WHERE NOT "grains"."created" ORDER BY "grains"."first_intent" ASC, "grains"."first_ordinal" ASC "#,
             r#"ON CONFLICT ("temporal_entity_key", "attribute_name_key", "dataset_id") DO NOTHING"#
         )),
-        "{evolving}"
+        "{existing}"
     );
+}
+
+/// The statements after the evolution upsert judge the ends of an instance
+/// by the evolutions it created, so it returns their keys and nothing else.
+#[test]
+fn the_evolution_statement_returns_the_keys_of_the_evolutions_it_created() {
+    let evolving = evolving();
+    assert!(evolving.ends_with(CREATED_KEYS), "{evolving}");
+    assert_eq!(
+        rendered_steps().iter().filter(|(role, _)| *role == StepRole::Evolve).count(),
+        1,
+        "one statement creates evolutions"
+    );
+}
+
+/// The judgement shared by every statement reading the attribute entries of
+/// an evolution, its created keys bound after the drain's claimed keys.
+const JUDGED: &str = concat!(
+    r#"(NOT ("e"."entry_kind" = 2 AND "te"."temporal_entity_key" = ANY($2::bigint[]) AND (NOT EXISTS(SELECT 1 FROM "#,
+    r#"(SELECT * FROM "temporal_append_intents" WHERE "intent_key" = ANY($1::bigint[])) AS "ai" "#,
+    r#"WHERE "ai"."entity_id" = "i"."entity_id" AND cardinality("ai"."entity_type_name_keys") > 0 "#,
+    r#"AND "ai"."intent_key" <= "i"."intent_key"))))"#
+);
+
+/// Applied on its own, the end of an instance finds the evolution its Entity
+/// held before the batch or one an intent stating types at or before its own
+/// created (clauses 4.5.6 and 5.6.16), so the batch drops the end of an
+/// instance of an evolution it created before the first intent of its Entity
+/// stating types, as a temporal read of the queue does: it is neither
+/// recorded, nor replaces or claims an instance, nor extends a stream.
+#[test]
+fn every_statement_reading_attribute_entries_judges_the_ends_of_an_instance_by_the_evolutions_created() {
+    for sql in [
+        writing("attribute_history"),
+        writing("attribute_history_instance_claims"),
+        writing("temporal_stream_shapes"),
+        writing("temporal_attribute_streams"),
+        in_role(StepRole::Replace),
+        growth(),
+    ] {
+        assert!(sql.contains(JUDGED), "{sql}");
+    }
+    let released = rendered_steps()
+        .into_iter()
+        .map(|(_, sql)| sql)
+        .find(|sql| sql.starts_with(r#"DELETE FROM "attribute_history_instance_claims""#))
+        .expect("a claim release");
+    assert!(released.contains(JUDGED), "{released}");
+}
+
+/// A stream of an evolution the statement created is not given to an end of
+/// an instance coming before every intent of its Entity stating types, while
+/// one of an evolution that existed is, as the read shows it.
+#[test]
+fn the_grains_of_a_created_evolution_leave_out_the_ends_of_an_instance_before_its_first_typed_intent() {
+    let evolving = evolving();
+    let grains = common_table(&evolving, "grains");
+    assert!(
+        grains.contains(r#"AND (NOT ("e"."entry_kind" = 2 AND "evolved"."created" AND (NOT EXISTS(SELECT 1 FROM "#),
+        "{grains}"
+    );
+    assert!(grains.contains(r#""ai"."intent_key" <= "i"."intent_key""#), "{grains}");
+}
+
+/// A Scope entry needs an evolution but no order among the intents, as the
+/// read judges it, so the Scope insert reads no created key.
+#[test]
+fn a_scope_entry_is_not_judged_by_the_evolutions_created() {
+    let scopes = scope_insert();
+    assert!(!scopes.contains(DRAIN_CREATED) && !scopes.contains(r#"AS "ai""#), "{scopes}");
+}
+
+/// Postgres refuses a statement bound more or fewer values than it names, so
+/// a step is sent the created keys exactly when its text reads them, in the
+/// drain and in a commit alike.
+#[test]
+fn a_step_is_sent_the_created_keys_exactly_when_it_reads_them() {
+    let record = WriteRecord::restored(WriteId::mint(), recorded_at());
+    let sources = [
+        (
+            IntentSource::Queued {
+                keys: &[3, 5],
+                reach: TemporalIntentReach::ALL.to_vec(),
+            },
+            DRAIN_CREATED,
+        ),
+        (IntentSource::Bound { record: &record, intents: &[] }, COMMIT_CREATED),
+    ];
+    for (source, marker) in &sources {
+        for step in application_steps(source, None).expect("every statement builds") {
+            assert_eq!(step.created == CreatedKeys::Read, step.sql.contains(marker), "{}", step.sql);
+        }
+    }
 }
 
 /// The streams of the Entities intents state types for take the evolution's
@@ -741,7 +859,7 @@ fn the_streams_of_a_typed_entity_take_the_key_its_evolution_insert_returned() {
         grains.contains(r#"WHERE "evolved"."id" = "i"."entity_id" AND "e"."entry_kind" IN (1, 2)"#),
         "{grains}"
     );
-    assert!(!grains.contains("temporal_entities") && !grains.contains("cardinality("), "{grains}");
+    assert!(!grains.contains("temporal_entities") && !grains.contains(r#"cardinality("i"."#), "{grains}");
 }
 
 /// The streams are keyed in the order the history insert reaches their

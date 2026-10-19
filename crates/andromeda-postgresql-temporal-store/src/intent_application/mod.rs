@@ -8,12 +8,15 @@
 //! Temporal Evolutions and streams, the instance replacements and claims, the
 //! history rows, the stream extents covering their geometries and the stream
 //! shapes their values carry, and the Scope rows; nothing is read back into
-//! the broker beyond the rows a replacement removes. The drain
-//! runs the sequence in the transaction that also removes the intents, so a
+//! the broker beyond the keys of the evolutions the application created, which
+//! the statements after them are sent, and the rows a replacement removes. The
+//! drain runs the sequence in the transaction that also removes the intents, so a
 //! reader sees each entry queued or recorded, never both.
 
 /// The write records and catalogue an application establishes first.
 mod catalog_statements;
+/// Which ends of an instance an application records.
+mod deletion_judgement;
 /// The Temporal Evolutions an application writes, and their type memberships.
 mod evolution_upsert;
 /// The history and Scope rows, the stream extents and shapes and the instance
@@ -59,6 +62,9 @@ use sqlx::{AssertSqlSafe, PgConnection, Row};
 enum StepRole {
     /// Run it.
     Write,
+    /// Run it and keep the keys of the Temporal Evolutions it returns as
+    /// created.
+    Evolve,
     /// Run it and refuse the application when it returns a row.
     RefuseUntyped,
     /// Run it and refuse a duplicate `instanceId` claim as the client's own.
@@ -66,6 +72,16 @@ enum StepRole {
     /// Read the attribute history rows the entries replace, then remove
     /// exactly those rows and prune their streams' shapes.
     Replace,
+}
+
+/// Whether a statement reads the keys of the Temporal Evolutions the
+/// application created, bound after the source's own values.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CreatedKeys {
+    /// It does not.
+    Unread,
+    /// It does.
+    Read,
 }
 
 /// One statement of the application, rendered.
@@ -77,6 +93,8 @@ struct Step {
     need: Option<TemporalIntentReach>,
     /// What of the entries it reads.
     reads: EntryReads,
+    /// Whether it reads the keys of the evolutions the application created.
+    created: CreatedKeys,
     /// The statement text.
     sql: String,
 }
@@ -89,7 +107,17 @@ impl Step {
             role,
             need,
             reads,
+            created: CreatedKeys::Unread,
             sql: rendered(statement),
+        }
+    }
+
+    /// The step also reading the keys of the evolutions the application
+    /// created.
+    fn reading_created(self) -> Step {
+        Step {
+            created: CreatedKeys::Read,
+            ..self
         }
     }
 }
@@ -100,14 +128,17 @@ impl Step {
 /// after the evolutions the source itself creates, the streams of the intents
 /// stating no type after that refusal, the instance replacements before the
 /// claims and rows that take their place, the stream extents and shapes after
-/// the history rows whose geometries and values they cover.
+/// the history rows whose geometries and values they cover. Every statement
+/// reading attribute entries after the evolutions are written reads the keys
+/// of the ones the application created, which decide the ends of an instance
+/// it records.
 fn application_steps(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<Vec<Step>, TemporalStoreError> {
     let build = TemporalStoreError::StatementBuild;
     let (nothing, identities, everything) = (EntryReads::Nothing, EntryReads::Identities, EntryReads::Everything);
     Ok(vec![
         Step::of(StepRole::Write, None, nothing, &write_records_statement(source).map_err(build)?),
         Step::of(
-            StepRole::Write,
+            StepRole::Evolve,
             Some(TemporalIntentReach::TypedIntent),
             identities,
             &evolutions_and_streams_statement(source, schema).map_err(build)?,
@@ -123,43 +154,50 @@ fn application_steps(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Res
             Some(TemporalIntentReach::UntypedAttributeEntry),
             identities,
             &untyped_streams_statement(source, schema).map_err(build)?,
-        ),
+        )
+        .reading_created(),
         Step::of(
             StepRole::Replace,
             Some(TemporalIntentReach::VerbatimInstance),
             identities,
             &replaced_instances_statement(source, schema),
-        ),
+        )
+        .reading_created(),
         Step::of(
             StepRole::Write,
             Some(TemporalIntentReach::VerbatimInstance),
             identities,
             &released_claims_statement(source, schema),
-        ),
+        )
+        .reading_created(),
         Step::of(
             StepRole::Claim,
             Some(TemporalIntentReach::VerbatimInstance),
             identities,
             &claims_statement(source, schema).map_err(build)?,
-        ),
+        )
+        .reading_created(),
         Step::of(
             StepRole::Write,
             Some(TemporalIntentReach::AttributeEntry),
             everything,
             &history_statement(source, schema).map_err(build)?,
-        ),
+        )
+        .reading_created(),
         Step::of(
             StepRole::Write,
             Some(TemporalIntentReach::AttributeEntry),
             everything,
             &extent_growth_statement(source, schema),
-        ),
+        )
+        .reading_created(),
         Step::of(
             StepRole::Write,
             Some(TemporalIntentReach::AttributeEntry),
             everything,
             &stream_shapes_statement(source, schema).map_err(build)?,
-        ),
+        )
+        .reading_created(),
         Step::of(
             StepRole::Write,
             Some(TemporalIntentReach::ScopeEntry),
@@ -188,16 +226,20 @@ fn application_steps(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Res
 /// one fails.
 pub async fn apply_intents_in_tx(connection: &mut PgConnection, source: &IntentSource<'_>, target: &ContextTarget) -> Result<(), TemporalStoreError> {
     let schema = schema_iden(target);
+    let mut created = Vec::new();
     for step in application_steps(source, schema.as_ref())? {
-        if step.need.is_none_or(|need| source.may_meet(need)) {
-            run(connection, source, schema.as_ref(), step).await?;
+        if step.need.is_none_or(|need| source.may_meet(need))
+            && let Some(keys) = run(connection, source, schema.as_ref(), &created, step).await?
+        {
+            created = keys;
         }
     }
     Ok(())
 }
 
 /// Record the attribute history of `source` alone in the relations of
-/// `schema`, whose evolutions and streams the caller has written.
+/// `schema`, whose evolutions and streams the caller has written, so the
+/// application creates none.
 ///
 /// # Errors
 ///
@@ -209,22 +251,41 @@ pub(crate) async fn record_history_in_tx(connection: &mut PgConnection, source: 
         connection,
         source,
         Some(schema),
-        Step::of(StepRole::Write, Some(TemporalIntentReach::AttributeEntry), EntryReads::Everything, &statement),
+        &[],
+        Step::of(StepRole::Write, Some(TemporalIntentReach::AttributeEntry), EntryReads::Everything, &statement).reading_created(),
     )
-    .await
+    .await?;
+    Ok(())
 }
 
-/// Run one step over `source` in the branch `schema` names.
+/// Run one step over `source` in the branch `schema` names, `created` the keys
+/// of the evolutions the application created, and return the keys an
+/// [`StepRole::Evolve`] step created.
 async fn run(
     connection: &mut PgConnection,
     source: &IntentSource<'_>,
     schema: Option<&DynIden>,
-    Step { role, reads, sql, .. }: Step,
-) -> Result<(), TemporalStoreError> {
+    created: &[i64],
+    Step {
+        role,
+        reads,
+        created: created_keys,
+        sql,
+        ..
+    }: Step,
+) -> Result<Option<Vec<i64>>, TemporalStoreError> {
     let query = source.bind(sqlx::query(AssertSqlSafe(sql)), reads);
+    let query = match created_keys {
+        CreatedKeys::Unread => query,
+        CreatedKeys::Read => query.bind(created),
+    };
     match role {
         StepRole::Write => {
             query.execute(&mut *connection).await?;
+        }
+        StepRole::Evolve => {
+            let rows = query.fetch_all(&mut *connection).await?;
+            return Ok(Some(rows.iter().map(|row| row.try_get(0)).collect::<Result<_, _>>()?));
         }
         StepRole::Claim => {
             query.execute(&mut *connection).await.map_err(claim_write_failure)?;
@@ -243,7 +304,7 @@ async fn run(
             }
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 #[cfg(test)]

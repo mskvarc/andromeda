@@ -145,6 +145,21 @@ impl<'a> IntentSource<'a> {
         relation
     }
 
+    /// How many values [`IntentSource::bind`] binds: the claimed keys, or the
+    /// intents, the write identity and its instant.
+    const fn bound_values(&self) -> usize {
+        match self {
+            IntentSource::Queued { .. } => 1,
+            IntentSource::Bound { .. } => 3,
+        }
+    }
+
+    /// The keys of the Temporal Evolutions the application created, as the
+    /// array marker after the source's own values.
+    pub(crate) fn created_evolutions(&self) -> SimpleExpr {
+        cast(external_placeholder(self.bound_values() + 1), PostgresType::BigintArray)
+    }
+
     /// Whether some intent of the source meets `need`.
     pub(crate) fn may_meet(&self, need: TemporalIntentReach) -> bool {
         match self {
