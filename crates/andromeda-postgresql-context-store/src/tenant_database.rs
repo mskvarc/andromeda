@@ -1,11 +1,14 @@
-//! Reaching and creating the database behind one tenant.
+//! Reaching, creating and dropping the database behind one tenant.
 //!
 //! Every database the broker creates comes from here so that identifier limits
 //! are decided once rather than per call site. Migrating a database is
 //! [`crate::tenant_migration`]'s concern, and its session defaults are
 //! [`crate::database_defaults`]'s.
 
-use crate::{error::ContextStoreError, schema_ddl::database::create_database};
+use crate::{
+    error::ContextStoreError,
+    schema_ddl::database::{create_database, drop_database},
+};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_tenancy::{database_name::TenantDatabaseName, db_name_prefix::DbNamePrefix};
 use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query};
@@ -117,6 +120,42 @@ pub async fn create_database_if_missing(base_url: &DatabaseUrl, database_name: &
     }
     conn.close().await?;
     Ok(())
+}
+
+/// The outcome of dropping a tenant's database.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DatabaseDrop {
+    /// The database is gone, whether dropped now or missing already.
+    Dropped,
+    /// A session is connected to the database, so it was left in place.
+    InUse,
+}
+
+/// Drop the named database unless a session is connected to it.
+///
+/// The drop never forces sessions out, so a database any broker still holds a
+/// connection to is left in place (SQLSTATE 55006, `object_in_use`).
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Database`] when the administrative connection
+/// cannot be opened or closed, or when the drop fails for any reason other
+/// than a connected session.
+pub async fn drop_database_unless_in_use(base_url: &DatabaseUrl, database_name: &TenantDatabaseName) -> Result<DatabaseDrop, ContextStoreError> {
+    let admin_url = base_url.with_database_name(&TenantDatabaseName::from("postgres".to_owned()));
+    let mut conn = PgConnection::connect(admin_url.as_str()).await?;
+    let outcome = match conn.execute(sqlx::AssertSqlSafe(drop_database(database_name.as_str()).as_str())).await {
+        Ok(_) => Ok(DatabaseDrop::Dropped),
+        Err(error) if is_object_in_use_sqlstate(error.as_database_error().and_then(DatabaseError::code).as_deref()) => Ok(DatabaseDrop::InUse),
+        Err(error) => Err(error.into()),
+    };
+    conn.close().await?;
+    outcome
+}
+
+/// Whether `code` is the `object_in_use` SQLSTATE (55006).
+fn is_object_in_use_sqlstate(code: Option<&str>) -> bool {
+    code == Some("55006")
 }
 
 /// The attempts a contended `CREATE DATABASE` is given before its failure is reported.
@@ -241,5 +280,13 @@ mod tests {
         assert!(is_duplicate_database_sqlstate(Some("42P04")));
         assert!(!is_duplicate_database_sqlstate(Some("55006")));
         assert!(!is_duplicate_database_sqlstate(None));
+    }
+
+    #[test]
+    fn only_object_in_use_leaves_a_database_in_place() {
+        use crate::tenant_database::is_object_in_use_sqlstate;
+        assert!(is_object_in_use_sqlstate(Some("55006")));
+        assert!(!is_object_in_use_sqlstate(Some("3D000")));
+        assert!(!is_object_in_use_sqlstate(None));
     }
 }

@@ -5,7 +5,11 @@ use crate::{
     database::TenantDatabase,
     database_name::TenantDatabaseName,
     pending_work::{PendingWork, PendingWorkError},
-    runtime::{TenantRuntimeManager, cached_runtime::CachedRuntime},
+    registered_tenant::RegisteredTenant,
+    runtime::{
+        TenantRuntimeManager,
+        cached_runtime::{CachedRuntime, RuntimeExistence},
+    },
     state_factory::{TenantRuntime, TenantStateFactory},
     status::TenantStatus,
     tenant_ref::TenantRef,
@@ -45,26 +49,31 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             return WakeOutcome::AlreadyCached;
         }
 
-        let record = match self.database.tenant_record(tenant).await {
-            Ok(Some(record)) => record,
+        // A provisional tenant is woken like an established one: a creating
+        // operation may have committed work to its database before any request
+        // established it, and that work falls due regardless.
+        let (database, existence) = match self.database.registered_tenant(tenant).await {
+            Ok(Some(RegisteredTenant::Established(record))) => match record.status {
+                // A suspended tenant is never woken: clear its schedule so it is
+                // not re-claimed until it is resumed and next accessed.
+                TenantStatus::Suspended => {
+                    self.settle_schedule(tenant, now, None).await;
+                    return WakeOutcome::NothingDue;
+                }
+                TenantStatus::Active => (record.database, RuntimeExistence::Established),
+            },
+            Ok(Some(RegisteredTenant::Provisional { database })) => (database, RuntimeExistence::Provisional),
             Ok(None) => return WakeOutcome::Unregistered,
             // A registry read failure is transient; leave the leased claim to
             // re-fire and report nothing loaded.
             Err(_) => return WakeOutcome::NothingDue,
         };
-        // A suspended tenant is never woken: clear its schedule so it is not
-        // re-claimed until it is resumed and next accessed.
-        if matches!(record.status, TenantStatus::Suspended) {
-            self.settle_schedule(tenant, now, None).await;
-            return WakeOutcome::NothingDue;
-        }
-        let database = record.database;
 
         // A source due at once reports the database's clock at the probe's
         // statement, which is later than `now`, so the deadline is compared
         // with the instant the answer arrived.
         match self.probe.earliest_pending_work(&database).await {
-            Ok(PendingWork::DueAt(due)) if due <= SystemTime::now() => self.load_woken(&tenant_ref, database, tenant).await,
+            Ok(PendingWork::DueAt(due)) if due <= SystemTime::now() => self.load_woken(&tenant_ref, database, existence, tenant).await,
             Ok(PendingWork::DueAt(due)) => {
                 self.settle_schedule(tenant, now, self.waker.next_wake(PendingWork::DueAt(due), now)).await;
                 WakeOutcome::NothingDue
@@ -96,7 +105,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// is rescheduled as it goes) so the connection budget stays flat while the
     /// due work is admitted. Only genuine backpressure, every cached runtime held
     /// by an in-flight request so no slot can be freed, defers the wake.
-    async fn load_woken(&self, tenant_ref: &TenantRef, database: TenantDatabaseName, tenant: &TenantName) -> WakeOutcome {
+    async fn load_woken(&self, tenant_ref: &TenantRef, database: TenantDatabaseName, existence: RuntimeExistence, tenant: &TenantName) -> WakeOutcome {
         let now = SystemTime::now();
         if self.runtimes.len() >= self.config.runtime_max_cached && !self.evict_one_for_wake(tenant_ref).await {
             self.settle_schedule(tenant, now, Some(self.waker.retry_wake(now))).await;
@@ -123,7 +132,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             Entry::Vacant(vacant) => {
                 let cached = {
                     let origin = self.new_origin(&runtime);
-                    CachedRuntime::unleased(state, runtime, database, origin)
+                    CachedRuntime::unleased(state, runtime, database, existence, origin)
                 };
                 cached.backdate(self.waker.woken_backdate());
                 drop(vacant.insert(cached));

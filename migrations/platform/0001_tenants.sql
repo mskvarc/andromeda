@@ -9,7 +9,15 @@
 --
 -- Codes:
 --
---   status: 1 active, 2 suspended
+--   status: 1 active, 2 suspended, 3 provisional
+--
+-- A provisional tenant is registered for a creating operation that targets it
+-- for the first time (clause 5.5.10). Its row is committed before its database
+-- is created, so an interrupted provisioning leaves a row and never a database
+-- the registry does not name. It is answered as nonexistent until its database
+-- holds information, when it becomes active. One that stays empty is retired
+-- once its `modified_at`, which every provisioning refreshes, is older than the
+-- configured time to live: its database is dropped, then its row deleted.
 --
 -- The unnamed default tenant is the row with `is_unnamed_default` set and no
 -- `name`, never a row named "default": clause 6.3.14 gives the default tenant
@@ -28,7 +36,7 @@ create table tenants (
     constraint uq_tenants_name unique (name),
     constraint uq_tenants_database_name unique (database_name),
     constraint chk_tenants_unnamed_default_has_no_name check ((name is null) = is_unnamed_default),
-    constraint chk_tenants_status check (status between 1 and 2)
+    constraint chk_tenants_status check (status between 1 and 3)
 );
 
 create unique index uq_tenants_unnamed_default on tenants (is_unnamed_default)

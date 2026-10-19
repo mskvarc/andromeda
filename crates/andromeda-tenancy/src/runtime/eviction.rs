@@ -19,9 +19,9 @@ use tokio::time::interval as tokio_interval;
 use tracing::info;
 
 impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
-    /// Sweep for orphaned, excess and idle runtimes until the process ends,
-    /// and release a suspended tenant's retired runtime the moment its last
-    /// lease drops.
+    /// Sweep for orphaned, excess and idle runtimes and for provisional tenants
+    /// that stayed empty until the process ends, and release a suspended
+    /// tenant's retired runtime the moment its last lease drops.
     pub(super) async fn run_janitor(self: Arc<TenantRuntimeManager<D, F>>) {
         let interval = self.config.janitor_interval.duration().max(Duration::from_secs(1));
         let ttl = self.config.runtime_idle_ttl.duration().max(Duration::from_secs(1));
@@ -46,6 +46,11 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             let orphaned = self.evict_orphan_runtimes().await;
             if orphaned > 0 {
                 info!(orphaned, "Janitor evicted tenant runtimes whose registry row was removed");
+            }
+
+            let retired = self.retire_abandoned_provisional().await;
+            if retired > 0 {
+                info!(retired, "Janitor retired provisional tenants that stayed empty");
             }
 
             let trimmed = self.trim_excess_runtimes(None).await;

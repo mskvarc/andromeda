@@ -15,6 +15,7 @@ use crate::{
 };
 use andromeda_context_commit::write_ordinal::WriteOrdinalOutOfRange;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+use andromeda_postgresql_codes::registry::UnknownCompactCode;
 use andromeda_postgresql_collation::provisioned_collations::CollationProvisioningError;
 use andromeda_postgresql_encoding::{copy::CopyFieldError, ewkb::EwkbError};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
@@ -134,6 +135,10 @@ pub enum ContextStoreError {
     /// A stored Entity Map no longer reads back.
     #[error("context store entity map row: {0}")]
     StoredEntityMap(#[from] StoredEntityMapError),
+    /// A tenant registry row stores a status number no tenant standing is
+    /// persisted as.
+    #[error("context store tenant status: {0}")]
+    StoredTenantStatus(#[source] UnknownCompactCode),
     /// The catalogue reports an identity generation PostgreSQL does not define,
     /// so the Snapshot clone cannot tell how to copy the column.
     #[error("context store catalogue identity generation: {0}")]
@@ -208,6 +213,7 @@ impl ContextStoreError {
             | ContextStoreError::StoredSnapshot(_)
             | ContextStoreError::StoredEntity(_)
             | ContextStoreError::StoredEntityMap(_)
+            | ContextStoreError::StoredTenantStatus(_)
             | ContextStoreError::CatalogueIdentityGeneration(_) => PersistenceFailure::Undecodable,
             ContextStoreError::Invariant(_) | ContextStoreError::DatabaseUrlUnnamed => PersistenceFailure::ContractBroken,
         }
@@ -248,6 +254,7 @@ impl ContextStoreError {
             | ContextStoreError::UnencodableSnapshot(_)
             | ContextStoreError::StoredEntity(_)
             | ContextStoreError::StoredEntityMap(_)
+            | ContextStoreError::StoredTenantStatus(_)
             | ContextStoreError::CatalogueIdentityGeneration(_)
             | ContextStoreError::Invariant(_)
             | ContextStoreError::DatabaseUrlUnnamed => false,
@@ -288,6 +295,7 @@ impl ContextStoreError {
             | ContextStoreError::UnencodableSnapshot(_)
             | ContextStoreError::StoredEntity(_)
             | ContextStoreError::StoredEntityMap(_)
+            | ContextStoreError::StoredTenantStatus(_)
             | ContextStoreError::CatalogueIdentityGeneration(_)
             | ContextStoreError::Invariant(_)
             | ContextStoreError::DatabaseUrlUnnamed => false,

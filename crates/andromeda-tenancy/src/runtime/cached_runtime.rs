@@ -6,7 +6,7 @@ use std::{
     sync::{
         Arc,
         LazyLock,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -27,6 +27,16 @@ pub(super) fn now_millis() -> u64 {
     elapsed.as_secs() * 1_000 + u64::from(elapsed.subsec_millis())
 }
 
+/// Whether the tenant a runtime serves exists yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RuntimeExistence {
+    /// Provisional: a request that requires the tenant to exist must first see
+    /// its database hold information (clause 5.5.10).
+    Provisional,
+    /// Established: the tenant exists and every request is served.
+    Established,
+}
+
 /// One tenant's live runtime, and when it was last reached for.
 pub(super) struct CachedRuntime<S, R> {
     /// The state handlers read.
@@ -45,6 +55,10 @@ pub(super) struct CachedRuntime<S, R> {
     /// above one as "in use" and spares the runtime, so a request holding this
     /// runtime's state is never handed a pool eviction closed underneath it.
     pub(super) origin: Arc<LeaseOrigin>,
+    /// Whether the tenant was seen to exist. Moves from provisional to
+    /// established once and never back: an established tenant stays so until
+    /// it is removed from the registry.
+    established: AtomicBool,
 }
 
 impl<S, R> CachedRuntime<S, R> {
@@ -59,7 +73,13 @@ impl<S, R> CachedRuntime<S, R> {
     /// `origin` is fresh, so the caller's lease and this runtime's field are its
     /// first two owners: the runtime is leased from the instant it enters the
     /// cache, before any concurrent trim can observe it.
-    pub(super) fn newly_leased(state: Arc<S>, runtime: R, database: TenantDatabaseName, origin: Arc<LeaseOrigin>) -> (CachedRuntime<S, R>, Arc<LeaseOrigin>) {
+    pub(super) fn newly_leased(
+        state: Arc<S>,
+        runtime: R,
+        database: TenantDatabaseName,
+        existence: RuntimeExistence,
+        origin: Arc<LeaseOrigin>,
+    ) -> (CachedRuntime<S, R>, Arc<LeaseOrigin>) {
         // clone: the lease is a second owner of the origin by construction; the
         // cache field and the returned handle are the two owners that make the
         // strong count read two while a request holds it.
@@ -71,6 +91,7 @@ impl<S, R> CachedRuntime<S, R> {
                 database,
                 last_used: AtomicU64::new(now_millis()),
                 origin,
+                established: AtomicBool::new(existence == RuntimeExistence::Established),
             },
             leased,
         )
@@ -82,14 +103,35 @@ impl<S, R> CachedRuntime<S, R> {
     /// Unleased from the start, so a sweep may evict it once it has idled past
     /// its residency; the waker backdates its last use so it is the first idle
     /// victim and never displaces a request-touched runtime.
-    pub(super) fn unleased(state: Arc<S>, runtime: R, database: TenantDatabaseName, origin: Arc<LeaseOrigin>) -> CachedRuntime<S, R> {
+    pub(super) fn unleased(
+        state: Arc<S>,
+        runtime: R,
+        database: TenantDatabaseName,
+        existence: RuntimeExistence,
+        origin: Arc<LeaseOrigin>,
+    ) -> CachedRuntime<S, R> {
         CachedRuntime {
             state,
             runtime,
             database,
             last_used: AtomicU64::new(now_millis()),
             origin,
+            established: AtomicBool::new(existence == RuntimeExistence::Established),
         }
+    }
+
+    /// Whether the tenant this runtime serves was seen to exist.
+    pub(super) fn existence(&self) -> RuntimeExistence {
+        if self.established.load(Ordering::Acquire) {
+            RuntimeExistence::Established
+        } else {
+            RuntimeExistence::Provisional
+        }
+    }
+
+    /// Record that the tenant this runtime serves exists.
+    pub(super) fn establish(&self) {
+        self.established.store(true, Ordering::Release);
     }
 
     /// Age this runtime's last use by `age`, so it sorts older for eviction.
@@ -132,7 +174,7 @@ mod tests {
     use crate::{
         database_name::TenantDatabaseName,
         runtime::{
-            cached_runtime::CachedRuntime,
+            cached_runtime::{CachedRuntime, RuntimeExistence},
             lease::{LeaseOrigin, RuntimeLease},
         },
         state_factory::RuntimeActivity,
@@ -153,11 +195,12 @@ mod tests {
         }
     }
 
-    fn cached_reporting_to(activity: &Arc<ActivityCount>) -> CachedRuntime<(), ()> {
+    fn cached_reporting_to(activity: &Arc<ActivityCount>, existence: RuntimeExistence) -> CachedRuntime<(), ()> {
         CachedRuntime::unleased(
             Arc::new(()),
             (),
             TenantDatabaseName::from("andromeda_tenant_acme".to_string()),
+            existence,
             LeaseOrigin::new(Arc::new(Notify::new()), Arc::clone(activity) as Arc<dyn RuntimeActivity>),
         )
     }
@@ -167,7 +210,7 @@ mod tests {
     #[test]
     fn every_touch_tells_the_runtime_it_was_reached_for() {
         let activity = Arc::new(ActivityCount::default());
-        let cached = cached_reporting_to(&activity);
+        let cached = cached_reporting_to(&activity, RuntimeExistence::Established);
         cached.touch();
         cached.touch();
         pretty_assertions::assert_eq!(activity.0.load(Ordering::Relaxed), 2);
@@ -179,11 +222,27 @@ mod tests {
     #[test]
     fn letting_a_lease_go_tells_the_runtime_it_was_used() {
         let activity = Arc::new(ActivityCount::default());
-        let cached = cached_reporting_to(&activity);
+        let cached = cached_reporting_to(&activity, RuntimeExistence::Established);
         cached.touch();
         let lease = RuntimeLease::clone_from(&cached.origin);
         pretty_assertions::assert_eq!(activity.0.load(Ordering::Relaxed), 1);
         drop(lease);
         pretty_assertions::assert_eq!(activity.0.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn a_provisional_runtime_is_established_once_and_stays_so() {
+        let cached = cached_reporting_to(&Arc::new(ActivityCount::default()), RuntimeExistence::Provisional);
+        pretty_assertions::assert_eq!(cached.existence(), RuntimeExistence::Provisional);
+        cached.establish();
+        pretty_assertions::assert_eq!(cached.existence(), RuntimeExistence::Established);
+        cached.establish();
+        pretty_assertions::assert_eq!(cached.existence(), RuntimeExistence::Established);
+    }
+
+    #[test]
+    fn a_runtime_built_for_an_established_tenant_starts_established() {
+        let cached = cached_reporting_to(&Arc::new(ActivityCount::default()), RuntimeExistence::Established);
+        pretty_assertions::assert_eq!(cached.existence(), RuntimeExistence::Established);
     }
 }

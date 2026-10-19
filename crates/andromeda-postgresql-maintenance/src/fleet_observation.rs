@@ -103,6 +103,7 @@ impl FleetRow {
                 });
             }
             Some((_, TenantStatusCode::Suspended)) => UnvisitedRegistration::Suspended,
+            Some((_, TenantStatusCode::Provisional)) => UnvisitedRegistration::Provisional,
             None => UnvisitedRegistration::Unregistered,
         };
         FleetEntry::Unvisited(UnvisitedDatabase {
@@ -346,6 +347,14 @@ mod tests {
             FleetEntry::Unvisited(UnvisitedDatabase {
                 name: DatabaseName("andromeda_tenant_acme_0badc0de".to_owned()),
                 registration: UnvisitedRegistration::Suspended,
+                freeze: FREEZE,
+            })
+        );
+        assert_eq!(
+            row("andromeda_tenant_acme_0badc0de", Some((TenantKey(7), TenantStatusCode::Provisional))).entry(),
+            FleetEntry::Unvisited(UnvisitedDatabase {
+                name: DatabaseName("andromeda_tenant_acme_0badc0de".to_owned()),
+                registration: UnvisitedRegistration::Provisional,
                 freeze: FREEZE,
             })
         );

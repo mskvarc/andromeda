@@ -1,5 +1,7 @@
 //! The `tenants` table, as the tenancy crate's registry and lifecycle ports.
 
+mod occupancy;
+mod settlement;
 mod statements;
 /// The number the `tenants.status` column stores a tenant's status as.
 pub mod status_code;
@@ -15,18 +17,21 @@ use crate::{
         statements::{
             advisory_lock_query,
             default_tenant_upsert,
-            named_tenant_database_query,
+            named_tenant_standing_query,
+            provisional_tenants_query,
+            provisional_touch,
+            registered_tenant_query,
             registered_tenants_query,
             set_status_update,
             tenant_count_query,
             tenant_insert,
-            tenant_record_query,
             tenant_records_page_query,
         },
-        status_code::{status_of, stored_status},
+        status_code::{StoredStanding, standing_of, stored_status},
     },
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
 use andromeda_postgresql_pool::saturation::is_pool_saturated;
 use andromeda_tenancy::{
@@ -35,6 +40,8 @@ use andromeda_tenancy::{
     database_name::TenantDatabaseName,
     error::TenancyError,
     lifecycle::TenantLifecycle,
+    provisional::{Establishment, Retirement},
+    registered_tenant::RegisteredTenant,
     status::TenantStatus,
     tenant_page_start::TenantPageStart,
     tenant_record::TenantRecord,
@@ -160,13 +167,25 @@ fn registry_read_failure(error: &sqlx::Error, name: &TenantName) -> TenancyError
     }
 }
 
-/// Build a [`TenantRecord`] from one registry row, projected as `name`, `status`,
-/// `database_name`, `created_at`, `modified_at`.
+/// The failure a per-tenant registry write becomes, telling a saturated backend
+/// pool (backpressure, shed as a 503) apart from a genuine registry fault (500).
+fn registry_write_failure(error: &ContextStoreError, name: &TenantName) -> TenancyError {
+    if matches!(error, ContextStoreError::Saturated) {
+        TenancyError::Saturated {
+            tenant: TenantRef::Named(name.clone()),
+        } // clone: the error outlives this borrow
+    } else {
+        TenancyError::RegistryUnavailable(persistence_failure(error))
+    }
+}
+
+/// Build a [`RegisteredTenant`] from one registry row, projected as `name`,
+/// `status`, `database_name`, `created_at`, `modified_at`.
 ///
 /// A column the registry cannot present as a tenant name, database name or known
 /// status is a registry corruption rather than a per-tenant fault, so it surfaces
 /// as [`TenancyError::RegistryUnavailable`].
-fn record_from_row(row: &PgRow) -> Result<TenantRecord, TenancyError> {
+fn registered_from_row(row: &PgRow) -> Result<RegisteredTenant, TenancyError> {
     let name: String = row.try_get("name").map_err(|error| registry_unavailable(&error))?;
     let status: i16 = row.try_get("status").map_err(|error| registry_unavailable(&error))?;
     let database_name: String = row.try_get("database_name").map_err(|error| registry_unavailable(&error))?;
@@ -174,14 +193,37 @@ fn record_from_row(row: &PgRow) -> Result<TenantRecord, TenancyError> {
     let modified_at: DateTime<Utc> = row.try_get("modified_at").map_err(|error| registry_unavailable(&error))?;
 
     let tenant_name = TenantName::try_from(name).map_err(|error| TenancyError::RegistryUnavailable(undecodable(&error)))?;
-    let status = status_of(TenantStatusCode::try_from(status).map_err(|error| TenancyError::RegistryUnavailable(undecodable(&error)))?);
-    Ok(TenantRecord::new(
-        tenant_name,
-        status,
-        TenantDatabaseName::from(database_name),
-        created_at,
-        modified_at,
-    ))
+    let database = TenantDatabaseName::from(database_name);
+    Ok(
+        match standing_of(TenantStatusCode::try_from(status).map_err(|error| TenancyError::RegistryUnavailable(undecodable(&error)))?) {
+            StoredStanding::Provisional => RegisteredTenant::Provisional { database },
+            StoredStanding::Established(status) => RegisteredTenant::Established(TenantRecord::new(tenant_name, status, database, created_at, modified_at)),
+        },
+    )
+}
+
+/// The provisional row a collection page holds against its contract.
+#[derive(Debug, thiserror::Error)]
+#[error("a tenant collection page held a provisional tenant")]
+struct ProvisionalInCollection;
+
+/// Build the [`TenantRecord`] of one row of a collection page, which reads
+/// established tenants only.
+fn listed_record_from_row(row: &PgRow) -> Result<TenantRecord, TenancyError> {
+    match registered_from_row(row)? {
+        RegisteredTenant::Established(record) => Ok(record),
+        RegisteredTenant::Provisional { .. } => Err(TenancyError::RegistryUnavailable(
+            PersistenceFailure::ContractBroken.record(&ProvisionalInCollection),
+        )),
+    }
+}
+
+/// Decode a list of registry names.
+fn names_from(names: Vec<String>) -> Result<Vec<TenantName>, TenancyError> {
+    names
+        .into_iter()
+        .map(|name| TenantName::try_from(name).map_err(|error| TenancyError::RegistryUnavailable(undecodable(&error))))
+        .collect()
 }
 
 #[async_trait]
@@ -196,20 +238,16 @@ impl TenantDatabase for PostgresTenantRegistry {
             .fetch_all(&self.main_pool)
             .await
             .map_err(|error| registry_unavailable(&error))?;
-
-        names
-            .into_iter()
-            .map(|name| TenantName::try_from(name).map_err(|error| TenancyError::RegistryUnavailable(undecodable(&error))))
-            .collect()
+        names_from(names)
     }
 
-    async fn tenant_record(&self, name: &TenantName) -> Result<Option<TenantRecord>, TenancyError> {
-        let (sql, values) = tenant_record_query(name.as_str()).build_sqlx(PostgresQueryBuilder);
+    async fn registered_tenant(&self, name: &TenantName) -> Result<Option<RegisteredTenant>, TenancyError> {
+        let (sql, values) = registered_tenant_query(name.as_str()).build_sqlx(PostgresQueryBuilder);
         let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_optional(&self.main_pool)
             .await
             .map_err(|error| registry_read_failure(&error, name))?;
-        row.as_ref().map(record_from_row).transpose()
+        row.as_ref().map(registered_from_row).transpose()
     }
 
     async fn list_tenant_records(&self, start: &TenantPageStart, limit: u32) -> Result<(Vec<TenantRecord>, i64), TenancyError> {
@@ -224,7 +262,7 @@ impl TenantDatabase for PostgresTenantRegistry {
             .fetch_all(&self.main_pool)
             .await
             .map_err(|error| registry_unavailable(&error))?;
-        let mut records = rows.iter().map(record_from_row).collect::<Result<Vec<TenantRecord>, TenancyError>>()?;
+        let mut records = rows.iter().map(listed_record_from_row).collect::<Result<Vec<TenantRecord>, TenancyError>>()?;
         // A backward or from-end page was read descending; present it ascending
         // so a page always reads in name order regardless of its direction.
         match start {
@@ -250,6 +288,23 @@ impl TenantDatabase for PostgresTenantRegistry {
             }
         })
     }
+
+    async fn establish(&self, name: &TenantName) -> Result<Establishment, TenancyError> {
+        self.establish_inner(name).await.map_err(|error| registry_write_failure(&error, name))
+    }
+
+    async fn provisional_tenants(&self) -> Result<Vec<TenantName>, TenancyError> {
+        let (sql, values) = provisional_tenants_query().build_sqlx(PostgresQueryBuilder);
+        let names: Vec<String> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_all(&self.main_pool)
+            .await
+            .map_err(|error| registry_unavailable(&error))?;
+        names_from(names)
+    }
+
+    async fn retire_provisional(&self, name: &TenantName, idle_for: Duration) -> Result<Retirement, TenancyError> {
+        self.retire_inner(name, idle_for).await.map_err(|error| registry_write_failure(&error, name))
+    }
 }
 
 #[async_trait]
@@ -265,34 +320,48 @@ impl TenantLifecycle for PostgresTenantRegistry {
 }
 
 impl PostgresTenantRegistry {
-    /// Create the tenant's database and register it, once.
+    /// Register the tenant as provisional, then create and migrate its
+    /// database; for a tenant already registered, make sure its database is
+    /// created and migrated.
     ///
-    /// The advisory lock is what makes this safe against two requests naming
-    /// the same unknown tenant: both take it, the first creates, the second
-    /// finds the row the first inserted.
+    /// The advisory lock serialises the registry decision: of two requests
+    /// naming the same unknown tenant, the first inserts the row, the second
+    /// finds it. The row commits before the database is created, so a crash
+    /// can leave a provisional row with no database, which the next
+    /// provisioning or the retirement of the tenant settles, but never a
+    /// database with no row. Creating and migrating are idempotent, so the
+    /// second request preparing the same database is harmless.
     async fn provision_inner(&self, name: &TenantName) -> Result<TenantDatabaseName, ContextStoreError> {
         let mut tx = self.main_pool.begin().await?;
         let (lock_sql, lock_values) = advisory_lock_query(name.as_str()).build_sqlx(PostgresQueryBuilder);
         sqlx::query_with(sqlx::AssertSqlSafe(lock_sql.as_str()), lock_values).execute(&mut *tx).await?;
 
-        let (lookup_sql, lookup_values) = named_tenant_database_query(name.as_str()).build_sqlx(PostgresQueryBuilder);
-        if let Some(existing) = sqlx::query_scalar_with::<_, String, _>(sqlx::AssertSqlSafe(lookup_sql.as_str()), lookup_values)
+        let (lookup_sql, lookup_values) = named_tenant_standing_query(name.as_str()).build_sqlx(PostgresQueryBuilder);
+        let existing = sqlx::query_as_with::<_, (String, i16), _>(sqlx::AssertSqlSafe(lookup_sql.as_str()), lookup_values)
             .fetch_optional(&mut *tx)
-            .await?
-        {
-            let database_name = TenantDatabaseName::from(existing);
-            tx.commit().await?;
-            return Ok(database_name);
-        }
-
-        let database_name = generate_database_name(&self.tenancy.tenant_db_prefix, name);
-        create_database_if_missing(&self.direct_url, &database_name).await?;
-
-        let statement = tenant_insert(name.as_str(), database_name.as_str(), stored_status(TenantStatus::Active))?;
-        let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut *tx).await?;
+            .await?;
+        let database_name = if let Some((database_name, status)) = existing {
+            match standing_of(TenantStatusCode::try_from(status).map_err(ContextStoreError::StoredTenantStatus)?) {
+                StoredStanding::Established(_) => {
+                    tx.commit().await?;
+                    return Ok(TenantDatabaseName::from(database_name));
+                }
+                StoredStanding::Provisional => {
+                    let (sql, values) = provisional_touch(name.as_str()).build_sqlx(PostgresQueryBuilder);
+                    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut *tx).await?;
+                    TenantDatabaseName::from(database_name)
+                }
+            }
+        } else {
+            let database_name = generate_database_name(&self.tenancy.tenant_db_prefix, name);
+            let statement = tenant_insert(name.as_str(), database_name.as_str(), TenantStatusCode::Provisional)?;
+            let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+            sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut *tx).await?;
+            database_name
+        };
         tx.commit().await?;
 
+        create_database_if_missing(&self.direct_url, &database_name).await?;
         let tenant_url = self.direct_url.with_database_name(&database_name);
         migrate_single_tenant_db(&tenant_url, self.acquire_timeout).await?;
 

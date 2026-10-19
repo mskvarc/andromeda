@@ -2,9 +2,11 @@
 
 use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
 use andromeda_postgresql_schema::tenancy::Tenants;
-use andromeda_postgresql_seaquery::{advisory_lock::advisory_xact_lock, aggregate::count_all};
+use andromeda_postgresql_seaquery::{advisory_lock::advisory_xact_lock, aggregate::count_all, clock::now};
 use andromeda_tenancy::tenant_page_start::TenantPageStart;
 use sea_query::{
+    Alias,
+    DeleteStatement,
     Expr,
     ExprTrait,
     InsertStatement,
@@ -35,21 +37,22 @@ pub(super) fn registered_tenants_query() -> SelectStatement {
         .to_owned()
 }
 
-/// The database name of any tenant row called `name`.
+/// The database name and status of any tenant row called `name`.
 ///
 /// Reads any row, including the unnamed default, because its one caller is
 /// provisioning, which is checking whether the row it is about to insert already
 /// exists.
-pub(super) fn named_tenant_database_query(name: &str) -> SelectStatement {
+pub(super) fn named_tenant_standing_query(name: &str) -> SelectStatement {
     Query::select()
-        .column(Tenants::DatabaseName)
+        .columns([Tenants::DatabaseName, Tenants::Status])
         .from(Tenants::Table)
         .and_where(Expr::col(Tenants::Name).eq(name))
         .to_owned()
 }
 
-/// The full registry row of the named tenant called `name`.
-pub(super) fn tenant_record_query(name: &str) -> SelectStatement {
+/// The full registry row of the named tenant called `name`, provisional or
+/// established.
+pub(super) fn registered_tenant_query(name: &str) -> SelectStatement {
     let mut query = Query::select();
     record_columns(&mut query);
     query
@@ -59,8 +62,70 @@ pub(super) fn tenant_record_query(name: &str) -> SelectStatement {
         .to_owned()
 }
 
-/// One page of named-tenant registry rows, positioned by `start` and capped at
-/// `limit`.
+/// The status, database and last provisioning of the named tenant called
+/// `name`, with the transaction's clock beside it as `observed_at`, so the
+/// age of a provisional tenant is measured on one clock.
+pub(super) fn settlement_query(name: &str) -> SelectStatement {
+    Query::select()
+        .columns([Tenants::Status, Tenants::DatabaseName, Tenants::ModifiedAt])
+        .expr_as(now(), Alias::new(OBSERVED_AT))
+        .from(Tenants::Table)
+        .and_where(Expr::col(Tenants::Name).eq(name))
+        .and_where(Expr::col(Tenants::IsUnnamedDefault).eq(false))
+        .to_owned()
+}
+
+/// The alias [`settlement_query`] reads the transaction's clock under.
+pub(super) const OBSERVED_AT: &str = "observed_at";
+
+/// The names of every provisional tenant, in name order.
+pub(super) fn provisional_tenants_query() -> SelectStatement {
+    Query::select()
+        .column(Tenants::Name)
+        .from(Tenants::Table)
+        .and_where(Expr::col(Tenants::Status).eq(TenantStatusCode::Provisional.code()))
+        .and_where(Expr::col(Tenants::IsUnnamedDefault).eq(false))
+        .order_by(Tenants::Name, Order::Asc)
+        .to_owned()
+}
+
+/// Restart a provisional tenant's time to live.
+pub(super) fn provisional_touch(name: &str) -> UpdateStatement {
+    provisional_update(name).value(Tenants::ModifiedAt, Expr::current_timestamp()).to_owned()
+}
+
+/// Establish a provisional tenant: it exists from now on.
+pub(super) fn establish_update(name: &str) -> UpdateStatement {
+    provisional_update(name)
+        .value(Tenants::Status, TenantStatusCode::Active.code())
+        .value(Tenants::ModifiedAt, Expr::current_timestamp())
+        .to_owned()
+}
+
+/// An update of the named tenant called `name` that applies only while it is
+/// provisional, so it never touches an established tenant.
+fn provisional_update(name: &str) -> UpdateStatement {
+    Query::update()
+        .table(Tenants::Table)
+        .and_where(Expr::col(Tenants::Name).eq(name))
+        .and_where(Expr::col(Tenants::Status).eq(TenantStatusCode::Provisional.code()))
+        .and_where(Expr::col(Tenants::IsUnnamedDefault).eq(false))
+        .to_owned()
+}
+
+/// Remove a provisional tenant's row; an established tenant's row is never
+/// removed.
+pub(super) fn provisional_delete(name: &str) -> DeleteStatement {
+    Query::delete()
+        .from_table(Tenants::Table)
+        .and_where(Expr::col(Tenants::Name).eq(name))
+        .and_where(Expr::col(Tenants::Status).eq(TenantStatusCode::Provisional.code()))
+        .and_where(Expr::col(Tenants::IsUnnamedDefault).eq(false))
+        .to_owned()
+}
+
+/// One page of established named-tenant registry rows, positioned by `start`
+/// and capped at `limit`.
 ///
 /// An offset, forward or first page reads ascending by name; a backward or
 /// from-end page reads descending (the caller reverses it to present
@@ -71,7 +136,8 @@ pub(super) fn tenant_records_page_query(start: &TenantPageStart, limit: u32) -> 
     query
         .from(Tenants::Table)
         .and_where(Expr::col(Tenants::IsUnnamedDefault).eq(false))
-        .and_where(Expr::col(Tenants::Name).is_not_null());
+        .and_where(Expr::col(Tenants::Name).is_not_null())
+        .and_where(Expr::col(Tenants::Status).ne(TenantStatusCode::Provisional.code()));
     match start {
         TenantPageStart::Offset(offset) => {
             query.order_by(Tenants::Name, Order::Asc).offset(u64::from(*offset));
@@ -95,17 +161,20 @@ pub(super) fn tenant_records_page_query(start: &TenantPageStart, limit: u32) -> 
     query.clone()
 }
 
-/// The number of named tenants in the registry, the collection total.
+/// The number of established named tenants in the registry, the collection
+/// total.
 pub(super) fn tenant_count_query() -> SelectStatement {
     Query::select()
         .expr(count_all())
         .from(Tenants::Table)
         .and_where(Expr::col(Tenants::IsUnnamedDefault).eq(false))
         .and_where(Expr::col(Tenants::Name).is_not_null())
+        .and_where(Expr::col(Tenants::Status).ne(TenantStatusCode::Provisional.code()))
         .to_owned()
 }
 
-/// Set a named tenant's administrative status and refresh its `modified_at`.
+/// Set an established named tenant's administrative status and refresh its
+/// `modified_at`; a provisional tenant is left as it is.
 pub(super) fn set_status_update(name: &str, status: TenantStatusCode) -> UpdateStatement {
     let mut statement = Query::update();
     statement
@@ -113,6 +182,7 @@ pub(super) fn set_status_update(name: &str, status: TenantStatusCode) -> UpdateS
         .value(Tenants::Status, status.code())
         .value(Tenants::ModifiedAt, Expr::current_timestamp())
         .and_where(Expr::col(Tenants::Name).eq(name))
+        .and_where(Expr::col(Tenants::Status).ne(TenantStatusCode::Provisional.code()))
         .and_where(Expr::col(Tenants::IsUnnamedDefault).eq(false));
     statement.clone()
 }
@@ -183,19 +253,24 @@ mod tests {
     use crate::tenant_registry::statements::{
         advisory_lock_query,
         default_tenant_upsert,
-        named_tenant_database_query,
+        establish_update,
+        named_tenant_standing_query,
+        provisional_delete,
+        provisional_tenants_query,
+        provisional_touch,
+        registered_tenant_query,
         registered_tenants_query,
         set_status_update,
+        settlement_query,
         tenant_count_query,
         tenant_insert,
-        tenant_record_query,
         tenant_records_page_query,
     };
     use andromeda_ngsi_ld_lexicon::tenant::TenantName;
     use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
     use andromeda_tenancy::tenant_page_start::TenantPageStart;
     use pretty_assertions::assert_eq;
-    use sea_query::{PostgresQueryBuilder, SelectStatement, UpdateStatement};
+    use sea_query::{DeleteStatement, PostgresQueryBuilder, SelectStatement, UpdateStatement};
 
     fn select_sql(statement: &SelectStatement) -> String {
         statement.to_string(PostgresQueryBuilder)
@@ -218,22 +293,73 @@ mod tests {
         assert!(sql.contains("ORDER BY \"name\" ASC"), "{sql}");
     }
 
+    fn delete_sql(statement: &DeleteStatement) -> String {
+        statement.to_string(PostgresQueryBuilder)
+    }
+
     #[test]
     fn the_provisioning_lookup_reads_any_row() {
-        let sql = select_sql(&named_tenant_database_query("acme"));
-        assert!(sql.contains("SELECT \"database_name\" FROM \"tenants\""), "{sql}");
+        let sql = select_sql(&named_tenant_standing_query("acme"));
+        assert!(sql.contains("SELECT \"database_name\", \"status\" FROM \"tenants\""), "{sql}");
         assert!(sql.contains("\"name\" ="), "{sql}");
         assert!(!sql.contains("is_unnamed_default"), "provisioning must not exclude the default row: {sql}");
     }
 
     #[test]
     fn a_record_read_projects_every_column_and_excludes_the_default() {
-        let sql = select_sql(&tenant_record_query("acme"));
+        let sql = select_sql(&registered_tenant_query("acme"));
         for column in ["\"name\"", "\"status\"", "\"database_name\"", "\"created_at\"", "\"modified_at\""] {
             assert!(sql.contains(column), "record read must project {column}: {sql}");
         }
         assert!(sql.contains("\"name\" ="), "{sql}");
         assert!(sql.contains("\"is_unnamed_default\" ="), "a record read excludes the unnamed default: {sql}");
+    }
+
+    /// Clause 5.5.10: a provisional tenant does not exist, so the collection
+    /// neither lists nor counts one.
+    #[test]
+    fn the_collection_page_and_its_total_leave_provisional_tenants_out() {
+        for sql in [
+            select_sql(&tenant_records_page_query(&TenantPageStart::Forward { after: None }, 10)),
+            select_sql(&tenant_count_query()),
+        ] {
+            assert!(sql.contains("\"status\" <> 3"), "{sql}");
+        }
+    }
+
+    #[test]
+    fn the_settlement_read_carries_the_transaction_clock_beside_the_last_provisioning() {
+        let sql = select_sql(&settlement_query("acme"));
+        assert!(sql.contains("\"status\", \"database_name\", \"modified_at\""), "{sql}");
+        assert!(sql.contains("NOW() AS \"observed_at\""), "{sql}");
+        assert!(sql.contains("\"is_unnamed_default\" = FALSE"), "{sql}");
+    }
+
+    #[test]
+    fn the_provisional_listing_reads_provisional_named_tenants_in_order() {
+        let sql = select_sql(&provisional_tenants_query());
+        assert!(sql.contains("SELECT \"name\" FROM \"tenants\""), "{sql}");
+        assert!(sql.contains("\"status\" = 3"), "{sql}");
+        assert!(sql.contains("ORDER BY \"name\" ASC"), "{sql}");
+    }
+
+    #[test]
+    fn the_touch_and_the_establishment_apply_only_to_a_provisional_tenant() {
+        let touch = update_sql(&provisional_touch("acme"));
+        assert!(touch.contains("SET \"modified_at\" = CURRENT_TIMESTAMP"), "{touch}");
+        assert!(touch.contains("\"status\" = 3"), "{touch}");
+        let establish = update_sql(&establish_update("acme"));
+        assert!(establish.contains("\"status\" = 1"), "{establish}");
+        assert!(establish.contains("\"modified_at\" = CURRENT_TIMESTAMP"), "{establish}");
+        assert!(establish.contains("WHERE \"name\" = 'acme' AND \"status\" = 3"), "{establish}");
+    }
+
+    #[test]
+    fn the_retirement_removes_only_a_provisional_row() {
+        let sql = delete_sql(&provisional_delete("acme"));
+        assert!(sql.contains("DELETE FROM \"tenants\""), "{sql}");
+        assert!(sql.contains("\"status\" = 3"), "{sql}");
+        assert!(sql.contains("\"is_unnamed_default\" = FALSE"), "{sql}");
     }
 
     #[test]
@@ -284,6 +410,7 @@ mod tests {
             sql.contains("\"is_unnamed_default\" ="),
             "a status write never touches the unnamed default: {sql}"
         );
+        assert!(sql.contains("\"status\" <> 3"), "a status write never touches a provisional tenant: {sql}");
     }
 
     #[test]

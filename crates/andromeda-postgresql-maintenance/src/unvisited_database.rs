@@ -3,8 +3,8 @@
 //! Transaction-ID wraparound is cluster-wide: PostgreSQL stops assigning IDs
 //! to every database once the oldest `datfrozenxid` of any database reaches its
 //! limit, and a database ages with the cluster's transaction rate whether or
-//! not anything writes to it. The server's own databases, a suspended tenant's
-//! database and a database a crashed provisioning or an unfinished removal left
+//! not anything writes to it. The server's own databases, a suspended or
+//! provisional tenant's database and a database an unfinished removal left
 //! behind all age, and autovacuum must freeze each of them. The controller
 //! visits only active tenants, so these are reported from the fleet statement
 //! alone, under their database name.
@@ -34,6 +34,9 @@ impl DatabaseName {
 pub(crate) enum UnvisitedRegistration {
     /// Its tenant is administratively suspended.
     Suspended,
+    /// Its tenant is provisional: registered for a creating operation and not
+    /// known to exist yet.
+    Provisional,
     /// No registry row names it.
     Unregistered,
 }
@@ -67,7 +70,7 @@ impl UnvisitedDatabase {
             UnvisitedRegistration::Unregistered if is_tenant_shaped(&self.name, tenant_database_prefix) => {
                 Some(Finding::warning(ObservationDecision::OrphanTenantDatabase))
             }
-            UnvisitedRegistration::Unregistered | UnvisitedRegistration::Suspended => None,
+            UnvisitedRegistration::Unregistered | UnvisitedRegistration::Suspended | UnvisitedRegistration::Provisional => None,
         }
     }
 
@@ -152,6 +155,16 @@ mod tests {
         );
         assert_eq!(
             findings(&suspended(1_000_000_000)),
+            (Some(Finding::error(ObservationDecision::FreezePressure)), None)
+        );
+    }
+
+    #[test]
+    fn a_provisional_tenant_database_is_no_orphan_and_reports_only_its_freeze_pressure() {
+        let provisional = |age| database("andromeda_tenant_acme_0badc0de", UnvisitedRegistration::Provisional, age);
+        assert_eq!(findings(&provisional(10)), (None, None));
+        assert_eq!(
+            findings(&provisional(1_000_000_000)),
             (Some(Finding::error(ObservationDecision::FreezePressure)), None)
         );
     }

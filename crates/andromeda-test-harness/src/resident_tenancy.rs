@@ -16,6 +16,8 @@ use andromeda_tenancy::{
     database_name::TenantDatabaseName,
     error::TenancyError,
     pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
+    provisional::{Establishment, Retirement},
+    registered_tenant::RegisteredTenant,
     runtime::{TenantRuntimeManager, lease::LeasedState},
     state_factory::{RuntimeActivity, TenantRuntime, TenantStateFactory},
     status::TenantStatus,
@@ -26,7 +28,10 @@ use andromeda_tenancy::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use std::{sync::Arc, time::SystemTime};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 /// A runtime cache whose every tenant is served the same state.
 pub struct ResidentTenancy<S: Send + Sync + 'static> {
@@ -60,7 +65,8 @@ impl<S: Send + Sync + 'static> ResidentTenancy<S> {
     }
 }
 
-/// A registry holding a fixed set of named tenants, none of them suspended.
+/// A registry holding a fixed set of established named tenants, none of them
+/// suspended or provisional.
 struct FixedRegistry {
     /// The registered named tenants.
     named: Vec<TenantName>,
@@ -89,8 +95,8 @@ impl TenantDatabase for FixedRegistry {
         Ok(self.named.clone()) // clone: the caller owns the listing
     }
 
-    async fn tenant_record(&self, name: &TenantName) -> Result<Option<TenantRecord>, TenancyError> {
-        Ok(self.named.contains(name).then(|| FixedRegistry::record(name)))
+    async fn registered_tenant(&self, name: &TenantName) -> Result<Option<RegisteredTenant>, TenancyError> {
+        Ok(self.named.contains(name).then(|| RegisteredTenant::Established(FixedRegistry::record(name))))
     }
 
     async fn list_tenant_records(&self, _start: &TenantPageStart, _limit: u32) -> Result<(Vec<TenantRecord>, i64), TenancyError> {
@@ -103,6 +109,22 @@ impl TenantDatabase for FixedRegistry {
         Err(TenancyError::UnknownTenant {
             name: name.clone(), // clone: the error owns the name it reports
         })
+    }
+
+    async fn establish(&self, name: &TenantName) -> Result<Establishment, TenancyError> {
+        Ok(if self.named.contains(name) {
+            Establishment::Established
+        } else {
+            Establishment::Empty
+        })
+    }
+
+    async fn provisional_tenants(&self) -> Result<Vec<TenantName>, TenancyError> {
+        Ok(Vec::new())
+    }
+
+    async fn retire_provisional(&self, _name: &TenantName, _idle_for: Duration) -> Result<Retirement, TenancyError> {
+        Ok(Retirement::Kept)
     }
 }
 

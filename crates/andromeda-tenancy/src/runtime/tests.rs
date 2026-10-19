@@ -11,7 +11,9 @@ use crate::{
     error::TenancyError,
     lifecycle::TenantLifecycle,
     pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
-    runtime::TenantRuntimeManager,
+    provisional::{Establishment, Retirement},
+    registered_tenant::RegisteredTenant,
+    runtime::{TenantRuntimeManager, cached_runtime::RuntimeExistence},
     state_factory::{RuntimeActivity, TenantRuntime, TenantStateFactory},
     status::TenantStatus,
     tenant_page_start::TenantPageStart,
@@ -170,6 +172,7 @@ fn config(enabled: bool, max_cached: usize) -> TenancyConfig {
         min_dormancy: HumanDuration::from_secs(30),
         wake_residency: HumanDuration::from_secs(60),
         waker_max_wakes_per_pass: 4,
+        provisional_tenant_ttl: HumanDuration::from_secs(600),
     }
 }
 
@@ -185,12 +188,20 @@ fn bounded_config(max_cached: usize, max_concurrent_builds: usize, eviction_conc
 
 /// A registry holding a mutable set of tenants, which records provisioning.
 struct FakeRegistry {
-    /// Tenants that are already registered.
+    /// Tenants that are established.
     registered: StdMutex<Vec<String>>,
+    /// Tenants registered for a creating operation that do not exist yet.
+    provisional: StdMutex<Vec<String>>,
+    /// Tenants whose database holds information.
+    occupied: StdMutex<Vec<String>>,
     /// Registered tenants whose administrative state is suspended.
     suspended: StdMutex<Vec<String>>,
     /// How many times `provision` was called.
     provisioned: AtomicUsize,
+    /// How many times `establish` was called.
+    establishments: AtomicUsize,
+    /// The names `retire_provisional` was offered, in order.
+    offered: StdMutex<Vec<String>>,
 }
 
 /// A fixed timestamp for a fake registry row, since these tests never assert on
@@ -204,9 +215,59 @@ impl FakeRegistry {
     fn new(names: &[&str]) -> FakeRegistry {
         FakeRegistry {
             registered: StdMutex::new(names.iter().map(|name| (*name).to_string()).collect()),
+            provisional: StdMutex::new(Vec::new()),
+            occupied: StdMutex::new(Vec::new()),
             suspended: StdMutex::new(Vec::new()),
             provisioned: AtomicUsize::new(0),
+            establishments: AtomicUsize::new(0),
+            offered: StdMutex::new(Vec::new()),
         }
+    }
+
+    /// Every provisional name.
+    fn provisional(&self) -> Vec<String> {
+        self.provisional.lock().map(|names| names.clone()).unwrap_or_default()
+    }
+
+    /// Whether a tenant is provisional.
+    fn is_provisional(&self, name: &str) -> bool {
+        self.provisional().iter().any(|held| held == name)
+    }
+
+    /// Register a tenant as provisional, as an interrupted or refused creating
+    /// operation leaves it.
+    fn register_provisional(&self, name: &str) {
+        if let Ok(mut names) = self.provisional.lock() {
+            names.push(name.to_string());
+        }
+    }
+
+    /// Record that a tenant's database now holds information, as a committed
+    /// creating operation leaves it.
+    fn occupy(&self, name: &str) {
+        if let Ok(mut names) = self.occupied.lock() {
+            names.push(name.to_string());
+        }
+    }
+
+    /// Whether a tenant's database holds information.
+    fn is_occupied(&self, name: &str) -> bool {
+        self.occupied.lock().is_ok_and(|names| names.iter().any(|held| held == name))
+    }
+
+    /// Move a provisional tenant to the established tenants.
+    fn promote(&self, name: &str) {
+        if let Ok(mut names) = self.provisional.lock() {
+            names.retain(|held| held != name);
+        }
+        if let Ok(mut names) = self.registered.lock() {
+            names.push(name.to_string());
+        }
+    }
+
+    /// The names offered for retirement so far.
+    fn offered(&self) -> Vec<String> {
+        self.offered.lock().map(|names| names.clone()).unwrap_or_default()
     }
 
     /// Every registered name.
@@ -267,8 +328,17 @@ impl TenantDatabase for FakeRegistry {
         Ok(self.all().into_iter().filter_map(|name| TenantName::try_from(name).ok()).collect())
     }
 
-    async fn tenant_record(&self, name: &TenantName) -> Result<Option<TenantRecord>, TenancyError> {
-        Ok(self.all().iter().any(|held| held == name.as_str()).then(|| self.record_for(name)))
+    async fn registered_tenant(&self, name: &TenantName) -> Result<Option<RegisteredTenant>, TenancyError> {
+        if self.is_provisional(name.as_str()) {
+            return Ok(Some(RegisteredTenant::Provisional {
+                database: TenantDatabaseName::from(format!("db_{}", name.as_str())),
+            }));
+        }
+        Ok(self
+            .all()
+            .iter()
+            .any(|held| held == name.as_str())
+            .then(|| RegisteredTenant::Established(self.record_for(name))))
     }
 
     async fn list_tenant_records(&self, start: &TenantPageStart, limit: u32) -> Result<(Vec<TenantRecord>, i64), TenancyError> {
@@ -302,10 +372,47 @@ impl TenantDatabase for FakeRegistry {
 
     async fn provision(&self, name: &TenantName) -> Result<TenantDatabaseName, TenancyError> {
         self.provisioned.fetch_add(1, Ordering::Relaxed);
-        if let Ok(mut names) = self.registered.lock() {
+        let known = self.is_provisional(name.as_str()) || self.all().iter().any(|held| held == name.as_str());
+        if !known && let Ok(mut names) = self.provisional.lock() {
             names.push(name.as_str().to_string());
         }
         Ok(TenantDatabaseName::from(format!("db_{}", name.as_str())))
+    }
+
+    async fn establish(&self, name: &TenantName) -> Result<Establishment, TenancyError> {
+        self.establishments.fetch_add(1, Ordering::Relaxed);
+        if self.is_provisional(name.as_str()) {
+            if !self.is_occupied(name.as_str()) {
+                return Ok(Establishment::Empty);
+            }
+            self.promote(name.as_str());
+        }
+        Ok(if self.all().iter().any(|held| held == name.as_str()) {
+            Establishment::Established
+        } else {
+            Establishment::Empty
+        })
+    }
+
+    async fn provisional_tenants(&self) -> Result<Vec<TenantName>, TenancyError> {
+        Ok(self.provisional().into_iter().filter_map(|name| TenantName::try_from(name).ok()).collect())
+    }
+
+    async fn retire_provisional(&self, name: &TenantName, _idle_for: Duration) -> Result<Retirement, TenancyError> {
+        if let Ok(mut offered) = self.offered.lock() {
+            offered.push(name.as_str().to_string());
+        }
+        if !self.is_provisional(name.as_str()) {
+            return Ok(Retirement::Kept);
+        }
+        if self.is_occupied(name.as_str()) {
+            self.promote(name.as_str());
+            return Ok(Retirement::Established);
+        }
+        if let Ok(mut names) = self.provisional.lock() {
+            names.retain(|held| held != name.as_str());
+        }
+        Ok(Retirement::Retired)
     }
 }
 
@@ -784,14 +891,14 @@ async fn a_registry_that_cannot_be_read_evicts_nothing_rather_than_everything() 
             Err(TenancyError::RegistryUnavailable(PersistenceFailure::Unavailable))
         }
 
-        async fn tenant_record(&self, name: &TenantName) -> Result<Option<TenantRecord>, TenancyError> {
-            Ok(Some(TenantRecord::new(
+        async fn registered_tenant(&self, name: &TenantName) -> Result<Option<RegisteredTenant>, TenancyError> {
+            Ok(Some(RegisteredTenant::Established(TenantRecord::new(
                 name.clone(), // clone: the record owns its name
                 TenantStatus::Active,
                 TenantDatabaseName::from(format!("db_{}", name.as_str())),
                 epoch(),
                 epoch(),
-            )))
+            ))))
         }
 
         async fn list_tenant_records(&self, _start: &TenantPageStart, _limit: u32) -> Result<(Vec<TenantRecord>, i64), TenancyError> {
@@ -800,6 +907,18 @@ async fn a_registry_that_cannot_be_read_evicts_nothing_rather_than_everything() 
 
         async fn provision(&self, name: &TenantName) -> Result<TenantDatabaseName, TenancyError> {
             Ok(TenantDatabaseName::from(format!("db_{}", name.as_str())))
+        }
+
+        async fn establish(&self, _name: &TenantName) -> Result<Establishment, TenancyError> {
+            Err(TenancyError::RegistryUnavailable(PersistenceFailure::Unavailable))
+        }
+
+        async fn provisional_tenants(&self) -> Result<Vec<TenantName>, TenancyError> {
+            Err(TenancyError::RegistryUnavailable(PersistenceFailure::Unavailable))
+        }
+
+        async fn retire_provisional(&self, _name: &TenantName, _idle_for: Duration) -> Result<Retirement, TenancyError> {
+            Err(TenancyError::RegistryUnavailable(PersistenceFailure::Unavailable))
         }
     }
 
@@ -877,8 +996,9 @@ async fn insert_trim_keeps_the_just_built_runtime_at_capacity_one() {
     pretty_assertions::assert_eq!(shutdowns.load(Ordering::Relaxed), 0);
 
     // The returned state is the live cached one: a follow-up hit resolves to
-    // the same Arc, proving the trim did not close the pool behind it.
-    let hit = manager.resolve_state(&acme, TenantCreationPolicy::MustExist).await.expect("resolves");
+    // the same Arc, proving the trim did not close the pool behind it. The hit
+    // may create the tenant too, since nothing has been written to it yet.
+    let hit = manager.resolve_state(&acme, TenantCreationPolicy::CreateOnDemand).await.expect("resolves");
     assert!(Arc::ptr_eq(&built.state, &hit.state));
 }
 
@@ -1881,4 +2001,246 @@ async fn suspending_an_unleased_tenant_releases_its_runtime_before_answering() {
         .expect("the suspend is applied");
     assert!(!manager.runtimes.contains_key(&tenant), "the runtime is released synchronously");
     pretty_assertions::assert_eq!(shutdowns.load(Ordering::SeqCst), 1, "its teardown completed before the suspend returned");
+}
+
+/// Whether the cached runtime of `tenant` serves an established tenant.
+fn cached_existence(manager: &TenantRuntimeManager<FakeRegistry, FakeFactory>, tenant: &TenantRef) -> Option<RuntimeExistence> {
+    manager.runtimes.get(tenant).map(|cached| cached.existence())
+}
+
+/// Clause 5.5.10: a tenant is created when an operation creating information
+/// targets it, so the tenant a creating request provisioned does not exist for
+/// a request that requires it until its database holds information.
+#[tokio::test]
+async fn a_tenant_created_on_demand_is_answered_as_nonexistent_until_its_database_holds_information() {
+    let Harness { manager, registry, .. } = harness(&[], true, 64);
+    let tenant = TenantRef::Named(named("acme"));
+
+    drop(manager.resolve_state(&tenant, TenantCreationPolicy::CreateOnDemand).await.expect("provisions"));
+    pretty_assertions::assert_eq!(cached_existence(&manager, &tenant), Some(RuntimeExistence::Provisional));
+
+    let refused = manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await;
+    assert!(
+        matches!(refused, Err(TenancyError::UnknownTenant { .. })),
+        "an empty provisional tenant does not exist"
+    );
+
+    registry.occupy("acme");
+    let served = manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await.expect("established");
+    pretty_assertions::assert_eq!(served.state.as_str(), "db_acme");
+    pretty_assertions::assert_eq!(cached_existence(&manager, &tenant), Some(RuntimeExistence::Established));
+    assert!(registry.all().contains(&"acme".to_string()), "the registry records the tenant as established");
+}
+
+#[tokio::test]
+async fn a_cached_runtime_of_an_established_tenant_is_served_without_reading_its_database_again() {
+    let Harness { manager, registry, .. } = harness(&[], true, 64);
+    let tenant = TenantRef::Named(named("acme"));
+    drop(manager.resolve_state(&tenant, TenantCreationPolicy::CreateOnDemand).await.expect("provisions"));
+    registry.occupy("acme");
+    drop(manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await.expect("established"));
+    let establishments = registry.establishments.load(Ordering::Relaxed);
+
+    for _ in 0..3 {
+        drop(manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await.expect("served"));
+    }
+    pretty_assertions::assert_eq!(registry.establishments.load(Ordering::Relaxed), establishments);
+}
+
+#[tokio::test]
+async fn a_creating_request_on_a_cached_provisional_tenant_is_served_without_settling_it() {
+    let Harness {
+        manager, registry, factory, ..
+    } = harness(&[], true, 64);
+    let tenant = TenantRef::Named(named("acme"));
+    drop(manager.resolve_state(&tenant, TenantCreationPolicy::CreateOnDemand).await.expect("provisions"));
+
+    drop(manager.resolve_state(&tenant, TenantCreationPolicy::CreateOnDemand).await.expect("served"));
+    pretty_assertions::assert_eq!(registry.establishments.load(Ordering::Relaxed), 0);
+    pretty_assertions::assert_eq!(registry.provisioned.load(Ordering::Relaxed), 1, "a cached runtime is not provisioned again");
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 1);
+}
+
+#[tokio::test]
+async fn an_empty_provisional_tenant_with_no_runtime_is_refused_and_never_built() {
+    let Harness {
+        manager, registry, factory, ..
+    } = harness(&[], true, 64);
+    registry.register_provisional("acme");
+    let tenant = TenantRef::Named(named("acme"));
+
+    let refused = manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await;
+    assert!(matches!(refused, Err(TenancyError::UnknownTenant { .. })));
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 0);
+    assert!(!manager.runtimes.contains_key(&tenant));
+}
+
+#[tokio::test]
+async fn a_provisional_tenant_holding_information_is_established_by_a_cold_admission() {
+    let Harness { manager, registry, .. } = harness(&[], true, 64);
+    registry.register_provisional("acme");
+    registry.occupy("acme");
+    let tenant = TenantRef::Named(named("acme"));
+
+    drop(manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await.expect("established"));
+    pretty_assertions::assert_eq!(cached_existence(&manager, &tenant), Some(RuntimeExistence::Established));
+    pretty_assertions::assert_eq!(
+        registry.provisioned.load(Ordering::Relaxed),
+        0,
+        "a request that requires the tenant never provisions it"
+    );
+}
+
+/// An interrupted provisioning leaves a provisional row whose database may be
+/// missing, so a creating request that finds one prepares it again.
+#[tokio::test]
+async fn a_creating_request_on_an_uncached_provisional_tenant_provisions_it_again() {
+    let Harness { manager, registry, .. } = harness(&[], true, 64);
+    registry.register_provisional("acme");
+    let tenant = TenantRef::Named(named("acme"));
+
+    drop(manager.resolve_state(&tenant, TenantCreationPolicy::CreateOnDemand).await.expect("provisions"));
+    pretty_assertions::assert_eq!(registry.provisioned.load(Ordering::Relaxed), 1);
+    pretty_assertions::assert_eq!(cached_existence(&manager, &tenant), Some(RuntimeExistence::Provisional));
+}
+
+#[tokio::test]
+async fn the_sweep_offers_only_provisional_tenants_this_broker_holds_no_runtime_for() {
+    let Harness { manager, registry, .. } = harness(&["established"], true, 64);
+    drop(
+        manager
+            .resolve_state(&TenantRef::Named(named("cached")), TenantCreationPolicy::CreateOnDemand)
+            .await
+            .expect("provisions"),
+    );
+    registry.register_provisional("abandoned");
+
+    let retired = manager.retire_abandoned_provisional().await;
+    pretty_assertions::assert_eq!(retired, 1);
+    pretty_assertions::assert_eq!(registry.offered(), vec!["abandoned".to_string()]);
+    pretty_assertions::assert_eq!(registry.provisional(), vec!["cached".to_string()]);
+}
+
+#[tokio::test]
+async fn the_sweep_retires_nothing_when_the_registry_cannot_be_read() {
+    let manager = TenantRuntimeManager::new(
+        config(true, 64),
+        Arc::new(UnreadableProvisionalRegistry),
+        Arc::new(FakeFactory {
+            shutdowns: Arc::new(AtomicUsize::new(0)),
+            built: AtomicUsize::new(0),
+        }),
+        Arc::new(FakeProbe::none()),
+        Arc::new(FakeSchedule::inert()),
+    );
+    pretty_assertions::assert_eq!(manager.retire_abandoned_provisional().await, 0);
+}
+
+/// A registry that lists no provisional tenant because it cannot be read.
+struct UnreadableProvisionalRegistry;
+
+#[async_trait]
+impl TenantDatabase for UnreadableProvisionalRegistry {
+    fn default_database(&self) -> TenantDatabaseName {
+        TenantDatabaseName::from("andromeda".to_string())
+    }
+
+    async fn registered_tenants(&self) -> Result<Vec<TenantName>, TenancyError> {
+        Ok(Vec::new())
+    }
+
+    async fn registered_tenant(&self, _name: &TenantName) -> Result<Option<RegisteredTenant>, TenancyError> {
+        Ok(None)
+    }
+
+    async fn list_tenant_records(&self, _start: &TenantPageStart, _limit: u32) -> Result<(Vec<TenantRecord>, i64), TenancyError> {
+        Ok((Vec::new(), 0))
+    }
+
+    async fn provision(&self, name: &TenantName) -> Result<TenantDatabaseName, TenancyError> {
+        Ok(TenantDatabaseName::from(format!("db_{}", name.as_str())))
+    }
+
+    async fn establish(&self, _name: &TenantName) -> Result<Establishment, TenancyError> {
+        Ok(Establishment::Empty)
+    }
+
+    async fn provisional_tenants(&self) -> Result<Vec<TenantName>, TenancyError> {
+        Err(TenancyError::RegistryUnavailable(PersistenceFailure::Unavailable))
+    }
+
+    async fn retire_provisional(&self, _name: &TenantName, _idle_for: Duration) -> Result<Retirement, TenancyError> {
+        Ok(Retirement::Retired)
+    }
+}
+
+#[tokio::test]
+async fn the_sweep_establishes_a_provisional_tenant_whose_database_holds_information() {
+    let Harness { manager, registry, .. } = harness(&[], true, 64);
+    registry.register_provisional("acme");
+    registry.occupy("acme");
+
+    pretty_assertions::assert_eq!(manager.retire_abandoned_provisional().await, 0);
+    assert!(registry.all().contains(&"acme".to_string()));
+    pretty_assertions::assert_eq!(registry.provisional(), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn the_tenant_collection_lists_a_provisional_tenant_holding_information_and_not_an_empty_one() {
+    let Harness { manager, registry, .. } = harness(&["established"], true, 64);
+    registry.register_provisional("created");
+    registry.occupy("created");
+    registry.register_provisional("refused");
+
+    let listing = manager.list_tenants(&TenantPageStart::Forward { after: None }, 10).await.expect("lists");
+    let names: Vec<&str> = listing.views.iter().map(|view| view.record.tenant_name.as_str()).collect();
+    pretty_assertions::assert_eq!(names, vec!["created", "established"]);
+    pretty_assertions::assert_eq!(listing.total, 2);
+}
+
+#[tokio::test]
+async fn a_tenant_read_settles_a_provisional_tenant() {
+    let Harness { manager, registry, .. } = harness(&[], true, 64);
+    registry.register_provisional("refused");
+    registry.register_provisional("created");
+    registry.occupy("created");
+
+    assert!(manager.tenant(&named("refused")).await.expect("reads").is_none());
+    let created = manager.tenant(&named("created")).await.expect("reads").expect("exists");
+    pretty_assertions::assert_eq!(created.record.status, TenantStatus::Active);
+}
+
+#[tokio::test]
+async fn suspending_an_empty_provisional_tenant_finds_no_tenant() {
+    let Harness { manager, registry, .. } = harness(&[], true, 64);
+    registry.register_provisional("refused");
+
+    let view = manager.set_admin_status(&named("refused"), TenantStatus::Suspended).await.expect("answers");
+    assert!(view.is_none());
+    assert!(!registry.is_suspended("refused"));
+}
+
+/// A creating operation may commit work that falls due before any request
+/// establishes its tenant, and that work runs regardless.
+#[tokio::test]
+async fn a_provisional_tenant_with_work_due_is_woken_and_stays_provisional() {
+    let registry = Arc::new(FakeRegistry::new(&[]));
+    registry.register_provisional("acme");
+    let factory = Arc::new(FakeFactory {
+        shutdowns: Arc::new(AtomicUsize::new(0)),
+        built: AtomicUsize::new(0),
+    });
+    let manager = TenantRuntimeManager::new(
+        config(true, 64),
+        Arc::clone(&registry),
+        factory,
+        Arc::new(FakeProbe::due_as_answered()),
+        Arc::new(FakeSchedule::inert()),
+    );
+
+    pretty_assertions::assert_eq!(manager.wake(&named("acme")).await, WakeOutcome::Loaded);
+    pretty_assertions::assert_eq!(
+        cached_existence(&manager, &TenantRef::Named(named("acme"))),
+        Some(RuntimeExistence::Provisional)
+    );
 }

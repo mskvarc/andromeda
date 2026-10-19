@@ -29,6 +29,8 @@ pub mod db_name_prefix;
 pub mod error;
 pub mod lifecycle;
 pub mod pending_work;
+pub mod provisional;
+pub mod registered_tenant;
 pub mod residency;
 pub mod runtime;
 pub mod runtime_build_failure;

@@ -138,6 +138,7 @@ impl PostgresPendingWorkProbe {
                 | ContextStoreError::UnencodableSnapshot(_)
                 | ContextStoreError::StoredEntity(_)
                 | ContextStoreError::StoredEntityMap(_)
+                | ContextStoreError::StoredTenantStatus(_)
                 | ContextStoreError::CatalogueIdentityGeneration(_)
                 | ContextStoreError::Invariant(_)
                 | ContextStoreError::DatabaseUrlUnnamed),

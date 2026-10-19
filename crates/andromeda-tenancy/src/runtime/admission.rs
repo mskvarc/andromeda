@@ -4,10 +4,13 @@
 use crate::{
     creation_policy::TenantCreationPolicy,
     database::TenantDatabase,
+    database_name::TenantDatabaseName,
     error::TenancyError,
+    provisional::Establishment,
+    registered_tenant::RegisteredTenant,
     runtime::{
         TenantRuntimeManager,
-        cached_runtime::CachedRuntime,
+        cached_runtime::{CachedRuntime, RuntimeExistence},
         lease::{LeasedState, RuntimeLease},
     },
     state_factory::{TenantRuntime, TenantStateFactory},
@@ -37,8 +40,10 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// Returns [`TenancyError::MultiTenancyDisabled`] when a named tenant is
     /// addressed on a deployment that serves only the unnamed default, and
     /// [`TenancyError::UnknownTenant`] when the tenant is not registered and
-    /// `policy` is [`TenantCreationPolicy::MustExist`], or when it is suspended
-    /// (including a cached runtime a suspend retired while a request held it).
+    /// `policy` is [`TenantCreationPolicy::MustExist`], when it is provisional
+    /// under that policy and its database holds no information, or when it is
+    /// suspended (including a cached runtime a suspend retired while a request
+    /// held it).
     /// Returns [`TenancyError::Saturated`] when the request cannot be admitted
     /// to a cold build within `build_admission_timeout`. Reading the registry,
     /// provisioning the tenant and building its runtime each surface the
@@ -48,8 +53,8 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             return Err(TenancyError::MultiTenancyDisabled);
         }
 
-        if let Some(leased) = self.cached_lease(tenant)? {
-            return Ok(leased);
+        if let Some(cached) = self.cached_lease(tenant)? {
+            return self.admit_cached(tenant, policy, cached).await;
         }
 
         // Every wait ahead of the build (the single-flight lock, the build
@@ -80,12 +85,13 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         result
     }
 
-    /// The cached runtime's state and a fresh lease on it, if one is cached.
+    /// The cached runtime's state and a fresh lease on it, with whether its
+    /// tenant exists yet, if one is cached.
     ///
     /// A runtime retired by a suspend while a request held it is refused exactly
     /// as the cold path refuses a suspended tenant (clause 5.5.10): the data path
     /// answers as if the tenant did not exist.
-    fn cached_lease(&self, tenant: &TenantRef) -> Result<Option<LeasedState<F::State>>, TenancyError> {
+    fn cached_lease(&self, tenant: &TenantRef) -> Result<Option<CachedLease<F::State>>, TenancyError> {
         let Some(runtime) = self.runtimes.get(tenant) else {
             return Ok(None);
         };
@@ -98,17 +104,47 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         // The lease is cloned under the shard read guard that also reads the
         // state, so the strong count a concurrent eviction reads already counts
         // this hold.
-        Ok(Some(LeasedState {
-            state: Arc::clone(&runtime.state),
-            lease: RuntimeLease::clone_from(&runtime.origin),
+        Ok(Some(CachedLease {
+            leased: LeasedState {
+                state: Arc::clone(&runtime.state),
+                lease: RuntimeLease::clone_from(&runtime.origin),
+            },
+            existence: runtime.existence(),
         }))
+    }
+
+    /// Hand a request the cached runtime it found, once its tenant is known to
+    /// exist when `policy` requires that.
+    ///
+    /// A provisional tenant is served to a request that may create it. A
+    /// request that requires the tenant to exist is served only once the
+    /// tenant's database holds information (clause 5.5.10); the lease is held
+    /// while that is read, so the runtime cannot be released underneath it.
+    async fn admit_cached(
+        &self,
+        tenant: &TenantRef,
+        policy: TenantCreationPolicy,
+        CachedLease { leased, existence }: CachedLease<F::State>,
+    ) -> Result<LeasedState<F::State>, TenancyError> {
+        if let (RuntimeExistence::Provisional, TenantCreationPolicy::MustExist, TenantRef::Named(name)) = (existence, policy, tenant) {
+            self.require_established(name).await?;
+        }
+        Ok(leased)
+    }
+
+    /// Refuse a provisional tenant whose database holds no information.
+    async fn require_established(&self, name: &TenantName) -> Result<(), TenancyError> {
+        match self.establish_tenant(name).await? {
+            Establishment::Established => Ok(()),
+            Establishment::Empty => Err(unknown(name)),
+        }
     }
 
     /// The cold path under the tenant's single-flight lock: re-check the cache,
     /// take a build permit and build.
     async fn resolve_state_locked(&self, tenant: &TenantRef, policy: TenantCreationPolicy, deadline: Instant) -> Result<LeasedState<F::State>, TenancyError> {
-        if let Some(leased) = self.cached_lease(tenant)? {
-            return Ok(leased);
+        if let Some(cached) = self.cached_lease(tenant)? {
+            return self.admit_cached(tenant, policy, cached).await;
         }
 
         // Admission: only a genuine cold build past the second cache check waits
@@ -143,7 +179,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     }
 
     /// The build lock for a tenant, creating it on the first request.
-    fn build_lock_for(&self, tenant: &TenantRef) -> Arc<Mutex<()>> {
+    pub(super) fn build_lock_for(&self, tenant: &TenantRef) -> Arc<Mutex<()>> {
         // clone: hand back an owned Arc so the DashMap shard guard is released
         // before the caller awaits on the lock: holding a shard guard across
         // an await deadlocks.
@@ -152,22 +188,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
 
     /// Build a runtime for a tenant that has none open, returning it leased.
     async fn resolve_state_cold(&self, tenant: &TenantRef, policy: TenantCreationPolicy, deadline: Instant) -> Result<LeasedState<F::State>, TenancyError> {
-        let database = match tenant {
-            TenantRef::UnnamedDefault => self.database.default_database(),
-            TenantRef::Named(name) => match self.database.tenant_record(name).await? {
-                // A suspended tenant is refused on the data path exactly as an
-                // absent one is (clause 5.5.10): it is never cold-loaded, so a
-                // request bearing its `NGSILD-Tenant` header sees a 404
-                // `NonexistentTenant`, and the suspension cannot be probed by
-                // whether a request succeeds.
-                Some(record) if matches!(record.status, TenantStatus::Suspended) => return Err(unknown(name)),
-                Some(record) => record.database,
-                None => match policy {
-                    TenantCreationPolicy::MustExist => return Err(unknown(name)),
-                    TenantCreationPolicy::CreateOnDemand => self.database.provision(name).await?,
-                },
-            },
-        };
+        let (database, existence) = self.admitted_database(tenant, policy).await?;
 
         self.make_room(tenant, deadline).await?;
         let (state, runtime) = self.factory.build(tenant, &database).await?;
@@ -178,6 +199,9 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         match self.runtimes.entry(tenant.clone()) {
             Entry::Occupied(entry) => {
                 entry.get().touch();
+                if existence == RuntimeExistence::Established {
+                    entry.get().establish();
+                }
                 let state = Arc::clone(&entry.get().state);
                 let lease = RuntimeLease::clone_from(&entry.get().origin);
                 drop(entry);
@@ -190,7 +214,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                 // instant it is inserted, observes the lease and spares it.
                 let (cached, leased) = {
                     let origin = self.new_origin(&runtime);
-                    CachedRuntime::newly_leased(Arc::clone(&state), runtime, database, origin)
+                    CachedRuntime::newly_leased(Arc::clone(&state), runtime, database, existence, origin)
                 };
                 drop(vacant.insert(cached));
                 self.record_cache_size();
@@ -199,6 +223,37 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                     lease: RuntimeLease::hold(leased),
                 })
             }
+        }
+    }
+
+    /// Where a tenant's data lives and whether it exists yet, for a request
+    /// admitted under `policy`.
+    ///
+    /// A suspended tenant is refused on the data path exactly as an absent one
+    /// is (clause 5.5.10): it is never cold-loaded, so a request bearing its
+    /// `NGSILD-Tenant` header sees a 404 `NonexistentTenant`, and the suspension
+    /// cannot be probed by whether a request succeeds. A provisional tenant is
+    /// refused the same way under [`TenantCreationPolicy::MustExist`] until its
+    /// database holds information. A request that may create the tenant
+    /// provisions it, which also prepares the database of a provisional tenant
+    /// whose provisioning was interrupted.
+    async fn admitted_database(&self, tenant: &TenantRef, policy: TenantCreationPolicy) -> Result<(TenantDatabaseName, RuntimeExistence), TenancyError> {
+        let TenantRef::Named(name) = tenant else {
+            return Ok((self.database.default_database(), RuntimeExistence::Established));
+        };
+        match (self.database.registered_tenant(name).await?, policy) {
+            (Some(RegisteredTenant::Established(record)), TenantCreationPolicy::MustExist | TenantCreationPolicy::CreateOnDemand) => match record.status {
+                TenantStatus::Suspended => Err(unknown(name)),
+                TenantStatus::Active => Ok((record.database, RuntimeExistence::Established)),
+            },
+            (Some(RegisteredTenant::Provisional { database }), TenantCreationPolicy::MustExist) => {
+                self.require_established(name).await?;
+                Ok((database, RuntimeExistence::Established))
+            }
+            (Some(RegisteredTenant::Provisional { .. }) | None, TenantCreationPolicy::CreateOnDemand) => {
+                Ok((self.database.provision(name).await?, RuntimeExistence::Provisional))
+            }
+            (None, TenantCreationPolicy::MustExist) => Err(unknown(name)),
         }
     }
 
@@ -227,8 +282,17 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     }
 }
 
+/// A lease on a cached runtime, with whether its tenant exists yet.
+struct CachedLease<S> {
+    /// The runtime's state and the hold against its eviction.
+    leased: LeasedState<S>,
+    /// Whether the tenant the runtime serves was seen to exist.
+    existence: RuntimeExistence,
+}
+
 /// The refusal for a named tenant the data path must answer as nonexistent:
-/// absent under [`TenantCreationPolicy::MustExist`], suspended, or retired.
+/// absent or provisional and empty under [`TenantCreationPolicy::MustExist`],
+/// suspended, or retired.
 fn unknown(name: &TenantName) -> TenancyError {
     TenancyError::UnknownTenant { name: name.clone() } // clone: the error outlives this borrow
 }

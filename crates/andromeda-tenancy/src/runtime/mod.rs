@@ -5,6 +5,7 @@ pub mod lease;
 mod admission;
 mod cached_runtime;
 mod eviction;
+mod provisional_sweep;
 mod teardown;
 #[cfg(test)]
 mod tests;
@@ -17,12 +18,15 @@ use crate::{
     error::TenancyError,
     lifecycle::TenantLifecycle,
     pending_work::PendingWorkProbe,
+    provisional::Establishment,
+    registered_tenant::RegisteredTenant,
     residency::TenantResidency,
     runtime::{cached_runtime::CachedRuntime, lease::LeaseOrigin},
     state_factory::{TenantRuntime, TenantStateFactory},
     status::TenantStatus,
     tenant_listing::TenantListing,
     tenant_page_start::TenantPageStart,
+    tenant_record::TenantRecord,
     tenant_ref::TenantRef,
     tenant_view::TenantView,
     wake_schedule::TenantWakeSchedule,
@@ -190,6 +194,35 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         self.evict_named(tenant).await;
     }
 
+    /// Settle a provisional tenant against its database, recording on its
+    /// cached runtime, if one is open, that a tenant found to exist does.
+    async fn establish_tenant(&self, name: &TenantName) -> Result<Establishment, TenancyError> {
+        let establishment = self.database.establish(name).await?;
+        let tenant = TenantRef::Named(name.clone()); // clone: the cache is keyed by an owned tenant reference
+        if establishment == Establishment::Established
+            && let Some(cached) = self.runtimes.get(&tenant)
+        {
+            cached.establish();
+        }
+        Ok(establishment)
+    }
+
+    /// The registry row of an established tenant, settling a provisional one
+    /// first, or `None` when no tenant of that name exists.
+    async fn established_record(&self, name: &TenantName) -> Result<Option<TenantRecord>, TenancyError> {
+        match self.database.registered_tenant(name).await? {
+            Some(RegisteredTenant::Established(record)) => Ok(Some(record)),
+            None => Ok(None),
+            Some(RegisteredTenant::Provisional { .. }) => match self.establish_tenant(name).await? {
+                Establishment::Empty => Ok(None),
+                Establishment::Established => match self.database.registered_tenant(name).await? {
+                    Some(RegisteredTenant::Established(record)) => Ok(Some(record)),
+                    Some(RegisteredTenant::Provisional { .. }) | None => Ok(None),
+                },
+            },
+        }
+    }
+
     /// Return a resumed tenant's runtime to service if a suspend retired it while
     /// a request held it and it is still cached.
     fn reinstate(&self, tenant: &TenantRef) {
@@ -202,7 +235,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
 #[async_trait]
 impl<D: TenantDatabase + TenantLifecycle, F: TenantStateFactory> TenantAdministration for TenantRuntimeManager<D, F> {
     async fn tenant(&self, name: &TenantName) -> Result<Option<TenantView>, TenancyError> {
-        let Some(record) = self.database.tenant_record(name).await? else {
+        let Some(record) = self.established_record(name).await? else {
             return Ok(None);
         };
         let residency = self.residency(&TenantRef::Named(name.clone())); // clone: the residency probe keys the cache
@@ -210,6 +243,12 @@ impl<D: TenantDatabase + TenantLifecycle, F: TenantStateFactory> TenantAdministr
     }
 
     async fn list_tenants(&self, start: &TenantPageStart, limit: u32) -> Result<TenantListing, TenancyError> {
+        // Every provisional tenant is settled before the page is read, so a
+        // tenant whose creating operation has answered is listed and counted,
+        // and one whose creating operation was refused is not.
+        for name in self.database.provisional_tenants().await? {
+            self.establish_tenant(&name).await?;
+        }
         let (records, total) = self.database.list_tenant_records(start, limit).await?;
         let views = records
             .into_iter()
@@ -223,8 +262,9 @@ impl<D: TenantDatabase + TenantLifecycle, F: TenantStateFactory> TenantAdministr
 
     async fn set_admin_status(&self, name: &TenantName, status: TenantStatus) -> Result<Option<TenantView>, TenancyError> {
         // A status change on a tenant that does not exist is a 404 for the
-        // caller, so nothing is written for an unregistered name.
-        if self.database.tenant_record(name).await?.is_none() {
+        // caller, so nothing is written for an unregistered name or for a
+        // provisional tenant that holds no information.
+        if self.established_record(name).await?.is_none() {
             return Ok(None);
         }
         self.database.set_status(name, status).await?;

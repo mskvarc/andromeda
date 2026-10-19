@@ -60,6 +60,7 @@ fn classify(error: &ContextStoreError) -> EntityError {
         | ContextStoreError::UnencodableSnapshot(_)
         | ContextStoreError::StoredEntity(_)
         | ContextStoreError::StoredEntityMap(_)
+        | ContextStoreError::StoredTenantStatus(_)
         | ContextStoreError::CatalogueIdentityGeneration(_)
         | ContextStoreError::Invariant(_)
         | ContextStoreError::DatabaseUrlUnnamed => EntityError::from(persistence_failure(error)),

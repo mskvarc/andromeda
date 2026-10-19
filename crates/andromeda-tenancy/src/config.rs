@@ -40,6 +40,9 @@ pub enum TenancyConfigError {
     /// The cold-build admission deadline was configured as zero.
     #[error("tenancy.build_admission_timeout must be greater than zero")]
     ZeroBuildAdmissionTimeout,
+    /// The provisional-tenant time to live was configured as zero.
+    #[error("tenancy.provisional_tenant_ttl must be greater than zero")]
+    ZeroProvisionalTenantTtl,
 }
 
 /// Multi-tenancy configuration.
@@ -152,6 +155,20 @@ pub struct TenancyConfig {
     /// cold builds; this caps how much of a pass's budget the waker takes so a
     /// wake burst cannot starve request-driven cold loads.
     pub waker_max_wakes_per_pass: usize,
+
+    /// How long a provisional tenant whose database holds no information is
+    /// kept before the janitor retires it, in human-readable form (`"10m"`).
+    ///
+    /// A creating operation registers a tenant it targets for the first time
+    /// and prepares its database before the operation runs; until that
+    /// database holds information the tenant is answered as nonexistent
+    /// (clause 5.5.10). A refused creating operation leaves such a tenant
+    /// behind, and the janitor drops its database and removes its row once it
+    /// has not been provisioned for this long. Measured from the last
+    /// provisioning, so it must exceed the longest a creating request can take,
+    /// or a request still running could find its database gone.
+    #[toml_comment(inline)]
+    pub provisional_tenant_ttl: HumanDuration,
 }
 
 impl Default for TenancyConfig {
@@ -169,6 +186,7 @@ impl Default for TenancyConfig {
             min_dormancy: HumanDuration::from_secs(30),
             wake_residency: HumanDuration::from_secs(60),
             waker_max_wakes_per_pass: 4,
+            provisional_tenant_ttl: HumanDuration::from_secs(600),
         }
     }
 }
@@ -182,8 +200,8 @@ impl TenancyConfig {
     /// as zero: the per-tenant pool size, the runtime idle retention, the
     /// runtime cache capacity, the janitor cadence, the concurrent cold-build
     /// bound, the cold-build admission deadline, the concurrent-eviction bound,
-    /// the dormant re-wake floor, the woken-runtime residency or the per-pass
-    /// wake bound.
+    /// the dormant re-wake floor, the woken-runtime residency, the per-pass
+    /// wake bound or the provisional-tenant time to live.
     pub const fn validate(&self) -> Result<(), TenancyConfigError> {
         if self.tenant_max_connections == 0 {
             return Err(TenancyConfigError::ZeroTenantMaxConnections);
@@ -215,6 +233,9 @@ impl TenancyConfig {
         if self.waker_max_wakes_per_pass == 0 {
             return Err(TenancyConfigError::ZeroWakerMaxWakesPerPass);
         }
+        if self.provisional_tenant_ttl.is_zero() {
+            return Err(TenancyConfigError::ZeroProvisionalTenantTtl);
+        }
         Ok(())
     }
 }
@@ -241,6 +262,7 @@ mod config_tests {
             min_dormancy: HumanDuration::from_secs(30),
             wake_residency: HumanDuration::from_secs(60),
             waker_max_wakes_per_pass: 4,
+            provisional_tenant_ttl: HumanDuration::from_secs(600),
         };
         assert_eq!(config.validate(), Err(TenancyConfigError::ZeroRuntimeMaxCached));
     }
@@ -297,5 +319,14 @@ mod config_tests {
             ..TenancyConfig::default()
         };
         assert_eq!(config.validate(), Err(TenancyConfigError::ZeroWakerMaxWakesPerPass));
+    }
+
+    #[test]
+    fn a_zero_provisional_tenant_ttl_is_rejected() {
+        let config = TenancyConfig {
+            provisional_tenant_ttl: HumanDuration::from_secs(0),
+            ..TenancyConfig::default()
+        };
+        assert_eq!(config.validate(), Err(TenancyConfigError::ZeroProvisionalTenantTtl));
     }
 }

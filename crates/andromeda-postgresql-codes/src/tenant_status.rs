@@ -3,7 +3,8 @@
 use crate::{compact_code_domain::CompactCodeDomain, compact_code_registry, registry::UnknownCompactCode};
 
 compact_code_registry! {
-    /// The administrative status of a tenant in the platform registry.
+    /// The status of a tenant in the platform registry: whether it exists yet
+    /// and, once it does, its administrative status.
     ///
     /// Tenant status is an Andromeda administrative concept, so the labels are
     /// kebab-case.
@@ -15,6 +16,9 @@ compact_code_registry! {
             Active = 1, "active";
             /// The tenant is administratively suspended.
             Suspended = 2, "suspended";
+            /// The tenant is registered for a creating operation and does not
+            /// exist until its database holds information.
+            Provisional = 3, "provisional";
         }
     }
 }
@@ -26,14 +30,15 @@ mod tests {
 
     #[test]
     fn the_members_are_numbered_as_the_migration_documents_them() {
-        assert_eq!(TenantStatusCode::ALL.len(), 2);
+        assert_eq!(TenantStatusCode::ALL.len(), 3);
         assert_eq!(TenantStatusCode::Active.code(), 1);
         assert_eq!(TenantStatusCode::Suspended.code(), 2);
+        assert_eq!(TenantStatusCode::Provisional.code(), 3);
     }
 
     #[test]
     fn zero_and_the_number_after_the_last_member_fail_to_decode() {
         assert!(TenantStatusCode::try_from(0).is_err());
-        assert!(TenantStatusCode::try_from(3).is_err());
+        assert!(TenantStatusCode::try_from(4).is_err());
     }
 }

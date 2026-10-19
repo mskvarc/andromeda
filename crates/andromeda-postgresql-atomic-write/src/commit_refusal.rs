@@ -71,6 +71,7 @@ pub(crate) fn context_store(error: ContextStoreError) -> CommitError {
         | ContextStoreError::UnencodableSnapshot(_)
         | ContextStoreError::StoredEntity(_)
         | ContextStoreError::StoredEntityMap(_)
+        | ContextStoreError::StoredTenantStatus(_)
         | ContextStoreError::CatalogueIdentityGeneration(_)
         | ContextStoreError::Invariant(_)
         | ContextStoreError::DatabaseUrlUnnamed) => CommitError::from(other.failure_class().record(&other)),
@@ -113,6 +114,7 @@ pub(crate) fn entity_statement(error: ContextStoreError) -> AttemptFailure {
         | ContextStoreError::UnencodableSnapshot(_)
         | ContextStoreError::StoredEntity(_)
         | ContextStoreError::StoredEntityMap(_)
+        | ContextStoreError::StoredTenantStatus(_)
         | ContextStoreError::CatalogueIdentityGeneration(_)
         | ContextStoreError::Invariant(_)
         | ContextStoreError::DatabaseUrlUnnamed) => AttemptFailure::Failed(context_store(other)),
