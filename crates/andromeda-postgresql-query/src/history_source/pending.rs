@@ -22,8 +22,10 @@
 //!   ones by the judgement the application applies
 //!   ([`crate::scope_assertion`]).
 //!
-//! The visible types of an Entity are those of its latest queued intent
-//! stating types, which the application writes over the recorded ones.
+//! The visible types of an Entity with a queued intent stating types are
+//! those its recorded Temporal Evolution holds, then every other type its
+//! queued intents state: the application adds a type to the list and never
+//! removes one (clauses 5.6.11.4 and 5.6.12.4).
 //!
 //! The queue lives beside the live branch's relations. The recorded relations
 //! an entry is judged against are named in the schema the caller gives, which
@@ -37,6 +39,7 @@ use crate::{
         grain::HistoryGrain,
     },
     scope_assertion::{EVENT_COLUMNS, held_in_force, path_set},
+    type_list_union::{TypeListColumn, type_list_union},
 };
 use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
 use andromeda_postgresql_schema::{
@@ -52,7 +55,7 @@ use andromeda_postgresql_seaquery::{
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
-use sea_query::{Condition, DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, Order, Query, SelectStatement, SimpleExpr, TableRef, UnionType};
+use sea_query::{Condition, DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, Query, SelectStatement, SimpleExpr, TableRef, UnionType};
 
 /// Alias `pe`: the queued entry a source row is projected from.
 #[derive(Iden, Clone, Copy)]
@@ -83,11 +86,6 @@ struct RecordedStream;
 #[derive(Iden, Clone, Copy)]
 #[iden = "pd"]
 struct RecordedRow;
-
-/// Alias `pl`: the latest queued intent of an Entity stating types.
-#[derive(Iden, Clone, Copy)]
-#[iden = "pl"]
-struct LatestTypedIntent;
 
 /// Alias `pj`: a recorded Scope event a queued assertion is judged against.
 #[derive(Iden, Clone, Copy)]
@@ -359,24 +357,33 @@ fn queued_assertion() -> SimpleExpr {
     path_set(paths, Expr::col((AssertedPath, TemporalEntry::VerbatimScopePath)))
 }
 
-/// The Entities a queued intent states types for, each with the types of its
-/// latest such intent, as rows of the entity source.
-pub(crate) fn typed_entity_rows() -> SelectStatement {
-    let mut latest = Query::select();
-    latest
-        .distinct_on([(TypedIntent, TemporalAppendIntents::EntityId)])
-        .expr_as(Expr::col((TypedIntent, TemporalAppendIntents::EntityId)), TemporalEntities::Id)
-        .column((TypedIntent, TemporalAppendIntents::EntityTypeNameKeys))
+/// The Entities a queued intent states types for, each with the types the
+/// application leaves its Temporal Evolution, as rows of the entity source:
+/// those its recorded Evolution in `schema` holds, then every other type its
+/// queued intents state, in the order of the first intent stating it.
+pub(crate) fn typed_entity_rows(schema: Option<&DynIden>) -> SelectStatement {
+    let mut recorded = Query::select();
+    recorded
+        .expr_as(Expr::col((RecordedEvolution, TemporalEntities::Id)), TypeListColumn::Id)
+        .expr_as(
+            Expr::col((RecordedEvolution, TemporalEntities::EntityTypeNameKeys)),
+            TypeListColumn::EntityTypeNameKeys,
+        )
+        .expr_as(int_literal(0), TypeListColumn::ListRank)
+        .from(qualified(schema, TemporalEntities::Table).alias(RecordedEvolution))
+        .and_where(types_queued_for(Expr::col((RecordedEvolution, TemporalEntities::Id))));
+    let mut queued = Query::select();
+    queued
+        .expr_as(Expr::col((TypedIntent, TemporalAppendIntents::EntityId)), TypeListColumn::Id)
+        .expr_as(
+            Expr::col((TypedIntent, TemporalAppendIntents::EntityTypeNameKeys)),
+            TypeListColumn::EntityTypeNameKeys,
+        )
+        .expr_as(Expr::col((TypedIntent, TemporalAppendIntents::IntentKey)), TypeListColumn::ListRank)
         .from_as(TemporalAppendIntents::Table, TypedIntent)
-        .and_where(has_elements(Expr::col((TypedIntent, TemporalAppendIntents::EntityTypeNameKeys))))
-        .order_by((TypedIntent, TemporalAppendIntents::EntityId), Order::Asc)
-        .order_by((TypedIntent, TemporalAppendIntents::IntentKey), Order::Desc);
-    let mut select = Query::select();
-    select
-        .column((LatestTypedIntent, TemporalEntities::Id))
-        .column((LatestTypedIntent, TemporalEntities::EntityTypeNameKeys))
-        .from_subquery(latest, LatestTypedIntent);
-    select
+        .and_where(has_elements(Expr::col((TypedIntent, TemporalAppendIntents::EntityTypeNameKeys))));
+    recorded.union(UnionType::All, queued);
+    type_list_union(recorded)
 }
 
 #[cfg(test)]

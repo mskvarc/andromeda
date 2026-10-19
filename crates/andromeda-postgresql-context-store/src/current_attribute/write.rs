@@ -24,14 +24,8 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{CurrentAttributes, Entities};
-use andromeda_postgresql_seaquery::{pg_array::any, pg_operator::PgBinaryOperator};
-use sea_query::{Cond, DeleteStatement, DynIden, Expr, ExprTrait, Iden, InsertStatement, IntoIden, JoinType, OnConflict, Query, SimpleExpr, UpdateStatement};
-
-/// The `excluded` pseudo-relation an `ON CONFLICT DO UPDATE` action reads the
-/// proposed row from.
-#[derive(Iden, Clone, Copy)]
-#[iden = "excluded"]
-struct Excluded;
+use andromeda_postgresql_seaquery::{conflict_image::Excluded, pg_array::any, pg_operator::PgBinaryOperator};
+use sea_query::{Cond, DeleteStatement, DynIden, Expr, ExprTrait, InsertStatement, IntoIden, JoinType, OnConflict, Query, SimpleExpr, UpdateStatement};
 
 /// The columns a stored row takes from the row an update writes in its place:
 /// every staged column but the grain it is matched by and `created_at`, which

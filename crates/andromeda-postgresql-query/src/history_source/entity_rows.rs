@@ -2,17 +2,19 @@
 //! recorded under.
 //!
 //! Clause 4.5.6 makes the Temporal Evolution the Entity as clause 4.5.1
-//! mandates, and the application writes the types of an Entity's latest queued
-//! intent stating types over the recorded ones, so on the live branch those
-//! types are the Entity's before the drain as after it. An Entity only queued
-//! intents stating no type name has no Temporal Evolution yet.
+//! mandates, and the application adds every type an Entity's queued intents
+//! state to the recorded ones, so on the live branch an Entity with such an
+//! intent is read under that union, its types before the drain as after it.
+//! An Entity only queued intents stating no type name has no Temporal
+//! Evolution yet.
 //!
 //! The union's recorded branch carries no condition of its own: PostgreSQL
 //! flattens a `UNION ALL` into one append relation only when every branch is a
 //! bare relation, and only then does an identifier-ordered page read the
 //! catalogue's identifier index and stop at the page. The recorded Evolutions
-//! a queued intent retypes are therefore left out by a condition over the
-//! union, through the flag each branch projects.
+//! a queued intent adds types to are therefore left out by a condition over
+//! the union, through the flag each branch projects, and read from the queued
+//! branch with their recorded types.
 //!
 //! A selection by type reads the recorded Evolutions from the walk of their
 //! type memberships instead ([`type_member_rows`]), which yields one type's
@@ -57,7 +59,8 @@ struct RecordedEvolution;
 #[iden = "rw"]
 struct WalkedEvolution;
 
-/// Alias `rq`: the latest queued intent of an Entity stating types.
+/// Alias `rq`: an Entity a queued intent states types for, under the types
+/// the drain leaves it.
 #[derive(Iden, Clone, Copy)]
 #[iden = "rq"]
 struct QueuedEvolution;
@@ -129,7 +132,7 @@ pub fn entity_rows(branch: &HistoryBranch, alias: impl IntoIden) -> TableRef {
     match branch.pending() {
         PendingEntries::Absent => qualified(schema, TemporalEntities::Table).alias(alias),
         PendingEntries::Unioned => {
-            let mut queued = pending::typed_entity_rows();
+            let mut queued = pending::typed_entity_rows(schema);
             queued.expr_as(SimpleExpr::Constant(true.into()), Queued);
             let mut union = Query::select();
             union
@@ -154,9 +157,9 @@ pub fn entity_rows(branch: &HistoryBranch, alias: impl IntoIden) -> TableRef {
 ///
 /// The membership relation holds the recorded Evolutions alone. On the live
 /// branch the Entities a queued intent states types for join the walk,
-/// filtered by the same expressions over the types of their latest such
-/// intent, and a recorded Evolution such an intent retypes is left out of the
-/// walk, as [`entity_rows`] leaves it out.
+/// filtered by the same expressions over their recorded types and every type
+/// their queued intents state, and the recorded Evolution of such an Entity
+/// is left out of the walk, as [`entity_rows`] leaves it out.
 ///
 /// Narrowed by `walked`, the recorded walk reads the named Evolutions in
 /// identifier order behind `OFFSET 0`, so PostgreSQL neither merges it into
@@ -197,7 +200,7 @@ pub fn type_member_rows(
             queued
                 .column((QueuedEvolution, TemporalEntities::Id))
                 .expr_as(SimpleExpr::Constant(true.into()), Queued)
-                .from_subquery(pending::typed_entity_rows(), QueuedEvolution)
+                .from_subquery(pending::typed_entity_rows(memberships.schema), QueuedEvolution)
                 .cond_where(
                     exprs
                         .iter()
@@ -323,8 +326,8 @@ fn no_holder(branch: &HistoryBranch) -> SelectStatement {
 }
 
 /// `rows` over the union of recorded and queued Evolutions, keeping a
-/// recorded one only while no queued intent states types for it: the
-/// application writes those types over the recorded ones.
+/// recorded one only while no queued intent states types for it: the queued
+/// branch reads it then, under the types the drain leaves it.
 fn unretyped(mut rows: SelectStatement) -> SelectStatement {
     rows.cond_where(
         Condition::any()
@@ -354,19 +357,40 @@ mod tests {
         Query::select().column(Asterisk).from(source).to_owned().to_string(PostgresQueryBuilder)
     }
 
+    /// Clauses 5.6.11.4 and 5.6.12.4 only add types: an Entity a queued intent
+    /// states types for is read under its recorded types, then every type
+    /// its queued intents state, and its recorded row is left to that read.
     #[test]
-    fn pending_entities_take_the_types_of_their_latest_typed_intent() {
+    fn pending_entities_take_their_recorded_types_and_every_queued_type() {
         let sql = rendered(entity_rows(&HistoryBranch::live(), Alias::new("e")));
         assert!(
-            sql.contains(
-                r#"SELECT DISTINCT ON ("pt"."entity_id") "pt"."entity_id" AS "id", "pt"."entity_type_name_keys" FROM "temporal_append_intents" AS "pt" WHERE cardinality("pt"."entity_type_name_keys") > 0 ORDER BY "pt"."entity_id" ASC, "pt"."intent_key" DESC"#
-            ),
+            sql.contains(concat!(
+                r#"(SELECT "pv"."id" AS "id", "pv"."entity_type_name_keys" AS "entity_type_name_keys", 0 AS "list_rank" FROM "temporal_entities" AS "pv" "#,
+                r#"WHERE EXISTS(SELECT 1 FROM "temporal_append_intents" AS "pt" WHERE "pt"."entity_id" = "pv"."id""#
+            )),
             "{sql}"
         );
+        assert!(
+            sql.contains(concat!(
+                r#"UNION ALL (SELECT "pt"."entity_id" AS "id", "pt"."entity_type_name_keys" AS "entity_type_name_keys", "pt"."intent_key" AS "list_rank" "#,
+                r#"FROM "temporal_append_intents" AS "pt" WHERE cardinality("pt"."entity_type_name_keys") > 0)"#
+            )),
+            "{sql}"
+        );
+        assert!(sql.contains(r#"GROUP BY "first_stated"."id""#), "{sql}");
         assert!(
             sql.contains(r#"WHERE "ru"."queued" OR (NOT EXISTS(SELECT 1 FROM "temporal_append_intents" AS "pt" WHERE "pt"."entity_id" = "ru"."id""#),
             "{sql}"
         );
+    }
+
+    /// The recorded types of an Entity a queued intent states types for are
+    /// read in the schema the live branch's relations are named in.
+    #[test]
+    fn the_recorded_types_of_a_queued_entity_are_read_in_the_branch_schema() {
+        let schema = Alias::new("live_x").into_iden();
+        let sql = rendered(entity_rows(&HistoryBranch::live_in(schema), Alias::new("e")));
+        assert!(sql.contains(r#"FROM "live_x"."temporal_entities" AS "pv""#), "{sql}");
     }
 
     /// The recorded branch is the bare catalogue, so the planner flattens the
@@ -402,9 +426,10 @@ mod tests {
     }
 
     /// Clause 4.17 on the live branch: the recorded Evolutions of the type come
-    /// from its membership range, the queued ones from their latest typed
-    /// intent filtered by the same type, and a recorded one a queued intent
-    /// retypes is left to that intent.
+    /// from its membership range, the queued ones from the types the drain
+    /// leaves them filtered by the same type, and a recorded one a queued
+    /// intent states types for is left to the queued branch. The catalogue is
+    /// read for those Entities alone.
     #[test]
     fn a_live_type_walk_reads_the_membership_range_beside_the_queued_typed_intents() {
         let sql = walked(&HistoryBranch::live(), &vehicle());
@@ -417,7 +442,11 @@ mod tests {
             sql.contains(r#"WHERE "ru"."queued" OR (NOT EXISTS(SELECT 1 FROM "temporal_append_intents" AS "pt" WHERE "pt"."entity_id" = "ru"."id""#),
             "{sql}"
         );
-        assert!(!sql.contains(r#"FROM "temporal_entities""#), "{sql}");
+        assert_eq!(sql.matches(r#"FROM "temporal_entities""#).count(), 1, "{sql}");
+        assert!(
+            sql.contains(r#"FROM "temporal_entities" AS "pv" WHERE EXISTS(SELECT 1 FROM "temporal_append_intents" AS "pt" WHERE "pt"."entity_id" = "pv"."id""#),
+            "{sql}"
+        );
     }
 
     #[test]

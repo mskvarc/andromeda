@@ -198,7 +198,7 @@ mod tests {
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_entity::{document::EntityDocument, history::current_state_fold::fold_into_current_state, refusal::EntityRefusal};
     use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::{request_body::RequestBody, temporal::written_temporal_entity::WrittenTemporalEntity};
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use indexmap::IndexMap;
@@ -231,6 +231,37 @@ mod tests {
         let path = identifier("urn:ngsi-ld:Vehicle:1");
         let addressed = written(Some(identifier("urn:ngsi-ld:Vehicle:2"))).addressed_to(&path, Vec::new());
         pretty_assertions::assert_eq!(addressed.document().id(), Some(&path));
+    }
+
+    /// The evolution a Fragment of `types` writes, holding no instance.
+    fn written_of(types: &[&str]) -> WrittenEvolution {
+        let types = types.iter().map(|raw| raw.parse().expect("a valid type")).collect();
+        WrittenEvolution::new(Arc::new(EntityDocument::new(None, types, None, None, IndexMap::new())), None)
+    }
+
+    /// The types of `evolution`'s document, as written.
+    fn types_of(evolution: &WrittenEvolution) -> Vec<&str> {
+        evolution.document().types().iter().map(EntityTypeName::as_str).collect()
+    }
+
+    /// Clause 5.6.12.4 adds a type only when the Fragment includes one: a
+    /// Fragment naming none is the Temporal Evolution under the types it is
+    /// recorded under.
+    #[test]
+    fn a_fragment_naming_no_type_takes_the_recorded_types() {
+        let recorded = vec!["https://example.org/Vehicle".parse().expect("a valid type")];
+        let addressed = written_of(&[]).addressed_to(&identifier("urn:ngsi-ld:Vehicle:1"), recorded);
+        pretty_assertions::assert_eq!(types_of(&addressed), ["https://example.org/Vehicle"]);
+    }
+
+    /// Clause 5.6.12.4: a Fragment naming types states the types it adds, and
+    /// the store adds the ones the Temporal Evolution lacks to its list, so
+    /// the recorded types are not copied into what the write states.
+    #[test]
+    fn a_fragment_naming_types_states_its_own_types() {
+        let recorded = vec!["https://example.org/Vehicle".parse().expect("a valid type")];
+        let addressed = written_of(&["https://example.org/Car"]).addressed_to(&identifier("urn:ngsi-ld:Vehicle:1"), recorded);
+        pretty_assertions::assert_eq!(types_of(&addressed), ["https://example.org/Car"]);
     }
 
     /// A Temporal Evolution is held to the attribute nesting a Core write is:

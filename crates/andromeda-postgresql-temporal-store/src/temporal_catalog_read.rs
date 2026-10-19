@@ -352,15 +352,18 @@ mod tests {
     }
 
     /// Clause 4.5.6: an Entity whose only history is a queued intent stating
-    /// types has a Temporal Evolution, under the types of its latest such
-    /// intent.
+    /// types has a Temporal Evolution, under every type its queued intents
+    /// state.
     #[test]
     fn an_entity_with_only_pending_history_exists() {
         for sql in [
             temporal_entity_exists_query(&HistoryBranch::live(), "urn:x").to_string(PostgresQueryBuilder),
             temporal_entity_types_query(&HistoryBranch::live(), &["urn:x"]).to_string(PostgresQueryBuilder),
         ] {
-            assert!(sql.contains(r#"SELECT DISTINCT ON ("pt"."entity_id") "pt"."entity_id" AS "id""#), "{sql}");
+            assert!(
+                sql.contains(r#"(SELECT "pt"."entity_id" AS "id", "pt"."entity_type_name_keys" AS "entity_type_name_keys""#),
+                "{sql}"
+            );
             assert!(sql.contains(r#""te"."id""#), "{sql}");
         }
     }

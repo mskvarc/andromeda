@@ -170,7 +170,7 @@ mod tests {
         literal::LiteralValue,
         reads::attribute_change::AttributeChangeKind,
     };
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::entity_change::EntityLifecycle;
     use andromeda_ngsi_ld_number::JsonNumber;
     use chrono::Utc;
@@ -299,6 +299,28 @@ mod tests {
         let write = written(&evolution, Some(&current));
 
         assert!(matches!(write.write.entity, EntityMutation::None));
+        assert!(write.write.subscription_matches.is_empty());
+        assert!(write.events.is_empty());
+    }
+
+    /// Entity Type names carry no instant, so a backfill naming a type the
+    /// Entity lacks still adds it to current state, the types its Temporal
+    /// Evolution is then recorded under. No attribute changed, so clause 5.8.6
+    /// sees no change and no notification is owed.
+    #[test]
+    fn a_backfill_naming_a_new_type_adds_it_to_current_state_and_owes_no_notification() {
+        let current = standing();
+        let mut evolution = vehicle(&json!({SPEED: [instance(0, "2023-01-01T00:00:00Z")]}));
+        evolution[0]["@type"] = json!(["https://example.org/Car"]);
+
+        let write = written(&evolution, Some(&current));
+
+        let EntityMutation::Update(record) = &write.write.entity else {
+            panic!("the new type updates current state: {:?}", write.write.entity);
+        };
+        let types: Vec<&str> = record.projection.types.iter().map(EntityTypeName::as_str).collect();
+        pretty_assertions::assert_eq!(types, ["https://example.org/Vehicle", "https://example.org/Car"]);
+        pretty_assertions::assert_eq!(speed(&record.state), Some(JsonNumber::from(1)));
         assert!(write.write.subscription_matches.is_empty());
         assert!(write.events.is_empty());
     }

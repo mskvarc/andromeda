@@ -8,7 +8,12 @@
 //! past-due instances are discarded, then the most recent `observedAt` stands,
 //! then the most recent `modifiedAt`. The instance being added is the newest
 //! write, so it stands whenever no `observedAt` pair says it is older, and a
-//! backfill of observations older than current state changes nothing at all.
+//! backfill of observations older than current state changes no attribute.
+//!
+//! Entity Type names carry no instant, so clause 4.5.5.3 never makes one the
+//! older: a type the fragment names that the entity lacks is added whether or
+//! not an instance stands, as clauses 5.6.11.4 and 5.6.12.4 add it to the
+//! Temporal Evolution.
 
 use crate::{
     attribute_instances::AttributeInstances,
@@ -41,6 +46,15 @@ pub enum CurrentStateFoldError {
     Instance(#[from] MutationError),
 }
 
+/// Whether the fragment named a type current state did not hold.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TypeGrowth {
+    /// The fragment named a type the entity lacked.
+    Grew,
+    /// Every type the fragment named was already the entity's.
+    Unchanged,
+}
+
 /// Whether a candidate instance stood over the instance current state held.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Standing {
@@ -55,8 +69,9 @@ enum Standing {
 /// instant `at` (clauses 4.5.5.3, 4.5.7, 5.6.11.4).
 ///
 /// Returns the entity's current state after the fold, or `None` when current
-/// state existed and no instance of the fragment stands over what it held. A new entity is always created, with the
-/// fragment's identifier, types and scope, even when no instance of the
+/// state existed, no instance of the fragment stands over what it held and
+/// the fragment names no type it lacked. A new entity is always created, with
+/// the fragment's identifier, types and scope, even when no instance of the
 /// fragment stands. The fragment's types are added to the entity's. The
 /// instances keep their members except `instanceId`, which identifies an
 /// instance of the Temporal Evolution and has no place in current state
@@ -78,6 +93,11 @@ pub fn fold_into_current_state(
         Some(current) => current.clone(),
         None => new_entity(evolution)?,
     };
+    let growth = if evolution.types().iter().any(|name| !state.types().contains(name)) {
+        TypeGrowth::Grew
+    } else {
+        TypeGrowth::Unchanged
+    };
     // clone: the entity owns the types it gains.
     state.types_mut().extend(evolution.types().iter().cloned());
     let mut stood = Standing::Older;
@@ -88,9 +108,11 @@ pub fn fold_into_current_state(
             }
         }
     }
-    Ok(match (current, stood) {
-        (Some(_), Standing::Older) => None,
-        (Some(_), Standing::Stood) | (None, Standing::Stood | Standing::Older) => Some(state),
+    Ok(match (current, stood, growth) {
+        (Some(_), Standing::Older, TypeGrowth::Unchanged) => None,
+        (Some(_), Standing::Stood, TypeGrowth::Grew | TypeGrowth::Unchanged)
+        | (Some(_), Standing::Older, TypeGrowth::Grew)
+        | (None, Standing::Stood | Standing::Older, TypeGrowth::Grew | TypeGrowth::Unchanged) => Some(state),
     })
 }
 
@@ -184,6 +206,8 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     const V: &str = "https://example.org/v";
+    /// The type of the entity [`entity`] builds.
+    const VEHICLE: &str = "https://example.com/Vehicle";
 
     fn at(raw: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(raw).expect("a valid instant").with_timezone(&Utc)
@@ -201,9 +225,14 @@ mod tests {
     }
 
     fn evolution(instances: Vec<InstanceDocument>) -> EntityDocument {
+        evolution_of("https://example.org/TQ", instances)
+    }
+
+    /// A fragment of type `entity_type` carrying `instances` of `V`.
+    fn evolution_of(entity_type: &str, instances: Vec<InstanceDocument>) -> EntityDocument {
         EntityDocument::new(
             Some("urn:ngsi-ld:TQ:1".parse().expect("a valid identifier")),
-            vec!["https://example.org/TQ".parse().expect("a valid type")],
+            vec![entity_type.parse().expect("a valid type")],
             None,
             None,
             [(name(V), AttributeMember::Instances(instances))].into_iter().collect(),
@@ -266,11 +295,37 @@ mod tests {
 
         let backfill = fold_into_current_state(
             Some(&current),
-            &evolution(vec![instance(1, Some("2019-01-01T00:00:00Z"))]),
+            &evolution_of(VEHICLE, vec![instance(1, Some("2019-01-01T00:00:00Z"))]),
             at("2026-01-01T00:00:00Z"),
         )
         .expect("foldable");
         assert!(backfill.is_none(), "an older observation leaves current state as it was");
+    }
+
+    /// Clause 4.5.5.3 orders instances, never types: a backfill naming a type
+    /// the entity lacks keeps every attribute and adds the type, after the
+    /// ones the entity held, as clauses 5.6.11.4 and 5.6.12.4 add it to the
+    /// Temporal Evolution.
+    #[test]
+    fn a_backfill_naming_a_new_type_adds_the_type_and_keeps_the_attributes() {
+        let mut held = property(number(5));
+        held.set_observed_at(Some(date_time("2021-01-01T00:00:00Z")));
+        held.set_modified_at(Some("2021-01-01T00:00:00Z".parse::<SystemInstant>().expect("a valid instant")));
+        let current = entity(vec![(V, instances(vec![(None, held)]))]);
+
+        let fold = fold_into_current_state(
+            Some(&current),
+            &evolution(vec![instance(1, Some("2019-01-01T00:00:00Z"))]),
+            at("2026-01-01T00:00:00Z"),
+        )
+        .expect("foldable")
+        .expect("the new type changes current state");
+
+        assert_eq!(values(&fold), vec![5]);
+        assert_eq!(
+            fold.types().as_slice(),
+            &[VEHICLE.parse().expect("a valid type"), "https://example.org/TQ".parse().expect("a valid type")]
+        );
     }
 
     /// Each `datasetId` is its own instance of the attribute.

@@ -298,7 +298,10 @@ mod tests {
         let sql = catalogue_page();
         let walk = PageBranches::of(&sql).walk;
         assert!(!walk.contains("CASE"), "{walk}");
-        assert!(walk.contains(r#"(SELECT COUNT(*) FROM "short_walk") < 20 AND (SELECT COUNT(*) FROM "candidates") > 1000"#), "{walk}");
+        assert!(
+            walk.contains(r#"(SELECT COUNT(*) FROM "short_walk") < 20 AND (SELECT COUNT(*) FROM "candidates") > 1000"#),
+            "{walk}"
+        );
     }
 
     #[test]

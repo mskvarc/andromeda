@@ -55,6 +55,7 @@ pub mod sort_key;
 pub mod temporal_operand;
 pub mod time_column;
 pub mod time_interval_predicate;
+pub mod type_list_union;
 pub mod type_membership;
 pub mod type_membership_moves;
 pub mod type_predicate;

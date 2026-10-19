@@ -23,6 +23,7 @@ pub mod clock;
 pub mod collation;
 pub mod column_reference;
 pub mod columnstore_chunk;
+pub mod conflict_image;
 pub mod date_field;
 pub mod datetime;
 pub mod interval;

@@ -173,6 +173,12 @@ fn earlier(relation: &str) -> String {
     relation.replace(r#"AS "i""#, r#"AS "sj""#)
 }
 
+/// The source relation `relation` names under `i`, as the evolution upsert
+/// reads it again under `si` for the types its intents state.
+fn stating(relation: &str) -> String {
+    relation.replace(r#"AS "i""#, r#"AS "si""#)
+}
+
 /// The part of the guard of a Scope assertion only the drain renders: the
 /// queued intents it holds claimed are in its source, and every intent queued
 /// when a commit records its own came before it.
@@ -185,13 +191,23 @@ fn the_commit_and_the_drain_render_one_statement_shape() {
         .map(|(role, sql)| {
             (
                 role,
-                sql.replace(QUEUED, "<source>").replace(&earlier(QUEUED), "<source>").replace(DRAIN_GUARD, ""),
+                sql.replace(QUEUED, "<source>")
+                    .replace(&earlier(QUEUED), "<source>")
+                    .replace(&stating(QUEUED), "<source>")
+                    .replace(DRAIN_GUARD, ""),
             )
         })
         .collect();
     let commit: Vec<(StepRole, String)> = commit_steps()
         .into_iter()
-        .map(|(role, sql)| (role, sql.replace(BOUND, "<source>").replace(&earlier(BOUND), "<source>")))
+        .map(|(role, sql)| {
+            (
+                role,
+                sql.replace(BOUND, "<source>")
+                    .replace(&earlier(BOUND), "<source>")
+                    .replace(&stating(BOUND), "<source>"),
+            )
+        })
         .collect();
     assert_eq!(drain, commit);
     assert!(drain.iter().all(|(_, sql)| sql.contains("<source>")), "{drain:?}");
@@ -203,7 +219,7 @@ fn a_commit_binds_its_intents_as_one_typed_array() {
         assert!(sql.contains(BOUND), "{sql}");
         assert_eq!(
             sql.matches("$1::temporal_intent[]").count(),
-            sql.matches(BOUND).count() + sql.matches(&earlier(BOUND)).count(),
+            sql.matches(BOUND).count() + sql.matches(&earlier(BOUND)).count() + sql.matches(&stating(BOUND)).count(),
             "{sql}"
         );
         let queue_reads = sql.matches("temporal_append_intents").count();
@@ -502,10 +518,11 @@ fn missing_evolutions_and_streams_are_created_before_the_history() {
 }
 
 /// A source may hold several intents of one Entity, and a conflict action
-/// changes a row once per statement, so the evolution takes the types of the
-/// Entity's latest typed intent in one row.
+/// changes a row once per statement, so the evolution is written in one row
+/// carrying every type the Entity's intents state, at the instant of its
+/// latest typed intent.
 #[test]
-fn the_latest_typed_intent_of_an_entity_gives_its_evolution_its_types() {
+fn one_row_of_an_entity_carries_every_type_its_intents_state() {
     let evolving = evolving();
     let evolutions = common_table(&evolving, "evolved");
     assert!(evolutions.contains(r#"AS (INSERT INTO "temporal_entities""#), "{evolutions}");
@@ -513,7 +530,34 @@ fn the_latest_typed_intent_of_an_entity_gives_its_evolution_its_types() {
     assert!(evolutions.contains(r#"ORDER BY "i"."entity_id" ASC, "i"."intent_key" DESC"#), "{evolutions}");
     assert!(evolutions.contains(r#"cardinality("i"."entity_type_name_keys") > 0"#), "{evolutions}");
     assert!(
-        evolutions.contains(r#"DO UPDATE SET "modified_at" = "excluded"."modified_at", "entity_type_name_keys" = "excluded"."entity_type_name_keys""#),
+        evolutions.contains(r#""i"."recorded_at", "stated_types"."entity_type_name_keys" FROM"#),
+        "{evolutions}"
+    );
+    assert!(
+        evolutions
+            .contains(r#"(SELECT "si"."entity_id" AS "id", "si"."entity_type_name_keys" AS "entity_type_name_keys", "si"."intent_key" AS "list_rank" FROM"#),
+        "{evolutions}"
+    );
+    assert!(
+        evolutions.contains(r#"AS "stated_types" WHERE "stated_types"."id" = "i"."entity_id""#),
+        "{evolutions}"
+    );
+}
+
+/// Clauses 5.6.11.4 and 5.6.12.4 add the types a write states that the
+/// evolution lacks to its list, and the conflict action reads the list as the
+/// last committed writer left it, so a concurrent writer's types are kept.
+#[test]
+fn an_existing_evolution_keeps_its_types_and_gains_the_ones_it_lacks() {
+    let evolving = evolving();
+    let evolutions = common_table(&evolving, "evolved");
+    assert!(
+        evolutions.contains(concat!(
+            r#"DO UPDATE SET "modified_at" = "excluded"."modified_at", "entity_type_name_keys" = array_cat("temporal_entities"."entity_type_name_keys", "#,
+            r#"ARRAY((SELECT "added"."added" FROM UNNEST("excluded"."entity_type_name_keys") AS "added" "#,
+            r#"WHERE "added"."added" <> ALL("temporal_entities"."entity_type_name_keys") "#,
+            r#"ORDER BY array_position("excluded"."entity_type_name_keys", "added"."added") ASC)))"#
+        )),
         "{evolutions}"
     );
 }
@@ -553,21 +597,14 @@ fn an_evolution_lands_a_membership_row_for_every_type_it_gained() {
     );
 }
 
-/// A type the latest typed intent no longer states leaves the membership
-/// relation, so the evolution stops answering a selection of that type.
+/// No operation removes a type from an evolution, so the statement deletes no
+/// membership row: one it could not see in its snapshot, a concurrent
+/// writer's, is never left without its type.
 #[test]
-fn an_evolution_drops_the_membership_rows_of_the_types_it_lost() {
+fn an_evolution_never_drops_a_membership_row() {
     let evolving = evolving();
-    let dropped = common_table(&evolving, "dropped_members");
-    assert!(
-        dropped.contains(r#"AS (DELETE FROM "temporal_entity_type_members" WHERE ("entity_type_name_key", "id") IN (SELECT "carried"."entity_type_name_key", "evolved"."id" FROM "evolved""#),
-        "{dropped}"
-    );
-    assert!(dropped.contains(r#"UNNEST("evolved"."old_types")"#), "{dropped}");
-    assert!(
-        dropped.contains(r#"NOT "carried"."entity_type_name_key" = ANY("evolved"."new_types")"#),
-        "{dropped}"
-    );
+    assert!(!evolving.contains("dropped_members"), "{evolving}");
+    assert!(!evolving.contains(r#"DELETE FROM "temporal_entity_type_members""#), "{evolving}");
 }
 
 /// A Snapshot records its Temporal Evolutions in its own schema, memberships
@@ -587,7 +624,6 @@ fn a_snapshot_moves_its_memberships_in_its_own_schema() {
     .find(|sql| sql.starts_with(r#"WITH "evolved""#))
     .expect("an evolution statement");
     assert!(evolving.contains(r#"INSERT INTO "snap_4"."temporal_entity_type_members""#), "{evolving}");
-    assert!(evolving.contains(r#"DELETE FROM "snap_4"."temporal_entity_type_members""#), "{evolving}");
 }
 
 #[test]

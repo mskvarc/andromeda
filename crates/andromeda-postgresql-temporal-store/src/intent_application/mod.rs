@@ -13,6 +13,8 @@
 
 /// The write records and catalogue an application establishes first.
 mod catalog_statements;
+/// The Temporal Evolutions an application writes, and their type memberships.
+mod evolution_upsert;
 /// The history and Scope rows, the stream extents and the instance claims an
 /// application records.
 mod history_statements;
