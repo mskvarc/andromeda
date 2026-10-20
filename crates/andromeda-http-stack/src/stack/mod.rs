@@ -7,6 +7,7 @@ mod decompression_layer;
 mod encoded_entity_tag;
 mod helmet_layer;
 mod metric_layer;
+mod request_deadline;
 mod server_timing;
 
 use crate::{
@@ -19,6 +20,7 @@ use crate::{
         encoded_entity_tag::EncodedEntityTags,
         helmet_layer::build_helmet_layer,
         metric_layer::http_metric_layer,
+        request_deadline::{RequestDeadline, answer_within_deadline},
         server_timing::apply_server_timing,
     },
 };
@@ -35,7 +37,7 @@ use axum::{
     Extension,
     Router,
     extract::{DefaultBodyLimit, MatchedPath, Request},
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, header},
     middleware,
     response::Response,
 };
@@ -52,7 +54,6 @@ use tower_http::{
     normalize_path::{NormalizePath, NormalizePathLayer},
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, RequestId, SetRequestIdLayer},
     sensitive_headers::{SetSensitiveRequestHeadersLayer, SetSensitiveResponseHeadersLayer},
-    timeout::TimeoutLayer,
     trace::TraceLayer,
 };
 
@@ -86,7 +87,7 @@ pub struct HttpStack {
     /// How a response's link-values are laid out over `Link` field lines.
     link_field: LinkFieldLayout,
     /// Maximum wall-clock time for one HTTP request.
-    request_timeout: Duration,
+    request_deadline: RequestDeadline,
     /// `Server-Timing` policy, applied per assembled router.
     server_timing: ServerTimingConfig,
     /// The prebuilt security-header layer, absent when disabled.
@@ -125,7 +126,7 @@ impl HttpStack {
             blocking_decode,
             forwarded_headers: config.forwarded_headers,
             link_field: config.link_field,
-            request_timeout: config.request_timeout.duration(),
+            request_deadline: RequestDeadline::new(config.request_timeout.duration()),
             helmet: build_helmet_layer(config.helmet)?,
             cors: build_cors_layer(&config.cors),
             compression: build_compression_layer(&config.compression),
@@ -227,7 +228,7 @@ impl HttpStack {
             .layer(trace_layer)
             .layer(SetSensitiveResponseHeadersLayer::from_shared(sensitive_response_headers))
             .layer(PropagateRequestIdLayer::x_request_id())
-            .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, self.request_timeout));
+            .layer(middleware::from_fn_with_state(self.request_deadline, answer_within_deadline));
         router.layer(diagnostic)
     }
 

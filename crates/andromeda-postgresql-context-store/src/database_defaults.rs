@@ -1,6 +1,6 @@
 //! The session defaults the broker installs on every database it serves from.
 //!
-//! Two settings are part of the broker's own semantics rather than server
+//! Three settings are part of the broker's own semantics rather than server
 //! tuning, so the broker installs them itself, with `ALTER DATABASE ... SET`,
 //! on the platform database and on every tenant database:
 //!
@@ -9,7 +9,11 @@
 //! - `statement_timeout`, just past the HTTP request deadline
 //!   ([`StatementTimeout`]): a statement whose request has already been
 //!   answered with a timeout is work nobody waits for, and without a bound it
-//!   keeps its connection, its locks and its share of the server until it ends.
+//!   keeps its connection, its locks and its share of the server until it ends;
+//! - `client_connection_check_interval` ([`CLIENT_CONNECTION_CHECK_INTERVAL`]):
+//!   the pool closes a connection its dropped request left mid-statement, and
+//!   the server ends that statement at its next check rather than when the
+//!   statement would have finished.
 //!
 //! A database-level default is inherited by every session opened afterwards,
 //! including one a transaction-pooling proxy opens, which a per-connection
@@ -35,6 +39,15 @@ use std::time::Duration;
 /// instead, and covers the round trips around the statement.
 pub const STATEMENT_TIMEOUT_MARGIN: Duration = Duration::from_secs(5);
 
+/// How often a session running a statement checks that its client is still
+/// connected.
+///
+/// The check is a socket poll, so a one-second interval costs nothing a
+/// statement would notice, and an abandoned statement ends within a second of
+/// its connection closing. PostgreSQL implements it on Linux, macOS, illumos
+/// and the BSDs.
+pub const CLIENT_CONNECTION_CHECK_INTERVAL: Duration = Duration::from_secs(1);
+
 /// The `statement_timeout` installed on each database: the HTTP request
 /// deadline plus [`STATEMENT_TIMEOUT_MARGIN`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -53,11 +66,17 @@ impl StatementTimeout {
         self.0
     }
 
-    /// The value `ALTER DATABASE ... SET statement_timeout` takes, in whole
-    /// milliseconds, the unit PostgreSQL stores it in.
+    /// The value `ALTER DATABASE ... SET statement_timeout` takes.
     fn setting(self) -> String {
-        format!("{}ms", self.0.as_millis())
+        milliseconds_setting(self.0)
     }
+}
+
+/// A span as a time-valued parameter takes it, in whole milliseconds, the unit
+/// PostgreSQL stores `statement_timeout` and `client_connection_check_interval`
+/// in.
+fn milliseconds_setting(span: Duration) -> String {
+    format!("{}ms", span.as_millis())
 }
 
 /// The session defaults one database carries.
@@ -89,7 +108,7 @@ impl DatabaseDefault {
 impl DatabaseDefaults {
     /// Every default, in the order they are written.
     #[must_use]
-    pub fn entries(&self) -> [DatabaseDefault; 2] {
+    pub fn entries(&self) -> [DatabaseDefault; 3] {
         [
             DatabaseDefault {
                 parameter: "synchronous_commit",
@@ -98,6 +117,10 @@ impl DatabaseDefaults {
             DatabaseDefault {
                 parameter: "statement_timeout",
                 value: self.statement_timeout.setting(),
+            },
+            DatabaseDefault {
+                parameter: "client_connection_check_interval",
+                value: milliseconds_setting(CLIENT_CONNECTION_CHECK_INTERVAL),
             },
         ]
     }
@@ -223,23 +246,28 @@ mod tests {
         let entries = defaults().entries();
         assert_eq!(
             entries.iter().map(DatabaseDefault::stored_form).collect::<Vec<_>>(),
-            vec!["synchronous_commit=on", "statement_timeout=35000ms"]
+            vec!["synchronous_commit=on", "statement_timeout=35000ms", "client_connection_check_interval=1000ms"]
         );
     }
 
     #[test]
     fn only_a_default_missing_or_stored_with_another_value_is_written() {
         let entries = defaults().entries();
-        let stored = vec!["synchronous_commit=on".to_owned(), "statement_timeout=30000ms".to_owned()];
+        let stored = vec![
+            "synchronous_commit=on".to_owned(),
+            "statement_timeout=30000ms".to_owned(),
+            "client_connection_check_interval=1000ms".to_owned(),
+        ];
         let missing = missing_defaults(&entries, &stored);
         assert_eq!(missing.iter().map(|default| default.parameter).collect::<Vec<_>>(), vec!["statement_timeout"]);
         let stored = vec![
             "statement_timeout=35000ms".to_owned(),
             "search_path=public".to_owned(),
             "synchronous_commit=on".to_owned(),
+            "client_connection_check_interval=1000ms".to_owned(),
         ];
         assert_eq!(missing_defaults(&entries, &stored), Vec::<&DatabaseDefault>::new());
-        assert_eq!(missing_defaults(&entries, &[]).len(), 2);
+        assert_eq!(missing_defaults(&entries, &[]).len(), 3);
     }
 
     #[test]

@@ -16,6 +16,8 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+/// Returning a connection to its pool after its request let go of it.
+pub mod connection_release;
 /// A database error the tests can construct without a live driver connection.
 #[cfg(test)]
 mod fake_database_error;

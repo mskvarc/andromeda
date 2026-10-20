@@ -1,6 +1,7 @@
 //! The broker's shared pool tuning.
 
-use sqlx::postgres::PgPoolOptions;
+use crate::connection_release::{RELEASE_READINESS_DEADLINE, ReleasedConnection, released_connection};
+use sqlx::{Connection, postgres::PgPoolOptions};
 use std::time::Duration;
 
 /// How long an idle connection is kept before the pool closes it.
@@ -25,6 +26,10 @@ const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 /// connection borrowed from a transaction-pooling proxy inherits it without any
 /// session `SET` that the proxy could leak to the next client.
 ///
+/// A connection handed back while a statement still runs on it, because its
+/// request was dropped, is closed rather than waited for
+/// ([`released_connection`]).
+///
 /// [`is_pool_saturated`]: crate::saturation::is_pool_saturated
 #[must_use]
 pub fn configure_pool_options(max_connections: u32, acquire_timeout: Duration) -> PgPoolOptions {
@@ -33,6 +38,13 @@ pub fn configure_pool_options(max_connections: u32, acquire_timeout: Duration) -
         .max_connections(max_connections)
         .idle_timeout(POOL_IDLE_TIMEOUT)
         .acquire_timeout(acquire_timeout)
+        .after_release(|connection, _metadata| {
+            Box::pin(async move {
+                released_connection(connection.ping(), RELEASE_READINESS_DEADLINE)
+                    .await
+                    .map(ReleasedConnection::is_kept)
+            })
+        })
 }
 
 #[cfg(test)]
