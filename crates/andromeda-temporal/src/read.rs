@@ -9,7 +9,7 @@ use crate::{
     },
     read::{dataset_step::DatasetStep, entity_members::carries_members, rendered_entity::HistoryPresence},
     requested_identifiers::RequestedIdentifiers,
-    service::{TemporalRange, TemporalReadResult, TemporalService},
+    service::{TemporalReadResult, TemporalService},
     temporal_invariant::TemporalInvariant,
     temporal_not_found_reason::TemporalNotFoundReason,
     temporal_operation_unsupported::TemporalOperationUnsupported,
@@ -106,11 +106,7 @@ impl TemporalService {
 
             // Clause 6.3.10: a page that left instances out is a 206 carrying the
             // `Content-Range` its client resumes from.
-            let range = rendered.cut.map(|cut| TemporalRange {
-                interval: compiled.window.interval,
-                observed: rendered.time_range,
-                direction: cut.direction,
-            });
+            let range = rendered.cut.map(|cut| cut.range(compiled.window.interval, rendered.time_range));
 
             Ok(TemporalReadResult {
                 history: rendered.history,
@@ -259,6 +255,8 @@ pub mod merged_rendering;
 mod query;
 /// Rendering the temporal evolution of one entity over a compiled window.
 pub(crate) mod rendered_entity;
+/// The cut a partial response is made at, and the request that continues it.
+mod response_cut;
 
 /// What a listing of the identifiers a temporal query matches holds them to.
 #[cfg(test)]

@@ -17,9 +17,10 @@ use andromeda_ngsi_ld_lexicon::{
     time_prop::TimeProp,
 };
 use andromeda_ngsi_ld_query::temporal::window::TemporalWindow;
+use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
-use std::{cmp::Reverse, num::NonZeroU32};
+use std::{cmp::Reverse, collections::HashMap, num::NonZeroU32};
 
 /// How the history another holder contributed joins the one already held
 /// (clauses 4.3.6.2 and 5.7.3.4).
@@ -116,6 +117,29 @@ impl TemporalDocument {
             .fold(None, |span, instant| {
                 Some(span.map_or((instant, instant), |(least, most)| (least.min(instant), most.max(instant))))
             })
+    }
+
+    /// The fewest instances `admit` admits of any attribute stream (an
+    /// attribute and the `datasetId` of its instances) the evolution holds,
+    /// or `None` when it holds no stream.
+    ///
+    /// A stream is any attribute and `datasetId` an instance positioned on
+    /// `timeproperty` carries, so one `admit` refuses every instance of
+    /// counts 0. Scope history is valid over a span rather than at an instant
+    /// (clause 4.18) and takes no part.
+    #[must_use]
+    pub fn fewest_stream_instances(&self, timeproperty: TimeProp, admit: impl Fn(DateTime<Utc>) -> bool) -> Option<usize> {
+        let mut streams: HashMap<(&AttributeName, Option<&Identifier>), usize> = HashMap::new();
+        for (name, instance) in self.instances().filter(|(name, _)| name.as_str() != expanded_properties::SCOPE.as_str()) {
+            let Some(instant) = instance.instant_on(timeproperty) else {
+                continue;
+            };
+            let admitted = streams.entry((name, instance.dataset_id())).or_default();
+            if admit(instant) {
+                *admitted += 1;
+            }
+        }
+        streams.into_values().min()
     }
 
     /// Keep only the instances whose instant on `timeproperty` `keep` admits;

@@ -19,7 +19,7 @@ use andromeda_ngsi_ld_query::{
     geo::admission::GeoQueryAdmission,
     page_reach::PageReach,
     projection::compiled::Projection,
-    temporal::{instance_page::PageDirection, window::TimeInterval},
+    temporal::{continuation::TemporalContinuation, instance_page::PageDirection, window::TimeInterval},
 };
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
@@ -94,6 +94,10 @@ pub struct TemporalRange {
     pub observed: Option<(DateTime<Utc>, DateTime<Utc>)>,
     /// The direction the remainder of the response is paged in.
     pub direction: PageDirection,
+    /// The request the client continues the response with, serving no
+    /// instance of this page again; `None` when nothing of the request
+    /// remains or the rest of a backward `lastN` cannot be stated.
+    pub next: Option<TemporalContinuation>,
 }
 
 /// Warning collected when a per-entity temporal query step fails non-fatally.

@@ -84,7 +84,7 @@ impl FederationService {
                 .filter(|_| resumed_at.is_none_or(|previous| stopped_at > previous))
                 .and_then(|url| resumed_window(url, stopped_at));
             let Some(resumed) = resumed else {
-                gathered.warnings.push(incomplete_answer(registration, IncompleteReason::HistoryCutShort));
+                gathered.warnings.push(incomplete_answer(&registration.id, IncompleteReason::HistoryCutShort));
                 break;
             };
             // The resumed walk gathers entities the first one already counted,

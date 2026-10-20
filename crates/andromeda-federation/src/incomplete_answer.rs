@@ -3,7 +3,6 @@
 use crate::source_continuation::UnfollowableNext;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use thiserror::Error;
 
 /// What a source did that ended the walk of its answer early.
@@ -38,12 +37,13 @@ struct IncompleteAnswer<'a> {
 
 /// The clause 6.3.17 warning of a source whose answer the walk could not read
 /// to its end, for the `reason` it stopped.
-pub(crate) fn incomplete_answer(registration: &ContextSourceRegistration, reason: IncompleteReason<'_>) -> NgsiLdWarning {
-    NgsiLdWarning::MiscellaneousWarning(
-        IncompleteAnswer {
-            registration: &registration.id,
-            reason,
-        }
-        .to_string(),
-    )
+pub(crate) fn incomplete_answer(registration: &Identifier, reason: IncompleteReason<'_>) -> NgsiLdWarning {
+    NgsiLdWarning::MiscellaneousWarning(IncompleteAnswer { registration, reason }.to_string())
+}
+
+/// The clause 6.3.17 warning of the source `registration` names, whose history
+/// stopped inside an instant the response cannot be resumed past.
+#[must_use]
+pub fn history_cut_short(registration: &Identifier) -> NgsiLdWarning {
+    incomplete_answer(registration, IncompleteReason::HistoryCutShort)
 }

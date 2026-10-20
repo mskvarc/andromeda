@@ -206,6 +206,7 @@ mod tests {
             interval: TimeInterval::After(at("2024-01-01T00:00:00Z")),
             observed: Some((at(least), at(most))),
             direction: PageDirection::Forward,
+            next: None,
         }
     }
 

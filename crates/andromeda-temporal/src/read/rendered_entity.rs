@@ -15,7 +15,10 @@
 use crate::{
     error::TemporalError,
     port::read_scope::TemporalReadScope,
-    read::aggregated_page::{AggregationRendering, render_aggregation_page, settle_aggregation_pages},
+    read::{
+        aggregated_page::{AggregationRendering, render_aggregation_page, settle_aggregation_pages},
+        response_cut::ResponseCut,
+    },
     result_bound::ResultBound,
     service::TemporalService,
     temporal_invariant::TemporalInvariant,
@@ -69,7 +72,7 @@ pub(crate) struct RenderedTemporalEntity {
     pub(crate) presence: HistoryPresence,
     /// The cut the history was made at, present when it is part of a partial
     /// response (clause 6.3.10).
-    pub(crate) cut: Option<PageCut>,
+    pub(crate) cut: Option<ResponseCut>,
     /// The earliest and latest instants the history actually carries.
     pub(crate) time_range: Option<TimeRange>,
 }
@@ -153,7 +156,9 @@ impl TemporalService {
     ///
     /// A page carries the instances of one attribute sharing the instant at
     /// its edge whole, past its size if need be: a client resumes from a
-    /// `range-end` `DateTime`, which cannot point inside an instant.
+    /// `range-end` `DateTime`, which cannot point inside an instant. The cut
+    /// is counted over the pages before it drops anything, so a stream it
+    /// empties still counts as served nothing.
     ///
     /// # Errors
     ///
@@ -162,7 +167,7 @@ impl TemporalService {
     /// `temporal.max_edge_group`: such a group is the one part of a page its
     /// size does not bound (clause 5.5.6 leaves the threshold to the
     /// implementation).
-    pub(crate) fn common_page_cut(&self, compiled: &CompiledTemporalQuery, pages: &[EntityHistoryPage]) -> Result<Option<PageCut>, TemporalError> {
+    pub(crate) fn common_page_cut(&self, compiled: &CompiledTemporalQuery, pages: &[EntityHistoryPage]) -> Result<Option<ResponseCut>, TemporalError> {
         let Some(direction) = compiled.instances.page.direction() else {
             return Ok(None);
         };
@@ -180,7 +185,7 @@ impl TemporalService {
                 ));
             }
         }
-        Ok(cut)
+        Ok(cut.map(|cut| ResponseCut::of_instances(cut, pages, timeproperty)))
     }
 
     /// Read the clause 4.5.19 aggregated representation of one entity, cut on
@@ -225,11 +230,11 @@ pub(crate) fn render_history_page(
     page: EntityHistoryPage,
     entity_types: &[EntityTypeName],
     compiled: &CompiledTemporalQuery,
-    cut: Option<PageCut>,
+    cut: Option<ResponseCut>,
 ) -> Result<RenderedTemporalEntity, TemporalError> {
     let presence = page.presence();
     let EntityHistoryPage { entity_id, rows } = page;
-    let built = TemporalEntityRenderer::new(&entity_id, entity_types, rows, compiled, cut)
+    let built = TemporalEntityRenderer::new(&entity_id, entity_types, rows, compiled, cut.map(|settled| settled.cut))
         .render()
         .map_err(|error| TemporalError::from(TemporalInvariant::RenderedInstance(error)))?;
     Ok(RenderedTemporalEntity {
@@ -345,7 +350,10 @@ mod tests {
     /// The `speed` values of `page` the response cut at `compiled` keeps.
     fn kept(service: &TemporalService, compiled: &CompiledTemporalQuery, page: &EntityHistoryPage) -> usize {
         let cut = service.common_page_cut(compiled, slice::from_ref(page)).expect("a page within the bound");
-        page.rows.iter().filter(|row| cut.is_none_or(|cut| cut.keeps(row, TimeProp::Observed))).count()
+        page.rows
+            .iter()
+            .filter(|row| cut.is_none_or(|settled| settled.cut.keeps(row, TimeProp::Observed)))
+            .count()
     }
 
     /// Clause 6.3.10 resumes a forward page from its `range-end` `DateTime`, which
@@ -357,7 +365,7 @@ mod tests {
         let compiled = compiled(InstancePage::Forward { size: 19 });
         let page = page("urn:ngsi-ld:Vehicle:1", simultaneous(25, 0, "2024-01-01T00:00:00Z", StreamExtent::Cut));
         let cut = service.common_page_cut(&compiled, slice::from_ref(&page)).expect("a group within the bound");
-        pretty_assertions::assert_eq!(cut.map(|cut| cut.boundary), Some(at("2024-01-01T00:00:00Z")));
+        pretty_assertions::assert_eq!(cut.map(|settled| settled.cut.boundary), Some(at("2024-01-01T00:00:00Z")));
         pretty_assertions::assert_eq!(kept(&service, &compiled, &page), 25);
     }
 
@@ -377,7 +385,8 @@ mod tests {
         let cut = service
             .common_page_cut(&compiled, slice::from_ref(&page))
             .expect("a group within the bound")
-            .expect("the stream was cut");
+            .expect("the stream was cut")
+            .cut;
         assert!(matches!(cut.direction, PageDirection::Backward { .. }));
         pretty_assertions::assert_eq!(cut.boundary, at("2024-01-01T00:00:00Z"));
         pretty_assertions::assert_eq!(kept(&service, &compiled, &page), 30);
@@ -422,7 +431,8 @@ mod tests {
         let cut = service
             .common_page_cut(&compiled, &pages)
             .expect("every kept group within the bound")
-            .expect("both streams were cut");
+            .expect("both streams were cut")
+            .cut;
         pretty_assertions::assert_eq!(cut.boundary, at("2024-01-01T00:00:00Z"));
         let kept: Vec<usize> = pages
             .iter()

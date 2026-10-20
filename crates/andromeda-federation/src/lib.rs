@@ -71,7 +71,7 @@ pub mod forwarding_url;
 /// Why a single forwarded request failed as a bad gateway.
 pub mod gateway_failure;
 /// The warning of a paged answer the walk could not read to its end.
-mod incomplete_answer;
+pub mod incomplete_answer;
 /// The most attribute instances one forwarded temporal query may gather.
 pub mod instance_budget;
 /// Resolving a locally-held entity's type for federated-write coverage.

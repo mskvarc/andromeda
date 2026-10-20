@@ -8,19 +8,15 @@
 //! read to the end of the window, page after page (clause 6.3.10). What the
 //! sources cut short is read in further passes over every source page, each
 //! over the window resumed past the previous pass.
-//!
-//! A query's own failure is recorded in its execution result (clause 5.2.42).
-//! A transient store failure is not the query's: it is returned as an error
-//! instead, so the whole preparation restarts.
 
 use crate::{
-    error::{Recurrence, SnapshotError, temporal_recurrence},
+    error::SnapshotError,
     executor::{
         SnapshotExecutor,
-        execution_failure::ExecutionFailure,
         instance_walk::{InstanceWalk, WalkProgress, WalkRefusal},
         source_instance_walk::SourceInstanceWalk,
         status::{failure_detail, success_detail},
+        temporal_failure::{TemporalStep, temporal_failure},
         translation::temporal_parameters,
     },
 };
@@ -380,26 +376,4 @@ fn walk_refusal(capture: &TemporalCapture<'_>, refusal: WalkRefusal) -> Executio
 /// asked for.
 fn offset_overflow() -> ExecutionResultDetails {
     failure_detail("Snapshot temporal pagination offset overflowed")
-}
-
-/// Which temporal operation of a snapshot query failed.
-#[derive(Clone, Copy)]
-enum TemporalStep {
-    /// Reading a page of temporal entities.
-    Query,
-    /// Writing a captured evolution into the branch.
-    Store,
-}
-
-/// A failed temporal query or temporal write, `step` naming which: the
-/// query's own failure, or a transient store failure the preparation restarts
-/// on.
-fn temporal_failure(error: TemporalError, step: TemporalStep) -> Result<ExecutionResultDetails, SnapshotError> {
-    match temporal_recurrence(&error) {
-        Recurrence::Transient => Err(SnapshotError::from(error)),
-        Recurrence::Persistent => Ok(failure_detail(match step {
-            TemporalStep::Query => error.to_string(),
-            TemporalStep::Store => ExecutionFailure::StoreTemporalResults { cause: &error }.to_string(),
-        })),
-    }
 }

@@ -261,7 +261,7 @@ impl FederationService {
                 PageEnd::Continue(request) => request,
             };
             if !position.first_request_of(&request) {
-                gathered.warnings().push(incomplete_answer(registration, IncompleteReason::PointedBack));
+                gathered.warnings().push(incomplete_answer(&registration.id, IncompleteReason::PointedBack));
                 break;
             }
             let (outcome, following) = match request {
@@ -280,7 +280,7 @@ impl FederationService {
                 success @ ForwardGetOutcome::Success(_) => A::read(registration, success),
                 ForwardGetOutcome::NotFound(warnings) => {
                     gathered.warnings().extend(warnings);
-                    gathered.warnings().push(incomplete_answer(registration, IncompleteReason::NextPageGone));
+                    gathered.warnings().push(incomplete_answer(&registration.id, IncompleteReason::NextPageGone));
                     break;
                 }
                 failure @ (ForwardGetOutcome::ErrorStatus(_) | ForwardGetOutcome::Transport(_) | ForwardGetOutcome::LoopDetected) => {
@@ -307,7 +307,7 @@ impl FederationService {
                 // An empty page that still points onward makes no progress a
                 // bounded walk could rely on.
                 PageEnd::Continue(NextPage::Pointer(_)) if sent == 0 => {
-                    PageEnd::Stop(Some(incomplete_answer(registration, IncompleteReason::EmptyPageWithNext)))
+                    PageEnd::Stop(Some(incomplete_answer(&registration.id, IncompleteReason::EmptyPageWithNext)))
                 }
                 continuing @ (PageEnd::Continue(_) | PageEnd::Stop(_)) => continuing,
             };
@@ -342,7 +342,7 @@ fn pointer_continuation(registration: &ContextSourceRegistration, outcome: &Forw
             SourceContinuation::Complete => PageEnd::Stop(None),
             // clone: the walk owns the URL of the page it fetches next
             SourceContinuation::Next(url) => PageEnd::Continue(NextPage::Pointer(Url::clone(url))),
-            SourceContinuation::Unfollowable(reason) => PageEnd::Stop(Some(incomplete_answer(registration, IncompleteReason::Unfollowable(reason)))),
+            SourceContinuation::Unfollowable(reason) => PageEnd::Stop(Some(incomplete_answer(&registration.id, IncompleteReason::Unfollowable(reason)))),
         },
         ForwardGetOutcome::NotFound(_) | ForwardGetOutcome::ErrorStatus(_) | ForwardGetOutcome::Transport(_) | ForwardGetOutcome::LoopDetected => {
             PageEnd::Stop(None)

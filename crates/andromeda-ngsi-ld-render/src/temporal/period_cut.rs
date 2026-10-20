@@ -68,6 +68,26 @@ impl PageCut {
             PageDirection::Backward { .. } => row.bucket_start.is_some_and(|start| start >= self.boundary),
         }
     }
+
+    /// The fewest instances the periods this cut keeps aggregate of any
+    /// attribute stream `rows` hold, or `None` when they hold no stream or a
+    /// kept period does not say how many instances it aggregates (or says a
+    /// negative number).
+    ///
+    /// The groups of a grouped aggregation split one stream's periods, so
+    /// their counts are summed into the stream; a stream the cut leaves no
+    /// period of counts 0.
+    #[must_use]
+    pub fn fewest_kept_instances(&self, rows: &[TemporalAggregationRow]) -> Option<u64> {
+        let mut streams: HashMap<StreamKey<'_>, u64> = HashMap::new();
+        for row in rows {
+            let kept = streams.entry((&row.attribute_name, row.dataset_id.as_ref())).or_default();
+            if self.keeps_period(row) {
+                *kept = kept.saturating_add(u64::try_from(row.total_count?).ok()?);
+            }
+        }
+        streams.into_values().min()
+    }
 }
 
 /// The least recent start and the most recent end of any period `rows` hold,
@@ -84,7 +104,7 @@ pub fn period_time_range<'a>(rows: impl IntoIterator<Item = &'a TemporalAggregat
 mod tests {
     use crate::temporal::{page_cut::PageCut, period_cut::period_time_range};
     use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
-    use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalAggregationRow};
+    use andromeda_ngsi_ld_model::temporal::{GroupKeyValue, StreamExtent, TemporalAggregationRow};
     use andromeda_ngsi_ld_query::temporal::instance_page::PageDirection;
     use chrono::{DateTime, Duration, TimeZone, Utc};
     use std::num::NonZeroU32;
@@ -155,6 +175,47 @@ mod tests {
     fn an_aggregated_page_no_stream_was_cut_in_has_no_cut() {
         let rows = stream("speed", 0, 39, StreamExtent::Whole);
         assert!(PageCut::of_periods(&rows, PageDirection::Forward).is_none());
+    }
+
+    fn counted(attribute: &str, offset: i64, total_count: Option<i64>) -> TemporalAggregationRow {
+        TemporalAggregationRow {
+            total_count,
+            ..period(attribute, offset, StreamExtent::Cut)
+        }
+    }
+
+    /// `speed` keeps two periods of 4 and 5 instances, `fuelLevel` two of 2
+    /// each, its first one split over two groups; the period past the cut
+    /// counts nothing.
+    #[test]
+    fn the_fewest_kept_instances_sums_the_kept_periods_of_each_stream() {
+        let cut = PageCut {
+            direction: PageDirection::Forward,
+            boundary: hour(2),
+        };
+        let mut grouped = counted("fuelLevel", 0, Some(1));
+        grouped.group_keys = vec![GroupKeyValue::Value("a".to_owned())];
+        let mut other_group = counted("fuelLevel", 0, Some(1));
+        other_group.group_keys = vec![GroupKeyValue::Value("b".to_owned())];
+        let rows = vec![
+            counted("speed", 0, Some(4)),
+            counted("speed", 1, Some(5)),
+            counted("speed", 2, Some(50)),
+            grouped,
+            other_group,
+            counted("fuelLevel", 1, Some(2)),
+        ];
+        pretty_assertions::assert_eq!(cut.fewest_kept_instances(&rows), Some(4));
+    }
+
+    #[test]
+    fn a_kept_period_without_a_count_leaves_the_fewest_kept_instances_unknown() {
+        let cut = PageCut {
+            direction: PageDirection::Forward,
+            boundary: hour(2),
+        };
+        let rows = vec![counted("speed", 0, Some(4)), counted("fuelLevel", 0, None)];
+        pretty_assertions::assert_eq!(cut.fewest_kept_instances(&rows), None);
     }
 
     /// Clause 6.3.10: forwards the `range-end` is the most recent timestamp in

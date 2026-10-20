@@ -99,6 +99,17 @@ impl TemporalHistory {
         }
     }
 
+    /// The fewest instances `admit` admits of any attribute stream the
+    /// history holds, or `None` when it holds no stream or is an aggregate,
+    /// whose periods do not say which instants they aggregate.
+    #[must_use]
+    pub fn fewest_stream_instances(&self, timeproperty: TimeProp, admit: impl Fn(DateTime<Utc>) -> bool) -> Option<usize> {
+        match self {
+            TemporalHistory::Instances(document) => document.fewest_stream_instances(timeproperty, admit),
+            TemporalHistory::Aggregates(_) => None,
+        }
+    }
+
     /// How many instances the history holds; an aggregate holds none.
     #[must_use]
     pub fn instance_count(&self) -> usize {

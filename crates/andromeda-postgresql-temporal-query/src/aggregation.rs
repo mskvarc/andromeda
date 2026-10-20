@@ -126,8 +126,13 @@ fn project_group_span(select: &mut SelectStatement) {
 /// `VocabProperty` (Table 4.5.19.1-3 and the "URI" column of Table 4.5.19.1-2
 /// mark all six N/A for them) contributes to none of them. Only the two
 /// counting methods read such a row.
+///
+/// Every statement counts the instances of each period, requested or not: a
+/// backward page states the rest of its `lastN` from the instances its
+/// periods aggregate (clause 6.3.10), and the representation writes
+/// `totalCount` only when it was asked for.
 fn aggregate_columns(methods: &[AggrMethod]) -> Vec<(SimpleExpr, &'static str)> {
-    let mut columns: Vec<(SimpleExpr, &'static str)> = Vec::new();
+    let mut columns: Vec<(SimpleExpr, &'static str)> = vec![(count_all(), "agg_total_count")];
     for method in methods {
         match method {
             AggrMethod::Avg => {
@@ -147,12 +152,9 @@ fn aggregate_columns(methods: &[AggrMethod]) -> Vec<(SimpleExpr, &'static str)> 
             AggrMethod::Sum => columns.push((Func::sum(sized_numeric_expr()).into(), "agg_sum")),
             AggrMethod::SumSq => columns.push((Func::sum(arithmetic_numeric_expr().mul(arithmetic_numeric_expr())).into(), "agg_sumsq")),
             AggrMethod::StdDev => columns.push((stddev(arithmetic_numeric_expr()), "agg_stddev")),
-            AggrMethod::TotalCount => columns.push((count_all(), "agg_total_count")),
+            AggrMethod::TotalCount => {}
             AggrMethod::DistinctCount => columns.push((count_distinct(distinct_value_expr()), "agg_distinct_count")),
         }
-    }
-    if columns.is_empty() {
-        columns.push((count_all(), "agg_total_count"));
     }
     columns
 }
@@ -703,6 +705,18 @@ mod tests {
             sql.contains("(SELECT \"bucket_origin\".\"origin\" FROM \"bucket_origin\")::timestamptz AS \"origin\""),
             "{sql}"
         );
+    }
+
+    #[test]
+    fn a_statement_not_asking_for_total_count_still_counts_each_period() {
+        let sql = sql_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
+        pretty_assertions::assert_eq!(sql.matches(r#"AS "agg_total_count""#).count(), 1, "{sql}");
+    }
+
+    #[test]
+    fn a_statement_asking_for_total_count_counts_each_period_once() {
+        let sql = sql_of(&aggregated(vec![AggrMethod::TotalCount], Some("PT1H")));
+        pretty_assertions::assert_eq!(sql.matches(r#"AS "agg_total_count""#).count(), 1, "{sql}");
     }
 
     #[test]

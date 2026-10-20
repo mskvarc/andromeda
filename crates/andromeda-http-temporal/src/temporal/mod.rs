@@ -62,6 +62,9 @@ fn local_temporal_outcome<T>(result: Result<T, TemporalError>, forwarded: &[Forw
 
 /// Temporal add attributes handling.
 pub mod add_attributes;
+/// How far the merged history of a federated temporal read is complete
+/// (clause 6.3.10).
+mod complete_history;
 /// Handles `POST /ngsi-ld/v1/temporal/entities`.
 ///
 /// Creates a new temporal entity or updates an existing one from the request payload.

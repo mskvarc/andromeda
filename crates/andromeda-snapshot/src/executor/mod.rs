@@ -21,6 +21,8 @@ mod source_instance_walk;
 mod status;
 /// Capturing the whole answer of one snapshot temporal query.
 mod temporal_capture;
+/// Recording a failed temporal step of a snapshot query.
+mod temporal_failure;
 mod translation;
 
 use crate::{

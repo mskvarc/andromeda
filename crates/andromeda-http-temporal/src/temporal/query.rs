@@ -15,9 +15,9 @@ use crate::{
         Response,
         ResultInstanceExt,
         StatusCode,
+        complete_history::HistoryCompleteness,
         query::{
             admission::admit_request,
-            complete_history::HistoryCompleteness,
             forwarding::{QueryScope, TemporalForwarding, forward_temporal_history},
             merged_page::{MergedPageCut, cut_merged_page},
             request::TemporalQueryRequest,
@@ -40,8 +40,6 @@ use andromeda_temporal::{
 
 /// Admitting a decoded query before it runs.
 mod admission;
-/// How far the merged history is complete (clause 6.3.10).
-mod complete_history;
 /// Asking the registered context sources for their part of the history.
 mod forwarding;
 /// Folding what those sources returned into the locally read history.
@@ -106,7 +104,8 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         .with_instance(&uri)?;
     log_query_warnings(&local_result.warnings);
     let local_total = local_match_count(local_result.total_count).with_instance(&uri)?;
-    let completeness = HistoryCompleteness::of(&params, local_result.range, forwarded.as_ref()).with_instance(&uri)?;
+    let sources = forwarded.as_ref().map_or(&[][..], |history| history.sources.as_slice());
+    let mut completeness = HistoryCompleteness::of(&params, local_result.range, sources).with_instance(&uri)?;
     let contribution = ContributionMerge {
         target: &target,
         params: &params,
@@ -118,7 +117,8 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     let projection = local_result.projection;
     let mut merged = merge_with_contributions(service, contribution, local_result.entities, forwarded, &uri).await?;
     let timeproperty = params.timeproperty_or_default();
-    completeness.trim(&mut merged.entities, timeproperty);
+    let cut_short = completeness.trim(&mut merged.entities, timeproperty);
+    merged.warnings.extend(cut_short);
 
     let (entities, total_count, reach) = cut_merged_page(
         merged.entities,

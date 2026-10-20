@@ -102,6 +102,28 @@ impl PageCut {
             PageDirection::Backward { .. } => instant >= self.boundary,
         })
     }
+
+    /// The fewest instances this cut keeps of any attribute stream `rows`
+    /// hold, or `None` when they hold no stream.
+    ///
+    /// A stream the cut leaves empty counts 0: it received nothing of the
+    /// page, so a continuation still owes it every instance it asked for.
+    /// Scope history and rows with no instant on the requested axis take no
+    /// part, as they take none in the cut.
+    #[must_use]
+    pub fn fewest_kept(&self, rows: &[TemporalHistoryRow], timeproperty: TimeProp) -> Option<usize> {
+        let mut streams: HashMap<StreamKey<'_>, usize> = HashMap::new();
+        for row in rows
+            .iter()
+            .filter(|row| !is_scope_attribute(&row.attribute_name) && row.time_axis(timeproperty).is_some())
+        {
+            let kept = streams.entry((&row.attribute_name, row.dataset_id.as_ref())).or_default();
+            if self.keeps(row, timeproperty) {
+                *kept += 1;
+            }
+        }
+        streams.into_values().min()
+    }
 }
 
 /// One attribute stream: an attribute and the `datasetId` of its instances.
@@ -269,6 +291,62 @@ mod tests {
         let cut = PageCut::of_page(&rows, TimeProp::Observed, PageDirection::Forward).expect("speed was cut");
         pretty_assertions::assert_eq!(cut.boundary, minute(5));
         assert!(cut.keeps(&scope, TimeProp::Observed));
+    }
+
+    fn forward_cut_at(offset: i64) -> PageCut {
+        PageCut {
+            direction: PageDirection::Forward,
+            boundary: minute(offset),
+        }
+    }
+
+    /// `speed` keeps 01:01-01:19 and `fuelLevel` only 01:18 and 01:19 of its
+    /// 01:18-01:30, so the sparsest stream received 2.
+    #[test]
+    fn the_fewest_kept_is_the_count_of_the_sparsest_stream() {
+        let mut rows = stream("speed", 1, 25, StreamExtent::Cut);
+        rows.extend(stream("fuelLevel", 18, 30, StreamExtent::Cut));
+        pretty_assertions::assert_eq!(forward_cut_at(19).fewest_kept(&rows, TimeProp::Observed), Some(2));
+    }
+
+    #[test]
+    fn a_stream_the_cut_leaves_empty_counts_zero() {
+        let mut rows = stream("speed", 1, 19, StreamExtent::Cut);
+        rows.extend(stream("fuelLevel", 20, 30, StreamExtent::Whole));
+        pretty_assertions::assert_eq!(forward_cut_at(19).fewest_kept(&rows, TimeProp::Observed), Some(0));
+    }
+
+    #[test]
+    fn scope_history_is_not_a_stream_the_fewest_kept_counts() {
+        let mut scope = row("unused", 50, StreamExtent::Cut);
+        scope.attribute_name = expanded_properties::SCOPE.as_str().parse().expect("the scope IRI");
+        let mut rows = stream("speed", 1, 5, StreamExtent::Cut);
+        rows.push(scope);
+        pretty_assertions::assert_eq!(forward_cut_at(5).fewest_kept(&rows, TimeProp::Observed), Some(5));
+    }
+
+    /// Each `datasetId` of an attribute is a stream of its own.
+    #[test]
+    fn two_datasets_of_one_attribute_are_counted_apart() {
+        let mut rows = stream("speed", 1, 3, StreamExtent::Cut);
+        let mut other = stream("speed", 1, 7, StreamExtent::Cut);
+        for row in &mut other {
+            row.dataset_id = Some("urn:ngsi-ld:Dataset:other".parse().expect("a valid identifier"));
+        }
+        rows.extend(other);
+        pretty_assertions::assert_eq!(forward_cut_at(19).fewest_kept(&rows, TimeProp::Observed), Some(3));
+    }
+
+    /// A row with no `observedAt` has no position on the axis and forms no
+    /// stream the count could report as empty.
+    #[test]
+    fn rows_without_an_instant_on_the_axis_are_not_counted() {
+        let mut rows = stream("speed", 1, 4, StreamExtent::Cut);
+        let mut unobserved = row("fuelLevel", 2, StreamExtent::Whole);
+        unobserved.observed_at = None;
+        rows.push(unobserved);
+        pretty_assertions::assert_eq!(forward_cut_at(19).fewest_kept(&rows, TimeProp::Observed), Some(4));
+        pretty_assertions::assert_eq!(forward_cut_at(19).fewest_kept(&[], TimeProp::Observed), None);
     }
 
     /// Instances sharing one instant form one group, counted per stream.

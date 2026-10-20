@@ -38,6 +38,14 @@ fn document(instances: Vec<InstanceDocument>) -> TemporalDocument {
     TemporalDocument::new(entity, EntitySystemTimes::default(), IndexMap::new())
 }
 
+fn in_dataset(observed: &str, dataset: &str) -> InstanceDocument {
+    InstanceDocument::builder()
+        .family(Some(AttributeType::Property))
+        .observed_at(Some(Slot::Set(observed.parse::<DateTimeText>().expect("an instant"))))
+        .dataset_id(Some(dataset.parse::<Identifier>().expect("an identifier")))
+        .build()
+}
+
 fn observed(document: &TemporalDocument) -> Vec<DateTime<Utc>> {
     document
         .instances()
@@ -186,4 +194,57 @@ fn instances_are_kept_by_the_attribute_they_belong_to_and_an_emptied_attribute_k
     held.retain_instances(|name, kept| name == &speed() && kept.instant_on(TimeProp::Observed) > Some(at("2024-01-01T00:00:00Z")));
     pretty_assertions::assert_eq!(held.instance_count(), 1);
     assert!(held.emptied().is_empty());
+}
+
+/// `speed` holds a default stream of 3 admitted instances and a dataset
+/// stream none of which is admitted; `fuelLevel` holds 2 admitted instances.
+/// The dataset stream every instance of which lies past the bound counts 0;
+/// admitting everything, the dataset stream's one instance is the fewest.
+#[test]
+fn the_fewest_stream_instances_counts_every_dataset_stream_apart() {
+    let fuel: AttributeName = "https://example.com/fuelLevel".parse().expect("a valid attribute name");
+    let bound = at("2020-01-01T10:00:00Z");
+    let entity = EntityDocument::new(
+        Some("urn:ngsi-ld:Vehicle:1".parse().expect("an identifier")),
+        vec!["https://example.com/Vehicle".parse().expect("a type")],
+        None,
+        None,
+        IndexMap::from([
+            (
+                speed(),
+                AttributeMember::Instances(vec![
+                    instance("2020-01-01T01:00:00Z", None),
+                    instance("2020-01-01T02:00:00Z", None),
+                    instance("2020-01-01T03:00:00Z", None),
+                    in_dataset("2020-01-01T11:00:00Z", "urn:ngsi-ld:Dataset:late"),
+                ]),
+            ),
+            (
+                fuel,
+                AttributeMember::Instances(vec![
+                    instance("2020-01-01T04:00:00Z", None),
+                    instance("2020-01-01T05:00:00Z", None),
+                    instance("2020-01-01T12:00:00Z", None),
+                ]),
+            ),
+        ]),
+    );
+    let document = TemporalDocument::new(entity, EntitySystemTimes::default(), IndexMap::new());
+    pretty_assertions::assert_eq!(document.fewest_stream_instances(TimeProp::Observed, |instant| instant <= bound), Some(0));
+    pretty_assertions::assert_eq!(document.fewest_stream_instances(TimeProp::Observed, |_| true), Some(1));
+    pretty_assertions::assert_eq!(TemporalDocument::default().fewest_stream_instances(TimeProp::Observed, |_| true), None);
+}
+
+/// Two of the three instances of the one stream lie at or before the bound.
+#[test]
+fn the_fewest_stream_instances_is_the_admitted_count_of_the_sparsest_stream() {
+    let document = document(vec![
+        instance("2020-01-01T01:00:00Z", None),
+        instance("2020-01-01T02:00:00Z", None),
+        instance("2020-01-01T03:00:00Z", None),
+    ]);
+    pretty_assertions::assert_eq!(
+        document.fewest_stream_instances(TimeProp::Observed, |instant| instant <= at("2020-01-01T02:00:00Z")),
+        Some(2)
+    );
 }

@@ -18,6 +18,7 @@ use crate::{
         ResultInstanceExt,
         TemporalQueryParameters,
         collect_temporal_warnings,
+        complete_history::HistoryCompleteness,
         local_map_entities::LocalHistoryEntities,
         merge_temporal_retrieve_results,
     },
@@ -54,7 +55,8 @@ pub(crate) struct RetrievedHistory {
     /// The history of the entity the response carries, merged over every
     /// holder, before it is compacted under the request context.
     pub(crate) history: TemporalHistory,
-    /// Range metadata of the local read, present when it truncated the history.
+    /// Range metadata of the merged history, present when the local read or
+    /// a source cut it short.
     pub(crate) range: Option<TemporalRange>,
     /// The clause 6.3.17 warnings the forwarding produced.
     pub(crate) warnings: Vec<NgsiLdWarning>,
@@ -170,7 +172,7 @@ pub(crate) async fn distributed_retrieval(
     if let Some(status) = forwarded.sources.single_source_status {
         return Err(single_source_declined(status, instance));
     }
-    let warnings = collect_temporal_warnings(&forwarded.results);
+    let mut warnings = collect_temporal_warnings(&forwarded.results);
     // Capture which registration returned which entity, and with which map,
     // before the merge (clauses 5.2.39 and 5.5.14).
     let contributions: Vec<SourceContribution> = temporal_contributions_of(&forwarded.results).collect();
@@ -186,17 +188,24 @@ pub(crate) async fn distributed_retrieval(
     let had_remote_history = forwarded.results.iter().any(|result| !result.entities.is_empty());
     let local_id = local_entity.is_some().then(|| id.clone()); // clone: the map owns the entity identifiers it names
     let window = params.window().map_err(|error| temporal_problem(&TemporalError::from(error), instance))?;
+    // Clause 6.3.10: a source that cut its history short bounds the merged
+    // page as the local cut does, so the response's range is the merge's.
+    let mut completeness = HistoryCompleteness::of(params, range, &forwarded.results).map_err(|error| temporal_problem(&error, instance))?;
     let merged = merge_temporal_retrieve_results(local_entity, forwarded.results, window);
     let entity_map_uri = record_retrieve_map(entity_maps, map_use, contributions, local_id, instance).await?;
 
-    let history = match merged {
+    let (history, range) = match merged {
         Some(mut history) => {
             // Clause 5.7.3.4: `lastN` bounds the instances of the merged
             // history, so it is applied once more over the aggregation.
             if let (true, Some(last_n)) = (had_remote_history, params.last_n) {
                 history.keep_last(window.timeproperty, last_n);
             }
-            history
+            let mut page = [history];
+            warnings.extend(completeness.trim(&mut page, window.timeproperty));
+            let range = completeness.range(&page, window.timeproperty);
+            let [history] = page;
+            (history, range)
         }
         // Clause 5.7.3.4: ResourceNotFound when the target Entity's history is
         // held neither locally nor by any source a matching registration

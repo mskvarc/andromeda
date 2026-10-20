@@ -16,10 +16,8 @@
 //! page was read under, which the pagination policy holds the followed request
 //! to.
 
-use andromeda_http_headers::{
-    link::{header::Link, relation_type::RelationType, value::LinkValue},
-    media_type::ResponseMediaType,
-};
+use crate::link_target::{append_typed_links, rebuilt_target};
+use andromeda_http_headers::{link::relation_type::RelationType, media_type::ResponseMediaType};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     cursor::{NeighbourCursors, PageCursor},
@@ -27,13 +25,7 @@ use andromeda_ngsi_ld_query::{
     page_window::{PageStart, PageWindow},
 };
 use andromeda_ngsi_ld_request::pagination::page_context::{PAGE_CONTEXT_PARAMETER, PageContext};
-use axum::{
-    http::{Uri, header::LINK},
-    response::Response,
-};
-use iri_rs::IriRefBuf;
-use mediatype::MediaTypeBuf;
-use url::form_urlencoded;
+use axum::{http::Uri, response::Response};
 
 /// What a page cut by a window returned, as far as its pointers depend on it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,27 +172,8 @@ struct PageUri<'request> {
 /// the context the walk is held to, and keeps the rest of the query intact.
 fn build_page_link(page: PageUri<'_>, set: &[(&str, &str)]) -> String {
     let PageUri { uri, context } = page;
-    let mut pairs: Vec<(String, String)> = Vec::new();
-    if let Some(query) = uri.query() {
-        for (k, v) in form_urlencoded::parse(query.as_bytes()) {
-            if PAGINATION_PARAMS.contains(&k.as_ref()) {
-                continue;
-            }
-            pairs.push((k.into_owned(), v.into_owned()));
-        }
-    }
-    for (key, value) in set {
-        pairs.push(((*key).to_string(), (*value).to_string()));
-    }
-    pairs.push((PAGE_CONTEXT_PARAMETER.to_owned(), context.as_str().to_owned()));
-
-    let query = form_urlencoded::Serializer::new(String::new()).extend_pairs(pairs).finish();
-
-    if query.is_empty() {
-        uri.path().to_string()
-    } else {
-        format!("{}?{}", uri.path(), query)
-    }
+    let set: Vec<(&str, &str)> = set.iter().copied().chain([(PAGE_CONTEXT_PARAMETER, context.as_str())]).collect();
+    rebuilt_target(uri, PAGINATION_PARAMS, &set)
 }
 
 /// Append the pagination `Link` header `links` describes over a page of
@@ -221,28 +194,11 @@ fn append_pagination_links(response: &mut Response, uri: &PageUri<'_>, window: &
         return;
     }
 
-    // Clause 6.3.10: every pagination link carries a `type` equal to the
-    // negotiated response media type, so the client walks the collection with
-    // the same representation it asked for.
-    let mt = MediaTypeBuf::from(&media_type.media_type());
-
     let targets = match links {
         PageLinks::Offset { offset, extent } => offset_targets(*uri, limit, offset, extent),
         PageLinks::Cursor(cursors) => cursor_targets(*uri, limit, &cursors),
     };
-
-    let values = targets
-        .into_iter()
-        .filter_map(|(relation, target)| {
-            // clone: each link value owns its copy of the negotiated media type.
-            IriRefBuf::new(target)
-                .ok()
-                .map(|target| LinkValue::with_params(target, Some(relation), Some(mt.clone())))
-        })
-        .collect::<Vec<_>>();
-    if let Some(value) = Link::from_values(values).and_then(|link| link.to_header_value()) {
-        response.headers_mut().append(LINK, value);
-    }
+    append_typed_links(response, targets, media_type);
 }
 
 /// The offset-mode pointer targets: `first`/`last` when a total is known, and

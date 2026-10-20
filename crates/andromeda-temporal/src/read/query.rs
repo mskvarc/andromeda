@@ -12,7 +12,7 @@ use crate::{
         ensure_aggregation_supported,
         rendered_entity::{HistoryPresence, RenderedTemporalEntity, render_history_page},
     },
-    service::{TemporalQueryResult, TemporalQueryWarning, TemporalRange, TemporalService},
+    service::{TemporalQueryResult, TemporalQueryWarning, TemporalService},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -132,11 +132,7 @@ impl TemporalService {
             }
 
             let any_truncated = cut.is_some();
-            let range = cut.map(|cut| TemporalRange {
-                interval: compiled.window.interval,
-                observed: overall_min.zip(overall_max),
-                direction: cut.direction,
-            });
+            let range = cut.map(|cut| cut.range(compiled.window.interval, overall_min.zip(overall_max)));
 
             Ok(TemporalQueryResult {
                 entities,

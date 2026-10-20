@@ -12,7 +12,10 @@ use crate::{
     error::TemporalError,
     grouping_depth::grouping_depth,
     port::read_scope::TemporalReadScope,
-    read::rendered_entity::{HistoryPresence, RenderedTemporalEntity, presence_of},
+    read::{
+        rendered_entity::{HistoryPresence, RenderedTemporalEntity, presence_of},
+        response_cut::ResponseCut,
+    },
     result_bound::ResultBound,
     service::TemporalService,
 };
@@ -36,6 +39,12 @@ pub(crate) struct EntityAggregationPage {
 }
 
 impl EntityAggregationPage {
+    /// The periods `rows` the page of `entity_id` read.
+    pub(crate) const fn read(entity_id: Identifier, rows: Vec<TemporalAggregationRow>) -> EntityAggregationPage {
+        let presence = presence_of(rows.is_empty());
+        EntityAggregationPage { entity_id, rows, presence }
+    }
+
     /// Whether the window selected any history for the entity at all.
     pub(crate) const fn presence(&self) -> HistoryPresence {
         self.presence
@@ -57,25 +66,22 @@ impl TemporalService {
         compiled: &CompiledTemporalQuery,
     ) -> Result<EntityAggregationPage, TemporalError> {
         let rows = self.reader.query_entity_aggregation(scope, entity_id, compiled).await?;
-        let presence = presence_of(rows.is_empty());
-        Ok(EntityAggregationPage {
-            entity_id: entity_id.clone(), // clone: the page owns the identifier it is rendered under.
-            rows,
-            presence,
-        })
+        // clone: the page owns the identifier it is rendered under.
+        Ok(EntityAggregationPage::read(entity_id.clone(), rows))
     }
 }
 
 /// Cut every page of a response at the one period boundary any stream of any
 /// of them was cut at, and report the whole-range period every stream of the
 /// response shares; the cut, or `None` when the response is complete.
-pub(crate) fn settle_aggregation_pages(compiled: &CompiledTemporalQuery, pages: &mut [EntityAggregationPage]) -> Option<PageCut> {
+pub(crate) fn settle_aggregation_pages(compiled: &CompiledTemporalQuery, pages: &mut [EntityAggregationPage]) -> Option<ResponseCut> {
     let cut = compiled
         .instances
         .page
         .direction()
-        .and_then(|direction| PageCut::common(pages.iter().filter_map(|page| PageCut::of_periods(&page.rows, direction))));
-    if let Some(cut) = cut {
+        .and_then(|direction| PageCut::common(pages.iter().filter_map(|page| PageCut::of_periods(&page.rows, direction))))
+        .map(|cut| ResponseCut::of_periods(cut, pages));
+    if let Some(ResponseCut { cut, .. }) = cut {
         for page in pages.iter_mut() {
             page.rows.retain(|row| cut.keeps_period(row));
         }
@@ -99,7 +105,7 @@ pub(crate) struct AggregationRendering<'r> {
     /// The distinct groups one grouped aggregation may produce at most.
     pub(crate) max_groups: u64,
     /// The response's common cut.
-    pub(crate) cut: Option<PageCut>,
+    pub(crate) cut: Option<ResponseCut>,
 }
 
 /// Build one entity's aggregated representation at the response's common
@@ -247,7 +253,7 @@ mod tests {
             page("urn:ngsi-ld:Vehicle:1", hours(0, 19, StreamExtent::Cut)),
             page("urn:ngsi-ld:Vehicle:2", hours(5, 24, StreamExtent::Cut)),
         ];
-        let cut = settle_aggregation_pages(&compiled, &mut pages).expect("the response was cut");
+        let cut = settle_aggregation_pages(&compiled, &mut pages).expect("the response was cut").cut;
         pretty_assertions::assert_eq!(cut.boundary, at("2024-01-01T19:00:00Z"));
         pretty_assertions::assert_eq!(pages[0].rows.len(), 19);
         pretty_assertions::assert_eq!(pages[1].rows.len(), 14);

@@ -65,6 +65,8 @@ pub(crate) struct StubBroker {
     merged_answers: Mutex<Vec<TemporalHistoryRow>>,
     /// The entity selections each identifier listing ran under, in order.
     listed_selections: Mutex<Vec<EntitySelection>>,
+    /// The page of history an entity reads as in place of its links.
+    pages: HashMap<Identifier, Vec<TemporalHistoryRow>>,
 }
 
 /// Whether the stubbed entities have current state.
@@ -84,7 +86,16 @@ impl StubBroker {
             aggregated: Vec::new(),
             merged_answers: Mutex::new(Vec::new()),
             listed_selections: Mutex::new(Vec::new()),
+            pages: HashMap::new(),
         }
+    }
+
+    /// The same graph with `entity_id` known and reading as `rows`, whatever
+    /// the window, the way a store answers one page of its history.
+    pub(crate) fn paging(mut self, entity_id: Identifier, rows: Vec<TemporalHistoryRow>) -> StubBroker {
+        self.links.entry(entity_id.clone()).or_default(); // clone: the graph and the page both key by the entity
+        self.pages.insert(entity_id, rows);
+        self
     }
 
     /// The entity selections the identifier listings ran under, in the order
@@ -118,6 +129,9 @@ impl StubBroker {
     /// empty history is legitimately dropped from a join, and the traversal
     /// tests are about which entities are *reached*, not about that rule.
     pub(crate) fn rows(&self, entity_id: &Identifier) -> Vec<TemporalHistoryRow> {
+        if let Some(page) = self.pages.get(entity_id) {
+            return page.clone(); // clone: every read of the entity answers the same page
+        }
         let instant = "2024-01-01T00:00:00Z".parse::<DateTime<Utc>>().expect("valid instant");
         let Some(targets) = self.links.get(entity_id) else {
             return Vec::new();

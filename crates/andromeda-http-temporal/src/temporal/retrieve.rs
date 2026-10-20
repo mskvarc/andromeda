@@ -33,11 +33,17 @@ use andromeda_entity_map::reuse::EntityMapUse;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::{admitted_temporal_query::AdmittedTemporalQuery, context_target, response_context_request::ResponseContextRequest};
 use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_warning::NgsiLdWarning};
-use andromeda_http_response::{collection::NgsiLdCollectionResponse, content_range::build_content_range, rendered_response::RenderedResponse};
+use andromeda_http_response::{
+    collection::NgsiLdCollectionResponse,
+    content_range::build_content_range,
+    rendered_response::RenderedResponse,
+    temporal_continuation::append_continuation_link,
+};
 use andromeda_jsonld::user_context_admission::SubmittedContext;
+use andromeda_ngsi_ld_query::temporal::continuation::TemporalContinuation;
 use andromeda_ngsi_ld_render::structural_projection::StructuralProjection;
 use andromeda_ngsi_ld_request::query::temporal::operation::TemporalQueryOperation;
-use andromeda_temporal::{error::TemporalError, temporal_invariant::TemporalInvariant};
+use andromeda_temporal::{error::TemporalError, service::TemporalRange, temporal_invariant::TemporalInvariant};
 
 pub async fn get(
     context_target::ExistingTargetedTenantState {
@@ -111,7 +117,7 @@ pub async fn get(
         entity_map_uri,
     } = retrieved;
 
-    let content_range = range.and_then(|range| build_content_range(&range.interval, range.observed, range.direction));
+    let (content_range, next) = page_position(range);
     let read = TemporalHistoryRead {
         service: &state.temporal,
         target: &target,
@@ -151,7 +157,7 @@ pub async fn get(
         .with_instance(&uri)?;
     let rendered = answer.render(rendering, &params, &uri)?;
 
-    Ok(retrieval_response(
+    let mut response = retrieval_response(
         answer_shape,
         RetrievalHead {
             status,
@@ -160,7 +166,26 @@ pub async fn get(
             content_range,
         },
         rendered,
-    ))
+    );
+    if let Some(next) = next {
+        append_continuation_link(&mut response, &uri, &next, accept.media_type());
+    }
+    Ok(response)
+}
+
+/// The `Content-Range` of a history `range` says was cut short, and the
+/// request that continues it (clause 6.3.10).
+///
+/// Clause 6.3.10 defines no request resuming a partial response, so a page
+/// that left instances out points at one that serves none of its own again;
+/// a page with no range to report points nowhere.
+fn page_position(range: Option<TemporalRange>) -> (Option<NgsiLdContentRange>, Option<TemporalContinuation>) {
+    let Some(range) = range else {
+        return (None, None);
+    };
+    let content_range = build_content_range(&range.interval, range.observed, range.direction);
+    let next = range.next.filter(|_| content_range.is_some());
+    (content_range, next)
 }
 
 /// What a retrieval says about its body beside the body.
