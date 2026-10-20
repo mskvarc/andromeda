@@ -64,18 +64,25 @@ async fn probe(pool: &PgPool, entity_id: &Identifier, through: TemporalIntentKey
 
 /// What the probe's counts and clocks say of the intents it read.
 ///
+/// The intents are claimable only when none of them is under a live lease: a
+/// claim takes no intent behind a leased one of its Entity, so while any is
+/// leased the barrier's claim comes back empty and only the wait can end it.
 /// Every queued intent that is not claimable carries a live lease, so a probe
 /// that counts one without reporting a lease breaks the statement's contract.
 fn release(queued: i64, claimable: i64, latest_lease: Option<DateTime<Utc>>, database_now: DateTime<Utc>) -> Result<EntityRelease, TemporalError> {
-    match (queued, claimable, latest_lease) {
-        (0, _, _) => Ok(EntityRelease::Clear),
-        (_, 1.., _) => Ok(EntityRelease::Claimable),
+    if queued == 0 {
+        return Ok(EntityRelease::Clear);
+    }
+    if claimable == queued {
+        return Ok(EntityRelease::Claimable);
+    }
+    match latest_lease {
         // A lease that lapsed between the comparison and the subtraction has
         // no time left to run.
-        (_, _, Some(latest_lease)) => Ok(EntityRelease::Held {
+        Some(latest_lease) => Ok(EntityRelease::Held {
             remaining_lease: (latest_lease - database_now).to_std().unwrap_or(Duration::ZERO),
         }),
-        (_, _, None) => Err(TemporalError::from(PersistenceFailure::ContractBroken.record_bare())),
+        None => Err(TemporalError::from(PersistenceFailure::ContractBroken.record_bare())),
     }
 }
 
@@ -97,10 +104,23 @@ mod tests {
     }
 
     #[test]
-    fn any_unleased_or_lapsed_intent_is_claimable() {
+    fn intents_none_of_which_is_leased_are_claimable() {
         assert_eq!(
-            release(3, 1, Some(now() + TimeDelta::seconds(10)), now()).expect("a probe outcome"),
+            release(2, 2, Some(now() - TimeDelta::seconds(10)), now()).expect("a probe outcome"),
             EntityRelease::Claimable
+        );
+        assert_eq!(release(2, 2, None, now()).expect("a probe outcome"), EntityRelease::Claimable);
+    }
+
+    /// A claim takes nothing behind a leased intent of the Entity, so one
+    /// live lease holds the rest back however many are unleased.
+    #[test]
+    fn one_leased_intent_holds_the_others_with_its_lease() {
+        assert_eq!(
+            release(2, 1, Some(now() + TimeDelta::seconds(10)), now()).expect("a probe outcome"),
+            EntityRelease::Held {
+                remaining_lease: Duration::from_secs(10)
+            }
         );
     }
 

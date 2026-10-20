@@ -28,6 +28,9 @@ pub enum QueueOutcome {
     Exhausted,
     /// The lease expired or was taken over before the item could be acknowledged.
     LeaseLost,
+    /// The item was released unprocessed, without counting an attempt, to wait
+    /// for an earlier item it must follow.
+    HeldBack,
     /// The item has failed as many times as the operator threshold names and
     /// stays queued; reported so a wedged sink is visible.
     Stuck,
@@ -58,10 +61,15 @@ mod tests {
         recorder.record_locally(|| {
             record_queue_outcome(QueueName::NotificationDeliveries, QueueOutcome::Completed, 3);
             record_queue_outcome(QueueName::PendingSideEffects, QueueOutcome::LeaseLost, 0);
+            record_queue_outcome(QueueName::TemporalAppendIntents, QueueOutcome::HeldBack, 2);
         });
         let rendered = recorder.render();
         assert!(
             rendered.contains(&format!("{QUEUE_OUTCOMES_TOTAL}{{queue=\"notification-deliveries\",outcome=\"completed\"}} 3")),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(&format!("{QUEUE_OUTCOMES_TOTAL}{{queue=\"temporal-append-intents\",outcome=\"held-back\"}} 2")),
             "{rendered}"
         );
         assert!(!rendered.contains("pending-side-effects"), "{rendered}");

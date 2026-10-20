@@ -1,25 +1,31 @@
 //! PostgreSQL anchor persistence and delivery state for temporal append intents.
 //!
 //! The store's enqueue, run inside the entity anchor transaction, lives in
-//! [`enqueue`]; the claim, high-water, release-probe, removal and retry
-//! statements in [`lease_statements`]; the mutation barrier's wait on another
-//! owner's lease in [`release_wait`]; the port implementations here. An application runs
-//! the history statements of `andromeda-postgresql-temporal-store` over the
-//! claimed rows and removes them under the lease in the same transaction.
+//! [`enqueue`]; the claim, high-water, release-probe, removal, release and
+//! retry statements in [`lease_statements`]; the statements keeping each
+//! Entity's intents in commit order in [`queue_order`]; the mutation barrier's
+//! wait on another owner's lease in [`release_wait`]; the port implementations
+//! here. An application first refuses a set holding an intent behind an
+//! earlier one of its Entity still queued outside it, then runs the history
+//! statements of `andromeda-postgresql-temporal-store` over the claimed rows
+//! and removes them under the lease in the same transaction.
 //!
 //! The queue lives only in the live branch: a Snapshot branch records its
 //! history in the write's own transaction, so nothing here names a branch.
 
 /// Enqueueing temporal append intents inside the entity anchor transaction.
 mod enqueue;
-/// The claim, high-water, release-probe, lease-guarded removal and retry
-/// statements.
+/// The claim, high-water, release-probe, lease-guarded removal, release and
+/// retry statements.
 mod lease_statements;
+/// The statements keeping each Entity's queued intents in commit order.
+mod queue_order;
 /// Waiting for another owner's lease on one entity's intents to end.
 mod release_wait;
 
 use crate::intent_store::{
-    lease_statements::{ClaimScope, applied_removal_statement, claim_statement, last_intent_statement, retry_statement},
+    lease_statements::{ClaimScope, applied_removal_statement, claim_statement, last_intent_statement, release_statement, retry_statement},
+    queue_order::behind_earlier_statement,
     release_wait::await_release,
 };
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder, write_id::WriteId};
@@ -33,7 +39,7 @@ use andromeda_temporal::{
     append_intent::TemporalIntentKey,
     error::TemporalError,
     port::{
-        temporal_intent_application::TemporalIntentApplication,
+        temporal_intent_application::{TemporalIntentApplication, TemporalIntentApplicationOutcome},
         temporal_intent_queue::{ClaimedTemporalIntent, EntityRelease, TemporalIntentBatchSize, TemporalIntentQueue, TemporalIntentRetry},
     },
 };
@@ -49,6 +55,8 @@ use uuid::Uuid;
 const INTENT_CLAIM: StatementName = StatementName("temporal-intent-claim");
 /// The statement name intent retry is observed under.
 const INTENT_RETRY: StatementName = StatementName("temporal-intent-retry");
+/// The statement name the release of held-back intents is observed under.
+const INTENT_RELEASE: StatementName = StatementName("temporal-intent-release");
 /// The name an intent application, from its first statement to its commit, is
 /// observed under.
 const INTENT_APPLICATION: StatementName = StatementName("temporal-intent-application");
@@ -109,10 +117,20 @@ impl PostgresTemporalIntentStore {
     }
 
     /// Apply `intents` and remove them under `owner`'s live lease, in one
-    /// transaction that commits only when every intent is still held.
-    async fn apply_held(&self, owner: LeaseHolder, intents: &[ClaimedTemporalIntent]) -> Result<LeaseAcknowledgement, TemporalError> {
+    /// transaction that commits only when no earlier intent of their Entities
+    /// is queued outside them and every intent is still held.
+    async fn apply_held(&self, owner: LeaseHolder, intents: &[ClaimedTemporalIntent]) -> Result<TemporalIntentApplicationOutcome, TemporalError> {
         let keys: Vec<i64> = intents.iter().map(|intent| intent.key.get()).collect();
         let mut tx = self.pool.begin().await.map_err(|error| persistence(&error))?;
+        let (sql, values) = behind_earlier_statement(&keys).build_sqlx(PostgresQueryBuilder);
+        let behind: bool = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|error| persistence(&error))?;
+        if behind {
+            tx.rollback().await.map_err(|error| persistence(&error))?;
+            return Ok(TemporalIntentApplicationOutcome::Behind);
+        }
         let source = IntentSource::claimed(&mut tx, &keys).await.map_err(TemporalError::from)?;
         apply_intents_in_tx(&mut tx, &source, &ContextTarget::Live).await.map_err(TemporalError::from)?;
         let (sql, values) = applied_removal_statement(&keys, owner).build_sqlx(PostgresQueryBuilder);
@@ -123,10 +141,10 @@ impl PostgresTemporalIntentStore {
             .rows_affected();
         if usize::try_from(removed).ok() != Some(keys.len()) {
             tx.rollback().await.map_err(|error| persistence(&error))?;
-            return Ok(LeaseAcknowledgement::Lost);
+            return Ok(TemporalIntentApplicationOutcome::LeaseLost);
         }
         tx.commit().await.map_err(|error| persistence(&error))?;
-        Ok(LeaseAcknowledgement::Applied)
+        Ok(TemporalIntentApplicationOutcome::Applied)
     }
 }
 
@@ -171,13 +189,30 @@ impl TemporalIntentQueue for PostgresTemporalIntentStore {
             .map_err(|error| persistence(&error))?;
         held(result.rows_affected())
     }
+
+    async fn release(&self, owner: LeaseHolder, intents: &[ClaimedTemporalIntent]) -> Result<LeaseAcknowledgement, TemporalError> {
+        if intents.is_empty() {
+            return Ok(LeaseAcknowledgement::Applied);
+        }
+        let keys: Vec<i64> = intents.iter().map(|intent| intent.key.get()).collect();
+        let (sql, values) = release_statement(&keys, owner).build_sqlx(PostgresQueryBuilder);
+        let released = observe_statement(INTENT_RELEASE, sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&self.pool))
+            .await
+            .map_err(|error| persistence(&error))?
+            .rows_affected();
+        Ok(if usize::try_from(released).ok() == Some(keys.len()) {
+            LeaseAcknowledgement::Applied
+        } else {
+            LeaseAcknowledgement::Lost
+        })
+    }
 }
 
 #[async_trait]
 impl TemporalIntentApplication for PostgresTemporalIntentStore {
-    async fn apply(&self, owner: LeaseHolder, intents: &[ClaimedTemporalIntent]) -> Result<LeaseAcknowledgement, TemporalError> {
+    async fn apply(&self, owner: LeaseHolder, intents: &[ClaimedTemporalIntent]) -> Result<TemporalIntentApplicationOutcome, TemporalError> {
         if intents.is_empty() {
-            return Ok(LeaseAcknowledgement::Applied);
+            return Ok(TemporalIntentApplicationOutcome::Applied);
         }
         observe_statement(INTENT_APPLICATION, self.apply_held(owner, intents)).await
     }

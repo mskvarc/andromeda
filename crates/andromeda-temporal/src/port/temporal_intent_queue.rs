@@ -57,9 +57,10 @@ pub struct TemporalIntentRetry {
 pub enum EntityRelease {
     /// None of them is queued any more.
     Clear,
-    /// At least one is unleased, or its lease has lapsed.
+    /// Every one still queued is unleased, or its lease has lapsed.
     Claimable,
-    /// Every one still queued is held under another owner's live lease.
+    /// At least one is held under another owner's live lease, and a claim
+    /// takes nothing behind it.
     Held {
         /// The time until the last of those leases lapses, on the queue's own
         /// clock.
@@ -72,6 +73,10 @@ pub enum EntityRelease {
 pub trait TemporalIntentQueue: Send + Sync {
     /// Claim the oldest intents whose retry delay has passed, for one bounded
     /// lease interval.
+    ///
+    /// An intent is claimed only when no earlier intent of its Entity is
+    /// leased or waiting for its retry delay, so a claim takes the head of an
+    /// Entity's queued intents and the run after it.
     #[must_use = "temporal intent claims must be awaited"]
     async fn claim(&self, owner: LeaseHolder, limit: TemporalIntentBatchSize, lease_until: DateTime<Utc>) -> Result<Vec<ClaimedTemporalIntent>, TemporalError>;
 
@@ -80,7 +85,8 @@ pub trait TemporalIntentQueue: Send + Sync {
     /// delay has passed.
     ///
     /// The retry delay paces the background drain; a client waiting on its
-    /// own mutation is better served by an attempt now.
+    /// own mutation is better served by an attempt now. An intent behind an
+    /// earlier one of the Entity under a live lease is not claimed.
     #[must_use = "entity-scoped temporal intent claims must be awaited"]
     async fn claim_for_entity(
         &self,
@@ -114,4 +120,14 @@ pub trait TemporalIntentQueue: Send + Sync {
     /// the intent stays queued for the worker that now holds it.
     #[must_use = "temporal intent retries must be recorded"]
     async fn retry(&self, owner: LeaseHolder, intent: &ClaimedTemporalIntent, retry: TemporalIntentRetry) -> Result<LeaseAcknowledgement, TemporalError>;
+
+    /// Release the leases of `intents`, which were claimed but held back
+    /// behind an earlier intent of their Entity, without counting an attempt
+    /// and without touching their retry delay or last failure.
+    ///
+    /// Guarded by the caller's live lease: when it no longer holds one of
+    /// them, that one is left to the worker that now holds it and
+    /// [`LeaseAcknowledgement::Lost`] is answered.
+    #[must_use = "temporal intent releases must be recorded"]
+    async fn release(&self, owner: LeaseHolder, intents: &[ClaimedTemporalIntent]) -> Result<LeaseAcknowledgement, TemporalError>;
 }

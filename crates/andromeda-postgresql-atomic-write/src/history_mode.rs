@@ -1,11 +1,13 @@
 //! Placement of one commit's temporal history within the PostgreSQL anchor.
 //!
-//! A synchronous commit records its history in its own transaction. A
-//! respond-async commit, whose client asked to be answered before the
+//! A respond-async commit, whose client asked to be answered before the
 //! consequences are produced (RFC 7240 section 4.1), queues its live-branch
-//! history as intents for the resident drain to apply behind it. The store's
-//! temporal reads include queued intents, so a queued history is answered at
-//! once.
+//! history as intents for the resident drain to apply behind it. A synchronous
+//! live commit records the history of its Entities in its own transaction,
+//! except for the Entities whose earlier history is still queued: clauses
+//! 4.5.7, 4.5.8 and 4.8 read an Entity's history in commit order, so their
+//! intents queue behind the earlier ones. The store's temporal reads include
+//! queued intents, so a queued history is answered at once.
 //!
 //! None of that holds for a Snapshot branch. Its history tables are plain
 //! tables, it is bounded and read-mostly, and nothing drains its intent queue
@@ -51,6 +53,18 @@ pub(crate) enum HistoryPlacement<'a> {
         /// The drain's wake.
         publisher: &'a dyn TemporalIntentPublisher,
     },
+    /// Into the history tables inside the commit's own transaction for every
+    /// Entity with no queued history, and into the live branch's intent queue
+    /// behind the earlier intents of every other, waking the drain through
+    /// `publisher` once the commit lands when anything was queued. Only a
+    /// live-branch commit is placed here.
+    BehindQueued {
+        /// The recorder history is written with and queued entries are keyed
+        /// through.
+        recorder: &'a TemporalRecorder,
+        /// The drain's wake.
+        publisher: &'a dyn TemporalIntentPublisher,
+    },
 }
 
 impl TemporalHistoryCommitMode {
@@ -65,9 +79,11 @@ impl TemporalHistoryCommitMode {
     /// temporal history.
     pub(crate) fn placement(&self, target: &ContextTarget, response: CommitResponse) -> HistoryPlacement<'_> {
         match (target, response) {
-            (ContextTarget::Snapshot(_), CommitResponse::Synchronous | CommitResponse::RespondAsync) | (ContextTarget::Live, CommitResponse::Synchronous) => {
-                HistoryPlacement::Inline(&self.recorder)
-            }
+            (ContextTarget::Snapshot(_), CommitResponse::Synchronous | CommitResponse::RespondAsync) => HistoryPlacement::Inline(&self.recorder),
+            (ContextTarget::Live, CommitResponse::Synchronous) => HistoryPlacement::BehindQueued {
+                recorder: &self.recorder,
+                publisher: self.publisher.as_ref(),
+            },
             (ContextTarget::Live, CommitResponse::RespondAsync) => HistoryPlacement::Queued {
                 recorder: &self.recorder,
                 publisher: self.publisher.as_ref(),
@@ -121,11 +137,14 @@ mod tests {
         }
     }
 
+    /// Clauses 4.5.7, 4.5.8 and 4.8 read an Entity's history in commit
+    /// order, so a synchronous commit records inline only what no queued
+    /// history of its Entity precedes.
     #[tokio::test]
-    async fn a_live_synchronous_commits_history_is_recorded_in_the_write_transaction() {
+    async fn a_live_synchronous_commits_history_queues_behind_its_entities_queued_history() {
         assert!(matches!(
             mode().placement(&ContextTarget::Live, CommitResponse::Synchronous),
-            HistoryPlacement::Inline(_)
+            HistoryPlacement::BehindQueued { .. }
         ));
     }
 

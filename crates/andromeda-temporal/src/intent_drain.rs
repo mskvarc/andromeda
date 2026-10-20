@@ -1,10 +1,17 @@
 //! Bounded, ordered delivery of queued temporal append intents, and the
 //! mutation barrier over them.
 //!
+//! An Entity's history is applied in the order its writes committed (clauses
+//! 4.5.7, 4.5.8 and 4.8). A claim takes only the head of an Entity's queued
+//! intents and the run after it, and an application refuses a set holding an
+//! intent behind an earlier one of its Entity still queued outside it.
+//!
 //! A pass claims a batch and applies it in one transaction. When the batch
-//! does not apply, it is applied again one intent per transaction, so one
-//! intent that cannot be applied holds back none of the others and is the only
-//! one rescheduled.
+//! does not apply, it is applied again one intent per transaction: an intent
+//! that cannot be applied is rescheduled, holds back the later intents of its
+//! Entity, and holds back no other Entity's. A held-back intent is released at
+//! the end of the pass without counting an attempt, and follows its head once
+//! the head applies.
 //!
 //! The barrier applies one entity's queued intents before a Temporal API
 //! mutation of its history. It waits only for the intents queued when it
@@ -21,7 +28,7 @@ use crate::{
     intent_retry_policy::TemporalIntentRetryPolicy,
     port::{
         mutation_barrier::TemporalMutationBarrier,
-        temporal_intent_application::TemporalIntentApplication,
+        temporal_intent_application::{TemporalIntentApplication, TemporalIntentApplicationOutcome},
         temporal_intent_queue::{ClaimedTemporalIntent, EntityRelease, TemporalIntentBatchSize, TemporalIntentQueue, TemporalIntentRetry},
     },
     temporal_invariant::TemporalInvariant,
@@ -47,6 +54,9 @@ pub struct TemporalIntentDrainOutcome {
     pub acknowledged: usize,
     /// Intents retained with retry metadata after their application failed.
     pub retried: usize,
+    /// Intents released unapplied, without counting an attempt, because an
+    /// earlier intent of their Entity was still queued.
+    pub held_back: usize,
     /// Intents whose lease had lapsed before their outcome could be recorded,
     /// left to the worker that now holds them.
     pub lease_lost: usize,
@@ -162,7 +172,8 @@ impl TemporalIntentDrain {
     }
 
     /// Apply a claimed batch in one transaction, and when it does not apply,
-    /// each of its intents in one of its own, in durable sequence order.
+    /// each of its intents in one of its own, in durable sequence order,
+    /// releasing at the end the intents held back behind an earlier one.
     async fn process_claimed(&self, claimed: &[ClaimedTemporalIntent], now: DateTime<Utc>) -> Result<ClaimedPass, TemporalError> {
         let work_may_remain = claimed.len() == usize::try_from(self.batch_size.get()).unwrap_or(usize::MAX);
         let mut pass = ClaimedPass {
@@ -174,7 +185,7 @@ impl TemporalIntentDrain {
         };
         // A batch of one is applied once, by the per-intent pass below.
         if claimed.len() > 1
-            && let Ok(LeaseAcknowledgement::Applied) = self.application.apply(self.owner, claimed).await
+            && let Ok(TemporalIntentApplicationOutcome::Applied) = self.application.apply(self.owner, claimed).await
         {
             pass.outcome.acknowledged = claimed.len();
             record_queue_outcome(
@@ -184,6 +195,7 @@ impl TemporalIntentDrain {
             );
             return Ok(pass);
         }
+        let mut held_back = Vec::new();
         for claim in claimed {
             let ended = self.apply_alone(claim, now, &mut pass.outcome.stuck).await?;
             record_queue_outcome(QueueName::TemporalAppendIntents, ended.queue_outcome(), 1);
@@ -194,9 +206,26 @@ impl TemporalIntentDrain {
                     pass.first_failure.get_or_insert(failure);
                 }
                 IntentEnd::LeaseLost => pass.outcome.lease_lost += 1,
+                IntentEnd::Behind => held_back.push(claim.clone()), // clone: the release names the claims it gives back.
             }
         }
+        pass.outcome.held_back = held_back.len();
+        self.release_held_back(&held_back).await?;
         Ok(pass)
+    }
+
+    /// Give back the leases of the intents held back in a pass.
+    ///
+    /// A release that finds a lease lapsed leaves that intent with whoever
+    /// claimed it since, which is where it belongs, so it is not an outcome of
+    /// its own.
+    async fn release_held_back(&self, held_back: &[ClaimedTemporalIntent]) -> Result<(), TemporalError> {
+        if held_back.is_empty() {
+            return Ok(());
+        }
+        match self.queue.release(self.owner, held_back).await? {
+            LeaseAcknowledgement::Applied | LeaseAcknowledgement::Lost => Ok(()),
+        }
     }
 
     /// Apply one claimed intent in a transaction of its own, rescheduling it
@@ -204,8 +233,9 @@ impl TemporalIntentDrain {
     /// often as the threshold names.
     async fn apply_alone(&self, claim: &ClaimedTemporalIntent, now: DateTime<Utc>, stuck: &mut Vec<StuckTemporalIntent>) -> Result<IntentEnd, TemporalError> {
         match self.application.apply(self.owner, slice::from_ref(claim)).await {
-            Ok(LeaseAcknowledgement::Applied) => Ok(IntentEnd::Applied),
-            Ok(LeaseAcknowledgement::Lost) => Ok(IntentEnd::LeaseLost),
+            Ok(TemporalIntentApplicationOutcome::Applied) => Ok(IntentEnd::Applied),
+            Ok(TemporalIntentApplicationOutcome::LeaseLost) => Ok(IntentEnd::LeaseLost),
+            Ok(TemporalIntentApplicationOutcome::Behind) => Ok(IntentEnd::Behind),
             Err(error) => {
                 stuck.extend(self.report_if_stuck(claim, &error));
                 let retry = TemporalIntentRetry {
@@ -239,6 +269,9 @@ enum IntentEnd {
     Retried(TemporalError),
     /// The lease lapsed before the outcome could be recorded.
     LeaseLost,
+    /// An earlier intent of the Entity is still queued, so the intent waits
+    /// for it and is released without counting an attempt.
+    Behind,
 }
 
 impl IntentEnd {
@@ -248,6 +281,7 @@ impl IntentEnd {
             IntentEnd::Applied => QueueOutcome::Completed,
             IntentEnd::Retried(_) => QueueOutcome::Retried,
             IntentEnd::LeaseLost => QueueOutcome::LeaseLost,
+            IntentEnd::Behind => QueueOutcome::HeldBack,
         }
     }
 }
@@ -316,6 +350,7 @@ impl TemporalIntentDrain {
             };
             // The retry is recorded, so the background drain keeps its delay;
             // the mutation answers with what kept the history from applying.
+            // The intents after the failing one were held back, not applied.
             if let Some(failure) = pass.first_failure {
                 return Err(failure);
             }

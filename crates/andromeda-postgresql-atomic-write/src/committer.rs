@@ -2,6 +2,7 @@
 
 use crate::{
     attempt_failure::AttemptFailure,
+    behind_queue,
     columns::{columns_for, expectations},
     commit_refusal::{context_store, database, entity_statement},
     consequences::{
@@ -271,12 +272,15 @@ impl PostgresAtomicCommitter {
             events_base,
             job_base,
         } = number_consequences(&landed, &record, base, self.core_write_history)?;
-        let intents = &intents;
         let placement = self.history_mode.placement(target, response);
-        match placement {
-            HistoryPlacement::Inline(recorder) => history::apply(recorder, &mut tx, target, &record, intents).await?,
-            HistoryPlacement::Queued { recorder, .. } => deferred_history::apply(&mut tx, recorder, &record, intents).await?,
-        }
+        let queued = match placement {
+            HistoryPlacement::Inline(recorder) => {
+                history::apply(recorder, &mut tx, target, &record, &intents).await?;
+                ConsequenceWrite::Nothing
+            }
+            HistoryPlacement::Queued { recorder, .. } => deferred_history::apply(&mut tx, recorder, &record, &intents).await?,
+            HistoryPlacement::BehindQueued { recorder, .. } => behind_queue::apply(&mut tx, recorder, &record, intents).await?,
+        };
         let notifications = notification_events::apply(
             &mut tx,
             target,
@@ -300,8 +304,8 @@ impl PostgresAtomicCommitter {
 
         tx.commit().await.map_err(|error| database(&error))?;
         tracing::debug!(write_id = %record.write_id(), writes = writes.len(), "atomic context write committed");
-        if !intents.is_empty()
-            && let HistoryPlacement::Queued { publisher, .. } = placement
+        if queued == ConsequenceWrite::Written
+            && let HistoryPlacement::Queued { publisher, .. } | HistoryPlacement::BehindQueued { publisher, .. } = placement
         {
             publisher.intents_available();
         }

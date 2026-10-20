@@ -198,11 +198,6 @@ const DRAIN_CREATED: &str = "$2::bigint[]";
 /// them after its intents, write identity and instant.
 const COMMIT_CREATED: &str = "$4::bigint[]";
 
-/// The part of the guard of a Scope assertion only the drain renders: the
-/// queued intents it holds claimed are in its source, and every intent queued
-/// when a commit records its own came before it.
-const DRAIN_GUARD: &str = r#" AND "sq"."intent_key" < "i"."intent_key" AND "sq"."intent_key" <> ALL($1::bigint[])"#;
-
 #[test]
 fn the_commit_and_the_drain_render_one_statement_shape() {
     let drain: Vec<(StepRole, String)> = rendered_steps()
@@ -214,7 +209,6 @@ fn the_commit_and_the_drain_render_one_statement_shape() {
                     .replace(&earlier(QUEUED), "<source>")
                     .replace(&stating(QUEUED), "<source>")
                     .replace(&anchoring(QUEUED), "<source>")
-                    .replace(DRAIN_GUARD, "")
                     .replace(DRAIN_CREATED, "<created>"),
             )
         })
@@ -245,8 +239,7 @@ fn a_commit_binds_its_intents_as_one_typed_array() {
             sql.matches(BOUND).count() + sql.matches(&earlier(BOUND)).count() + sql.matches(&stating(BOUND)).count() + sql.matches(&anchoring(BOUND)).count(),
             "{sql}"
         );
-        let queue_reads = sql.matches("temporal_append_intents").count();
-        assert_eq!(queue_reads, sql.matches(r#"FROM "temporal_append_intents" AS "sq""#).count(), "{sql}");
+        assert!(!sql.contains("temporal_append_intents"), "{sql}");
     }
 }
 
@@ -285,10 +278,7 @@ fn an_assertion_is_inserted_only_when_either_head_differs() {
 fn a_change_an_instance_and_a_removal_are_inserted_unconditionally() {
     let sql = scope_insert();
     assert!(sql.contains(r#""e"."entry_kind" IN (3, 4)"#), "{sql}");
-    assert!(
-        sql.contains(r#"("e"."entry_kind" <> 4 OR EXISTS(SELECT 1 FROM "temporal_append_intents" AS "sq""#),
-        "{sql}"
-    );
+    assert!(sql.contains(r#"("e"."entry_kind" <> 4 OR "#), "{sql}");
 }
 
 /// The statement cannot see the rows it inserts, so an assertion is judged
@@ -318,25 +308,15 @@ fn the_first_assertion_of_an_entity_in_the_batch_is_judged_against_both_heads() 
     assert_eq!(sql.matches(union).count(), 4, "two reads of each of two axes: {sql}");
 }
 
-/// Intents are claimed in key order across workers and a retry reschedules
-/// one, so an earlier intent of the Entity may still be queued outside the
-/// batch, or applied by a transaction not yet committed: the assertion is
-/// inserted unjudged. A commit recording its own intents treats every queued
-/// intent of its Entity as earlier, and a Snapshot branch has no queue.
+/// No application runs while an earlier intent of one of its Entities is
+/// queued outside its source, so every entry an assertion is judged against is
+/// recorded or in the source, and no source reads the queue to judge one.
 #[test]
-fn an_assertion_with_an_earlier_intent_of_its_entity_still_queued_is_inserted() {
+fn an_assertion_is_judged_without_reading_the_queue_in_any_source() {
     let drain = scope_insert();
-    assert!(
-        drain.contains(&format!(
-            r#"OR EXISTS(SELECT 1 FROM "temporal_append_intents" AS "sq" WHERE "sq"."entity_id" = "i"."entity_id"{DRAIN_GUARD}) OR"#
-        )),
-        "{drain}"
-    );
+    assert!(!drain.contains(r#""temporal_append_intents" AS "sq""#), "{drain}");
     let commit = writing_in(commit_steps(), "scope_history");
-    assert!(
-        commit.contains(r#"OR EXISTS(SELECT 1 FROM "temporal_append_intents" AS "sq" WHERE "sq"."entity_id" = "i"."entity_id") OR"#),
-        "{commit}"
-    );
+    assert!(!commit.contains("temporal_append_intents"), "{commit}");
     let record = WriteRecord::restored(WriteId::mint(), recorded_at());
     let schema = Alias::new("snap_1").into_iden();
     let snapshot = writing_in(
@@ -598,13 +578,26 @@ fn an_existing_evolution_keeps_its_types_and_gains_the_ones_it_lacks() {
     let evolutions = common_table(&evolving, "evolved");
     assert!(
         evolutions.contains(concat!(
-            r#"DO UPDATE SET "modified_at" = "excluded"."modified_at", "entity_type_name_keys" = array_cat("temporal_entities"."entity_type_name_keys", "#,
+            r#"DO UPDATE SET "modified_at" = GREATEST("temporal_entities"."modified_at", "excluded"."modified_at"), "entity_type_name_keys" = array_cat("temporal_entities"."entity_type_name_keys", "#,
             r#"ARRAY((SELECT "added"."added" FROM UNNEST("excluded"."entity_type_name_keys") AS "added" "#,
             r#"WHERE "added"."added" <> ALL("temporal_entities"."entity_type_name_keys") "#,
             r#"ORDER BY array_position("excluded"."entity_type_name_keys", "added"."added") ASC)))"#
         )),
         "{evolutions}"
     );
+}
+
+/// Clause 4.8 makes `modifiedAt` the instant of the last modification, so an
+/// application stamped before the stored evolution leaves it where it is.
+#[test]
+fn an_evolutions_modification_instant_never_moves_back() {
+    let evolving = evolving();
+    let evolutions = common_table(&evolving, "evolved");
+    assert!(
+        evolutions.contains(r#""modified_at" = GREATEST("temporal_entities"."modified_at", "excluded"."modified_at")"#),
+        "{evolutions}"
+    );
+    assert!(!evolutions.contains(r#""created_at" ="#), "{evolutions}");
 }
 
 /// The membership moves read the types the evolution had and has from the

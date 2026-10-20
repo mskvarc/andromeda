@@ -135,7 +135,8 @@ pub(crate) fn with_evolutions(with: &mut WithClause, source: &IntentSource<'_>, 
 /// change a row once per statement, so one row per Entity is inserted: every
 /// type its intents state ([`stated_types`]), its first intent's instant as
 /// `created_at` and its latest's as `modified_at`, which is what applying them
-/// one after the other leaves. `created_at` is never moved (clause 4.8).
+/// one after the other leaves. `created_at` is never moved and `modified_at`
+/// never moves back ([`latest_modification`], clause 4.8).
 fn evolutions_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
     let mut select = Query::select();
     select
@@ -167,7 +168,7 @@ fn evolutions_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> 
         .on_conflict(
             OnConflict::column(TemporalEntities::Id)
                 .values([
-                    (TemporalEntities::ModifiedAt, Expr::col((Excluded, TemporalEntities::ModifiedAt))),
+                    (TemporalEntities::ModifiedAt, latest_modification()),
                     (TemporalEntities::EntityTypeNameKeys, merged_types()),
                 ])
                 .to_owned(),
@@ -196,6 +197,20 @@ fn stated_types(source: &IntentSource<'_>) -> SelectStatement {
         .expr_as(Expr::col((StatingIntent, TemporalAppendIntents::IntentKey)), TypeListColumn::ListRank);
     source_intents_as(&mut lists, source, StatingIntent);
     type_list_union(lists)
+}
+
+/// The later of the stored evolution's `modified_at` and the proposed row's.
+///
+/// Clause 4.8 makes `modifiedAt` the instant the Entity was last modified.
+/// Writers whose history is not applied in entity order (a Temporal API write
+/// whose fold stores no entity row) can commit after a later-stamped one, and
+/// that later instant stays the last modification.
+fn latest_modification() -> SimpleExpr {
+    Func::greatest([
+        Expr::col((TemporalEntities::Table, TemporalEntities::ModifiedAt)),
+        Expr::col((Excluded, TemporalEntities::ModifiedAt)),
+    ])
+    .into()
 }
 
 /// The types of the stored evolution, then those of the proposed row it

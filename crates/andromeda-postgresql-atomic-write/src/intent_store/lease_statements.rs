@@ -5,6 +5,7 @@
 //! no statement here names a branch. The statements naming one entity are
 //! answered by `idx_temporal_append_intents_entity (entity_id, intent_key)`.
 
+use crate::intent_store::queue_order::{ClaimedIntent, HeadBlock, earlier_intent_blocks};
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::queue::TemporalAppendIntents;
@@ -69,23 +70,32 @@ fn unleased_by(clock: SimpleExpr) -> SimpleExpr {
 /// Claim an ordered bounded batch of the intents `scope` admits for `owner`.
 ///
 /// One `UPDATE` whose `WHERE intent_key IN (SELECT … FOR UPDATE SKIP LOCKED)`
-/// both selects and claims the batch atomically.
+/// both selects and claims the batch atomically. An intent is eligible only
+/// when no earlier intent of its Entity blocks it ([`earlier_intent_blocks`]),
+/// so the batch holds each Entity's head and the run after it.
+///
+/// `SKIP LOCKED` lets a claim pass an earlier intent another claim has locked
+/// but not yet leased, so the filter avoids churn without ordering anything:
+/// the application's own guard refuses an intent claimed that way.
 pub(super) fn claim_statement(owner: LeaseHolder, scope: ClaimScope<'_>, limit: u32, lease_until: DateTime<Utc>) -> UpdateStatement {
     let mut eligible = Query::select();
     eligible
         .column(TemporalAppendIntents::IntentKey)
-        .from(TemporalAppendIntents::Table)
+        .from_as(TemporalAppendIntents::Table, ClaimedIntent)
         .and_where(unleased_by(Expr::current_timestamp()));
-    match scope {
+    let block = match scope {
         ClaimScope::Due => {
             eligible.and_where(Expr::col(TemporalAppendIntents::NextAttemptAt).lte(Expr::current_timestamp()));
+            HeadBlock::LeaseOrBackoff
         }
         ClaimScope::EntityThrough { entity_id, through } => {
             eligible
                 .and_where(Expr::col(TemporalAppendIntents::EntityId).eq(entity_id.as_str()))
                 .and_where(Expr::col(TemporalAppendIntents::IntentKey).lte(through.get()));
+            HeadBlock::Lease
         }
-    }
+    };
+    eligible.and_where(earlier_intent_blocks(block).not());
     eligible
         .order_by(TemporalAppendIntents::IntentKey, Order::Asc)
         .limit(u64::from(limit))
@@ -170,6 +180,28 @@ pub(super) fn applied_removal_statement(intent_keys: &[i64], owner: LeaseHolder)
         .to_owned()
 }
 
+/// Release the leases of the intents named by `intent_keys` that this worker
+/// still holds under a live lease, giving back the attempt their claim
+/// counted.
+///
+/// A held-back intent was never attempted, so its retry delay and last
+/// failure are left as they were.
+pub(super) fn release_statement(intent_keys: &[i64], owner: LeaseHolder) -> UpdateStatement {
+    Query::update()
+        .table(TemporalAppendIntents::Table)
+        .value(TemporalAppendIntents::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))
+        .value(TemporalAppendIntents::LeaseUntil, SimpleExpr::Keyword(Keyword::Null))
+        .value(TemporalAppendIntents::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
+        .value(TemporalAppendIntents::AttemptCount, Expr::col(TemporalAppendIntents::AttemptCount).sub(1))
+        .cond_where(
+            Cond::all()
+                .add(Expr::col(TemporalAppendIntents::IntentKey).eq(any(Expr::val(intent_keys.to_vec()))))
+                .add(Expr::col(TemporalAppendIntents::ClaimedBy).eq(owner.as_uuid()))
+                .add(Expr::col(TemporalAppendIntents::LeaseUntil).gt(wall_clock())),
+        )
+        .to_owned()
+}
+
 /// Reschedule one intent held under this worker's live lease and release the lease.
 pub(super) fn retry_statement(next_attempt_at: DateTime<Utc>, last_error: &str, intent_key: i64, write_id: Uuid, owner: LeaseHolder) -> UpdateStatement {
     Query::update()
@@ -191,6 +223,7 @@ mod tests {
         claim_statement,
         last_intent_statement,
         release_probe_statement,
+        release_statement,
         retry_statement,
     };
     use andromeda_context_commit::lease_holder::LeaseHolder;
@@ -224,7 +257,24 @@ mod tests {
     fn the_background_claim_takes_only_intents_whose_retry_delay_has_passed() {
         let sql = claim_statement(holder(), ClaimScope::Due, 10, Utc::now()).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#""next_attempt_at" <= CURRENT_TIMESTAMP"#), "{sql}");
-        assert!(!sql.contains(r#""entity_id" ="#), "{sql}");
+        assert!(!sql.contains(r#""entity_id" = '"#), "{sql}");
+    }
+
+    /// Clauses 4.5.7, 4.5.8 and 4.8 read an Entity's history in commit
+    /// order, so the drain claims no intent behind an earlier one of its
+    /// Entity that is leased or waiting for its retry delay.
+    #[test]
+    fn the_background_claim_takes_no_intent_behind_a_leased_or_backing_off_one_of_its_entity() {
+        let sql = claim_statement(holder(), ClaimScope::Due, 10, Utc::now()).to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#"FROM "temporal_append_intents" AS "c""#), "{sql}");
+        assert!(
+            sql.contains(concat!(
+                r#"NOT EXISTS(SELECT 1 FROM "temporal_append_intents" AS "p" WHERE "p"."entity_id" = "c"."entity_id" "#,
+                r#"AND "p"."intent_key" < "c"."intent_key" "#,
+                r#"AND ("p"."lease_until" > CURRENT_TIMESTAMP OR "p"."next_attempt_at" > CURRENT_TIMESTAMP))"#
+            )),
+            "{sql}"
+        );
     }
 
     /// The barrier's client is waiting on its own mutation, so the retry
@@ -241,6 +291,10 @@ mod tests {
         assert!(sql.contains(r#""intent_key" <= 42"#), "{sql}");
         assert!(sql.contains("FOR UPDATE SKIP LOCKED"), "{sql}");
         assert!(sql.contains(r#""lease_until" IS NULL"#), "{sql}");
+        assert!(
+            sql.contains(r#"AND "p"."intent_key" < "c"."intent_key" AND "p"."lease_until" > CURRENT_TIMESTAMP)"#),
+            "{sql}"
+        );
     }
 
     /// The claim names each intent without reading its entries: the queue
@@ -287,5 +341,21 @@ mod tests {
         let retry = retry_statement(Utc::now(), "boom", 1, Uuid::nil(), holder()).to_string(PostgresQueryBuilder);
         assert!(retry.contains(r#""claimed_by" = NULL"#) && retry.contains(r#""lease_until" = NULL"#), "{retry}");
         assert!(retry.contains(r#""lease_until" > CURRENT_TIMESTAMP"#), "{retry}");
+    }
+
+    /// A held-back intent was never attempted: the release gives back the
+    /// attempt its claim counted and keeps its retry delay and last failure.
+    #[test]
+    fn a_release_gives_back_the_lease_and_the_claims_attempt_under_a_live_lease() {
+        let sql = release_statement(&[2, 3], holder()).to_string(PostgresQueryBuilder);
+        assert!(sql.starts_with(r#"UPDATE "temporal_append_intents" SET"#), "{sql}");
+        for column in ["claimed_at", "lease_until", "claimed_by"] {
+            assert!(sql.contains(&format!(r#""{column}" = NULL"#)), "{column}: {sql}");
+        }
+        assert!(sql.contains(r#""attempt_count" = "attempt_count" - 1"#), "{sql}");
+        assert!(!sql.contains("next_attempt_at") && !sql.contains("last_error"), "{sql}");
+        assert!(sql.contains(r#""intent_key" = ANY(ARRAY [2,3])"#), "{sql}");
+        assert!(sql.contains(r#""claimed_by" ="#), "{sql}");
+        assert!(sql.contains(r#""lease_until" > CLOCK_TIMESTAMP()"#), "{sql}");
     }
 }

@@ -11,6 +11,9 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 mod attempt_failure;
+/// Recording a live synchronous commit's history behind its Entities' queued
+/// history.
+mod behind_queue;
 mod columns;
 mod commit_refusal;
 /// Native PostgreSQL implementation of the context commit port.

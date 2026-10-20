@@ -5,7 +5,7 @@ use crate::{
     intent_retry_policy::TemporalIntentRetryPolicy,
     port::{
         mutation_barrier::TemporalMutationBarrier,
-        temporal_intent_application::TemporalIntentApplication,
+        temporal_intent_application::{TemporalIntentApplication, TemporalIntentApplicationOutcome},
         temporal_intent_queue::{ClaimedTemporalIntent, EntityRelease, TemporalIntentBatchSize, TemporalIntentQueue, TemporalIntentRetry},
     },
     temporal_not_found_reason::TemporalNotFoundReason,
@@ -63,6 +63,11 @@ struct RecordingQueueState {
     remaining_lease: Duration,
     /// When set, every retry reports a lapsed lease.
     lease_lapsed: bool,
+    /// The keys of every release, in order.
+    released: Vec<i64>,
+    /// The keys a claim takes whatever an earlier intent of their Entity
+    /// holds, as a second drain racing past `FOR UPDATE SKIP LOCKED` does.
+    unfiltered: HashSet<i64>,
 }
 
 #[derive(Default)]
@@ -81,6 +86,38 @@ impl RecordingQueue {
 
     async fn remove(&self, keys: &[i64]) {
         self.state.lock().await.pending.retain(|claim| !keys.contains(&claim.key.get()));
+    }
+
+    async fn released(&self) -> Vec<i64> {
+        self.state.lock().await.released.clone()
+    }
+
+    /// The attempts the queue holds for `key`, as the claim counts them.
+    async fn attempts(&self, key: i64) -> Option<u32> {
+        self.state
+            .lock()
+            .await
+            .pending
+            .iter()
+            .find(|claim| claim.key.get() == key)
+            .map(|claim| claim.attempts)
+    }
+
+    /// Let a claim take `key` past an earlier intent of its Entity.
+    async fn skip_filter_for(&self, key: i64) {
+        self.state.lock().await.unfiltered.insert(key);
+    }
+
+    /// Whether an intent of `intents` has an earlier pending intent of its
+    /// Entity outside `intents`.
+    async fn behind(&self, intents: &[ClaimedTemporalIntent]) -> bool {
+        let state = self.state.lock().await;
+        intents.iter().any(|intent| {
+            state
+                .pending
+                .iter()
+                .any(|earlier| earlier.entity_id == intent.entity_id && earlier.key < intent.key && intents.iter().all(|other| other.key != earlier.key))
+        })
     }
 
     async fn retries(&self) -> Vec<TemporalIntentRetry> {
@@ -117,16 +154,46 @@ impl RecordingQueue {
 }
 
 impl RecordingQueueState {
-    /// The pending intents a claim of `limit` takes under `admits`, skipping
-    /// what another owner holds.
-    fn claimable(&self, limit: TemporalIntentBatchSize, admits: impl Fn(&ClaimedTemporalIntent) -> bool) -> Vec<ClaimedTemporalIntent> {
+    /// The pending intents, up to `limit`, that `admits` and that no earlier
+    /// intent of their Entity `blocks`, skipping what another owner holds.
+    fn claimable(
+        &self,
+        limit: TemporalIntentBatchSize,
+        admits: impl Fn(&ClaimedTemporalIntent) -> bool,
+        blocks: impl Fn(&ClaimedTemporalIntent) -> bool,
+    ) -> Vec<ClaimedTemporalIntent> {
         let limit = usize::try_from(limit.get()).unwrap_or(usize::MAX);
         self.pending
             .iter()
             .filter(|claim| !self.held_elsewhere.contains(&claim.key.get()) && admits(claim))
+            .filter(|claim| {
+                self.unfiltered.contains(&claim.key.get())
+                    || !self
+                        .pending
+                        .iter()
+                        .any(|earlier| earlier.entity_id == claim.entity_id && earlier.key < claim.key && blocks(earlier))
+            })
             .take(limit)
             .cloned()
             .collect()
+    }
+
+    /// Count an attempt for every intent of `taken`, as the claim statement
+    /// does.
+    fn count_attempts(&mut self, taken: &[ClaimedTemporalIntent]) {
+        for claim in self.pending.iter_mut().filter(|claim| taken.iter().any(|one| one.key == claim.key)) {
+            claim.attempts = claim.attempts.saturating_add(1);
+        }
+    }
+
+    /// Whether the retry delay of `claim` has passed by `now`.
+    fn due(&self, claim: &ClaimedTemporalIntent, now: DateTime<Utc>) -> bool {
+        self.not_before.get(&claim.key.get()).is_none_or(|due| *due <= now)
+    }
+
+    /// Whether another owner holds `claim` under a live lease.
+    fn held(&self, claim: &ClaimedTemporalIntent) -> bool {
+        self.held_elsewhere.contains(&claim.key.get())
     }
 }
 
@@ -138,9 +205,11 @@ impl TemporalIntentQueue for RecordingQueue {
         limit: TemporalIntentBatchSize,
         _lease_until: DateTime<Utc>,
     ) -> Result<Vec<ClaimedTemporalIntent>, TemporalError> {
-        let state = self.state.lock().await;
+        let mut state = self.state.lock().await;
         let now = Utc::now();
-        Ok(state.claimable(limit, |claim| state.not_before.get(&claim.key.get()).is_none_or(|due| *due <= now)))
+        let taken = state.claimable(limit, |claim| state.due(claim, now), |earlier| state.held(earlier) || !state.due(earlier, now));
+        state.count_attempts(&taken);
+        Ok(taken)
     }
 
     async fn claim_for_entity(
@@ -153,7 +222,13 @@ impl TemporalIntentQueue for RecordingQueue {
     ) -> Result<Vec<ClaimedTemporalIntent>, TemporalError> {
         let mut state = self.state.lock().await;
         state.entity_claims.push((entity_id.clone(), through.get())); // clone: the recording owns the entity it was asked about.
-        Ok(state.claimable(limit, |claim| claim.entity_id == *entity_id && claim.key <= through))
+        let taken = state.claimable(
+            limit,
+            |claim| claim.entity_id == *entity_id && claim.key <= through,
+            |earlier| state.held(earlier),
+        );
+        state.count_attempts(&taken);
+        Ok(taken)
     }
 
     async fn last_intent_for(&self, entity_id: &Identifier) -> Result<Option<TemporalIntentKey>, TemporalError> {
@@ -182,12 +257,12 @@ impl TemporalIntentQueue for RecordingQueue {
         if up_to_mark.peek().is_none() {
             return Ok(EntityRelease::Clear);
         }
-        if up_to_mark.any(|claim| !state.held_elsewhere.contains(&claim.key.get())) {
-            return Ok(EntityRelease::Claimable);
+        if up_to_mark.any(|claim| state.held(claim)) {
+            return Ok(EntityRelease::Held {
+                remaining_lease: state.remaining_lease,
+            });
         }
-        Ok(EntityRelease::Held {
-            remaining_lease: state.remaining_lease,
-        })
+        Ok(EntityRelease::Claimable)
     }
 
     async fn retry(&self, _owner: LeaseHolder, intent: &ClaimedTemporalIntent, retry: TemporalIntentRetry) -> Result<LeaseAcknowledgement, TemporalError> {
@@ -195,11 +270,17 @@ impl TemporalIntentQueue for RecordingQueue {
         if state.lease_lapsed {
             return Ok(LeaseAcknowledgement::Lost);
         }
-        if let Some(claim) = state.pending.iter_mut().find(|claim| claim.key == intent.key) {
-            claim.attempts = claim.attempts.saturating_add(1);
-        }
         state.not_before.insert(intent.key.get(), retry.eligible_at);
         state.retries.push(retry);
+        Ok(LeaseAcknowledgement::Applied)
+    }
+
+    async fn release(&self, _owner: LeaseHolder, intents: &[ClaimedTemporalIntent]) -> Result<LeaseAcknowledgement, TemporalError> {
+        let mut state = self.state.lock().await;
+        state.released.extend(intents.iter().map(|intent| intent.key.get()));
+        for claim in state.pending.iter_mut().filter(|claim| intents.iter().any(|intent| intent.key == claim.key)) {
+            claim.attempts = claim.attempts.saturating_sub(1);
+        }
         Ok(LeaseAcknowledgement::Applied)
     }
 }
@@ -267,6 +348,10 @@ impl RecordingApplication {
         self.state.lock().await.failing.insert(key);
     }
 
+    async fn recover_key(&self, key: i64) {
+        self.state.lock().await.failing.remove(&key);
+    }
+
     async fn lapse_leases(&self) {
         self.state.lock().await.lease_lapsed = true;
     }
@@ -283,10 +368,13 @@ impl RecordingApplication {
 
 #[async_trait]
 impl TemporalIntentApplication for RecordingApplication {
-    async fn apply(&self, _owner: LeaseHolder, intents: &[ClaimedTemporalIntent]) -> Result<LeaseAcknowledgement, TemporalError> {
+    async fn apply(&self, _owner: LeaseHolder, intents: &[ClaimedTemporalIntent]) -> Result<TemporalIntentApplicationOutcome, TemporalError> {
         let keys: Vec<i64> = intents.iter().map(|intent| intent.key.get()).collect();
         let mut state = self.state.lock().await;
         state.calls.push(keys.clone()); // clone: the recording owns the keys of each call.
+        if self.queue.behind(intents).await {
+            return Ok(TemporalIntentApplicationOutcome::Behind);
+        }
         if let Some(failure) = state.failure {
             return Err(failure.error());
         }
@@ -294,7 +382,7 @@ impl TemporalIntentApplication for RecordingApplication {
             return Err(ApplicationFailure::StoreUnavailable.error());
         }
         if state.lease_lapsed {
-            return Ok(LeaseAcknowledgement::Lost);
+            return Ok(TemporalIntentApplicationOutcome::LeaseLost);
         }
         let committed = state.committed_during_first_call.take();
         drop(state);
@@ -302,7 +390,7 @@ impl TemporalIntentApplication for RecordingApplication {
         if let Some(intent) = committed {
             self.queue.insert(intent).await;
         }
-        Ok(LeaseAcknowledgement::Applied)
+        Ok(TemporalIntentApplicationOutcome::Applied)
     }
 }
 
@@ -390,6 +478,7 @@ async fn an_applied_batch_is_counted_as_acknowledged() {
     let outcome = drain(&queue, &application).execute(instant()).await.expect("the pass runs");
     assert_eq!(outcome.acknowledged, 3);
     assert_eq!(outcome.retried, 0);
+    assert_eq!(outcome.held_back, 0);
     assert_eq!(application.calls().await, vec![vec![1, 2, 3]], "one transaction for the batch");
     assert_eq!(queue.pending_keys().await, Vec::<i64>::new());
 }
@@ -409,6 +498,7 @@ async fn one_failing_intent_does_not_hold_back_its_batch() {
     let outcome = drain(&queue, &application).execute(instant()).await.expect("the pass runs");
     assert_eq!(outcome.acknowledged, 2);
     assert_eq!(outcome.retried, 1);
+    assert_eq!(outcome.held_back, 0, "no two of the intents share an Entity");
     assert_eq!(queue.pending_keys().await, vec![2], "only the failing intent stays queued");
     assert_eq!(queue.retries().await.len(), 1);
 }
@@ -662,4 +752,113 @@ async fn a_snapshot_mutation_barrier_neither_waits_for_nor_delivers_live_intents
     assert_eq!(queue.pending_keys().await, vec![1, 2, 3], "the live branch's intent stays queued");
     assert!(application.calls().await.is_empty(), "nothing was delivered on the Snapshot's behalf");
     assert_eq!(queue.probed().await, Vec::<Identifier>::new());
+}
+
+/// A queue holding the intents keyed `keys`, each of the Entity `vehicle`
+/// numbers, and an application over it.
+async fn intents_of(keys: &[(i64, u8)]) -> (Arc<RecordingQueue>, Arc<RecordingApplication>) {
+    let queue = Arc::new(RecordingQueue::default());
+    for (key, vehicle_number) in keys {
+        queue.insert(claimed(*key, &vehicle(*vehicle_number))).await;
+    }
+    let application = Arc::new(RecordingApplication::over(&queue));
+    (queue, application)
+}
+
+/// Clauses 4.5.7, 4.5.8 and 4.8 read an Entity's history in the order its
+/// writes committed, so the intents after a failing one wait for it, and
+/// waiting is not an attempt of theirs.
+#[tokio::test]
+async fn a_failing_intent_holds_back_the_later_intents_of_its_entity() {
+    let (queue, application) = intents_of(&[(1, 1), (2, 1), (3, 1)]).await;
+    application.fail_key(1).await;
+    let outcome = drain(&queue, &application).execute(instant()).await.expect("the pass runs");
+    assert_eq!(application.calls().await, vec![vec![1, 2, 3], vec![1], vec![2], vec![3]]);
+    assert_eq!((outcome.acknowledged, outcome.retried, outcome.held_back), (0, 1, 2));
+    assert_eq!(queue.pending_keys().await, vec![1, 2, 3]);
+    assert_eq!(queue.released().await, vec![2, 3]);
+    assert_eq!((queue.attempts(2).await, queue.attempts(3).await), (Some(0), Some(0)));
+    assert_eq!(queue.retries().await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_failing_intent_holds_back_none_of_another_entitys_intents() {
+    let (queue, application) = intents_of(&[(1, 1), (2, 2)]).await;
+    application.fail_key(1).await;
+    let outcome = drain(&queue, &application).execute(instant()).await.expect("the pass runs");
+    assert_eq!((outcome.acknowledged, outcome.retried, outcome.held_back), (1, 1, 0));
+    assert_eq!(queue.pending_keys().await, vec![1]);
+}
+
+#[tokio::test]
+async fn an_entitys_intents_after_a_head_waiting_for_its_retry_are_not_claimed() {
+    let (queue, application) = intents_of(&[(1, 1), (2, 1), (3, 2)]).await;
+    queue.defer(1, Utc::now() + TimeDelta::minutes(5)).await;
+    drain(&queue, &application).execute(instant()).await.expect("the pass runs");
+    assert_eq!(application.calls().await, vec![vec![3]]);
+    assert_eq!(queue.pending_keys().await, vec![1, 2]);
+}
+
+#[tokio::test]
+async fn an_entitys_intents_after_a_head_held_elsewhere_are_not_claimed() {
+    let (queue, application) = intents_of(&[(1, 1), (2, 1)]).await;
+    queue.hold_elsewhere(1, &[]).await;
+    drain(&queue, &application).execute(instant()).await.expect("the pass runs");
+    assert_eq!(application.calls().await, Vec::<Vec<i64>>::new());
+    assert_eq!(queue.pending_keys().await, vec![1, 2]);
+}
+
+/// Two drains claiming at once can each skip the rows the other locks, so a
+/// claim may take an intent whose earlier one the other drain is applying:
+/// the application refuses it and the drain gives it back unattempted.
+#[tokio::test]
+async fn an_intent_claimed_past_an_earlier_one_is_released_without_an_attempt() {
+    let (queue, application) = intents_of(&[(1, 1), (2, 1)]).await;
+    queue.hold_elsewhere(1, &[]).await;
+    queue.skip_filter_for(2).await;
+    let outcome = drain(&queue, &application).execute(instant()).await.expect("the pass runs");
+    assert_eq!(application.calls().await, vec![vec![2]]);
+    assert_eq!((outcome.retried, outcome.held_back), (0, 1));
+    assert!(queue.retries().await.is_empty());
+    assert_eq!(queue.attempts(2).await, Some(0));
+    assert_eq!(queue.released().await, vec![2]);
+}
+
+#[tokio::test]
+async fn held_back_intents_follow_their_head_once_it_applies() {
+    let (queue, application) = intents_of(&[(1, 1), (2, 1), (3, 1)]).await;
+    application.fail_key(1).await;
+    let drain = drain(&queue, &application);
+    drain.execute(instant()).await.expect("the first pass runs");
+    application.recover_key(1).await;
+    let outcome = drain.execute(instant() + TimeDelta::minutes(1)).await.expect("the pass past the backoff runs");
+    assert_eq!(application.calls().await.last(), Some(&vec![1, 2, 3]));
+    assert_eq!(outcome.acknowledged, 3);
+    assert_eq!(queue.pending_keys().await, Vec::<i64>::new());
+}
+
+/// The mutation is answered with the failure of the intent its history waits
+/// on, and nothing after that intent is applied ahead of it.
+#[tokio::test]
+async fn the_mutation_barrier_stops_at_the_first_intent_that_fails() {
+    let (queue, application) = intents_of(&[(1, 1), (2, 1)]).await;
+    application.fail_key(1).await;
+    let refused = drain(&queue, &application).synchronize(&live_target(), &vehicle(1)).await;
+    assert!(matches!(refused, Err(TemporalError::StoreUnavailable)), "{refused:?}");
+    assert_eq!(application.calls().await, vec![vec![1, 2], vec![1], vec![2]]);
+    assert_eq!(queue.pending_keys().await, vec![1, 2]);
+    assert_eq!(queue.released().await, vec![2]);
+}
+
+/// `Retry-After` carries whole seconds, so 2.3 s of lease left asks for 3.
+#[tokio::test]
+async fn the_mutation_barrier_applies_nothing_past_an_intent_held_elsewhere() {
+    let (queue, application) = intents_of(&[(1, 1), (2, 1)]).await;
+    queue.hold_elsewhere(1, &[HolderMove::Keeps(Duration::from_millis(2300))]).await;
+    let refused = drain(&queue, &application).synchronize(&live_target(), &vehicle(1)).await;
+    let Err(TemporalError::HistoryUnsettled(unsettled)) = refused else {
+        panic!("expected an unsettled history, got {refused:?}");
+    };
+    assert_eq!(unsettled.retry_after(), Duration::from_secs(3));
+    assert_eq!(application.calls().await, Vec::<Vec<i64>>::new());
 }

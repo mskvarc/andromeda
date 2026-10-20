@@ -7,15 +7,11 @@
 //! the intents of the Entity before it in the source: the statement recording
 //! them cannot see the rows it inserts itself.
 //!
-//! Intents are claimed in key order across workers, and a retry reschedules
-//! one, so an earlier intent of an Entity can still be queued, or applied by a
-//! transaction not yet committed, when a later one is applied. Its entries
-//! belong to the history an assertion is judged against, yet are neither
-//! recorded nor in the source, so an assertion of an Entity with such an
-//! intent is recorded unjudged. The queue removal runs after the application
-//! in the same transaction, so an applied intent not yet committed is still
-//! seen as queued. A source adds at most one redundant event per Entity that
-//! way, and a redundant event changes no clause 4.19 reading of the history.
+//! An application never runs while an earlier intent of one of its Entities is
+//! still queued outside its source: the drain refuses such a set, and a live
+//! commit records inline only the Entities with no queued history. Every
+//! entry an assertion is judged against is therefore recorded or in the
+//! source.
 
 use crate::intent_application::intent_source::{I, IntentSource, Te, entry, intent, source_intents_as};
 use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
@@ -25,15 +21,7 @@ use andromeda_postgresql_schema::{
     temporal::{ScopeHistory, TemporalEntities},
     temporal_intent::TemporalEntry,
 };
-use andromeda_postgresql_seaquery::{
-    branch::qualified,
-    cast::cast,
-    literal::int_literal,
-    pg_array::all,
-    pg_type::PostgresType,
-    placeholder::external_placeholder,
-    unnest::unnest_of,
-};
+use andromeda_postgresql_seaquery::{branch::qualified, unnest::unnest_of};
 use sea_query::{Condition, DynIden, Expr, ExprTrait, Iden, Query, SelectStatement, SimpleExpr, UnionType};
 
 /// The alias of a recorded Scope event an assertion is judged against, `sr`.
@@ -56,25 +44,18 @@ struct EarlierEntry;
 #[iden = "sa"]
 struct AssertedPath;
 
-/// The alias of a queued intent outside the source, `sq`.
-#[derive(Iden, Clone, Copy)]
-#[iden = "sq"]
-struct QueuedIntent;
-
 /// The two Scope entry codes.
 const SCOPE_KINDS: [i16; 2] = [TemporalEntryKind::Scope.code(), TemporalEntryKind::ScopeAssertion.code()];
 
 /// Whether the Scope entry under `e`, of the intent under `i` and the
 /// Temporal Evolution under `te`, is recorded in the branch `schema` names:
-/// it is an event, an earlier intent of its Entity is queued outside the
-/// source, or the Scope in force at its write is not the one it asserts.
+/// it is an event, or the Scope in force at its write is not the one it
+/// asserts.
 pub(crate) fn recorded_scope_entry(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Condition {
     let judged = held_in_force(&judging_events(source, schema), &asserted_paths(), &intent(TemporalAppendIntents::RecordedAt)).not();
-    let recorded = Condition::any().add(entry(TemporalEntry::EntryKind).ne(TemporalEntryKind::ScopeAssertion.code()));
-    match earlier_intent_queued(source, schema) {
-        Some(queued) => recorded.add(queued).add(judged),
-        None => recorded.add(judged),
-    }
+    Condition::any()
+        .add(entry(TemporalEntry::EntryKind).ne(TemporalEntryKind::ScopeAssertion.code()))
+        .add(judged)
 }
 
 /// The Scope events the assertion under `e` is judged against: its Entity's
@@ -110,33 +91,6 @@ fn asserted_paths() -> SimpleExpr {
     path_set(paths, Expr::col((AssertedPath, TemporalEntry::VerbatimScopePath)))
 }
 
-/// Whether an intent of the Entity under `i` that comes before it is queued
-/// outside the source, `None` where the branch has no queue.
-///
-/// Only the live branch queues intents; a Snapshot branch records its history
-/// in the write's own transaction. Every intent queued when a commit records
-/// its own came before it, while the drain's own claimed intents are in the
-/// source.
-fn earlier_intent_queued(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Option<SimpleExpr> {
-    if schema.is_some() {
-        return None;
-    }
-    let mut queued = Query::select();
-    queued
-        .expr(int_literal(1))
-        .from_as(TemporalAppendIntents::Table, QueuedIntent)
-        .and_where(Expr::col((QueuedIntent, TemporalAppendIntents::EntityId)).equals((I, TemporalAppendIntents::EntityId)));
-    match source {
-        IntentSource::Queued { .. } => {
-            queued
-                .and_where(Expr::col((QueuedIntent, TemporalAppendIntents::IntentKey)).lt(intent(TemporalAppendIntents::IntentKey)))
-                .and_where(Expr::col((QueuedIntent, TemporalAppendIntents::IntentKey)).ne(all(cast(external_placeholder(1), PostgresType::BigintArray))));
-        }
-        IntentSource::Bound { .. } => {}
-    }
-    Some(Expr::exists(queued))
-}
-
 #[cfg(test)]
 mod tests {
     use crate::intent_application::{intent_source::IntentSource, scope_judgement::recorded_scope_entry};
@@ -158,11 +112,16 @@ mod tests {
         }
     }
 
+    /// Every entry an assertion is judged against is recorded or in the
+    /// source, so no branch reads the queue to judge one.
     #[test]
-    fn a_snapshot_branch_has_no_queue_to_guard_against() {
+    fn an_assertion_is_judged_without_reading_the_queue_in_either_branch() {
         let schema = Alias::new("snap_1").into_iden();
-        let sql = rendered(&queued(), Some(&schema));
-        assert!(!sql.contains(r#""temporal_append_intents" AS "sq""#), "{sql}");
-        assert!(sql.contains(r#"FROM "snap_1"."scope_history" AS "sr""#), "{sql}");
+        let snapshot = rendered(&queued(), Some(&schema));
+        assert!(!snapshot.contains(r#""temporal_append_intents" AS "sq""#), "{snapshot}");
+        assert!(snapshot.contains(r#"FROM "snap_1"."scope_history" AS "sr""#), "{snapshot}");
+        let live = rendered(&queued(), None);
+        assert!(!live.contains(r#""temporal_append_intents" AS "sq""#), "{live}");
+        assert!(live.contains(r#"FROM "scope_history" AS "sr""#), "{live}");
     }
 }
