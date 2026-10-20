@@ -166,7 +166,8 @@ impl TemporalStoreError {
                 | TemporalStoreInvariant::EntityTypeUnresolved(_)
                 | TemporalStoreInvariant::CountStatementMissing
                 | TemporalStoreInvariant::CountRowMissing
-                | TemporalStoreInvariant::CountOutOfRange(_),
+                | TemporalStoreInvariant::CountOutOfRange(_)
+                | TemporalStoreInvariant::HeldShapeUnasked(_),
             )
             | TemporalStoreError::WriteRecordMismatch { .. }
             | TemporalStoreError::RetentionHorizon(_)

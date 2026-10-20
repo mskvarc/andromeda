@@ -33,6 +33,7 @@ mod evolution_walk;
 mod extent_candidates;
 mod gated_count;
 mod gated_walk;
+pub mod held_shapes;
 mod pattern_candidates;
 #[cfg(test)]
 mod query_fixture;

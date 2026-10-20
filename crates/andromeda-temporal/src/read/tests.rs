@@ -8,6 +8,7 @@ use crate::{
             AggregationPushdown,
             HistoryVisibility,
             RecordedAttributeShape,
+            ShapeHolders,
             TemporalHistoryOutcome,
             TemporalHistoryReader,
             TemporalReaderCapabilities,
@@ -140,6 +141,17 @@ impl TemporalHistoryReader for RefusingReader {
         &self,
         _scope: &TemporalReadScope<'_>,
         _attributes: &[AttributeName],
+    ) -> Result<HashMap<AttributeName, HashSet<RecordedAttributeShape>>, TemporalError> {
+        self.query_calls.fetch_add(1, Ordering::Relaxed);
+        panic!("query must not execute")
+    }
+
+    async fn held_attribute_shapes(
+        &self,
+        _scope: &TemporalReadScope<'_>,
+        _holders: ShapeHolders<'_>,
+        _compiled: &CompiledTemporalQuery,
+        _shapes: &HashMap<AttributeName, HashSet<RecordedAttributeShape>>,
     ) -> Result<HashMap<AttributeName, HashSet<RecordedAttributeShape>>, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);
         panic!("query must not execute")

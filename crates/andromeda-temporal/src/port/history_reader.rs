@@ -102,6 +102,16 @@ pub struct RecordedAttributeShape {
     pub value_kind: RecordedValueKind,
 }
 
+/// The Entities whose instances an aggregation eligibility read looks among.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShapeHolders<'a> {
+    /// The one Entity a retrieval names (clause 5.7.3).
+    Entity(&'a Identifier),
+    /// Every Entity the query selects, before it is paginated (clause
+    /// 5.7.4.4, set S8).
+    Selected,
+}
+
 /// Whether aggregation is materialized, computed from raw history, or unavailable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AggregationPushdown {
@@ -249,11 +259,32 @@ pub trait TemporalHistoryReader: Send + Sync {
     /// Clause 5.7.4.4 rejects an aggregated representation over an attribute
     /// ineligible for a requested method before any history is read, and the
     /// eligibility of an attribute is a property of both the family it was
-    /// written as and the values it carries.
+    /// written as and the values it carries. Every shape the request could
+    /// aggregate is among these, so when all of them admit the requested
+    /// methods the request is eligible without a further read.
     #[must_use = "recorded attribute shape reads must be awaited"]
     async fn recorded_attribute_shapes(
         &self,
         scope: &TemporalReadScope<'_>,
         attributes: &[AttributeName],
+    ) -> Result<HashMap<AttributeName, HashSet<RecordedAttributeShape>>, TemporalError>;
+
+    /// The combinations among `shapes` that an instance `compiled` would
+    /// aggregate carries, keyed like `shapes`: an instance of an Entity
+    /// `holders` names, inside the temporal window on its axis and of a
+    /// dataset `datasetId` names; an attribute none of whose combinations is
+    /// carried is absent from the result.
+    ///
+    /// Clause 5.7.4.4 judges the eligibility of the requested Attributes of
+    /// the selected Entities over those instances, so a shape the attribute
+    /// holds only for another Entity, or only outside the window, refuses
+    /// nothing.
+    #[must_use = "held attribute shape reads must be awaited"]
+    async fn held_attribute_shapes(
+        &self,
+        scope: &TemporalReadScope<'_>,
+        holders: ShapeHolders<'_>,
+        compiled: &CompiledTemporalQuery,
+        shapes: &HashMap<AttributeName, HashSet<RecordedAttributeShape>>,
     ) -> Result<HashMap<AttributeName, HashSet<RecordedAttributeShape>>, TemporalError>;
 }

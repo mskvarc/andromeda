@@ -10,6 +10,7 @@ use crate::{
             AggregationPushdown,
             HistoryVisibility,
             RecordedAttributeShape,
+            ShapeHolders,
             TemporalHistoryObservation,
             TemporalHistoryOutcome,
             TemporalHistoryReader,
@@ -154,6 +155,16 @@ impl TemporalHistoryReader for StubBroker {
         &self,
         _scope: &TemporalReadScope<'_>,
         _attributes: &[AttributeName],
+    ) -> Result<HashMap<AttributeName, HashSet<RecordedAttributeShape>>, TemporalError> {
+        Ok(HashMap::new())
+    }
+
+    async fn held_attribute_shapes(
+        &self,
+        _scope: &TemporalReadScope<'_>,
+        _holders: ShapeHolders<'_>,
+        _compiled: &CompiledTemporalQuery,
+        _shapes: &HashMap<AttributeName, HashSet<RecordedAttributeShape>>,
     ) -> Result<HashMap<AttributeName, HashSet<RecordedAttributeShape>>, TemporalError> {
         Ok(HashMap::new())
     }

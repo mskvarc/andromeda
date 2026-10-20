@@ -28,6 +28,10 @@ pub enum TemporalStoreInvariant {
     /// The count statement, an aggregate without grouping, answered no row.
     #[error("the temporal count statement answered no row")]
     CountRowMissing,
+    /// The held-shapes statement answered a position no combination it was
+    /// asked about holds.
+    #[error("the held-shapes statement answered combination {0}, which it was not asked about")]
+    HeldShapeUnasked(i32),
     /// A count does not fit the width it is reported at.
     #[error("a temporal store count is out of range: {0}")]
     CountOutOfRange(#[source] TryFromIntError),

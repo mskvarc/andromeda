@@ -4,7 +4,10 @@
 use crate::{
     error::TemporalError,
     outcome::TemporalEntityIdOutcome,
-    port::read_scope::{ScopeReach, TemporalReadScope},
+    port::{
+        history_reader::ShapeHolders,
+        read_scope::{ScopeReach, TemporalReadScope},
+    },
     query_warning_reason::TemporalQueryWarningReason,
     read::{
         aggregated_page::{AggregationRendering, render_aggregation_page, settle_aggregation_pages},
@@ -73,7 +76,7 @@ impl TemporalService {
 
             ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
             let scope = self.reader.read_scope(target, ScopeReach::Every).await?;
-            self.ensure_requested_attributes_aggregable(&scope, &compiled).await?;
+            self.ensure_requested_attributes_aggregable(&scope, &compiled, ShapeHolders::Selected).await?;
             // Clause 5.5.9.1: the identifier page is read one entity past the
             // window, so whether the collection continues is known before any
             // history is read, and only the page's own entities are read.

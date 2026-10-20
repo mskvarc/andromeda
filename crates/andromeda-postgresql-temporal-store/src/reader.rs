@@ -16,7 +16,10 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow};
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow, split_filter::LeafTruths, temporal::compiled::CompiledTemporalQuery};
-use andromeda_postgresql_codes::{attribute_kind_code::attribute_type_of, recorded_shape::RecordedShape};
+use andromeda_postgresql_codes::{
+    attribute_kind_code::{attribute_type_of, stored_attribute_kind},
+    recorded_shape::RecordedShape,
+};
 use andromeda_postgresql_query::{
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     history_source::HistoryBranch,
@@ -38,6 +41,7 @@ use andromeda_temporal::{
             HistoryVisibility,
             RecordedAttributeShape,
             RecordedValueKind,
+            ShapeHolders,
             TemporalHistoryObservation,
             TemporalHistoryOutcome,
             TemporalHistoryReader,
@@ -81,6 +85,32 @@ const fn recorded_value_kind(shape: RecordedShape) -> RecordedValueKind {
         RecordedShape::Date => RecordedValueKind::Date,
         RecordedShape::Time => RecordedValueKind::Time,
         RecordedShape::Uri => RecordedValueKind::Uri,
+    }
+}
+
+/// The stored [`RecordedShape`] one neutral value shape is projected as: the
+/// inverse of [`recorded_value_kind`].
+const fn stored_recorded_shape(kind: RecordedValueKind) -> RecordedShape {
+    match kind {
+        RecordedValueKind::Number => RecordedShape::Number,
+        RecordedValueKind::String => RecordedShape::String,
+        RecordedValueKind::Boolean => RecordedShape::Boolean,
+        RecordedValueKind::Geometry => RecordedShape::Geometry,
+        RecordedValueKind::Object => RecordedShape::Object,
+        RecordedValueKind::Array => RecordedShape::Array,
+        RecordedValueKind::DateTime => RecordedShape::DateTime,
+        RecordedValueKind::Date => RecordedShape::Date,
+        RecordedValueKind::Time => RecordedShape::Time,
+        RecordedValueKind::Uri => RecordedShape::Uri,
+    }
+}
+
+/// The stored family-and-value-shape pair one neutral shape is recorded as:
+/// the inverse of [`neutral_attribute_shape`].
+pub(crate) const fn stored_attribute_shape(neutral: RecordedAttributeShape) -> StoredAttributeShape {
+    StoredAttributeShape {
+        kind: stored_attribute_kind(neutral.family),
+        shape: stored_recorded_shape(neutral.value_kind),
     }
 }
 
@@ -196,6 +226,16 @@ impl TemporalHistoryReader for TemporalRepository {
             .into_iter()
             .map(|(name, shapes)| (name, shapes.into_iter().map(neutral_attribute_shape).collect()))
             .collect())
+    }
+
+    async fn held_attribute_shapes(
+        &self,
+        scope: &TemporalReadScope<'_>,
+        holders: ShapeHolders<'_>,
+        compiled: &CompiledTemporalQuery,
+        shapes: &HashMap<AttributeName, HashSet<RecordedAttributeShape>>,
+    ) -> Result<HashMap<AttributeName, HashSet<RecordedAttributeShape>>, TemporalError> {
+        self.held_shapes(&branch_of(scope), holders, compiled, shapes).await
     }
 
     async fn query_entity_ids(
@@ -315,7 +355,13 @@ impl TemporalHistoryReader for TemporalRepository {
 
 #[cfg(test)]
 mod tests {
-    use crate::{error::TemporalStoreError, reader::stage1_total, temporal_store_invariant::TemporalStoreInvariant};
+    use crate::{
+        error::TemporalStoreError,
+        reader::{neutral_attribute_shape, stage1_total, stored_attribute_shape},
+        stored_attribute_shape::StoredAttributeShape,
+        temporal_store_invariant::TemporalStoreInvariant,
+    };
+    use andromeda_postgresql_codes::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
 
     #[test]
     fn a_count_statement_answering_no_row_is_a_broken_contract() {
@@ -323,5 +369,18 @@ mod tests {
             stage1_total(&[]),
             Err(TemporalStoreError::Invariant(TemporalStoreInvariant::CountRowMissing))
         ));
+    }
+
+    /// A shape looked for among the instances of a request is the one the
+    /// stream catalogue reported, so every stored pair survives the trip to
+    /// the port and back.
+    #[test]
+    fn every_stored_shape_round_trips_through_its_neutral_shape() {
+        for kind in AttributeKind::ALL {
+            for shape in RecordedShape::ALL {
+                let stored = StoredAttributeShape { kind: *kind, shape: *shape };
+                assert_eq!(stored_attribute_shape(neutral_attribute_shape(stored)), stored);
+            }
+        }
     }
 }

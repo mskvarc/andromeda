@@ -27,6 +27,9 @@ pub(crate) enum TemporalStatement {
     /// The truth of every leaf of a split query's filters over the entities a
     /// Context Source contributed to (clause 5.7.4.4).
     SplitFilterLeaves,
+    /// Which disqualifying shapes the instances an aggregated request
+    /// aggregates carry (clause 5.7.4.4).
+    HeldShapes,
 }
 
 impl TemporalStatement {
@@ -39,6 +42,7 @@ impl TemporalStatement {
             TemporalStatement::ScopeHistory => StatementName("temporal-scope-history"),
             TemporalStatement::Aggregation => StatementName("temporal-aggregation"),
             TemporalStatement::SplitFilterLeaves => StatementName("temporal-split-filter-leaves"),
+            TemporalStatement::HeldShapes => StatementName("temporal-held-shapes"),
         }
     }
 }

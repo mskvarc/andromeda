@@ -37,6 +37,8 @@ pub mod duplicate_instance_claim;
 mod entity_attribute_history;
 /// Error types for the temporal store crate.
 pub mod error;
+/// Reading which disqualifying shapes the instances a request aggregates carry.
+pub(crate) mod held_shape_read;
 /// Deciding which relations of a branch a temporal read takes history from.
 mod history_branch;
 /// Where the history hypertables' chunks lie, for the write-record release.

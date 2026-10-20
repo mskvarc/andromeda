@@ -198,10 +198,28 @@ pub(crate) fn limits() -> TemporalServiceLimits {
 /// A service whose history is the stubbed `broker`, whose non-local half is
 /// `remote`, bounded by `limits`.
 pub(crate) fn service_under(broker: Arc<StubBroker>, remote: Option<Arc<dyn RemoteTemporalLinkedSource>>, limits: TemporalServiceLimits) -> TemporalService {
+    let reader = Arc::clone(&broker) as Arc<dyn TemporalHistoryReader>; // clone: one test double supplies every focused capability
+    service_over_reader(broker, reader, remote, limits)
+}
+
+/// A service whose history is read through `reader`, every other port of it
+/// an empty stubbed broker.
+pub(crate) fn service_reading(reader: Arc<dyn TemporalHistoryReader>) -> TemporalService {
+    service_over_reader(Arc::new(StubBroker::new([])), reader, None, limits())
+}
+
+/// A service whose history is read through `reader` and whose every other
+/// port is `broker`.
+fn service_over_reader(
+    broker: Arc<StubBroker>,
+    reader: Arc<dyn TemporalHistoryReader>,
+    remote: Option<Arc<dyn RemoteTemporalLinkedSource>>,
+    limits: TemporalServiceLimits,
+) -> TemporalService {
     TemporalService::new(
         TemporalServicePorts {
             entity_reader: Arc::clone(&broker) as Arc<dyn EntityReader>, // clone: one test double supplies every focused capability
-            reader: Arc::clone(&broker) as Arc<dyn TemporalHistoryReader>,
+            reader,
             mutation_barrier: Arc::clone(&broker) as Arc<dyn TemporalMutationBarrier>,
             mutator: Arc::clone(&broker) as Arc<dyn TemporalMutator>,
             writes: Arc::clone(&broker) as Arc<dyn ContextCommitter>, // clone: one test double supplies every focused capability

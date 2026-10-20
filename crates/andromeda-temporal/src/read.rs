@@ -1,10 +1,10 @@
 //! Temporal retrieval and query execution policy.
 
 use crate::{
-    aggregation_eligibility::ensure_aggregation_eligible,
+    aggregation_eligibility::{disqualifying_shapes, ensure_aggregation_eligible},
     error::TemporalError,
     port::{
-        history_reader::TemporalHistoryReader,
+        history_reader::{ShapeHolders, TemporalHistoryReader},
         read_scope::{ScopeReach, TemporalReadScope},
     },
     read::{dataset_step::DatasetStep, entity_members::carries_members, rendered_entity::HistoryPresence},
@@ -26,7 +26,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation};
 use andromeda_telemetry::temporal::{self, TemporalOperation};
-use std::slice::from_ref;
+use std::{collections::HashMap, slice::from_ref};
 
 impl TemporalService {
     /// Retrieve and render one temporal entity under the supplied query parameters.
@@ -57,7 +57,8 @@ impl TemporalService {
             ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
             if shapes_decide_eligibility(&compiled) {
                 let every = self.reader.read_scope(target, ScopeReach::Every).await?;
-                self.ensure_requested_attributes_aggregable(&every, &compiled).await?;
+                self.ensure_requested_attributes_aggregable(&every, &compiled, ShapeHolders::Entity(entity_id))
+                    .await?;
             }
             let scope = self.reader.read_scope(target, ScopeReach::Entity(entity_id)).await?;
 
@@ -201,12 +202,21 @@ impl TemporalService {
 impl TemporalService {
     /// Clause 5.7.4.4: an aggregated representation over an attribute that is
     /// not eligible for one of the requested methods is an `InvalidRequest`,
-    /// decided from the families and value shapes the attribute has been
-    /// recorded with before any history is read. Only the attributes the
-    /// request named can be checked ahead of the read; a request over every
-    /// attribute is not, which is why the statement itself must also refuse to
-    /// fold a value-derived aggregate for a family Table 4.5.19.1-3 marks N/A.
-    async fn ensure_requested_attributes_aggregable(&self, scope: &TemporalReadScope<'_>, compiled: &CompiledTemporalQuery) -> Result<(), TemporalError> {
+    /// decided before any history is read for the response from the families
+    /// and value shapes of the instances it would aggregate: those of the
+    /// Entities `holders` names, inside the window and of the datasets the
+    /// request names. The shapes the attribute holds anywhere in the branch
+    /// are read first, and only those some method refuses are looked for among
+    /// the instances. Only the attributes the request named can be checked
+    /// ahead of the read; a request over every attribute is not, which is why
+    /// the statement itself must also refuse to fold a value-derived aggregate
+    /// for a family Table 4.5.19.1-3 marks N/A.
+    async fn ensure_requested_attributes_aggregable(
+        &self,
+        scope: &TemporalReadScope<'_>,
+        compiled: &CompiledTemporalQuery,
+        holders: ShapeHolders<'_>,
+    ) -> Result<(), TemporalError> {
         if !shapes_decide_eligibility(compiled) {
             return Ok(());
         }
@@ -217,8 +227,15 @@ impl TemporalService {
             .map(|iri| iri.as_str().parse::<AttributeName>())
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| TemporalError::from(TemporalInvariant::ExpandedAttributeName(error)))?;
+        let methods = &compiled.representation.aggr_methods;
         let recorded = self.reader.recorded_attribute_shapes(scope, &attributes).await?;
-        ensure_aggregation_eligible(&attributes, &compiled.representation.aggr_methods, &recorded).map_err(TemporalError::from)
+        let disqualifying = disqualifying_shapes(methods, &recorded);
+        let held = if disqualifying.is_empty() {
+            HashMap::new()
+        } else {
+            self.reader.held_attribute_shapes(scope, holders, compiled, &disqualifying).await?
+        };
+        ensure_aggregation_eligible(&attributes, methods, &recorded, &held).map_err(TemporalError::from)
     }
 }
 
@@ -261,5 +278,8 @@ mod response_cut;
 /// What a listing of the identifiers a temporal query matches holds them to.
 #[cfg(test)]
 mod candidate_listing_tests;
+/// Whose instances decide the aggregation eligibility of a temporal read.
+#[cfg(test)]
+mod eligibility_tests;
 #[cfg(test)]
 mod tests;
