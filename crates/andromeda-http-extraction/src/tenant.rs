@@ -8,14 +8,15 @@ use andromeda_http_headers::ngsild_tenant::NgsiLdTenant;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use axum::{extract::FromRequestParts, http::request::Parts};
-use headers::HeaderMapExt;
+use headers::Header;
 use std::future::{Future, ready};
 
 /// Axum extractor for the `NGSILD-Tenant` request header.
 ///
 /// Returns `Some(TenantName)` when the header is present and valid, `None`
-/// when absent, or a `BadRequestData` rejection when the header is present
-/// but invalid (e.g. empty).
+/// when absent, or a `BadRequestData` rejection naming why a present header
+/// names no tenant: it is empty, it is not visible ASCII, or it is not a
+/// tenant name.
 #[derive(Clone, Debug, Default)]
 pub struct TenantHeader(pub Option<TenantName>);
 
@@ -30,14 +31,13 @@ impl TenantHeader {
 /// Decode the `NGSILD-Tenant` header into the tenant the request addresses,
 /// rejecting a header that is present but not a tenant name.
 fn resolve_tenant_header(parts: &Parts) -> Result<TenantHeader, ExtractorRejection> {
-    match parts.headers.typed_try_get::<NgsiLdTenant>() {
-        Ok(Some(tenant)) => Ok(TenantHeader(Some(tenant.into_inner()))),
-        Ok(None) => Ok(TenantHeader(None)),
-        Err(_) => Err(ExtractorRejection::bad_request_data(
-            "NGSILD-Tenant header must not be empty",
-            addressed_uri(parts),
-        )),
-    }
+    parts
+        .headers
+        .get(NgsiLdTenant::name())
+        .map(NgsiLdTenant::try_from)
+        .transpose()
+        .map(|tenant| TenantHeader(tenant.map(NgsiLdTenant::into_inner)))
+        .map_err(|error| ExtractorRejection::bad_request_data(error.to_string(), addressed_uri(parts)))
 }
 
 impl<S> FromRequestParts<S> for TenantHeader
@@ -53,18 +53,29 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use axum::{extract::FromRequestParts, http::Request};
+    use crate::tenant::TenantHeader;
+    use andromeda_http_response::extraction_rejection::ExtractorRejection;
+    use axum::{
+        extract::FromRequestParts,
+        http::{HeaderValue, Request},
+    };
+
+    async fn extract(value: HeaderValue) -> Result<TenantHeader, ExtractorRejection> {
+        let req = Request::builder().uri("/test").header("NGSILD-Tenant", value).body(()).expect("valid request");
+        let (mut parts, ()) = req.into_parts();
+        TenantHeader::from_request_parts(&mut parts, &()).await
+    }
+
+    async fn refusal_detail(value: &'static str) -> String {
+        match extract(HeaderValue::from_static(value)).await {
+            Err(ExtractorRejection::BadRequestData { detail, .. }) => detail,
+            other => panic!("{value:?} should be refused as BadRequestData, got {other:?}"),
+        }
+    }
 
     #[tokio::test]
     async fn valid_tenant_header_extracts_name() {
-        let req = Request::builder()
-            .uri("/test")
-            .header("NGSILD-Tenant", "my-tenant")
-            .body(())
-            .expect("valid request");
-        let (mut parts, ()) = req.into_parts();
-        let result = TenantHeader::from_request_parts(&mut parts, &()).await.expect("should succeed");
+        let result = extract(HeaderValue::from_static("my-tenant")).await.expect("should succeed");
         let name = result.into_inner().expect("should have value");
         pretty_assertions::assert_eq!(name.as_str(), "my-tenant");
     }
@@ -78,10 +89,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_header_produces_rejection() {
-        let req = Request::builder().uri("/test").header("NGSILD-Tenant", "").body(()).expect("valid request");
-        let (mut parts, ()) = req.into_parts();
-        let result = TenantHeader::from_request_parts(&mut parts, &()).await;
-        assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
+    async fn an_empty_header_is_refused_as_empty() {
+        pretty_assertions::assert_eq!(refusal_detail("").await, "the NGSILD-Tenant header is empty");
+    }
+
+    #[tokio::test]
+    async fn a_whitespace_only_header_is_refused_as_empty() {
+        pretty_assertions::assert_eq!(refusal_detail("   ").await, "the NGSILD-Tenant header is empty");
+    }
+
+    #[tokio::test]
+    async fn a_name_with_a_leading_digit_is_refused_as_not_a_tenant_name() {
+        pretty_assertions::assert_eq!(
+            refusal_detail("1abc").await,
+            "the NGSILD-Tenant header is not a valid tenant name: tenant name must match [A-Za-z_][A-Za-z0-9_-]*"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_name_with_a_space_is_refused_as_not_a_tenant_name() {
+        pretty_assertions::assert_eq!(
+            refusal_detail("bad tenant").await,
+            "the NGSILD-Tenant header is not a valid tenant name: tenant name must match [A-Za-z_][A-Za-z0-9_-]*"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_header_outside_visible_ascii_is_refused_as_not_text() {
+        let value = HeaderValue::from_bytes("café".as_bytes()).expect("obs-text is a valid header value");
+        match extract(value).await {
+            Err(ExtractorRejection::BadRequestData { detail, .. }) => {
+                pretty_assertions::assert_eq!(detail, "the NGSILD-Tenant header holds a character outside visible ASCII");
+            }
+            other => panic!("a non-ASCII tenant should be refused as BadRequestData, got {other:?}"),
+        }
     }
 }

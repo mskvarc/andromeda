@@ -25,7 +25,7 @@ const MAX_TENANT_LEN: usize = 255;
 struct TenantLabel(str);
 
 /// Error returned when a tenant identifier fails validation.
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum InvalidTenantName {
     /// Input is empty or violates the tenant character grammar.
     #[error("tenant name must match [A-Za-z_][A-Za-z0-9_-]*")]

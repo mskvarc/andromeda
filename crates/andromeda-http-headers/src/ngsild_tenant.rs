@@ -1,11 +1,12 @@
 //! Typed `NGSILD-Tenant` request/response header (ETSI GS CIM 009 clause 6.3.14).
 //!
-//! Identifies the tenant scope for multi-tenant deployments.
-//! The value must be a non-empty string.
+//! Identifies the tenant scope for multi-tenant deployments. The value, once
+//! its surrounding whitespace is trimmed, must be a [`TenantName`].
 
-use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::tenant::{InvalidTenantName, TenantName};
 use http::{HeaderName, HeaderValue};
 use std::iter;
+use thiserror::Error;
 
 /// The header name, as a `HeaderName` the `headers` trait can hand back.
 static NGSILD_TENANT: HeaderName = HeaderName::from_static("ngsild-tenant");
@@ -13,9 +14,23 @@ static NGSILD_TENANT: HeaderName = HeaderName::from_static("ngsild-tenant");
 /// Typed `NGSILD-Tenant` header (clause 6.3.14).
 ///
 /// Carries the tenant identifier for multi-tenant deployments. The value
-/// must be a non-empty string after trimming whitespace.
+/// must be a [`TenantName`] after trimming whitespace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NgsiLdTenant(TenantName);
+
+/// Why an `NGSILD-Tenant` header value names no tenant.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum NgsiLdTenantError {
+    /// The value is empty or holds only whitespace.
+    #[error("the NGSILD-Tenant header is empty")]
+    Empty,
+    /// The value holds a byte outside visible ASCII, which no tenant name contains.
+    #[error("the NGSILD-Tenant header holds a character outside visible ASCII")]
+    NotText,
+    /// The value is text but breaks the tenant name grammar or its length bound.
+    #[error("the NGSILD-Tenant header is not a valid tenant name: {0}")]
+    InvalidName(#[source] InvalidTenantName),
+}
 
 impl NgsiLdTenant {
     /// Create a new `NGSILD-Tenant` header from a validated [`TenantName`].
@@ -37,6 +52,26 @@ impl NgsiLdTenant {
     }
 }
 
+impl TryFrom<&HeaderValue> for NgsiLdTenant {
+    type Error = NgsiLdTenantError;
+
+    /// Read one `NGSILD-Tenant` field value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NgsiLdTenantError::NotText`] for a value holding a byte outside
+    /// visible ASCII, [`NgsiLdTenantError::Empty`] for a value that is empty once
+    /// trimmed, and [`NgsiLdTenantError::InvalidName`] for one that is not a
+    /// [`TenantName`].
+    fn try_from(value: &HeaderValue) -> Result<NgsiLdTenant, NgsiLdTenantError> {
+        let trimmed = value.to_str().map_err(|_| NgsiLdTenantError::NotText)?.trim();
+        if trimmed.is_empty() {
+            return Err(NgsiLdTenantError::Empty);
+        }
+        trimmed.parse().map(NgsiLdTenant).map_err(NgsiLdTenantError::InvalidName)
+    }
+}
+
 impl headers::Header for NgsiLdTenant {
     fn name() -> &'static HeaderName {
         &NGSILD_TENANT
@@ -47,10 +82,7 @@ impl headers::Header for NgsiLdTenant {
         I: Iterator<Item = &'i HeaderValue>,
     {
         let value = values.next().ok_or_else(headers::Error::invalid)?;
-        let s = value.to_str().map_err(|_| headers::Error::invalid())?;
-        let trimmed = s.trim();
-        let name = TenantName::try_from(trimmed.to_string()).map_err(|_| headers::Error::invalid())?;
-        Ok(NgsiLdTenant(name))
+        NgsiLdTenant::try_from(value).map_err(|_| headers::Error::invalid())
     }
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
@@ -63,67 +95,80 @@ impl headers::Header for NgsiLdTenant {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::ngsild_tenant::{NgsiLdTenant, NgsiLdTenantError};
+    use andromeda_ngsi_ld_lexicon::tenant::{InvalidTenantName, TenantName};
     use headers::Header;
+    use http::HeaderValue;
+    use std::iter;
 
-    fn decode_from(raw: &str) -> Result<NgsiLdTenant, headers::Error> {
-        let val = HeaderValue::from_str(raw).expect("valid header value");
-        let mut iter = iter::once(&val);
-        NgsiLdTenant::decode(&mut iter)
+    fn read(raw: &str) -> Result<NgsiLdTenant, NgsiLdTenantError> {
+        let value = HeaderValue::from_str(raw).expect("valid header value");
+        NgsiLdTenant::try_from(&value)
     }
 
     #[test]
-    fn decode_valid_tenant() {
-        let header = decode_from("my-tenant").expect("should decode");
-        pretty_assertions::assert_eq!(header.as_str(), "my-tenant");
+    fn a_tenant_name_is_read() {
+        pretty_assertions::assert_eq!(read("my-tenant").expect("should read").as_str(), "my-tenant");
     }
 
     #[test]
-    fn decode_rejects_invalid_syntax() {
-        assert!(decode_from("bad tenant").is_err());
+    fn surrounding_whitespace_is_trimmed() {
+        pretty_assertions::assert_eq!(read("  tenant  ").expect("should read").as_str(), "tenant");
     }
 
     #[test]
-    fn decode_trims_whitespace() {
-        let header = decode_from("  tenant  ").expect("should decode");
-        pretty_assertions::assert_eq!(header.as_str(), "tenant");
+    fn an_empty_value_is_empty() {
+        pretty_assertions::assert_eq!(read(""), Err(NgsiLdTenantError::Empty));
     }
 
     #[test]
-    fn decode_rejects_empty() {
-        assert!(decode_from("").is_err());
+    fn a_whitespace_only_value_is_empty() {
+        pretty_assertions::assert_eq!(read("   "), Err(NgsiLdTenantError::Empty));
     }
 
     #[test]
-    fn decode_rejects_whitespace_only() {
-        assert!(decode_from("   ").is_err());
+    fn a_value_breaking_the_grammar_is_an_invalid_name() {
+        pretty_assertions::assert_eq!(read("1abc"), Err(NgsiLdTenantError::InvalidName(InvalidTenantName::InvalidSyntax)));
+        pretty_assertions::assert_eq!(read("bad tenant"), Err(NgsiLdTenantError::InvalidName(InvalidTenantName::InvalidSyntax)));
     }
 
     #[test]
-    fn encode_roundtrip() {
-        let name = match TenantName::try_from("t1".to_string()) {
-            Ok(value) => value,
-            Err(err) => panic!("unexpected tenant error: {err}"),
-        };
+    fn an_over_long_value_is_an_invalid_name() {
+        pretty_assertions::assert_eq!(read(&"a".repeat(256)), Err(NgsiLdTenantError::InvalidName(InvalidTenantName::TooLong)));
+    }
+
+    #[test]
+    fn a_value_outside_visible_ascii_is_not_text() {
+        let value = HeaderValue::from_bytes("café".as_bytes()).expect("obs-text is a valid header value");
+        pretty_assertions::assert_eq!(NgsiLdTenant::try_from(&value), Err(NgsiLdTenantError::NotText));
+    }
+
+    #[test]
+    fn each_refusal_names_its_cause() {
+        pretty_assertions::assert_eq!(NgsiLdTenantError::Empty.to_string(), "the NGSILD-Tenant header is empty");
+        pretty_assertions::assert_eq!(
+            NgsiLdTenantError::NotText.to_string(),
+            "the NGSILD-Tenant header holds a character outside visible ASCII"
+        );
+        pretty_assertions::assert_eq!(
+            NgsiLdTenantError::InvalidName(InvalidTenantName::InvalidSyntax).to_string(),
+            "the NGSILD-Tenant header is not a valid tenant name: tenant name must match [A-Za-z_][A-Za-z0-9_-]*"
+        );
+    }
+
+    #[test]
+    fn the_typed_header_decoder_refuses_what_the_reader_refuses() {
+        let value = HeaderValue::from_static("1abc");
+        assert!(NgsiLdTenant::decode(&mut iter::once(&value)).is_err());
+    }
+
+    #[test]
+    fn an_encoded_tenant_decodes_to_itself() {
+        let name: TenantName = "t1".parse().expect("valid tenant name");
         let header = NgsiLdTenant::new(name);
         let mut encoded = Vec::new();
         header.encode(&mut encoded);
-        pretty_assertions::assert_eq!(encoded.len(), 1);
-        let encoded_str = encoded[0].to_str();
-        assert!(encoded_str.is_ok());
-        let encoded_str = match encoded_str {
-            Ok(value) => value,
-            Err(err) => panic!("unexpected header value error: {err}"),
-        };
-        pretty_assertions::assert_eq!(encoded_str, "t1");
-
-        let mut iter = encoded.iter();
-        let decoded = NgsiLdTenant::decode(&mut iter);
-        assert!(decoded.is_ok());
-        let decoded = match decoded {
-            Ok(value) => value,
-            Err(err) => panic!("unexpected roundtrip decode error: {err}"),
-        };
-        pretty_assertions::assert_eq!(header, decoded);
+        pretty_assertions::assert_eq!(encoded, vec![HeaderValue::from_static("t1")]);
+        pretty_assertions::assert_eq!(NgsiLdTenant::decode(&mut encoded.iter()).expect("should decode"), header);
     }
 }
