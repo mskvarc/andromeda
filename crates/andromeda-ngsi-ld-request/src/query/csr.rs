@@ -29,7 +29,7 @@ use andromeda_ngsi_ld_query::{
     pattern::Pattern,
     projection::grammar::RawProjectionTerm,
     scope::query::ScopeQuery,
-    temporal::window::{BoundPresence, TimeInterval},
+    temporal::window::TimeInterval,
     type_selection::grammar::TypeExprRaw,
 };
 use chrono::{DateTime, Utc};
@@ -158,7 +158,7 @@ impl CsrQueryParameters {
     /// Returns [`ParameterError::SelectorRequired`] when none of `type`,
     /// `attrs`, `q` and `georel` narrows the registrations, and
     /// [`ParameterError::Query`] when the `timerel`, `timeAt` and `endTimeAt`
-    /// group is incomplete for the requested temporal relation.
+    /// group names no interval.
     pub fn validate(&self) -> Result<(), ParameterError> {
         // Clause 6.3.20: `sysAttrs` is the one value clause 6.3.11 defines for
         // this operation's `options`.
@@ -167,13 +167,8 @@ impl CsrQueryParameters {
         // Clause 5.5.9: an opaque `cursor` (5.5.9.1) and an `offset` (5.5.9.2)
         // page a collection by different mechanisms and cannot both govern it.
         // The `timerel`/`timeAt`/`endTimeAt` combination rule is owned by the
-        // query crate, so the request seam asks rather than re-deriving it.
-        TimeInterval::check_time_bounds(
-            self.timerel,
-            BoundPresence::of(self.time_at.as_ref()),
-            BoundPresence::of(self.end_time_at.as_ref()),
-        )
-        .map_err(ParameterError::Query)?;
+        // interval, so the request seam builds it rather than re-deriving it.
+        TimeInterval::from_parts(self.timerel, self.time_at, self.end_time_at).map_err(ParameterError::Query)?;
 
         Ok(())
     }
@@ -271,6 +266,20 @@ mod tests {
         let p = params_from_query("type=Vehicle&timerel=between&timeAt=2024-01-01T00:00:00Z");
         let err = p.validate().expect_err("expected error");
         assert!(err.to_string().contains("endTimeAt is required"));
+    }
+
+    /// Clause 4.11 and Table 6.8.3.2-1: `endTimeAt` comes with `between` alone,
+    /// and a `between` closes after it opens.
+    #[test]
+    fn validate_rejects_a_window_naming_no_interval() {
+        let err = params_from_query("type=Vehicle&timerel=after&timeAt=2024-01-01T00:00:00Z&endTimeAt=2024-02-01T00:00:00Z")
+            .validate()
+            .expect_err("endTimeAt beside after");
+        assert!(matches!(err, ParameterError::Query(QueryError::ParamEndTimeAtWithoutBetween)), "{err:?}");
+        let err = params_from_query("type=Vehicle&timerel=between&timeAt=2024-02-01T00:00:00Z&endTimeAt=2024-01-01T00:00:00Z")
+            .validate()
+            .expect_err("an inverted between");
+        assert!(matches!(err, ParameterError::Query(QueryError::ParamEndTimeAtNotAfterTimeAt)), "{err:?}");
     }
 
     /// Table 6.8.3.2-1: the members the entity query shares with discovery.

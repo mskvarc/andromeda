@@ -86,8 +86,8 @@ pub enum SubscriptionValidationReason {
     /// Table 5.2.13-1, clause 4.10).
     #[error(transparent)]
     GeoQ(GeoQError),
-    /// The `temporalQ` names no time window (Table 5.2.21-1: `endTimeAt` has
-    /// cardinality 1 when `timerel` is `between`).
+    /// The `temporalQ` names no time window (clause 4.11, Table 5.2.21-1:
+    /// `endTimeAt` comes with `between` alone and closes after `timeAt`).
     #[error("temporalQ is invalid: {0}")]
     TemporalQ(QueryError),
     /// The notification projection combined mutually exclusive selectors

@@ -5,7 +5,7 @@ use crate::{
     query::temporal::delete_parameters::TemporalDeleteParameters,
     query_narrowing::{AdmittedNarrowings, NarrowingInputs, require_narrowing},
 };
-use andromeda_ngsi_ld_query::temporal::window::{BoundPresence, TimeInterval};
+use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
 
 impl TemporalDeleteParameters {
     /// Validate the delete-by-query before it is compiled.
@@ -19,8 +19,8 @@ impl TemporalDeleteParameters {
     /// Returns [`ParameterError::DropKeepExclusive`] when both `drop` and `keep`
     /// are present, [`ParameterError::DatasetIdWithDeleteAll`] when `datasetId`
     /// and `deleteAll` are both present, and [`ParameterError::Query`] carrying
-    /// the clause 5.7.3 window fault when `timerel`/`timeAt` are half-specified
-    /// or `between` came without `endTimeAt`.
+    /// the clause 4.11 window fault when `timerel`, `timeAt` and `endTimeAt`
+    /// name no interval.
     pub fn validate(&self) -> Result<(), ParameterError> {
         // A delete must name what to select entities by. The local scope is
         // withheld from the admitted narrowings: the delete is always local, so
@@ -46,14 +46,9 @@ impl TemporalDeleteParameters {
             return Err(ParameterError::DatasetIdWithDeleteAll);
         }
 
-        // Clause 5.7.3: `timerel`/`timeAt` are meaningless apart, and `between`
-        // requires `endTimeAt`. Checked on presence before the instants are
-        // read, exactly as the temporal query's own window check is.
-        TimeInterval::check_time_bounds(
-            self.timerel,
-            BoundPresence::of(self.time_at.as_ref()),
-            BoundPresence::of(self.end_time_at.as_ref()),
-        )?;
+        // Clause 4.11: the window is read by the same rule the temporal query's
+        // own window is built with.
+        TimeInterval::from_parts(self.timerel, self.time_at, self.end_time_at)?;
 
         Ok(())
     }
@@ -112,6 +107,20 @@ mod tests {
                 .validate()
                 .is_ok()
         );
+    }
+
+    /// Clause 4.11: `endTimeAt` comes with `between` alone, and a `between`
+    /// closes after it opens, so neither deletes anything.
+    #[test]
+    fn a_window_naming_no_interval_is_rejected() {
+        let err = params("type=Vehicle&timerel=before&timeAt=2024-01-01T00:00:00Z&endTimeAt=2024-06-01T00:00:00Z")
+            .validate()
+            .expect_err("endTimeAt beside before");
+        assert!(matches!(err, ParameterError::Query(QueryError::ParamEndTimeAtWithoutBetween)), "got {err:?}");
+        let err = params("type=Vehicle&timerel=between&timeAt=2024-06-01T00:00:00Z&endTimeAt=2024-06-01T00:00:00Z")
+            .validate()
+            .expect_err("an empty between");
+        assert!(matches!(err, ParameterError::Query(QueryError::ParamEndTimeAtNotAfterTimeAt)), "got {err:?}");
     }
 
     /// Clause 5.7.3: `timerel` and `timeAt` are meaningless apart.

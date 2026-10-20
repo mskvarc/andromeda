@@ -20,7 +20,7 @@ use andromeda_ngsi_ld_query::{
     temporal::{
         grouping::{AggregationGrouping, group_key::GroupKey},
         ordering::TemporalEntityOrdering,
-        window::{BoundPresence, TemporalWindow, TimeInterval},
+        window::{TemporalWindow, TimeInterval},
     },
     type_selection::grammar::TypeExprRaw,
 };
@@ -70,7 +70,7 @@ impl TemporalQueryParameters {
     /// # Errors
     ///
     /// Returns the [`QueryError`] of [`TimeInterval::from_parts`] when the
-    /// `timerel`, `timeAt` and `endTimeAt` group is incomplete.
+    /// `timerel`, `timeAt` and `endTimeAt` group names no interval.
     pub fn window(&self) -> Result<TemporalWindow, QueryError> {
         Ok(TemporalWindow::builder()
             .interval(TimeInterval::from_parts(self.timerel, self.time_at, self.end_time_at)?)
@@ -159,7 +159,7 @@ impl TemporalQueryParameters {
     /// [`ParameterError::SelectorRequired`] when a query endpoint omits the
     /// temporal window or every entity selector,
     /// [`ParameterError::Query`] when the `timerel`, `timeAt` and `endTimeAt`
-    /// group is incomplete, and [`ParameterError::AggrMethodsRequired`] when
+    /// group names no interval, and [`ParameterError::AggrMethodsRequired`] when
     /// `format=aggregatedValues` carries no aggregation methods.
     pub fn validate(&self, operation: TemporalQueryOperation, linked_retrieval: TemporalJoin) -> Result<(), ParameterError> {
         // Clause 6.3.20: a `format` or `options` value Table 6.3.12-1 does not
@@ -213,13 +213,8 @@ impl TemporalQueryParameters {
             require_narrowing(&self.narrowing_inputs())?;
         }
         // The `timerel`/`timeAt`/`endTimeAt` combination rule is owned by the
-        // query crate, so the request seam asks rather than re-deriving it.
-        TimeInterval::check_time_bounds(
-            self.timerel,
-            BoundPresence::of(self.time_at.as_ref()),
-            BoundPresence::of(self.end_time_at.as_ref()),
-        )
-        .map_err(ParameterError::Query)?;
+        // interval, so the request seam builds it rather than re-deriving it.
+        self.window().map_err(ParameterError::Query)?;
         // Both the standard aggregated format and the grouped extension format
         // apply the clause 4.5.19 methods, so both require them.
         if self.parse_format()?.is_aggregated() && self.aggr_methods.is_none() {

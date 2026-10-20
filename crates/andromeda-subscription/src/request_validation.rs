@@ -143,8 +143,9 @@ pub fn validate_common_members(request: &SubscriptionRequest, geo_q_admission: G
     }
 
     // Table 5.2.21-1: `endTimeAt` "Cardinality shall be 1 if timerel is equal to
-    // between". The same rule builds the window a stored `temporalQ` compiles to,
-    // so an admitted `temporalQ` always compiles.
+    // between", and clause 4.11 uses it for no other relation. The same rule
+    // builds the window a stored `temporalQ` compiles to, so an admitted
+    // `temporalQ` always compiles.
     if let Some(temporal_q) = request.temporal_q.as_set() {
         TimeInterval::from_parts(Some(temporal_q.timerel), Some(temporal_q.time_at), temporal_q.end_time_at)
             .map_err(|error| SubscriptionError::Validation(SubscriptionValidationReason::TemporalQ(error)))?;
@@ -507,6 +508,25 @@ mod tests {
         ] {
             let result = validate_common_members(&request(&accepted), limits());
             assert!(result.is_ok(), "{accepted}: {result:?}");
+        }
+    }
+
+    /// Clause 4.11: `endTimeAt` is only used with `between`, and a `between`
+    /// closes after it opens.
+    #[test]
+    fn a_temporal_q_naming_no_interval_is_refused() {
+        for refused in [
+            json!({"temporalQ": {"timerel": "before", "timeAt": "2020-06-01T00:00:00Z", "endTimeAt": "2020-07-01T00:00:00Z"}}),
+            json!({"temporalQ": {"timerel": "after", "timeAt": "2020-06-01T00:00:00Z", "endTimeAt": "2020-07-01T00:00:00Z"}}),
+            json!({"temporalQ": {"timerel": "between", "timeAt": "2020-07-01T00:00:00Z", "endTimeAt": "2020-06-01T00:00:00Z"}}),
+            json!({"temporalQ": {"timerel": "between", "timeAt": "2020-07-01T00:00:00Z", "endTimeAt": "2020-07-01T00:00:00Z"}}),
+        ] {
+            let error = validate_common_members(&request(&refused), limits()).expect_err("no interval");
+            assert!(
+                matches!(&error, SubscriptionError::Validation(SubscriptionValidationReason::TemporalQ(_))),
+                "{refused}: {error:?}"
+            );
+            assert!(error.to_string().contains("endTimeAt"), "{refused}: {error}");
         }
     }
 

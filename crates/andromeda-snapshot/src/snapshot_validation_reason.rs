@@ -1,6 +1,7 @@
 //! The concrete reasons a Snapshot request is rejected as `BadRequestData`.
 
 use andromeda_ngsi_ld_model::snapshot::SnapshotStatus;
+use andromeda_ngsi_ld_query::error::QueryError;
 use thiserror::Error;
 
 /// Why a Snapshot request violates Snapshot semantics (clause 5.16).
@@ -20,6 +21,15 @@ pub enum SnapshotValidationReason {
     TemporalQueryWithoutTemporalQ {
         /// Position of the offending query.
         index: usize,
+    },
+    /// A member of `snapshotTemporalQueries` carries a `temporalQ` whose
+    /// `timerel`, `timeAt` and `endTimeAt` name no interval.
+    #[error("invalid snapshotTemporalQueries[{index}]: {source}")]
+    TemporalQWindow {
+        /// Position of the offending query.
+        index: usize,
+        /// The window fault.
+        source: QueryError,
     },
     /// A patch named a Snapshot id other than the one it patches.
     #[error("the Snapshot id is immutable")]

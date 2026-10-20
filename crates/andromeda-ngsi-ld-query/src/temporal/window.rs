@@ -7,10 +7,11 @@ use typed_builder::TypedBuilder;
 
 /// The slice of the time axis a query is bounded to (clause 4.11).
 ///
-/// `timerel` and `timeAt` are meaningless apart — clause 5.7.3 requires both or
-/// neither — and `endTimeAt` is required exactly when `timerel` is `between`.
-/// Stating that in the type means SQL builders need no runtime checks for it,
-/// and none has to raise a *request* error from inside a statement builder.
+/// `timerel` and `timeAt` are meaningless apart (clause 5.7.3 requires both or
+/// neither), `endTimeAt` belongs to `between` alone, and a `between` interval
+/// closes after it opens. Stating that in the type means SQL builders need no
+/// runtime checks for it, and none has to raise a *request* error from inside a
+/// statement builder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimeInterval {
     /// The query bounded nothing; every instant qualifies.
@@ -19,7 +20,8 @@ pub enum TimeInterval {
     Before(DateTime<Utc>),
     /// Everything at or after the instant.
     After(DateTime<Utc>),
-    /// Everything from `from` inclusive to `to` exclusive.
+    /// Everything from `from` inclusive to `to` exclusive, `to` later than
+    /// `from`.
     Between {
         /// The opening instant, inclusive.
         from: DateTime<Utc>,
@@ -31,55 +33,31 @@ pub enum TimeInterval {
 impl TimeInterval {
     /// Build an interval from the three parameters a request carries.
     ///
+    /// Clause 4.11 uses `endTimeAt` "only for the between relation", and every
+    /// table carrying it gives it cardinality 1 with `between` and 0 otherwise.
+    /// A `between` whose `endTimeAt` is not after its `timeAt` selects no instant
+    /// (the lower bound is inclusive, the upper exclusive), so it is a malformed
+    /// window rather than an empty one.
+    ///
     /// # Errors
     ///
     /// Returns [`QueryError::ParamTimerelTimeatPair`] when exactly one of
-    /// `timerel` and `timeAt` is present, and
+    /// `timerel` and `timeAt` is present,
     /// [`QueryError::ParamEndTimeAtRequired`] when `timerel` is `between` and
-    /// no `endTimeAt` came with it.
-    pub const fn from_parts(timerel: Option<TimeRel>, time_at: Option<DateTime<Utc>>, end_time_at: Option<DateTime<Utc>>) -> Result<TimeInterval, QueryError> {
-        match (timerel, time_at) {
-            (None, None) => Ok(TimeInterval::Unbounded),
-            (Some(TimeRel::Before), Some(instant)) => Ok(TimeInterval::Before(instant)),
-            (Some(TimeRel::After), Some(instant)) => Ok(TimeInterval::After(instant)),
-            (Some(TimeRel::Between), Some(from)) => match end_time_at {
-                Some(to) => Ok(TimeInterval::Between { from, to }),
-                None => Err(QueryError::ParamEndTimeAtRequired),
-            },
-            (None, Some(_)) | (Some(_), None) => Err(QueryError::ParamTimerelTimeatPair),
-        }
-    }
-
-    /// Reject the `timerel`/`timeAt`/`endTimeAt` combinations clause 5.7.3
-    /// forbids, from the presence of each parameter alone.
-    ///
-    /// The two pair-faults belong to this module: [`from_parts`](TimeInterval::from_parts)
-    /// raises them when it builds an interval from parsed values, and a request
-    /// layer that has only established which parameters arrived — not yet parsed
-    /// them — asks here rather than re-deriving the same rule and minting the
-    /// same errors at the request seam, where they had drifted out of step with
-    /// this one (a CSR check that rejected `timerel` without `timeAt` but let
-    /// `timeAt` without `timerel` through).
-    ///
-    /// `timerel` is the relation the request carried, if any; the other two
-    /// parameters are reported as presence alone because the request seam has
-    /// not parsed their instants yet.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`QueryError::ParamTimerelTimeatPair`] when exactly one of
-    /// `timerel` and `timeAt` is present, and
-    /// [`QueryError::ParamEndTimeAtRequired`] when `timerel` is `between` and no
-    /// `endTimeAt` came with it.
-    pub const fn check_time_bounds(timerel: Option<TimeRel>, time_at: BoundPresence, end_time_at: BoundPresence) -> Result<(), QueryError> {
-        match (timerel, time_at) {
-            (Some(_), BoundPresence::Absent) | (None, BoundPresence::Present) => return Err(QueryError::ParamTimerelTimeatPair),
-            (Some(_), BoundPresence::Present) | (None, BoundPresence::Absent) => (),
-        }
-        match (timerel, end_time_at) {
-            (Some(TimeRel::Between), BoundPresence::Absent) => Err(QueryError::ParamEndTimeAtRequired),
-            (Some(TimeRel::Before | TimeRel::After | TimeRel::Between) | None, BoundPresence::Present)
-            | (Some(TimeRel::Before | TimeRel::After) | None, BoundPresence::Absent) => Ok(()),
+    /// no `endTimeAt` came with it, [`QueryError::ParamEndTimeAtWithoutBetween`]
+    /// when an `endTimeAt` came with any other `timerel` or with none, and
+    /// [`QueryError::ParamEndTimeAtNotAfterTimeAt`] when a `between` closes at
+    /// or before the instant it opens at.
+    pub fn from_parts(timerel: Option<TimeRel>, time_at: Option<DateTime<Utc>>, end_time_at: Option<DateTime<Utc>>) -> Result<TimeInterval, QueryError> {
+        match (timerel, time_at, end_time_at) {
+            (None, None, None) => Ok(TimeInterval::Unbounded),
+            (None, Some(_), _) | (Some(_), None, _) => Err(QueryError::ParamTimerelTimeatPair),
+            (Some(TimeRel::Before), Some(instant), None) => Ok(TimeInterval::Before(instant)),
+            (Some(TimeRel::After), Some(instant), None) => Ok(TimeInterval::After(instant)),
+            (Some(TimeRel::Between), Some(from), Some(to)) if to > from => Ok(TimeInterval::Between { from, to }),
+            (Some(TimeRel::Between), Some(_), Some(_)) => Err(QueryError::ParamEndTimeAtNotAfterTimeAt),
+            (Some(TimeRel::Between), Some(_), None) => Err(QueryError::ParamEndTimeAtRequired),
+            (Some(TimeRel::Before | TimeRel::After), Some(_), Some(_)) | (None, None, Some(_)) => Err(QueryError::ParamEndTimeAtWithoutBetween),
         }
     }
 
@@ -176,29 +154,6 @@ impl TimeInterval {
     }
 }
 
-/// Whether an optional temporal bound arrived in the request.
-///
-/// The request seam establishes which parameters were sent before it parses
-/// them, so the pair rule of clause 5.7.3 is checked on presence alone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BoundPresence {
-    /// The parameter was carried by the request.
-    Present,
-    /// The parameter was not carried by the request.
-    Absent,
-}
-
-impl BoundPresence {
-    /// Read the presence of an optional parameter.
-    #[must_use]
-    pub const fn of<T>(value: Option<&T>) -> BoundPresence {
-        match value {
-            Some(_) => BoundPresence::Present,
-            None => BoundPresence::Absent,
-        }
-    }
-}
-
 /// The interval of the time axis a temporal query reads, and the property it
 /// reads it on (clause 4.5.19).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TypedBuilder)]
@@ -224,27 +179,58 @@ mod tests {
         assert_eq!(TimeInterval::from_parts(None, None, None).expect("valid"), TimeInterval::Unbounded);
     }
 
+    /// Clause 4.11: `endTimeAt` "is only used for the between relation".
     #[test]
-    fn check_time_bounds_is_the_presence_only_reading_of_the_pair_rule() {
-        // The request seam calls this before it has parsed instants, so it
-        // matches `from_parts` on presence alone: both `timerel` and `timeAt`,
-        // or neither, and `endTimeAt` present when `timerel` is `between`.
-        assert!(TimeInterval::check_time_bounds(None, BoundPresence::Absent, BoundPresence::Absent).is_ok());
-        assert!(TimeInterval::check_time_bounds(Some(TimeRel::After), BoundPresence::Present, BoundPresence::Absent).is_ok());
-        assert!(TimeInterval::check_time_bounds(Some(TimeRel::Between), BoundPresence::Present, BoundPresence::Present).is_ok());
-        // Either half alone is rejected, in both directions.
+    fn an_end_time_at_beside_any_relation_but_between_is_rejected() {
+        let reference = instant("2024-01-01T00:00:00Z");
+        let end = instant("2024-06-01T00:00:00Z");
+        for timerel in [TimeRel::Before, TimeRel::After] {
+            assert!(
+                matches!(
+                    TimeInterval::from_parts(Some(timerel), Some(reference), Some(end)),
+                    Err(QueryError::ParamEndTimeAtWithoutBetween)
+                ),
+                "{timerel}"
+            );
+        }
         assert!(matches!(
-            TimeInterval::check_time_bounds(Some(TimeRel::After), BoundPresence::Absent, BoundPresence::Absent),
+            TimeInterval::from_parts(None, None, Some(end)),
+            Err(QueryError::ParamEndTimeAtWithoutBetween)
+        ));
+    }
+
+    /// Clause 4.11 makes `timeAt` an inclusive and `endTimeAt` an exclusive
+    /// bound, so a `between` closing at or before its opening holds no instant.
+    #[test]
+    fn a_between_closing_at_or_before_its_opening_is_rejected() {
+        let from = instant("2024-01-01T00:00:00.000002Z");
+        for to in [from, instant("2024-01-01T00:00:00.000001Z"), instant("2023-12-31T00:00:00Z")] {
+            assert!(
+                matches!(
+                    TimeInterval::from_parts(Some(TimeRel::Between), Some(from), Some(to)),
+                    Err(QueryError::ParamEndTimeAtNotAfterTimeAt)
+                ),
+                "{to}"
+            );
+        }
+        let to = instant("2024-01-01T00:00:00.000003Z");
+        assert_eq!(
+            TimeInterval::from_parts(Some(TimeRel::Between), Some(from), Some(to)).expect("one microsecond is a window"),
+            TimeInterval::Between { from, to }
+        );
+    }
+
+    /// The pair fault is reported before what the `endTimeAt` is beside.
+    #[test]
+    fn a_half_specified_pair_is_reported_before_a_stray_end_time_at() {
+        let end = instant("2024-06-01T00:00:00Z");
+        assert!(matches!(
+            TimeInterval::from_parts(Some(TimeRel::Between), None, Some(end)),
             Err(QueryError::ParamTimerelTimeatPair)
         ));
         assert!(matches!(
-            TimeInterval::check_time_bounds(None, BoundPresence::Present, BoundPresence::Absent),
+            TimeInterval::from_parts(None, Some(end), Some(end)),
             Err(QueryError::ParamTimerelTimeatPair)
-        ));
-        // `between` without an `endTimeAt` is the second fault.
-        assert!(matches!(
-            TimeInterval::check_time_bounds(Some(TimeRel::Between), BoundPresence::Present, BoundPresence::Absent),
-            Err(QueryError::ParamEndTimeAtRequired)
         ));
     }
 

@@ -343,6 +343,42 @@ mod tests {
         pretty_assertions::assert_eq!(p.end_time_at.map(|at| at.to_rfc3339()).as_deref(), Some("2020-08-01T12:00:01.500+00:00"));
     }
 
+    /// Clause 4.11: `endTimeAt` is only used with `between`, and a `between`
+    /// closes after it opens; both the retrieval and the query refuse it.
+    #[test]
+    fn validate_refuses_a_window_naming_no_interval() {
+        for (query, expected) in [
+            (
+                "timerel=before&timeAt=2024-01-02T00:00:00Z&endTimeAt=2024-01-03T00:00:00Z",
+                "endTimeAt is only allowed",
+            ),
+            (
+                "timerel=after&timeAt=2024-01-02T00:00:00Z&endTimeAt=2024-01-03T00:00:00Z",
+                "endTimeAt is only allowed",
+            ),
+            (
+                "timerel=between&timeAt=2024-01-02T00:00:00Z&endTimeAt=2024-01-02T00:00:00Z",
+                "later than timeAt",
+            ),
+            (
+                "timerel=between&timeAt=2024-01-02T00:00:00Z&endTimeAt=2024-01-01T00:00:00Z",
+                "later than timeAt",
+            ),
+        ] {
+            let p = params_from_query(&format!("type=Vehicle&{query}"));
+            for operation in [TemporalQueryOperation::Retrieve, TemporalQueryOperation::Query] {
+                let error = p.validate(operation, TemporalJoin::Extended).expect_err(query);
+                assert!(matches!(error, ParameterError::Query(_)), "{query}: {error:?}");
+                assert!(error.to_string().contains(expected), "{query}: {error}");
+            }
+        }
+        // The query requires `timerel` and `timeAt` before it reads the window.
+        let error = params_from_query("type=Vehicle&endTimeAt=2024-01-03T00:00:00Z")
+            .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+            .expect_err("a lone endTimeAt");
+        assert!(matches!(error, ParameterError::Query(QueryError::ParamEndTimeAtWithoutBetween)), "{error:?}");
+    }
+
     #[test]
     fn validate_between_with_end_time_at_ok() {
         let p = params_from_query("timerel=between&timeAt=2024-01-01T00:00:00Z&endTimeAt=2024-01-02T00:00:00Z");

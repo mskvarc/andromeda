@@ -287,6 +287,12 @@ pub enum QueryError {
     /// `timerel=between` was provided without an `endTimeAt`.
     #[error("endTimeAt is required when timerel is 'between'")]
     ParamEndTimeAtRequired,
+    /// An `endTimeAt` came with a `timerel` other than `between`, or with none.
+    #[error("endTimeAt is only allowed when timerel is 'between'")]
+    ParamEndTimeAtWithoutBetween,
+    /// A `between` window's `endTimeAt` is at or before its `timeAt`.
+    #[error("endTimeAt must be later than timeAt")]
+    ParamEndTimeAtNotAfterTimeAt,
 }
 
 #[cfg(test)]

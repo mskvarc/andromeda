@@ -5,14 +5,16 @@
 
 use crate::{error::SnapshotError, snapshot_validation_reason::SnapshotValidationReason};
 use andromeda_ngsi_ld_model::query::body::Query;
+use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
 
 /// Reject requests that omit both collections and queries placed in the wrong collection.
 ///
 /// # Errors
 ///
 /// Returns [`SnapshotError::Validation`] when both collections are absent, when
-/// a member of `snapshot_queries` carries a `temporalQ`, or when a member of
-/// `snapshot_temporal_queries` omits its `temporalQ`.
+/// a member of `snapshot_queries` carries a `temporalQ`, when a member of
+/// `snapshot_temporal_queries` omits its `temporalQ`, and when one carries a
+/// `temporalQ` naming no interval (clause 4.11, Table 5.2.21-1).
 pub fn validate_snapshot_query_shapes(snapshot_queries: Option<&[Query]>, snapshot_temporal_queries: Option<&[Query]>) -> Result<(), SnapshotError> {
     if snapshot_queries.is_none() && snapshot_temporal_queries.is_none() {
         return Err(SnapshotValidationReason::QueryCollectionsMissing.into());
@@ -26,6 +28,17 @@ pub fn validate_snapshot_query_shapes(snapshot_queries: Option<&[Query]>, snapsh
         && let Some(index) = queries.iter().position(|query| query.temporal_q.is_none())
     {
         return Err(SnapshotValidationReason::TemporalQueryWithoutTemporalQ { index }.into());
+    }
+    // The capture builds its window by the same rule, so an admitted query
+    // always runs rather than recording a failure once the Snapshot exists.
+    for (index, temporal_q) in snapshot_temporal_queries
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(index, query)| query.temporal_q.as_ref().map(|temporal_q| (index, temporal_q)))
+    {
+        TimeInterval::from_parts(Some(temporal_q.timerel), Some(temporal_q.time_at), temporal_q.end_time_at)
+            .map_err(|source| SnapshotValidationReason::TemporalQWindow { index, source })?;
     }
     Ok(())
 }
@@ -77,6 +90,23 @@ mod tests {
         assert!(validate_snapshot_query_shapes(Some(&[]), None).is_ok());
         assert!(validate_snapshot_query_shapes(None, Some(&[])).is_ok());
         assert!(validate_snapshot_query_shapes(Some(&[]), Some(&[])).is_ok());
+    }
+
+    /// Clause 4.11 and Table 5.2.21-1: `endTimeAt` comes with `between` alone,
+    /// and a `between` closes after it opens.
+    #[test]
+    fn a_temporal_query_naming_no_window_is_rejected_at_ingest() {
+        for temporal_q in [
+            json!({"timerel": "between", "timeAt": "2024-01-01T00:00:00Z"}),
+            json!({"timerel": "before", "timeAt": "2024-01-01T00:00:00Z", "endTimeAt": "2024-02-01T00:00:00Z"}),
+            json!({"timerel": "between", "timeAt": "2024-02-01T00:00:00Z", "endTimeAt": "2024-01-01T00:00:00Z"}),
+            json!({"timerel": "between", "timeAt": "2024-01-01T00:00:00Z", "endTimeAt": "2024-01-01T00:00:00Z"}),
+        ] {
+            let query = serde_json::from_value::<Query>(json!({"type": "Query", "entities": [{"type": "Vehicle"}], "temporalQ": temporal_q}))
+                .expect("a decodable temporal query");
+            let error = validate_snapshot_query_shapes(None, Some(&[query])).expect_err("no window");
+            assert!(error.to_string().contains("snapshotTemporalQueries[0]"), "{error}");
+        }
     }
 
     #[test]
