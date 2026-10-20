@@ -237,8 +237,8 @@ impl GetEntityParams {
         // Clause 4.21: the retrieval carries the same three selectors a query
         // does, and so the same rule about combining them.
         check_projection_exclusivity(ProjectionSelectors {
-            pick: self.pick.as_deref(),
-            omit: self.omit.as_deref(),
+            pick: Presence::of(self.pick.as_deref()),
+            omit: Presence::of(self.omit.as_deref()),
             attrs: Presence::of(self.attrs.as_deref()),
         })?;
         // Clause 5.7.1.4: a nested sub-projection describes a Linked Entity,
@@ -415,16 +415,6 @@ mod tests {
     fn get_validate_admits_pick_and_omit_together() {
         let params: GetEntityParams = serde_urlencoded::from_str("pick=speed&omit=scope").expect("valid projection terms");
         assert!(params.validate().is_ok());
-    }
-
-    #[test]
-    fn get_validate_rejects_a_member_in_both_pick_and_omit() {
-        let params: GetEntityParams = serde_urlencoded::from_str("pick=name&omit=name").expect("valid projection terms");
-        let error = params.validate().expect_err("a member in both is refused");
-        assert!(
-            matches!(error, ParameterError::Projection(ProjectionConflict::MemberPickedAndOmitted { .. })),
-            "{error:?}"
-        );
     }
 
     #[test]

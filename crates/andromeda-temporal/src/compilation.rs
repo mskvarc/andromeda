@@ -15,7 +15,7 @@ use andromeda_ngsi_ld_query::{
     geo::{compile as geo_compile, query::GeoQuery},
     projection::{
         compiled::Projection,
-        expansion::{expand_attrs, expand_projection_terms},
+        expansion::{expand_attrs, expand_projection},
         projected_members::ProjectedMembers,
     },
     temporal::{
@@ -254,9 +254,7 @@ async fn compile_grouping(
 /// expander, without compiling the unrelated selection, window and
 /// representation the traversal never reads.
 pub(crate) async fn compile_projection(params: &TemporalQueryParameters, expander: &impl TermExpander) -> Result<Projection, TemporalError> {
-    let pick = expand_projection_terms(params.pick.as_deref().unwrap_or_default(), expander).await?;
-    let omit = expand_projection_terms(params.omit.as_deref().unwrap_or_default(), expander).await?;
-    Ok(Projection { pick, omit })
+    Ok(expand_projection(params.pick.as_deref().unwrap_or_default(), params.omit.as_deref().unwrap_or_default(), expander).await?)
 }
 
 #[cfg(test)]

@@ -26,8 +26,7 @@ use andromeda_ngsi_ld_query::{
         term::{CompiledOrderTerm, OrderTarget, RawOrderTarget},
     },
     projection::{
-        compiled::Projection,
-        expansion::{expand_attrs, expand_projection_terms},
+        expansion::{expand_attrs, expand_projection},
         projected_members::ProjectedMembers,
     },
 };
@@ -78,13 +77,16 @@ impl EntityQueryService {
         let q_expr = self.compile_q_expression(params, &prepared_context).await?;
         let geo = self.compile_geo_query(params, &prepared_context).await?;
 
-        let pick = expand_projection_terms(params.pick.as_deref().unwrap_or_default(), &expander).await?;
-        let omit = expand_projection_terms(params.omit.as_deref().unwrap_or_default(), &expander).await?;
+        let projection = expand_projection(
+            params.pick.as_deref().unwrap_or_default(),
+            params.omit.as_deref().unwrap_or_default(),
+            &expander,
+        )
+        .await?;
 
         let order_by = self.compile_order_terms(params, &prepared_context).await?;
         let ordering_geometry = compile_ordering_geometry(params, self.geo_admission.limits)?;
 
-        let projection = Projection::builder().pick(pick).omit(omit).build();
         let compiled = CompiledEntityQuery::builder()
             .selection(
                 EntitySelection::builder()

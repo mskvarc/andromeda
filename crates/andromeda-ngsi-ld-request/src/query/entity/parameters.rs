@@ -367,18 +367,6 @@ mod tests {
     }
 
     #[test]
-    fn a_member_in_both_pick_and_omit_is_rejected() {
-        let err = params_from_query("type=Building,Vehicle&pick=name&omit=name")
-            .validate(EntityQueryOperation::Query)
-            .expect_err("a member in both is refused");
-        assert!(
-            matches!(err, ParameterError::Projection(ProjectionConflict::MemberPickedAndOmitted { .. })),
-            "{err:?}"
-        );
-        assert!(err.to_string().contains("'name' is named in both pick and omit"), "{err}");
-    }
-
-    #[test]
     fn pick_or_omit_with_attrs_is_rejected() {
         for query in ["type=Vehicle&pick=speed&attrs=fuelLevel", "type=Vehicle&omit=speed&attrs=fuelLevel"] {
             let err = params_from_query(query)

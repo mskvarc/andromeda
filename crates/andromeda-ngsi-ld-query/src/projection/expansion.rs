@@ -2,7 +2,7 @@
 
 use crate::{
     error::QueryError,
-    projection::{grammar::RawProjectionTerm, term::ProjectionTerm},
+    projection::{compiled::Projection, exclusivity::check_member_exclusivity, grammar::RawProjectionTerm, term::ProjectionTerm},
     term_expander::TermExpander,
 };
 use iri_rs::IriBuf;
@@ -20,6 +20,20 @@ pub async fn expand_attrs<S: AsRef<str> + Sync>(raw: &[S], expander: &impl TermE
         expanded_iris.push(expander.expand_term(term.as_ref()).await?);
     }
     Ok(expanded_iris)
+}
+
+/// Expands the `pick` and `omit` lists of one request into its clause 4.21 projection, refusing one whose two lists name the same member once expanded.
+///
+/// # Errors
+///
+/// Returns what [`expand_projection_terms`] returns for either list, and
+/// [`QueryError::ProjectionMemberPickedAndOmitted`] when `pick` and `omit`
+/// name one member.
+pub async fn expand_projection(pick: &[RawProjectionTerm], omit: &[RawProjectionTerm], expander: &impl TermExpander) -> Result<Projection, QueryError> {
+    let pick = expand_projection_terms(pick, expander).await?;
+    let omit = expand_projection_terms(omit, expander).await?;
+    check_member_exclusivity(&pick, &omit)?;
+    Ok(Projection { pick, omit })
 }
 
 /// Expands a `pick` / `omit` term list (clause 4.21), keeping the keywords `id`, `type` and `scope` as written and recursing into each term's linked-entity sub-projection.
@@ -75,6 +89,7 @@ fn keyword_term(term: &RawProjectionTerm, expanded: ProjectionTerm) -> Result<Pr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::projection::grammar::ProjectionList;
     use pretty_assertions::assert_eq;
     use std::future::ready;
 
@@ -162,6 +177,75 @@ mod tests {
             vec![ProjectionTerm::Attribute {
                 iri: iri("https://example.com/observation"),
                 linked: vec![ProjectionTerm::Id, ProjectionTerm::Type, ProjectionTerm::Scope],
+            }]
+        );
+    }
+
+    /// Expands every term through one table, the way a request `@context`
+    /// maps short names to IRIs; a name it does not hold stays as written.
+    struct TableExpander(&'static [(&'static str, &'static str)]);
+
+    impl TermExpander for TableExpander {
+        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+            let expanded = self.0.iter().find(|(short, _)| *short == term).map_or(term, |(_, full)| *full);
+            ready(Ok(IriBuf::new(expanded.to_owned()).expect("valid IRI")))
+        }
+
+        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+            self.expand_term(term)
+        }
+    }
+
+    const SCHEMA_NAME: TableExpander = TableExpander(&[
+        ("name", "https://schema.org/name"),
+        ("label", "https://example.com/name"),
+        ("owner", "https://example.com/owner"),
+        ("email", "https://example.com/email"),
+    ]);
+
+    fn list(raw: &str) -> Vec<RawProjectionTerm> {
+        raw.parse::<ProjectionList>().map(Vec::from).expect("valid projection list")
+    }
+
+    async fn projected(pick: &str, omit: &str) -> Result<Projection, QueryError> {
+        expand_projection(&list(pick), &list(omit), &SCHEMA_NAME).await
+    }
+
+    /// Clause 5.5.7: `name` and `https://schema.org/name` are one member under a context mapping the one to the other.
+    #[tokio::test]
+    async fn a_short_name_against_its_full_iri_is_refused() {
+        let error = projected("name", "https://schema.org/name").await.expect_err("one member in both");
+        assert!(
+            matches!(&error, QueryError::ProjectionMemberPickedAndOmitted { member } if member.to_string() == "https://schema.org/name"),
+            "got {error:?}"
+        );
+    }
+
+    /// The comparison descends into a linked-entity group at the same level.
+    #[tokio::test]
+    async fn a_linked_member_spelled_two_ways_is_refused() {
+        let error = projected("owner{name,email}", "owner{https://schema.org/name}")
+            .await
+            .expect_err("one member in both");
+        assert!(matches!(error, QueryError::ProjectionMemberPickedAndOmitted { .. }), "got {error:?}");
+    }
+
+    /// Two short names a context maps to different IRIs are different members.
+    #[tokio::test]
+    async fn two_short_names_expanding_to_different_iris_are_admitted() {
+        let projection = projected("name", "label").await.expect("different members");
+        assert_eq!(
+            projection.pick,
+            vec![ProjectionTerm::Attribute {
+                iri: iri("https://schema.org/name"),
+                linked: Vec::new()
+            }]
+        );
+        assert_eq!(
+            projection.omit,
+            vec![ProjectionTerm::Attribute {
+                iri: iri("https://example.com/name"),
+                linked: Vec::new()
             }]
         );
     }

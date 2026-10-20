@@ -27,6 +27,7 @@ use crate::{
     },
     non_posix_construct::NonPosixConstruct,
     ordering::{collation::IcuCollationError, term::OrderDirection},
+    projection::term::ProjectionTerm,
     scope::pattern_fault::ScopePatternFault,
     term_expander::TermExpansionFailure,
 };
@@ -184,6 +185,12 @@ pub enum QueryError {
     ProjectionKeywordWithLinkedTerm {
         /// The offending keyword.
         keyword: AttributeName,
+    },
+    /// `pick` and `omit` name the same member of the same Entity once both are expanded against the request `@context`, so its pick selects nothing (clause 4.21).
+    #[error("'{member}' is named in both pick and omit")]
+    ProjectionMemberPickedAndOmitted {
+        /// The member both lists name: a clause 4.21 keyword, or an Attribute by its expanded name.
+        member: ProjectionTerm,
     },
 
     /// A pattern operand was not a valid regular expression.

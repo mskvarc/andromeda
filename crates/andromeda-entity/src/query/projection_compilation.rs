@@ -7,7 +7,7 @@
 //! clause 5.6.3 single-entity retrieval compiles no query at all, it looks an
 //! identifier up, yet still carries `pick` and `omit`, so it needs the
 //! projection on its own. The expansion itself is shared:
-//! [`expand_projection_terms`] is what compiling a query calls too, so the two
+//! [`expand_projection`] is what compiling a query calls too, so the two
 //! bindings cannot expand the same terms differently.
 //!
 //! [`CompiledEntityQuery`]: andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery
@@ -17,7 +17,7 @@ use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpa
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::projection::{
     compiled::Projection,
-    expansion::{expand_attrs, expand_projection_terms},
+    expansion::{expand_attrs, expand_projection},
     grammar::RawProjectionTerm,
 };
 use iri_rs::IriBuf;
@@ -32,8 +32,8 @@ impl EntityQueryService {
     /// # Errors
     ///
     /// Returns [`EntityError`] when a term cannot be expanded through the
-    /// context, or when a structural keyword carries a clause 4.21 nested
-    /// sub-projection.
+    /// context, when a structural keyword carries a clause 4.21 nested
+    /// sub-projection, or when `pick` and `omit` name one member.
     pub async fn compile_projection(
         &self,
         pick: Option<&[RawProjectionTerm]>,
@@ -46,10 +46,7 @@ impl EntityQueryService {
 
         let prepared_context = self.engine().prepare_term_context(context);
         let expander = ContextualExpander::new(self.engine(), &prepared_context);
-        let pick = expand_projection_terms(pick.unwrap_or(&[]), &expander).await?;
-        let omit = expand_projection_terms(omit.unwrap_or(&[]), &expander).await?;
-
-        Ok(Some(Projection::builder().pick(pick).omit(omit).build()))
+        Ok(Some(expand_projection(pick.unwrap_or(&[]), omit.unwrap_or(&[]), &expander).await?))
     }
 
     /// Expand a request's `attrs` names (clause 5.7.2) against the active
@@ -71,10 +68,13 @@ impl EntityQueryService {
 
 #[cfg(test)]
 mod tests {
-    use crate::query::service_test_double::service;
+    use crate::{error::EntityError, query::service_test_double::service};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::context_spec::ContextSpec;
-    use andromeda_ngsi_ld_query::projection::{grammar::RawProjectionTerm, term::ProjectionTerm};
+    use andromeda_ngsi_ld_query::{
+        error::QueryError,
+        projection::{grammar::RawProjectionTerm, term::ProjectionTerm},
+    };
     use iri_rs::IriBuf;
     use serde_json::json;
 
@@ -160,6 +160,36 @@ mod tests {
                 linked: Vec::new()
             }]
         );
+    }
+
+    /// Clause 5.5.7: `temperature` and `https://example.com/temperature` are
+    /// one member under a context mapping the one to the other, so the pick
+    /// would select nothing.
+    #[tokio::test]
+    async fn a_member_picked_by_its_short_name_and_omitted_by_its_iri_is_refused() {
+        let pick = [raw("temperature", Vec::new())];
+        let omit = [raw("https://example.com/temperature", Vec::new())];
+
+        let error = service()
+            .compile_projection(Some(&pick), Some(&omit), &context())
+            .await
+            .expect_err("one member in both");
+
+        assert!(
+            matches!(&error, EntityError::Query(QueryError::ProjectionMemberPickedAndOmitted { .. })),
+            "{error:?}"
+        );
+    }
+
+    /// Two short names the context maps to different IRIs are two members.
+    #[tokio::test]
+    async fn two_short_names_of_different_members_are_admitted() {
+        let pick = [raw("temperature", Vec::new())];
+        let omit = [raw("hasA", Vec::new())];
+
+        let compiled = service().compile_projection(Some(&pick), Some(&omit), &context()).await.expect("compiles");
+
+        assert!(compiled.is_some());
     }
 
     /// Clause 4.21: `LinkedEntityTerm` only ever follows `AttrName`, so a

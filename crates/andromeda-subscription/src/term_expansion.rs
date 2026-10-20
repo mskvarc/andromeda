@@ -7,7 +7,7 @@
 //! against expanded entity data and never has the creator's `@context` at hand.
 //! Context hosting is not handled here; the lifecycle adds that on top.
 
-use crate::{error::SubscriptionError, filter_opt_ins::FilterOptIns, projection_expansion::expand_projection_lists};
+use crate::{error::SubscriptionError, filter_opt_ins::FilterOptIns, projection_expansion::expand_notification_projection};
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{processor::JsonLdEngine, term_lookup::PreparedTermContext},
@@ -73,10 +73,7 @@ async fn expand_notification(
     if let Some(names) = notification.attributes.as_deref_mut() {
         expand_name_list(engine, prepared_context, names, "attributes").await?;
     }
-    for lists in [notification.pick.as_deref_mut(), notification.omit.as_deref_mut()].into_iter().flatten() {
-        expand_projection_lists(lists, expander).await?;
-    }
-    Ok(())
+    expand_notification_projection(notification.pick.as_deref_mut(), notification.omit.as_deref_mut(), expander).await
 }
 
 /// Expand the geoproperty a `geoQ` names, leaving it as written when the

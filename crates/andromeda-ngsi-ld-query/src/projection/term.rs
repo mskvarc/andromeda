@@ -10,17 +10,23 @@ use iri_rs::IriBuf;
 /// to and the renderer treats each of them differently from an attribute. The
 /// enum is what stops that distinction from being re-derived by comparing the
 /// term against three string literals wherever it matters.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// It displays as the keyword, or as the expanded name of the Attribute.
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum ProjectionTerm {
     /// The entity identifier.
+    #[display("id")]
     Id,
     /// The entity type.
+    #[display("type")]
     Type,
     /// The entity scope.
+    #[display("scope")]
     Scope,
     /// One attribute, named by its expanded IRI, together with the
     /// clause 4.21 linked-entity sub-projection carried inside `{...}` — empty
     /// when this term selects no linked entity.
+    #[display("{iri}")]
     Attribute {
         /// The expanded IRI naming this attribute.
         iri: IriBuf,
@@ -72,6 +78,19 @@ impl ProjectionTerm {
         match self {
             ProjectionTerm::Attribute { iri, .. } => Some(iri),
             ProjectionTerm::Id | ProjectionTerm::Type | ProjectionTerm::Scope => None,
+        }
+    }
+
+    /// Whether this term and `other` name one member of the Entity: the same
+    /// keyword, or Attributes of one expanded name, whichever linked-entity
+    /// sub-projections the two carry.
+    #[must_use]
+    pub fn names_same_member(&self, other: &ProjectionTerm) -> bool {
+        match (self.attribute_iri(), other.attribute_iri()) {
+            (Some(iri), Some(other_iri)) => iri == other_iri,
+            // A keyword carries nothing beside itself.
+            (None, None) => self == other,
+            (Some(_), None) | (None, Some(_)) => false,
         }
     }
 
@@ -136,6 +155,46 @@ mod tests {
         for keyword in [ProjectionTerm::Id, ProjectionTerm::Type, ProjectionTerm::Scope] {
             assert_eq!(keyword.attribute_iri(), None, "{keyword:?}");
         }
+    }
+
+    #[test]
+    fn attribute_terms_of_one_expanded_name_name_the_same_member_whatever_they_link() {
+        let plain = ProjectionTerm::Attribute {
+            iri: iri("https://schema.org/name"),
+            linked: Vec::new(),
+        };
+        let linking = ProjectionTerm::Attribute {
+            iri: iri("https://schema.org/name"),
+            linked: vec![ProjectionTerm::Id],
+        };
+        let other = ProjectionTerm::Attribute {
+            iri: iri("https://example.com/name"),
+            linked: Vec::new(),
+        };
+        assert!(plain.names_same_member(&linking));
+        assert!(!plain.names_same_member(&other));
+    }
+
+    #[test]
+    fn a_keyword_names_the_same_member_only_as_itself() {
+        let attribute = ProjectionTerm::Attribute {
+            iri: iri("https://example.com/id"),
+            linked: Vec::new(),
+        };
+        assert!(ProjectionTerm::Id.names_same_member(&ProjectionTerm::Id));
+        assert!(!ProjectionTerm::Id.names_same_member(&ProjectionTerm::Type));
+        assert!(!ProjectionTerm::Id.names_same_member(&attribute));
+        assert!(!attribute.names_same_member(&ProjectionTerm::Id));
+    }
+
+    #[test]
+    fn a_term_displays_as_its_keyword_or_its_expanded_name() {
+        let attribute = ProjectionTerm::Attribute {
+            iri: iri("https://schema.org/name"),
+            linked: vec![ProjectionTerm::Id],
+        };
+        assert_eq!(ProjectionTerm::Scope.to_string(), "scope");
+        assert_eq!(attribute.to_string(), "https://schema.org/name");
     }
 
     #[test]

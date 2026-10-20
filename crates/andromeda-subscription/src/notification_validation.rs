@@ -42,29 +42,27 @@ pub(crate) const fn validate_endpoint_present(notification: &NotificationRequest
 /// notification breaks.
 pub(crate) fn validate_notification(notification: &NotificationRequest, q: Option<&Expr>) -> Result<(), SubscriptionError> {
     validate_show_changes_format(notification)?;
+    validate_projection_exclusivity(notification)?;
     let pick = notification.pick.as_deref().map(projection_terms);
     let omit = notification.omit.as_deref().map(projection_terms);
-    validate_projection_exclusivity(notification, pick.as_deref(), omit.as_deref())?;
     admit_linked_references(notification, pick.as_deref(), omit.as_deref(), q)
 }
 
-/// Reject a notification combining clause 4.21 selectors that shape the same
-/// projection.
+/// Reject a notification combining `pick` or `omit` with the deprecated
+/// `attributes`.
 ///
 /// Table 5.2.14.1-1 gives `NotificationParams` the same three members a query
 /// carries on its URL -- `pick`, `omit` and the deprecated `attributes`, "a
 /// synonym for pick" -- so it carries the same rule about combining them. The
 /// rule itself is owned by
 /// [`andromeda_ngsi_ld_query::projection::exclusivity`], which the query
-/// bindings apply to their own parameters.
-fn validate_projection_exclusivity(
-    notification: &NotificationRequest,
-    pick: Option<&[RawProjectionTerm]>,
-    omit: Option<&[RawProjectionTerm]>,
-) -> Result<(), SubscriptionError> {
+/// bindings apply to their own parameters. A member named in both `pick` and
+/// `omit` is refused once the two are expanded, since only the expansions
+/// tell whether two names are one member.
+fn validate_projection_exclusivity(notification: &NotificationRequest) -> Result<(), SubscriptionError> {
     check_projection_exclusivity(ProjectionSelectors {
-        pick,
-        omit,
+        pick: Presence::of(notification.pick.as_ref()),
+        omit: Presence::of(notification.omit.as_ref()),
         attrs: Presence::of(notification.attributes.as_ref()),
     })
     .map_err(|conflict| SubscriptionError::Validation(SubscriptionValidationReason::Projection(conflict)))
@@ -128,7 +126,6 @@ mod tests {
         subscription_validation_reason::SubscriptionValidationReason,
     };
     use andromeda_ngsi_ld_model::notification_request::NotificationRequest;
-    use andromeda_ngsi_ld_query::projection::exclusivity::ProjectionConflict;
     use serde_json::{Value, json};
 
     fn notification(wire: Value) -> NotificationRequest {
@@ -170,27 +167,6 @@ mod tests {
             let result = validate_notification(&notification(wire.clone()), None);
             assert!(
                 matches!(&result, Err(SubscriptionError::Validation(SubscriptionValidationReason::Projection(_)))),
-                "{wire}: {result:?}"
-            );
-        }
-    }
-
-    /// Two strings of one member are one list: a member in either string of
-    /// `pick` and in `omit` is named in both.
-    #[test]
-    fn a_member_named_in_both_pick_and_omit_is_refused() {
-        for wire in [
-            json!({"pick": ["id"], "omit": ["id"]}),
-            json!({"pick": ["name", "speed"], "omit": ["type,speed"]}),
-        ] {
-            let result = validate_notification(&notification(wire.clone()), None);
-            assert!(
-                matches!(
-                    &result,
-                    Err(SubscriptionError::Validation(SubscriptionValidationReason::Projection(
-                        ProjectionConflict::MemberPickedAndOmitted { .. }
-                    )))
-                ),
                 "{wire}: {result:?}"
             );
         }
