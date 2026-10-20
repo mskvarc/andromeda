@@ -1,18 +1,18 @@
 //! Query parameter types for JSON-LD context management endpoints.
 
 use crate::pagination::{
-    page_size::{PageSizeBounds, PageSizeCap},
+    page_size::{BROKER_PAGE_SIZE_CAP, PageSizeBounds},
     parameters::PageParameters,
 };
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 use serde::Deserialize;
 
 /// The page size of List @contexts: 100 when the request names no `limit`,
-/// and whatever it names otherwise, as for the broker's other administrative
-/// collections.
+/// and at most the broker's cap, since every `@context` a request carries
+/// inline or by reference can add one.
 pub const CONTEXT_PAGE_SIZE: PageSizeBounds = PageSizeBounds {
     default: 100,
-    cap: PageSizeCap::Uncapped,
+    cap: BROKER_PAGE_SIZE_CAP,
 };
 
 /// Query parameters for `GET /jsonldContexts` (list contexts).
@@ -55,9 +55,21 @@ pub struct DeleteParams {
 
 #[cfg(test)]
 mod tests {
-    use crate::jsonld_context::{DeleteParams, ListParams, ServeParams};
+    use crate::{
+        jsonld_context::{CONTEXT_PAGE_SIZE, DeleteParams, ListParams, ServeParams},
+        pagination::page_size::PageSizeExceeded,
+    };
     use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
     use pretty_assertions::assert_eq;
+
+    /// List @contexts answers with 100 by default, serves 1000 and refuses
+    /// more.
+    #[test]
+    fn context_page_size_is_one_hundred_capped_at_one_thousand() {
+        assert_eq!(CONTEXT_PAGE_SIZE.limit(None), Ok(100));
+        assert_eq!(CONTEXT_PAGE_SIZE.limit(Some(1000)), Ok(1000));
+        assert_eq!(CONTEXT_PAGE_SIZE.limit(Some(5000)), Err(PageSizeExceeded { requested: 5000, cap: 1000 }));
+    }
 
     #[test]
     fn serve_reads_the_detail_level() {

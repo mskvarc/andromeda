@@ -9,6 +9,9 @@ use andromeda_ngsi_ld_request::error::ParameterError;
 pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
     match error {
         ParameterError::Query(source) => classify_query_error(source),
+        // Clause 5.5.6 answers a request the broker will not serve whole with
+        // `TooManyResults`, whose threshold it leaves to the implementation.
+        ParameterError::PageSizeExceeded(_) => ClassifiedReport::public(NgsiLdErrorType::TooManyResults, error.to_string()),
         // Clause 5.7.4.4 names the ineligible-aggregation failure an
         // InvalidRequest, beside the clause 6.3.20 parameter incompatibilities,
         // of which `type=*` contradicted by `local=false` is one.
@@ -57,7 +60,7 @@ mod tests {
     use crate::parameter_failure::classify_parameter_error;
     use andromeda_http_headers::media_type::ResponseMediaType;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-    use andromeda_ngsi_ld_request::error::ParameterError;
+    use andromeda_ngsi_ld_request::{error::ParameterError, pagination::page_size::PageSizeExceeded};
     use pretty_assertions::assert_eq;
 
     /// Clause 6.3.20: a cursor where the collection offers no cursor walk is a
@@ -77,6 +80,15 @@ mod tests {
             classify_parameter_error(&ParameterError::PaginationUndefined).error_type(),
             NgsiLdErrorType::InvalidRequest
         );
+    }
+
+    /// Clause 5.5.6: a `limit` above the cap is `TooManyResults`, and the
+    /// detail names the cap.
+    #[test]
+    fn a_limit_above_the_cap_is_too_many_results_naming_the_cap() {
+        let report = classify_parameter_error(&ParameterError::PageSizeExceeded(PageSizeExceeded { requested: 1001, cap: 1000 }));
+        assert_eq!(report.error_type(), NgsiLdErrorType::TooManyResults);
+        assert!(report.detail().contains("at most 1000"), "{}", report.detail());
     }
 
     /// A cursor over a requested ordering is input the operation cannot meet.

@@ -9,7 +9,7 @@
 //! a parameter is parsed by the language wherever the language defines its
 //! grammar, and there is one error chain either way.
 
-use crate::{query_narrowing::LocalScopeNarrowing, unsupported_representation::UnsupportedRepresentation};
+use crate::{pagination::page_size::PageSizeExceeded, query_narrowing::LocalScopeNarrowing, unsupported_representation::UnsupportedRepresentation};
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_linked_retrieval::admission::{AdmissionError, LinkedMember, LinkedOperation, ReachingMember};
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, temporal_format::TemporalFormat};
@@ -67,6 +67,10 @@ pub enum ParameterError {
     /// 6.3.10-1 permits only when a count is requested.
     #[error("limit=0 is only allowed together with the count option")]
     LimitZeroWithoutCount,
+    /// `limit` asked for more elements than one page of the collection holds,
+    /// a `TooManyResults` (clause 5.5.6).
+    #[error(transparent)]
+    PageSizeExceeded(#[from] PageSizeExceeded),
     /// `cursor` and `offset` were both supplied (clause 5.5.9).
     ///
     /// An opaque `cursor` is a keyset continuation (clause 5.5.9.1) and `offset`

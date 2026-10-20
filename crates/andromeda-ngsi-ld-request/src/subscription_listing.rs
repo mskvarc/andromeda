@@ -5,7 +5,7 @@ use crate::{
     error::ParameterError,
     options::ListOptions,
     pagination::{
-        page_size::{PageSizeBounds, PageSizeCap},
+        page_size::{BROKER_PAGE_SIZE_CAP, PageSizeBounds},
         parameters::PageParameters,
     },
     representation_parameter::{WrittenValue, supported_option},
@@ -13,11 +13,11 @@ use crate::{
 use serde::Deserialize;
 
 /// The page size of the subscription collections: 100 when the request names
-/// no `limit`, and whatever it names otherwise. A broker's subscriptions are
-/// its own administrative state, small enough to be read whole on request.
+/// no `limit`, and at most the broker's cap, since a tenant can hold any
+/// number of subscriptions.
 pub const SUBSCRIPTION_PAGE_SIZE: PageSizeBounds = PageSizeBounds {
     default: 100,
-    cap: PageSizeCap::Uncapped,
+    cap: BROKER_PAGE_SIZE_CAP,
 };
 
 /// Query parameters for listing subscriptions of either kind.
@@ -50,16 +50,20 @@ impl ListParams {
 
 #[cfg(test)]
 mod tests {
-    use crate::subscription_listing::{ListParams, SUBSCRIPTION_PAGE_SIZE};
+    use crate::{
+        pagination::page_size::PageSizeExceeded,
+        subscription_listing::{ListParams, SUBSCRIPTION_PAGE_SIZE},
+    };
     use andromeda_ngsi_ld_query::count_policy::CountPolicy;
     use pretty_assertions::assert_eq;
 
-    /// The subscription collections answer with 100 by default and honour a
-    /// larger request.
+    /// The subscription collections answer with 100 by default, serve 1000
+    /// and refuse more.
     #[test]
-    fn subscription_page_size_is_one_hundred_uncapped() {
-        assert_eq!(SUBSCRIPTION_PAGE_SIZE.limit(None), 100);
-        assert_eq!(SUBSCRIPTION_PAGE_SIZE.limit(Some(5000)), 5000);
+    fn subscription_page_size_is_one_hundred_capped_at_one_thousand() {
+        assert_eq!(SUBSCRIPTION_PAGE_SIZE.limit(None), Ok(100));
+        assert_eq!(SUBSCRIPTION_PAGE_SIZE.limit(Some(1000)), Ok(1000));
+        assert_eq!(SUBSCRIPTION_PAGE_SIZE.limit(Some(1001)), Err(PageSizeExceeded { requested: 1001, cap: 1000 }));
     }
 
     /// The page and the options are read side by side.

@@ -1,17 +1,16 @@
 //! Query parameter types for the tenant-management reads.
 
 use andromeda_ngsi_ld_request::pagination::{
-    page_size::{PageSizeBounds, PageSizeCap},
+    page_size::{BROKER_PAGE_SIZE_CAP, PageSizeBounds},
     parameters::PageParameters,
 };
 use serde::Deserialize;
 
 /// The page size of the tenant collection: 100 when the request names no
-/// `limit`, and whatever it names otherwise. A broker's tenants are few enough
-/// to be read whole on request.
+/// `limit`, and at most the broker's cap, as for every other paged collection.
 pub const TENANT_PAGE_SIZE: PageSizeBounds = PageSizeBounds {
     default: 100,
-    cap: PageSizeCap::Uncapped,
+    cap: BROKER_PAGE_SIZE_CAP,
 };
 
 /// Query parameters for `GET /ngsi-ld/v1/tenants` (list tenants).
@@ -35,4 +34,20 @@ pub struct TenantListParams {
 pub struct TenantIntrospectionParams {
     /// The `options` keywords (`sysAttrs`, `usage`).
     pub options: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::params::TENANT_PAGE_SIZE;
+    use andromeda_ngsi_ld_request::pagination::page_size::PageSizeExceeded;
+    use pretty_assertions::assert_eq;
+
+    /// The tenant collection answers with 100 by default, serves 1000 and
+    /// refuses more.
+    #[test]
+    fn tenant_page_size_is_one_hundred_capped_at_one_thousand() {
+        assert_eq!(TENANT_PAGE_SIZE.limit(None), Ok(100));
+        assert_eq!(TENANT_PAGE_SIZE.limit(Some(1000)), Ok(1000));
+        assert_eq!(TENANT_PAGE_SIZE.limit(Some(1001)), Err(PageSizeExceeded { requested: 1001, cap: 1000 }));
+    }
 }

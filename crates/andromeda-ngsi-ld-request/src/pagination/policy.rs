@@ -75,7 +75,8 @@ impl PaginationPolicy {
     /// Every pagination rule is applied here, in this order: a followed pointer
     /// under another `@context`, a cursor where none can be followed, a cursor
     /// beside an offset, a cursor over a requested ordering, then `limit=0`
-    /// without a count; then the limit is bounded and the start decided.
+    /// without a count; then the start is decided and the limit checked
+    /// against the collection's cap.
     ///
     /// # Errors
     ///
@@ -92,6 +93,8 @@ impl PaginationPolicy {
     ///   4.23 ordering, which a cursor's identifier position cannot walk.
     /// - [`ParameterError::LimitZeroWithoutCount`] for `limit=0` without a
     ///   count (Table 6.3.10-1).
+    /// - [`ParameterError::PageSizeExceeded`] for a `limit` above the
+    ///   collection's cap (clauses 5.5.6 and 5.5.9.1).
     pub fn window(self, page: &PageParameters, request: PageRequest<'_>) -> Result<PageWindow, ParameterError> {
         if page.context.as_ref().is_some_and(|walked| walked != request.context) {
             return Err(ParameterError::PageContextChanged);
@@ -110,7 +113,7 @@ impl PaginationPolicy {
             (None, None) => self.fresh_start(request),
         };
         Ok(PageWindow {
-            limit: request.size.limit(page.limit),
+            limit: request.size.limit(page.limit)?,
             start,
         })
     }
@@ -160,7 +163,7 @@ mod tests {
             page_context::PageContext,
             page_pointers::PagePointers,
             page_request::{CollectionOrder, PageRequest},
-            page_size::{PageSizeBounds, PageSizeCap},
+            page_size::{PageSizeBounds, PageSizeCap, PageSizeExceeded},
             paging_mode::PagingMode,
             parameters::PageParameters,
             policy::{PaginationPolicy, PaginationPolicyError},
@@ -410,11 +413,34 @@ mod tests {
     }
 
     #[test]
-    fn the_cap_bounds_the_limit() {
-        let limit = window(PaginationPolicy::CursorDefault, &page(Some(5000), None, None), identifier())
+    fn a_limit_equal_to_the_cap_is_served() {
+        let limit = window(PaginationPolicy::CursorDefault, &page(Some(1000), None, None), identifier())
             .ok()
             .map(|window| window.limit);
         assert_eq!(limit, Some(1000));
+    }
+
+    /// Clauses 5.5.6 and 5.5.9.1: a page smaller than the requested `limit`
+    /// is not served in its place.
+    #[test]
+    fn a_limit_above_the_cap_is_refused_naming_the_cap() {
+        let error = window(PaginationPolicy::CursorDefault, &page(Some(5000), None, None), identifier()).expect_err("refused");
+        assert!(
+            matches!(error, ParameterError::PageSizeExceeded(PageSizeExceeded { requested: 5000, cap: 1000 })),
+            "{error}"
+        );
+    }
+
+    /// The cap is checked by offset and by cursor alike.
+    #[test]
+    fn a_limit_above_the_cap_is_refused_on_a_followed_cursor() {
+        let error = window(
+            PaginationPolicy::CursorDefault,
+            &page(Some(1001), None, Some(CursorRequest::Continue(after("urn:e:1")))),
+            identifier(),
+        )
+        .expect_err("refused");
+        assert!(matches!(error, ParameterError::PageSizeExceeded(_)), "{error}");
     }
 
     #[test]

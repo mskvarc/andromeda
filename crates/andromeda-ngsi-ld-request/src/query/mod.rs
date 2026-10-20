@@ -15,7 +15,7 @@ pub mod entity_selector;
 pub mod parameter_error;
 pub mod temporal;
 
-use crate::pagination::page_size::{PageSizeBounds, PageSizeCap};
+use crate::pagination::page_size::{BROKER_PAGE_SIZE_CAP, PageSizeBounds};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, projection::grammar::RawProjectionTerm};
 
@@ -37,11 +37,11 @@ pub trait SharedQueryParams {
 }
 
 /// The page size of the three query endpoints: 20 when the request names no
-/// `limit`, and at most 1000, which stops one request from asking for an
-/// unbounded result set (clause 5.5.6 leaves both to the broker).
+/// `limit`, and at most the broker's cap (clause 5.5.6 leaves both to the
+/// broker).
 pub const QUERY_PAGE_SIZE: PageSizeBounds = PageSizeBounds {
     default: 20,
-    cap: PageSizeCap::Capped(1000),
+    cap: BROKER_PAGE_SIZE_CAP,
 };
 
 /// Implement [`SharedQueryParams`] for a query parameter struct.
@@ -77,13 +77,15 @@ macro_rules! params_from_query {
 
 #[cfg(test)]
 mod tests {
-    use crate::query::QUERY_PAGE_SIZE;
+    use crate::{pagination::page_size::PageSizeExceeded, query::QUERY_PAGE_SIZE};
     use pretty_assertions::assert_eq;
 
-    /// The query endpoints answer with 20 by default and at most 1000.
+    /// The query endpoints answer with 20 by default, serve 1000 and refuse
+    /// more.
     #[test]
     fn query_page_size_is_twenty_capped_at_one_thousand() {
-        assert_eq!(QUERY_PAGE_SIZE.limit(None), 20);
-        assert_eq!(QUERY_PAGE_SIZE.limit(Some(5000)), 1000);
+        assert_eq!(QUERY_PAGE_SIZE.limit(None), Ok(20));
+        assert_eq!(QUERY_PAGE_SIZE.limit(Some(1000)), Ok(1000));
+        assert_eq!(QUERY_PAGE_SIZE.limit(Some(5000)), Err(PageSizeExceeded { requested: 5000, cap: 1000 }));
     }
 }

@@ -10,4 +10,3 @@
 mod internal_error;
 mod no_multi_tenant_support;
 mod too_complex_query;
-mod too_many_results;
