@@ -9,13 +9,11 @@
 //! out of history, keeps current state and everything that reads it exact, and
 //! records the Temporal API exactly as before.
 //!
-//! The self-contained `core-write-history` stack runs one PostgreSQL and three
+//! The self-contained `core-write-history` stack runs one PostgreSQL and two
 //! brokers over the same database, so a test writes through one and reads the
 //! Temporal Evolution back through any of them.
 //!
 //! - `core-write-history-not-recorded` (host :1101), the subject.
-//! - `core-write-history-deferred` (host :1102), the subject with
-//!   `append_mode = "deferred"`.
 //! - `core-write-history-recorded` (host :1103), the default, which records
 //!   Core writes: the control every contrast is drawn against.
 //!
@@ -31,7 +29,6 @@ mod attribute_writes;
 mod batch_writes;
 mod broker_roles;
 mod current_state;
-mod deferred_append;
 mod entity_writes;
 mod evolution;
 mod notifications;

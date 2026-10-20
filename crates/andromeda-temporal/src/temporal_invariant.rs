@@ -32,12 +32,6 @@ pub enum TemporalInvariant {
     /// A temporal intent lease duration cannot be expressed as a calendar duration.
     #[error("a temporal intent lease duration is out of range: {0}")]
     LeaseOutOfRange(#[source] OutOfRangeError),
-    /// The pending history of an entity is leased by another delivery owner.
-    #[error("pending temporal history is leased by another delivery owner")]
-    PendingHistoryLeasedElsewhere,
-    /// Pending history remains after the bounded mutation barrier.
-    #[error("pending temporal history remains after the bounded mutation barrier")]
-    PendingHistoryRemains,
     /// An attribute IRI the JSON-LD engine expanded is not an attribute name.
     #[error("an expanded attribute IRI is not an attribute name: {0}")]
     ExpandedAttributeName(#[source] NgsiLdReferenceError),

@@ -1,6 +1,6 @@
 name: andromeda-core-write-history
 
-# Three brokers over one database, so a test can write through one and read
+# Two brokers over one database, so a test can write through one and read
 # the Temporal Evolution back through any: whether a write is recorded is
 # decided by the broker that commits it.
 x-broker-base: &broker-base
@@ -26,7 +26,7 @@ x-broker-base: &broker-base
     ANDROMEDA__TEMPORAL__DEFAULT_LAST_N: "1000"
     ANDROMEDA__TEMPORAL__MAX_LAST_N: "1000"
     ANDROMEDA__TEMPORAL__EXPIRATION_CHECK_INTERVAL: "1s"
-    # Broker share: 3 x (16 + 4 x 4) = 96 of max_connections.
+    # Broker share: 2 x (16 + 4 x 4) = 64 of max_connections.
     ANDROMEDA__DATABASE__MAX_CONNECTIONS: "16"
     ANDROMEDA__TENANCY__TENANT_MAX_CONNECTIONS: "4"
     ANDROMEDA__TENANCY__RUNTIME_IDLE_TTL: "60s"
@@ -73,22 +73,9 @@ services:
     ports:
       - "1101:1101"
 
-  # The same, with the Temporal API's history queued and drained after commit.
-  core-write-history-deferred:
-    <<: *broker-base
-    environment:
-      <<: *broker-env
-      ANDROMEDA__SERVER__PORT: "1102"
-      ANDROMEDA__TEMPORAL__CORE_WRITE_HISTORY: "not-recorded"
-      ANDROMEDA__TEMPORAL__APPEND_MODE: "deferred"
-      ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:core-write-history-deferred"
-      ANDROMEDA__IDENTITY__SOURCE_ALIAS: "core-write-history-deferred"
-    ports:
-      - "1102:1102"
-
   # The default, which records Core writes: the control every contrast is drawn against.
   # The expiry sweep deletes as the broker that runs it, so only the not-recorded
-  # brokers sweep: with this one sweeping too, whichever broker won the race
+  # broker sweeps: with this one sweeping too, whichever broker won the race
   # decided whether an expiry reached the Temporal Evolution.
   core-write-history-recorded:
     <<: *broker-base

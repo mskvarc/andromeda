@@ -1,6 +1,6 @@
 //! Durable claim, retry and pending state for temporal intent delivery.
 //!
-//! Only the live branch defers its temporal history, so the queue is the live
+//! Only the live branch queues its temporal history, so the queue is the live
 //! branch's and no operation names a branch.
 
 use crate::{append_intent::TemporalIntentKey, error::TemporalError};
@@ -8,7 +8,7 @@ use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, leas
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use std::num::NonZeroU32;
+use std::{num::NonZeroU32, time::Duration};
 
 /// Non-zero upper bound for one temporal intent claim.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -51,26 +51,60 @@ pub struct TemporalIntentRetry {
     pub summary: String,
 }
 
+/// Whether the queued intents of one entity up to a high-water mark are free
+/// for a mutation barrier to claim.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EntityRelease {
+    /// None of them is queued any more.
+    Clear,
+    /// At least one is unleased, or its lease has lapsed.
+    Claimable,
+    /// Every one still queued is held under another owner's live lease.
+    Held {
+        /// The time until the last of those leases lapses, on the queue's own
+        /// clock.
+        remaining_lease: Duration,
+    },
+}
+
 /// Durable queue operations consumed by the temporal policy drain.
 #[async_trait]
 pub trait TemporalIntentQueue: Send + Sync {
-    /// Claim the oldest eligible intents for one bounded lease interval.
+    /// Claim the oldest intents whose retry delay has passed, for one bounded
+    /// lease interval.
     #[must_use = "temporal intent claims must be awaited"]
     async fn claim(&self, owner: LeaseHolder, limit: TemporalIntentBatchSize, lease_until: DateTime<Utc>) -> Result<Vec<ClaimedTemporalIntent>, TemporalError>;
 
-    /// Claim the oldest eligible intents for one entity before an immediate mutation.
+    /// Claim the oldest unleased intents of `entity_id` keyed at most
+    /// `through`, before an immediate mutation, whether or not their retry
+    /// delay has passed.
+    ///
+    /// The retry delay paces the background drain; a client waiting on its
+    /// own mutation is better served by an attempt now.
     #[must_use = "entity-scoped temporal intent claims must be awaited"]
     async fn claim_for_entity(
         &self,
         owner: LeaseHolder,
         entity_id: &Identifier,
+        through: TemporalIntentKey,
         limit: TemporalIntentBatchSize,
         lease_until: DateTime<Utc>,
     ) -> Result<Vec<ClaimedTemporalIntent>, TemporalError>;
 
-    /// Whether the queue holds an intent for `entity_id`, leased or not.
-    #[must_use = "the pending probe must be awaited"]
-    async fn holds_intent_for(&self, entity_id: &Identifier) -> Result<bool, TemporalError>;
+    /// The key of the newest intent the queue holds for `entity_id`, leased
+    /// or not, and [`None`] when it holds none.
+    #[must_use = "the high-water probe must be awaited"]
+    async fn last_intent_for(&self, entity_id: &Identifier) -> Result<Option<TemporalIntentKey>, TemporalError>;
+
+    /// Wait, at most `wait`, until no intent of `entity_id` keyed at most
+    /// `through` is held under a live lease, and report what the wait ended
+    /// on.
+    ///
+    /// Answers at once with [`EntityRelease::Clear`] or
+    /// [`EntityRelease::Claimable`]; [`EntityRelease::Held`] only once `wait`
+    /// has run out.
+    #[must_use = "the release wait must be awaited"]
+    async fn await_entity_release(&self, entity_id: &Identifier, through: TemporalIntentKey, wait: Duration) -> Result<EntityRelease, TemporalError>;
 
     /// Release one intent whose application failed, with explicit retry
     /// metadata.

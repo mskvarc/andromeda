@@ -166,24 +166,6 @@ services:
     ports:
       - "1085:1085"
 
-  # Deferred temporal history over the primary database: the live branch queues
-  # its history, a Snapshot branch records it in the write's transaction.
-  snapshot-deferred:
-    <<: *broker-base
-    depends_on:
-      snapshot-postgres-primary:
-        condition: service_healthy
-      snapshot-primary:
-        condition: service_healthy
-    environment:
-      <<: *primary-env
-      # Not 1086: the xtask host broker's management plane binds it.
-      ANDROMEDA__SERVER__PORT: "1088"
-      ANDROMEDA__TEMPORAL__APPEND_MODE: "deferred"
-      ANDROMEDA__IDENTITY__ADVERTISED_URL: "http://snapshot-deferred:1088"
-    ports:
-      - "1088:1088"
-
 volumes:
   snapshot-postgres-primary-data:
   snapshot-postgres-remote-data:

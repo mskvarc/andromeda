@@ -11,7 +11,7 @@ pub mod aggregation_eligibility;
 mod answered_evolution;
 /// The instances a Context Source answered a temporal query with, as history rows.
 mod answered_history;
-/// Typed, durable consequences for deferred temporal append.
+/// Typed, durable consequences for queued temporal append.
 pub mod append_intent;
 mod attribute_instance_mutation;
 mod compilation;
@@ -29,7 +29,8 @@ pub mod forwarded_evolution;
 mod grouping_depth;
 /// The page sizes an instance-returning temporal read runs under.
 pub mod instance_limits;
-/// Bounded delivery of deferred temporal append intents.
+/// Bounded delivery of queued temporal append intents, and the mutation
+/// barrier over them.
 pub mod intent_drain;
 mod intent_preparation;
 /// How a rejected temporal append intent is rescheduled and when it is stuck.
@@ -72,6 +73,8 @@ pub mod temporal_not_found_reason;
 pub mod temporal_operation_unsupported;
 pub mod temporal_validation_reason;
 mod unit_code_admission;
+/// A mutation refused while its entity's queued history is held elsewhere.
+pub mod unsettled_history;
 mod write;
 /// What one temporal write is for, and what an absent evolution means for it.
 pub mod write_purpose;
@@ -81,7 +84,7 @@ mod written_evolution;
 mod written_instance;
 
 #[cfg(test)]
-mod deferred_history_tests;
+mod intent_drain_tests;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

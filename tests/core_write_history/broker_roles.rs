@@ -1,25 +1,18 @@
-//! The three brokers of the stack, and a client for each.
+//! The two brokers of the stack, and a client for each.
 
 use andromeda_test_client::{broker_endpoint::BrokerEndpoint, test_client::TestClient};
 use std::env;
 
-/// Environment variable naming the deferred subject broker's API base.
-const DEFERRED_BROKER_URL_ENV: &str = "ANDROMEDA_TEST_DEFERRED_BROKER_URL";
 /// Environment variable naming the recording control broker's API base.
 const RECORDING_BROKER_URL_ENV: &str = "ANDROMEDA_TEST_RECORDING_BROKER_URL";
-/// The deferred broker's API base when the environment names none.
-const DEFAULT_DEFERRED_BROKER_URL: &str = "http://127.0.0.1:1102/ngsi-ld/v1/";
 /// The recording broker's API base when the environment names none.
 const DEFAULT_RECORDING_BROKER_URL: &str = "http://127.0.0.1:1103/ngsi-ld/v1/";
 
-/// One of the stack's two other brokers, named by what it does with a Core
-/// write. The harness's own broker is the subject: it leaves Core writes out
-/// of history and writes the Temporal API's in the write's own transaction.
+/// The stack's other broker, named by what it does with a Core write. The
+/// harness's own broker is the subject: it leaves Core writes out of history
+/// and writes the Temporal API's in the write's own transaction.
 #[derive(Clone, Copy, Debug)]
 pub enum Broker {
-    /// Leaves Core writes out of history and queues the Temporal API's for the
-    /// deferred drain.
-    Deferred,
     /// Records Core writes, the default.
     Recorded,
 }
@@ -28,7 +21,6 @@ pub enum Broker {
 /// through either land in the same database and tenant.
 pub fn client_for(harness: &TestClient, broker: Broker) -> TestClient {
     match broker {
-        Broker::Deferred => sibling(harness, DEFERRED_BROKER_URL_ENV, DEFAULT_DEFERRED_BROKER_URL),
         Broker::Recorded => sibling(harness, RECORDING_BROKER_URL_ENV, DEFAULT_RECORDING_BROKER_URL),
     }
 }

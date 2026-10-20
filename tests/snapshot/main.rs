@@ -9,7 +9,6 @@ mod clone_liveness;
 mod clone_writes;
 mod core;
 mod coverage;
-mod deferred_history;
 mod lifecycle;
 mod model_protocol;
 #[path = "../support/notification_adapter.rs"]

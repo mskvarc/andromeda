@@ -18,7 +18,7 @@ use andromeda_temporal::{
     },
 };
 use sqlx::PgPool;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 /// The temporal history capabilities one tenant's commits and reads share.
 pub(super) struct TemporalComposition {
@@ -31,9 +31,9 @@ pub(super) struct TemporalComposition {
 /// The ports the request-facing temporal path reads history through and gates
 /// its mutations on.
 ///
-/// The two belong together because deferred history couples them: the barrier
-/// is what an immediate mutation waits on until the intents a commit queued
-/// have been applied to the history the reader reads.
+/// The two belong together because queued history couples them: the barrier
+/// is what an immediate mutation waits on until the intents a respond-async
+/// commit queued have been applied to the history the reader reads.
 pub(super) struct TemporalPorts {
     /// The reader temporal reads go through.
     pub(super) reader: Arc<dyn TemporalHistoryReader>,
@@ -41,11 +41,11 @@ pub(super) struct TemporalPorts {
     pub(super) mutation_barrier: Arc<dyn TemporalMutationBarrier>,
 }
 
-/// Register the deferred-history drain and select the tenant's history mode.
+/// Register the intent drain, its mutation barrier bounded by the HTTP
+/// `request_timeout`, and select the tenant's history mode.
 ///
-/// The drain is registered whichever append mode is configured: a tenant moved
-/// back to `Native` must still deliver the intents an earlier `Deferred` run
-/// committed.
+/// The drain always runs, because every respond-async commit queues its
+/// live-branch history as intents for it to apply.
 ///
 /// # Errors
 ///
@@ -56,21 +56,21 @@ pub(super) fn compose_temporal_history(
     pool: &PgPool,
     repository: &Arc<TemporalRepository>,
     config: &TemporalConfig,
+    request_timeout: Duration,
     supervisor: &TaskSupervisor,
     pacer: &Arc<BackgroundPacer>,
 ) -> Result<TemporalComposition, TenantAssemblyError> {
     let intent_store = Arc::new(PostgresTemporalIntentStore::new(pool));
     let TemporalIntentRegistration { publisher, mutation_barrier } = register_temporal_intent_drain(
         config,
+        request_timeout,
         supervisor,
         Arc::clone(&intent_store) as Arc<dyn TemporalIntentQueue>, // clone: one store answers both intent ports.
         intent_store as Arc<dyn TemporalIntentApplication>,
         Arc::clone(pacer), // clone: the intent drain consults the tenant's one pacer.
     )?;
     let recorder = Arc::new(TemporalRecorder::new(Arc::clone(repository))); // clone: the recorder and the read path share one repository.
-    // Both modes queue a respond-async commit's history, so both hold the
-    // drain's wake.
-    let history_mode = TemporalHistoryCommitMode::new(config.append_mode, recorder, publisher);
+    let history_mode = TemporalHistoryCommitMode::new(recorder, publisher);
     Ok(TemporalComposition {
         history_mode,
         ports: TemporalPorts {

@@ -1,9 +1,19 @@
-//! Bounded, ordered delivery of deferred temporal append intents.
+//! Bounded, ordered delivery of queued temporal append intents, and the
+//! mutation barrier over them.
 //!
 //! A pass claims a batch and applies it in one transaction. When the batch
 //! does not apply, it is applied again one intent per transaction, so one
 //! intent that cannot be applied holds back none of the others and is the only
 //! one rescheduled.
+//!
+//! The barrier applies one entity's queued intents before a Temporal API
+//! mutation of its history. It waits only for the intents queued when it
+//! starts, up to the entity's newest key at that moment: a later intent is a
+//! concurrent write, and waiting for it too would never end under sustained
+//! writes. It claims them whatever their retry delay, claims again while a
+//! claim leaves some behind, and waits, at most its bound, for another owner's
+//! lease on them; a wait that runs out answers
+//! [`TemporalError::HistoryUnsettled`].
 
 use crate::{
     append_intent::TemporalIntentKey,
@@ -12,9 +22,10 @@ use crate::{
     port::{
         mutation_barrier::TemporalMutationBarrier,
         temporal_intent_application::TemporalIntentApplication,
-        temporal_intent_queue::{ClaimedTemporalIntent, TemporalIntentBatchSize, TemporalIntentQueue, TemporalIntentRetry},
+        temporal_intent_queue::{ClaimedTemporalIntent, EntityRelease, TemporalIntentBatchSize, TemporalIntentQueue, TemporalIntentRetry},
     },
     temporal_invariant::TemporalInvariant,
+    unsettled_history::UnsettledHistory,
 };
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder, write_id::WriteId};
 use andromeda_context_space::context_target::ContextTarget;
@@ -23,7 +34,11 @@ use andromeda_telemetry::queue::{QueueName, QueueOutcome, record_queue_outcome};
 use async_lock::Mutex;
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
-use std::{slice, sync::Arc, time::Duration};
+use std::{
+    slice,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 /// Outcome of one bounded temporal intent drain pass.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -60,7 +75,7 @@ pub struct StuckTemporalIntent {
 
 /// Policy-owned bounded operation for ordered, idempotent intent delivery.
 ///
-/// Only the live branch defers its temporal history, so the drain delivers the
+/// Only the live branch queues its temporal history, so the drain delivers the
 /// live branch's queue and applies every intent to the live branch.
 pub struct TemporalIntentDrain {
     /// Durable anchor queue.
@@ -75,11 +90,14 @@ pub struct TemporalIntentDrain {
     lease_duration: Duration,
     /// How a failed intent is rescheduled and when it is reported as stuck.
     retry_policy: TemporalIntentRetryPolicy,
+    /// The longest the mutation barrier waits for another owner's lease on
+    /// the entity's queued history.
+    barrier_wait: Duration,
     /// Executor-independent gate preventing scheduled and request-driven passes from overlapping.
     execution_gate: Mutex<()>,
 }
 
-/// How one worker claims deferred intents and reschedules what it cannot apply.
+/// How one worker claims queued intents and reschedules what it cannot apply.
 ///
 /// The four values describe a single claim: who holds it, how much of the queue
 /// it takes, how long it is held before another worker may take it back, and
@@ -97,8 +115,14 @@ pub struct TemporalIntentClaim {
 }
 
 impl TemporalIntentDrain {
-    /// Construct one bounded temporal intent delivery operation.
-    pub const fn new(queue: Arc<dyn TemporalIntentQueue>, application: Arc<dyn TemporalIntentApplication>, claim: TemporalIntentClaim) -> TemporalIntentDrain {
+    /// Construct one bounded temporal intent delivery operation whose mutation
+    /// barrier waits at most `barrier_wait` for another owner's lease.
+    pub const fn new(
+        queue: Arc<dyn TemporalIntentQueue>,
+        application: Arc<dyn TemporalIntentApplication>,
+        claim: TemporalIntentClaim,
+        barrier_wait: Duration,
+    ) -> TemporalIntentDrain {
         let TemporalIntentClaim {
             owner,
             batch_size,
@@ -112,6 +136,7 @@ impl TemporalIntentDrain {
             batch_size,
             lease_duration,
             retry_policy,
+            barrier_wait,
             execution_gate: Mutex::new(()),
         }
     }
@@ -127,41 +152,51 @@ impl TemporalIntentDrain {
     /// returned outcome.
     pub async fn execute(&self, now: DateTime<Utc>) -> Result<TemporalIntentDrainOutcome, TemporalError> {
         let _execution = self.execution_gate.lock().await;
-        let lease_duration = TimeDelta::from_std(self.lease_duration).map_err(|error| TemporalError::from(TemporalInvariant::LeaseOutOfRange(error)))?;
-        let claimed = self.queue.claim(self.owner, self.batch_size, now + lease_duration).await?;
-        self.process_claimed(&claimed, now).await
+        let claimed = self.queue.claim(self.owner, self.batch_size, now + self.lease_delta()?).await?;
+        Ok(self.process_claimed(&claimed, now).await?.outcome)
+    }
+
+    /// The claim lease as a calendar duration.
+    fn lease_delta(&self) -> Result<TimeDelta, TemporalError> {
+        TimeDelta::from_std(self.lease_duration).map_err(|error| TemporalError::from(TemporalInvariant::LeaseOutOfRange(error)))
     }
 
     /// Apply a claimed batch in one transaction, and when it does not apply,
     /// each of its intents in one of its own, in durable sequence order.
-    async fn process_claimed(&self, claimed: &[ClaimedTemporalIntent], now: DateTime<Utc>) -> Result<TemporalIntentDrainOutcome, TemporalError> {
+    async fn process_claimed(&self, claimed: &[ClaimedTemporalIntent], now: DateTime<Utc>) -> Result<ClaimedPass, TemporalError> {
         let work_may_remain = claimed.len() == usize::try_from(self.batch_size.get()).unwrap_or(usize::MAX);
-        let mut outcome = TemporalIntentDrainOutcome {
-            work_may_remain,
-            ..TemporalIntentDrainOutcome::default()
+        let mut pass = ClaimedPass {
+            outcome: TemporalIntentDrainOutcome {
+                work_may_remain,
+                ..TemporalIntentDrainOutcome::default()
+            },
+            first_failure: None,
         };
         // A batch of one is applied once, by the per-intent pass below.
         if claimed.len() > 1
             && let Ok(LeaseAcknowledgement::Applied) = self.application.apply(self.owner, claimed).await
         {
-            outcome.acknowledged = claimed.len();
+            pass.outcome.acknowledged = claimed.len();
             record_queue_outcome(
                 QueueName::TemporalAppendIntents,
                 QueueOutcome::Completed,
                 u64::try_from(claimed.len()).unwrap_or(u64::MAX),
             );
-            return Ok(outcome);
+            return Ok(pass);
         }
         for claim in claimed {
-            let ended = self.apply_alone(claim, now, &mut outcome.stuck).await?;
-            match ended {
-                IntentEnd::Applied => outcome.acknowledged += 1,
-                IntentEnd::Retried => outcome.retried += 1,
-                IntentEnd::LeaseLost => outcome.lease_lost += 1,
-            }
+            let ended = self.apply_alone(claim, now, &mut pass.outcome.stuck).await?;
             record_queue_outcome(QueueName::TemporalAppendIntents, ended.queue_outcome(), 1);
+            match ended {
+                IntentEnd::Applied => pass.outcome.acknowledged += 1,
+                IntentEnd::Retried(failure) => {
+                    pass.outcome.retried += 1;
+                    pass.first_failure.get_or_insert(failure);
+                }
+                IntentEnd::LeaseLost => pass.outcome.lease_lost += 1,
+            }
         }
-        Ok(outcome)
+        Ok(pass)
     }
 
     /// Apply one claimed intent in a transaction of its own, rescheduling it
@@ -178,7 +213,7 @@ impl TemporalIntentDrain {
                     summary: TemporalIntentRetryPolicy::summary(&error),
                 };
                 Ok(match self.queue.retry(self.owner, claim, retry).await? {
-                    LeaseAcknowledgement::Applied => IntentEnd::Retried,
+                    LeaseAcknowledgement::Applied => IntentEnd::Retried(error),
                     LeaseAcknowledgement::Lost => IntentEnd::LeaseLost,
                 })
             }
@@ -186,23 +221,32 @@ impl TemporalIntentDrain {
     }
 }
 
+/// What one pass over a claimed batch did.
+struct ClaimedPass {
+    /// The counts a drain pass reports.
+    outcome: TemporalIntentDrainOutcome,
+    /// The failure of the first intent rescheduled, [`None`] when every
+    /// intent applied or was left to another owner.
+    first_failure: Option<TemporalError>,
+}
+
 /// How the delivery of one claimed intent ended.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 enum IntentEnd {
     /// The intent's entries are history and the intent left the queue.
     Applied,
-    /// The intent did not apply and is rescheduled.
-    Retried,
+    /// The intent did not apply, for the reason carried, and is rescheduled.
+    Retried(TemporalError),
     /// The lease lapsed before the outcome could be recorded.
     LeaseLost,
 }
 
 impl IntentEnd {
     /// The queue outcome the end is counted as.
-    const fn queue_outcome(self) -> QueueOutcome {
+    const fn queue_outcome(&self) -> QueueOutcome {
         match self {
             IntentEnd::Applied => QueueOutcome::Completed,
-            IntentEnd::Retried => QueueOutcome::Retried,
+            IntentEnd::Retried(_) => QueueOutcome::Retried,
             IntentEnd::LeaseLost => QueueOutcome::LeaseLost,
         }
     }
@@ -248,26 +292,46 @@ impl TemporalMutationBarrier for TemporalIntentDrain {
 }
 
 impl TemporalIntentDrain {
-    /// Apply every intent the live branch still queues for `entity_id` before
-    /// an immediate mutation of its history runs.
+    /// Apply every intent the live branch queued for `entity_id` before the
+    /// barrier started, ahead of an immediate mutation of its history.
+    ///
+    /// The execution gate is held around each claim and its application only,
+    /// never across the wait, so this replica's drain keeps running while the
+    /// barrier waits on another owner.
     async fn synchronize_live(&self, entity_id: &Identifier) -> Result<(), TemporalError> {
-        let _execution = self.execution_gate.lock().await;
-        if !self.queue.holds_intent_for(entity_id).await? {
+        let Some(through) = self.queue.last_intent_for(entity_id).await? else {
             return Ok(());
+        };
+        let lease = self.lease_delta()?;
+        let started = Instant::now();
+        loop {
+            let pass = {
+                let _execution = self.execution_gate.lock().await;
+                let now = Utc::now();
+                let claimed = self
+                    .queue
+                    .claim_for_entity(self.owner, entity_id, through, self.batch_size, now + lease)
+                    .await?;
+                self.process_claimed(&claimed, now).await?
+            };
+            // The retry is recorded, so the background drain keeps its delay;
+            // the mutation answers with what kept the history from applying.
+            if let Some(failure) = pass.first_failure {
+                return Err(failure);
+            }
+            if pass.outcome.acknowledged > 0 {
+                continue;
+            }
+            let remaining = self.barrier_wait.saturating_sub(started.elapsed());
+            match self.queue.await_entity_release(entity_id, through, remaining).await? {
+                EntityRelease::Clear => return Ok(()),
+                // A row another transaction still locks is claimable yet
+                // skipped by the claim, so once the wait is spent it is
+                // answered as held rather than claimed again without end.
+                EntityRelease::Claimable if remaining.is_zero() => return Err(TemporalError::HistoryUnsettled(UnsettledHistory::after(Duration::ZERO))),
+                EntityRelease::Claimable => (),
+                EntityRelease::Held { remaining_lease } => return Err(TemporalError::HistoryUnsettled(UnsettledHistory::after(remaining_lease))),
+            }
         }
-        let now = Utc::now();
-        let lease_duration = TimeDelta::from_std(self.lease_duration).map_err(|error| TemporalError::from(TemporalInvariant::LeaseOutOfRange(error)))?;
-        let claimed = self
-            .queue
-            .claim_for_entity(self.owner, entity_id, self.batch_size, now + lease_duration)
-            .await?;
-        if claimed.is_empty() {
-            return Err(TemporalInvariant::PendingHistoryLeasedElsewhere.into());
-        }
-        let outcome = self.process_claimed(&claimed, now).await?;
-        if outcome.retried > 0 || outcome.lease_lost > 0 || self.queue.holds_intent_for(entity_id).await? {
-            return Err(TemporalInvariant::PendingHistoryRemains.into());
-        }
-        Ok(())
     }
 }

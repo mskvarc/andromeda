@@ -11,12 +11,12 @@ use andromeda_postgresql_atomic_write::{committer::PostgresAtomicCommitter, hist
 use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_cache_config::NameCacheConfig, name_lookup::NameLookup};
 use andromeda_postgresql_pool::{read_share::ReadShare, write_reserve::WriteReserve};
 use andromeda_postgresql_temporal_store::{columnstore_capability::ColumnstoreSupport, recorder::TemporalRecorder, repo::TemporalRepository};
-use andromeda_temporal::{config::TemporalAppendMode, core_write_history::CoreWriteHistory, port::temporal_intent_publisher::NoTemporalIntentPublisher};
+use andromeda_temporal::{core_write_history::CoreWriteHistory, port::temporal_intent_publisher::NoTemporalIntentPublisher};
 use sqlx::PgPool;
 use std::sync::Arc;
 
-/// The broker's own committer over `pool`, recording history natively and every
-/// Core write in it.
+/// The broker's own committer over `pool`, recording synchronous history in the
+/// write's transaction and every Core write in it.
 pub fn committer(pool: &PgPool) -> PostgresAtomicCommitter {
     let attribute_names = Arc::new(NameCache::<AttributeName>::new(pool, &NameCacheConfig::default())) as Arc<dyn NameLookup<AttributeName>>;
     let entity_type_names = Arc::new(NameCache::<EntityTypeName>::new(pool, &NameCacheConfig::default())) as Arc<dyn NameLookup<EntityTypeName>>;
@@ -29,11 +29,7 @@ pub fn committer(pool: &PgPool) -> PostgresAtomicCommitter {
     ));
     PostgresAtomicCommitter::new(
         pool,
-        TemporalHistoryCommitMode::new(
-            TemporalAppendMode::Native,
-            Arc::new(TemporalRecorder::new(repository)),
-            Arc::new(NoTemporalIntentPublisher),
-        ),
+        TemporalHistoryCommitMode::new(Arc::new(TemporalRecorder::new(repository)), Arc::new(NoTemporalIntentPublisher)),
         CoreWriteHistory::Recorded,
         attribute_names,
         entity_type_names,

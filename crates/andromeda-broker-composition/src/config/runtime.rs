@@ -98,7 +98,7 @@ pub struct RuntimeConfig {
     /// JSON-LD processing and context-loading configuration.
     pub jsonld: JsonLdConfig,
 
-    /// Temporal policy and append-mode configuration.
+    /// Temporal history, paging and intent-drain configuration.
     pub temporal: TemporalConfig,
 
     /// Tenant creation and runtime-cache configuration.

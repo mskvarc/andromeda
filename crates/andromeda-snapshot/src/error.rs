@@ -223,11 +223,12 @@ pub(crate) const fn entity_recurrence(error: &EntityError) -> Recurrence {
 }
 
 /// Whether a fresh attempt at a temporal operation could succeed: only a lost
-/// race, a saturated pool or an unreachable store clears on its own.
+/// race, a saturated pool, an unreachable store or queued history another
+/// owner is still applying clears on its own.
 pub(crate) const fn temporal_recurrence(error: &TemporalError) -> Recurrence {
     if matches!(
         error,
-        TemporalError::TransactionContended | TemporalError::StoreSaturated | TemporalError::StoreUnavailable
+        TemporalError::TransactionContended | TemporalError::StoreSaturated | TemporalError::StoreUnavailable | TemporalError::HistoryUnsettled(_)
     ) {
         Recurrence::Transient
     } else {

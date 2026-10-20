@@ -8,7 +8,7 @@ use crate::{
     parameter_failure::classify_parameter_error,
     query_failure::classify_query_error,
 };
-use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
 use andromeda_temporal::error::TemporalError;
 
 /// Exhaustively classify one temporal-policy failure.
@@ -34,6 +34,12 @@ pub fn classify_temporal_error(error: &TemporalError) -> ClassifiedReport {
         TemporalError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
         TemporalError::TransactionContended => ClassifiedReport::transaction_contended(error.to_string()),
         TemporalError::StoreUnavailable => ClassifiedReport::store_unavailable(error.to_string()),
+        // Clause 5.5.6 has no type for a broker that is busy, so it stays
+        // `InternalError`; the 503 and the remaining lease as `Retry-After` say
+        // the identical mutation succeeds once the history is applied.
+        TemporalError::HistoryUnsettled(unsettled) => {
+            ClassifiedReport::public_binding(ProblemClassification::ServiceUnavailable, error.to_string()).with_retry_after(unsettled.retry_after())
+        }
         TemporalError::Commit(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to persist temporal history")),
         TemporalError::Persistence(_) => ClassifiedReport::internal(error, InternalFailureSummary::TEMPORAL_STORE_FAULT),
         TemporalError::Internal(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("internal temporal error")),
@@ -58,6 +64,7 @@ mod tests {
         temporal_not_found_reason::TemporalNotFoundReason,
         temporal_operation_unsupported::TemporalOperationUnsupported,
         temporal_validation_reason::TemporalValidationReason,
+        unsettled_history::UnsettledHistory,
     };
     use axum::http::StatusCode;
     use std::{num::NonZeroUsize, time::Duration};
@@ -118,6 +125,12 @@ mod tests {
                 Some(("the temporal store could not complete the operation", "the store rejected a statement")),
             ),
             (
+                "HistoryUnsettled",
+                TemporalError::HistoryUnsettled(UnsettledHistory::after(Duration::from_secs(3))),
+                NgsiLdErrorType::InternalError,
+                None,
+            ),
+            (
                 "Internal",
                 TemporalError::from(TemporalInvariant::RetrievalWithoutRoot),
                 NgsiLdErrorType::InternalError,
@@ -126,7 +139,9 @@ mod tests {
         ] {
             let report = classify_temporal_error(&error);
             pretty_assertions::assert_eq!(report.error_type(), expected, "wrong category for {name}");
-            pretty_assertions::assert_eq!(report.classification().status_code(), expected.status_code(), "wrong status for {name}");
+            if !matches!(error, TemporalError::HistoryUnsettled(_)) {
+                pretty_assertions::assert_eq!(report.classification().status_code(), expected.status_code(), "wrong status for {name}");
+            }
             if let Some((expected_detail, secret)) = internal_disclosure {
                 pretty_assertions::assert_eq!(report.detail(), expected_detail, "wrong internal detail for {name}");
                 assert!(!report.detail().contains(secret), "internal detail leaked for {name}: {}", report.detail());
@@ -173,6 +188,21 @@ mod tests {
             pretty_assertions::assert_eq!(classification.status_code(), StatusCode::SERVICE_UNAVAILABLE, "{error}");
             pretty_assertions::assert_eq!(report.retry_after(), Some(retry_after), "{error}");
         }
+    }
+
+    /// A mutation whose entity's queued history another owner still held when
+    /// the barrier's wait ran out is a 503 `InternalError` asking the client
+    /// to come back once that owner's lease lapses.
+    #[test]
+    fn an_unsettled_history_is_a_503_internal_error_retried_after_the_remaining_lease() {
+        let unsettled = UnsettledHistory::after(Duration::from_millis(2300));
+        let report = classify_temporal_error(&TemporalError::HistoryUnsettled(unsettled));
+        let classification = report.classification();
+        pretty_assertions::assert_eq!(classification, ProblemClassification::ServiceUnavailable);
+        pretty_assertions::assert_eq!(classification.status_code(), StatusCode::SERVICE_UNAVAILABLE);
+        pretty_assertions::assert_eq!(classification.type_iri().as_str(), NgsiLdErrorType::InternalError.type_iri().as_str());
+        pretty_assertions::assert_eq!(report.retry_after(), Some(unsettled.retry_after()));
+        pretty_assertions::assert_eq!(report.retry_after(), Some(Duration::from_secs(3)));
     }
 
     /// Clause 5.5.6: a statement the store refused on a valid request is an

@@ -55,7 +55,7 @@ struct EntityMutations {
 pub struct PostgresAtomicCommitter {
     /// Tenant pool whose connection owns the complete transaction.
     pool: PgPool,
-    /// Native or deferred temporal history behavior.
+    /// Whether a commit records its temporal history inline or queues it.
     history_mode: TemporalHistoryCommitMode,
     /// Whether Core writes add to the Temporal Evolution they change.
     core_write_history: CoreWriteHistory,

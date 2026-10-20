@@ -21,7 +21,7 @@ mod deferred_history;
 mod entity_group;
 mod history;
 mod history_interpretation;
-/// Native or deferred temporal history selection.
+/// Whether a commit records its temporal history inline or queues it.
 pub mod history_mode;
 /// PostgreSQL durable temporal intent queue.
 pub mod intent_store;

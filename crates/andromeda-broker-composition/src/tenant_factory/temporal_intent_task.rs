@@ -30,7 +30,7 @@ use andromeda_temporal::{
     },
 };
 use chrono::{DateTime, Utc};
-use std::{num::NonZeroU32, sync::Arc};
+use std::{num::NonZeroU32, sync::Arc, time::Duration};
 
 /// Runtime wake capability exposed through the temporal-owned commit notification port.
 struct RuntimeTemporalIntentPublisher {
@@ -61,9 +61,21 @@ pub(super) struct TemporalIntentRegistration {
     pub(super) mutation_barrier: Arc<dyn TemporalMutationBarrier>,
 }
 
-/// Register temporal-intent delivery as the first managed drain operation.
+/// How long the mutation barrier waits for another owner's lease on an
+/// entity's queued history before the mutation is answered 503.
+///
+/// Half the request deadline leaves the mutation itself room to run before
+/// the request times out, and a wait past one lease is pointless: the holder's
+/// lease has lapsed by then, and the barrier claims the history itself.
+fn barrier_wait(intent_lease: Duration, request_timeout: Duration) -> Duration {
+    intent_lease.min(request_timeout / 2)
+}
+
+/// Register temporal-intent delivery as the first managed drain operation,
+/// its mutation barrier bounded by the HTTP `request_timeout`.
 pub(super) fn register_temporal_intent_drain(
     config: &TemporalConfig,
+    request_timeout: Duration,
     supervisor: &TaskSupervisor,
     queue: Arc<dyn TemporalIntentQueue>,
     application: Arc<dyn TemporalIntentApplication>,
@@ -88,6 +100,7 @@ pub(super) fn register_temporal_intent_drain(
             lease_duration: config.intent_lease.duration(),
             retry_policy,
         },
+        barrier_wait(config.intent_lease.duration(), request_timeout),
     ));
     let scheduled_drain = Arc::clone(&drain);
     let name = TaskName::try_from("temporal-intent-delivery").map_err(AssemblyInvariant::from)?;
@@ -129,7 +142,8 @@ const fn classify_temporal_drain_failure(error: TemporalError) -> TaskFailure<Te
         | TemporalError::Persistence(_)
         | TemporalError::StoreSaturated
         | TemporalError::StoreUnavailable
-        | TemporalError::TransactionContended => FailureClass::Transient,
+        | TemporalError::TransactionContended
+        | TemporalError::HistoryUnsettled(_) => FailureClass::Transient,
         TemporalError::Internal(_) => FailureClass::InvariantViolation,
         TemporalError::Validation(_)
         | TemporalError::NotFound(_)
@@ -142,4 +156,21 @@ const fn classify_temporal_drain_failure(error: TemporalError) -> TaskFailure<Te
         | TemporalError::Request(_) => FailureClass::Permanent,
     };
     TaskFailure::new(class, error)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::tenant_factory::temporal_intent_task::barrier_wait;
+    use pretty_assertions::assert_eq;
+    use std::time::Duration;
+
+    #[test]
+    fn the_default_barrier_waits_half_the_request_deadline() {
+        assert_eq!(barrier_wait(Duration::from_secs(30), Duration::from_secs(30)), Duration::from_secs(15));
+    }
+
+    #[test]
+    fn a_lease_shorter_than_half_the_request_deadline_bounds_the_barrier() {
+        assert_eq!(barrier_wait(Duration::from_secs(5), Duration::from_secs(30)), Duration::from_secs(5));
+    }
 }

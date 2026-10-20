@@ -46,6 +46,7 @@ use std::{
     collections::hash_map::DefaultHasher,
     hash::Hasher,
     sync::{Arc, OnceLock},
+    time::Duration,
 };
 use tracing::debug;
 use url::Url;
@@ -105,6 +106,9 @@ struct TenantFactoryConfig {
     /// How every HTTP notification lays out its `Link` field lines, as the
     /// `[http]` table decides for responses.
     link_field: LinkFieldLayout,
+    /// The deadline every HTTP request runs under, which bounds how long a
+    /// Temporal API mutation waits for queued history held elsewhere.
+    request_timeout: Duration,
 }
 
 impl From<&RuntimeConfig> for TenantFactoryConfig {
@@ -123,6 +127,7 @@ impl From<&RuntimeConfig> for TenantFactoryConfig {
             tenancy: config.tenancy.clone(),
             extensions: config.extensions.clone(),
             link_field: config.http.link_field,
+            request_timeout: config.http.request_timeout.duration(),
         }
     }
 }
@@ -236,7 +241,14 @@ async fn build_tenant_state(
         config.temporal.expiration_check_interval.duration(),
         Arc::new(TenantObligations::new(&storage.pool)),
     ));
-    let temporal = compose_temporal_history(&storage.pool, &storage.temporal_repo, &config.temporal, &task_supervisor, &pacer)?;
+    let temporal = compose_temporal_history(
+        &storage.pool,
+        &storage.temporal_repo,
+        &config.temporal,
+        config.request_timeout,
+        &task_supervisor,
+        &pacer,
+    )?;
     // Every write path reaches the `current_attributes` rows through this
     // complete atomic commit implementation, which writes them in the
     // transaction that mutates the entity.

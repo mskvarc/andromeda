@@ -6,6 +6,7 @@ use crate::{
     temporal_not_found_reason::TemporalNotFoundReason,
     temporal_operation_unsupported::TemporalOperationUnsupported,
     temporal_validation_reason::TemporalValidationReason,
+    unsettled_history::UnsettledHistory,
 };
 use andromeda_context_commit::{error::CommitError, submission_refusal::SubmissionRefusal};
 use andromeda_entity::error::EntityError;
@@ -99,6 +100,15 @@ pub enum TemporalError {
     /// `Retry-After`, never the 500 a broker malfunction earns.
     #[error("the operation was rolled back by a concurrent transaction; retry shortly")]
     TransactionContended,
+    /// Another delivery owner still held the entity's queued history when the
+    /// mutation barrier's wait ran out.
+    ///
+    /// Not a fault: the history is being applied, and the mutation can run once
+    /// it is or once the holder's lease lapses. It is answered 503 with a
+    /// `Retry-After` of the remaining lease, never the 500 a broker malfunction
+    /// earns.
+    #[error("the entity's queued temporal history is still being applied elsewhere; retry shortly")]
+    HistoryUnsettled(UnsettledHistory),
     /// An internal temporal invariant could not be satisfied.
     #[error("temporal invariant failed: {0}")]
     Internal(#[from] TemporalInvariant),

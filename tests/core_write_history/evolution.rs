@@ -4,12 +4,7 @@ use crate::observation::{at, entity, fragment, reading};
 use andromeda_test_client::test_client::TestClient;
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
-use std::time::Duration;
-use tokio::time::{Instant, sleep};
 use urlencoding::encode;
-
-/// How long a test waits for the deferred drain to land queued history.
-pub const DRAIN_DEADLINE: Duration = Duration::from_secs(20);
 
 /// Create the Temporal Evolution of `id` through the Temporal API (clause
 /// 5.6.11): one `v` instance per `(value, minute)` in `readings`.
@@ -88,21 +83,4 @@ pub async fn assert_holds_only(client: &TestClient, id: &str, readings: &[(i64, 
 /// The `(value, observedAt)` pairs `readings` stands for.
 pub fn expected(readings: &[(i64, u32)]) -> Vec<(Value, String)> {
     readings.iter().map(|&(value, minute)| (json!(value), at(minute))).collect()
-}
-
-/// The observations of `attribute` of `id`, polled until `ready` accepts them
-/// or [`DRAIN_DEADLINE`] passes, for history the deferred drain lands after
-/// the write answers.
-pub async fn observations_when(client: &TestClient, id: &str, attribute: &str, ready: impl Fn(&[(Value, String)]) -> bool) -> Vec<(Value, String)> {
-    let deadline = Instant::now() + DRAIN_DEADLINE;
-    loop {
-        let observed = evolution(client, id)
-            .await
-            .map(|evolution| observations(&evolution, attribute))
-            .unwrap_or_default();
-        if ready(&observed) || Instant::now() >= deadline {
-            return observed;
-        }
-        sleep(Duration::from_millis(200)).await;
-    }
 }

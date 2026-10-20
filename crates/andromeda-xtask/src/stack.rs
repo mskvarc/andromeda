@@ -42,9 +42,6 @@ pub(crate) const BROKER_DIRECT_URL_ENV: &str = "ANDROMEDA_TEST_BROKER_DIRECT_URL
 pub(crate) const POOLER_URL_ENV: &str = "ANDROMEDA_TEST_POOLER_URL";
 /// Environment variable naming the `PgBouncer` admin-console endpoint (db `pgbouncer`).
 pub(crate) const PGBOUNCER_ADMIN_URL_ENV: &str = "ANDROMEDA_TEST_PGBOUNCER_ADMIN_URL";
-/// Environment variable naming the API base of the broker that leaves Core
-/// writes out of history and defers the Temporal API's.
-pub(crate) const DEFERRED_BROKER_URL_ENV: &str = "ANDROMEDA_TEST_DEFERRED_BROKER_URL";
 /// Environment variable naming the API base of the broker that records Core
 /// writes in history, the default.
 pub(crate) const RECORDING_BROKER_URL_ENV: &str = "ANDROMEDA_TEST_RECORDING_BROKER_URL";
@@ -105,8 +102,8 @@ pub(crate) enum StackName {
     Pgbouncer,
     /// Brokers terminating TLS natively, and one behind an nginx terminator.
     Tls,
-    /// Three brokers on one PostgreSQL, two of which leave Core writes out of
-    /// history (one native, one deferred) and one that records them.
+    /// Two brokers on one PostgreSQL, one that leaves Core writes out of
+    /// history and one that records them.
     CoreWriteHistory,
 }
 
@@ -361,7 +358,6 @@ pub(crate) static STACKS: [Stack; 9] = [
         profile: None,
         env: &[
             (BROKER_URL_ENV, "http://127.0.0.1:1101/ngsi-ld/v1/"),
-            (DEFERRED_BROKER_URL_ENV, "http://127.0.0.1:1102/ngsi-ld/v1/"),
             (RECORDING_BROKER_URL_ENV, "http://127.0.0.1:1103/ngsi-ld/v1/"),
             (DATABASE_URL_ENV, "postgres://postgres:postgres@127.0.0.1:5501/postgres"),
         ],

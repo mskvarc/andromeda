@@ -9,7 +9,6 @@ use crate::{
 use andromeda_configuration_scalars::human_duration::HumanDuration;
 use serde::{Deserialize, Serialize};
 use std::num::{NonZeroU32, NonZeroU64};
-use strum::{Display, EnumString};
 use toml_comment::TomlComment;
 
 /// The chunk interval the tenant schema declares when no override is set.
@@ -55,24 +54,9 @@ pub const DEFAULT_AGGREGATION_INSTANCE_BUDGET: NonZeroU64 = NonZeroU64::MIN.satu
 /// are constrained to.
 const SECONDS_PER_DAY: u64 = 86_400;
 
-/// How the PostgreSQL anchor lands temporal append consequences.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Display, EnumString, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-#[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
-pub enum TemporalAppendMode {
-    /// Persist temporal history inside the anchor transaction.
-    #[default]
-    Native,
-    /// Persist a typed intent in the anchor and deliver it through the selected sink.
-    Deferred,
-}
-
 /// Defaults and reconciliation cadence for temporal history.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
 pub struct TemporalConfig {
-    /// Native or deferred append topology selected for this broker profile.
-    #[toml_comment(inline)]
-    pub append_mode: TemporalAppendMode,
     /// Whether Core API writes add to the Temporal Evolution of the Entities
     /// they change: `"recorded"` (the default) or `"not-recorded"`.
     ///
@@ -211,7 +195,6 @@ pub struct TemporalConfig {
 impl Default for TemporalConfig {
     fn default() -> TemporalConfig {
         TemporalConfig {
-            append_mode: TemporalAppendMode::Native,
             core_write_history: CoreWriteHistory::Recorded,
             default_last_n: 100,
             max_last_n: 1000,
@@ -380,7 +363,6 @@ mod config_tests {
             DEFAULT_COLUMNSTORE_AFTER,
             MAX_EDGE_GROUP_CEILING,
             MAX_LAST_N_CEILING,
-            TemporalAppendMode,
             TemporalConfig,
         },
         config_error::TemporalConfigError,
@@ -397,7 +379,6 @@ mod config_tests {
 
     fn valid() -> TemporalConfig {
         TemporalConfig {
-            append_mode: TemporalAppendMode::Native,
             core_write_history: CoreWriteHistory::Recorded,
             default_last_n: 19,
             max_last_n: 19,
@@ -427,18 +408,6 @@ mod config_tests {
             ..valid()
         };
         assert_eq!(zero.validate(), Err(TemporalConfigError::ZeroColumnstoreSweepInterval));
-    }
-
-    /// The shipped broker commits temporal history synchronously inside the
-    /// atomic write, so a POST followed by an immediate temporal aggregate GET
-    /// reads its own writes. That guarantee holds only in `Native` mode: the
-    /// `Deferred` overlay lands history through a sink and would expose a
-    /// write-then-read window. This pins the default so flipping it fails loudly
-    /// rather than silently reintroducing that staleness.
-    #[test]
-    fn the_default_append_mode_is_native() {
-        assert_eq!(TemporalConfig::default().append_mode, TemporalAppendMode::Native);
-        assert_eq!(TemporalAppendMode::default(), TemporalAppendMode::Native);
     }
 
     /// Core writes are recorded in history unless an operator turns that off,

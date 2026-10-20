@@ -1,8 +1,7 @@
 # set -a && . docker/compose/test/core-write-history/env && set +a
 # The subject broker of the core_write_history suite, run on the host against
-# any PostgreSQL. The deferred and recording brokers add
-# ANDROMEDA__TEMPORAL__APPEND_MODE=deferred, or leave the history setting at
-# its default, on their own ports.
+# any PostgreSQL. The recording broker leaves the history setting at its
+# default, on its own port.
 ANDROMEDA__TEMPORAL__CORE_WRITE_HISTORY=not-recorded
 ANDROMEDA__TEMPORAL__DEFAULT_LAST_N=1000
 ANDROMEDA__TEMPORAL__MAX_LAST_N=1000
