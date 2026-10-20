@@ -149,6 +149,36 @@ mod tests {
         );
     }
 
+    /// IETF RFC 8288 Appendix B.3: a `type` parameter written as a bare media
+    /// type is read like a quoted one, and the context still resolves.
+    #[tokio::test]
+    async fn a_context_link_with_an_unquoted_type_is_the_request_context() {
+        for line in [
+            r#"<https://example.com/a.jsonld>; rel="http://www.w3.org/ns/json-ld#context"; type=application/ld+json"#,
+            r#"<https://example.com/a.jsonld>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json""#,
+        ] {
+            pretty_assertions::assert_eq!(
+                extracted(&[line]).await.expect("the context link is admitted"),
+                RequestContext::Link(iri("https://example.com/a.jsonld")),
+                "{line}"
+            );
+        }
+    }
+
+    /// Clause 5.5.4: a context link whose `type` is empty or not a media type
+    /// is malformed, quoted or not.
+    #[tokio::test]
+    async fn a_context_link_with_an_invalid_type_is_rejected_as_bad_request_data() {
+        for line in [
+            r#"<https://example.com/a.jsonld>; rel="http://www.w3.org/ns/json-ld#context"; type="#,
+            r#"<https://example.com/a.jsonld>; rel="http://www.w3.org/ns/json-ld#context"; type=not a type"#,
+            r#"<https://example.com/a.jsonld>; rel="http://www.w3.org/ns/json-ld#context"; type="not a type""#,
+        ] {
+            let rejection = extracted(&[line]).await.expect_err("an invalid type is refused");
+            assert!(is_bad_request_data(&rejection), "{line}: {rejection:?}");
+        }
+    }
+
     /// IETF RFC 8288 section 3.1: a relative target resolves against the
     /// request's own URI.
     #[tokio::test]

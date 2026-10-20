@@ -137,8 +137,9 @@ impl LinkValue {
     /// # Errors
     ///
     /// Returns [`LinkParseError`] when the segment has no parameter name, when a
-    /// recognised parameter has an empty or unquotable value, or when `type` is
-    /// not a media type or `profile` is not an absolute IRI.
+    /// recognised parameter has an empty value, when `profile` is unquoted,
+    /// when a quoted value is unbalanced, or when `type` is not a media type or
+    /// `profile` is not an absolute IRI.
     pub fn apply_param(&mut self, segment: &str) -> Result<(), LinkParseError> {
         let mut parts = segment.splitn(2, '=');
         let name = match parts.next() {
@@ -152,7 +153,7 @@ impl LinkValue {
             }
         } else if "type".eq_ignore_ascii_case(name) {
             if self.media_type.is_none() {
-                self.media_type = Some(quoted_value(parts.next())?.parse().map_err(|_| LinkParseError)?);
+                self.media_type = Some(media_type_value(parts.next())?);
             }
         } else if "profile".eq_ignore_ascii_case(name) && self.profile.is_none() {
             self.profile = Some(quoted_value(parts.next())?.parse::<IriBuf>().map_err(|_| LinkParseError)?);
@@ -165,6 +166,19 @@ impl LinkValue {
 /// The inside of a quoted parameter value.
 fn quoted_value(raw: Option<&str>) -> Result<&str, LinkParseError> {
     verify_and_trim(raw.filter(|value| !value.is_empty()).ok_or(LinkParseError)?.trim(), b'"', b'"')
+}
+
+/// The media type a `type` parameter names, written bare or quoted.
+///
+/// RFC 8288 Appendix B.3 reads a parameter value as a quoted string when it
+/// opens with a double quote and as the characters up to the next `;` or `,`
+/// otherwise, so `type=application/ld+json` names the same media type as
+/// `type="application/ld+json"`. A `profile` carries a URI, which a bare
+/// value cannot hold, so only `type` takes this reading.
+fn media_type_value(raw: Option<&str>) -> Result<MediaTypeBuf, LinkParseError> {
+    let raw = raw.map(str::trim).filter(|value| !value.is_empty()).ok_or(LinkParseError)?;
+    let written = if raw.starts_with('"') { verify_and_trim(raw, b'"', b'"')? } else { raw };
+    written.parse().map_err(|_| LinkParseError)
 }
 
 /// Parse the space-separated relation types of a `rel` parameter.
@@ -296,6 +310,48 @@ mod tests {
         assert!(value.apply_param(r#"="next""#).is_err());
         assert!(value.apply_param("rel=").is_err());
         assert!(value.apply_param("profile=").is_err());
+    }
+
+    /// A fresh link-value with the parameter segment `raw` applied.
+    fn applied(raw: &str) -> LinkValue {
+        let mut value = LinkValue::new(iri_ref("https://example.com/ctx.jsonld"));
+        value.apply_param(raw).expect("the parameter applies");
+        value
+    }
+
+    fn ld_json() -> MediaTypeBuf {
+        "application/ld+json".parse::<MediaTypeBuf>().expect("valid media type")
+    }
+
+    #[test]
+    fn an_unquoted_type_is_read_as_its_media_type() {
+        pretty_assertions::assert_eq!(applied("type=application/ld+json").media_type(), Some(&ld_json()));
+    }
+
+    #[test]
+    fn a_quoted_type_is_read_as_its_media_type() {
+        pretty_assertions::assert_eq!(applied(r#"type="application/ld+json""#).media_type(), Some(&ld_json()));
+    }
+
+    #[test]
+    fn an_empty_type_is_rejected_quoted_or_not() {
+        let mut value = LinkValue::new(iri_ref("/page"));
+        assert!(value.apply_param("type=").is_err());
+        assert!(value.apply_param(r#"type="""#).is_err());
+    }
+
+    #[test]
+    fn a_type_that_is_not_a_media_type_is_rejected_quoted_or_not() {
+        let mut value = LinkValue::new(iri_ref("/page"));
+        assert!(value.apply_param("type=not a type").is_err());
+        assert!(value.apply_param(r#"type="not a type""#).is_err());
+        assert!(value.apply_param(r#"type="application/ld+json"#).is_err());
+    }
+
+    #[test]
+    fn an_unquoted_profile_is_rejected() {
+        let mut value = LinkValue::new(iri_ref("/page"));
+        assert!(value.apply_param("profile=https://uri.etsi.org/ngsi-ld/profile/1.8").is_err());
     }
 
     #[test]
