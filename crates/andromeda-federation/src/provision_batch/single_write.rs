@@ -57,14 +57,14 @@ mod tests {
         registration_fixture::{document, uri},
         single_write::single_write_request,
     };
-    use andromeda_jsonld::{batch_contexts::BatchContexts, context_spec::ContextSpec};
+    use andromeda_jsonld::{batch_contexts::BatchContext, context_spec::ContextSpec};
     use std::borrow::Cow;
     use url::Url;
 
     #[test]
     fn every_single_entity_fallback_addresses_its_clause_6_4_and_6_5_resource() {
         let endpoint = Url::parse("http://peer").expect("valid URL");
-        let context = BatchContexts::shared(ContextSpec::none()).context_of(None);
+        let context = BatchContext::shared(ContextSpec::none());
         let entity = NarrowedEntity {
             id: uri("urn:ngsi-ld:Vehicle:1"),
             body: Some(Cow::Owned(document(

@@ -109,7 +109,10 @@ mod tests {
         registration_fixture::{document, registration, uri},
     };
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_jsonld::{batch_contexts::BatchContexts, context_spec::ContextSpec};
+    use andromeda_jsonld::{
+        batch_contexts::{BatchContext, BatchContexts},
+        context_spec::ContextSpec,
+    };
     use serde_json::json;
     use std::{borrow::Cow, slice::from_ref};
 
@@ -229,7 +232,7 @@ mod tests {
             &[],
             &["deleteBatch"],
         );
-        let context = BatchContexts::shared(ContextSpec::none()).context_of(None);
+        let context = BatchContext::shared(ContextSpec::none());
         let v1 = uri("urn:ngsi-ld:Vehicle:1");
         let v2 = uri("urn:ngsi-ld:Vehicle:2");
         let entities = [
@@ -263,7 +266,7 @@ mod tests {
             &[],
             &["createBatch"],
         );
-        let context = BatchContexts::shared(ContextSpec::none()).context_of(None);
+        let context = BatchContext::shared(ContextSpec::none());
         let vehicle_id = uri("urn:ngsi-ld:Vehicle:1");
         let device_id = uri("urn:ngsi-ld:Device:1");
         let vehicle = document("urn:ngsi-ld:Vehicle:1", VEHICLE_TYPE, &[SPEED]);

@@ -225,6 +225,10 @@ pub struct ParsedBatch<M = AttributeValue> {
     /// the one every item shares, or the default context when the items of an
     /// `application/ld+json` batch name different ones.
     pub context: ContextSpec,
+    /// The context the request itself named for every item, its `Link` header
+    /// context or the default one: present for an `application/json` batch,
+    /// absent for an `application/ld+json` one, whose items each name their own.
+    pub shared_context: Option<BatchContext>,
     /// The items refused before their context is known, each against its own
     /// entity.
     pub errors: Vec<BatchEntityError>,
@@ -357,10 +361,12 @@ fn decode_batch<M: MemberReading>(
     refuse_values_past_budget(body, value_limit)?;
     let items = batch_items::<&RawValue>(body, BatchMembers::Entities)?;
 
-    let mut contexts = match content_kind {
-        ContentKind::Json => BatchContexts::shared(link_context),
-        ContentKind::LdJson => BatchContexts::per_entity(),
+    let shared_context = match content_kind {
+        ContentKind::Json => Some(BatchContext::shared(link_context)),
+        ContentKind::LdJson => None,
     };
+    // clone: the batch and every item it reads hold the shared handle
+    let mut contexts = shared_context.clone().map_or_else(BatchContexts::per_entity, BatchContexts::shared);
     let mut admitted = Vec::new();
     let mut errors = Vec::new();
 
@@ -381,6 +387,7 @@ fn decode_batch<M: MemberReading>(
     Ok(ParsedBatch {
         items: admitted,
         context: contexts.request_context(),
+        shared_context,
         errors,
     })
 }
@@ -713,9 +720,15 @@ mod tests {
         )
         .await;
 
-        let ParsedBatch { items, context, errors } = parse_batch_entities::<AttributeValue>(&batch, &batch_uri()).await.expect("batch parses");
+        let ParsedBatch {
+            items,
+            context,
+            shared_context,
+            errors,
+        } = parse_batch_entities::<AttributeValue>(&batch, &batch_uri()).await.expect("batch parses");
 
         assert!(errors.is_empty(), "{errors:?}");
+        assert!(shared_context.is_none(), "the items of an ld+json batch each name their own context");
         pretty_assertions::assert_eq!(
             items[0].context.spec().body_context(),
             Some(&JsonLiteral::admit(&json!({"speed": "https://a.example/speed"}).to_string()).expect("an admissible literal"))
@@ -765,11 +778,19 @@ mod tests {
         .await;
         let link = ContextSpec::from_link(IriBuf::new("https://example.com/ctx.jsonld".to_owned()).expect("a valid IRI"));
 
-        let ParsedBatch { items, context, .. } = parse_batch_entities::<AttributeValue>(&batch, &batch_uri()).await.expect("batch parses");
+        let ParsedBatch {
+            items,
+            context,
+            shared_context,
+            ..
+        } = parse_batch_entities::<AttributeValue>(&batch, &batch_uri()).await.expect("batch parses");
 
         pretty_assertions::assert_eq!(context, link);
         assert!(items.iter().all(|item| *item.context.spec() == link));
         pretty_assertions::assert_eq!(items[0].context.id(), items[1].context.id());
+        let shared_context = shared_context.expect("an application/json batch shares the request's context");
+        pretty_assertions::assert_eq!(shared_context.spec(), &link);
+        pretty_assertions::assert_eq!(shared_context.id(), items[0].context.id(), "every item is read under the shared context");
     }
 
     /// Clause 6.3.5: a context `Link` beside an `application/ld+json` batch is

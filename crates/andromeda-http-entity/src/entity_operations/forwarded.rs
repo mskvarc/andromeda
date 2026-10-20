@@ -11,7 +11,7 @@ use andromeda_federation::{
     request::TriggeringRequest,
 };
 use andromeda_http_response::{batch_projection::forwarded_write_error, problem_response::ProblemResponse};
-use andromeda_jsonld::{batch_contexts::BatchContexts, user_context_admission::AdmittedContext};
+use andromeda_jsonld::{batch_contexts::BatchContext, user_context_admission::AdmittedContext};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
@@ -84,7 +84,7 @@ pub(crate) async fn forward_identifiers(
     triggering: TriggeringRequest<'_>,
     instance: &HttpUri,
 ) -> Result<Vec<BatchForwardedResult>, ProblemResponse> {
-    let context = BatchContexts::shared(context.into_spec()).context_of(None);
+    let context = BatchContext::shared(context.into_spec());
     let batch = ids
         .iter()
         .map(|id| BatchEntity {

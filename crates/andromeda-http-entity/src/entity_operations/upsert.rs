@@ -12,7 +12,6 @@ use crate::{
         ForwardedBatch,
         IntoResponse,
         NgsiLdRequestEnvelope,
-        ParsedBatch,
         PreferHeader,
         ProblemResponse,
         Response,
@@ -32,9 +31,8 @@ use crate::{
         local_remainder,
         merge_forwarded,
         multi_status_response,
-        parse_batch_entities,
     },
-    written_payload_admission::admitted_batch_entities,
+    written_payload_admission::{AdmittedBatchRequest, admitted_batch_entities},
 };
 use andromeda_entity::write_kind::BatchUpsert;
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
@@ -55,26 +53,23 @@ pub(crate) async fn batch_upsert(
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
 
-    let ParsedBatch {
-        items,
-        context,
-        errors: mut entity_errors,
-    } = parse_batch_entities(&batch_body, &uri).await?;
-    // Clause 5.6.8.4 runs clause 5.6.1, or clause 5.6.2 and a replacement where
-    // the Entity already exists, "for each of the NGSI-LD Entities included in
-    // the input Array": every entity answers for itself, so the clause 5.5.4
-    // validation an entity fails contributes a BatchEntityError of its own
-    // rather than failing the whole request.
+    // Which NGSI-LD Nulls the payload may carry is the requested mode's answer
+    // (clause 5.6.8.4), so the mode is read before the screening.
     let upsert_mode = params.mode().with_entity_instance(&uri)?;
     let upsert_policy = match upsert_mode {
         UpsertMode::Update => UpsertPolicy::Update,
         UpsertMode::Replace => UpsertPolicy::Replace,
     };
-    // Which NGSI-LD Nulls the payload may carry is the requested mode's answer
-    // (clause 5.6.8.4), so the mode is read before the screening.
-    let mut admitted = admitted_batch_entities(service, state.entity_query.engine(), BatchUpsert(upsert_policy), items, &mut entity_errors)
-        .await
-        .with_entity_instance(&uri)?;
+    // Clause 5.6.8.4 runs clause 5.6.1, or clause 5.6.2 and a replacement where
+    // the Entity already exists, "for each of the NGSI-LD Entities included in
+    // the input Array": every entity answers for itself, so the clause 5.5.4
+    // validation an entity fails contributes a BatchEntityError of its own
+    // rather than failing the whole request.
+    let AdmittedBatchRequest {
+        mut admitted,
+        context,
+        refused: mut entity_errors,
+    } = admitted_batch_entities(service, state.entity_query.engine(), BatchUpsert(upsert_policy), &batch_body, &uri).await?;
 
     let query_string = Some(format!("options={upsert_mode}"));
     let triggering = TriggeringRequest {

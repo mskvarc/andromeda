@@ -11,7 +11,6 @@ use crate::{
         EntityTenantStateOrCreate,
         ForwardedBatch,
         NgsiLdRequestEnvelope,
-        ParsedBatch,
         PreferHeader,
         ProblemResponse,
         Response,
@@ -25,9 +24,8 @@ use crate::{
         local_remainder,
         merge_forwarded,
         multi_status_response,
-        parse_batch_entities,
     },
-    written_payload_admission::admitted_batch_entities,
+    written_payload_admission::{AdmittedBatchRequest, admitted_batch_entities},
 };
 use andromeda_entity::write_kind::BatchCreate;
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
@@ -51,19 +49,16 @@ pub(crate) async fn batch_create(
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
 
-    let ParsedBatch {
-        items,
-        context,
-        errors: mut entity_errors,
-    } = parse_batch_entities(&batch_body, &uri).await?;
     // Clause 5.6.7.4 runs clause 5.6.1 "for each of the NGSI-LD Entities
     // included in the input Array", and "if the Entity creation failed, then a
     // new BatchEntityError shall be added to E containing the failed Entity ID
     // and the related ProblemDetails": the clause 5.5.4 validation an entity
     // fails is that entity's failure, not the request's.
-    let mut admitted = admitted_batch_entities(service, state.entity_query.engine(), BatchCreate, items, &mut entity_errors)
-        .await
-        .with_entity_instance(&uri)?;
+    let AdmittedBatchRequest {
+        mut admitted,
+        context,
+        refused: mut entity_errors,
+    } = admitted_batch_entities(service, state.entity_query.engine(), BatchCreate, &batch_body, &uri).await?;
 
     let triggering = TriggeringRequest {
         via: incoming_via.as_ref(),

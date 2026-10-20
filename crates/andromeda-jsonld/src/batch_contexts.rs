@@ -33,6 +33,16 @@ pub struct BatchContext {
 }
 
 impl BatchContext {
+    /// The one context every entity of a batch shares: the one the request
+    /// named, as an `application/json` batch names it in its `Link` header.
+    #[must_use]
+    pub fn shared(context: ContextSpec) -> BatchContext {
+        BatchContext {
+            id: BatchContextId(0),
+            spec: Arc::new(context),
+        }
+    }
+
     /// The identity every entity naming this context shares.
     #[must_use]
     pub const fn id(&self) -> BatchContextId {
@@ -55,6 +65,27 @@ impl BatchContext {
     /// [`admit_user_context`](crate::user_context_admission::admit_user_context).
     pub async fn admit(&self, engine: &JsonLdEngine) -> Result<AdmittedBatchContext, JsonLdError> {
         screen_user_context(engine, &self.spec).await?;
+        Ok(AdmittedBatchContext(self.clone())) // clone: every entity naming the context holds the shared handle
+    }
+
+    /// Admit this context as the request's own, exactly as
+    /// [`admit_user_context`](crate::user_context_admission::admit_user_context)
+    /// admits a single request's: screened and then processed.
+    ///
+    /// A context the request named for every entity is no entity's failure:
+    /// clause 5.5.6 raises `LdContextNotAvailable` for "a remote JSON-LD
+    /// @context referenced by an incoming request" and `BadRequestData` for one
+    /// that is not valid, so the request fails as a whole, before any entity is
+    /// read under it. Processing it here is what makes a context that loads but
+    /// does not process the request's refusal too.
+    ///
+    /// # Errors
+    ///
+    /// Returns the refusal of
+    /// [`admit_user_context`](crate::user_context_admission::admit_user_context).
+    pub async fn admit_for_request(&self, engine: &JsonLdEngine) -> Result<AdmittedBatchContext, JsonLdError> {
+        screen_user_context(engine, &self.spec).await?;
+        engine.expansion_context(&self.spec).await?;
         Ok(AdmittedBatchContext(self.clone())) // clone: every entity naming the context holds the shared handle
     }
 }
@@ -96,12 +127,9 @@ impl BatchContexts {
     /// The contexts of a batch whose entities all share `context`, the one the
     /// request named.
     #[must_use]
-    pub fn shared(context: ContextSpec) -> BatchContexts {
+    pub const fn shared(context: BatchContext) -> BatchContexts {
         BatchContexts {
-            naming: ContextNaming::Shared(BatchContext {
-                id: BatchContextId(0),
-                spec: Arc::new(context),
-            }),
+            naming: ContextNaming::Shared(context),
         }
     }
 
@@ -203,8 +231,9 @@ impl<T> IntoIterator for ContextGroups<T> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        batch_contexts::{BatchContexts, ContextGroups},
+        batch_contexts::{BatchContext, BatchContexts, ContextGroups},
         context_spec::ContextSpec,
+        engine::processor::JsonLdEngine,
         test_documents::literal,
     };
     use iri_rs::IriBuf;
@@ -229,7 +258,7 @@ mod tests {
     #[test]
     fn a_shared_batch_reads_every_entity_under_the_request_context() {
         let link = ContextSpec::from_link(IriBuf::new("https://example.com/ctx.jsonld".to_owned()).expect("a valid IRI"));
-        let mut contexts = BatchContexts::shared(link.clone()); // clone: compared below
+        let mut contexts = BatchContexts::shared(BatchContext::shared(link.clone())); // clone: compared below
         let first = contexts.context_of(None);
         let second = contexts.context_of(None);
 
@@ -256,6 +285,46 @@ mod tests {
         pretty_assertions::assert_eq!(differing.request_context(), ContextSpec::none());
 
         pretty_assertions::assert_eq!(BatchContexts::per_entity().request_context(), ContextSpec::none());
+    }
+
+    /// The engine every admission below runs on, which retrieves no remote
+    /// document.
+    fn offline_engine() -> JsonLdEngine {
+        JsonLdEngine::builder().allow_remote(false).build().expect("the offline engine builds")
+    }
+
+    /// Clause 5.5.6: a remote `@context` the request names that cannot be
+    /// retrieved is `LdContextNotAvailable` for the request.
+    #[tokio::test]
+    async fn a_request_context_that_cannot_be_retrieved_is_not_available() {
+        let link = ContextSpec::from_link(IriBuf::new("https://example.com/ctx.jsonld".to_owned()).expect("a valid IRI"));
+        let error = BatchContext::shared(link)
+            .admit_for_request(&offline_engine())
+            .await
+            .expect_err("the context cannot be retrieved");
+        assert!(error.is_context_not_available(), "{error}");
+    }
+
+    /// Clause 5.5.6: a request context that loads but is not valid is refused
+    /// for the request, although an entity's own admission only screens it and
+    /// leaves the processing to each entity's expansion.
+    #[tokio::test]
+    async fn a_request_context_that_does_not_process_is_refused_for_the_request() {
+        let invalid = BatchContext::shared(ContextSpec::from_body(literal(&json!({"speed": {"@id": 5}}))));
+        let engine = offline_engine();
+
+        assert!(invalid.admit(&engine).await.is_ok(), "an entity's admission only screens the context");
+        let error = invalid.admit_for_request(&engine).await.expect_err("the context does not process");
+        assert!(!error.is_context_not_available(), "{error}");
+    }
+
+    /// A request context that processes is admitted for every entity under its
+    /// own identity.
+    #[tokio::test]
+    async fn a_request_context_that_processes_is_admitted() {
+        let shared = BatchContext::shared(ContextSpec::from_body(literal(&json!({"speed": "https://example.org/speed"}))));
+        let admitted = shared.admit_for_request(&offline_engine()).await.expect("the context processes");
+        pretty_assertions::assert_eq!(admitted.id(), shared.id());
     }
 
     /// Items are grouped by the identity of the context they name, in

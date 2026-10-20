@@ -11,7 +11,6 @@ use crate::{
         ForwardedBatch,
         IntoResponse,
         NgsiLdRequestEnvelope,
-        ParsedBatch,
         PreferHeader,
         ProblemResponse,
         Response,
@@ -26,9 +25,8 @@ use crate::{
         local_remainder,
         merge_forwarded,
         multi_status_response,
-        parse_batch_entities,
     },
-    written_payload_admission::admitted_batch_entities,
+    written_payload_admission::{AdmittedBatchRequest, admitted_batch_entities},
 };
 use andromeda_entity::write_kind::BatchMerge;
 use andromeda_http_extraction::context_target;
@@ -50,18 +48,15 @@ pub(crate) async fn batch_merge(
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
 
-    let ParsedBatch {
-        items,
-        context: _,
-        errors: mut entity_errors,
-    } = parse_batch_entities(&batch_body, &uri).await?;
     // Clause 5.6.20.4 runs clause 5.6.17 "for each of the NGSI-LD Entities
     // included in the input Array", each entity answering for itself: the
     // clause 5.5.4 validation an entity fails contributes a BatchEntityError of
     // its own rather than failing the whole request.
-    let mut admitted = admitted_batch_entities(service, state.entity_query.engine(), BatchMerge, items, &mut entity_errors)
-        .await
-        .with_entity_instance(&uri)?;
+    let AdmittedBatchRequest {
+        mut admitted,
+        context: _,
+        refused: mut entity_errors,
+    } = admitted_batch_entities(service, state.entity_query.engine(), BatchMerge, &batch_body, &uri).await?;
 
     let triggering = TriggeringRequest {
         via: incoming_via.as_ref(),

@@ -12,7 +12,7 @@ use crate::{
 };
 use andromeda_json_literal::piece::JsonPiece;
 use andromeda_jsonld::{
-    batch_contexts::BatchContexts,
+    batch_contexts::BatchContext,
     context_spec::ContextSpec,
     user_context_admission::{AdmittedContext, SubmittedContext, admit_user_context},
 };
@@ -83,7 +83,7 @@ pub(crate) async fn admitted_batch<W: BatchWriteKind>(
 /// every entity read against `context`, admitted once.
 pub(crate) async fn submitted<M>(service: &EntityService, entities: Vec<Entity<M>>, context: &ContextSpec) -> Vec<SubmittedEntity<M>> {
     // clone: every entity of the fixture batch shares one context
-    let shared = BatchContexts::shared(context.clone()).context_of(None);
+    let shared = BatchContext::shared(context.clone());
     let admitted = shared.admit(&service.engine).await.expect("the context is admitted");
     entities
         .into_iter()

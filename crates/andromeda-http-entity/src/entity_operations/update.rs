@@ -12,7 +12,6 @@ use crate::{
         IntoResponse,
         NgsiLdRequestEnvelope,
         OverwritePolicy,
-        ParsedBatch,
         PreferHeader,
         ProblemResponse,
         RequestOverwritePolicy,
@@ -29,9 +28,8 @@ use crate::{
         local_remainder,
         merge_forwarded,
         multi_status_response,
-        parse_batch_entities,
     },
-    written_payload_admission::admitted_batch_entities,
+    written_payload_admission::{AdmittedBatchRequest, admitted_batch_entities},
 };
 use andromeda_entity::write_kind::BatchUpdate;
 use andromeda_http_extraction::context_target;
@@ -50,19 +48,16 @@ pub(crate) async fn batch_update(
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
 
-    let ParsedBatch {
-        items,
-        context: _,
-        errors: mut entity_errors,
-    } = parse_batch_entities(&batch_body, &uri).await?;
     // Clause 5.6.9.4 runs clause 5.6.3 "for each of the NGSI-LD Entities
     // included in the input Array", and "if the Entity update failed, then a
     // new BatchEntityError shall be added to E containing the failed Entity ID
     // and the ProblemDetails associated": the clause 5.5.4 validation an entity
     // fails is that entity's failure, not the request's.
-    let mut admitted = admitted_batch_entities(service, state.entity_query.engine(), BatchUpdate, items, &mut entity_errors)
-        .await
-        .with_entity_instance(&uri)?;
+    let AdmittedBatchRequest {
+        mut admitted,
+        context: _,
+        refused: mut entity_errors,
+    } = admitted_batch_entities(service, state.entity_query.engine(), BatchUpdate, &batch_body, &uri).await?;
 
     let requested = params.overwrite_policy().with_entity_instance(&uri)?;
     let overwrite = match requested {

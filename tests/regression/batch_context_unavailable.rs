@@ -1,4 +1,4 @@
-//! ETSI GS CIM 009 v1.9.1 clause 5.5.6 makes an unretrievable remote JSON-LD `@context` an error of type `LdContextNotAvailable`, which Table 6.3.2-1 maps to HTTP 504. Clause 5.6.7.5 states that batch entity creation returns "207 Multi-Status ... where a `BatchOperationResult` ... is returned", with a `BatchEntityError` per entity that failed. The unretrievable `@context` is the same failure for every entity in the array, so it is reported once per entity inside a 207, not as one 504 for the whole request. A single-entity create with the same `@context` answers a top-level 504 (clause 5.6.1).
+//! ETSI GS CIM 009 v1.9.1 clause 5.5.6 makes an unretrievable remote JSON-LD `@context` "referenced by an incoming request" an error of type `LdContextNotAvailable`, which Table 6.3.2-1 maps to HTTP 504. The `Link` header context of an `application/json` batch belongs to the request and holds for every entity, so the request fails as a whole with a 504, as a single-entity create does (clause 5.6.1). An `@context` an entity of an `application/ld+json` batch carries itself is that entity's: clause 5.6.7.5 answers 207 with a `BatchEntityError` for every entity naming it.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -23,11 +23,10 @@ fn building(identifier: &str) -> Value {
     })
 }
 
-/// Clause 5.6.7.5: a batch create of two entities whose shared `@context` is
-/// unretrievable answers 207, with an `LdContextNotAvailable` `BatchEntityError`
-/// for each submitted entity.
+/// Clause 5.5.6: a batch create whose `Link` context is unretrievable answers
+/// 504 `LdContextNotAvailable` for the request and creates no entity.
 #[tokio::test]
-async fn regression_batch_context_unavailable_reports_a_per_entity_error_in_a_207() {
+async fn regression_batch_context_unavailable_a_link_context_fails_the_whole_batch_with_a_504() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let client = scope.client();
     let first = scope.id("Building:batch-context-unavailable-first");
@@ -43,27 +42,20 @@ async fn regression_batch_context_unavailable_reports_a_per_entity_error_in_a_20
         .expect("batch creation request");
     assert_eq!(
         created.status,
-        StatusCode::MULTI_STATUS,
-        "an unretrievable @context is a per-entity failure, not a top-level one: {:?}",
+        StatusCode::GATEWAY_TIMEOUT,
+        "the request's own context fails the request: {:?}",
         created.body
     );
+    let problem = created.json_value().expect("a refusal carries a problem details body");
+    assert_eq!(problem["type"], json!(LD_CONTEXT_NOT_AVAILABLE.as_str()), "{problem}");
 
-    let result = created.json_value().expect("a 207 carries a BatchOperationResult");
-    let errors = result["errors"].as_array().expect("the result carries an errors array");
-    assert_eq!(errors.len(), 2, "every submitted entity is reported: {result}");
-    assert!(result["success"].as_array().is_some_and(Vec::is_empty), "no entity was created: {result}");
-
-    let reported: Vec<&str> = errors.iter().filter_map(|error| error["entityId"].as_str()).collect();
     for identifier in [&first, &second] {
-        assert!(reported.contains(&identifier.as_str()), "{identifier} is named in the errors: {result}");
-    }
-    for error in errors {
-        assert_eq!(
-            error["error"]["type"],
-            json!(LD_CONTEXT_NOT_AVAILABLE.as_str()),
-            "each error is LdContextNotAvailable: {error}"
-        );
-        assert!(error["error"]["title"].is_string(), "each error carries a title: {error}");
+        let read = client
+            .raw(Method::GET, &format!("entities/{identifier}"))
+            .send()
+            .await
+            .expect("retrieve request");
+        assert_eq!(read.status, StatusCode::NOT_FOUND, "{identifier} was not created: {:?}", read.body);
     }
 
     scope.finish().await.expect("environment cleanup");
