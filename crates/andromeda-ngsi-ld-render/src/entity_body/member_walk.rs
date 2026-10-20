@@ -2,20 +2,17 @@
 
 use crate::{
     entity_body::linked_entities::AttributeJoin,
-    uri_decoding::UriDecoding,
     version::fallback::{EntityMember, InstanceMember, VersionFallback},
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 
 /// The presentation-boundary rules the walk applies while it writes an
-/// attribute member: URI decoding and the clause 4.3.6.8 version fallback
+/// attribute member: the clause 4.3.6.8 version fallback
 /// (everywhere), and clause 4.15 language negotiation and the clause 4.5.23
 /// inline join (top-level attributes only).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct MemberWalk<'a> {
-    /// Whether Relationship targets are percent-decoded.
-    pub(crate) decoding: UriDecoding,
     /// The clause 4.15 `lang` filter a top-level `LanguageProperty` is
     /// negotiated against, if the request sent one.
     pub(crate) language_filter: Option<&'a LanguageFilter>,
@@ -29,9 +26,8 @@ pub(crate) struct MemberWalk<'a> {
 
 impl<'a> MemberWalk<'a> {
     /// The walk over a top-level attribute member.
-    pub(crate) const fn new(decoding: UriDecoding, language_filter: Option<&'a LanguageFilter>, fallback: Option<VersionFallback>) -> MemberWalk<'a> {
+    pub(crate) const fn new(language_filter: Option<&'a LanguageFilter>, fallback: Option<VersionFallback>) -> MemberWalk<'a> {
         MemberWalk {
-            decoding,
             language_filter,
             join: None,
             fallback,
@@ -50,7 +46,6 @@ impl<'a> MemberWalk<'a> {
     /// other (clauses 4.5.2 and 4.5.3), so the version fallback reaches it.
     pub(crate) const fn nested(self) -> MemberWalk<'a> {
         MemberWalk {
-            decoding: self.decoding,
             language_filter: None,
             join: None,
             fallback: self.fallback,

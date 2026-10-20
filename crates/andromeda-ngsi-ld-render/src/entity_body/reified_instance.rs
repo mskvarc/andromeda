@@ -68,7 +68,7 @@ impl<'a> ReifiedInstance<'a> {
 
     /// The value member the instance carries, as its written family writes it.
     fn current(&self) -> FamilyValue<'a> {
-        FamilyValue::current(self.attribute, self.reification, self.walk.decoding).written_as(self.written_family())
+        FamilyValue::current(self.attribute, self.reification).written_as(self.written_family())
     }
 
     /// The value of a family a version fallback reformats as a Property, read
@@ -147,14 +147,14 @@ impl<'a> ReifiedInstance<'a> {
     /// families' previous members (clauses 4.5.2.2 and 4.5.21.2), so a value
     /// in another family's spelling is no previous value of this one.
     fn previous_member(&self) -> Option<FamilyValue<'a>> {
-        let (reification, decoding, written) = (self.reification, self.walk.decoding, self.written_family());
+        let (reification, written) = (self.reification, self.written_family());
         match self
             .report
             .previous
             .and_then(|previous| previous_value_of(previous, self.attribute.attribute_type()))
         {
-            Some(previous) => Some(FamilyValue::current(previous, reification, decoding).written_as(written)),
-            None => FamilyValue::previous(self.attribute, reification, decoding).map(|previous| previous.written_as(written)),
+            Some(previous) => Some(FamilyValue::current(previous, reification).written_as(written)),
+            None => FamilyValue::previous(self.attribute, reification).map(|previous| previous.written_as(written)),
         }
     }
 

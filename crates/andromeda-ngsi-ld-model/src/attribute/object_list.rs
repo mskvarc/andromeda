@@ -35,22 +35,19 @@ pub struct RelationshipObjectList(pub Vec<Uri>);
 /// array keeps the single-element spelling clause 4.5.0 gives it rather than
 /// being wrapped as one.
 ///
-/// This is the one implementation of the representation. The typed member below
-/// writes through it and so does every renderer that writes the targets in some
-/// other form, such as percent-decoded, which is what keeps a query response, a
-/// notification and a temporal evolution from disagreeing about which shape the
-/// member has. `previousObjectList` is governed by the same rules: clause
-/// 4.5.22.2 makes its representation "the same as that of `objectList`".
+/// The typed member below writes through it, so a query response, a
+/// notification and a temporal evolution agree on which shape the member has.
+/// `previousObjectList` is governed by the same rules: clause 4.5.22.2 makes
+/// its representation "the same as that of `objectList`".
 #[derive(Debug, Clone, Copy)]
-pub struct NormalizedObjectList<'a, T> {
+struct NormalizedObjectList<'a, T> {
     /// The ordered targets.
     targets: &'a [T],
 }
 
 impl<'a, T: AsRef<str>> NormalizedObjectList<'a, T> {
     /// The normalized representation of `targets`.
-    #[must_use]
-    pub const fn new(targets: &'a [T]) -> NormalizedObjectList<'a, T> {
+    const fn new(targets: &'a [T]) -> NormalizedObjectList<'a, T> {
         NormalizedObjectList { targets }
     }
 

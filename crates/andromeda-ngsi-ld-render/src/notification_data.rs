@@ -82,7 +82,7 @@ mod tests {
     use crate::{
         geometry_selection::GeometrySelection,
         notification_data::{DataShape, notification_data},
-        notification_entity::{NotificationEntity, StampedInstants, TargetSpelling},
+        notification_entity::{NotificationEntity, StampedInstants},
     };
     use andromeda_http_headers::media_type::ResponseMediaType;
     use andromeda_json_literal::JsonLiteral;
@@ -125,7 +125,7 @@ mod tests {
         let stamped = StampedInstants::default();
         let entities: Vec<NotificationEntity<'_>> = buildings
             .iter()
-            .map(|building| NotificationEntity::new(building, &stamped, ResponseFormat::Normalized, TargetSpelling::Decoded))
+            .map(|building| NotificationEntity::new(building, &stamped, ResponseFormat::Normalized))
             .collect();
         let shape = DataShape {
             media_type,
@@ -202,7 +202,7 @@ mod tests {
         let stamped = StampedInstants::default();
         let entities: Vec<NotificationEntity<'_>> = buildings
             .iter()
-            .map(|building| NotificationEntity::new(building, &stamped, ResponseFormat::Normalized, TargetSpelling::Decoded))
+            .map(|building| NotificationEntity::new(building, &stamped, ResponseFormat::Normalized))
             .collect();
         let shape = DataShape {
             media_type: ResponseMediaType::Json,
@@ -250,7 +250,7 @@ mod tests {
             panic!("an inline join plans inline");
         };
         let stamped = StampedInstants::default();
-        let entity = NotificationEntity::new(&root, &stamped, ResponseFormat::Normalized, TargetSpelling::Decoded).with_inline_join(plan.cursor());
+        let entity = NotificationEntity::new(&root, &stamped, ResponseFormat::Normalized).with_inline_join(plan.cursor());
         let shape = DataShape {
             media_type: ResponseMediaType::Json,
             selection: GeometrySelection::new(None, &[]),

@@ -193,6 +193,20 @@ mod tests {
         }
     }
 
+    /// RFC 3986 section 6.2.2.2: a percent-encoded reserved character is not
+    /// equivalent to the character, so the operand is compared as written.
+    #[test]
+    fn a_percent_encoded_relationship_operand_is_compared_as_written() {
+        for scalar in [
+            Scalar::Str("urn:ngsi-ld%3ABuilding%3A1".to_owned()),
+            Scalar::Uri("urn:ngsi-ld%3ABuilding%3A1".to_owned()),
+        ] {
+            let sql = render(current(&scalar, CmpOp::Equal));
+            assert!(sql.contains(r#""ca"."value_uri" = 'urn:ngsi-ld%3ABuilding%3A1'"#), "{scalar:?}: {sql}");
+            assert!(!sql.contains("urn:ngsi-ld:Building:1"), "{scalar:?}: {sql}");
+        }
+    }
+
     /// A Relationship object past the B-tree bound is projected into
     /// `value_long_uri`, so an equality on an operand that long reads that
     /// column and never `value_uri`, where no such object can be.

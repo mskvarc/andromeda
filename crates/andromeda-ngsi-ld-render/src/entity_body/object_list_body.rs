@@ -4,13 +4,13 @@
 //! object containing a single Attribute with a key called `object` and where
 //! the value is a valid URI. In the concise form, each string in the array
 //! holds a valid URI." The normalized form, with its clause 4.5.22.2 deletion
-//! encoding, is the model's own rule.
+//! encoding, is the model's own rule. Every target is written as it was
+//! stored: RFC 3986 section 6.2.2.2 does not make a percent-encoded reserved
+//! character equivalent to the character itself.
 
-use crate::{
-    entity_body::reified_member::Reification,
-    uri_decoding::{DecodedTarget, UriDecoding, decode_percent_encoded_uri},
-};
-use andromeda_ngsi_ld_model::attribute::object_list::{NormalizedObjectList, RelationshipObjectList};
+use crate::entity_body::reified_member::Reification;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::attribute::object_list::RelationshipObjectList;
 use serde::{Serialize, Serializer};
 
 /// One `objectList` or `previousObjectList`.
@@ -20,31 +20,25 @@ pub(crate) struct ObjectListBody<'a> {
     list: &'a RelationshipObjectList,
     /// The representation the list is written in.
     reification: Reification,
-    /// Whether the presentation boundary decodes the targets.
-    decoding: UriDecoding,
 }
 
 impl<'a> ObjectListBody<'a> {
-    /// The list, written in `reification` under `decoding`.
-    pub(crate) const fn new(list: &'a RelationshipObjectList, reification: Reification, decoding: UriDecoding) -> ObjectListBody<'a> {
-        ObjectListBody { list, reification, decoding }
+    /// The list, written in `reification`.
+    pub(crate) const fn new(list: &'a RelationshipObjectList, reification: Reification) -> ObjectListBody<'a> {
+        ObjectListBody { list, reification }
     }
 
-    /// The first target of the list, written under the list's decoding.
-    pub(crate) fn first(self) -> Option<DecodedTarget<'a>> {
-        self.list.0.first().map(|target| DecodedTarget::new(target, self.decoding))
+    /// The first target of the list.
+    pub(crate) fn first(self) -> Option<&'a Uri> {
+        self.list.0.first()
     }
 }
 
 impl Serialize for ObjectListBody<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match (self.reification, self.decoding) {
-            (Reification::Concise, decoding) => serializer.collect_seq(self.list.iter().map(|target| DecodedTarget::new(target, decoding))),
-            (Reification::Normalized, UriDecoding::Keep) => self.list.serialize(serializer),
-            (Reification::Normalized, UriDecoding::Decode) => {
-                let decoded = self.list.iter().map(|target| decode_percent_encoded_uri(target.as_str())).collect::<Vec<_>>();
-                NormalizedObjectList::new(&decoded).serialize(serializer)
-            }
+        match self.reification {
+            Reification::Concise => serializer.collect_seq(self.list.iter()),
+            Reification::Normalized => self.list.serialize(serializer),
         }
     }
 }

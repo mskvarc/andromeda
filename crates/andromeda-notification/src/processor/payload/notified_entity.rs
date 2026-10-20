@@ -14,7 +14,7 @@ use andromeda_linked_retrieval::{
 };
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_render::{
-    notification_entity::{NotificationEntity, StampedInstants, TargetSpelling},
+    notification_entity::{NotificationEntity, StampedInstants},
     notification_language::NotificationLanguage,
     notified_changes::{DeletedInstances, HeldAttributes, NotifiedChanges},
     structural_projection::StructuralProjection,
@@ -25,14 +25,12 @@ use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
 /// How every entity of one notification is written: the subscription's
-/// `notification.format`, the spelling of Relationship targets, and the clause
-/// 4.3.6.8 fallback of its `ngsildConformance`.
+/// `notification.format` and the clause 4.3.6.8 fallback of its
+/// `ngsildConformance`.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct WrittenShape<'a> {
     /// The `notification.format`.
     pub(crate) format: ResponseFormat,
-    /// How Relationship targets are spelled.
-    pub(crate) targets: TargetSpelling,
     /// The fallback every entity is amended by, if the subscription names an
     /// older version.
     pub(crate) fallback: Option<VersionFallback>,
@@ -89,7 +87,7 @@ impl NotifiedEntity {
         join: Option<InlineCursor<'a, TypedEntities>>,
         projection: StructuralProjection<'a>,
     ) -> NotificationEntity<'a> {
-        let notified = NotificationEntity::new(&self.entity, &self.stamped, shape.format, shape.targets)
+        let notified = NotificationEntity::new(&self.entity, &self.stamped, shape.format)
             .with_projection(projection)
             .with_language(shape.language)
             .with_fallback(shape.fallback);
@@ -107,7 +105,7 @@ impl NotifiedEntity {
 /// One Linked Entity a flat join appends (clause 4.5.23.3), to be written as
 /// `shape` says, by the rule its first encounter decided.
 pub(crate) const fn linked_entity<'a>(linked: &FlatEntity<'a, TypedEntities>, shape: WrittenShape<'a>) -> NotificationEntity<'a> {
-    NotificationEntity::linked(linked, shape.format, shape.targets)
+    NotificationEntity::linked(linked, shape.format)
         .with_fallback(shape.fallback)
         .with_language(shape.language)
 }

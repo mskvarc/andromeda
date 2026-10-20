@@ -11,11 +11,7 @@ use andromeda_linked_retrieval::{
 };
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection};
-use andromeda_ngsi_ld_render::{
-    notification_entity::{StampedInstants, TargetSpelling},
-    notified_changes::HeldAttributes,
-    structural_projection::StructuralProjection,
-};
+use andromeda_ngsi_ld_render::{notification_entity::StampedInstants, notified_changes::HeldAttributes, structural_projection::StructuralProjection};
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use chrono::{TimeZone, Utc};
 use pretty_assertions::assert_eq;
@@ -47,20 +43,19 @@ fn current(entity: Entity) -> NotifiedEntity {
 }
 
 /// The shape a subscription naming no `ngsildConformance` writes in.
-const fn shape<'a>(format: ResponseFormat, targets: TargetSpelling) -> WrittenShape<'a> {
+const fn shape<'a>(format: ResponseFormat) -> WrittenShape<'a> {
     WrittenShape {
         format,
-        targets,
         fallback: None,
         language: None,
     }
 }
 
 /// `entity` as a notification reporting nothing beyond its state writes it.
-fn written(entity: Entity, format: ResponseFormat, targets: TargetSpelling) -> Value {
+fn written(entity: Entity, format: ResponseFormat) -> Value {
     let projection = whole();
     let current = current(entity);
-    serde_json::to_value(current.notified(shape(format, targets), None, StructuralProjection::from(&projection))).expect("the walk writes it")
+    serde_json::to_value(current.notified(shape(format), None, StructuralProjection::from(&projection))).expect("the walk writes it")
 }
 
 /// A Vehicle with a speed and a Relationship.
@@ -74,18 +69,14 @@ fn vehicle() -> Entity {
 }
 
 /// A notification that reports nothing beyond the entity's state writes the
-/// entity as a query response does, its targets decoded.
+/// entity as a query response does.
 #[test]
 fn a_current_entity_is_written_as_it_stands() {
     let projection = whole();
-    let rendered = serde_json::to_value(current(vehicle()).notified(
-        shape(ResponseFormat::Normalized, TargetSpelling::Decoded),
-        None,
-        StructuralProjection::from(&projection),
-    ))
-    .expect("the walk writes it");
+    let rendered = serde_json::to_value(current(vehicle()).notified(shape(ResponseFormat::Normalized), None, StructuralProjection::from(&projection)))
+        .expect("the walk writes it");
     assert_eq!(rendered["speed"], json!({"type": "Property", "value": 80}));
-    assert_eq!(rendered["parkedIn"]["object"], json!("urn:ngsi-ld:Parking:a/b"));
+    assert_eq!(rendered["parkedIn"]["object"], json!("urn:ngsi-ld:Parking:a%2Fb"));
 }
 
 /// An entity deletion under `showChanges` writes every Attribute deleted,
@@ -105,17 +96,13 @@ fn an_entity_deletion_reports_every_attribute_deleted_with_its_previous_value() 
         previous: Some(previous),
     };
     let projection = whole();
-    let rendered = serde_json::to_value(notified.notified(
-        shape(ResponseFormat::Normalized, TargetSpelling::Decoded),
-        None,
-        StructuralProjection::from(&projection),
-    ))
-    .expect("the walk writes it");
+    let rendered =
+        serde_json::to_value(notified.notified(shape(ResponseFormat::Normalized), None, StructuralProjection::from(&projection))).expect("the walk writes it");
     assert_eq!(rendered["deletedAt"], json!("2024-06-15T12:30:00Z"));
     assert_eq!(rendered["speed"], json!({"type": "Property", "value": "urn:ngsi-ld:null", "previousValue": 80}));
     assert_eq!(
         rendered["parkedIn"],
-        json!({"type": "Relationship", "object": "urn:ngsi-ld:null", "previousObject": "urn:ngsi-ld:Parking:a/b"})
+        json!({"type": "Relationship", "object": "urn:ngsi-ld:null", "previousObject": "urn:ngsi-ld:Parking:a%2Fb"})
     );
 }
 
@@ -133,12 +120,8 @@ fn deleted_instances_join_the_held_ones() {
         deleted_at: None,
     });
     let projection = whole();
-    let rendered = serde_json::to_value(notified.notified(
-        shape(ResponseFormat::Simplified, TargetSpelling::Decoded),
-        None,
-        StructuralProjection::from(&projection),
-    ))
-    .expect("the walk writes it");
+    let rendered =
+        serde_json::to_value(notified.notified(shape(ResponseFormat::Simplified), None, StructuralProjection::from(&projection))).expect("the walk writes it");
     assert_eq!(
         rendered["speed"],
         json!({"dataset": {"@none": 80, "urn:ngsi-ld:Dataset:old": "urn:ngsi-ld:null"}})
@@ -170,7 +153,7 @@ fn an_inline_join_nests_the_linked_entity() {
     };
     let projection = whole();
     let rendered = serde_json::to_value(notified.notified(
-        shape(ResponseFormat::Simplified, TargetSpelling::Decoded),
+        shape(ResponseFormat::Simplified),
         Some(inline.cursor()),
         StructuralProjection::from(&projection),
     ))
@@ -184,23 +167,35 @@ fn an_inline_join_nests_the_linked_entity() {
 #[test]
 fn a_carried_linked_entity_and_a_family_named_type_are_written_by_the_walk() {
     let typed_like_a_family = entity(&json!({"id": "urn:ngsi-ld:Link:1", "type": "Relationship"}));
-    let rendered = written(typed_like_a_family, ResponseFormat::Normalized, TargetSpelling::Decoded);
+    let rendered = written(typed_like_a_family, ResponseFormat::Normalized);
     assert_eq!(rendered, json!({"id": "urn:ngsi-ld:Link:1", "type": "Relationship"}));
 
     let carrying = entity(&json!({
         "id": "urn:ngsi-ld:Link:2", "type": "A",
         "rel": {"type": "Relationship", "object": "urn:ngsi-ld:B:1", "entity": {"id": "urn:ngsi-ld:B:1", "type": "B", "name": {"type": "Property", "value": "b"}}}
     }));
-    let simplified = written(carrying, ResponseFormat::Simplified, TargetSpelling::Decoded);
+    let simplified = written(carrying, ResponseFormat::Simplified);
     assert_eq!(
         simplified,
         json!({"id": "urn:ngsi-ld:Link:2", "type": "A", "rel": {"id": "urn:ngsi-ld:B:1", "type": "B", "name": "b"}})
     );
 }
 
-/// A periodic notification spells its targets as the store holds them.
+/// RFC 3986 section 6.2.2.2: a percent-encoded reserved character is not
+/// equivalent to the character, so a notification names the target the
+/// Relationship was written with, in every format.
 #[test]
-fn targets_as_stored_are_left_encoded() {
-    let rendered = written(vehicle(), ResponseFormat::Normalized, TargetSpelling::AsStored);
-    assert_eq!(rendered["parkedIn"]["object"], json!("urn:ngsi-ld:Parking:a%2Fb"));
+fn a_percent_encoded_target_is_notified_as_written() {
+    let encoded = || {
+        entity(&json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "parkedIn": {"type": "Relationship", "object": "urn:ngsi-ld%3ABuilding%3A1"}
+        }))
+    };
+    assert_eq!(
+        written(encoded(), ResponseFormat::Normalized)["parkedIn"]["object"],
+        json!("urn:ngsi-ld%3ABuilding%3A1")
+    );
+    assert_eq!(written(encoded(), ResponseFormat::Simplified)["parkedIn"], json!("urn:ngsi-ld%3ABuilding%3A1"));
 }

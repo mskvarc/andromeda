@@ -52,7 +52,6 @@ pub mod response;
 pub mod structural_projection;
 pub mod subscription;
 pub mod temporal;
-pub mod uri_decoding;
 pub mod version;
 
 #[cfg(test)]

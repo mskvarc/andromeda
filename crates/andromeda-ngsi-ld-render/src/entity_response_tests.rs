@@ -31,9 +31,9 @@ use serde_json::{Value, json};
 
 /// The entities every combination is written over: each attribute family in
 /// every shape it takes, the members carried verbatim, percent-encoded
-/// Relationship targets in every place the presentation-boundary decoding
-/// reaches, client values shaped like Relationships, an entity typed like a
-/// Relationship family and one already carrying a Linked Entity.
+/// Relationship targets in every place a target stands, client values shaped
+/// like Relationships, an entity typed like a Relationship family and one
+/// already carrying a Linked Entity.
 fn corpus() -> Vec<Value> {
     [typed_entities(), verbatim_and_change_entities(), edge_entities()]
         .into_iter()
@@ -486,11 +486,12 @@ fn a_requested_version_decides_the_outcome_and_a_current_one_changes_nothing() {
     }
 }
 
-/// Clause 4.6.2: the percent-encoded Relationship targets are written
-/// decoded in every representation, and a client's own value -- a Property's
-/// value, a `JsonProperty`'s `json` -- is never decoded, whatever it holds.
+/// Clauses 4.5.3.2 and 5.7.1 serve the Relationship that was written, and RFC
+/// 3986 section 6.2.2.2 does not make a percent-encoded reserved character
+/// equivalent to the character: a target, like a client's own value, is
+/// written as stored in every representation.
 #[test]
-fn relationship_targets_are_decoded_in_every_representation_and_values_are_not() {
+fn percent_encoded_targets_and_values_are_written_as_stored_in_every_representation() {
     let families = entity("urn:ngsi-ld:Building:families");
     let nested = entity("urn:ngsi-ld:Building:nested");
     let carrier = (ResponseMediaType::Json, ResponseContext::Absent);
@@ -498,30 +499,64 @@ fn relationship_targets_are_decoded_in_every_representation_and_values_are_not()
         let writing = Writing::of(&carrier, format);
         let (body, _) = writing.single(&families);
         let text = body.to_string();
-        assert!(text.contains("urn:ngsi-ld:Person:x:1"), "{format:?}: {text}");
-        assert!(!text.contains("Person:x%3A1"), "{format:?}: {text}");
+        assert!(text.contains("urn:ngsi-ld:Person:x%3A1"), "{format:?}: {text}");
+        assert!(!text.contains("Person:x:1"), "{format:?}: {text}");
+        assert!(text.contains("urn:ngsi-ld:Stop:x%3A1"), "{format:?}: {text}");
         assert!(text.contains("urn%3Ajson%3Akept"), "{format:?} keeps the JsonProperty's own value: {text}");
         let (body, _) = writing.single(&nested);
         assert!(body.to_string().contains("urn%3Ain%3Avalue"), "{format:?} keeps a Property's own value: {body}");
+        if matches!(format, ResponseFormat::Normalized | ResponseFormat::Concise) {
+            assert!(
+                body.to_string().contains("urn:ngsi-ld:Device:x%3A9"),
+                "{format:?} keeps a sub-Relationship's target: {body}"
+            );
+        }
+        let (body, _) = writing.single(&entity("urn:ngsi-ld:Building:changes"));
+        assert!(!body.to_string().contains("Person:x:1"), "{format:?} keeps a previous target: {body}");
     }
 }
 
-/// Clause 4.6.2: only the targets of a Relationship and a `ListRelationship`
-/// are decoded, in both spellings of an `objectList` member.
+/// Table 5.2.37-1: both spellings of an `objectList` member hold the targets
+/// as written.
 #[test]
-fn list_relationship_targets_are_decoded_in_both_object_list_spellings() {
+fn list_relationship_targets_are_written_as_stored_in_both_object_list_spellings() {
     let carrier = (ResponseMediaType::Json, ResponseContext::Absent);
     let (normalized, _) = Writing::of(&carrier, ResponseFormat::Normalized).single(&entity("urn:ngsi-ld:Building:families"));
     pretty_assertions::assert_eq!(
         normalized["stops"]["objectList"],
-        json!([{"object": "urn:ngsi-ld:Stop:x:1"}, {"object": "urn:ngsi-ld:Stop:2"}])
+        json!([{"object": "urn:ngsi-ld:Stop:x%3A1"}, {"object": "urn:ngsi-ld:Stop:2"}])
     );
     let (simplified, _) = Writing::of(&carrier, ResponseFormat::Simplified).single(&entity("urn:ngsi-ld:Building:families"));
-    pretty_assertions::assert_eq!(simplified["stops"], json!(["urn:ngsi-ld:Stop:x:1", "urn:ngsi-ld:Stop:2"]));
+    pretty_assertions::assert_eq!(simplified["stops"], json!(["urn:ngsi-ld:Stop:x%3A1", "urn:ngsi-ld:Stop:2"]));
+}
+
+#[test]
+fn a_percent_encoded_relationship_object_reads_back_as_written() {
+    let encoded: Entity = serde_json::from_value(json!({
+        "id": "urn:ngsi-ld:Room:1",
+        "type": "Room",
+        "locatedIn": {"type": "Relationship", "object": "urn:ngsi-ld%3ABuilding%3A1"}
+    }))
+    .expect("an entity");
+    let carrier = (ResponseMediaType::Json, ResponseContext::Absent);
+    let (normalized, _) = Writing::of(&carrier, ResponseFormat::Normalized).single(&encoded);
+    pretty_assertions::assert_eq!(normalized["locatedIn"]["object"], "urn:ngsi-ld%3ABuilding%3A1");
+    let (concise, _) = Writing::of(&carrier, ResponseFormat::Concise).single(&encoded);
+    pretty_assertions::assert_eq!(concise["locatedIn"]["object"], "urn:ngsi-ld%3ABuilding%3A1");
+    let (key_values, _) = Writing::of(&carrier, ResponseFormat::KeyValues).single(&encoded);
+    pretty_assertions::assert_eq!(key_values["locatedIn"], "urn:ngsi-ld%3ABuilding%3A1");
+}
+
+#[test]
+fn previous_targets_are_written_as_stored() {
+    let carrier = (ResponseMediaType::Json, ResponseContext::Absent);
+    let (normalized, _) = Writing::of(&carrier, ResponseFormat::Normalized).single(&entity("urn:ngsi-ld:Building:changes"));
+    pretty_assertions::assert_eq!(normalized["owner"]["previousObject"], "urn:ngsi-ld:Person:x%3A1");
+    pretty_assertions::assert_eq!(normalized["stops"]["previousObjectList"], json!([{"object": "urn:ngsi-ld:Stop:x%3A1"}]));
 }
 
 /// An entity typed like a Relationship family is still an entity: its own
-/// members are values, and are not decoded.
+/// members are values.
 #[test]
 fn an_entity_typed_like_a_relationship_family_keeps_its_values() {
     let carrier = (ResponseMediaType::Json, ResponseContext::Absent);

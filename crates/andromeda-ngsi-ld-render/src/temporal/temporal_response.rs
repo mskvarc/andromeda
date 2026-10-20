@@ -22,7 +22,6 @@ use crate::{
         temporal_entity_body::{AttributeShape, TemporalEntityBody},
         temporal_evolutions::TemporalEvolutions,
     },
-    uri_decoding::UriDecoding,
     version::{adaptation::VersionAdaptation, adapted_payload::AdaptedPayload, fallback::VersionFallback},
 };
 use andromeda_http_headers::{language::LanguageFilter, media_type::ResponseMediaType};
@@ -113,9 +112,7 @@ impl<'a> TemporalRoot<'a> {
     #[must_use]
     pub fn carries_members(&self, representation: TemporalRepresentation) -> bool {
         match self.body {
-            TemporalBody::Evolution(entity) => self
-                .evolution(entity, representation, MemberWalk::new(UriDecoding::Decode, None, None), None)
-                .carries_members(),
+            TemporalBody::Evolution(entity) => self.evolution(entity, representation, MemberWalk::new(None, None), None).carries_members(),
             TemporalBody::Aggregated(_) => true,
         }
     }
@@ -247,7 +244,7 @@ impl ReadyTemporalResponse<'_> {
         };
         let presentation = Presentation {
             representation: self.representation,
-            walk: MemberWalk::new(UriDecoding::Decode, self.language_filter, fallback),
+            walk: MemberWalk::new(self.language_filter, fallback),
             context: None,
         };
         let written = match (&self.payload, self.renderer.media_type) {

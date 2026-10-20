@@ -40,9 +40,8 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_model::temporal::{TemporalValue, observation_metadata::ObservationMetadata, structured_value::StructuredValue};
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_render::uri_decoding::decode_percent_encoded_uri;
 use chrono::{DateTime, Utc};
-use std::{borrow::Cow, str::FromStr};
+use std::str::FromStr;
 
 /// The JSON-LD datatype of a JSON literal, which a time value classification
 /// reads like any other declared datatype.
@@ -193,7 +192,7 @@ fn family_value(family: AttributeType, written: WrittenValue) -> Result<Temporal
             objects
                 .into_iter()
                 .map(|object| match object {
-                    ListObject::Bare(uri) | ListObject::Literal(uri) | ListObject::Wrapped(uri) => target(uri),
+                    ListObject::Bare(uri) | ListObject::Literal(uri) | ListObject::Wrapped(uri) => uri,
                 })
                 .collect(),
         ))),
@@ -211,10 +210,9 @@ fn family_value(family: AttributeType, written: WrittenValue) -> Result<Temporal
     }
 }
 
-/// A Relationship's targets: one keeps the URI column, several are kept as the
-/// ordered array clause 4.5.3.2 admits ("a URI or array of URIs").
+/// A Relationship's targets, as written: one keeps the URI column, several are
+/// kept as the ordered array clause 4.5.3.2 admits ("a URI or array of URIs").
 fn relationship_value(targets: NonEmpty<Uri>) -> TemporalValue {
-    let targets = targets.map(target);
     match targets.as_slice() {
         [single] => TemporalValue::Uri(single.clone()), // clone: the one target the URI column keeps
         _ => TemporalValue::Structured(StructuredValue::Objects(targets)),
@@ -228,21 +226,6 @@ fn vocab_value(terms: NonEmpty<NgsiLdReference>) -> TemporalValue {
         [single] => TemporalValue::String(single.as_str().to_owned()),
         _ => TemporalValue::Structured(StructuredValue::Vocabs(terms)),
     }
-}
-
-/// One Relationship target with the percent-encoding a client may have written
-/// its entity identifier in decoded.
-///
-/// A client is free to percent-encode characters in an entity identifier, and
-/// the same identifier written two ways names one entity, so the decoding
-/// happens once on the way into history rather than at each presentation
-/// boundary.
-fn target(uri: Uri) -> Uri {
-    let decoded = match decode_percent_encoded_uri(uri.as_str()) {
-        Cow::Owned(decoded) => Some(decoded),
-        Cow::Borrowed(_) => None,
-    };
-    decoded.and_then(|decoded| decoded.parse::<Uri>().ok()).unwrap_or(uri)
 }
 
 /// A Property's value: a single scalar lands in its typed column, anything

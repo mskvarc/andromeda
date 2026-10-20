@@ -21,7 +21,6 @@ use crate::{
     error::{RenderError, RenderedShape},
     response::{ResponseHead, ResponseRenderer},
     structural_projection::StructuralProjection,
-    uri_decoding::UriDecoding,
     version::{adaptation::VersionAdaptation, adapted_payload::AdaptedPayload, fallback::VersionFallback},
 };
 use andromeda_http_headers::{language::LanguageFilter, media_type::ResponseMediaType};
@@ -92,7 +91,7 @@ impl<'a> EntityBody<'a> {
         TypedEntity {
             entity: self.entity,
             format,
-            walk: MemberWalk::new(UriDecoding::Decode, language_filter, fallback),
+            walk: MemberWalk::new(language_filter, fallback),
             projection: self.projection,
             identifier: IdentifierMember::Written,
             context: None,

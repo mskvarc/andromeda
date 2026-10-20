@@ -93,14 +93,24 @@ fn a_relationship_without_any_object_is_refused() {
     assert!(error.to_string().contains("object"), "{error}");
 }
 
-/// A percent-encoded entity identifier is decoded once, on the way in, so the
-/// stored target is the identifier the Relationship names.
+/// RFC 3986 section 6.2.2.2: a percent-encoded reserved character is not
+/// equivalent to the character, so history records the target as written,
+/// the spelling current state holds.
 #[test]
-fn a_percent_encoded_target_is_decoded_before_it_is_stored() {
+fn a_percent_encoded_target_is_stored_as_written() {
     pretty_assertions::assert_eq!(
         recorded(&relationship(&["urn:ngsi-ld:Person%3AAlice"])),
-        TemporalValue::Uri("urn:ngsi-ld:Person:Alice".parse().expect("a valid URI"))
+        TemporalValue::Uri("urn:ngsi-ld:Person%3AAlice".parse().expect("a valid URI"))
     );
+}
+
+#[test]
+fn a_percent_encoded_list_target_is_stored_as_written() {
+    let instance = json!({
+        "@type": [LIST_RELATIONSHIP],
+        expanded_properties::OBJECT_LIST.as_str(): [{"@list": [{"@id": "urn:ngsi-ld%3ACity%3AAntwerp"}]}]
+    });
+    pretty_assertions::assert_eq!(stored(&recorded(&instance)), json!(["urn:ngsi-ld%3ACity%3AAntwerp"]));
 }
 
 /// Clauses 4.5.22.2 and 4.5.22.3: the normalized `{"object": …}` member, the

@@ -429,6 +429,33 @@ mod tests {
         assert!(holds(&expr, &vehicle_entity()));
     }
 
+    /// RFC 3986 section 6.2.2.2: a percent-encoded reserved character is not
+    /// equivalent to the character, so an encoded object matches only its
+    /// own spelling, quoted or bare.
+    #[test]
+    fn a_percent_encoded_relationship_object_matches_only_its_own_spelling() {
+        let entity = serde_json::json!([{
+            "@id": "urn:ngsi-ld:Room:1",
+            "@type": ["https://example.com/Room"],
+            "https://example.com/locatedIn": [{
+                "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld%3ABuilding%3A1"}]
+            }]
+        }]);
+        for (expression, expected) in [
+            ("\"https://example.com/locatedIn\"==\"urn:ngsi-ld%3ABuilding%3A1\"", true),
+            ("\"https://example.com/locatedIn\"==urn:ngsi-ld%3ABuilding%3A1", true),
+            ("\"https://example.com/locatedIn\"==\"urn:ngsi-ld:Building:1\"", false),
+            ("\"https://example.com/locatedIn\"==urn:ngsi-ld:Building:1", false),
+            ("\"https://example.com/locatedIn\"!=\"urn:ngsi-ld:Building:1\"", true),
+        ] {
+            pretty_assertions::assert_eq!(holds(&parse(expression).unwrap(), &entity), expected, "{expression}");
+        }
+        assert!(!holds(
+            &parse("\"https://example.com/isParked\"==\"urn:ngsi-ld%3AOffStreetParking%3ADowntown1\"").unwrap(),
+            &vehicle_entity()
+        ));
+    }
+
     #[test]
     fn eval_boolean() {
         let expr = parse("\"https://example.com/active\"==true").unwrap();

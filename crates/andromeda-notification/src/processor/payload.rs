@@ -28,7 +28,6 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_render::{
     notification_data::DataShape,
-    notification_entity::TargetSpelling,
     notification_language::NotificationLanguage,
     notified_changes::HeldAttributes,
     structural_projection::StructuralProjection,
@@ -141,7 +140,6 @@ async fn notification_payload(
     let shape = CarriedShape {
         format: sub.notification_format.unwrap_or_default(),
         join: sub.notification_join,
-        targets: TargetSpelling::Decoded,
         projection: StructuralProjection::from(&sub.notification_projection),
         list,
         conformance: sub.ngsild_conformance,

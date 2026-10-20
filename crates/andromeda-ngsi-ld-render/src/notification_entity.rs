@@ -31,7 +31,6 @@ use crate::{
     notification_language::NotificationLanguage,
     notified_changes::NotifiedChanges,
     structural_projection::StructuralProjection,
-    uri_decoding::UriDecoding,
     version::fallback::VersionFallback,
 };
 use andromeda_json_literal::JsonLiteral;
@@ -59,16 +58,6 @@ pub struct StampedInstants {
     pub deleted_at: Option<DateTime<Utc>>,
 }
 
-/// How the targets of the entity's Relationships are spelled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TargetSpelling {
-    /// Percent-decoded at the presentation boundary, as a query response
-    /// spells them.
-    Decoded,
-    /// As the store holds them.
-    AsStored,
-}
-
 /// One notified entity, ready to be written in a notification format.
 #[derive(Debug, Clone, Copy)]
 pub struct NotificationEntity<'a> {
@@ -78,8 +67,6 @@ pub struct NotificationEntity<'a> {
     stamped: Option<&'a StampedInstants>,
     /// The subscription's `notification.format`.
     format: ResponseFormat,
-    /// How its Relationship targets are spelled.
-    targets: TargetSpelling,
     /// The inline join its Relationships nest their targets by, if the
     /// subscription asked for one.
     join: Option<InlineCursor<'a, TypedEntities>>,
@@ -103,15 +90,13 @@ pub struct NotificationEntity<'a> {
 }
 
 impl<'a> NotificationEntity<'a> {
-    /// The entity, with `stamped` written on it, in `format`, its
-    /// Relationship targets spelled as `targets` says.
+    /// The entity, with `stamped` written on it, in `format`.
     #[must_use]
-    pub const fn new(entity: &'a Entity, stamped: &'a StampedInstants, format: ResponseFormat, targets: TargetSpelling) -> NotificationEntity<'a> {
+    pub const fn new(entity: &'a Entity, stamped: &'a StampedInstants, format: ResponseFormat) -> NotificationEntity<'a> {
         NotificationEntity {
             entity,
             stamped: Some(stamped),
             format,
-            targets,
             join: None,
             changes: None,
             projection: None,
@@ -123,19 +108,17 @@ impl<'a> NotificationEntity<'a> {
     }
 
     /// One Linked Entity a flat join appends (clause 4.5.23.3), in `format`,
-    /// its Relationship targets spelled as `targets` says, written by the
-    /// rule its first encounter decided.
+    /// written by the rule its first encounter decided.
     ///
     /// The clause 5.8.6 exemption of `id` is the notified entity's: a Linked
     /// Entity keeps its `id` only where its list does (clause 5.7.1.5), as in
     /// a query response.
     #[must_use]
-    pub const fn linked(linked: &FlatEntity<'a, TypedEntities>, format: ResponseFormat, targets: TargetSpelling) -> NotificationEntity<'a> {
+    pub const fn linked(linked: &FlatEntity<'a, TypedEntities>, format: ResponseFormat) -> NotificationEntity<'a> {
         NotificationEntity {
             entity: linked.node,
             stamped: None,
             format,
-            targets,
             join: None,
             changes: None,
             projection: None,
@@ -148,9 +131,9 @@ impl<'a> NotificationEntity<'a> {
 
     /// One entity a notification relays from its source, re-assembled for
     /// the local subscription (clause 5.8.6), written as a notification of
-    /// that subscription writes a local entity: in `format`, its Relationship
-    /// targets decoded, `type` and `scope` under the subscription's
-    /// `projection`, and `id` written whatever that rule says; its top-level
+    /// that subscription writes a local entity: in `format`, `type` and
+    /// `scope` under the subscription's `projection`, and `id` written
+    /// whatever that rule says; its top-level
     /// `LanguageProperty` attributes are reduced under the subscription's
     /// `lang` when it names one (Table 5.2.12-1, clause 4.15).
     ///
@@ -166,7 +149,6 @@ impl<'a> NotificationEntity<'a> {
             entity,
             stamped: None,
             format,
-            targets: TargetSpelling::Decoded,
             join: None,
             changes: None,
             projection: Some(projection),
@@ -222,14 +204,10 @@ impl<'a> NotificationEntity<'a> {
     /// The entity as the typed walk writes it, carrying `context` beside its
     /// own members when the body carries one.
     pub(crate) fn typed(&self, context: Option<&'a JsonLiteral>) -> TypedEntity<'a> {
-        let decoding = match self.targets {
-            TargetSpelling::Decoded => UriDecoding::Decode,
-            TargetSpelling::AsStored => UriDecoding::Keep,
-        };
         TypedEntity {
             entity: self.entity,
             format: self.format,
-            walk: MemberWalk::new(decoding, self.language.map(NotificationLanguage::filter), self.fallback),
+            walk: MemberWalk::new(self.language.map(NotificationLanguage::filter), self.fallback),
             projection: self.projection,
             identifier: self.identifier,
             context,

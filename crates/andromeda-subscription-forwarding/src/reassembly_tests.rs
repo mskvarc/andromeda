@@ -181,9 +181,10 @@ async fn the_structural_projection_applies() {
 }
 
 /// Clause 5.8.6: a relayed entity is written as a local one is, so a
-/// Relationship target the source percent-encoded is spelled decoded.
+/// Relationship target the source percent-encoded keeps the spelling it was
+/// sent with (RFC 3986 section 6.2.2.2).
 #[tokio::test]
-async fn relayed_targets_are_decoded() {
+async fn relayed_targets_keep_their_percent_encoding() {
     let mut scene = ReassemblyScene::start(SceneSpec::default());
     let data = json!([compact_vehicle(
         "urn:ngsi-ld:Vehicle:1",
@@ -196,7 +197,7 @@ async fn relayed_targets_are_decoded() {
     let [entity] = entities.as_slice() else {
         panic!("one entity is relayed, got {entities:?}");
     };
-    pretty_assertions::assert_eq!(entity["owner"]["object"], json!("urn:ngsi-ld:Person:a:b"), "{entity}");
+    pretty_assertions::assert_eq!(entity["owner"]["object"], json!("urn:ngsi-ld:Person:a%3Ab"), "{entity}");
 }
 
 /// Clause 5.8.6 and Table 4.3.6.8-1: a subscription declaring

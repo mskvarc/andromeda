@@ -232,12 +232,20 @@ fn lang_reduces_language_properties() {
     );
 }
 
-/// The presentation boundary decodes a Relationship target once.
+/// RFC 3986 section 6.2.2.2: a percent-encoded reserved character is not
+/// equivalent to the character, so a Temporal Evolution names the target the
+/// Relationship was written with.
 #[test]
-fn targets_are_percent_decoded_once() {
-    let body = evolution(json!({"owner": [{"type": "Relationship", "object": "urn:a%3Ab", "observedAt": "2025-01-01T00:00:00Z"}]}));
-    assert_eq!(written(&body, NORMALIZED, None, None)["owner"][0]["object"], json!("urn:a:b"));
-    assert_eq!(written(&body, VALUES, None, None)["owner"]["objects"][0][0], json!("urn:a:b"));
+fn a_percent_encoded_target_is_written_as_stored() {
+    let body = evolution(json!({"owner": [{"type": "Relationship", "object": "urn:ngsi-ld%3ABuilding%3A1", "observedAt": "2025-01-01T00:00:00Z"}]}));
+    assert_eq!(
+        written(&body, NORMALIZED, None, None)["owner"][0]["object"],
+        json!("urn:ngsi-ld%3ABuilding%3A1")
+    );
+    assert_eq!(
+        written(&body, VALUES, None, None)["owner"]["objects"][0][0],
+        json!("urn:ngsi-ld%3ABuilding%3A1")
+    );
 }
 
 /// Clause 4.3.6.8 over a Temporal Evolution: the array is the sequence of

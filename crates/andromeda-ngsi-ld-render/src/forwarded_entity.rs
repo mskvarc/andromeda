@@ -20,7 +20,6 @@ use crate::{
         notified_member::MemberInstances,
         reified_member::{Reification, ReifiedMember},
     },
-    uri_decoding::UriDecoding,
     version::{
         adapted_payload::AdaptedPayload,
         fallback::{EntityMember, VersionFallback},
@@ -83,7 +82,7 @@ impl<'a> ForwardedEntity<'a> {
         };
         ForwardedEntity {
             patch,
-            walk: MemberWalk::new(UriDecoding::Keep, None, fallback),
+            walk: MemberWalk::new(None, fallback),
             layout: InstanceLayout::of(element),
             scope_history: None,
         }
@@ -155,7 +154,7 @@ impl<'a> ForwardedAttribute<'a> {
             Some(version) => VersionFallback::new(version, element),
             None => None,
         };
-        ForwardedAttribute::member(member, MemberWalk::new(UriDecoding::Keep, None, fallback), InstanceLayout::of(element))
+        ForwardedAttribute::member(member, MemberWalk::new(None, fallback), InstanceLayout::of(element))
     }
 
     /// `member` written under `walk` and `layout`.

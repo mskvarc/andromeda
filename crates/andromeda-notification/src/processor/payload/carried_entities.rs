@@ -26,7 +26,6 @@ use andromeda_ngsi_ld_query::projection::attribute_iri_index::AttributeIriIndex;
 use andromeda_ngsi_ld_render::{
     joined_notification::{join_plan, joined_entities},
     notification_data::{DataShape, notification_data},
-    notification_entity::TargetSpelling,
     notification_language::NotificationLanguage,
     structural_projection::StructuralProjection,
     version::{adapted_payload::AdaptedPayload, fallback::VersionFallback},
@@ -40,8 +39,6 @@ pub(crate) struct CarriedShape<'a> {
     pub(crate) format: ResponseFormat,
     /// The `notification.join`.
     pub(crate) join: Option<JoinMode>,
-    /// How Relationship targets are spelled.
-    pub(crate) targets: TargetSpelling,
     /// The `id` / `type` / `scope` half of the `pick` / `omit` projection.
     pub(crate) projection: StructuralProjection<'a>,
     /// The list in force the subscription narrows every entity by.
@@ -92,7 +89,6 @@ pub(crate) fn carried_entities(
     let CarriedShape {
         format,
         join,
-        targets,
         projection,
         list,
         conformance,
@@ -100,12 +96,7 @@ pub(crate) fn carried_entities(
     } = shape;
     let fallback = conformance.and_then(|target| VersionFallback::new(target, AdaptedPayload::Entity));
     let plan = linked.and_then(|linked| join_plan(join, Some(linked.graph), MemberRule::new(list, linked.index)));
-    let written = WrittenShape {
-        format,
-        targets,
-        fallback,
-        language,
-    };
+    let written = WrittenShape { format, fallback, language };
     let entities = joined_entities(
         plan.as_ref(),
         notified,
@@ -133,7 +124,7 @@ mod tests {
     use andromeda_ngsi_ld_render::{
         geometry_selection::GeometrySelection,
         notification_data::DataShape,
-        notification_entity::{StampedInstants, TargetSpelling},
+        notification_entity::StampedInstants,
         notification_language::NotificationLanguage,
         notified_changes::HeldAttributes,
         structural_projection::StructuralProjection,
@@ -224,7 +215,6 @@ mod tests {
         CarriedShape {
             format: ResponseFormat::Normalized,
             join,
-            targets: TargetSpelling::AsStored,
             projection: StructuralProjection::from(projection),
             list: ListInForce::of(Some(projection), &[]),
             conformance: None,

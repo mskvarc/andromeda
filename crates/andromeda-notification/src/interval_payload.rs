@@ -37,7 +37,6 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::projection::compiled::Projection;
 use andromeda_ngsi_ld_render::{
     notification_data::DataShape,
-    notification_entity::TargetSpelling,
     notification_language::NotificationLanguage,
     notified_changes::HeldAttributes,
     structural_projection::StructuralProjection,
@@ -125,9 +124,6 @@ impl PeriodicPayload<'_> {
         let shape = CarriedShape {
             format: sub.notification.format.unwrap_or_default(),
             join: sub.notification.join,
-            // A periodic notification spells its Relationship targets as the
-            // store holds them.
-            targets: TargetSpelling::AsStored,
             projection: StructuralProjection::from(&projection),
             list: rule.list,
             conformance: sub.delivery.ngsild_conformance,

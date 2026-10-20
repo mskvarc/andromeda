@@ -2,7 +2,7 @@
 //! 5.8.6), as the typed walk writes it in every representation.
 
 use crate::{
-    notification_entity::{NotificationEntity, StampedInstants, TargetSpelling},
+    notification_entity::{NotificationEntity, StampedInstants},
     notified_changes::{DeletedInstances, HeldAttributes, NotifiedChanges},
     structural_projection::StructuralProjection,
 };
@@ -21,7 +21,7 @@ fn entity(document: Value) -> Entity {
 /// `notified` in `format` with `changes` reported beside it.
 fn rendered(notified: &Entity, changes: NotifiedChanges<'_>, format: ResponseFormat) -> Value {
     let stamped = StampedInstants::default();
-    let written = NotificationEntity::new(notified, &stamped, format, TargetSpelling::Decoded).with_changes(changes);
+    let written = NotificationEntity::new(notified, &stamped, format).with_changes(changes);
     serde_json::to_value(written).expect("the walk writes it")
 }
 
@@ -265,8 +265,7 @@ fn a_projection_narrows_the_structural_members_but_never_the_id() {
         omit: Vec::new(),
     };
     let stamped = StampedInstants::default();
-    let written = NotificationEntity::new(&notified, &stamped, ResponseFormat::Normalized, TargetSpelling::Decoded)
-        .with_projection(StructuralProjection::from(&projection));
+    let written = NotificationEntity::new(&notified, &stamped, ResponseFormat::Normalized).with_projection(StructuralProjection::from(&projection));
     let document = serde_json::to_value(written).expect("the walk writes it");
     assert_eq!(document["id"], json!("urn:ngsi-ld:Vehicle:1"));
     assert!(document.get("type").is_none(), "{document}");

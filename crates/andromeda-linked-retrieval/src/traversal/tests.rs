@@ -57,6 +57,21 @@ async fn a_self_reference_terminates() {
     assert_eq!(resolved(&graph), vec!["urn:ngsi-ld:T:B"]);
 }
 
+/// RFC 3986 section 6.2.2.2: a percent-encoded reserved character is not
+/// equivalent to the character, so a target written `x%3A1` names no entity
+/// whose identifier spells it `x:1`.
+#[tokio::test]
+async fn a_percent_encoded_target_resolves_only_the_entity_spelled_the_same() {
+    let source = FakeSource::local([node("x:1", &[]), node("y%3A2", &[])]);
+    let graph = walk(
+        &source,
+        &node("A", &[("encoded", "x%3A1"), ("same", "y%3A2")]),
+        &TraversalBounds::of(level(1), None),
+    )
+    .await;
+    assert_eq!(resolved(&graph), vec!["urn:ngsi-ld:T:y%3A2"]);
+}
+
 /// Clause 4.5.23 `containedBy`: what the client already holds is neither read
 /// nor returned.
 #[tokio::test]

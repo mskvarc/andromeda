@@ -83,7 +83,7 @@ impl<'a> AttributeJoin<'a> {
                 Some(LinkedEntity::Entity(TypedEntity {
                     entity,
                     format,
-                    walk: MemberWalk::new(walk.decoding, walk.language_filter, walk.fallback),
+                    walk: MemberWalk::new(walk.language_filter, walk.fallback),
                     projection: None,
                     identifier: IdentifierMember::Written,
                     context: None,
@@ -102,7 +102,7 @@ impl<'a> AttributeJoin<'a> {
                 };
                 Some(LinkedEntity::Temporal(TemporalEntityBody::nested(
                     entity,
-                    MemberWalk::new(walk.decoding, walk.language_filter, walk.fallback),
+                    MemberWalk::new(walk.language_filter, walk.fallback),
                     cursor,
                 )))
             }
@@ -194,7 +194,7 @@ const fn carried_entity<'a>(entity: &'a Entity, format: ResponseFormat, walk: Me
     LinkedEntity::Entity(TypedEntity {
         entity,
         format,
-        walk: MemberWalk::new(walk.decoding, None, walk.fallback),
+        walk: MemberWalk::new(None, walk.fallback),
         projection: None,
         identifier: IdentifierMember::Written,
         context: None,

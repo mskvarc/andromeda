@@ -155,6 +155,18 @@ mod tests {
         assert_eq!(targets, vec!["urn:ngsi-ld:Person:P", "urn:ngsi-ld:Person:Q"]);
     }
 
+    /// RFC 3986 section 6.2.2.2: the edge names the target as written, not
+    /// the entity its decoded spelling would name.
+    #[test]
+    fn a_percent_encoded_object_names_its_target_as_written() {
+        let entity = building(json!({
+            "owner": {"type": "Relationship", "object": "urn:ngsi-ld:Person%3AP"},
+            "owners": {"type": "ListRelationship", "objectList": ["urn:ngsi-ld:Person%3AQ"]}
+        }));
+        let targets: Vec<String> = edges(&entity).into_iter().map(|edge| edge.target.to_string()).collect();
+        assert_eq!(targets, vec!["urn:ngsi-ld:Person%3AP", "urn:ngsi-ld:Person%3AQ"]);
+    }
+
     /// Clause 4.5.23.1: an `objectType` declares the object an Internal
     /// Linked Entity.
     #[test]

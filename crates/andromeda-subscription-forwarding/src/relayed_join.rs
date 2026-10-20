@@ -20,7 +20,7 @@ use andromeda_ngsi_ld_query::projection::attribute_iri_index::AttributeIriIndex;
 use andromeda_ngsi_ld_render::{
     joined_notification::{join_plan, joined_entities},
     notification_data::{DataShape, notification_data},
-    notification_entity::{NotificationEntity, TargetSpelling},
+    notification_entity::NotificationEntity,
     notification_language::NotificationLanguage,
     structural_projection::StructuralProjection,
     version::{adapted_payload::AdaptedPayload, fallback::VersionFallback},
@@ -74,10 +74,10 @@ impl RelayedLinks {
 impl SubscriptionForwardingService {
     /// The `data` of the copy sent to the local subscription's endpoint, its
     /// Entities written as a notification of that subscription writes a local
-    /// entity (clause 5.8.6): its `format`, `pick` and `omit`, decoded
-    /// Relationship targets, its `lang`, the Linked Entities of its `join`, and
-    /// amended to its `ngsildConformance`. Table 5.3.1-1: the local endpoint's
-    /// `accept` decides the shape, whatever shape the source sent.
+    /// entity (clause 5.8.6): its `format`, `pick` and `omit`, its `lang`, the
+    /// Linked Entities of its `join`, and amended to its `ngsildConformance`.
+    /// Table 5.3.1-1: the local endpoint's `accept` decides the shape,
+    /// whatever shape the source sent.
     ///
     /// # Errors
     ///
@@ -120,7 +120,7 @@ impl SubscriptionForwardingService {
                 }
             },
             |linked| {
-                NotificationEntity::linked(linked, format, TargetSpelling::Decoded)
+                NotificationEntity::linked(linked, format)
                     .with_fallback(fallback)
                     .with_language(language.as_ref())
             },

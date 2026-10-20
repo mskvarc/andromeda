@@ -161,7 +161,6 @@ impl Serialize for Pairs<'_, '_, '_> {
             instance,
             written_family: object.written_family,
             timeproperty: object.timeproperty,
-            walk: object.walk,
         }))
     }
 }
@@ -174,8 +173,6 @@ struct Pair<'a> {
     written_family: AttributeType,
     /// The Temporal Property the query ran on.
     timeproperty: TimeProp,
-    /// What the walk applies on the way.
-    walk: MemberWalk<'a>,
 }
 
 impl Serialize for Pair<'_> {
@@ -184,7 +181,6 @@ impl Serialize for Pair<'_> {
         pair.serialize_element(&PairValue {
             instance: self.instance,
             written_family: self.written_family,
-            walk: self.walk,
         })?;
         pair.serialize_element(&instant(self.instance.common(), self.timeproperty).map(Instant))?;
         pair.end()
@@ -205,13 +201,11 @@ struct PairValue<'a> {
     instance: &'a Attribute,
     /// The family the pair is written as.
     written_family: AttributeType,
-    /// What the walk applies on the way.
-    walk: MemberWalk<'a>,
 }
 
 impl Serialize for PairValue<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let value = FamilyValue::current(self.instance, Reification::Concise, self.walk.decoding).written_as(self.written_family);
+        let value = FamilyValue::current(self.instance, Reification::Concise).written_as(self.written_family);
         match self.written_family.temporal_value_encoding() {
             TemporalValueEncoding::Wrapped => {
                 let mut wrapper = serializer.serialize_map(Some(1))?;

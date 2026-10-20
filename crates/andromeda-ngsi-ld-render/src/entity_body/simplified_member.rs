@@ -29,7 +29,6 @@ use crate::{
         value_body::{ValueBody, ValueListBody},
     },
     language_negotiation::negotiated_entry,
-    uri_decoding::DecodedTargets,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, default_instance::DEFAULT_INSTANCE_TOKEN, identifier::Identifier};
 use andromeda_ngsi_ld_model::attribute::instance::{Attribute, AttributeValue};
@@ -217,7 +216,6 @@ struct SimplifiedTyped<'a> {
 
 impl Serialize for SimplifiedTyped<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let decoding = self.walk.decoding;
         match self.attribute {
             Attribute::LanguageProperty(language_property) => match self.walk.language_filter.and_then(|filter| negotiated_entry(language_property, filter)) {
                 Some(entry) => entry.value.serialize(serializer),
@@ -227,7 +225,7 @@ impl Serialize for SimplifiedTyped<'_> {
             Attribute::GeoProperty(geo_property) => geo_property.value.serialize(serializer),
             Attribute::Relationship(relationship) => match relationship_entities(relationship, ResponseFormat::Simplified, self.walk) {
                 Some(linked) => linked.serialize(serializer),
-                None => DecodedTargets::new(&relationship.object, decoding).serialize(serializer),
+                None => relationship.object.serialize(serializer),
             },
             Attribute::VocabProperty(vocab_property) => self.wrapped(serializer, AttributeType::VocabProperty, &vocab_property.vocab),
             Attribute::JsonProperty(json_property) => self.wrapped(serializer, AttributeType::JsonProperty, &json_property.json),
@@ -237,7 +235,7 @@ impl Serialize for SimplifiedTyped<'_> {
                 // Clause 4.5.4: "an ordered array holding the
                 // `ListRelationship`'s Objects (represented as URIs)", the
                 // concise list.
-                None => ObjectListBody::new(&list_relationship.object_list, Reification::Concise, decoding).serialize(serializer),
+                None => ObjectListBody::new(&list_relationship.object_list, Reification::Concise).serialize(serializer),
             },
         }
     }
