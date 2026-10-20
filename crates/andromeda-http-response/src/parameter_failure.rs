@@ -17,7 +17,6 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         ParameterError::OptionsInvalid(_)
         | ParameterError::FormatInvalid(_)
         | ParameterError::MergeFormatInvalid(_)
-        | ParameterError::ResponseFormatHeaderInvalid(_)
         | ParameterError::AggregationIneligible { .. }
         | ParameterError::AggrGroupByWithoutGroupedValues
         | ParameterError::AggrGroupByInvalid(_)

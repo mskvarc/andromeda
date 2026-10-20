@@ -207,7 +207,6 @@ const BASE_SUITES: &[Suite] = &[
     Suite::parallel("entity_order"),
     Suite::serial("expand_values"),
     Suite::parallel("expiration"),
-    Suite::parallel("extension"),
     Suite::parallel("geometry"),
     Suite::parallel("info"),
     Suite::parallel("join"),
@@ -389,9 +388,7 @@ mod tests {
     }
 
     #[test]
-    fn singular_extension_is_base_and_plural_extensions_is_the_extensions_stack() {
-        let base = stack_for_suite("extension").expect("extension is registered").stack;
-        assert_eq!(base.name, StackName::Base);
+    fn the_extensions_suite_is_the_extensions_stack() {
         let extensions = stack_for_suite("extensions").expect("extensions is registered").stack;
         assert_eq!(extensions.name, StackName::Extensions);
     }

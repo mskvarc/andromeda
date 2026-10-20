@@ -18,7 +18,7 @@ async fn create(client: &TestClient, entity: &Value) {
     assert_eq!(response.status, StatusCode::CREATED);
 }
 
-async fn get_entity(client: &TestClient, id: &str, lang: Option<&str>, language_header: Option<&str>, format: Option<&str>) -> (StatusCode, Value) {
+async fn get_entity(client: &TestClient, id: &str, lang: Option<&str>, format: Option<&str>) -> (StatusCode, Value) {
     let mut parts: Vec<String> = Vec::new();
     if let Some(l) = lang {
         parts.push(format!("lang={l}"));
@@ -28,25 +28,17 @@ async fn get_entity(client: &TestClient, id: &str, lang: Option<&str>, language_
     }
     let qs = if parts.is_empty() { String::new() } else { format!("?{}", parts.join("&")) };
     let path = format!("/ngsi-ld/v1/entities/{}{qs}", urlencoding::encode(id));
-    let mut request = client
+    let response = client
         .raw(Method::GET, &path)
         .header("Accept", "application/ld+json")
-        .header("Link", jsonld_link_header(CORE_CONTEXT).expect("core context Link must be valid"));
-    if let Some(header) = language_header {
-        request = request.header("NGSILD-Language", header);
-    }
-    let response = request.send().await.expect("get_entity failed");
+        .header("Link", jsonld_link_header(CORE_CONTEXT).expect("core context Link must be valid"))
+        .send()
+        .await
+        .expect("get_entity failed");
     (response.status, response.json_value().expect("response body must be valid JSON"))
 }
 
-async fn query_entities(
-    client: &TestClient,
-    type_filter: &str,
-    id_filter: Option<&str>,
-    lang: Option<&str>,
-    language_header: Option<&str>,
-    format: Option<&str>,
-) -> (StatusCode, Value) {
+async fn query_entities(client: &TestClient, type_filter: &str, id_filter: Option<&str>, lang: Option<&str>, format: Option<&str>) -> (StatusCode, Value) {
     let mut parts = vec![format!("type={type_filter}")];
     if let Some(i) = id_filter {
         parts.push(format!("id={}", urlencoding::encode(i)));
@@ -58,27 +50,13 @@ async fn query_entities(
         parts.push(format!("options={f}"));
     }
     let path = format!("/ngsi-ld/v1/entities?{}", parts.join("&"));
-    let mut request = client
+    let response = client
         .raw(Method::GET, &path)
         .header("Accept", "application/ld+json")
-        .header("Link", jsonld_link_header(CORE_CONTEXT).expect("core context Link must be valid"));
-    if let Some(header) = language_header {
-        request = request.header("NGSILD-Language", header);
-    }
-    let response = request.send().await.expect("query_entities failed");
-    (response.status, response.json_value().expect("response body must be valid JSON"))
-}
-
-async fn batch_query(client: &TestClient, body: &Value, language_header: Option<&str>) -> (StatusCode, Value) {
-    let mut request = client
-        .raw(Method::POST, "/ngsi-ld/v1/entityOperations/query")
-        .header("Content-Type", "application/ld+json")
-        .header("Accept", "application/ld+json")
-        .json(body);
-    if let Some(header) = language_header {
-        request = request.header("NGSILD-Language", header);
-    }
-    let response = request.send().await.expect("batch_query failed");
+        .header("Link", jsonld_link_header(CORE_CONTEXT).expect("core context Link must be valid"))
+        .send()
+        .await
+        .expect("query_entities failed");
     (response.status, response.json_value().expect("response body must be valid JSON"))
 }
 
@@ -100,7 +78,7 @@ async fn language_retrieve_exact_match_returns_property_with_lang_tag() {
     let client = scope.client();
     let id = scope.id("Building:lang-exact");
     create(client, &building_fr_nl(&id)).await;
-    let (status, body) = get_entity(client, &id, Some("fr"), None, None).await;
+    let (status, body) = get_entity(client, &id, Some("fr"), None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["street"]["type"], "Property");
     assert_eq!(body["street"]["value"], "Grand Place");
@@ -115,7 +93,7 @@ async fn language_retrieve_wildcard_selects_first_tagged_language() {
     let client = scope.client();
     let id = scope.id("Building:lang-wildcard");
     create(client, &building_fr_nl(&id)).await;
-    let (status, body) = get_entity(client, &id, Some("*"), None, None).await;
+    let (status, body) = get_entity(client, &id, Some("*"), None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["street"]["value"], "Grand Place");
     assert_eq!(body["street"]["lang"], "fr");
@@ -128,7 +106,7 @@ async fn language_retrieve_ranked_preferences_select_highest_quality_match() {
     let client = scope.client();
     let id = scope.id("Building:lang-ranked");
     create(client, &building_fr_nl(&id)).await;
-    let (status, body) = get_entity(client, &id, Some("fr;q=0.5,nl"), None, None).await;
+    let (status, body) = get_entity(client, &id, Some("fr;q=0.5,nl"), None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["street"]["value"], "Grote Markt");
     assert_eq!(body["street"]["lang"], "nl");
@@ -141,7 +119,7 @@ async fn language_retrieve_no_match_falls_back_to_a_supported_language() {
     let client = scope.client();
     let id = scope.id("Building:lang-nomatch");
     create(client, &building_fr_nl(&id)).await;
-    let (status, body) = get_entity(client, &id, Some("ja"), None, None).await;
+    let (status, body) = get_entity(client, &id, Some("ja"), None).await;
     assert_eq!(status, StatusCode::OK);
     // Clause 4.15: no requested language matches, so the broker shall fall back
     // to a supported language (the first tagged entry) rather than return the
@@ -167,7 +145,7 @@ async fn language_retrieve_wildcard_falls_back_to_at_none() {
         }),
     )
     .await;
-    let (status, body) = get_entity(client, &id, Some("*"), None, None).await;
+    let (status, body) = get_entity(client, &id, Some("*"), None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["street"]["type"], "Property");
     assert_eq!(body["street"]["value"], "Default Street");
@@ -193,7 +171,7 @@ async fn language_retrieve_range_match_prefix_selects_dialect() {
         }),
     )
     .await;
-    let (status, body) = get_entity(client, &id, Some("fr"), None, None).await;
+    let (status, body) = get_entity(client, &id, Some("fr"), None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["street"]["value"], "Rue Principale");
     assert_eq!(body["street"]["lang"], "fr-CA");
@@ -218,7 +196,7 @@ async fn language_retrieve_exact_match_preferred_over_range_match() {
         }),
     )
     .await;
-    let (status, body) = get_entity(client, &id, Some("fr"), None, None).await;
+    let (status, body) = get_entity(client, &id, Some("fr"), None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["street"]["value"], "Grand Place");
     assert_eq!(body["street"]["lang"], "fr");
@@ -231,7 +209,7 @@ async fn language_retrieve_zero_quality_excludes_preference() {
     let client = scope.client();
     let id = scope.id("Building:lang-q0");
     create(client, &building_fr_nl(&id)).await;
-    let (status, body) = get_entity(client, &id, Some("fr;q=0,nl"), None, None).await;
+    let (status, body) = get_entity(client, &id, Some("fr;q=0,nl"), None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["street"]["value"], "Grote Markt");
     assert_eq!(body["street"]["lang"], "nl");
@@ -244,7 +222,7 @@ async fn language_retrieve_empty_lang_returns_400() {
     let client = scope.client();
     let id = scope.id("Building:lang-empty");
     create(client, &building_fr_nl(&id)).await;
-    let (status, _) = get_entity(client, &id, Some(""), None, None).await;
+    let (status, _) = get_entity(client, &id, Some(""), None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     scope.finish().await.expect("cleanup failed");
 }
@@ -255,7 +233,7 @@ async fn language_retrieve_key_values_with_lang_returns_scalar_value() {
     let client = scope.client();
     let id = scope.id("Building:lang-kv");
     create(client, &building_fr_nl(&id)).await;
-    let (status, body) = get_entity(client, &id, Some("nl"), None, Some("keyValues")).await;
+    let (status, body) = get_entity(client, &id, Some("nl"), Some("keyValues")).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["street"], "Grote Markt");
     scope.finish().await.expect("cleanup failed");
@@ -267,7 +245,7 @@ async fn language_retrieve_key_values_without_lang_returns_language_map() {
     let client = scope.client();
     let id = scope.id("Building:lang-kv-nofilter");
     create(client, &building_fr_nl(&id)).await;
-    let (status, body) = get_entity(client, &id, None, None, Some("keyValues")).await;
+    let (status, body) = get_entity(client, &id, None, Some("keyValues")).await;
     assert_eq!(status, StatusCode::OK);
     // Clause 4.5.4 (Example 4): the simplified form of a LanguageProperty keeps
     // the `languageMap` member rather than inlining the map at the attribute.
@@ -282,7 +260,7 @@ async fn language_retrieve_no_lang_returns_original_language_property() {
     let client = scope.client();
     let id = scope.id("Building:lang-noparam");
     create(client, &building_fr_nl(&id)).await;
-    let (status, body) = get_entity(client, &id, None, None, None).await;
+    let (status, body) = get_entity(client, &id, None, None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["street"]["type"], "LanguageProperty");
     assert_eq!(body["street"]["languageMap"]["fr"], "Grand Place");
@@ -309,7 +287,7 @@ async fn language_retrieve_sub_attributes_preserved_after_negotiation() {
         }),
     )
     .await;
-    let (status, body) = get_entity(client, &id, Some("fr"), None, None).await;
+    let (status, body) = get_entity(client, &id, Some("fr"), None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["street"]["type"], "Property");
     assert_eq!(body["street"]["value"], "Grand Place");
@@ -339,7 +317,7 @@ async fn language_retrieve_metadata_fields_preserved_after_negotiation() {
         }),
     )
     .await;
-    let (status, body) = get_entity(client, &id, Some("fr"), None, None).await;
+    let (status, body) = get_entity(client, &id, Some("fr"), None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["street"]["type"], "Property");
     assert_eq!(body["street"]["value"], "Grand Place");
@@ -368,7 +346,7 @@ async fn language_retrieve_mixed_types_only_language_property_negotiated() {
         }),
     )
     .await;
-    let (status, body) = get_entity(client, &id, Some("fr"), None, None).await;
+    let (status, body) = get_entity(client, &id, Some("fr"), None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["name"]["type"], "Property");
     assert_eq!(body["name"]["value"], "Eiffel Tower");
@@ -402,7 +380,7 @@ async fn language_retrieve_multiple_language_properties_negotiated_independently
         }),
     )
     .await;
-    let (status, body) = get_entity(client, &id, Some("nl"), None, None).await;
+    let (status, body) = get_entity(client, &id, Some("nl"), None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["street"]["value"], "Grote Markt");
     assert_eq!(body["street"]["lang"], "nl");
@@ -429,7 +407,7 @@ async fn language_retrieve_array_value_in_language_map_preserved() {
         }),
     )
     .await;
-    let (status, body) = get_entity(client, &id, Some("fr"), None, None).await;
+    let (status, body) = get_entity(client, &id, Some("fr"), None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["street"]["type"], "Property");
     let value = &body["street"]["value"];
@@ -442,63 +420,12 @@ async fn language_retrieve_array_value_in_language_map_preserved() {
 }
 
 #[tokio::test]
-async fn language_header_fallback_when_lang_query_absent() {
-    let scope = TestEnvironment::from_suite("language").await.expect("isolated test environment");
-    let client = scope.client();
-    let id = scope.id("Building:lang-header");
-    create(client, &building_fr_nl(&id)).await;
-    let (status, body) = get_entity(client, &id, None, Some("nl"), None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["street"]["type"], "Property");
-    assert_eq!(body["street"]["value"], "Grote Markt");
-    assert_eq!(body["street"]["lang"], "nl");
-    scope.finish().await.expect("cleanup failed");
-}
-
-#[tokio::test]
-async fn language_header_query_param_overrides_ngsild_language_header() {
-    let scope = TestEnvironment::from_suite("language").await.expect("isolated test environment");
-    let client = scope.client();
-    let id = scope.id("Building:lang-precedence");
-    create(client, &building_fr_nl(&id)).await;
-    let (status, body) = get_entity(client, &id, Some("fr"), Some("nl"), None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["street"]["value"], "Grand Place");
-    assert_eq!(body["street"]["lang"], "fr");
-    scope.finish().await.expect("cleanup failed");
-}
-
-#[tokio::test]
-async fn language_header_ranked_preferences_in_ngsild_language_header() {
-    let scope = TestEnvironment::from_suite("language").await.expect("isolated test environment");
-    let client = scope.client();
-    let id = scope.id("Building:lang-header-ranked");
-    create(client, &building_fr_nl(&id)).await;
-    let (status, body) = get_entity(client, &id, None, Some("nl;q=0.5,fr"), None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["street"]["value"], "Grand Place");
-    assert_eq!(body["street"]["lang"], "fr");
-    scope.finish().await.expect("cleanup failed");
-}
-
-#[tokio::test]
-async fn language_header_invalid_empty_value_returns_400() {
-    let scope = TestEnvironment::from_suite("language").await.expect("isolated test environment");
-    let client = scope.client();
-    let id = scope.id("Building:lang-header-invalid");
-    create(client, &building_fr_nl(&id)).await;
-    let (status, _) = get_entity(client, &id, None, Some(""), None).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    scope.finish().await.expect("cleanup failed");
-}
-
-#[tokio::test]
 async fn language_query_lang_param_applied_to_query_results() {
     let scope = TestEnvironment::from_suite("language").await.expect("isolated test environment");
     let client = scope.client();
     let id = scope.id("Building:lang-query");
     create(client, &building_fr_nl(&id)).await;
-    let (status, body) = query_entities(client, "Building", Some(&id), Some("nl"), None, None).await;
+    let (status, body) = query_entities(client, "Building", Some(&id), Some("nl"), None).await;
     assert_eq!(status, StatusCode::OK);
     let arr = body.as_array().expect("query result must be array");
     assert_eq!(arr.len(), 1);
@@ -509,55 +436,15 @@ async fn language_query_lang_param_applied_to_query_results() {
 }
 
 #[tokio::test]
-async fn language_query_ngsild_language_header_applied_to_query_results() {
-    let scope = TestEnvironment::from_suite("language").await.expect("isolated test environment");
-    let client = scope.client();
-    let id = scope.id("Building:lang-query-header");
-    create(client, &building_fr_nl(&id)).await;
-    let (status, body) = query_entities(client, "Building", Some(&id), None, Some("fr"), None).await;
-    assert_eq!(status, StatusCode::OK);
-    let arr = body.as_array().expect("query result must be array");
-    assert_eq!(arr.len(), 1);
-    assert_eq!(arr[0]["street"]["value"], "Grand Place");
-    assert_eq!(arr[0]["street"]["lang"], "fr");
-    scope.finish().await.expect("cleanup failed");
-}
-
-#[tokio::test]
 async fn language_query_key_values_with_lang_returns_scalar_value() {
     let scope = TestEnvironment::from_suite("language").await.expect("isolated test environment");
     let client = scope.client();
     let id = scope.id("Building:lang-query-kv");
     create(client, &building_fr_nl(&id)).await;
-    let (status, body) = query_entities(client, "Building", Some(&id), Some("nl"), None, Some("keyValues")).await;
+    let (status, body) = query_entities(client, "Building", Some(&id), Some("nl"), Some("keyValues")).await;
     assert_eq!(status, StatusCode::OK);
     let arr = body.as_array().expect("query result must be array");
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0]["street"], "Grote Markt");
-    scope.finish().await.expect("cleanup failed");
-}
-
-#[tokio::test]
-async fn language_batch_query_ngsild_language_header_applied_to_results() {
-    let scope = TestEnvironment::from_suite("language").await.expect("isolated test environment");
-    let client = scope.client();
-    let id = scope.id("Building:lang-batch");
-    create(client, &building_fr_nl(&id)).await;
-
-    let query_body = json!({
-        "type": "Query",
-        "entities": [{"type": "Building", "id": id}],
-        "@context": [CORE_CONTEXT]
-    });
-    let (status, body) = batch_query(client, &query_body, Some("nl")).await;
-    assert_eq!(status, StatusCode::OK);
-    let arr = body.as_array().expect("batch query result must be array");
-    let ours = arr
-        .iter()
-        .find(|e| e["id"].as_str() == Some(&id))
-        .expect("created entity must appear in batch query results");
-    assert_eq!(ours["street"]["type"], "Property");
-    assert_eq!(ours["street"]["value"], "Grote Markt");
-    assert_eq!(ours["street"]["lang"], "nl");
     scope.finish().await.expect("cleanup failed");
 }

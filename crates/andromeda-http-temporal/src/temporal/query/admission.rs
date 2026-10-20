@@ -1,9 +1,8 @@
 //! Admitting a decoded temporal query before it runs.
 //!
 //! Admission is everything that can be decided about a query before it reaches
-//! the store: folding the extension headers into it, resolving the Entity Map it
-//! runs under, confining a non-federating branch to the local scope, validating
-//! it, compiling the geoquery the registrations are selected by, and holding it
+//! the store: resolving the Entity Map it runs under, confining a non-federating
+//! branch to the local scope, validating it, compiling the geoquery the registrations are selected by, and holding it
 //! to the clause 5.7.4.4 ordering rule.
 
 use crate::{
@@ -42,20 +41,18 @@ pub(super) struct AdmittedQuery {
     pub(super) registry_geo: Option<GeoQuery>,
 }
 
-/// Decode `protocol` into the query, hold the query to every rule that can be
-/// decided before it runs, and resolve the Entity Map it runs under.
+/// Hold the query to every rule that can be decided before it runs, and
+/// resolve the Entity Map it runs under.
 ///
-/// The extension headers add to the query before it is validated, so a value a
-/// header supplied is held to the same rules as one the query string carried.
 /// A branch that cannot federate is confined to the local scope first: clause
 /// 5.5.15 makes a Snapshot "implicitly limited to a local scope ... overriding
 /// setting a local scope to false".
 ///
 /// # Errors
 ///
-/// The classified failure of an extension header the query cannot take, of
-/// resolving the Entity Map, of the clause 5.7.4.4 validation, of compiling the
-/// geoquery, and of the clause 5.7.4.4 ordering rule.
+/// The classified failure of resolving the Entity Map, of the clause 5.7.4.4
+/// validation, of compiling the geoquery, and of the clause 5.7.4.4 ordering
+/// rule.
 pub(super) async fn admit_request(
     state: &TemporalRouteServices,
     target: &ContextTarget,
@@ -64,7 +61,6 @@ pub(super) async fn admit_request(
     params: &mut TemporalQueryParameters,
     instance: &Uri,
 ) -> Result<AdmittedQuery, ProblemResponse> {
-    protocol.extensions().apply_to_temporal_query(params).with_instance(instance)?;
     params.lang = params.lang.take().or(protocol.language_filter);
     let map_use = resolve_query_map(&state.entity_maps, target, params, protocol.entity_map.as_ref(), instance).await?;
     if !target.permits_federation() {

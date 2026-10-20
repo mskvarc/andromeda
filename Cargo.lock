@@ -747,7 +747,6 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-lexicon",
- "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-representation",
  "chrono",
  "derive_more",
@@ -1511,8 +1510,6 @@ dependencies = [
  "andromeda-ngsi-ld-representation",
  "chrono",
  "derive_more",
- "headers",
- "http",
  "iri-rs",
  "iso8601-duration",
  "langtag",

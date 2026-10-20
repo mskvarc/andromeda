@@ -1,10 +1,9 @@
 //! Language negotiation over BCP 47 ranges (clause 5.7.2.5).
 //!
-//! The same value reaches a request three ways -- the `lang` query parameter
-//! of clause 4.15, the `NGSILD-Language` header and, under the
-//! `accept_language` extension, `Accept-Language` itself -- and all three spell
-//! it with the `Accept-Language` syntax of RFC 9110 section 12.5.4, so the
-//! grammar is owned here rather than by any carrier.
+//! The same value reaches a request two ways, the `lang` query parameter of
+//! clause 4.15 and, under the `accept_language` extension, `Accept-Language`
+//! itself. Both spell it with the `Accept-Language` syntax of RFC 9110 section
+//! 12.5.4, so the grammar is owned here rather than by either carrier.
 
 use crate::quality::{Quality, QualityParseError, QualityValue};
 use http::{

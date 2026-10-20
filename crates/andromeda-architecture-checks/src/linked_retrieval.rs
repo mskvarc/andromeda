@@ -9,8 +9,8 @@
 //!
 //! - reading a nested projection term (`linked_terms`, `linked_depth`,
 //!   `matching_term`), which only the clause 4.21 grammar may also do;
-//! - matching a pattern on a join mode, which only the mode's definition and
-//!   its header decoding may also do;
+//! - matching a pattern on a join mode, which only the mode's definition may
+//!   also do;
 //! - writing the clause 4.5.23.2 `entity` or `entityList` member (passing it
 //!   as the key of an `insert`, `entry`, `serialize_entry` or
 //!   `serialize_field`), which only the two inline writers may also do;

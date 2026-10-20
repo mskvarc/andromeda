@@ -62,7 +62,6 @@ pub async fn get(
     // Clause 5.5.7: the request `@context` is admitted on the temporal history
     // read path before anything is forwarded or expanded against it.
     let context = admit_request_context(service.engine(), SubmittedContext::from(context), &uri).await?;
-    protocol.extensions().apply_to_temporal_query(&mut params).with_instance(&uri)?;
     params.lang = params.lang.take().or(protocol.language_filter);
     params
         .validate(TemporalQueryOperation::Retrieve, service.linked_retrieval())

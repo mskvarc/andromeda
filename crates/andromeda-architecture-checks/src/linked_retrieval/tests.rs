@@ -52,9 +52,12 @@ fn a_join_mode_inside_matches_is_flagged() {
 }
 
 #[test]
-fn a_join_mode_match_in_header_decoding_passes() {
+fn a_join_mode_match_where_the_modes_are_defined_passes() {
     let source = "fn f(m: Option<JoinMode>) -> u8 { match m { Some(JoinMode::Flat) => 1, _ => 0 } }";
-    assert_eq!(violations("crates/andromeda-http-headers/src/ngsild_join.rs", source), Vec::<String>::new());
+    assert_eq!(
+        violations("crates/andromeda-ngsi-ld-representation/src/join_mode.rs", source),
+        Vec::<String>::new()
+    );
 }
 
 #[test]

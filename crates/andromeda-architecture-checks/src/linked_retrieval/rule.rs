@@ -7,8 +7,8 @@ pub(crate) const ENGINE: &str = "crates/andromeda-linked-retrieval/src/";
 /// The clause 4.21 grammar, which defines the nested projection terms.
 const PROJECTION_GRAMMAR: &str = "crates/andromeda-ngsi-ld-query/src/";
 
-/// The sources that define the join modes or decode them from a request.
-const JOIN_MODE_DEFINITIONS: [&str; 2] = ["crates/andromeda-ngsi-ld-representation/src/", "crates/andromeda-http-headers/src/"];
+/// The source that defines the join modes.
+const JOIN_MODE_DEFINITION: &str = "crates/andromeda-ngsi-ld-representation/src/";
 
 /// The writer that spells an inline Linked Entity, whichever kind of entity it
 /// nests: an Entity, or the Temporal Evolution of one.
@@ -51,7 +51,7 @@ impl Rule {
         let in_engine = path.starts_with(ENGINE);
         match self {
             Rule::NestedTerm => in_engine || path.starts_with(PROJECTION_GRAMMAR),
-            Rule::JoinModeMatch => in_engine || JOIN_MODE_DEFINITIONS.iter().any(|owner| path.starts_with(owner)),
+            Rule::JoinModeMatch => in_engine || path.starts_with(JOIN_MODE_DEFINITION),
             Rule::InlineMember => in_engine || path.starts_with(INLINE_WRITER),
             Rule::IndexBuild => path == INDEX_OWNER,
             Rule::AdmissionError | Rule::PrivateWalk => in_engine,

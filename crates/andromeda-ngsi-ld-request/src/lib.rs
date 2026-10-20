@@ -38,7 +38,6 @@ pub mod local;
 pub mod options;
 pub mod options_token;
 pub mod pagination;
-pub mod protocol;
 pub mod query;
 pub mod query_narrowing;
 pub mod representation_format;

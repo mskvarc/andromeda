@@ -7,8 +7,7 @@
 //! `accept_language` extension the operations that take `lang` read the header
 //! in its place. `negotiate_accept_language` decodes it once, before the
 //! handler, and keeps the filter as an `AcceptedLanguage` request extension
-//! for [`crate::language`] to hand over when neither `lang` nor
-//! `NGSILD-Language` names one.
+//! for [`crate::language`] to hand over when no `lang` names one.
 
 use crate::addressed_uri::addressed_uri;
 use andromeda_http_headers::language::{LanguageFilter, LanguageFilterError};
@@ -156,12 +155,6 @@ mod tests {
         let body = body_text(response).await;
         assert!(body.contains("https://uri.etsi.org/ngsi-ld/errors/BadRequestData"), "{body}");
         assert!(body.contains("the accept-language header is not a language preference list"), "{body}");
-    }
-
-    #[tokio::test]
-    async fn the_ngsild_language_header_outranks_accept_language() {
-        let response = send(AcceptLanguageReading::Honoured, &[("accept-language", "fr"), ("ngsild-language", "de")]).await;
-        pretty_assertions::assert_eq!(body_text(response).await, "de");
     }
 
     #[tokio::test]

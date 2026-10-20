@@ -110,7 +110,6 @@ pub(crate) async fn get(
     let context = admit_user_context(service.engine(), SubmittedContext::from(context))
         .await
         .with_entity_instance(&uri)?;
-    protocol.extensions().apply_to_entity_get(&mut params).with_entity_instance(&uri)?;
     let language_filter = params.lang.take().or(protocol.language_filter);
     let prefer = protocol.prefer;
     let entity_map_header = protocol.entity_map;

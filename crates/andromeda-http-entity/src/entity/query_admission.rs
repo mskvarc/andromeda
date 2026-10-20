@@ -1,8 +1,7 @@
 //! Admitting a decoded entity query before it runs.
 //!
 //! Admission is everything that can be decided about a query before it reaches
-//! the store: folding the extension headers into it, refusing a scoped read
-//! `@context`, confining a non-federating branch to the local scope, validating
+//! the store: refusing a scoped read `@context`, confining a non-federating branch to the local scope, validating
 //! it, resolving the Entity Map it runs under, parsing its response options,
 //! compiling the geoquery the registrations are selected by, and holding it to
 //! the clause 5.7.2.4 ordering rule. [`crate::entity::query::run`]
@@ -53,19 +52,16 @@ pub(crate) struct AdmittedQuery {
     pub(crate) registry_geo: Option<GeoQuery>,
 }
 
-/// Decode `protocol` into the query, hold the query to every rule that can be
-/// decided before it runs, and resolve the Entity Map it runs under.
+/// Hold the query to every rule that can be decided before it runs, and
+/// resolve the Entity Map it runs under.
 ///
-/// The extension headers add to the query before it is validated, so a value a
-/// header supplied is held to the same rules as one the query string carried.
 /// A branch that cannot federate is confined to the local scope first: clause
 /// 5.5.15 makes a Snapshot "implicitly limited to a local scope ... overriding
 /// setting a local scope to false".
 ///
 /// # Errors
 ///
-/// The classified failure of an extension header the query cannot take, of the
-/// clause 5.7.2.4 validation, of resolving the Entity Map, of the Table 6.3.7-1
+/// The classified failure of the clause 5.7.2.4 validation, of resolving the Entity Map, of the Table 6.3.7-1
 /// options, of compiling the geoquery, and of the clause 5.7.2.4 ordering rule.
 pub(crate) async fn admit_request(
     state: &EntityRouteServices,
@@ -76,7 +72,6 @@ pub(crate) async fn admit_request(
     binding: QueryBinding,
     instance: &HttpUri,
 ) -> Result<AdmittedQuery, ProblemResponse> {
-    protocol.extensions().apply_to_entity_query(query).with_entity_instance(instance)?;
     if !target.permits_federation() {
         query.local = Some(true);
     }

@@ -37,14 +37,8 @@ pub mod listener_scheme;
 pub mod location;
 pub mod media_type;
 pub mod ngsild_content_range;
-pub mod ngsild_dataset_id;
 pub mod ngsild_entity_map;
-pub mod ngsild_join;
-pub mod ngsild_join_level;
-pub mod ngsild_language;
-pub mod ngsild_response_format;
 pub mod ngsild_results_count;
-pub mod ngsild_scope;
 pub mod ngsild_snapshot;
 pub mod ngsild_tenant;
 pub mod ngsild_warning;
@@ -61,7 +55,6 @@ pub mod x_request_id;
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-ngsi-ld-lexicon",
-        "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-vocabulary",
     ],

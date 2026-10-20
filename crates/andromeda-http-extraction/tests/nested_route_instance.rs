@@ -17,7 +17,6 @@ use andromeda_http_extraction::{
     entity_batch::BatchBody,
     entity_query::EntityQuery,
     jsonld::JsonLd,
-    language::LanguageNegotiation,
     protocol::NgsiLdProtocolHeaders,
     query::ValidatedQuery,
     request_envelope::NgsiLdRequestEnvelope,
@@ -148,10 +147,6 @@ async fn protocol_headers(_headers: NgsiLdProtocolHeaders) -> StatusCode {
     StatusCode::OK
 }
 
-async fn language(_language: LanguageNegotiation) -> StatusCode {
-    StatusCode::OK
-}
-
 async fn tenant(_tenant: TenantHeader) -> StatusCode {
     StatusCode::OK
 }
@@ -200,7 +195,6 @@ fn nested_api() -> Router {
         .route("/types", get(validated_query))
         .route("/snapshots", delete(snapshot_purge))
         .route("/attributes", get(protocol_headers))
-        .route("/entityMaps", get(language))
         .route("/subscriptions", get(tenant))
         .route("/csourceSubscriptions", get(snapshot))
         .route("/csourceRegistrations", get(context))
@@ -234,8 +228,7 @@ fn refused_requests() -> Result<Vec<Request<Body>>, Box<dyn Error>> {
         request(Method::DELETE, "/temporal/entities?type=Vehicle&lastN=5", &[], "")?,
         request(Method::GET, "/types?unknownParameter=1", &[], "")?,
         request(Method::DELETE, "/snapshots", &[], "")?,
-        request(Method::GET, "/attributes?details=true", &[("ngsild-dataset-id", "invalid")], "")?,
-        request(Method::GET, "/entityMaps", &[("ngsild-language", "")], "")?,
+        request(Method::GET, "/attributes?details=true", &[("ngsild-snapshot", "not-a-urn")], "")?,
         request(Method::GET, "/subscriptions?limit=5", &[("ngsild-tenant", "")], "")?,
         request(Method::GET, "/csourceSubscriptions", &[("ngsild-snapshot", "not-a-urn")], "")?,
         request(Method::GET, "/csourceRegistrations?type=Vehicle", &malformed_link, "")?,

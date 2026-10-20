@@ -4,28 +4,10 @@
 //! headers into a single extractor to reduce handler parameter counts (ETSI GS
 //! CIM 009 clauses 6.3.5, 6.3.6, 6.3.18, 6.3.21, 6.3.22).
 
-use crate::{
-    addressed_uri::addressed_uri,
-    language::LanguageNegotiation,
-    prefer::PreferHeader,
-    profile::PayloadProfile,
-    snapshot::SnapshotHeader,
-    via::IncomingVia,
-};
-use andromeda_http_headers::{
-    language::LanguageFilter,
-    ngsild_dataset_id::NgsiLdDatasetId,
-    ngsild_entity_map::NgsiLdEntityMap,
-    ngsild_join::NgsiLdJoin,
-    ngsild_join_level::NgsiLdJoinLevel,
-    ngsild_response_format::NgsiLdResponseFormat,
-    ngsild_scope::NgsiLdScope,
-    via::Via,
-};
+use crate::{language::LanguageNegotiation, prefer::PreferHeader, profile::PayloadProfile, snapshot::SnapshotHeader, via::IncomingVia};
+use andromeda_http_headers::{language::LanguageFilter, ngsild_entity_map::NgsiLdEntityMap, via::Via};
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
-use andromeda_ngsi_ld_request::protocol::ProtocolExtensions;
 use axum::{extract::FromRequestParts, http::request::Parts};
-use headers::HeaderMapExt;
 
 /// Composite extractor for NGSI-LD protocol-level request headers.
 ///
@@ -33,8 +15,8 @@ use headers::HeaderMapExt;
 /// NGSILD-Snapshot header, NGSILD-EntityMap header, and the Via header in a
 /// single pass.
 pub struct NgsiLdProtocolHeaders {
-    /// Language filter from the `NGSILD-Language` header, else from an accepted
-    /// `Accept-Language`; a `lang` parameter outranks it.
+    /// Language filter from an accepted `Accept-Language`; a `lang` parameter
+    /// outranks it.
     pub language_filter: Option<LanguageFilter>,
     /// Parsed Prefer header (body format, version negotiation).
     pub prefer: PreferHeader,
@@ -49,35 +31,6 @@ pub struct NgsiLdProtocolHeaders {
     pub incoming_via: Option<Via>,
     /// Optional entity map identifier from `NGSILD-EntityMap` header (clause 5.5.9.3).
     pub entity_map: Option<NgsiLdEntityMap>,
-    /// Optional scope query expression from `NGSILD-Scope` extension header.
-    pub scope: Option<NgsiLdScope>,
-    /// Optional response format token from `NGSILD-Response-Format` extension header.
-    pub response_format: Option<NgsiLdResponseFormat>,
-    /// Optional dataset filter from `NGSILD-Dataset-Id` extension header.
-    pub dataset_id: Option<NgsiLdDatasetId>,
-    /// Optional join mode from `NGSILD-Join` extension header.
-    pub join: Option<NgsiLdJoin>,
-    /// Optional join depth from `NGSILD-Join-Level` extension header.
-    pub join_level: Option<NgsiLdJoinLevel>,
-}
-
-impl NgsiLdProtocolHeaders {
-    /// The clause 6.3.x extension headers, handed to the request model as the
-    /// typed values they decoded to.
-    ///
-    /// The header crate already parsed and validated each one, so this passes
-    /// the typed values straight through -- the scope, the format and the
-    /// dataset ids by reference, the join by its owner enum -- rather than
-    /// re-stringifying them for the merge to re-parse.
-    pub fn extensions(&self) -> ProtocolExtensions<'_> {
-        ProtocolExtensions {
-            scope: self.scope.as_ref(),
-            response_format: self.response_format,
-            dataset_ids: self.dataset_id.as_ref(),
-            join: self.join.map(NgsiLdJoin::into_inner),
-            join_level: self.join_level.map(NgsiLdJoinLevel::into_inner),
-        }
-    }
 }
 
 impl<S> FromRequestParts<S> for NgsiLdProtocolHeaders
@@ -87,8 +40,11 @@ where
     type Rejection = ExtractorRejection;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<NgsiLdProtocolHeaders, Self::Rejection> {
-        let uri = addressed_uri(parts);
-        let LanguageNegotiation(language_filter) = LanguageNegotiation::from_request_parts(parts, state).await?;
+        // LanguageNegotiation is infallible, so unwrap via match.
+        let LanguageNegotiation(language_filter) = match LanguageNegotiation::from_request_parts(parts, state).await {
+            Ok(negotiation) => negotiation,
+            Err(never) => match never {},
+        };
         // PreferHeader is infallible (Rejection = Infallible), so unwrap via match.
         let prefer = match PreferHeader::from_request_parts(parts, state).await {
             Ok(p) => p,
@@ -105,26 +61,6 @@ where
             let mut values = parts.headers.get_all("ngsild-entitymap").iter();
             headers::Header::decode(&mut values).ok()
         };
-        let scope = parts
-            .headers
-            .typed_try_get::<NgsiLdScope>()
-            .map_err(|_| ExtractorRejection::bad_request_data("NGSILD-Scope header has invalid syntax", uri.clone()))?;
-        let response_format = parts
-            .headers
-            .typed_try_get::<NgsiLdResponseFormat>()
-            .map_err(|_| ExtractorRejection::bad_request_data("NGSILD-Response-Format header has invalid value", uri.clone()))?;
-        let dataset_id = parts
-            .headers
-            .typed_try_get::<NgsiLdDatasetId>()
-            .map_err(|_| ExtractorRejection::bad_request_data("NGSILD-Dataset-Id header must contain URN values", uri.clone()))?;
-        let join = parts
-            .headers
-            .typed_try_get::<NgsiLdJoin>()
-            .map_err(|_| ExtractorRejection::bad_request_data("NGSILD-Join header has invalid value", uri.clone()))?;
-        let join_level = parts
-            .headers
-            .typed_try_get::<NgsiLdJoinLevel>()
-            .map_err(|_| ExtractorRejection::bad_request_data("NGSILD-Join-Level header must be an unsigned integer", uri.clone()))?;
 
         Ok(NgsiLdProtocolHeaders {
             language_filter,
@@ -133,11 +69,6 @@ where
             snapshot,
             incoming_via,
             entity_map,
-            scope,
-            response_format,
-            dataset_id,
-            join,
-            join_level,
         })
     }
 }
@@ -161,11 +92,6 @@ mod tests {
         assert!(headers.payload_profile.version().is_none());
         assert!(headers.incoming_via.is_none());
         assert!(headers.entity_map.is_none());
-        assert!(headers.scope.is_none());
-        assert!(headers.response_format.is_none());
-        assert!(headers.dataset_id.is_none());
-        assert!(headers.join.is_none());
-        assert!(headers.join_level.is_none());
     }
 
     #[tokio::test]
@@ -205,18 +131,6 @@ mod tests {
             .unwrap();
         let (mut parts, ()) = req.into_parts();
 
-        let result = NgsiLdProtocolHeaders::from_request_parts(&mut parts, &()).await;
-        assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
-    }
-
-    #[tokio::test]
-    async fn rejects_invalid_dataset_header() {
-        let req = Request::builder()
-            .uri("/ngsi-ld/v1/entities")
-            .header("ngsild-dataset-id", "invalid")
-            .body(())
-            .unwrap();
-        let (mut parts, ()) = req.into_parts();
         let result = NgsiLdProtocolHeaders::from_request_parts(&mut parts, &()).await;
         assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
     }
