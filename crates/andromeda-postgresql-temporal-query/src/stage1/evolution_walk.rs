@@ -43,7 +43,9 @@ pub(super) enum Among {
 pub(super) struct Evolutions {
     /// The Evolutions the page is cut from.
     pub(super) paged: TableRef,
-    /// The same Evolutions, in the order the count probes them best.
+    /// The Evolutions the count reads: those the page is cut from, in the
+    /// order the count probes them best, or a wider source the count's window
+    /// match narrows to exactly them.
     pub(super) counted: TableRef,
     /// How a selector's type is tested on them.
     pub(super) type_test: TypeTest,
@@ -76,9 +78,14 @@ impl Evolutions {
 /// a stream of it, and no type is tested on what it yields. Its count probes
 /// the same holders in the order of their surrogate keys when the queue is
 /// read: each probe then reads the history of one Evolution inside the
-/// union, and in key order those reads follow the indexes. A request that
-/// considers no Entity (clause 5.5.14) walks nothing. Otherwise the temporal
-/// catalogue, its types tested on its type keys.
+/// union, and in key order those reads follow the indexes. Over recorded rows
+/// alone a bounded window's count reads the catalogue instead: its window
+/// match names the concerned attributes, so it keeps exactly the holders with
+/// an instance in the window, and compared beside the history by key it lets
+/// PostgreSQL join the window's rows to the catalogue rather than probe
+/// every holder after merging the attribute ranges in identifier order. A
+/// request that considers no Entity (clause 5.5.14) walks nothing. Otherwise
+/// the temporal catalogue, its types tested on its type keys.
 ///
 /// Read `among` the candidates, the walk is narrowed to them and yields them
 /// in identifier order before anything tests them: over recorded rows alone
@@ -159,13 +166,20 @@ fn walk(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryN
     if holder_walkable {
         let keys = concerned_attribute_keys(compiled, &names.attributes);
         let paged = attribute_holder_rows(branch, E, &keys, walked);
-        let evolutions = match branch.pending() {
-            PendingEntries::Unioned => Evolutions {
+        let evolutions = match (branch.pending(), walked, compiled.window.interval.is_bounded()) {
+            (PendingEntries::Unioned, _, _) => Evolutions {
                 paged,
                 counted: attribute_holder_rows_by_key(branch, E, &keys),
                 type_test: TypeTest::TypeKeys,
             },
-            PendingEntries::Absent => Evolutions::read_alike(paged, TypeTest::TypeKeys),
+            (PendingEntries::Absent, WalkedKeys::Every, true) => Evolutions {
+                paged,
+                counted: entity_rows(branch, E),
+                type_test: TypeTest::TypeKeys,
+            },
+            (PendingEntries::Absent, WalkedKeys::Every, false) | (PendingEntries::Absent, WalkedKeys::Among(_), _) => {
+                Evolutions::read_alike(paged, TypeTest::TypeKeys)
+            }
         };
         return (evolutions, WalkSource::Ranges);
     }
@@ -404,24 +418,60 @@ mod tests {
         assert!(count.contains(r#"ORDER BY "hm"."temporal_entity_key" ASC) AS "e""#), "{count}");
     }
 
-    /// Over recorded rows alone the probe is compared beside its source, and
+    /// The count of `compiled` over `branch`, rendered with its values inlined.
+    fn recorded_count(branch: &HistoryBranch, compiled: &CompiledTemporalQuery) -> String {
+        build_stage1_entity_ids(branch, compiled, &PageWindow::offset(20, 0), CountPolicy::Emit, &speed_and_address())
+            .expect("valid temporal query")
+            .count
+            .expect("count requested")
+            .to_string(PostgresQueryBuilder)
+    }
+
+    /// Clause 5.7.4.4 step S1 keeps an Evolution with an instance of a
+    /// concerned attribute in the window, which the window match names by
+    /// attribute key: over recorded rows alone the count reads the catalogue
+    /// under that match, compared by key beside the history, and merges no
+    /// holder range.
+    #[test]
+    fn a_counted_attrs_only_selection_over_recorded_rows_counts_the_catalogue_under_the_window_match() {
+        for branch in [HistoryBranch::live_recorded(), HistoryBranch::recorded_in(Alias::new("snap_7").into_iden())] {
+            let count = recorded_count(&branch, &speed_only());
+            assert!(count.starts_with(r#"SELECT COUNT("e"."id") FROM "#), "{count}");
+            assert!(count.contains(r#""temporal_entities" AS "e" WHERE"#), "{count}");
+            assert!(!count.contains(r#"AS "held""#), "{count}");
+            assert!(
+                count.contains(concat!(
+                    r#") AS "ah" WHERE "ah"."attribute_name_key" IN (7) AND "ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00'"#,
+                    r#" AND "ah"."temporal_entity_key" = "e"."temporal_entity_key")"#
+                )),
+                "{count}"
+            );
+        }
+    }
+
+    /// The window match of an attribute the dictionary never keyed matches
+    /// nothing, so the catalogue count answers none.
+    #[test]
+    fn a_counted_selection_of_an_attribute_never_keyed_matches_nothing_in_the_catalogue() {
+        let mut compiled = speed_only();
+        compiled.instances.attr_filter = vec![iri("https://example.com/unknown")];
+        let count = recorded_count(&HistoryBranch::live_recorded(), &compiled);
+        assert!(count.contains(r#""temporal_entities" AS "e" WHERE"#), "{count}");
+        assert!(count.contains(r#") AS "ah" WHERE 1 = 2 AND"#), "{count}");
+    }
+
+    /// An unbounded window reads no history, so every holder is a match and
     /// the count reads the holders as the page does.
     #[test]
-    fn a_counted_attrs_only_selection_over_recorded_rows_counts_the_page_walk() {
-        let stage1 = build_stage1_entity_ids(
-            &HistoryBranch::live_recorded(),
-            &speed_only(),
-            &PageWindow::offset(20, 0),
-            CountPolicy::Emit,
-            &speed_and_address(),
-        )
-        .expect("valid temporal query");
-        let count = stage1.count.expect("count requested").to_string(PostgresQueryBuilder);
+    fn a_counted_attrs_only_selection_over_an_unbounded_window_counts_the_holders() {
+        let mut compiled = speed_only();
+        compiled.window.interval = TimeInterval::Unbounded;
+        let count = recorded_count(&HistoryBranch::live_recorded(), &compiled);
         assert!(
             count.starts_with(r#"SELECT COUNT("e"."id") FROM (SELECT DISTINCT ON ("held"."id") "held"."id", "held"."temporal_entity_key" FROM"#),
             "{count}"
         );
-        assert!(!count.contains(r#""hm""#), "{count}");
+        assert!(!count.contains(r#""temporal_entities" AS "e""#), "{count}");
     }
 
     /// A pattern names no identifier the index could answer, so the walk
@@ -480,8 +530,8 @@ mod tests {
     }
 
     /// Every Evolution source a count over an empty queue is compared to
-    /// carries the key it is compared by: the type walk, the attribute walk
-    /// and the catalogue.
+    /// carries the key it is compared by: the type walk, and the catalogue an
+    /// attribute selection or no selection reads.
     #[test]
     fn every_evolution_source_a_count_compares_by_key_carries_the_key() {
         let mut typed = typed(vec![vehicle_selector()]);
@@ -496,11 +546,7 @@ mod tests {
                 vehicle_is_known(),
                 r#"(SELECT "temporal_entity_key", "id" FROM "temporal_entity_type_members""#,
             ),
-            (
-                attributed,
-                speed_and_address(),
-                r#"SELECT DISTINCT ON ("held"."id") "held"."id", "held"."temporal_entity_key" FROM"#,
-            ),
+            (attributed, speed_and_address(), r#"FROM "temporal_entities" AS "e""#),
             (catalogued, QueryNames::default(), r#"FROM "temporal_entities" AS "e""#),
         ] {
             let count = build_stage1_entity_ids(
