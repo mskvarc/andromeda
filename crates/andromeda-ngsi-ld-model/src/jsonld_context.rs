@@ -1,7 +1,10 @@
 //! The `@context` resources the broker caches, hosts, and serves (ETSI GS CIM 009 clause 5.13).
 
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{
+    identifier::Identifier,
+    rfc3339::{datetime, optional_datetime},
+};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use serde::{Deserialize, Serialize};
@@ -45,11 +48,14 @@ pub struct ContextMetadata {
     /// How the broker came to hold this context.
     pub kind: ContextKind,
     /// When the broker first stored it.
+    #[serde(with = "datetime")]
     pub created_at: DateTime<Utc>,
     /// When the cached copy stops being valid, if it expires at all.
     #[builder(default = Default::default())]
+    #[serde(with = "optional_datetime")]
     pub expires_at: Option<DateTime<Utc>>,
     /// When it was last read.
+    #[serde(with = "datetime")]
     pub last_usage: DateTime<Utc>,
     /// How many times it has been read.
     pub number_of_hits: u64,
@@ -64,6 +70,27 @@ mod tests {
     use andromeda_json_literal::JsonLiteral;
     use chrono::{TimeZone, Utc};
     use serde_json::json;
+
+    /// Clause 4.6.3 caps a `DateTime` at six fractional digits, so an instant
+    /// read from a clock that resolves nanoseconds is written at the
+    /// microsecond.
+    #[test]
+    fn context_metadata_writes_its_instants_at_the_microsecond() {
+        let instant: chrono::DateTime<Utc> = "2026-10-19T16:27:34.800524180Z".parse().expect("a valid instant");
+        let metadata = ContextMetadata::builder()
+            .serving_iri(None)
+            .local_id("urn:ngsi-ld:Context:c1".parse().expect("a valid identifier"))
+            .kind(ContextKind::ImplicitlyCreated)
+            .created_at(instant)
+            .expires_at(Some(instant))
+            .last_usage(instant)
+            .number_of_hits(0)
+            .build();
+        let written = serde_json::to_value(&metadata).expect("the metadata serialises");
+        for member in ["createdAt", "expiresAt", "lastUsage"] {
+            pretty_assertions::assert_eq!(written[member], json!("2026-10-19T16:27:34.800524Z"), "{member}");
+        }
+    }
 
     #[test]
     fn an_unknown_context_kind_label_is_a_parse_error_not_a_panic() {

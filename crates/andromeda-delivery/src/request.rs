@@ -213,7 +213,7 @@ mod tests {
     };
     use andromeda_http_headers::{media_type::ResponseMediaType, ngsild_snapshot::NgsiLdSnapshot, ngsild_tenant::NgsiLdTenant};
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, positive_milliseconds::PositiveMilliseconds, tenant::TenantName};
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, positive_milliseconds::PositiveMilliseconds, rfc3339::parse_client_instant, tenant::TenantName};
     use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, notification::NotificationData};
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use iri_rs::IriBuf;
@@ -457,6 +457,26 @@ mod tests {
             .assemble(body());
         pretty_assertions::assert_eq!(request.timeout, Some(timeout));
         assert!(delivered(None, None, None).1.timeout.is_none());
+    }
+
+    /// Clause 4.6.3 caps a `DateTime` at six fractional digits, and the broker
+    /// reads a received `notifiedAt` under that cap, so the notification it
+    /// stamps from its own clock is one it would accept.
+    #[test]
+    fn a_notification_is_stamped_with_an_admissible_notified_at() {
+        let endpoint = endpoint();
+        let subscription = subscription();
+        let context = context_of(None);
+        let request = NotificationDelivery::builder()
+            .endpoint_uri(&endpoint)
+            .context(&context)
+            .subscription_id(&subscription)
+            .build()
+            .notification(NotificationData::written(RawValue::from_string("[]".to_owned()).expect("written JSON")))
+            .expect("a written notification");
+        let written: serde_json::Value = serde_json::from_str(request.body.text()).expect("the notification is JSON");
+        let notified_at = written["notifiedAt"].as_str().expect("notifiedAt is a string");
+        assert!(notified_at.ends_with('Z') && parse_client_instant(notified_at).is_ok(), "{notified_at}");
     }
 
     #[test]

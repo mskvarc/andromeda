@@ -253,10 +253,17 @@ impl Snapshot {
 mod tests {
     use crate::{
         query::{body::Query, temporal_query::TemporalQuery},
-        snapshot::{Snapshot, SnapshotPriority, SnapshotStatus},
+        snapshot::{Snapshot, SnapshotNotification, SnapshotPriority, SnapshotStatus},
     };
     use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
-    use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, identifier::Identifier, time_prop::TimeProp, time_rel::TimeRel};
+    use andromeda_ngsi_ld_lexicon::{
+        aggr_method::AggrMethod,
+        identifier::Identifier,
+        ngsi_ld_urn::SnapshotNotificationId,
+        rfc3339::parse_client_instant,
+        time_prop::TimeProp,
+        time_rel::TimeRel,
+    };
     use andromeda_ngsi_ld_query::geo::reference_geometry::ReferenceGeometry;
     use chrono::{DateTime, Utc};
     use iso8601_duration::Duration as Iso8601Duration;
@@ -469,6 +476,41 @@ mod tests {
         pretty_assertions::assert_eq!(rendered["createdAt"], "2024-01-01T00:00:00.750Z");
         pretty_assertions::assert_eq!(rendered["modifiedAt"], "2024-01-01T00:00:00.750Z");
         pretty_assertions::assert_eq!(rendered["expiresAt"], "2024-01-01T00:00:00.750Z");
+    }
+
+    /// Clause 4.6.3 caps a `DateTime` at six fractional digits, so a nanosecond
+    /// instant is written at the microsecond.
+    #[test]
+    fn a_snapshot_notification_writes_its_notified_at_at_the_microsecond() {
+        let instant = "2026-10-19T16:27:34.800524180Z".parse::<DateTime<Utc>>().expect("valid instant");
+        let notification = SnapshotNotification::builder()
+            .id(SnapshotNotificationId::mint())
+            .expires_at(instant)
+            .notified_at(instant)
+            .snapshot_id("urn:ngsi-ld:Snapshot:1".parse::<Identifier>().expect("valid snapshot id"))
+            .snapshot_priority(SnapshotPriority::DEFAULT)
+            .snapshot_status(SnapshotStatus::Success)
+            .build();
+        let rendered = serde_json::to_value(notification).expect("notification serializes");
+        pretty_assertions::assert_eq!(rendered["notifiedAt"], "2026-10-19T16:27:34.800524Z");
+        pretty_assertions::assert_eq!(rendered["expiresAt"], "2026-10-19T16:27:34.800524Z");
+    }
+
+    /// The notification stamped from the broker clock carries a `notifiedAt`
+    /// the clause 4.6.3 reading of a received instant accepts.
+    #[test]
+    fn a_built_snapshot_notification_stamps_an_admissible_notified_at() {
+        let snapshot = Snapshot::builder()
+            .id("urn:ngsi-ld:Snapshot:1".parse::<Identifier>().expect("valid snapshot id"))
+            .snapshot_priority(SnapshotPriority::DEFAULT)
+            .status(SnapshotStatus::Success)
+            .created_at(january_first())
+            .modified_at(january_first())
+            .expires_at(january_first())
+            .build();
+        let rendered = serde_json::to_value(snapshot.build_notification()).expect("notification serializes");
+        let notified_at = rendered["notifiedAt"].as_str().expect("notifiedAt is a string");
+        assert!(notified_at.ends_with('Z') && parse_client_instant(notified_at).is_ok(), "{notified_at}");
     }
 
     #[test]

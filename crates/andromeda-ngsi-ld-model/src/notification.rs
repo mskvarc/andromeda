@@ -2,7 +2,7 @@
 
 use crate::{csource_change_revision::CsourceChangeRevision, registration::ContextSourceRegistration};
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_lexicon::{constant_string, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{constant_string, identifier::Identifier, rfc3339::datetime};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -113,7 +113,9 @@ pub struct Notification<'a> {
     pub type_: NotificationType,
     /// Subscription this notification answers.
     pub subscription_id: &'a Identifier,
-    /// When the notification was generated.
+    /// When the notification was generated, written at no finer than the
+    /// microsecond: clause 4.6.3 caps a `DateTime` at six fractional digits.
+    #[serde(with = "datetime")]
     pub notified_at: DateTime<Utc>,
     /// The entity representations that triggered it.
     pub data: NotificationData,
@@ -220,7 +222,9 @@ pub struct CsourceNotification<'a> {
     pub type_: CsourceNotificationType,
     /// Subscription this notification answers.
     pub subscription_id: &'a Identifier,
-    /// When the notification was generated.
+    /// When the notification was generated, written at no finer than the
+    /// microsecond: clause 4.6.3 caps a `DateTime` at six fractional digits.
+    #[serde(with = "datetime")]
     pub notified_at: DateTime<Utc>,
     /// The registrations that triggered it, as the subscriber is notified of
     /// them.
@@ -256,6 +260,42 @@ mod tests {
 
     fn data(text: &str) -> NotificationData {
         NotificationData::written(RawValue::from_string(text.to_owned()).expect("written JSON"))
+    }
+
+    /// An instant read from a clock that resolves nanoseconds.
+    fn nanosecond_instant() -> chrono::DateTime<Utc> {
+        "2026-10-19T16:27:34.800524180Z".parse().expect("valid instant")
+    }
+
+    /// Clause 4.6.3 caps a `DateTime` at six fractional digits, so a nanosecond
+    /// instant is written at the microsecond.
+    #[test]
+    fn a_notification_writes_its_notified_at_at_the_microsecond() {
+        let (id, subscription) = (notification_id(), subscription_id());
+        let notification = Notification::builder()
+            .id(&id)
+            .subscription_id(&subscription)
+            .notified_at(nanosecond_instant())
+            .data(data("[]"))
+            .build();
+        let rendered = serde_json::to_value(&notification).expect("serialises");
+        pretty_assertions::assert_eq!(rendered["notifiedAt"], json!("2026-10-19T16:27:34.800524Z"));
+    }
+
+    /// Clause 4.6.3 caps a `DateTime` at six fractional digits, so a nanosecond
+    /// instant is written at the microsecond.
+    #[test]
+    fn a_csource_notification_writes_its_notified_at_at_the_microsecond() {
+        let (id, subscription) = (notification_id(), subscription_id());
+        let notification = CsourceNotification::builder()
+            .id(&id)
+            .subscription_id(&subscription)
+            .notified_at(nanosecond_instant())
+            .data(&[])
+            .trigger_reason(CsrTriggerReason::Updated)
+            .build();
+        let rendered = serde_json::to_value(&notification).expect("serialises");
+        pretty_assertions::assert_eq!(rendered["notifiedAt"], json!("2026-10-19T16:27:34.800524Z"));
     }
 
     #[test]
