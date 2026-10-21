@@ -96,7 +96,7 @@ impl headers::Header for NgsiLdTenant {
 #[cfg(test)]
 mod tests {
     use crate::ngsild_tenant::{NgsiLdTenant, NgsiLdTenantError};
-    use andromeda_ngsi_ld_lexicon::tenant::{InvalidTenantName, TenantName};
+    use andromeda_ngsi_ld_lexicon::tenant::{InvalidTenantName, TENANT_NAME_BYTE_LIMIT, TenantName};
     use headers::Header;
     use http::HeaderValue;
     use std::iter;
@@ -133,8 +133,24 @@ mod tests {
     }
 
     #[test]
-    fn an_over_long_value_is_an_invalid_name() {
-        pretty_assertions::assert_eq!(read(&"a".repeat(256)), Err(NgsiLdTenantError::InvalidName(InvalidTenantName::TooLong)));
+    fn a_value_at_the_tenant_name_limit_is_read() {
+        let at_limit = "a".repeat(TENANT_NAME_BYTE_LIMIT);
+        pretty_assertions::assert_eq!(read(&at_limit).expect("should read").as_str(), at_limit);
+    }
+
+    #[test]
+    fn an_over_long_value_is_an_invalid_name_stating_the_limit() {
+        let refused = read(&"a".repeat(TENANT_NAME_BYTE_LIMIT + 1));
+        pretty_assertions::assert_eq!(
+            refused,
+            Err(NgsiLdTenantError::InvalidName(InvalidTenantName::TooLong {
+                length: TENANT_NAME_BYTE_LIMIT + 1
+            }))
+        );
+        pretty_assertions::assert_eq!(
+            refused.err().map(|error| error.to_string()),
+            Some("the NGSILD-Tenant header is not a valid tenant name: a tenant name of 1006 bytes exceeds the 1005 bytes a tenant name may occupy".to_owned())
+        );
     }
 
     #[test]

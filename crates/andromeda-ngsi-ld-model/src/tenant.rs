@@ -13,7 +13,7 @@
 use andromeda_ngsi_ld_lexicon::{
     constant_string,
     identifier::{Identifier, IdentifierParseError},
-    tenant::TenantName,
+    tenant::{TENANT_ID_PREFIX, TenantName},
     time::instant_serde,
 };
 use chrono::{DateTime, Utc};
@@ -107,9 +107,10 @@ pub struct Tenant {
 /// # Errors
 ///
 /// Returns [`IdentifierParseError`] when the name cannot be assembled into an NGSI-LD
-/// URN, which a validated [`TenantName`] never triggers in practice.
+/// URN, which a validated [`TenantName`] never triggers: its grammar keeps the
+/// URN well formed and its length bound keeps it within the identifier limit.
 pub fn tenant_id(name: &TenantName) -> Result<Identifier, IdentifierParseError> {
-    format!("urn:ngsi-ld:Tenant:{}", name.as_str()).parse::<Identifier>()
+    format!("{TENANT_ID_PREFIX}{}", name.as_str()).parse::<Identifier>()
 }
 
 /// The tenant name a tenant identifier carries, if it is a well-formed tenant id.
@@ -119,14 +120,18 @@ pub fn tenant_id(name: &TenantName) -> Result<Identifier, IdentifierParseError> 
 #[must_use]
 pub fn tenant_name_from_id(id: &Identifier) -> Option<TenantName> {
     let rendered = id.to_string();
-    let name = rendered.strip_prefix("urn:ngsi-ld:Tenant:")?;
+    let name = rendered.strip_prefix(TENANT_ID_PREFIX)?;
     TenantName::try_from(name.to_string()).ok()
 }
 
 #[cfg(test)]
 mod tests {
     use crate::tenant::{Tenant, TenantState, TenantUsage, tenant_id, tenant_name_from_id};
-    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, tenant::TenantName};
+    use andromeda_ngsi_ld_lexicon::{
+        identifier::Identifier,
+        identifier_length::IDENTIFIER_BYTE_LIMIT,
+        tenant::{TENANT_NAME_BYTE_LIMIT, TenantName},
+    };
     use chrono::{TimeZone, Utc};
 
     fn name(raw: &str) -> TenantName {
@@ -213,6 +218,14 @@ mod tests {
         let id = tenant_id(&name("acme")).expect("id");
         pretty_assertions::assert_eq!(id.to_string(), "urn:ngsi-ld:Tenant:acme");
         pretty_assertions::assert_eq!(tenant_name_from_id(&id), Some(name("acme")));
+    }
+
+    #[test]
+    fn the_longest_tenant_name_has_an_identifier_at_the_identifier_limit() {
+        let longest = name(&format!("t{}", "a".repeat(TENANT_NAME_BYTE_LIMIT - 1)));
+        let id = tenant_id(&longest).expect("the identifier of the longest tenant name");
+        pretty_assertions::assert_eq!(id.as_str().len(), IDENTIFIER_BYTE_LIMIT);
+        pretty_assertions::assert_eq!(tenant_name_from_id(&id), Some(longest));
     }
 
     #[test]

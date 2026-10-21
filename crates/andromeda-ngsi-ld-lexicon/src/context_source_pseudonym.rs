@@ -137,7 +137,7 @@ impl FromStr for ContextSourcePseudonym {
 mod tests {
     use crate::{
         context_source_pseudonym::{ContextSourcePseudonym, ContextSourcePseudonymError},
-        tenant::TenantName,
+        tenant::{TENANT_NAME_BYTE_LIMIT, TenantName},
     };
 
     /// A validated tenant label, for composing tenant-scoped aliases.
@@ -224,7 +224,7 @@ mod tests {
     #[test]
     fn every_admissible_tenant_label_composes_to_a_valid_pseudonym() {
         let broker = ContextSourcePseudonym::new("urn:ngsi-ld:ContextSourceIdentity:broker1").expect("valid pseudonym");
-        for label in ["_internal", "A_B", "tenant-a", "t9", &"a".repeat(255)] {
+        for label in ["_internal", "A_B", "tenant-a", "t9", &"a".repeat(TENANT_NAME_BYTE_LIMIT)] {
             let composed = broker.scoped_to_tenant(&tenant(label));
             assert!(
                 ContextSourcePseudonym::new(composed.as_str()).is_ok(),

@@ -1,16 +1,27 @@
 //! The tenant identifier the broker keys every request by (ETSI GS CIM 009 clause 6.3.14).
 
+use crate::identifier_length::IDENTIFIER_BYTE_LIMIT;
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use static_regular_grammar::RegularGrammar;
 use std::str::FromStr;
 
-/// Maximum tenant identifier length. NGSI-LD v1.9.1 clause 6.3.14 does not
-/// constrain the length of the `NGSILD-Tenant` header value; this bound is
-/// chosen for HTTP-header practicality. The broker's tenant-database naming
-/// truncates as needed to fit Postgres's 63-char identifier limit while
-/// preserving uniqueness via a hash suffix.
-const MAX_TENANT_LEN: usize = 255;
+/// The prefix of the identifier a tenant resource is exposed under,
+/// `urn:ngsi-ld:Tenant:{tenantName}`: the Annex A.3 `urn:ngsi-ld:` prefix and the
+/// `Tenant` kind.
+pub const TENANT_ID_PREFIX: &str = concat!("urn:ngsi-ld:", "Tenant", ":");
+
+/// The greatest length, in UTF-8 octets, a tenant name may have.
+///
+/// Clause 6.3.14 types the tenant as a String and sets no length, so this is
+/// Andromeda's own bound. The registry keeps every name under a unique B-tree
+/// index, which is the storage reason [`IDENTIFIER_BYTE_LIMIT`] exists for, and
+/// a tenant resource is exposed as [`TENANT_ID_PREFIX`] followed by its name, an
+/// identifier held to that same limit. The bound is the identifier limit less
+/// the prefix, so the identifier of every admissible tenant fits it. The tenant's
+/// database name sets no bound: it is derived with a hash suffix that always
+/// fits PostgreSQL's identifier limit.
+pub const TENANT_NAME_BYTE_LIMIT: usize = IDENTIFIER_BYTE_LIMIT - TENANT_ID_PREFIX.len();
 
 /// Grammar-validated tenant label (FIWARE convention).
 ///
@@ -30,16 +41,19 @@ pub enum InvalidTenantName {
     /// Input is empty or violates the tenant character grammar.
     #[error("tenant name must match [A-Za-z_][A-Za-z0-9_-]*")]
     InvalidSyntax,
-    /// Input exceeds the maximum tenant identifier length.
-    #[error("tenant name must be at most {MAX_TENANT_LEN} characters")]
-    TooLong,
+    /// Input is longer than [`TENANT_NAME_BYTE_LIMIT`].
+    #[error("a tenant name of {length} bytes exceeds the {TENANT_NAME_BYTE_LIMIT} bytes a tenant name may occupy")]
+    TooLong {
+        /// The length of the refused name, in UTF-8 octets.
+        length: usize,
+    },
 }
 
 /// A validated tenant identifier.
 ///
-/// Combines the ABNF grammar check with an upper-bound
-/// length limit so that the value is safe to use as a Postgres identifier
-/// component.
+/// Combines the ABNF grammar check with [`TENANT_NAME_BYTE_LIMIT`], so the
+/// name fits the registry's unique index and the identifier the tenant is
+/// exposed under fits [`IDENTIFIER_BYTE_LIMIT`].
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Display, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct TenantName(TenantLabelBuf);
@@ -58,8 +72,9 @@ impl FromStr for TenantName {
     type Err = InvalidTenantName;
 
     fn from_str(value: &str) -> Result<TenantName, InvalidTenantName> {
-        if value.len() > MAX_TENANT_LEN {
-            return Err(InvalidTenantName::TooLong);
+        let length = value.len();
+        if length > TENANT_NAME_BYTE_LIMIT {
+            return Err(InvalidTenantName::TooLong { length });
         }
         let label = TenantLabelBuf::new(value.to_string()).map_err(|_| InvalidTenantName::InvalidSyntax)?;
         Ok(TenantName(label))
@@ -86,7 +101,10 @@ impl From<TenantName> for String {
 
 #[cfg(test)]
 mod tests {
-    use crate::tenant::{MAX_TENANT_LEN, TenantName};
+    use crate::{
+        identifier_length::IDENTIFIER_BYTE_LIMIT,
+        tenant::{InvalidTenantName, TENANT_ID_PREFIX, TENANT_NAME_BYTE_LIMIT, TenantName},
+    };
 
     #[test]
     fn tenant_name_valid_plain() {
@@ -132,16 +150,43 @@ mod tests {
         assert!(TenantName::try_from(String::new()).is_err());
     }
 
+    /// The identifier `urn:ngsi-ld:Tenant:{name}` of the longest tenant name is
+    /// exactly as long as an identifier may be.
     #[test]
-    fn tenant_name_rejects_over_length() {
-        let over = "a".repeat(MAX_TENANT_LEN + 1);
-        assert!(TenantName::try_from(over).is_err());
+    fn the_tenant_name_limit_is_the_identifier_limit_less_the_tenant_id_prefix() {
+        pretty_assertions::assert_eq!(TENANT_NAME_BYTE_LIMIT, 1005);
+        pretty_assertions::assert_eq!(TENANT_ID_PREFIX.len() + TENANT_NAME_BYTE_LIMIT, IDENTIFIER_BYTE_LIMIT);
     }
 
     #[test]
-    fn tenant_name_accepts_max_length() {
-        let at_max = "a".repeat(MAX_TENANT_LEN);
-        assert!(TenantName::try_from(at_max).is_ok());
+    fn a_tenant_name_at_the_limit_is_accepted() {
+        let at_limit = format!("t{}", "a".repeat(TENANT_NAME_BYTE_LIMIT - 1));
+        let tenant = at_limit.parse::<TenantName>().expect("a tenant name at the limit");
+        pretty_assertions::assert_eq!(tenant.as_str().len(), TENANT_NAME_BYTE_LIMIT);
+    }
+
+    #[test]
+    fn a_tenant_name_one_byte_past_the_limit_is_too_long_and_the_refusal_states_the_limit() {
+        let past_limit = "a".repeat(TENANT_NAME_BYTE_LIMIT + 1);
+        let refused = past_limit.parse::<TenantName>();
+        pretty_assertions::assert_eq!(refused, Err(InvalidTenantName::TooLong { length: 1006 }));
+        pretty_assertions::assert_eq!(
+            refused.err().map(|error| error.to_string()),
+            Some("a tenant name of 1006 bytes exceeds the 1005 bytes a tenant name may occupy".to_owned())
+        );
+    }
+
+    /// The length is checked before the grammar, so an over-long value is
+    /// refused for its length whatever it holds.
+    #[test]
+    fn an_over_long_value_breaking_the_grammar_is_refused_for_its_length() {
+        let past_limit = format!("1{}", "a".repeat(TENANT_NAME_BYTE_LIMIT));
+        pretty_assertions::assert_eq!(
+            past_limit.parse::<TenantName>(),
+            Err(InvalidTenantName::TooLong {
+                length: TENANT_NAME_BYTE_LIMIT + 1
+            })
+        );
     }
 
     #[test]
