@@ -309,7 +309,7 @@ fn the_schema_reader_finds_every_kind_of_declared_object() {
             .any(|trigger| trigger.table == "entities" && trigger.name == "trg_entities_current_attributes_cascade"),
         "triggers are read"
     );
-    assert!(schema.functions.iter().any(|function| function.name == "sub_eq_keys"), "functions are read");
+    assert!(schema.functions.iter().any(|function| function.name == "geom_to_geog"), "functions are read");
 }
 
 #[test]

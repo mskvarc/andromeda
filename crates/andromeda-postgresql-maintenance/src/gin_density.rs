@@ -271,7 +271,7 @@ mod tests {
         assert!(sql.contains(r#""c"."reltuples" >= 0"#), "a table never analyzed covers nothing: {sql}");
         assert!(
             sql.contains(
-                r#"("c"."relname", "s"."attname") IN (('current_attributes', 'sub_attributes'), ('current_attributes', 'value_object'), ('current_attributes', 'value_long_text'))"#
+                r#"("c"."relname", "s"."attname") IN (('current_attributes', 'sub_eq_keys'), ('current_attributes', 'value_object'), ('current_attributes', 'value_long_text'))"#
             ),
             "{sql}"
         );

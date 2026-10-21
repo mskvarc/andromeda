@@ -160,7 +160,7 @@ mod tests {
             .find(r#""candidates" AS  MATERIALIZED (SELECT "ca"."entity_key""#)
             .unwrap_or_else(|| panic!("the index path: {sql}"));
         assert!(short < candidates, "{sql}");
-        assert!(sql.contains(r#"sub_eq_keys("ca"."attribute_name_key", "ca"."sub_attributes") && "#), "{sql}");
+        assert!(sql.contains(r#""ca"."sub_eq_keys" && "#), "{sql}");
         assert!(sql.contains(r#"(SELECT COUNT(*) FROM "short_walk") >= $"#), "{sql}");
         assert!(sql.contains(r#"(SELECT COUNT(*) FROM "candidates") <= $"#), "{sql}");
         assert!(sql.contains(r#"(SELECT COUNT(*) FROM "candidates") > $"#), "{sql}");

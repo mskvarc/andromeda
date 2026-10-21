@@ -1,10 +1,10 @@
-//! The shape of `current_attributes`, its key functions and its
-//! statement-level references, checked against the embedded migrations.
+//! The shape of `current_attributes` and its statement-level references,
+//! checked against the embedded migrations.
 //!
 //! The grain, the value placement, the partial value indexes, the sub-attribute
-//! key index with its statistics and the triggers that stand in for foreign
-//! keys are what every reader and writer of the relation relies on, so their
-//! declared text is pinned here.
+//! key column and its index and the triggers that stand in for foreign keys are
+//! what every reader and writer of the relation relies on, so their declared
+//! text is pinned here.
 
 use crate::migration_set::{
     branch::branch_migrations,
@@ -73,28 +73,12 @@ fn trigger<'a>(schema: &'a DeclaredSchema, name: &str) -> &'a DeclaredTrigger {
         .unwrap_or_else(|| panic!("no migration declares {name}"))
 }
 
-/// Every declaration of the function `name`, one per overload.
-fn functions<'a>(schema: &'a DeclaredSchema, name: &str) -> Vec<&'a DeclaredFunction> {
-    schema.functions.iter().filter(|function| function.name == name).collect()
-}
-
 /// The one declaration of the function `name`, which a migration must declare.
 fn function<'a>(schema: &'a DeclaredSchema, name: &str) -> &'a DeclaredFunction {
-    let [function] = functions(schema, name)[..] else {
+    let [function] = schema.functions.iter().filter(|function| function.name == name).collect::<Vec<_>>()[..] else {
         panic!("{name} is declared exactly once");
     };
     function
-}
-
-/// The expression `idx_ca_sub_eq_keys` keys, parenthesised as written.
-fn sub_attribute_key_expression(schema: &DeclaredSchema) -> String {
-    let definition = normalized(&index(schema, "idx_ca_sub_eq_keys").definition);
-    definition
-        .split_once("using gin (")
-        .and_then(|(_, rest)| rest.split_once(") with"))
-        .unwrap_or_else(|| panic!("the key index is a GIN over one expression: {definition}"))
-        .0
-        .to_owned()
 }
 
 /// An instance holds as many sub-attribute instances as the value budgets
@@ -110,16 +94,17 @@ fn an_element_names_its_parent_by_an_integer_position() {
     assert!(fields.trim_start().starts_with("parent integer,"), "{fields}");
 }
 
-/// A queue holds an Entity's state as `attribute_instance_record`s, which SQL
-/// moves into `current_attributes` rows field for field: the record is the
-/// table's columns but `entity_key`, in order and with the same types.
+/// A queue holds an Entity's state as `attribute_instance_record`s, which
+/// decode as `current_attributes` rows do: the record is the table's columns
+/// but `entity_key` and the `sub_eq_keys` a write derives from the instance,
+/// in order and with the same types.
 #[test]
 fn an_instance_record_declares_the_current_attributes_columns_in_order() {
     let schema = DeclaredSchema::of_every_migration();
     let fields = |table: &str, columns: &[DeclaredColumn]| {
         columns
             .iter()
-            .filter(|column| column.table == table && column.name != "entity_key")
+            .filter(|column| column.table == table && !["entity_key", "sub_eq_keys"].contains(&column.name.as_str()))
             .map(|column| (column.name.clone(), column.type_word()))
             .collect::<Vec<_>>()
     };
@@ -185,8 +170,30 @@ fn the_sub_attribute_key_index_is_partial_and_off_the_pending_list() {
     let schema = DeclaredSchema::of_every_migration();
     assert_eq!(
         normalized(&index(&schema, "idx_ca_sub_eq_keys").definition),
-        "on current_attributes using gin (sub_eq_keys(attribute_name_key, sub_attributes)) with (fastupdate = off) where sub_attributes is not null"
+        "on current_attributes using gin (sub_eq_keys) with (fastupdate = off) where sub_eq_keys is not null"
     );
+}
+
+/// A row without a keyed value stores NULL, which the partial index leaves
+/// out, never an empty array it would index.
+#[test]
+fn the_sub_attribute_keys_are_null_or_non_empty() {
+    let schema = DeclaredSchema::of_every_migration();
+    assert_eq!(
+        normalized(constraint(&schema, "chk_current_attributes_sub_eq_keys_not_empty")),
+        "check (cardinality(sub_eq_keys) > 0)"
+    );
+}
+
+/// The keys are a plain column, so ANALYZE gathers its element statistics and
+/// no object or function in the database computes them.
+#[test]
+fn no_statistics_object_or_function_computes_the_sub_attribute_keys() {
+    let schema = DeclaredSchema::of_every_migration();
+    assert!(!schema.indexes.iter().any(|index| index.name == "stx_ca_sub_eq_keys"));
+    for name in ["sub_eq_keys", "sub_eq_query_key", "sub_path_hash"] {
+        assert!(!schema.functions.iter().any(|function| function.name == name), "{name} is declared");
+    }
 }
 
 /// Concurrent writers queue on the posting pages of trigrams the strings of
@@ -209,37 +216,6 @@ fn the_long_text_trigram_and_object_indexes_stay_off_the_pending_list() {
     for name in ["idx_ca_value_long_text_trgm", "idx_ca_value_object"] {
         let definition = normalized(&index(&schema, name).definition);
         assert!(definition.contains(" with (fastupdate = off) "), "{name}: {definition}");
-    }
-}
-
-#[test]
-fn the_sub_attribute_key_expression_has_statistics() {
-    let schema = DeclaredSchema::of_every_migration();
-    let statistics = index(&schema, "stx_ca_sub_eq_keys");
-    assert_eq!(statistics.table, TABLE);
-    assert_eq!(
-        normalized(&statistics.definition),
-        format!("on ({}) from {TABLE}", sub_attribute_key_expression(&schema))
-    );
-}
-
-#[test]
-fn the_key_functions_are_immutable_and_parallel_safe() {
-    let schema = DeclaredSchema::of_every_migration();
-    let query_keys = functions(&schema, "sub_eq_query_key");
-    assert_eq!(query_keys.len(), 4, "one query key per value kind family: {query_keys:#?}");
-    let declarations = query_keys
-        .into_iter()
-        .chain([function(&schema, "sub_eq_keys"), function(&schema, "sub_path_hash")]);
-    for declaration in declarations {
-        let attributes = normalized(&declaration.definition);
-        let attributes = attributes.split_once(" as $$").map_or(attributes.as_str(), |(attributes, _)| attributes);
-        assert!(attributes.contains(" immutable "), "{} is not immutable: {attributes}", declaration.name);
-        assert!(
-            attributes.ends_with(" parallel safe"),
-            "{} is not parallel safe: {attributes}",
-            declaration.name
-        );
     }
 }
 

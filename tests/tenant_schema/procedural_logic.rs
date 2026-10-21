@@ -30,20 +30,13 @@ const TOLERATED_TRIGGERS: [&str; 5] = [
 ];
 
 /// The functions the schema tolerates, one entry per overload: the tolerated
-/// triggers' functions, the immutable wrapper an expression index needs to
-/// cast a geometry to a geography, and the immutable sub-attribute key
-/// functions an expression index and its queries call.
-const TOLERATED_FUNCTIONS: [&str; 10] = [
+/// triggers' functions and the immutable wrapper a generated column needs to
+/// cast a geometry to a geography.
+const TOLERATED_FUNCTIONS: [&str; 4] = [
     "cascade_entity_current_attributes",
     "check_current_attribute_entities",
     "check_current_attribute_name_keys",
     "geom_to_geog",
-    "sub_eq_keys",
-    "sub_eq_query_key",
-    "sub_eq_query_key",
-    "sub_eq_query_key",
-    "sub_eq_query_key",
-    "sub_path_hash",
 ];
 
 /// A temporal entity with two instances of one attribute.

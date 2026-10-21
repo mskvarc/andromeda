@@ -23,7 +23,7 @@ cefact-units = "1.0.0"
 chrono = "0.4.45"
 indexmap = "2.14.2"
 langtag = "1.1.0"
-serde = "1.0.229"
+serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision", "raw_value"] }
 sqlx = { version = "0.9.0", features = ["bigdecimal", "runtime-tokio", "postgres", "json", "chrono"] }
 thiserror = "2.0.21"

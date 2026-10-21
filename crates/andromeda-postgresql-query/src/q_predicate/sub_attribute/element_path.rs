@@ -23,13 +23,13 @@ use crate::{
         instance_row::{ElementLevel, InstanceRow, ProbedRow},
         sub_attribute::member_field::MemberField,
     },
+    sub_attribute_key::path_hash::PathHash,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::filter::path::AttrPath;
 use andromeda_postgresql_schema::current::SubAttribute;
 use andromeda_postgresql_seaquery::unnest::{exists_in_positional_tree, first_in_positional_tree};
 use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
-use std::iter::once;
 
 /// The `parent` an element under the top-level instance itself carries.
 const INSTANCE_PARENT: i64 = 0;
@@ -75,10 +75,11 @@ impl ElementPath {
         }
     }
 
-    /// The name path the equality keys hash, the top-level attribute first.
+    /// The hash of the name path the equality keys at the target element are
+    /// salted with, the top-level attribute first.
     #[must_use]
-    pub fn key_path(&self) -> Vec<i32> {
-        once(self.attribute).chain(self.chain.iter().copied()).map(AttributeNameKey::get).collect()
+    pub fn path_hash(&self) -> PathHash {
+        self.chain.iter().fold(PathHash::ROOT.child(self.attribute), |path, name| path.child(*name))
     }
 
     /// The condition on a row of the attribute that holds when the target
@@ -149,6 +150,7 @@ mod tests {
             projection::compile,
             sub_attribute::{element_path::ElementPath, member_field::MemberField},
         },
+        sub_attribute_key::path_hash::PathHash,
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::{
@@ -200,7 +202,7 @@ mod tests {
     #[test]
     fn a_path_resolves_to_its_attribute_and_chain() {
         let path = element_path("\"https://example.com/a\".\"https://example.com/b\".\"https://example.com/c\"==3").expect("resolved");
-        assert_eq!(path.key_path(), vec![2, 5, 9]);
+        assert_eq!(path.path_hash(), PathHash::of(&[2, 5, 9].map(AttributeNameKey::from)));
         assert_eq!(path.holder(), InstanceRow::Element(ElementLevel::at(1)));
         assert_eq!(path.field, None);
     }
@@ -234,7 +236,7 @@ mod tests {
             sql.contains(r#""l0"."attribute_name_key" = 5"#) && sql.contains(r#""l1"."attribute_name_key" = 9"#),
             "{sql}"
         );
-        assert!(!sql.contains("sub_eq_keys("), "{sql}");
+        assert!(!sql.contains("sub_eq_keys"), "{sql}");
     }
 
     #[test]

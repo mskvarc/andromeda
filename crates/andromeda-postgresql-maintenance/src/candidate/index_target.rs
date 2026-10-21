@@ -59,8 +59,8 @@ pub enum IndexTarget {
 #[derive(Clone, Copy, Debug, Display, EnumString, Eq, Hash, IntoStaticStr, PartialEq)]
 #[strum(serialize_all = "snake_case")]
 pub enum DensityColumn {
-    /// `sub_attributes`, covered by `idx_ca_sub_eq_keys`.
-    SubAttributes,
+    /// `sub_eq_keys`, covered by `idx_ca_sub_eq_keys`.
+    SubEqKeys,
     /// `value_object`, covered by `idx_ca_value_object`.
     ValueObject,
     /// `value_long_text`, covered by `idx_ca_value_long_text_trgm`.
@@ -69,13 +69,13 @@ pub enum DensityColumn {
 
 impl DensityColumn {
     /// Every column a density-measured GIN covers.
-    pub const ALL: [DensityColumn; 3] = [DensityColumn::SubAttributes, DensityColumn::ValueObject, DensityColumn::ValueLongText];
+    pub const ALL: [DensityColumn; 3] = [DensityColumn::SubEqKeys, DensityColumn::ValueObject, DensityColumn::ValueLongText];
 
     /// The GIN that covers this column's non-null rows.
     #[must_use]
     pub const fn gin(self) -> IndexTarget {
         match self {
-            DensityColumn::SubAttributes => IndexTarget::IdxCaSubEqKeys,
+            DensityColumn::SubEqKeys => IndexTarget::IdxCaSubEqKeys,
             DensityColumn::ValueObject => IndexTarget::IdxCaValueObject,
             DensityColumn::ValueLongText => IndexTarget::IdxCaValueLongTextTrgm,
         }
@@ -178,7 +178,7 @@ impl IndexTarget {
     #[must_use]
     pub const fn density_column(self) -> Option<DensityColumn> {
         match self {
-            IndexTarget::IdxCaSubEqKeys => Some(DensityColumn::SubAttributes),
+            IndexTarget::IdxCaSubEqKeys => Some(DensityColumn::SubEqKeys),
             IndexTarget::IdxCaValueObject => Some(DensityColumn::ValueObject),
             IndexTarget::IdxCaValueLongTextTrgm => Some(DensityColumn::ValueLongText),
             IndexTarget::UqCurrentAttributesGrain
@@ -315,7 +315,7 @@ mod tests {
         assert_eq!(
             DensityColumn::ALL.map(|column| (<&str>::from(column), column.gin().relation_name())),
             [
-                ("sub_attributes", "idx_ca_sub_eq_keys"),
+                ("sub_eq_keys", "idx_ca_sub_eq_keys"),
                 ("value_object", "idx_ca_value_object"),
                 ("value_long_text", "idx_ca_value_long_text_trgm"),
             ]

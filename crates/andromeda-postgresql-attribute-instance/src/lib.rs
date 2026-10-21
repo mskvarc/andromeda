@@ -7,7 +7,8 @@
 //! sub-attributes (clause 4.5.2) as `sub_attribute` elements in pre-order. This
 //! crate owns those members, the element and the composite it travels as, the
 //! dictionary keys every name is held as and their minting and lookup, and the
-//! flattening and assembly of one instance and its tree. Where an instance sits (a current-state row, a
+//! flattening and assembly of one instance and its tree, and the equality keys
+//! of that tree. Where an instance sits (a current-state row, a
 //! history row, a queue record) and the statements that write and read it
 //! belong to the stores that hold it.
 
@@ -23,6 +24,8 @@ pub mod name_keys;
 /// Minting the keys a write flattens with, and reading back the names a read
 /// assembles with.
 pub mod name_resolution;
+/// The scalar members of a stored array value.
+pub mod stored_array_members;
 /// The family value an instance's stored columns hold.
 mod stored_family;
 /// A JSON piece held as its codec wrote it.
@@ -33,6 +36,8 @@ pub mod stored_members;
 pub mod stored_value;
 /// One sub-attribute element and the composite it travels as.
 pub mod sub_attribute;
+/// The equality keys of one instance's sub-attribute tree.
+pub mod sub_attribute_keys;
 
 #[cfg(test)]
 andromeda_architecture_checks::forbid_sql!();

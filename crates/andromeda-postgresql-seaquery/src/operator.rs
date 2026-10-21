@@ -82,6 +82,20 @@ pub fn key_array(keys: &[i32]) -> SimpleExpr {
     Expr::cust(format!("ARRAY[{keys}]::integer[]"))
 }
 
+/// `ARRAY[k, …]::bigint[]`, hash keys rendered inline.
+///
+/// Inlined for the reason [`array_contains_key`] gives: the planner reads a
+/// `bigint[]` column's most-common-element statistics for the very keys a
+/// constant names, and prices a bound array at the operator's default
+/// selectivity. A hash key is computed by the broker from a value, never
+/// caller-supplied text, which is what makes inlining it safe. Cast so an
+/// empty list still names the element type.
+#[must_use]
+pub fn hash_key_array(keys: &[i64]) -> SimpleExpr {
+    let keys = keys.iter().map(i64::to_string).collect::<Vec<_>>().join(", ");
+    Expr::cust(format!("ARRAY[{keys}]::bigint[]"))
+}
+
 /// Regex: `col ~ pattern` - tests if column matches POSIX regex.
 #[must_use]
 pub fn regex_match(col: SimpleExpr, pattern: SimpleExpr) -> SimpleExpr {
@@ -204,6 +218,18 @@ mod tests {
             .to_owned()
             .to_string(PostgresQueryBuilder);
         assert!(sql.contains("<@ (ARRAY[]::integer[])"), "{sql}");
+    }
+
+    /// A hash key spans the whole signed 64-bit range, so the array is typed
+    /// `bigint[]` and a negative key is written as one.
+    #[test]
+    fn hash_keys_render_as_an_inline_bigint_array() {
+        let (sql, values) = Query::select()
+            .expr(Expr::col("sub_eq_keys").array_overlaps(hash_key_array(&[i64::MIN, 7])))
+            .to_owned()
+            .build(PostgresQueryBuilder);
+        assert!(sql.contains("\"sub_eq_keys\" && (ARRAY[-9223372036854775808, 7]::bigint[])"), "{sql}");
+        assert!(values.0.is_empty(), "the keys must not be bound: {sql}");
     }
 
     #[test]

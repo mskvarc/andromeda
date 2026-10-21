@@ -263,10 +263,7 @@ mod tests {
     fn a_keyed_sub_attribute_equality_counts_through_the_key_index() {
         let (sql, _) = count_of("\"https://example.com/temperature\".\"https://example.com/source\"==\"sensor-43\"");
         let (candidates, _) = sql.split_once(" SELECT (CASE WHEN ").unwrap_or_else(|| panic!("a gated count: {sql}"));
-        assert!(
-            candidates.contains(r#"sub_eq_keys("ca"."attribute_name_key", "ca"."sub_attributes") && "#),
-            "{candidates}"
-        );
+        assert!(candidates.contains(r#""ca"."sub_eq_keys" && "#), "{candidates}");
         let (indexed, walked) = arms(&sql);
         assert!(!indexed.contains("sub_eq_keys") && !indexed.contains("UNNEST("), "{indexed}");
         assert!(walked.contains("UNNEST("), "{walked}");

@@ -45,7 +45,6 @@ pub mod scalar_subquery;
 pub mod setting;
 pub mod spherical_distance;
 pub mod statement_planning;
-pub mod sub_attribute_key;
 pub mod temporary_table;
 pub mod timescale;
 pub mod timescale_job;

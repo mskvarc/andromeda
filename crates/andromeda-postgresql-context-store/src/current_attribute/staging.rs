@@ -4,8 +4,8 @@
 //! The rows are transposed into one array per column and expanded with
 //! `UNNEST` under the alias `r`, then projected once, in the common table
 //! expression `instances`, into the types the columns store: the EWKB of a
-//! geometry is read and validated and the `objectType` keys are cast from
-//! their array literal. Each row's elements travel in a `sub_attribute_tree`,
+//! geometry is read and validated, and the `objectType` keys and the
+//! sub-attribute equality keys are cast from their array literals. Each row's elements travel in a `sub_attribute_tree`,
 //! because PostgreSQL arrays are rectangular; an `UNNEST` of several arrays
 //! expands a composite element into its fields, so the staged column is the
 //! tree's one field, the `sub_attribute[]` itself. Every row carries its
@@ -39,7 +39,7 @@ pub(crate) struct Instances;
 /// Every `current_attributes` column a row is written with, the Entity's key
 /// aside, in bind order. The staging carries the same columns, after the
 /// Entity's identifier.
-pub(crate) const ROW_COLUMNS: [CurrentAttributes; 26] = [
+pub(crate) const ROW_COLUMNS: [CurrentAttributes; 27] = [
     CurrentAttributes::AttributeNameKey,
     CurrentAttributes::DatasetId,
     CurrentAttributes::Ordinal,
@@ -66,11 +66,12 @@ pub(crate) const ROW_COLUMNS: [CurrentAttributes; 26] = [
     CurrentAttributes::ExpiresAt,
     CurrentAttributes::ProofSeals,
     CurrentAttributes::SubAttributes,
+    CurrentAttributes::SubEqKeys,
 ];
 
 /// The array type each staged column binds as: the column's own type, but
-/// EWKB for a geometry, an array literal for the `objectType` keys and the
-/// carrier composite for the elements.
+/// EWKB for a geometry, an array literal for the `objectType` keys and for the
+/// sub-attribute equality keys, and the carrier composite for the elements.
 const fn staged_type(column: CurrentAttributes) -> PostgresType {
     match column {
         CurrentAttributes::AttributeNameKey | CurrentAttributes::Ordinal | CurrentAttributes::ValueDatatypeKey | CurrentAttributes::ValueTypeKey => {
@@ -95,7 +96,8 @@ const fn staged_type(column: CurrentAttributes) -> PostgresType {
         | CurrentAttributes::ValueUri
         | CurrentAttributes::ValueLongUri
         | CurrentAttributes::ValueLanguage
-        | CurrentAttributes::ObjectTypeKeys => PostgresType::TextArray,
+        | CurrentAttributes::ObjectTypeKeys
+        | CurrentAttributes::SubEqKeys => PostgresType::TextArray,
     }
 }
 
@@ -113,6 +115,7 @@ fn projected(column: CurrentAttributes) -> SimpleExpr {
     match column {
         CurrentAttributes::ValueGeometry => validated_geom_from_ewkb(staged),
         CurrentAttributes::ObjectTypeKeys => cast(staged, PostgresType::IntegerArray),
+        CurrentAttributes::SubEqKeys => cast(staged, PostgresType::BigintArray),
         CurrentAttributes::Table
         | CurrentAttributes::EntityKey
         | CurrentAttributes::CreatedAt
@@ -175,9 +178,10 @@ mod tests {
         let mut with_clause = WithClause::new();
         with_clause.cte(instances_cte(7));
         let sql = apply_instances_alias(with_clause.query(Query::select().take()).to_string(PostgresQueryBuilder));
-        pretty_assertions::assert_eq!(staged_columns().len(), 27);
+        pretty_assertions::assert_eq!(staged_columns().len(), 28);
         assert!(sql.contains("UNNEST($7::text[], $8::integer[]"), "{sql}");
-        assert!(sql.contains("$33::sub_attribute_tree[]) AS r(id, attribute_name_key,"), "{sql}");
+        assert!(sql.contains("$33::sub_attribute_tree[], $34::text[]) AS r(id, attribute_name_key,"), "{sql}");
+        assert!(sql.contains(r#""r"."sub_eq_keys"::bigint[] AS "sub_eq_keys""#), "{sql}");
         assert!(
             sql.contains(r#"ST_MakeValid(ST_GeomFromEWKB("r"."value_geometry")) AS "value_geometry""#),
             "{sql}"

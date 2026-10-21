@@ -172,6 +172,10 @@ pub enum CurrentAttributes {
     /// [`SubAttribute`] elements in written order, parents before
     /// children, NULL when the instance has no sub-attribute
     SubAttributes,
+    /// The clause 4.9 equality keys of every scalar value of the sub-attribute
+    /// tree, one per value, salted by the value's name path and kind; NULL
+    /// when the tree holds no keyed value, never empty
+    SubEqKeys,
 }
 
 /// The fields of the `sub_attribute` composite type - one
@@ -333,6 +337,7 @@ mod tests {
             CurrentAttributes::ObjectTypeKeys,
             CurrentAttributes::ProofSeals,
             CurrentAttributes::SubAttributes,
+            CurrentAttributes::SubEqKeys,
         ]
         .map(|name| name.to_string());
         assert_eq!(
@@ -366,6 +371,7 @@ mod tests {
                 "object_type_keys",
                 "proof_seals",
                 "sub_attributes",
+                "sub_eq_keys",
             ]
         );
     }

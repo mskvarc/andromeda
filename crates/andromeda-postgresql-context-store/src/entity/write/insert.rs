@@ -245,8 +245,9 @@ mod tests {
         );
         assert!(sql.contains(r#""instances" AS (SELECT "r"."id" AS "id""#), "{sql}");
         assert!(sql.contains(r"FROM UNNEST($12::text[]"), "{sql}");
-        assert!(sql.contains(r"$38::sub_attribute_tree[]) AS r("), "{sql}");
+        assert!(sql.contains(r"$38::sub_attribute_tree[], $39::text[]) AS r("), "{sql}");
         assert!(sql.contains(r#""r"."sub_attributes" AS "sub_attributes""#), "{sql}");
+        assert!(sql.contains(r#""r"."sub_eq_keys"::bigint[] AS "sub_eq_keys""#), "{sql}");
         assert!(!sql.contains("WITH RECURSIVE"), "{sql}");
     }
 

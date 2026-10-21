@@ -242,7 +242,7 @@ mod tests {
             sql.contains(r#"ON CONFLICT ("entity_key", "attribute_name_key", "dataset_id") DO UPDATE SET"#),
             "{sql}"
         );
-        for column in ["ordinal", "value_kind", "modified_at", "sub_attributes", "proof_seals"] {
+        for column in ["ordinal", "value_kind", "modified_at", "sub_attributes", "sub_eq_keys", "proof_seals"] {
             assert!(sql.contains(&format!(r#""{column}" = "excluded"."{column}""#)), "{column}: {sql}");
         }
         for kept in ["entity_key", "attribute_name_key", "dataset_id", "created_at"] {
@@ -260,7 +260,15 @@ mod tests {
             .to_string(PostgresQueryBuilder);
         let (_, guard) = sql.split_once(" WHERE ").expect("the conflict action is guarded");
         let (stored, proposed) = guard.split_once(" IS DISTINCT FROM ").expect("the guard compares two row values");
-        for column in ["ordinal", "value_number", "value_object", "observed_at", "modified_at", "sub_attributes"] {
+        for column in [
+            "ordinal",
+            "value_number",
+            "value_object",
+            "observed_at",
+            "modified_at",
+            "sub_attributes",
+            "sub_eq_keys",
+        ] {
             assert!(stored.contains(&format!(r#""current_attributes"."{column}""#)), "{column}: {sql}");
             assert!(proposed.contains(&format!(r#""excluded"."{column}""#)), "{column}: {sql}");
         }

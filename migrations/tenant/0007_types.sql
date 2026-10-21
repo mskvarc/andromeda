@@ -68,11 +68,12 @@ create type sub_attribute_tree as (
 );
 
 -- One top-level attribute instance of an Entity's state outside
--- `current_attributes`: a row of that table without its `entity_key`, field
--- for field in the table's column order and with the same types, so a record
--- and a current row decode alike and SQL moves one into the other without a
--- cast. The codes and keys are those of `sub_attribute`; `ordinal` is the
--- instance's written position among the Entity's instances, from 0.
+-- `current_attributes`: a row of that table without its `entity_key` and
+-- without the `sub_eq_keys` a write derives from its sub-attributes, field for
+-- field in the table's column order and with the same types, so a record and
+-- a current row decode alike. The codes and keys are those of
+-- `sub_attribute`; `ordinal` is the instance's written position among the
+-- Entity's instances, from 0.
 create type attribute_instance_record as (
     created_at timestamptz,
     modified_at timestamptz,

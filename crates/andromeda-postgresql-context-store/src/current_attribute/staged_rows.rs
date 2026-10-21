@@ -4,8 +4,8 @@
 //!
 //! Everything that turns a row into a column happens on the way in here: the
 //! length split a String or a URI makes, the EWKB of a geometry, the array
-//! literal of the `objectType` keys and the `sub_attribute_tree` each row's
-//! elements travel in.
+//! literals of the `objectType` keys and of the sub-attribute equality keys,
+//! and the `sub_attribute_tree` each row's elements travel in.
 
 use crate::current_attribute::row::{CurrentAttributeRow, row_column};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -14,6 +14,7 @@ use andromeda_postgresql_attribute_instance::{
     stored_members::InstanceMembers,
     stored_value::StoredValue,
     sub_attribute::{SubAttributeRecord, SubAttributeTree},
+    sub_attribute_keys::{SubAttributeKeyError, sub_attribute_keys},
 };
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stored_unit_code::stored_unit_code, value_kind::ValueKind};
 use andromeda_postgresql_encoding::{
@@ -26,6 +27,18 @@ use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::value::RawValue;
 use sqlx::{Postgres, postgres::PgArguments, query::QueryAs, types::Json};
+use thiserror::Error;
+
+/// A row that cannot be staged.
+#[derive(Debug, Error)]
+pub enum StagedRowError {
+    /// A geometry, of a row or of an element, has no EWKB encoding.
+    #[error(transparent)]
+    Geometry(#[from] EwkbError),
+    /// The equality keys of a row's sub-attribute tree cannot be computed.
+    #[error(transparent)]
+    SubAttributeKeys(#[from] SubAttributeKeyError),
+}
 
 /// The value columns one stored value occupies, exactly one of them set.
 #[derive(Default)]
@@ -134,6 +147,9 @@ pub struct StagedRows<'a> {
     proof_seals: Vec<Option<Json<Box<RawValue>>>>,
     /// `sub_attributes`, NULL when the instance has none.
     sub_attributes: Vec<Option<SubAttributeTree>>,
+    /// `sub_eq_keys`, as array literals, NULL when the tree holds no keyed
+    /// value.
+    sub_eq_keys: Vec<Option<IntegerArrayLiteral>>,
 }
 
 impl<'a> StagedRows<'a> {
@@ -141,9 +157,10 @@ impl<'a> StagedRows<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`EwkbError`] when a geometry, of a row or of an element,
-    /// cannot be encoded as EWKB.
-    pub fn push(&mut self, entity: &'a Identifier, rows: Vec<CurrentAttributeRow>) -> Result<(), EwkbError> {
+    /// Returns [`StagedRowError`] when a geometry, of a row or of an element,
+    /// cannot be encoded as EWKB, or the equality keys of a sub-attribute tree
+    /// cannot be computed.
+    pub fn push(&mut self, entity: &'a Identifier, rows: Vec<CurrentAttributeRow>) -> Result<(), StagedRowError> {
         for row in rows {
             let CurrentAttributeRow {
                 ordinal,
@@ -168,6 +185,7 @@ impl<'a> StagedRows<'a> {
             let language = value.language().map(|language| language.as_str().to_owned());
             let kind = ValueKind::code(value.kind());
             let values = ValueColumns::of(value)?;
+            let sub_eq_keys = sub_attribute_keys(attribute_name_key, &sub_attributes)?;
             let elements = sub_attributes
                 .into_iter()
                 .map(SubAttributeRecord::try_from)
@@ -200,6 +218,7 @@ impl<'a> StagedRows<'a> {
             self.expires_ats.push(expires_at);
             self.proof_seals.push(proof_seals.map(StoredJson::into_json));
             self.sub_attributes.push((!elements.is_empty()).then_some(SubAttributeTree { elements }));
+            self.sub_eq_keys.push(sub_eq_keys);
         }
         Ok(())
     }
@@ -223,11 +242,8 @@ impl<'a> StagedRows<'a> {
     where
         'a: 'q,
     {
-        let object_type_keys: Vec<Option<String>> = self
-            .object_type_keys
-            .iter()
-            .map(|keys| keys.as_ref().map(|keys| keys.as_str().to_owned()))
-            .collect();
+        let object_type_keys = literal_texts(&self.object_type_keys);
+        let sub_eq_keys = literal_texts(&self.sub_eq_keys);
         query
             .bind(self.entity_ids)
             .bind(self.attribute_name_keys)
@@ -256,7 +272,13 @@ impl<'a> StagedRows<'a> {
             .bind(self.expires_ats)
             .bind(self.proof_seals)
             .bind(self.sub_attributes)
+            .bind(sub_eq_keys)
     }
+}
+
+/// The texts of a column of array literals, as the `text[]` bind carries them.
+fn literal_texts(column: &[Option<IntegerArrayLiteral>]) -> Vec<Option<String>> {
+    column.iter().map(|keys| keys.as_ref().map(|keys| keys.as_str().to_owned())).collect()
 }
 
 #[cfg(test)]
@@ -307,6 +329,12 @@ mod tests {
         let tree = rows.sub_attributes[0].as_ref().expect("the nested instance carries its tree");
         pretty_assertions::assert_eq!(tree.elements.iter().map(|element| element.parent).collect::<Vec<_>>(), vec![0, 1]);
         assert!(rows.sub_attributes[1].is_none(), "an instance without sub-attributes stages no tree");
+        let keys = rows.sub_eq_keys[0].as_ref().map(|keys| keys.as_str().to_owned());
+        assert!(
+            keys.as_deref().is_some_and(|keys| keys.starts_with('{') && keys.matches(',').count() == 1),
+            "one key per element value: {keys:?}"
+        );
+        assert!(rows.sub_eq_keys[1].is_none(), "an instance without sub-attributes stages no key");
         assert!(rows.value_uris[1].is_none());
         pretty_assertions::assert_eq!(
             rows.value_objects[1].as_ref().map(|object| object.0.get()),

@@ -37,6 +37,13 @@
 -- order. A single Relationship object stays in `value_uri` or
 -- `value_long_uri`, where a traversal joins it.
 --
+-- `sub_eq_keys` holds the clause 4.9 equality keys of every scalar value of
+-- the instance's sub-attribute tree, which the broker computes from the
+-- elements it writes: one key per value, salted by the value's name path and
+-- kind, so a `q` equality on a sub-attribute probes one GIN index. A key
+-- selects candidates only, and every candidate is rechecked against the
+-- element it names.
+--
 -- `expires_at` is the instance's clause 4.22 `expiresAt`, NULL when it never
 -- expires. Every read excludes a past-due instance with
 -- `expires_at IS NULL OR expires_at > NOW()`; the expiry sweep deletes the row
@@ -111,6 +118,9 @@ create table current_attributes (
     proof_seals jsonb compression lz4,
     -- The instance's sub-attributes, NULL when it has none.
     sub_attributes sub_attribute[] compression lz4,
+    -- The equality keys of the sub-attribute tree's scalar values, NULL when
+    -- it holds none.
+    sub_eq_keys bigint[] compression lz4,
     -- The grain has a nullable `dataset_id`, so it is a unique constraint and
     -- the table has no primary key. It is the upsert's conflict target, the
     -- range a whole-Entity read scans and the access path of every
@@ -131,7 +141,8 @@ create table current_attributes (
     constraint chk_current_attributes_value_long_text_length check (octet_length(value_long_text) > 2048),
     constraint chk_current_attributes_value_uri_length check (octet_length(value_uri) <= 1024),
     constraint chk_current_attributes_value_long_uri_length check (octet_length(value_long_uri) > 1024),
-    constraint chk_current_attributes_dataset_id_length check (octet_length(dataset_id) <= 1024)
+    constraint chk_current_attributes_dataset_id_length check (octet_length(dataset_id) <= 1024),
+    constraint chk_current_attributes_sub_eq_keys_not_empty check (cardinality(sub_eq_keys) > 0)
 )
 with (
     vacuum_truncate = false,
@@ -217,22 +228,15 @@ create index idx_ca_entity_geometry on current_attributes (attribute_name_key, e
 where
     value_geometry is not null;
 
--- A clause 4.9 `q` equality on a sub-attribute. A query names the indexed
--- expression exactly, which is the only way the planner matches an expression
--- index, and rechecks the value it compares.
-create index idx_ca_sub_eq_keys on current_attributes using gin (sub_eq_keys(attribute_name_key, sub_attributes)) with (fastupdate = off)
+-- A clause 4.9 `q` equality on a sub-attribute, which reads the keys of its
+-- operand and rechecks the value it compares.
+create index idx_ca_sub_eq_keys on current_attributes using gin (sub_eq_keys) with (fastupdate = off)
 where
-    sub_attributes is not null;
+    sub_eq_keys is not null;
 
 create statistics stx_ca_attribute_value_kind (dependencies, ndistinct) on attribute_name_key, value_kind from current_attributes;
 
 create statistics stx_ca_entity_attribute (dependencies, ndistinct) on entity_key, attribute_name_key from current_attributes;
-
--- The planner ignores a partial index's own expression statistics, so without
--- these every predicate on the key expression is estimated at a fixed default
--- selectivity.
-create statistics stx_ca_sub_eq_keys on (sub_eq_keys(attribute_name_key, sub_attributes))
-from current_attributes;
 
 -- The trigger's own schema names the Entities checked, because a Snapshot
 -- schema's statements qualify its relations rather than steering the search
