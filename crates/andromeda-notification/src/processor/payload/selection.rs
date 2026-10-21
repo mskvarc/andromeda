@@ -213,8 +213,8 @@ impl Selection {
         }
         // clone: the narrowed state owns the entity's own members it keeps
         let (scope, expires_at) = match members {
-            EntityMembers::Kept => (source.scope().cloned(), source.expires_at().cloned()),
-            EntityMembers::Unscoped => (None, source.expires_at().cloned()),
+            EntityMembers::Kept => (source.scope().cloned(), source.expires_at()),
+            EntityMembers::Unscoped => (None, source.expires_at()),
             EntityMembers::Dropped => (None, None),
         };
         // clone: the narrowed state is named and typed as its source

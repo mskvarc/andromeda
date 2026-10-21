@@ -8,13 +8,7 @@ use crate::{
     queried::family_values::{FamilyValues, language_strings},
     value_mode::Stored,
 };
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    attribute_type::AttributeType,
-    identifier::Identifier,
-    reference::NgsiLdReference,
-    time::written_date_time::DateTimeText,
-};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, reference::NgsiLdReference};
 use andromeda_ngsi_ld_query::queried_entity::{attribute_reading::QueriedInstance, instance_metadata::InstanceMetadata, value_item::ValueItem};
 use std::borrow::Cow;
 
@@ -88,10 +82,10 @@ impl<'a> QueriedInstance<'a> for HeldInstance<'a> {
     fn metadata(self, member: InstanceMetadata) -> Option<Cow<'a, str>> {
         let instance = self.instance;
         match member {
-            InstanceMetadata::ObservedAt => instance.observed_at().map(DateTimeText::as_str).map(Cow::Borrowed),
+            InstanceMetadata::ObservedAt => instance.observed_at().map(|instant| Cow::Owned(instant.to_string())),
             InstanceMetadata::CreatedAt => instance.created_at().map(|instant| Cow::Owned(instant.to_string())),
             InstanceMetadata::ModifiedAt => instance.modified_at().map(|instant| Cow::Owned(instant.to_string())),
-            InstanceMetadata::ExpiresAt => instance.expires_at().map(DateTimeText::as_str).map(Cow::Borrowed),
+            InstanceMetadata::ExpiresAt => instance.expires_at().map(|instant| Cow::Owned(instant.to_string())),
             InstanceMetadata::DatasetId => self.dataset_id.map(Identifier::as_str).map(Cow::Borrowed),
             // Table 5.2.5-2 has `instanceId` only in the temporal representation,
             // so a held instance never carries one.

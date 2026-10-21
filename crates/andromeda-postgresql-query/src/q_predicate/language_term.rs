@@ -9,7 +9,6 @@
 //! answer every operand alike.
 
 use crate::{
-    jsonb::lift_comparison,
     operator::{compare, pattern as pattern_predicate},
     q_predicate::{
         language_map::{LanguageMap, LanguageSelection},
@@ -36,11 +35,11 @@ const BYTE_ORDER: &str = "C";
 /// Whether a string can compare with an operand at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StringComparability {
-    /// A String, `Date`, `Time` or `DateTime` operand, which a string may
-    /// equal or order against.
+    /// A String operand, which a language string may equal or order against.
     Comparable,
-    /// A number or a boolean: a datatype no string carries, which clause 4.9
-    /// makes a non-match under every operator but `!=`.
+    /// A number, a boolean or a time value: a datatype no language string
+    /// carries, which clause 4.9 makes a non-match under every operator but
+    /// `!=`.
     Incomparable,
 }
 
@@ -48,8 +47,8 @@ pub enum StringComparability {
 #[must_use]
 pub const fn string_comparability(scalar: &Scalar) -> StringComparability {
     match scalar {
-        Scalar::Str(_) | Scalar::Uri(_) | Scalar::Date(_) | Scalar::Time(_) | Scalar::DateTime(_) => StringComparability::Comparable,
-        Scalar::Number(_) | Scalar::Bool(_) => StringComparability::Incomparable,
+        Scalar::Str(_) | Scalar::Uri(_) => StringComparability::Comparable,
+        Scalar::Number(_) | Scalar::Bool(_) | Scalar::Date(_) | Scalar::Time(_) | Scalar::DateTime(_) => StringComparability::Incomparable,
     }
 }
 
@@ -103,28 +102,18 @@ fn string_in_range(text: SimpleExpr, min: &Scalar, max: &Scalar) -> SimpleExpr {
 
 /// Compare one string against one operand.
 ///
-/// A number or a boolean is a datatype no string carries, which clause 4.9
-/// makes a non-match. A String ordering compares under the collation
-/// [`string_ordering_collation`] picks. Any other String, `Date` or `Time`
-/// comparison runs on the canonical text the String column holds the value in,
-/// under that column's byte order. A `DateTime` compares as an instant once the
-/// string is shown to be one, which carries no collation. The lifting is
-/// [`lift_comparison`]'s, which the JSON value reading shares.
+/// A `languageMap` holds `rdf:langString` values, so only a String operand
+/// compares with one: a number, a boolean and a time value are data types no
+/// language string carries, which clause 4.9 makes a non-match. A String
+/// ordering compares under the collation [`string_ordering_collation`] picks,
+/// any other comparison under the String column's byte order.
 fn string_comparison(text: SimpleExpr, op: CmpOp, scalar: &Scalar) -> SimpleExpr {
-    if string_comparability(scalar) == StringComparability::Incomparable {
-        return false_literal();
-    }
-    let lifted = lift_comparison(scalar, text);
-    let stored = match (scalar, string_ordering_collation(scalar, op)) {
-        (Scalar::DateTime(_), _) => lifted.stored,
-        (Scalar::Str(_) | Scalar::Uri(_) | Scalar::Date(_) | Scalar::Time(_) | Scalar::Number(_) | Scalar::Bool(_), Some(collation)) => {
-            collate(lifted.stored, &collation)
-        }
-        (Scalar::Str(_) | Scalar::Uri(_) | Scalar::Date(_) | Scalar::Time(_) | Scalar::Number(_) | Scalar::Bool(_), None) => {
-            collate(lifted.stored, &PostgresCollation::new(BYTE_ORDER))
-        }
+    let value = match scalar {
+        Scalar::Str(value) | Scalar::Uri(value) => value,
+        Scalar::Number(_) | Scalar::Bool(_) | Scalar::Date(_) | Scalar::Time(_) | Scalar::DateTime(_) => return false_literal(),
     };
-    compare(stored, op, lifted.operand)
+    let collation = string_ordering_collation(scalar, op).unwrap_or_else(|| PostgresCollation::new(BYTE_ORDER));
+    compare(collate(text, &collation), op, SeaExpr::val(value.as_str()))
 }
 
 /// Whether one string is in the language of a pattern.

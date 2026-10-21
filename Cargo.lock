@@ -1334,6 +1334,7 @@ name = "andromeda-ngsi-ld-lexicon"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-ngsi-ld-number",
  "andromeda-ngsi-ld-vocabulary",
  "cefact-units",
  "chrono",
@@ -1342,7 +1343,7 @@ dependencies = [
  "indexmap 2.14.2",
  "iri-rs",
  "pretty_assertions",
- "regex",
+ "rdfx",
  "serde",
  "serde_json",
  "static-regular-grammar",
@@ -1351,6 +1352,7 @@ dependencies = [
  "url",
  "urn-rs",
  "uuid",
+ "xsd-rs",
 ]
 
 [[package]]
@@ -1704,6 +1706,7 @@ dependencies = [
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-postgresql-branch",
+ "andromeda-postgresql-codes",
  "andromeda-postgresql-encoding",
  "andromeda-postgresql-query",
  "andromeda-postgresql-schema",

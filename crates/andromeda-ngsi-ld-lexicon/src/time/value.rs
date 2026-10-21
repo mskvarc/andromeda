@@ -1,40 +1,38 @@
-//! The three clause 4.6.3 time value forms, and the single classification of a literal into one of them.
+//! The three clause 4.6.3 time value data types, and the one rule that decides when a value is one.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 4.6.3 enumerates the data types "for
-//! representing Values" and names three of them by their lexical form alone: a
-//! "`DateTime` string for encoding a timestamp", a "Date string for encoding a
-//! calendar date" and a "Time string for encoding a local time expressed in
-//! UTC". Each is a JSON string, and each is fully pinned by the clause — all
-//! components present with "reduced representations are not permitted", the
-//! literal `Z` designator and no other zone expression, and a fraction of "one
-//! or more fractional digits, up to a maximum of six".
+//! ETSI GS CIM 009 v1.9.1 clause 4.6.3 enumerates `DateTime`, `Date` and
+//! `Time` among the data types "for representing Values" and pins the string
+//! form of each completely: all components present with "reduced
+//! representations are not permitted", the literal `Z` designator and no other
+//! zone expression, and a fraction of "one or more fractional digits, up to a
+//! maximum of six".
 //!
-//! Because the representation of those three data types *is* the string, which
-//! data type a value has can only be read off the string. Clause 4.8 NOTE 3
-//! confirms a Property may hold one — "User-defined Properties whose value is a
-//! time value (Date, `DateTime` or Time) are defined as Property, not as
-//! `TemporalProperty`" — and annex C.6 calls the `valueType` member and the
-//! JSON-LD `@value`/`@type` pair mechanisms for saying so explicitly, not the
-//! only way a value can be one.
+//! A value has one of those data types only when it is declared as one (annex
+//! C.6): by its JSON-LD `@type`, which a user `@context` may also coerce, or
+//! by the `valueType` of the Property it belongs to (clause 4.5.2). A string
+//! declared as neither is a string, whatever it looks like, so it is held,
+//! served and compared as the text it is. Clause 4.9 compares a target only
+//! with an operand of its own data type ("if there is no equality between the
+//! target value data type and the Query Term value data type ... not
+//! matching"), and its `quotedStr` is a String.
 //!
-//! Clause 4.9 then depends on that reading twice over: its `ComparableValue`
-//! production admits a bare `dateTime`, `date` and `time` operand, it requires
-//! that "when comparing dates or times, the order relation considered shall be
-//! a temporal one", and it makes every operator non-matching when "there is no
-//! equality between the target value data type and the Query Term value data
-//! type". A broker that classified a stored value by one rule and a `q` operand
-//! by another would satisfy that last sentence by never matching anything, so
-//! the classification lives here and every side of the comparison reads it from
-//! this one module.
+//! The lexical form decides in one place only: a bare `q` operand, which the
+//! clause 4.9 `ComparableValue` grammar admits as a `dateTime`, a `date` or a
+//! `time` by its shape ([`TimeValueForm::of`]).
 
-use crate::time::{
-    date::{NgsiLdDate, NgsiLdDateError},
-    date_time::{NgsiLdDateTime, NgsiLdDateTimeError},
-    time_of_day::{NgsiLdTime, NgsiLdTimeError},
+use crate::{
+    datatype::primitive_literal::PrimitiveLiteral,
+    reference::NgsiLdReference,
+    time::{
+        date::{NgsiLdDate, NgsiLdDateError},
+        date_time::{NgsiLdDateTime, NgsiLdDateTimeError},
+        rendering::{date_text, instant_text, time_of_day_text},
+        time_of_day::{NgsiLdTime, NgsiLdTimeError},
+    },
 };
 use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
 use derive_more::Display;
-use std::str::FromStr;
+use iri_rs::Iri;
 use thiserror::Error;
 
 /// The width of the clause 4.6.3 `DateTime` skeleton `YYYY-MM-DDThh:mm:ss`, before its mandatory `Z`.
@@ -46,74 +44,44 @@ const DATE_WIDTH: usize = 10;
 /// The width of the clause 4.6.3 `Time` skeleton `hh:mm:ss`, before its mandatory `Z`.
 const TIME_SKELETON_WIDTH: usize = 8;
 
-/// Whether a character may appear anywhere in a clause 4.6.3 time value.
+/// Whether a character may appear anywhere in a bare clause 4.6.3 time operand.
 ///
-/// The alphabet is deliberately wider than the conformant forms: `+` and `-`
-/// admit the numeric zone offset the clause forbids, and `,` admits the decimal
-/// separator it allows "in requests" only. A literal spelled with either is
-/// recognised as a time value *written wrongly*, which is what lets a `q`
-/// operand carrying one be refused as malformed rather than silently compared
-/// as text. What the alphabet excludes is free-form text: a space, or any
-/// letter other than the `T` and `Z` designators, means the literal is not an
-/// attempt at a time value at all.
+/// The alphabet is wider than the conformant forms: `+` and `-` admit the
+/// numeric zone offset the clause forbids, and `,` the decimal separator it
+/// allows "in requests". An operand spelled with either is a time value
+/// written wrongly, which is refused as malformed rather than compared as
+/// text. A space, or any letter other than the `T` and `Z` designators, means
+/// the operand is not an attempt at a time value at all.
 const fn is_time_value_char(character: char) -> bool {
     matches!(character, '0'..='9' | '-' | ':' | '.' | ',' | '+' | 'T' | 'Z')
 }
 
-/// The calendar-date components of the `Date` and `DateTime` forms, `YYYY-MM-DD`.
-macro_rules! date_components {
-    () => {
-        "[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])"
-    };
-}
-
-/// The time-of-day components of the `Time` and `DateTime` forms: `hh:mm:ss`,
-/// the optional fraction in either separator, and the mandatory `Z`.
-macro_rules! time_components {
-    () => {
-        "([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.,][0-9]{1,6})?Z"
-    };
-}
-
-/// The whole-literal pattern of the `DateTime` form.
-const DATE_TIME_PATTERN: &str = concat!("^", date_components!(), "T", time_components!(), "$");
-
-/// The whole-literal pattern of the `Date` form.
-const DATE_PATTERN: &str = concat!("^", date_components!(), "$");
-
-/// The whole-literal pattern of the `Time` form.
-const TIME_PATTERN: &str = concat!("^", time_components!(), "$");
-
-/// Which of the three clause 4.6.3 time value forms a literal is written in.
-///
-/// This is the shape of the literal, decided before it is parsed. A literal that
-/// has a form and does not satisfy it is a malformed value of that form, which
-/// is a different thing from a string that was never one — and the two callers
-/// of this module part company on exactly that distinction.
+/// One of the three clause 4.6.3 time value data types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TimeValueForm {
-    /// The `DateTime` form, `YYYY-MM-DDThh:mm:ssZ`.
+    /// `DateTime`, `YYYY-MM-DDThh:mm:ssZ`.
     DateTime,
-    /// The `Date` form, `YYYY-MM-DD`.
+    /// `Date`, `YYYY-MM-DD`.
     Date,
-    /// The `Time` form, `hh:mm:ssZ`.
+    /// `Time`, `hh:mm:ssZ`.
     Time,
 }
 
 impl TimeValueForm {
-    /// The form a literal is written in, or `None` when it is written in none.
+    /// The form a bare clause 4.9 `q` operand is written in, or `None` when it
+    /// is written in none.
     ///
     /// The three forms cannot collide: the `Date` and `DateTime` forms open with
     /// a four-digit year followed by `-`, and only the longer one carries the
     /// `T` that starts a time of day, while a `Time` opens with the two hour
     /// digits followed by `:`.
     #[must_use]
-    pub fn of(literal: &str) -> Option<TimeValueForm> {
-        if !literal.chars().all(is_time_value_char) {
+    pub fn of(operand: &str) -> Option<TimeValueForm> {
+        if !operand.chars().all(is_time_value_char) {
             return None;
         }
         // Every admitted character is ASCII, so a byte index is a character index.
-        let bytes = literal.as_bytes();
+        let bytes = operand.as_bytes();
         if bytes.len() >= DATE_TIME_SKELETON_WIDTH && bytes.get(4) == Some(&b'-') && bytes.get(10) == Some(&b'T') {
             Some(TimeValueForm::DateTime)
         } else if bytes.len() == DATE_WIDTH && bytes.get(4) == Some(&b'-') && bytes.get(7) == Some(&b'-') {
@@ -125,46 +93,21 @@ impl TimeValueForm {
         }
     }
 
-    /// The form a JSON-LD `@type` IRI declares, or `None` when it declares none.
-    ///
-    /// Annex C.6 shows a reified Property naming its value's datatype through
-    /// the `@value`/`@type` pair or the `valueType` member, both of which reach
-    /// an expanded value node carrying one of these three IRIs.
-    fn declared_by(type_iri: &str) -> Option<TimeValueForm> {
-        if type_iri == expanded_classes::DATE_TIME.as_str() {
-            Some(TimeValueForm::DateTime)
-        } else if type_iri == expanded_classes::DATE.as_str() {
-            Some(TimeValueForm::Date)
-        } else if type_iri == expanded_classes::TIME.as_str() {
-            Some(TimeValueForm::Time)
-        } else {
-            None
-        }
+    /// The form a datatype IRI names, or `None` when it names none of the three.
+    #[must_use]
+    pub fn named_by(datatype: &str) -> Option<TimeValueForm> {
+        [TimeValueForm::DateTime, TimeValueForm::Date, TimeValueForm::Time]
+            .into_iter()
+            .find(|form| form.iri().as_str() == datatype)
     }
 
-    /// The POSIX regular expression matching exactly the spellings clause 4.6.3
-    /// admits for this form, anchored at both ends.
-    ///
-    /// The pattern is this module's classification written for a reader that
-    /// cannot run [`TimeValueForm::of`] followed by a parse — a storage backend
-    /// deciding a stored literal's data type inside a statement. Every component
-    /// the clause pins is pinned here: all components present, because "reduced
-    /// representations are not permitted"; the literal `Z` and no other zone
-    /// expression; a fraction of "one or more fractional digits, up to a maximum
-    /// of six", written with either separator, since "in requests, also a comma
-    /// instead of a decimal point may be used".
-    ///
-    /// The ranges cover every rule a regular expression can carry, which leaves
-    /// exactly one literal the pattern admits and the parsers refuse: a day the
-    /// calendar does not have, such as `2024-02-30`. A reader that classifies by
-    /// this pattern places such a value in its lexical form's bucket rather than
-    /// under String.
+    /// The datatype IRI of this form in the NGSI-LD core vocabulary.
     #[must_use]
-    pub const fn lexical_pattern(self) -> &'static str {
+    pub const fn iri(self) -> Iri<&'static str> {
         match self {
-            TimeValueForm::DateTime => DATE_TIME_PATTERN,
-            TimeValueForm::Date => DATE_PATTERN,
-            TimeValueForm::Time => TIME_PATTERN,
+            TimeValueForm::DateTime => expanded_classes::DATE_TIME,
+            TimeValueForm::Date => expanded_classes::DATE,
+            TimeValueForm::Time => expanded_classes::TIME,
         }
     }
 
@@ -183,259 +126,247 @@ impl TimeValueForm {
     }
 }
 
+/// What one literal is declared as: its own datatype and the `valueType` of
+/// the attribute it is a value of.
+///
+/// `valueType` declares the datatype of every primitive member of the value it
+/// sits beside (clause 4.5.2): the single value, each value of a multi-valued
+/// Property, each item of a `ListProperty`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TimeValueDeclaration<'a> {
+    /// The literal's JSON-LD `@type`, expanded.
+    pub datatype: Option<&'a NgsiLdReference>,
+    /// The `valueType` of the attribute, expanded.
+    pub value_type: Option<&'a NgsiLdReference>,
+}
+
+impl<'a> TimeValueDeclaration<'a> {
+    /// The declaration of a literal carrying `datatype` in an attribute whose
+    /// `valueType` is `value_type`.
+    #[must_use]
+    pub const fn new(datatype: Option<&'a NgsiLdReference>, value_type: Option<&'a NgsiLdReference>) -> TimeValueDeclaration<'a> {
+        TimeValueDeclaration { datatype, value_type }
+    }
+
+    /// The time value form the declaration names, `None` when it names none.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TimeValueError::ConflictingDeclarations`] when the datatype and
+    /// the `valueType` are two different datatypes and one of them is a time
+    /// value form: a literal has one datatype.
+    pub fn form(self) -> Result<Option<TimeValueForm>, TimeValueError> {
+        let named = |reference: Option<&NgsiLdReference>| reference.and_then(|reference| TimeValueForm::named_by(reference.as_str()));
+        let (by_datatype, by_value_type) = (named(self.datatype), named(self.value_type));
+        match (self.datatype, self.value_type) {
+            (Some(datatype), Some(value_type)) if datatype != value_type && (by_datatype.is_some() || by_value_type.is_some()) => {
+                Err(TimeValueError::ConflictingDeclarations)
+            }
+            (Some(_) | None, Some(_) | None) => Ok(by_datatype.or(by_value_type)),
+        }
+    }
+}
+
 /// A parsed clause 4.6.3 time value.
 ///
-/// [`Display`] renders each variant as its own type does: an instant as every
-/// instant the broker emits is spelled, a date and a time of day in the
-/// fixed-width spelling the broker stores and orders them by.
+/// [`Display`] renders the one spelling the broker gives each value it serves:
+/// an instant and a time of day in UTC with the sub-second precision they carry
+/// in groups of three digits, a date in its only spelling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display)]
 pub enum TimeValue {
     /// A `DateTime`: an instant.
-    #[display("{_0}")]
+    #[display("{}", instant_text(_0.get()))]
     DateTime(NgsiLdDateTime),
     /// A `Date`: a calendar date.
-    #[display("{_0}")]
+    #[display("{}", date_text(_0.get()))]
     Date(NgsiLdDate),
     /// A `Time`: a time of day in UTC.
-    #[display("{_0}")]
+    #[display("{}", time_of_day_text(_0.get()))]
     Time(NgsiLdTime),
 }
 
 impl TimeValue {
-    /// The time value one JSON string literal carries, if it carries one.
+    /// The time value `literal` is declared as, `None` when it is declared as
+    /// none and is therefore the plain JSON value it is.
     ///
-    /// `declared` is the JSON-LD `@type` an expanded value node states. The two
-    /// inputs are read in the order clause 4.6.3 and annex C.6 put them in:
-    ///
-    /// * a declared form is what the client said the value is, so the literal is
-    ///   held to it and one that does not satisfy it is an error — refusing is
-    ///   the only way `2026-4-2` declared as a `Date` is not silently stored as
-    ///   a spelling that sorts nowhere near its neighbours;
-    /// * with no declared form, the clause 4.6.3 lexical forms decide, because
-    ///   the representation of each of those three data types *is* the string.
-    ///   A literal that resembles one without satisfying it is not an error
-    ///   here: clause 4.6.3 admits "all the JSON native data types" too, so the
-    ///   value is simply the JSON string it is written as, and `None` says so.
+    /// A declared form is what the client said the value is, so a literal that
+    /// does not satisfy it is an error, never a string.
     #[must_use]
-    pub fn admitted(declared: Option<&str>, literal: &str) -> Option<Result<TimeValue, TimeValueError>> {
-        match declared.and_then(TimeValueForm::declared_by) {
-            Some(form) => Some(form.parse(literal)),
-            None => TimeValueForm::of(literal).and_then(|form| form.parse(literal).ok()).map(Ok),
+    pub fn declared(declaration: TimeValueDeclaration<'_>, literal: PrimitiveLiteral<'_>) -> Option<Result<TimeValue, TimeValueError>> {
+        let form = match declaration.form() {
+            Ok(form) => form?,
+            Err(conflict) => return Some(Err(conflict)),
+        };
+        Some(match literal {
+            PrimitiveLiteral::String(text) => form.parse(text),
+            PrimitiveLiteral::Number(_) | PrimitiveLiteral::Boolean(_) => Err(TimeValueError::NotAString),
+        })
+    }
+
+    /// The form this value has.
+    #[must_use]
+    pub const fn form(&self) -> TimeValueForm {
+        match self {
+            TimeValue::DateTime(_) => TimeValueForm::DateTime,
+            TimeValue::Date(_) => TimeValueForm::Date,
+            TimeValue::Time(_) => TimeValueForm::Time,
         }
     }
 }
 
-// Parsing is `TimeValueForm::of` followed by that form's own parser, which is
-// what a caller holding only text wants; the two steps stay separate because a
-// caller that has a declared form skips the first.
-impl FromStr for TimeValue {
-    type Err = TimeValueError;
-
-    fn from_str(literal: &str) -> Result<TimeValue, TimeValueError> {
-        let Some(form) = TimeValueForm::of(literal) else {
-            return Err(TimeValueError::NoTimeValueForm);
-        };
-        form.parse(literal)
-    }
-}
-
-/// Ways a literal fails to be a clause 4.6.3 time value.
+/// Ways a declared literal fails to be a clause 4.6.3 time value.
 #[derive(Debug, Error)]
 pub enum TimeValueError {
-    /// The literal is written in the `DateTime` form and is not one.
+    /// The literal is declared a `DateTime` and is not one.
     #[error(transparent)]
     DateTime(#[from] NgsiLdDateTimeError),
-    /// The literal is written in the `Date` form and is not one.
+    /// The literal is declared a `Date` and is not one.
     #[error(transparent)]
     Date(#[from] NgsiLdDateError),
-    /// The literal is written in the `Time` form and is not one.
+    /// The literal is declared a `Time` and is not one.
     #[error(transparent)]
     Time(#[from] NgsiLdTimeError),
-    /// The literal is written in none of the three forms (ETSI GS CIM 009 clause 4.6.3).
-    #[error("value is written in no NGSI-LD time value form")]
-    NoTimeValueForm,
+    /// A time datatype is declared on a JSON number or boolean; clause 4.6.3
+    /// writes each of the three as a string.
+    #[error("an NGSI-LD time value is a string")]
+    NotAString,
+    /// The literal's datatype and the attribute's `valueType` name two
+    /// different datatypes.
+    #[error("the value's datatype and the attribute's valueType disagree")]
+    ConflictingDeclarations,
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::time::value::{TimeValue, TimeValueError, TimeValueForm};
+    use crate::{
+        datatype::primitive_literal::PrimitiveLiteral,
+        reference::NgsiLdReference,
+        time::{
+            lexical::LexicalError,
+            time_of_day::NgsiLdTimeError,
+            value::{TimeValue, TimeValueDeclaration, TimeValueError, TimeValueForm},
+        },
+    };
+    use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
 
-    /// Clause 4.6.3 fixes one lexical form per data type, so each conformant
-    /// spelling is classified as the type whose form it is written in.
-    #[test]
-    fn each_conformant_spelling_is_classified_as_its_own_form() {
-        for (literal, form) in [
-            ("2024-01-01T00:00:00Z", TimeValueForm::DateTime),
-            ("2024-01-01T00:00:00.250000Z", TimeValueForm::DateTime),
-            ("2024-01-01", TimeValueForm::Date),
-            ("12:00:00Z", TimeValueForm::Time),
-            ("12:00:00.5Z", TimeValueForm::Time),
-        ] {
-            pretty_assertions::assert_eq!(TimeValueForm::of(literal), Some(form), "{literal}");
-        }
+    fn reference(form: TimeValueForm) -> NgsiLdReference {
+        form.iri().as_str().parse().expect("a datatype IRI")
     }
 
-    /// Free-form text is not an attempt at a time value, whatever punctuation it
-    /// happens to carry. A `q` operand carrying such a literal is a `quotedStr`
-    /// under clause 4.9's grammar and has to compare as the text it is.
-    #[test]
-    fn free_form_text_carrying_temporal_punctuation_is_written_in_no_form() {
-        for literal in [
-            "12:00:00 in the morning",
-            "ab:cd:ef",
-            "urn:ngsi-ld:Vehicle:A4567",
-            "atrium",
-            "2024-01-01T00:00:00Z and later",
-            "",
-        ] {
-            pretty_assertions::assert_eq!(TimeValueForm::of(literal), None, "{literal}");
-        }
+    fn declared(datatype: Option<&NgsiLdReference>, value_type: Option<&NgsiLdReference>, text: &str) -> Option<Result<TimeValue, TimeValueError>> {
+        TimeValue::declared(TimeValueDeclaration::new(datatype, value_type), PrimitiveLiteral::String(text))
     }
 
-    /// A spelling clause 4.6.3 forbids is still written in the form it fails —
-    /// a numeric offset in place of the mandatory `Z`, a fraction beyond six
-    /// digits, a reduced representation — which is what lets it be reported as
-    /// malformed rather than compared as text.
     #[test]
-    fn a_forbidden_spelling_keeps_the_form_it_fails() {
-        for (literal, form) in [
-            ("2024-01-01T01:00:00+01:00", TimeValueForm::DateTime),
-            ("2024-01-01T00:00:00.1234567Z", TimeValueForm::DateTime),
-            ("2024-01-01T00:00:00", TimeValueForm::DateTime),
-            ("13:00:00+01:00", TimeValueForm::Time),
-            ("12:00:00", TimeValueForm::Time),
-        ] {
-            pretty_assertions::assert_eq!(TimeValueForm::of(literal), Some(form), "{literal}");
-            assert!(literal.parse::<TimeValue>().is_err(), "{literal} must not parse");
-        }
+    fn a_literal_typed_date_time_is_a_date_time() {
+        let date_time = reference(TimeValueForm::DateTime);
+        let value = declared(Some(&date_time), None, "2024-01-01T00:00:00.5Z")
+            .expect("declared")
+            .expect("a DateTime");
+        assert!(matches!(value, TimeValue::DateTime(_)), "got {value:?}");
+        pretty_assertions::assert_eq!(value.to_string(), "2024-01-01T00:00:00.500Z");
     }
 
-    /// Annex C.6: the `@value`/`@type` pair is one mechanism for declaring the
-    /// datatype of a reified Property's value.
+    /// Annex C.6: a value is a time value only when it is declared as one.
     #[test]
-    fn each_time_value_class_iri_declares_its_own_form() {
-        pretty_assertions::assert_eq!(TimeValueForm::declared_by(expanded_classes::DATE_TIME.as_str()), Some(TimeValueForm::DateTime));
-        pretty_assertions::assert_eq!(TimeValueForm::declared_by(expanded_classes::DATE.as_str()), Some(TimeValueForm::Date));
-        pretty_assertions::assert_eq!(TimeValueForm::declared_by(expanded_classes::TIME.as_str()), Some(TimeValueForm::Time));
-        pretty_assertions::assert_eq!(TimeValueForm::declared_by(expanded_classes::PROPERTY.as_str()), None);
+    fn an_undeclared_string_in_date_time_form_is_no_time_value() {
+        assert!(declared(None, None, "2024-01-01T00:00:00Z").is_none());
+        assert!(declared(None, None, "12:00:00Z").is_none());
+        assert!(declared(None, None, "2024-01-01").is_none());
+    }
+
+    #[test]
+    fn a_value_type_declares_the_time_value_of_a_plain_literal() {
+        let time = reference(TimeValueForm::Time);
+        let value = declared(None, Some(&time), "12:00:00Z").expect("declared").expect("a Time");
+        assert!(matches!(value, TimeValue::Time(_)), "got {value:?}");
+        pretty_assertions::assert_eq!(value.to_string(), "12:00:00Z");
+    }
+
+    #[test]
+    fn a_datatype_and_a_value_type_naming_two_forms_conflict() {
+        let (date, time) = (reference(TimeValueForm::Date), reference(TimeValueForm::Time));
+        let refusal = declared(Some(&date), Some(&time), "2024-01-01").expect("declared");
+        assert!(matches!(refusal, Err(TimeValueError::ConflictingDeclarations)), "got {refusal:?}");
+    }
+
+    #[test]
+    fn a_non_time_datatype_beside_a_time_value_type_conflicts() {
+        let string: NgsiLdReference = "http://www.w3.org/2001/XMLSchema#string".parse().expect("a datatype IRI");
+        let date_time = reference(TimeValueForm::DateTime);
+        let refusal = declared(Some(&string), Some(&date_time), "2024-01-01T00:00:00Z").expect("declared");
+        assert!(matches!(refusal, Err(TimeValueError::ConflictingDeclarations)), "got {refusal:?}");
+    }
+
+    #[test]
+    fn a_datatype_and_a_value_type_naming_one_form_agree() {
+        let date_time = reference(TimeValueForm::DateTime);
+        let value = declared(Some(&date_time), Some(&date_time), "2024-01-01T00:00:00Z").expect("declared");
+        assert!(matches!(value, Ok(TimeValue::DateTime(_))), "got {value:?}");
     }
 
     /// A declared form is what the client said the value is, so a literal that
     /// does not satisfy it is refused rather than demoted to a string.
     #[test]
     fn a_declared_form_refuses_a_literal_that_does_not_satisfy_it() {
-        let refusal = TimeValue::admitted(Some(expanded_classes::TIME.as_str()), "13:00:00+01:00").expect("a declared form always answers");
-        assert!(matches!(refusal, Err(TimeValueError::Time(_))), "got {refusal:?}");
-    }
-
-    /// With nothing declared, a literal that merely resembles a time value is
-    /// the JSON string it is written as: clause 4.6.3 admits "all the JSON
-    /// native data types" alongside the three lexical forms.
-    #[test]
-    fn an_undeclared_literal_that_resembles_a_form_without_satisfying_it_is_a_plain_string() {
-        assert!(TimeValue::admitted(None, "13:00:00+01:00").is_none());
-        assert!(TimeValue::admitted(None, "2024-01-01T00:00:00.1234567Z").is_none());
-        assert!(TimeValue::admitted(None, "atrium").is_none());
-    }
-
-    /// The undeclared reading is what makes a client's timestamp findable: the
-    /// value it wrote is a `DateTime`, and it renders in the canonical form of
-    /// its lexical type.
-    #[test]
-    fn an_undeclared_conformant_literal_is_the_time_value_it_is_written_as() {
-        let admitted = TimeValue::admitted(None, "2024-01-01T00:00:00.250000Z")
-            .expect("a conformant DateTime is a time value")
-            .expect("and it parses");
-        pretty_assertions::assert_eq!(admitted.to_string(), "2024-01-01T00:00:00.250Z");
-
-        let time = TimeValue::admitted(None, "12:00:00Z").expect("a conformant Time").expect("and it parses");
-        pretty_assertions::assert_eq!(time.to_string(), "12:00:00.000000Z");
-
-        let date = TimeValue::admitted(None, "2024-01-01").expect("a conformant Date").expect("and it parses");
-        pretty_assertions::assert_eq!(date.to_string(), "2024-01-01");
-    }
-
-    /// Clause 4.6.3: "In requests, also a comma instead of a decimal point may
-    /// be used as separator for compatibility reasons."
-    #[test]
-    fn the_comma_compatibility_separator_names_the_same_value_as_the_decimal_point() {
-        pretty_assertions::assert_eq!(
-            "12:00:00,5Z".parse::<TimeValue>().expect("the comma form").to_string(),
-            "12:00:00.5Z".parse::<TimeValue>().expect("the decimal point form").to_string()
-        );
-        pretty_assertions::assert_eq!(
-            "2024-01-01T00:00:00,25Z".parse::<TimeValue>().expect("the comma form").to_string(),
-            "2024-01-01T00:00:00.25Z".parse::<TimeValue>().expect("the decimal point form").to_string()
+        let time = reference(TimeValueForm::Time);
+        let refusal = declared(Some(&time), None, "yesterday").expect("declared");
+        assert!(
+            matches!(refusal, Err(TimeValueError::Time(NgsiLdTimeError::Lexical(LexicalError::Malformed)))),
+            "got {refusal:?}"
         );
     }
 
-    /// The pattern is the classification written for a reader that cannot run
-    /// the parser, so it has to accept exactly the literals the parser accepts.
-    /// The one documented exception is a day the calendar does not have, which
-    /// no regular expression can exclude.
     #[test]
-    fn each_lexical_pattern_accepts_exactly_the_literals_its_form_parses() {
-        let literals = [
-            "2024-01-01T00:00:00Z",
-            "2024-01-01T00:00:00.250000Z",
-            "2024-01-01T00:00:00,25Z",
-            "2024-01-01T00:00:00.1234567Z",
-            "2024-01-01T00:00:00.123456Z",
-            "2024-01-01T00:00:00.Z",
-            "2024-01-01T00:00:00,5,5Z",
-            "2024-01-01T01:00:00+01:00",
-            "2024-01-01T00:00:00+00:00",
-            "2024-01-01t00:00:00Z",
-            "2024-01-01T00:00:00z",
-            "2024-01-01 00:00:00Z",
-            "2024-01-01T00:00Z",
-            "2024-01-01T00:00:60Z",
-            "0000-01-01T00:00:00Z",
-            "2024-01-01T00:00:00",
-            "2024-01-01T24:00:00Z",
-            "2024-13-01T00:00:00Z",
-            "2024-01-01",
-            "2024-1-1",
-            "2024-01-32",
-            "12:00:00Z",
-            "12:00:00.5Z",
-            "12:00:00,5Z",
-            "12:00:00.1234567Z",
-            "12:00:00+00:00",
-            "12:00:00z",
-            "12:00Z",
-            "12:00:60Z",
-            "12:00:00",
-            "13:00:00+01:00",
-            "24:00:00Z",
-            "12:60:00Z",
-            "atrium",
-            "12:00:00 in the morning",
-            "urn:ngsi-ld:Vehicle:A4567",
-            "",
-        ];
+    fn a_time_datatype_on_a_number_is_not_a_string() {
+        let date_time = reference(TimeValueForm::DateTime);
+        let number: JsonNumber = serde_json::from_str("123").expect("a number");
+        let refusal = TimeValue::declared(TimeValueDeclaration::new(Some(&date_time), None), PrimitiveLiteral::Number(&number)).expect("declared");
+        assert!(matches!(refusal, Err(TimeValueError::NotAString)), "got {refusal:?}");
+        let refusal = TimeValue::declared(TimeValueDeclaration::new(Some(&date_time), None), PrimitiveLiteral::Boolean(true)).expect("declared");
+        assert!(matches!(refusal, Err(TimeValueError::NotAString)), "got {refusal:?}");
+    }
+
+    #[test]
+    fn each_time_value_class_iri_names_its_own_form() {
         for form in [TimeValueForm::DateTime, TimeValueForm::Date, TimeValueForm::Time] {
-            let pattern = regex::Regex::new(form.lexical_pattern()).expect("a valid regular expression");
-            for literal in literals {
-                let parses = form.parse(literal).is_ok();
-                pretty_assertions::assert_eq!(pattern.is_match(literal), parses, "{form:?} pattern disagrees on {literal}");
-            }
+            pretty_assertions::assert_eq!(TimeValueForm::named_by(form.iri().as_str()), Some(form));
+        }
+        pretty_assertions::assert_eq!(TimeValueForm::named_by(expanded_classes::PROPERTY.as_str()), None);
+    }
+
+    /// The canonical spelling of each form: no fraction, three or six digits,
+    /// and `Z`; a date in its only spelling.
+    #[test]
+    fn each_value_displays_in_its_one_served_spelling() {
+        for (form, written, served) in [
+            (TimeValueForm::DateTime, "2024-01-01T00:00:00,5Z", "2024-01-01T00:00:00.500Z"),
+            (TimeValueForm::DateTime, "2024-01-01T00:00:00.000Z", "2024-01-01T00:00:00Z"),
+            (TimeValueForm::DateTime, "2024-01-01T00:00:00.250000Z", "2024-01-01T00:00:00.250Z"),
+            (TimeValueForm::Time, "12:00:00.000Z", "12:00:00Z"),
+            (TimeValueForm::Time, "12:00:00.5Z", "12:00:00.500Z"),
+            (TimeValueForm::Time, "12:00:00.123456Z", "12:00:00.123456Z"),
+            (TimeValueForm::Date, "2024-01-01", "2024-01-01"),
+        ] {
+            pretty_assertions::assert_eq!(form.parse(written).expect("a time value").to_string(), served, "{written}");
         }
     }
 
-    /// The one literal a regular expression cannot separate: February has no
-    /// thirtieth day, so the pattern accepts what the parser refuses.
     #[test]
-    fn a_calendar_day_that_does_not_exist_is_the_patterns_single_documented_exception() {
-        let pattern = regex::Regex::new(TimeValueForm::Date.lexical_pattern()).expect("a valid regular expression");
-        assert!(pattern.is_match("2024-02-30"), "the pattern cannot count the days of a month");
-        assert!(TimeValueForm::Date.parse("2024-02-30").is_err(), "the parser can");
-    }
-
-    #[test]
-    fn a_literal_in_no_form_reports_that_rather_than_a_lexical_refusal() {
-        let error = "atrium".parse::<TimeValue>().expect_err("not a time value");
-        assert!(matches!(error, TimeValueError::NoTimeValueForm), "got {error:?}");
+    fn each_bare_operand_form_is_classified_by_its_shape() {
+        for (operand, form) in [
+            ("2024-01-01T00:00:00Z", Some(TimeValueForm::DateTime)),
+            ("2024-01-01T01:00:00+01:00", Some(TimeValueForm::DateTime)),
+            ("2024-01-01", Some(TimeValueForm::Date)),
+            ("12:00:00.5Z", Some(TimeValueForm::Time)),
+            ("13:00:00+01:00", Some(TimeValueForm::Time)),
+            ("12:00:00 in the morning", None),
+            ("urn:ngsi-ld:Vehicle:A4567", None),
+            ("atrium", None),
+            ("", None),
+        ] {
+            pretty_assertions::assert_eq!(TimeValueForm::of(operand), form, "{operand}");
+        }
     }
 }

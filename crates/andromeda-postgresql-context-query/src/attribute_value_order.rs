@@ -15,7 +15,10 @@
 //! ([`datatype_token`]), so the rank and the key that breaks its ties read one
 //! answer.
 
-use crate::attribute_value_datatype::{ARRAY_TYPE, NUMBER_TYPE, OBJECT_TYPE, OrderedValue, VALUE_MEMBER, datatype_rank, datatype_token};
+use crate::{
+    attribute_value_datatype::{NUMBER_TYPE, VALUE_MEMBER, datatype_rank, datatype_token},
+    attribute_value_holder::ordered_value,
+};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{filter::path::AttrPath, ordering::sort_direction::SortDirection};
 use andromeda_ngsi_ld_vocabulary::expanded::classes::{DATE_TIME, TIME};
@@ -25,20 +28,15 @@ use andromeda_postgresql_query::{
     q_predicate::{
         instance_row::ProbedRow,
         projection_probe::{Ca, of_attribute, projection_column, standing},
-        sub_attribute::{element_path::ElementPath, member_field::MemberField},
-        value_object_member::{expanded_jsonpath, is_json_property, literal_jsonpath},
+        sub_attribute::element_path::ElementPath,
     },
-    temporal_operand::{stored_date_time, stored_time},
+    temporal_operand::{declared_date_time, declared_time},
 };
-use andromeda_postgresql_schema::current::{CurrentAttributes, SubAttribute};
+use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::{
-    cast::{cast_compound, typed_null},
     collation::{PostgresCollation, collate},
-    jsonb::{escape_jsonpath_key, jsonb_build_object, jsonb_path_query_first, jsonb_typeof},
     literal::{false_literal, int_literal, text_literal},
     pg_operator::PgBinaryOperator,
-    pg_type::PostgresType,
-    unnest::composite_field,
 };
 use sea_query::{Alias, Asterisk, CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Func, Iden, IntoIden, Order, Query, SelectStatement, SimpleExpr};
 
@@ -60,7 +58,7 @@ const LATERAL_ALIAS_PREFIX: &str = "order_value_";
 const SOURCE_ALIAS: &str = "ordered";
 
 /// The column the instance read carries a sub-attribute element in.
-const ELEMENT_COLUMN: &str = "element";
+pub(crate) const ELEMENT_COLUMN: &str = "element";
 
 /// The columns the lateral projects, one per kind of value, and the datatype.
 #[derive(Iden, Clone, Copy)]
@@ -77,6 +75,9 @@ enum Projected {
     /// A string.
     #[iden = "value_text"]
     Text,
+    /// The expanded datatype IRI the string is declared as.
+    #[iden = "value_declared_datatype"]
+    DeclaredDatatype,
     /// A structured value.
     #[iden = "value_object"]
     Object,
@@ -119,6 +120,7 @@ impl AttributeValue {
             .expr_as(value.boolean.clone(), Projected::Boolean) // clone: as above
             .expr_as(value.date_time.clone(), Projected::DateTime) // clone: as above
             .expr_as(value.text.clone(), Projected::Text) // clone: as above
+            .expr_as(value.datatype.clone(), Projected::DeclaredDatatype) // clone: as above
             .expr_as(value.object.clone(), Projected::Object) // clone: as above
             .expr_as(datatype_token(&value), Projected::Datatype);
         projection.take()
@@ -142,12 +144,15 @@ impl AttributeValue {
     /// The ordering key for `DateTime` values, `NULL` for every other datatype.
     ///
     /// Clause 4.23.1 calls the sort order for datetimes trivial, which it is
-    /// once each side is an instant: a value held as one is one, and a string
-    /// written as a `DateTime` is resolved to one.
+    /// once each side is an instant: a value held as one is one, and a member
+    /// of a structured value declared as a `DateTime` is resolved to one.
     #[must_use]
     pub fn instant_key(&self) -> SimpleExpr {
         let date_time = DATE_TIME;
-        let instant = Func::coalesce([self.column(Projected::DateTime), stored_date_time(self.column(Projected::Text))]);
+        let instant = Func::coalesce([
+            self.column(Projected::DateTime),
+            declared_date_time(self.column(Projected::Text), self.column(Projected::DeclaredDatatype)),
+        ]);
         CaseStatement::new()
             .case(self.column(Projected::Datatype).eq(text_literal(date_time.as_str())), instant)
             .into()
@@ -156,10 +161,10 @@ impl AttributeValue {
     /// The collated ordering key for every datatype that compares as text.
     ///
     /// Strings compare as themselves, a Relationship's target object as its
-    /// URI, and a `Date` as its canonical `YYYY-MM-DD` form, which is
-    /// fixed-width and so already in chronological order. A `Time` is
-    /// normalised to a single UTC spelling first, for the reason a `DateTime`
-    /// is resolved to an instant.
+    /// URI, and a `Date` as its one `YYYY-MM-DD` spelling, which is fixed-width
+    /// and so already in chronological order. A `Time` compares in its
+    /// fixed-width storage encoding, the one text whose byte order is
+    /// chronological.
     ///
     /// An array is read through its first element. Clause 4.23.2 ranks every
     /// array under one bucket, Array, and says nothing about how two Arrays
@@ -172,7 +177,7 @@ impl AttributeValue {
         let comparable = CaseStatement::new()
             .case(
                 self.column(Projected::Datatype).eq(text_literal(time.as_str())),
-                stored_time(self.column(Projected::Text)),
+                declared_time(self.column(Projected::Text), self.column(Projected::DeclaredDatatype)),
             )
             .finally(Func::coalesce([
                 self.column(Projected::Text),
@@ -212,175 +217,6 @@ fn instance_read(rows: &EntityRowRefs, path: &AttrPath, attributes: &ResolvedNam
         }
     }
     read.take()
-}
-
-/// The typed value the read instance holds for the path, read off the
-/// columns of `source`.
-fn ordered_value(path: &AttrPath, element: Option<&ElementPath>, source: &Alias) -> OrderedValue {
-    let holder = match element.map(|element| element.chain.is_empty()) {
-        Some(false) => Holder::Element(SeaExpr::col((source.clone(), Alias::new(ELEMENT_COLUMN)))),
-        Some(true) | None => Holder::Row(source.clone()),
-    };
-    match element.and_then(|element| element.field) {
-        Some(field) => holder.member(field),
-        None if path.value_path.is_empty() => holder.own_value(),
-        None => holder.member_of_value(path),
-    }
-}
-
-/// The instance holding the ordered value: a row, or an element of a row.
-enum Holder {
-    /// A `current_attributes` row, read under this alias.
-    Row(Alias),
-    /// A `sub_attribute` element value.
-    Element(SimpleExpr),
-}
-
-impl Holder {
-    /// A field of a row and an element alike.
-    fn field(&self, row: CurrentAttributes, element: SubAttribute) -> SimpleExpr {
-        match self {
-            Holder::Row(alias) => SeaExpr::col((alias.clone(), row)),
-            Holder::Element(value) => composite_field(value.clone(), &element), // clone: the element is read by every field
-        }
-    }
-
-    /// The holder's own value: the typed field that is set, a scalar a JSON
-    /// literal holds, a structured value, and a geometry as an Object.
-    fn own_value(&self) -> OrderedValue {
-        let object = self.field(CurrentAttributes::ValueObject, SubAttribute::ValueObject);
-        let strings = match self {
-            Holder::Row(_) => vec![
-                self.field(CurrentAttributes::ValueString, SubAttribute::ValueString),
-                self.field(CurrentAttributes::ValueLongText, SubAttribute::ValueString),
-                self.field(CurrentAttributes::ValueUri, SubAttribute::ValueUri),
-                self.field(CurrentAttributes::ValueLongUri, SubAttribute::ValueUri),
-                json_text(object.clone()), // clone: the object is read by every kind
-            ],
-            Holder::Element(_) => vec![
-                self.field(CurrentAttributes::ValueString, SubAttribute::ValueString),
-                self.field(CurrentAttributes::ValueUri, SubAttribute::ValueUri),
-                json_text(object.clone()), // clone: as above
-            ],
-        };
-        let geometry = CaseStatement::new().case(
-            self.field(CurrentAttributes::ValueGeometry, SubAttribute::ValueGeometry).is_not_null(),
-            jsonb_build_object([]),
-        );
-        OrderedValue {
-            number: Func::coalesce([
-                self.field(CurrentAttributes::ValueNumber, SubAttribute::ValueNumber),
-                json_number(object.clone()),
-            ])
-            .into(), // clone: as above
-            boolean: Func::coalesce([
-                self.field(CurrentAttributes::ValueBoolean, SubAttribute::ValueBoolean),
-                json_boolean(object.clone()),
-            ])
-            .into(), // clone: as above
-            date_time: self.field(CurrentAttributes::ValueDateTime, SubAttribute::ValueDateTime),
-            text: Func::coalesce(strings).into(),
-            object: Func::coalesce([json_compound(object), geometry.into()]).into(),
-        }
-    }
-
-    /// A member of the holder the path ends on: an instant compares as one,
-    /// and a `unitCode` (held as the `cefact-units` identity of the code) has no
-    /// value to order by.
-    fn member(&self, field: MemberField) -> OrderedValue {
-        let date_time = match field {
-            MemberField::ObservedAt => self.field(CurrentAttributes::ObservedAt, SubAttribute::ObservedAt),
-            MemberField::CreatedAt => self.field(CurrentAttributes::CreatedAt, SubAttribute::CreatedAt),
-            MemberField::ModifiedAt => self.field(CurrentAttributes::ModifiedAt, SubAttribute::ModifiedAt),
-            MemberField::ExpiresAt => self.field(CurrentAttributes::ExpiresAt, SubAttribute::ExpiresAt),
-            MemberField::UnitCode => typed_null(PostgresType::Timestamptz),
-        };
-        OrderedValue {
-            number: typed_null(PostgresType::Numeric),
-            boolean: typed_null(PostgresType::Boolean),
-            date_time,
-            text: typed_null(PostgresType::Text),
-            object: typed_null(PostgresType::Jsonb),
-        }
-    }
-
-    /// The member of the holder's compound value a trailing path addresses
-    /// (clause 4.23.3 EXAMPLE 4, `?orderBy=address[city]`).
-    ///
-    /// Clause 4.9 gives the spelling three readings and only the stored value
-    /// says which applies, so each is looked up and the first that resolves is
-    /// taken: a member of an expanded structured value, a member of a
-    /// `JsonProperty`'s literal, and, for one member, a target language of a
-    /// `languageMap`. They cannot collide: a structured value has no
-    /// `@language`, a `languageMap` no IRI-keyed members, and a literal is read
-    /// only on a `JsonProperty`.
-    fn member_of_value(&self, path: &AttrPath) -> OrderedValue {
-        let object = self.field(CurrentAttributes::ValueObject, SubAttribute::ValueObject);
-        let json_property = is_json_property(self.field(CurrentAttributes::AttributeKind, SubAttribute::AttributeKind));
-        let mut readings = vec![
-            jsonb_path_query_first(object.clone(), &expanded_jsonpath(&path.value_path)), // clone: every reading walks the one value
-            CaseStatement::new()
-                .case(
-                    json_property,
-                    jsonb_path_query_first(object.clone(), &literal_jsonpath(&path.value_path_compact)),
-                ) // clone: as above
-                .into(),
-        ];
-        if let [language] = path.value_path_compact.as_slice() {
-            readings.push(jsonb_path_query_first(object, &target_language_jsonpath(language)));
-        }
-        let member: SimpleExpr = Func::coalesce(readings).into();
-        OrderedValue {
-            number: json_number(member.clone()),   // clone: the member is read by every kind
-            boolean: json_boolean(member.clone()), // clone: as above
-            date_time: typed_null(PostgresType::Timestamptz),
-            text: json_text(member.clone()), // clone: as above
-            object: json_compound(member),
-        }
-    }
-}
-
-/// The jsonpath selecting the value of one language of a `languageMap`.
-fn target_language_jsonpath(language: &AttributeName) -> String {
-    format!("$[*] ? (@.\"@language\" == \"{}\").\"{VALUE_MEMBER}\"", escape_jsonpath_key(language.as_str()))
-}
-
-/// `json` read as a number when it is a JSON number.
-fn json_number(json: SimpleExpr) -> SimpleExpr {
-    json_scalar(json, NUMBER_TYPE, PostgresType::Numeric)
-}
-
-/// `json` read as a boolean when it is a JSON boolean.
-fn json_boolean(json: SimpleExpr) -> SimpleExpr {
-    json_scalar(json, "boolean", PostgresType::Boolean)
-}
-
-/// `json` read as text when it is a JSON string.
-fn json_text(json: SimpleExpr) -> SimpleExpr {
-    json_scalar(json, "string", PostgresType::Text)
-}
-
-/// `json` when it is a structure: an object or an array.
-fn json_compound(json: SimpleExpr) -> SimpleExpr {
-    CaseStatement::new()
-        .case(
-            jsonb_typeof(json.clone()).is_in([text_literal(OBJECT_TYPE), text_literal(ARRAY_TYPE)]), // clone: the test reads the value it guards
-            json,
-        )
-        .into()
-}
-
-/// `json` as `ty` when its JSON type is `json_type`, `NULL` otherwise.
-///
-/// Guarded by a `CASE`, because the cast raises on a value of another type and
-/// only a `CASE` guarantees the test runs first.
-fn json_scalar(json: SimpleExpr, json_type: &str, ty: PostgresType) -> SimpleExpr {
-    CaseStatement::new()
-        .case(
-            jsonb_typeof(json.clone()).eq(text_literal(json_type)), // clone: the test reads the value it guards
-            cast_compound(json.json_path_text(text_literal("{}")), ty),
-        )
-        .into()
 }
 
 #[cfg(test)]

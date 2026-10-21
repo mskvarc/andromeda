@@ -17,7 +17,7 @@ use crate::{
     error::TemporalStoreError,
     history_row_decode::{decode_attribute_name, decode_dataset_id, decode_stream_extent, decode_unit_code},
     stored_aggregation_error::{AggregationColumn, StoredAggregationError},
-    stored_history_error::UnitCodeColumn,
+    stored_history_error::{StoredHistoryError, UnitCodeColumn},
 };
 use andromeda_ngsi_ld_lexicon::time::time_of_day::NgsiLdTime;
 use andromeda_ngsi_ld_model::temporal::{AggregationAverage, AggregationMinMax, TemporalAggregationRow};
@@ -111,6 +111,9 @@ enum ExtremumColumn {
     NumericAsBoolean,
     /// The text aggregate.
     Text,
+    /// The text aggregate over the fixed-width storage encoding of a `Time`,
+    /// read back as the time of day it encodes.
+    TimeOfDay,
     /// The timestamp aggregate.
     Instant,
     /// The shape has no ordering, so no extremum of it exists.
@@ -124,8 +127,8 @@ enum ExtremumColumn {
 /// `max` over "the size of the arrays inside the period", which is what the
 /// size-measuring operand computed; a JSON Object has no `min` or `max` at all
 /// and so reads nothing. A `Date` and a `Time` read the text aggregate they
-/// were stored in, whose canonical fixed-width rendering orders byte-wise in
-/// chronological order. A geometry is unordered and a URI is aggregated by
+/// were stored in, a date in its one spelling and a time in its fixed-width
+/// storage encoding, both of which order byte-wise in chronological order. A geometry is unordered and a URI is aggregated by
 /// count alone, both being N/A for `min` and `max`.
 ///
 /// The value shape alone does not decide a Relationship family, whose extrema
@@ -138,7 +141,8 @@ const fn extremum_column(value_shape: RecordedShape) -> ExtremumColumn {
     match value_shape {
         RecordedShape::Number | RecordedShape::Array => ExtremumColumn::Numeric,
         RecordedShape::Boolean => ExtremumColumn::NumericAsBoolean,
-        RecordedShape::String | RecordedShape::Date | RecordedShape::Time => ExtremumColumn::Text,
+        RecordedShape::String | RecordedShape::Date => ExtremumColumn::Text,
+        RecordedShape::Time => ExtremumColumn::TimeOfDay,
         RecordedShape::DateTime => ExtremumColumn::Instant,
         RecordedShape::Object | RecordedShape::Geometry | RecordedShape::Uri => ExtremumColumn::Unordered,
     }
@@ -158,6 +162,9 @@ fn decode_extremum(row: &PgRow, value_shape: Option<RecordedShape>, columns: Ext
             .map(|counted| boolean_extremum(counted, columns.numeric))
             .transpose()?),
         ExtremumColumn::Text => Ok(projected_column::<String>(row, columns.text.into())?.map(AggregationMinMax::String)),
+        ExtremumColumn::TimeOfDay => Ok(projected_column::<String>(row, columns.text.into())?
+            .map(|text| text.parse().map(AggregationMinMax::Time).map_err(StoredHistoryError::ValueTime))
+            .transpose()?),
         ExtremumColumn::Instant => Ok(projected_column::<DateTime<Utc>>(row, columns.instant.into())?.map(AggregationMinMax::DateTime)),
         ExtremumColumn::Unordered => Ok(None),
     }
@@ -312,7 +319,7 @@ mod tests {
             (RecordedShape::Boolean, ExtremumColumn::NumericAsBoolean),
             (RecordedShape::String, ExtremumColumn::Text),
             (RecordedShape::Date, ExtremumColumn::Text),
-            (RecordedShape::Time, ExtremumColumn::Text),
+            (RecordedShape::Time, ExtremumColumn::TimeOfDay),
             (RecordedShape::DateTime, ExtremumColumn::Instant),
             (RecordedShape::Object, ExtremumColumn::Unordered),
             (RecordedShape::Geometry, ExtremumColumn::Unordered),

@@ -57,8 +57,7 @@ impl EntityState {
         }
         match (fragment.expires_at(), overwrite) {
             (Some(Slot::Set(_)), OverwritePolicy::Preserve) if self.expires_at().is_some() => not_appended.push(MemberName::ExpiresAt),
-            // clone: the entity owns its copy of the borrowed fragment's expiry.
-            (Some(Slot::Set(expires_at)), OverwritePolicy::Overwrite | OverwritePolicy::Preserve) => self.set_expires_at(Some(expires_at.clone())),
+            (Some(Slot::Set(expires_at)), OverwritePolicy::Overwrite | OverwritePolicy::Preserve) => self.set_expires_at(Some(*expires_at)),
             (Some(Slot::Remove), OverwritePolicy::Overwrite) => self.set_expires_at(None),
             (Some(Slot::Remove), OverwritePolicy::Preserve) | (None, OverwritePolicy::Overwrite | OverwritePolicy::Preserve) => {}
         }
@@ -274,6 +273,6 @@ mod tests {
         let not_appended = target.append_attributes(&attrs, OverwritePolicy::Preserve).expect("append succeeds");
 
         pretty_assertions::assert_eq!(not_appended, vec![MemberName::ExpiresAt]);
-        pretty_assertions::assert_eq!(target.expires_at(), Some(&date_time("2030-01-01T00:00:00Z")));
+        pretty_assertions::assert_eq!(target.expires_at(), Some(date_time("2030-01-01T00:00:00Z")));
     }
 }

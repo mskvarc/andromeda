@@ -335,6 +335,13 @@ mod tests {
         assert!(serde_urlencoded::from_str::<EntityQueryParameters>("q=").is_err());
     }
 
+    /// Clause 4.9: a bare `time` and a quoted `quotedStr` in the same form are
+    /// different operands, so they compile apart.
+    #[test]
+    fn a_bare_time_and_a_quoted_time_form_string_produce_different_keys() {
+        assert_ne!(key("q=opens%3D%3D09:30:00Z"), key("q=opens%3D%3D%2209:30:00Z%22"));
+    }
+
     #[test]
     fn different_parameters_produce_different_keys() {
         assert_ne!(key("q=speed>50"), key("q=speed>10"));

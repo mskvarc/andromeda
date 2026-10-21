@@ -14,6 +14,7 @@ use crate::{
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
     identifier::{Identifier, IdentifierParseError},
+    time::{date::NgsiLdDateError, time_of_day::NgsiLdTimeError},
     uri::UriParseError,
 };
 use andromeda_ngsi_ld_number::{JsonNumber, JsonNumberError};
@@ -141,6 +142,12 @@ pub enum StoredInstanceError {
     /// The unit-code identity names no code this build lists.
     #[error(transparent)]
     UnitCode(#[from] UnknownStoredUnitCode),
+    /// A `Date` value kind holds text that is not a clause 4.6.3 `Date`.
+    #[error("the instance's stored date is not an NGSI-LD Date: {0}")]
+    Date(#[from] NgsiLdDateError),
+    /// A `Time` value kind holds text that is not a clause 4.6.3 `Time`.
+    #[error("the instance's stored time is not an NGSI-LD Time: {0}")]
+    Time(#[from] NgsiLdTimeError),
 }
 
 impl TryFrom<MemberColumns> for InstanceMembers {
@@ -231,6 +238,8 @@ impl TryFrom<InstanceMembers> for MemberColumns {
             StoredValue::String { text, .. } => columns.value_string = Some(text),
             StoredValue::Boolean { flag, .. } => columns.value_boolean = Some(flag),
             StoredValue::DateTime { instant, .. } => columns.value_date_time = Some(instant),
+            StoredValue::Date { date, .. } => columns.value_string = Some(date.to_string()),
+            StoredValue::Time { time, .. } => columns.value_string = Some(time.to_string()),
             StoredValue::Geometry { form, members } => {
                 columns.value_geometry = Some(EwkbGeometry::of(&form)?);
                 columns.value_geometry_members = members.map(StoredJson::into_json);
@@ -301,6 +310,14 @@ impl ValueFields {
             },
             ValueKind::DateTime => StoredValue::DateTime {
                 instant: self.date_time.ok_or(misplaced)?,
+                datatype,
+            },
+            ValueKind::Date => StoredValue::Date {
+                date: self.string.ok_or(misplaced)?.parse()?,
+                datatype,
+            },
+            ValueKind::Time => StoredValue::Time {
+                time: self.string.ok_or(misplaced)?.parse()?,
                 datatype,
             },
             ValueKind::Geometry | ValueKind::Object | ValueKind::Uri if annotated => return Err(StoredInstanceError::Annotation),

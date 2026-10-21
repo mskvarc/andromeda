@@ -29,7 +29,7 @@ const VALUE_COLUMNS: [&str; 9] = [
 ];
 
 /// The value kind codes and the columns each may populate.
-const VALUE_KIND_COLUMNS: [(u8, &[&str]); 7] = [
+const VALUE_KIND_COLUMNS: [(u8, &[&str]); 9] = [
     (1, &["value_number"]),
     (2, &["value_string", "value_long_text"]),
     (3, &["value_boolean"]),
@@ -37,6 +37,8 @@ const VALUE_KIND_COLUMNS: [(u8, &[&str]); 7] = [
     (5, &["value_object"]),
     (6, &["value_date_time"]),
     (7, &["value_uri", "value_long_uri"]),
+    (8, &["value_string"]),
+    (9, &["value_string"]),
 ];
 
 /// `text` with every run of whitespace collapsed to one space.
@@ -127,7 +129,7 @@ fn every_value_kind_pins_exactly_one_column() {
         assert!(placement.contains(&arm), "value kind {code} pins no column: {placement}");
     }
     assert!(!placement.contains("value_kind = 0"), "the tombstone never appears: {placement}");
-    assert!(!placement.contains("value_kind = 8"), "there are seven value kinds: {placement}");
+    assert!(!placement.contains("value_kind = 10"), "there are nine value kinds: {placement}");
 }
 
 #[test]

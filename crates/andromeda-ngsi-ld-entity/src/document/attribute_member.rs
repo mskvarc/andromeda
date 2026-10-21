@@ -50,7 +50,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{
         attribute_name::AttributeName,
         identifier::Identifier,
-        time::{system_instant::SystemInstant, written_date_time::DateTimeText},
+        time::{date_time::NgsiLdDateTime, system_instant::SystemInstant},
     };
     use indexmap::IndexMap;
 
@@ -64,7 +64,7 @@ mod tests {
         InstanceDocument::builder()
             .created_at(Some(at()))
             .modified_at(Some(at()))
-            .deleted_at(Some("1900-01-02T00:00:00Z".parse::<DateTimeText>().expect("a DateTime")))
+            .deleted_at(Some("1900-01-02T00:00:00Z".parse::<NgsiLdDateTime>().expect("a DateTime")))
             .instance_id(Some("urn:ngsi-ld:instance:1".parse::<Identifier>().expect("a URI")))
             .sub_attributes(sub_attributes)
             .build()

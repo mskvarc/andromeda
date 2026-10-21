@@ -3,22 +3,23 @@
 //!
 //! Each element is keyed at its own name path, the top-level attribute first,
 //! which it reaches through `parent`. An element holding one scalar has its
-//! value's keys; one holding an array has the keys of every scalar member
+//! value's key; one holding an array has the key of every scalar member
 //! ([`stored_array_members`]); one holding a geometry or a structured object
-//! has none.
+//! has none. A value declared as a time value is keyed under its kind, a
+//! String under its own.
 
 use crate::{
     stored_array_members::{ArrayMember, StoredArrayMemberError, stored_array_members},
     stored_value::StoredValue,
     sub_attribute::SubAttributeElement,
 };
+use andromeda_ngsi_ld_lexicon::time::value::TimeValue;
 use andromeda_postgresql_encoding::array_literal::IntegerArrayLiteral;
 use andromeda_postgresql_query::{
     attribute_name_key::AttributeNameKey,
     sub_attribute_key::{
         key::{KeyedValue, SubAttributeKey, TextKind},
         path_hash::PathHash,
-        string_keys::string_keys,
     },
 };
 use thiserror::Error;
@@ -75,16 +76,21 @@ fn push_value_keys(path: PathHash, value: &StoredValue, keys: &mut Vec<SubAttrib
     let key = |value: KeyedValue<'_>| SubAttributeKey::of(path, value);
     match value {
         StoredValue::Number { number, .. } => keys.push(key(KeyedValue::Number(number.decimal()))),
-        StoredValue::String { text, .. } => keys.extend(string_keys(path, text)),
+        StoredValue::String { text, .. } => keys.push(key(KeyedValue::Text(text, TextKind::String))),
         StoredValue::Boolean { flag, .. } => keys.push(key(KeyedValue::Boolean(*flag))),
         StoredValue::DateTime { instant, .. } => keys.push(key(KeyedValue::Instant(*instant))),
+        StoredValue::Date { date, .. } => keys.push(key(KeyedValue::Text(&date.to_string(), TextKind::Date))),
+        StoredValue::Time { time, .. } => keys.push(key(KeyedValue::Text(&time.to_string(), TextKind::Time))),
         StoredValue::Uri(uri) => keys.push(key(KeyedValue::Text(uri.as_str(), TextKind::Uri))),
         StoredValue::Object(json) => {
             for member in stored_array_members(json)? {
                 match member {
                     ArrayMember::Number(number) => keys.push(key(KeyedValue::Number(number.decimal()))),
-                    ArrayMember::Text(text) => keys.extend(string_keys(path, &text)),
+                    ArrayMember::Text(text) => keys.push(key(KeyedValue::Text(&text, TextKind::String))),
                     ArrayMember::Boolean(flag) => keys.push(key(KeyedValue::Boolean(flag))),
+                    ArrayMember::Time(TimeValue::DateTime(instant)) => keys.push(key(KeyedValue::Instant(instant.get()))),
+                    ArrayMember::Time(TimeValue::Date(date)) => keys.push(key(KeyedValue::Text(&date.to_string(), TextKind::Date))),
+                    ArrayMember::Time(TimeValue::Time(time)) => keys.push(key(KeyedValue::Text(&time.to_string(), TextKind::Time))),
                 }
             }
         }
@@ -196,12 +202,37 @@ mod tests {
         assert_eq!(keys(&[element(0, 5, number("1.00"))]), Some(vec![key_at(&[5], KeyedValue::Number(&one))]));
     }
 
-    /// The fixed-width spelling is the one key a `Time` operand reads.
+    /// Annex C.6: a string declared as no time value is a String.
     #[test]
-    fn a_time_element_carries_its_fixed_width_key() {
-        let keys = keys(&[element(0, 5, string("12:00:00.000Z"))]).expect("keyed");
-        assert!(keys.contains(&key_at(&[5], KeyedValue::Text("12:00:00.000000Z", TextKind::String))), "{keys:?}");
-        assert!(keys.contains(&key_at(&[5], KeyedValue::Text("12:00:00.000Z", TextKind::String))), "{keys:?}");
+    fn a_plain_string_in_a_time_value_form_carries_its_string_key_alone() {
+        assert_eq!(
+            keys(&[element(0, 5, string("12:00:00.000Z"))]),
+            Some(vec![key_at(&[5], KeyedValue::Text("12:00:00.000Z", TextKind::String))])
+        );
+    }
+
+    #[test]
+    fn a_time_element_carries_the_time_key_of_its_fixed_width_encoding() {
+        let value = StoredValue::Time {
+            time: "12:00:00.5Z".parse().expect("a Time"),
+            datatype: None,
+        };
+        assert_eq!(
+            keys(&[element(0, 5, value)]),
+            Some(vec![key_at(&[5], KeyedValue::Text("12:00:00.500000Z", TextKind::Time))])
+        );
+    }
+
+    #[test]
+    fn a_date_element_carries_the_date_key_of_its_text() {
+        let value = StoredValue::Date {
+            date: "2024-01-01".parse().expect("a Date"),
+            datatype: None,
+        };
+        assert_eq!(
+            keys(&[element(0, 5, value)]),
+            Some(vec![key_at(&[5], KeyedValue::Text("2024-01-01", TextKind::Date))])
+        );
     }
 
     #[test]
@@ -214,9 +245,20 @@ mod tests {
     }
 
     #[test]
-    fn each_date_time_member_of_an_array_carries_its_instant_key() {
-        let keys = keys(&[element(0, 5, object(r#"["2024-01-01T00:00:00Z","2024-01-01T00:00:00,000Z"]"#))]).expect("keyed");
-        assert_eq!(keys.iter().filter(|key| **key == key_at(&[5], KeyedValue::Instant(midnight()))).count(), 2);
+    fn a_typed_date_time_member_of_an_array_carries_its_instant_key_and_a_plain_one_its_text() {
+        let keys = keys(&[element(
+            0,
+            5,
+            object(r#"[{"@value":"2024-01-01T00:00:00Z","@type":"https://uri.etsi.org/ngsi-ld/DateTime"},"2024-01-01T00:00:00Z"]"#),
+        )])
+        .expect("keyed");
+        assert_eq!(
+            keys,
+            vec![
+                key_at(&[5], KeyedValue::Instant(midnight())),
+                key_at(&[5], KeyedValue::Text("2024-01-01T00:00:00Z", TextKind::String)),
+            ]
+        );
     }
 
     #[test]

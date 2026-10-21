@@ -867,10 +867,10 @@ fn a_declared_time_value_not_of_its_form_is_refused() {
         let instance = property_valued(&json!({"@value": text, "@type": datatype}));
         for admission in ADMISSIONS {
             let error = admit(&entity_with_instance(&instance), admission).expect_err("a misspelled time value");
-            assert!(matches!(error, EntityRefusal::TimeValue { .. }), "{datatype} {text} {admission:?}: {error:?}");
+            assert!(matches!(error, EntityRefusal::Datatype { .. }), "{datatype} {text} {admission:?}: {error:?}");
         }
         let error = admit_fragment(&instance, NullSentinelAdmission::PartialUpdateFragment).expect_err("a misspelled time value");
-        assert!(matches!(error, EntityRefusal::TimeValue { .. }), "{datatype} {text}: {error:?}");
+        assert!(matches!(error, EntityRefusal::Datatype { .. }), "{datatype} {text}: {error:?}");
     }
 }
 
@@ -885,7 +885,7 @@ fn a_declared_time_value_is_held_to_its_form_at_every_depth() {
     let inside_a_list = property_valued(&json!({"@list": [misspelled]}));
     for instance in [on_a_sub_attribute, inside_a_structure, inside_a_list] {
         let error = admit(&entity_with_instance(&instance), NullSentinelAdmission::Refused).expect_err("a misspelled time value");
-        assert!(matches!(error, EntityRefusal::TimeValue { .. }), "{instance}: {error:?}");
+        assert!(matches!(error, EntityRefusal::Datatype { .. }), "{instance}: {error:?}");
     }
 }
 
@@ -909,4 +909,105 @@ fn a_declared_time_value_of_its_form_is_admitted() {
 fn an_undeclared_string_resembling_a_time_value_is_admitted() {
     let instance = property_valued(&json!({"@value": "2024-01-01T00:00:00+01:00"}));
     admit(&entity_with_instance(&instance), NullSentinelAdmission::Refused).expect("an undeclared string is a string");
+}
+
+/// One expanded Property instance holding `value` beside the `valueType` `value_type`.
+fn property_with_value_type(value: &Value, value_type: &str) -> Value {
+    json!({
+        "@type": [AttributeType::Property.iri().as_str()],
+        properties::VALUE.as_str(): [value],
+        properties::VALUE_TYPE.as_str(): [{"@id": value_type}],
+    })
+}
+
+/// Clause 4.6.3 writes each time value as a string, so a time datatype on a
+/// number declares a value that is none, wherever it stands.
+#[test]
+fn a_time_datatype_on_a_number_is_refused_at_every_depth() {
+    let numeric = json!({"@value": 123, "@type": "https://uri.etsi.org/ngsi-ld/DateTime"});
+    let at_top = property_valued(&numeric);
+    let mut on_a_sub_attribute = property_valued(&json!({"@value": 1}));
+    on_a_sub_attribute["https://example.org/measuredAt"] = json!([property_valued(&numeric)]);
+    let inside_a_structure = property_valued(&json!({"https://example.org/reading": [{"https://example.org/at": [numeric]}]}));
+    for instance in [at_top, on_a_sub_attribute, inside_a_structure] {
+        let error = admit(&entity_with_instance(&instance), NullSentinelAdmission::Refused).expect_err("a numeric time value");
+        assert!(matches!(error, EntityRefusal::Datatype { .. }), "{instance}: {error:?}");
+    }
+}
+
+/// Annex C.6: `valueType` declares the datatype of the value beside it.
+#[test]
+fn a_value_type_holds_a_plain_value_to_its_datatype() {
+    let declared = property_with_value_type(&json!({"@value": "yesterday"}), "https://uri.etsi.org/ngsi-ld/DateTime");
+    let error = admit(&entity_with_instance(&declared), NullSentinelAdmission::Refused).expect_err("not a DateTime");
+    assert!(matches!(error, EntityRefusal::Datatype { .. }), "{error:?}");
+    let undeclared = property_valued(&json!({"@value": "yesterday"}));
+    admit(&entity_with_instance(&undeclared), NullSentinelAdmission::Refused).expect("an undeclared string is a string");
+}
+
+/// Clause 4.5.2 aligns a JSON primitive's `valueType` with its RDF datatype,
+/// and a value outside a recognised datatype is not one of its values.
+#[test]
+fn a_value_outside_its_recognised_xsd_datatype_is_refused() {
+    let integer = "http://www.w3.org/2001/XMLSchema#integer";
+    let list_item = json!({
+        "@type": [AttributeType::ListProperty.iri().as_str()],
+        properties::VALUE_LIST.as_str(): [{"@list": [{"@value": 300}, {"@value": 1.5}]}],
+        properties::VALUE_TYPE.as_str(): [{"@id": integer}],
+    });
+    let mut typed_on_a_sub_attribute = property_valued(&json!({"@value": 1}));
+    typed_on_a_sub_attribute["https://example.org/count"] = json!([property_valued(&json!({"@value": "abc", "@type": integer}))]);
+    for instance in [
+        property_with_value_type(&json!({"@value": "abc"}), integer),
+        property_with_value_type(&json!({"@value": 1.5}), integer),
+        property_with_value_type(&json!({"@value": 42}), "http://www.w3.org/2001/XMLSchema#string"),
+        list_item,
+        typed_on_a_sub_attribute,
+    ] {
+        let error = admit(&entity_with_instance(&instance), NullSentinelAdmission::Refused).expect_err("outside its datatype");
+        assert!(matches!(error, EntityRefusal::Datatype { .. }), "{instance}: {error:?}");
+    }
+}
+
+/// RDF 1.1 Concepts section 5.3: an unrecognised datatype IRI has nothing to
+/// check, which keeps annex C's `Integer` and C.10's `PostalAddress` valid.
+#[test]
+fn a_value_type_outside_the_recognised_set_is_admitted_unchecked() {
+    let annex_c = json!({
+        "@type": [AttributeType::ListProperty.iri().as_str()],
+        properties::VALUE_LIST.as_str(): [{"@list": [{"@value": 300}, {"@value": 300}, {"@value": 120}, {"@value": 6}]}],
+        properties::VALUE_TYPE.as_str(): [{"@id": "https://uri.etsi.org/ngsi-ld/default-context/Integer"}],
+    });
+    let postal_address = property_with_value_type(
+        &json!({"https://example.org/street": [{"@value": "Pariser Platz"}]}),
+        "http://example.org/PostalAddress",
+    );
+    let xsd_date_time = property_with_value_type(&json!({"@value": "2024-01-01T01:00:00+01:00"}), "http://www.w3.org/2001/XMLSchema#dateTime");
+    for instance in [annex_c, postal_address, xsd_date_time] {
+        admit(&entity_with_instance(&instance), NullSentinelAdmission::Refused).unwrap_or_else(|error| panic!("{instance}: {error:?}"));
+    }
+}
+
+/// Table 5.2.32-1: the `valueType` of a `LanguageProperty` "shall be equal to
+/// `langString`".
+#[test]
+fn a_language_property_value_type_other_than_lang_string_is_refused() {
+    let language_property = |value_type: &str| {
+        json!({
+            "@type": [AttributeType::LanguageProperty.iri().as_str()],
+            properties::LANGUAGE_MAP.as_str(): [{"@value": "Grand Place", "@language": "en"}],
+            properties::VALUE_TYPE.as_str(): [{"@id": value_type}],
+        })
+    };
+    admit(
+        &entity_with_instance(&language_property("http://www.w3.org/1999/02/22-rdf-syntax-ns#langString")),
+        NullSentinelAdmission::Refused,
+    )
+    .expect("langString is the LanguageProperty valueType");
+    let error = admit(
+        &entity_with_instance(&language_property("http://www.w3.org/2001/XMLSchema#string")),
+        NullSentinelAdmission::Refused,
+    )
+    .expect_err("only langString");
+    assert!(matches!(error, EntityRefusal::Datatype { .. }), "{error:?}");
 }

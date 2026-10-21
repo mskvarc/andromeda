@@ -4,6 +4,14 @@
 //! instance is ([`crate::typed_walk::instance`]); a member it removes is
 //! expanded as the NGSI-LD Null written under that member's key, which the
 //! merge of the expanded fragment reads as the removal.
+//!
+//! A bare value written under a term whose user `@context` definition coerces
+//! its `@type` to a time value form is expanded as that typed literal, as
+//! JSON-LD expansion reads any coerced scalar (annex C.6). A value written
+//! inside an object is no such scalar: the coercion of the attribute term does
+//! not reach its `value` member. A term of the core context, which is appended
+//! protected (clause 5.5.7), names an NGSI-LD member whose concise value
+//! clause 4.5.2.3 reads as the Property value it is written as.
 
 use crate::{
     compact_walk::{
@@ -11,13 +19,20 @@ use crate::{
         object::NodeBuilder,
     },
     decline::Decline,
-    expanded_tree::ExpandedItem,
+    expanded_tree::{ExpandedItem, Scalar, ValueObject},
     term_scope::TermScope,
     typed_walk::instance::{add_geo_value, add_json, add_member, add_optional, add_serialized, add_value, add_value_list, member_name, null_property},
 };
-use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
-use andromeda_ngsi_ld_model::attribute::{merge_instance::MergeInstance, merge_member::MergeMember, merge_value::MergeValue, patched::Patched};
+use andromeda_ngsi_ld_lexicon::time::{rendering::instant_text, value::TimeValueForm};
+use andromeda_ngsi_ld_model::attribute::{
+    merge_instance::{Declaration, MergeInstance},
+    merge_member::MergeMember,
+    merge_value::MergeValue,
+    patched::Patched,
+    value::NgsiLdValue,
+};
 use andromeda_ngsi_ld_vocabulary::{NULL_URI, compact::properties as compact_properties};
+use jsonld::Type;
 use std::slice::from_ref;
 
 /// The member of an instance that names its family.
@@ -52,7 +67,14 @@ fn instance_items(parent: &TermScope<'_>, key: &str, instance: &MergeInstance) -
     if let Some(family) = instance.family {
         add_serialized(&mut node, &scope, TYPE_MEMBER, family.short_name())?;
         match &instance.value {
-            Some(Patched::Set(value)) => add_merge_value(&mut node, &scope, family.compact_value_key(), value)?,
+            Some(Patched::Set(value)) => match coerced_time_literal(parent, key, instance) {
+                Some(literal) => {
+                    if let Some(name) = member_name(&scope, family.compact_value_key())? {
+                        node.add_expanded(name, vec![literal]);
+                    }
+                }
+                None => add_merge_value(&mut node, &scope, family.compact_value_key(), value)?,
+            },
             Some(Patched::Null) => add_serialized(&mut node, &scope, family.compact_value_key(), NULL_URI.as_str())?,
             None => {}
         }
@@ -86,6 +108,27 @@ fn instance_items(parent: &TermScope<'_>, key: &str, instance: &MergeInstance) -
         add_member(&mut node, &scope, name.as_str(), member)?;
     }
     Ok(node.finish(Some(key)).into_items())
+}
+
+/// The typed literal a bare string written as the concise Property `key`
+/// expands to, when the term's user `@context` definition coerces it to a time
+/// value form; `None` for every other instance.
+fn coerced_time_literal(parent: &TermScope<'_>, key: &str, instance: &MergeInstance) -> Option<ExpandedItem> {
+    let (Declaration::Concise(written), Some(Patched::Set(MergeValue::Property(NgsiLdValue::Json(_))))) = (&instance.declaration, &instance.value) else {
+        return None;
+    };
+    let text = written.piece().as_str()?;
+    let definition = parent.definition(key).filter(|definition| !definition.protected())?;
+    let Some(Type::Iri(datatype)) = definition.typ() else {
+        return None;
+    };
+    TimeValueForm::named_by(datatype.as_str())?;
+    Some(ExpandedItem::Value(ValueObject {
+        scalar: Scalar::String(text.into_owned()),
+        datatype: Some(datatype.as_str().to_owned()),
+        language: None,
+        direction: None,
+    }))
 }
 
 /// The value member of a merge instance, under `key`.

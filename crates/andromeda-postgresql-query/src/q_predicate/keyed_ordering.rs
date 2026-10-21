@@ -1,20 +1,18 @@
 //! The index path of an ordering (`>`, `>=`, `<`, `<=`) or a range (`==a..b`)
-//! on an attribute's own value whose operand is a `DateTime` or a `Date`.
+//! on an attribute's own value whose operand is a `DateTime`, a `Date` or a
+//! `Time`.
 //!
-//! Such a term compiles to the disjunction of its typed column and the
-//! strings of a `languageMap` ([`OwnValueArms`]), and the language arm has no
-//! index, so the planner cannot drive the disjunction from one and walks the
-//! selection. The candidates read each arm on its own instead: the typed arm
-//! as a range scan of `idx_ca_value_date_time` or, for a `Date`, which is held
-//! as its fixed-width text, of `idx_ca_value_string`; the language arm through
-//! the attribute's `LanguageProperty` rows.
+//! Such a term compiles to its typed column and, where an operand may match a
+//! `languageMap` string, a language arm ([`OwnValueArms`]) that has no index,
+//! so the candidates read each arm on its own: the typed arm as a range scan
+//! of `idx_ca_value_date_time` or, for a `Date` and a `Time`, which are held
+//! as fixed-width text under their value kinds, of `idx_ca_value_string`; any
+//! language arm through the attribute's `LanguageProperty` rows.
 //!
 //! No other operand is offered. A number or a boolean compares against its
 //! typed column alone, which the planner already drives from its index. A
 //! String orders under the ICU root collation (clause 4.9 recommends the UCA),
-//! which the byte-ordered `idx_ca_value_string` cannot range over, and a
-//! `Time` compares by the canonical form of its stored text, which no index
-//! holds.
+//! which the byte-ordered `idx_ca_value_string` cannot range over.
 
 use crate::{
     dictionary::query_names::QueryNames,
@@ -48,8 +46,8 @@ enum OperandOrder {
 /// The order a value index gives `scalar`.
 const fn operand_order(scalar: &Scalar) -> OperandOrder {
     match scalar {
-        Scalar::DateTime(_) | Scalar::Date(_) => OperandOrder::Indexed,
-        Scalar::Number(_) | Scalar::Bool(_) | Scalar::Str(_) | Scalar::Uri(_) | Scalar::Time(_) => OperandOrder::Unindexed,
+        Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_) => OperandOrder::Indexed,
+        Scalar::Number(_) | Scalar::Bool(_) | Scalar::Str(_) | Scalar::Uri(_) => OperandOrder::Unindexed,
     }
 }
 
@@ -129,61 +127,59 @@ mod tests {
         ordering_candidates(&pred, &EntityRowRefs::unaliased(None), &names()).map(|select| select.to_string(PostgresQueryBuilder))
     }
 
-    /// The typed branch ranges over the date-time index, and the language
-    /// branch reads the attribute's `LanguageProperty` rows (clause 4.9 makes
-    /// each string of a `languageMap` a target value).
+    /// A `languageMap` holds no time value, so the one branch ranges over the
+    /// date-time index.
     #[test]
-    fn a_date_time_ordering_reads_the_date_time_index_and_the_language_property_rows() {
+    fn a_date_time_ordering_reads_the_date_time_index_alone() {
         let sql = candidates("\"https://example.com/observedOn\">2024-01-15T12:00:00Z").expect("keyed");
-        let (typed, language) = sql.split_once("UNION ALL").expect("two branches");
-        assert!(typed.contains(r#""ca"."attribute_name_key" = 21"#), "{typed}");
-        assert!(typed.contains(r#""ca"."value_date_time" > '2024-01-15 12:00:00.000000 +00:00'"#), "{typed}");
-        assert!(!typed.contains("value_object"), "{typed}");
-        assert!(
-            language.contains(r#"("ca"."attribute_kind" = (5) AND "ca"."value_object" IS NOT NULL)"#),
-            "{language}"
-        );
-        assert!(language.contains("jsonb_array_elements"), "{language}");
-        assert!(sql.ends_with(r#") AS "matches""#), "{sql}");
+        assert!(sql.contains(r#""ca"."attribute_name_key" = 21"#), "{sql}");
+        assert!(sql.contains(r#""ca"."value_date_time" > '2024-01-15 12:00:00.000000 +00:00'"#), "{sql}");
+        assert!(!sql.contains("UNION ALL"), "{sql}");
+        assert!(!sql.contains("value_object"), "{sql}");
     }
 
-    /// A `Date` is held as its fixed-width text, whose byte order is
-    /// chronological, so its typed branch ranges over the string index.
+    /// A `Date` is held as its fixed-width text under value kind 8, whose
+    /// byte order is chronological, so its branch ranges over the string index.
     #[test]
     fn a_date_ordering_reads_the_string_index_by_its_text() {
         let sql = candidates("\"https://example.com/observedOn\"<=2024-01-15").expect("keyed");
-        let typed = sql.split("UNION ALL").next().expect("the typed branch");
-        assert!(typed.contains(r#""ca"."value_string" <= '2024-01-15'"#), "{typed}");
-        assert!(!typed.contains("COLLATE"), "{typed}");
+        assert!(sql.contains(r#""ca"."value_string" <= '2024-01-15'"#), "{sql}");
+        assert!(sql.contains(r#"nullif("ca"."value_kind" = (8), FALSE)"#), "{sql}");
+        assert!(!sql.contains("COLLATE"), "{sql}");
+    }
+
+    /// A `Time` is held in its fixed-width storage encoding under value kind 9.
+    #[test]
+    fn a_time_ordering_reads_the_string_index_by_its_fixed_width_encoding() {
+        let sql = candidates("\"https://example.com/observedOn\">12:00:00Z").expect("keyed");
+        assert!(sql.contains(r#""ca"."value_string" > '12:00:00.000000Z'"#), "{sql}");
+        assert!(sql.contains(r#"nullif("ca"."value_kind" = (9), FALSE)"#), "{sql}");
     }
 
     #[test]
     fn a_date_time_range_reads_both_bounds_from_the_date_time_index() {
         let sql = candidates("\"https://example.com/observedOn\"==2024-01-01T00:00:00Z..2024-02-01T00:00:00Z").expect("keyed");
-        let typed = sql.split("UNION ALL").next().expect("the typed branch");
-        assert!(typed.contains(r#""ca"."value_date_time" >= '2024-01-01 00:00:00.000000 +00:00'"#), "{typed}");
-        assert!(typed.contains(r#""ca"."value_date_time" <= '2024-02-01 00:00:00.000000 +00:00'"#), "{typed}");
-        assert_eq!(sql.matches("UNION ALL").count(), 1, "{sql}");
+        assert!(sql.contains(r#""ca"."value_date_time" >= '2024-01-01 00:00:00.000000 +00:00'"#), "{sql}");
+        assert!(sql.contains(r#""ca"."value_date_time" <= '2024-02-01 00:00:00.000000 +00:00'"#), "{sql}");
+        assert!(!sql.contains("UNION ALL"), "{sql}");
     }
 
     /// Clause 4.22: a past-due instance holds no value, so no branch offers it.
     #[test]
     fn every_branch_skips_an_expired_instance() {
         let sql = candidates("\"https://example.com/observedOn\">2024-01-15T12:00:00Z").expect("keyed");
-        assert_eq!(sql.matches(r#""ca"."expires_at" IS NULL"#).count(), 2, "{sql}");
+        assert_eq!(sql.matches(r#""ca"."expires_at" IS NULL"#).count(), 1, "{sql}");
     }
 
     /// A number orders through its typed column alone, which the planner
     /// already drives from `idx_ca_value_number`; a String orders under the
-    /// ICU root collation and a `Time` by its canonical text, which no index
-    /// orders.
+    /// ICU root collation, which no index orders.
     #[test]
     fn an_ordering_no_index_orders_better_than_the_planner_is_not_keyed() {
         for q in [
             "\"https://example.com/reading\">990",
             "\"https://example.com/reading\"==1..5",
             "\"https://example.com/reading\">\"23:58:00\"",
-            "\"https://example.com/reading\">12:00:00Z",
             "\"https://example.com/reading\"==2024-01-01..\"z\"",
         ] {
             assert_eq!(candidates(q), None, "{q}");

@@ -12,7 +12,6 @@ use crate::{
     walk::Walk,
 };
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, value_mode::Stored};
-use andromeda_ngsi_ld_lexicon::time::written_date_time::DateTimeText;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use jsonld::Term;
 
@@ -28,7 +27,8 @@ impl Walk<'_> {
             let paths: Vec<ExpandedItem<'a, Stored>> = scope.as_slice().iter().map(|path| ExpandedItem::text(path.as_str())).collect();
             self.compact_property(&mut result, &reserved().scope, &paths)?;
         }
-        self.compact_date_time(&mut result, &reserved().expires_at, state.expires_at().map(DateTimeText::as_str))?;
+        let expires_at = state.expires_at().map(|instant| instant.to_string());
+        self.compact_date_time(&mut result, &reserved().expires_at, expires_at.as_deref())?;
         self.compact_stored_attributes(&mut result, state.attributes(), system_times)?;
         Ok(result)
     }

@@ -10,7 +10,6 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_model::temporal::TemporalValue;
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_query::filter::{quoting::Quoting, scalar::Scalar};
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
 use serde_json::{Value, json};
 
@@ -138,56 +137,59 @@ fn every_conformant_object_list_member_spelling_names_its_target() {
 
 /// Clause 4.6.3 lists a "`DateTime` string for encoding a timestamp" among the
 /// data types a Value may have, and the string is its whole representation.
+/// Annex C.6: a string declared as no time value is the string it is, kept
+/// byte for byte whatever it resembles.
 #[test]
-fn a_bare_timestamp_literal_is_recorded_as_the_instant_it_names() {
-    let value = recorded(&bare_property("2024-01-01T00:00:00.250000Z"));
-    let TemporalValue::DateTime(instant) = value else {
-        panic!("a conformant DateTime literal is an instant, got {value:?}");
-    };
-    pretty_assertions::assert_eq!(instant_text(instant), "2024-01-01T00:00:00.250Z");
-}
-
-/// Clause 4.9 orders `Time` and `Date` values chronologically and the string
-/// column they land in orders byte-wise, so each is recorded in the one
-/// fixed-width canonical rendering its lexical type defines.
-#[test]
-fn a_time_or_date_literal_is_recorded_in_its_canonical_rendering() {
-    pretty_assertions::assert_eq!(recorded(&bare_property("12:00:00Z")), TemporalValue::String("12:00:00.000000Z".to_owned()));
-    pretty_assertions::assert_eq!(recorded(&bare_property("12:00:00,5Z")), TemporalValue::String("12:00:00.500000Z".to_owned()));
-    pretty_assertions::assert_eq!(recorded(&bare_property("2024-01-01")), TemporalValue::String("2024-01-01".to_owned()));
-    for spelling in ["12:00:00.5Z", "12:00:00,5Z"] {
-        pretty_assertions::assert_eq!(
-            recorded(&typed_property(expanded_classes::TIME.as_str(), spelling)),
-            TemporalValue::String("12:00:00.500000Z".to_owned()),
-            "{spelling}"
-        );
-    }
-    pretty_assertions::assert_eq!(
-        recorded(&typed_property(expanded_classes::DATE.as_str(), "2026-04-12")),
-        TemporalValue::String("2026-04-12".to_owned())
-    );
-}
-
-/// Clause 4.6.3 admits "all the JSON native data types" beside the three time
-/// value forms, so a string that only resembles one is the string it is
-/// written as rather than a refused write.
-#[test]
-fn a_literal_that_only_resembles_a_time_value_stays_the_string_it_is() {
+fn an_undeclared_string_is_recorded_as_written_whatever_it_resembles() {
     for literal in [
+        "2024-01-01T00:00:00Z",
+        "2024-01-01T00:00:00.250000Z",
+        "12:00:00.5Z",
+        "2024-01-01",
         "2024-01-01T01:00:00+01:00",
-        "2024-01-01T00:00:00.1234567Z",
-        "13:00:00+01:00",
-        "12:00:00 in the morning",
         "atrium",
     ] {
         pretty_assertions::assert_eq!(recorded(&bare_property(literal)), TemporalValue::String(literal.to_owned()), "{literal}");
     }
 }
 
-/// A `@type` the client declared still overrides the literal's own form and
-/// still refuses a literal that does not satisfy it (annex C.6): a numeric
-/// offset on a `Time`, a `Time` without an offset, an unpadded `Date`, a
-/// `DateTime` past microsecond resolution or not a timestamp at all.
+#[test]
+fn a_typed_time_is_recorded_as_a_time() {
+    for spelling in ["12:00:00.5Z", "12:00:00,5Z"] {
+        pretty_assertions::assert_eq!(
+            recorded(&typed_property(expanded_classes::TIME.as_str(), spelling)),
+            TemporalValue::Time("12:00:00.5Z".parse::<NgsiLdTime>().expect("a Time")),
+            "{spelling}"
+        );
+    }
+}
+
+#[test]
+fn a_typed_date_is_recorded_as_a_date() {
+    pretty_assertions::assert_eq!(
+        recorded(&typed_property(expanded_classes::DATE.as_str(), "2026-04-12")),
+        TemporalValue::Date("2026-04-12".parse::<NgsiLdDate>().expect("a Date"))
+    );
+}
+
+/// Annex C.6: `valueType` declares the datatype of the plain value beside it.
+#[test]
+fn a_value_type_declares_the_time_value_of_a_plain_literal() {
+    let instance = json!({
+        "@type": [PROPERTY],
+        expanded_properties::VALUE.as_str(): [{"@value": "2024-01-01T00:00:00.250000Z"}],
+        expanded_properties::VALUE_TYPE.as_str(): [{"@id": expanded_classes::DATE_TIME.as_str()}],
+    });
+    let value = recorded(&instance);
+    let TemporalValue::DateTime(instant) = value else {
+        panic!("a declared DateTime is an instant, got {value:?}");
+    };
+    pretty_assertions::assert_eq!(instant_text(instant), "2024-01-01T00:00:00.250Z");
+}
+
+/// A declared `@type` refuses a literal that does not satisfy it (annex C.6):
+/// a numeric offset on a `Time`, a `Time` without its designator, an unpadded
+/// `Date`, a `DateTime` past microsecond resolution or not a timestamp at all.
 #[test]
 fn a_declared_type_refuses_a_literal_that_does_not_satisfy_it() {
     for (type_iri, literal) in [
@@ -213,94 +215,13 @@ fn a_datetime_typed_property_lands_in_the_instant_column() {
     ));
 }
 
-/// Which clause 4.6.3 data type a literal has, read by whichever side of a
-/// comparison read it.
-#[derive(Debug, PartialEq, Eq)]
-enum ReadAs {
-    /// The literal is a `DateTime`.
-    DateTime,
-    /// The literal is a `Date`.
-    Date,
-    /// The literal is a `Time`.
-    Time,
-    /// The literal is an ordinary JSON string.
-    PlainString,
-    /// The literal is a malformed operand and the request is refused.
-    Refused,
-}
-
-/// How the write path reads one bare literal.
-fn written_as(literal: &str) -> ReadAs {
-    match recorded(&bare_property(literal)) {
-        TemporalValue::DateTime(_) => ReadAs::DateTime,
-        TemporalValue::String(text) => {
-            if text.parse::<NgsiLdDate>().is_ok_and(|date| date.to_string() == text) {
-                ReadAs::Date
-            } else if text.parse::<NgsiLdTime>().is_ok_and(|time| time.to_string() == text) {
-                ReadAs::Time
-            } else {
-                ReadAs::PlainString
-            }
-        }
-        other @ (TemporalValue::Number(_)
-        | TemporalValue::Boolean(_)
-        | TemporalValue::Geometry(_)
-        | TemporalValue::Structured(_)
-        | TemporalValue::Uri(_)
-        | TemporalValue::Scopes(_)
-        | TemporalValue::Tombstone { .. }) => panic!("a string literal is not {other:?}"),
-    }
-}
-
-/// How the clause 4.9 operand parser reads the same literal in one spelling.
-fn queried_as(literal: &str, quoting: Quoting) -> ReadAs {
-    match Scalar::from_literal(literal, quoting) {
-        Ok(Scalar::DateTime(_)) => ReadAs::DateTime,
-        Ok(Scalar::Date(_)) => ReadAs::Date,
-        Ok(Scalar::Time(_)) => ReadAs::Time,
-        Ok(Scalar::Str(_) | Scalar::Uri(_)) => ReadAs::PlainString,
-        Ok(other @ (Scalar::Number(_) | Scalar::Bool(_))) => panic!("a string literal is not {other:?}"),
-        Err(_) => ReadAs::Refused,
-    }
-}
-
-/// Clause 4.9's `equal`: "If there is no equality between the target value
-/// data type and the Query Term value data type, then it shall be considered
-/// as not matching." One classifier reads both sides, and this pins that they
-/// land in the same place.
+/// A structured value is recorded with every typed time value inside it in
+/// its served spelling, as current state holds it.
 #[test]
-fn the_write_side_and_the_query_side_read_every_literal_the_same_way() {
-    for (literal, written, bare, quoted) in [
-        ("2024-01-01T00:00:00Z", ReadAs::DateTime, ReadAs::DateTime, ReadAs::DateTime),
-        ("2024-01-01T00:00:00.250000Z", ReadAs::DateTime, ReadAs::DateTime, ReadAs::DateTime),
-        ("2024-01-01T00:00:00,25Z", ReadAs::DateTime, ReadAs::DateTime, ReadAs::DateTime),
-        ("2024-01-01", ReadAs::Date, ReadAs::Date, ReadAs::Date),
-        ("12:00:00Z", ReadAs::Time, ReadAs::Time, ReadAs::Time),
-        ("12:00:00.5Z", ReadAs::Time, ReadAs::Time, ReadAs::Time),
-        ("12:00:00,5Z", ReadAs::Time, ReadAs::Time, ReadAs::Time),
-        ("2024-01-01T01:00:00+01:00", ReadAs::PlainString, ReadAs::Refused, ReadAs::PlainString),
-        ("13:00:00+01:00", ReadAs::PlainString, ReadAs::Refused, ReadAs::PlainString),
-        ("12:00:00 in the morning", ReadAs::PlainString, ReadAs::Refused, ReadAs::PlainString),
-        ("urn:ngsi-ld:Vehicle:A4567", ReadAs::PlainString, ReadAs::PlainString, ReadAs::PlainString),
-        ("atrium", ReadAs::PlainString, ReadAs::Refused, ReadAs::PlainString),
-    ] {
-        pretty_assertions::assert_eq!(written_as(literal), written, "the write path reads {literal}");
-        pretty_assertions::assert_eq!(queried_as(literal, Quoting::Quoted), quoted, "a quoted operand reads {literal}");
-        pretty_assertions::assert_eq!(queried_as(literal, Quoting::Bare), bare, "a bare operand reads {literal}");
-    }
-}
-
-/// The text a `Time` operand binds against the string column has to be the
-/// text the write path put there.
-#[test]
-fn a_time_operand_binds_the_text_the_write_path_stored() {
-    for literal in ["12:00:00Z", "12:00:00.5Z", "12:00:00,5Z", "12:00:00.500000Z"] {
-        let Ok(Scalar::Time(operand)) = Scalar::from_literal(literal, Quoting::Bare) else {
-            panic!("{literal} is a Time operand");
-        };
-        let bound = NgsiLdTime::normalise(operand).to_string();
-        pretty_assertions::assert_eq!(recorded(&bare_property(literal)), TemporalValue::String(bound), "{literal}");
-    }
+fn a_typed_time_inside_a_structured_value_is_recorded_in_its_served_spelling() {
+    let at = |text: &str| json!([{"@value": text, "@type": expanded_classes::TIME.as_str()}]);
+    let value = recorded(&property(&json!([{"https://example.org/at": at("12:00:00.000Z")}])));
+    pretty_assertions::assert_eq!(stored(&value), json!({"https://example.org/at": at("12:00:00Z")}));
 }
 
 /// The number keeps the exact shape it was written in all the way to the
@@ -546,10 +467,10 @@ fn a_sub_attribute_holding_the_null_is_refused() {
     assert!(matches!(read(&instance), Err(TemporalError::Validation(_))), "{:?}", read(&instance));
 }
 
-/// A sub-attribute's instants, its `DateTime` value and its list targets take
-/// the spelling storage keeps, as the instance's own `observedAt` does.
+/// A sub-attribute's instants, its `DateTime` value and its list targets are
+/// recorded in their served spelling, as the instance's own `observedAt` is.
 #[test]
-fn a_sub_attribute_takes_the_spelling_storage_keeps() {
+fn a_sub_attribute_is_recorded_in_its_served_spelling() {
     let date_time = |text: &str| json!([{"@value": text, "@type": expanded_classes::DATE_TIME.as_str()}]);
     let instance = json!({
         "@type": [PROPERTY],

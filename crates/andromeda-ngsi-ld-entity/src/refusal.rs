@@ -17,9 +17,9 @@ use andromeda_ngsi_ld_geometry::geojson::GeometryError;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
+    datatype::recognised::DatatypeError,
     identifier::{Identifier, IdentifierParseError},
     reference::NgsiLdReferenceError,
-    time::value::TimeValueError,
     unit_code_resolution::UnitCodeRefusal,
 };
 use iri_rs::Iri;
@@ -114,15 +114,15 @@ pub enum EntityRefusal {
         /// The member.
         member: MemberShape,
     },
-    /// A value declared as a clause 4.6.3 `DateTime`, `Date` or `Time`, at any
-    /// depth of an instance, is not one.
-    #[error("attribute '{attribute}': a value declared as a time value is not one: {source}")]
-    TimeValue {
+    /// A literal, at any depth of an instance, is not a value of the datatype
+    /// it is declared as, or a `valueType` declares no datatype it may.
+    #[error("attribute '{attribute}': {source}")]
+    Datatype {
         /// The attribute or sub-attribute the value belongs to.
         attribute: AttributeName,
-        /// Why the value is not of its declared form.
+        /// Why the literal or the `valueType` is refused.
         #[source]
-        source: TimeValueError,
+        source: DatatypeError,
     },
     /// A `valueType`, `objectType` or `vocab` entry is not a name.
     #[error("attribute '{attribute}': the member '{member}' is not a valid name: {source}")]

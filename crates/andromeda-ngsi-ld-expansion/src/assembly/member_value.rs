@@ -17,7 +17,7 @@ use andromeda_ngsi_ld_lexicon::{
     default_instance::DEFAULT_INSTANCE_TOKEN,
     identifier::Identifier,
     reference::NgsiLdReference,
-    time::{system_instant::SystemInstant, written_date_time::DateTimeText},
+    time::{date_time::NgsiLdDateTime, system_instant::SystemInstant},
     unit_code_resolution::{UnitCodeRefusal, resolve_unit_code},
 };
 use cefact_units::UnitCode;
@@ -70,21 +70,21 @@ pub fn reference_id(node: &ExpandedNode) -> Option<&str> {
 /// # Errors
 ///
 /// Returns [`EntityRefusal::DateTime`] for a text that is not RFC 3339.
-pub fn date_time_slot(items: &[ExpandedItem], attribute: &AttributeName, member: MemberShape) -> Result<Slot<DateTimeText>, EntityRefusal> {
+pub fn date_time_slot(items: &[ExpandedItem], attribute: &AttributeName, member: MemberShape) -> Result<Slot<NgsiLdDateTime>, EntityRefusal> {
     if is_sole_null(items) {
         return Ok(Slot::Remove);
     }
     date_time(items, attribute, member).map(Slot::Set)
 }
 
-/// A date-time member kept as written (`deletedAt`).
+/// A date-time member (`deletedAt`).
 ///
 /// # Errors
 ///
 /// Returns [`EntityRefusal::DateTime`] for a text that is not RFC 3339.
-pub fn date_time(items: &[ExpandedItem], attribute: &AttributeName, member: MemberShape) -> Result<DateTimeText, EntityRefusal> {
+pub fn date_time(items: &[ExpandedItem], attribute: &AttributeName, member: MemberShape) -> Result<NgsiLdDateTime, EntityRefusal> {
     single_text(items, attribute, member)?
-        .parse::<DateTimeText>()
+        .parse::<NgsiLdDateTime>()
         .map_err(|_| EntityRefusal::DateTime {
             attribute: attribute.clone(), // clone: the refusal names the attribute the caller keeps
             member,

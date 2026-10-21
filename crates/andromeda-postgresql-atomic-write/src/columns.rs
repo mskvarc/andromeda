@@ -85,7 +85,7 @@ fn flatten_failure(error: &FlattenError) -> CommitError {
         FlattenError::UnresolvedAttribute(_) => CommitError::Invariant(CommitInvariant::UnresolvedName(NameDictionary::AttributeName)),
         FlattenError::UnresolvedType(_) => CommitError::Invariant(CommitInvariant::UnresolvedName(NameDictionary::EntityType)),
         FlattenError::Unstamped(_)
-        | FlattenError::UncommittedSpelling(_)
+        | FlattenError::UncommittedValue(_)
         | FlattenError::SeveralJsonLiterals(_)
         | FlattenError::TooManyInstances(_)
         | FlattenError::Json(_) => CommitError::Persistence(PersistenceFailure::Unencodable.record(error)),

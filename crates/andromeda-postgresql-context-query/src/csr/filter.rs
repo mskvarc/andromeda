@@ -3,23 +3,33 @@
 //! Registrations carry no attribute projection, so every predicate reads the
 //! JSONB document directly.
 
+use andromeda_ngsi_ld_lexicon::time::value::TimeValueForm;
 use andromeda_ngsi_ld_query::filter::{
     expression::Expr,
     path::{AttrPath, QueryPath},
     predicate::{CmpOp, OrderingOp, PatternPolarity, Predicate, SetMembership},
     scalar::{CompareValue, Scalar},
 };
+use andromeda_ngsi_ld_vocabulary::compact::classes::{DATE, DATE_TIME, TIME};
 use andromeda_postgresql_query::{
     jsonb::lift_comparison,
     operator::{compare, pattern as pattern_predicate},
 };
 use andromeda_postgresql_seaquery::{
+    cast::typed_null,
     jsonb::jsonb_key_exists,
     literal::{false_literal, text_literal},
     operator::present_and,
     pg_operator::PgBinaryOperator,
+    pg_type::PostgresType,
 };
 use sea_query::{Alias, CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Query, QueryStatementBuilder, SimpleExpr};
+
+/// The JSON-LD keyword a value object carries its value under.
+const VALUE_KEYWORD: &str = "@value";
+
+/// The JSON-LD keyword a value object carries its datatype under.
+const TYPE_KEYWORD: &str = "@type";
 
 /// The registration's `additional_properties` JSONB document, read fresh each
 /// time it opens an extraction.
@@ -151,11 +161,40 @@ fn stored_text(extract: SimpleExpr) -> SimpleExpr {
     extract.json_path_text(text_literal("{}"))
 }
 
+/// The text and the declared datatype IRI one extracted registration property
+/// is compared with `scalar` through.
+///
+/// Only a value object declaring a time value form in its `@type` compares
+/// with a time operand (clause 4.9: no equality of data types, no match), so
+/// such an operand reads the object's `@value` beside its datatype. A
+/// registration property keeps the value a client wrote, so that `@type` is
+/// the core context's term for the form or the form's IRI. Every other
+/// operand reads the whole value and no datatype.
+fn csr_reading(extract: SimpleExpr, scalar: &Scalar) -> (SimpleExpr, SimpleExpr) {
+    match scalar {
+        Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_) => {
+            let datatype = extract.clone().json_get_text(text_literal(TYPE_KEYWORD)); // clone: the value and the datatype read one extraction
+            let declared = [(TimeValueForm::DateTime, DATE_TIME), (TimeValueForm::Date, DATE), (TimeValueForm::Time, TIME)]
+                .into_iter()
+                .fold(CaseStatement::new(), |case, (form, term)| {
+                    let iri = form.iri();
+                    case.case(
+                        datatype.clone().is_in([text_literal(term), text_literal(iri.as_str())]),
+                        text_literal(iri.as_str()),
+                    ) // clone: every arm reads the one datatype
+                });
+            (extract.json_get_text(text_literal(VALUE_KEYWORD)), declared.into())
+        }
+        Scalar::Number(_) | Scalar::Bool(_) | Scalar::Str(_) | Scalar::Uri(_) => (stored_text(extract), typed_null(PostgresType::Text)),
+    }
+}
+
 /// Build the present-guarded single-scalar comparison against
 /// `additional_properties`.
 fn csr_scalar_comparison(extract: SimpleExpr, scalar: &Scalar, op: CmpOp) -> SimpleExpr {
     let guard = present(extract.clone()); // clone: the value side lifts the same extraction
-    let lifted = lift_comparison(scalar, stored_text(extract));
+    let (text, datatype) = csr_reading(extract, scalar);
+    let lifted = lift_comparison(scalar, text, datatype);
     present_and(guard, compare(lifted.stored, op, lifted.operand))
 }
 
@@ -167,9 +206,9 @@ fn csr_equality_condition(path: &AttrPath, membership: SetMembership, rhs: &Comp
         CompareValue::Scalar(scalar) => Condition::all().add(csr_scalar_comparison(extract, scalar, membership.as_cmp_op())),
         CompareValue::Range { min, max } => {
             let guard = present(extract.clone()); // clone: the bounds lift the same extraction
-            let stored = stored_text(extract);
-            let lower = lift_comparison(min, stored.clone()); // clone: both bounds compare against the one lifted stored side
-            let upper_operand = lift_comparison(max, stored).operand;
+            let (stored, datatype) = csr_reading(extract, min);
+            let lower = lift_comparison(min, stored.clone(), datatype.clone()); // clone: both bounds compare against the one lifted stored side
+            let upper_operand = lift_comparison(max, stored, datatype).operand;
             let stored_side = lower.stored;
             let value = match membership {
                 SetMembership::Within => compare(stored_side.clone(), CmpOp::GreaterEq, lower.operand).and(compare(stored_side, CmpOp::LessEq, upper_operand)),
@@ -179,9 +218,9 @@ fn csr_equality_condition(path: &AttrPath, membership: SetMembership, rhs: &Comp
         }
         CompareValue::ValueList(values) => {
             let guard = present(extract.clone()); // clone: every arm lifts the same extraction
-            let stored = stored_text(extract);
             let disjunction = values.iter().fold(Condition::any(), |cond, v| {
-                let lifted = lift_comparison(v, stored.clone());
+                let (stored, datatype) = csr_reading(extract.clone(), v); // clone: every arm reads the one extraction
+                let lifted = lift_comparison(v, stored, datatype);
                 cond.add(compare(lifted.stored, CmpOp::Equal, lifted.operand))
             });
             let value: SimpleExpr = match membership {

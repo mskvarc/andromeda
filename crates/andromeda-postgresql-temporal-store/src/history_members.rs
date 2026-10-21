@@ -13,12 +13,7 @@
 
 use crate::{error::TemporalStoreError, stored_history_error::StoredHistoryError};
 use andromeda_ngsi_ld_entity::proof_seals::ProofSeals;
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    entity_type_name::EntityTypeName,
-    reference::NgsiLdReference,
-    time::written_date_time::DateTimeText,
-};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, reference::NgsiLdReference, time::date_time::NgsiLdDateTime};
 use andromeda_ngsi_ld_model::temporal::observation_metadata::{MetadataMembers, ObservationMetadata};
 use andromeda_postgresql_attribute_instance::{
     assemble::{AssemblyError, sub_attributes},
@@ -105,7 +100,7 @@ impl HistoryMembers {
             value_type_key: members.value_type.as_ref().map(type_key).transpose()?,
             object_type_keys: members.object_types.iter().map(type_key).collect::<Result<_, _>>()?,
             unit_code: members.unit_code,
-            expires_at: members.expires_at.as_ref().map(DateTimeText::instant),
+            expires_at: members.expires_at.map(NgsiLdDateTime::get),
             proof_seals: if members.proof_seals.is_empty() {
                 None
             } else {
@@ -150,8 +145,9 @@ impl HistoryMembers {
             .transpose()
             .map_err(|refusal| StoredHistoryError::ProofSeals(Box::new(refusal)))?
             .unwrap_or_default();
+        let expires_at = expires_at.map(NgsiLdDateTime::normalise).transpose().map_err(StoredHistoryError::ExpiresAt)?;
         Ok(ObservationMetadata::new(MetadataMembers {
-            expires_at: expires_at.map(DateTimeText::from_instant),
+            expires_at,
             unit_code,
             value_type,
             object_types,

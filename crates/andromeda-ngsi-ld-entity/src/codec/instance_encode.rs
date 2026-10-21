@@ -64,10 +64,10 @@ impl Serialize for InstanceOut<'_> {
         write_family(&mut map, value.family().iri_str())?;
         write_family_value(&mut map, value)?;
         if let Some(observed_at) = instance.observed_at() {
-            write_date_time_text(&mut map, properties::OBSERVED_AT.as_str(), observed_at.as_str())?;
+            write_date_time_text(&mut map, properties::OBSERVED_AT.as_str(), &observed_at.to_string())?;
         }
         if let Some(expires_at) = instance.expires_at() {
-            write_date_time_text(&mut map, properties::EXPIRES_AT.as_str(), expires_at.as_str())?;
+            write_date_time_text(&mut map, properties::EXPIRES_AT.as_str(), &expires_at.to_string())?;
         }
         if let Some(created_at) = instance.created_at() {
             write_date_time_text(&mut map, properties::CREATED_AT.as_str(), &created_at.to_string())?;

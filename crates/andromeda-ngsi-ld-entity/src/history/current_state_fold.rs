@@ -30,7 +30,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
-    time::{system_instant::SystemInstant, written_date_time::DateTimeText},
+    time::{date_time::NgsiLdDateTime, system_instant::SystemInstant},
 };
 use chrono::{DateTime, Utc};
 use std::cmp::Ordering;
@@ -116,7 +116,7 @@ fn stand(state: &mut EntityState, name: &AttributeName, candidate: &InstanceDocu
     let dataset_id = candidate.dataset_id();
     let held = state.attributes().get(name).and_then(|instances| instances.get(dataset_id));
     let candidate_recency = InstanceRecency {
-        observed_at: candidate.observed_at().and_then(Slot::as_set).map(DateTimeText::instant),
+        observed_at: candidate.observed_at().and_then(Slot::as_set).copied().map(NgsiLdDateTime::get),
         // The candidate is the newest write, so only an `observedAt` pair can
         // make it the older instance.
         modified_at: Some(at),
@@ -150,16 +150,13 @@ fn stand(state: &mut EntityState, name: &AttributeName, candidate: &InstanceDocu
 
 /// Whether a candidate is already past its `expiresAt` (clause 4.22).
 fn expired(candidate: &InstanceDocument, at: DateTime<Utc>) -> bool {
-    candidate
-        .expires_at()
-        .and_then(Slot::as_set)
-        .is_some_and(|expires_at| expires_at.instant() <= at)
+    candidate.expires_at().and_then(Slot::as_set).is_some_and(|expires_at| expires_at.get() <= at)
 }
 
 /// The clause 4.5.5.3 instants a held instance carries.
 fn recency_of(instance: &Instance) -> InstanceRecency {
     InstanceRecency {
-        observed_at: instance.observed_at().map(DateTimeText::instant),
+        observed_at: instance.observed_at().map(NgsiLdDateTime::get),
         modified_at: instance.modified_at().map(SystemInstant::get),
     }
 }

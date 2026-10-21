@@ -21,14 +21,12 @@
 //! or a maximum that was never observed.
 
 use crate::{alias::Ah, structured_json::structured_json};
-use andromeda_ngsi_ld_lexicon::time::time_of_day::NgsiLdTime;
-use andromeda_postgresql_codes::attribute_kind::AttributeKind;
+use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
     cast::cast,
     jsonb::{jsonb_array_length, jsonb_typeof},
-    literal::{int_literal, text_literal},
-    operator::regex_match,
+    literal::int_literal,
     pg_type::PostgresType,
 };
 use sea_query::{CaseStatement, Expr, ExprTrait, Func, SimpleExpr};
@@ -143,14 +141,16 @@ pub fn ordered_instant_expr() -> SimpleExpr {
 /// arrangement `min` and `max` already use across their three columns.
 #[must_use]
 pub fn average_time_expr() -> SimpleExpr {
-    // The text column also holds JSON Strings and clause 4.6.3 `Date` values,
-    // and casting one of those to `time` is a hard database error rather than a
-    // NULL. Only a value in the canonical `Time` rendering is folded, exactly as
-    // `array_size` folds only a JSONB array, so every other row falls out of the
-    // aggregate instead of failing the statement.
+    // The text column also holds JSON Strings and `Date` values, and casting
+    // one of those to `time` is a hard database error rather than a NULL. Only
+    // a value recorded under the `Time` value kind is folded, exactly as
+    // `array_size` folds only a JSONB array, so every other row falls out of
+    // the aggregate instead of failing the statement.
     let time_of_day: SimpleExpr = CaseStatement::new()
         .case(
-            regex_match(Expr::col((Ah, AttributeHistory::ValueString)), text_literal(NgsiLdTime::STORED_PATTERN)).and(family_has_value_aggregates()),
+            Expr::col((Ah, AttributeHistory::ValueKind))
+                .eq(int_literal(i64::from(ValueKind::Time.code())))
+                .and(family_has_value_aggregates()),
             cast(cast(Expr::col((Ah, AttributeHistory::ValueString)), PostgresType::Time), PostgresType::Interval),
         )
         .into();

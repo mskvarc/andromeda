@@ -41,11 +41,6 @@ pub enum NgsiLdDateError {
 pub struct NgsiLdDate(NaiveDate);
 
 impl NgsiLdDate {
-    /// The POSIX regular expression the spelling matches, anchored at both
-    /// ends, for a reader inside a statement that tells a stored date from
-    /// other stored text.
-    pub const STORED_PATTERN: &str = "^[0-9]{4}-[0-9]{2}-[0-9]{2}$";
-
     /// The calendar date this value names.
     #[must_use]
     pub const fn get(self) -> NaiveDate {
@@ -121,15 +116,6 @@ mod tests {
             let (earlier, later) = (window[0], window[1]);
             assert!(earlier < later, "{earlier} must precede {later} chronologically");
             assert!(earlier.to_string() < later.to_string(), "{earlier} must precede {later} byte-wise as well");
-        }
-    }
-
-    #[test]
-    fn every_spelling_matches_the_stored_pattern() {
-        let pattern = regex::Regex::new(NgsiLdDate::STORED_PATTERN).expect("a valid regular expression");
-        for text in ["0001-01-01", "2026-04-12", "9999-12-31"] {
-            let stored = text.parse::<NgsiLdDate>().expect("a Date").to_string();
-            assert!(pattern.is_match(&stored), "{stored}");
         }
     }
 

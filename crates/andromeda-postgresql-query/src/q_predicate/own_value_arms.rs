@@ -14,7 +14,8 @@ pub struct OwnValueArms {
     /// The comparison against the typed column holding the operand's kind.
     pub typed: Condition,
     /// The comparison against the strings of a `languageMap`, `None` for an
-    /// operand no string compares with (a number or a boolean).
+    /// operand no language string compares with (a number, a boolean or a time
+    /// value).
     pub language: Option<SimpleExpr>,
 }
 

@@ -220,7 +220,7 @@ impl FederationService {
 /// The received entity, unless it expired at `now` (clauses 5.7.1.4, 5.7.2.4,
 /// 4.5.5.3).
 fn unexpired(mut received: ReceivedState, source: &str, now: DateTime<Utc>) -> Option<ReceivedState> {
-    if received.state.expires_at().is_some_and(|expires_at| expires_at.instant() <= now) {
+    if received.state.expires_at().is_some_and(|expires_at| expires_at.get() <= now) {
         debug!(
             "Context source {} returned the expired entity {}, which is discarded",
             source,

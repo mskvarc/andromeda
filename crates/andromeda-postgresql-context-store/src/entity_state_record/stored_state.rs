@@ -11,7 +11,7 @@ use crate::{
     entity_state_record::state_record::EntityStateRecord,
 };
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes, scopes::Scopes};
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier, scope::path::ScopePath, time::written_date_time::DateTimeText};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier, scope::path::ScopePath, time::date_time::NgsiLdDateTime};
 use andromeda_postgresql_attribute_instance::name_keys::{HeldKeys, KeyNames};
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use chrono::{DateTime, Utc};
@@ -76,12 +76,11 @@ impl StoredState {
             .map(|key| names.type_name(*key).map(EntityTypeName::from).ok_or(StoredEntityError::TypeKey(*key)))
             .collect::<Result<Vec<_>, _>>()?;
         let entity_types = EntityTypes::try_from_names(type_names).map_err(|_| StoredEntityError::Untyped)?;
-        Ok(EntityState::from_parts(
-            id,
-            entity_types,
-            self.scope,
-            self.expires_at.map(DateTimeText::from_instant),
-            attributes,
-        ))
+        let expires_at = self
+            .expires_at
+            .map(NgsiLdDateTime::normalise)
+            .transpose()
+            .map_err(StoredEntityError::ExpiresAt)?;
+        Ok(EntityState::from_parts(id, entity_types, self.scope, expires_at, attributes))
     }
 }

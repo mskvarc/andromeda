@@ -8,7 +8,10 @@
 
 use crate::stored_json::StoredJson;
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::{
+    time::{date::NgsiLdDate, time_of_day::NgsiLdTime},
+    uri::Uri,
+};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
@@ -54,12 +57,29 @@ pub enum StoredValue {
         /// The datatype a typed boolean declares.
         datatype: Option<EntityTypeNameKey>,
     },
-    /// A clause 4.6.3 `DateTime`, held as its instant.
+    /// A value declared as a clause 4.6.3 `DateTime`, held as its instant.
     DateTime {
         /// The instant, at microsecond resolution.
         instant: DateTime<Utc>,
-        /// The `DateTime` datatype when the literal declares it; `None` for a
-        /// string recognised by its lexical form.
+        /// The `DateTime` datatype when the literal declares it; `None` when
+        /// the attribute's `valueType` does.
+        datatype: Option<EntityTypeNameKey>,
+    },
+    /// A value declared as a clause 4.6.3 `Date`.
+    Date {
+        /// The date.
+        date: NgsiLdDate,
+        /// The `Date` datatype when the literal declares it; `None` when the
+        /// attribute's `valueType` does.
+        datatype: Option<EntityTypeNameKey>,
+    },
+    /// A value declared as a clause 4.6.3 `Time`, held in its fixed-width
+    /// storage encoding.
+    Time {
+        /// The time of day, at microsecond resolution.
+        time: NgsiLdTime,
+        /// The `Time` datatype when the literal declares it; `None` when the
+        /// attribute's `valueType` does.
         datatype: Option<EntityTypeNameKey>,
     },
     /// A geometry.
@@ -86,6 +106,8 @@ impl StoredValue {
             StoredValue::String { .. } => ValueKind::String,
             StoredValue::Boolean { .. } => ValueKind::Boolean,
             StoredValue::DateTime { .. } => ValueKind::DateTime,
+            StoredValue::Date { .. } => ValueKind::Date,
+            StoredValue::Time { .. } => ValueKind::Time,
             StoredValue::Geometry { .. } => ValueKind::Geometry,
             StoredValue::Object(_) => ValueKind::Object,
             StoredValue::Uri(_) => ValueKind::Uri,
@@ -96,7 +118,11 @@ impl StoredValue {
     #[must_use]
     pub const fn datatype_key(&self) -> Option<EntityTypeNameKey> {
         match self {
-            StoredValue::Number { datatype, .. } | StoredValue::Boolean { datatype, .. } | StoredValue::DateTime { datatype, .. } => *datatype,
+            StoredValue::Number { datatype, .. }
+            | StoredValue::Boolean { datatype, .. }
+            | StoredValue::DateTime { datatype, .. }
+            | StoredValue::Date { datatype, .. }
+            | StoredValue::Time { datatype, .. } => *datatype,
             StoredValue::String { annotation, .. } => match annotation {
                 LiteralAnnotation::Datatype(key) => Some(*key),
                 LiteralAnnotation::Plain | LiteralAnnotation::Language(_) => None,
@@ -117,6 +143,8 @@ impl StoredValue {
             | StoredValue::Number { .. }
             | StoredValue::Boolean { .. }
             | StoredValue::DateTime { .. }
+            | StoredValue::Date { .. }
+            | StoredValue::Time { .. }
             | StoredValue::Geometry { .. }
             | StoredValue::Object(_)
             | StoredValue::Uri(_) => None,

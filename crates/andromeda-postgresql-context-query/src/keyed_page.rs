@@ -255,7 +255,7 @@ mod tests {
             .and_then(|rest| rest.split(r#") AS "matches""#).next())
             .unwrap_or_else(|| panic!("the index path: {sql}"));
         assert!(candidates.contains(r#""ca"."value_date_time" > $"#), "{candidates}");
-        assert_eq!(candidates.matches("UNION ALL").count(), 1, "the typed and the language branch: {candidates}");
+        assert_eq!(candidates.matches("UNION ALL").count(), 0, "a languageMap holds no time value: {candidates}");
         assert!(values.0.contains(&Value::BigUnsigned(Some(50_001))), "{:?}", values.0);
         assert!(values.0.contains(&Value::BigUnsigned(Some(50_000))), "{:?}", values.0);
     }

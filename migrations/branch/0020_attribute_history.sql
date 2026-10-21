@@ -14,7 +14,7 @@
 --     4 VocabProperty, 5 LanguageProperty, 6 JsonProperty, 7 ListProperty,
 --     8 ListRelationship
 --   value_kind: 0 tombstone, 1 number, 2 string, 3 boolean, 4 geometry,
---     5 object, 6 date-time, 7 uri
+--     5 object, 6 date-time, 7 uri, 8 date, 9 time
 --
 -- `recorded_at` is the write clock and is never rendered. `observed_at`,
 -- `created_at`, `modified_at` and `deleted_at` are the four axes clause 5.2.21
@@ -106,7 +106,7 @@ create table attribute_history (
     -- Pins `value_kind` to the populated column, so a value whose declared
     -- shape disagrees with where it sits cannot be stored and is never
     -- repaired by guessing. It also bounds `value_kind` to its codes.
-    constraint chk_attribute_history_value_kind_column check (value_kind = 0 or (value_kind = 1 and value_number is not null) or (value_kind = 2 and value_string is not null) or (value_kind = 3 and value_boolean is not null) or (value_kind = 4 and value_geometry is not null) or (value_kind = 5 and value_object is not null) or (value_kind = 6 and value_date_time is not null) or (value_kind = 7 and value_uri is not null)),
+    constraint chk_attribute_history_value_kind_column check (value_kind = 0 or (value_kind = 1 and value_number is not null) or (value_kind = 2 and value_string is not null) or (value_kind = 3 and value_boolean is not null) or (value_kind = 4 and value_geometry is not null) or (value_kind = 5 and value_object is not null) or (value_kind = 6 and value_date_time is not null) or (value_kind = 7 and value_uri is not null) or (value_kind = 8 and value_string is not null) or (value_kind = 9 and value_string is not null)),
     constraint chk_attribute_history_value_geometry_valid check (value_geometry is null or st_isvalid(value_geometry)),
     constraint chk_attribute_history_value_geometry_srid check (value_geometry is null or st_srid(value_geometry) = 4326),
     constraint chk_attribute_history_value_geometry_zm check (value_geometry is null or st_zmflag(value_geometry) in (0, 2)),

@@ -22,7 +22,7 @@ use andromeda_ngsi_ld_entity::{
     value_mode::{Fragment, FragmentMember},
 };
 use andromeda_ngsi_ld_model::{
-    attribute::{instance::AttributeValue, member_reading::MemberReading},
+    attribute::{instance::AttributeValue, member_reading::MemberReading, merge_member::MergeMember},
     entity::EntityPatch,
 };
 use iri_rs::IriBuf;
@@ -253,4 +253,46 @@ async fn an_attribute_fragment_the_walk_declines_is_expanded_by_the_processor() 
     pretty_assertions::assert_eq!(fragment.name().as_str(), "https://uri.etsi.org/ngsi-ld/default-context/reading");
     let value = node(fragment.instance());
     pretty_assertions::assert_eq!(member(value, "https://example.org/level").len(), 1);
+}
+
+/// The merge fragment `body` expands to under its own `@context`.
+async fn merge_document(body: Value) -> EntityDocument {
+    let engine = engine();
+    let (body, spec) = admitted(body);
+    let context = engine.expansion_context(&spec).await.expect("the context processes");
+    let fragment: EntityPatch<MergeMember> = serde_json::from_value(body).expect("a typed merge fragment");
+    let TypedExpansion::Expanded(document) = TypedExpander::new(&context)
+        .entity_patch(&fragment, Normalization::MemberDeletions)
+        .expect("expands")
+    else {
+        panic!("the walk expands it");
+    };
+    document
+}
+
+/// The datatype of the one literal the instance of `attribute` holds.
+fn literal_datatype(document: &EntityDocument, attribute: &str) -> Option<String> {
+    let ValueSlot::Set(WrittenValue::Value(values)) = instance(document, attribute).value() else {
+        panic!("a Property value");
+    };
+    let [ExpandedValue::Literal(literal)] = values.as_slice() else {
+        panic!("one literal, got {values:?}");
+    };
+    literal.datatype().map(ToString::to_string)
+}
+
+/// JSON-LD 1.1 value expansion reads a bare scalar under a coerced term as a
+/// typed literal, so a concise Property under a term coerced to `DateTime` is a
+/// declared time value; the coercion does not reach the `value` member of a
+/// normalized one (annex C.6).
+#[tokio::test]
+async fn a_concise_merge_value_under_a_term_coerced_to_a_time_value_form_is_that_typed_literal() {
+    let coercing = json!({"testedAt": {"@id": "https://example.org/testedAt", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}});
+    let concise = merge_document(json!({"testedAt": "2018-12-04T12:00:00Z", "@context": [coercing]})).await;
+    pretty_assertions::assert_eq!(
+        literal_datatype(&concise, "https://example.org/testedAt").as_deref(),
+        Some("https://uri.etsi.org/ngsi-ld/DateTime")
+    );
+    let normalized = merge_document(json!({"testedAt": {"type": "Property", "value": "2018-12-04T12:00:00Z"}, "@context": [coercing]})).await;
+    pretty_assertions::assert_eq!(literal_datatype(&normalized, "https://example.org/testedAt"), None);
 }

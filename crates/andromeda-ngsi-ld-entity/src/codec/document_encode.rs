@@ -80,7 +80,7 @@ impl Serialize for InstanceDocumentOut<'_> {
             write_date_time_text(&mut map, properties::MODIFIED_AT.as_str(), &modified_at.to_string())?;
         }
         if let Some(deleted_at) = instance.deleted_at() {
-            write_date_time_text(&mut map, properties::DELETED_AT.as_str(), deleted_at.as_str())?;
+            write_date_time_text(&mut map, properties::DELETED_AT.as_str(), &deleted_at.to_string())?;
         }
         if let Some(dataset_id) = instance.dataset_id() {
             write_reference(&mut map, properties::DATASET_ID.as_str(), dataset_id.as_str())?;

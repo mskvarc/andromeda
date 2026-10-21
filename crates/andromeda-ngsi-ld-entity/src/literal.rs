@@ -2,10 +2,11 @@
 //!
 //! Expansion turns every scalar of a Property value into `{"@value": ..}`,
 //! optionally typed (`"@type"`, for example `ngsi-ld:DateTime`) or tagged
-//! (`"@language"`, `"@direction"`). Numbers stay exact (clause 4.6.3) and strings
-//! stay as written (clause 4.6.4).
+//! (`"@language"`, `"@direction"`). Numbers stay exact (clause 4.6.3), a string
+//! declared as no time value stays as written (clause 4.6.4), and one declared
+//! as a time value takes its one served spelling when a write commits it.
 
-use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
+use andromeda_ngsi_ld_lexicon::{datatype::primitive_literal::PrimitiveLiteral, reference::NgsiLdReference};
 use andromeda_ngsi_ld_number::JsonNumber;
 use compact_str::CompactString;
 use langtag::LangTagBuf;
@@ -21,6 +22,18 @@ pub enum LiteralValue {
     String(CompactString),
     /// A JSON boolean.
     Boolean(bool),
+}
+
+impl LiteralValue {
+    /// The scalar as the datatype checks read it.
+    #[must_use]
+    pub fn primitive(&self) -> PrimitiveLiteral<'_> {
+        match self {
+            LiteralValue::Number(number) => PrimitiveLiteral::Number(number),
+            LiteralValue::String(text) => PrimitiveLiteral::String(text),
+            LiteralValue::Boolean(flag) => PrimitiveLiteral::Boolean(*flag),
+        }
+    }
 }
 
 /// The base direction of a string (JSON-LD 1.1 `@direction`).

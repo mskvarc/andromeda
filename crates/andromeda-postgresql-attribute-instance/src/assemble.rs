@@ -28,7 +28,10 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
     identifier::Identifier,
     reference::NgsiLdReferenceError,
-    time::{system_instant::SystemInstant, written_date_time::DateTimeText},
+    time::{
+        date_time::{NgsiLdDateTime, NgsiLdDateTimeError},
+        system_instant::SystemInstant,
+    },
 };
 use andromeda_ngsi_ld_model::temporal::structured_value_codec::StoredValueError;
 use andromeda_postgresql_codes::{attribute_kind_code::attribute_type_of, value_kind::ValueKind};
@@ -104,6 +107,9 @@ pub enum AssemblyError {
     /// The stored literal carries annotations its value cannot carry.
     #[error(transparent)]
     Literal(#[from] LiteralError),
+    /// A stored `observedAt` or `expiresAt` lies below the storable floor.
+    #[error("a stored instant is not an NGSI-LD DateTime: {0}")]
+    Instant(#[from] NgsiLdDateTimeError),
 }
 
 impl From<StoredValueError> for AssemblyError {
@@ -248,8 +254,8 @@ pub fn instance(
         .unwrap_or_default();
     let instance = Instance::builder()
         .value(value)
-        .observed_at(observed_at.map(DateTimeText::from_instant))
-        .expires_at(expires_at.map(DateTimeText::from_instant))
+        .observed_at(observed_at.map(NgsiLdDateTime::normalise).transpose()?)
+        .expires_at(expires_at.map(NgsiLdDateTime::normalise).transpose()?)
         .created_at(created_at.map(SystemInstant::new))
         .modified_at(modified_at.map(SystemInstant::new))
         .proof_seals(proof_seals)

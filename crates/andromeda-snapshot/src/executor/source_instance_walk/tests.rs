@@ -4,7 +4,7 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     identifier::Identifier,
-    time::{date_time::NgsiLdDateTime, written_date_time::DateTimeText},
+    time::date_time::NgsiLdDateTime,
     time_prop::TimeProp,
 };
 use andromeda_ngsi_ld_model::{
@@ -43,7 +43,7 @@ fn instance(day: u32) -> InstanceDocument {
     let observed = format!("2024-01-{day:02}T00:00:00Z");
     InstanceDocument::builder()
         .family(Some(AttributeType::Property))
-        .observed_at(Some(Slot::Set(observed.parse::<DateTimeText>().expect("an instant"))))
+        .observed_at(Some(Slot::Set(observed.parse::<NgsiLdDateTime>().expect("an instant"))))
         .build()
 }
 

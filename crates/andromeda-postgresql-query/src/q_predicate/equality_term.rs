@@ -79,10 +79,15 @@ fn equality_condition(target: StructuredTarget<'_>, scalar: &Scalar, membership:
             SetMembership::Outside => Condition::all().add(does_not_hold(carries_any_target_value(&column, scalar, row))),
         },
         StructuredTarget::TargetLanguage(language) => match membership {
-            SetMembership::Within => carries_operand(&column, target, scalar),
+            SetMembership::Within => carries_operand(&column, &row.value_type_key(), target, scalar),
             SetMembership::Outside => Condition::all()
                 .add(LanguageMap::of_instance(row).holds(LanguageSelection::AnyLanguage))
-                .add(does_not_hold(carries_operand(&column, StructuredTarget::TargetLanguage(language), scalar))),
+                .add(does_not_hold(carries_operand(
+                    &column,
+                    &row.value_type_key(),
+                    StructuredTarget::TargetLanguage(language),
+                    scalar,
+                ))),
         },
     }
 }
@@ -90,9 +95,12 @@ fn equality_condition(target: StructuredTarget<'_>, scalar: &Scalar, membership:
 /// Whether any column that can hold an unqualified clause 4.9 target value
 /// holds this operand.
 fn carries_any_target_value(column: &SimpleExpr, scalar: &Scalar, row: InstanceRow) -> Condition {
-    Condition::any()
-        .add(typed_column_condition(scalar, CmpOp::Equal, row))
-        .add(carries_operand(column, StructuredTarget::AnyValue, scalar))
+    Condition::any().add(typed_column_condition(scalar, CmpOp::Equal, row)).add(carries_operand(
+        column,
+        &row.value_type_key(),
+        StructuredTarget::AnyValue,
+        scalar,
+    ))
 }
 
 /// Compile a range operand (`==10..20` / `!=10..20`).

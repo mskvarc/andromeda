@@ -252,6 +252,14 @@ fn decode_value(row: &PgRow, attribute_type: AttributeType, attribute_name: &Att
                 .map_err(|refusal| StoredHistoryError::ValueObject(Box::new(refusal)))?)
         }
         ValueKind::DateTime => Ok(TemporalValue::DateTime(required_column(row, TABLE, HistoryColumn::ValueDateTime)?)),
+        ValueKind::Date => {
+            let text: String = required_column(row, TABLE, HistoryColumn::ValueString)?;
+            Ok(text.parse().map(TemporalValue::Date).map_err(StoredHistoryError::ValueDate)?)
+        }
+        ValueKind::Time => {
+            let text: String = required_column(row, TABLE, HistoryColumn::ValueString)?;
+            Ok(text.parse().map(TemporalValue::Time).map_err(StoredHistoryError::ValueTime)?)
+        }
         ValueKind::Uri => {
             let raw: String = required_column(row, TABLE, HistoryColumn::ValueUri)?;
             Ok(raw.parse::<Uri>().map(TemporalValue::Uri).map_err(StoredHistoryError::ValueUri)?)

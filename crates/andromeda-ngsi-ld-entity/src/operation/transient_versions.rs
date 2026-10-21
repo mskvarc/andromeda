@@ -16,7 +16,7 @@
 //! single holder.
 
 use crate::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::written_date_time::DateTimeText};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::date_time::NgsiLdDateTime};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
@@ -57,7 +57,7 @@ pub fn differentiate_transient_versions<'v>(versions: impl IntoIterator<Item = &
     let mut versions: Vec<&'v mut EntityState> = versions.into_iter().collect();
     let mut agreement: HashMap<Identifier, ExpiryAgreement> = HashMap::new();
     for version in &versions {
-        let reported = version.expires_at().map(DateTimeText::instant);
+        let reported = version.expires_at().map(NgsiLdDateTime::get);
         let folded = agreement
             .get(version.id())
             .map_or(ExpiryAgreement::Unanimous(reported), |seen| seen.observing(reported));
@@ -82,7 +82,7 @@ pub fn differentiate_transient_versions<'v>(versions: impl IntoIterator<Item = &
 /// corresponding to the earlier `DateTime`". An Attribute that already expires
 /// no later than the Entity is left exactly as the holder sent it.
 fn constrain_attributes_to_entity_expiry(version: &mut EntityState) {
-    let Some(entity_expiry) = version.expires_at().cloned() else {
+    let Some(entity_expiry) = version.expires_at() else {
         return;
     };
     let late: Vec<_> = version
@@ -91,16 +91,15 @@ fn constrain_attributes_to_entity_expiry(version: &mut EntityState) {
         .filter(|(_, instances)| {
             instances
                 .iter()
-                .any(|(_, instance)| instance.expires_at().is_none_or(|own| own.instant() > entity_expiry.instant()))
+                .any(|(_, instance)| instance.expires_at().is_none_or(|own| own > entity_expiry))
         })
         .map(|(name, _)| name.clone()) // clone: the names outlive the borrow the scan holds
         .collect();
     for name in late {
         if let Some(instances) = version.attributes_mut().get_mut(&name) {
             for (_, instance) in instances.iter_mut() {
-                if instance.expires_at().is_none_or(|own| own.instant() > entity_expiry.instant()) {
-                    // clone: every constrained instance owns its expiry
-                    instance.set_expires_at(Some(entity_expiry.clone()));
+                if instance.expires_at().is_none_or(|own| own > entity_expiry) {
+                    instance.set_expires_at(Some(entity_expiry));
                 }
             }
         }
@@ -128,7 +127,7 @@ mod tests {
 
     fn attribute_expiry(state: &EntityState) -> Option<String> {
         let (_, instance) = state.attributes().get(SPEED).expect("speed").iter().next().expect("one instance");
-        instance.expires_at().map(|expiry| expiry.as_str().to_owned())
+        instance.expires_at().map(|expiry| expiry.to_string())
     }
 
     /// Clause 4.5.5.2: two versions disagreeing on the entity-level expiry

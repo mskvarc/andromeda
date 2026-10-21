@@ -238,20 +238,16 @@ fn write_compare_value(buf: &mut String, val: &CompareValue) {
 /// Write one scalar operand.
 fn write_scalar(buf: &mut String, scalar: &Scalar) {
     match scalar {
-        // A string is quoted, as the clause 4.9 grammar requires. A time of day
-        // is quoted too, for a tokeniser reason rather than a grammatical one:
-        // a bare literal that starts with digits is read as a number unless a
-        // `-` follows, so `12:00:00Z` would come back as `12` and a stray
-        // identifier. A date and a date-time both start `dddd-` and read back
-        // whole. Quoting costs the `Time` nothing, because a quoted literal
-        // that satisfies a clause 4.6.3 form is read back as that form.
-        Scalar::Str(_) | Scalar::Time(_) => write_quoted(buf, &scalar.literal_text()),
+        // A string is quoted, as the clause 4.9 grammar requires; `dateTime`,
+        // `date` and `time` are its unquoted alternatives, and a quoted one
+        // would read back as a String.
+        Scalar::Str(_) => write_quoted(buf, &scalar.literal_text()),
         // A `URI` an expansion produced can hold characters the tokeniser reads
         // as query syntax; quoted, it reads back as the same text and compares
         // the same.
         Scalar::Uri(uri) if is_bare_uri(uri) => buf.push_str(uri),
         Scalar::Uri(uri) => write_quoted(buf, uri),
-        Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) => buf.push_str(&scalar.literal_text()),
+        Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_) => buf.push_str(&scalar.literal_text()),
     }
 }
 
@@ -357,6 +353,8 @@ mod tests {
             "observed==2017-12-24T12:00:00Z..2017-12-25T12:00:00Z",
             "day>=2017-12-24",
             "day==2017-12-24..2017-12-25",
+            "moment>=12:00:00Z",
+            "moment==12:00:00.500Z..13:00:00Z",
             "moment>=\"12:00:00Z\"",
             "moment==\"12:00:00Z\"..\"13:00:00Z\"",
             "name~=\"^A.*\"",
@@ -499,5 +497,23 @@ mod tests {
             }
             other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => panic!("expected Ordering, got {other:?}"),
         }
+    }
+
+    /// Clause 4.9: a bare `time` operand and a quoted `quotedStr` in the same
+    /// form are different data types, and each reads back as the one it is.
+    #[test]
+    fn a_bare_time_and_a_quoted_time_form_string_keep_their_data_types() {
+        let operand = |written: &str| {
+            let Expr::Pred(Predicate::Equality {
+                rhs: CompareValue::Scalar(scalar),
+                ..
+            }) = parse(&serialize(&parse(written).unwrap())).unwrap()
+            else {
+                panic!("{written} is no single equality");
+            };
+            scalar
+        };
+        assert!(matches!(operand("moment==12:00:00Z"), Scalar::Time(_)));
+        assert!(matches!(operand("moment==\"12:00:00Z\""), Scalar::Str(_)));
     }
 }

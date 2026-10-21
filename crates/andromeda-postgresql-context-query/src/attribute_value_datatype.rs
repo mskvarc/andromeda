@@ -7,13 +7,11 @@
 //! `DateTime`, Null" and, last of all, "Attribute does not exist".
 //!
 //! A stored instance holds its value in the typed field of its kind, so the
-//! field that is set names most datatypes. Clause 4.6.3 names three data types
-//! whose whole representation *is* the string, and a `Date` or a `Time` is held
-//! as its text, so a string is read off its literal: that reading is
-//! [`TimeValueForm`], the classifier the write projection and the clause 4.9
-//! `q` operand parser share, and the pattern below is that same classifier
-//! written for a statement. A stored timestamp must not be a `DateTime` to `q`
-//! and a String to the ordering.
+//! field that is set names most datatypes. A value declared as a `Date` or a
+//! `Time` is held as text under its own value kind, and a member of a
+//! structured value carries its datatype in its `@type`, so the datatype a
+//! value is declared as (annex C.6) is read beside its text. A string declared
+//! as none ranks as a String, whatever it looks like.
 //!
 //! The order is rendered as a rank rather than as a chain of comparisons. The
 //! datatype is read as a single token, and the token's position in a
@@ -22,14 +20,12 @@
 //! nowhere at all, which, sorted `NULLS LAST`, is exactly where "attribute does
 //! not exist" belongs, in both directions.
 
-use andromeda_ngsi_ld_lexicon::time::value::TimeValueForm;
 use andromeda_ngsi_ld_query::ordering::sort_direction::SortDirection;
 use andromeda_ngsi_ld_vocabulary::expanded::classes::{DATE, DATE_TIME, TIME};
 use andromeda_postgresql_seaquery::{
     cast::cast,
     jsonb::{jsonb_key_exists, jsonb_typeof},
     literal::text_literal,
-    operator::regex_match,
     pg_array::{array_position, text_array},
     pg_type::PostgresType,
 };
@@ -78,6 +74,8 @@ pub(crate) struct OrderedValue {
     pub(crate) date_time: SimpleExpr,
     /// A string: a String, a Relationship's object, a `Date` or a `Time`.
     pub(crate) text: SimpleExpr,
+    /// The expanded datatype IRI the text is declared as, `NULL` when none.
+    pub(crate) datatype: SimpleExpr,
     /// A structured value: an object or an array.
     pub(crate) object: SimpleExpr,
 }
@@ -99,9 +97,9 @@ pub(crate) fn datatype_token(value: &OrderedValue) -> SimpleExpr {
         .case(value.number.clone().is_not_null(), text_literal(NUMBER_TYPE))
         .case(value.boolean.clone().is_not_null(), text_literal(BOOLEAN_TYPE))
         .case(value.date_time.clone().is_not_null(), text_literal(date_time.as_str()))
-        .case(written_in(&value.text, TimeValueForm::DateTime), text_literal(date_time.as_str()))
-        .case(written_in(&value.text, TimeValueForm::Date), text_literal(date.as_str()))
-        .case(written_in(&value.text, TimeValueForm::Time), text_literal(time.as_str()))
+        .case(declares(&value.datatype, date_time.as_str()), text_literal(date_time.as_str()))
+        .case(declares(&value.datatype, date.as_str()), text_literal(date.as_str()))
+        .case(declares(&value.datatype, time.as_str()), text_literal(time.as_str()))
         .case(value.text.clone().is_not_null(), text_literal(STRING_TYPE))
         .case(listed, text_literal(ARRAY_TYPE))
         .case(value.object.clone().is_not_null(), text_literal(OBJECT_TYPE))
@@ -144,19 +142,14 @@ pub(crate) fn datatype_rank(datatype: SimpleExpr, direction: SortDirection) -> S
     array_position(cast(text_array(&sequence), PostgresType::TextArray), datatype)
 }
 
-/// Whether a string is written in one clause 4.6.3 form.
-///
-/// The pattern is the lexical form's own, taken from the classifier the write
-/// projection and the `q` operand parser read, so the three sides cannot come to
-/// disagree about what a literal is.
-fn written_in(text: &SimpleExpr, form: TimeValueForm) -> SimpleExpr {
-    regex_match(text.clone(), text_literal(form.lexical_pattern())) // clone: the text is read by every reading
+/// Whether the declared datatype `datatype` is `iri`.
+fn declares(datatype: &SimpleExpr, iri: &str) -> SimpleExpr {
+    datatype.clone().eq(text_literal(iri)) // clone: the datatype is read by every reading
 }
 
 #[cfg(test)]
 mod tests {
     use crate::attribute_value_datatype::{OrderedValue, datatype_rank, datatype_token};
-    use andromeda_ngsi_ld_lexicon::time::value::TimeValueForm;
     use andromeda_ngsi_ld_query::ordering::sort_direction::SortDirection;
     use andromeda_postgresql_seaquery::literal::int_literal;
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
@@ -168,6 +161,7 @@ mod tests {
             boolean: column("b"),
             date_time: column("t"),
             text: column("s"),
+            datatype: column("d"),
             object: column("o"),
         };
         Query::select().expr(datatype_token(&value)).to_owned().to_string(PostgresQueryBuilder)
@@ -201,24 +195,25 @@ mod tests {
         assert!(number_at < null_at, "null stays last: {sql}");
     }
 
-    /// A `Date` and a `Time` are held as their text, so the literal is what
-    /// says which it is, read by the lexical form's own pattern before the
-    /// plain-string reading.
+    /// Annex C.6: a value is a `DateTime`, a `Date` or a `Time` only when it is
+    /// declared as one, which is read before the plain-string reading and with
+    /// no regular expression.
     #[test]
-    fn a_string_is_classified_by_its_clause_4_6_3_form_before_it_is_a_string() {
+    fn a_declared_time_value_ranks_by_its_datatype_before_a_string() {
         let sql = rendered_token();
         let mut last = 0;
-        for pattern in [
-            TimeValueForm::DateTime.lexical_pattern(),
-            TimeValueForm::Date.lexical_pattern(),
-            TimeValueForm::Time.lexical_pattern(),
+        for iri in [
+            "https://uri.etsi.org/ngsi-ld/DateTime",
+            "https://uri.etsi.org/ngsi-ld/Date",
+            "https://uri.etsi.org/ngsi-ld/Time",
         ] {
-            let at = sql.find(pattern).unwrap_or_else(|| panic!("{pattern} is not read: {sql}"));
+            let at = sql.find(&format!("\"d\" = ('{iri}')")).unwrap_or_else(|| panic!("{iri} is not read: {sql}"));
             assert!(at > last, "{sql}");
             last = at;
         }
         let fallback = sql.find("\"s\" IS NOT NULL) THEN 'string'").expect("the plain-string reading is present");
         assert!(last < fallback, "{sql}");
+        assert!(!sql.contains('~'), "{sql}");
     }
 
     /// Clause 4.9 defines a `ListProperty`'s target value as "the valueList

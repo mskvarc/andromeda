@@ -1,8 +1,7 @@
 //! The Table 6.5.3.4-1 parameters a clause 5.6.17 merge is performed under.
 
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::date_time::NgsiLdDateTime};
 use andromeda_ngsi_ld_representation::merge_representation::MergeRepresentation;
-use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 
 /// How one Merge Entity request asked for its fragment to be applied.
@@ -21,7 +20,7 @@ pub struct MergeOptions<'a> {
     pub lang: Option<&'a LangTagBuf>,
     /// The `observedAt` a merged instance takes when the fragment names none
     /// and the instance it merges into previously carried one.
-    pub observed_at: Option<DateTime<Utc>>,
+    pub observed_at: Option<NgsiLdDateTime>,
     /// The expanded names of the attributes proxied registrations took out of
     /// the fragment (clause 4.3.6.3), which a rewritten fragment must not
     /// bring back into the local merge.

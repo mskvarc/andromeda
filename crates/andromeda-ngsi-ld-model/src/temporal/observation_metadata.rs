@@ -23,7 +23,7 @@ use andromeda_ngsi_ld_entity::{
     proof_seals::ProofSeals,
     refusal::EntityRefusal,
 };
-use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, time::written_date_time::DateTimeText};
+use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, time::date_time::NgsiLdDateTime};
 use cefact_units::UnitCode;
 
 /// The metadata of one observed instance: never empty, and never holding the
@@ -38,7 +38,7 @@ pub struct ObservationMetadata(Box<MetadataMembers>);
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MetadataMembers {
     /// `expiresAt` (clause 4.22).
-    pub expires_at: Option<DateTimeText>,
+    pub expires_at: Option<NgsiLdDateTime>,
     /// `unitCode` (clause 4.5.2).
     pub unit_code: Option<UnitCode>,
     /// `valueType` (clause 4.5.2).

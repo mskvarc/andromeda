@@ -5,7 +5,7 @@
 //! take part in the attribute minimum.
 
 use crate::{entity_state::EntityState, instance::Instance};
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::written_date_time::DateTimeText};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::date_time::NgsiLdDateTime};
 use chrono::{DateTime, Utc};
 use std::borrow::Cow;
 
@@ -14,7 +14,7 @@ impl Instance {
     /// `expiresAt` on).
     #[must_use]
     pub fn expired_at(&self, at: DateTime<Utc>) -> bool {
-        self.expires_at().is_some_and(|expires_at| expires_at.instant() <= at)
+        self.expires_at().is_some_and(|expires_at| expires_at.get() <= at)
     }
 }
 
@@ -22,7 +22,7 @@ impl EntityState {
     /// The entity's own expiry instant.
     #[must_use]
     pub fn entity_expiry(&self) -> Option<DateTime<Utc>> {
-        self.expires_at().map(DateTimeText::instant)
+        self.expires_at().map(NgsiLdDateTime::get)
     }
 
     /// The earliest expiry of any attribute instance: what the expiry sweep
@@ -32,7 +32,7 @@ impl EntityState {
         self.attributes()
             .iter()
             .flat_map(|(_, instances)| instances.iter())
-            .filter_map(|(_, instance)| instance.expires_at().map(DateTimeText::instant))
+            .filter_map(|(_, instance)| instance.expires_at().map(NgsiLdDateTime::get))
             .min()
     }
 

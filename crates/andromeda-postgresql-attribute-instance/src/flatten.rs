@@ -8,7 +8,10 @@
 //!
 //! A value lands in the typed column or field its shape names: one scalar in
 //! its own column, everything else in `value_object` as the structured value
-//! codec writes it for history. The instance must be one a write commits (its
+//! codec writes it for history. A value declared as a clause 4.6.3 time value
+//! is held by its kind: a `DateTime` as its instant, a `Date` as its text, a
+//! `Time` in its fixed-width storage encoding. A string declared as none is a
+//! String, held as written. The instance must be one a write commits (its
 //! values in their committed spelling), since storage keeps nothing else.
 
 use crate::{
@@ -31,7 +34,11 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     identifier::Identifier,
     reference::NgsiLdReference,
-    time::{rendering::instant_text, system_instant::SystemInstant, value::TimeValue, written_date_time::DateTimeText},
+    time::{
+        date_time::NgsiLdDateTime,
+        system_instant::SystemInstant,
+        value::{TimeValue, TimeValueDeclaration},
+    },
 };
 use andromeda_ngsi_ld_model::temporal::structured_value::StructuredValue;
 use andromeda_postgresql_codes::attribute_kind_code::stored_attribute_kind;
@@ -53,11 +60,11 @@ pub enum FlattenError {
     /// (clause 4.8) before it commits.
     #[error("an instance of '{0}' carries no system times")]
     Unstamped(AttributeName),
-    /// A value is not in its committed spelling: storage keeps the instant of
-    /// a `DateTime` and the target of a list item, and would read back another
-    /// state than the one flattened.
-    #[error("an instance of '{0}' holds a value in a spelling storage does not keep")]
-    UncommittedSpelling(AttributeName),
+    /// A value is not one a write commits: a declared time value not in its
+    /// served spelling, or not of its declared form, or a list item target not
+    /// wrapped. Storage would read back another state than the one flattened.
+    #[error("an instance of '{0}' holds a value a write does not commit")]
+    UncommittedValue(AttributeName),
     /// A `JsonProperty` holds several JSON literals, which the structured value
     /// codec stores one of.
     #[error("an instance of '{0}' holds several JSON literals")]
@@ -103,11 +110,6 @@ pub fn push_elements(attributes: &Attributes, parent: i32, keys: &NameKeys, elem
 /// Returns [`FlattenError`] when a name has no key in `keys`, or when the
 /// instance is not one a write commits.
 pub fn members(name: &AttributeName, dataset_id: Option<&Identifier>, instance: &Instance, keys: &NameKeys) -> Result<InstanceMembers, FlattenError> {
-    let committed = |text: &DateTimeText| DateTimeText::from_instant(text.instant()) == *text;
-    if !instance.observed_at().is_none_or(committed) || !instance.expires_at().is_none_or(committed) {
-        // clone: the refusal owns the name it reports.
-        return Err(FlattenError::UncommittedSpelling(name.clone()));
-    }
     let family = instance.value();
     // clone: the refusal owns the name it reports.
     let type_key = |reference: &NgsiLdReference| keys.type_name(reference).ok_or_else(|| FlattenError::UnresolvedType(reference.clone()));
@@ -120,8 +122,8 @@ pub fn members(name: &AttributeName, dataset_id: Option<&Identifier>, instance: 
         value_type_key: family.value_type().map(type_key).transpose()?,
         object_type_keys: family.object_types().iter().map(type_key).collect::<Result<_, _>>()?,
         unit_code: family.unit_code(),
-        observed_at: instance.observed_at().map(DateTimeText::instant),
-        expires_at: instance.expires_at().map(DateTimeText::instant),
+        observed_at: instance.observed_at().map(NgsiLdDateTime::get),
+        expires_at: instance.expires_at().map(NgsiLdDateTime::get),
         proof_seals: if instance.proof_seals().is_empty() {
             None
         } else {
@@ -133,8 +135,8 @@ pub fn members(name: &AttributeName, dataset_id: Option<&Identifier>, instance: 
 /// The value of one instance of `name`, in the column its shape names.
 fn stored_value(name: &AttributeName, family: &FamilyValue, keys: &NameKeys) -> Result<StoredValue, FlattenError> {
     match family {
-        FamilyValue::Property { values, .. } => match scalar_literal(values) {
-            Some(literal) => literal_value(name, literal, keys),
+        FamilyValue::Property { values, value_type, .. } => match scalar_literal(values) {
+            Some(literal) => literal_value(name, literal, value_type.as_ref(), keys),
             None => object(&StructuredValue::Values(values.iter().map(ExpandedValue::to_fragment).collect())),
         },
         FamilyValue::GeoProperty { geometry, .. } => Ok(match geometry {
@@ -170,7 +172,7 @@ fn stored_value(name: &AttributeName, family: &FamilyValue, keys: &NameKeys) -> 
                 // clone: the codec writes the targets it owns
                 ListObject::Wrapped(uri) => Ok(uri.clone()),
                 // clone: the refusal owns the name it reports.
-                ListObject::Bare(_) | ListObject::Literal(_) => Err(FlattenError::UncommittedSpelling(name.clone())),
+                ListObject::Bare(_) | ListObject::Literal(_) => Err(FlattenError::UncommittedValue(name.clone())),
             })
             .collect::<Result<Vec<_>, _>>()
             .and_then(|targets| object(&StructuredValue::ObjectList(targets))),
@@ -187,35 +189,42 @@ pub const fn scalar_literal(values: &[ExpandedValue]) -> Option<&Literal> {
     }
 }
 
-/// The value of a Property holding one literal with no direction.
-fn literal_value(name: &AttributeName, literal: &Literal, keys: &NameKeys) -> Result<StoredValue, FlattenError> {
+/// The value of a Property holding one literal with no direction, beside the
+/// `valueType` `value_type`.
+fn literal_value(name: &AttributeName, literal: &Literal, value_type: Option<&NgsiLdReference>, keys: &NameKeys) -> Result<StoredValue, FlattenError> {
     let datatype = literal
         .datatype()
         // clone: the refusal owns the name it reports.
         .map(|datatype| keys.type_name(datatype).ok_or_else(|| FlattenError::UnresolvedType(datatype.clone())))
         .transpose()?;
-    Ok(match literal.value() {
-        LiteralValue::Number(number) => StoredValue::Number {
-            number: number.clone(), // clone: the row owns its exact number
-            datatype,
-        },
-        LiteralValue::Boolean(flag) => StoredValue::Boolean { flag: *flag, datatype },
-        LiteralValue::String(text) => match TimeValue::admitted(literal.datatype().map(NgsiLdReference::as_str), text) {
-            Some(Ok(TimeValue::DateTime(instant))) => {
-                if instant_text(instant.get()) != text.as_str() {
-                    // clone: the refusal owns the name it reports.
-                    return Err(FlattenError::UncommittedSpelling(name.clone()));
-                }
-                StoredValue::DateTime {
-                    instant: instant.get(),
-                    datatype,
-                }
-            }
-            Some(Ok(TimeValue::Date(_) | TimeValue::Time(_)) | Err(_)) | None => StoredValue::String {
+    let text = match literal.value() {
+        LiteralValue::Number(number) => {
+            return Ok(StoredValue::Number {
+                number: number.clone(), // clone: the row owns its exact number
+                datatype,
+            });
+        }
+        LiteralValue::Boolean(flag) => return Ok(StoredValue::Boolean { flag: *flag, datatype }),
+        LiteralValue::String(text) => text,
+    };
+    let declared = match TimeValue::declared(TimeValueDeclaration::new(literal.datatype(), value_type), literal.value().primitive()) {
+        None => {
+            return Ok(StoredValue::String {
                 text: text.to_string(),
                 annotation: string_annotation(literal, datatype),
-            },
+            });
+        }
+        Some(Ok(value)) if value.to_string() == text.as_str() => value,
+        // clone: the refusal owns the name it reports.
+        Some(Ok(_) | Err(_)) => return Err(FlattenError::UncommittedValue(name.clone())),
+    };
+    Ok(match declared {
+        TimeValue::DateTime(instant) => StoredValue::DateTime {
+            instant: instant.get(),
+            datatype,
         },
+        TimeValue::Date(date) => StoredValue::Date { date, datatype },
+        TimeValue::Time(time) => StoredValue::Time { time, datatype },
     })
 }
 

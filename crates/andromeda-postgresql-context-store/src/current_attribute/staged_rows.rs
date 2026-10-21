@@ -78,6 +78,8 @@ impl ValueColumns {
             StoredValue::String { text, .. } => columns.string = Some(text),
             StoredValue::Boolean { flag, .. } => columns.boolean = Some(flag),
             StoredValue::DateTime { instant, .. } => columns.date_time = Some(instant),
+            StoredValue::Date { date, .. } => columns.string = Some(date.to_string()),
+            StoredValue::Time { time, .. } => columns.string = Some(time.to_string()),
             StoredValue::Geometry { form, members } => {
                 columns.geometry = Some(encode(&form)?.to_vec());
                 columns.geometry_members = members.map(StoredJson::into_json);

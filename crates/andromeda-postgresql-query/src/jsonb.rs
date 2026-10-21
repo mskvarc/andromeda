@@ -1,7 +1,7 @@
 //! Lifting a `q` comparison against a value read out of JSONB into a
 //! comparable domain.
 
-use crate::temporal_operand::{stored_date_time, stored_time};
+use crate::temporal_operand::{declared_date, declared_date_time, declared_time};
 use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime};
 use andromeda_ngsi_ld_query::filter::scalar::Scalar;
 use andromeda_postgresql_seaquery::{
@@ -26,31 +26,25 @@ pub struct LiftedComparison {
 /// Lift a stored JSONB text expression and one `q` operand into a common domain.
 ///
 /// `stored_text` is an expression already yielding `text` (the `… #>> '{}'`
-/// form every document reader builds), and the operand carries its own bound
-/// value, so sea-query numbers both sides' placeholders when the enclosing
-/// statement renders.
+/// form every document reader builds), `datatype` the expanded datatype IRI the
+/// value is declared as (`NULL` when none), and the operand carries its own
+/// bound value, so sea-query numbers both sides' placeholders when the
+/// enclosing statement renders.
 ///
 /// The domains, by operand kind:
 ///
 /// * numbers and booleans cast on both sides,
 /// * strings compare as text, which is what they are,
-/// * a `DateTime` compares as `timestamptz`: the stored text is lifted by the
-///   clause 4.6.3 rules every path reads text by, and the operand binds as the
-///   instant itself, at the microsecond it was written to,
-/// * a `Time` compares as canonical text, with the stored value normalised to the
-///   same fixed-width UTC form the operand is rendered in,
-/// * a `Date` compares as text unlifted: its canonical `YYYY-MM-DD` form is
-///   already fixed-width and zero-padded, so text order over it is chronological
-///   order and a `::date` cast would buy nothing but a cast failure to guard.
-///
-/// Both temporal lifts are regex-guarded (see [`crate::temporal_operand`]): a
-/// document member holding text of another shape yields `NULL` and simply does not
-/// match, instead of aborting the statement.
+/// * a `DateTime`, `Date` or `Time` compares only with a value declared as one
+///   of its form (clause 4.9: no equality of data types, no match), a
+///   `DateTime` as `timestamptz` bound as the instant itself, a `Time` in the
+///   fixed-width encoding the operand is rendered in, a `Date` as its one
+///   text, which already sorts chronologically.
 ///
 /// Numbers bind directly as `NUMERIC` and `DateTime` values as `timestamptz`;
 /// booleans bind as text and are cast in the statement.
 #[must_use]
-pub fn lift_comparison(scalar: &Scalar, stored_text: SimpleExpr) -> LiftedComparison {
+pub fn lift_comparison(scalar: &Scalar, stored_text: SimpleExpr, datatype: SimpleExpr) -> LiftedComparison {
     match scalar {
         Scalar::Number(number) => LiftedComparison {
             stored: cast_compound(stored_text, PostgresType::Numeric),
@@ -67,15 +61,15 @@ pub fn lift_comparison(scalar: &Scalar, stored_text: SimpleExpr) -> LiftedCompar
             operand: SeaExpr::val(scalar.literal_text()),
         },
         Scalar::DateTime(instant) => LiftedComparison {
-            stored: stored_date_time(stored_text),
+            stored: declared_date_time(stored_text, datatype),
             operand: SeaExpr::val(*instant),
         },
         Scalar::Date(date) => LiftedComparison {
-            stored: stored_text,
+            stored: declared_date(stored_text, datatype),
             operand: SeaExpr::val(NgsiLdDate::from(*date).to_string()),
         },
         Scalar::Time(time) => LiftedComparison {
-            stored: stored_time(stored_text),
+            stored: declared_time(stored_text, datatype),
             operand: SeaExpr::val(NgsiLdTime::normalise(*time).to_string()),
         },
     }
@@ -83,14 +77,19 @@ pub fn lift_comparison(scalar: &Scalar, stored_text: SimpleExpr) -> LiftedCompar
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use andromeda_ngsi_ld_query::filter::scalar::{parse_date, parse_date_time, parse_time};
-    use sea_query::{Alias, PostgresQueryBuilder, Query, Value, Values};
+    use crate::jsonb::lift_comparison;
+    use andromeda_ngsi_ld_query::filter::scalar::{Scalar, parse_date, parse_date_time, parse_time};
+    use sea_query::{Alias, Expr as SeaExpr, PostgresQueryBuilder, Query, SimpleExpr, Value, Values};
 
     /// A plain column stands in for the `#>> '{}'` extraction real
     /// callers lift.
     fn stored() -> SimpleExpr {
         SeaExpr::col(Alias::new("stored"))
+    }
+
+    /// The column standing in for the declared datatype.
+    fn datatype() -> SimpleExpr {
+        SeaExpr::col(Alias::new("datatype"))
     }
 
     /// Render one lifted operand to its SQL text alone.
@@ -134,7 +133,7 @@ mod tests {
 
     #[test]
     fn a_number_is_lifted_to_numeric_on_both_sides_so_it_is_not_ordered_as_text() {
-        let lifted = lift_comparison(&Scalar::Number(9.into()), stored());
+        let lifted = lift_comparison(&Scalar::Number(9.into()), stored(), datatype());
         assert!(render(lifted.stored).contains("::numeric"), "the stored side casts to numeric");
         assert!(!render(lifted.operand.clone()).contains("::"), "the operand is already NUMERIC");
         assert_eq!(bound_value(lifted.operand), "9", "the operand binds NUMERIC, not a float");
@@ -142,7 +141,7 @@ mod tests {
 
     #[test]
     fn a_boolean_is_lifted_to_boolean_on_both_sides() {
-        let lifted = lift_comparison(&Scalar::Bool(true), stored());
+        let lifted = lift_comparison(&Scalar::Bool(true), stored(), datatype());
         assert!(render(lifted.stored).contains("::boolean"));
         assert!(render(lifted.operand.clone()).contains("::boolean"));
         assert_eq!(bound_value(lifted.operand), "true");
@@ -150,18 +149,17 @@ mod tests {
 
     #[test]
     fn a_string_operand_is_compared_as_the_text_it_already_is() {
-        let lifted = lift_comparison(&Scalar::Str("red".to_string()), stored());
+        let lifted = lift_comparison(&Scalar::Str("red".to_string()), stored(), datatype());
         assert!(!render(lifted.stored).contains("::"), "the stored side is not cast");
         assert!(!render(lifted.operand.clone()).contains("::"), "the operand is not cast");
         assert_eq!(bound_value(lifted.operand), "red");
     }
 
-    /// Clause 4.6.3 admits more than one fractional width, so `.5Z` and
-    /// `.500Z` are one instant that text order separates.
+    /// A declared `DateTime` is an instant, which text order does not order.
     #[test]
     fn a_date_time_is_compared_as_a_timestamp_not_as_text() {
         let instant = parse_date_time("2024-01-01T00:00:00Z").expect("valid date-time");
-        let lifted = lift_comparison(&Scalar::DateTime(instant), stored());
+        let lifted = lift_comparison(&Scalar::DateTime(instant), stored(), datatype());
         let stored_sql = render(lifted.stored);
         assert!(stored_sql.contains("::timestamptz"), "{stored_sql}");
         assert!(stored_sql.contains("CASE WHEN "), "the cast must be guarded: {stored_sql}");
@@ -172,27 +170,26 @@ mod tests {
     #[test]
     fn a_date_time_operand_binds_as_the_instant_it_names() {
         let instant = parse_date_time("2024-01-01T00:00:00.123456Z").expect("valid date-time");
-        let lifted = lift_comparison(&Scalar::DateTime(instant), stored());
+        let lifted = lift_comparison(&Scalar::DateTime(instant), stored(), datatype());
         let (_, Values(values)) = Query::select().expr(lifted.operand).to_owned().build(PostgresQueryBuilder);
         assert_eq!(values, vec![Value::ChronoDateTimeUtc(Some(instant))]);
     }
 
     #[test]
-    fn a_time_is_normalised_on_both_sides_into_the_canonical_form() {
-        // Clause 4.6.3 forbids a zone offset on a Time, so the spellings that
-        // still need normalising are the fractional ones: a comma separator and
-        // a short fraction both have to reach the fixed-width stored form.
+    fn a_time_is_brought_to_the_fixed_width_encoding_on_both_sides() {
         let time = parse_time("12:00:00,5Z").expect("the comma compatibility form");
-        let lifted = lift_comparison(&Scalar::Time(time), stored());
+        let lifted = lift_comparison(&Scalar::Time(time), stored(), datatype());
         assert!(render(lifted.stored).contains("AT TIME ZONE"), "the stored side normalises to UTC");
         assert_eq!(bound_value(lifted.operand), "12:00:00.500000Z");
     }
 
     #[test]
-    fn a_date_is_compared_as_text_because_its_canonical_form_already_sorts_chronologically() {
+    fn a_date_is_compared_as_text_because_its_one_spelling_already_sorts_chronologically() {
         let date = parse_date("2024-01-01").expect("valid full-date");
-        let lifted = lift_comparison(&Scalar::Date(date), stored());
-        assert!(!render(lifted.stored).contains("::"), "the stored side is not cast");
+        let lifted = lift_comparison(&Scalar::Date(date), stored(), datatype());
+        let stored_sql = render(lifted.stored);
+        assert!(!stored_sql.contains("::"), "the stored side is not cast: {stored_sql}");
+        assert!(stored_sql.contains("'https://uri.etsi.org/ngsi-ld/Date'"), "only a declared Date: {stored_sql}");
         assert_eq!(bound_value(lifted.operand), "2024-01-01");
     }
 }

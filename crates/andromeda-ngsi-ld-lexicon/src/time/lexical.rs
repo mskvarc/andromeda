@@ -15,7 +15,6 @@
 //! numbers; whether those numbers name a real calendar day or clock time is
 //! decided by the value types that construct from them.
 
-use std::borrow::Cow;
 use thiserror::Error;
 
 /// The most fractional-second digits clause 4.6.3 admits, which is also the
@@ -100,20 +99,6 @@ pub(crate) fn time(text: &str) -> Result<TimeComponents, LexicalError> {
     let time = cursor.time()?;
     cursor.zone()?;
     Ok(time)
-}
-
-/// `text`, a spelling one of the readers above accepted, with a comma
-/// separator written as the decimal point.
-///
-/// The comma is accepted "in requests" only (clause 4.6.3), so the spelling the
-/// broker keeps and writes back always carries the point. In an accepted
-/// spelling the separator is the only place a comma can stand.
-pub(crate) fn with_decimal_point(text: &str) -> Cow<'_, str> {
-    if text.contains(',') {
-        Cow::Owned(text.replacen(',', ".", 1))
-    } else {
-        Cow::Borrowed(text)
-    }
 }
 
 /// A forward-only reader over the bytes of a candidate time value.
@@ -237,7 +222,7 @@ impl<'a> Cursor<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::time::lexical::{DateComponents, LexicalError, TimeComponents, date, date_time, time, with_decimal_point};
+    use crate::time::lexical::{DateComponents, LexicalError, TimeComponents, date, date_time, time};
 
     #[test]
     fn a_date_time_is_read_into_its_components() {
@@ -267,12 +252,6 @@ mod tests {
     #[test]
     fn a_comma_separator_reads_as_the_decimal_point() {
         pretty_assertions::assert_eq!(date_time("2026-03-04T05:06:07,25Z"), date_time("2026-03-04T05:06:07.25Z"));
-    }
-
-    #[test]
-    fn an_accepted_comma_spelling_is_kept_with_the_decimal_point() {
-        pretty_assertions::assert_eq!(with_decimal_point("2026-03-04T05:06:07,25Z"), "2026-03-04T05:06:07.25Z");
-        pretty_assertions::assert_eq!(with_decimal_point("2026-03-04T05:06:07.25Z"), "2026-03-04T05:06:07.25Z");
     }
 
     #[test]

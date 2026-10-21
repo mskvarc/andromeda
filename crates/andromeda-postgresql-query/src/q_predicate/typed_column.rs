@@ -14,16 +14,17 @@
 //!   (or, past the B-tree bound, in `value_long_uri`, which
 //!   [`ValueColumn::of_uri`] decides from the byte length alone), which is what
 //!   [`relationship_object_is_comparable`] decides,
-//! * plain dates and times in `value_string`, because only full
-//!   `DateTime`-typed values are stored in `value_date_time`. A date has one
-//!   spelling, the fixed-width form clause 4.6.3 defines, so byte-wise order over
-//!   the column is chronological order and the date compares as stored. A time
-//!   is stored as written, and clause 4.6.3 admits several fractional widths of
-//!   one time of day. An equality therefore compares the stored text against
-//!   every spelling of the operand, which the column's index serves, and an
-//!   ordering normalises the stored text to the canonical fixed-width form,
-//!   which reads no index. Both are always short, so they never read
-//!   `value_long_text`.
+//! * values declared as a `Date` or a `Time` in `value_string` too, told apart
+//!   from a String by `value_kind`. A date has one spelling, and a time is
+//!   held in its fixed-width storage encoding, so byte-wise order over either
+//!   is chronological order: every operator compares the bound operand text
+//!   against the column, which its index serves. Both are always short, so
+//!   they never read `value_long_text`.
+//!
+//! A String, a `Date` and a `Time` share `value_string`, so each comparison
+//! against it also names the value kind it reads: clause 4.9 matches a target
+//! only with an operand of its own data type, and a quoted operand is a
+//! String.
 //!
 //! Every value whose family is not a single scalar lives in `value_object`
 //! instead; [`crate::q_predicate::structured_target`] compares those.
@@ -31,12 +32,11 @@
 use crate::{
     operator::compare,
     q_predicate::{instance_row::InstanceRow, string_ordering::ordered_string, value_column::ValueColumn},
-    temporal_operand::stored_time,
 };
-use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, spellings::time_of_day_spellings, time_of_day::NgsiLdTime};
+use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime};
 use andromeda_ngsi_ld_query::filter::{predicate::CmpOp, scalar::Scalar};
+use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_seaquery::literal::false_literal;
-use chrono::NaiveTime;
 use sea_query::{Expr as SeaExpr, ExprTrait, SimpleExpr};
 
 /// Compare one scalar against the typed column that holds values of its kind.
@@ -45,9 +45,10 @@ use sea_query::{Expr as SeaExpr, ExprTrait, SimpleExpr};
 /// each comparison is the shape the partial index over that column is predicated
 /// on: `value_number > $1` implies `value_number IS NOT NULL`, which is what
 /// makes `(attribute_name_key, value_number) WHERE value_number IS NOT NULL`
-/// applicable. Nothing tests `value_kind`, deliberately: the row's check
-/// constraint already ties the kind to the populated column, so the column being
-/// non-NULL *is* the kind test.
+/// applicable. The row's check constraint ties the kind to the populated
+/// column, so a column being non-NULL is the kind test for every column but
+/// `value_string`, which three kinds share and which is therefore read beside
+/// its `value_kind`.
 ///
 /// A row whose value lives in another column therefore yields NULL, not FALSE,
 /// which is the reading clause 4.9 wants under every operator compiled here.
@@ -82,25 +83,11 @@ pub fn typed_column_condition(scalar: &Scalar, op: CmpOp, row: InstanceRow) -> S
             }
         }
         Scalar::DateTime(value) => compare(row.value(ValueColumn::DateTime), op, SeaExpr::val(*value)),
-        Scalar::Date(value) => compare(row.value(ValueColumn::String), op, SeaExpr::val(NgsiLdDate::from(*value).to_string())),
-        Scalar::Time(value) => time_condition(*value, op, row),
-    }
-}
-
-/// Compare a `Time` operand against the string column (clause 4.9).
-///
-/// `12:00:00Z` and `12:00:00.000Z` are one time of day. A stored text names
-/// the operand's time of day exactly when it is one of the spellings clause
-/// 4.6.3 admits for it, so equality is membership in that set, an index read.
-/// An ordering compares both sides in the canonical fixed-width form, the one
-/// spelling whose byte order is chronological.
-fn time_condition(time: NaiveTime, op: CmpOp, row: InstanceRow) -> SimpleExpr {
-    let stored = row.value(ValueColumn::String);
-    match op {
-        CmpOp::Equal => stored.is_in(time_of_day_spellings(time)),
-        CmpOp::Unequal => stored.is_not_in(time_of_day_spellings(time)),
-        CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq => {
-            compare(stored_time(stored), op, SeaExpr::val(NgsiLdTime::normalise(time).to_string()))
+        Scalar::Date(value) => {
+            compare(row.value(ValueColumn::String), op, SeaExpr::val(NgsiLdDate::from(*value).to_string())).and(row.value_kind_is(ValueKind::Date))
+        }
+        Scalar::Time(value) => {
+            compare(row.value(ValueColumn::String), op, SeaExpr::val(NgsiLdTime::normalise(*value).to_string())).and(row.value_kind_is(ValueKind::Time))
         }
     }
 }
@@ -116,13 +103,14 @@ fn time_condition(time: NaiveTime, op: CmpOp, row: InstanceRow) -> SimpleExpr {
 /// yields NULL for that arm, which the disjunction absorbs. An ordering
 /// compares under the collation [`ordered_string`] picks.
 fn string_condition(scalar: &Scalar, value: &str, op: CmpOp, row: InstanceRow) -> SimpleExpr {
-    match op {
+    let compared = match op {
         CmpOp::Equal | CmpOp::Unequal => compare(row.value(ValueColumn::of_string(value)), op, SeaExpr::val(value)),
         CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq => {
             let ordered = |column: &ValueColumn| compare(ordered_string(row.value(*column), scalar, op), op, SeaExpr::val(value));
             row.string_columns().iter().map(ordered).reduce(ExprTrait::or).unwrap_or_else(false_literal)
         }
-    }
+    };
+    compared.and(row.value_kind_is(ValueKind::String))
 }
 
 /// Whether a Relationship's object is a comparison target under one operator.
@@ -322,43 +310,37 @@ mod tests {
         }
     }
 
-    /// Clause 4.6.3 admits a `Time` only with the literal `Z` designator, and
-    /// a stored time compares in its canonical rendering, so an operand that
-    /// cannot be normalised is one nothing stored could equal.
+    /// A `Time` is held in its fixed-width storage encoding under value kind
+    /// 9, so every operator compares one bound text against `value_string`,
+    /// which its index serves, at every depth.
     #[test]
-    fn a_time_operand_that_normalises_compares_against_its_canonical_text() {
+    fn a_time_operand_compares_one_fixed_width_text_under_its_value_kind() {
         let time = parse_time("12:00:00,5Z").expect("the comma compatibility form");
-        let sql = render(current(&Scalar::Time(time), CmpOp::Equal));
-        assert!(sql.contains("value_string"), "{sql}");
-    }
-
-    /// A time is stored as written, so `12:00:00Z` and `12:00:00.000Z` are
-    /// two texts of one time of day. An ordering compares both sides in the
-    /// canonical fixed-width form, at every depth.
-    #[test]
-    fn a_time_ordering_normalises_the_stored_text() {
-        let time = parse_time("12:00:00Z").expect("a time");
         for row in [InstanceRow::Current, InstanceRow::Element(ElementLevel::at(0))] {
-            for op in [CmpOp::Greater, CmpOp::LessEq] {
+            for op in [CmpOp::Equal, CmpOp::Greater, CmpOp::LessEq] {
                 let sql = render(typed_column_condition(&Scalar::Time(time), op, row));
-                assert!(sql.contains("'1970-01-01T'"), "the stored time is anchored and normalised: {op:?} {sql}");
-                assert!(sql.contains("'12:00:00.000000Z'"), "the operand is canonical: {op:?} {sql}");
+                assert!(sql.contains("'12:00:00.500000Z'"), "{op:?} {sql}");
+                assert!(sql.contains("\"value_kind\" = (9), FALSE)"), "{op:?} {sql}");
+                assert!(!sql.contains(" IN ("), "one text, not a set of spellings: {sql}");
+                assert!(!sql.contains('~'), "no regular expression: {sql}");
             }
         }
     }
 
-    /// An equality reads the stored text as written against every spelling of
-    /// the operand, so the comparison stays one the column's index serves.
     #[test]
-    fn a_time_equality_compares_the_stored_text_with_every_spelling() {
-        let time = parse_time("12:00:00.000Z").expect("a time");
-        for row in [InstanceRow::Current, InstanceRow::Element(ElementLevel::at(0))] {
-            let sql = render(typed_column_condition(&Scalar::Time(time), CmpOp::Equal, row));
-            assert!(!sql.contains("'1970-01-01T'"), "the stored text is not lifted: {sql}");
-            assert!(sql.contains(" IN ('12:00:00Z', '12:00:00.0Z', '12:00:00,0Z'"), "{sql}");
-            assert!(sql.contains("'12:00:00.000000Z', '12:00:00,000000Z')"), "{sql}");
-            let unequal = render(typed_column_condition(&Scalar::Time(time), CmpOp::Unequal, row));
-            assert!(unequal.contains(" NOT IN ('12:00:00Z'"), "{unequal}");
+    fn a_date_operand_reads_value_kind_8() {
+        let date = parse_date("2024-01-15").expect("a date");
+        let sql = render(current(&Scalar::Date(date), CmpOp::Equal));
+        assert!(sql.contains("'2024-01-15'") && sql.contains("\"value_kind\" = (8), FALSE)"), "{sql}");
+    }
+
+    /// Clause 4.9: a quoted operand is a String, which matches no `Date` or
+    /// `Time` the string column also holds.
+    #[test]
+    fn a_string_operand_reads_value_kind_2() {
+        for op in [CmpOp::Equal, CmpOp::Greater] {
+            let sql = render(current(&Scalar::Str("2024-01-15".to_owned()), op));
+            assert!(sql.contains("\"value_kind\" = (2), FALSE)"), "{op:?} {sql}");
         }
     }
 }

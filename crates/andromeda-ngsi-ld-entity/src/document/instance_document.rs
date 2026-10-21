@@ -14,7 +14,7 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
     identifier::Identifier,
     reference::NgsiLdReference,
-    time::{system_instant::SystemInstant, written_date_time::DateTimeText},
+    time::{date_time::NgsiLdDateTime, system_instant::SystemInstant},
     time_prop::TimeProp,
 };
 use cefact_units::UnitCode;
@@ -36,10 +36,10 @@ pub struct InstanceDocument {
     value: ValueSlot,
     /// `observedAt`.
     #[builder(default = None)]
-    observed_at: Option<Slot<DateTimeText>>,
+    observed_at: Option<Slot<NgsiLdDateTime>>,
     /// `expiresAt` (clause 4.22).
     #[builder(default = None)]
-    expires_at: Option<Slot<DateTimeText>>,
+    expires_at: Option<Slot<NgsiLdDateTime>>,
     /// `unitCode`.
     #[builder(default = None)]
     unit_code: Option<Slot<UnitCode>>,
@@ -57,7 +57,7 @@ pub struct InstanceDocument {
     modified_at: Option<SystemInstant>,
     /// `deletedAt` of a Temporal Evolution deletion (clause 4.5.7).
     #[builder(default = None)]
-    deleted_at: Option<DateTimeText>,
+    deleted_at: Option<NgsiLdDateTime>,
     /// `instanceId` (clause 4.5.7).
     #[builder(default = None)]
     instance_id: Option<Identifier>,
@@ -81,9 +81,9 @@ pub struct InstanceDocumentParts {
     /// The value slot.
     pub value: ValueSlot,
     /// `observedAt`.
-    pub observed_at: Option<Slot<DateTimeText>>,
+    pub observed_at: Option<Slot<NgsiLdDateTime>>,
     /// `expiresAt`.
-    pub expires_at: Option<Slot<DateTimeText>>,
+    pub expires_at: Option<Slot<NgsiLdDateTime>>,
     /// `unitCode`.
     pub unit_code: Option<Slot<UnitCode>>,
     /// `valueType`.
@@ -95,7 +95,7 @@ pub struct InstanceDocumentParts {
     /// `modifiedAt`.
     pub modified_at: Option<SystemInstant>,
     /// `deletedAt`.
-    pub deleted_at: Option<DateTimeText>,
+    pub deleted_at: Option<NgsiLdDateTime>,
     /// `instanceId`.
     pub instance_id: Option<Identifier>,
     /// The data-integrity seals.
@@ -125,13 +125,13 @@ impl InstanceDocument {
 
     /// `observedAt`.
     #[must_use]
-    pub const fn observed_at(&self) -> Option<&Slot<DateTimeText>> {
+    pub const fn observed_at(&self) -> Option<&Slot<NgsiLdDateTime>> {
         self.observed_at.as_ref()
     }
 
     /// `expiresAt`.
     #[must_use]
-    pub const fn expires_at(&self) -> Option<&Slot<DateTimeText>> {
+    pub const fn expires_at(&self) -> Option<&Slot<NgsiLdDateTime>> {
         self.expires_at.as_ref()
     }
 
@@ -167,8 +167,8 @@ impl InstanceDocument {
 
     /// `deletedAt`.
     #[must_use]
-    pub const fn deleted_at(&self) -> Option<&DateTimeText> {
-        self.deleted_at.as_ref()
+    pub const fn deleted_at(&self) -> Option<NgsiLdDateTime> {
+        self.deleted_at
     }
 
     /// `instanceId`.
@@ -190,10 +190,10 @@ impl InstanceDocument {
     #[must_use]
     pub fn instant_on(&self, timeproperty: TimeProp) -> Option<DateTime<Utc>> {
         match timeproperty {
-            TimeProp::Observed => self.observed_at.as_ref().and_then(Slot::as_set).map(DateTimeText::instant),
+            TimeProp::Observed => self.observed_at.as_ref().and_then(Slot::as_set).copied().map(NgsiLdDateTime::get),
             TimeProp::Created => self.created_at.map(SystemInstant::get),
             TimeProp::Modified => self.modified_at.map(SystemInstant::get),
-            TimeProp::Deleted => self.deleted_at.as_ref().map(DateTimeText::instant),
+            TimeProp::Deleted => self.deleted_at.map(NgsiLdDateTime::get),
         }
     }
 
@@ -209,7 +209,7 @@ impl InstanceDocument {
     }
 
     /// Replace `observedAt`.
-    pub fn set_observed_at(&mut self, observed_at: Option<Slot<DateTimeText>>) {
+    pub const fn set_observed_at(&mut self, observed_at: Option<Slot<NgsiLdDateTime>>) {
         self.observed_at = observed_at;
     }
 

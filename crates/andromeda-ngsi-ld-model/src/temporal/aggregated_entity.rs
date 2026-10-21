@@ -22,7 +22,7 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     identifier::Identifier,
-    time::rendering::instant_text,
+    time::{rendering::instant_text, value::TimeValue},
 };
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
@@ -314,16 +314,18 @@ fn extremum(value: &AggregationMinMax) -> AggregateValue {
         AggregationMinMax::String(text) => AggregateValue::Text(text.clone()),       // clone: the aggregate owns the text the row holds
         AggregationMinMax::Boolean(flag) => AggregateValue::Boolean(*flag),
         AggregationMinMax::DateTime(instant) => AggregateValue::Instant(*instant),
+        AggregationMinMax::Time(time) => AggregateValue::Text(TimeValue::Time(*time).to_string()),
     }
 }
 
 /// An arithmetic mean: Table 4.5.19.1-2 defines `avg` over a `Time` as "the
 /// average time inside the period", so it is in the clause 4.6.3 `Time`
-/// lexical form rather than the number of seconds it was computed from.
+/// spelling the broker serves a time of day in, rather than the number of
+/// seconds it was computed from.
 fn average(value: &AggregationAverage) -> AggregateValue {
     match value {
         AggregationAverage::Number(number) => AggregateValue::Number(number.clone()), // clone: the aggregate owns the exact number the row holds
-        AggregationAverage::Time(time) => AggregateValue::Text(time.to_string()),
+        AggregationAverage::Time(time) => AggregateValue::Text(TimeValue::Time(*time).to_string()),
     }
 }
 

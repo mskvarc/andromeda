@@ -124,6 +124,8 @@ impl ValueColumns {
             }
             AttributeHistoryValue::Object(object) => columns.value_object = Some(Json(object)),
             AttributeHistoryValue::DateTime(instant) => columns.value_date_time = Some(instant),
+            AttributeHistoryValue::Date(date) => columns.value_string = Some(date.to_string()),
+            AttributeHistoryValue::Time(time) => columns.value_string = Some(time.to_string()),
             AttributeHistoryValue::Uri(uri) => columns.value_uri = Some(String::from(uri)),
         }
         Ok(columns)

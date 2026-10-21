@@ -24,7 +24,7 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     identifier::Identifier,
     reference::NgsiLdReference,
-    time::{system_instant::SystemInstant, written_date_time::DateTimeText},
+    time::{date_time::NgsiLdDateTime, system_instant::SystemInstant},
     unit_code_resolution::{UnitCodeRefusal, resolve_unit_code},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::classes;
@@ -96,12 +96,12 @@ pub(crate) fn instance_id(elements: Vec<Decoded>, attribute: &AttributeName) -> 
 }
 
 /// A client-written temporal member, or its deletion.
-pub(crate) fn date_time(elements: Vec<Decoded>, attribute: Option<&AttributeName>, member: MemberShape) -> Result<Slot<DateTimeText>, EntityRefusal> {
+pub(crate) fn date_time(elements: Vec<Decoded>, attribute: Option<&AttributeName>, member: MemberShape) -> Result<Slot<NgsiLdDateTime>, EntityRefusal> {
     match single(elements, attribute, member)? {
         Decoded::Null => Ok(Slot::Remove),
         Decoded::Value(ExpandedValue::Literal(literal)) => {
             let text = string_literal(&literal).ok_or_else(|| malformed(attribute, member))?;
-            text.parse::<DateTimeText>().map(Slot::Set).map_err(|_| match attribute {
+            text.parse::<NgsiLdDateTime>().map(Slot::Set).map_err(|_| match attribute {
                 Some(attribute) => EntityRefusal::DateTime {
                     attribute: attribute.clone(),
                     member,
@@ -118,7 +118,7 @@ pub(crate) fn date_time(elements: Vec<Decoded>, attribute: Option<&AttributeName
 /// A broker-stamped system time (clause 4.8).
 pub(crate) fn system_instant(elements: Vec<Decoded>, attribute: &AttributeName, member: MemberShape) -> Result<SystemInstant, EntityRefusal> {
     match date_time(elements, Some(attribute), member)? {
-        Slot::Set(text) => Ok(SystemInstant::new(text.instant())),
+        Slot::Set(instant) => Ok(SystemInstant::new(instant.get())),
         Slot::Remove => Err(EntityRefusal::ReservedNullValue { attribute: attribute.clone() }),
     }
 }

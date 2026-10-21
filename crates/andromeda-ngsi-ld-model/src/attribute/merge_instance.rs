@@ -185,7 +185,8 @@ impl MergeInstance {
     /// from the value.
     pub fn of_family_value(family: AttributeType, written: &JsonLiteral) -> Result<MergeInstance, RefusedNode> {
         match MergeValue::from_node(family, written.piece()) {
-            Ok(value) => Ok(MergeInstance::of_value(Declaration::Typed, value)),
+            // clone: the instance keeps the JSON it was written as beside the value read from it.
+            Ok(value) => Ok(MergeInstance::of_value(Declaration::Concise(written.clone()), value)),
             Err(NodeReadError::Refused(refused)) => Err(refused),
             Err(NodeReadError::Unreadable(never)) => match never {},
         }

@@ -18,7 +18,7 @@ use crate::{
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_linked_retrieval::admission::{LinkedOperation, LinkedRequest, admit_request};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::instant_serde};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::date_time::NgsiLdDateTime};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     projection::{
@@ -33,7 +33,6 @@ use andromeda_ngsi_ld_representation::{
     response_format::ResponseFormat,
     sys_attrs::SysAttrsInclusion,
 };
-use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use langtag::LangTagBuf;
 use serde::Deserialize;
@@ -93,8 +92,8 @@ pub struct MergeParams {
     pub lang: Option<LangTagBuf>,
     /// The `observedAt` a merged attribute that previously carried one takes
     /// when the fragment names none.
-    #[serde(rename = "observedAt", default, deserialize_with = "instant_serde::optional::deserialize")]
-    pub observed_at: Option<DateTime<Utc>>,
+    #[serde(rename = "observedAt", default)]
+    pub observed_at: Option<NgsiLdDateTime>,
     /// The deprecated alternative to `format` (`options=simplified`).
     pub options: Option<WrittenValue<EntityRepresentationOptions>>,
     /// The clause 4.17 selector the target entity's types must satisfy.
@@ -258,7 +257,6 @@ impl GetEntityParams {
 mod tests {
     use super::*;
     use crate::query::entity::parameters::EntityQueryParameters;
-    use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
     use andromeda_ngsi_ld_query::projection::exclusivity::ProjectionConflict;
 
     #[test]
@@ -468,7 +466,10 @@ mod tests {
     #[test]
     fn a_merge_observed_at_with_a_comma_fraction_is_accepted() {
         let params: MergeParams = serde_urlencoded::from_str("observedAt=2024-01-01T00:00:00,5Z").expect("parses");
-        pretty_assertions::assert_eq!(params.observed_at.map(instant_text).as_deref(), Some("2024-01-01T00:00:00.500Z"));
+        pretty_assertions::assert_eq!(
+            params.observed_at.map(|observed| observed.to_string()).as_deref(),
+            Some("2024-01-01T00:00:00.500Z")
+        );
     }
 
     #[test]
@@ -477,7 +478,7 @@ mod tests {
             serde_urlencoded::from_str("format=simplified&lang=de&observedAt=2024-01-01T00:00:00Z&type=Vehicle&local=true").expect("parses");
         pretty_assertions::assert_eq!(params.representation().expect("simplified is a merge input"), MergeRepresentation::Simplified);
         pretty_assertions::assert_eq!(params.lang.as_ref().map(ToString::to_string).as_deref(), Some("de"));
-        pretty_assertions::assert_eq!(params.observed_at.map(instant_text).as_deref(), Some("2024-01-01T00:00:00Z"));
+        pretty_assertions::assert_eq!(params.observed_at.map(|observed| observed.to_string()).as_deref(), Some("2024-01-01T00:00:00Z"));
         assert!(matches!(params.entity_type, Some(TypeExprRaw::Type(ref name)) if name.as_str() == "Vehicle"));
         pretty_assertions::assert_eq!(params.local, Some(true));
     }

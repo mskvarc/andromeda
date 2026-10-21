@@ -261,7 +261,6 @@ mod tests {
         dictionary::resolved_names::ResolvedNames,
         entity_row_refs::EntityRowRefs,
         entity_type_name_key::EntityTypeNameKey,
-        temporal_operand::STORED_TIME_TEMPLATE,
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::filter::parser;
@@ -571,13 +570,14 @@ mod tests {
     }
 
     #[test]
-    fn no_probe_filters_on_the_value_kind_code() {
-        // The row's check constraint already pins the kind to the
-        // populated column, and a `value_kind = k` term would turn the NULL a
+    fn a_string_probe_reads_its_value_kind_as_true_or_unknown_only() {
+        // `value_string` holds a String, a `Date` and a `Time`, so a String
+        // probe names its kind; a plain `value_kind = k` would turn the NULL a
         // wrong-kind row yields into FALSE, which a negated predicate then
         // reads as a match.
         let (sql, _) = render("\"https://example.com/color\"!=\"red\",\"blue\"");
-        assert!(!sql.contains("value_kind"), "{sql}");
+        assert_eq!(sql.matches(r#"nullif("ca"."value_kind" = (2), FALSE)"#).count(), 2, "{sql}");
+        assert!(!sql.contains(r#""value_kind" = (2) "#), "{sql}");
     }
 
     #[test]
@@ -602,12 +602,10 @@ mod tests {
     }
 
     #[test]
-    fn a_time_operand_binds_the_canonical_form_the_write_path_stores() {
-        // Clause 4.6.3 admits a fraction of one to six digits, written with a
-        // decimal point or a comma, and the stored text is normalised to one
-        // canonical rendering of all of them. The probe has to bind that same
-        // rendering or a short-fraction operand matches nothing.
-        let (_, binds) = render("\"https://example.com/d\"==\"12:00:00,5Z\"");
+    fn a_time_operand_binds_the_fixed_width_encoding_the_write_path_stores() {
+        // A declared `Time` is stored in its fixed-width encoding, which the
+        // probe binds whatever spelling clause 4.6.3 let the operand take.
+        let (_, binds) = render("\"https://example.com/d\"==12:00:00.5Z");
         assert!(
             binds
                 .iter()
@@ -617,11 +615,11 @@ mod tests {
     }
 
     #[test]
-    fn a_time_ordering_comparison_binds_the_canonical_form_too() {
-        // Byte-wise order is chronological exactly because both sides are the
-        // fixed-width form, the stored side normalised from the text as written.
-        let (sql, binds) = render("\"https://example.com/d\">\"09:30:00.5Z\"");
-        assert!(sql.contains(&format!("'{STORED_TIME_TEMPLATE}') || ('Z') END) > $2")), "{sql}");
+    fn a_time_ordering_comparison_binds_the_fixed_width_encoding_too() {
+        // Byte-wise order is chronological because both sides are the
+        // fixed-width encoding, so the stored text is compared as it is.
+        let (sql, binds) = render("\"https://example.com/d\">09:30:00.5Z");
+        assert!(sql.contains(r#""ca"."value_string" > $2 AND nullif("ca"."value_kind" = (9), FALSE)"#), "{sql}");
         assert!(
             binds
                 .iter()
@@ -805,7 +803,10 @@ mod tests {
     fn a_bare_existence_of_a_target_language_probes_the_language_key() {
         let (sql, _) = render("\"https://example.com/color\"[en]");
         assert!(sql.contains("jsonb_build_object('@language', $2::text)"), "{sql}");
-        assert!(!sql.contains("'@value'"), "existence says nothing about the value: {sql}");
+        assert!(
+            !sql.contains("'@language', $2::text, '@value'"),
+            "existence says nothing about the value: {sql}"
+        );
         assert!(
             sql.contains(r#"jsonb_path_query("ca"."value_object""#),
             "the compound-member reading is compiled beside it: {sql}"
@@ -1088,10 +1089,7 @@ mod tests {
     /// with no element chain at all.
     #[test]
     fn a_member_of_the_attribute_is_read_from_its_row() {
-        let (sql, _) = render(&format!(
-            "{}.\"https://uri.etsi.org/ngsi-ld/observedAt\">\"2024-01-01T00:00:00Z\"",
-            quoted(SPEED)
-        ));
+        let (sql, _) = render(&format!("{}.\"https://uri.etsi.org/ngsi-ld/observedAt\">2024-01-01T00:00:00Z", quoted(SPEED)));
         assert!(sql.contains(r#""ca"."observed_at" > "#), "{sql}");
         assert!(!sql.contains("UNNEST"), "{sql}");
     }
@@ -1172,7 +1170,7 @@ mod tests {
                 r#"AND (("ls1"."entity_type_name_keys" @> (ARRAY[31])) OR ("ls1"."entity_type_name_keys" @> (ARRAY[32]))) "#,
                 r#"AND EXISTS(SELECT 1 FROM "current_attributes" AS "ca" "#,
                 r#"WHERE "ca"."attribute_name_key" = $2 AND ("ca"."expires_at" IS NULL OR "ca"."expires_at" > NOW()) "#,
-                r#"AND ("ca"."value_string" = $3 OR "ca"."value_uri" = $4 "#,
+                r#"AND (("ca"."value_string" = $3 AND nullif("ca"."value_kind" = (2), FALSE)) OR "ca"."value_uri" = $4 "#,
                 r#"OR (("ca"."value_object" @> jsonb_build_array($5::text)) "#,
                 r#"OR ("ca"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $6::text))))) "#,
                 r#"AND "ca"."entity_key" = "le1"."entity_key"))"#,

@@ -73,7 +73,7 @@ pub(crate) fn every_family_document() -> Value {
         ngsi("hasValue"): [{"@value": 55.5}],
         ngsi("unitCode"): [{"@value": "KMH"}],
         ngsi("hasValueType"): [{"@id": "https://ex.org/Speed"}],
-        ngsi("observedAt"): date_time("2026-01-01T00:00:00.5Z"),
+        ngsi("observedAt"): date_time("2026-01-01T00:00:00.500Z"),
         ngsi("expiresAt"): date_time("2027-01-01T00:00:00Z"),
         ngsi("datasetId"): [{"@id": "urn:ngsi-ld:Dataset:a"}]
     });

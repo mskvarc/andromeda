@@ -15,7 +15,7 @@ use crate::{
         mutation_error::MutationError,
     },
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::written_date_time::DateTimeText};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::date_time::NgsiLdDateTime};
 
 /// Whether removing an instance found one to remove.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,7 +44,7 @@ pub(crate) fn apply_instances(
     name: &AttributeName,
     documents: &[InstanceDocument],
     depth: InstancePatchDepth,
-    default_observed_at: Option<&DateTimeText>,
+    default_observed_at: Option<NgsiLdDateTime>,
 ) -> Result<(), MutationError> {
     documents
         .iter()
@@ -57,7 +57,7 @@ fn apply_instance(
     name: &AttributeName,
     document: &InstanceDocument,
     depth: InstancePatchDepth,
-    default_observed_at: Option<&DateTimeText>,
+    default_observed_at: Option<NgsiLdDateTime>,
 ) -> Result<(), MutationError> {
     let dataset_id = document.dataset_id();
     if let ValueSlot::Remove(_) = document.value() {
@@ -66,7 +66,7 @@ fn apply_instance(
     }
     let stamp = default_observed_at
         .filter(|_| document.observed_at().is_none() && previously_observed(attributes, name, dataset_id))
-        .map(|observed_at| Slot::Set(observed_at.clone())); // clone: each stamped instance owns its copy of the request parameter.
+        .map(Slot::Set);
     let Some(instances) = attributes.get_mut(name) else {
         let instance = new_instance(name, document, stamp.as_ref())?;
         // clone: the entity owns the attribute name and the instance identity it gains.

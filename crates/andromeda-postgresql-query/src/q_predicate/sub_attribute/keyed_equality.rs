@@ -121,19 +121,20 @@ mod tests {
         assert_eq!(key_array("\"sensor-43\"").split(", ").count(), 2);
     }
 
-    /// A stored time value carries the key of its value whatever spelling it
-    /// was written in, so one key serves every spelling of the operand.
+    /// A declared time value is keyed under its kind and a `valueType`-declared
+    /// member as the String it is held as, so a time operand reads both keys,
+    /// the same whichever spelling the operand is written in.
     #[test]
-    fn a_date_time_operand_reads_one_key_whatever_its_spelling() {
+    fn a_date_time_operand_reads_its_kind_key_and_its_string_key_whatever_its_spelling() {
         let keys = key_array("2024-01-01T00:00:00Z");
-        assert_eq!(keys.split(", ").count(), 1);
+        assert_eq!(keys.split(", ").count(), 2);
         assert_eq!(key_array("2024-01-01T00:00:00.000Z"), keys);
     }
 
     #[test]
-    fn a_time_operand_reads_one_key_whatever_its_spelling() {
+    fn a_time_operand_reads_its_kind_key_and_its_string_key_whatever_its_spelling() {
         let keys = key_array("12:00:00Z");
-        assert_eq!(keys.split(", ").count(), 1);
+        assert_eq!(keys.split(", ").count(), 2);
         assert_eq!(key_array("12:00:00.000Z"), keys);
     }
 

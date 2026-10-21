@@ -287,8 +287,7 @@ mod tests {
 
     #[test]
     fn a_temporal_q_on_a_sub_attribute_observed_at_reads_the_element_field() {
-        let sql =
-            temporal("\"https://example.com/speed\".\"https://example.com/accuracy\".\"https://uri.etsi.org/ngsi-ld/observedAt\">\"2026-01-01T00:00:00Z\"");
+        let sql = temporal("\"https://example.com/speed\".\"https://example.com/accuracy\".\"https://uri.etsi.org/ngsi-ld/observedAt\">2026-01-01T00:00:00Z");
         assert!(sql.contains(r#""l0"."observed_at" > '2026-01-01 00:00:00.000000 +00:00'"#), "{sql}");
         assert!(!sql.contains("jsonb_path"), "{sql}");
     }

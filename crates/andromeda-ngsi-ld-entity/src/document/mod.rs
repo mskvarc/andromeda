@@ -18,12 +18,7 @@ use crate::{
     document::{attribute_member::AttributeMember, slot::Slot},
     scopes::Scopes,
 };
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    entity_type_name::EntityTypeName,
-    identifier::Identifier,
-    time::written_date_time::DateTimeText,
-};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier, time::date_time::NgsiLdDateTime};
 use indexmap::IndexMap;
 
 /// The typed expanded document of one write.
@@ -36,7 +31,7 @@ pub struct EntityDocument {
     /// `scope` (clause 4.18).
     scope: Option<Slot<Scopes>>,
     /// The entity-level `expiresAt` (clause 4.22).
-    expires_at: Option<Slot<DateTimeText>>,
+    expires_at: Option<Slot<NgsiLdDateTime>>,
     /// The written attribute members, in written order.
     attributes: IndexMap<AttributeName, AttributeMember>,
 }
@@ -48,7 +43,7 @@ impl EntityDocument {
         id: Option<Identifier>,
         types: Vec<EntityTypeName>,
         scope: Option<Slot<Scopes>>,
-        expires_at: Option<Slot<DateTimeText>>,
+        expires_at: Option<Slot<NgsiLdDateTime>>,
         attributes: IndexMap<AttributeName, AttributeMember>,
     ) -> EntityDocument {
         EntityDocument {
@@ -80,7 +75,7 @@ impl EntityDocument {
 
     /// The entity-level `expiresAt`.
     #[must_use]
-    pub const fn expires_at(&self) -> Option<&Slot<DateTimeText>> {
+    pub const fn expires_at(&self) -> Option<&Slot<NgsiLdDateTime>> {
         self.expires_at.as_ref()
     }
 
@@ -119,7 +114,7 @@ pub struct EntityDocumentParts {
     /// `scope`.
     pub scope: Option<Slot<Scopes>>,
     /// The entity-level `expiresAt`.
-    pub expires_at: Option<Slot<DateTimeText>>,
+    pub expires_at: Option<Slot<NgsiLdDateTime>>,
     /// The written attribute members.
     pub attributes: IndexMap<AttributeName, AttributeMember>,
 }

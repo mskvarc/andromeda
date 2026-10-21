@@ -30,12 +30,7 @@ use andromeda_ngsi_ld_entity::{
     scope_slot::{ScopeItem, scope_slot},
     scopes::Scopes,
 };
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    entity_type_name::EntityTypeName,
-    identifier::Identifier,
-    time::written_date_time::DateTimeText,
-};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier, time::date_time::NgsiLdDateTime};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use indexmap::IndexMap;
 
@@ -141,14 +136,14 @@ fn scope_member(items: &[ExpandedItem]) -> Result<Slot<Scopes>, EntityRefusal> {
 
 /// Read the entity-level `expiresAt` (clause 4.22): its date-time, or its
 /// deletion by the NGSI-LD Null alone.
-fn entity_expiry(items: &[ExpandedItem]) -> Result<Slot<DateTimeText>, EntityRefusal> {
+fn entity_expiry(items: &[ExpandedItem]) -> Result<Slot<NgsiLdDateTime>, EntityRefusal> {
     if is_sole_null(items) {
         return Ok(Slot::Remove);
     }
     match items {
         [ExpandedItem::Value(value)] => value
             .as_str()
-            .and_then(|text| text.parse::<DateTimeText>().ok())
+            .and_then(|text| text.parse::<NgsiLdDateTime>().ok())
             .map(Slot::Set)
             .ok_or(EntityRefusal::EntityExpiresAt),
         [] | [_, ..] => Err(EntityRefusal::Malformed {

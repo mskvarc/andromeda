@@ -222,8 +222,8 @@ enum AxisPosition<'a, I: QueriedInstance<'a>> {
     Instance(I),
     /// One value of a family member or of a structured value's member.
     Value(ValueItem<'a, I::Node>),
-    /// The lexical form of an instance member that is not a sub-attribute.
-    Metadata(Cow<'a, str>),
+    /// An instance member that is not a sub-attribute, and its lexical form.
+    Metadata(InstanceMetadata, Cow<'a, str>),
 }
 
 impl<'a, I: QueriedInstance<'a>> AxisPosition<'a, I> {
@@ -234,7 +234,7 @@ impl<'a, I: QueriedInstance<'a>> AxisPosition<'a, I> {
         let (member, sub_attribute) = match self {
             AxisPosition::Instance(instance) => {
                 if let Some(member) = InstanceMetadata::named(name) {
-                    (instance.metadata(member).map(AxisPosition::Metadata), None)
+                    (instance.metadata(member).map(|text| AxisPosition::Metadata(member, text)), None)
                 } else if instance.family().value_key().as_str() == name.as_str() {
                     (first_family_value(instance).map(AxisPosition::Value), None)
                 } else {
@@ -242,7 +242,7 @@ impl<'a, I: QueriedInstance<'a>> AxisPosition<'a, I> {
                 }
             }
             AxisPosition::Value(ValueItem::Node(node)) => (node.first_member_value(name).map(AxisPosition::Value), None),
-            AxisPosition::Value(ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Reference(_) | ValueItem::Opaque) | AxisPosition::Metadata(_) => {
+            AxisPosition::Value(ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Reference(_) | ValueItem::Opaque) | AxisPosition::Metadata(..) => {
                 (None, None)
             }
         };
@@ -262,7 +262,7 @@ impl<'a, I: QueriedInstance<'a>> AxisPosition<'a, I> {
     fn target_language<'p>(&self, path: &'p AttrPath) -> Option<(I, &'p str)> {
         match (self, path.value_path_compact.as_slice()) {
             (AxisPosition::Instance(instance), [language]) if instance.family() == AttributeType::LanguageProperty => Some((*instance, language.as_str())),
-            (AxisPosition::Instance(_) | AxisPosition::Value(_) | AxisPosition::Metadata(_), _) => None,
+            (AxisPosition::Instance(_) | AxisPosition::Value(_) | AxisPosition::Metadata(..), _) => None,
         }
     }
 
@@ -271,7 +271,7 @@ impl<'a, I: QueriedInstance<'a>> AxisPosition<'a, I> {
     fn first_family_value(&self) -> Option<ValueItem<'a, I::Node>> {
         match self {
             AxisPosition::Instance(instance) => first_family_value(*instance),
-            AxisPosition::Value(_) | AxisPosition::Metadata(_) => None,
+            AxisPosition::Value(_) | AxisPosition::Metadata(..) => None,
         }
     }
 
@@ -280,7 +280,7 @@ impl<'a, I: QueriedInstance<'a>> AxisPosition<'a, I> {
         let value = match self {
             AxisPosition::Instance(instance) => return family_target(instance),
             AxisPosition::Value(item) => TerminalKeyword::Identifier.read(item)?,
-            AxisPosition::Metadata(text) => TargetValue::Text(text),
+            AxisPosition::Metadata(member, text) => member.target_value(text),
         };
         Some(ResolvedTarget {
             value,

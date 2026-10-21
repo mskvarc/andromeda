@@ -29,7 +29,7 @@ impl Serialize for StateNodeOut<'_> {
             map.serialize_entry(properties::SCOPE.as_str(), &ScopesOut(scope))?;
         }
         if let Some(expires_at) = state.expires_at() {
-            write_date_time_text(&mut map, properties::EXPIRES_AT.as_str(), expires_at.as_str())?;
+            write_date_time_text(&mut map, properties::EXPIRES_AT.as_str(), &expires_at.to_string())?;
         }
         write_attributes(&mut map, state.attributes())?;
         map.end()

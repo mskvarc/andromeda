@@ -116,7 +116,7 @@ mod tests {
         },
         refusal::EntityRefusal,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::written_date_time::DateTimeText};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::date_time::NgsiLdDateTime};
     use indexmap::IndexMap;
 
     const A: &str = "urn:ngsi-ld:Dataset:A";
@@ -142,13 +142,12 @@ mod tests {
     }
 
     /// The `observedAt` of the held `accuracy` instance with `dataset_id`.
-    fn observed_at(attributes: &Attributes, dataset_id: Option<&str>) -> Option<DateTimeText> {
+    fn observed_at(attributes: &Attributes, dataset_id: Option<&str>) -> Option<NgsiLdDateTime> {
         let dataset_id = dataset_id.map(dataset);
         attributes
             .get(ACCURACY)
             .and_then(|held| held.get(dataset_id.as_ref()))
             .and_then(Instance::observed_at)
-            .cloned()
     }
 
     /// Land `documents` on `held` under `depth`, and expect it to apply.

@@ -22,7 +22,7 @@ use crate::{
     literal::{Literal, LiteralValue},
     value_mode::{Fragment, ValueMode},
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, time::written_date_time::DateTimeText};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, time::date_time::NgsiLdDateTime};
 use andromeda_ngsi_ld_number::JsonNumber;
 use indexmap::IndexMap;
 
@@ -44,8 +44,8 @@ pub(crate) fn dataset(raw: &str) -> Identifier {
     raw.parse().expect("a valid dataset identifier")
 }
 
-/// A `DateTime` text.
-pub(crate) fn date_time(raw: &str) -> DateTimeText {
+/// A `DateTime`.
+pub(crate) fn date_time(raw: &str) -> NgsiLdDateTime {
     raw.parse().expect("an RFC 3339 date-time")
 }
 

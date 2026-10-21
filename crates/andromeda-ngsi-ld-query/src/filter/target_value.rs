@@ -6,7 +6,7 @@
 
 use crate::queried_entity::value_item::LiteralValue;
 use andromeda_json_literal::piece::{JsonKind, JsonPiece};
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::value::TimeValue};
 use andromeda_ngsi_ld_number::JsonNumber;
 use std::borrow::Cow;
 
@@ -42,6 +42,9 @@ pub enum TargetValue<'a> {
     Json(JsonPiece<'a>),
     /// Several values, which clause 4.9 compares by membership.
     Array(Vec<TargetValue<'a>>),
+    /// A value declared as a clause 4.6.3 time value, or an instant the
+    /// instance holds; only a time operand of its form compares with it.
+    Time(TimeValue),
 }
 
 impl<'a> TargetValue<'a> {
@@ -61,6 +64,7 @@ impl<'a> TargetValue<'a> {
             LiteralValue::Number(number) => TargetValue::Number(number),
             LiteralValue::Text(text) => TargetValue::Text(text),
             LiteralValue::Boolean(boolean) => TargetValue::Boolean(boolean),
+            LiteralValue::Time(value) => TargetValue::Time(value),
         }
     }
 
@@ -76,7 +80,7 @@ impl<'a> TargetValue<'a> {
                 JsonKind::String => json.as_str().and_then(|text| text.parse().ok()).map(Cow::Owned),
                 JsonKind::Null | JsonKind::Boolean | JsonKind::Array | JsonKind::Object => None,
             },
-            TargetValue::Boolean(_) | TargetValue::Array(_) => None,
+            TargetValue::Boolean(_) | TargetValue::Array(_) | TargetValue::Time(_) => None,
         }
     }
 
@@ -91,12 +95,13 @@ impl<'a> TargetValue<'a> {
                 JsonKind::String => json.as_str().and_then(|text| boolean_spelled(&text)),
                 JsonKind::Null | JsonKind::Number | JsonKind::Array | JsonKind::Object => None,
             },
-            TargetValue::Number(_) | TargetValue::Array(_) => None,
+            TargetValue::Number(_) | TargetValue::Array(_) | TargetValue::Time(_) => None,
         }
     }
 
-    /// The value rendered as text for string and temporal comparisons: a
-    /// string as it is, a number or a boolean in its JSON spelling.
+    /// The value rendered as text for string comparisons: a string as it is, a
+    /// number or a boolean in its JSON spelling. A time value is no String
+    /// (clause 4.9: no equality of data types, no match).
     #[must_use]
     pub fn as_lexical(&self) -> Option<Cow<'_, str>> {
         match self {
@@ -110,7 +115,16 @@ impl<'a> TargetValue<'a> {
                 JsonKind::Number | JsonKind::Boolean => Some(Cow::Borrowed(json.text())),
                 JsonKind::Null | JsonKind::Array | JsonKind::Object => None,
             },
-            TargetValue::Array(_) => None,
+            TargetValue::Array(_) | TargetValue::Time(_) => None,
+        }
+    }
+
+    /// The value when it is a time value.
+    #[must_use]
+    pub const fn as_time(&self) -> Option<TimeValue> {
+        match self {
+            TargetValue::Time(value) => Some(*value),
+            TargetValue::Number(_) | TargetValue::Text(_) | TargetValue::Boolean(_) | TargetValue::Json(_) | TargetValue::Array(_) => None,
         }
     }
 
@@ -121,7 +135,7 @@ impl<'a> TargetValue<'a> {
         match self {
             TargetValue::Text(text) => Some(Cow::Borrowed(text.as_ref())),
             TargetValue::Json(json) => json.as_str(),
-            TargetValue::Number(_) | TargetValue::Boolean(_) | TargetValue::Array(_) => None,
+            TargetValue::Number(_) | TargetValue::Boolean(_) | TargetValue::Array(_) | TargetValue::Time(_) => None,
         }
     }
 }

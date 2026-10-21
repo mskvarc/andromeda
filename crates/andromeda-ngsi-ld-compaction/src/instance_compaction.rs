@@ -22,7 +22,7 @@ use andromeda_ngsi_ld_entity::{
     proof_seals::ProofSeals,
     value_mode::Stored,
 };
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, reference::NgsiLdReference, time::written_date_time::DateTimeText, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, reference::NgsiLdReference, uri::Uri};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use jsonld::{BlankIdBuf, IriBuf, Term};
 use std::slice::from_ref;
@@ -64,8 +64,10 @@ impl Walk<'_> {
         let mut result = CompactedObject::new();
         self.write_identity(&mut result, None, from_ref(reserved().family(value.family())))?;
         self.compact_family_value(&mut result, value)?;
-        self.compact_date_time(&mut result, &reserved().observed_at, instance.observed_at().map(DateTimeText::as_str))?;
-        self.compact_date_time(&mut result, &reserved().expires_at, instance.expires_at().map(DateTimeText::as_str))?;
+        let observed_at = instance.observed_at().map(|instant| instant.to_string());
+        let expires_at = instance.expires_at().map(|instant| instant.to_string());
+        self.compact_date_time(&mut result, &reserved().observed_at, observed_at.as_deref())?;
+        self.compact_date_time(&mut result, &reserved().expires_at, expires_at.as_deref())?;
         if stored.system_times == SysAttrsInclusion::Include {
             let created_at = instance.created_at().map(|instant| instant.to_string());
             let modified_at = instance.modified_at().map(|instant| instant.to_string());

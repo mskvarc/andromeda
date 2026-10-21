@@ -30,7 +30,7 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
     identifier::Identifier,
     reference::NgsiLdReference,
-    time::{system_instant::SystemInstant, written_date_time::DateTimeText},
+    time::{date_time::NgsiLdDateTime, system_instant::SystemInstant},
 };
 use andromeda_ngsi_ld_vocabulary::{compact_to_expanded, expanded::properties};
 use cefact_units::UnitCode;
@@ -101,9 +101,9 @@ struct InstanceParts {
     /// `datasetId`.
     dataset_id: Option<Identifier>,
     /// `observedAt`.
-    observed_at: Option<Slot<DateTimeText>>,
+    observed_at: Option<Slot<NgsiLdDateTime>>,
     /// `expiresAt`.
-    expires_at: Option<Slot<DateTimeText>>,
+    expires_at: Option<Slot<NgsiLdDateTime>>,
     /// `unitCode`.
     unit_code: Option<Slot<UnitCode>>,
     /// `valueType`.
@@ -115,7 +115,7 @@ struct InstanceParts {
     /// `modifiedAt`.
     modified_at: Option<SystemInstant>,
     /// `deletedAt`.
-    deleted_at: Option<DateTimeText>,
+    deleted_at: Option<NgsiLdDateTime>,
     /// `instanceId`.
     instance_id: Option<Identifier>,
     /// `entityIdSealed`.

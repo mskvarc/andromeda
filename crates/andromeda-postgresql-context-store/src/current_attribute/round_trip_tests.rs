@@ -13,13 +13,13 @@ use andromeda_ngsi_ld_entity::{
     expanded_value::ExpandedValue,
     family_value::FamilyValue,
     instance::Instance,
-    literal::LiteralValue,
+    literal::{Literal, LiteralValue},
 };
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     entity_type_name::EntityTypeName,
     reference::NgsiLdReference,
-    time::{system_instant::SystemInstant, written_date_time::DateTimeText},
+    time::system_instant::SystemInstant,
 };
 use andromeda_ngsi_ld_model::temporal::structured_value::StructuredValue;
 use andromeda_ngsi_ld_number::JsonNumber;
@@ -362,11 +362,32 @@ fn a_datetime_value_renders_its_sub_second_form() {
     pretty_assertions::assert_eq!(literal.value(), &LiteralValue::String("2024-01-01T00:00:00.500Z".into()));
 }
 
+/// Annex C.6: a string declared as no time value is a String, held as written.
 #[test]
-fn a_lexical_datetime_string_keeps_no_datatype() {
-    let state = committed(&document(&json!({ex("at"): [property(&json!([{"@value": "2024-01-01T00:00:00Z"}]))]})));
+fn an_untyped_string_in_date_time_form_is_a_string_held_as_written() {
+    let state = committed(&document(&json!({ex("at"): [property(&json!([{"@value": "2024-01-01T00:00:00.250000Z"}]))]})));
+    let rows = round_trip(&state);
+    assert!(matches!(only_value(&rows), StoredValue::String { text, annotation: LiteralAnnotation::Plain } if text == "2024-01-01T00:00:00.250000Z"));
+    pretty_assertions::assert_eq!(only_value(&rows).kind(), ValueKind::String);
+}
+
+/// Annex C.6: `valueType` declares the datatype of the plain value beside it,
+/// which is held as its instant and read back plain in its served spelling.
+#[test]
+fn a_value_type_date_time_reads_back_plain_in_its_served_spelling() {
+    let state = committed(&document(&json!({ex("at"): [with(
+        property(&json!([{"@value": "2024-01-01T00:00:00.000Z"}])),
+        &json!({ngsi("hasValueType"): [{"@id": ngsi("DateTime")}]})
+    )]})));
     let rows = round_trip(&state);
     assert!(matches!(only_value(&rows), StoredValue::DateTime { datatype: None, .. }));
+    let FamilyValue::Property { values, .. } = held(state.attributes(), &ex("at"), None).value() else {
+        panic!("a Property")
+    };
+    pretty_assertions::assert_eq!(
+        values.as_slice(),
+        [ExpandedValue::Literal(Literal::plain(LiteralValue::String("2024-01-01T00:00:00Z".into())))]
+    );
 }
 
 /// Clause 4.6.3 admits a comma for the decimal point in requests; the broker
@@ -378,27 +399,41 @@ fn an_expires_at_with_a_comma_fraction_comes_back_with_a_decimal_point() {
     ));
     round_trip(&state);
     pretty_assertions::assert_eq!(
-        held(state.attributes(), &ex("at"), None).expires_at().map(DateTimeText::as_str),
+        held(state.attributes(), &ex("at"), None)
+            .expires_at()
+            .map(|expires_at| expires_at.to_string())
+            .as_deref(),
         Some("2024-01-01T00:00:00.500Z")
     );
 }
 
 #[test]
-fn a_date_value_keeps_its_text() {
+fn a_typed_date_is_held_under_the_date_kind() {
     let state = committed(&document(
         &json!({ex("on"): [property(&json!([{"@type": ngsi("Date"), "@value": "2024-01-01"}]))]}),
     ));
     let rows = round_trip(&state);
-    assert!(matches!(only_value(&rows), StoredValue::String { text, annotation: LiteralAnnotation::Datatype(_) } if text == "2024-01-01"));
+    assert!(matches!(only_value(&rows), StoredValue::Date { date, datatype: Some(_) } if date.to_string() == "2024-01-01"));
+    pretty_assertions::assert_eq!(only_value(&rows).kind(), ValueKind::Date);
 }
 
+/// A `Time` is held in its fixed-width storage encoding under the `Time`
+/// kind and read back typed in its served spelling.
 #[test]
-fn a_time_value_keeps_its_text() {
+fn a_typed_time_is_held_in_its_storage_encoding_and_read_back_served() {
     let state = committed(&document(
         &json!({ex("at"): [property(&json!([{"@type": ngsi("Time"), "@value": "12:00:00.5Z"}]))]}),
     ));
     let rows = round_trip(&state);
-    assert!(matches!(only_value(&rows), StoredValue::String { text, annotation: LiteralAnnotation::Datatype(_) } if text == "12:00:00.5Z"));
+    assert!(matches!(only_value(&rows), StoredValue::Time { time, datatype: Some(_) } if time.to_string() == "12:00:00.500000Z"));
+    pretty_assertions::assert_eq!(only_value(&rows).kind(), ValueKind::Time);
+    let FamilyValue::Property { values, .. } = held(state.attributes(), &ex("at"), None).value() else {
+        panic!("a Property")
+    };
+    let [ExpandedValue::Literal(literal)] = values.as_slice() else {
+        panic!("one literal")
+    };
+    pretty_assertions::assert_eq!(literal.value(), &LiteralValue::String("12:00:00.500Z".into()));
 }
 
 #[test]
@@ -865,7 +900,7 @@ fn an_uncommitted_datetime_spelling_is_a_flatten_error() {
     .expect("a stored entity");
     state.stamp_attribute_instants(None, now());
     let (keys, _) = dictionary(&state);
-    assert!(matches!(flatten(state.attributes(), &keys), Err(FlattenError::UncommittedSpelling(_))));
+    assert!(matches!(flatten(state.attributes(), &keys), Err(FlattenError::UncommittedValue(_))));
 }
 
 /// Table 5.2.5-2 makes `instanceId` output-only, so current state holds none
@@ -895,17 +930,4 @@ fn corpus_round_trips() {
         checked += 1;
     }
     assert!(checked > 0, "the corpus holds no document");
-}
-
-#[test]
-fn an_uncommitted_observed_at_spelling_is_a_flatten_error() {
-    let mut state = EntityState::from_slice(
-        document(&json!({ex("a"): [with(property(&json!([{"@value": 1}])), &json!({ngsi("observedAt"): date_time("2024-01-01T00:00:00.5Z")}))]}))
-            .to_string()
-            .as_bytes(),
-    )
-    .expect("a stored entity");
-    state.stamp_attribute_instants(None, now());
-    let (keys, _) = dictionary(&state);
-    assert!(matches!(flatten(state.attributes(), &keys), Err(FlattenError::UncommittedSpelling(_))));
 }

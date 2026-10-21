@@ -25,6 +25,7 @@ pub mod attribute_type;
 pub mod coerced_term;
 pub mod constant_string;
 pub mod context_source_pseudonym;
+pub mod datatype;
 pub mod default_instance;
 pub mod dereferenceable_uri;
 pub mod entity_type_name;
@@ -50,6 +51,7 @@ pub mod uri;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-vocabulary",
     ],
     allow_workspace_dev_dependencies: [

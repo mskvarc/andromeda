@@ -24,6 +24,11 @@ pub enum TextKind {
     String,
     /// A URI, the object of a Relationship.
     Uri,
+    /// A value declared as a clause 4.6.3 `Date`, as its one spelling.
+    Date,
+    /// A value declared as a clause 4.6.3 `Time`, in its fixed-width storage
+    /// encoding.
+    Time,
 }
 
 /// One value a key is computed from.
@@ -35,7 +40,7 @@ pub enum KeyedValue<'a> {
     Text(&'a str, TextKind),
     /// A boolean.
     Boolean(bool),
-    /// A clause 4.6.3 `DateTime`, keyed at the microsecond.
+    /// A value declared as a clause 4.6.3 `DateTime`, keyed at the microsecond.
     Instant(DateTime<Utc>),
 }
 
@@ -46,6 +51,8 @@ impl KeyedValue<'_> {
             KeyedValue::Number(_) => ValueKind::Number,
             KeyedValue::Text(_, TextKind::String) => ValueKind::String,
             KeyedValue::Text(_, TextKind::Uri) => ValueKind::Uri,
+            KeyedValue::Text(_, TextKind::Date) => ValueKind::Date,
+            KeyedValue::Text(_, TextKind::Time) => ValueKind::Time,
             KeyedValue::Boolean(_) => ValueKind::Boolean,
             KeyedValue::Instant(_) => ValueKind::DateTime,
         }

@@ -1,16 +1,19 @@
-//! The clause 4.6.3 restrictions on `DateTime` and `Time` lexical values.
+//! The clause 4.6.3 restrictions on `DateTime`, `Date` and `Time` values, and
+//! how `q` compares a declared time value and an untyped string.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 4.6.3 fixes three things about a temporal
-//! literal: the fraction runs "one or more fractional digits, up to a maximum
-//! of six"; "in requests, also a comma instead of a decimal point may be used
-//! as separator for compatibility reasons"; and a `Time` string "shall not
-//! contain expressions of the difference between local time and UTC".
+//! ETSI GS CIM 009 v1.9.1 clause 4.6.3 fixes three things about a time value:
+//! the fraction runs "one or more fractional digits, up to a maximum of six";
+//! "in requests, also a comma instead of a decimal point may be used as
+//! separator for compatibility reasons"; and a `Time` string "shall not contain
+//! expressions of the difference between local time and UTC". A value is a time
+//! value only when it is declared as one (annex C.6); a string declared as none
+//! is a String.
 //!
-//! Clause 4.9's grammar defines the query language's `dateTime` and `time`
-//! productions as values "as mandated by clause 4.6.3", so a `q` operand is
-//! admitted on exactly the terms a stored value is. An offset-bearing operand is
-//! therefore not resolved to UTC and compared, and the comma compatibility form
-//! is not refused.
+//! Clause 4.9's grammar defines the query language's `dateTime`, `date` and
+//! `time` productions as values "as mandated by clause 4.6.3", unquoted, and
+//! makes `quotedStr` a String. A bare offset-bearing operand is therefore
+//! refused, a bare operand compares with a declared time value of its form, and
+//! a quoted one with a String alone.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -40,8 +43,8 @@ const OFFSET_BEARING_LABEL: &str = "2024-01-01T01:00:00+01:00";
 const COLON_BEARING_NOTE: &str = "12:00:00 in the morning";
 
 /// Values written in one of clause 4.6.3's three lexical forms without
-/// satisfying it, which the same clause therefore leaves as "JSON native data
-/// types" — ordinary strings the broker stores and has to be able to find.
+/// satisfying it: untyped, they are ordinary strings the broker stores and has
+/// to be able to find.
 const UNADMITTED_TIME_SPELLINGS: [&str; 5] = [
     "2024-01-01T01:00:00+01:00",
     "2024-01-01T00:00:00.1234567Z",
@@ -50,20 +53,19 @@ const UNADMITTED_TIME_SPELLINGS: [&str; 5] = [
     "0000-00-00",
 ];
 
-/// One observation carrying a Property of each clause 4.6.3 time value form,
-/// beside two values that only resemble one.
+/// One observation carrying a Property typed as each clause 4.6.3 time value
+/// data type, beside two untyped values that only resemble one.
 ///
 /// `reading_time` and `reading_instant` are what each test varies; the other
 /// three are fixed, because they are the same control in every test: a `Date`,
-/// a string a broker must not read as a `DateTime`, and text a broker must not
-/// read as a `Time`.
+/// a string that is no `DateTime`, and text that is no `Time`.
 fn observation(id: &str, reading_time: &str, reading_instant: &str) -> Value {
     json!({
         "id": id,
         "type": "Observation",
-        "readingTime": {"type": "Property", "value": reading_time},
-        "readingInstant": {"type": "Property", "value": reading_instant},
-        "readingDate": {"type": "Property", "value": READING_DATE},
+        "readingTime": {"type": "Property", "value": {"@type": "Time", "@value": reading_time}},
+        "readingInstant": {"type": "Property", "value": {"@type": "DateTime", "@value": reading_instant}},
+        "readingDate": {"type": "Property", "value": {"@type": "Date", "@value": READING_DATE}},
         "readingLabel": {"type": "Property", "value": OFFSET_BEARING_LABEL},
         "readingNote": {"type": "Property", "value": COLON_BEARING_NOTE},
         "@context": [TEST_SUITE_CONTEXT]
@@ -72,14 +74,15 @@ fn observation(id: &str, reading_time: &str, reading_instant: &str) -> Value {
 
 /// An isolated environment holding one observation, and its identifier.
 async fn seeded(local: &str, reading_time: &str, reading_instant: &str) -> (TestEnvironment, String) {
+    seeded_with(local, |id| observation(id, reading_time, reading_instant)).await
+}
+
+/// An isolated environment holding the one entity `entity` builds for its
+/// identifier, and that identifier.
+async fn seeded_with(local: &str, entity: impl FnOnce(&str) -> Value) -> (TestEnvironment, String) {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let id = scope.id(local);
-    let created = scope
-        .client()
-        .post_entity(&observation(&id, reading_time, reading_instant))
-        .send()
-        .await
-        .expect("create entity failed");
+    let created = scope.client().post_entity(&entity(&id)).send().await.expect("create entity failed");
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
     (scope, id)
 }
@@ -127,21 +130,24 @@ async fn assert_selects_nothing(scope: &TestEnvironment, id: &str, q: &str) {
     assert_eq!(entities.len(), 0, "q={q} selected the seeded entity: {body}");
 }
 
-/// Assert both spellings of one operand — the bare literal clause 4.9's
-/// `dateTime`, `date` and `time` productions define, and the quoted form its
-/// `quotedStr` production admits — reach the same answer.
+/// Assert the bare spelling of one operand, clause 4.9's `dateTime`, `date`
+/// or `time`, selects `expected`, and the quoted spelling, a `quotedStr` and so
+/// a String, matches the declared time value under no operator but `!=`.
 ///
-/// Clause 4.9 gives no rule making a quoted value a String: its own EXAMPLE 3,
-/// `?q=isParked=="urn:ngsi-ld:OffStreetParking:Downtown1"`, quotes a URI and
-/// requires it to match a Relationship object, and EXAMPLE 11 quotes
-/// `"Overstay 60 minutes"` because the value carries spaces. Quoting is the
-/// escaping device, and the value's own lexical form is its data type.
-async fn assert_both_spellings(scope: &TestEnvironment, id: &str, attribute: &str, operator: &str, operand: &str, expected: Selection) {
-    for spelling in [format!("{attribute}{operator}{operand}"), format!("{attribute}{operator}\"{operand}\"")] {
-        match expected {
-            Selection::TheEntity => assert_matches(scope, id, &spelling).await,
-            Selection::Nothing => assert_selects_nothing(scope, id, &spelling).await,
-        }
+/// Clause 4.9: "If there is no equality between the target value data type and
+/// the Query Term value data type, then it shall be considered as not
+/// matching", and under `unequal` "considered unequal".
+async fn assert_bare_and_quoted(scope: &TestEnvironment, id: &str, attribute: &str, operator: &str, operand: &str, expected: Selection) {
+    let bare = format!("{attribute}{operator}{operand}");
+    match expected {
+        Selection::TheEntity => assert_matches(scope, id, &bare).await,
+        Selection::Nothing => assert_selects_nothing(scope, id, &bare).await,
+    }
+    let quoted = format!("{attribute}{operator}\"{operand}\"");
+    match operator {
+        "!=" => assert_matches(scope, id, &quoted).await,
+        // The operators are a closed set of `q` spellings written in this file.
+        _other => assert_selects_nothing(scope, id, &quoted).await,
     }
 }
 
@@ -254,13 +260,13 @@ async fn regression_time_value_a_quoted_operand_no_temporal_form_admits_finds_th
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.6.3, for both lexical forms: "In requests, also a comma instead of
-/// a decimal point may be used as separator for compatibility reasons."
-///
-/// A `q` operand is request text, so the comma form has to name the same value
-/// the decimal point does.
+/// Clause 4.9's `quotedStr` is a String whatever separator it carries, so a
+/// quoted operand in the comma or the decimal point spelling selects no typed
+/// time value, while the bare operand with fewer fraction digits names the
+/// same value. A comma cannot be written in a bare operand: it separates the
+/// members of a value list.
 #[tokio::test]
-async fn regression_time_value_a_q_operand_may_use_a_comma_decimal_separator() {
+async fn regression_time_value_a_quoted_operand_is_a_string_whatever_its_separator() {
     let (scope, id) = seeded("Observation:comma-separator-operand", "12:00:00.500000Z", "2024-01-01T00:00:00.250000Z").await;
 
     for q in [
@@ -269,6 +275,9 @@ async fn regression_time_value_a_q_operand_may_use_a_comma_decimal_separator() {
         "readingInstant==\"2024-01-01T00:00:00,25Z\"",
         "readingInstant==\"2024-01-01T00:00:00.25Z\"",
     ] {
+        assert_selects_nothing(&scope, &id, q).await;
+    }
+    for q in ["readingTime==12:00:00.5Z", "readingInstant==2024-01-01T00:00:00.25Z"] {
         assert_matches(&scope, &id, q).await;
     }
 
@@ -296,19 +305,19 @@ async fn regression_time_value_a_bare_q_operand_beyond_six_fractional_digits_is_
     scope.finish().await.expect("cleanup failed");
 }
 
-/// The restrictions must not cost the forms clause 4.6.3 does admit. A `Z` value
-/// with no fraction, with a short fraction, and with the full six digits are
-/// all one value, and all remain queryable.
+/// The restrictions must not cost the forms clause 4.6.3 does admit. A bare
+/// `Z` operand with no fraction, with a short fraction, and with the full six
+/// digits names one value, which every one of them finds.
 #[tokio::test]
 async fn regression_time_value_the_admitted_lexical_forms_still_match() {
     let (scope, id) = seeded("Observation:admitted-forms", "12:00:00Z", "2024-01-01T00:00:00Z").await;
 
     for q in [
-        "readingTime==\"12:00:00Z\"",
-        "readingTime==\"12:00:00.0Z\"",
-        "readingTime==\"12:00:00.000000Z\"",
-        "readingInstant==\"2024-01-01T00:00:00Z\"",
-        "readingInstant==\"2024-01-01T00:00:00.000000Z\"",
+        "readingTime==12:00:00Z",
+        "readingTime==12:00:00.0Z",
+        "readingTime==12:00:00.000000Z",
+        "readingInstant==2024-01-01T00:00:00Z",
+        "readingInstant==2024-01-01T00:00:00.000000Z",
     ] {
         assert_matches(&scope, &id, q).await;
     }
@@ -316,24 +325,25 @@ async fn regression_time_value_the_admitted_lexical_forms_still_match() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.6.3 read on the storage side rather than the query side: a value a
-/// client wrote is served back as written. This is the control for the operand
-/// tests above -- if the write path silently rewrote the stored spelling, a
-/// matching query would prove nothing about the operand.
-///
-/// Clause 4.6.3 admits several conformant spellings of one value -- a fraction
-/// of "one or more fractional digits, up to a maximum of six" -- and licenses no
-/// broker to substitute one for another, so the document carries the client's
-/// text. What the value *is* under the clause, and therefore what a `q` operand
-/// is compared against, is decided separately and never reaches the document.
-/// The document must not be rebuilt from a sniffed typed value, which would cost
-/// `2024-01-01T00:00:00.250000Z` its trailing zeroes and rewrite
-/// `2024-01-01T01:00:00+01:00` -- a value clause 4.6.3 makes an ordinary string,
-/// because the trailing component "shall always be equal to the character 'Z'"
-/// -- into a UTC instant the client never wrote.
+/// Annex C.6: a string declared as no time value is a String, which the broker
+/// holds and serves byte for byte (clause 4.6.4, "return the original
+/// content"), whatever clause 4.6.3 form it is written in, an offset-bearing
+/// one and free text included.
 #[tokio::test]
-async fn regression_time_value_a_stored_time_property_is_served_back_verbatim() {
-    let (scope, id) = seeded("Observation:stored-spelling", "12:00:00.500000Z", "2024-01-01T00:00:00.250000Z").await;
+async fn regression_time_value_an_untyped_string_in_a_time_value_form_is_served_back_as_written() {
+    let untyped = |id: &str| {
+        json!({
+            "id": id,
+            "type": "Observation",
+            "readingTime": {"type": "Property", "value": "12:00:00.500000Z"},
+            "readingInstant": {"type": "Property", "value": "2024-01-01T00:00:00.250000Z"},
+            "readingDate": {"type": "Property", "value": READING_DATE},
+            "readingLabel": {"type": "Property", "value": OFFSET_BEARING_LABEL},
+            "readingNote": {"type": "Property", "value": COLON_BEARING_NOTE},
+            "@context": [TEST_SUITE_CONTEXT]
+        })
+    };
+    let (scope, id) = seeded_with("Observation:stored-spelling", untyped).await;
 
     let read = scope
         .client()
@@ -353,10 +363,7 @@ async fn regression_time_value_a_stored_time_property_is_served_back_verbatim() 
 
 /// Clause 4.9's `ComparableValue` admits a `dateTime`, and clause 4.8 NOTE 3
 /// puts a time value on an ordinary Property, so every operator the clause
-/// defines has to answer over one. A timestamp-shaped Property value must not be
-/// read as a String while the operand is read as a `dateTime`: clause 4.9 makes
-/// differing data types non-matching, so equality, inequality and all four
-/// ordering operators would select nothing, in every spelling.
+/// defines answers over a value declared as a `DateTime`.
 ///
 /// "When comparing dates or times, the order relation considered shall be a
 /// temporal one", which is why `12:00:00.000000Z` and `12:00:00Z` name the same
@@ -380,17 +387,15 @@ async fn regression_time_value_a_date_time_property_answers_every_clause_4_9_ope
         ("<=", "2024-06-15T12:00:00Z", Selection::TheEntity),
         ("<=", "2024-06-15T11:59:59Z", Selection::Nothing),
     ] {
-        assert_both_spellings(&scope, &id, "readingInstant", operator, operand, expected).await;
+        assert_bare_and_quoted(&scope, &id, "readingInstant", operator, operand, expected).await;
     }
 
     scope.finish().await.expect("cleanup failed");
 }
 
-/// The same coverage for clause 4.9's `time` production. A `Time` is compared
-/// through the canonical fixed-width rendering clause 4.6.3's own restrictions
-/// make possible, so the ordering operators are answered byte-wise and are
-/// still chronological; a `Time` Property that reached storage in the spelling
-/// the client wrote would break exactly that.
+/// The same coverage for clause 4.9's `time` production over a value declared
+/// as a `Time`, which is stored in a fixed-width encoding, so the ordering
+/// operators are answered byte-wise and are still chronological.
 ///
 /// The bare spelling needs its own tokenisation: `readingTime==09:30:00Z` is not
 /// the number `09` followed by an unexpected identifier.
@@ -413,16 +418,16 @@ async fn regression_time_value_a_time_property_answers_every_clause_4_9_operator
         ("<=", "09:30:00Z", Selection::TheEntity),
         ("<=", "09:29:59Z", Selection::Nothing),
     ] {
-        assert_both_spellings(&scope, &id, "readingTime", operator, operand, expected).await;
+        assert_bare_and_quoted(&scope, &id, "readingTime", operator, operand, expected).await;
     }
 
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.9's third temporal production, `date`, over the same classifier.
-/// Clause 4.6.3 gives a `Date` exactly one conformant spelling, so its stored
-/// text and every operand written against it are the same fixed-width form and
-/// the ordering operators are chronological over it.
+/// Clause 4.9's third temporal production, `date`, over a value declared as a
+/// `Date`. Clause 4.6.3 gives a `Date` exactly one conformant spelling, so its
+/// stored text and every operand written against it are the same fixed-width
+/// form and the ordering operators are chronological over it.
 #[tokio::test]
 async fn regression_time_value_a_date_property_answers_every_clause_4_9_operator() {
     let (scope, id) = seeded("Observation:date-operators", "12:00:00Z", "2024-06-15T12:00:00Z").await;
@@ -441,22 +446,19 @@ async fn regression_time_value_a_date_property_answers_every_clause_4_9_operator
         ("<=", "2024-06-15", Selection::TheEntity),
         ("<=", "2024-06-14", Selection::Nothing),
     ] {
-        assert_both_spellings(&scope, &id, "readingDate", operator, operand, expected).await;
+        assert_bare_and_quoted(&scope, &id, "readingDate", operator, operand, expected).await;
     }
 
     scope.finish().await.expect("cleanup failed");
 }
 
-/// The control for the three tests above: a value that only *resembles* a time
-/// value is a JSON string, and is compared as one.
+/// The control for the three tests above: an untyped value is a JSON string,
+/// and is compared as one.
 ///
-/// Clause 4.6.3 admits "all the JSON native data types" beside its three time
-/// value forms, and a string is only one of those forms when it satisfies the
-/// form completely -- a numeric offset where the clause demands `Z` does not.
-/// So `readingLabel` stays text, and a `dateTime` operand does not match it:
-/// clause 4.9 requires that "if there is no equality between the target value
-/// data type and the Query Term value data type, then it shall be considered as
-/// not matching".
+/// `readingLabel` is text, so a `dateTime` operand does not match it: clause
+/// 4.9 requires that "if there is no equality between the target value data
+/// type and the Query Term value data type, then it shall be considered as not
+/// matching". A quoted operand is a String and orders against it as text.
 ///
 /// `readingNote` is the other half of the control. Text carrying the colons of a
 /// time of day is a `quotedStr` under clause 4.9's grammar, not a malformed
@@ -470,13 +472,11 @@ async fn regression_time_value_a_string_that_only_resembles_a_time_value_is_comp
     assert_matches(&scope, &id, &format!("readingNote==\"{COLON_BEARING_NOTE}\"")).await;
     assert_matches(&scope, &id, "readingNote!=\"09:30:00Z\"").await;
 
-    for q in [
-        "readingLabel==\"2024-01-01T00:00:00Z\"",
-        "readingLabel==2024-01-01T00:00:00Z",
-        "readingLabel>\"2023-01-01T00:00:00Z\"",
-        "readingLabel<\"2025-01-01T00:00:00Z\"",
-    ] {
+    for q in ["readingLabel==\"2024-01-01T00:00:00Z\"", "readingLabel==2024-01-01T00:00:00Z"] {
         assert_selects_nothing(&scope, &id, q).await;
+    }
+    for q in ["readingLabel>\"2023-01-01T00:00:00Z\"", "readingLabel<\"2025-01-01T00:00:00Z\""] {
+        assert_matches(&scope, &id, q).await;
     }
 
     scope.finish().await.expect("cleanup failed");

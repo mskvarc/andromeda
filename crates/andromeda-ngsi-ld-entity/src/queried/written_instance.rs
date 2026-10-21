@@ -17,13 +17,7 @@ use crate::{
     queried::family_values::{FamilyValues, language_strings},
     value_mode::Fragment,
 };
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    attribute_type::AttributeType,
-    identifier::Identifier,
-    reference::NgsiLdReference,
-    time::written_date_time::DateTimeText,
-};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, reference::NgsiLdReference};
 use andromeda_ngsi_ld_query::queried_entity::{attribute_reading::QueriedInstance, instance_metadata::InstanceMetadata, value_item::ValueItem};
 use cefact_units::UnitCode;
 use std::borrow::Cow;
@@ -43,7 +37,7 @@ impl<'a> QueriedInstance<'a> for &'a InstanceDocument {
 
     fn values(self) -> impl Iterator<Item = ValueItem<'a, &'a ValueNode<Fragment>>> {
         match self.value() {
-            ValueSlot::Set(value) => FamilyValues::of_written(value),
+            ValueSlot::Set(value) => FamilyValues::of_written(value, self.value_type().and_then(Slot::as_set)),
             ValueSlot::Absent | ValueSlot::Remove(_) => FamilyValues::none(),
         }
     }
@@ -72,10 +66,10 @@ impl<'a> QueriedInstance<'a> for &'a InstanceDocument {
 
     fn metadata(self, member: InstanceMetadata) -> Option<Cow<'a, str>> {
         match member {
-            InstanceMetadata::ObservedAt => set(self.observed_at()).map(DateTimeText::as_str).map(Cow::Borrowed),
+            InstanceMetadata::ObservedAt => set(self.observed_at()).map(|instant| Cow::Owned(instant.to_string())),
             InstanceMetadata::CreatedAt => self.created_at().map(|instant| Cow::Owned(instant.to_string())),
             InstanceMetadata::ModifiedAt => self.modified_at().map(|instant| Cow::Owned(instant.to_string())),
-            InstanceMetadata::ExpiresAt => set(self.expires_at()).map(DateTimeText::as_str).map(Cow::Borrowed),
+            InstanceMetadata::ExpiresAt => set(self.expires_at()).map(|instant| Cow::Owned(instant.to_string())),
             InstanceMetadata::DatasetId => self.dataset_id().map(Identifier::as_str).map(Cow::Borrowed),
             InstanceMetadata::InstanceId => self.instance_id().map(Identifier::as_str).map(Cow::Borrowed),
             InstanceMetadata::UnitCode => set(self.unit_code()).copied().map(UnitCode::as_str).map(Cow::Borrowed),

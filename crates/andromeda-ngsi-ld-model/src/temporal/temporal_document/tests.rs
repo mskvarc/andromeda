@@ -7,7 +7,7 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     identifier::Identifier,
-    time::{date_time::NgsiLdDateTime, written_date_time::DateTimeText},
+    time::date_time::NgsiLdDateTime,
     time_prop::TimeProp,
 };
 use chrono::{DateTime, Utc};
@@ -25,7 +25,7 @@ fn speed() -> AttributeName {
 fn instance(observed: &str, id: Option<&str>) -> InstanceDocument {
     InstanceDocument::builder()
         .family(Some(AttributeType::Property))
-        .observed_at(Some(Slot::Set(observed.parse::<DateTimeText>().expect("an instant"))))
+        .observed_at(Some(Slot::Set(observed.parse::<NgsiLdDateTime>().expect("an instant"))))
         .instance_id(id.map(|raw| raw.parse::<Identifier>().expect("an identifier")))
         .build()
 }
@@ -44,7 +44,7 @@ fn document(instances: Vec<InstanceDocument>) -> TemporalDocument {
 fn in_dataset(observed: &str, dataset: &str) -> InstanceDocument {
     InstanceDocument::builder()
         .family(Some(AttributeType::Property))
-        .observed_at(Some(Slot::Set(observed.parse::<DateTimeText>().expect("an instant"))))
+        .observed_at(Some(Slot::Set(observed.parse::<NgsiLdDateTime>().expect("an instant"))))
         .dataset_id(Some(dataset.parse::<Identifier>().expect("an identifier")))
         .build()
 }

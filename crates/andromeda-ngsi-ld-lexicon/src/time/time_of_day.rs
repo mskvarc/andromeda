@@ -3,16 +3,16 @@
 //! Clause 4.6.3 writes a `Time` as `hh:mm:ssZ`, with the same optional fraction
 //! as a `DateTime`, and states that "the string shall not contain expressions
 //! of the difference between local time and UTC", so `Z` is the only designator
-//! a value may end in. The fraction may be absent or one to six digits, so
-//! written spellings vary in width, and text order over them is not
-//! chronological: `12:00:00.5Z` sorts before `12:00:00Z` lexically and after it
-//! in time.
+//! a value may end in. The fraction may be absent or one to six digits, so text
+//! order over the served spelling (none, three or six digits) is not
+//! chronological: `12:00:00.500Z` sorts before `12:00:00Z` byte-wise and after
+//! it in time.
 //!
-//! [`NgsiLdTime`] therefore stores one fixed-width spelling,
-//! `HH:MM:SS.ffffffZ`. Fixed width plus a fixed designator is what makes
-//! byte-wise (`COLLATE "C"`) order over the stored text chronological, which is
-//! what lets clause 4.9's `<`, `>`, `<=` and `>=` be answered by a plain string
-//! comparison and by the B-tree index over it.
+//! [`NgsiLdTime`]'s [`Display`] is therefore the storage encoding of a time of
+//! day, `HH:MM:SS.ffffffZ`, which no client reads. Fixed width plus a fixed
+//! designator makes byte-wise (`COLLATE "C"`) order over the stored text
+//! chronological, which is what lets clause 4.9's `<`, `>`, `<=` and `>=` be
+//! answered by a plain string comparison and by the B-tree index over it.
 
 use crate::time::{
     lexical::{self, LexicalError},
@@ -38,7 +38,7 @@ pub enum NgsiLdTimeError {
 
 /// An NGSI-LD `Time` at microsecond resolution.
 ///
-/// [`Display`] renders the fixed-width stored spelling `HH:MM:SS.ffffffZ`. Two
+/// [`Display`] renders the fixed-width storage encoding `HH:MM:SS.ffffffZ`. Two
 /// values compare through [`Ord`] in chronological order, and their stored
 /// spellings compare byte-wise in the same order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, AsRef, Deref, Display, Serialize, Deserialize)]
@@ -47,11 +47,6 @@ pub enum NgsiLdTimeError {
 pub struct NgsiLdTime(NaiveTime);
 
 impl NgsiLdTime {
-    /// The POSIX regular expression the stored spelling matches, anchored at
-    /// both ends, for a reader inside a statement that tells a stored time of
-    /// day from other stored text.
-    pub const STORED_PATTERN: &str = "^[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{6}Z$";
-
     /// The time of day, in UTC.
     #[must_use]
     pub const fn get(self) -> NaiveTime {
@@ -188,16 +183,6 @@ mod tests {
             assert!(earlier < later, "{earlier} must precede {later} chronologically");
             assert!(earlier.to_string() < later.to_string(), "{earlier} must precede {later} byte-wise as well");
         }
-    }
-
-    #[test]
-    fn every_stored_spelling_matches_the_stored_pattern() {
-        let pattern = regex::Regex::new(NgsiLdTime::STORED_PATTERN).expect("a valid regular expression");
-        for text in ["00:00:00Z", "12:00:00.5Z", "23:59:59.999999Z", "11:00:00,25Z"] {
-            let stored = text.parse::<NgsiLdTime>().expect("a Time").to_string();
-            assert!(pattern.is_match(&stored), "{stored}");
-        }
-        assert!(!pattern.is_match("12:00:00Z"), "a written spelling is not the stored one");
     }
 
     #[test]

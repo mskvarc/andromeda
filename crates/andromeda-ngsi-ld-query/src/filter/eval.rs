@@ -12,12 +12,13 @@ use crate::{
         expression::Expr,
         path::QueryPath,
         predicate::{CmpOp, Predicate, SetMembership},
-        scalar::{CompareValue, Scalar, parse_date, parse_date_time, parse_time},
+        scalar::{CompareValue, Scalar},
         string_order::string_order,
         target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, TargetValue},
     },
     queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities},
 };
+use andromeda_ngsi_ld_lexicon::time::value::TimeValue;
 use std::{borrow::Cow, cmp::Ordering};
 
 /// Evaluate a parsed `q` expression (clause 4.9) against an entity, reading
@@ -133,7 +134,10 @@ fn pattern_targets<'t>(target: &'t ResolvedTarget<'_>) -> Vec<Cow<'t, str>> {
 fn any_one_value<'t, 'a>(target: &'t ResolvedTarget<'a>) -> Option<&'t [TargetValue<'a>]> {
     match (target.reading, &target.value) {
         (MultiValueReading::AnyOneValue, TargetValue::Array(values)) => Some(values),
-        (MultiValueReading::AnyOneValue, TargetValue::Number(_) | TargetValue::Text(_) | TargetValue::Boolean(_) | TargetValue::Json(_))
+        (
+            MultiValueReading::AnyOneValue,
+            TargetValue::Number(_) | TargetValue::Text(_) | TargetValue::Boolean(_) | TargetValue::Json(_) | TargetValue::Time(_),
+        )
         | (MultiValueReading::WholeArray, _) => None,
     }
 }
@@ -209,14 +213,21 @@ fn compare_in_domain(value: &TargetValue<'_>, op: CmpOp, scalar: &Scalar) -> Opt
         Scalar::Bool(rhs) => Some(cmp_op(value.as_boolean()?.cmp(rhs), op)),
         Scalar::Str(rhs) => Some(cmp_op(string_order(&value.as_lexical()?, rhs, op), op)),
         Scalar::Uri(rhs) => Some(cmp_op(value.as_lexical()?.as_ref().cmp(rhs.as_str()), op)),
-        // A stored temporal value is compared in its own domain, not as text:
-        // clause 4.6.3 lets the same instant be written with any offset, and
-        // lexicographic order over those renderings is not chronological order.
-        // A target value that is not a temporal literal of the operand's kind
-        // is not comparable with it, so the predicate does not hold.
-        Scalar::DateTime(rhs) => Some(cmp_op(parse_date_time(&value.as_lexical()?).ok()?.cmp(rhs), op)),
-        Scalar::Date(rhs) => Some(cmp_op(parse_date(&value.as_lexical()?).ok()?.cmp(rhs), op)),
-        Scalar::Time(rhs) => Some(cmp_op(parse_time(&value.as_lexical()?).ok()?.cmp(rhs), op)),
+        // A time operand compares only with a value declared as one of its form
+        // (clause 4.9: no equality of data types, no match), in the temporal
+        // order clause 4.9 asks for.
+        Scalar::DateTime(rhs) => match value.as_time()? {
+            TimeValue::DateTime(held) => Some(cmp_op(held.get().cmp(rhs), op)),
+            TimeValue::Date(_) | TimeValue::Time(_) => None,
+        },
+        Scalar::Date(rhs) => match value.as_time()? {
+            TimeValue::Date(held) => Some(cmp_op(held.get().cmp(rhs), op)),
+            TimeValue::DateTime(_) | TimeValue::Time(_) => None,
+        },
+        Scalar::Time(rhs) => match value.as_time()? {
+            TimeValue::Time(held) => Some(cmp_op(held.get().cmp(rhs), op)),
+            TimeValue::DateTime(_) | TimeValue::Date(_) => None,
+        },
     }
 }
 
@@ -716,8 +727,9 @@ mod tests {
     fn a_temporal_sub_attribute_resolves_to_its_direct_value() {
         // Clause 4.9: `temperature.observedAt` terminates at a bare `@value`
         // node, carrying neither `hasValue` nor `hasObject`; the evaluator must
-        // still reach it rather than resolving nothing.
-        let expr = parse("\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/observedAt\">\"2024-01-01T00:00:00Z\"").unwrap();
+        // still reach it rather than resolving nothing. An instant the instance
+        // holds is a `DateTime`, which a bare `dateTime` operand compares with.
+        let expr = parse("\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/observedAt\">2024-01-01T00:00:00Z").unwrap();
         assert!(holds(&expr, &rich_entity()));
     }
 
@@ -1255,6 +1267,38 @@ mod tests {
             &parse("\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/modifiedAt\"").expect("parses"),
             &entity
         ));
+    }
+
+    /// One plain and one typed value in `DateTime` form, and an `observedAt`.
+    fn time_value_entity() -> Value {
+        serde_json::json!([{
+            "@id": "urn:ngsi-ld:Device:1",
+            "@type": ["https://example.com/Device"],
+            "https://example.com/plain": [{
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "2024-01-01T00:00:00Z"}]
+            }],
+            "https://example.com/typed": [{
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "2024-01-01T00:00:00Z", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}],
+                "https://uri.etsi.org/ngsi-ld/observedAt": [{"@value": "2024-01-01T00:00:00Z", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}]
+            }]
+        }])
+    }
+
+    /// Clause 4.9: a target matches only an operand of its own data type, a
+    /// bare `dateTime` is a time value and a `quotedStr` a String (annex C.6:
+    /// an undeclared string is a String).
+    #[test]
+    fn a_date_time_operand_matches_a_declared_time_value_and_a_quoted_one_a_plain_string() {
+        let entity = time_value_entity();
+        let holds_q = |q: &str| holds(&parse(q).expect("parses"), &entity);
+        assert!(!holds_q("\"https://example.com/plain\"==2024-01-01T00:00:00Z"));
+        assert!(holds_q("\"https://example.com/typed\"==2024-01-01T00:00:00.000Z"));
+        assert!(holds_q(
+            "\"https://example.com/typed\".\"https://uri.etsi.org/ngsi-ld/observedAt\"==2024-01-01T00:00:00Z"
+        ));
+        assert!(holds_q("\"https://example.com/plain\"==\"2024-01-01T00:00:00Z\""));
+        assert!(!holds_q("\"https://example.com/plain\"==\"2024-01-01T00:00:00.000Z\""));
+        assert!(!holds_q("\"https://example.com/typed\"==\"2024-01-01T00:00:00Z\""));
     }
 
     /// A segment naming the value member itself lands on the first value of

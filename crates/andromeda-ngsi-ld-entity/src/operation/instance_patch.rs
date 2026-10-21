@@ -25,7 +25,7 @@ use crate::{
     proof_seals::ProofSeals,
     refusal::EntityRefusal,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, time::written_date_time::DateTimeText};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, time::date_time::NgsiLdDateTime};
 
 /// How deeply a written instance is applied to the instance it lands on.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -74,7 +74,7 @@ pub(crate) fn written_family(document: &InstanceDocument, held: Option<Attribute
 pub(crate) fn new_instance(
     attribute: &AttributeName,
     document: &InstanceDocument,
-    observed_at: Option<&Slot<DateTimeText>>,
+    observed_at: Option<&Slot<NgsiLdDateTime>>,
 ) -> Result<Instance, MutationError> {
     let family = written_family(document, None);
     let written = match document.value() {
@@ -103,14 +103,15 @@ pub(crate) fn new_instance(
 ///
 /// Returns [`MutationError::AttributeTypeMismatch`] when a partial update
 /// names another family, [`EntityRefusal::ReservedNullValue`] when the value
-/// is a deletion encoding (the caller deletes the instance instead), and the
-/// refusals of [`new_instance`].
+/// is a deletion encoding (the caller deletes the instance instead),
+/// [`EntityRefusal::Datatype`] when the merged value is not of the datatype
+/// it is declared as, and the refusals of [`new_instance`].
 pub(crate) fn patch_instance(
     attribute: &AttributeName,
     held: &mut Instance,
     document: &InstanceDocument,
     depth: InstancePatchDepth,
-    observed_at: Option<&Slot<DateTimeText>>,
+    observed_at: Option<&Slot<NgsiLdDateTime>>,
 ) -> Result<(), MutationError> {
     let family = written_family(document, Some(held.family()));
     let (value_depth, sub_attribute_depth) = match depth {
@@ -138,6 +139,9 @@ pub(crate) fn patch_instance(
         ValueSlot::Remove(_) => return Err(reserved_null(attribute)),
     }
     apply_companion_members(attribute, held.value_mut(), document)?;
+    // A merge can put a written value beside a held `valueType`, or the
+    // reverse, which neither the document nor the held instance shows alone.
+    held.admit_datatypes(attribute)?;
     apply_instance_members(held, document, observed_at);
     patch_sub_attributes(held.sub_attributes_mut(), document.sub_attributes(), sub_attribute_depth)
 }
@@ -149,12 +153,12 @@ pub(crate) fn patch_instance(
 /// ignores them in a write, and the write stamps attribute instances itself
 /// (clause 4.8). Nor is `instanceId`, which Table 5.2.5-2 makes output-only
 /// and clause 5.2.5 has the broker ignore.
-fn apply_instance_members(instance: &mut Instance, document: &InstanceDocument, observed_at: Option<&Slot<DateTimeText>>) {
+fn apply_instance_members(instance: &mut Instance, document: &InstanceDocument, observed_at: Option<&Slot<NgsiLdDateTime>>) {
     if let Some(slot) = observed_at.or_else(|| document.observed_at()) {
-        instance.set_observed_at(slot.as_set().cloned()); // clone: the stored instance owns its copy of the borrowed fragment.
+        instance.set_observed_at(slot.as_set().copied());
     }
     if let Some(slot) = document.expires_at() {
-        instance.set_expires_at(slot.as_set().cloned()); // clone: the stored instance owns its copy of the borrowed fragment.
+        instance.set_expires_at(slot.as_set().copied());
     }
     let written_seals = document.proof_seals();
     if !written_seals.is_empty() {

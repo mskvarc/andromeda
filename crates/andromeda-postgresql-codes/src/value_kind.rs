@@ -5,7 +5,8 @@ use crate::{compact_code_domain::CompactCodeDomain, compact_code_registry, regis
 compact_code_registry! {
     /// Which typed column of an attribute-history row holds its value.
     ///
-    /// One member per typed value column, plus the reserved
+    /// One member per typed value column, plus the two time value data types
+    /// the string column holds apart from a String and the reserved
     /// [`Tombstone`](ValueKind::Tombstone). The number is not a convenience
     /// index: the rebuilt history table constrains the row so that the member
     /// and the populated column agree, which makes a stored value whose
@@ -40,6 +41,13 @@ compact_code_registry! {
             DateTime = 6, "date-time";
             /// The row's value is a URI, which is how a relationship object is held.
             Uri = 7, "uri";
+            /// The row's value is a value declared as a clause 4.6.3 `Date`, held
+            /// as its one spelling in the string column.
+            Date = 8, "date";
+            /// The row's value is a value declared as a clause 4.6.3 `Time`, held
+            /// in the string column in its fixed-width storage encoding
+            /// `HH:MM:SS.ffffffZ`, whose byte order is chronological.
+            Time = 9, "time";
         }
     }
 }
@@ -63,8 +71,8 @@ mod tests {
     }
 
     #[test]
-    fn every_typed_value_column_has_exactly_one_member() {
-        assert_eq!(ValueKind::ALL.len(), 8);
+    fn every_value_shape_has_exactly_one_member() {
+        assert_eq!(ValueKind::ALL.len(), 10);
     }
 
     #[test]
@@ -74,6 +82,6 @@ mod tests {
 
     #[test]
     fn a_value_shape_a_newer_release_might_add_fails_to_decode() {
-        assert!(ValueKind::try_from(8).is_err());
+        assert!(ValueKind::try_from(10).is_err());
     }
 }

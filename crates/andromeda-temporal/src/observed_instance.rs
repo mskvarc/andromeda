@@ -31,19 +31,19 @@ use andromeda_ngsi_ld_entity::{
 };
 use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
+    datatype::primitive_literal::PrimitiveLiteral,
     identifier::Identifier,
     reference::NgsiLdReference,
-    time::{value::TimeValue, written_date_time::DateTimeText},
+    time::{
+        date_time::NgsiLdDateTime,
+        value::{TimeValue, TimeValueDeclaration},
+    },
     uri::Uri,
 };
 use andromeda_ngsi_ld_model::temporal::{TemporalValue, observation_metadata::ObservationMetadata, structured_value::StructuredValue};
 use andromeda_ngsi_ld_number::JsonNumber;
 use chrono::{DateTime, Utc};
 use std::str::FromStr;
-
-/// The JSON-LD datatype of a JSON literal, which a time value classification
-/// reads like any other declared datatype.
-const JSON_DATATYPE: &str = "@json";
 
 /// One written instance, read as the observation a history row records.
 #[derive(Clone, Debug, PartialEq)]
@@ -103,7 +103,7 @@ impl ObservedInstance {
             (Some(family), ValueSlot::Set(written)) => (family, written),
             (None, ValueSlot::Set(written)) => (written.carrier().implied_family(), written),
         };
-        let value = family_value(family, written)?;
+        let value = family_value(family, written, value_type.as_ref().and_then(Slot::as_set))?;
         let observed_at = declared_observed_at(observed_at.as_ref());
         let metadata = ObservationMetadata::admit(InstanceDocumentParts {
             family: None,
@@ -133,11 +133,10 @@ impl ObservedInstance {
 }
 
 /// The instant the written `observedAt` declares, `None` when the instance
-/// declares none or removes it. The text was read by the clause 4.6.3 rules
-/// when the instance was decoded, so the instant it names is already known.
-pub(crate) const fn declared_observed_at(observed_at: Option<&Slot<DateTimeText>>) -> Option<DateTime<Utc>> {
+/// declares none or removes it.
+pub(crate) const fn declared_observed_at(observed_at: Option<&Slot<NgsiLdDateTime>>) -> Option<DateTime<Utc>> {
     match observed_at {
-        Some(Slot::Set(text)) => Some(text.instant()),
+        Some(Slot::Set(instant)) => Some(instant.get()),
         Some(Slot::Remove) | None => None,
     }
 }
@@ -158,10 +157,10 @@ const fn missing_value(family: AttributeType) -> SubmissionRefusal {
 }
 
 /// The observation the value member `written` of an instance of `family`
-/// records.
-fn family_value(family: AttributeType, written: WrittenValue) -> Result<TemporalValue, TemporalError> {
+/// records, beside the `valueType` `value_type` the instance declares.
+fn family_value(family: AttributeType, written: WrittenValue, value_type: Option<&NgsiLdReference>) -> Result<TemporalValue, TemporalError> {
     match (family, written) {
-        (AttributeType::Property, WrittenValue::Value(values)) => property_value(values),
+        (AttributeType::Property, WrittenValue::Value(values)) => property_value(values, value_type),
         (AttributeType::GeoProperty, WrittenValue::Geometry(geometry)) => Ok(TemporalValue::Geometry(match geometry {
             GeoValue::Geometry(value) => value,
             // The clause 4.7.2 text is not kept, only the positions it parses
@@ -177,7 +176,12 @@ fn family_value(family: AttributeType, written: WrittenValue) -> Result<Temporal
         (AttributeType::JsonProperty, WrittenValue::Json(literals)) => Ok(TemporalValue::Structured(StructuredValue::Json(
             literals.into_vec().into_iter().next().ok_or(SubmissionRefusal::JsonPropertyMissingJson)?,
         ))),
-        (AttributeType::ListProperty, WrittenValue::ValueList(items)) => Ok(TemporalValue::Structured(StructuredValue::List(items))),
+        (AttributeType::ListProperty, WrittenValue::ValueList(mut items)) => {
+            for item in &mut items {
+                item.commit_time_values(value_type);
+            }
+            Ok(TemporalValue::Structured(StructuredValue::List(items)))
+        }
         (AttributeType::ListRelationship, WrittenValue::ObjectList(objects)) => Ok(TemporalValue::Structured(StructuredValue::ObjectList(
             objects
                 .into_iter()
@@ -226,24 +230,30 @@ fn vocab_value(terms: NonEmpty<NgsiLdReference>) -> TemporalValue {
 /// expands `"value": ["a","b"]` into one value per element, so several values
 /// are kept together, and the empty array, which expands to none, is kept as
 /// the empty array.
-fn property_value(values: Vec<ExpandedValue<Fragment>>) -> Result<TemporalValue, TemporalError> {
+///
+/// A declared time value is recorded in its served spelling, at every depth of
+/// a structured value too, as current state holds it.
+fn property_value(mut values: Vec<ExpandedValue<Fragment>>, value_type: Option<&NgsiLdReference>) -> Result<TemporalValue, TemporalError> {
     let scalar = match values.as_slice() {
-        [ExpandedValue::Literal(literal)] => Some(scalar_value(literal)),
+        [ExpandedValue::Literal(literal)] => Some(scalar_value(literal, value_type)),
         [ExpandedValue::Json(literal)] => json_scalar_value(literal.piece()),
         [ExpandedValue::Node(_) | ExpandedValue::List(_)] | [] | [_, _, ..] => None,
     };
-    match scalar {
-        Some(column) => column,
-        None => Ok(TemporalValue::Structured(StructuredValue::Values(values))),
+    if let Some(column) = scalar {
+        return column;
     }
+    for value in &mut values {
+        value.commit_time_values(value_type);
+    }
+    Ok(TemporalValue::Structured(StructuredValue::Values(values)))
 }
 
-/// The column a scalar value object lands in.
-fn scalar_value(literal: &Literal) -> Result<TemporalValue, TemporalError> {
+/// The column a scalar value object beside the `valueType` `value_type` lands in.
+fn scalar_value(literal: &Literal, value_type: Option<&NgsiLdReference>) -> Result<TemporalValue, TemporalError> {
     match literal.value() {
         LiteralValue::Number(number) => Ok(TemporalValue::Number(number.clone())), // clone: the observation owns its exact number
         LiteralValue::Boolean(flag) => Ok(TemporalValue::Boolean(*flag)),
-        LiteralValue::String(text) => text_value(literal.datatype().map(NgsiLdReference::as_str), text),
+        LiteralValue::String(text) => text_value(TimeValueDeclaration::new(literal.datatype(), value_type), text),
     }
 }
 
@@ -256,38 +266,25 @@ fn json_scalar_value(json: JsonPiece<'_>) -> Option<Result<TemporalValue, Tempor
                 .map(TemporalValue::Number)
                 .map_err(|source| TemporalError::from(SubmissionRefusal::PropertyNumber(source))),
         ),
-        JsonKind::String => json.as_str().map(|text| text_value(Some(JSON_DATATYPE), &text)),
+        JsonKind::String => json.as_str().map(|text| Ok(TemporalValue::String(text.into_owned()))),
         JsonKind::Boolean => json.as_bool().map(|flag| Ok(TemporalValue::Boolean(flag))),
         JsonKind::Null => Some(Ok(TemporalValue::String("null".to_owned()))),
         JsonKind::Array | JsonKind::Object => None,
     }
 }
 
-/// A string Property value, which is one of the three clause 4.6.3 time values
-/// when its declared datatype or its lexical form says so.
+/// A string Property value: the time value it is declared as (annex C.6), or
+/// the string it is, as written.
 ///
-/// The classification is [`TimeValue::admitted`]'s and nothing here repeats
-/// it: a `@type` the client declared names the form, and with none declared the
-/// clause 4.6.3 lexical form of the literal does — "`DateTime` string for
-/// encoding a timestamp" is a data type whose whole representation is the
-/// string, and clause 4.8 NOTE 3 puts such a value on an ordinary Property.
-/// Sharing that one classifier with the `q` operand parser is what makes clause
-/// 4.9's rule that "if there is no equality between the target value data type
-/// and the Query Term value data type, then it shall be considered as not
-/// matching" a rule about the values rather than about which side of the broker
-/// read them.
-///
-/// The two forms stored as text are stored in the canonical rendering their
-/// type defines: clause 4.6.3 admits many spellings of one `Time`, clause 4.9
-/// orders `Time` and `Date` values chronologically, and the string column
-/// orders byte-wise, so only a fixed-width UTC rendering makes the two orders
-/// the same. A `DateTime` reaches its own `timestamptz` column, where the
-/// instant, not its spelling, is what is compared.
-fn text_value(declared: Option<&str>, text: &str) -> Result<TemporalValue, TemporalError> {
-    match TimeValue::admitted(declared, text) {
+/// A `DateTime` reaches its own `timestamptz` column, where the instant is
+/// what is compared. A `Date` and a `Time` reach the string column under their
+/// own value kinds, a `Time` in its fixed-width storage encoding, so byte-wise
+/// order over the column is the chronological order clause 4.9 asks for.
+fn text_value(declaration: TimeValueDeclaration<'_>, text: &str) -> Result<TemporalValue, TemporalError> {
+    match TimeValue::declared(declaration, PrimitiveLiteral::String(text)) {
         Some(Ok(TimeValue::DateTime(instant))) => Ok(TemporalValue::DateTime(instant.get())),
-        Some(Ok(TimeValue::Date(date))) => Ok(TemporalValue::String(date.to_string())),
-        Some(Ok(TimeValue::Time(time))) => Ok(TemporalValue::String(time.to_string())),
+        Some(Ok(TimeValue::Date(date))) => Ok(TemporalValue::Date(date)),
+        Some(Ok(TimeValue::Time(time))) => Ok(TemporalValue::Time(time)),
         Some(Err(source)) => Err(SubmissionRefusal::TimeValueProperty(source).into()),
         None => Ok(TemporalValue::String(text.to_owned())),
     }

@@ -16,7 +16,7 @@
 --     3 GeoProperty, 4 VocabProperty, 5 LanguageProperty, 6 JsonProperty,
 --     7 ListProperty, 8 ListRelationship
 --   sub_attribute.value_kind: 1 number, 2 string, 3 boolean,
---     4 geometry, 5 object, 6 date-time, 7 uri
+--     4 geometry, 5 object, 6 date-time, 7 uri, 8 date, 9 time
 -- ============================================================================
 -- One sub-attribute of an attribute instance (clause 4.5.2), an element of
 -- the instance's `sub_attributes` array. The array lists an instance's

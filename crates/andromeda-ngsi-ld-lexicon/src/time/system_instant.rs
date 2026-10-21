@@ -1,8 +1,8 @@
 //! A system time the broker stamps on an attribute instance (clause 4.8).
 //!
-//! `createdAt` and `modifiedAt` are written by the broker, never by a client,
-//! so the instant alone determines the text: it is held at the microsecond the
-//! store keeps and spelled as every instant the broker emits is spelled.
+//! `createdAt` and `modifiedAt` are stamped by the broker from its clock. The
+//! instant is held at the microsecond the store keeps and spelled as every
+//! instant the broker emits is spelled.
 
 use crate::time::{
     date_time::{NgsiLdDateTime, NgsiLdDateTimeError},

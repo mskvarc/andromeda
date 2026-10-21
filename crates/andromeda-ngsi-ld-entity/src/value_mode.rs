@@ -20,6 +20,10 @@ pub trait ValueMode: Debug + Clone + PartialEq + private::Sealed {
 
     /// The values `member` holds; none for a member a fragment deletes.
     fn held_values(member: &Self::Member) -> &[ExpandedValue<Self>];
+
+    /// The values `member` holds, to rewrite in place; none for a member a
+    /// fragment deletes.
+    fn held_values_mut(member: &mut Self::Member) -> &mut [ExpandedValue<Self>];
 }
 
 /// Entity state: no deletion anywhere.
@@ -31,6 +35,10 @@ impl ValueMode for Stored {
     type Text = CompactString;
 
     fn held_values(member: &Vec<ExpandedValue<Stored>>) -> &[ExpandedValue<Stored>] {
+        member
+    }
+
+    fn held_values_mut(member: &mut Vec<ExpandedValue<Stored>>) -> &mut [ExpandedValue<Stored>] {
         member
     }
 }
@@ -48,6 +56,13 @@ impl ValueMode for Fragment {
         match member {
             FragmentMember::Values(values) => values,
             FragmentMember::Remove => &[],
+        }
+    }
+
+    fn held_values_mut(member: &mut FragmentMember) -> &mut [ExpandedValue<Fragment>] {
+        match member {
+            FragmentMember::Values(values) => values,
+            FragmentMember::Remove => &mut [],
         }
     }
 }

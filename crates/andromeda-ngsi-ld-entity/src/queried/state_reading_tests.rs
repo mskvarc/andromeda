@@ -160,7 +160,7 @@ fn vehicle_cases() -> Vec<(&'static str, bool)> {
 fn rich_cases() -> Vec<(&'static str, bool)> {
     vec![
         (
-            "\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/observedAt\">\"2024-01-01T00:00:00Z\"",
+            "\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/observedAt\">2024-01-01T00:00:00Z",
             true,
         ),
         ("\"https://example.com/description\"", true),

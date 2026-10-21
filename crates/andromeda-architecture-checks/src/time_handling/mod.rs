@@ -25,7 +25,10 @@
 //! - a manifest enabling `chrono`'s `serde` feature, which would let a model
 //!   derive a reader for a bare `DateTime<Utc>` that skips the clause, or
 //!   depending on another date-time library, which would bring a reader and a
-//!   writer of its own.
+//!   writer of its own;
+//! - a name of, or a dependency on, the XSD datatype library outside the
+//!   lexicon's datatype module, which reads XSD datatypes and never an NGSI-LD
+//!   time value.
 //!
 //! The reading is syntactic, so it sees what a source names, not the types an
 //! expression has: a `chrono` value written through its own `Display` or read
@@ -34,11 +37,16 @@
 
 mod manifest_reading;
 mod source_reading;
+mod xsd_reading;
 
 use crate::{
     dependencies::workspace_manifest_paths,
     source_scan::every_workspace_source,
-    time_handling::{manifest_reading::date_time_library_findings, source_reading::time_handling_findings},
+    time_handling::{
+        manifest_reading::date_time_library_findings,
+        source_reading::time_handling_findings,
+        xsd_reading::{xsd_dependency_findings, xsd_names},
+    },
 };
 use std::{fs, path::Path};
 
@@ -47,6 +55,12 @@ const TIME_OWNER: &str = "crates/andromeda-ngsi-ld-lexicon/src/time/";
 
 /// The guard's own sources, which spell the names they look for.
 const GUARD_SOURCES: &str = "crates/andromeda-architecture-checks/src/time_handling/";
+
+/// The module that reads XSD datatypes, the one source naming the XSD library.
+const XSD_OWNER: &str = "crates/andromeda-ngsi-ld-lexicon/src/datatype/";
+
+/// The manifest of the crate holding [`XSD_OWNER`].
+const XSD_OWNER_MANIFEST: &str = "crates/andromeda-ngsi-ld-lexicon/Cargo.toml";
 
 /// The PostgreSQL lift of stored time text, which renders a time of day with `to_char`.
 const SQL_LIFT_OWNER: &str = "crates/andromeda-postgresql-query/src/temporal_operand.rs";
@@ -83,7 +97,17 @@ pub fn time_handling_sites(workspace_root: &str) -> Vec<TimeHandlingSite> {
     let root = Path::new(workspace_root);
     let mut sites = Vec::new();
     for source in every_workspace_source(root) {
-        if source.workspace_path.starts_with(TIME_OWNER) || source.workspace_path.starts_with(GUARD_SOURCES) {
+        if source.workspace_path.starts_with(GUARD_SOURCES) {
+            continue;
+        }
+        if !source.workspace_path.starts_with(XSD_OWNER) {
+            sites.extend(xsd_names(&source.syntax).into_iter().map(|line| TimeHandlingSite {
+                path: source.workspace_path.clone(), // clone: every site of the file reports its path
+                line,
+                subject: "names the XSD datatype library outside the lexicon's datatype module".to_owned(),
+            }));
+        }
+        if source.workspace_path.starts_with(TIME_OWNER) {
             continue;
         }
         let keeps_sql_template = source.workspace_path == SQL_LIFT_OWNER;
@@ -100,7 +124,8 @@ pub fn time_handling_sites(workspace_root: &str) -> Vec<TimeHandlingSite> {
     for manifest in workspace_manifest_paths(root) {
         let path = manifest.strip_prefix(root).unwrap_or(&manifest).to_string_lossy().replace('\\', "/");
         let findings = match fs::read_to_string(&manifest) {
-            Ok(text) => date_time_library_findings(&text),
+            Ok(text) if path == XSD_OWNER_MANIFEST => date_time_library_findings(&text),
+            Ok(text) => date_time_library_findings(&text).into_iter().chain(xsd_dependency_findings(&text)).collect(),
             Err(error) => vec![format!("could not be read: {error}")],
         };
         sites.extend(findings.into_iter().map(|subject| TimeHandlingSite {
@@ -122,7 +147,7 @@ pub fn assert_time_values_have_one_owner(workspace_root: &str) {
     let sites = time_handling_sites(workspace_root);
     assert!(
         sites.is_empty(),
-        "time values are read or written outside {TIME_OWNER}; parse through `NgsiLdDateTime`, `NgsiLdDate`, `NgsiLdTime` or `DateTimeText`, write through `instant_text` or `time_of_day_text`, truncate through `to_microsecond`, and carry serde members through `instant_serde`:\n{}",
+        "time values are read or written outside {TIME_OWNER}; parse through `NgsiLdDateTime`, `NgsiLdDate`, or `NgsiLdTime`, write through `instant_text` or `time_of_day_text`, truncate through `to_microsecond`, and carry serde members through `instant_serde`:\n{}",
         sites.iter().map(TimeHandlingSite::report).collect::<Vec<_>>().join("\n")
     );
 }

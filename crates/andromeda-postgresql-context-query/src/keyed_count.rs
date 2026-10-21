@@ -246,7 +246,7 @@ mod tests {
         );
         assert!(!indexed.contains(r#""ca"."value_string" ~ "#), "the candidates answer the pattern: {indexed}");
         assert!(
-            indexed.contains(r#"NOT COALESCE("ca"."value_string" = $"#),
+            indexed.contains(r#"NOT COALESCE(("ca"."value_string" = $"#),
             "the rest of q still filters: {indexed}"
         );
     }

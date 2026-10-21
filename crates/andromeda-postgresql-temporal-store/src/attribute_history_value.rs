@@ -2,13 +2,17 @@
 
 use crate::error::TemporalStoreError;
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::{
+    time::{date::NgsiLdDate, time_of_day::NgsiLdTime},
+    uri::Uri,
+};
 use andromeda_ngsi_ld_model::temporal::TemporalValue;
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_codes::value_kind::ValueKind;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::value::{RawValue, to_raw_value};
+use std::borrow::Cow;
 
 /// What one attribute-history row records.
 ///
@@ -31,7 +35,7 @@ pub enum AttributeHistoryValue {
     },
     /// Arbitrary-precision number.
     Number(JsonNumber),
-    /// A string that is not an `xsd:dateTime`.
+    /// A string declared as no time value.
     String(String),
     /// Boolean.
     Boolean(bool),
@@ -46,8 +50,14 @@ pub enum AttributeHistoryValue {
     },
     /// Structured value, as the JSON the structured column stores.
     Object(Box<RawValue>),
-    /// A point in time, already truncated to the broker's microsecond resolution.
+    /// A value declared as a clause 4.6.3 `DateTime`, already truncated to the
+    /// broker's microsecond resolution.
     DateTime(DateTime<Utc>),
+    /// A value declared as a clause 4.6.3 `Date`, stored in the string column.
+    Date(NgsiLdDate),
+    /// A value declared as a clause 4.6.3 `Time`, stored in the string column
+    /// in its fixed-width storage encoding.
+    Time(NgsiLdTime),
     /// A URI, which is the shape a relationship object is stored in.
     Uri(Uri),
 }
@@ -74,6 +84,8 @@ impl AttributeHistoryValue {
             },
             TemporalValue::Structured(structured) => AttributeHistoryValue::Object(structured.to_stored_json().map_err(TemporalStoreError::StoredJson)?),
             TemporalValue::DateTime(instant) => AttributeHistoryValue::DateTime(*instant),
+            TemporalValue::Date(date) => AttributeHistoryValue::Date(*date),
+            TemporalValue::Time(time) => AttributeHistoryValue::Time(*time),
             TemporalValue::Uri(uri) => AttributeHistoryValue::Uri(uri.clone()), // clone: the persisted row owns the URI.
             TemporalValue::Tombstone { deleted_at } => AttributeHistoryValue::Tombstone { deleted_at: *deleted_at },
             TemporalValue::Scopes(_) => return Err(TemporalStoreError::ScopeHasNoAttributeRow),
@@ -91,6 +103,8 @@ impl AttributeHistoryValue {
             AttributeHistoryValue::Geometry { .. } => ValueKind::Geometry,
             AttributeHistoryValue::Object(_) => ValueKind::Object,
             AttributeHistoryValue::DateTime(_) => ValueKind::DateTime,
+            AttributeHistoryValue::Date(_) => ValueKind::Date,
+            AttributeHistoryValue::Time(_) => ValueKind::Time,
             AttributeHistoryValue::Uri(_) => ValueKind::Uri,
         }
     }
@@ -106,6 +120,8 @@ impl AttributeHistoryValue {
             | AttributeHistoryValue::Geometry { .. }
             | AttributeHistoryValue::Object(_)
             | AttributeHistoryValue::DateTime(_)
+            | AttributeHistoryValue::Date(_)
+            | AttributeHistoryValue::Time(_)
             | AttributeHistoryValue::Uri(_) => None,
         }
     }
@@ -128,6 +144,8 @@ impl AttributeHistoryValue {
             | AttributeHistoryValue::Geometry { .. }
             | AttributeHistoryValue::Object(_)
             | AttributeHistoryValue::DateTime(_)
+            | AttributeHistoryValue::Date(_)
+            | AttributeHistoryValue::Time(_)
             | AttributeHistoryValue::Uri(_) => None,
         }
     }
@@ -143,15 +161,20 @@ impl AttributeHistoryValue {
             | AttributeHistoryValue::Geometry { .. }
             | AttributeHistoryValue::Object(_)
             | AttributeHistoryValue::DateTime(_)
+            | AttributeHistoryValue::Date(_)
+            | AttributeHistoryValue::Time(_)
             | AttributeHistoryValue::Uri(_) => None,
         }
     }
 
-    /// String column content.
+    /// String column content: a String as it is, a `Date` in its one
+    /// spelling, a `Time` in its fixed-width storage encoding.
     #[must_use]
-    pub fn string(&self) -> Option<&str> {
+    pub fn string(&self) -> Option<Cow<'_, str>> {
         match self {
-            AttributeHistoryValue::String(text) => Some(text),
+            AttributeHistoryValue::String(text) => Some(Cow::Borrowed(text)),
+            AttributeHistoryValue::Date(date) => Some(Cow::Owned(date.to_string())),
+            AttributeHistoryValue::Time(time) => Some(Cow::Owned(time.to_string())),
             AttributeHistoryValue::Tombstone { .. }
             | AttributeHistoryValue::Number(_)
             | AttributeHistoryValue::Boolean(_)
@@ -173,6 +196,8 @@ impl AttributeHistoryValue {
             | AttributeHistoryValue::Geometry { .. }
             | AttributeHistoryValue::Object(_)
             | AttributeHistoryValue::DateTime(_)
+            | AttributeHistoryValue::Date(_)
+            | AttributeHistoryValue::Time(_)
             | AttributeHistoryValue::Uri(_) => None,
         }
     }
@@ -188,6 +213,8 @@ impl AttributeHistoryValue {
             | AttributeHistoryValue::Boolean(_)
             | AttributeHistoryValue::Object(_)
             | AttributeHistoryValue::DateTime(_)
+            | AttributeHistoryValue::Date(_)
+            | AttributeHistoryValue::Time(_)
             | AttributeHistoryValue::Uri(_) => None,
         }
     }
@@ -203,6 +230,8 @@ impl AttributeHistoryValue {
             | AttributeHistoryValue::Boolean(_)
             | AttributeHistoryValue::Object(_)
             | AttributeHistoryValue::DateTime(_)
+            | AttributeHistoryValue::Date(_)
+            | AttributeHistoryValue::Time(_)
             | AttributeHistoryValue::Uri(_) => None,
         }
     }
@@ -218,6 +247,8 @@ impl AttributeHistoryValue {
             | AttributeHistoryValue::Boolean(_)
             | AttributeHistoryValue::Geometry { .. }
             | AttributeHistoryValue::DateTime(_)
+            | AttributeHistoryValue::Date(_)
+            | AttributeHistoryValue::Time(_)
             | AttributeHistoryValue::Uri(_) => None,
         }
     }
@@ -233,6 +264,8 @@ impl AttributeHistoryValue {
             | AttributeHistoryValue::Boolean(_)
             | AttributeHistoryValue::Geometry { .. }
             | AttributeHistoryValue::Object(_)
+            | AttributeHistoryValue::Date(_)
+            | AttributeHistoryValue::Time(_)
             | AttributeHistoryValue::Uri(_) => None,
         }
     }
@@ -248,7 +281,9 @@ impl AttributeHistoryValue {
             | AttributeHistoryValue::Boolean(_)
             | AttributeHistoryValue::Geometry { .. }
             | AttributeHistoryValue::Object(_)
-            | AttributeHistoryValue::DateTime(_) => None,
+            | AttributeHistoryValue::DateTime(_)
+            | AttributeHistoryValue::Date(_)
+            | AttributeHistoryValue::Time(_) => None,
         }
     }
 }

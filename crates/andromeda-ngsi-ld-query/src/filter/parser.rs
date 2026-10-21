@@ -414,13 +414,16 @@ mod tests {
         }
     }
 
-    /// The same quotes do not hold a conformant literal apart from the value it
-    /// names: clause 4.9's EXAMPLE 3 quotes a URI and requires it to match a
-    /// Relationship object, so quoting is the escaping device and the literal's
-    /// own lexical form is its data type.
+    /// Clause 4.9: `quotedStr` is a String whatever it contains, so a quoted
+    /// literal in a `DateTime` form is a String, and only the bare one is a
+    /// `dateTime`.
     #[test]
-    fn a_quoted_operand_that_satisfies_a_temporal_form_is_that_value() {
+    fn a_quoted_operand_in_a_temporal_form_is_a_string_and_a_bare_one_that_value() {
         match parse("observed>=\"2017-12-24T12:00:00Z\"").expect("parses") {
+            Expr::Pred(Predicate::Ordering { rhs: Scalar::Str(_), .. }) => {}
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => panic!("expected a string operand, got {other:?}"),
+        }
+        match parse("observed>=2017-12-24T12:00:00Z").expect("parses") {
             Expr::Pred(Predicate::Ordering { rhs: Scalar::DateTime(_), .. }) => {}
             other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => panic!("expected a date-time operand, got {other:?}"),
         }

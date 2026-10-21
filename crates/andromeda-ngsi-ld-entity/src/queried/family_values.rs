@@ -23,8 +23,9 @@ use std::{borrow::Cow, slice::Iter};
 /// The values of one family member, in the order the instance holds them.
 #[derive(Debug)]
 pub enum FamilyValues<'a, M: QueriedMode> {
-    /// Expanded values: a Property's `value`, a `ListProperty`'s items.
-    Expanded(Iter<'a, ExpandedValue<M>>),
+    /// Expanded values: a Property's `value`, a `ListProperty`'s items, with
+    /// the `valueType` that declares their datatype.
+    Expanded(Iter<'a, ExpandedValue<M>>, Option<&'a NgsiLdReference>),
     /// A Relationship's objects.
     Objects(Iter<'a, Uri>),
     /// A `VocabProperty`'s terms.
@@ -45,30 +46,31 @@ impl<'a> FamilyValues<'a, Stored> {
     #[must_use]
     pub fn of_state(value: &'a FamilyValue) -> FamilyValues<'a, Stored> {
         match value {
-            FamilyValue::Property { values, .. } => FamilyValues::Expanded(values.iter()),
+            FamilyValue::Property { values, value_type, .. } => FamilyValues::Expanded(values.iter(), value_type.as_ref()),
             FamilyValue::GeoProperty { geometry, .. } => FamilyValues::Single(Some(geometry_item(geometry))),
             FamilyValue::Relationship { objects, .. } => FamilyValues::Objects(objects.iter()),
             FamilyValue::LanguageProperty { entries, .. } => FamilyValues::Entries(entries.entries().iter()),
             FamilyValue::VocabProperty { vocab, .. } => FamilyValues::Terms(vocab.iter()),
             FamilyValue::JsonProperty { json, .. } => FamilyValues::Json(json.iter()),
-            FamilyValue::ListProperty { items, .. } => FamilyValues::Expanded(items.iter()),
+            FamilyValue::ListProperty { items, value_type, .. } => FamilyValues::Expanded(items.iter(), value_type.as_ref()),
             FamilyValue::ListRelationship { objects, .. } => FamilyValues::ListObjects(objects.iter()),
         }
     }
 }
 
 impl<'a> FamilyValues<'a, Fragment> {
-    /// The values a written instance's value member holds.
+    /// The values a written instance's value member holds, beside the
+    /// `valueType` the instance writes.
     #[must_use]
-    pub fn of_written(value: &'a WrittenValue) -> FamilyValues<'a, Fragment> {
+    pub fn of_written(value: &'a WrittenValue, value_type: Option<&'a NgsiLdReference>) -> FamilyValues<'a, Fragment> {
         match value {
-            WrittenValue::Value(values) => FamilyValues::Expanded(values.iter()),
+            WrittenValue::Value(values) => FamilyValues::Expanded(values.iter(), value_type),
             WrittenValue::Geometry(geometry) => FamilyValues::Single(Some(geometry_item(geometry))),
             WrittenValue::Object(objects) => FamilyValues::Objects(objects.iter()),
             WrittenValue::LanguageMap(entries) => FamilyValues::Entries(entries.entries().iter()),
             WrittenValue::Vocab(vocab) => FamilyValues::Terms(vocab.iter()),
             WrittenValue::Json(json) => FamilyValues::Json(json.iter()),
-            WrittenValue::ValueList(items) => FamilyValues::Expanded(items.iter()),
+            WrittenValue::ValueList(items) => FamilyValues::Expanded(items.iter(), value_type),
             WrittenValue::ObjectList(objects) => FamilyValues::ListObjects(objects.iter()),
         }
     }
@@ -111,7 +113,7 @@ impl<'a, M: QueriedMode> Iterator for FamilyValues<'a, M> {
 
     fn next(&mut self) -> Option<ValueItem<'a, &'a ValueNode<M>>> {
         match self {
-            FamilyValues::Expanded(values) => values.next().map(item_of),
+            FamilyValues::Expanded(values, value_type) => values.next().map(|value| item_of(value, *value_type)),
             FamilyValues::Objects(objects) => objects.next().map(|object| ValueItem::Reference(object.as_str())),
             FamilyValues::Terms(terms) => terms.next().map(|term| ValueItem::Reference(term.as_str())),
             FamilyValues::Entries(entries) => entries

@@ -8,7 +8,13 @@
 
 use andromeda_context_commit::write_ordinal::WriteOrdinalOutOfRange;
 use andromeda_ngsi_ld_entity::refusal::EntityRefusal;
-use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, reference::NgsiLdReferenceError, scope::path::ScopePathError, uri::UriParseError};
+use andromeda_ngsi_ld_lexicon::{
+    identifier::IdentifierParseError,
+    reference::NgsiLdReferenceError,
+    scope::path::ScopePathError,
+    time::{date::NgsiLdDateError, date_time::NgsiLdDateTimeError, time_of_day::NgsiLdTimeError},
+    uri::UriParseError,
+};
 use andromeda_ngsi_ld_model::temporal::structured_value_codec::StoredValueError;
 use andromeda_ngsi_ld_number::JsonNumberError;
 use andromeda_postgresql_attribute_instance::{assemble::AssemblyError, stored_members::StoredInstanceError};
@@ -150,6 +156,14 @@ pub enum StoredHistoryError {
     /// A URI value is not a URI.
     #[error("a stored attribute_history value_uri is not a URI: {0}")]
     ValueUri(#[source] UriParseError),
+    /// A row recorded under the `Date` value kind holds text that is no
+    /// clause 4.6.3 `Date`.
+    #[error("a stored attribute_history date is not an NGSI-LD Date: {0}")]
+    ValueDate(#[source] NgsiLdDateError),
+    /// A row recorded under the `Time` value kind holds text that is no
+    /// clause 4.6.3 `Time`.
+    #[error("a stored attribute_history time is not an NGSI-LD Time: {0}")]
+    ValueTime(#[source] NgsiLdTimeError),
     /// A Number value is outside the broker's documented numeric range.
     #[error("a stored attribute_history value_number is not a representable number: {0}")]
     ValueNumber(#[source] JsonNumberError),
@@ -190,6 +204,9 @@ pub enum StoredHistoryError {
     /// A scope write recorded neither a path nor a removal.
     #[error("a scope write recorded neither a path nor a removal")]
     ScopeWriteWithoutValue,
+    /// A stored `expires_at` lies below the storable floor.
+    #[error("a stored attribute_history expires_at is not an NGSI-LD DateTime: {0}")]
+    ExpiresAt(#[source] NgsiLdDateTimeError),
 }
 
 #[cfg(test)]

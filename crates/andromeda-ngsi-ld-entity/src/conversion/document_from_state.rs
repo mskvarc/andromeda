@@ -30,8 +30,8 @@ impl From<&EntityState> for EntityDocument {
         EntityDocument::new(
             Some(state.id().clone()), // clone: the document owns what it names, the state stays shared
             state.types().as_slice().to_vec(),
-            state.scope().cloned().map(Slot::Set),      // clone: as above
-            state.expires_at().cloned().map(Slot::Set), // clone: as above
+            state.scope().cloned().map(Slot::Set), // clone: as above
+            state.expires_at().map(Slot::Set),
             state.attributes().written_members(),
         )
     }
@@ -47,8 +47,8 @@ impl InstanceDocument {
             .family(Some(value.family()))
             .dataset_id(dataset_id.cloned()) // clone: the document owns its identity, the state stays shared
             .value(ValueSlot::Set(written_value(value)))
-            .observed_at(instance.observed_at().cloned().map(Slot::Set)) // clone: as above
-            .expires_at(instance.expires_at().cloned().map(Slot::Set)) // clone: as above
+            .observed_at(instance.observed_at().map(Slot::Set))
+            .expires_at(instance.expires_at().map(Slot::Set))
             .unit_code(value.unit_code().map(Slot::Set))
             .value_type(value.value_type().cloned().map(Slot::Set)) // clone: as above
             .object_types((!object_types.is_empty()).then(|| Slot::Set(object_types.to_vec())))

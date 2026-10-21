@@ -32,6 +32,7 @@ pub fn row_column(value: &StoredValue) -> CurrentAttributes {
         StoredValue::String { text, .. } => StringValueColumn::of(text).column(),
         StoredValue::Boolean { .. } => CurrentAttributes::ValueBoolean,
         StoredValue::DateTime { .. } => CurrentAttributes::ValueDateTime,
+        StoredValue::Date { .. } | StoredValue::Time { .. } => CurrentAttributes::ValueString,
         StoredValue::Geometry { .. } => CurrentAttributes::ValueGeometry,
         StoredValue::Object(_) => CurrentAttributes::ValueObject,
         StoredValue::Uri(uri) => UriValueColumn::of(uri.as_str()).column(),

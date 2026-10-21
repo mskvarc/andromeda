@@ -344,7 +344,13 @@ mod tests {
             (json!({"@value": 12.5}), ValueKind::Number),
             (json!({"@value": "text"}), ValueKind::String),
             (json!({"@value": true}), ValueKind::Boolean),
-            (json!({"@value": "2026-07-25T10:00:00Z"}), ValueKind::DateTime),
+            (json!({"@value": "2026-07-25T10:00:00Z"}), ValueKind::String),
+            (
+                json!({"@value": "2026-07-25T10:00:00Z", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}),
+                ValueKind::DateTime,
+            ),
+            (json!({"@value": "2026-07-25", "@type": "https://uri.etsi.org/ngsi-ld/Date"}), ValueKind::Date),
+            (json!({"@value": "10:00:00Z", "@type": "https://uri.etsi.org/ngsi-ld/Time"}), ValueKind::Time),
         ] {
             let replacement = replacement_of(&json!({"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [value]}));
             assert_eq!(update_of(&replacement).value.kind(), kind, "{value}");

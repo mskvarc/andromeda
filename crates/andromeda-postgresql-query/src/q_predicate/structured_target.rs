@@ -39,31 +39,39 @@
 //! `valueList` carries — and one for a target language, which pins `@language`
 //! as well.
 //!
-//! A `DateTime` or `Time` operand is compared as text too, because JSON has no
-//! instant type, but not as one text. A member keeps the spelling its client
-//! wrote, clause 4.6.3 admits several spellings of one value, and clause 4.9
-//! compares dates and times by "a temporal one" order relation, so the operand
-//! is contained in every spelling the clause admits for it
-//! ([`instant_spellings`], [`time_of_day_spellings`]). Those are finite and a
-//! member names the value exactly when it is one of them, so the comparison is
-//! the temporal equality and each arm still reads `idx_ca_value_object`.
+//! A `DateTime`, `Date` or `Time` operand matches only a member declared as
+//! a value of its form (clause 4.9 matches a target only with an operand of
+//! its own data type). A declared member is committed in its one served
+//! spelling, so the operand is contained once: as a value node carrying the
+//! form's `@type`, or as the plain text when the instance's `valueType` names
+//! the form, which declares every primitive member of its value (annex C.6).
+//! A `languageMap` holds language-tagged strings only, so no time operand
+//! matches one.
 
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
-    time::spellings::{instant_spellings, time_of_day_spellings},
+    time::{
+        date::NgsiLdDate,
+        rendering::{instant_text, time_of_day_text},
+        value::TimeValueForm,
+    },
 };
 use andromeda_ngsi_ld_query::filter::scalar::Scalar;
+use andromeda_postgresql_schema::name_dictionary::EntityTypeNames;
 use andromeda_postgresql_seaquery::{
     cast::cast,
     jsonb::{jsonb_build_array, jsonb_build_object},
-    literal::text_literal,
+    literal::{false_literal, text_literal},
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
-use sea_query::{Condition, Expr as SeaExpr, SimpleExpr};
+use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Query, QueryStatementBuilder, SimpleExpr};
 
 /// The JSON-LD keyword a value node carries its value under.
 const VALUE_KEYWORD: &str = "@value";
+
+/// The JSON-LD keyword a value node carries its datatype under.
+const TYPE_KEYWORD: &str = "@type";
 
 /// The JSON-LD keyword a `languageMap` entry carries its language tag under.
 const LANGUAGE_KEYWORD: &str = "@language";
@@ -88,7 +96,7 @@ pub enum StructuredTarget<'a> {
 }
 
 /// Whether the structured value in `column` carries `scalar` as its clause 4.9
-/// target value.
+/// target value, `value_type` being the instance's `valueType` key.
 ///
 /// This is the `equal` operator over a structured target: the Query Term value
 /// "is identical or equivalent to the target value" or "is included in the
@@ -96,21 +104,28 @@ pub enum StructuredTarget<'a> {
 /// where a match may be "a single element from the array of values of the
 /// key-value pair".
 #[must_use]
-pub fn carries_operand(column: &SimpleExpr, target: StructuredTarget<'_>, scalar: &Scalar) -> Condition {
+pub fn carries_operand(column: &SimpleExpr, value_type: &SimpleExpr, target: StructuredTarget<'_>, scalar: &Scalar) -> Condition {
     match (member_text(scalar), target) {
         (MemberText::One(operand), StructuredTarget::AnyValue) => Condition::any()
             // clone: each element shape is built around its own copy of the operand
             .add(contains(column, bare_element(operand.clone())))
             .add(contains(column, value_element(operand))),
         (MemberText::One(operand), StructuredTarget::TargetLanguage(language)) => Condition::all().add(contains(column, tagged_element(language, operand))),
-        (MemberText::Spellings(spellings), StructuredTarget::AnyValue) => spellings.iter().fold(Condition::any(), |carried, spelling| {
-            carried
-                .add(contains(column, spelled_element(&format!("[\"{spelling}\"]"))))
-                .add(contains(column, spelled_element(&format!("[{{\"{VALUE_KEYWORD}\": \"{spelling}\"}}]"))))
-        }),
-        (MemberText::Spellings(spellings), StructuredTarget::TargetLanguage(language)) => spellings.into_iter().fold(Condition::any(), |carried, spelling| {
-            carried.add(contains(column, tagged_element(language, cast(SeaExpr::val(spelling), PostgresType::Text))))
-        }),
+        (MemberText::Declared { form, text }, StructuredTarget::AnyValue) => {
+            let plain = Condition::any()
+                .add(contains(column, json_element(&format!("[\"{text}\"]"))))
+                .add(contains(column, json_element(&format!("[{{\"{VALUE_KEYWORD}\": \"{text}\"}}]"))));
+            Condition::any()
+                .add(contains(
+                    column,
+                    json_element(&format!(
+                        "[{{\"{VALUE_KEYWORD}\": \"{text}\", \"{TYPE_KEYWORD}\": \"{}\"}}]",
+                        form.iri().as_str()
+                    )),
+                ))
+                .add(Condition::all().add(value_type_names(value_type, form)).add(plain))
+        }
+        (MemberText::Declared { .. }, StructuredTarget::TargetLanguage(_)) => Condition::all().add(false_literal()),
     }
 }
 
@@ -119,21 +134,38 @@ enum MemberText {
     /// The one value a member equal to the operand holds, bound as the
     /// PostgreSQL type its JSON counterpart is built from.
     One(SimpleExpr),
-    /// Every spelling clause 4.6.3 admits for the operand's instant or time
-    /// of day, any one of which a member equal to it holds.
-    Spellings(Vec<String>),
+    /// The time value a member declared as one of `form` holds, as `text`,
+    /// its one committed spelling.
+    Declared {
+        /// The time value form the operand is written in.
+        form: TimeValueForm,
+        /// The operand's served spelling.
+        text: String,
+    },
 }
 
-/// One single-element array a spelling is contained as, bound as `jsonb`.
+/// One single-element array a member is contained as, bound as `jsonb`.
 ///
 /// The element is written as JSON text rather than built in the statement:
 /// `jsonb_build_array` is `STABLE`, so a probe that reads every row would build
-/// each of the thirteen spellings' elements again for every row, while the
-/// `jsonb` input function is `IMMUTABLE` and the planner reads the bound text
-/// once. A spelling is digits, `-`, `:`, `T`, `.`, `,` and `Z`, none of which a
-/// JSON string escapes.
-fn spelled_element(json: &str) -> SimpleExpr {
+/// the element again for every row, while the `jsonb` input function is
+/// `IMMUTABLE` and the planner reads the bound text once. A served time value
+/// is digits, `-`, `:`, `T`, `.` and `Z`, and a form's IRI a fixed URL, none
+/// of which a JSON string escapes.
+fn json_element(json: &str) -> SimpleExpr {
     cast(SeaExpr::val(json), PostgresType::Jsonb)
+}
+
+/// Whether the instance's `valueType` key `value_type` is the dictionary key
+/// of `form`'s datatype IRI.
+fn value_type_names(value_type: &SimpleExpr, form: TimeValueForm) -> SimpleExpr {
+    let key = Query::select()
+        .column(EntityTypeNames::EntityTypeNameKey)
+        .from(EntityTypeNames::Table)
+        .and_where(SeaExpr::col(EntityTypeNames::Name).eq(form.iri().as_str()))
+        .to_owned();
+    // clone: sea-query owns every operand, and one column is read by several tests
+    value_type.clone().eq(SimpleExpr::SubQuery(None, Box::new(key.into_sub_query_statement())))
 }
 
 /// Whether the structured value in `column` holds a `languageMap` entry under
@@ -200,9 +232,8 @@ fn language_operand(language: &AttributeName) -> SimpleExpr {
 ///
 /// A number binds as `NUMERIC`, so an integer beyond 2^53 and an exact fraction
 /// reach the comparison as themselves and JSONB's own numeric equality decides
-/// it — `2` and `2.0` are one number there, as they are in the `value_number`
-/// column. A `Date` binds as its one clause 4.6.3 text. A `DateTime` and a
-/// `Time` are held in whichever spelling their client wrote.
+/// it: `2` and `2.0` are one number there, as they are in the `value_number`
+/// column.
 fn member_text(scalar: &Scalar) -> MemberText {
     match scalar {
         // clone: sea-query owns every value in its AST, so the exact decimal is
@@ -211,9 +242,18 @@ fn member_text(scalar: &Scalar) -> MemberText {
         Scalar::Number(number) => MemberText::One(cast(SeaExpr::val(number.decimal().clone()), PostgresType::Numeric)),
         Scalar::Bool(value) => MemberText::One(cast(SeaExpr::val(*value), PostgresType::Boolean)),
         Scalar::Str(value) | Scalar::Uri(value) => MemberText::One(cast(SeaExpr::val(value.as_str()), PostgresType::Text)),
-        Scalar::Date(_) => MemberText::One(cast(SeaExpr::val(scalar.literal_text()), PostgresType::Text)),
-        Scalar::DateTime(instant) => MemberText::Spellings(instant_spellings(*instant)),
-        Scalar::Time(time) => MemberText::Spellings(time_of_day_spellings(*time)),
+        Scalar::DateTime(instant) => MemberText::Declared {
+            form: TimeValueForm::DateTime,
+            text: instant_text(*instant),
+        },
+        Scalar::Date(date) => MemberText::Declared {
+            form: TimeValueForm::Date,
+            text: NgsiLdDate::from(*date).to_string(),
+        },
+        Scalar::Time(time) => MemberText::Declared {
+            form: TimeValueForm::Time,
+            text: time_of_day_text(*time),
+        },
     }
 }
 
@@ -247,7 +287,12 @@ mod tests {
         // Clause 4.9 names an `objectList` of bare URIs and a `valueList` of
         // value nodes as targets of the same Query Term, so one comparison has
         // to reach both element shapes.
-        let (sql, _) = render(carries_operand(&column(), StructuredTarget::AnyValue, &Scalar::Str("red".to_owned())));
+        let (sql, _) = render(carries_operand(
+            &column(),
+            &value_type(),
+            StructuredTarget::AnyValue,
+            &Scalar::Str("red".to_owned()),
+        ));
         assert!(sql.contains("\"value_object\" @> jsonb_build_array($1::text)"), "{sql}");
         assert!(
             sql.contains("\"value_object\" @> jsonb_build_array(jsonb_build_object('@value', $2::text))"),
@@ -263,6 +308,7 @@ mod tests {
         // value may satisfy the term.
         let (sql, binds) = render(carries_operand(
             &column(),
+            &value_type(),
             StructuredTarget::TargetLanguage(&language("en")),
             &Scalar::Str("red".to_owned()),
         ));
@@ -292,6 +338,7 @@ mod tests {
         // containment enforces exactly that once the operand is a JSON number.
         let (sql, binds) = render(carries_operand(
             &column(),
+            &value_type(),
             StructuredTarget::AnyValue,
             &Scalar::Number(JsonNumber::from(9_007_199_254_740_993_i64)),
         ));
@@ -304,72 +351,79 @@ mod tests {
 
     #[test]
     fn a_boolean_operand_binds_a_native_boolean() {
-        let (sql, binds) = render(carries_operand(&column(), StructuredTarget::AnyValue, &Scalar::Bool(true)));
+        let (sql, binds) = render(carries_operand(&column(), &value_type(), StructuredTarget::AnyValue, &Scalar::Bool(true)));
         assert!(sql.contains("$1::boolean"), "{sql}");
         assert!(binds.iter().any(|bind| matches!(bind, Value::Bool(Some(true)))), "{binds:?}");
     }
 
-    /// Clause 4.9 compares a date or time temporally and a member keeps the
-    /// spelling it was written in, so the operand is contained in every
-    /// spelling clause 4.6.3 admits for the instant, each in both element
-    /// shapes, and every arm is a containment an index serves.
-    #[test]
-    fn a_date_time_operand_is_contained_in_every_spelling_of_its_instant() {
-        let instant = parse_date_time("2024-01-01T00:00:00,000Z").expect("valid date-time");
-        let (sql, binds) = render(carries_operand(&column(), StructuredTarget::AnyValue, &Scalar::DateTime(instant)));
-        pretty_assertions::assert_eq!(sql.matches("\"value_object\" @> ($").count(), 26, "{sql}");
-        assert!(!sql.contains("jsonb_build_array"), "no element is built per row: {sql}");
-        for spelling in [
-            r#"["2024-01-01T00:00:00Z"]"#,
-            r#"[{"@value": "2024-01-01T00:00:00.000Z"}]"#,
-            r#"["2024-01-01T00:00:00,000000Z"]"#,
-        ] {
-            assert!(
-                binds.iter().any(|bind| matches!(bind, Value::String(Some(text)) if text.as_str() == spelling)),
-                "{spelling}: {binds:?}"
-            );
-        }
+    /// The column naming the datatype the row's `valueType` declares.
+    fn value_type() -> SimpleExpr {
+        SeaExpr::col(Alias::new("value_type_key"))
     }
 
+    fn json_binds(binds: &[Value]) -> Vec<&str> {
+        binds
+            .iter()
+            .filter_map(|bind| if let Value::String(Some(text)) = bind { Some(text.as_str()) } else { None })
+            .collect()
+    }
+
+    /// A declared member is committed in its one served spelling, so the
+    /// operand is contained once as a typed node, or once in each plain shape
+    /// under a `valueType` naming its form.
     #[test]
-    fn a_time_operand_is_contained_in_every_spelling_of_its_time_of_day() {
-        let time = parse_time("12:00:00.5Z").expect("valid time");
-        let (_, binds) = render(carries_operand(&column(), StructuredTarget::AnyValue, &Scalar::Time(time)));
-        for spelling in [r#"["12:00:00.5Z"]"#, r#"["12:00:00,500Z"]"#, r#"[{"@value": "12:00:00.500000Z"}]"#] {
-            assert!(
-                binds.iter().any(|bind| matches!(bind, Value::String(Some(text)) if text.as_str() == spelling)),
-                "{spelling}: {binds:?}"
-            );
-        }
+    fn a_date_time_operand_is_contained_once_as_a_declared_member() {
+        let instant = parse_date_time("2024-01-01T00:00:00.000Z").expect("valid date-time");
+        let (sql, binds) = render(carries_operand(
+            &column(),
+            &value_type(),
+            StructuredTarget::AnyValue,
+            &Scalar::DateTime(instant),
+        ));
+        pretty_assertions::assert_eq!(sql.matches("\"value_object\" @> ($").count(), 3, "{sql}");
         assert!(
-            !binds
-                .iter()
-                .any(|bind| matches!(bind, Value::String(Some(text)) if text.as_str() == "12:00:00Z")),
-            "{binds:?}"
+            sql.contains("\"value_type_key\" = (SELECT \"entity_type_name_key\" FROM \"entity_type_names\""),
+            "{sql}"
+        );
+        pretty_assertions::assert_eq!(
+            json_binds(&binds),
+            vec![
+                r#"[{"@value": "2024-01-01T00:00:00Z", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}]"#,
+                "https://uri.etsi.org/ngsi-ld/DateTime",
+                r#"["2024-01-01T00:00:00Z"]"#,
+                r#"[{"@value": "2024-01-01T00:00:00Z"}]"#,
+            ]
         );
     }
 
     #[test]
-    fn a_temporal_operand_under_a_target_language_pins_the_language_of_every_spelling() {
-        let time = parse_time("12:00:00Z").expect("valid time");
-        let (sql, _) = render(carries_operand(
-            &column(),
-            StructuredTarget::TargetLanguage(&language("en")),
-            &Scalar::Time(time),
-        ));
-        pretty_assertions::assert_eq!(sql.matches("jsonb_build_object('@language', ").count(), 13, "{sql}");
+    fn a_time_operand_is_contained_in_its_served_spelling() {
+        let time = parse_time("12:00:00,5Z").expect("valid time");
+        let (_, binds) = render(carries_operand(&column(), &value_type(), StructuredTarget::AnyValue, &Scalar::Time(time)));
+        assert!(
+            json_binds(&binds).contains(&r#"[{"@value": "12:00:00.500Z", "@type": "https://uri.etsi.org/ngsi-ld/Time"}]"#),
+            "{binds:?}"
+        );
     }
 
     #[test]
     fn a_date_operand_is_contained_as_its_one_text() {
         let date = parse_date("2024-01-01").expect("valid date");
-        let (sql, binds) = render(carries_operand(&column(), StructuredTarget::AnyValue, &Scalar::Date(date)));
-        assert!(sql.contains(r#""value_object" @> jsonb_build_array($1::text)"#), "{sql}");
-        assert!(
-            binds
-                .iter()
-                .any(|bind| matches!(bind, Value::String(Some(text)) if text.as_str() == "2024-01-01")),
-            "{binds:?}"
-        );
+        let (_, binds) = render(carries_operand(&column(), &value_type(), StructuredTarget::AnyValue, &Scalar::Date(date)));
+        assert!(json_binds(&binds).contains(&r#"["2024-01-01"]"#), "{binds:?}");
+    }
+
+    /// A `languageMap` holds language-tagged strings, never a time value.
+    #[test]
+    fn a_temporal_operand_under_a_target_language_matches_nothing() {
+        let time = parse_time("12:00:00Z").expect("valid time");
+        let (sql, binds) = render(carries_operand(
+            &column(),
+            &value_type(),
+            StructuredTarget::TargetLanguage(&language("en")),
+            &Scalar::Time(time),
+        ));
+        assert!(sql.contains("FALSE"), "{sql}");
+        assert!(binds.is_empty(), "{binds:?}");
     }
 }

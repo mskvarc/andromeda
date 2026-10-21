@@ -7,7 +7,7 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
     identifier::Identifier,
     scope::path::ScopePath,
-    time::time_of_day::NgsiLdTime,
+    time::{date::NgsiLdDate, time_of_day::NgsiLdTime},
     time_prop::TimeProp,
     uri::Uri,
 };
@@ -68,8 +68,12 @@ pub enum TemporalValue {
     /// (clause 4.5): the values of a Property, the targets of a Relationship
     /// naming several, a language map, a JSON literal, a list.
     Structured(StructuredValue),
-    /// A datetime attribute value.
+    /// A value declared as a clause 4.6.3 `DateTime`.
     DateTime(DateTime<Utc>),
+    /// A value declared as a clause 4.6.3 `Date`.
+    Date(NgsiLdDate),
+    /// A value declared as a clause 4.6.3 `Time`.
+    Time(NgsiLdTime),
     /// A URI attribute value.
     Uri(Uri),
     /// The Scopes one reified scope instance names (clause 4.18).
@@ -108,6 +112,8 @@ impl TemporalValue {
             | TemporalValue::Geometry(_)
             | TemporalValue::Structured(_)
             | TemporalValue::DateTime(_)
+            | TemporalValue::Date(_)
+            | TemporalValue::Time(_)
             | TemporalValue::Uri(_)
             | TemporalValue::Scopes(_) => None,
         }
@@ -198,6 +204,8 @@ pub enum AggregationMinMax {
     Boolean(bool),
     /// Temporal minimum or maximum.
     DateTime(DateTime<Utc>),
+    /// Minimum or maximum time of day.
+    Time(NgsiLdTime),
 }
 
 /// The arithmetic mean of one aggregation period.
@@ -211,7 +219,7 @@ pub enum AggregationMinMax {
 pub enum AggregationAverage {
     /// A numeric mean, in the exact shape the stored values have.
     Number(JsonNumber),
-    /// The mean time of day, in the clause 4.6.3 `Time` rendering.
+    /// The mean time of day.
     Time(NgsiLdTime),
 }
 

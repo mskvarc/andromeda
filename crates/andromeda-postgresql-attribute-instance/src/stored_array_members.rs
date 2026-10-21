@@ -6,14 +6,16 @@
 //! map, several Relationship objects) an equality matches a value the array
 //! includes, so each member that is a number, a string or a boolean is one
 //! value, and so is the `@value` of a member value node when it is one of
-//! those. Every other member (`null`, an array, a node without such a
-//! `@value`) and a value that is not an array hold none.
+//! those. A value node whose `@type` declares a clause 4.6.3 time value is
+//! that time value. Every other member (`null`, an array, a node without such
+//! a `@value`) and a value that is not an array hold none.
 //!
 //! The members are read from the stored text: a member's JSON type is fixed by
 //! its first byte, and a number is read at arbitrary precision so it keys as
 //! the exact decimal it is.
 
 use crate::stored_json::StoredJson;
+use andromeda_ngsi_ld_lexicon::time::value::{TimeValue, TimeValueError, TimeValueForm};
 use andromeda_ngsi_ld_number::{JsonNumber, JsonNumberError};
 use serde::Deserialize;
 use serde_json::value::RawValue;
@@ -24,18 +26,23 @@ use thiserror::Error;
 pub enum ArrayMember {
     /// A number, at its exact value.
     Number(JsonNumber),
-    /// A string.
+    /// A string declared as no time value.
     Text(String),
     /// A boolean.
     Boolean(bool),
+    /// A value node declared as a time value.
+    Time(TimeValue),
 }
 
-/// A member value node, of which only `@value` is read.
+/// A member value node, of which `@value` and `@type` are read.
 #[derive(Deserialize)]
 struct ValueNode<'a> {
     /// The node's `@value`, absent on a node that has none.
     #[serde(rename = "@value", borrow)]
     value: Option<&'a RawValue>,
+    /// The node's datatype IRI, absent on a node that declares none.
+    #[serde(rename = "@type", borrow)]
+    datatype: Option<&'a str>,
 }
 
 /// A stored array whose members do not read back.
@@ -47,6 +54,9 @@ pub enum StoredArrayMemberError {
     /// A member number has no exact decimal value.
     #[error("a stored array member is not a storable number: {0}")]
     Number(#[from] JsonNumberError),
+    /// A member declared as a time value is not one.
+    #[error("a stored array member is not of its declared time value form: {0}")]
+    Time(#[from] TimeValueError),
 }
 
 /// The scalar members of `json`, in stored order; none when it is not an
@@ -68,13 +78,18 @@ pub fn stored_array_members(json: &StoredJson) -> Result<Vec<ArrayMember>, Store
 }
 
 /// The value `member` holds: itself when it is a scalar, its `@value` when it
-/// is a node whose `@value` is one.
+/// is a node whose `@value` is one, read as the time value its `@type`
+/// declares.
 fn array_member(member: &RawValue) -> Result<Option<ArrayMember>, StoredArrayMemberError> {
-    if member.get().starts_with('{') {
-        let node = serde_json::from_str::<ValueNode<'_>>(member.get())?;
-        return node.value.map_or(Ok(None), scalar);
+    if !member.get().starts_with('{') {
+        return scalar(member);
     }
-    scalar(member)
+    let node = serde_json::from_str::<ValueNode<'_>>(member.get())?;
+    let form = node.datatype.and_then(TimeValueForm::named_by);
+    match (node.value.map(scalar).transpose()?.flatten(), form) {
+        (Some(ArrayMember::Text(text)), Some(form)) => Ok(Some(ArrayMember::Time(form.parse(&text)?))),
+        (held, Some(_) | None) => Ok(held),
+    }
 }
 
 /// `value` when it is a number, a string or a boolean.
@@ -97,6 +112,7 @@ mod tests {
         stored_array_members::{ArrayMember, stored_array_members},
         stored_json::StoredJson,
     };
+    use andromeda_ngsi_ld_lexicon::time::value::TimeValueForm;
     use andromeda_ngsi_ld_number::JsonNumber;
     use pretty_assertions::{assert_eq, assert_ne};
     use serde_json::value::RawValue;
@@ -120,6 +136,22 @@ mod tests {
                 ArrayMember::Boolean(true),
                 number("2"),
                 ArrayMember::Text("b".to_owned()),
+            ]
+        );
+    }
+
+    /// Annex C.6: a value node's `@type` declares its datatype.
+    #[test]
+    fn a_value_node_typed_as_a_time_value_is_that_time_value() {
+        let read = members(
+            r#"[{"@value":"12:00:00.500Z","@type":"https://uri.etsi.org/ngsi-ld/Time"},{"@value":"2024-01-01","@type":"https://uri.etsi.org/ngsi-ld/Date"},"2024-01-01"]"#,
+        );
+        assert_eq!(
+            read,
+            vec![
+                ArrayMember::Time(TimeValueForm::Time.parse("12:00:00.500Z").expect("a Time")),
+                ArrayMember::Time(TimeValueForm::Date.parse("2024-01-01").expect("a Date")),
+                ArrayMember::Text("2024-01-01".to_owned()),
             ]
         );
     }

@@ -43,8 +43,7 @@ impl EntityState {
             }
         }
         match fragment.expires_at() {
-            // clone: the entity owns its copy of the borrowed fragment's expiry.
-            Some(Slot::Set(expires_at)) => self.set_expires_at(Some(expires_at.clone())),
+            Some(Slot::Set(expires_at)) => self.set_expires_at(Some(*expires_at)),
             Some(Slot::Remove) => self.set_expires_at(None),
             None => {}
         }

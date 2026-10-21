@@ -30,6 +30,9 @@ pub(crate) struct JsonTarget {
     pub(crate) value: SimpleExpr,
     /// The Relationship object, as JSONB, where the reading can hold one.
     pub(crate) object: Option<SimpleExpr>,
+    /// The expanded datatype IRI the value is declared as, as text; SQL `NULL`
+    /// where it declares none.
+    pub(crate) datatype: SimpleExpr,
     /// Whether the value is present at all.
     pub(crate) presence: SimpleExpr,
 }
@@ -49,8 +52,8 @@ fn whole_text(jsonb: SimpleExpr) -> SimpleExpr {
 /// normalisation a `Time` needs) lives in [`lift_comparison`], so this reading
 /// and the CSR renderer compare the same way. A String ordering compares under
 /// the collation [`ordered_string`] picks.
-fn scalar_predicate(stored_text: SimpleExpr, scalar: &Scalar, op: CmpOp) -> SimpleExpr {
-    let lifted = lift_comparison(scalar, stored_text);
+fn scalar_predicate(stored_text: SimpleExpr, datatype: SimpleExpr, scalar: &Scalar, op: CmpOp) -> SimpleExpr {
+    let lifted = lift_comparison(scalar, stored_text, datatype);
     compare(ordered_string(lifted.stored, scalar, op), op, lifted.operand)
 }
 
@@ -71,13 +74,13 @@ fn equality_text(target: &JsonTarget) -> SimpleExpr {
 /// Decide an equality Query Term (`==`/`!=`) against one target.
 pub(crate) fn json_equality(target: &JsonTarget, membership: SetMembership, rhs: &CompareValue) -> Condition {
     match rhs {
-        CompareValue::Scalar(scalar) => Condition::all().add(scalar_predicate(equality_text(target), scalar, membership.as_cmp_op())),
+        CompareValue::Scalar(scalar) => Condition::all().add(scalar_predicate(equality_text(target), target.datatype.clone(), scalar, membership.as_cmp_op())), // clone: the target may be read by further terms
         CompareValue::Range { min, max } => {
             let stored = whole_text(target.value.clone()); // clone: the target is read by every arm
             // Both bounds compare against the one lifted stored side; lifting the
             // maximum only contributes its operand.
-            let lower = lift_comparison(min, stored.clone()); // clone: the stored side is compared against both bounds
-            let upper_operand = lift_comparison(max, stored).operand;
+            let lower = lift_comparison(min, stored.clone(), target.datatype.clone()); // clone: the stored side is compared against both bounds
+            let upper_operand = lift_comparison(max, stored, target.datatype.clone()).operand; // clone: as above
             let stored_side = lower.stored;
             // Each bound orders the stored side under its own collation.
             let bounded = |op: CmpOp, bound: &Scalar, operand: SimpleExpr| compare(ordered_string(stored_side.clone(), bound, op), op, operand); // clone: the stored side is read by both halves
@@ -98,7 +101,7 @@ pub(crate) fn json_equality(target: &JsonTarget, membership: SetMembership, rhs:
             // 4.9-1), so each arm reads the Relationship object exactly as the
             // single-scalar comparison does.
             let disjunction = values.iter().fold(Condition::any(), |cond, value| {
-                let lifted = lift_comparison(value, equality_text(target));
+                let lifted = lift_comparison(value, equality_text(target), target.datatype.clone()); // clone: every arm reads the one datatype
                 cond.add(compare(lifted.stored, CmpOp::Equal, lifted.operand))
             });
             match membership {
@@ -116,7 +119,8 @@ pub(crate) fn json_equality(target: &JsonTarget, membership: SetMembership, rhs:
 /// other than equality and inequality: a URI names a resource and carries no
 /// order a `<` or `>` could mean.
 pub(crate) fn json_ordering(target: &JsonTarget, op: OrderingOp, rhs: &Scalar) -> Condition {
-    Condition::all().add(scalar_predicate(whole_text(target.value.clone()), rhs, op.as_cmp_op())) // clone: the target may be read by further terms
+    // clone: the target may be read by further terms
+    Condition::all().add(scalar_predicate(whole_text(target.value.clone()), target.datatype.clone(), rhs, op.as_cmp_op()))
 }
 
 /// Decide a pattern Query Term (`~=`/`!~=`) against one target.
@@ -155,7 +159,8 @@ mod tests {
         };
         let condition = on_some_member(path, InstanceRow::History, |member| json_equality(member, SetMembership::Within, rhs));
         let sql = Query::select().cond_where(condition).to_owned().to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#"jsonb_path_query("qh"."value_object", '$."city"[*]."@value"')"#), "{sql}");
+        assert!(sql.contains(r#"jsonb_path_query("qh"."value_object", '$."city"[*]')"#), "{sql}");
+        assert!(sql.contains(r"-> ('@value')"), "{sql}");
         assert!(sql.contains("'Bern'"), "{sql}");
         assert!(!sql.contains("jsonb_build_object"), "{sql}");
     }

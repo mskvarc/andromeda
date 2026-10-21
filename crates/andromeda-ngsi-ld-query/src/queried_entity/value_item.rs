@@ -2,6 +2,7 @@
 //! apart (clause 4.9).
 
 use andromeda_json_literal::piece::JsonPiece;
+use andromeda_ngsi_ld_lexicon::time::value::TimeValue;
 use andromeda_ngsi_ld_number::JsonNumber;
 use std::borrow::Cow;
 
@@ -16,9 +17,9 @@ use std::borrow::Cow;
 pub enum ValueItem<'a, N> {
     /// A JSON-LD value object holding a literal: a Property value, a
     /// `ListProperty` item, the string of one `LanguageProperty` map entry, a
-    /// `GeoProperty` geometry written as a string (clause 4.7.2) or a temporal
-    /// literal. The datatype and the language tag are not part of what clause
-    /// 4.9 compares.
+    /// `GeoProperty` geometry written as a string (clause 4.7.2) or a time
+    /// value. A language tag is not part of what clause 4.9 compares, and a
+    /// datatype only where it declares a time value.
     Literal(LiteralValue<'a>),
     /// A JSON literal (`@type: @json`): a `JsonProperty` value (clause
     /// 4.5.24), or a Property value held as raw JSON outside the JSON-LD graph,
@@ -35,15 +36,19 @@ pub enum ValueItem<'a, N> {
     Opaque,
 }
 
-/// The value of a JSON-LD literal, in the three JSON scalar types clause 4.9
-/// compares (clause 4.6.3 for numbers).
+/// The value of a JSON-LD literal, in the JSON scalar types clause 4.9
+/// compares (clause 4.6.3 for numbers) and the time values a literal is
+/// declared as (annex C.6).
 #[derive(Debug, Clone, PartialEq)]
 pub enum LiteralValue<'a> {
     /// An exact number.
     Number(Cow<'a, JsonNumber>),
     /// A string: a plain or language-tagged string, or the lexical form of a
-    /// typed literal such as a `DateTime`.
+    /// typed literal declared as no time value.
     Text(Cow<'a, str>),
     /// A boolean.
     Boolean(bool),
+    /// A literal declared as a clause 4.6.3 time value, by its datatype or by
+    /// the `valueType` of its attribute.
+    Time(TimeValue),
 }

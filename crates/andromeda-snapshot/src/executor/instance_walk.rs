@@ -153,12 +153,7 @@ pub(crate) fn is_scope(name: &AttributeName) -> bool {
 mod tests {
     use crate::executor::instance_walk::{InstanceWalk, WalkProgress, WalkRefusal};
     use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot};
-    use andromeda_ngsi_ld_lexicon::{
-        attribute_name::AttributeName,
-        attribute_type::AttributeType,
-        time::{date_time::NgsiLdDateTime, written_date_time::DateTimeText},
-        time_prop::TimeProp,
-    };
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_model::{entity_system_times::EntitySystemTimes, temporal::temporal_document::TemporalDocument};
     use andromeda_ngsi_ld_query::temporal::{instance_page::PageDirection, window::TimeInterval};
     use andromeda_ngsi_ld_vocabulary::expanded::properties;
@@ -183,7 +178,7 @@ mod tests {
     fn instance(observed: &str) -> InstanceDocument {
         InstanceDocument::builder()
             .family(Some(AttributeType::Property))
-            .observed_at(Some(Slot::Set(observed.parse::<DateTimeText>().expect("an instant"))))
+            .observed_at(Some(Slot::Set(observed.parse::<NgsiLdDateTime>().expect("an instant"))))
             .build()
     }
 

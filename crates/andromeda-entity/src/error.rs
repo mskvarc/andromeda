@@ -188,7 +188,7 @@ impl From<EntityRefusal> for EntityError {
             | EntityRefusal::DatasetId { .. }
             | EntityRefusal::InstanceId { .. }
             | EntityRefusal::DateTime { .. }
-            | EntityRefusal::TimeValue { .. }
+            | EntityRefusal::Datatype { .. }
             | EntityRefusal::Reference { .. }
             | EntityRefusal::DatasetIdSentinel { .. }
             | EntityRefusal::ReservedNullValue { .. }

@@ -10,7 +10,7 @@
 use crate::{attributes::Attributes, family_value::FamilyValue, proof_seals::ProofSeals};
 use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
-    time::{system_instant::SystemInstant, written_date_time::DateTimeText},
+    time::{date_time::NgsiLdDateTime, system_instant::SystemInstant},
 };
 use typed_builder::TypedBuilder;
 
@@ -20,12 +20,12 @@ use typed_builder::TypedBuilder;
 pub struct Instance {
     /// The family and its value.
     value: FamilyValue,
-    /// `observedAt` (clause 4.5.1), as written.
+    /// `observedAt` (clause 4.5.1).
     #[builder(default = None)]
-    observed_at: Option<DateTimeText>,
-    /// `expiresAt` (clause 4.22), as written.
+    observed_at: Option<NgsiLdDateTime>,
+    /// `expiresAt` (clause 4.22).
     #[builder(default = None)]
-    expires_at: Option<DateTimeText>,
+    expires_at: Option<NgsiLdDateTime>,
     /// `createdAt` (clause 4.8), stamped by the broker.
     #[builder(default = None)]
     created_at: Option<SystemInstant>,
@@ -55,14 +55,14 @@ impl Instance {
 
     /// `observedAt`, when present.
     #[must_use]
-    pub const fn observed_at(&self) -> Option<&DateTimeText> {
-        self.observed_at.as_ref()
+    pub const fn observed_at(&self) -> Option<NgsiLdDateTime> {
+        self.observed_at
     }
 
     /// `expiresAt`, when present.
     #[must_use]
-    pub const fn expires_at(&self) -> Option<&DateTimeText> {
-        self.expires_at.as_ref()
+    pub const fn expires_at(&self) -> Option<NgsiLdDateTime> {
+        self.expires_at
     }
 
     /// `createdAt`, when stamped.
@@ -105,12 +105,12 @@ impl Instance {
     }
 
     /// Replace `observedAt`.
-    pub fn set_observed_at(&mut self, observed_at: Option<DateTimeText>) {
+    pub const fn set_observed_at(&mut self, observed_at: Option<NgsiLdDateTime>) {
         self.observed_at = observed_at;
     }
 
     /// Replace `expiresAt`.
-    pub fn set_expires_at(&mut self, expires_at: Option<DateTimeText>) {
+    pub const fn set_expires_at(&mut self, expires_at: Option<NgsiLdDateTime>) {
         self.expires_at = expires_at;
     }
 

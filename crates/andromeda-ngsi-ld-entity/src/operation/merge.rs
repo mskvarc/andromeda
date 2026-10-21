@@ -6,8 +6,7 @@ use crate::{
     entity_state::EntityState,
     operation::{attribute_write::apply_instances, instance_patch::InstancePatchDepth, mutation_error::MutationError, scope_write::replace_scope},
 };
-use andromeda_ngsi_ld_lexicon::time::written_date_time::DateTimeText;
-use chrono::{DateTime, Utc};
+use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
 
 impl EntityState {
     /// Merge `fragment` into the entity (clause 5.6.17, behaviour in clause
@@ -25,36 +24,28 @@ impl EntityState {
     ///
     /// `default_observed_at` is Table 6.5.3.4-1's `observedAt`: an instance
     /// that names no `observedAt` while the instance it merges into carries
-    /// one takes it, spelled with the sub-second precision it carries.
+    /// one takes it.
     ///
     /// # Errors
     ///
     /// Returns [`MutationError::Refused`] when a written instance cannot
     /// become state.
-    pub fn merge(&mut self, fragment: &EntityDocument, default_observed_at: Option<DateTime<Utc>>) -> Result<(), MutationError> {
+    pub fn merge(&mut self, fragment: &EntityDocument, default_observed_at: Option<NgsiLdDateTime>) -> Result<(), MutationError> {
         // clone: the entity owns the types it gains.
         self.types_mut().extend(fragment.types().iter().cloned());
         if let Some(scope) = fragment.scope() {
             replace_scope(self, scope);
         }
         if let Some(expires_at) = fragment.expires_at() {
-            // clone: the entity owns its copy of the borrowed fragment's expiry.
-            self.set_expires_at(expires_at.as_set().cloned());
+            self.set_expires_at(expires_at.as_set().copied());
         }
-        let default_observed_at = default_observed_at.map(DateTimeText::from_instant);
         for (name, member) in fragment.attributes() {
             match member {
                 AttributeMember::Remove => {
                     self.attributes_mut().remove(name);
                 }
                 AttributeMember::Instances(documents) => {
-                    apply_instances(
-                        self.attributes_mut(),
-                        name,
-                        documents,
-                        InstancePatchDepth::DeepMerge,
-                        default_observed_at.as_ref(),
-                    )?;
+                    apply_instances(self.attributes_mut(), name, documents, InstancePatchDepth::DeepMerge, default_observed_at)?;
                 }
             }
         }
@@ -111,10 +102,9 @@ mod tests {
         value_mode::{Fragment, FragmentMember, FragmentText},
     };
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, scope::path::ScopePath, time::written_date_time::DateTimeText};
+    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, scope::path::ScopePath, time::date_time::NgsiLdDateTime};
     use andromeda_ngsi_ld_vocabulary::expanded::properties;
     use cefact_units::UnitCode;
-    use chrono::{DateTime, Utc};
     use indexmap::IndexMap;
     use langtag::LangTagBuf;
     use serde_json::json;
@@ -124,7 +114,7 @@ mod tests {
     const CITY: &str = "https://example.com/city";
     const COUNTRY: &str = "https://example.com/country";
 
-    fn at(raw: &str) -> DateTime<Utc> {
+    fn at(raw: &str) -> NgsiLdDateTime {
         raw.parse().expect("a valid timestamp")
     }
 
@@ -317,7 +307,7 @@ mod tests {
                 .get(attribute)
                 .and_then(|held| held.get(dataset_id.as_ref()))
                 .and_then(Instance::observed_at)
-                .map(|observed| observed.as_str().to_owned())
+                .map(|observed| observed.to_string())
         };
         pretty_assertions::assert_eq!(
             observed_at(SPEED, None).as_deref(),
@@ -337,10 +327,10 @@ mod tests {
     }
 
     /// Table 6.5.3.4-1 `observedAt` is stamped by the broker from the request
-    /// parameter, so it keeps the milliseconds rather than truncating them to
+    /// parameter, so it carries the milliseconds rather than truncating them to
     /// whole seconds (clause 4.6.3).
     #[test]
-    fn a_default_observed_at_keeps_its_sub_second_precision() {
+    fn a_default_observed_at_is_stamped_with_its_sub_second_precision() {
         let mut observed = property(number(10));
         observed.set_observed_at(Some(date_time("2020-01-01T00:00:00Z")));
         let mut target = entity(vec![(SPEED, instances(vec![(None, observed)]))]);
@@ -350,7 +340,10 @@ mod tests {
             .expect("merge succeeds");
 
         let instance = target.attributes().get(SPEED).and_then(|held| held.get(None)).expect("the instance");
-        pretty_assertions::assert_eq!(instance.observed_at().map(DateTimeText::as_str), Some("2026-03-01T10:00:00.123Z"));
+        pretty_assertions::assert_eq!(
+            instance.observed_at().map(|observed| observed.to_string()).as_deref(),
+            Some("2026-03-01T10:00:00.123Z")
+        );
     }
 
     /// Clause 4.18 makes scope non-reified, so it cannot carry the
@@ -375,7 +368,10 @@ mod tests {
 
         pretty_assertions::assert_eq!(target.scope(), Some(&scope(&["/A/B"])));
         let instance = target.attributes().get(SPEED).and_then(|held| held.get(None)).expect("the instance");
-        pretty_assertions::assert_eq!(instance.observed_at().map(DateTimeText::as_str), Some("2024-02-03T04:05:06Z"));
+        pretty_assertions::assert_eq!(
+            instance.observed_at().map(|observed| observed.to_string()).as_deref(),
+            Some("2024-02-03T04:05:06Z")
+        );
     }
 
     #[test]
@@ -513,7 +509,7 @@ mod tests {
 
         target.merge(&patch, None).expect("merge succeeds");
 
-        pretty_assertions::assert_eq!(target.expires_at(), Some(&date_time("2031-01-01T00:00:00Z")));
+        pretty_assertions::assert_eq!(target.expires_at(), Some(date_time("2031-01-01T00:00:00Z")));
     }
 
     #[test]

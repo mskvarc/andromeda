@@ -14,7 +14,7 @@ use crate::{
     value_mode::ValueMode,
 };
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, time::written_date_time::DateTimeText, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, time::date_time::NgsiLdDateTime, uri::Uri};
 use andromeda_ngsi_ld_vocabulary::{
     NULL_URI,
     expanded::{classes, properties},
@@ -114,9 +114,9 @@ pub(crate) fn write_family<M: SerializeMap>(map: &mut M, family_iri: &str) -> Re
 }
 
 /// Write a `DateTime`-typed member, set or deleted.
-pub(crate) fn write_date_time<M: SerializeMap>(map: &mut M, key: &str, value: Option<&Slot<DateTimeText>>) -> Result<(), M::Error> {
+pub(crate) fn write_date_time<M: SerializeMap>(map: &mut M, key: &str, value: Option<&Slot<NgsiLdDateTime>>) -> Result<(), M::Error> {
     match value {
-        Some(Slot::Set(text)) => write_date_time_text(map, key, text.as_str()),
+        Some(Slot::Set(instant)) => write_date_time_text(map, key, &instant.to_string()),
         Some(Slot::Remove) => write_date_time_text(map, key, NULL_URI.as_str()),
         None => Ok(()),
     }

@@ -2,33 +2,17 @@
 //! Tables 4.5.19.1-1, 4.5.19.1-2 and 4.5.19.1-3 distinguish.
 //!
 //! The stored `value_kind` code names the typed column a row's value sits in,
-//! which is coarser than the tables are. One JSONB column holds both a JSON
+//! and for the text column the data type it holds: a String, a value declared
+//! as a clause 4.6.3 `Date`, or one declared as a `Time`, which the tables
+//! give an `avg` the other two do not have. One JSONB column holds both a JSON
 //! Object and a JSON Array, and the tables give the two different methods:
 //! `avg`, `min`, `max` and `sum` are defined over the sizes of arrays and are
-//! N/A over objects. One text column holds a JSON String, a clause 4.6.3 `Date`
-//! and a clause 4.6.3 `Time`, and the tables give `Time` an `avg` the other two
-//! do not have.
-//!
-//! Refining the shape therefore has to happen from the value itself: where a
-//! row is recorded, for the shapes the stream catalogue keeps per stream, and
-//! where it is aggregated. Both splits are decidable because the write path
-//! stores a
-//! canonical rendering: `NgsiLdTime` reaches the text column as
-//! `HH:MM:SS.ffffffZ` and `NgsiLdDate` as `YYYY-MM-DD`, and both forms are
-//! fixed-width, so a pattern that pins the whole value recognises exactly what
-//! that path wrote.
+//! N/A over objects, so that one split is read from the value itself.
 
 use crate::{alias::Ah, structured_json::structured_json};
-use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime};
 use andromeda_postgresql_codes::{recorded_shape::RecordedShape, value_kind::ValueKind};
 use andromeda_postgresql_schema::temporal::AttributeHistory;
-use andromeda_postgresql_seaquery::{
-    cast::cast,
-    jsonb::jsonb_typeof,
-    literal::{int_literal, text_literal},
-    operator::regex_match,
-    pg_type::PostgresType,
-};
+use andromeda_postgresql_seaquery::{cast::cast, jsonb::jsonb_typeof, literal::int_literal, pg_type::PostgresType};
 use sea_query::{CaseStatement, Expr, ExprTrait, Iden, SimpleExpr};
 
 /// The name this shape is projected under by [`recorded_shape`].
@@ -55,7 +39,6 @@ fn value_kind_is(kind: ValueKind) -> SimpleExpr {
 /// tombstone rows rather than asking what shape one has.
 #[must_use]
 pub fn recorded_shape() -> SimpleExpr {
-    let value_string = || Expr::col((Ah, AttributeHistory::ValueString));
     // An integer literal is `int4` in PostgreSQL, but the code the decoder reads
     // is the same `smallint` the `value_kind` column it refines is stored as, so
     // each branch is cast rather than leaving the CASE a wider type than the row
@@ -68,14 +51,8 @@ pub fn recorded_shape() -> SimpleExpr {
             shape(RecordedShape::Array),
         )
         .case(value_kind_is(ValueKind::Object), shape(RecordedShape::Object))
-        .case(
-            value_kind_is(ValueKind::String).and(regex_match(value_string(), text_literal(NgsiLdTime::STORED_PATTERN))),
-            shape(RecordedShape::Time),
-        )
-        .case(
-            value_kind_is(ValueKind::String).and(regex_match(value_string(), text_literal(NgsiLdDate::STORED_PATTERN))),
-            shape(RecordedShape::Date),
-        )
+        .case(value_kind_is(ValueKind::Time), shape(RecordedShape::Time))
+        .case(value_kind_is(ValueKind::Date), shape(RecordedShape::Date))
         .case(value_kind_is(ValueKind::String), shape(RecordedShape::String))
         .case(value_kind_is(ValueKind::Number), shape(RecordedShape::Number))
         .case(value_kind_is(ValueKind::Boolean), shape(RecordedShape::Boolean))
@@ -88,7 +65,6 @@ pub fn recorded_shape() -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::recorded_shape::recorded_shape;
-    use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime};
     use sea_query::{PostgresQueryBuilder, Query};
 
     fn rendered() -> String {
@@ -113,28 +89,14 @@ mod tests {
     }
 
     /// Table 4.5.19.1-2 gives `Time` an `avg` that the `Date` and the JSON
-    /// String sharing its text column do not have, so all three are separated
-    /// by the canonical rendering the write path stores.
+    /// String sharing its text column do not have, so all three are told apart
+    /// by the value kind the write recorded, never by the text.
     #[test]
-    fn a_time_and_a_date_are_separated_from_a_plain_string_by_their_canonical_form() {
+    fn a_time_and_a_date_are_separated_from_a_plain_string_by_their_value_kind() {
         let sql = rendered();
-        assert!(sql.contains(NgsiLdTime::STORED_PATTERN), "{sql}");
-        assert!(sql.contains(NgsiLdDate::STORED_PATTERN), "{sql}");
-        let time_branch = sql.find("THEN 9").expect("a time branch");
-        let date_branch = sql.find("THEN 8").expect("a date branch");
-        let string_branch = sql.find("THEN 2").expect("a string branch");
-        assert!(time_branch < string_branch && date_branch < string_branch, "{sql}");
-    }
-
-    /// The patterns are anchored at both ends: an unanchored `Time` pattern
-    /// would classify any string that merely contains a time of day, and the
-    /// aggregation tables would then offer `avg` over it.
-    #[test]
-    fn both_temporal_patterns_pin_the_whole_value() {
-        for pattern in [NgsiLdTime::STORED_PATTERN, NgsiLdDate::STORED_PATTERN] {
-            assert!(pattern.starts_with('^'), "{pattern}");
-            assert!(pattern.ends_with('$'), "{pattern}");
-        }
+        assert!(sql.contains(r#"("ah"."value_kind" = (9)) THEN 9::smallint"#), "{sql}");
+        assert!(sql.contains(r#"("ah"."value_kind" = (8)) THEN 8::smallint"#), "{sql}");
+        assert!(!sql.contains('~'), "no regular expression: {sql}");
     }
 
     /// Clause 4.5.7: a deletion carries no value, so it has no shape either -

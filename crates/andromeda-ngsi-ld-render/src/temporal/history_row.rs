@@ -17,11 +17,15 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
     identifier::{Identifier, IdentifierParseError},
     reference::{NgsiLdReference, NgsiLdReferenceError},
-    time::{rendering::instant_text, system_instant::SystemInstant, written_date_time::DateTimeText},
+    time::{
+        date_time::{NgsiLdDateTime, NgsiLdDateTimeError},
+        rendering::instant_text,
+        system_instant::SystemInstant,
+        value::{TimeValue, TimeValueForm},
+    },
 };
 use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance, observation_metadata::ObservationMetadata};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 
@@ -37,15 +41,18 @@ pub enum HistoryRowRenderError {
     /// A stored `VocabProperty` term is not a name.
     #[error("a stored vocabulary term is not a name: {0}")]
     VocabTerm(#[source] NgsiLdReferenceError),
-    /// The `DateTime` datatype IRI did not read as a name.
-    #[error("the DateTime datatype is not a name: {0}")]
-    DateTimeDatatype(#[source] NgsiLdReferenceError),
+    /// A time value datatype IRI did not read as a name.
+    #[error("a time value datatype is not a name: {0}")]
+    TimeDatatype(#[source] NgsiLdReferenceError),
     /// A rendered `instanceId` is not an identifier.
     #[error("a rendered instance identifier is not an identifier: {0}")]
     InstanceId(#[source] IdentifierParseError),
     /// A reified scope instance names no Scope.
     #[error("a reified scope instance names no scope")]
     EmptyScope(#[source] EmptyCollection),
+    /// A stored observation or deletion instant lies below the storable floor.
+    #[error("a stored instant is not an NGSI-LD DateTime: {0}")]
+    Instant(#[source] NgsiLdDateTimeError),
 }
 
 /// The attribute instance one backend-neutral [`TemporalHistoryRow`] renders
@@ -77,16 +84,23 @@ pub fn neutral_row_to_instance(row: TemporalHistoryRow, sys_attrs: SysAttrsInclu
     } = row;
     let (instance_id, dataset_id) = identity_members(&instance, dataset_id)?;
     let deleted_at = value.deleted_at();
-    let value = rendered_value(value, attribute_type)?;
+    let metadata = metadata.map_or_else(empty_parts, ObservationMetadata::into_parts);
+    let value = rendered_value(value, attribute_type, metadata.value_type.as_ref().and_then(Slot::as_set))?;
     // A deletion carries no observation of its own: its value member, its
     // deletion instant, the `observedAt` a written deletion declared and its
     // identity are the whole rendering.
+    let observed_at = observed_at
+        .map(NgsiLdDateTime::normalise)
+        .transpose()
+        .map_err(HistoryRowRenderError::Instant)?
+        .map(Slot::Set);
     if let Some(deleted_at) = deleted_at {
+        let deleted_at = NgsiLdDateTime::normalise(deleted_at).map_err(HistoryRowRenderError::Instant)?;
         return Ok(InstanceDocument::builder()
             .family(Some(attribute_type))
             .value(value)
-            .observed_at(observed_at.map(|instant| Slot::Set(DateTimeText::from_instant(instant))))
-            .deleted_at(Some(DateTimeText::from_instant(deleted_at)))
+            .observed_at(observed_at)
+            .deleted_at(Some(deleted_at))
             .instance_id(instance_id)
             .dataset_id(dataset_id)
             .build());
@@ -95,12 +109,11 @@ pub fn neutral_row_to_instance(row: TemporalHistoryRow, sys_attrs: SysAttrsInclu
         SysAttrsInclusion::Include => (created_at.map(SystemInstant::new), modified_at.map(SystemInstant::new)),
         SysAttrsInclusion::Strip => (None, None),
     };
-    let metadata = metadata.map_or_else(empty_parts, ObservationMetadata::into_parts);
     Ok(InstanceDocument::builder()
         .family(Some(attribute_type))
         .dataset_id(dataset_id)
         .value(value)
-        .observed_at(observed_at.map(|instant| Slot::Set(DateTimeText::from_instant(instant))))
+        .observed_at(observed_at)
         .expires_at(metadata.expires_at)
         .unit_code(metadata.unit_code)
         .value_type(metadata.value_type)
@@ -130,7 +143,12 @@ fn empty_parts() -> InstanceDocumentParts {
 /// `ListProperty` or `ListRelationship` renders the single-null array of clauses
 /// 4.5.21.2 and 4.5.22.2 in its own list member, never the `value` those clauses
 /// prohibit.
-fn rendered_value(value: TemporalValue, attribute_type: AttributeType) -> Result<ValueSlot, HistoryRowRenderError> {
+///
+/// A declared time value renders typed, `{"type": form, "@value": text}` once
+/// compacted, unless the `valueType` `value_type` already declares its form,
+/// when it renders as the plain text beside that `valueType`, as current state
+/// holds it.
+fn rendered_value(value: TemporalValue, attribute_type: AttributeType, value_type: Option<&NgsiLdReference>) -> Result<ValueSlot, HistoryRowRenderError> {
     Ok(ValueSlot::Set(match value {
         TemporalValue::Number(number) => literal(LiteralValue::Number(number)),
         TemporalValue::String(text) => match attribute_type {
@@ -146,13 +164,9 @@ fn rendered_value(value: TemporalValue, attribute_type: AttributeType) -> Result
         TemporalValue::Boolean(flag) => literal(LiteralValue::Boolean(flag)),
         TemporalValue::Geometry(geometry) => WrittenValue::Geometry(GeoValue::Geometry(geometry)),
         TemporalValue::Structured(structured) => structured.into_written(),
-        TemporalValue::DateTime(instant) => WrittenValue::Value(vec![ExpandedValue::Literal(Literal::typed(
-            LiteralValue::String(rendered_instant(instant).into()),
-            expanded_classes::DATE_TIME
-                .as_str()
-                .parse::<NgsiLdReference>()
-                .map_err(HistoryRowRenderError::DateTimeDatatype)?,
-        ))]),
+        TemporalValue::DateTime(instant) => time_literal(TimeValueForm::DateTime, rendered_instant(instant), value_type)?,
+        TemporalValue::Date(date) => time_literal(TimeValueForm::Date, TimeValue::Date(date).to_string(), value_type)?,
+        TemporalValue::Time(time) => time_literal(TimeValueForm::Time, TimeValue::Time(time).to_string(), value_type)?,
         TemporalValue::Uri(uri) => WrittenValue::Object(NonEmpty::one(uri)),
         // Clause 4.18: "The value of scope is represented as a JSON array in
         // case there is more than one Scope". Several Scopes are several value
@@ -176,6 +190,19 @@ fn rendered_value(value: TemporalValue, attribute_type: AttributeType) -> Result
 /// A value member holding one plain value object.
 fn literal(value: LiteralValue) -> WrittenValue {
     WrittenValue::Value(vec![ExpandedValue::Literal(Literal::plain(value))])
+}
+
+/// The value member holding a time value of `form` spelled `text`, typed
+/// unless `value_type` declares the form.
+fn time_literal(form: TimeValueForm, text: String, value_type: Option<&NgsiLdReference>) -> Result<WrittenValue, HistoryRowRenderError> {
+    let literal = match value_type {
+        Some(value_type) if TimeValueForm::named_by(value_type.as_str()) == Some(form) => Literal::plain(LiteralValue::String(text.into())),
+        Some(_) | None => Literal::typed(
+            LiteralValue::String(text.into()),
+            form.iri().as_str().parse().map_err(HistoryRowRenderError::TimeDatatype)?,
+        ),
+    };
+    Ok(WrittenValue::Value(vec![ExpandedValue::Literal(literal)]))
 }
 
 /// An instant rendered in exactly the sub-second precision it carries.

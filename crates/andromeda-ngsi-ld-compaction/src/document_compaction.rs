@@ -25,13 +25,7 @@ use andromeda_ngsi_ld_entity::{
     },
     value_mode::Fragment,
 };
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    identifier::Identifier,
-    reference::NgsiLdReference,
-    time::written_date_time::DateTimeText,
-    uri::Uri,
-};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReference, time::date_time::NgsiLdDateTime, uri::Uri};
 use andromeda_ngsi_ld_vocabulary::NULL_URI;
 use indexmap::IndexMap;
 use jsonld::{BlankIdBuf, IriBuf, Term};
@@ -78,7 +72,8 @@ impl Walk<'_> {
         let modified_at = instance.modified_at().map(|instant| instant.to_string());
         self.compact_date_time(&mut result, &reserved().created_at, created_at.as_deref())?;
         self.compact_date_time(&mut result, &reserved().modified_at, modified_at.as_deref())?;
-        self.compact_date_time(&mut result, &reserved().deleted_at, instance.deleted_at().map(DateTimeText::as_str))?;
+        let deleted_at = instance.deleted_at().map(|instant| instant.to_string());
+        self.compact_date_time(&mut result, &reserved().deleted_at, deleted_at.as_deref())?;
         self.compact_reference(&mut result, &reserved().dataset_id, instance.dataset_id().map(Identifier::as_str))?;
         self.compact_reference(&mut result, &reserved().instance_id, instance.instance_id().map(Identifier::as_str))?;
         if let Some(unit_code) = instance.unit_code() {
@@ -132,13 +127,13 @@ impl Walk<'_> {
         &mut self,
         result: &mut CompactedObject<'_>,
         member: &Term<IriBuf, BlankIdBuf>,
-        slot: Option<&Slot<DateTimeText>>,
+        slot: Option<&Slot<NgsiLdDateTime>>,
     ) -> Result<(), Undecidable> {
         let text = slot.map(|slot| match slot {
-            Slot::Set(text) => text.as_str(),
-            Slot::Remove => NULL_URI.as_str(),
+            Slot::Set(instant) => instant.to_string(),
+            Slot::Remove => NULL_URI.as_str().to_owned(),
         });
-        self.compact_date_time(result, member, text)
+        self.compact_date_time(result, member, text.as_deref())
     }
 }
 

@@ -11,6 +11,7 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 mod attribute_value_datatype;
+mod attribute_value_holder;
 pub mod attribute_value_order;
 mod carried_names;
 pub mod carrier_page;
@@ -40,6 +41,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-postgresql-branch",
+        "andromeda-postgresql-codes",
         "andromeda-postgresql-encoding",
         "andromeda-postgresql-query",
         "andromeda-postgresql-schema",

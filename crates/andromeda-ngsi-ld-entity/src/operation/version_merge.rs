@@ -14,7 +14,7 @@
 //! under different contexts merge into one attribute.
 
 use crate::{attribute_instances::AttributeInstances, entity_state::EntityState, history::instance_recency::InstanceRecency, instance::Instance};
-use andromeda_ngsi_ld_lexicon::time::{system_instant::SystemInstant, written_date_time::DateTimeText};
+use andromeda_ngsi_ld_lexicon::time::{date_time::NgsiLdDateTime, system_instant::SystemInstant};
 use std::{cmp::Ordering, sync::Arc};
 
 /// How one version folds into the entity being assembled.
@@ -77,13 +77,13 @@ impl EntityState {
             // expiresAt attribute of the Entity is set to the DateTime
             // corresponding to the expiresAt DateTime which is furthest in the
             // future."
-            MergePolicy::Instances => match (self.expires_at().cloned(), expires_at) {
-                (Some(held), Some(received)) => Some(if received.instant() > held.instant() { received } else { held }),
+            MergePolicy::Instances => match (self.expires_at(), expires_at) {
+                (Some(held), Some(received)) => Some(received.max(held)),
                 (None, _) | (_, None) => None,
             },
             // Clause 4.3.6.2: an auxiliary version can neither raise the
             // Entity's expiry nor erase it by not reporting one.
-            MergePolicy::SupplementMissing => self.expires_at().cloned(),
+            MergePolicy::SupplementMissing => self.expires_at(),
         };
         self.set_expires_at(merged_expiry);
     }
@@ -107,7 +107,7 @@ fn merge_instances(held: &mut AttributeInstances, received: &AttributeInstances)
 /// The clause 4.5.5.3 instants one instance carries.
 fn recency(instance: &Instance) -> InstanceRecency {
     InstanceRecency {
-        observed_at: instance.observed_at().map(DateTimeText::instant),
+        observed_at: instance.observed_at().map(NgsiLdDateTime::get),
         modified_at: instance.modified_at().map(SystemInstant::get),
     }
 }
@@ -197,10 +197,7 @@ mod tests {
         let mut remote = entity(Vec::new());
         remote.set_expires_at(Some(date_time("2031-01-01T00:00:00Z")));
         local.merge_version(remote, MergePolicy::Instances);
-        assert_eq!(
-            local.expires_at().map(|expiry| expiry.as_str().to_owned()),
-            Some("2031-01-01T00:00:00Z".to_owned())
-        );
+        assert_eq!(local.expires_at().map(|expiry| expiry.to_string()), Some("2031-01-01T00:00:00Z".to_owned()));
     }
 
     #[test]

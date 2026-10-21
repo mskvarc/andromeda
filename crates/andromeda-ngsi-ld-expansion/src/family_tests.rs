@@ -21,7 +21,7 @@ use andromeda_ngsi_ld_entity::{
     value_mode::{Fragment, FragmentMember, FragmentText},
 };
 use andromeda_ngsi_ld_geometry::geometry_type::GeometryType;
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, time::written_date_time::DateTimeText};
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, time::date_time::NgsiLdDateTime};
 use andromeda_ngsi_ld_number::JsonNumber;
 use serde_json::json;
 
@@ -84,7 +84,7 @@ async fn a_property_expands_to_its_value_unit_observation_and_dataset() {
     pretty_assertions::assert_eq!(number(&values(speed)[0]), &"21.5".parse::<JsonNumber>().expect("a number"));
     pretty_assertions::assert_eq!(speed.unit_code().and_then(Slot::as_set).map(|unit| unit.as_str()), Some("KMH"));
     pretty_assertions::assert_eq!(
-        speed.observed_at().and_then(Slot::as_set).map(DateTimeText::as_str),
+        speed.observed_at().and_then(Slot::as_set).map(NgsiLdDateTime::to_string).as_deref(),
         Some("2024-01-01T00:00:00Z")
     );
     pretty_assertions::assert_eq!(speed.dataset_id().map(ToString::to_string).as_deref(), Some("urn:ngsi-ld:Dataset:a"));
@@ -292,7 +292,7 @@ async fn scope_and_expiry_are_entity_members() {
     };
     pretty_assertions::assert_eq!(scopes.as_slice().iter().map(ToString::to_string).collect::<Vec<_>>(), vec!["/a/b", "/c"]);
     pretty_assertions::assert_eq!(
-        document.expires_at().and_then(Slot::as_set).map(DateTimeText::as_str),
+        document.expires_at().and_then(Slot::as_set).map(NgsiLdDateTime::to_string).as_deref(),
         Some("2030-01-01T00:00:00Z")
     );
     assert!(document.attributes().is_empty());

@@ -68,7 +68,7 @@ fn the_document_reading_answers_every_written_instance() {
         ("\"https://example.com/temperature\"==21", true),
         ("\"https://example.com/temperature\">40", false),
         (
-            "\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/observedAt\">\"2024-06-01T12:00:00Z\"",
+            "\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/observedAt\">2024-06-01T12:00:00Z",
             true,
         ),
         (

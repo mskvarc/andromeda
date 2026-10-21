@@ -8,7 +8,7 @@
 
 use crate::{attribute_instances::AttributeInstances, entity_state::EntityState, geo_value::GeoValue};
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
-use andromeda_ngsi_ld_lexicon::time::written_date_time::DateTimeText;
+use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use chrono::{DateTime, Utc};
 
@@ -42,7 +42,7 @@ impl EntityState {
     #[must_use]
     pub fn location_expiry(&self) -> Option<DateTime<Utc>> {
         let (_, instance) = self.attributes().get(properties::LOCATION.as_str())?.default_instance()?;
-        instance.expires_at().map(DateTimeText::instant)
+        instance.expires_at().map(NgsiLdDateTime::get)
     }
 }
 

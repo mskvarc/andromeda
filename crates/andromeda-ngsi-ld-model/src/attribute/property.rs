@@ -38,13 +38,9 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::coerced_term::CoercedTerm;
     use cefact_units::UnitCode;
 
-    /// Clause 4.6.3 admits several spellings of one `DateTime`, so the document
-    /// representation carries the one the client wrote rather than re-rendering
-    /// it. What the value *is* under the clause is decided by
-    /// `andromeda_ngsi_ld_lexicon::time::value::TimeValue`, where the write
-    /// projection and the clause 4.9 `q` operand parser both read it; this type
-    /// carries the text so that a `2018-12-04T12:00:00.250000Z` a client wrote
-    /// is not served back as `2018-12-04T12:00:00.250Z`.
+    /// The request representation reads a value as the JSON the client sent:
+    /// whether `valueType` makes it a time value, and the one spelling such a
+    /// value is held in, is decided when the write is committed.
     #[test]
     fn property_round_trip_carries_the_written_value_alongside_value_type_and_previous_value() {
         let json = serde_json::json!({

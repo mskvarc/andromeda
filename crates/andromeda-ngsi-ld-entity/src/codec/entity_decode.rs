@@ -20,12 +20,7 @@ use crate::{
     refusal::EntityRefusal,
     scopes::Scopes,
 };
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    entity_type_name::EntityTypeName,
-    identifier::Identifier,
-    time::written_date_time::DateTimeText,
-};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier, time::date_time::NgsiLdDateTime};
 use indexmap::IndexMap;
 use serde::{
     Deserializer,
@@ -101,7 +96,7 @@ impl<'de> Visitor<'de> for EntityNodeSeed<'_> {
         let mut id = None;
         let mut types = Vec::new();
         let mut scope_member: Option<Slot<Scopes>> = None;
-        let mut expires_at: Option<Slot<DateTimeText>> = None;
+        let mut expires_at: Option<Slot<NgsiLdDateTime>> = None;
         let mut attributes: IndexMap<AttributeName, AttributeMember> = IndexMap::new();
         while let Some(key) = map.next_key::<ObjectKey>()? {
             match key {

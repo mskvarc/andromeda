@@ -59,34 +59,20 @@ pub enum Scalar {
 }
 
 impl Scalar {
-    /// Classify a literal operand by the clause 4.6.3 form it is written in and
-    /// by whether the client quoted it.
+    /// Classify a literal operand by whether the client quoted it and, when it
+    /// did not, by the clause 4.6.3 form it is written in.
     ///
-    /// Clause 4.9's grammar gives an operand no type tag — `ComparableValue =
-    /// Number / quotedStr / dateTime / date / time` — so the literal's own
-    /// lexical form is what says which domain it belongs to, and the same
-    /// classifier reads it that
-    /// [`TimeValueForm`](andromeda_ngsi_ld_lexicon::time::value::TimeValueForm)
-    /// classifies a stored value with. Clause 4.9 makes every operator
+    /// Clause 4.9's grammar gives an operand no type tag, `ComparableValue =
+    /// Number / quotedStr / dateTime / date / time`, and the quotes are part of
+    /// the production: `quotedStr` is the IETF RFC 8259 `String` production
+    /// together with its quotes, and it is a String whatever it contains.
+    /// `dateTime`, `date` and `time` are unquoted alternatives, as clause 4.9's
+    /// own EXAMPLE 8 writes them, so only a bare literal is classified by its
+    /// lexical form ([`TimeValueForm::of`]), and a bare one that satisfies no
+    /// production is a malformed request. Clause 4.9 makes every operator
     /// non-matching when "there is no equality between the target value data
-    /// type and the Query Term value data type", which two classifiers could
-    /// only ever satisfy by never matching.
-    ///
-    /// The quotes decide what a literal that is *written in* one of those forms
-    /// and does not satisfy it means, because the grammar puts them inside the
-    /// production: `quotedStr` is the IETF RFC 8259 `String` production together
-    /// with its quotes, while `dateTime`, `date` and `time` are unquoted
-    /// alternatives, as clause 4.9's own EXAMPLE 8 writes them. So a quoted
-    /// literal is derivable whatever it contains, and refusing one would refuse
-    /// a well-formed Query Term — while a bare one that satisfies no unquoted
-    /// production is derivable from nothing at all and is a malformed request.
-    ///
-    /// A quoted literal that *does* satisfy a clause 4.6.3 form is classified
-    /// temporally, which is what keeps a stored timestamp findable in either
-    /// spelling and matches clause 4.9's EXAMPLE 3,
-    /// `?q=isParked=="urn:ngsi-ld:OffStreetParking:Downtown1"`, where a quoted
-    /// URI has to match a Relationship object rather than being held apart from
-    /// one because of its quotes.
+    /// type and the Query Term value data type", so a quoted operand matches a
+    /// String and no time value.
     ///
     /// # Errors
     ///
@@ -96,19 +82,14 @@ impl Scalar {
     /// [`QueryError::QBareWord`] when a bare literal is in no clause 4.6.3 form
     /// and is no `URI`.
     pub fn from_literal(raw: &str, quoting: Quoting) -> Result<Scalar, QueryError> {
-        let Some(form) = TimeValueForm::of(raw) else {
-            return match quoting {
-                Quoting::Bare => Scalar::bare_word(raw),
-                Quoting::Quoted => Ok(Scalar::Str(raw.to_string())),
-            };
-        };
-        match (form, quoting) {
-            (TimeValueForm::DateTime, Quoting::Bare) => Ok(Scalar::DateTime(parse_date_time(raw)?)),
-            (TimeValueForm::Date, Quoting::Bare) => Ok(Scalar::Date(parse_date(raw)?)),
-            (TimeValueForm::Time, Quoting::Bare) => Ok(Scalar::Time(parse_time(raw)?)),
-            (TimeValueForm::DateTime, Quoting::Quoted) => Ok(parse_date_time(raw).map_or_else(|_| Scalar::Str(raw.to_string()), Scalar::DateTime)),
-            (TimeValueForm::Date, Quoting::Quoted) => Ok(parse_date(raw).map_or_else(|_| Scalar::Str(raw.to_string()), Scalar::Date)),
-            (TimeValueForm::Time, Quoting::Quoted) => Ok(parse_time(raw).map_or_else(|_| Scalar::Str(raw.to_string()), Scalar::Time)),
+        if quoting == Quoting::Quoted {
+            return Ok(Scalar::Str(raw.to_string()));
+        }
+        match TimeValueForm::of(raw) {
+            None => Scalar::bare_word(raw),
+            Some(TimeValueForm::DateTime) => Ok(Scalar::DateTime(parse_date_time(raw)?)),
+            Some(TimeValueForm::Date) => Ok(Scalar::Date(parse_date(raw)?)),
+            Some(TimeValueForm::Time) => Ok(Scalar::Time(parse_time(raw)?)),
         }
     }
 
@@ -276,30 +257,27 @@ mod tests {
         assert!(matches!(time_error, QueryError::QInvalidTime { .. }), "got {time_error:?}");
     }
 
-    /// A literal that satisfies a clause 4.6.3 form is that value in either
-    /// spelling. Quoting is the escaping device EXAMPLE 11's `"Overstay 60
-    /// minutes"` needs, not a declaration that the value is a String — EXAMPLE 3
-    /// writes a URI inside quotes and requires it to match a Relationship
-    /// object — so a stored timestamp is findable by the timestamp that wrote
-    /// it however the client spelled the operand.
+    /// Clause 4.9: `quotedStr` is a String, and only the unquoted `dateTime`,
+    /// `date` and `time` productions are time values.
     #[test]
-    fn the_quoted_and_unquoted_spellings_of_a_conformant_operand_classify_alike() {
+    fn a_quoted_literal_in_a_time_value_form_is_a_string_and_a_bare_one_a_time_value() {
         for literal in ["2024-01-01T00:00:00Z", "2024-01-01", "12:00:00Z"] {
             let bare = Scalar::from_literal(literal, Quoting::Bare).expect("a conformant operand");
-            let quoted = Scalar::from_literal(literal, Quoting::Quoted).expect("a conformant operand");
             assert!(
                 matches!(bare, Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_)),
                 "{literal} classified as {bare:?}"
             );
-            pretty_assertions::assert_eq!(bare, quoted, "{literal}");
+            pretty_assertions::assert_eq!(
+                Scalar::from_literal(literal, Quoting::Quoted).expect("a quotedStr"),
+                Scalar::Str(literal.to_owned()),
+                "{literal}"
+            );
         }
     }
 
     /// Clause 4.9's `quotedStr` is the IETF RFC 8259 `String` production
     /// *including its quotes*, so a quoted literal is derivable whatever it
-    /// contains: a value written in a clause 4.6.3 form that it does not satisfy
-    /// is the text it is, and comparing it as text is what lets a client find
-    /// the value the write path stored for it.
+    /// contains and is the text it is.
     #[test]
     fn a_quoted_literal_that_satisfies_no_form_is_the_text_it_is() {
         for literal in [

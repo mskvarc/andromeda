@@ -26,7 +26,7 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     reference::NgsiLdReference,
-    time::rendering::instant_text,
+    time::{rendering::instant_text, value::TimeValue},
     uri::Uri,
 };
 use andromeda_ngsi_ld_model::temporal::structured_value::StructuredValue;
@@ -171,9 +171,12 @@ impl StoredFamily<'_> {
                 | StructuredValue::List(_)
                 | StructuredValue::ObjectList(_) => Err(self.mismatch(ValueKind::Object)),
             },
-            scalar @ (StoredValue::Number { .. } | StoredValue::String { .. } | StoredValue::Boolean { .. } | StoredValue::DateTime { .. }) => {
-                Ok(vec![ExpandedValue::Literal(self.literal(scalar)?)])
-            }
+            scalar @ (StoredValue::Number { .. }
+            | StoredValue::String { .. }
+            | StoredValue::Boolean { .. }
+            | StoredValue::DateTime { .. }
+            | StoredValue::Date { .. }
+            | StoredValue::Time { .. }) => Ok(vec![ExpandedValue::Literal(self.literal(scalar)?)]),
             other @ (StoredValue::Geometry { .. } | StoredValue::Uri(_)) => Err(self.mismatch(other.kind())),
         }
     }
@@ -197,6 +200,8 @@ impl StoredFamily<'_> {
             | StoredValue::String { .. }
             | StoredValue::Boolean { .. }
             | StoredValue::DateTime { .. }
+            | StoredValue::Date { .. }
+            | StoredValue::Time { .. }
             | StoredValue::Object(_)
             | StoredValue::Uri(_)) => Err(self.mismatch(other.kind())),
         }
@@ -220,6 +225,8 @@ impl StoredFamily<'_> {
             | StoredValue::String { .. }
             | StoredValue::Boolean { .. }
             | StoredValue::DateTime { .. }
+            | StoredValue::Date { .. }
+            | StoredValue::Time { .. }
             | StoredValue::Geometry { .. }) => Err(self.mismatch(other.kind())),
         }
     }
@@ -245,6 +252,8 @@ impl StoredFamily<'_> {
             | StoredValue::String { .. }
             | StoredValue::Boolean { .. }
             | StoredValue::DateTime { .. }
+            | StoredValue::Date { .. }
+            | StoredValue::Time { .. }
             | StoredValue::Geometry { .. }
             | StoredValue::Uri(_)) => Err(self.mismatch(other.kind())),
         }
@@ -258,6 +267,12 @@ impl StoredFamily<'_> {
             StoredValue::Boolean { flag, datatype: key } => Literal::try_new(LiteralValue::Boolean(flag), datatype(key)?, None, None)?,
             StoredValue::DateTime { instant, datatype: key } => {
                 Literal::try_new(LiteralValue::String(instant_text(instant).into()), datatype(key)?, None, None)?
+            }
+            StoredValue::Date { date, datatype: key } => {
+                Literal::try_new(LiteralValue::String(TimeValue::Date(date).to_string().into()), datatype(key)?, None, None)?
+            }
+            StoredValue::Time { time, datatype: key } => {
+                Literal::try_new(LiteralValue::String(TimeValue::Time(time).to_string().into()), datatype(key)?, None, None)?
             }
             StoredValue::String { text, annotation } => match annotation {
                 LiteralAnnotation::Plain => Literal::plain(LiteralValue::String(text.into())),
@@ -276,6 +291,8 @@ impl StoredFamily<'_> {
             | StoredValue::String { .. }
             | StoredValue::Boolean { .. }
             | StoredValue::DateTime { .. }
+            | StoredValue::Date { .. }
+            | StoredValue::Time { .. }
             | StoredValue::Geometry { .. }
             | StoredValue::Uri(_)) => Err(self.mismatch(other.kind())),
         }

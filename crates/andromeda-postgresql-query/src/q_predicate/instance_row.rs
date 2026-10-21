@@ -12,11 +12,16 @@
 //! of whichever [`ProbedRow`] the probe reads.
 
 use crate::q_predicate::{history_window::HistoryAliases, projection_probe::projection_column, value_column::ValueColumn};
+use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, SubAttribute},
     temporal::AttributeHistory,
 };
-use sea_query::{Alias, Expr as SeaExpr, IntoIden, SimpleExpr};
+use andromeda_postgresql_seaquery::{
+    literal::{false_literal, int_literal},
+    operator::null_if,
+};
+use sea_query::{Alias, Expr as SeaExpr, ExprTrait, IntoIden, SimpleExpr};
 
 /// The top-level row a probe reads, whose `sub_attributes` a sub-attribute
 /// path walks.
@@ -105,6 +110,33 @@ impl InstanceRow {
             InstanceRow::History => HistoryAliases::top_level().instance_column(AttributeHistory::AttributeKind),
             InstanceRow::Element(level) => level.field(SubAttribute::AttributeKind),
         }
+    }
+
+    /// The `entity_type_names` key of the instance's `valueType`.
+    #[must_use]
+    pub fn value_type_key(self) -> SimpleExpr {
+        match self {
+            InstanceRow::Current => projection_column(CurrentAttributes::ValueTypeKey),
+            InstanceRow::History => HistoryAliases::top_level().instance_column(AttributeHistory::ValueTypeKey),
+            InstanceRow::Element(level) => level.field(SubAttribute::ValueTypeKey),
+        }
+    }
+
+    /// Whether the instance records the value kind `kind`, which tells apart
+    /// the three kinds `value_string` holds: a String, a `Date` and a `Time`.
+    ///
+    /// TRUE for that kind and unknown for any other, never FALSE: a condition
+    /// over another kind's column then stays unknown, as it is with no kind
+    /// test at all, so the total negation `unequal` compiles to still reads a
+    /// datatype difference as a match.
+    #[must_use]
+    pub fn value_kind_is(self, kind: ValueKind) -> SimpleExpr {
+        let column = match self {
+            InstanceRow::Current => projection_column(CurrentAttributes::ValueKind),
+            InstanceRow::History => HistoryAliases::top_level().instance_column(AttributeHistory::ValueKind),
+            InstanceRow::Element(level) => level.field(SubAttribute::ValueKind),
+        };
+        null_if(column.eq(int_literal(i64::from(kind.code()))), false_literal())
     }
 
     /// The fields a String target value can occupy, each named once.

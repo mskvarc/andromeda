@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn an_instant_member_compares_its_field_with_a_date_time() {
-        let Expr::Pred(pred) = parse("\"https://example.com/t\".\"https://uri.etsi.org/ngsi-ld/observedAt\">\"2024-01-01T00:00:00Z\"").expect("parse q") else {
+        let Expr::Pred(pred) = parse("\"https://example.com/t\".\"https://uri.etsi.org/ngsi-ld/observedAt\">2024-01-01T00:00:00Z").expect("parse q") else {
             panic!("a single predicate");
         };
         let field = MemberField::ObservedAt.of_instance(InstanceRow::Element(ElementLevel::at(1)));

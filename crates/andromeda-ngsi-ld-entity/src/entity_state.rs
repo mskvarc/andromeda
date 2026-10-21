@@ -10,7 +10,7 @@
 //! the canonical decoder refuse it.
 
 use crate::{attributes::Attributes, entity_types::EntityTypes, scopes::Scopes};
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::written_date_time::DateTimeText};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::date_time::NgsiLdDateTime};
 
 /// One entity.
 #[derive(Clone, Debug, PartialEq)]
@@ -22,7 +22,7 @@ pub struct EntityState {
     /// `scope` (clause 4.18).
     scope: Option<Scopes>,
     /// The entity-level `expiresAt` (clause 4.22).
-    expires_at: Option<DateTimeText>,
+    expires_at: Option<NgsiLdDateTime>,
     /// The attributes.
     attributes: Attributes,
 }
@@ -46,7 +46,7 @@ impl EntityState {
         id: Identifier,
         types: EntityTypes,
         scope: Option<Scopes>,
-        expires_at: Option<DateTimeText>,
+        expires_at: Option<NgsiLdDateTime>,
         attributes: Attributes,
     ) -> EntityState {
         EntityState {
@@ -78,8 +78,8 @@ impl EntityState {
 
     /// The entity-level expiry, when set.
     #[must_use]
-    pub const fn expires_at(&self) -> Option<&DateTimeText> {
-        self.expires_at.as_ref()
+    pub const fn expires_at(&self) -> Option<NgsiLdDateTime> {
+        self.expires_at
     }
 
     /// The attributes.
@@ -99,7 +99,7 @@ impl EntityState {
     }
 
     /// Replace the entity-level expiry.
-    pub fn set_expires_at(&mut self, expires_at: Option<DateTimeText>) {
+    pub const fn set_expires_at(&mut self, expires_at: Option<NgsiLdDateTime>) {
         self.expires_at = expires_at;
     }
 
@@ -110,7 +110,7 @@ impl EntityState {
 
     /// Give the entity up as its parts.
     #[must_use]
-    pub fn into_parts(self) -> (Identifier, EntityTypes, Option<Scopes>, Option<DateTimeText>, Attributes) {
+    pub fn into_parts(self) -> (Identifier, EntityTypes, Option<Scopes>, Option<NgsiLdDateTime>, Attributes) {
         (self.id, self.types, self.scope, self.expires_at, self.attributes)
     }
 }

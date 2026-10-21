@@ -3,7 +3,7 @@
 
 use crate::{current_attribute::flatten::flatten, entity_state_record::instance_record::AttributeInstanceRecord};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, scope::path::ScopePath, time::written_date_time::DateTimeText};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, scope::path::ScopePath, time::date_time::NgsiLdDateTime};
 use andromeda_postgresql_attribute_instance::{flatten::FlattenError, name_keys::NameKeys};
 use andromeda_postgresql_encoding::ewkb::EwkbError;
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
@@ -66,7 +66,7 @@ pub fn record_of(state: &EntityState, keys: &NameKeys) -> Result<EntityStateReco
     Ok(EntityStateRecord {
         entity_type_name_keys,
         scope_paths,
-        expires_at: state.expires_at().map(DateTimeText::instant),
+        expires_at: state.expires_at().map(NgsiLdDateTime::get),
         instances,
     })
 }

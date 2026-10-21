@@ -1,7 +1,8 @@
 //! The members of an attribute instance a `q` path names after `.` without
 //! naming a sub-attribute.
 
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use crate::filter::target_value::TargetValue;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::value::TimeValue};
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{
     CREATED_AT,
     DATASET_ID,
@@ -14,16 +15,16 @@ use andromeda_ngsi_ld_vocabulary::expanded::properties::{
     VALUE_TYPE,
 };
 use iri_rs::Iri;
+use std::borrow::Cow;
 use strum::{EnumIter, IntoEnumIterator};
 
 /// A member an attribute instance carries as data of its own rather than as a
 /// sub-attribute, which clause 4.9 nevertheless lets a path address with `.`
 /// exactly as it addresses a sub-attribute (`temperature.observedAt`).
 ///
-/// Its target value is the lexical form of what the instance holds there,
-/// compared as clause 4.9 compares any String: a `DateTime` operand reads it as
-/// a temporal value, every other operand as text. A path ends at such a member;
-/// nothing is addressable beneath it.
+/// Its target value is what the instance holds there: the four instants are
+/// `DateTime` values (clauses 4.8 and 4.22), every other member a String. A
+/// path ends at such a member; nothing is addressable beneath it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter)]
 pub enum InstanceMetadata {
     /// When the value was observed, `observedAt`.
@@ -62,6 +63,24 @@ impl InstanceMetadata {
             InstanceMetadata::UnitCode => UNIT_CODE,
             InstanceMetadata::ValueType => VALUE_TYPE,
             InstanceMetadata::ObjectType => OBJECT_TYPE,
+        }
+    }
+
+    /// The clause 4.9 target value of the member holding `text`.
+    ///
+    /// An instant the instance holds was admitted as a `DateTime` or stamped by
+    /// the broker, so its text always reads as one.
+    #[must_use]
+    pub fn target_value(self, text: Cow<'_, str>) -> TargetValue<'_> {
+        match self {
+            InstanceMetadata::ObservedAt | InstanceMetadata::CreatedAt | InstanceMetadata::ModifiedAt | InstanceMetadata::ExpiresAt => text
+                .parse()
+                .map_or(TargetValue::Text(text), |instant| TargetValue::Time(TimeValue::DateTime(instant))),
+            InstanceMetadata::DatasetId
+            | InstanceMetadata::InstanceId
+            | InstanceMetadata::UnitCode
+            | InstanceMetadata::ValueType
+            | InstanceMetadata::ObjectType => TargetValue::Text(text),
         }
     }
 

@@ -438,3 +438,82 @@ fn the_stored_metadata_renders_beside_the_value() {
     pretty_assertions::assert_eq!(member(&rendered, AttributeType::Property.value_key_str()), Some(&json!([{"@value": 1}])));
     assert!(member(&rendered, "https://example.org/accuracy").is_some());
 }
+
+/// A row holding `value` beside the `valueType` `value_type`.
+fn row_with_value_type(value: TemporalValue, value_type: &str) -> TemporalHistoryRow {
+    let mut row = row(value);
+    let members = json!({
+        "@type": [AttributeType::Property.iri_str()],
+        expanded_properties::VALUE_TYPE.as_str(): [{"@id": value_type}]
+    });
+    let document = InstanceDocument::from_slice(&row.attribute_name, &serde_json::to_vec(&members).expect("JSON")).expect("expanded members");
+    row.metadata = ObservationMetadata::admit(document.into_parts()).expect("the members are committed");
+    row
+}
+
+fn time_of_day(text: &str) -> TemporalValue {
+    TemporalValue::Time(text.parse().expect("a time of day"))
+}
+
+/// Annex C.6 with clause 4.6.3: a typed `Time` renders typed, in the one
+/// spelling a `Time` is served in, whatever width the store holds it at.
+#[test]
+fn a_time_renders_typed_in_its_served_spelling() {
+    let rendered = rendered(row(time_of_day("12:00:00.5Z")), SysAttrsInclusion::Strip);
+    pretty_assertions::assert_eq!(
+        member(&rendered, AttributeType::Property.value_key_str()),
+        Some(&json!([{"@value": "12:00:00.500Z", "@type": "https://uri.etsi.org/ngsi-ld/Time"}]))
+    );
+}
+
+/// A typed `Date` renders typed, as Retrieve Entity serves it.
+#[test]
+fn a_date_renders_typed() {
+    let rendered = rendered(row(TemporalValue::Date("2024-06-15".parse().expect("a date"))), SysAttrsInclusion::Strip);
+    pretty_assertions::assert_eq!(
+        member(&rendered, AttributeType::Property.value_key_str()),
+        Some(&json!([{"@value": "2024-06-15", "@type": "https://uri.etsi.org/ngsi-ld/Date"}]))
+    );
+}
+
+/// Annex C.6: a `valueType` naming the form already declares the datatype, so
+/// the value renders plain beside it, as current state holds it.
+#[test]
+fn a_time_under_a_value_type_naming_its_form_renders_plain() {
+    let rendered = rendered(
+        row_with_value_type(time_of_day("12:00:00.5Z"), "https://uri.etsi.org/ngsi-ld/Time"),
+        SysAttrsInclusion::Strip,
+    );
+    pretty_assertions::assert_eq!(
+        member(&rendered, AttributeType::Property.value_key_str()),
+        Some(&json!([{"@value": "12:00:00.500Z"}]))
+    );
+}
+
+/// A `valueType` naming another datatype declares nothing about the form, so
+/// the value keeps its own `@type`.
+#[test]
+fn a_time_under_a_value_type_naming_another_datatype_renders_typed() {
+    let rendered = rendered(
+        row_with_value_type(time_of_day("12:00:00Z"), "http://example.org/Reading"),
+        SysAttrsInclusion::Strip,
+    );
+    pretty_assertions::assert_eq!(
+        member(&rendered, AttributeType::Property.value_key_str()),
+        Some(&json!([{"@value": "12:00:00Z", "@type": "https://uri.etsi.org/ngsi-ld/Time"}]))
+    );
+}
+
+/// An untyped string is a string whatever it resembles, and renders as the
+/// text recorded.
+#[test]
+fn an_untyped_string_in_a_time_value_form_renders_as_recorded() {
+    for text in ["2024-01-01T00:00:00.250000Z", "12:00:00.5Z", "2024-06-15"] {
+        let rendered = rendered(row(TemporalValue::String(text.to_owned())), SysAttrsInclusion::Strip);
+        pretty_assertions::assert_eq!(
+            member(&rendered, AttributeType::Property.value_key_str()),
+            Some(&json!([{"@value": text}])),
+            "{text}"
+        );
+    }
+}
