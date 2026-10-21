@@ -4,7 +4,7 @@
 use crate::temporal::history_row::neutral_row_to_instance;
 use andromeda_ngsi_ld_entity::{document::instance_document::InstanceDocument, geometry_value::GeometryValue, non_empty::NonEmpty};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_identity::InstanceIdentity, rfc3339::sub_second};
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_identity::InstanceIdentity, time::rendering::instant_text};
 use andromeda_ngsi_ld_model::temporal::{
     StreamExtent,
     TemporalHistoryRow,
@@ -87,7 +87,7 @@ fn a_tombstone_renders_the_synthesised_null_uri_and_its_deletion_instant() {
     );
     pretty_assertions::assert_eq!(
         member(&rendered, expanded_properties::DELETED_AT.as_str()),
-        Some(&json!([{"@value": sub_second(deleted_at), "@type": DATE_TIME}]))
+        Some(&json!([{"@value": instant_text(deleted_at), "@type": DATE_TIME}]))
     );
 }
 
@@ -104,7 +104,7 @@ fn a_written_deletion_renders_its_observed_at() {
     );
     pretty_assertions::assert_eq!(
         member(&rendered, expanded_properties::OBSERVED_AT.as_str()),
-        Some(&json!([{"@value": sub_second(observed_at), "@type": DATE_TIME}]))
+        Some(&json!([{"@value": instant_text(observed_at), "@type": DATE_TIME}]))
     );
     pretty_assertions::assert_eq!(member(&rendered, expanded_properties::CREATED_AT.as_str()), None);
     pretty_assertions::assert_eq!(member(&rendered, expanded_properties::MODIFIED_AT.as_str()), None);
@@ -134,7 +134,7 @@ fn the_operational_write_clock_is_never_rendered() {
     let rendered = rendered(row, SysAttrsInclusion::Include);
     pretty_assertions::assert_eq!(member(&rendered, expanded_properties::DELETED_AT.as_str()), None);
     assert!(
-        !rendered.to_string().contains(&sub_second(recorded_at)),
+        !rendered.to_string().contains(&instant_text(recorded_at)),
         "recorded_at is not a Temporal Property and must not reach the rendering"
     );
 }
@@ -413,11 +413,11 @@ fn broker_minted_system_times_render_at_their_stored_resolution() {
     let rendered = rendered(row, SysAttrsInclusion::Include);
     pretty_assertions::assert_eq!(
         member(&rendered, expanded_properties::CREATED_AT.as_str()),
-        Some(&json!([{"@value": "2023-11-14T22:15:00.999000Z", "@type": DATE_TIME}]))
+        Some(&json!([{"@value": "2023-11-14T22:15:00.999Z", "@type": DATE_TIME}]))
     );
     pretty_assertions::assert_eq!(
         member(&rendered, expanded_properties::MODIFIED_AT.as_str()),
-        Some(&json!([{"@value": "2023-11-14T22:16:40.999000Z", "@type": DATE_TIME}]))
+        Some(&json!([{"@value": "2023-11-14T22:16:40.999Z", "@type": DATE_TIME}]))
     );
 }
 

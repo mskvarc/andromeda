@@ -8,6 +8,7 @@ use andromeda_ngsi_ld_lexicon::{
     aggr_method::AggrMethod,
     attribute_name::AttributeName,
     attribute_type::AttributeType,
+    time::date_time::NgsiLdDateTime,
     time_prop::TimeProp,
     time_rel::TimeRel,
 };
@@ -25,7 +26,7 @@ use serde_json::{Value, json};
 use std::num::NonZeroU32;
 
 fn at(raw: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(raw).expect("a valid instant").with_timezone(&Utc)
+    raw.parse::<NgsiLdDateTime>().expect("a valid instant").get()
 }
 
 fn after_2020() -> TimeInterval {

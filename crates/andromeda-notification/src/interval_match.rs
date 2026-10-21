@@ -84,6 +84,7 @@ fn apply_subscription_filters(sub: &Subscription, mut entities: Vec<EntityState>
 mod tests {
     use crate::interval_match::apply_subscription_filters;
     use andromeda_ngsi_ld_entity::{entity_state::EntityState, queried::linked_states::LinkedStates};
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_ngsi_ld_model::subscription::Subscription;
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
@@ -109,7 +110,7 @@ mod tests {
     }
 
     fn instant(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("instant parses").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("instant parses").get()
     }
 
     /// A Vehicle whose `speed` is 20 until `expires_at`.

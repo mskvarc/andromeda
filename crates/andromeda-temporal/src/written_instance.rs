@@ -73,7 +73,7 @@ impl WrittenInstance {
         Ok(Some(WrittenInstance::Deletion(DeletedInstance {
             attribute_type: family.unwrap_or_else(|| carrier.implied_family()),
             dataset_id,
-            observed_at: declared_observed_at(observed_at.as_ref())?,
+            observed_at: declared_observed_at(observed_at.as_ref()),
             instance_id,
         })))
     }
@@ -83,7 +83,7 @@ impl WrittenInstance {
 mod tests {
     use crate::written_instance::{DeletedInstance, WrittenInstance};
     use andromeda_ngsi_ld_entity::document::instance_document::InstanceDocument;
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, time::date_time::NgsiLdDateTime};
     use andromeda_ngsi_ld_model::temporal::TemporalValue;
     use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
     use chrono::{DateTime, Utc};
@@ -100,7 +100,7 @@ mod tests {
     }
 
     fn at(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("a valid instant").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("a valid instant").get()
     }
 
     fn date_time(text: &str) -> Value {
@@ -191,8 +191,7 @@ mod tests {
             expanded_properties::VALUE.as_str(): [{"@value": "urn:ngsi-ld:null"}],
             expanded_properties::OBSERVED_AT.as_str(): [{"@value": "2024-01-01T01:00:00+01:00"}]
         });
-        let document = InstanceDocument::from_slice(&attribute, &serde_json::to_vec(&instance).expect("JSON")).expect("an expanded instance");
-        let error = WrittenInstance::read(document).expect_err("a numeric offset is not the UTC form");
+        let error = InstanceDocument::from_slice(&attribute, &serde_json::to_vec(&instance).expect("JSON")).expect_err("a numeric offset is not the UTC form");
         assert!(error.to_string().contains("observedAt"), "{error}");
     }
 }

@@ -6,8 +6,8 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     identifier::Identifier,
-    ngsi_ld_time::NgsiLdTime,
     scope::path::ScopePath,
+    time::time_of_day::NgsiLdTime,
     time_prop::TimeProp,
     uri::Uri,
 };

@@ -154,6 +154,7 @@ fn matching_scope_events(lquery: &str, of: &HistoryOf, axis: ScopeHistory, valid
 #[cfg(test)]
 mod tests {
     use super::*;
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_postgresql_schema::current::{Entities, EntitySearch};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, PostgresQueryBuilder, Query};
@@ -176,7 +177,7 @@ mod tests {
     }
 
     fn instant(raw: &str) -> chrono::DateTime<chrono::Utc> {
-        chrono::DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&chrono::Utc)
+        raw.parse::<NgsiLdDateTime>().expect("valid instant").get()
     }
 
     fn render(condition: Condition) -> String {

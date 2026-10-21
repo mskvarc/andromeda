@@ -17,6 +17,7 @@ use andromeda_http_headers::{language::LanguageFilter, media_type::ResponseMedia
 use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
+use chrono::{TimeDelta, TimeZone, Utc};
 use iri_rs::IriBuf;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
@@ -413,23 +414,23 @@ fn a_geojson_feature_is_not_amended_to_a_requested_version() {
 
 /// Clause 4.6.3 admits at most six fractional digits, yet a clock may read
 /// nanoseconds: an entity written under a version fallback carries the
-/// entity times of such a reading without failing.
+/// entity times of such a reading at their microsecond, without failing.
 #[test]
 fn an_entity_under_fallback_writes_nanosecond_entity_times() {
-    let building = entity(json!({
+    let mut building = entity(json!({
         "id": "urn:ngsi-ld:Building:1",
         "type": "Building",
-        "createdAt": "2026-10-06T13:29:28.000090386Z",
-        "modifiedAt": "2026-10-06T13:29:28.000090386Z",
         "location": {
             "type": "GeoProperty",
-            "value": {"type": "Point", "coordinates": [13.3986, 52.5547]},
-            "createdAt": "2026-10-06T13:29:28.000090386Z",
-            "modifiedAt": "2026-10-06T13:29:28.000090386Z"
+            "value": {"type": "Point", "coordinates": [13.3986, 52.5547]}
         }
     }));
+    let reading = Utc.with_ymd_and_hms(2026, 10, 6, 13, 29, 28).single().expect("a valid instant") + TimeDelta::nanoseconds(90_386);
+    building.created_at = Some(reading);
+    building.modified_at = Some(reading);
     let (written, head) = written(&building, ResponseMediaType::Json, ResponseFormat::Normalized, Some(SpecVersion::V1_3), None);
     assert_eq!(written["location"]["value"], json!({"type": "Point", "coordinates": [13.3986, 52.5547]}));
+    assert_eq!(written["createdAt"], json!("2026-10-06T13:29:28.000090Z"));
     assert_eq!(head.version_adaptation, VersionAdaptation::Applied { version: SpecVersion::V1_3 });
 }
 

@@ -10,6 +10,7 @@ use crate::{
     oracle::{assert_status, json_body},
     topology::{self, BrokerRole},
 };
+use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 use chrono::{Duration as ChronoDuration, Utc};
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -328,7 +329,7 @@ async fn sub_expiration_reached_sets_status_expired_and_stops_notifications() {
     let vtype = topology.id("Vehicle");
     let mut body = subscription(&id, &receiver.endpoint_url());
     set_entity_type(&mut body, &vtype);
-    body["expiresAt"] = json!((Utc::now() + ChronoDuration::seconds(3)).to_rfc3339());
+    body["expiresAt"] = json!(instant_text(Utc::now() + ChronoDuration::seconds(3)));
     assert_status(
         &topology
             .broker(BrokerRole::A)

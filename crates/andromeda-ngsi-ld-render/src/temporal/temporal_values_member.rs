@@ -23,7 +23,7 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::{
     attribute_type::{AttributeType, TemporalValueEncoding},
     identifier::Identifier,
-    rfc3339::sub_second,
+    time::rendering::instant_text,
     time_prop::TimeProp,
 };
 use andromeda_ngsi_ld_model::{
@@ -234,6 +234,6 @@ struct Instant(DateTime<Utc>);
 
 impl Serialize for Instant {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&sub_second(self.0))
+        serializer.serialize_str(&instant_text(self.0))
     }
 }

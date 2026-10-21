@@ -17,7 +17,13 @@ use crate::{
         aggregated_entity::{AggregateValue, AggregatedAttribute, AggregatedTemporalEntity, AggregatedTriple, AggregatedValues, MethodAggregate},
     },
 };
-use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{
+    aggr_method::AggrMethod,
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    identifier::Identifier,
+    time::date_time::NgsiLdDateTime,
+};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeShape};
 use andromeda_ngsi_ld_vocabulary::NULL_URI;
@@ -237,8 +243,9 @@ fn aggregate_value<'n, N: CompactNode<'n>>(node: N) -> Result<AggregateValue, Re
 fn instant<'n, N: CompactNode<'n>>(node: N) -> Result<Option<DateTime<Utc>>, ReadError<'n, N>> {
     match node.shape() {
         NodeShape::Null => Ok(None),
-        NodeShape::String(text) => DateTime::parse_from_rfc3339(&text)
-            .map(|parsed| Some(parsed.with_timezone(&Utc)))
+        NodeShape::String(text) => text
+            .parse::<NgsiLdDateTime>()
+            .map(|parsed| Some(parsed.get()))
             .map_err(|_| NodeRefusal::Aggregate(AggregateRefusal::Instant).into()),
         NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::Array(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => {
             Err(NodeRefusal::Aggregate(AggregateRefusal::Instant).into())

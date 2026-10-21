@@ -41,7 +41,7 @@ mod tests {
     /// Clause 4.6.3 admits several spellings of one `DateTime`, so the document
     /// representation carries the one the client wrote rather than re-rendering
     /// it. What the value *is* under the clause is decided by
-    /// `andromeda_ngsi_ld_lexicon::time_value::TimeValue`, where the write
+    /// `andromeda_ngsi_ld_lexicon::time::value::TimeValue`, where the write
     /// projection and the clause 4.9 `q` operand parser both read it; this type
     /// carries the text so that a `2018-12-04T12:00:00.250000Z` a client wrote
     /// is not served back as `2018-12-04T12:00:00.250Z`.

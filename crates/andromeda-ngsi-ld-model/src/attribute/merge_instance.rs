@@ -29,7 +29,13 @@ use crate::{
     node_refusal::{NodeReadError, NodeRefusal, RefusedMember, RefusedNode},
 };
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, coerced_term::CoercedTerm, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    coerced_term::CoercedTerm,
+    identifier::Identifier,
+    time::rendering::instant_text,
+};
 use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeMembers};
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use cefact_units::UnitCode;
@@ -223,9 +229,17 @@ impl Serialize for MergeInstance {
         optional_entry(&mut map, compact_properties::ENTITY_ID_SEALED, self.entity_id_sealed.as_ref())?;
         optional_entry(&mut map, compact_properties::ENTITY_TYPE_SEALED, self.entity_type_sealed.as_ref())?;
         optional_entry(&mut map, compact_properties::DATASET_ID, self.dataset_id.as_ref())?;
-        optional_entry(&mut map, compact_properties::EXPIRES_AT, self.expires_at.as_ref())?;
+        optional_entry(
+            &mut map,
+            compact_properties::EXPIRES_AT,
+            self.expires_at.as_ref().map(|patched| patched.map(|at| instant_text(*at))).as_ref(),
+        )?;
         optional_entry(&mut map, compact_properties::INSTANCE_ID, self.instance_id.as_ref())?;
-        optional_entry(&mut map, compact_properties::OBSERVED_AT, self.observed_at.as_ref())?;
+        optional_entry(
+            &mut map,
+            compact_properties::OBSERVED_AT,
+            self.observed_at.as_ref().map(|patched| patched.map(|at| instant_text(*at))).as_ref(),
+        )?;
         for (name, member) in &self.sub_attributes {
             map.serialize_entry(name.as_str(), &NestedMergeMember(member))?;
         }

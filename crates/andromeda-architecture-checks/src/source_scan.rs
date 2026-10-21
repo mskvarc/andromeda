@@ -50,6 +50,34 @@ pub(crate) fn workspace_sources(workspace_root: &Path) -> Vec<RustSource> {
     sources
 }
 
+/// Read and parse every Rust source of the workspace, test code included.
+///
+/// Unlike [`workspace_sources`], nothing is filtered: integration tests,
+/// test-only modules, build scripts and the test-infrastructure crates are all
+/// returned, for a guard whose rule holds for test code as much as for
+/// production code.
+///
+/// # Panics
+///
+/// Panics when a discovered source cannot be read or does not parse as Rust.
+pub(crate) fn every_workspace_source(workspace_root: &Path) -> Vec<RustSource> {
+    let mut paths = ["build.rs", "src", "tests", "crates", "lib"]
+        .into_iter()
+        .flat_map(|root| {
+            let path = workspace_root.join(root);
+            if path.is_file() { vec![path] } else { rust_file_paths(&path) }
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+    let mut unreadable = Vec::new();
+    let sources = paths
+        .iter()
+        .filter_map(|path| parse_source(workspace_root, path, &mut unreadable))
+        .collect::<Vec<_>>();
+    assert!(unreadable.is_empty(), "workspace sources could not be scanned:\n{}", unreadable.join("\n"));
+    sources
+}
+
 /// Recursively discover every Rust source below one directory, ordered by path.
 ///
 /// A directory that does not exist holds no sources. One that exists but cannot

@@ -1,9 +1,12 @@
 use crate::executor::{instance_walk::WalkRefusal, source_instance_walk::SourceInstanceWalk};
-use andromeda_ngsi_ld_entity::{
-    date_time_text::DateTimeText,
-    document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot},
+use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    identifier::Identifier,
+    time::{date_time::NgsiLdDateTime, written_date_time::DateTimeText},
+    time_prop::TimeProp,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, time_prop::TimeProp};
 use andromeda_ngsi_ld_model::{
     entity_system_times::EntitySystemTimes,
     temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory},
@@ -21,9 +24,7 @@ const SOURCE_A: &str = "urn:ngsi-ld:ContextSourceRegistration:a";
 const SOURCE_B: &str = "urn:ngsi-ld:ContextSourceRegistration:b";
 
 fn at(day: u32) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(&format!("2024-01-{day:02}T00:00:00Z"))
-        .expect("a valid instant")
-        .with_timezone(&Utc)
+    format!("2024-01-{day:02}T00:00:00Z").parse::<NgsiLdDateTime>().expect("a valid instant").get()
 }
 
 fn speed() -> AttributeName {

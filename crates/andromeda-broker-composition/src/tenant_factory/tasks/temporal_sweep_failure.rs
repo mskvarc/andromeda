@@ -18,7 +18,6 @@ pub(super) const fn classify_sweep_failure(error: TemporalStoreError) -> TaskFai
         | TemporalStoreError::StatementBuild(_)
         | TemporalStoreError::RetentionHorizon(_)
         | TemporalStoreError::ColumnstoreHorizon(_)
-        | TemporalStoreError::StoredTime(_)
         | TemporalStoreError::StoredJson(_)
         | TemporalStoreError::ScopeHasNoAttributeRow
         | TemporalStoreError::StoredHistory(_)

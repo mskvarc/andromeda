@@ -7,10 +7,11 @@
 //!
 //! Each test uses a private tenant, so no other test's obligations keep its pacer awake, and lets the tenant idle for several sweep cadences first so the pacer is resting when the obligation is created. Every bound is the obligation's own time plus a small multiple of the base stack's one-second sweep cadence, far below the sixteen-cadence ceiling a missed wake would fall back to.
 
+use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use andromeda_test_mocks::{notification_server::NotificationServer, server_config::MockServerConfig};
-use chrono::{SecondsFormat, Utc};
+use chrono::Utc;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
@@ -99,7 +100,7 @@ async fn regression_resting_tenant_a_new_entity_expiry_is_swept_within_the_caden
         .post_entity(&json!({
             "id": entity_id,
             "type": "Vehicle",
-            "expiresAt": expires_at.to_rfc3339_opts(SecondsFormat::Millis, true),
+            "expiresAt": instant_text(expires_at),
             "@context": [TEST_SUITE_CONTEXT]
         }))
         .with_ld_json()

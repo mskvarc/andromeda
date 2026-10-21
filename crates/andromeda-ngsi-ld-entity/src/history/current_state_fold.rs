@@ -21,16 +21,17 @@
 use crate::{
     attribute_instances::AttributeInstances,
     attributes::Attributes,
-    date_time_text::DateTimeText,
     document::{EntityDocument, instance_document::InstanceDocument, slot::Slot},
     entity_state::EntityState,
     entity_types::EntityTypes,
     history::instance_recency::InstanceRecency,
     instance::Instance,
     operation::{attribute_write::remove_instance, instance_patch::new_instance, mutation_error::MutationError},
-    system_instant::SystemInstant,
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    time::{system_instant::SystemInstant, written_date_time::DateTimeText},
+};
 use chrono::{DateTime, Utc};
 use std::cmp::Ordering;
 use thiserror::Error;
@@ -189,9 +190,11 @@ mod tests {
         history::current_state_fold::fold_into_current_state,
         instance::Instance,
         operation::speed_entity::{dataset, date_time, entity, instances, integer_of, name, number, observed_document, property, property_document},
-        system_instant::SystemInstant,
     };
-    use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+    use andromeda_ngsi_ld_lexicon::{
+        attribute_type::AttributeType,
+        time::{date_time::NgsiLdDateTime, system_instant::SystemInstant},
+    };
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
 
@@ -200,7 +203,7 @@ mod tests {
     const VEHICLE: &str = "https://example.com/Vehicle";
 
     fn at(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("a valid instant").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("a valid instant").get()
     }
 
     /// A Temporal Evolution instance carrying `value` and its own

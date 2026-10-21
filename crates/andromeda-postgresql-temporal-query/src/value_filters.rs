@@ -198,7 +198,7 @@ mod tests {
         value_filters::{stage1_evolution, temporal_geo_existential, value_filter_condition},
     };
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
-    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         entity_selection::{EntitySelection, EntitySelector},
         filter::parser,
@@ -240,7 +240,7 @@ mod tests {
     const GEO_KEY: &str = r#""ahg"."attribute_name_key" = $"#;
 
     fn instant(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("valid instant").get()
     }
 
     fn before_2030() -> TimeInterval {

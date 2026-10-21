@@ -16,7 +16,7 @@ andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 andromeda-persistence-failure.workspace = true
-chrono = { version = "0.4.45", features = ["serde"] }
+chrono = "0.4.45"
 derive_more = { version = "2.1.1", features = ["display", "from", "is_variant"] }
 fastrand = "2.5.0"
 serde = { version = "1.0.229", features = ["derive"] }

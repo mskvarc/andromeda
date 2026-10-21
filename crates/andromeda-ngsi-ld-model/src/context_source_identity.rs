@@ -1,7 +1,7 @@
 //! The identity a Context Source answers `/info/sourceIdentity` with (clauses 5.2.40 and 6.33.3.1).
 
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_lexicon::{constant_string, context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, rfc3339};
+use andromeda_ngsi_ld_lexicon::{constant_string, context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, time::instant_serde};
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use serde::Serialize;
@@ -28,7 +28,7 @@ pub struct ContextSourceIdentity {
     /// Total duration the source has been available, as an ISO 8601 duration.
     pub context_source_uptime: Iso8601Duration,
     /// The current time observed at the source.
-    #[serde(with = "rfc3339::datetime")]
+    #[serde(with = "instant_serde::required")]
     pub context_source_time_at: DateTime<Utc>,
     /// Instance-specific configuration in raw JSON.
     ///

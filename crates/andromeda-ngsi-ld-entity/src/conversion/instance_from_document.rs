@@ -244,9 +244,8 @@ mod tests {
         },
         instance::Instance,
         operation::speed_entity::{ACCURACY, SPEED, name, number},
-        system_instant::SystemInstant,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, time::system_instant::SystemInstant};
     use indexmap::IndexMap;
 
     /// The instant every written instance below claims.

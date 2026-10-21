@@ -16,7 +16,6 @@ use crate::error::TemporalError;
 use andromeda_context_commit::submission_refusal::SubmissionRefusal;
 use andromeda_json_literal::piece::{JsonKind, JsonPiece};
 use andromeda_ngsi_ld_entity::{
-    date_time_text::DateTimeText,
     document::{
         instance_document::{InstanceDocument, InstanceDocumentParts},
         slot::Slot,
@@ -33,9 +32,8 @@ use andromeda_ngsi_ld_entity::{
 use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
     identifier::Identifier,
-    ngsi_ld_date_time::NgsiLdDateTime,
     reference::NgsiLdReference,
-    time_value::TimeValue,
+    time::{value::TimeValue, written_date_time::DateTimeText},
     uri::Uri,
 };
 use andromeda_ngsi_ld_model::temporal::{TemporalValue, observation_metadata::ObservationMetadata, structured_value::StructuredValue};
@@ -106,7 +104,7 @@ impl ObservedInstance {
             (None, ValueSlot::Set(written)) => (written.carrier().implied_family(), written),
         };
         let value = family_value(family, written)?;
-        let observed_at = declared_observed_at(observed_at.as_ref())?;
+        let observed_at = declared_observed_at(observed_at.as_ref());
         let metadata = ObservationMetadata::admit(InstanceDocumentParts {
             family: None,
             dataset_id: None,
@@ -135,20 +133,12 @@ impl ObservedInstance {
 }
 
 /// The instant the written `observedAt` declares, `None` when the instance
-/// declares none.
-///
-/// # Errors
-///
-/// Returns [`TemporalError::Validation`] when the `observedAt` is not a clause
-/// 4.6.3 `DateTime` in UTC.
-pub(crate) fn declared_observed_at(observed_at: Option<&Slot<DateTimeText>>) -> Result<Option<DateTime<Utc>>, TemporalError> {
+/// declares none or removes it. The text was read by the clause 4.6.3 rules
+/// when the instance was decoded, so the instant it names is already known.
+pub(crate) const fn declared_observed_at(observed_at: Option<&Slot<DateTimeText>>) -> Option<DateTime<Utc>> {
     match observed_at {
-        Some(Slot::Set(text)) => text
-            .as_str()
-            .parse::<NgsiLdDateTime>()
-            .map(|instant| Some(instant.get()))
-            .map_err(|source| SubmissionRefusal::ObservedAt(source).into()),
-        Some(Slot::Remove) | None => Ok(None),
+        Some(Slot::Set(text)) => Some(text.instant()),
+        Some(Slot::Remove) | None => None,
     }
 }
 

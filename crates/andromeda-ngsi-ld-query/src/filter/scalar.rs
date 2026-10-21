@@ -1,7 +1,13 @@
 //! Comparison operands of a `q` predicate (clause 4.9).
 
 use crate::{error::QueryError, filter::quoting::Quoting};
-use andromeda_ngsi_ld_lexicon::{ngsi_ld_date::NgsiLdDate, ngsi_ld_date_time::NgsiLdDateTime, ngsi_ld_time::NgsiLdTime, time_value::TimeValueForm};
+use andromeda_ngsi_ld_lexicon::time::{
+    date::NgsiLdDate,
+    date_time::NgsiLdDateTime,
+    rendering::{instant_text, time_of_day_text},
+    time_of_day::NgsiLdTime,
+    value::TimeValueForm,
+};
 use andromeda_ngsi_ld_number::JsonNumber;
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use iri_rs::Iri;
@@ -60,7 +66,7 @@ impl Scalar {
     /// Number / quotedStr / dateTime / date / time` — so the literal's own
     /// lexical form is what says which domain it belongs to, and the same
     /// classifier reads it that
-    /// [`TimeValueForm`](andromeda_ngsi_ld_lexicon::time_value::TimeValueForm)
+    /// [`TimeValueForm`](andromeda_ngsi_ld_lexicon::time::value::TimeValueForm)
     /// classifies a stored value with. Clause 4.9 makes every operator
     /// non-matching when "there is no equality between the target value data
     /// type and the Query Term value data type", which two classifiers could
@@ -126,13 +132,14 @@ impl Scalar {
     /// binding, so a filter that round-trips through the query string and a
     /// filter that reaches a store carry the same literal by construction.
     ///
-    /// A temporal operand renders in the canonical clause 4.6.3 form of its own
-    /// lexical type, fraction included. The fraction is not decoration: the
-    /// binding a `valueList`, a `languageMap` and a compound value are probed
-    /// through compares this text against the literal the client stored, and
-    /// clause 4.9 names the `valueList` array as a target value, so a rendering
-    /// at whole seconds turned `readings=="2024-01-01T00:00:00.250Z"` into a
-    /// filter that could never match the value it names.
+    /// A temporal operand renders as the broker spells every value of its
+    /// clause 4.6.3 type it writes back, fraction included. The fraction is not
+    /// decoration: the binding a `valueList`, a `languageMap` and a compound
+    /// value are probed through compares this text against the literal the
+    /// client stored, and clause 4.9 names the `valueList` array as a target
+    /// value, so a rendering at whole seconds would make
+    /// `readings=="2024-01-01T00:00:00.250Z"` a filter that never matches the
+    /// value it names.
     #[must_use]
     pub fn literal_text(&self) -> String {
         match self {
@@ -140,9 +147,9 @@ impl Scalar {
             Scalar::Bool(value) => value.to_string(),
             // clone: callers own the rendered literal
             Scalar::Str(value) | Scalar::Uri(value) => value.clone(),
-            Scalar::DateTime(value) => value.format(DATE_TIME_FORMAT).to_string(),
-            Scalar::Date(value) => value.to_string(),
-            Scalar::Time(value) => value.format(TIME_FORMAT).to_string(),
+            Scalar::DateTime(value) => instant_text(*value),
+            Scalar::Date(value) => NgsiLdDate::from(*value).to_string(),
+            Scalar::Time(value) => time_of_day_text(*value),
         }
     }
 }
@@ -185,14 +192,6 @@ pub fn parse_time(raw: &str) -> Result<NaiveTime, QueryError> {
     raw.parse::<NgsiLdTime>().map(NgsiLdTime::get).map_err(QueryError::QInvalidTime)
 }
 
-/// Canonical rendering of a UTC instant: seconds always, fractional seconds
-/// only when they are non-zero, and an explicit `Z`.
-const DATE_TIME_FORMAT: &str = "%Y-%m-%dT%H:%M:%S%.fZ";
-
-/// Canonical rendering of a UTC time of day: seconds always, fractional
-/// seconds only when they are non-zero, and an explicit `Z`.
-const TIME_FORMAT: &str = "%H:%M:%S%.fZ";
-
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -202,6 +201,7 @@ mod tests {
             scalar::{Scalar, parse_date, parse_date_time, parse_time},
         },
     };
+    use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 
     fn date_time(raw: &str) -> Scalar {
         Scalar::DateTime(parse_date_time(raw).expect("valid date-time"))
@@ -225,7 +225,7 @@ mod tests {
         // Clause 4.6.3: a date-time operand is an RFC 3339 date-time, so it is
         // resolved to an instant here rather than re-read on every rendering.
         let parsed = parse_date_time("2017-12-24T12:00:00Z").expect("valid date-time");
-        assert_eq!(parsed.to_rfc3339_opts(chrono::SecondsFormat::Secs, true), "2017-12-24T12:00:00Z");
+        assert_eq!(instant_text(parsed), "2017-12-24T12:00:00Z");
     }
 
     #[test]

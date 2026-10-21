@@ -2,7 +2,6 @@
 //! instance a temporal representation carries.
 
 use andromeda_ngsi_ld_entity::{
-    date_time_text::DateTimeText,
     document::{
         instance_document::{InstanceDocument, InstanceDocumentParts},
         slot::Slot,
@@ -13,13 +12,12 @@ use andromeda_ngsi_ld_entity::{
     geo_value::GeoValue,
     literal::{Literal, LiteralValue},
     non_empty::{EmptyCollection, NonEmpty},
-    system_instant::SystemInstant,
 };
 use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
     identifier::{Identifier, IdentifierParseError},
     reference::{NgsiLdReference, NgsiLdReferenceError},
-    rfc3339::sub_second,
+    time::{rendering::instant_text, system_instant::SystemInstant, written_date_time::DateTimeText},
 };
 use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance, observation_metadata::ObservationMetadata};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -183,14 +181,14 @@ fn literal(value: LiteralValue) -> WrittenValue {
 /// An instant rendered in exactly the sub-second precision it carries.
 ///
 /// Each instant here is rebuilt from what the store decoded, never from a
-/// client string, so it renders through [`sub_second`]: exactly the sub-second
+/// client string, so it renders through [`instant_text`]: exactly the sub-second
 /// precision the instant carries, up to the microsecond resolution the
 /// `TIMESTAMPTZ` column holds and clause 4.6.3 caps a `DateTime` at. A returned
 /// instant is then exact enough to reuse as a bound in a later temporal query,
 /// while a whole-second instant still renders as a bare `Z`, which is what a
 /// client that wrote a whole second reads back.
 fn rendered_instant(instant: DateTime<Utc>) -> String {
-    sub_second(instant)
+    instant_text(instant)
 }
 
 /// The members that identify the instance: the `instanceId` clause 4.5.7 hands

@@ -2,11 +2,11 @@
 //! 5.5.12.
 
 use crate::{
-    date_time_text::DateTimeText,
     document::{EntityDocument, attribute_member::AttributeMember},
     entity_state::EntityState,
     operation::{attribute_write::apply_instances, instance_patch::InstancePatchDepth, mutation_error::MutationError, scope_write::replace_scope},
 };
+use andromeda_ngsi_ld_lexicon::time::written_date_time::DateTimeText;
 use chrono::{DateTime, Utc};
 
 impl EntityState {
@@ -65,7 +65,6 @@ impl EntityState {
 #[cfg(test)]
 mod tests {
     use crate::{
-        date_time_text::DateTimeText,
         document::{
             EntityDocument,
             attribute_member::AttributeMember,
@@ -112,7 +111,7 @@ mod tests {
         value_mode::{Fragment, FragmentMember, FragmentText},
     };
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, scope::path::ScopePath};
+    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, scope::path::ScopePath, time::written_date_time::DateTimeText};
     use andromeda_ngsi_ld_vocabulary::expanded::properties;
     use cefact_units::UnitCode;
     use chrono::{DateTime, Utc};

@@ -24,8 +24,8 @@ use crate::{
     side_effect::SideEffectPlacement,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_entity::{entity_state::EntityState, system_instant::SystemInstant};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 
 /// Merging each entity of a chunk into the entity as an attempt read it
 /// (clause 5.6.20.4 runs the merge of clause 5.6.17 per entity).

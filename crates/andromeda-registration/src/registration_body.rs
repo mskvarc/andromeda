@@ -27,9 +27,9 @@ use andromeda_ngsi_ld_lexicon::{
     dereferenceable_uri::DereferenceableUri,
     identifier::Identifier,
     non_empty_text::NonEmptyText,
-    rfc3339::RequestInstant,
     scope::path::ScopePath,
     tenant::TenantName,
+    time::date_time::NgsiLdDateTime,
 };
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
@@ -72,7 +72,7 @@ pub struct RegistrationBody {
     /// `operationSpace`.
     pub(crate) operation_space: NullableMember<RegistrationGeometry>,
     /// `expiresAt`, read as every instant a request carries (clause 4.6.3).
-    pub(crate) expires_at: NullableMember<RequestInstant>,
+    pub(crate) expires_at: NullableMember<NgsiLdDateTime>,
     /// `endpoint`: cardinality 1 on creation.
     pub(crate) endpoint: NullableMember<DereferenceableUri>,
     /// `accept`.
@@ -188,7 +188,7 @@ impl RegistrationBody {
             location: stored_geometry(location).present(CsrMember::Location)?,
             observation_space: stored_geometry(observation_space).present(CsrMember::ObservationSpace)?,
             operation_space: stored_geometry(operation_space).present(CsrMember::OperationSpace)?,
-            expires_at: expires_at.map(RequestInstant::get).present(CsrMember::ExpiresAt)?,
+            expires_at: expires_at.map(NgsiLdDateTime::get).present(CsrMember::ExpiresAt)?,
             endpoint: endpoint.required(CsrMember::Endpoint)?,
             accept: accept.present(CsrMember::Accept)?,
             mode,
@@ -252,7 +252,7 @@ impl RegistrationBody {
             location: stored_geometry(location),
             observation_space: stored_geometry(observation_space),
             operation_space: stored_geometry(operation_space),
-            expires_at: expires_at.map(RequestInstant::get),
+            expires_at: expires_at.map(NgsiLdDateTime::get),
             endpoint: endpoint.present(CsrMember::Endpoint)?,
             accept,
             mode: mode.present(CsrMember::Mode)?,
@@ -270,7 +270,7 @@ impl RegistrationBody {
 #[cfg(test)]
 mod tests {
     use crate::{nullable_member::NullableMember, registration_body::RegistrationBody, store::create_params::CreateCsrParams};
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::rendering::instant_text};
     use andromeda_ngsi_ld_model::{registration::operation::CsrOperation, request_body::RequestBody};
     use serde_json::{Value, json};
 
@@ -381,10 +381,7 @@ mod tests {
         let params = create_of(&payload).expect("valid registration");
         pretty_assertions::assert_eq!(params.dataset_id.as_ref().map(Vec::len), Some(2));
         assert!(params.management.is_some());
-        pretty_assertions::assert_eq!(
-            params.expires_at.map(|instant| instant.to_rfc3339()),
-            Some(String::from("2099-03-04T05:06:07.123456+00:00"))
-        );
+        pretty_assertions::assert_eq!(params.expires_at.map(instant_text), Some(String::from("2099-03-04T05:06:07.123456Z")));
         assert!(params.location.is_some());
         assert!(params.management_interval.is_some_and(|interval| interval.end_at.is_none()));
         let extras: Vec<(&str, &str)> = params.additional_properties.iter().map(|(name, value)| (name.as_str(), value.text())).collect();

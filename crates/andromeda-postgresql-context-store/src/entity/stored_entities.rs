@@ -259,8 +259,13 @@ mod tests {
         current_attribute::{flatten::flatten, row::CurrentAttributeRow},
         entity::stored_entities::{GatheredEntities, StoredHead},
     };
-    use andromeda_ngsi_ld_entity::{entity_state::EntityState, system_instant::SystemInstant};
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, reference::NgsiLdReference};
+    use andromeda_ngsi_ld_entity::entity_state::EntityState;
+    use andromeda_ngsi_ld_lexicon::{
+        attribute_name::AttributeName,
+        entity_type_name::EntityTypeName,
+        reference::NgsiLdReference,
+        time::system_instant::SystemInstant,
+    };
     use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
     use andromeda_postgresql_attribute_instance::name_keys::{KeyNames, NameKeys};
     use andromeda_postgresql_codes::entity_key::EntityKey;

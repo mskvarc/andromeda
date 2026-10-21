@@ -2,13 +2,12 @@
 //! comparable domain.
 
 use crate::temporal_operand::{stored_date_time, stored_time};
-use andromeda_ngsi_ld_lexicon::{ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime};
+use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime};
 use andromeda_ngsi_ld_query::filter::scalar::Scalar;
 use andromeda_postgresql_seaquery::{
     cast::{cast, cast_compound},
     pg_type::PostgresType,
 };
-use chrono::SecondsFormat;
 use sea_query::{Expr as SeaExpr, SimpleExpr};
 
 /// Both sides of one document comparison, lifted into the domain the operand's
@@ -35,11 +34,9 @@ pub struct LiftedComparison {
 ///
 /// * numbers and booleans cast on both sides,
 /// * strings compare as text, which is what they are,
-/// * a `DateTime` compares as `timestamptz`, so PostgreSQL resolves each side's
-///   offset rather than the statement ordering two spellings of one instant by
-///   their text. The operand is rendered at full microsecond precision, because
-///   truncating it to whole seconds would make `>` admit an instant inside the
-///   truncated second that the client's operand excludes,
+/// * a `DateTime` compares as `timestamptz`: the stored text is lifted by the
+///   clause 4.6.3 rules every path reads text by, and the operand binds as the
+///   instant itself, at the microsecond it was written to,
 /// * a `Time` compares as canonical text, with the stored value normalised to the
 ///   same fixed-width UTC form the operand is rendered in,
 /// * a `Date` compares as text unlifted: its canonical `YYYY-MM-DD` form is
@@ -50,8 +47,8 @@ pub struct LiftedComparison {
 /// document member holding text of another shape yields `NULL` and simply does not
 /// match, instead of aborting the statement.
 ///
-/// Numbers bind directly as `NUMERIC`; booleans and `DateTime` values bind as
-/// text and are cast in the statement.
+/// Numbers bind directly as `NUMERIC` and `DateTime` values as `timestamptz`;
+/// booleans bind as text and are cast in the statement.
 #[must_use]
 pub fn lift_comparison(scalar: &Scalar, stored_text: SimpleExpr) -> LiftedComparison {
     match scalar {
@@ -71,7 +68,7 @@ pub fn lift_comparison(scalar: &Scalar, stored_text: SimpleExpr) -> LiftedCompar
         },
         Scalar::DateTime(instant) => LiftedComparison {
             stored: stored_date_time(stored_text),
-            operand: cast(SeaExpr::val(instant.to_rfc3339_opts(SecondsFormat::Micros, true)), PostgresType::Timestamptz),
+            operand: SeaExpr::val(*instant),
         },
         Scalar::Date(date) => LiftedComparison {
             stored: stored_text,
@@ -79,10 +76,7 @@ pub fn lift_comparison(scalar: &Scalar, stored_text: SimpleExpr) -> LiftedCompar
         },
         Scalar::Time(time) => LiftedComparison {
             stored: stored_time(stored_text),
-            // A time of day with no canonical form is one no write path could
-            // have stored; binding text nothing can equal is the non-match the
-            // normalised stored column would produce anyway.
-            operand: SeaExpr::val(NgsiLdTime::normalise(*time).map_or_else(|_| String::new(), |canonical| canonical.to_string())),
+            operand: SeaExpr::val(NgsiLdTime::normalise(*time).to_string()),
         },
     }
 }
@@ -162,25 +156,25 @@ mod tests {
         assert_eq!(bound_value(lifted.operand), "red");
     }
 
+    /// Clause 4.6.3 admits more than one fractional width, so `.5Z` and
+    /// `.500Z` are one instant that text order separates.
     #[test]
     fn a_date_time_is_compared_as_a_timestamp_not_as_text() {
-        // Clause 4.6.3 admits any offset, so `2024-01-01T01:00:00+01:00` and
-        // `2024-01-01T00:00:00Z` are one instant that text order separates.
         let instant = parse_date_time("2024-01-01T00:00:00Z").expect("valid date-time");
         let lifted = lift_comparison(&Scalar::DateTime(instant), stored());
         let stored_sql = render(lifted.stored);
         assert!(stored_sql.contains("::timestamptz"), "{stored_sql}");
         assert!(stored_sql.contains("CASE WHEN "), "the cast must be guarded: {stored_sql}");
-        assert!(render(lifted.operand).contains("::timestamptz"), "the operand casts to timestamptz");
     }
 
+    /// Truncating to whole seconds would make `>` admit an instant inside the
+    /// truncated second that the client's operand excludes.
     #[test]
-    fn a_date_time_operand_keeps_its_sub_second_precision() {
-        // Truncating to whole seconds would make `>` admit an instant inside the
-        // truncated second that the client's operand excludes.
+    fn a_date_time_operand_binds_as_the_instant_it_names() {
         let instant = parse_date_time("2024-01-01T00:00:00.123456Z").expect("valid date-time");
         let lifted = lift_comparison(&Scalar::DateTime(instant), stored());
-        assert_eq!(bound_value(lifted.operand), "2024-01-01T00:00:00.123456Z");
+        let (_, Values(values)) = Query::select().expr(lifted.operand).to_owned().build(PostgresQueryBuilder);
+        assert_eq!(values, vec![Value::ChronoDateTimeUtc(Some(instant))]);
     }
 
     #[test]

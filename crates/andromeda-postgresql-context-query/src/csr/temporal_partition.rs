@@ -10,7 +10,6 @@
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrTemporalFilter, temporal::window::TimeInterval};
 use andromeda_postgresql_schema::csr::Csr;
-use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType};
 use chrono::{DateTime, Utc};
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
 
@@ -90,19 +89,20 @@ fn overlaps_window(interval: IntervalColumns, from: Option<DateTime<Utc>>, to: O
     overlap
 }
 
-/// A window instant bound as RFC 3339 text and cast in the statement, so it
-/// compares as `timestamptz` against an interval column.
+/// A window instant bound as the `timestamptz` it is, so it compares against
+/// an interval column without a text rendering on the way.
 fn window_instant(instant: DateTime<Utc>) -> SimpleExpr {
-    cast(SeaExpr::val(instant.to_rfc3339()), PostgresType::Timestamptz)
+    SeaExpr::val(instant)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use sea_query::{Alias, PostgresQueryBuilder, Query};
 
     fn dt(s: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(s).expect("valid instant").with_timezone(&Utc)
+        s.parse::<NgsiLdDateTime>().expect("valid instant").get()
     }
 
     fn render(temporal: Option<&CompiledCsrTemporalFilter>) -> String {
@@ -160,10 +160,7 @@ mod tests {
     #[test]
     fn before_tests_only_the_interval_start() {
         let sql = render(Some(&filter(TimeInterval::Before(dt("2020-06-01T00:00:00Z")), None)));
-        assert!(
-            sql.contains("\"observation_interval_start\" <= ('2020-06-01T00:00:00+00:00'::timestamptz)"),
-            "{sql}"
-        );
+        assert!(sql.contains("\"observation_interval_start\" <= '2020-06-01 00:00:00.000000 +00:00'"), "{sql}");
         assert!(!sql.contains("\"observation_interval_end\""), "{sql}");
     }
 
@@ -174,7 +171,7 @@ mod tests {
     fn after_tests_only_the_interval_end_and_admits_an_open_one() {
         let sql = render(Some(&filter(TimeInterval::After(dt("2020-06-01T00:00:00Z")), None)));
         assert!(
-            sql.contains("\"observation_interval_end\" IS NULL OR \"observation_interval_end\" >= ('2020-06-01T00:00:00+00:00'::timestamptz)"),
+            sql.contains("\"observation_interval_end\" IS NULL OR \"observation_interval_end\" >= '2020-06-01 00:00:00.000000 +00:00'"),
             "{sql}"
         );
         assert!(!sql.contains("\"observation_interval_start\" <="), "{sql}");
@@ -190,13 +187,7 @@ mod tests {
             },
             None,
         )));
-        assert!(
-            sql.contains("\"observation_interval_start\" <= ('2020-09-01T00:00:00+00:00'::timestamptz)"),
-            "{sql}"
-        );
-        assert!(
-            sql.contains("\"observation_interval_end\" >= ('2020-06-01T00:00:00+00:00'::timestamptz)"),
-            "{sql}"
-        );
+        assert!(sql.contains("\"observation_interval_start\" <= '2020-09-01 00:00:00.000000 +00:00'"), "{sql}");
+        assert!(sql.contains("\"observation_interval_end\" >= '2020-06-01 00:00:00.000000 +00:00'"), "{sql}");
     }
 }

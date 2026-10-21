@@ -20,7 +20,8 @@
 //! and widening it to binary floating point to aggregate would report a minimum
 //! or a maximum that was never observed.
 
-use crate::{alias::Ah, recorded_shape::CANONICAL_TIME_PATTERN, structured_json::structured_json};
+use crate::{alias::Ah, structured_json::structured_json};
+use andromeda_ngsi_ld_lexicon::time::time_of_day::NgsiLdTime;
 use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
@@ -149,7 +150,7 @@ pub fn average_time_expr() -> SimpleExpr {
     // aggregate instead of failing the statement.
     let time_of_day: SimpleExpr = CaseStatement::new()
         .case(
-            regex_match(Expr::col((Ah, AttributeHistory::ValueString)), text_literal(CANONICAL_TIME_PATTERN)).and(family_has_value_aggregates()),
+            regex_match(Expr::col((Ah, AttributeHistory::ValueString)), text_literal(NgsiLdTime::STORED_PATTERN)).and(family_has_value_aggregates()),
             cast(cast(Expr::col((Ah, AttributeHistory::ValueString)), PostgresType::Time), PostgresType::Interval),
         )
         .into();

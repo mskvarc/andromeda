@@ -152,13 +152,14 @@ fn replaced_streams(rows: &[ReplacedRow]) -> Vec<i64> {
 #[cfg(test)]
 mod tests {
     use crate::intent_application::replaced_rows::{ReplacedRow, delete_statement, replaced_streams};
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, DynIden, IntoIden};
     use uuid::Uuid;
 
     fn instant(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("valid instant").get()
     }
 
     fn rows() -> Vec<ReplacedRow> {

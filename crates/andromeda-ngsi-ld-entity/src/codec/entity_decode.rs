@@ -14,14 +14,18 @@ use crate::{
         member_decode::{date_time, malformed, scope},
         object_key::{ObjectKey, attribute_key},
     },
-    date_time_text::DateTimeText,
     document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot},
     member_role::MemberRole,
     member_shape::MemberShape,
     refusal::EntityRefusal,
     scopes::Scopes,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    entity_type_name::EntityTypeName,
+    identifier::Identifier,
+    time::written_date_time::DateTimeText,
+};
 use indexmap::IndexMap;
 use serde::{
     Deserializer,

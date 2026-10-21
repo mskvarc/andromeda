@@ -10,6 +10,7 @@ use crate::{
     evolution::{assert_holds_only, evolution, observations, seed},
     observation::{core_context, entity, fragment, reading},
 };
+use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 use andromeda_test_client::entity::results_count;
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
@@ -141,7 +142,7 @@ async fn an_expired_entity_leaves_its_temporal_evolution_as_it_was() {
     let id = scope.id("Sensor:expired");
     seed(scope.client(), &id, &scope.entity_type("Sensor"), &SEEDED).await;
 
-    let expires_at = (chrono::Utc::now() + chrono::Duration::seconds(2)).format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let expires_at = instant_text(chrono::Utc::now() + chrono::Duration::seconds(2));
     let response = scope
         .client()
         .merge_entity(&id, &fragment(json!({"expiresAt": expires_at})), None)

@@ -11,7 +11,7 @@ use crate::{
     attribute::instance_member::{ReadError, optional_member},
     node_refusal::RefusedMember,
 };
-use andromeda_ngsi_ld_lexicon::rfc3339::RequestInstant;
+use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
 use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeShape};
 use andromeda_ngsi_ld_vocabulary::NULL_URI;
 use chrono::{DateTime, Utc};
@@ -24,6 +24,16 @@ pub enum Patched<T> {
     Set(T),
     /// The NGSI-LD Null: the value held is removed.
     Null,
+}
+
+impl<T> Patched<T> {
+    /// The member with the value it sets mapped through `set`; a removal stays one.
+    pub fn map<U>(&self, set: impl FnOnce(&T) -> U) -> Patched<U> {
+        match self {
+            Patched::Set(value) => Patched::Set(set(value)),
+            Patched::Null => Patched::Null,
+        }
+    }
 }
 
 // Hand-written: the removal is written as the NGSI-LD Null string, which no
@@ -73,7 +83,7 @@ pub(crate) fn patched_instant_member<'n, N: CompactNode<'n>>(
     member: Option<N>,
     name: RefusedMember,
 ) -> Result<Option<Patched<DateTime<Utc>>>, ReadError<'n, N>> {
-    Ok(patched_member::<RequestInstant, N>(member, name)?.map(|patched| match patched {
+    Ok(patched_member::<NgsiLdDateTime, N>(member, name)?.map(|patched| match patched {
         Patched::Set(instant) => Patched::Set(instant.get()),
         Patched::Null => Patched::Null,
     }))

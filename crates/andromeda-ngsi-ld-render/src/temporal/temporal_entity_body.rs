@@ -25,7 +25,7 @@ use crate::{
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_linked_retrieval::{keyword::Keyword, narrowing::member::MemberRule, plan::InlineCursor};
-use andromeda_ngsi_ld_lexicon::{rfc3339::sub_second, time_prop::TimeProp};
+use andromeda_ngsi_ld_lexicon::{time::rendering::instant_text, time_prop::TimeProp};
 use andromeda_ngsi_ld_model::temporal::{temporal_attribute::TemporalAttribute, temporal_entity::TemporalEntity};
 use andromeda_ngsi_ld_query::projection::term::ProjectionTerm;
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
@@ -183,6 +183,6 @@ struct EntityInstant(DateTime<Utc>);
 
 impl Serialize for EntityInstant {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&sub_second(self.0))
+        serializer.serialize_str(&instant_text(self.0))
     }
 }

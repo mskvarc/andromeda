@@ -14,7 +14,7 @@ andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-request.workspace = true
 andromeda-persistence-failure.workspace = true
-chrono = { version = "0.4.45", features = ["serde"] }
+chrono = "0.4.45"
 iso8601-duration = { version = "0.2.0", features = ["chrono", "serde"] }
 serde_json = "1.0.151"
 sha2 = "0.11.0"

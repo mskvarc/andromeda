@@ -16,7 +16,7 @@ use crate::{
     normalization::Normalization,
     written_member::{WrittenMember, WrittenMemberRef},
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::rendering::instant_text};
 use andromeda_ngsi_ld_model::{
     attribute::{instance::AttributeValue, merge_member::MergeMember, nested_null::NullProperty},
     entity::{Entity, EntityPatch},
@@ -75,14 +75,14 @@ impl EntityMembers<'_> {
             map.serialize_entry(compact_properties::SCOPE, scope)?;
         }
         if let Some(expires_at) = self.expires_at {
-            map.serialize_entry(compact_properties::EXPIRES_AT, expires_at)?;
+            map.serialize_entry(compact_properties::EXPIRES_AT, &instant_text(*expires_at))?;
         }
         for (name, instant) in [compact_properties::CREATED_AT, compact_properties::MODIFIED_AT, compact_properties::DELETED_AT]
             .into_iter()
             .zip(self.system)
         {
             if let Some(instant) = instant {
-                map.serialize_entry(name, instant)?;
+                map.serialize_entry(name, &instant_text(*instant))?;
             }
         }
         Ok(())

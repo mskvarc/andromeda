@@ -16,7 +16,6 @@ use crate::{
     walk::{Walk, property_term},
 };
 use andromeda_ngsi_ld_entity::{
-    date_time_text::DateTimeText,
     document::{
         EntityDocument,
         attribute_member::AttributeMember,
@@ -26,7 +25,13 @@ use andromeda_ngsi_ld_entity::{
     },
     value_mode::Fragment,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReference, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    identifier::Identifier,
+    reference::NgsiLdReference,
+    time::written_date_time::DateTimeText,
+    uri::Uri,
+};
 use andromeda_ngsi_ld_vocabulary::NULL_URI;
 use indexmap::IndexMap;
 use jsonld::{BlankIdBuf, IriBuf, Term};

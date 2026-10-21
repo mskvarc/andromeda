@@ -22,7 +22,7 @@
 //! nowhere at all, which, sorted `NULLS LAST`, is exactly where "attribute does
 //! not exist" belongs, in both directions.
 
-use andromeda_ngsi_ld_lexicon::time_value::TimeValueForm;
+use andromeda_ngsi_ld_lexicon::time::value::TimeValueForm;
 use andromeda_ngsi_ld_query::ordering::sort_direction::SortDirection;
 use andromeda_ngsi_ld_vocabulary::expanded::classes::{DATE, DATE_TIME, TIME};
 use andromeda_postgresql_seaquery::{
@@ -156,7 +156,7 @@ fn written_in(text: &SimpleExpr, form: TimeValueForm) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::attribute_value_datatype::{OrderedValue, datatype_rank, datatype_token};
-    use andromeda_ngsi_ld_lexicon::time_value::TimeValueForm;
+    use andromeda_ngsi_ld_lexicon::time::value::TimeValueForm;
     use andromeda_ngsi_ld_query::ordering::sort_direction::SortDirection;
     use andromeda_postgresql_seaquery::literal::int_literal;
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};

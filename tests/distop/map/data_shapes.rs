@@ -8,9 +8,9 @@ use crate::{
     registration::CsrBuilder,
     topology::{self, BrokerRole},
 };
+use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
 use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
-use chrono::DateTime;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -81,10 +81,7 @@ async fn entity_map_expires_at_is_datetime() {
     let vtype = topology.id("Vehicle");
     let (_, map) = map_over_vehicle(&topology, &vtype, "Vehicle:shape-expires").await;
     let expires_at = map["expiresAt"].as_str().unwrap_or_default();
-    assert!(
-        DateTime::parse_from_rfc3339(expires_at).is_ok(),
-        "expiresAt is an RFC3339 datetime: {expires_at}"
-    );
+    assert!(expires_at.parse::<NgsiLdDateTime>().is_ok(), "expiresAt is an RFC3339 datetime: {expires_at}");
     topology.finish().await.expect("topology cleanup");
 }
 
@@ -245,7 +242,7 @@ async fn identity_context_source_time_at_datetime() {
     let topology = topology::single().await.expect("single-broker topology");
     let time_at = identity(&topology).await["contextSourceTimeAt"].as_str().unwrap_or_default().to_owned();
     assert!(
-        DateTime::parse_from_rfc3339(&time_at).is_ok(),
+        &time_at.parse::<NgsiLdDateTime>().is_ok(),
         "contextSourceTimeAt is an RFC3339 datetime: {time_at}"
     );
     topology.finish().await.expect("topology cleanup");

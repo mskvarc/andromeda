@@ -6,16 +6,15 @@
 //! `deletedAt` (clauses 4.5.7, 5.6.11, 5.6.12).
 
 use crate::{
-    date_time_text::DateTimeText,
     document::{attribute_member::AttributeMember, slot::Slot, written_value::ValueSlot},
     proof_seals::ProofSeals,
-    system_instant::SystemInstant,
 };
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     identifier::Identifier,
     reference::NgsiLdReference,
+    time::{system_instant::SystemInstant, written_date_time::DateTimeText},
     time_prop::TimeProp,
 };
 use cefact_units::UnitCode;

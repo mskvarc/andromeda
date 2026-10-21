@@ -25,7 +25,7 @@ use crate::{
         fallback::{EntityMember, VersionFallback},
     },
 };
-use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
+use andromeda_ngsi_ld_lexicon::{spec_version::SpecVersion, time::rendering::instant_text};
 use andromeda_ngsi_ld_model::{attribute::instance::AttributeValue, entity::EntityPatch};
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use serde::{Serialize, Serializer, ser::SerializeMap};
@@ -124,7 +124,7 @@ impl Serialize for ForwardedEntity<'_> {
         if let Some(expires_at) = &patch.expires_at
             && self.walk.keeps_entity_member(EntityMember::ExpiresAt)
         {
-            object.serialize_entry(compact_properties::EXPIRES_AT, expires_at)?;
+            object.serialize_entry(compact_properties::EXPIRES_AT, &instant_text(*expires_at))?;
         }
         for (name, member) in patch.attribute_members() {
             object.serialize_entry(name, &ForwardedAttribute::member(member, self.walk, self.layout))?;

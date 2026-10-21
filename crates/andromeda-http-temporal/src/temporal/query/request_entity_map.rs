@@ -20,10 +20,9 @@ use andromeda_entity_map::{
     service::EntityMapService,
 };
 use andromeda_http_headers::ngsild_entity_map::NgsiLdEntityMap;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::date_time::NgsiLdDateTime};
 use andromeda_temporal::{error::TemporalError, temporal_invariant::TemporalInvariant};
 use axum::http::Uri;
-use chrono::{DateTime, Utc};
 
 /// Resolve the Entity Map the query runs under and hold the query to it.
 ///
@@ -64,8 +63,9 @@ pub(crate) async fn resolve_query_map(
         if params.timerel.is_none() && params.time_at.is_none() {
             params.timerel = Some(TimeRel::Before);
             params.time_at = Some(
-                DateTime::parse_from_rfc3339("9999-12-31T23:59:59Z")
-                    .map(|instant| instant.with_timezone(&Utc))
+                "9999-12-31T23:59:59Z"
+                    .parse::<NgsiLdDateTime>()
+                    .map(NgsiLdDateTime::get)
                     .map_err(|source| TemporalError::from(TemporalInvariant::EntityMapHorizon(source)))
                     .with_instance(instance)?,
             );

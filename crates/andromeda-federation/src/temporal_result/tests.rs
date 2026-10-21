@@ -5,7 +5,7 @@ use crate::{
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
 use andromeda_ngsi_ld_model::{
     received::ReceivedElement,
     registration::forwarding_mode::ForwardingMode,
@@ -68,9 +68,7 @@ fn observed_within(interval: TimeInterval) -> TemporalWindow {
 
 /// Midnight of `day` of January 2024.
 fn january(day: u32) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(&format!("2024-01-{day:02}T00:00:00Z"))
-        .expect("a valid instant")
-        .with_timezone(&Utc)
+    format!("2024-01-{day:02}T00:00:00Z").parse::<NgsiLdDateTime>().expect("a valid instant").get()
 }
 
 /// The instants of `history`'s speed instances, in the order the merge lists

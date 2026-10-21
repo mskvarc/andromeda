@@ -35,10 +35,8 @@ use andromeda_ngsi_ld_geometry::{geo_rel::GeoRelParseError, geojson::GeometryErr
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     identifier::IdentifierParseError,
-    ngsi_ld_date::NgsiLdDateError,
-    ngsi_ld_date_time::NgsiLdDateTimeError,
-    ngsi_ld_time::NgsiLdTimeError,
     reference::NgsiLdReferenceError,
+    time::{date::NgsiLdDateError, date_time::NgsiLdDateTimeError, time_of_day::NgsiLdTimeError},
 };
 use andromeda_ngsi_ld_number::JsonNumberError;
 use regex_syntax::hir;

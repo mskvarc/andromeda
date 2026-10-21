@@ -12,11 +12,13 @@
 //! and aggregates nothing.
 
 use crate::{error::TemporalError, observed_instance::ObservedInstance};
-use andromeda_ngsi_ld_entity::{
-    document::{EntityDocumentParts, attribute_member::AttributeMember, instance_document::InstanceDocument},
-    system_instant::SystemInstant,
+use andromeda_ngsi_ld_entity::document::{EntityDocumentParts, attribute_member::AttributeMember, instance_document::InstanceDocument};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    entity_type_name::EntityTypeName,
+    instance_identity::InstanceIdentity,
+    time::system_instant::SystemInstant,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, instance_identity::InstanceIdentity};
 use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, evolution_instance::EvolutionInstance, temporal_document::TemporalDocument};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::{DateTime, Utc};
@@ -95,6 +97,7 @@ mod tests {
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_ngsi_ld_model::{
         received::ReceivedElement,
         temporal::{TemporalHistoryRow, received_temporal::ReceivedTemporalEntities, temporal_body::TemporalBody, temporal_document::TemporalDocument},
@@ -103,7 +106,7 @@ mod tests {
     use serde_json::{Value, json};
 
     fn at(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("a valid instant").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("a valid instant").get()
     }
 
     /// The expanded temporal entity a source answered with.

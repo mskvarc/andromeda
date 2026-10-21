@@ -68,7 +68,7 @@ andromeda-telemetry.workspace = true
 andromeda-temporal.workspace = true
 andromeda-tenancy.workspace = true
 async-trait = "0.1.92"
-chrono = { version = "0.4.45", features = ["serde"] }
+chrono = "0.4.45"
 derive_more = { version = "2.1.1", features = ["as_ref", "debug", "deref", "display", "from", "into", "is_variant"] }
 etcetera = "0.11.0"
 figment2 = { version = "0.11.5", features = ["env", "toml"] }

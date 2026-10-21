@@ -211,9 +211,8 @@ mod tests {
         scalar::{CompareValue, Scalar},
         value_path::MAX_SUB_ATTRIBUTE_DEPTH,
     };
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::rendering::instant_text};
     use andromeda_ngsi_ld_number::JsonNumber;
-    use chrono::SecondsFormat;
 
     #[test]
     fn parse_existence() {
@@ -452,7 +451,7 @@ mod tests {
                 pretty_assertions::assert_eq!(op, OrderingOp::GreaterEq);
                 match rhs {
                     Scalar::DateTime(dt) => {
-                        pretty_assertions::assert_eq!(dt.to_rfc3339_opts(SecondsFormat::Secs, true), "2017-12-24T12:00:00Z");
+                        pretty_assertions::assert_eq!(instant_text(dt), "2017-12-24T12:00:00Z");
                     }
                     other @ (Scalar::Number(_) | Scalar::Bool(_) | Scalar::Str(_) | Scalar::Uri(_) | Scalar::Date(_) | Scalar::Time(_)) => {
                         panic!("expected DateTime scalar, got {other:?}")

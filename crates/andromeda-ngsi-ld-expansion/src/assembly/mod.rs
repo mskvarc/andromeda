@@ -23,7 +23,6 @@ use crate::{
     expanded_tree::{ExpandedItem, ExpandedNode},
 };
 use andromeda_ngsi_ld_entity::{
-    date_time_text::DateTimeText,
     document::{EntityDocument, attribute_member::AttributeMember, slot::Slot},
     member_role::MemberRole,
     member_shape::MemberShape,
@@ -31,7 +30,12 @@ use andromeda_ngsi_ld_entity::{
     scope_slot::{ScopeItem, scope_slot},
     scopes::Scopes,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    entity_type_name::EntityTypeName,
+    identifier::Identifier,
+    time::written_date_time::DateTimeText,
+};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use indexmap::IndexMap;
 

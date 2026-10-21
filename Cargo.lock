@@ -120,6 +120,7 @@ dependencies = [
  "h3",
  "h3-quinn",
  "http",
+ "httpdate",
  "iri-rs",
  "jsonld",
  "jsonld-syntax",
@@ -2316,6 +2317,7 @@ name = "andromeda-test-fixtures"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-ngsi-ld-lexicon",
  "chrono",
  "dashmap",
  "iri-rs",

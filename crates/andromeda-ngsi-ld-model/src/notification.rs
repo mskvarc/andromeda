@@ -2,7 +2,7 @@
 
 use crate::{csource_change_revision::CsourceChangeRevision, registration::ContextSourceRegistration};
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_lexicon::{constant_string, identifier::Identifier, rfc3339::datetime};
+use andromeda_ngsi_ld_lexicon::{constant_string, identifier::Identifier, time::instant_serde};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -115,7 +115,7 @@ pub struct Notification<'a> {
     pub subscription_id: &'a Identifier,
     /// When the notification was generated, written at no finer than the
     /// microsecond: clause 4.6.3 caps a `DateTime` at six fractional digits.
-    #[serde(with = "datetime")]
+    #[serde(with = "instant_serde::required")]
     pub notified_at: DateTime<Utc>,
     /// The entity representations that triggered it.
     pub data: NotificationData,
@@ -224,7 +224,7 @@ pub struct CsourceNotification<'a> {
     pub subscription_id: &'a Identifier,
     /// When the notification was generated, written at no finer than the
     /// microsecond: clause 4.6.3 caps a `DateTime` at six fractional digits.
-    #[serde(with = "datetime")]
+    #[serde(with = "instant_serde::required")]
     pub notified_at: DateTime<Utc>,
     /// The registrations that triggered it, as the subscriber is notified of
     /// them.

@@ -82,11 +82,11 @@ mod tests {
             window::{TemporalWindow, TimeInterval},
         },
     };
-    use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
+    use andromeda_ngsi_ld_lexicon::{time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use chrono::{DateTime, Utc};
 
     fn instant(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("valid instant").get()
     }
 
     fn scope(interval: TimeInterval, delete_all: bool) -> TemporalHistoryDeleteScope {

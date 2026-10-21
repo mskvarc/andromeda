@@ -7,7 +7,6 @@ use crate::{
     normalization::Normalization,
 };
 use andromeda_ngsi_ld_entity::{
-    date_time_text::DateTimeText,
     document::{
         EntityDocument,
         attribute_member::AttributeMember,
@@ -22,7 +21,7 @@ use andromeda_ngsi_ld_entity::{
     value_mode::{Fragment, FragmentMember, FragmentText},
 };
 use andromeda_ngsi_ld_geometry::geometry_type::GeometryType;
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, time::written_date_time::DateTimeText};
 use andromeda_ngsi_ld_number::JsonNumber;
 use serde_json::json;
 

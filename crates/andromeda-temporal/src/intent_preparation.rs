@@ -206,7 +206,7 @@ const fn scope_entry(observation: ScopeObservation, kind: ScopeEntryKind, observ
 /// An instance carrying a member beyond the four Temporal Properties clause
 /// 4.5.6 gives a reified Scope is refused, as it is on the client's write.
 fn append_reified_scope(instance: &InstanceDocument, recorded_at: DateTime<Utc>, entries: &mut Vec<TemporalAppendEntry>) -> Result<(), TemporalError> {
-    let observed_at = declared_observed_at(instance.observed_at())?.unwrap_or(recorded_at);
+    let observed_at = declared_observed_at(instance.observed_at()).unwrap_or(recorded_at);
     let observations = scope_observations(instance).map_err(|refusal| TemporalError::from(EntityRefusal::Scope(refusal)))?;
     entries.extend(
         observations

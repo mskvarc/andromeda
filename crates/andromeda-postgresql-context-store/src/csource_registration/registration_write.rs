@@ -306,8 +306,7 @@ pub(super) async fn delete(store: &PostgresRegistrationStore, id: &Identifier) -
 mod tests {
     use crate::csource_registration::registration_write::{stored_properties, swept_select};
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use chrono::DateTime;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::date_time::NgsiLdDateTime};
     use indexmap::IndexMap;
     use sea_query::PostgresQueryBuilder;
 
@@ -315,7 +314,7 @@ mod tests {
     /// joined to: `FOR UPDATE` cannot lock the nullable side of an outer join.
     #[test]
     fn the_sweep_locks_the_registration_rows_it_reads() {
-        let cutoff = DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").expect("valid instant").to_utc();
+        let cutoff = "2026-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("valid instant").get();
         let sql = swept_select(cutoff).to_string(PostgresQueryBuilder);
         assert!(sql.ends_with("FOR UPDATE OF \"context_source_registrations\""), "{sql}");
     }

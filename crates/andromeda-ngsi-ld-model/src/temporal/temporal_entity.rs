@@ -12,8 +12,12 @@
 //! of compaction wrote and one a client wrote are read by the same rules.
 
 use crate::{
-    attribute::{instance::AttributeValue, instance_member::ReadError, member_decoding::refusal},
-    compact_member::{decoded, decoded_optional},
+    attribute::{
+        instance::AttributeValue,
+        instance_member::{ReadError, optional_instant_member},
+        member_decoding::refusal,
+    },
+    compact_member::decoded,
     entity::Entity,
     entity_system_times::EntitySystemTimes,
     entity_type::EntityTypeValue,
@@ -81,9 +85,9 @@ impl TemporalEntity {
                 ID_MEMBER => id = Some(required(member, RefusedMember::Id).map_err(at)?),
                 TYPE_MEMBER => type_ = Some(required(member, RefusedMember::Type).map_err(at)?),
                 compact_properties::SCOPE => scope = TemporalAttribute::from_node(compact_properties::SCOPE, member).map_err(at)?,
-                compact_properties::CREATED_AT => system_times.created_at = optional(member, RefusedMember::CreatedAt).map_err(at)?,
-                compact_properties::MODIFIED_AT => system_times.modified_at = optional(member, RefusedMember::ModifiedAt).map_err(at)?,
-                compact_properties::DELETED_AT => system_times.deleted_at = optional(member, RefusedMember::DeletedAt).map_err(at)?,
+                compact_properties::CREATED_AT => system_times.created_at = optional_instant_member(Some(member), RefusedMember::CreatedAt).map_err(at)?,
+                compact_properties::MODIFIED_AT => system_times.modified_at = optional_instant_member(Some(member), RefusedMember::ModifiedAt).map_err(at)?,
+                compact_properties::DELETED_AT => system_times.deleted_at = optional_instant_member(Some(member), RefusedMember::DeletedAt).map_err(at)?,
                 attribute => {
                     let attribute_name = AttributeName::from_str(attribute).map_err(|source| at(NodeRefusal::AttributeName(source).into()))?;
                     if let Some(read) = TemporalAttribute::from_node(attribute, member).map_err(at)? {
@@ -153,13 +157,6 @@ impl TemporalEntity {
 /// Read a member the entity requires, `null` being no value.
 fn required<'n, T: DeserializeOwned, N: CompactNode<'n>>(node: N, name: RefusedMember) -> Result<T, ReadError<'n, N>> {
     decoded(node)
-        .map_err(NodeReadError::Unreadable)?
-        .map_err(|source| NodeRefusal::Member { member: name, source }.into())
-}
-
-/// Read a member the entity may carry, `null` being none.
-fn optional<'n, T: DeserializeOwned, N: CompactNode<'n>>(node: N, name: RefusedMember) -> Result<Option<T>, ReadError<'n, N>> {
-    decoded_optional(node)
         .map_err(NodeReadError::Unreadable)?
         .map_err(|source| NodeRefusal::Member { member: name, source }.into())
 }

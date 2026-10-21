@@ -336,13 +336,14 @@ mod tests {
             instance_test::{InstanceTest, non_empty},
         },
     };
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
     use andromeda_postgresql_schema::temporal::AttributeHistory;
     use chrono::{DateTime, Utc};
     use sea_query::{Alias, Condition, Expr, ExprTrait, IntoIden, PostgresQueryBuilder, Query, SelectStatement};
 
     fn instant(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("a valid instant").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("a valid instant").get()
     }
 
     fn window_on(branch: HistoryBranch, axis: AttributeHistory, interval: TimeInterval) -> HistoryWindow {

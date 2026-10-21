@@ -10,7 +10,7 @@
 //! notification, and no JSON tree is built on the way.
 
 use andromeda_json_literal::piece::{JsonKind, JsonPiece};
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, rfc3339::RequestInstant};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::date_time::NgsiLdDateTime};
 use andromeda_ngsi_ld_model::{
     notification::CsrTriggerReason,
     received::{ReceivedElement, ReceivedEntities, decoded_elements},
@@ -137,7 +137,7 @@ struct Envelope<'a> {
     subscription_id: Option<Identifier>,
     /// `notifiedAt`, read as every instant a request carries (clause 4.6.3).
     #[serde(default)]
-    notified_at: Option<RequestInstant>,
+    notified_at: Option<NgsiLdDateTime>,
     /// `data`, as written.
     #[serde(borrow, default)]
     data: Option<&'a RawValue>,

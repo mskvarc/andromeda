@@ -42,13 +42,14 @@ mod tests {
             speed_entity::{dataset_ids, date_time, entity, instances, number, property},
         },
     };
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use chrono::{DateTime, Utc};
     use std::sync::Arc;
 
     const SPEED: &str = "https://example.org/speed";
 
     fn cutoff() -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").expect("cutoff parses").with_timezone(&Utc)
+        "2026-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("cutoff parses").get()
     }
 
     fn instance(expires_at: Option<&str>) -> Instance {

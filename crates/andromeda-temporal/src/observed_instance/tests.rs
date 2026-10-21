@@ -3,7 +3,11 @@
 use crate::{error::TemporalError, observed_instance::ObservedInstance};
 use andromeda_ngsi_ld_entity::{document::instance_document::InstanceDocument, expanded_value_name::ExpandedValueName, geometry_value::GeometryValue};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    identifier::Identifier,
+    time::{date::NgsiLdDate, rendering::instant_text, time_of_day::NgsiLdTime},
+};
 use andromeda_ngsi_ld_model::temporal::TemporalValue;
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::filter::{quoting::Quoting, scalar::Scalar};
@@ -140,7 +144,7 @@ fn a_bare_timestamp_literal_is_recorded_as_the_instant_it_names() {
     let TemporalValue::DateTime(instant) = value else {
         panic!("a conformant DateTime literal is an instant, got {value:?}");
     };
-    pretty_assertions::assert_eq!(instant.to_rfc3339_opts(chrono::SecondsFormat::Micros, true), "2024-01-01T00:00:00.250000Z");
+    pretty_assertions::assert_eq!(instant_text(instant), "2024-01-01T00:00:00.250Z");
 }
 
 /// Clause 4.9 orders `Time` and `Date` values chronologically and the string
@@ -294,7 +298,7 @@ fn a_time_operand_binds_the_text_the_write_path_stored() {
         let Ok(Scalar::Time(operand)) = Scalar::from_literal(literal, Quoting::Bare) else {
             panic!("{literal} is a Time operand");
         };
-        let bound = NgsiLdTime::normalise(operand).expect("a normalisable time of day").to_string();
+        let bound = NgsiLdTime::normalise(operand).to_string();
         pretty_assertions::assert_eq!(recorded(&bare_property(literal)), TemporalValue::String(bound), "{literal}");
     }
 }
@@ -446,7 +450,8 @@ fn a_deletion_or_an_empty_instance_records_no_observation() {
 fn an_observed_at_outside_the_strict_utc_form_is_refused() {
     let mut instance = bare_property("free");
     instance[expanded_properties::OBSERVED_AT.as_str()] = json!([{"@value": "2024-01-01T01:00:00+01:00"}]);
-    let error = read(&instance).expect_err("a numeric offset is not the UTC form");
+    let attribute: AttributeName = "https://example.org/speed".parse().expect("a valid attribute name");
+    let error = InstanceDocument::from_slice(&attribute, &serde_json::to_vec(&instance).expect("JSON")).expect_err("a numeric offset is not the UTC form");
     assert!(error.to_string().contains("observedAt"), "{error}");
 }
 

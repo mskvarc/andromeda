@@ -8,7 +8,10 @@
 //! and entity and temporal policy both read it back out. Each `#[error]` renders
 //! lowercase client prose; spec attribute-type names keep their fixed casing.
 
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_date_time::NgsiLdDateTimeError, time_value::TimeValueError};
+use andromeda_ngsi_ld_lexicon::{
+    identifier::Identifier,
+    time::{date_time::NgsiLdDateTimeError, value::TimeValueError},
+};
 use andromeda_ngsi_ld_number::JsonNumberError;
 use thiserror::Error;
 
@@ -21,9 +24,6 @@ pub enum SubmissionRefusal {
     /// An Entity carried no type, and the store that refused it names no row.
     #[error("an entity write carried no type, but at least one is required")]
     UntypedEntityUnidentified,
-    /// An `observedAt` value was not a clause 4.6.3 `DateTime`.
-    #[error("invalid observedAt: {0}")]
-    ObservedAt(#[source] NgsiLdDateTimeError),
     /// A time-value property was not a clause 4.6.3 time value.
     #[error("invalid time value property: {0}")]
     TimeValueProperty(#[source] TimeValueError),

@@ -63,6 +63,7 @@ impl EntityDocument {
         for (name, member) in self.attributes() {
             member.instances().iter().try_for_each(|instance| admit_json_shapes(name, instance))?;
         }
+        self.admit_time_values()?;
         self.admit_null_placements(admission)?;
         for (name, member) in self.attributes() {
             member.instances().iter().try_for_each(|instance| admit_geometry(name, instance))?;
@@ -118,6 +119,7 @@ impl InstanceDocument {
         }
         admit_family_members(None, self)?;
         admit_json_shapes(attribute, self)?;
+        self.admit_time_values(attribute)?;
         self.admit_null_placements(attribute, admission)?;
         admit_geometry(attribute, self)
     }

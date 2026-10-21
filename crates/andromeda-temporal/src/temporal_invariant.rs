@@ -6,7 +6,7 @@
 
 use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
-use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
+use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReferenceError, time::date_time::NgsiLdDateTimeError};
 use andromeda_ngsi_ld_render::temporal::history_row::HistoryRowRenderError;
 use chrono::OutOfRangeError;
 use thiserror::Error;
@@ -40,7 +40,7 @@ pub enum TemporalInvariant {
     EntityOperation,
     /// The horizon an Entity Map holds a temporal query to does not parse.
     #[error("the entity-map temporal horizon does not parse: {0}")]
-    EntityMapHorizon(#[source] chrono::ParseError),
+    EntityMapHorizon(#[source] NgsiLdDateTimeError),
     /// The local temporal read reported a negative match count.
     #[error("the local temporal read reported a negative match count")]
     NegativeMatchCount,

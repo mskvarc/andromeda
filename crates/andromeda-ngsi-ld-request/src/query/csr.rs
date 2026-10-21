@@ -22,7 +22,7 @@ use crate::{
     representation_parameter::{WrittenValue, supported_option},
 };
 use andromeda_http_headers::language::LanguageFilter;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, rfc3339, time_prop::TimeProp, time_rel::TimeRel};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::instant_serde, time_prop::TimeProp, time_rel::TimeRel};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     filter::expression::Expr,
@@ -95,10 +95,10 @@ pub struct CsrQueryParameters {
     #[serde(default, deserialize_with = "crate::query::temporal::deserialization::deserialize_option_timerel")]
     pub timerel: Option<TimeRel>,
     /// The instant the window is anchored at (`timeAt`).
-    #[serde(rename = "timeAt", default, deserialize_with = "rfc3339::optional_datetime::deserialize")]
+    #[serde(rename = "timeAt", default, deserialize_with = "instant_serde::optional::deserialize")]
     pub time_at: Option<DateTime<Utc>>,
     /// The closing instant, required by `timerel=between` (`endTimeAt`).
-    #[serde(rename = "endTimeAt", default, deserialize_with = "rfc3339::optional_datetime::deserialize")]
+    #[serde(rename = "endTimeAt", default, deserialize_with = "instant_serde::optional::deserialize")]
     pub end_time_at: Option<DateTime<Utc>>,
     /// The temporal property the window applies to (clause 4.8 `timeproperty`).
     #[serde(default, deserialize_with = "crate::query::temporal::deserialization::deserialize_option_timeproperty")]

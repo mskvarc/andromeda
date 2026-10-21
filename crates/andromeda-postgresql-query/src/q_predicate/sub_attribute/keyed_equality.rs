@@ -22,7 +22,7 @@ use crate::{
         sub_attribute::element_path::ElementPath,
     },
 };
-use andromeda_ngsi_ld_lexicon::{ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime};
+use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime};
 use andromeda_ngsi_ld_query::filter::{
     path::QueryPath,
     predicate::{Predicate, SetMembership},
@@ -115,13 +115,10 @@ fn query_keys(path: &[i32], scalar: &Scalar) -> SimpleExpr {
             text_key(STRING_KIND, scalar.literal_text()),
         ),
         Scalar::Date(value) => text_key(STRING_KIND, NgsiLdDate::from(*value).to_string()),
-        Scalar::Time(value) => {
-            let literal = text_key(STRING_KIND, scalar.literal_text());
-            match NgsiLdTime::normalise(*value) {
-                Ok(canonical) => array_cat(text_key(STRING_KIND, canonical.to_string()), literal),
-                Err(_) => literal,
-            }
-        }
+        Scalar::Time(value) => array_cat(
+            text_key(STRING_KIND, NgsiLdTime::normalise(*value).to_string()),
+            text_key(STRING_KIND, scalar.literal_text()),
+        ),
     }
 }
 
@@ -132,13 +129,18 @@ mod tests {
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
         entity_row_refs::EntityRowRefs,
         q_predicate::{keyed_term::keyed_candidates, sub_attribute::keyed_equality::key_expression},
+        temporal_operand::STORED_TIME_TEMPLATE,
     };
+    use andromeda_ngsi_ld_lexicon::time::value::TimeValueForm;
     use andromeda_ngsi_ld_query::filter::parser::parse;
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
 
     /// The `current_attributes` migration, which declares `idx_ca_sub_eq_keys`.
     const MIGRATION: &str = include_str!("../../../../../migrations/branch/0022_current_attributes.sql");
+
+    /// The functions migration, which defines `sub_eq_keys`.
+    const FUNCTIONS: &str = include_str!("../../../../../migrations/tenant/0008_functions.sql");
 
     fn names() -> QueryNames {
         QueryNames {
@@ -221,5 +223,22 @@ mod tests {
             assert_eq!(candidates(q), None, "{q}");
         }
         assert!(candidates("\"https://example.com/temperature\"==1;\"https://example.com/temperature\".\"https://example.com/accuracy\"==0.5").is_some());
+    }
+
+    /// The index keys a stored time of day by the same reading of clause 4.6.3
+    /// a `q` operand and the JSONB lift use: the lexicon's pattern of the form,
+    /// the comma read as the decimal point, and the fixed-width spelling.
+    #[test]
+    fn the_index_keys_a_time_of_day_by_the_lexicons_reading_of_the_form() {
+        let shape = format!("element.value_string ~ '{}'", TimeValueForm::Time.lexical_pattern());
+        assert!(FUNCTIONS.contains(&shape), "sub_eq_keys reads a Time by another pattern than {shape}");
+        assert!(
+            FUNCTIONS.contains("replace(element.value_string, ',', '.')"),
+            "sub_eq_keys reads the comma as the decimal point"
+        );
+        assert!(
+            FUNCTIONS.contains(&format!("'{STORED_TIME_TEMPLATE}') || 'Z'")),
+            "sub_eq_keys keys the fixed-width spelling"
+        );
     }
 }

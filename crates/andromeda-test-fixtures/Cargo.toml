@@ -9,7 +9,8 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-chrono = { version = "0.4.45", features = ["serde"] }
+andromeda-ngsi-ld-lexicon.workspace = true
+chrono = "0.4.45"
 dashmap = { version = "6.2.1", features = ["inline"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 rand = { version = "0.10.3", default-features = false, features = ["std", "std_rng"] }

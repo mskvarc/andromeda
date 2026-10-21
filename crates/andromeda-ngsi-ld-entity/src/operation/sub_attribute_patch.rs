@@ -106,7 +106,6 @@ fn repeated_instance(name: &AttributeName, repeated: RepeatedInstance) -> Mutati
 mod tests {
     use crate::{
         attributes::Attributes,
-        date_time_text::DateTimeText,
         document::{attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot},
         instance::Instance,
         operation::{
@@ -117,7 +116,7 @@ mod tests {
         },
         refusal::EntityRefusal,
     };
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::written_date_time::DateTimeText};
     use indexmap::IndexMap;
 
     const A: &str = "urn:ngsi-ld:Dataset:A";

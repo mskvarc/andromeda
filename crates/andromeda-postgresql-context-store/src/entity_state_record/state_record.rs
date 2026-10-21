@@ -2,8 +2,8 @@
 //! of a committed state.
 
 use crate::{current_attribute::flatten::flatten, entity_state_record::instance_record::AttributeInstanceRecord};
-use andromeda_ngsi_ld_entity::{date_time_text::DateTimeText, entity_state::EntityState};
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, scope::path::ScopePath};
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, scope::path::ScopePath, time::written_date_time::DateTimeText};
 use andromeda_postgresql_attribute_instance::{flatten::FlattenError, name_keys::NameKeys};
 use andromeda_postgresql_encoding::ewkb::EwkbError;
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;

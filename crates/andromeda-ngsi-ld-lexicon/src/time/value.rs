@@ -27,10 +27,10 @@
 //! the classification lives here and every side of the comparison reads it from
 //! this one module.
 
-use crate::{
-    ngsi_ld_date::{NgsiLdDate, NgsiLdDateError},
-    ngsi_ld_date_time::{NgsiLdDateTime, NgsiLdDateTimeError},
-    ngsi_ld_time::{NgsiLdTime, NgsiLdTimeError},
+use crate::time::{
+    date::{NgsiLdDate, NgsiLdDateError},
+    date_time::{NgsiLdDateTime, NgsiLdDateTimeError},
+    time_of_day::{NgsiLdTime, NgsiLdTimeError},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
 use derive_more::Display;
@@ -130,8 +130,7 @@ impl TimeValueForm {
     /// Annex C.6 shows a reified Property naming its value's datatype through
     /// the `@value`/`@type` pair or the `valueType` member, both of which reach
     /// an expanded value node carrying one of these three IRIs.
-    #[must_use]
-    pub fn declared_by(type_iri: &str) -> Option<TimeValueForm> {
+    fn declared_by(type_iri: &str) -> Option<TimeValueForm> {
         if type_iri == expanded_classes::DATE_TIME.as_str() {
             Some(TimeValueForm::DateTime)
         } else if type_iri == expanded_classes::DATE.as_str() {
@@ -186,9 +185,9 @@ impl TimeValueForm {
 
 /// A parsed clause 4.6.3 time value.
 ///
-/// [`Display`] renders each variant in the canonical form its lexical type
-/// defines, which is the single rendering the broker stores, orders and
-/// compares against.
+/// [`Display`] renders each variant as its own type does: an instant as every
+/// instant the broker emits is spelled, a date and a time of day in the
+/// fixed-width spelling the broker stores and orders them by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display)]
 pub enum TimeValue {
     /// A `DateTime`: an instant.
@@ -259,7 +258,7 @@ pub enum TimeValueError {
 
 #[cfg(test)]
 mod tests {
-    use crate::time_value::{TimeValue, TimeValueError, TimeValueForm};
+    use crate::time::value::{TimeValue, TimeValueError, TimeValueForm};
     use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
 
     /// Clause 4.6.3 fixes one lexical form per data type, so each conformant
@@ -348,7 +347,7 @@ mod tests {
         let admitted = TimeValue::admitted(None, "2024-01-01T00:00:00.250000Z")
             .expect("a conformant DateTime is a time value")
             .expect("and it parses");
-        pretty_assertions::assert_eq!(admitted.to_string(), "2024-01-01T00:00:00.250000Z");
+        pretty_assertions::assert_eq!(admitted.to_string(), "2024-01-01T00:00:00.250Z");
 
         let time = TimeValue::admitted(None, "12:00:00Z").expect("a conformant Time").expect("and it parses");
         pretty_assertions::assert_eq!(time.to_string(), "12:00:00.000000Z");
@@ -382,7 +381,17 @@ mod tests {
             "2024-01-01T00:00:00.250000Z",
             "2024-01-01T00:00:00,25Z",
             "2024-01-01T00:00:00.1234567Z",
+            "2024-01-01T00:00:00.123456Z",
+            "2024-01-01T00:00:00.Z",
+            "2024-01-01T00:00:00,5,5Z",
             "2024-01-01T01:00:00+01:00",
+            "2024-01-01T00:00:00+00:00",
+            "2024-01-01t00:00:00Z",
+            "2024-01-01T00:00:00z",
+            "2024-01-01 00:00:00Z",
+            "2024-01-01T00:00Z",
+            "2024-01-01T00:00:60Z",
+            "0000-01-01T00:00:00Z",
             "2024-01-01T00:00:00",
             "2024-01-01T24:00:00Z",
             "2024-13-01T00:00:00Z",
@@ -392,6 +401,11 @@ mod tests {
             "12:00:00Z",
             "12:00:00.5Z",
             "12:00:00,5Z",
+            "12:00:00.1234567Z",
+            "12:00:00+00:00",
+            "12:00:00z",
+            "12:00Z",
+            "12:00:60Z",
             "12:00:00",
             "13:00:00+01:00",
             "24:00:00Z",

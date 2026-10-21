@@ -16,7 +16,7 @@ andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 base64 = "0.23.1"
-chrono = { version = "0.4.45", features = ["serde"] }
+chrono = "0.4.45"
 derive_more = { version = "2.1.1", features = ["deref", "display", "from", "into"] }
 icu_collator = { version = "2.3.1", features = ["unstable"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }

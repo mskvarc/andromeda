@@ -20,6 +20,7 @@ use crate::{
 };
 use andromeda_json_literal::piece::JsonPiece;
 use andromeda_ngsi_ld_geometry::{foreign_members::ForeignMembers, geometry::Geometry};
+use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 use andromeda_ngsi_ld_model::attribute::{
     common_fields::CommonAttributeFields,
     geo_property_value::GeoPropertyValue,
@@ -169,13 +170,13 @@ fn family_members(node: &mut NodeBuilder, scope: &TermScope<'_>, instance: &Attr
 
 /// The members every family carries, sub-attributes included.
 fn common_members(node: &mut NodeBuilder, scope: &TermScope<'_>, common: &CommonAttributeFields) -> Result<(), Decline> {
-    add_optional(node, scope, compact_properties::CREATED_AT, common.created_at.as_ref())?;
+    add_optional(node, scope, compact_properties::CREATED_AT, common.created_at.map(instant_text).as_ref())?;
     add_optional(node, scope, compact_properties::DATASET_ID, common.dataset_id.as_ref())?;
-    add_optional(node, scope, compact_properties::DELETED_AT, common.deleted_at.as_ref())?;
-    add_optional(node, scope, compact_properties::EXPIRES_AT, common.expires_at.as_ref())?;
+    add_optional(node, scope, compact_properties::DELETED_AT, common.deleted_at.map(instant_text).as_ref())?;
+    add_optional(node, scope, compact_properties::EXPIRES_AT, common.expires_at.map(instant_text).as_ref())?;
     add_optional(node, scope, compact_properties::INSTANCE_ID, common.instance_id.as_ref())?;
-    add_optional(node, scope, compact_properties::MODIFIED_AT, common.modified_at.as_ref())?;
-    add_optional(node, scope, compact_properties::OBSERVED_AT, common.observed_at.as_ref())?;
+    add_optional(node, scope, compact_properties::MODIFIED_AT, common.modified_at.map(instant_text).as_ref())?;
+    add_optional(node, scope, compact_properties::OBSERVED_AT, common.observed_at.map(instant_text).as_ref())?;
     for (name, member) in &common.sub_attributes {
         add_member(node, scope, name.as_str(), member)?;
     }

@@ -196,6 +196,7 @@ impl From<EntityRefusal> for TemporalError {
             | EntityRefusal::DatasetId { .. }
             | EntityRefusal::InstanceId { .. }
             | EntityRefusal::DateTime { .. }
+            | EntityRefusal::TimeValue { .. }
             | EntityRefusal::Reference { .. }
             | EntityRefusal::DatasetIdSentinel { .. }
             | EntityRefusal::ReservedNullValue { .. }

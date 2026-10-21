@@ -6,8 +6,9 @@
 //! `GeoJSON` representation read one instance, the default one of clause
 //! 4.5.16.1: the instance without a `datasetId`, else the first.
 
-use crate::{attribute_instances::AttributeInstances, date_time_text::DateTimeText, entity_state::EntityState, geo_value::GeoValue};
+use crate::{attribute_instances::AttributeInstances, entity_state::EntityState, geo_value::GeoValue};
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
+use andromeda_ngsi_ld_lexicon::time::written_date_time::DateTimeText;
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use chrono::{DateTime, Utc};
 
@@ -49,6 +50,7 @@ impl EntityState {
 mod tests {
     use crate::entity_state::EntityState;
     use andromeda_ngsi_ld_geometry::form::GeometryForm;
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use chrono::{DateTime, Utc};
     use serde_json::{Value, json};
 
@@ -86,7 +88,7 @@ mod tests {
     }
 
     fn instant(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("instant parses").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("instant parses").get()
     }
 
     #[test]

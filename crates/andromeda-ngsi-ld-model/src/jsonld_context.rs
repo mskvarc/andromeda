@@ -1,10 +1,7 @@
 //! The `@context` resources the broker caches, hosts, and serves (ETSI GS CIM 009 clause 5.13).
 
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_lexicon::{
-    identifier::Identifier,
-    rfc3339::{datetime, optional_datetime},
-};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::instant_serde};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use serde::{Deserialize, Serialize};
@@ -48,14 +45,14 @@ pub struct ContextMetadata {
     /// How the broker came to hold this context.
     pub kind: ContextKind,
     /// When the broker first stored it.
-    #[serde(with = "datetime")]
+    #[serde(with = "instant_serde::required")]
     pub created_at: DateTime<Utc>,
     /// When the cached copy stops being valid, if it expires at all.
     #[builder(default = Default::default())]
-    #[serde(with = "optional_datetime")]
+    #[serde(with = "instant_serde::optional")]
     pub expires_at: Option<DateTime<Utc>>,
     /// When it was last read.
-    #[serde(with = "datetime")]
+    #[serde(with = "instant_serde::required")]
     pub last_usage: DateTime<Utc>,
     /// How many times it has been read.
     pub number_of_hits: u64,
@@ -68,7 +65,7 @@ pub struct ContextMetadata {
 mod tests {
     use crate::jsonld_context::{ContextKind, ContextMetadata};
     use andromeda_json_literal::JsonLiteral;
-    use chrono::{TimeZone, Utc};
+    use chrono::{TimeDelta, TimeZone, Utc};
     use serde_json::json;
 
     /// Clause 4.6.3 caps a `DateTime` at six fractional digits, so an instant
@@ -76,7 +73,7 @@ mod tests {
     /// microsecond.
     #[test]
     fn context_metadata_writes_its_instants_at_the_microsecond() {
-        let instant: chrono::DateTime<Utc> = "2026-10-19T16:27:34.800524180Z".parse().expect("a valid instant");
+        let instant = Utc.with_ymd_and_hms(2026, 10, 19, 16, 27, 34).single().expect("a valid instant") + TimeDelta::nanoseconds(800_524_180);
         let metadata = ContextMetadata::builder()
             .serving_iri(None)
             .local_id("urn:ngsi-ld:Context:c1".parse().expect("a valid identifier"))

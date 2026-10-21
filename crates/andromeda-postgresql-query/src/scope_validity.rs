@@ -118,14 +118,14 @@ mod tests {
         history_source::{EvolutionColumns, HistoryBranch, HistoryOf},
         scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis},
     };
-    use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
+    use andromeda_ngsi_ld_lexicon::{time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
     use andromeda_postgresql_schema::temporal::ScopeHistory;
     use chrono::{DateTime, Utc};
     use sea_query::{Alias, Condition, Expr, Iden, PostgresQueryBuilder, Query};
 
     fn instant(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("valid instant").get()
     }
 
     fn render(condition: Condition) -> String {

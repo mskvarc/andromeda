@@ -16,8 +16,9 @@ use crate::{
     rendered_instances,
     stored_history::{StoredHistoryRow, stored_attribute_history},
 };
+use andromeda_ngsi_ld_lexicon::time::{date_time::NgsiLdDateTime, rendering::instant_text};
 use andromeda_test_harness::environment::TestEnvironment;
-use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use pretty_assertions::{assert_eq, assert_ne};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
@@ -27,7 +28,7 @@ const DECLARED_OBSERVED_AT: &str = "2021-01-01T00:00:00Z";
 
 /// Render one instant in the spelling a temporal query parameter takes.
 fn query_instant(instant: DateTime<Utc>) -> String {
-    instant.to_rfc3339_opts(SecondsFormat::Millis, true)
+    instant_text(instant)
 }
 
 /// A `between` window one second either side of the given instant.
@@ -41,7 +42,7 @@ fn window_around(instant: DateTime<Utc>) -> String {
 
 /// A `between` window one second either side of the declared observation.
 fn declared_observation_window() -> String {
-    let observed = DECLARED_OBSERVED_AT.parse::<DateTime<Utc>>().expect("a valid fixture instant");
+    let observed = DECLARED_OBSERVED_AT.parse::<NgsiLdDateTime>().expect("a valid fixture instant").get();
     window_around(observed)
 }
 

@@ -11,7 +11,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
-use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::{tenant::TenantName, time::rendering::instant_text};
 use andromeda_tenancy::database_name::TenantDatabaseName;
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::pooler_probe::{
@@ -29,7 +29,7 @@ use andromeda_test_mocks::{
     notification_server::NotificationServer,
     server_config::MockServerConfig,
 };
-use chrono::{SecondsFormat, Utc};
+use chrono::Utc;
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -365,7 +365,7 @@ async fn an_entity_expires_on_a_dormant_tenant() {
     let tenant = tenant_load::tenant_names("pgbexpire", 1).remove(0);
 
     // Clause 4.22: an entity whose expiresAt is twenty seconds out.
-    let expires_at = (Utc::now() + chrono::Duration::seconds(20)).to_rfc3339_opts(SecondsFormat::Secs, true);
+    let expires_at = instant_text(Utc::now() + chrono::Duration::seconds(20));
     let _ = client
         .post(format!("{broker}entities"))
         .header("NGSILD-Tenant", tenant.as_str())

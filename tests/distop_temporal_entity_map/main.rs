@@ -7,6 +7,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
+use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, tenant_scoped_environment::TenantScopedEnvironment};
 use reqwest::{
@@ -565,7 +566,7 @@ async fn distop_temporal_entity_map_with_lifetime_sets_expiry() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let expires_at_str = body["expiresAt"].as_str().expect("expiresAt should be present");
-    let expires_at = chrono::DateTime::parse_from_rfc3339(expires_at_str).expect("expiresAt should be valid RFC3339");
+    let expires_at = expires_at_str.parse::<NgsiLdDateTime>().expect("expiresAt should be valid RFC3339").get();
     let now = chrono::Utc::now();
     let diff = expires_at.signed_duration_since(now);
     assert!(

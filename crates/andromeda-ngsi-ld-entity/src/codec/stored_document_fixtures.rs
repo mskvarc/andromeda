@@ -31,7 +31,7 @@ pub(crate) fn date_time(text: &str) -> Value {
 pub(crate) fn stamped(mut instance: Value) -> Value {
     if let Some(members) = instance.as_object_mut() {
         members.insert(ngsi("createdAt"), date_time("2026-10-01T17:39:35.497983Z"));
-        members.insert(ngsi("modifiedAt"), date_time("2026-10-01T17:40:00.000000Z"));
+        members.insert(ngsi("modifiedAt"), date_time("2026-10-01T17:40:00Z"));
     }
     instance
 }

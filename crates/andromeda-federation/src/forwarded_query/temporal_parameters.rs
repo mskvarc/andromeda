@@ -6,7 +6,7 @@ use crate::{
     forwarded_query::{ForwardedQuery, SYS_ATTRS_OPTION},
     request::TemporalAnswer,
 };
-use andromeda_ngsi_ld_lexicon::{rfc3339::sub_second, temporal_format::TemporalFormat, time_prop::TimeProp};
+use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time::rendering::instant_text, time_prop::TimeProp};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::{query::temporal::TemporalQueryParameters, representation_parameter::WrittenValue};
 
@@ -22,8 +22,8 @@ impl ForwardedQuery {
     /// instant it is aggregated on.
     pub(super) fn push_temporal_parameters(&mut self, params: &TemporalQueryParameters, answer: TemporalAnswer) {
         self.push_optional(ForwardedParameter::Timerel, params.timerel.map(|timerel| timerel.to_string()));
-        self.push_optional(ForwardedParameter::TimeAt, params.time_at.map(sub_second));
-        self.push_optional(ForwardedParameter::EndTimeAt, params.end_time_at.map(sub_second));
+        self.push_optional(ForwardedParameter::TimeAt, params.time_at.map(instant_text));
+        self.push_optional(ForwardedParameter::EndTimeAt, params.end_time_at.map(instant_text));
         self.push_optional(ForwardedParameter::Timeproperty, params.timeproperty.map(|property| property.to_string()));
         match answer {
             TemporalAnswer::AsRequested => self.push_requested_representation(params),

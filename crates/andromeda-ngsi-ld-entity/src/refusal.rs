@@ -19,6 +19,7 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
     identifier::{Identifier, IdentifierParseError},
     reference::NgsiLdReferenceError,
+    time::value::TimeValueError,
     unit_code_resolution::UnitCodeRefusal,
 };
 use iri_rs::Iri;
@@ -105,13 +106,23 @@ pub enum EntityRefusal {
         #[source]
         source: IdentifierParseError,
     },
-    /// A temporal member of an instance is not an RFC 3339 date-time.
-    #[error("attribute '{attribute}': the member '{member}' is not an RFC 3339 date-time")]
+    /// A temporal member of an instance is not a clause 4.6.3 `DateTime`.
+    #[error("attribute '{attribute}': the member '{member}' is not an NGSI-LD DateTime")]
     DateTime {
         /// The attribute the instance belongs to.
         attribute: AttributeName,
         /// The member.
         member: MemberShape,
+    },
+    /// A value declared as a clause 4.6.3 `DateTime`, `Date` or `Time`, at any
+    /// depth of an instance, is not one.
+    #[error("attribute '{attribute}': a value declared as a time value is not one: {source}")]
+    TimeValue {
+        /// The attribute or sub-attribute the value belongs to.
+        attribute: AttributeName,
+        /// Why the value is not of its declared form.
+        #[source]
+        source: TimeValueError,
     },
     /// A `valueType`, `objectType` or `vocab` entry is not a name.
     #[error("attribute '{attribute}': the member '{member}' is not a valid name: {source}")]

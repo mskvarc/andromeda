@@ -10,7 +10,7 @@ use crate::version::{
     adapted_payload::AdaptedPayload,
     fallback::{EntityMember, VersionFallback},
 };
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, rfc3339, spec_version::SpecVersion};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, spec_version::SpecVersion, time::instant_serde};
 use andromeda_ngsi_ld_model::entity_map::{EntityMap, EntityMapSource, EntityMapType};
 use chrono::{DateTime, Utc};
 use indexmap::{IndexMap, IndexSet};
@@ -28,7 +28,7 @@ pub struct EntityMapBody<'a> {
     type_: &'a EntityMapType,
     /// When the map stops being usable, unless the target predates the
     /// member.
-    #[serde(with = "rfc3339::optional_datetime", skip_serializing_if = "Option::is_none")]
+    #[serde(with = "instant_serde::optional", skip_serializing_if = "Option::is_none")]
     expires_at: Option<DateTime<Utc>>,
     /// Every entity of the map with the sources that hold it.
     entity_map: &'a IndexMap<Identifier, IndexSet<EntityMapSource>>,

@@ -34,7 +34,10 @@ use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 use sqlx::types::Json;
-use std::{slice::from_ref, time::Duration};
+use std::{
+    slice::from_ref,
+    time::{Duration, SystemTime},
+};
 use tokio::time::{Instant, sleep};
 use urlencoding::encode;
 use uuid::Uuid;
@@ -67,7 +70,7 @@ fn served_subtree() -> Value {
 /// An `Expires` value, formatted as the IMF-fixdate an HTTP-date must be.
 fn expires_in(seconds: i64) -> String {
     let instant = Utc::now() + TimeDelta::try_seconds(seconds).expect("a small number of seconds is a valid delta");
-    instant.format("%a, %d %b %Y %H:%M:%S GMT").to_string()
+    httpdate::fmt_http_date(SystemTime::from(instant))
 }
 
 /// Build a response header map, allowing a value that is not readable text: an

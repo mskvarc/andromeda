@@ -9,7 +9,7 @@ use crate::{
     },
     version::fallback::InstanceMember,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, rfc3339::sub_second};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::rendering::instant_text};
 use andromeda_ngsi_ld_model::attribute::{common_fields::CommonAttributeFields, instance::AttributeValue};
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use chrono::{DateTime, Utc};
@@ -37,27 +37,27 @@ pub(crate) fn serialize_common_members<M: SerializeMap>(
     reported_deleted_at: Option<DateTime<Utc>>,
     keeps: impl Fn(InstanceMember) -> bool,
 ) -> Result<(), M::Error> {
-    serialize_present(object, compact_properties::CREATED_AT, common.created_at.as_ref())?;
+    serialize_present(object, compact_properties::CREATED_AT, common.created_at.map(instant_text).as_ref())?;
     serialize_present(
         object,
         compact_properties::DATASET_ID,
         common.dataset_id.as_ref().filter(|_| keeps(InstanceMember::DatasetId)),
     )?;
     match reported_deleted_at {
-        Some(deleted_at) => object.serialize_entry(compact_properties::DELETED_AT, &sub_second(deleted_at))?,
-        None => serialize_present(object, compact_properties::DELETED_AT, common.deleted_at.as_ref())?,
+        Some(deleted_at) => object.serialize_entry(compact_properties::DELETED_AT, &instant_text(deleted_at))?,
+        None => serialize_present(object, compact_properties::DELETED_AT, common.deleted_at.map(instant_text).as_ref())?,
     }
     serialize_present(
         object,
         compact_properties::EXPIRES_AT,
-        common.expires_at.as_ref().filter(|_| keeps(InstanceMember::ExpiresAt)),
+        common.expires_at.filter(|_| keeps(InstanceMember::ExpiresAt)).map(instant_text).as_ref(),
     )?;
     serialize_present(object, compact_properties::INSTANCE_ID, common.instance_id.as_ref())?;
-    serialize_present(object, compact_properties::MODIFIED_AT, common.modified_at.as_ref())?;
+    serialize_present(object, compact_properties::MODIFIED_AT, common.modified_at.map(instant_text).as_ref())?;
     serialize_present(
         object,
         compact_properties::OBSERVED_AT,
-        common.observed_at.as_ref().filter(|_| keeps(InstanceMember::ObservedAt)),
+        common.observed_at.filter(|_| keeps(InstanceMember::ObservedAt)).map(instant_text).as_ref(),
     )
 }
 

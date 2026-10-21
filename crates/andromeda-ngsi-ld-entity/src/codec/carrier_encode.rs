@@ -8,14 +8,13 @@
 
 use crate::{
     codec::value_encode::{IdOut, JsonLiteralOut, ListOut, ModeEncoding, NullJsonOut, NullValueOut, TextOut, TypedTextOut},
-    date_time_text::DateTimeText,
     document::{slot::Slot, value_carrier::ValueCarrier},
     language_entries::{LanguageEntries, LanguageEntry},
     list_object::ListObject,
     value_mode::ValueMode,
 };
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, time::written_date_time::DateTimeText, uri::Uri};
 use andromeda_ngsi_ld_vocabulary::{
     NULL_URI,
     expanded::{classes, properties},

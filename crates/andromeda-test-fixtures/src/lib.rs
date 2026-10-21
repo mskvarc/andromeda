@@ -15,7 +15,7 @@ pub mod temporal_fixture;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
-    allow_workspace_dependencies: [],
+    allow_workspace_dependencies: ["andromeda-ngsi-ld-lexicon"],
     allow_workspace_dev_dependencies: [],
     allow_production_dependencies: all,
 }

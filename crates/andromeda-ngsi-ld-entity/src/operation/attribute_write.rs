@@ -9,14 +9,13 @@
 use crate::{
     attribute_instances::{AttributeInstances, InstanceRemoval},
     attributes::Attributes,
-    date_time_text::DateTimeText,
     document::{instance_document::InstanceDocument, slot::Slot, written_value::ValueSlot},
     operation::{
         instance_patch::{InstancePatchDepth, new_instance, patch_instance},
         mutation_error::MutationError,
     },
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::written_date_time::DateTimeText};
 
 /// Whether removing an instance found one to remove.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

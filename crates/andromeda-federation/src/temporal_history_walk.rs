@@ -21,7 +21,10 @@ use crate::{
     request::HistoryBudget,
 };
 use andromeda_http_headers::ngsild_content_range::NgsiLdContentRange;
-use andromeda_ngsi_ld_lexicon::{rfc3339::sub_second, time_rel::TimeRel};
+use andromeda_ngsi_ld_lexicon::{
+    time::{date_time::NgsiLdDateTime, rendering::instant_text},
+    time_rel::TimeRel,
+};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
 use chrono::{DateTime, Utc};
@@ -121,18 +124,14 @@ pub(crate) fn least_range_end(ranges: &[NgsiLdContentRange]) -> Option<DateTime<
 fn resumed_window(first: &Url, stopped_at: DateTime<Utc>) -> Option<Url> {
     let pairs: Vec<(String, String)> = first.query_pairs().map(|(name, value)| (name.into_owned(), value.into_owned())).collect();
     let value_of = |name: &str| pairs.iter().find(|(key, _)| key == name).map(|(_, value)| value.as_str());
-    let instant_of = |name: &str| {
-        value_of(name)
-            .map(|raw| DateTime::parse_from_rfc3339(raw).map(|instant| instant.with_timezone(&Utc)))
-            .transpose()
-    };
+    let instant_of = |name: &str| value_of(name).map(|raw| raw.parse::<NgsiLdDateTime>().map(NgsiLdDateTime::get)).transpose();
     let timerel = value_of("timerel")?.parse::<TimeRel>().ok()?;
     let interval = TimeInterval::from_parts(Some(timerel), instant_of("timeAt").ok()?, instant_of("endTimeAt").ok()?).ok()?;
     let (timerel, time_at, end_time_at) = interval.resumed_at(stopped_at).parts();
     let resumed = [
         ("timerel", timerel.map(|relation| relation.to_string())),
-        ("timeAt", time_at.map(sub_second)),
-        ("endTimeAt", end_time_at.map(sub_second)),
+        ("timeAt", time_at.map(instant_text)),
+        ("endTimeAt", end_time_at.map(instant_text)),
     ];
     let mut url = first.clone(); // clone: the resumed request is the first one with another window
     {
@@ -151,11 +150,12 @@ fn resumed_window(first: &Url, stopped_at: DateTime<Utc>) -> Option<Url> {
 #[cfg(test)]
 mod tests {
     use crate::temporal_history_walk::resumed_window;
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use chrono::{DateTime, Utc};
     use url::Url;
 
     fn at(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("a valid instant").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("a valid instant").get()
     }
 
     /// Clause 6.3.10: what remains of a `before` window after the instant the

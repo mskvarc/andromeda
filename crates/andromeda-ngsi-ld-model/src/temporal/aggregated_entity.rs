@@ -22,7 +22,7 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     identifier::Identifier,
-    rfc3339::sub_second,
+    time::rendering::instant_text,
 };
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
@@ -370,7 +370,7 @@ struct Instant(DateTime<Utc>);
 // Hand-written: the spelling is the lexicon's, not chrono's.
 impl Serialize for Instant {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&sub_second(self.0))
+        serializer.serialize_str(&instant_text(self.0))
     }
 }
 

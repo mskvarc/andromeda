@@ -29,7 +29,6 @@ pub mod attributes;
 pub mod codec;
 pub mod committed_values;
 pub mod conversion;
-pub mod date_time_text;
 pub mod document;
 pub mod entity_state;
 pub mod entity_types;
@@ -58,7 +57,6 @@ pub mod scope_refusal;
 pub mod scope_slot;
 pub mod scopes;
 pub mod syntax_category;
-pub mod system_instant;
 pub mod system_time;
 pub mod value_mode;
 

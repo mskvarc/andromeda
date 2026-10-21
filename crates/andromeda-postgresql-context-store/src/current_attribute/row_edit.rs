@@ -164,8 +164,8 @@ mod tests {
         round_trip_tests::{committed, dictionary, document, ex, ngsi, property, with},
         row_edit::{EditReach, InstanceGrain, MovedInstance, RowEdit},
     };
-    use andromeda_ngsi_ld_entity::{entity_state::EntityState, instance::Instance, system_instant::SystemInstant};
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+    use andromeda_ngsi_ld_entity::{entity_state::EntityState, instance::Instance};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::system_instant::SystemInstant};
     use chrono::{TimeZone, Utc};
     use serde_json::{Map, Value, json};
 

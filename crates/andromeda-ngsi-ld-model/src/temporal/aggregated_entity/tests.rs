@@ -9,7 +9,7 @@ use crate::{
         aggregated_entity::{AggregateValue, AggregatedTemporalEntity, AggregatedTriple, AggregatedValues},
     },
 };
-use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, attribute_type::AttributeType};
+use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, attribute_type::AttributeType, time::date_time::NgsiLdDateTime};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
 use chrono::{DateTime, Utc};
@@ -17,7 +17,7 @@ use chrono::{DateTime, Utc};
 const WEIGHT: &str = "https://uri.etsi.org/ngsi-ld/default-context/weight";
 
 fn instant(raw: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(raw).expect("a valid instant").with_timezone(&Utc)
+    raw.parse::<NgsiLdDateTime>().expect("a valid instant").get()
 }
 
 fn weight() -> AttributeName {

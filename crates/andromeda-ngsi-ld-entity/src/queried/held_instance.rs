@@ -2,14 +2,19 @@
 
 use crate::{
     attribute_instances::AttributeInstances,
-    date_time_text::DateTimeText,
     expanded_value::ValueNode,
     family_value::FamilyValue,
     instance::Instance,
     queried::family_values::{FamilyValues, language_strings},
     value_mode::Stored,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, reference::NgsiLdReference};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    identifier::Identifier,
+    reference::NgsiLdReference,
+    time::written_date_time::DateTimeText,
+};
 use andromeda_ngsi_ld_query::queried_entity::{attribute_reading::QueriedInstance, instance_metadata::InstanceMetadata, value_item::ValueItem};
 use std::borrow::Cow;
 

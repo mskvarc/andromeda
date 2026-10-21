@@ -166,13 +166,14 @@ mod tests {
         precondition::Precondition,
         projected_attributes::ProjectedAttributes,
     };
-    use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes, system_instant::SystemInstant};
+    use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes};
     use andromeda_ngsi_ld_lexicon::{
         attribute_name::AttributeName,
         attribute_type::AttributeType,
         entity_type_name::EntityTypeName,
         identifier::Identifier,
         scope::path::ScopePath,
+        time::system_instant::SystemInstant,
     };
     use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
     use andromeda_postgresql_context_store::entity::staged_geometry::StagedGeometry;

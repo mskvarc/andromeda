@@ -77,7 +77,7 @@ fn leaf_expression(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, lea
 mod tests {
     use crate::split_filter_leaves::build_filter_leaf_truths;
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
-    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         filter::parser,
@@ -96,7 +96,6 @@ mod tests {
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
         history_source::HistoryBranch,
     };
-    use chrono::{DateTime, Utc};
     use sea_query::PostgresQueryBuilder;
 
     fn compiled(q: &str, geo: Option<GeoQuery>, scope: Option<&str>) -> CompiledTemporalQuery {
@@ -111,9 +110,7 @@ mod tests {
             .window(
                 TemporalWindow::builder()
                     .timeproperty(TimeProp::Observed)
-                    .interval(TimeInterval::After(
-                        DateTime::parse_from_rfc3339("2019-01-01T00:00:00Z").expect("instant").with_timezone(&Utc),
-                    ))
+                    .interval(TimeInterval::After("2019-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("instant").get()))
                     .build(),
             )
             .instances(InstanceSelection::builder().build())

@@ -19,7 +19,7 @@ use crate::{
     stored_aggregation_error::{AggregationColumn, StoredAggregationError},
     stored_history_error::UnitCodeColumn,
 };
-use andromeda_ngsi_ld_lexicon::ngsi_ld_time::NgsiLdTime;
+use andromeda_ngsi_ld_lexicon::time::time_of_day::NgsiLdTime;
 use andromeda_ngsi_ld_model::temporal::{AggregationAverage, AggregationMinMax, TemporalAggregationRow};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_codes::{
@@ -188,9 +188,7 @@ fn boolean_extremum(counted: JsonNumber, column: AggregationColumn) -> Result<Ag
 fn decode_average(row: &PgRow, value_shape: Option<RecordedShape>) -> Result<Option<AggregationAverage>, TemporalStoreError> {
     if value_shape == Some(RecordedShape::Time) {
         return match projected_column::<NaiveTime>(row, AggregationColumn::AggAvgTime.into())? {
-            Some(mean) => Ok(Some(AggregationAverage::Time(
-                NgsiLdTime::normalise(mean).map_err(TemporalStoreError::StoredTime)?,
-            ))),
+            Some(mean) => Ok(Some(AggregationAverage::Time(NgsiLdTime::normalise(mean)))),
             None => Ok(None),
         };
     }

@@ -1,4 +1,5 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
+use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
 use std::time::Duration;
 
 use andromeda_test_fixtures::context::CORE_CONTEXT;
@@ -243,7 +244,7 @@ async fn notification_payload_contains_type_subscription_id_notified_at_and_data
     pretty_assertions::assert_eq!(notification.body["type"], "Notification");
     pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
     let notified_at = notification.body["notifiedAt"].as_str().expect("notifiedAt string");
-    assert!(chrono::DateTime::parse_from_rfc3339(notified_at).is_ok());
+    assert!(notified_at.parse::<NgsiLdDateTime>().is_ok());
     assert!(notification.body["data"].is_array());
     scope.finish().await.expect("cleanup failed");
 }
@@ -438,8 +439,20 @@ async fn notification_after_successful_delivery_subscription_status_is_ok_and_ti
     let (status, body) = retrieve_subscription(&http_client, &subscription_id).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["notification"]["status"], "ok");
-    assert!(chrono::DateTime::parse_from_rfc3339(body["notification"]["lastNotification"].as_str().expect("lastNotification string")).is_ok());
-    assert!(chrono::DateTime::parse_from_rfc3339(body["notification"]["lastSuccess"].as_str().expect("lastSuccess string")).is_ok());
+    assert!(
+        body["notification"]["lastNotification"]
+            .as_str()
+            .expect("lastNotification string")
+            .parse::<NgsiLdDateTime>()
+            .is_ok()
+    );
+    assert!(
+        body["notification"]["lastSuccess"]
+            .as_str()
+            .expect("lastSuccess string")
+            .parse::<NgsiLdDateTime>()
+            .is_ok()
+    );
     scope.finish().await.expect("cleanup failed");
 }
 
@@ -464,7 +477,13 @@ async fn notification_failed_delivery_sets_failed_status_and_last_failure_timest
         pretty_assertions::assert_eq!(status, StatusCode::OK);
 
         if body["notification"]["status"] == "failed" {
-            assert!(chrono::DateTime::parse_from_rfc3339(body["notification"]["lastFailure"].as_str().expect("lastFailure string")).is_ok());
+            assert!(
+                body["notification"]["lastFailure"]
+                    .as_str()
+                    .expect("lastFailure string")
+                    .parse::<NgsiLdDateTime>()
+                    .is_ok()
+            );
             scope.finish().await.expect("cleanup failed");
             return;
         }

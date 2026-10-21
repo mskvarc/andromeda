@@ -116,7 +116,7 @@ mod tests {
         csource_matching::{csource_subscription_follows_registration_changes, csource_subscription_selects_registration, matching_information},
         geo_filter::SubscriptionGeoFilter,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_model::{
         registration::ContextSourceRegistration,
         subscription::{EntitySelector, SubscriptionStatus},
@@ -183,7 +183,7 @@ mod tests {
     }
 
     fn at(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("valid instant").get()
     }
 
     fn temporal_q(interval: TimeInterval, timeproperty: Option<TimeProp>) -> CompiledCsrTemporalFilter {

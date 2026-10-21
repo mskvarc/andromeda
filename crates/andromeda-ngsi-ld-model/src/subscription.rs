@@ -7,8 +7,8 @@ use andromeda_ngsi_ld_lexicon::{
     dereferenceable_uri::DereferenceableUri,
     identifier::Identifier,
     positive_milliseconds::PositiveMilliseconds,
-    rfc3339,
     spec_version::SpecVersion,
+    time::instant_serde,
 };
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
@@ -164,13 +164,13 @@ pub struct NotificationParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub join_level: Option<NonZeroU32>,
     /// Timestamp of the last notification sent.
-    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
+    #[serde(skip_serializing_if = "Option::is_none", with = "instant_serde::optional", default)]
     pub last_notification: Option<DateTime<Utc>>,
     /// Timestamp of the last successful notification delivery.
-    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
+    #[serde(skip_serializing_if = "Option::is_none", with = "instant_serde::optional", default)]
     pub last_success: Option<DateTime<Utc>>,
     /// Timestamp of the last failed notification delivery.
-    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
+    #[serde(skip_serializing_if = "Option::is_none", with = "instant_serde::optional", default)]
     pub last_failure: Option<DateTime<Utc>>,
     /// How many times the notification has been sent (Table 5.2.14.2-1
     /// `timesSent`).
@@ -334,14 +334,14 @@ pub struct SubscriptionLifecycle {
     /// Current lifecycle status of the subscription.
     pub status: SubscriptionStatus,
     /// Expiration timestamp after which the subscription becomes inactive.
-    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
+    #[serde(skip_serializing_if = "Option::is_none", with = "instant_serde::optional", default)]
     #[builder(default = Default::default())]
     pub expires_at: Option<DateTime<Utc>>,
     /// Timestamp when the subscription was created.
-    #[serde(with = "rfc3339::datetime")]
+    #[serde(with = "instant_serde::required")]
     pub created_at: DateTime<Utc>,
     /// Timestamp when the subscription was last modified.
-    #[serde(with = "rfc3339::datetime")]
+    #[serde(with = "instant_serde::required")]
     pub modified_at: DateTime<Utc>,
 }
 

@@ -1,6 +1,6 @@
 //! The `TimeInterval` member (ETSI GS CIM 009 clause 5.2.11).
 
-use andromeda_ngsi_ld_lexicon::rfc3339;
+use andromeda_ngsi_ld_lexicon::time::instant_serde;
 use andromeda_ngsi_ld_query::temporal::window::TimeInterval as QueryWindow;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -16,10 +16,10 @@ use thiserror::Error;
 #[serde(rename_all = "camelCase", try_from = "TimeIntervalWire")]
 pub struct TimeInterval {
     /// The start of the interval.
-    #[serde(with = "rfc3339::datetime")]
+    #[serde(with = "instant_serde::required")]
     pub start_at: DateTime<Utc>,
     /// The end of the interval; open when absent.
-    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
+    #[serde(skip_serializing_if = "Option::is_none", with = "instant_serde::optional", default)]
     pub end_at: Option<DateTime<Utc>>,
 }
 
@@ -69,10 +69,10 @@ pub enum TimeIntervalError {
 #[serde(rename_all = "camelCase")]
 struct TimeIntervalWire {
     /// The `startAt` member.
-    #[serde(with = "rfc3339::datetime")]
+    #[serde(with = "instant_serde::required")]
     start_at: DateTime<Utc>,
     /// The `endAt` member.
-    #[serde(with = "rfc3339::optional_datetime", default)]
+    #[serde(with = "instant_serde::optional", default)]
     end_at: Option<DateTime<Utc>>,
 }
 
@@ -93,6 +93,7 @@ impl TryFrom<TimeIntervalWire> for TimeInterval {
 #[cfg(test)]
 mod tests {
     use crate::time_interval::TimeInterval;
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval as QueryWindow;
     use serde_json::json;
 
@@ -125,7 +126,7 @@ mod tests {
     }
 
     fn at(raw: &str) -> chrono::DateTime<chrono::Utc> {
-        chrono::DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&chrono::Utc)
+        raw.parse::<NgsiLdDateTime>().expect("valid instant").get()
     }
 
     /// Clauses 5.10.2.4 and 5.11.2.4: `after` reaches every interval that

@@ -5,7 +5,6 @@
 use crate::{
     attribute_instances::AttributeInstances,
     attributes::Attributes,
-    date_time_text::DateTimeText,
     document::{
         EntityDocument,
         attribute_member::AttributeMember,
@@ -23,7 +22,7 @@ use crate::{
     literal::{Literal, LiteralValue},
     value_mode::{Fragment, ValueMode},
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, time::written_date_time::DateTimeText};
 use andromeda_ngsi_ld_number::JsonNumber;
 use indexmap::IndexMap;
 

@@ -349,6 +349,7 @@ mod tests {
         mapper::{StoredManagement, context_source_info_of, interval_of, management_of},
         stored_registration_error::{StoredIntervalError, StoredRegistrationError},
     };
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_ngsi_ld_model::{
         key_value_pair::KeyValuePair,
         registration_management::{LocalScope, RegistrationManagementInfo},
@@ -359,7 +360,7 @@ mod tests {
     use serde_json::json;
 
     fn instant(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("a valid instant").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("a valid instant").get()
     }
 
     fn management(cache_duration: Option<&str>, cooldown: Option<i64>, local_only: Option<bool>, timeout: Option<i64>) -> StoredManagement {

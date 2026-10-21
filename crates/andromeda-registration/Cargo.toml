@@ -19,7 +19,7 @@ andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-request.workspace = true
 andromeda-persistence-failure.workspace = true
-chrono = { version = "0.4.45", features = ["serde"] }
+chrono = "0.4.45"
 futures = "0.3.34"
 indexmap = { version = "2.14.2", features = ["serde"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }

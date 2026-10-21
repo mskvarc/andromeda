@@ -98,7 +98,7 @@ mod tests {
         },
         test_history::held_history,
     };
-    use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
+    use andromeda_ngsi_ld_lexicon::{time::rendering::instant_text, time_prop::TimeProp};
     use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
@@ -152,7 +152,7 @@ mod tests {
                 .collect();
             assert_eq!(days.len(), 3);
             assert!(days.windows(2).all(|pair| pair[0] < pair[1]), "{days:?}");
-            assert_eq!(days[2].to_rfc3339(), "2024-01-05T00:00:00+00:00");
+            assert_eq!(instant_text(days[2]), "2024-01-05T00:00:00Z");
         }
     }
 

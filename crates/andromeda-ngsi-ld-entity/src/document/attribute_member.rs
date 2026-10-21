@@ -46,12 +46,12 @@ impl AttributeMember {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        date_time_text::DateTimeText,
-        document::{attribute_member::AttributeMember, instance_document::InstanceDocument},
-        system_instant::SystemInstant,
+    use crate::document::{attribute_member::AttributeMember, instance_document::InstanceDocument};
+    use andromeda_ngsi_ld_lexicon::{
+        attribute_name::AttributeName,
+        identifier::Identifier,
+        time::{system_instant::SystemInstant, written_date_time::DateTimeText},
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use indexmap::IndexMap;
 
     /// A client-written instant.

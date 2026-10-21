@@ -1,7 +1,7 @@
 //! The members every NGSI-LD attribute family carries (ETSI GS CIM 009 clause 5.2).
 
 use crate::attribute::{instance::AttributeValue, nested_null::NestedMember};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::rendering::instant_text};
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
@@ -39,13 +39,13 @@ pub struct CommonAttributeFields {
 impl Serialize for CommonAttributeFields {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(None)?;
-        optional_entry(&mut map, compact_properties::CREATED_AT, self.created_at.as_ref())?;
+        optional_entry(&mut map, compact_properties::CREATED_AT, self.created_at.map(instant_text).as_ref())?;
         optional_entry(&mut map, compact_properties::DATASET_ID, self.dataset_id.as_ref())?;
-        optional_entry(&mut map, compact_properties::DELETED_AT, self.deleted_at.as_ref())?;
-        optional_entry(&mut map, compact_properties::EXPIRES_AT, self.expires_at.as_ref())?;
+        optional_entry(&mut map, compact_properties::DELETED_AT, self.deleted_at.map(instant_text).as_ref())?;
+        optional_entry(&mut map, compact_properties::EXPIRES_AT, self.expires_at.map(instant_text).as_ref())?;
         optional_entry(&mut map, compact_properties::INSTANCE_ID, self.instance_id.as_ref())?;
-        optional_entry(&mut map, compact_properties::MODIFIED_AT, self.modified_at.as_ref())?;
-        optional_entry(&mut map, compact_properties::OBSERVED_AT, self.observed_at.as_ref())?;
+        optional_entry(&mut map, compact_properties::MODIFIED_AT, self.modified_at.map(instant_text).as_ref())?;
+        optional_entry(&mut map, compact_properties::OBSERVED_AT, self.observed_at.map(instant_text).as_ref())?;
         for (name, member) in &self.sub_attributes {
             map.serialize_entry(name.as_str(), &NestedMember(member))?;
         }

@@ -7,8 +7,11 @@
 //! used in temporal representation of Properties", and clause 5.2.5 has a Core
 //! write ignore one a producer supplies.
 
-use crate::{attributes::Attributes, date_time_text::DateTimeText, family_value::FamilyValue, proof_seals::ProofSeals, system_instant::SystemInstant};
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use crate::{attributes::Attributes, family_value::FamilyValue, proof_seals::ProofSeals};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_type::AttributeType,
+    time::{system_instant::SystemInstant, written_date_time::DateTimeText},
+};
 use typed_builder::TypedBuilder;
 
 /// One attribute instance: its family and value, its temporal members and its
@@ -152,8 +155,8 @@ mod tests {
         attribute_instances::AttributeInstances,
         instance::Instance,
         operation::speed_entity::{date_time, name, number, property},
-        system_instant::SystemInstant,
     };
+    use andromeda_ngsi_ld_lexicon::time::system_instant::SystemInstant;
 
     const ACCURACY: &str = "https://example.org/accuracy";
 

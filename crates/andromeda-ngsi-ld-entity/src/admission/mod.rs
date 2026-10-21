@@ -6,6 +6,7 @@ pub mod attribute_nesting_admission;
 pub mod document_admission;
 pub mod instance_completeness;
 pub mod null_sentinel_admission;
+pub mod time_value_admission;
 
 #[cfg(test)]
 mod document_admission_tests;

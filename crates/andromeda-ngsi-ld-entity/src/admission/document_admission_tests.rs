@@ -835,3 +835,78 @@ fn a_replacement_carrying_its_value_is_admitted() {
     )
     .expect("a Property with its value is a complete instance");
 }
+
+/// A Property instance whose value is the expanded value node `value`.
+fn property_valued(value: &Value) -> Value {
+    json!({
+        "@type": [AttributeType::Property.iri().as_str()],
+        properties::VALUE.as_str(): [value],
+    })
+}
+
+/// The expanded `DateTime`, `Date` and `Time` datatype IRIs, each with a
+/// spelling clause 4.6.3 refuses for it.
+fn misspelled_time_values() -> [(&'static str, &'static str); 7] {
+    [
+        ("https://uri.etsi.org/ngsi-ld/DateTime", "2024-01-01T00:00:00+01:00"),
+        ("https://uri.etsi.org/ngsi-ld/DateTime", "2024-01-01T00:00:00+00:00"),
+        ("https://uri.etsi.org/ngsi-ld/DateTime", "2024-01-01T00:00:00.1234567Z"),
+        ("https://uri.etsi.org/ngsi-ld/DateTime", "2024-01-01T00:00Z"),
+        ("https://uri.etsi.org/ngsi-ld/DateTime", "yesterday"),
+        ("https://uri.etsi.org/ngsi-ld/Date", "2024-1-1"),
+        ("https://uri.etsi.org/ngsi-ld/Time", "12:00:00+01:00"),
+    ]
+}
+
+/// Clause 4.6.3 fixes each time value form, and annex C.6 makes the
+/// `@value`/`@type` pair how a value declares one, so a declared value that
+/// is not of its form is refused rather than stored as a string.
+#[test]
+fn a_declared_time_value_not_of_its_form_is_refused() {
+    for (datatype, text) in misspelled_time_values() {
+        let instance = property_valued(&json!({"@value": text, "@type": datatype}));
+        for admission in ADMISSIONS {
+            let error = admit(&entity_with_instance(&instance), admission).expect_err("a misspelled time value");
+            assert!(matches!(error, EntityRefusal::TimeValue { .. }), "{datatype} {text} {admission:?}: {error:?}");
+        }
+        let error = admit_fragment(&instance, NullSentinelAdmission::PartialUpdateFragment).expect_err("a misspelled time value");
+        assert!(matches!(error, EntityRefusal::TimeValue { .. }), "{datatype} {text}: {error:?}");
+    }
+}
+
+/// A sub-attribute is an attribute of its instance (clause 4.5.2.2), and a
+/// structured value nests values of its own, so the rule holds at every depth.
+#[test]
+fn a_declared_time_value_is_held_to_its_form_at_every_depth() {
+    let misspelled = json!({"@value": "2024-01-01T00:00:00+01:00", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"});
+    let mut on_a_sub_attribute = property_valued(&json!({"@value": 1}));
+    on_a_sub_attribute["https://example.org/measuredAt"] = json!([property_valued(&misspelled)]);
+    let inside_a_structure = property_valued(&json!({"https://example.org/reading": [{"https://example.org/at": [misspelled]}]}));
+    let inside_a_list = property_valued(&json!({"@list": [misspelled]}));
+    for instance in [on_a_sub_attribute, inside_a_structure, inside_a_list] {
+        let error = admit(&entity_with_instance(&instance), NullSentinelAdmission::Refused).expect_err("a misspelled time value");
+        assert!(matches!(error, EntityRefusal::TimeValue { .. }), "{instance}: {error:?}");
+    }
+}
+
+/// Clause 4.6.3 admits a comma for the decimal point and up to six digits.
+#[test]
+fn a_declared_time_value_of_its_form_is_admitted() {
+    for (datatype, text) in [
+        ("https://uri.etsi.org/ngsi-ld/DateTime", "2024-01-01T00:00:00Z"),
+        ("https://uri.etsi.org/ngsi-ld/DateTime", "2024-01-01T00:00:00,123456Z"),
+        ("https://uri.etsi.org/ngsi-ld/Date", "2024-01-01"),
+        ("https://uri.etsi.org/ngsi-ld/Time", "12:00:00.5Z"),
+    ] {
+        let instance = property_valued(&json!({"@value": text, "@type": datatype}));
+        admit(&entity_with_instance(&instance), NullSentinelAdmission::Refused).unwrap_or_else(|error| panic!("{datatype} {text}: {error:?}"));
+    }
+}
+
+/// Clause 4.6.3 admits every JSON native type as a value, so a string that
+/// declares no form is a string whatever it resembles.
+#[test]
+fn an_undeclared_string_resembling_a_time_value_is_admitted() {
+    let instance = property_valued(&json!({"@value": "2024-01-01T00:00:00+01:00"}));
+    admit(&entity_with_instance(&instance), NullSentinelAdmission::Refused).expect("an undeclared string is a string");
+}

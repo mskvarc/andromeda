@@ -19,7 +19,7 @@
 //! subscription keeps each as the term tree of its expanded names, and the
 //! lifecycle members honour `sysAttrs`.
 
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, rfc3339};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::instant_serde};
 use andromeda_ngsi_ld_model::subscription::{
     Endpoint,
     NotificationParams,
@@ -82,13 +82,13 @@ struct NotificationView<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     join_level: Option<NonZeroU32>,
     /// Timestamp of the last notification sent.
-    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime")]
+    #[serde(skip_serializing_if = "Option::is_none", with = "instant_serde::optional")]
     last_notification: Option<DateTime<Utc>>,
     /// Timestamp of the last successful notification delivery.
-    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime")]
+    #[serde(skip_serializing_if = "Option::is_none", with = "instant_serde::optional")]
     last_success: Option<DateTime<Utc>>,
     /// Timestamp of the last failed notification delivery.
-    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime")]
+    #[serde(skip_serializing_if = "Option::is_none", with = "instant_serde::optional")]
     last_failure: Option<DateTime<Utc>>,
     /// How many times the notification has been sent.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -143,13 +143,13 @@ struct LifecycleView {
     /// Current lifecycle status of the subscription.
     status: SubscriptionStatus,
     /// Expiration timestamp after which the subscription becomes inactive.
-    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime")]
+    #[serde(skip_serializing_if = "Option::is_none", with = "instant_serde::optional")]
     expires_at: Option<DateTime<Utc>>,
     /// Timestamp when the subscription was created, when `sysAttrs` asks.
-    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime")]
+    #[serde(skip_serializing_if = "Option::is_none", with = "instant_serde::optional")]
     created_at: Option<DateTime<Utc>>,
     /// Timestamp when the subscription was last modified, when `sysAttrs` asks.
-    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime")]
+    #[serde(skip_serializing_if = "Option::is_none", with = "instant_serde::optional")]
     modified_at: Option<DateTime<Utc>>,
 }
 

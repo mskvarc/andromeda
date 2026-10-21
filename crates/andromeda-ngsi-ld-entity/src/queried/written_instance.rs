@@ -7,7 +7,6 @@
 //! encoding) holds no value.
 
 use crate::{
-    date_time_text::DateTimeText,
     document::{
         attribute_member::AttributeMember,
         instance_document::InstanceDocument,
@@ -18,7 +17,13 @@ use crate::{
     queried::family_values::{FamilyValues, language_strings},
     value_mode::Fragment,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, reference::NgsiLdReference};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    identifier::Identifier,
+    reference::NgsiLdReference,
+    time::written_date_time::DateTimeText,
+};
 use andromeda_ngsi_ld_query::queried_entity::{attribute_reading::QueriedInstance, instance_metadata::InstanceMetadata, value_item::ValueItem};
 use cefact_units::UnitCode;
 use std::borrow::Cow;

@@ -137,6 +137,7 @@ mod tests {
     use crate::response_compaction::compact_for_response;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
+    use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
     use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
     use chrono::{Duration, Utc};
     use serde_json::{Value, json};
@@ -184,7 +185,7 @@ mod tests {
     /// client's `isActive` is not rewritten.
     #[tokio::test]
     async fn a_due_expiration_reports_status_expired_at_read_time() {
-        let due = (Utc::now() - Duration::seconds(1)).to_rfc3339();
+        let due = instant_text(Utc::now() - Duration::seconds(1));
         let subscription = compact_for_response(stored(&json!({"expiresAt": due, "isActive": true})), &core_names().await).await;
 
         pretty_assertions::assert_eq!(subscription.lifecycle.status, SubscriptionStatus::Expired);
@@ -193,7 +194,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_future_or_absent_expiration_leaves_the_status_alone() {
-        let future = (Utc::now() + Duration::hours(1)).to_rfc3339();
+        let future = instant_text(Utc::now() + Duration::hours(1));
         let subscription = compact_for_response(stored(&json!({"expiresAt": future})), &core_names().await).await;
         pretty_assertions::assert_eq!(subscription.lifecycle.status, SubscriptionStatus::Active);
 

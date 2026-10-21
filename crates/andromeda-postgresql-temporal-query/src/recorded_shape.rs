@@ -19,6 +19,7 @@
 //! that path wrote.
 
 use crate::{alias::Ah, structured_json::structured_json};
+use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime};
 use andromeda_postgresql_codes::{recorded_shape::RecordedShape, value_kind::ValueKind};
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
@@ -34,16 +35,6 @@ use sea_query::{CaseStatement, Expr, ExprTrait, Iden, SimpleExpr};
 #[derive(Iden, Clone, Copy)]
 #[iden = "recorded_shape"]
 pub struct RecordedShapeColumn;
-
-/// The whole-value pattern the canonical `NgsiLdTime` rendering matches.
-///
-/// Anchored at both ends and fixed-width: the write path canonicalises every
-/// `Time` to UTC with exactly six fractional digits, so a text value that is
-/// not that shape was never written as a `Time`.
-pub(crate) const CANONICAL_TIME_PATTERN: &str = "^[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{6}Z$";
-
-/// The whole-value pattern the canonical `NgsiLdDate` rendering matches.
-const CANONICAL_DATE_PATTERN: &str = "^[0-9]{4}-[0-9]{2}-[0-9]{2}$";
 
 /// The JSON type name `jsonb_typeof` reports for an array.
 const JSON_ARRAY_TYPE: &str = "array";
@@ -78,11 +69,11 @@ pub fn recorded_shape() -> SimpleExpr {
         )
         .case(value_kind_is(ValueKind::Object), shape(RecordedShape::Object))
         .case(
-            value_kind_is(ValueKind::String).and(regex_match(value_string(), text_literal(CANONICAL_TIME_PATTERN))),
+            value_kind_is(ValueKind::String).and(regex_match(value_string(), text_literal(NgsiLdTime::STORED_PATTERN))),
             shape(RecordedShape::Time),
         )
         .case(
-            value_kind_is(ValueKind::String).and(regex_match(value_string(), text_literal(CANONICAL_DATE_PATTERN))),
+            value_kind_is(ValueKind::String).and(regex_match(value_string(), text_literal(NgsiLdDate::STORED_PATTERN))),
             shape(RecordedShape::Date),
         )
         .case(value_kind_is(ValueKind::String), shape(RecordedShape::String))
@@ -96,7 +87,8 @@ pub fn recorded_shape() -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use crate::recorded_shape::{CANONICAL_DATE_PATTERN, CANONICAL_TIME_PATTERN, recorded_shape};
+    use crate::recorded_shape::recorded_shape;
+    use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime};
     use sea_query::{PostgresQueryBuilder, Query};
 
     fn rendered() -> String {
@@ -126,8 +118,8 @@ mod tests {
     #[test]
     fn a_time_and_a_date_are_separated_from_a_plain_string_by_their_canonical_form() {
         let sql = rendered();
-        assert!(sql.contains(CANONICAL_TIME_PATTERN), "{sql}");
-        assert!(sql.contains(CANONICAL_DATE_PATTERN), "{sql}");
+        assert!(sql.contains(NgsiLdTime::STORED_PATTERN), "{sql}");
+        assert!(sql.contains(NgsiLdDate::STORED_PATTERN), "{sql}");
         let time_branch = sql.find("THEN 9").expect("a time branch");
         let date_branch = sql.find("THEN 8").expect("a date branch");
         let string_branch = sql.find("THEN 2").expect("a string branch");
@@ -139,7 +131,7 @@ mod tests {
     /// aggregation tables would then offer `avg` over it.
     #[test]
     fn both_temporal_patterns_pin_the_whole_value() {
-        for pattern in [CANONICAL_TIME_PATTERN, CANONICAL_DATE_PATTERN] {
+        for pattern in [NgsiLdTime::STORED_PATTERN, NgsiLdDate::STORED_PATTERN] {
             assert!(pattern.starts_with('^'), "{pattern}");
             assert!(pattern.ends_with('$'), "{pattern}");
         }

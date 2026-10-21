@@ -11,18 +11,13 @@ use crate::{
     assembly::null_sentinel::{is_null, is_sole_null},
     expanded_tree::{ExpandedItem, ExpandedNode},
 };
-use andromeda_ngsi_ld_entity::{
-    date_time_text::DateTimeText,
-    document::slot::Slot,
-    member_shape::MemberShape,
-    refusal::EntityRefusal,
-    system_instant::SystemInstant,
-};
+use andromeda_ngsi_ld_entity::{document::slot::Slot, member_shape::MemberShape, refusal::EntityRefusal};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     default_instance::DEFAULT_INSTANCE_TOKEN,
     identifier::Identifier,
     reference::NgsiLdReference,
+    time::{system_instant::SystemInstant, written_date_time::DateTimeText},
     unit_code_resolution::{UnitCodeRefusal, resolve_unit_code},
 };
 use cefact_units::UnitCode;

@@ -1,5 +1,6 @@
 //! Reusable temporal payload construction.
 
+use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use serde_json::{Value, json};
@@ -22,7 +23,7 @@ impl TemporalPropertyFixture {
     pub fn into_member(self) -> (String, Value) {
         (
             self.attribute.to_string(),
-            json!([{"type": "Property", "value": self.value, "observedAt": self.observed_at.to_rfc3339()}]),
+            json!([{"type": "Property", "value": self.value, "observedAt": instant_text(self.observed_at)}]),
         )
     }
 }

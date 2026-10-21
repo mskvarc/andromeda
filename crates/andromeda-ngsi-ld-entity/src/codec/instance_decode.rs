@@ -17,7 +17,6 @@ use crate::{
         object_key::{ObjectKey, attribute_key},
         raw_scalar::RawScalar,
     },
-    date_time_text::DateTimeText,
     document::{attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot, value_carrier::ValueCarrier, written_value::ValueSlot},
     expanded_value::ExpandedValue,
     member_role::{MemberRole, ProofSeal},
@@ -25,9 +24,14 @@ use crate::{
     ngsi_ld_null::is_ngsi_ld_null,
     proof_seals::ProofSeals,
     refusal::EntityRefusal,
-    system_instant::SystemInstant,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, reference::NgsiLdReference};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    identifier::Identifier,
+    reference::NgsiLdReference,
+    time::{system_instant::SystemInstant, written_date_time::DateTimeText},
+};
 use cefact_units::UnitCode;
 use indexmap::IndexMap;
 use serde::{

@@ -318,7 +318,7 @@ mod tests {
         windowed_delete_statement,
         windowed_writes_statement,
     };
-    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         dataset::DatasetFilter,
         temporal::{
@@ -332,7 +332,7 @@ mod tests {
     use sea_query::PostgresQueryBuilder;
 
     fn instant(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("valid instant").get()
     }
 
     fn ids() -> Vec<Identifier> {

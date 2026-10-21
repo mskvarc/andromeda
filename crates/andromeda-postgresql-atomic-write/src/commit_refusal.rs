@@ -184,7 +184,6 @@ pub(crate) fn history(error: TemporalStoreError) -> AttemptFailure {
         | TemporalStoreError::StatementBuild(_)
         | TemporalStoreError::RetentionHorizon(_)
         | TemporalStoreError::ColumnstoreHorizon(_)
-        | TemporalStoreError::StoredTime(_)
         | TemporalStoreError::ScopeHasNoAttributeRow
         | TemporalStoreError::TimestampPrecision(_)
         | TemporalStoreError::MixedAggregationGroup(_)

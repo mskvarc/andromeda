@@ -19,7 +19,7 @@ andromeda-postgresql-encoding.workspace = true
 andromeda-postgresql-query.workspace = true
 andromeda-postgresql-schema.workspace = true
 andromeda-postgresql-seaquery.workspace = true
-chrono = { version = "0.4.45", features = ["serde"] }
+chrono = "0.4.45"
 derive_more = { version = "2.1.1", features = ["try_from"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 sea-query = { version = "1.0.2", features = ["backend-postgres", "with-chrono"] }

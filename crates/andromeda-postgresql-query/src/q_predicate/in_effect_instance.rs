@@ -164,14 +164,13 @@ mod tests {
         history_source::HistoryBranch,
         q_predicate::{history_window::HistoryAliases, in_effect_instance::InEffectInstance},
     };
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_postgresql_schema::temporal::AttributeHistory;
     use chrono::{DateTime, Utc};
     use sea_query::{Alias, Condition, Expr, IntoIden, JoinType, PostgresQueryBuilder, Query, SimpleExpr};
 
     fn start() -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339("2019-01-01T00:00:00Z")
-            .expect("a valid instant")
-            .with_timezone(&Utc)
+        "2019-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("a valid instant").get()
     }
 
     /// The placement source, the instance at the placement and the strict

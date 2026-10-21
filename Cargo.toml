@@ -91,11 +91,12 @@ andromeda-test-mocks.workspace = true
 axum = { version = "0.8.9", features = ["ws"] }
 bytes = "1.12.1"
 cefact-units = "1.0.0"
-chrono = { version = "0.4.45", features = ["serde"] }
+chrono = "0.4.45"
 futures = "0.3.34"
 h3 = "0.0.8"
 h3-quinn = "0.0.10"
 http = "1.5.0"
+httpdate = "1.0.3"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 jsonld = { version = "0.24.0", features = ["serde-json"] }
 jsonld-syntax = { version = "0.24.0", features = ["serde-json"] }

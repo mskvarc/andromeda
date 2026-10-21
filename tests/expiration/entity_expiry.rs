@@ -7,19 +7,22 @@
 //! `expiresAt` leaves no instant behind.
 
 use crate::{create, fetch};
+use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
+use chrono::{DateTime, Utc};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
 
 /// The entity-level expiry instant the write path recorded on the entity's row.
 async fn recorded_entity_expiry(scope: &TestEnvironment, id: &str) -> Option<String> {
-    sqlx::query_scalar("SELECT to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') FROM entities WHERE id = $1")
+    sqlx::query_scalar::<_, Option<DateTime<Utc>>>("SELECT expires_at FROM entities WHERE id = $1")
         .bind(id)
         .fetch_one(scope.database_pool())
         .await
         .expect("the entity row must be readable")
+        .map(instant_text)
 }
 
 /// A Replace Entity (clause 5.6.18) whose replacement carries no `expiresAt`

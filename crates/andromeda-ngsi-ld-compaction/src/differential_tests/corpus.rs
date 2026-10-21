@@ -12,7 +12,8 @@
 use crate::differential_tests::oracle::expanded;
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-use andromeda_ngsi_ld_entity::{entity_state::EntityState, system_instant::SystemInstant};
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
+use andromeda_ngsi_ld_lexicon::time::system_instant::SystemInstant;
 use chrono::{TimeZone, Utc};
 use serde_json::{Value, json};
 

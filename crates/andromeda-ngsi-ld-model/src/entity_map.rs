@@ -4,7 +4,7 @@ use crate::entity_map_fingerprint::RequestFingerprint;
 use andromeda_ngsi_ld_lexicon::{
     constant_string,
     identifier::{Identifier, IdentifierParseError},
-    rfc3339,
+    time::instant_serde,
 };
 use chrono::{DateTime, Utc};
 use indexmap::{IndexMap, IndexSet};
@@ -78,7 +78,7 @@ pub struct EntityMap {
     #[builder(default = Default::default())]
     pub type_: EntityMapType,
     /// When the map stops being usable for follow-up pages.
-    #[serde(with = "rfc3339::datetime")]
+    #[serde(with = "instant_serde::required")]
     pub expires_at: DateTime<Utc>,
     /// Every entity the originating query matched, in order, each with the
     /// sources that hold it, in the order they were found: `@none` for this

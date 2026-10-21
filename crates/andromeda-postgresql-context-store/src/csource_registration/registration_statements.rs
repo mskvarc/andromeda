@@ -301,7 +301,7 @@ mod tests {
         proxied_mode,
         stored_scopes,
     };
-    use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
+    use andromeda_ngsi_ld_lexicon::{scope::path::ScopePath, time::date_time::NgsiLdDateTime};
     use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, registration_management::RegistrationManagementInfo, time_interval::TimeInterval};
     use andromeda_registration::store::forwarding_outcome::ForwardingOutcome;
     use chrono::{DateTime, Utc};
@@ -410,7 +410,7 @@ mod tests {
     }
 
     fn instant(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("a valid instant").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("a valid instant").get()
     }
 
     #[test]

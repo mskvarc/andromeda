@@ -15,6 +15,7 @@ use crate::{
     term_scope::TermScope,
     typed_walk::instance::{add_geo_value, add_json, add_member, add_optional, add_serialized, add_value, add_value_list, member_name, null_property},
 };
+use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 use andromeda_ngsi_ld_model::attribute::{merge_instance::MergeInstance, merge_member::MergeMember, merge_value::MergeValue, patched::Patched};
 use andromeda_ngsi_ld_vocabulary::{NULL_URI, compact::properties as compact_properties};
 use std::slice::from_ref;
@@ -68,9 +69,19 @@ fn instance_items(parent: &TermScope<'_>, key: &str, instance: &MergeInstance) -
         add_json(&mut node, &scope, compact_properties::ENTITY_TYPE_SEALED, seal.piece())?;
     }
     add_optional(&mut node, &scope, compact_properties::DATASET_ID, instance.dataset_id.as_ref())?;
-    add_optional(&mut node, &scope, compact_properties::EXPIRES_AT, instance.expires_at.as_ref())?;
+    add_optional(
+        &mut node,
+        &scope,
+        compact_properties::EXPIRES_AT,
+        instance.expires_at.as_ref().map(|patched| patched.map(|at| instant_text(*at))).as_ref(),
+    )?;
     add_optional(&mut node, &scope, compact_properties::INSTANCE_ID, instance.instance_id.as_ref())?;
-    add_optional(&mut node, &scope, compact_properties::OBSERVED_AT, instance.observed_at.as_ref())?;
+    add_optional(
+        &mut node,
+        &scope,
+        compact_properties::OBSERVED_AT,
+        instance.observed_at.as_ref().map(|patched| patched.map(|at| instant_text(*at))).as_ref(),
+    )?;
     for (name, member) in &instance.sub_attributes {
         add_member(&mut node, &scope, name.as_str(), member)?;
     }

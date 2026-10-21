@@ -25,8 +25,7 @@ use crate::{
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{context_spec::ContextSpec, user_context_admission::AdmittedContext};
-use andromeda_ngsi_ld_entity::system_instant::SystemInstant;
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::SnapshotId};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::SnapshotId, time::system_instant::SystemInstant};
 use andromeda_ngsi_ld_model::{
     snapshot::{Snapshot, SnapshotStatus},
     snapshot_clone::SnapshotCloneInput,

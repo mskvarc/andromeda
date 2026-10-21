@@ -10,8 +10,8 @@ use crate::{
     entity::stored_entity_error::StoredEntityError,
     entity_state_record::state_record::EntityStateRecord,
 };
-use andromeda_ngsi_ld_entity::{date_time_text::DateTimeText, entity_state::EntityState, entity_types::EntityTypes, scopes::Scopes};
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier, scope::path::ScopePath};
+use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes, scopes::Scopes};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier, scope::path::ScopePath, time::written_date_time::DateTimeText};
 use andromeda_postgresql_attribute_instance::name_keys::{HeldKeys, KeyNames};
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use chrono::{DateTime, Utc};

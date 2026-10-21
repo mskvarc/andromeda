@@ -1,4 +1,5 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
+use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 use chrono::{Duration as ChronoDuration, Utc};
 use reqwest::{Method, StatusCode};
 use serde_json::json;
@@ -240,7 +241,7 @@ async fn subscription_update_expired_subscription_with_future_expires_reactivate
     let expires_at = Utc::now() + ChronoDuration::seconds(5);
     let temporary_expiration = serde_json::json!({
         "type": "Subscription",
-        "expiresAt": expires_at.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+        "expiresAt": instant_text(expires_at)
     });
 
     let (status, _) = update_subscription(&http_client, &subscription_id, &temporary_expiration, false).await;

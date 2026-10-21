@@ -9,6 +9,7 @@ use crate::{
     registration::csr_basic,
     topology::{self, BrokerRole},
 };
+use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 use andromeda_test_fixtures::problem_detail::{ALREADY_EXISTS, BAD_REQUEST_DATA};
 use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::json;
@@ -88,7 +89,7 @@ async fn reg_future_expiresat_auto_deleted_when_reached() {
     let id = topology.id("registration:future-expiry");
     let mut body = csr_basic(&id, PEER_ENDPOINT);
     body["information"][0]["entities"][0]["type"] = json!(topology.id("Vehicle"));
-    body["expiresAt"] = json!((Utc::now() + ChronoDuration::seconds(EXPIRY_LEAD_SECONDS)).to_rfc3339());
+    body["expiresAt"] = json!(instant_text(Utc::now() + ChronoDuration::seconds(EXPIRY_LEAD_SECONDS)));
     let created = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")

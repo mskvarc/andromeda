@@ -261,6 +261,7 @@ mod tests {
         dictionary::resolved_names::ResolvedNames,
         entity_row_refs::EntityRowRefs,
         entity_type_name_key::EntityTypeNameKey,
+        temporal_operand::STORED_TIME_TEMPLATE,
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::filter::parser;
@@ -620,7 +621,7 @@ mod tests {
         // Byte-wise order is chronological exactly because both sides are the
         // fixed-width form, the stored side normalised from the text as written.
         let (sql, binds) = render("\"https://example.com/d\">\"09:30:00.5Z\"");
-        assert!(sql.contains("'HH24:MI:SS.US') || ('Z') END) > $2"), "{sql}");
+        assert!(sql.contains(&format!("'{STORED_TIME_TEMPLATE}') || ('Z') END) > $2")), "{sql}");
         assert!(
             binds
                 .iter()

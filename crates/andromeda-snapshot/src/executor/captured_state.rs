@@ -44,6 +44,7 @@ fn selected(selectors: &[DatasetSelector], dataset_id: Option<&Identifier>) -> b
 mod tests {
     use crate::executor::captured_state::narrow_captured;
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_ngsi_ld_query::dataset::DatasetSelector;
     use chrono::{DateTime, Utc};
     use serde_json::json;
@@ -78,7 +79,7 @@ mod tests {
     }
 
     fn instant(text: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(text).expect("an instant").with_timezone(&Utc)
+        text.parse::<NgsiLdDateTime>().expect("an instant").get()
     }
 
     fn dataset_ids(state: &EntityState, attribute: &str) -> Vec<Option<String>> {

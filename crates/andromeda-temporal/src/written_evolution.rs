@@ -74,6 +74,7 @@ impl WrittenEvolution {
             None => None,
         };
         admit_document_unit_codes(&document)?;
+        document.admit_time_values()?;
         document.admit_null_placements(NullSentinelAdmission::TemporalEvolution)?;
         Ok(WrittenEvolution::new(Arc::new(document), reified_scope.map(Arc::new)))
     }
@@ -102,6 +103,7 @@ impl WrittenEvolution {
             .map(|entry| EntityDocument::new(None, Vec::new(), None, None, IndexMap::from([entry])));
         let document = EntityDocument::new(id, types, scope, expires_at, attributes);
         admit_document_unit_codes(&document)?;
+        document.admit_time_values()?;
         document.admit_null_placements(NullSentinelAdmission::TemporalEvolution)?;
         Ok(WrittenEvolution::new(Arc::new(document), reified_scope.map(Arc::new)))
     }

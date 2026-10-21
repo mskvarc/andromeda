@@ -36,7 +36,7 @@ andromeda-temporal.workspace = true
 async-trait = "0.1.92"
 bigdecimal = "0.4.11"
 cefact-units = "1.0.0"
-chrono = { version = "0.4.45", features = ["serde"] }
+chrono = "0.4.45"
 derive_more = { version = "2.1.1", features = ["as_ref", "display", "from"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 sea-query = { version = "1.0.2", features = ["backend-postgres", "postgres-array", "with-bigdecimal", "with-chrono", "with-json", "with-uuid"] }

@@ -44,9 +44,8 @@ mod tests {
     use crate::query::state_projection::{keeps_a_standing_attribute, narrow_state};
     use andromeda_linked_retrieval::narrowing::list::ListInForce;
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::date_time::NgsiLdDateTime};
     use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
-    use chrono::{DateTime, Utc};
     use iri_rs::IriBuf;
     use serde_json::{Value, json};
 
@@ -177,8 +176,8 @@ mod tests {
             }]
         }]);
         let state = EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored state");
-        let before: DateTime<Utc> = "2029-12-31T00:00:00Z".parse().expect("instant");
-        let after: DateTime<Utc> = "2030-01-01T00:00:00Z".parse().expect("instant");
+        let before = "2029-12-31T00:00:00Z".parse::<NgsiLdDateTime>().expect("instant").get();
+        let after = "2030-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("instant").get();
         assert!(keeps_a_standing_attribute(&state, before));
         assert!(!keeps_a_standing_attribute(&state, after));
     }

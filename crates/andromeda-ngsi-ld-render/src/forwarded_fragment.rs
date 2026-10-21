@@ -17,7 +17,7 @@ use crate::{
         fallback::{InstanceMember, VersionFallback},
     },
 };
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, spec_version::SpecVersion, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, spec_version::SpecVersion, time::rendering::instant_text, uri::Uri};
 use andromeda_ngsi_ld_model::attribute::{
     merge_instance::MergeInstance,
     merge_member::MergeMember,
@@ -173,13 +173,23 @@ impl Serialize for FragmentInstance<'_> {
         optional_entry(
             &mut map,
             compact_properties::EXPIRES_AT,
-            instance.expires_at.as_ref().filter(|_| kept(InstanceMember::ExpiresAt)),
+            instance
+                .expires_at
+                .as_ref()
+                .filter(|_| kept(InstanceMember::ExpiresAt))
+                .map(|patched| patched.map(|at| instant_text(*at)))
+                .as_ref(),
         )?;
         optional_entry(&mut map, compact_properties::INSTANCE_ID, instance.instance_id.as_ref())?;
         optional_entry(
             &mut map,
             compact_properties::OBSERVED_AT,
-            instance.observed_at.as_ref().filter(|_| kept(InstanceMember::ObservedAt)),
+            instance
+                .observed_at
+                .as_ref()
+                .filter(|_| kept(InstanceMember::ObservedAt))
+                .map(|patched| patched.map(|at| instant_text(*at)))
+                .as_ref(),
         )?;
         for (name, member) in &instance.sub_attributes {
             map.serialize_entry(name.as_str(), &self.member.sub_attribute(member))?;

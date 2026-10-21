@@ -4,6 +4,7 @@
 //! only the instances that still stand, so the answer does not depend on
 //! whether the attribute-expiry sweep has run yet.
 
+use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use chrono::{DateTime, Utc};
@@ -57,7 +58,7 @@ async fn current_projection_records_each_instances_own_expiry() {
         .expect("create entity failed");
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
 
-    let expected = DateTime::parse_from_rfc3339(FAR_FUTURE).expect("instant parses").with_timezone(&Utc);
+    let expected = FAR_FUTURE.parse::<NgsiLdDateTime>().expect("instant parses").get();
     assert_eq!(projected_speed_expiry(scope.database_pool(), &id).await, Some(Some(expected)));
     scope.finish().await.expect("cleanup failed");
 }

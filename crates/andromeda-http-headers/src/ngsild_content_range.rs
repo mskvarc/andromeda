@@ -9,7 +9,10 @@
 //! range unit rather than byte ranges.
 //! This file, including local modifications, is distributed under the MIT License.
 
-use andromeda_ngsi_ld_lexicon::rfc3339::sub_second;
+use andromeda_ngsi_ld_lexicon::time::{
+    date_time::{NgsiLdDateTime, NgsiLdDateTimeError},
+    rendering::instant_text,
+};
 use chrono::{DateTime, Utc};
 use http::{HeaderName, HeaderValue};
 use std::{fmt, iter, num::ParseIntError, str::FromStr};
@@ -36,9 +39,10 @@ pub enum NgsiLdContentRangeError {
     /// The range halves were not separated by a UTC-terminated start instant.
     #[error("content-range must separate range-start and range-end with 'Z-'")]
     RangeMalformed,
-    /// One of the two instants was not an RFC 3339 timestamp.
-    #[error("content-range instant is not an RFC 3339 timestamp: {0}")]
-    Instant(#[from] chrono::ParseError),
+    /// One of the two instants was not a clause 4.6.3 `DateTime`, which
+    /// clause 6.3.10 makes `range-start` and `range-end`.
+    #[error("content-range instant is not an NGSI-LD DateTime: {0}")]
+    Instant(#[from] NgsiLdDateTimeError),
     /// The size was neither `*` nor a count.
     #[error("content-range size must be '*' or a count: {0}")]
     Size(#[from] ParseIntError),
@@ -92,8 +96,8 @@ impl fmt::Display for NgsiLdContentRange {
         write!(
             f,
             "{RANGE_UNIT} {}-{}/{}",
-            sub_second(self.start),
-            sub_second(self.end),
+            instant_text(self.start),
+            instant_text(self.end),
             self.total.map_or_else(|| "*".to_owned(), |n| n.to_string())
         )
     }
@@ -109,8 +113,8 @@ impl FromStr for NgsiLdContentRange {
         let (range, total) = spec.rsplit_once('/').ok_or(NgsiLdContentRangeError::SizeMissing)?;
         let (start, end) = range.split_once("Z-").ok_or(NgsiLdContentRangeError::RangeMalformed)?;
         let start = format!("{start}Z");
-        let start = DateTime::parse_from_rfc3339(&start)?.with_timezone(&Utc);
-        let end = DateTime::parse_from_rfc3339(end)?.with_timezone(&Utc);
+        let start = start.parse::<NgsiLdDateTime>()?.get();
+        let end = end.parse::<NgsiLdDateTime>()?.get();
         let total = if total == "*" { None } else { Some(total.parse()?) };
         Ok(Self::new(start, end, total))
     }
@@ -142,22 +146,21 @@ impl headers::Header for NgsiLdContentRange {
 #[cfg(test)]
 mod tests {
     use crate::ngsild_content_range::{NgsiLdContentRange, NgsiLdContentRangeError};
+    use andromeda_ngsi_ld_lexicon::time::{date_time::NgsiLdDateTime, rendering::instant_text};
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
     use std::str::FromStr;
 
     fn instant(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw)
-            .expect("the fixture is an RFC 3339 timestamp")
-            .with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("the fixture is an NGSI-LD DateTime").get()
     }
 
     #[test]
     fn backwards_last_n_range_accepts_a_later_start_than_end() {
         let range = NgsiLdContentRange::from_str("DateTime 2021-01-01T01:01:00Z-2020-01-01T20:00:00Z/20").expect("valid backwards temporal range");
 
-        assert_eq!(range.start().to_rfc3339(), "2021-01-01T01:01:00+00:00");
-        assert_eq!(range.end().to_rfc3339(), "2020-01-01T20:00:00+00:00");
+        assert_eq!(instant_text(range.start()), "2021-01-01T01:01:00Z");
+        assert_eq!(instant_text(range.end()), "2020-01-01T20:00:00Z");
         assert_eq!(range.total(), Some(20));
     }
 
@@ -194,6 +197,18 @@ mod tests {
 
         assert_eq!(range.to_string(), "DateTime 2020-01-01T20:00:00.250Z-2020-01-01T20:00:01.123456Z/*");
         assert_eq!(NgsiLdContentRange::from_str(&range.to_string()).expect("round trip"), range);
+    }
+
+    /// Clause 6.3.10 makes both bounds clause 4.6.3 `DateTime` values.
+    #[test]
+    fn a_bound_clause_4_6_3_refuses_is_refused() {
+        for value in [
+            "DateTime 2020-01-01T20:00:00Z-2021-01-01T01:01:00.1234567Z/*",
+            "DateTime 2020-01-01T20:00:00Z-2021-01-01T01:01Z/*",
+        ] {
+            let error = NgsiLdContentRange::from_str(value).expect_err("must reject");
+            assert!(matches!(error, NgsiLdContentRangeError::Instant(_)), "{value}: got {error:?}");
+        }
     }
 
     /// Rendering and parsing agree, so a range survives a round trip.

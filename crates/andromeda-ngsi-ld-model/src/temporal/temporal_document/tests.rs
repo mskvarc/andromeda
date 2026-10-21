@@ -2,17 +2,20 @@ use crate::{
     entity_system_times::EntitySystemTimes,
     temporal::temporal_document::{MergeMode, TemporalDocument},
 };
-use andromeda_ngsi_ld_entity::{
-    date_time_text::DateTimeText,
-    document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot},
+use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    identifier::Identifier,
+    time::{date_time::NgsiLdDateTime, written_date_time::DateTimeText},
+    time_prop::TimeProp,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, time_prop::TimeProp};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use std::num::NonZeroU32;
 
 fn at(raw: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(raw).expect("a valid instant").with_timezone(&Utc)
+    raw.parse::<NgsiLdDateTime>().expect("a valid instant").get()
 }
 
 fn speed() -> AttributeName {

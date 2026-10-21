@@ -10,7 +10,7 @@
 
 use crate::link_target::{append_typed_links, rebuilt_target};
 use andromeda_http_headers::{link::relation_type::RelationType, media_type::ResponseMediaType};
-use andromeda_ngsi_ld_lexicon::rfc3339::sub_second;
+use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 use andromeda_ngsi_ld_query::temporal::continuation::TemporalContinuation;
 use axum::{http::Uri, response::Response};
 
@@ -27,8 +27,8 @@ const CONTINUATION_PARAMETERS: [&str; 4] = ["timerel", "timeAt", "endTimeAt", "l
 pub fn append_continuation_link(response: &mut Response, uri: &Uri, next: &TemporalContinuation, media_type: ResponseMediaType) {
     let (timerel, time_at, end_time_at) = next.interval.parts();
     let timerel = timerel.map(|relation| relation.to_string());
-    let time_at = time_at.map(sub_second);
-    let end_time_at = end_time_at.map(sub_second);
+    let time_at = time_at.map(instant_text);
+    let end_time_at = end_time_at.map(instant_text);
     let last_n = next.last_n.map(|last_n| last_n.to_string());
     let set: Vec<(&str, &str)> = CONTINUATION_PARAMETERS
         .into_iter()
@@ -43,6 +43,7 @@ pub fn append_continuation_link(response: &mut Response, uri: &Uri, next: &Tempo
 mod tests {
     use crate::temporal_continuation::append_continuation_link;
     use andromeda_http_headers::media_type::ResponseMediaType;
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_ngsi_ld_query::temporal::{continuation::TemporalContinuation, window::TimeInterval};
     use axum::{
         http::{HeaderValue, StatusCode, Uri, header::LINK},
@@ -53,7 +54,7 @@ mod tests {
     use url::form_urlencoded;
 
     fn at(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("a valid instant").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("a valid instant").get()
     }
 
     fn uri(raw: &str) -> Uri {

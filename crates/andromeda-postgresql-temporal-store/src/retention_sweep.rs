@@ -311,6 +311,7 @@ mod tests {
         streamless_scope_events,
         superseded_scope_events,
     };
+    use andromeda_ngsi_ld_lexicon::time::{date_time::NgsiLdDateTime, rendering::instant_text};
     use andromeda_postgresql_seaquery::timescale::drop_chunks;
     use chrono::{DateTime, TimeDelta, Utc};
     use pretty_assertions::assert_eq;
@@ -318,7 +319,10 @@ mod tests {
 
     /// The fixed instant the cutoff cases are measured from.
     fn now() -> Result<DateTime<Utc>, String> {
-        "2026-08-11T12:00:00Z".parse::<DateTime<Utc>>().map_err(|error| error.to_string())
+        "2026-08-11T12:00:00Z"
+            .parse::<NgsiLdDateTime>()
+            .map(NgsiLdDateTime::get)
+            .map_err(|error| error.to_string())
     }
 
     #[test]
@@ -337,10 +341,7 @@ mod tests {
         let cutoff = TemporalRetentionHorizon::new(TimeDelta::days(30))
             .map_err(|error| error.to_string())
             .and_then(|horizon| now().and_then(|now| horizon.cutoff(now).map_err(|error| error.to_string())));
-        assert_eq!(
-            cutoff.map(|cutoff| cutoff.to_rfc3339()),
-            now().map(|now| (now - TimeDelta::days(30)).to_rfc3339())
-        );
+        assert_eq!(cutoff.map(instant_text), now().map(|now| instant_text(now - TimeDelta::days(30))));
     }
 
     #[test]

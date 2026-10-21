@@ -4,8 +4,8 @@
 //! already gone. The entity-level `expiresAt` is the entity's own and does not
 //! take part in the attribute minimum.
 
-use crate::{date_time_text::DateTimeText, entity_state::EntityState, instance::Instance};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use crate::{entity_state::EntityState, instance::Instance};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::written_date_time::DateTimeText};
 use chrono::{DateTime, Utc};
 use std::borrow::Cow;
 
@@ -92,12 +92,13 @@ impl EntityState {
 #[cfg(test)]
 mod tests {
     use crate::entity_state::EntityState;
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use chrono::{DateTime, Utc};
     use serde_json::{Value, json};
     use std::{borrow::Cow, sync::Arc};
 
     fn instant(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("instant parses").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("instant parses").get()
     }
 
     fn instance(expires_at: Option<&str>, dataset: Option<&str>) -> Value {

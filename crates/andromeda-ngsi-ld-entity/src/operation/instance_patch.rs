@@ -14,7 +14,6 @@
 //! instance, each matched by its `datasetId` (clauses 4.5.5.1, 5.5.8, 5.5.12).
 
 use crate::{
-    date_time_text::DateTimeText,
     document::{instance_document::InstanceDocument, slot::Slot, value_carrier::ValueCarrier, written_value::ValueSlot},
     expanded_value::ExpandedValue,
     instance::Instance,
@@ -26,7 +25,7 @@ use crate::{
     proof_seals::ProofSeals,
     refusal::EntityRefusal,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, time::written_date_time::DateTimeText};
 
 /// How deeply a written instance is applied to the instance it lands on.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

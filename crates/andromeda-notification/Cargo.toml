@@ -36,7 +36,7 @@ andromeda-subscription.workspace = true
 andromeda-telemetry.workspace = true
 andromeda-tenancy.workspace = true
 async-trait = "0.1.92"
-chrono = { version = "0.4.45", features = ["serde"] }
+chrono = "0.4.45"
 dashmap = { version = "6.2.1", features = ["inline"] }
 derive_more = { version = "2.1.1", features = ["display", "from"] }
 futures = "0.3.34"

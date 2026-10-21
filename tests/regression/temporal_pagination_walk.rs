@@ -25,7 +25,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 use andromeda_http_headers::ngsild_content_range::NgsiLdContentRange;
-use andromeda_ngsi_ld_lexicon::rfc3339::sub_second;
+use andromeda_ngsi_ld_lexicon::time::{date_time::NgsiLdDateTime, rendering::instant_text};
 use andromeda_test_client::{response::TestResponse, test_client::TestClient};
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
@@ -54,7 +54,7 @@ fn origin() -> DateTime<Utc> {
 
 /// One Property instance carrying the number `value`, observed at `at`.
 fn instance(value: u64, at: DateTime<Utc>) -> Value {
-    json!({"type": "Property", "value": value, "observedAt": sub_second(at)})
+    json!({"type": "Property", "value": value, "observedAt": instant_text(at)})
 }
 
 /// Create one Temporal Evolution from `instances` of each attribute, in
@@ -113,9 +113,12 @@ fn instances_of<'a>(entity: &'a Value, name: &str) -> Vec<&'a Value> {
 
 /// The instant an instance was observed at.
 fn observed(instance: &Value) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(instance["observedAt"].as_str().expect("an observedAt"))
+    instance["observedAt"]
+        .as_str()
+        .expect("an observedAt")
+        .parse::<NgsiLdDateTime>()
         .expect("an RFC 3339 instant")
-        .with_timezone(&Utc)
+        .get()
 }
 
 /// The value an instance carries.
@@ -166,7 +169,7 @@ async fn regression_temporal_pagination_a_forward_walk_collects_every_instance_e
 
     let mut collected: BTreeSet<(String, u64)> = BTreeSet::new();
     let mut seen_instances: HashSet<String> = HashSet::new();
-    let mut time_at = sub_second(origin() - Duration::days(1));
+    let mut time_at = instant_text(origin() - Duration::days(1));
     let mut previous_end: Option<DateTime<Utc>> = None;
     let mut pages = 0;
     loop {
@@ -195,7 +198,7 @@ async fn regression_temporal_pagination_a_forward_walk_collects_every_instance_e
                 assert_eq!(range.total(), None, "a forward page reports size '*'");
                 assert!(previous_end.is_none_or(|end| range.end() > end), "every page ends later than the one before");
                 previous_end = Some(range.end());
-                time_at = sub_second(range.end());
+                time_at = instant_text(range.end());
             }
             other => panic!("page {pages}: unexpected {other}: {:?}", response.body),
         }
@@ -218,7 +221,7 @@ async fn regression_temporal_pagination_a_backward_walk_collects_every_instance_
     create_series(client, &id, "PagedSeries", &series).await;
 
     let mut collected: BTreeSet<(String, u64)> = BTreeSet::new();
-    let mut time_at = sub_second(origin() + Duration::days(1));
+    let mut time_at = instant_text(origin() + Duration::days(1));
     let mut previous_end: Option<DateTime<Utc>> = None;
     let mut pages = 0;
     loop {
@@ -241,7 +244,7 @@ async fn regression_temporal_pagination_a_backward_walk_collects_every_instance_
                 assert_eq!(range.total(), Some(1000), "a backward page reports the requested lastN as its size");
                 assert!(previous_end.is_none_or(|end| range.end() < end), "every page ends earlier than the one before");
                 previous_end = Some(range.end());
-                time_at = sub_second(range.end());
+                time_at = instant_text(range.end());
             }
             other => panic!("page {pages}: unexpected {other}: {:?}", response.body),
         }
@@ -278,7 +281,7 @@ async fn regression_temporal_pagination_a_read_without_last_n_is_the_oldest_defa
     create_series(client, &id, "PagedSeries", &short_series()).await;
 
     let time_at = origin() - Duration::days(1);
-    let response = retrieve(client, &id, &format!("timerel=after&timeAt={}", sub_second(time_at))).await;
+    let response = retrieve(client, &id, &format!("timerel=after&timeAt={}", instant_text(time_at))).await;
     assert_eq!(response.status, StatusCode::PARTIAL_CONTENT, "{:?}", response.body);
     let entity = response.json_value().expect("a temporal entity");
     let values: Vec<u64> = instances_of(&entity, "speed").into_iter().map(value_of).collect();
@@ -343,23 +346,28 @@ async fn regression_temporal_pagination_content_range_follows_direction_and_time
     let forward_end = minute(i64::try_from(DEFAULT_PAGE).expect("small") - 1);
     let backward_end = minute(i64::try_from(30 - MAXIMUM).expect("small"));
     let cases = [
-        (format!("timerel=after&timeAt={}", sub_second(after)), after, forward_end, None),
-        (format!("timerel=before&timeAt={}", sub_second(before)), minute(0), forward_end, None),
+        (format!("timerel=after&timeAt={}", instant_text(after)), after, forward_end, None),
+        (format!("timerel=before&timeAt={}", instant_text(before)), minute(0), forward_end, None),
         (
-            format!("timerel=between&timeAt={}&endTimeAt={}", sub_second(after), sub_second(before)),
+            format!("timerel=between&timeAt={}&endTimeAt={}", instant_text(after), instant_text(before)),
             after,
             forward_end,
             None,
         ),
-        (format!("lastN=25&timerel=before&timeAt={}", sub_second(before)), before, backward_end, Some(25)),
         (
-            format!("lastN=25&timerel=between&timeAt={}&endTimeAt={}", sub_second(after), sub_second(before)),
+            format!("lastN=25&timerel=before&timeAt={}", instant_text(before)),
             before,
             backward_end,
             Some(25),
         ),
         (
-            format!("lastN=25&timerel=after&timeAt={}", sub_second(after)),
+            format!("lastN=25&timerel=between&timeAt={}&endTimeAt={}", instant_text(after), instant_text(before)),
+            before,
+            backward_end,
+            Some(25),
+        ),
+        (
+            format!("lastN=25&timerel=after&timeAt={}", instant_text(after)),
             minute(29),
             backward_end,
             Some(25),
@@ -482,9 +490,9 @@ async fn regression_temporal_pagination_a_simultaneous_group_above_the_maximum_i
     let entity = response.json_value().expect("a temporal entity");
     let values: BTreeSet<u64> = instances_of(&entity, "speed").into_iter().map(value_of).collect();
     assert_eq!(values, (0..group).collect::<BTreeSet<u64>>());
-    assert_eq!(range.to_string(), format!("DateTime 2020-01-01T00:00:00Z-{}/*", sub_second(origin())));
+    assert_eq!(range.to_string(), format!("DateTime 2020-01-01T00:00:00Z-{}/*", instant_text(origin())));
 
-    let resumed = retrieve(client, &id, &format!("timerel=after&timeAt={}", sub_second(origin()))).await;
+    let resumed = retrieve(client, &id, &format!("timerel=after&timeAt={}", instant_text(origin()))).await;
     assert_eq!(resumed.status, StatusCode::PARTIAL_CONTENT, "{:?}", resumed.body);
     let entity = resumed.json_value().expect("a temporal entity");
     let values: BTreeSet<u64> = instances_of(&entity, "speed").into_iter().map(value_of).collect();

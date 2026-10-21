@@ -15,8 +15,8 @@
 //! value it left behind is the reconciled one and no longer belongs to any
 //! single holder.
 
-use crate::{date_time_text::DateTimeText, entity_state::EntityState};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use crate::entity_state::EntityState;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::written_date_time::DateTimeText};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 

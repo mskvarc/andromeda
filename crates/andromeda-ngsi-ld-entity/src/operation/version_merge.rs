@@ -13,14 +13,8 @@
 //! The merge works on expanded names, so two holders spelling one attribute
 //! under different contexts merge into one attribute.
 
-use crate::{
-    attribute_instances::AttributeInstances,
-    date_time_text::DateTimeText,
-    entity_state::EntityState,
-    history::instance_recency::InstanceRecency,
-    instance::Instance,
-    system_instant::SystemInstant,
-};
+use crate::{attribute_instances::AttributeInstances, entity_state::EntityState, history::instance_recency::InstanceRecency, instance::Instance};
+use andromeda_ngsi_ld_lexicon::time::{system_instant::SystemInstant, written_date_time::DateTimeText};
 use std::{cmp::Ordering, sync::Arc};
 
 /// How one version folds into the entity being assembled.
@@ -127,8 +121,8 @@ mod tests {
             version_merge::MergePolicy,
         },
         scopes::Scopes,
-        system_instant::SystemInstant,
     };
+    use andromeda_ngsi_ld_lexicon::time::system_instant::SystemInstant;
     use pretty_assertions::assert_eq;
 
     const NAME: &str = "https://example.com/name";

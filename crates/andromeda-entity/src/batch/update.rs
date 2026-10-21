@@ -26,8 +26,8 @@ use crate::{
     side_effect::SideEffectPlacement,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState, operation::selection::OverwritePolicy, system_instant::SystemInstant};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState, operation::selection::OverwritePolicy};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 
 /// Whether a `noOverwrite` append of `fragment` onto `entity` can add nothing:
 /// the fragment names at least one member and every member it names is

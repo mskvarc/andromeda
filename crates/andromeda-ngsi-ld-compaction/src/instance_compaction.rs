@@ -17,13 +17,12 @@ use crate::{
 };
 use andromeda_ngsi_ld_entity::{
     attributes::Attributes,
-    date_time_text::DateTimeText,
     document::value_carrier::ValueCarrier,
     family_value::FamilyValue,
     proof_seals::ProofSeals,
     value_mode::Stored,
 };
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, reference::NgsiLdReference, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, reference::NgsiLdReference, time::written_date_time::DateTimeText, uri::Uri};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use jsonld::{BlankIdBuf, IriBuf, Term};
 use std::slice::from_ref;

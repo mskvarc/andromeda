@@ -2,7 +2,7 @@
 
 use crate::stage1::{Stage1Query, build_stage1_entity_ids};
 use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity_selection::{EntitySelection, EntitySelector},
@@ -32,7 +32,7 @@ use std::str::FromStr;
 
 /// The UTC instant `raw` spells in RFC 3339.
 pub(super) fn instant(raw: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&Utc)
+    raw.parse::<NgsiLdDateTime>().expect("valid instant").get()
 }
 
 /// The identifiers `raw` spells.

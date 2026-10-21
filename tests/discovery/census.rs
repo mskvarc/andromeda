@@ -14,12 +14,13 @@
 
 use crate::{BASE_URL, client, provision_tenant};
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 use andromeda_postgresql_context_store::entity::census::fold::fold_census;
 use andromeda_test_harness::{
     discovery_census::{census_drift, census_rows},
     tenant_scoped_environment::TenantScopedEnvironment,
 };
-use chrono::{Duration as TimeDelta, SecondsFormat, Utc};
+use chrono::{Duration as TimeDelta, Utc};
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -521,7 +522,7 @@ async fn discovery_census_forgets_an_attribute_the_expiry_sweep_removed() {
     let tenant = env.tenant();
     provision_tenant(&c, tenant).await;
     let id = env.id("census:expiry");
-    let expires = (Utc::now() + TimeDelta::seconds(2)).to_rfc3339_opts(SecondsFormat::Millis, true);
+    let expires = instant_text(Utc::now() + TimeDelta::seconds(2));
     create(
         &c,
         tenant,

@@ -22,7 +22,13 @@ use andromeda_ngsi_ld_entity::{
     non_empty::NonEmpty,
     value_mode::Fragment,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, reference::NgsiLdReference, rfc3339::sub_second, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    reference::NgsiLdReference,
+    time::rendering::instant_text,
+    uri::Uri,
+};
 use andromeda_ngsi_ld_model::temporal::structured_value::StructuredValue;
 use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
@@ -250,7 +256,9 @@ impl StoredFamily<'_> {
         Ok(match value {
             StoredValue::Number { number, datatype: key } => Literal::try_new(LiteralValue::Number(number), datatype(key)?, None, None)?,
             StoredValue::Boolean { flag, datatype: key } => Literal::try_new(LiteralValue::Boolean(flag), datatype(key)?, None, None)?,
-            StoredValue::DateTime { instant, datatype: key } => Literal::try_new(LiteralValue::String(sub_second(instant).into()), datatype(key)?, None, None)?,
+            StoredValue::DateTime { instant, datatype: key } => {
+                Literal::try_new(LiteralValue::String(instant_text(instant).into()), datatype(key)?, None, None)?
+            }
             StoredValue::String { text, annotation } => match annotation {
                 LiteralAnnotation::Plain => Literal::plain(LiteralValue::String(text.into())),
                 LiteralAnnotation::Datatype(key) => Literal::typed(LiteralValue::String(text.into()), self.type_name(key)?),

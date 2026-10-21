@@ -29,6 +29,7 @@ use andromeda_ngsi_ld_lexicon::{
     entity_type_name::EntityTypeName,
     identifier::Identifier,
     instance_identity::InstanceIdentity,
+    time::date_time::NgsiLdDateTime,
     time_rel::TimeRel,
 };
 use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalAggregationRow, TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance};
@@ -169,7 +170,7 @@ fn aggregation_refusal_precedes_every_reader_query() {
 }
 
 fn minute(offset: i64) -> DateTime<Utc> {
-    "2020-01-01T01:00:00Z".parse::<DateTime<Utc>>().expect("a valid instant") + Duration::minutes(offset)
+    "2020-01-01T01:00:00Z".parse::<NgsiLdDateTime>().expect("a valid instant").get() + Duration::minutes(offset)
 }
 
 /// The instances of `attribute` observed at `minute(offset)` for each

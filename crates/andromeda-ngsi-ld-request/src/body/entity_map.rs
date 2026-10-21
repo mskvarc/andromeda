@@ -1,6 +1,6 @@
 //! HTTP request model for updating an `EntityMap`.
 
-use andromeda_ngsi_ld_lexicon::rfc3339;
+use andromeda_ngsi_ld_lexicon::time::instant_serde;
 use andromeda_ngsi_ld_model::request_body::RequestBody;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, de::IgnoredAny};
@@ -13,7 +13,7 @@ use serde::{Deserialize, de::IgnoredAny};
 #[serde(deny_unknown_fields)]
 pub struct UpdateEntityMapBody {
     /// New expiration time, read as every instant a request carries (clause 4.6.3).
-    #[serde(rename = "expiresAt", default, deserialize_with = "rfc3339::optional_datetime::deserialize")]
+    #[serde(rename = "expiresAt", default, deserialize_with = "instant_serde::optional::deserialize")]
     pub expires_at: Option<DateTime<Utc>>,
     /// Output-only member accepted and ignored as clause 5.14.2.4 requires.
     #[serde(rename = "entityMap")]
@@ -34,8 +34,8 @@ impl RequestBody for UpdateEntityMapBody {}
 #[cfg(test)]
 mod tests {
     use crate::body::entity_map::UpdateEntityMapBody;
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_ngsi_ld_model::request_body::RequestBody;
-    use chrono::{DateTime, Utc};
 
     #[test]
     fn output_only_members_are_accepted_without_becoming_domain_values() {
@@ -78,7 +78,7 @@ mod tests {
         .expect("the context is skipped");
         pretty_assertions::assert_eq!(
             body.expires_at,
-            Some("2030-01-01T00:00:00Z".parse::<DateTime<Utc>>().expect("a valid timestamp"))
+            Some("2030-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("a valid timestamp").get())
         );
     }
 

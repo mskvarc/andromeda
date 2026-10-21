@@ -27,6 +27,7 @@
 
 use crate::context_source_adapter::ContextSourceAdapter;
 use andromeda_http_headers::ngsild_content_range::NgsiLdContentRange;
+use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
 use andromeda_test_client::{entity::results_count, response::TestResponse, test_client::TestClient};
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
@@ -189,7 +190,7 @@ fn content_range(response: &TestResponse) -> Option<NgsiLdContentRange> {
 }
 
 fn at(raw: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(raw).expect("a valid instant").with_timezone(&Utc)
+    raw.parse::<NgsiLdDateTime>().expect("a valid instant").get()
 }
 
 /// The `observedAt` instants of every instance of `attribute` an entity carries.

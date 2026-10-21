@@ -22,7 +22,7 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     identifier::Identifier,
-    rfc3339::RequestInstant,
+    time::date_time::NgsiLdDateTime,
     unit_code_admission::{UnitCodeAdmission, unit_code_admission},
 };
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
@@ -272,12 +272,12 @@ impl<'n, N: CompactNode<'n>> InstanceMembers<'n, N> {
             sub_attributes.insert(attribute_name, value);
         }
         Ok(CommonAttributeFields {
-            created_at: optional_member(system.created_at, RefusedMember::CreatedAt)?,
+            created_at: optional_instant_member(system.created_at, RefusedMember::CreatedAt)?,
             dataset_id: optional_dataset_member(system.dataset_id)?,
-            deleted_at: optional_member(system.deleted_at, RefusedMember::DeletedAt)?,
+            deleted_at: optional_instant_member(system.deleted_at, RefusedMember::DeletedAt)?,
             expires_at: optional_instant_member(system.expires_at, RefusedMember::ExpiresAt)?,
             instance_id: optional_member(system.instance_id, RefusedMember::InstanceId)?,
-            modified_at: optional_member(system.modified_at, RefusedMember::ModifiedAt)?,
+            modified_at: optional_instant_member(system.modified_at, RefusedMember::ModifiedAt)?,
             observed_at: optional_instant_member(system.observed_at, RefusedMember::ObservedAt)?,
             sub_attributes,
         })
@@ -337,15 +337,15 @@ pub(crate) fn optional_member<'n, T: DeserializeOwned, N: CompactNode<'n>>(membe
         .map_err(|source| refused_member::<N>(name, NodeRefusal::Member { member: name, source }))
 }
 
-/// Read an optional instant member a request carries (`observedAt`,
-/// `expiresAt`), accepting the clause 4.6.3 comma separator.
+/// Read an optional instant member (`observedAt`, `expiresAt`, a system
+/// time) by the clause 4.6.3 `DateTime` rules.
 ///
 /// # Errors
 ///
-/// Returns [`NodeRefusal::Member`] when the member is not an RFC 3339
-/// date-time, and the node's [`CompactNode::Unreadable`].
+/// Returns [`NodeRefusal::Member`] when the member is not a clause 4.6.3
+/// `DateTime`, and the node's [`CompactNode::Unreadable`].
 pub(crate) fn optional_instant_member<'n, N: CompactNode<'n>>(member: Option<N>, name: RefusedMember) -> Result<Option<DateTime<Utc>>, ReadError<'n, N>> {
-    Ok(optional_member::<RequestInstant, N>(member, name)?.map(RequestInstant::get))
+    Ok(optional_member::<NgsiLdDateTime, N>(member, name)?.map(NgsiLdDateTime::get))
 }
 
 /// Read the optional `datasetId` of an instance (clause 4.5.5).

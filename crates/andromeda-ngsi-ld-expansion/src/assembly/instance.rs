@@ -19,15 +19,19 @@ use crate::{
 };
 use andromeda_native_stack::on_sufficient_stack;
 use andromeda_ngsi_ld_entity::{
-    date_time_text::DateTimeText,
     document::{attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot, value_carrier::ValueCarrier, written_value::ValueSlot},
     expanded_value::ExpandedValue,
     member_shape::MemberShape,
     proof_seals::ProofSeals,
     refusal::EntityRefusal,
-    system_instant::SystemInstant,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, reference::NgsiLdReference};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    identifier::Identifier,
+    reference::NgsiLdReference,
+    time::{system_instant::SystemInstant, written_date_time::DateTimeText},
+};
 use andromeda_ngsi_ld_vocabulary::{compact_to_expanded, expanded::properties};
 use cefact_units::UnitCode;
 use indexmap::IndexMap;

@@ -339,9 +339,9 @@ mod tests {
         history_source::{HistoryBranch, HistoryOf},
         q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, traversal::LinkedHop},
     };
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
     use andromeda_postgresql_schema::temporal::AttributeHistory;
-    use chrono::{DateTime, Utc};
     use sea_query::{Alias, Condition, Expr, ExprTrait, PostgresQueryBuilder, Query};
 
     /// Clause 5.7.4.4 with clause 4.11: a hop in a temporal `q` follows every
@@ -350,9 +350,7 @@ mod tests {
     /// joins the entity its instance names and correlates on the outer entity.
     #[test]
     fn a_windowed_hop_probes_both_the_window_and_the_instance_in_effect() {
-        let start = DateTime::parse_from_rfc3339("2019-01-01T00:00:00Z")
-            .expect("a valid instant")
-            .with_timezone(&Utc);
+        let start = "2019-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("a valid instant").get();
         let window = HistoryWindow::builder()
             .branch(HistoryBranch::live())
             .of(HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id")))))
@@ -381,9 +379,7 @@ mod tests {
     /// probes, and expands only an instance of those two kinds (2 and 8).
     #[test]
     fn a_windowed_hop_follows_every_object_of_a_history_instance() {
-        let start = DateTime::parse_from_rfc3339("2019-01-01T00:00:00Z")
-            .expect("a valid instant")
-            .with_timezone(&Utc);
+        let start = "2019-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("a valid instant").get();
         let window = HistoryWindow::builder()
             .branch(HistoryBranch::live())
             .of(HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id")))))

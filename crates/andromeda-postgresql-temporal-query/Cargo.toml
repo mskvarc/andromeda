@@ -17,7 +17,7 @@ andromeda-postgresql-query.workspace = true
 andromeda-postgresql-schema.workspace = true
 andromeda-postgresql-seaquery.workspace = true
 cefact-units = "1.0.0"
-chrono = { version = "0.4.45", features = ["serde"] }
+chrono = "0.4.45"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 sea-query = { version = "1.0.2", features = ["backend-postgres", "with-chrono"] }
 strum = { version = "0.28.0", features = ["derive"] }

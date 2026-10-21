@@ -13,7 +13,7 @@ use crate::{
     temporal_store_invariant::TemporalStoreInvariant,
 };
 use andromeda_context_commit::{submission_refusal::SubmissionRefusal, write_id::WriteId, write_ordinal::WriteOrdinalOutOfRange};
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_date_time::NgsiLdDateTimeError, ngsi_ld_time::NgsiLdTimeError};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::date_time::NgsiLdDateTimeError};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_collation::provisioned_collations::CollationProvisioningError;
 use andromeda_postgresql_encoding::ewkb::EwkbError;
@@ -81,9 +81,6 @@ pub enum TemporalStoreError {
     /// range.
     #[error("temporal store columnstore conversion: {0}")]
     ColumnstoreHorizon(#[from] ColumnstoreHorizonOutOfRange),
-    /// A stored mean `Time` does not normalise to a clause 4.6.3 `Time`.
-    #[error("temporal store aggregation time: {0}")]
-    StoredTime(#[source] NgsiLdTimeError),
     /// An entity scope reached the attribute-history conversion; clause 4.5.4
     /// gives a Scope no attribute stream.
     #[error("temporal store: an entity scope has no attribute history row")]
@@ -148,10 +145,9 @@ impl TemporalStoreError {
             TemporalStoreError::EntityIntent { source, .. } => source.failure_class(),
             TemporalStoreError::Database(error) => Some(classify(error)),
             TemporalStoreError::NameLookup(error) => Some(error.failure_class()),
-            TemporalStoreError::StoredHistory(_)
-            | TemporalStoreError::StoredCatalog(_)
-            | TemporalStoreError::StoredAggregation(_)
-            | TemporalStoreError::StoredTime(_) => Some(PersistenceFailure::Undecodable),
+            TemporalStoreError::StoredHistory(_) | TemporalStoreError::StoredCatalog(_) | TemporalStoreError::StoredAggregation(_) => {
+                Some(PersistenceFailure::Undecodable)
+            }
             TemporalStoreError::Render(_) | TemporalStoreError::StatementBuild(_) => Some(PersistenceFailure::StatementUnbuildable),
             TemporalStoreError::Encoding(_)
             | TemporalStoreError::WriteOrdinal(_)
@@ -230,7 +226,6 @@ impl From<TemporalStoreError> for TemporalError {
             | TemporalStoreError::StatementBuild(_)
             | TemporalStoreError::RetentionHorizon(_)
             | TemporalStoreError::ColumnstoreHorizon(_)
-            | TemporalStoreError::StoredTime(_)
             | TemporalStoreError::StoredJson(_)
             | TemporalStoreError::HistoryMembers(_)
             | TemporalStoreError::ScopeHasNoAttributeRow) => TemporalError::from(PersistenceFailure::ContractBroken.record(&fault)),

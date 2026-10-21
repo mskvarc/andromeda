@@ -20,21 +20,18 @@ use crate::{
 };
 use andromeda_ngsi_ld_entity::{
     attributes::Attributes,
-    date_time_text::DateTimeText,
     expanded_value::ExpandedValue,
     family_value::FamilyValue,
     geo_value::GeoValue,
     instance::Instance,
     list_object::ListObject,
     literal::{Literal, LiteralValue},
-    system_instant::SystemInstant,
 };
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     identifier::Identifier,
     reference::NgsiLdReference,
-    rfc3339::sub_second,
-    time_value::TimeValue,
+    time::{rendering::instant_text, system_instant::SystemInstant, value::TimeValue, written_date_time::DateTimeText},
 };
 use andromeda_ngsi_ld_model::temporal::structured_value::StructuredValue;
 use andromeda_postgresql_codes::attribute_kind_code::stored_attribute_kind;
@@ -205,7 +202,7 @@ fn literal_value(name: &AttributeName, literal: &Literal, keys: &NameKeys) -> Re
         LiteralValue::Boolean(flag) => StoredValue::Boolean { flag: *flag, datatype },
         LiteralValue::String(text) => match TimeValue::admitted(literal.datatype().map(NgsiLdReference::as_str), text) {
             Some(Ok(TimeValue::DateTime(instant))) => {
-                if sub_second(instant.get()) != text.as_str() {
+                if instant_text(instant.get()) != text.as_str() {
                     // clone: the refusal owns the name it reports.
                     return Err(FlattenError::UncommittedSpelling(name.clone()));
                 }

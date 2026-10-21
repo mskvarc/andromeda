@@ -29,7 +29,7 @@ andromeda-persistence-failure.workspace = true
 andromeda-registration.workspace = true
 andromeda-subscription.workspace = true
 andromeda-tenancy.workspace = true
-chrono = { version = "0.4.45", features = ["serde"] }
+chrono = "0.4.45"
 futures = "0.3.34"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 mediatype = "0.23.0"

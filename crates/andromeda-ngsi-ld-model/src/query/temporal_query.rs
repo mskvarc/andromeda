@@ -1,6 +1,6 @@
 //! The temporal window embedded in a clause-5.2.23 query.
 
-use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, rfc3339, time_prop::TimeProp, time_rel::TimeRel};
+use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, time::instant_serde, time_prop::TimeProp, time_rel::TimeRel};
 use andromeda_ngsi_ld_query::temporal::aggregation_period::{self, AggregationPeriod};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,7 @@ use std::num::NonZeroU32;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TemporalQuery {
     /// Reference instant for the temporal relation.
-    #[serde(with = "rfc3339::datetime")]
+    #[serde(with = "instant_serde::required")]
     pub time_at: DateTime<Utc>,
     /// Relation between matching instances and the supplied instants.
     #[serde_as(as = "DisplayFromStr")]
@@ -26,7 +26,7 @@ pub struct TemporalQuery {
     #[serde(with = "aggregation_period::optional", default, skip_serializing_if = "Option::is_none")]
     pub aggr_period_duration: Option<AggregationPeriod>,
     /// Closing instant, required for `between`.
-    #[serde(with = "rfc3339::optional_datetime", default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "instant_serde::optional", default, skip_serializing_if = "Option::is_none")]
     pub end_time_at: Option<DateTime<Utc>>,
     /// Maximum matching instances returned per attribute, a "Positive integer"
     /// (Table 5.2.21-1), so `0` fails to decode.

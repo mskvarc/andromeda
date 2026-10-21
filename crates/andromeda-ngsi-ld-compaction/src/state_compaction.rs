@@ -11,7 +11,8 @@ use crate::{
     undecidable::Undecidable,
     walk::Walk,
 };
-use andromeda_ngsi_ld_entity::{date_time_text::DateTimeText, entity_state::EntityState, value_mode::Stored};
+use andromeda_ngsi_ld_entity::{entity_state::EntityState, value_mode::Stored};
+use andromeda_ngsi_ld_lexicon::time::written_date_time::DateTimeText;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use jsonld::Term;
 

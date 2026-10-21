@@ -10,7 +10,6 @@
 use crate::{
     codec::element::{Decoded, values_without_null},
     conversion::stored_value::into_stored_values,
-    date_time_text::DateTimeText,
     document::slot::Slot,
     expanded_value::{ExpandedValue, ValueNode},
     literal::{Literal, LiteralValue},
@@ -19,13 +18,13 @@ use crate::{
     refusal::EntityRefusal,
     scope_slot::{ScopeItem, scope_slot},
     scopes::Scopes,
-    system_instant::SystemInstant,
     value_mode::Fragment,
 };
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     identifier::Identifier,
     reference::NgsiLdReference,
+    time::{system_instant::SystemInstant, written_date_time::DateTimeText},
     unit_code_resolution::{UnitCodeRefusal, resolve_unit_code},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::classes;

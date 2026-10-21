@@ -9,15 +9,18 @@ use crate::current_attribute::{
 };
 use andromeda_ngsi_ld_entity::{
     attributes::Attributes,
-    date_time_text::DateTimeText,
     entity_state::EntityState,
     expanded_value::ExpandedValue,
     family_value::FamilyValue,
     instance::Instance,
     literal::LiteralValue,
-    system_instant::SystemInstant,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, reference::NgsiLdReference};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    entity_type_name::EntityTypeName,
+    reference::NgsiLdReference,
+    time::{system_instant::SystemInstant, written_date_time::DateTimeText},
+};
 use andromeda_ngsi_ld_model::temporal::structured_value::StructuredValue;
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_attribute_instance::{
@@ -366,15 +369,17 @@ fn a_lexical_datetime_string_keeps_no_datatype() {
     assert!(matches!(only_value(&rows), StoredValue::DateTime { datatype: None, .. }));
 }
 
+/// Clause 4.6.3 admits a comma for the decimal point in requests; the broker
+/// writes the point.
 #[test]
-fn a_datetime_with_an_offset_comes_back_in_utc() {
+fn an_expires_at_with_a_comma_fraction_comes_back_with_a_decimal_point() {
     let state = committed(&document(
-        &json!({ex("at"): [with(property(&json!([{"@value": 1}])), &json!({ngsi("expiresAt"): date_time("2024-01-01T02:00:00+02:00")}))]}),
+        &json!({ex("at"): [with(property(&json!([{"@value": 1}])), &json!({ngsi("expiresAt"): date_time("2024-01-01T00:00:00,5Z")}))]}),
     ));
     round_trip(&state);
     pretty_assertions::assert_eq!(
         held(state.attributes(), &ex("at"), None).expires_at().map(DateTimeText::as_str),
-        Some("2024-01-01T00:00:00Z")
+        Some("2024-01-01T00:00:00.500Z")
     );
 }
 

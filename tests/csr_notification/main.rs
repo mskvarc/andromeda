@@ -1,8 +1,9 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
+use andromeda_ngsi_ld_lexicon::time::{date_time::NgsiLdDateTime, rendering::instant_text};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, environment::TestEnvironment};
 use andromeda_test_mocks::{callback_server::CallbackServerError, notification_server::NotificationServer, server_config::MockServerConfig};
-use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, SecondsFormat, Utc};
+use chrono::{Duration as ChronoDuration, Utc};
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
@@ -343,7 +344,7 @@ fn subscription_update_vehicle_and_bus_entities_fragment(scope: &TestEnvironment
 
 fn assert_iso_timestamp(value: &Value, field_name: &str) {
     let value_str = value.as_str().expect("timestamp field should be a string");
-    let parsed = DateTime::<FixedOffset>::parse_from_rfc3339(value_str);
+    let parsed = value_str.parse::<NgsiLdDateTime>();
     assert!(parsed.is_ok(), "{field_name} should be a valid RFC3339 timestamp");
 }
 
@@ -1001,7 +1002,7 @@ async fn csr_notification_expires_at_in_future_results_in_active_status_before_d
     let subscription_id = scope.id("Subscription:extra-expiration-status");
     let endpoint = "http://127.0.0.1:8085/notify";
     let mut subscription = base_subscription_payload(&scope, &subscription_id, endpoint);
-    let future_expiration = (Utc::now() + ChronoDuration::seconds(20)).to_rfc3339_opts(SecondsFormat::Secs, true);
+    let future_expiration = instant_text(Utc::now() + ChronoDuration::seconds(20));
     subscription["expiresAt"] = Value::String(future_expiration);
 
     let (create_status, _) = create_csource_subscription(&http_client, &subscription).await;

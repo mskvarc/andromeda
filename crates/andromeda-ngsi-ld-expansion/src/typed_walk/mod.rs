@@ -19,7 +19,7 @@ use crate::{
     typed_walk::instance::{add_member, add_optional, add_serialized, is_ngsi_ld_null},
     written_member::WrittenMember,
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::rendering::instant_text};
 use andromeda_ngsi_ld_model::entity::{Entity, EntityPatch};
 use andromeda_ngsi_ld_vocabulary::{NULL_URI, compact::properties as compact_properties};
 
@@ -39,10 +39,10 @@ pub fn entity_node<M: WrittenMember>(scope: &TermScope<'_>, entity: &Entity<M>, 
     add_serialized(&mut node, scope, ID_MEMBER, &entity.id)?;
     add_serialized(&mut node, scope, TYPE_MEMBER, &entity.type_)?;
     add_optional(&mut node, scope, compact_properties::SCOPE, entity.scope.as_ref())?;
-    add_optional(&mut node, scope, compact_properties::EXPIRES_AT, entity.expires_at.as_ref())?;
-    add_optional(&mut node, scope, compact_properties::CREATED_AT, entity.created_at.as_ref())?;
-    add_optional(&mut node, scope, compact_properties::MODIFIED_AT, entity.modified_at.as_ref())?;
-    add_optional(&mut node, scope, compact_properties::DELETED_AT, entity.deleted_at.as_ref())?;
+    add_optional(&mut node, scope, compact_properties::EXPIRES_AT, entity.expires_at.map(instant_text).as_ref())?;
+    add_optional(&mut node, scope, compact_properties::CREATED_AT, entity.created_at.map(instant_text).as_ref())?;
+    add_optional(&mut node, scope, compact_properties::MODIFIED_AT, entity.modified_at.map(instant_text).as_ref())?;
+    add_optional(&mut node, scope, compact_properties::DELETED_AT, entity.deleted_at.map(instant_text).as_ref())?;
     let geo_members = [
         (compact_properties::LOCATION, entity.location.as_ref()),
         (compact_properties::OBSERVATION_SPACE, entity.observation_space.as_ref()),
@@ -62,7 +62,7 @@ pub fn patch_node<M: WrittenMember>(scope: &TermScope<'_>, patch: &EntityPatch<M
     add_optional(&mut node, scope, ID_MEMBER, patch.id.as_ref())?;
     add_optional(&mut node, scope, TYPE_MEMBER, patch.type_.as_ref())?;
     add_optional(&mut node, scope, compact_properties::SCOPE, patch.scope.as_ref())?;
-    add_optional(&mut node, scope, compact_properties::EXPIRES_AT, patch.expires_at.as_ref())?;
+    add_optional(&mut node, scope, compact_properties::EXPIRES_AT, patch.expires_at.map(instant_text).as_ref())?;
     let geo_members = [
         (compact_properties::LOCATION, patch.location.as_ref()),
         (compact_properties::OBSERVATION_SPACE, patch.observation_space.as_ref()),

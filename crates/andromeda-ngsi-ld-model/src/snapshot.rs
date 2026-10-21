@@ -1,12 +1,7 @@
 //! The Snapshot resource and its notification payload (ETSI GS CIM 009 clauses 5.2.41 and 5.3.4).
 
 use crate::{key_value_pair::KeyValuePair, query::body::Query};
-use andromeda_ngsi_ld_lexicon::{
-    constant_string,
-    identifier::Identifier,
-    ngsi_ld_urn::SnapshotNotificationId,
-    rfc3339::{datetime, optional_datetime},
-};
+use andromeda_ngsi_ld_lexicon::{constant_string, identifier::Identifier, ngsi_ld_urn::SnapshotNotificationId, time::instant_serde};
 use andromeda_ngsi_ld_problem_details::problem_detail::ProblemDetail;
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use chrono::{DateTime, Utc};
@@ -150,17 +145,17 @@ pub struct Snapshot {
     #[builder(default = Default::default())]
     pub temporal_queries_details: Option<Vec<ExecutionResultDetails>>,
     /// When the snapshot was requested.
-    #[serde(with = "datetime")]
+    #[serde(with = "instant_serde::required")]
     pub created_at: DateTime<Utc>,
     /// When it was last changed.
-    #[serde(with = "datetime")]
+    #[serde(with = "instant_serde::required")]
     pub modified_at: DateTime<Utc>,
     /// When it stops being usable.
-    #[serde(with = "datetime")]
+    #[serde(with = "instant_serde::required")]
     pub expires_at: DateTime<Utc>,
     /// When it was last read, if it ever was.
     #[builder(default = Default::default())]
-    #[serde(with = "optional_datetime")]
+    #[serde(with = "instant_serde::optional")]
     pub last_used_at: Option<DateTime<Utc>>,
 }
 
@@ -193,10 +188,10 @@ pub struct SnapshotNotification {
     #[builder(default = Default::default())]
     pub type_: SnapshotNotificationType,
     /// Expiration time for the snapshot.
-    #[serde(with = "datetime")]
+    #[serde(with = "instant_serde::required")]
     pub expires_at: DateTime<Utc>,
     /// Timestamp corresponding to the instant when the notification is generated.
-    #[serde(with = "datetime")]
+    #[serde(with = "instant_serde::required")]
     pub notified_at: DateTime<Utc>,
     /// Identifier of the snapshot whose status change triggered the notification.
     pub snapshot_id: Identifier,
@@ -260,12 +255,12 @@ mod tests {
         aggr_method::AggrMethod,
         identifier::Identifier,
         ngsi_ld_urn::SnapshotNotificationId,
-        rfc3339::parse_client_instant,
+        time::date_time::NgsiLdDateTime,
         time_prop::TimeProp,
         time_rel::TimeRel,
     };
     use andromeda_ngsi_ld_query::geo::reference_geometry::ReferenceGeometry;
-    use chrono::{DateTime, Utc};
+    use chrono::{DateTime, TimeDelta, TimeZone, Utc};
     use iso8601_duration::Duration as Iso8601Duration;
     use std::num::NonZeroU32;
 
@@ -376,12 +371,12 @@ mod tests {
 
     /// The instant `2024-01-01T00:00:00Z`, as a `DateTime<Utc>`.
     fn january_first() -> DateTime<Utc> {
-        "2024-01-01T00:00:00Z".parse::<DateTime<Utc>>().expect("valid instant")
+        "2024-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("valid instant").get()
     }
 
     #[test]
     fn a_snapshot_builder_defaults_every_optional_field() {
-        let instant = "2024-01-01T00:00:00Z".parse::<DateTime<Utc>>().expect("valid instant");
+        let instant = "2024-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("valid instant").get();
         let snapshot = Snapshot::builder()
             .id("urn:ngsi-ld:Snapshot:1".parse::<Identifier>().expect("valid snapshot id"))
             .snapshot_priority(SnapshotPriority::DEFAULT)
@@ -400,7 +395,7 @@ mod tests {
     /// `snapshotQueriesDetails` and `snapshotTemporalQueriesDetails`.
     #[test]
     fn the_output_only_members_carry_their_table_5_2_41_2_names() {
-        let instant = "2024-01-01T00:00:00Z".parse::<DateTime<Utc>>().expect("valid instant");
+        let instant = "2024-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("valid instant").get();
         let snapshot = Snapshot::builder()
             .id("urn:ngsi-ld:Snapshot:1".parse::<Identifier>().expect("valid snapshot id"))
             .snapshot_priority(SnapshotPriority::DEFAULT)
@@ -462,7 +457,7 @@ mod tests {
     /// 4.6.3); a millisecond instant renders three fractional digits.
     #[test]
     fn snapshot_timestamps_serialize_with_sub_second_precision() {
-        let instant = "2024-01-01T00:00:00.750Z".parse::<DateTime<Utc>>().expect("valid instant");
+        let instant = "2024-01-01T00:00:00.750Z".parse::<NgsiLdDateTime>().expect("valid instant").get();
         let snapshot = Snapshot::builder()
             .id("urn:ngsi-ld:Snapshot:1".parse::<Identifier>().expect("valid snapshot id"))
             .snapshot_priority(SnapshotPriority::DEFAULT)
@@ -482,7 +477,7 @@ mod tests {
     /// instant is written at the microsecond.
     #[test]
     fn a_snapshot_notification_writes_its_notified_at_at_the_microsecond() {
-        let instant = "2026-10-19T16:27:34.800524180Z".parse::<DateTime<Utc>>().expect("valid instant");
+        let instant = Utc.with_ymd_and_hms(2026, 10, 19, 16, 27, 34).single().expect("valid instant") + TimeDelta::nanoseconds(800_524_180);
         let notification = SnapshotNotification::builder()
             .id(SnapshotNotificationId::mint())
             .expires_at(instant)
@@ -510,7 +505,7 @@ mod tests {
             .build();
         let rendered = serde_json::to_value(snapshot.build_notification()).expect("notification serializes");
         let notified_at = rendered["notifiedAt"].as_str().expect("notifiedAt is a string");
-        assert!(notified_at.ends_with('Z') && parse_client_instant(notified_at).is_ok(), "{notified_at}");
+        assert!(notified_at.parse::<NgsiLdDateTime>().is_ok(), "{notified_at}");
     }
 
     #[test]
@@ -518,7 +513,10 @@ mod tests {
         let tq = temporal_q(r#""timerel": "between", "timeAt": "2024-01-01T00:00:00Z", "endTimeAt": "2024-02-01T00:00:00Z""#).expect("parses");
         pretty_assertions::assert_eq!(tq.timerel, TimeRel::Between);
         pretty_assertions::assert_eq!(tq.time_at, january_first());
-        pretty_assertions::assert_eq!(tq.end_time_at, Some("2024-02-01T00:00:00Z".parse::<DateTime<Utc>>().expect("valid instant")));
+        pretty_assertions::assert_eq!(
+            tq.end_time_at,
+            Some("2024-02-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("valid instant").get())
+        );
     }
 
     #[test]
@@ -526,10 +524,12 @@ mod tests {
         assert!(temporal_q(r#""timerel": "during", "timeAt": "2024-01-01T00:00:00Z""#).is_err());
     }
 
+    /// Clause 4.6.3: the trailing component "shall always be equal to the
+    /// character 'Z'", so an offset is refused even where it names UTC.
     #[test]
-    fn a_snapshot_temporal_query_normalises_an_offset_bearing_instant() {
-        let offset = temporal_q(r#""timerel": "after", "timeAt": "2024-01-01T01:00:00+01:00""#).expect("parses");
-        pretty_assertions::assert_eq!(offset.time_at, january_first());
+    fn a_snapshot_temporal_query_refuses_an_offset_bearing_instant() {
+        assert!(temporal_q(r#""timerel": "after", "timeAt": "2024-01-01T01:00:00+01:00""#).is_err());
+        assert!(temporal_q(r#""timerel": "after", "timeAt": "2024-01-01T00:00:00+00:00""#).is_err());
     }
 
     #[test]

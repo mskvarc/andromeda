@@ -98,9 +98,9 @@ mod tests {
         non_empty::NonEmpty,
         operation::speed_entity::{dataset, date_time, name, number, property, text},
         scopes::Scopes,
-        system_instant::SystemInstant,
     };
     use andromeda_json_literal::JsonLiteral;
+    use andromeda_ngsi_ld_lexicon::time::system_instant::SystemInstant;
     use cefact_units::UnitCode;
     use serde_json::json;
     use std::sync::Arc;

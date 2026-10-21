@@ -6,6 +6,7 @@
 //! every write sets.
 
 use crate::seeded_corpus::{PlannerPaths, SEED_PREFIX, SEEDED_ENTITIES, explain, explain_rolled_back, owner_object, seed, seed_essays};
+use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 use andromeda_test_harness::serialized_environment::SerializedEnvironment;
 use chrono::Utc;
 use pretty_assertions::assert_eq;
@@ -32,7 +33,7 @@ async fn entity_access_paths_reach_their_intended_index_for_every_query_shape() 
     let alarm = corpus.alarm();
     let city = corpus.city();
     let prefix = corpus.prefix();
-    let cutoff = Utc::now().to_rfc3339();
+    let cutoff = instant_text(Utc::now());
 
     let shapes = [
         PlannedShape {

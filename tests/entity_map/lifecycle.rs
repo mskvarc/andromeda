@@ -13,9 +13,10 @@ use crate::{
     setup_single_vehicle,
     update_entity_map,
 };
+use andromeda_ngsi_ld_lexicon::time::{date_time::NgsiLdDateTime, rendering::instant_text};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
-use chrono::{DateTime, Duration, SubsecRound, Utc};
+use chrono::{DateTime, Duration, Utc};
 use reqwest::StatusCode;
 use serde_json::json;
 
@@ -86,7 +87,7 @@ async fn entity_map_update_valid_expires_at_returns_204() {
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let map_id = body["id"].as_str().expect("map id missing").to_owned();
 
-    let new_expires = (Utc::now() + Duration::hours(2)).to_rfc3339();
+    let new_expires = instant_text(Utc::now() + Duration::hours(2));
     let patch = json!({ "expiresAt": new_expires });
     let (status, _) = update_entity_map(&c, &map_id, "application/json", &patch).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
@@ -111,7 +112,7 @@ async fn entity_map_update_output_only_fields_ignored_returns_204() {
     let map_id = body["id"].as_str().expect("map id missing").to_owned();
 
     let patch = json!({
-        "expiresAt": (Utc::now() + Duration::hours(3)).to_rfc3339(),
+        "expiresAt": instant_text(Utc::now() + Duration::hours(3)),
         "entityMap": { "urn:fake": ["@none"] },
         "linkedMaps": { "fake": "fake" }
     });
@@ -137,8 +138,8 @@ async fn entity_map_update_ld_json_with_context_returns_204() {
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let map_id = body["id"].as_str().expect("map id missing").to_owned();
 
-    let new_expires = (Utc::now() + Duration::hours(4)).trunc_subsecs(0);
-    let patch = json!({ "@context": [CORE_CONTEXT], "expiresAt": new_expires.to_rfc3339() });
+    let new_expires = DateTime::from_timestamp((Utc::now() + Duration::hours(4)).timestamp(), 0).expect("a representable instant");
+    let patch = json!({ "@context": [CORE_CONTEXT], "expiresAt": instant_text(new_expires) });
     let (status, body) = update_entity_map(&c, &map_id, "application/ld+json", &patch).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
 
@@ -147,8 +148,9 @@ async fn entity_map_update_ld_json_with_context_returns_204() {
     let stored = body["expiresAt"]
         .as_str()
         .expect("expiresAt is a string")
-        .parse::<DateTime<Utc>>()
-        .expect("expiresAt is a timestamp");
+        .parse::<NgsiLdDateTime>()
+        .expect("expiresAt is a timestamp")
+        .get();
     pretty_assertions::assert_eq!(stored, new_expires);
 
     cleanup_entity_map(&c, &map_id).await;
@@ -169,7 +171,7 @@ async fn entity_map_update_context_in_the_wrong_body_or_none_in_the_right_one_re
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let map_id = body["id"].as_str().expect("map id missing").to_owned();
 
-    let expires = (Utc::now() + Duration::hours(4)).to_rfc3339();
+    let expires = instant_text(Utc::now() + Duration::hours(4));
     for (content_type, patch) in [
         ("application/ld+json", json!({ "expiresAt": expires })),
         ("application/json", json!({ "@context": [CORE_CONTEXT], "expiresAt": expires })),
@@ -189,7 +191,7 @@ async fn entity_map_update_nonexistent_map_returns_404() {
     let scope = TestEnvironment::from_suite("entity_map").await.expect("isolated test environment");
     let c = client();
 
-    let patch = json!({ "expiresAt": (Utc::now() + Duration::hours(1)).to_rfc3339() });
+    let patch = json!({ "expiresAt": instant_text(Utc::now() + Duration::hours(1)) });
     let (status, body) = update_entity_map(&c, "urn:ngsi-ld:EntityMap:nonexistent", "application/json", &patch).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
     pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
@@ -228,7 +230,7 @@ async fn entity_map_update_past_expires_at_returns_400() {
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let map_id = body["id"].as_str().expect("map id missing").to_owned();
 
-    let patch = json!({ "expiresAt": (Utc::now() - Duration::minutes(1)).to_rfc3339() });
+    let patch = json!({ "expiresAt": instant_text(Utc::now() - Duration::minutes(1)) });
     let (status, body) = update_entity_map(&c, &map_id, "application/json", &patch).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());

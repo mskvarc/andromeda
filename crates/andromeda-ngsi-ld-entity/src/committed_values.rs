@@ -18,16 +18,17 @@
 
 use crate::{
     attributes::Attributes,
-    date_time_text::DateTimeText,
     entity_state::EntityState,
     expanded_value::ExpandedValue,
     family_value::FamilyValue,
     instance::Instance,
     list_object::ListObject,
     literal::{Literal, LiteralValue},
-    system_instant::SystemInstant,
 };
-use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, rfc3339::sub_second, time_value::TimeValue};
+use andromeda_ngsi_ld_lexicon::{
+    reference::NgsiLdReference,
+    time::{rendering::instant_text, system_instant::SystemInstant, value::TimeValue, written_date_time::DateTimeText},
+};
 use std::sync::Arc;
 
 impl EntityState {
@@ -162,7 +163,7 @@ fn canonical_date_time(literal: &Literal) -> Option<Literal> {
         Some(Ok(TimeValue::DateTime(instant))) => instant.get(),
         Some(Ok(TimeValue::Date(_) | TimeValue::Time(_)) | Err(_)) | None => return None,
     };
-    let canonical = sub_second(instant);
+    let canonical = instant_text(instant);
     if canonical == text.as_str() {
         return None;
     }
@@ -172,7 +173,6 @@ fn canonical_date_time(literal: &Literal) -> Option<Literal> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        date_time_text::DateTimeText,
         entity_state::EntityState,
         expanded_value::ExpandedValue,
         family_value::FamilyValue,
@@ -180,9 +180,12 @@ mod tests {
         list_object::ListObject,
         literal::{Literal, LiteralValue},
         operation::speed_entity::{SPEED, entity, instances, name, property, text},
-        system_instant::SystemInstant,
     };
-    use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{
+        reference::NgsiLdReference,
+        time::{system_instant::SystemInstant, written_date_time::DateTimeText},
+        uri::Uri,
+    };
     use andromeda_ngsi_ld_vocabulary::expanded::classes;
     use chrono::{DateTime, Duration};
     use std::sync::Arc;
@@ -307,10 +310,10 @@ mod tests {
     #[test]
     fn observed_at_and_expires_at_are_committed_in_their_rendered_spelling() {
         let mut instance = property(text("x"));
-        instance.set_observed_at(Some("2024-01-01T01:00:00.50+01:00".parse().expect("RFC 3339")));
-        instance.set_expires_at(Some("2030-01-01T00:00:00.000Z".parse().expect("RFC 3339")));
+        instance.set_observed_at(Some("2024-01-01T00:00:00.50Z".parse().expect("a DateTime")));
+        instance.set_expires_at(Some("2030-01-01T00:00:00.000Z".parse().expect("a DateTime")));
         let mut state = entity(vec![(SPEED, instances(vec![(None, instance)]))]);
-        state.set_expires_at(Some("2031-01-01T02:00:00+02:00".parse().expect("RFC 3339")));
+        state.set_expires_at(Some("2031-01-01T00:00:00,000000Z".parse().expect("a DateTime")));
         state.canonicalize_values(None);
         let held = state.attributes().get(SPEED).and_then(|held| held.get(None)).expect("the instance");
         pretty_assertions::assert_eq!(held.observed_at().map(DateTimeText::as_str), Some("2024-01-01T00:00:00.500Z"));

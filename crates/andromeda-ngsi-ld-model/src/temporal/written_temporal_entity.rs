@@ -32,7 +32,11 @@ use crate::{
     temporal::simplified_unfold::instances_of,
 };
 use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, rfc3339::RequestInstant};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    identifier::Identifier,
+    time::{date_time::NgsiLdDateTime, rendering::instant_text},
+};
 use andromeda_ngsi_ld_representation::{
     compact_key_admission::CompactKeyError,
     compact_node::{CompactNode, NodeShape, produced_node::ProducedNode},
@@ -117,7 +121,7 @@ impl WrittenTemporalEntity {
                 CONTEXT_MEMBER | compact_properties::CREATED_AT | compact_properties::MODIFIED_AT | compact_properties::DELETED_AT => {}
                 ID_MEMBER => written.id = optional(member, RefusedMember::Id).map_err(at)?,
                 TYPE_MEMBER => written.type_ = optional(member, RefusedMember::Type).map_err(at)?,
-                compact_properties::EXPIRES_AT => written.expires_at = optional(member, RefusedMember::ExpiresAt).map_err(at)?.map(RequestInstant::get),
+                compact_properties::EXPIRES_AT => written.expires_at = optional(member, RefusedMember::ExpiresAt).map_err(at)?.map(NgsiLdDateTime::get),
                 compact_properties::SCOPE => written.scope = written_scope(member).map_err(at)?,
                 attribute => {
                     let attribute_name = AttributeName::from_str(attribute).map_err(|source| at(NodeRefusal::AttributeName(source).into()))?;
@@ -217,7 +221,7 @@ impl Serialize for WrittenTemporalEntity {
             None => {}
         }
         if let Some(expires_at) = &self.expires_at {
-            object.serialize_entry(compact_properties::EXPIRES_AT, expires_at)?;
+            object.serialize_entry(compact_properties::EXPIRES_AT, &instant_text(*expires_at))?;
         }
         for (name, instances) in &self.attrs {
             object.serialize_entry(name.as_str(), instances)?;

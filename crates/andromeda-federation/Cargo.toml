@@ -35,7 +35,7 @@ andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-registration.workspace = true
 andromeda-telemetry.workspace = true
 backon = "1.6.0"
-chrono = { version = "0.4.45", features = ["serde"] }
+chrono = "0.4.45"
 dashmap = { version = "6.2.1", features = ["inline"] }
 derive_more = { version = "2.1.1", features = ["is_variant"] }
 futures = "0.3.34"

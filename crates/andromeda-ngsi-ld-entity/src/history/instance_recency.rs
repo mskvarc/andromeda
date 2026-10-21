@@ -45,12 +45,13 @@ impl InstanceRecency {
 #[cfg(test)]
 mod tests {
     use crate::history::instance_recency::InstanceRecency;
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
     use std::cmp::Ordering;
 
     fn at(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("a valid instant").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("a valid instant").get()
     }
 
     fn recency(observed_at: Option<DateTime<Utc>>, modified_at: Option<DateTime<Utc>>) -> InstanceRecency {

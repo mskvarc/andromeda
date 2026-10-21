@@ -39,7 +39,7 @@ andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-telemetry.workspace = true
 andromeda-tenancy.workspace = true
 async-trait = "0.1.92"
-chrono = { version = "0.4.45", features = ["serde"] }
+chrono = "0.4.45"
 futures = "0.3.34"
 pretty_assertions = "1.4.1"
 serde_json = "1.0.151"

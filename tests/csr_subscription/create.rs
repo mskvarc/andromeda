@@ -14,8 +14,9 @@ use crate::{
     invalid_type_csource_subscription_payload,
     retrieve_csource_subscription,
 };
+use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 use andromeda_test_harness::environment::TestEnvironment;
-use chrono::{Duration, SecondsFormat, Utc};
+use chrono::{Duration, Utc};
 use reqwest::StatusCode;
 use serde_json::Value;
 use std::time::Duration as StdDuration;
@@ -92,7 +93,7 @@ async fn csr_subscription_create_with_expires_at_becomes_expired_after_deadline(
     let scope = TestEnvironment::from_suite("csr_subscription").await.expect("isolated test environment");
     let http_client = client();
     let subscription_id = scope.id("Subscription:create-expiring");
-    let expires_at = (Utc::now() + Duration::seconds(3)).to_rfc3339_opts(SecondsFormat::Secs, true);
+    let expires_at = instant_text(Utc::now() + Duration::seconds(3));
     let payload = expires_at_csource_subscription_payload(&subscription_id, &expires_at);
 
     let (create_status, _, _) = create_csource_subscription(&http_client, &payload).await;

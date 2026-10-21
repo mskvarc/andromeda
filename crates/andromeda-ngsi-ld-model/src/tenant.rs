@@ -13,8 +13,8 @@
 use andromeda_ngsi_ld_lexicon::{
     constant_string,
     identifier::{Identifier, IdentifierParseError},
-    rfc3339,
     tenant::TenantName,
+    time::instant_serde,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -87,12 +87,12 @@ pub struct Tenant {
     /// The read-only, system-computed lifecycle status.
     pub status: TenantState,
     /// When the tenant was created (clause 4.8), present only under `sysAttrs`.
-    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime")]
+    #[serde(skip_serializing_if = "Option::is_none", with = "instant_serde::optional")]
     #[builder(default = Default::default())]
     pub created_at: Option<DateTime<Utc>>,
     /// When the tenant was last modified (clause 4.8), present only under
     /// `sysAttrs`.
-    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime")]
+    #[serde(skip_serializing_if = "Option::is_none", with = "instant_serde::optional")]
     #[builder(default = Default::default())]
     pub modified_at: Option<DateTime<Utc>>,
     /// The operational usage, present only under `usage`. Flattened so its

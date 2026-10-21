@@ -277,6 +277,7 @@ mod tests {
         conversion_settings,
         past_horizon,
     };
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use chrono::{DateTime, TimeDelta, Utc};
     use pretty_assertions::{assert_eq, assert_ne};
     use sea_query::PostgresQueryBuilder;
@@ -284,7 +285,7 @@ mod tests {
 
     /// An instant fixed for every case.
     fn instant(text: &str) -> DateTime<Utc> {
-        text.parse::<DateTime<Utc>>().expect("an RFC 3339 instant")
+        text.parse::<NgsiLdDateTime>().expect("an RFC 3339 instant").get()
     }
 
     /// A chunk named `name` ending at `range_end`.

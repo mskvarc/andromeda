@@ -13,7 +13,7 @@
 //! storage at all.
 //!
 //! Rendering the temporal representation carries the stored instant back in the
-//! form the lexicon crate's `sub_second` renderer produces — exactly the
+//! form the lexicon crate's `instant_text` renderer produces — exactly the
 //! sub-second precision the instant carries, up to the microsecond resolution
 //! the `TIMESTAMPTZ` column holds and clause 4.6.3 caps a `DateTime` at. The
 //! assertions below compare the rendering against that form of the stored
@@ -22,7 +22,7 @@
 //! prevent.
 
 use crate::{attribute_iri, client, create_entity, database, get_temporal_entity, rendered_instances, stored_history::stored_attribute_history};
-use andromeda_ngsi_ld_lexicon::rfc3339::sub_second;
+use andromeda_ngsi_ld_lexicon::time::{date_time::NgsiLdDateTime, rendering::instant_text};
 use andromeda_test_harness::environment::TestEnvironment;
 use chrono::{DateTime, Utc};
 use pretty_assertions::{assert_eq, assert_ne};
@@ -58,9 +58,7 @@ fn entity_with_instants(entity_id: &str, observed_at: &str, value: &str) -> Valu
 
 /// The instant a stored timestamp holds, as an RFC 3339 string.
 fn stored_instant(instant: Option<DateTime<Utc>>) -> String {
-    instant
-        .expect("the axis the fixture declared must be stored")
-        .to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+    instant_text(instant.expect("the axis the fixture declared must be stored"))
 }
 
 /// Clause 4.6.3 caps an NGSI-LD `DateTime` at six fractional-second digits. A
@@ -104,12 +102,12 @@ async fn temporal_semantics_a_microsecond_instant_round_trips_exactly() {
     let created = create_entity(&http, &entity_with_instants(&entity_id, EXACT_MICROSECOND, EXACT_MICROSECOND)).await;
     assert_eq!(created, StatusCode::CREATED, "the microsecond fixture must be accepted");
 
-    let expected = EXACT_MICROSECOND.parse::<DateTime<Utc>>().expect("a valid expected instant");
+    let expected = EXACT_MICROSECOND.parse::<NgsiLdDateTime>().expect("a valid expected instant").get();
     let rows = stored_attribute_history(&pool, &entity_id, &attribute_iri("inspected")).await;
     assert_eq!(rows.len(), 1, "the fixture records exactly one observation");
     assert_eq!(
         stored_instant(rows[0].observed_at),
-        expected.to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
+        instant_text(expected),
         "a microsecond instant survives storage unchanged"
     );
 
@@ -119,7 +117,7 @@ async fn temporal_semantics_a_microsecond_instant_round_trips_exactly() {
     assert_eq!(instances.len(), 1, "one observation renders: {body}");
     assert_eq!(
         instances[0]["observedAt"].as_str().unwrap_or_default(),
-        sub_second(expected),
+        instant_text(expected),
         "a microsecond instant renders through the sub-second outbound form: {body}"
     );
     scope.finish().await.expect("cleanup failed");

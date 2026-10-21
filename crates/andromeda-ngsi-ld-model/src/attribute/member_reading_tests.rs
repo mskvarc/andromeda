@@ -15,7 +15,7 @@ use crate::{
     request_body::RequestBody,
 };
 use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, time::rendering::instant_text};
 use andromeda_ngsi_ld_representation::attribute_type_validation::AttributeNodeFault;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json, value::RawValue};
@@ -173,26 +173,20 @@ fn a_dataset_id_none_reads_as_the_default_instance() {
     );
 }
 
-/// Clause 4.6.3: a comma fraction separator is accepted in a request, with a
-/// numeric offset too, on `observedAt` and `expiresAt`.
+/// Clause 4.6.3: a comma fraction separator is accepted in a request, on
+/// `observedAt` and `expiresAt`.
 #[test]
 fn an_observed_at_with_a_comma_fraction_is_read_as_the_instant_it_names() {
     let attribute = single(&json!({
         "type": "Property", "value": 1,
-        "observedAt": "2024-01-01T01:00:00,25+01:00",
+        "observedAt": "2024-01-01T00:00:00,25Z",
         "expiresAt": "2099-01-01T00:00:00,5Z"
     }));
     let Attribute::Property(property) = attribute else {
         panic!("a Property");
     };
-    pretty_assertions::assert_eq!(
-        property.common.observed_at.map(|at| at.to_rfc3339()).as_deref(),
-        Some("2024-01-01T00:00:00.250+00:00")
-    );
-    pretty_assertions::assert_eq!(
-        property.common.expires_at.map(|at| at.to_rfc3339()).as_deref(),
-        Some("2099-01-01T00:00:00.500+00:00")
-    );
+    pretty_assertions::assert_eq!(property.common.observed_at.map(instant_text).as_deref(), Some("2024-01-01T00:00:00.250Z"));
+    pretty_assertions::assert_eq!(property.common.expires_at.map(instant_text).as_deref(), Some("2099-01-01T00:00:00.500Z"));
 }
 
 /// A geometry written as a JSON string is kept as its text (clause

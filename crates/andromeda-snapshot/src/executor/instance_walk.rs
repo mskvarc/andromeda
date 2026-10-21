@@ -19,7 +19,7 @@
 //! no position on the requested axis (clause 4.18), so the Scope of an entity
 //! an earlier page captured is left out too.
 
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, rfc3339::sub_second, time_prop::TimeProp};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::rendering::instant_text, time_prop::TimeProp};
 use andromeda_ngsi_ld_model::temporal::temporal_document::TemporalDocument;
 use andromeda_ngsi_ld_query::temporal::{instance_page::PageDirection, window::TimeInterval};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
@@ -73,7 +73,7 @@ pub(crate) enum WalkRefusal {
     /// rather than repeat it.
     #[error(
         "a partial temporal answer was cut at {}, no later than the instant it was resumed at, so its history cannot be read past that instant",
-        sub_second(*at)
+        instant_text(*at)
     )]
     Stalled {
         /// The instant the page could not be read past.
@@ -152,11 +152,13 @@ pub(crate) fn is_scope(name: &AttributeName) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::executor::instance_walk::{InstanceWalk, WalkProgress, WalkRefusal};
-    use andromeda_ngsi_ld_entity::{
-        date_time_text::DateTimeText,
-        document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot},
+    use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot};
+    use andromeda_ngsi_ld_lexicon::{
+        attribute_name::AttributeName,
+        attribute_type::AttributeType,
+        time::{date_time::NgsiLdDateTime, written_date_time::DateTimeText},
+        time_prop::TimeProp,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, time_prop::TimeProp};
     use andromeda_ngsi_ld_model::{entity_system_times::EntitySystemTimes, temporal::temporal_document::TemporalDocument};
     use andromeda_ngsi_ld_query::temporal::{instance_page::PageDirection, window::TimeInterval};
     use andromeda_ngsi_ld_vocabulary::expanded::properties;
@@ -167,7 +169,7 @@ mod tests {
     use std::num::NonZeroU32;
 
     fn at(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("a valid instant").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("a valid instant").get()
     }
 
     fn speed() -> AttributeName {

@@ -15,7 +15,6 @@
 
 use andromeda_ngsi_ld_entity::{
     attributes::Attributes,
-    date_time_text::DateTimeText,
     document::{
         attribute_member::AttributeMember,
         instance_document::{InstanceDocument, InstanceDocumentParts},
@@ -24,7 +23,7 @@ use andromeda_ngsi_ld_entity::{
     proof_seals::ProofSeals,
     refusal::EntityRefusal,
 };
-use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
+use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, time::written_date_time::DateTimeText};
 use cefact_units::UnitCode;
 
 /// The metadata of one observed instance: never empty, and never holding the
@@ -174,11 +173,8 @@ fn set<T>(slot: Option<Slot<T>>) -> Result<Option<T>, EntityRefusal> {
 #[cfg(test)]
 mod tests {
     use crate::temporal::observation_metadata::ObservationMetadata;
-    use andromeda_ngsi_ld_entity::{
-        document::{attribute_member::AttributeMember, instance_document::InstanceDocument},
-        system_instant::SystemInstant,
-    };
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_entity::document::{attribute_member::AttributeMember, instance_document::InstanceDocument};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::system_instant::SystemInstant};
     use indexmap::IndexMap;
     use serde_json::{Value, json};
 

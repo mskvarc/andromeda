@@ -29,12 +29,13 @@ pub fn within_interval(column: &SimpleExpr, interval: &TimeInterval) -> Conditio
 #[cfg(test)]
 mod tests {
     use crate::time_interval_predicate::within_interval;
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
     use chrono::{DateTime, Utc};
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr};
 
     fn instant(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("a valid instant").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("a valid instant").get()
     }
 
     fn render(interval: &TimeInterval) -> String {

@@ -8,7 +8,7 @@
 //! enumerates the eight types rather than testing for a language map.
 
 use andromeda_http_headers::language::{LanguageFilter, LanguageRange};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, rfc3339};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, time::instant_serde};
 use andromeda_ngsi_ld_model::attribute::{
     instance::AttributeValue,
     language_property::{LanguageMapKey, LanguageMapValue, LanguageProperty},
@@ -166,7 +166,7 @@ pub(crate) struct NegotiatedProperty<'a> {
     value: &'a LanguageMapValue,
     /// The tag it was keyed by, or `@none`.
     lang: LanguageMapKey,
-    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
+    #[serde(skip_serializing_if = "Option::is_none", with = "instant_serde::optional", default)]
     /// The observation instant, when the attribute carried one.
     observed_at: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]

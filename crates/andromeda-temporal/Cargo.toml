@@ -38,7 +38,7 @@ andromeda-persistence-failure.workspace = true
 andromeda-telemetry.workspace = true
 async-lock = "3.4.2"
 async-trait = "0.1.92"
-chrono = { version = "0.4.45", features = ["serde"] }
+chrono = "0.4.45"
 derive_more = { version = "2.1.1", features = ["display"] }
 indexmap = { version = "2.14.2", features = ["serde"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }

@@ -1,7 +1,7 @@
 //! What the broker has observed about a registered Context Source (ETSI GS CIM 009 Table 5.2.9-2).
 
 use crate::registration::status::CsrStatus;
-use andromeda_ngsi_ld_lexicon::rfc3339;
+use andromeda_ngsi_ld_lexicon::time::instant_serde;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
@@ -34,11 +34,11 @@ pub struct RegistrationHealth {
     #[builder(default = Default::default())]
     pub times_failed: Option<i32>,
     /// Timestamp of last successful notification.
-    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
+    #[serde(skip_serializing_if = "Option::is_none", with = "instant_serde::optional", default)]
     #[builder(default = Default::default())]
     pub last_success: Option<DateTime<Utc>>,
     /// Timestamp of last failed notification.
-    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
+    #[serde(skip_serializing_if = "Option::is_none", with = "instant_serde::optional", default)]
     #[builder(default = Default::default())]
     pub last_failure: Option<DateTime<Utc>>,
 }

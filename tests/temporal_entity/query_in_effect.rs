@@ -26,8 +26,9 @@
 //! quarter of an hour after the deletion.
 
 use crate::{BASE_URL, client, create_temporal_entity_json, delete_entity_attr, query_temporal_entities};
+use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 use andromeda_test_harness::environment::TestEnvironment;
-use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use pretty_assertions::assert_eq;
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
@@ -54,7 +55,7 @@ impl Meters {
 
 /// The instant `minutes` after `base`, as a request writes it.
 fn minutes_after(base: DateTime<Utc>, minutes: i64) -> String {
-    (base + TimeDelta::minutes(minutes)).to_rfc3339_opts(SecondsFormat::Secs, true)
+    instant_text(base + TimeDelta::minutes(minutes))
 }
 
 /// One `power` instance observed `minutes` after `base`.
@@ -223,7 +224,7 @@ async fn temporal_query_q_on_modified_at_uses_the_same_rule() {
 
     let query = format!(
         "type=Meter&q=power>8&attrs=status&timeproperty=modifiedAt&timerel=after&timeAt={}",
-        meters_written.between_writes.to_rfc3339_opts(SecondsFormat::Millis, true)
+        instant_text(meters_written.between_writes)
     );
     let (status, body, _) = query_temporal_entities(&c, &scope, &query, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");

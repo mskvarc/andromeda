@@ -10,7 +10,7 @@ use crate::{
     language_negotiation::NegotiatedEntry,
     version::fallback::InstanceMember,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, rfc3339::sub_second};
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, time::rendering::instant_text};
 use andromeda_ngsi_ld_model::attribute::common_fields::CommonAttributeFields;
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use serde::{Serialize, Serializer, ser::SerializeMap};
@@ -42,7 +42,7 @@ impl Serialize for NegotiatedInstance<'_> {
         serialize_present(
             &mut object,
             compact_properties::OBSERVED_AT,
-            self.common.observed_at.filter(|_| keeps(InstanceMember::ObservedAt)).map(sub_second),
+            self.common.observed_at.filter(|_| keeps(InstanceMember::ObservedAt)).map(instant_text),
         )?;
         serialize_present(
             &mut object,

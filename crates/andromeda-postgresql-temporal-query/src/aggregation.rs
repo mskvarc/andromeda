@@ -342,7 +342,7 @@ pub fn build_aggregation_query(branch: &HistoryBranch, of: &HistoryOf, compiled:
 #[cfg(test)]
 mod tests {
     use crate::aggregation::build_aggregation_query;
-    use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat, time_prop::TimeProp};
+    use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         temporal::{
@@ -600,8 +600,8 @@ mod tests {
     /// bounds as the period's start and end instants.
     #[test]
     fn a_whole_range_period_over_a_between_query_spans_the_query_bounds() {
-        let from = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z").expect("valid instant").with_timezone(&Utc);
-        let to = DateTime::parse_from_rfc3339("2024-01-01T03:00:00Z").expect("valid instant").with_timezone(&Utc);
+        let from = "2024-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("valid instant").get();
+        let to = "2024-01-01T03:00:00Z".parse::<NgsiLdDateTime>().expect("valid instant").get();
         let mut compiled = aggregated(vec![AggrMethod::Avg], Some("PT0S"));
         compiled.window.interval = TimeInterval::Between { from, to };
         let sql = sql_of(&compiled);
@@ -615,7 +615,7 @@ mod tests {
     /// the response then widens to its own (clause 4.5.19.1).
     #[test]
     fn a_whole_range_period_over_a_before_query_opens_at_the_least_recent_instant_its_stream_holds() {
-        let to = DateTime::parse_from_rfc3339("2024-01-01T03:00:00Z").expect("valid instant").with_timezone(&Utc);
+        let to = "2024-01-01T03:00:00Z".parse::<NgsiLdDateTime>().expect("valid instant").get();
         let mut compiled = aggregated(vec![AggrMethod::Avg], None);
         compiled.window.interval = TimeInterval::Before(to);
         let sql = sql_of(&compiled);
@@ -624,7 +624,7 @@ mod tests {
     }
 
     fn instant(text: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(text).expect("valid instant").with_timezone(&Utc)
+        text.parse::<NgsiLdDateTime>().expect("valid instant").get()
     }
 
     /// The aggregation of `period` between 2026-03-15 and 2026-06-15.
@@ -761,7 +761,7 @@ mod tests {
     #[test]
     fn a_calendar_bucket_truncates_the_axis_in_the_group_by() {
         let sql = sql_of(&grouped(vec![AggrMethod::Avg], None, "observedAt;month"));
-        assert!(sql.contains("date_trunc('month', \"ah\".\"observed_at\")"), "{sql}");
+        assert!(sql.contains("date_trunc('month', \"ah\".\"observed_at\", 'UTC')"), "{sql}");
         assert!(group_keys(&sql).contains("date_trunc('month'"), "the bucket keys the group: {sql}");
     }
 
@@ -770,7 +770,7 @@ mod tests {
     #[test]
     fn a_cyclic_bucket_extracts_the_axis_field_in_the_group_by() {
         let sql = sql_of(&grouped(vec![AggrMethod::Avg], None, "observedAt;hourOfDay"));
-        assert!(sql.contains("date_part('hour', \"ah\".\"observed_at\")"), "{sql}");
+        assert!(sql.contains("date_part('hour', \"ah\".\"observed_at\" AT TIME ZONE ('UTC'))"), "{sql}");
     }
 
     /// A value-in-effect key correlates the attribute's value at each instant

@@ -7,8 +7,9 @@
 //! selectable on its own semantic axis.
 
 use crate::{attribute_iri, client, create_temporal_entity, database, get_temporal_entity, rendered_instances, stored_history::stored_attribute_history};
+use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 use andromeda_test_harness::environment::TestEnvironment;
-use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
@@ -19,7 +20,7 @@ const LATENESS_DAYS: [i64; 4] = [0, 1, 30, 365];
 
 /// Render one instant in the spelling an NGSI-LD `observedAt` takes.
 fn observation_instant(instant: DateTime<Utc>) -> String {
-    instant.to_rfc3339_opts(SecondsFormat::Millis, true)
+    instant_text(instant)
 }
 
 /// Count the chunks the history of one Entity occupies.

@@ -11,7 +11,8 @@
 //! not ask for `sysAttrs` drops them
 //! ([`EntityState::strip_attribute_instants`]).
 
-use crate::{attribute_instances::AttributeInstances, attributes::Attributes, entity_state::EntityState, instance::Instance, system_instant::SystemInstant};
+use crate::{attribute_instances::AttributeInstances, attributes::Attributes, entity_state::EntityState, instance::Instance};
+use andromeda_ngsi_ld_lexicon::time::system_instant::SystemInstant;
 use std::sync::Arc;
 
 impl EntityState {
@@ -157,8 +158,8 @@ mod tests {
         entity_state::EntityState,
         instance::Instance,
         operation::speed_entity::{SPEED, dataset, entity, instances, name, number, property},
-        system_instant::SystemInstant,
     };
+    use andromeda_ngsi_ld_lexicon::time::system_instant::SystemInstant;
     use std::sync::Arc;
 
     /// The sub-attribute the nested fixtures carry.
@@ -230,7 +231,7 @@ mod tests {
 
         target.stamp_attribute_instants(None, at("2024-02-03T04:05:06Z"));
 
-        pretty_assertions::assert_eq!(stamps_of(&target, None), texts("2024-02-03T04:05:06.000000Z", "2024-02-03T04:05:06.000000Z"));
+        pretty_assertions::assert_eq!(stamps_of(&target, None), texts("2024-02-03T04:05:06Z", "2024-02-03T04:05:06Z"));
     }
 
     #[test]
@@ -243,7 +244,7 @@ mod tests {
 
         target.stamp_attribute_instants(Some(&previous), at("2024-02-03T04:05:06Z"));
 
-        pretty_assertions::assert_eq!(stamps_of(&target, None), texts("2020-01-01T00:00:00.000000Z", "2024-02-03T04:05:06.000000Z"));
+        pretty_assertions::assert_eq!(stamps_of(&target, None), texts("2020-01-01T00:00:00Z", "2024-02-03T04:05:06Z"));
     }
 
     #[test]
@@ -258,7 +259,7 @@ mod tests {
 
         pretty_assertions::assert_eq!(
             stamps_of(&target, None),
-            texts("2020-01-01T00:00:00.000000Z", "2021-06-01T00:00:00.000000Z"),
+            texts("2020-01-01T00:00:00Z", "2021-06-01T00:00:00Z"),
             "an untouched instance does not move its modifiedAt"
         );
     }
@@ -282,14 +283,8 @@ mod tests {
 
         target.stamp_attribute_instants(Some(&previous), at("2024-02-03T04:05:06Z"));
 
-        pretty_assertions::assert_eq!(
-            stamps_of(&target, Some("urn:ngsi-ld:Dataset:A")).0.as_deref(),
-            Some("2020-01-01T00:00:00.000000Z")
-        );
-        pretty_assertions::assert_eq!(
-            stamps_of(&target, Some("urn:ngsi-ld:Dataset:B")).0.as_deref(),
-            Some("2024-02-03T04:05:06.000000Z")
-        );
+        pretty_assertions::assert_eq!(stamps_of(&target, Some("urn:ngsi-ld:Dataset:A")).0.as_deref(), Some("2020-01-01T00:00:00Z"));
+        pretty_assertions::assert_eq!(stamps_of(&target, Some("urn:ngsi-ld:Dataset:B")).0.as_deref(), Some("2024-02-03T04:05:06Z"));
     }
 
     #[test]
@@ -328,7 +323,7 @@ mod tests {
             &shared(&previous, "https://example.com/brand"),
             &shared(&target, "https://example.com/brand")
         ));
-        pretty_assertions::assert_eq!(stamps_of(&target, None), texts("2020-01-01T00:00:00.000000Z", "2024-02-03T04:05:06.000000Z"));
+        pretty_assertions::assert_eq!(stamps_of(&target, None), texts("2020-01-01T00:00:00Z", "2024-02-03T04:05:06Z"));
     }
 
     /// An instance restated with its content unchanged keeps the very stamps
@@ -365,13 +360,10 @@ mod tests {
 
         target.stamp_attribute_instants(Some(&previous), at("2024-02-03T04:05:06Z"));
 
-        pretty_assertions::assert_eq!(
-            nested_stamps_of(&target, &[ACCURACY]),
-            texts("2024-02-03T04:05:06.000000Z", "2024-02-03T04:05:06.000000Z")
-        );
+        pretty_assertions::assert_eq!(nested_stamps_of(&target, &[ACCURACY]), texts("2024-02-03T04:05:06Z", "2024-02-03T04:05:06Z"));
         pretty_assertions::assert_eq!(
             nested_stamps_of(&target, &[]),
-            texts("2020-01-01T00:00:00.000000Z", "2024-02-03T04:05:06.000000Z"),
+            texts("2020-01-01T00:00:00Z", "2024-02-03T04:05:06Z"),
             "clause 4.8: the Property changed when its sub-attribute was added"
         );
     }
@@ -389,7 +381,7 @@ mod tests {
         for path in [&[ACCURACY][..], &[ACCURACY, METHOD][..]] {
             pretty_assertions::assert_eq!(
                 nested_stamps_of(&target, path),
-                texts("2024-02-03T04:05:06.000000Z", "2024-02-03T04:05:06.000000Z"),
+                texts("2024-02-03T04:05:06Z", "2024-02-03T04:05:06Z"),
                 "{path:?}"
             );
         }
@@ -409,17 +401,11 @@ mod tests {
 
         target.stamp_attribute_instants(Some(&previous), at("2024-02-03T04:05:06Z"));
 
-        pretty_assertions::assert_eq!(
-            nested_stamps_of(&target, &[ACCURACY]),
-            texts("2020-01-01T00:00:00.000000Z", "2024-02-03T04:05:06.000000Z")
-        );
-        pretty_assertions::assert_eq!(
-            nested_stamps_of(&target, &[]),
-            texts("2020-01-01T00:00:00.000000Z", "2024-02-03T04:05:06.000000Z")
-        );
+        pretty_assertions::assert_eq!(nested_stamps_of(&target, &[ACCURACY]), texts("2020-01-01T00:00:00Z", "2024-02-03T04:05:06Z"));
+        pretty_assertions::assert_eq!(nested_stamps_of(&target, &[]), texts("2020-01-01T00:00:00Z", "2024-02-03T04:05:06Z"));
         pretty_assertions::assert_eq!(
             nested_stamps_of(&target, &[METHOD]),
-            texts("2020-01-01T00:00:00.000000Z", "2021-01-01T00:00:00.000000Z"),
+            texts("2020-01-01T00:00:00Z", "2021-01-01T00:00:00Z"),
             "the untouched sibling keeps both times"
         );
     }
@@ -440,7 +426,7 @@ mod tests {
         for path in [&[][..], &[ACCURACY][..]] {
             pretty_assertions::assert_eq!(
                 nested_stamps_of(&target, path),
-                texts("2020-01-01T00:00:00.000000Z", "2021-01-01T00:00:00.000000Z"),
+                texts("2020-01-01T00:00:00Z", "2021-01-01T00:00:00Z"),
                 "{path:?}"
             );
         }

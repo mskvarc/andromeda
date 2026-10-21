@@ -6,7 +6,7 @@ use crate::{
     notification::SysAttrsSnapshot,
     scope_member::ScopeMember,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::instant_serde};
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
@@ -39,6 +39,7 @@ pub struct Entity<M = AttributeValue> {
 
     /// Entity expiration timestamp (clause 4.22).
     #[builder(default = Default::default())]
+    #[serde(with = "instant_serde::optional")]
     pub expires_at: Option<DateTime<Utc>>,
 
     /// Default geospatial property (clause 4.7).
@@ -55,14 +56,17 @@ pub struct Entity<M = AttributeValue> {
 
     /// System-generated creation timestamp (clause 4.8, Table 5.2.2-1).
     #[builder(default = Default::default())]
+    #[serde(with = "instant_serde::optional")]
     pub created_at: Option<DateTime<Utc>>,
 
     /// System-generated modification timestamp (clause 4.8, Table 5.2.2-1).
     #[builder(default = Default::default())]
+    #[serde(with = "instant_serde::optional")]
     pub modified_at: Option<DateTime<Utc>>,
 
     /// Deletion timestamp, output-only in notifications/temporal (clause 4.8).
     #[builder(default = Default::default())]
+    #[serde(with = "instant_serde::optional")]
     pub deleted_at: Option<DateTime<Utc>>,
 
     /// Every other attribute the entity carries, keyed by attribute name.
@@ -223,6 +227,7 @@ pub struct EntityPatch<M = AttributeValue> {
     pub scope: Option<ScopeMember>,
 
     /// Entity expiration timestamp (clause 4.22).
+    #[serde(with = "instant_serde::optional")]
     pub expires_at: Option<DateTime<Utc>>,
 
     /// Default geospatial property (clause 4.7).

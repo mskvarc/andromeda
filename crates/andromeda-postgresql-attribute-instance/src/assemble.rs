@@ -17,15 +17,19 @@ use crate::{
 use andromeda_ngsi_ld_entity::{
     attribute_instances::{AttributeInstances, RepeatedInstance},
     attributes::Attributes,
-    date_time_text::DateTimeText,
     instance::Instance,
     literal::LiteralError,
     proof_seals::ProofSeals,
     refusal::EntityRefusal,
-    system_instant::SystemInstant,
 };
 use andromeda_ngsi_ld_geometry::geojson::GeometryError;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, reference::NgsiLdReferenceError};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    identifier::Identifier,
+    reference::NgsiLdReferenceError,
+    time::{system_instant::SystemInstant, written_date_time::DateTimeText},
+};
 use andromeda_ngsi_ld_model::temporal::structured_value_codec::StoredValueError;
 use andromeda_postgresql_codes::{attribute_kind_code::attribute_type_of, value_kind::ValueKind};
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};

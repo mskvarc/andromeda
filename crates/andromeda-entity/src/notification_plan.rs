@@ -144,12 +144,13 @@ mod tests {
             attribute_instance_key::AttributeInstanceKey,
         },
     };
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
     use chrono::{DateTime, Utc};
     use serde_json::{Map, Value, json};
 
     fn instant(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("instant parses").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("instant parses").get()
     }
 
     /// The stored entity `members` describe, decoded as the store decodes it.

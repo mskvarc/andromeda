@@ -80,7 +80,7 @@ fn of_selected_entity() -> HistoryOf {
 #[cfg(test)]
 mod tests {
     use crate::projected_members::projected_member_condition;
-    use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp};
+    use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         dataset::DatasetSelector,
         entity_selection::EntitySelection,
@@ -94,7 +94,6 @@ mod tests {
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_postgresql_query::history_source::HistoryBranch;
-    use chrono::{DateTime, Utc};
     use iri_rs::IriBuf;
     use sea_query::{PostgresQueryBuilder, Query};
 
@@ -105,7 +104,7 @@ mod tests {
                 TemporalWindow::builder()
                     .timeproperty(TimeProp::Observed)
                     .interval(TimeInterval::After(
-                        DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z").expect("valid instant").with_timezone(&Utc),
+                        "2024-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("valid instant").get(),
                     ))
                     .build(),
             )

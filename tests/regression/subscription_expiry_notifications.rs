@@ -13,11 +13,12 @@
 //! sweep ran past that instant, and no notification of the expiring
 //! Subscription may carry a `notifiedAt` at or after it.
 
+use andromeda_ngsi_ld_lexicon::time::{date_time::NgsiLdDateTime, rendering::instant_text};
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use andromeda_test_mocks::{notification_server::NotificationServer, server_config::MockServerConfig};
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, Utc};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
@@ -83,7 +84,7 @@ fn subscription(id: &str, entity_id: &str, endpoint: &str) -> Value {
 }
 
 fn rfc3339(instant: DateTime<Utc>) -> String {
-    instant.to_rfc3339_opts(SecondsFormat::Millis, true)
+    instant_text(instant)
 }
 
 async fn next_notification(receiver: &NotificationServer) -> Notified {
@@ -95,9 +96,9 @@ async fn next_notification(receiver: &NotificationServer) -> Notified {
     let subscription_id = body["subscriptionId"].as_str().expect("a notification names its Subscription").to_owned();
     let notified_at = body["notifiedAt"]
         .as_str()
-        .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
+        .and_then(|text| text.parse::<NgsiLdDateTime>().ok())
         .expect("a notification carries notifiedAt")
-        .with_timezone(&Utc);
+        .get();
     Notified { subscription_id, notified_at }
 }
 

@@ -10,13 +10,9 @@
 
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::outcome::ForwardedEntities;
-use andromeda_ngsi_ld_entity::{
-    admission::attribute_nesting_admission::admit_document_nesting,
-    document::EntityDocument,
-    entity_state::EntityState,
-    system_instant::SystemInstant,
-};
+use andromeda_ngsi_ld_entity::{admission::attribute_nesting_admission::admit_document_nesting, document::EntityDocument, entity_state::EntityState};
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
+use andromeda_ngsi_ld_lexicon::time::system_instant::SystemInstant;
 use andromeda_ngsi_ld_model::entity_system_times::EntitySystemTimes;
 use andromeda_ngsi_ld_representation::attribute_nesting::{AttributeNestingExceeded, AttributeNestingLimit};
 use chrono::{DateTime, Utc};
@@ -91,8 +87,9 @@ impl ForwardedCapture {
 mod tests {
     use crate::executor::forwarded_capture::ForwardedCapture;
     use andromeda_federation::outcome::ForwardedEntities;
-    use andromeda_ngsi_ld_entity::{entity_state::EntityState, system_instant::SystemInstant};
+    use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
+    use andromeda_ngsi_ld_lexicon::time::system_instant::SystemInstant;
     use andromeda_ngsi_ld_model::{entity_system_times::EntitySystemTimes, registration::forwarding_mode::ForwardingMode};
     use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingLimit;
     use chrono::Utc;

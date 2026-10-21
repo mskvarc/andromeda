@@ -4,8 +4,9 @@ use crate::{
     notification_adapter::NotificationAdapter,
     support::{broker_url, clean_database, client, clone_snapshot_raw, create_snapshot_raw, get_snapshot, wait_for_snapshot_terminal},
 };
+use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 use andromeda_test_harness::database_reset::reset_owned_tenant;
-use chrono::{SecondsFormat, TimeZone, Utc};
+use chrono::{TimeZone, Utc};
 use futures::{StreamExt, future::join_all, stream};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
@@ -46,10 +47,11 @@ fn temporal_entity(id: &str, entity_type: &str, offset: usize) -> Value {
     let start = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).single().expect("static timestamp");
     let observations = (0..20)
         .map(|index| {
-            let observed_at = start
-                .checked_add_signed(chrono::Duration::seconds(i64::try_from(offset * 20 + index).expect("stress index range")))
-                .expect("stress timestamp range")
-                .to_rfc3339_opts(SecondsFormat::Secs, true);
+            let observed_at = instant_text(
+                start
+                    .checked_add_signed(chrono::Duration::seconds(i64::try_from(offset * 20 + index).expect("stress index range")))
+                    .expect("stress timestamp range"),
+            );
             json!({"type": "Property", "value": index, "observedAt": observed_at})
         })
         .collect::<Vec<_>>();

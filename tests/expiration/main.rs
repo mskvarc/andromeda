@@ -6,9 +6,11 @@
 
 mod entity_expiry;
 
+use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
+use chrono::{DateTime, Utc};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
@@ -401,11 +403,12 @@ where
 
 /// The earliest instance expiry the write path recorded on the entity's row.
 async fn recorded_minimum_expiry(scope: &TestEnvironment, id: &str) -> Option<String> {
-    sqlx::query_scalar("SELECT to_char(min_attribute_expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') FROM entities WHERE id = $1")
+    sqlx::query_scalar::<_, Option<DateTime<Utc>>>("SELECT min_attribute_expires_at FROM entities WHERE id = $1")
         .bind(id)
         .fetch_one(scope.database_pool())
         .await
         .expect("the entity row must be readable")
+        .map(instant_text)
 }
 
 #[tokio::test]

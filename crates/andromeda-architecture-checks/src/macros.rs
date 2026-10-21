@@ -146,6 +146,12 @@ macro_rules! workspace_architecture {
                 $crate::string_typed_error::assert_no_string_typed_errors(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
+            /// Time values are read and written by the lexicon's `time` module only.
+            #[test]
+            fn time_values_have_one_owner() {
+                $crate::time_handling::assert_time_values_have_one_owner(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
+            }
+
             /// No production source names an untyped JSON tree.
             #[test]
             fn json_is_held_typed_not_as_an_untyped_tree() {

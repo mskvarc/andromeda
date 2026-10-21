@@ -241,6 +241,7 @@ mod tests {
         history_chunk_span::HistoryChunkSpan,
         write_record_release::{Ah, ReleaseWindow, Sh, Ti, base_release, named_window, no_history_reference, no_intent_reference, sweep_windows},
     };
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_postgresql_schema::{
         queue::TemporalAppendIntents,
         temporal::{AttributeHistory, ScopeHistory},
@@ -250,7 +251,7 @@ mod tests {
     use sea_query::{PostgresQueryBuilder, Query, SimpleExpr};
 
     fn instant(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("valid instant").get()
     }
 
     fn render(protection: SimpleExpr) -> String {

@@ -1,6 +1,7 @@
 //! The idempotency record one atomic write owns.
 
 use crate::write_id::WriteId;
+use andromeda_ngsi_ld_lexicon::time::instant_serde;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +18,7 @@ pub struct WriteRecord {
     /// Identity correlating every durable consequence of the write.
     write_id: WriteId,
     /// Server-side instant the write was accepted for durable storage.
+    #[serde(with = "instant_serde::required")]
     recorded_at: DateTime<Utc>,
 }
 

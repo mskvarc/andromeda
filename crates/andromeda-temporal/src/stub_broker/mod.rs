@@ -23,12 +23,17 @@ use andromeda_entity::{
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_linked_retrieval::admission::TemporalJoin;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, instance_identity::InstanceIdentity};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    identifier::Identifier,
+    instance_identity::InstanceIdentity,
+    time::date_time::NgsiLdDateTime,
+};
 use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalAggregationRow, TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::{entity_selection::EntitySelection, geo::near_distance_band::NearDistanceBand};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use std::{
     collections::HashMap,
     iter,
@@ -132,7 +137,7 @@ impl StubBroker {
         if let Some(page) = self.pages.get(entity_id) {
             return page.clone(); // clone: every read of the entity answers the same page
         }
-        let instant = "2024-01-01T00:00:00Z".parse::<DateTime<Utc>>().expect("valid instant");
+        let instant = "2024-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("valid instant").get();
         let Some(targets) = self.links.get(entity_id) else {
             return Vec::new();
         };

@@ -6,7 +6,7 @@
 //! headers from analogous pagination state.
 
 use andromeda_http_headers::ngsild_content_range::NgsiLdContentRange;
-use andromeda_ngsi_ld_lexicon::rfc3339::sub_second;
+use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 use andromeda_ngsi_ld_query::temporal::{instance_page::PageDirection, window::TimeInterval};
 use chrono::{DateTime, Utc};
 
@@ -29,8 +29,8 @@ pub fn build_content_range(
     direction: PageDirection,
 ) -> Option<NgsiLdContentRange> {
     let (min_time, max_time) = time_range?;
-    let least_recent = sub_second(min_time);
-    let most_recent = sub_second(max_time);
+    let least_recent = instant_text(min_time);
+    let most_recent = instant_text(max_time);
 
     let (start, end, size) = match direction {
         PageDirection::Backward { requested } => (backwards_range_start(interval, &most_recent), least_recent, Some(u64::from(requested.get()))),
@@ -47,8 +47,8 @@ pub fn build_content_range(
 /// recent timestamp in the range of the response.
 fn backwards_range_start(interval: &TimeInterval, most_recent: &str) -> String {
     match interval {
-        TimeInterval::Before(instant) => sub_second(*instant),
-        TimeInterval::Between { to, .. } => sub_second(*to),
+        TimeInterval::Before(instant) => instant_text(*instant),
+        TimeInterval::Between { to, .. } => instant_text(*to),
         TimeInterval::After(_) | TimeInterval::Unbounded => most_recent.to_owned(),
     }
 }
@@ -59,7 +59,7 @@ fn backwards_range_start(interval: &TimeInterval, most_recent: &str) -> String {
 /// nothing about where a forwards page begins.
 fn forwards_range_start(interval: &TimeInterval, least_recent: &str) -> String {
     match interval {
-        TimeInterval::After(instant) | TimeInterval::Between { from: instant, .. } => sub_second(*instant),
+        TimeInterval::After(instant) | TimeInterval::Between { from: instant, .. } => instant_text(*instant),
         TimeInterval::Before(_) | TimeInterval::Unbounded => least_recent.to_owned(),
     }
 }
@@ -67,12 +67,13 @@ fn forwards_range_start(interval: &TimeInterval, least_recent: &str) -> String {
 #[cfg(test)]
 mod tests {
     use crate::content_range::build_content_range;
+    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_ngsi_ld_query::temporal::{instance_page::PageDirection, window::TimeInterval};
     use chrono::{DateTime, Utc};
     use std::num::NonZeroU32;
 
     fn instant(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("valid instant").get()
     }
 
     /// The response of every case below carries 01:01 to 01:19.

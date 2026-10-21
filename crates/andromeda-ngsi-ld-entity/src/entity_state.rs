@@ -9,8 +9,8 @@
 //! The NGSI-LD Null cannot appear anywhere in a state: every constructor and
 //! the canonical decoder refuse it.
 
-use crate::{attributes::Attributes, date_time_text::DateTimeText, entity_types::EntityTypes, scopes::Scopes};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use crate::{attributes::Attributes, entity_types::EntityTypes, scopes::Scopes};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::written_date_time::DateTimeText};
 
 /// One entity.
 #[derive(Clone, Debug, PartialEq)]

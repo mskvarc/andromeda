@@ -163,7 +163,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_geometry::form::GeometryForm;
-    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, entity_type_name::EntityTypeName};
+    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, entity_type_name::EntityTypeName, time::date_time::NgsiLdDateTime};
     use chrono::{DateTime, Utc};
     use serde_json::{Value, json};
     use std::sync::Arc;
@@ -174,7 +174,7 @@ mod tests {
     }
 
     fn instant(raw: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(raw).expect("instant").with_timezone(&Utc)
+        raw.parse::<NgsiLdDateTime>().expect("instant").get()
     }
 
     #[test]

@@ -2,12 +2,12 @@
 //! fragment may clear (Table 5.2.12-1 `expiresAt`).
 //!
 //! The timestamp is the RFC 3339 string clause 4.6.3 defines, written and read
-//! as [`rfc3339::optional_datetime`] does; what this adds is the third state of
+//! as [`instant_serde::optional`] does; what this adds is the third state of
 //! a [`Clearable`] member, so that a `null` removes the stored timestamp
 //! (clause 5.5.8) instead of being read as an absent member.
 
 use crate::clearable::Clearable;
-use andromeda_ngsi_ld_lexicon::rfc3339;
+use andromeda_ngsi_ld_lexicon::time::instant_serde;
 use chrono::{DateTime, Utc};
 use serde::{Deserializer, Serializer};
 
@@ -22,7 +22,7 @@ pub fn deserialize<'de, D>(deserializer: D) -> Result<Clearable<DateTime<Utc>>, 
 where
     D: Deserializer<'de>,
 {
-    Ok(rfc3339::optional_datetime::deserialize(deserializer)?.map_or(Clearable::Cleared, Clearable::Set))
+    Ok(instant_serde::optional::deserialize(deserializer)?.map_or(Clearable::Cleared, Clearable::Set))
 }
 
 /// Serialize a member as the fragment wrote it: the RFC 3339 string, or `null`
@@ -35,7 +35,7 @@ pub fn serialize<S>(value: &Clearable<DateTime<Utc>>, serializer: S) -> Result<S
 where
     S: Serializer,
 {
-    rfc3339::optional_datetime::serialize(&value.as_set().copied(), serializer)
+    instant_serde::optional::serialize(&value.as_set().copied(), serializer)
 }
 
 #[cfg(test)]

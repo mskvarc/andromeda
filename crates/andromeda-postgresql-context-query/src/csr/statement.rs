@@ -169,7 +169,12 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Condition {
 mod tests {
     use super::*;
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
-    use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, time_prop::TimeProp};
+    use andromeda_ngsi_ld_lexicon::{
+        context_source_pseudonym::ContextSourcePseudonym,
+        identifier::Identifier,
+        time::date_time::NgsiLdDateTime,
+        time_prop::TimeProp,
+    };
     use andromeda_ngsi_ld_query::{
         csr::compiled::CompiledCsrTemporalFilter,
         cursor::PageCursor,
@@ -215,7 +220,7 @@ mod tests {
     }
 
     fn dt(s: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+        s.parse::<NgsiLdDateTime>().expect("valid instant").get()
     }
 
     /// A `GeoJSON` point reference geometry, for tests that vary the relation

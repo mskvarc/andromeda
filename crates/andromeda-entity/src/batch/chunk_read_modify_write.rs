@@ -29,8 +29,7 @@ use crate::{
     side_effect::SideEffectPlacement,
 };
 use andromeda_context_commit::{precondition::Precondition, write_retry::WRITE_ATTEMPTS};
-use andromeda_ngsi_ld_entity::system_instant::SystemInstant;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use chrono::Utc;
 use std::{collections::HashSet, future::Future};
 

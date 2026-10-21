@@ -17,6 +17,7 @@ use crate::{
     setup_single_vehicle,
     vehicle_entity_with_speed,
 };
+use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use chrono::Utc;
@@ -100,7 +101,7 @@ async fn entity_map_create_from_get_with_lifetime_pt5m_sets_expires_at_in_range(
 
     let map_id = body["id"].as_str().expect("map id missing").to_owned();
     let expires_at = body["expiresAt"].as_str().expect("expiresAt should exist");
-    let parsed = chrono::DateTime::parse_from_rfc3339(expires_at).expect("expiresAt should be RFC3339");
+    let parsed = expires_at.parse::<NgsiLdDateTime>().expect("expiresAt should be RFC3339").get();
     let diff = parsed.signed_duration_since(Utc::now());
     assert!(diff.num_seconds() > 240 && diff.num_seconds() <= 300);
 

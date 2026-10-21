@@ -15,11 +15,15 @@ pub mod value_carrier;
 pub mod written_value;
 
 use crate::{
-    date_time_text::DateTimeText,
     document::{attribute_member::AttributeMember, slot::Slot},
     scopes::Scopes,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    entity_type_name::EntityTypeName,
+    identifier::Identifier,
+    time::written_date_time::DateTimeText,
+};
 use indexmap::IndexMap;
 
 /// The typed expanded document of one write.

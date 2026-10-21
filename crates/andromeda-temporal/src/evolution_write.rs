@@ -33,8 +33,8 @@ use andromeda_entity::{
     entity_snapshot::EntitySnapshot,
     notification_plan::{creation, modification},
 };
-use andromeda_ngsi_ld_entity::{history::current_state_fold::fold_into_current_state, system_instant::SystemInstant};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_entity::history::current_state_fold::fold_into_current_state;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use chrono::Utc;
 use std::sync::Arc;
 

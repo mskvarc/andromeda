@@ -8,7 +8,10 @@
 //! Attribute Fragment. A refusal is located from the top of the entity.
 
 use crate::{
-    attribute::{instance_member::ReadError, member_reading::MemberReading},
+    attribute::{
+        instance_member::{ReadError, optional_instant_member},
+        member_reading::MemberReading,
+    },
     compact_member::{decoded, decoded_optional},
     entity::{Entity, EntityPatch},
     entity_member::{EntityForm, EntityMember, SharedMembers},
@@ -99,10 +102,10 @@ fn shared_members<'n, M: MemberReading, N: CompactNode<'n>>(
             EntityMember::Id => read.id = identity(member, form, RefusedMember::Id).map_err(at)?,
             EntityMember::Type => read.type_ = identity(member, form, RefusedMember::Type).map_err(at)?,
             EntityMember::Scope => read.scope = optional(member, RefusedMember::Scope).map_err(at)?,
-            EntityMember::ExpiresAt => read.expires_at = optional(member, RefusedMember::ExpiresAt).map_err(at)?,
-            EntityMember::CreatedAt => read.created_at = optional(member, RefusedMember::CreatedAt).map_err(at)?,
-            EntityMember::ModifiedAt => read.modified_at = optional(member, RefusedMember::ModifiedAt).map_err(at)?,
-            EntityMember::DeletedAt => read.deleted_at = optional(member, RefusedMember::DeletedAt).map_err(at)?,
+            EntityMember::ExpiresAt => read.expires_at = optional_instant_member(Some(member), RefusedMember::ExpiresAt).map_err(at)?,
+            EntityMember::CreatedAt => read.created_at = optional_instant_member(Some(member), RefusedMember::CreatedAt).map_err(at)?,
+            EntityMember::ModifiedAt => read.modified_at = optional_instant_member(Some(member), RefusedMember::ModifiedAt).map_err(at)?,
+            EntityMember::DeletedAt => read.deleted_at = optional_instant_member(Some(member), RefusedMember::DeletedAt).map_err(at)?,
             EntityMember::Location => read.location = optional_attribute(&name, member, reading).map_err(at)?,
             EntityMember::ObservationSpace => read.observation_space = optional_attribute(&name, member, reading).map_err(at)?,
             EntityMember::OperationSpace => read.operation_space = optional_attribute(&name, member, reading).map_err(at)?,

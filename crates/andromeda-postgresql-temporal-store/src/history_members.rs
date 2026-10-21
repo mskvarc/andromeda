@@ -12,8 +12,13 @@
 //! element's are NULL.
 
 use crate::{error::TemporalStoreError, stored_history_error::StoredHistoryError};
-use andromeda_ngsi_ld_entity::{date_time_text::DateTimeText, proof_seals::ProofSeals};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, reference::NgsiLdReference};
+use andromeda_ngsi_ld_entity::proof_seals::ProofSeals;
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    entity_type_name::EntityTypeName,
+    reference::NgsiLdReference,
+    time::written_date_time::DateTimeText,
+};
 use andromeda_ngsi_ld_model::temporal::observation_metadata::{MetadataMembers, ObservationMetadata};
 use andromeda_postgresql_attribute_instance::{
     assemble::{AssemblyError, sub_attributes},

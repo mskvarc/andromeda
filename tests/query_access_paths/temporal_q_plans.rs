@@ -14,7 +14,7 @@ use crate::{
     seeded_corpus::{SEED_PREFIX, explain},
     seeded_history::{HISTORY_ATTRIBUTE, WINDOWED_ENTITIES, WindowedHistory, remove_windowed_history, seed_window_and_prior},
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, temporal_format::TemporalFormat, time_prop::TimeProp};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, temporal_format::TemporalFormat, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity_selection::EntitySelection,
@@ -49,10 +49,7 @@ const LONG_HISTORY: i64 = 800;
 
 /// The instant `minute` minutes after the seeded origin.
 fn minute(minute: i64) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
-        .expect("a valid instant")
-        .with_timezone(&Utc)
-        + TimeDelta::minutes(minute)
+    "2026-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("a valid instant").get() + TimeDelta::minutes(minute)
 }
 
 /// The stage-1 statements of `q=<history>==<value in effect>` over the

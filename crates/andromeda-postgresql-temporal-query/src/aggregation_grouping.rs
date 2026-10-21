@@ -18,7 +18,9 @@
 //! - A calendar or cyclic bucket keys on the truncated or folded time axis.
 //! - A value-in-effect key correlates the attribute's value at each instant
 //!   through a `JOIN LATERAL` selecting the instance whose axis value is the
-//!   greatest not after the aggregated row's (the "in effect at t" rule).
+//!   greatest not after the aggregated row's (the "in effect at t" rule). It
+//!   keys on two columns: the value as text, and a `DateTime` value as the
+//!   instant, which the reader spells as every emitted instant is spelled.
 
 use crate::{aggregation_group::PromotedGroupFacets, alias::Ah};
 use andromeda_ngsi_ld_query::temporal::grouping::{
@@ -59,9 +61,25 @@ pub fn group_key_column(index: usize) -> String {
     format!("group_key_{index}")
 }
 
+/// The projected column a value-in-effect key of term `index` holding a
+/// `DateTime` is read back under, beside [`group_key_column`].
+///
+/// An instant is projected as the instant, never as text, so the reader spells
+/// it the way the broker spells every instant it emits; PostgreSQL's own text
+/// rendering of a `timestamptz` carries a numeric offset.
+#[must_use]
+pub fn group_key_instant_column(index: usize) -> String {
+    format!("group_key_{index}_instant")
+}
+
 /// The projected alias for grouping term `index`.
 fn group_key_alias(index: usize) -> Alias {
     Alias::new(group_key_column(index))
+}
+
+/// The projected alias for the instant of grouping term `index`.
+fn group_key_instant_alias(index: usize) -> Alias {
+    Alias::new(group_key_instant_column(index))
 }
 
 /// The lateral-join alias a value-in-effect key of term `index` is read under.
@@ -92,19 +110,19 @@ const fn bucket_field(bucket: BucketTerm) -> &'static str {
 }
 
 /// A history row's value rendered to text, coalesced across the typed value
-/// columns in `value_kind` order.
+/// columns in `value_kind` order, except the `DateTime` column.
 ///
-/// A value key groups on the discriminating value, which is one text projection
-/// whatever typed column `value_kind` populated. `min`/`max` are irrelevant
-/// here; this is an equality key, so the exact textual form only has to be
-/// stable per value.
+/// A value key groups on the discriminating value, which is this text
+/// projection whatever typed column `value_kind` populated, together with the
+/// `DateTime` column projected beside it as the instant. `min`/`max` are
+/// irrelevant here; this is an equality key, so the exact textual form only has
+/// to be stable per value.
 fn history_value_as_text(history: &Alias) -> SimpleExpr {
     // clone: each column reference takes the borrowed alias by value.
     Func::coalesce([
         Expr::col((history.clone(), AttributeHistory::ValueString)),
         cast(Expr::col((history.clone(), AttributeHistory::ValueNumber)), PostgresType::Text),
         cast(Expr::col((history.clone(), AttributeHistory::ValueBoolean)), PostgresType::Text),
-        cast(Expr::col((history.clone(), AttributeHistory::ValueDateTime)), PostgresType::Text),
         Expr::col((history.clone(), AttributeHistory::ValueUri)),
         cast(Expr::col((history.clone(), AttributeHistory::ValueObject)), PostgresType::Text),
         cast(Expr::col((history.clone(), AttributeHistory::ValueGeometry)), PostgresType::Text),
@@ -146,8 +164,11 @@ pub fn apply_grouping(
             }
             (GroupKey::Path(path), None) => {
                 project_value_in_effect(select, index, path.attr.as_str(), axis, branch, of);
-                select.expr_as(Expr::col((value_key_alias(index), group_key_alias(index))), group_key_alias(index));
-                keys.push(Expr::col((value_key_alias(index), group_key_alias(index))));
+                for column in [group_key_alias(index), group_key_instant_alias(index)] {
+                    // clone: the column is projected and grouped by.
+                    select.expr_as(Expr::col((value_key_alias(index), column.clone())), column.clone());
+                    keys.push(Expr::col((value_key_alias(index), column)));
+                }
             }
         }
     }
@@ -167,6 +188,7 @@ fn project_value_in_effect(select: &mut SelectStatement, index: usize, attribute
     let mut lateral = Query::select();
     lateral
         .expr_as(history_value_as_text(&history), group_key_alias(index))
+        .expr_as(Expr::col((history.clone(), AttributeHistory::ValueDateTime)), group_key_instant_alias(index))
         .from(attribute_rows(branch, of, history.clone()))
         .join_as(
             JoinType::Join,

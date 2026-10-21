@@ -31,7 +31,7 @@ use crate::{
     q_predicate::{instance_row::InstanceRow, string_ordering::ordered_string, value_column::ValueColumn},
     temporal_operand::stored_time,
 };
-use andromeda_ngsi_ld_lexicon::{ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime};
+use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime};
 use andromeda_ngsi_ld_query::filter::{predicate::CmpOp, scalar::Scalar};
 use andromeda_postgresql_seaquery::literal::false_literal;
 use sea_query::{Expr as SeaExpr, ExprTrait, SimpleExpr};
@@ -83,12 +83,11 @@ pub fn typed_column_condition(scalar: &Scalar, op: CmpOp, row: InstanceRow) -> S
         // Both sides compare in the canonical fixed-width form: `12:00:00Z` and
         // `12:00:00.000Z` are one time of day, and only their canonical texts are
         // equal and order chronologically.
-        Scalar::Time(value) => match NgsiLdTime::normalise(*value) {
-            Ok(canonical) => compare(stored_time(row.value(ValueColumn::String)), op, SeaExpr::val(canonical.to_string())),
-            // A time of day with no canonical form is one no write path could
-            // have stored, so nothing can compare equal to it.
-            Err(_) => false_literal(),
-        },
+        Scalar::Time(value) => compare(
+            stored_time(row.value(ValueColumn::String)),
+            op,
+            SeaExpr::val(NgsiLdTime::normalise(*value).to_string()),
+        ),
     }
 }
 

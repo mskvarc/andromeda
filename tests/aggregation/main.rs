@@ -4,6 +4,7 @@
 //! Uses the standard Rust test harness with `#[tokio::test]` and raw `reqwest`.
 //! Requires a running Andromeda instance on `127.0.0.1:1056` with a clean database.
 
+use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::configuration::RUNTIME_BROKER_BASE as BASE_URL;
 use reqwest::Client;
@@ -840,8 +841,8 @@ async fn aggregation_bucket_timestamps_are_consistent() {
     for bucket in buckets {
         let start = bucket[1].as_str().expect("bucket_start should be string");
         let end = bucket[2].as_str().expect("bucket_end should be string");
-        let start_dt = chrono::DateTime::parse_from_rfc3339(start).expect("parse start");
-        let end_dt = chrono::DateTime::parse_from_rfc3339(end).expect("parse end");
+        let start_dt = start.parse::<NgsiLdDateTime>().expect("parse start").get();
+        let end_dt = end.parse::<NgsiLdDateTime>().expect("parse end").get();
         let diff = end_dt - start_dt;
         pretty_assertions::assert_eq!(diff, chrono::Duration::hours(1), "bucket width should be exactly PT1H");
     }

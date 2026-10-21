@@ -12,6 +12,7 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
     spec_version::SpecVersion,
     temporal_format::TemporalFormat,
+    time::date_time::NgsiLdDateTime,
     time_prop::TimeProp,
 };
 use andromeda_ngsi_ld_model::{
@@ -306,7 +307,7 @@ fn projection_leaving_nothing_is_not_found() {
 const WEIGHT: &str = "https://uri.etsi.org/ngsi-ld/default-context/weight";
 
 fn instant(raw: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&Utc)
+    raw.parse::<NgsiLdDateTime>().expect("valid instant").get()
 }
 
 /// One period of one attribute instance, with every aggregate absent.
