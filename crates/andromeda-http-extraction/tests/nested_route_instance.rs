@@ -229,6 +229,7 @@ fn refused_requests() -> Result<Vec<Request<Body>>, Box<dyn Error>> {
         request(Method::GET, "/types?unknownParameter=1", &[], "")?,
         request(Method::DELETE, "/snapshots", &[], "")?,
         request(Method::GET, "/attributes?details=true", &[("ngsild-snapshot", "not-a-urn")], "")?,
+        request(Method::GET, "/attributes?details=true", &[("ngsild-entitymap", "not-a-uri")], "")?,
         request(Method::GET, "/subscriptions?limit=5", &[("ngsild-tenant", "")], "")?,
         request(Method::GET, "/csourceSubscriptions", &[("ngsild-snapshot", "not-a-urn")], "")?,
         request(Method::GET, "/csourceRegistrations?type=Vehicle", &malformed_link, "")?,

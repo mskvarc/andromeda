@@ -1,13 +1,22 @@
 //! Composite extractor for NGSI-LD protocol headers.
 //!
-//! Bundles the language, preference, payload profile, snapshot, and Via
-//! headers into a single extractor to reduce handler parameter counts (ETSI GS
-//! CIM 009 clauses 6.3.5, 6.3.6, 6.3.18, 6.3.21, 6.3.22).
+//! Bundles the language, preference, payload profile, snapshot, entity map and
+//! Via headers into a single extractor to reduce handler parameter counts
+//! (ETSI GS CIM 009 clauses 5.5.9.3, 6.3.5, 6.3.6, 6.3.18, 6.3.21, 6.3.22).
 
-use crate::{language::LanguageNegotiation, prefer::PreferHeader, profile::PayloadProfile, snapshot::SnapshotHeader, via::IncomingVia};
+use crate::{
+    addressed_uri::addressed_uri,
+    language::LanguageNegotiation,
+    prefer::PreferHeader,
+    profile::PayloadProfile,
+    snapshot::SnapshotHeader,
+    via::IncomingVia,
+};
 use andromeda_http_headers::{language::LanguageFilter, ngsild_entity_map::NgsiLdEntityMap, via::Via};
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use axum::{extract::FromRequestParts, http::request::Parts};
+use headers::HeaderMapExt;
+use thiserror::Error;
 
 /// Composite extractor for NGSI-LD protocol-level request headers.
 ///
@@ -31,6 +40,20 @@ pub struct NgsiLdProtocolHeaders {
     pub incoming_via: Option<Via>,
     /// Optional entity map identifier from `NGSILD-EntityMap` header (clause 5.5.9.3).
     pub entity_map: Option<NgsiLdEntityMap>,
+}
+
+/// An `NGSILD-EntityMap` header whose value is not a URI.
+#[derive(Debug, Error)]
+#[error("the ngsild-entitymap header is not a uri")]
+struct InvalidEntityMapHeader(#[source] headers::Error);
+
+/// The entity map the request names, refusing a present header that is not a
+/// URI (Table 6.4.3.2-2) as `BadRequestData` rather than reading it as absent.
+fn entity_map_header(parts: &Parts) -> Result<Option<NgsiLdEntityMap>, ExtractorRejection> {
+    parts
+        .headers
+        .typed_try_get::<NgsiLdEntityMap>()
+        .map_err(|error| ExtractorRejection::bad_request_data(InvalidEntityMapHeader(error).to_string(), addressed_uri(parts)))
 }
 
 impl<S> FromRequestParts<S> for NgsiLdProtocolHeaders
@@ -57,10 +80,7 @@ where
             Ok(v) => v.into_inner(),
             Err(never) => match never {},
         };
-        let entity_map: Option<NgsiLdEntityMap> = {
-            let mut values = parts.headers.get_all("ngsild-entitymap").iter();
-            headers::Header::decode(&mut values).ok()
-        };
+        let entity_map = entity_map_header(parts)?;
 
         Ok(NgsiLdProtocolHeaders {
             language_filter,
@@ -76,9 +96,13 @@ where
 #[cfg(test)]
 mod tests {
     use crate::protocol::NgsiLdProtocolHeaders;
+    use andromeda_http_headers::ngsild_entity_map::NgsiLdEntityMap;
     use andromeda_http_response::extraction_rejection::ExtractorRejection;
     use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
-    use axum::{extract::FromRequestParts, http::Request};
+    use axum::{
+        extract::FromRequestParts,
+        http::{HeaderValue, Request},
+    };
 
     #[tokio::test]
     async fn extracts_defaults_with_no_headers() {
@@ -120,6 +144,53 @@ mod tests {
         let headers = NgsiLdProtocolHeaders::from_request_parts(&mut parts, &()).await.expect("headers extract");
         pretty_assertions::assert_eq!(headers.payload_profile.version(), Some(SpecVersion::V1_8));
         pretty_assertions::assert_eq!(headers.prefer.requested_version, None);
+    }
+
+    /// The protocol headers a request carrying one `NGSILD-EntityMap` value
+    /// extracts to.
+    async fn with_entity_map(value: &str) -> Result<NgsiLdProtocolHeaders, ExtractorRejection> {
+        let req = Request::builder()
+            .uri("/ngsi-ld/v1/entities")
+            .header("ngsild-entitymap", value)
+            .body(())
+            .expect("valid request");
+        let (mut parts, ()) = req.into_parts();
+        NgsiLdProtocolHeaders::from_request_parts(&mut parts, &()).await
+    }
+
+    #[tokio::test]
+    async fn an_entity_map_urn_is_extracted() {
+        let headers = with_entity_map("urn:ngsi-ld:EntityMap:abc").await.expect("headers extract");
+        pretty_assertions::assert_eq!(headers.entity_map.as_ref().map(NgsiLdEntityMap::as_str), Some("urn:ngsi-ld:EntityMap:abc"));
+    }
+
+    /// Table 6.4.3.2-2 makes the header a URI: an empty value, a bare word and
+    /// a value outside visible ASCII each name no entity map.
+    #[tokio::test]
+    async fn an_entity_map_header_that_is_not_a_uri_is_bad_request_data_naming_the_header() {
+        let non_ascii = HeaderValue::from_bytes("urn:ngsi-ld:EntityMap:caf\u{e9}".as_bytes()).expect("opaque header bytes");
+        let req = Request::builder()
+            .uri("/ngsi-ld/v1/entities")
+            .header("ngsild-entitymap", non_ascii)
+            .body(())
+            .expect("valid request");
+        let (mut parts, ()) = req.into_parts();
+        let non_ascii_result = NgsiLdProtocolHeaders::from_request_parts(&mut parts, &()).await;
+
+        for (value, result) in [
+            ("", with_entity_map("").await),
+            ("not-a-uri", with_entity_map("not-a-uri").await),
+            ("non-ascii", non_ascii_result),
+        ] {
+            match result {
+                Err(ExtractorRejection::BadRequestData { detail, instance }) => {
+                    pretty_assertions::assert_eq!(detail, "the ngsild-entitymap header is not a uri", "{value}");
+                    pretty_assertions::assert_eq!(instance, "/ngsi-ld/v1/entities", "{value}");
+                }
+                Err(other) => panic!("{value}: refused as {other:?}"),
+                Ok(_) => panic!("{value}: extracted as an entity map"),
+            }
+        }
     }
 
     #[tokio::test]
