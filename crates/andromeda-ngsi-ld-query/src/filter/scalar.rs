@@ -133,13 +133,9 @@ impl Scalar {
     /// filter that reaches a store carry the same literal by construction.
     ///
     /// A temporal operand renders as the broker spells every value of its
-    /// clause 4.6.3 type it writes back, fraction included. The fraction is not
-    /// decoration: the binding a `valueList`, a `languageMap` and a compound
-    /// value are probed through compares this text against the literal the
-    /// client stored, and clause 4.9 names the `valueList` array as a target
-    /// value, so a rendering at whole seconds would make
-    /// `readings=="2024-01-01T00:00:00.250Z"` a filter that never matches the
-    /// value it names.
+    /// clause 4.6.3 type it writes back, fraction included, so a filter
+    /// re-serialised into a forwarded query names the same instant or time of
+    /// day it was written with.
     #[must_use]
     pub fn literal_text(&self) -> String {
         match self {

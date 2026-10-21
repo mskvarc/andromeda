@@ -19,9 +19,11 @@
 //!   spelling, the fixed-width form clause 4.6.3 defines, so byte-wise order over
 //!   the column is chronological order and the date compares as stored. A time
 //!   is stored as written, and clause 4.6.3 admits several fractional widths of
-//!   one time of day, so the stored text is normalised to the canonical
-//!   fixed-width form before it is compared, and the comparison reads no index.
-//!   Both are always short, so they never read `value_long_text`.
+//!   one time of day. An equality therefore compares the stored text against
+//!   every spelling of the operand, which the column's index serves, and an
+//!   ordering normalises the stored text to the canonical fixed-width form,
+//!   which reads no index. Both are always short, so they never read
+//!   `value_long_text`.
 //!
 //! Every value whose family is not a single scalar lives in `value_object`
 //! instead; [`crate::q_predicate::structured_target`] compares those.
@@ -31,9 +33,10 @@ use crate::{
     q_predicate::{instance_row::InstanceRow, string_ordering::ordered_string, value_column::ValueColumn},
     temporal_operand::stored_time,
 };
-use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime};
+use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, spellings::time_of_day_spellings, time_of_day::NgsiLdTime};
 use andromeda_ngsi_ld_query::filter::{predicate::CmpOp, scalar::Scalar};
 use andromeda_postgresql_seaquery::literal::false_literal;
+use chrono::NaiveTime;
 use sea_query::{Expr as SeaExpr, ExprTrait, SimpleExpr};
 
 /// Compare one scalar against the typed column that holds values of its kind.
@@ -80,14 +83,25 @@ pub fn typed_column_condition(scalar: &Scalar, op: CmpOp, row: InstanceRow) -> S
         }
         Scalar::DateTime(value) => compare(row.value(ValueColumn::DateTime), op, SeaExpr::val(*value)),
         Scalar::Date(value) => compare(row.value(ValueColumn::String), op, SeaExpr::val(NgsiLdDate::from(*value).to_string())),
-        // Both sides compare in the canonical fixed-width form: `12:00:00Z` and
-        // `12:00:00.000Z` are one time of day, and only their canonical texts are
-        // equal and order chronologically.
-        Scalar::Time(value) => compare(
-            stored_time(row.value(ValueColumn::String)),
-            op,
-            SeaExpr::val(NgsiLdTime::normalise(*value).to_string()),
-        ),
+        Scalar::Time(value) => time_condition(*value, op, row),
+    }
+}
+
+/// Compare a `Time` operand against the string column (clause 4.9).
+///
+/// `12:00:00Z` and `12:00:00.000Z` are one time of day. A stored text names
+/// the operand's time of day exactly when it is one of the spellings clause
+/// 4.6.3 admits for it, so equality is membership in that set, an index read.
+/// An ordering compares both sides in the canonical fixed-width form, the one
+/// spelling whose byte order is chronological.
+fn time_condition(time: NaiveTime, op: CmpOp, row: InstanceRow) -> SimpleExpr {
+    let stored = row.value(ValueColumn::String);
+    match op {
+        CmpOp::Equal => stored.is_in(time_of_day_spellings(time)),
+        CmpOp::Unequal => stored.is_not_in(time_of_day_spellings(time)),
+        CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq => {
+            compare(stored_time(stored), op, SeaExpr::val(NgsiLdTime::normalise(time).to_string()))
+        }
     }
 }
 
@@ -319,17 +333,32 @@ mod tests {
     }
 
     /// A time is stored as written, so `12:00:00Z` and `12:00:00.000Z` are
-    /// two texts of one time of day; both sides compare in the canonical
-    /// fixed-width form, under every operator and at every depth.
+    /// two texts of one time of day. An ordering compares both sides in the
+    /// canonical fixed-width form, at every depth.
     #[test]
-    fn a_time_comparison_normalises_the_stored_text() {
+    fn a_time_ordering_normalises_the_stored_text() {
         let time = parse_time("12:00:00Z").expect("a time");
         for row in [InstanceRow::Current, InstanceRow::Element(ElementLevel::at(0))] {
-            for op in [CmpOp::Equal, CmpOp::Greater, CmpOp::LessEq] {
+            for op in [CmpOp::Greater, CmpOp::LessEq] {
                 let sql = render(typed_column_condition(&Scalar::Time(time), op, row));
                 assert!(sql.contains("'1970-01-01T'"), "the stored time is anchored and normalised: {op:?} {sql}");
                 assert!(sql.contains("'12:00:00.000000Z'"), "the operand is canonical: {op:?} {sql}");
             }
+        }
+    }
+
+    /// An equality reads the stored text as written against every spelling of
+    /// the operand, so the comparison stays one the column's index serves.
+    #[test]
+    fn a_time_equality_compares_the_stored_text_with_every_spelling() {
+        let time = parse_time("12:00:00.000Z").expect("a time");
+        for row in [InstanceRow::Current, InstanceRow::Element(ElementLevel::at(0))] {
+            let sql = render(typed_column_condition(&Scalar::Time(time), CmpOp::Equal, row));
+            assert!(!sql.contains("'1970-01-01T'"), "the stored text is not lifted: {sql}");
+            assert!(sql.contains(" IN ('12:00:00Z', '12:00:00.0Z', '12:00:00,0Z'"), "{sql}");
+            assert!(sql.contains("'12:00:00.000000Z', '12:00:00,000000Z')"), "{sql}");
+            let unequal = render(typed_column_condition(&Scalar::Time(time), CmpOp::Unequal, row));
+            assert!(unequal.contains(" NOT IN ('12:00:00Z'"), "{unequal}");
         }
     }
 }

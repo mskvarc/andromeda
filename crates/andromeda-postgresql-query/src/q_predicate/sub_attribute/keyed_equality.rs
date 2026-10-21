@@ -22,7 +22,11 @@ use crate::{
         sub_attribute::element_path::ElementPath,
     },
 };
-use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime};
+use andromeda_ngsi_ld_lexicon::time::{
+    date::NgsiLdDate,
+    spellings::{instant_spellings, time_of_day_spellings},
+    time_of_day::NgsiLdTime,
+};
 use andromeda_ngsi_ld_query::filter::{
     path::QueryPath,
     predicate::{Predicate, SetMembership},
@@ -96,11 +100,12 @@ pub(crate) fn equality_candidates(pred: &Predicate, rows: &EntityRowRefs, names:
 /// have.
 ///
 /// A String or a URI operand may equal a String or a Relationship object, and
-/// the two are salted apart, so both keys are read. A `DateTime` is held as an
-/// instant in a scalar element and as its text inside an array, so both are
-/// read too. A `Date` is held as its one text. A `Time` compares in a scalar
-/// element by its canonical fixed-width text, which the element is keyed by,
-/// and inside an array by the operand's text, so both are read.
+/// the two are salted apart, so both keys are read. A `Date` is held as its
+/// one text. A `DateTime` is held as an instant in a scalar element and as the
+/// text its client wrote inside an array, and a `Time` as the text its client
+/// wrote everywhere, so each reads the key of every spelling clause 4.6.3
+/// admits for its value, and a `DateTime` its instant key too. The fixed-width
+/// spelling of a `Time` leads, the key a scalar element is also keyed by.
 fn query_keys(path: &[i32], scalar: &Scalar) -> SimpleExpr {
     let path = || key_array(path);
     let key = |value: SimpleExpr| sub_eq_query_key(path(), value);
@@ -110,15 +115,22 @@ fn query_keys(path: &[i32], scalar: &Scalar) -> SimpleExpr {
         Scalar::Number(number) => key(cast(SeaExpr::val(number.decimal().clone()), PostgresType::Numeric)),
         Scalar::Bool(value) => key(cast(SeaExpr::val(*value), PostgresType::Boolean)),
         Scalar::Str(value) | Scalar::Uri(value) => array_cat(text_key(STRING_KIND, value.to_owned()), text_key(URI_KIND, value.to_owned())),
-        Scalar::DateTime(value) => array_cat(
-            key(cast(SeaExpr::val(*value), PostgresType::Timestamptz)),
-            text_key(STRING_KIND, scalar.literal_text()),
-        ),
+        Scalar::DateTime(value) => instant_spellings(*value)
+            .into_iter()
+            .fold(key(cast(SeaExpr::val(*value), PostgresType::Timestamptz)), |keys, spelling| {
+                array_cat(keys, text_key(STRING_KIND, spelling))
+            }),
         Scalar::Date(value) => text_key(STRING_KIND, NgsiLdDate::from(*value).to_string()),
-        Scalar::Time(value) => array_cat(
-            text_key(STRING_KIND, NgsiLdTime::normalise(*value).to_string()),
-            text_key(STRING_KIND, scalar.literal_text()),
-        ),
+        Scalar::Time(value) => {
+            let fixed_width = NgsiLdTime::normalise(*value).to_string();
+            time_of_day_spellings(*value)
+                .into_iter()
+                .filter(|spelling| *spelling != fixed_width)
+                // clone: the leading key owns its text while the filter compares against it
+                .fold(text_key(STRING_KIND, fixed_width.clone()), |keys, spelling| {
+                    array_cat(keys, text_key(STRING_KIND, spelling))
+                })
+        }
     }
 }
 
@@ -202,13 +214,36 @@ mod tests {
         );
     }
 
+    /// The text key of one spelling at the `temperature.source` path.
+    fn spelling_key(spelling: &str) -> String {
+        format!("sub_eq_query_key(ARRAY[2, 7]::integer[], 2::smallint, '{spelling}'::text)")
+    }
+
+    /// A member keeps its written spelling, so a `Time` reads the key of every
+    /// spelling clause 4.6.3 admits, whichever one the operand is written in.
     #[test]
-    fn a_time_equality_reads_the_canonical_key_and_the_written_key() {
-        let sql = candidates("\"https://example.com/temperature\".\"https://example.com/source\"==12:00:00Z").expect("keyed");
+    fn a_time_equality_reads_the_key_of_every_spelling() {
+        for operand in ["12:00:00Z", "12:00:00.000Z"] {
+            let sql = candidates(&format!("\"https://example.com/temperature\".\"https://example.com/source\"=={operand}")).expect("keyed");
+            for spelling in ["12:00:00.000000Z", "12:00:00Z", "12:00:00.0Z", "12:00:00,000Z", "12:00:00,000000Z"] {
+                assert!(sql.contains(&spelling_key(spelling)), "{operand} reads {spelling}: {sql}");
+            }
+            pretty_assertions::assert_eq!(sql.matches("2::smallint").count(), 13, "{operand}: {sql}");
+        }
+    }
+
+    /// A scalar `DateTime` element is keyed by its instant and an array member
+    /// by its written text, so the operand reads both.
+    #[test]
+    fn a_date_time_equality_reads_the_instant_key_and_the_key_of_every_spelling() {
+        let sql = candidates("\"https://example.com/temperature\".\"https://example.com/source\"==2024-01-01T00:00:00.000Z").expect("keyed");
         assert!(
-            sql.contains(r"array_cat(sub_eq_query_key(ARRAY[2, 7]::integer[], 2::smallint, '12:00:00.000000Z'::text), sub_eq_query_key(ARRAY[2, 7]::integer[], 2::smallint, '12:00:00Z'::text))"),
+            sql.contains("sub_eq_query_key(ARRAY[2, 7]::integer[], '2024-01-01 00:00:00.000000 +00:00'::timestamptz)"),
             "{sql}"
         );
+        for spelling in ["2024-01-01T00:00:00Z", "2024-01-01T00:00:00.000Z", "2024-01-01T00:00:00,000000Z"] {
+            assert!(sql.contains(&spelling_key(spelling)), "{spelling}: {sql}");
+        }
     }
 
     #[test]

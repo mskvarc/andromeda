@@ -14,6 +14,7 @@
 //! * [`date_time`], [`date`] and [`time_of_day`] build the value types on it;
 //! * [`value`] decides which form a literal is written in;
 //! * [`rendering`] spells a held value back;
+//! * [`spellings`] lists every text one value can be written as;
 //! * [`resolution`] brings a broker-produced value to the microsecond;
 //! * [`instant_serde`] carries the rules into serde models;
 //! * [`written_date_time`] and [`system_instant`] are the instants an
@@ -26,6 +27,7 @@ pub mod instant_serde;
 pub mod lexical;
 pub mod rendering;
 pub mod resolution;
+pub mod spellings;
 pub mod system_instant;
 pub mod time_of_day;
 pub mod value;
