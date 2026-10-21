@@ -48,7 +48,7 @@ pub struct EntityQuery {
     pub read_order: ReadOrder,
     /// How PostgreSQL may plan and run `select`: a gated page, keyed, cut
     /// from the carriers of its `attrs` or the trigram matches of its
-    /// `idPattern`, or walked in the order of a numbered Attribute, with its
+    /// `idPattern`, or walked in the order of an Attribute's value index, with its
     /// bound values, which alone let the planner price an
     /// index against walking the selection, and without the parallel workers
     /// a gated-off branch would launch.

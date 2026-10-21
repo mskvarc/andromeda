@@ -11,7 +11,7 @@ use crate::{
     gated_page::{GatedColumns, PageSource},
     id_pattern_page::{PatternMatches, id_pattern_page, pattern_matches},
     keyed_page::keyed_page,
-    numbered_page::{NumberedOrder, numbered_order, numbered_page},
+    value_walk_page::{ValueWalkOrder, value_walk_order, value_walk_page},
 };
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
@@ -40,8 +40,9 @@ pub(crate) enum PageShape<'q> {
     /// the Entities that carry one of the Attributes.
     Carriers(SelectStatement),
     /// The gated page of a selection ordered by one Attribute, walked in the
-    /// order of its value index while every instance of it holds a number.
-    Numbered(NumberedOrder),
+    /// order of its value index while every instance of it holds a number, or
+    /// while every instance holds a `DateTime`.
+    ValueWalk(ValueWalkOrder),
     /// The gated page of a type selection filtered by an unanchored
     /// `idPattern` alone, the statement reading the pattern's trigram matches.
     IdPattern(PatternMatches<'q>),
@@ -65,7 +66,7 @@ pub(crate) struct CutPage<'q> {
 
 impl<'q> PageShape<'q> {
     /// How the page of `query` over `window` is cut: gated when a term of
-    /// `q`, the request's `attrs`, a numbered ordering or an unanchored
+    /// `q`, the request's `attrs`, an ordering a value walk serves or an unanchored
     /// `idPattern` gives the page an index to read, plain otherwise.
     pub(crate) fn of(
         query: &'q CompiledEntityQuery,
@@ -84,7 +85,7 @@ impl<'q> PageShape<'q> {
             Some((q_expr, keyed)) => PageShape::Keyed(q_expr, keyed),
             None => carriers(query, names, schema)
                 .map(PageShape::Carriers)
-                .or_else(|| numbered_order(query, names, window).map(PageShape::Numbered))
+                .or_else(|| value_walk_order(query, names, window).map(PageShape::ValueWalk))
                 .or_else(|| pattern_matches(query, relations, schema).map(PageShape::IdPattern))
                 .unwrap_or(PageShape::Plain),
         }
@@ -96,7 +97,7 @@ impl<'q> PageShape<'q> {
     /// requested total on their rows: every row of a plain page, the rows of
     /// a gated page whose index branch answered, which read every candidate.
     /// A continued cursor page cannot, since its rows are only those past the
-    /// cursor, and neither can a numbered page, whose branches each read part
+    /// cursor, and neither can a value walk page, whose branches each read part
     /// of the selection.
     pub(crate) const fn counted_on_page(&self, count: CountPolicy, window: &PageWindow) -> CountPolicy {
         match (count, &window.start, self) {
@@ -106,11 +107,11 @@ impl<'q> PageShape<'q> {
                 PageShape::Plain | PageShape::Keyed(..) | PageShape::Carriers(_) | PageShape::IdPattern(_),
             ) => CountPolicy::Emit,
             (CountPolicy::Emit, PageStart::Cursor(Some(_)), PageShape::Plain | PageShape::Keyed(..) | PageShape::Carriers(_) | PageShape::IdPattern(_))
-            | (CountPolicy::Emit, PageStart::Offset(_) | PageStart::Cursor(_), PageShape::Numbered(_))
+            | (CountPolicy::Emit, PageStart::Offset(_) | PageStart::Cursor(_), PageShape::ValueWalk(_))
             | (
                 CountPolicy::Omit,
                 PageStart::Offset(_) | PageStart::Cursor(_),
-                PageShape::Plain | PageShape::Keyed(..) | PageShape::Carriers(_) | PageShape::Numbered(_) | PageShape::IdPattern(_),
+                PageShape::Plain | PageShape::Keyed(..) | PageShape::Carriers(_) | PageShape::ValueWalk(_) | PageShape::IdPattern(_),
             ) => CountPolicy::Omit,
         }
     }
@@ -163,8 +164,8 @@ impl<'q> PageShape<'q> {
                 let (page, read_order) = carrier_page(source, carriers, counted_on_page)?;
                 (page, read_order, StatementPlanning::Cached, None)
             }
-            PageShape::Numbered(order) => {
-                let (page, read_order) = numbered_page(source, &order)?;
+            PageShape::ValueWalk(order) => {
+                let (page, read_order) = value_walk_page(source, &order)?;
                 (page, read_order, StatementPlanning::Cached, None)
             }
             PageShape::IdPattern(matches) => {

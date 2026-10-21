@@ -237,7 +237,12 @@ create index idx_ca_sub_eq_keys on current_attributes using gin (sub_eq_keys) wi
 where
     sub_eq_keys is not null;
 
-create statistics stx_ca_attribute_value_kind (dependencies, ndistinct) on attribute_name_key, value_kind from current_attributes;
+-- The most common (attribute, kind) pairs show the planner how few of an
+-- attribute's instances, often none, hold a given kind. A probe for whether
+-- any instance of an attribute sets a column no B-tree orders (an object, a
+-- long text, a long URI) names the kind the row pins to that column, and is
+-- priced from this list rather than from the two columns taken independently.
+create statistics stx_ca_attribute_value_kind (dependencies, ndistinct, mcv) on attribute_name_key, value_kind from current_attributes;
 
 create statistics stx_ca_entity_attribute (dependencies, ndistinct) on entity_key, attribute_name_key from current_attributes;
 

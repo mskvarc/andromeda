@@ -25,12 +25,14 @@ mod gated_page;
 pub mod id_pattern_page;
 pub mod keyed_count;
 pub mod keyed_page;
-pub mod numbered_page;
+mod occupied_columns;
 pub mod order_geography;
 mod page_shape;
 pub mod result_ordering;
 pub mod selector_predicate;
 pub mod snapshot_purge;
+pub mod value_walk_page;
+mod walked_column;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

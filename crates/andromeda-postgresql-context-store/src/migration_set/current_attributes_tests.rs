@@ -176,6 +176,17 @@ fn the_sub_attribute_key_index_is_partial_and_off_the_pending_list() {
     );
 }
 
+/// The most common pairs are what a probe naming one value kind of one
+/// Attribute is priced from.
+#[test]
+fn the_attribute_value_kind_statistics_keep_the_most_common_pairs() {
+    let schema = DeclaredSchema::of_every_migration();
+    assert_eq!(
+        normalized(&index(&schema, "stx_ca_attribute_value_kind").definition),
+        "(dependencies, ndistinct, mcv) on attribute_name_key, value_kind from current_attributes"
+    );
+}
+
 /// A row without a keyed value stores NULL, which the partial index leaves
 /// out, never an empty array it would index.
 #[test]

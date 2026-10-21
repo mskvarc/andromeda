@@ -35,7 +35,7 @@ pub enum EntityTotal {
     },
     /// The page is a keyset window (clause 5.5.9.1), whose predicate keeps only
     /// the entities past its cursor, so a window count over it would count
-    /// those alone, or a numbered page, whose branches each read part of the
+    /// those alone, or a value walk page, whose branches each read part of the
     /// selection. The total is always this separate count over the whole
     /// selection.
     Counted(TotalCount),
