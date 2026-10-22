@@ -3,7 +3,7 @@
 //! contributed entity this store holds (clauses 4.9 and 5.7.4.4).
 
 use crate::{history_row_decode::assembled_history, in_effect_instance_read::entity_of, repo::TemporalRepository, temporal_query_execution::TemporalStatement};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
 use andromeda_ngsi_ld_query::{split_filter::SplitFilter, temporal::compiled::CompiledTemporalQuery};
 use andromeda_postgresql_query::history_source::HistoryBranch;
@@ -36,7 +36,7 @@ impl TemporalRepository {
             return Ok(instances);
         }
         let names = self.resolve_query_names(compiled).await?;
-        let keys = names.attributes.keys_of(first_hops.into_iter().map(|relationship| relationship.as_str()));
+        let keys = names.attributes.keys_of(first_hops.into_iter().map(AttributeName::as_str));
         if keys.is_empty() {
             return Ok(instances);
         }

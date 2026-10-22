@@ -13,7 +13,10 @@
 //! represented by no read on it (clause 4.5.7), so it satisfies no leaf even
 //! when a source answers with it, and the Scope event or instance in effect
 //! when the window opens is the latest across every part, which the merged
-//! in-effect entity decides rather than any one part.
+//! in-effect entity decides rather than any one part. A Scope a source states
+//! with no instant on the window's axis counts: this broker dates such a Scope
+//! at the write that states it (clause 4.18 makes it valid from the time it
+//! has been set), and the instant a source set it at is not in its answer.
 
 use crate::reified_scope::reified_paths;
 use andromeda_ngsi_ld_entity::document::{EntityDocument, instance_document::InstanceDocument};
@@ -32,8 +35,8 @@ use std::borrow::Cow;
 pub(crate) struct AnsweredEvolution<'a> {
     /// The instances the answer carries.
     document: &'a EntityDocument,
-    /// The paths the answer's reified Scope instances inside the window name
-    /// (clause 4.5.6).
+    /// The paths the answer's reified Scope instances inside the window, or
+    /// with no instant on its axis, name (clause 4.5.6).
     scopes: Vec<ScopePath>,
     /// The window whose attribute instances the leaves read.
     window: TemporalWindow,
@@ -46,10 +49,16 @@ impl<'a> AnsweredEvolution<'a> {
         let scopes = document
             .attributes()
             .get(expanded_properties::SCOPE.as_str())
-            .map(|scope| reified_paths(scope.instances().iter().filter(|instance| instance.lies_within(window))))
+            .map(|scope| reified_paths(scope.instances().iter().filter(|instance| counts_in(instance, window))))
             .unwrap_or_default();
         AnsweredEvolution { document, scopes, window }
     }
+}
+
+/// Whether a reified Scope instance counts in `window`: it lies in it, or it
+/// carries no instant on the window's axis and so states the Scope undated.
+fn counts_in(instance: &InstanceDocument, window: TemporalWindow) -> bool {
+    instance.lies_within(window) || instance.instant_on(window.timeproperty).is_none()
 }
 
 impl<'a> QueriedEntity<'a> for &'a AnsweredEvolution<'a> {
@@ -209,5 +218,24 @@ mod tests {
         }))
         .await;
         assert!(!SplitFilter::of(&above).holds(&truths_of(&above, &undated_only)));
+    }
+
+    /// Clause 4.18: a Scope a source states with no instant is valid from a
+    /// time its answer does not carry, as this broker dates such a Scope at
+    /// its write, so it counts in the window; a dated one before the window
+    /// does not, the merged in-effect entity deciding it.
+    #[tokio::test]
+    async fn an_undated_scope_a_source_states_counts_in_the_window() {
+        let barcelona = selection(None, Some("/Barcelona"));
+        let noon = "2020-08-01T12:00:00Z".parse::<NgsiLdDateTime>().expect("a valid instant").get();
+        let undated = answered(&json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "scope": "/Barcelona"})).await;
+        assert!(SplitFilter::of(&barcelona).holds(&truths_over(&barcelona, &undated, observed(TimeInterval::After(noon)))));
+        let before = answered(&json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "scope": [{"type": "Property", "value": "/Barcelona", "observedAt": "2020-08-01T11:00:00Z"}]
+        }))
+        .await;
+        assert!(!SplitFilter::of(&barcelona).holds(&truths_over(&barcelona, &before, observed(TimeInterval::After(noon)))));
     }
 }

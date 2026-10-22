@@ -141,7 +141,7 @@ fn placement(instance: &InstanceDocument, timeproperty: TimeProp) -> Option<Date
 }
 
 /// Whether `instance` records a deletion (clause 4.5.7), which holds no value.
-fn records_deletion(instance: &InstanceDocument) -> bool {
+const fn records_deletion(instance: &InstanceDocument) -> bool {
     instance.deleted_at().is_some() || matches!(instance.value(), ValueSlot::Remove(_))
 }
 

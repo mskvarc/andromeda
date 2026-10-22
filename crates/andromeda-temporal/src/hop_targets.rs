@@ -27,6 +27,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
+use andromeda_ngsi_ld_entity::document::{attribute_member::AttributeMember, instance_document::InstanceDocument};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, temporal_format::TemporalFormat};
 use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
 use andromeda_ngsi_ld_query::{
@@ -198,8 +199,8 @@ fn objects_of<'a>(parts: impl Iterator<Item = &'a TemporalDocument>, relationshi
                 .attributes()
                 .get(relationship.as_str())
                 .into_iter()
-                .flat_map(|member| member.instances())
-                .flat_map(|instance| instance.objects())
+                .flat_map(AttributeMember::instances)
+                .flat_map(InstanceDocument::objects)
                 // clone: the walk owns the identifiers it reads
                 .filter_map(|object| Identifier::try_from(object.clone()).ok());
             for object in named {
@@ -309,6 +310,6 @@ mod tests {
         let level = vec![&parked_in];
         let objects = objects_of([&first, &second].into_iter(), Some(&level));
         pretty_assertions::assert_eq!(objects, vec!["urn:ngsi-ld:Parking:1".parse::<Identifier>().expect("a valid identifier")]);
-        assert!(objects_of([&first].into_iter(), None).is_empty());
+        pretty_assertions::assert_eq!(objects_of([&first].into_iter(), None), Vec::<Identifier>::new());
     }
 }

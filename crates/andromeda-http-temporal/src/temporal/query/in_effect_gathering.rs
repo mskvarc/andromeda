@@ -25,10 +25,12 @@ use andromeda_federation::{
     in_effect_probe::{InEffectProbe, InEffectReading},
     outcome::ForwardedTemporalEntities,
 };
-use andromeda_jsonld::engine::processor::JsonLdEngine;
+use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
+use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_temporal::{in_effect_follow_up::follow_up_datasets, local_in_effect::LocalInEffect, service::TemporalService};
+use axum::http::Uri;
 use std::{collections::HashMap, slice};
 
 /// The probes asked across every dataset.
@@ -70,11 +72,30 @@ pub(crate) fn instance_documents(sources: &[ForwardedTemporalEntities]) -> impl 
 #[derive(Clone, Copy)]
 pub(crate) struct GatheringRequest<'r> {
     /// The branch the query reads.
-    pub(crate) target: &'r ContextTarget,
+    target: &'r ContextTarget,
     /// The query, its context and the URI a failure names.
-    pub(crate) query: InEffectRequest<'r>,
+    query: InEffectRequest<'r>,
     /// The engine the context source filter is expanded with.
-    pub(crate) engine: &'r JsonLdEngine,
+    engine: &'r JsonLdEngine,
+}
+
+impl<'r> GatheringRequest<'r> {
+    /// The gathering of `params` against `target`, under `context`, its
+    /// context source filter expanded with `engine` and a failure naming
+    /// `instance`.
+    pub(crate) const fn new(
+        target: &'r ContextTarget,
+        params: &'r TemporalQueryParameters,
+        context: &'r ContextSpec,
+        engine: &'r JsonLdEngine,
+        instance: &'r Uri,
+    ) -> GatheringRequest<'r> {
+        GatheringRequest {
+            target,
+            query: InEffectRequest { params, context, instance },
+            engine,
+        }
+    }
 }
 
 /// Gather what every part holds in effect when the window opens, of every

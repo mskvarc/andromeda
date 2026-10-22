@@ -107,6 +107,6 @@ mod tests {
             "speed": [{"type": "Property", "value": 1, "observedAt": "2020-08-01T11:00:00Z"}]
         }))
         .await;
-        assert!(follow_up_datasets(&[Vec::new()], [&local]).is_empty());
+        pretty_assertions::assert_eq!(follow_up_datasets(&[Vec::new()], [&local]), Vec::<DatasetSelector>::new());
     }
 }

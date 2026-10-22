@@ -222,7 +222,7 @@ impl LinkedHop {
                 }
                 GuardedRow::Catalogue => SeaExpr::col((linked(), TemporalEntities::EntityTypeNameKeys)),
             };
-            probe.and_where(type_guard(guard_types, types, entity_type_name_keys.into()));
+            probe.and_where(type_guard(guard_types, types, &entity_type_name_keys));
         }
         // The inner predicate is added as its own condition for the same reason,
         // before any future compilation of it renders a top-level `OR`.
@@ -350,7 +350,7 @@ fn relationship_kinds() -> [SimpleExpr; 2] {
 /// markers unsubstituted and silently aliased onto other binds. Each arm is
 /// still a containment test the `entity_type_name_keys` GIN index answers, so the cost of
 /// the disjunction is an extra index probe per type rather than a scan.
-fn type_guard(guard_types: &[AttributeName], types: &ResolvedNames<EntityTypeName>, entity_type_name_keys: SimpleExpr) -> SimpleExpr {
+fn type_guard(guard_types: &[AttributeName], types: &ResolvedNames<EntityTypeName>, entity_type_name_keys: &SimpleExpr) -> SimpleExpr {
     guard_types
         .iter()
         .fold(Condition::any(), |guard, guard_type| match types.get_str(guard_type.as_str()) {

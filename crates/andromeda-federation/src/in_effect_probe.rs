@@ -26,7 +26,7 @@ use crate::{
     request::ForwardTemporalQueryRequest,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp, time_rel::TimeRel};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReferenceError, time_prop::TimeProp, time_rel::TimeRel};
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::referenced_attributes::referenced_attributes};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
@@ -62,11 +62,11 @@ impl InEffectProbe<'_> {
     ///
     /// # Errors
     ///
-    /// Returns [`FederationInvariant::CoreAttributeName`] when a core term the
-    /// filters default to is not an attribute name.
+    /// Returns [`NgsiLdReferenceError`] when a core term the filters default
+    /// to is not an attribute name.
     ///
     /// [`TemporalWindow::in_effect_start`]: andromeda_ngsi_ld_query::temporal::window::TemporalWindow::in_effect_start
-    pub fn parameters(&self, client: &TemporalQueryParameters) -> Result<Option<TemporalQueryParameters>, FederationInvariant> {
+    pub fn parameters(&self, client: &TemporalQueryParameters) -> Result<Option<TemporalQueryParameters>, NgsiLdReferenceError> {
         let Some(start) = client.window().ok().and_then(|window| window.in_effect_start()) else {
             return Ok(None);
         };
@@ -100,9 +100,9 @@ impl InEffectProbe<'_> {
 ///
 /// # Errors
 ///
-/// Returns [`FederationInvariant::CoreAttributeName`] when `location` or
-/// `scope` is not an attribute name.
-fn filter_attributes(client: &TemporalQueryParameters) -> Result<Vec<AttributeName>, FederationInvariant> {
+/// Returns [`NgsiLdReferenceError`] when `location` or `scope` is not an
+/// attribute name.
+fn filter_attributes(client: &TemporalQueryParameters) -> Result<Vec<AttributeName>, NgsiLdReferenceError> {
     let mut attributes: Vec<AttributeName> = client.q.as_ref().map(referenced_attributes).unwrap_or_default().into_iter().cloned().collect(); // clone: the probe owns the names it forwards
     if let Some(geo) = client.geo.0.as_ref() {
         let geoproperty = match &geo.geoproperty {
@@ -130,9 +130,9 @@ fn filter_attributes(client: &TemporalQueryParameters) -> Result<Vec<AttributeNa
 ///
 /// # Errors
 ///
-/// Returns [`FederationInvariant::CoreAttributeName`] when it is not one.
-fn core_attribute(term: &str) -> Result<AttributeName, FederationInvariant> {
-    term.parse().map_err(FederationInvariant::CoreAttributeName)
+/// Returns [`NgsiLdReferenceError`] when it is not one.
+fn core_attribute(term: &str) -> Result<AttributeName, NgsiLdReferenceError> {
+    term.parse()
 }
 
 impl FederationService {
@@ -157,7 +157,7 @@ impl FederationService {
     ) -> Result<ForwardReadOutcome<ForwardedTemporalEntities>, QueryForwardingError> {
         let Some(params) = probe
             .parameters(request.client_query)
-            .map_err(|invariant| QueryForwardingError::from(FederationError::from(invariant)))?
+            .map_err(|error| QueryForwardingError::from(FederationError::from(FederationInvariant::CoreAttributeName(error))))?
         else {
             return Ok(ForwardReadOutcome::empty());
         };

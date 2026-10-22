@@ -18,7 +18,7 @@ use crate::{
         complete_history::HistoryCompleteness,
         query::{
             admission::admit_request,
-            forwarding::{InEffectRequest, QueryScope, TemporalForwarding, forward_temporal_history},
+            forwarding::{QueryScope, TemporalForwarding, forward_temporal_history},
             in_effect_gathering::{GatheringRequest, gather_in_effect},
             merged_page::{MergedPageCut, cut_merged_page},
             request::TemporalQueryRequest,
@@ -96,15 +96,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     // from the value, geo and scope filters (clause 5.7.4.4).
     let sources = TemporalForwarding::new(&state.forwarding, &admitted, &headers, split, shape.reach());
     let forwarded = forward_temporal_history(sources, scope, service.engine(), &target, &params, &context, &uri).await?;
-    let gathering = GatheringRequest {
-        target: &target,
-        query: InEffectRequest {
-            params: &params,
-            context: &context,
-            instance: &uri,
-        },
-        engine: service.engine(),
-    };
+    let gathering = GatheringRequest::new(&target, &params, &context, service.engine(), &uri);
     let in_effect = gather_in_effect(sources, service, gathering, filtering, forwarded.as_ref()).await?;
 
     let contributed = contributed_entities(filtering, &params, forwarded.as_ref(), in_effect.as_ref(), shape.rendering());

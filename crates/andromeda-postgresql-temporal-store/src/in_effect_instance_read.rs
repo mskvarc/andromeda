@@ -10,7 +10,7 @@ use crate::{
     stored_catalog_error::StoredCatalogError,
     temporal_query_execution::TemporalStatement,
 };
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
 use andromeda_ngsi_ld_query::{split_filter::SplitFilter, temporal::compiled::CompiledTemporalQuery};
 use andromeda_postgresql_query::history_source::HistoryBranch;
@@ -52,9 +52,7 @@ impl TemporalRepository {
             }
         }
         let names = self.resolve_query_names(compiled).await?;
-        let keys = names
-            .attributes
-            .keys_of(filter.read_attributes().into_iter().map(|attribute| attribute.as_str()));
+        let keys = names.attributes.keys_of(filter.read_attributes().into_iter().map(AttributeName::as_str));
         if keys.is_empty() {
             return Ok(in_effect);
         }
