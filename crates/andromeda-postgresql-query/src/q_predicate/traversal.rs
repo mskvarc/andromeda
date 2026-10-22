@@ -2,16 +2,22 @@
 //!
 //! `rel{attr}=="x"` asks about an attribute of the entity a Relationship points
 //! at, so answering it means leaving the row being filtered. One hop becomes one
-//! `EXISTS`: the Relationship's instances are read from `current_attributes`,
-//! each object they hold is expanded to one row and joined to `entities.id` to
-//! reach the entity it names, and the rest of the predicate is compiled against
-//! that entity. Hops nest, so the probes nest with them.
+//! `EXISTS`: the Relationship's instances are read, each object they hold is
+//! expanded to one row and joined to the entity it names, and the rest of the
+//! predicate is compiled against that entity. Hops nest, so the probes nest
+//! with them.
 //!
-//! The join stays on `entities.id` because a Relationship's object is the
-//! Entity's URI (clause 4.5.3); it is the surrogate `entity_key` of the row that
-//! join lands on that the inner predicate then correlates against. The linked
-//! entity's `entity_search` row is joined only when the hop carries a type
-//! guard, since that is the one thing a hop reads from it.
+//! Over current state the instances are `current_attributes` rows and the join
+//! lands on `entities.id`, because a Relationship's object is the Entity's URI
+//! (clause 4.5.3); it is the surrogate `entity_key` of that row the inner
+//! predicate correlates against, and the linked entity's `entity_search` row is
+//! joined only when the hop carries a type guard, the one thing a hop reads
+//! from it. Over a temporal window the instances are the history instances
+//! valid within it, and the join lands on the linked entity's Temporal
+//! Evolution in the temporal catalogue, whose types a guard reads: the
+//! `temporal_linked_retrieval` extension renders every Linked Entity over the
+//! window of the roots, so a hop asks about the instances of the linked entity
+//! valid within that window too.
 //!
 //! An index path reads the same hop inward instead, from the linked entities
 //! the rest of the predicate keeps to the instances naming them
@@ -26,6 +32,7 @@ use crate::{
     attribute_name_key::AttributeNameKey,
     dictionary::resolved_names::ResolvedNames,
     entity_row_refs::EntityRowRefs,
+    history_source::HistoryOf,
     instance_expiry::instance_stands,
     q_predicate::{
         history_aliases::HistoryAliases,
@@ -37,7 +44,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, Entities, EntitySearch},
-    temporal::AttributeHistory,
+    temporal::{AttributeHistory, TemporalEntities},
 };
 use andromeda_postgresql_seaquery::{
     branch::qualified,
@@ -99,7 +106,8 @@ impl LinkedHop {
     /// window they are the history instances valid within it, so a temporal `q`
     /// follows the targets the Relationship named inside the window (clause
     /// 5.7.4.4), and the window's two probes each become one `EXISTS`. The join
-    /// to `entities.id` is that table's unique external key.
+    /// lands on the Entity's `id`, the unique external key of `entities` and of
+    /// the temporal catalogue alike.
     ///
     /// A deleted Relationship needs no exclusion: `current_attributes` holds no
     /// tombstone row, and the history probe excludes deletions itself.
@@ -114,11 +122,12 @@ impl LinkedHop {
         match outer {
             InstanceScan::Current(rows) => {
                 let probe = self.current_objects(relationship_id, rows);
-                Condition::all().add(SeaExpr::exists(self.completed(probe, guard_types, types, outer.schema(), inner)))
+                let guarded = GuardedRow::Search(outer.schema());
+                Condition::all().add(SeaExpr::exists(self.completed(probe, guard_types, types, guarded, inner)))
             }
             InstanceScan::History(window) => self
                 .windowed_objects(relationship_id, window)
-                .map(|probe| self.completed(probe, guard_types, types, outer.schema(), inner.clone())) // clone: each of the window's probes tests the linked entity
+                .map(|probe| self.completed(probe, guard_types, types, GuardedRow::Catalogue, inner.clone())) // clone: each of the window's probes tests the linked entity
                 .into_exists(),
         }
     }
@@ -179,18 +188,18 @@ impl LinkedHop {
             )
             .and_where(SeaExpr::col((hop(), CurrentAttributes::AttributeKind)).is_in(relationship_kinds()))
             .and_where(instance_stands(SeaExpr::col((hop(), CurrentAttributes::ExpiresAt))));
-        self.completed(branch, guard_types, types, outer.schema(), inner)
+        self.completed(branch, guard_types, types, GuardedRow::Search(outer.schema()), inner)
     }
 
     /// One probe over the Relationship's instances, completed with the type
-    /// guard and the inner predicate on the entity each instance names, whose
-    /// search row is read in the branch `schema`.
+    /// guard, read from `guarded`, and the inner predicate on the entity each
+    /// instance names.
     fn completed(
         &self,
         mut probe: SelectStatement,
         guard_types: &[AttributeName],
         types: &ResolvedNames<EntityTypeName>,
-        schema: Option<&DynIden>,
+        guarded: GuardedRow<'_>,
         inner: Condition,
     ) -> SelectStatement {
         let linked = || Alias::new(self.linked_entity.as_str());
@@ -200,15 +209,20 @@ impl LinkedHop {
         // The guard is the only reader of the linked entity's search row, so the
         // row is joined only when there is one.
         if !guard_types.is_empty() {
-            let search = || Alias::new(self.linked_search.as_str());
-            probe
-                .join_as(
-                    JoinType::Join,
-                    qualified(schema, EntitySearch::Table),
-                    search(),
-                    SeaExpr::col((search(), EntitySearch::EntityKey)).equals((linked(), Entities::EntityKey)),
-                )
-                .and_where(type_guard(guard_types, types, self.linked_search.as_str()));
+            let entity_type_name_keys = match guarded {
+                GuardedRow::Search(schema) => {
+                    let search = || Alias::new(self.linked_search.as_str());
+                    probe.join_as(
+                        JoinType::Join,
+                        qualified(schema, EntitySearch::Table),
+                        search(),
+                        SeaExpr::col((search(), EntitySearch::EntityKey)).equals((linked(), Entities::EntityKey)),
+                    );
+                    SeaExpr::col((search(), EntitySearch::EntityTypeNameKeys))
+                }
+                GuardedRow::Catalogue => SeaExpr::col((linked(), TemporalEntities::EntityTypeNameKeys)),
+            };
+            probe.and_where(type_guard(guard_types, types, entity_type_name_keys.into()));
         }
         // The inner predicate is added as its own condition for the same reason,
         // before any future compilation of it renders a top-level `OR`.
@@ -247,8 +261,15 @@ impl LinkedHop {
         probe
     }
 
+    /// The Temporal Evolution this hop lands on over a window, which the inner
+    /// predicate reads the history of.
+    pub(crate) fn linked_evolution(&self) -> HistoryOf {
+        HistoryOf::Entity(SeaExpr::col((Alias::new(self.linked_entity.as_str()), TemporalEntities::Id)))
+    }
+
     /// The Relationship's instances valid within the window joined to the
-    /// entities they name, correlated against the window's temporal entity.
+    /// Temporal Evolutions they name in the window's branch, correlated
+    /// against the window's temporal entity.
     ///
     /// History keeps a Relationship's objects as current state does, a single
     /// one in `value_uri` and several in `value_object`, so each instance
@@ -260,7 +281,7 @@ impl LinkedHop {
                 &mut probe,
                 aliases.instance_column(AttributeHistory::ValueObject),
                 aliases.instance_column(AttributeHistory::ValueUri),
-                qualified(window.schema(), Entities::Table),
+                window.evolutions(Alias::new(self.linked_entity.as_str())),
             );
             probe.and_where(SeaExpr::expr(aliases.instance_column(AttributeHistory::AttributeKind)).is_in(relationship_kinds()));
             probe
@@ -268,7 +289,7 @@ impl LinkedHop {
     }
 
     /// Join to `probe` one row per object its instance holds and the entity
-    /// each object names in `entities`.
+    /// each object names in `entities`, a relation keyed by the Entity's `id`.
     ///
     /// Clause 4.9 follows every object: a Relationship holding one object
     /// keeps it in `single_object`, and one holding several, like a
@@ -298,13 +319,22 @@ impl LinkedHop {
     }
 }
 
+/// Where a hop's type guard reads the linked entity's types.
+#[derive(Debug, Clone, Copy)]
+enum GuardedRow<'s> {
+    /// The linked entity's `entity_search` row, in the branch schema given.
+    Search(Option<&'s DynIden>),
+    /// The linked entity's Temporal Evolution the hop already lands on.
+    Catalogue,
+}
+
 /// The attribute kinds whose instances hold objects a hop follows.
 fn relationship_kinds() -> [SimpleExpr; 2] {
     [AttributeKind::Relationship, AttributeKind::ListRelationship].map(|kind| int_literal(i64::from(kind.code())))
 }
 
-/// The hop's entity-type constraint against the linked entity's `entity_type_name_keys`
-/// column.
+/// The hop's entity-type constraint against the linked entity's
+/// `entity_type_name_keys` column, wherever the hop reads it.
 ///
 /// Clause 4.9 lists the guard's types as alternatives, so the constraint is a
 /// disjunction of array-membership tests on the resolved dictionary keys, the
@@ -320,8 +350,7 @@ fn relationship_kinds() -> [SimpleExpr; 2] {
 /// markers unsubstituted and silently aliased onto other binds. Each arm is
 /// still a containment test the `entity_type_name_keys` GIN index answers, so the cost of
 /// the disjunction is an extra index probe per type rather than a scan.
-fn type_guard(guard_types: &[AttributeName], types: &ResolvedNames<EntityTypeName>, linked_search_alias: &str) -> SimpleExpr {
-    let entity_type_name_keys: SimpleExpr = SeaExpr::col((Alias::new(linked_search_alias), EntitySearch::EntityTypeNameKeys));
+fn type_guard(guard_types: &[AttributeName], types: &ResolvedNames<EntityTypeName>, entity_type_name_keys: SimpleExpr) -> SimpleExpr {
     guard_types
         .iter()
         .fold(Condition::any(), |guard, guard_type| match types.get_str(guard_type.as_str()) {
@@ -337,11 +366,12 @@ mod tests {
     use crate::{
         attribute_name_key::AttributeNameKey,
         dictionary::resolved_names::ResolvedNames,
+        entity_type_name_key::EntityTypeNameKey,
         history_source::{HistoryBranch, HistoryOf},
         q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, traversal::LinkedHop},
         window_reach::WindowReach,
     };
-    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, time::date_time::NgsiLdDateTime};
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
     use andromeda_postgresql_schema::temporal::AttributeHistory;
     use sea_query::{Alias, Condition, Expr, ExprTrait, PostgresQueryBuilder, Query};
@@ -370,10 +400,38 @@ mod tests {
         );
         let sql = Query::select().expr(Expr::val(1)).cond_where(probe).to_owned().to_string(PostgresQueryBuilder);
         assert_eq!(sql.matches(r#"AS "qh_ln1""#).count(), 2, "{sql}");
-        for fragment in [r#"JOIN "entities" AS "le1" ON "le1"."id" = "lo1""#, r#""le1"."entity_key" = 5"#] {
+        for fragment in [r#") AS "le1" ON "le1"."id" = "lo1""#, r#""le1"."entity_key" = 5"#] {
             assert_eq!(sql.matches(fragment).count(), 2, "{fragment}: {sql}");
         }
         assert!(sql.contains(r#"AS "qe_ln1" ON TRUE"#), "{sql}");
+    }
+
+    /// Clause 4.9: a hop's type guard names the types the linked entity
+    /// carries; over a window the hop lands on its Temporal Evolution, whose
+    /// types the temporal catalogue holds, so no `entity_search` row is read.
+    #[test]
+    fn a_windowed_hop_guards_types_from_the_temporal_catalogue() {
+        let start = "2019-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("a valid instant").get();
+        let window = HistoryWindow::builder()
+            .branch(HistoryBranch::live_recorded())
+            .of(HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id")))))
+            .axis(AttributeHistory::ObservedAt)
+            .interval(TimeInterval::After(start))
+            .reach(WindowReach::Inside)
+            .build();
+        let parking: EntityTypeName = "https://example.com/Parking".parse().expect("a valid type name");
+        let guard: Vec<AttributeName> = vec!["https://example.com/Parking".parse().expect("a valid name")];
+        let probe = LinkedHop::at_depth(1).probe(
+            AttributeNameKey::from(4),
+            &guard,
+            &ResolvedNames::from_pairs([(parking, EntityTypeNameKey::from(3))]),
+            &InstanceScan::History(&window),
+            Condition::all(),
+        );
+        let sql = Query::select().expr(Expr::val(1)).cond_where(probe).to_owned().to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#""temporal_entities" AS "le1""#), "{sql}");
+        assert!(sql.contains(r#""le1"."entity_type_name_keys""#), "{sql}");
+        assert!(!sql.contains("entity_search"), "{sql}");
     }
 
     /// Clause 4.9: a temporal hop follows every object a history instance

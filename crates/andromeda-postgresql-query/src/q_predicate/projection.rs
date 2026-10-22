@@ -102,10 +102,12 @@ fn compile_predicate(pred: &Predicate, scan: &InstanceScan<'_>, names: &QueryNam
 /// `depth` is the number of hops already descended; it suffixes the aliases so
 /// a nested traversal's probes cannot shadow an enclosing one's.
 ///
-/// A hop lands on the linked Entity as it stands: the instances `scan` reads
-/// decide which entities the Relationship named, and the linked entity is then
-/// asked about its current state, because a window selects instances of the
-/// entity being queried and says nothing of the entities it points at.
+/// The instances `scan` reads decide which entities the Relationship named.
+/// Over current state a hop lands on the linked Entity as it stands. Over a
+/// temporal window it lands on the linked entity's instances valid within the
+/// same window: the `temporal_linked_retrieval` extension renders every Linked
+/// Entity over the window of the roots, so a filter asking about a linked
+/// entity reads the history the answer shows of it.
 fn compile_along_path(pred: &Predicate, path: &QueryPath, scan: &InstanceScan<'_>, names: &QueryNames, depth: usize) -> CompiledTerm {
     match path {
         QueryPath::Local(local) => compile_local(pred, local, scan, names),
@@ -121,8 +123,14 @@ fn compile_along_path(pred: &Predicate, path: &QueryPath, scan: &InstanceScan<'_
                 return unsatisfiable_term();
             };
             let hop = LinkedHop::at_depth(depth + 1);
-            let inner_rows = hop.inner_rows(scan.schema().cloned());
-            let inner_condition = linked_condition(pred, inner, &inner_rows, names, depth + 1);
+            let inner_condition = match scan {
+                InstanceScan::Current(_) => linked_condition(pred, inner, &hop.inner_rows(scan.schema().cloned()), names, depth + 1),
+                InstanceScan::History(window) => {
+                    let linked = window.over(hop.linked_evolution());
+                    let linked_scan = InstanceScan::History(&linked);
+                    compile_along_path(pred, inner, &linked_scan, names, depth + 1).into_condition(&linked_scan)
+                }
+            };
             CompiledTerm::Standalone(hop.probe(relationship_id, guard_types, &names.types, scan, inner_condition))
         }
     }

@@ -205,7 +205,9 @@ mod tests {
     }
 
     /// A hop's linked entities are read by the store alone, so a Query Term
-    /// crossing one still reads the local instance in effect.
+    /// crossing one still reads the local instance in effect, and under the
+    /// `temporal_linked_retrieval` extension it lands on the linked entity's
+    /// Temporal Evolution and reads its history over the same window.
     #[test]
     fn a_hop_leaf_still_reads_the_instance_in_effect() {
         let compiled = compiled("\"https://example.com/parkedIn\"{\"https://example.com/name\"}==\"Lot\"", None, None);
@@ -223,6 +225,12 @@ mod tests {
             .expect("renders")
             .to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"AS "qe_ln1""#), "{sql}");
+        assert!(!sql.contains(r#""entities" AS "le1""#), "{sql}");
+        assert!(sql.contains(r#""re"."id" = "le1"."id""#), "the inner term reads the linked evolution: {sql}");
+        assert!(
+            sql.contains(r#""qh"."attribute_name_key" = 12"#),
+            "the inner term reads the linked history: {sql}"
+        );
     }
 
     /// Clause 5.7.4.4: the leaves of a split query judge the part held here,

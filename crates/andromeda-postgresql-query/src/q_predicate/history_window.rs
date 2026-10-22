@@ -41,6 +41,7 @@ use crate::{
         HistoryBranch,
         HistoryOf,
         attribute_rows::{attribute_rows, stream_rows},
+        entity_rows::entity_rows,
         grain::HistoryGrain,
     },
     q_predicate::{
@@ -61,7 +62,7 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
 };
 use chrono::{DateTime, Utc};
-use sea_query::{Asterisk, Condition, DynIden, Expr as SeaExpr, ExprTrait, JoinType, Query, SelectStatement, SimpleExpr};
+use sea_query::{Asterisk, Condition, DynIden, Expr as SeaExpr, ExprTrait, IntoIden, JoinType, Query, SelectStatement, SimpleExpr, TableRef};
 use typed_builder::TypedBuilder;
 
 /// The instances of one Temporal Evolution a temporal `q` is checked against.
@@ -115,6 +116,24 @@ impl HistoryWindow {
     #[must_use]
     pub const fn schema(&self) -> Option<&DynIden> {
         self.branch.schema()
+    }
+
+    /// The same window over the Temporal Evolution `of` names, which a hop
+    /// reads its linked entity through.
+    pub(crate) fn over(&self, of: HistoryOf) -> HistoryWindow {
+        HistoryWindow {
+            branch: self.branch.clone(), // clone: each window owns the branch its probes read
+            of,
+            axis: self.axis,
+            interval: self.interval,
+            reach: self.reach,
+        }
+    }
+
+    /// The Temporal Evolutions of the window's branch under `alias`, keyed by
+    /// the Entity's `id`.
+    pub(crate) fn evolutions(&self, alias: impl IntoIden) -> TableRef {
+        entity_rows(&self.branch, alias)
     }
 
     /// Wrap a value condition in the correlated probes over the window's
