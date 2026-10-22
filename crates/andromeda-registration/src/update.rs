@@ -59,11 +59,11 @@ impl RegistrationService {
             context_source_info: resolved.context_source_info.as_deref(),
             expires_at: resolved.expires_at,
         })?;
-        // A stored `jsonldContext` the fragment leaves in place was dereferenced
+        // A stored `jsonldContext` the fragment leaves in place was admitted
         // when it was written; an update touching nothing else is not refused
         // because that context went away since.
         if !fragment.context_source_info.is_absent() {
-            self.dereference_forwarding_context(&source_info).await?;
+            self.admit_forwarding_context(&source_info).await?;
         }
         check_conflicts(self.repo.as_ref(), self.entity_probe.as_ref(), resolved.mode, &resolved.information, Some(id)).await?;
         let written = self.repo.update(id, &resolved).await?.require_applied(id)?;

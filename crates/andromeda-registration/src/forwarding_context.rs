@@ -1,31 +1,34 @@
 //! The `@context` a registration's forwarded requests are compacted against,
-//! dereferenced when the registration is written.
+//! admitted when the registration is written.
 //!
 //! Clause 4.3.6.6 has the broker compact every request it distributes to a
 //! registered Context Source against the context the `jsonldContext` key of the
 //! registration's `contextSourceInfo` names. One that cannot be retrieved or
 //! processed would fail each of those requests long after the registration was
-//! accepted, so it is resolved and processed when a registration is created
-//! and when an update replaces its `contextSourceInfo`: an unreachable context
-//! is `LdContextNotAvailable` and an invalid one `BadRequestData` at the write,
-//! as clauses 5.8.1.4 and 5.8.2.4 answer a subscription's `jsonldContext`.
+//! accepted, so it is admitted as a user `@context` when a registration is
+//! created and when an update replaces its `contextSourceInfo`: an unreachable
+//! context is `LdContextNotAvailable` at the write, as clauses 5.8.1.4 and
+//! 5.8.2.4 answer a subscription's `jsonldContext`, and an invalid one, or one
+//! declaring a JSON-LD Scoped Context that could modify Core terms during the
+//! compaction (clause 5.5.7), is `BadRequestData`.
 
 use crate::{RegistrationService, error::RegistrationError};
-use andromeda_jsonld::context_validation::dereference_context_reference;
+use andromeda_jsonld::context_validation::admit_context_reference;
 use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfo;
 
 impl RegistrationService {
-    /// Resolve and process the `jsonldContext` the registration's
+    /// Admit the user `@context` the `jsonldContext` key of the registration's
     /// `contextSourceInfo` names, if it names one.
     ///
     /// # Errors
     ///
     /// Returns [`RegistrationError::JsonLd`] carrying the context-loading
-    /// failure when the context cannot be retrieved, and the JSON-LD
-    /// processing failure when it is not a valid `@context`.
-    pub(crate) async fn dereference_forwarding_context(&self, info: &ContextSourceInfo<'_>) -> Result<(), RegistrationError> {
+    /// failure when the context cannot be retrieved, the scoped-context refusal
+    /// when it declares a JSON-LD Scoped Context, and the JSON-LD processing
+    /// failure when it is not a valid `@context`.
+    pub(crate) async fn admit_forwarding_context(&self, info: &ContextSourceInfo<'_>) -> Result<(), RegistrationError> {
         if let Some(reference) = &info.jsonld_context {
-            dereference_context_reference(&self.engine, reference).await?;
+            admit_context_reference(&self.engine, reference).await?;
         }
         Ok(())
     }
@@ -66,17 +69,23 @@ mod tests {
     const ABSENT: &str = "https://example.org/absent.jsonld";
     const VALID: &str = "https://example.org/valid.jsonld";
     const INVALID: &str = "https://example.org/invalid.jsonld";
+    const SCOPED: &str = "https://example.org/scoped.jsonld";
 
     /// Makes every temporary context file name unique, so engines built by
     /// tests running in parallel never write or remove each other's files.
     static CONTEXT_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-    /// An engine resolving `VALID` to a context and `INVALID` to a document
-    /// whose term definition is a number, and nothing else.
+    /// An engine resolving `VALID` to a context, `INVALID` to a document whose
+    /// term definition is a number and `SCOPED` to a context declaring a JSON-LD
+    /// Scoped Context, and nothing else.
     fn serving_engine() -> JsonLdEngine {
         let documents = [
             (VALID, r#"{"@context": {"speed": "https://example.org/speed"}}"#),
             (INVALID, r#"{"@context": {"speed": 42}}"#),
+            (
+                SCOPED,
+                r#"{"@context": {"speed": {"@id": "https://example.org/speed", "@context": {"unitCode": "https://example.org/rewritten"}}}}"#,
+            ),
         ];
         let sequence = CONTEXT_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let mut preloads = HashMap::new();
@@ -191,11 +200,42 @@ mod tests {
         assert!(store.updated_information().is_empty());
     }
 
-    /// A stored forwarding context was dereferenced when it was written, so an
+    /// Clause 5.5.7: the forwarding context is a user `@context`, which shall
+    /// not contain JSON-LD Scoped Contexts.
+    #[tokio::test]
+    async fn a_registration_forwarding_under_a_scoped_context_is_refused() {
+        let service = service(&Arc::new(FixedStore::new(Vec::new())), serving_engine());
+        let context = core_context(&service).await;
+        let error = service.create(registration_body(SCOPED), &context).await.expect_err("clause 5.5.7 refuses it");
+        let failure = json_ld_failure(error);
+        assert!(
+            matches!(&failure, JsonLdError::ScopedUserContext { term } if term.as_str() == "speed"),
+            "{failure}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_update_replacing_the_context_source_info_with_a_scoped_context_is_refused_and_writes_nothing() {
+        let store = stored_forwarding_under(VALID);
+        let service = service(&store, serving_engine());
+        let context = core_context(&service).await;
+        let error = service
+            .update(&registration_id(), fragment(&json!({"contextSourceInfo": forwarding_info(SCOPED)})), &context)
+            .await
+            .expect_err("clause 5.5.7 refuses it");
+        let failure = json_ld_failure(error);
+        assert!(
+            matches!(&failure, JsonLdError::ScopedUserContext { term } if term.as_str() == "speed"),
+            "{failure}"
+        );
+        assert!(store.updated_information().is_empty());
+    }
+
+    /// A stored forwarding context was admitted when it was written, so an
     /// update leaving `contextSourceInfo` alone is not refused because that
     /// context went away since.
     #[tokio::test]
-    async fn an_update_leaving_the_context_source_info_alone_does_not_dereference_it() {
+    async fn an_update_leaving_the_context_source_info_alone_does_not_admit_it() {
         let store = stored_forwarding_under(ABSENT);
         let service = service(&store, offline_engine());
         let context = core_context(&service).await;

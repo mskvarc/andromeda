@@ -10,6 +10,7 @@ use crate::{
     notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
     store::{SubscriptionFields, SubscriptionStore},
     stored_subscription::StoredSubscription,
+    subscription_context::SubscriptionContext,
 };
 use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_context_space::context_target::ContextTarget;
@@ -17,7 +18,8 @@ use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::processor::JsonLdEngine,
-    user_context_admission::{SubmittedContext, admit_user_context},
+    error::JsonLdError,
+    user_context_admission::{AdmittedContext, SubmittedContext, admit_user_context},
 };
 use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
@@ -39,8 +41,16 @@ use iri_rs::IriBuf;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::{
+    collections::HashMap,
+    env,
+    fs,
     num::NonZeroUsize,
-    sync::{Arc, Mutex},
+    process,
+    sync::{
+        Arc,
+        Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 use url::Url;
 
@@ -468,6 +478,93 @@ async fn an_update_naming_a_jsonld_context_replaces_the_stored_one() {
     let written = written_context_after_update(json!({ "jsonldContext": replacement }), &ContextSpec::none()).await;
 
     assert_eq!(written.as_ref().map(IriBuf::as_str), Some(replacement));
+}
+
+/// A hosted context declaring a JSON-LD Scoped Context on `speed`.
+const SCOPED_CONTEXT: &str = "https://example.com/scoped.jsonld";
+
+/// Makes every temporary context file name unique, so engines built by tests
+/// running in parallel never write or remove each other's files.
+static CONTEXT_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+/// A service over the stored subscription whose engine resolves
+/// [`SCOPED_CONTEXT`] and nothing else, with what its store was asked to write.
+fn service_serving_a_scoped_context() -> (SubscriptionService<EntitySubscriptionVariant>, WrittenContext) {
+    let sequence = CONTEXT_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let path = env::temp_dir().join(format!("andromeda-subscription-scoped-context-{}-{sequence}.jsonld", process::id()));
+    fs::write(
+        &path,
+        r#"{"@context": {"speed": {"@id": "https://example.com/speed", "@context": {"unitCode": "https://example.com/rewritten"}}}}"#,
+    )
+    .expect("the temporary directory is writable");
+    let engine = JsonLdEngine::builder()
+        .allow_remote(false)
+        .preload_contexts(HashMap::from([(Url::parse(SCOPED_CONTEXT).expect("a valid URL"), path.clone())])) // clone: the removal below needs the path
+        .build()
+        .expect("engine builds");
+    fs::remove_file(&path).expect("the temporary context is removable");
+    let written = WrittenContext::default();
+    let store = UpdatingStore {
+        stored: subscription_with_chosen_context(),
+        written: Arc::clone(&written),
+    };
+    let service = SubscriptionService::new(
+        Arc::new(store),
+        // clone: the service and the variant each own an engine handle.
+        engine.clone(),
+        EntitySubscriptionVariant::new(engine),
+        None,
+        Arc::new(AcceptingEndpointValidator),
+        geo_q_admission(),
+    );
+    (service, written)
+}
+
+fn assert_scoped_refusal(error: &SubscriptionError) {
+    assert!(
+        matches!(error, SubscriptionError::JsonLd(JsonLdError::ScopedUserContext { term }) if term.as_str() == "speed"),
+        "{error:?}"
+    );
+}
+
+/// Clause 5.5.7: the context a `jsonldContext` names is a user `@context`,
+/// which shall not contain JSON-LD Scoped Contexts.
+#[tokio::test]
+async fn a_subscription_created_with_a_scoped_jsonld_context_is_refused() {
+    let (service, _) = service_serving_a_scoped_context();
+    let request = SubscriptionRequest::from_request_text(
+        json!({
+            "type": "Subscription",
+            "entities": [{ "type": "https://example.com/Vehicle" }],
+            "notification": { "endpoint": { "uri": "http://receiver.example.com/notify" } },
+            "jsonldContext": SCOPED_CONTEXT
+        })
+        .to_string()
+        .as_bytes(),
+    )
+    .expect("a readable subscription");
+    let error = service
+        .create(&ContextTarget::Live, request, SubscriptionContext::CoreOnly, &[])
+        .await
+        .expect_err("clause 5.5.7 refuses it");
+    assert_scoped_refusal(&error);
+}
+
+#[tokio::test]
+async fn an_update_naming_a_scoped_jsonld_context_is_refused_and_writes_nothing() {
+    let (service, written) = service_serving_a_scoped_context();
+    let request = SubscriptionRequest::from_request_text(json!({ "jsonldContext": SCOPED_CONTEXT }).to_string().as_bytes()).expect("a readable fragment");
+    let error = service
+        .update(
+            &ContextTarget::Live,
+            &uri("urn:ngsi-ld:Subscription:stored"),
+            request,
+            &AdmittedContext::core_only(),
+        )
+        .await
+        .expect_err("clause 5.5.7 refuses it");
+    assert_scoped_refusal(&error);
+    assert_eq!(*written.lock().expect("the written context is never poisoned"), None);
 }
 
 /// A store holding five entity subscriptions, `urn:ngsi-ld:Subscription:1` to

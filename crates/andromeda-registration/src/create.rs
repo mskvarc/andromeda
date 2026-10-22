@@ -61,7 +61,7 @@ impl RegistrationService {
             context_source_info: params.context_source_info.as_deref(),
             expires_at: params.expires_at,
         })?;
-        self.dereference_forwarding_context(&source_info).await?;
+        self.admit_forwarding_context(&source_info).await?;
         check_conflicts(self.repo.as_ref(), self.entity_probe.as_ref(), params.mode, &params.information, None).await?;
         let written = self.repo.create(&id, &params).await?;
         self.emit_csr_change(CsrChangeEvent {
