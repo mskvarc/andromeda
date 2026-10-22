@@ -34,7 +34,7 @@ use andromeda_postgresql_schema::{csr::RegistrationInformation, name_dictionary:
 use andromeda_postgresql_seaquery::{
     literal::text_literal,
     operator::regex_match,
-    pg_array::{any, array_of_subquery, text_array},
+    pg_array::{array_of_subquery, is_any_of, text_array},
     pg_operator::PgBinaryOperator,
 };
 use iri_rs::IriBuf;
@@ -78,13 +78,12 @@ pub fn entity_type_candidate(entity_types: &[IriBuf]) -> SimpleExpr {
 }
 
 /// Whether the row may admit one of `entity_ids`: it names one of them, names
-/// none, or carries a pattern, which the caller's residual evaluates.
+/// none, or carries a pattern, which the caller's residual evaluates. The
+/// values cross the bind boundary as one `text[]`.
 #[must_use]
 pub fn entity_id_candidate(entity_ids: &[Identifier]) -> SimpleExpr {
-    let named = entity_ids.iter().map(Identifier::as_str).chain([ANY_IDENTIFIER]);
-    entity_id_or_none()
-        .is_in(named)
-        .or(ri_col(RegistrationInformation::EntityIdPattern).is_not_null())
+    let named = entity_ids.iter().map(Identifier::as_str).chain([ANY_IDENTIFIER]).map(str::to_owned);
+    is_any_of(entity_id_or_none(), named).or(ri_col(RegistrationInformation::EntityIdPattern).is_not_null())
 }
 
 /// Whether the row admits `pattern`: it names no `id`, or its `id` matches the
@@ -116,13 +115,15 @@ struct RequestedName;
 /// parameter ceiling.
 #[must_use]
 pub fn attribute_name_candidate(attribute_names: &[IriBuf]) -> SimpleExpr {
-    let names: Vec<&str> = attribute_names.iter().map(IriBuf::as_str).collect();
     let requested_keys = || {
         let mut dictionary = Query::select();
         dictionary
             .expr(SeaExpr::col((RequestedName, AttributeNames::AttributeNameKey)))
             .from_as(AttributeNames::Table, RequestedName)
-            .and_where(SeaExpr::col((RequestedName, AttributeNames::Name)).eq(any(text_array(&names))));
+            .and_where(is_any_of(
+                SeaExpr::col((RequestedName, AttributeNames::Name)),
+                attribute_names.iter().map(IriBuf::to_string),
+            ));
         array_of_subquery(dictionary)
     };
     Condition::any()
@@ -249,7 +250,7 @@ mod tests {
     fn the_identifier_test_names_the_identifiers_beside_the_sentinel_and_admits_pattern_rows_unevaluated() {
         let sql = render(entity_id_candidate(&[uri("urn:ngsi-ld:Vehicle:1"), uri("urn:ngsi-ld:Vehicle:2")]));
         assert!(
-            sql.contains("COALESCE(\"ri\".\"entity_id\", '') IN ('urn:ngsi-ld:Vehicle:1', 'urn:ngsi-ld:Vehicle:2', '')"),
+            sql.contains("COALESCE(\"ri\".\"entity_id\", '') = ANY(ARRAY ['urn:ngsi-ld:Vehicle:1','urn:ngsi-ld:Vehicle:2',''])"),
             "{sql}"
         );
         assert!(sql.contains("OR \"ri\".\"entity_id_pattern\" IS NOT NULL"), "{sql}");

@@ -2,10 +2,12 @@
 //! mapper reads, the family pin, the total count, and the window of a listing
 //! page (clause 5.5.9).
 
-use crate::subscription_store::{
-    delivery_state::join_delivery_state,
-    failure::persistence_error,
-    stored_kind::{StoredKind, of_kind},
+use crate::{
+    store_fault::persistence_error,
+    subscription_store::{
+        delivery_state::join_delivery_state,
+        stored_kind::{StoredKind, of_kind},
+    },
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -97,7 +99,7 @@ pub(super) async fn count_of_kind(pool: &sqlx::PgPool, target: &ContextTarget, k
     let row: (i64,) = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_one(pool)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SubscriptionError>(error))?;
     Ok(row.0)
 }
 

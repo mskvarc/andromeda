@@ -21,11 +21,10 @@
 
 use crate::error::TemporalError;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_linked_retrieval::source::RemoteReach;
+use andromeda_linked_retrieval::source::{RemoteReach, RemoteResolution};
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp, time_rel::TimeRel};
 use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
 use andromeda_ngsi_ld_query::temporal::aggregation_period::AggregationPeriod;
-use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
 use andromeda_ngsi_ld_request::{query::temporal::TemporalQueryParameters, representation_parameter::WrittenValue};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -100,20 +99,6 @@ impl TemporalLinkedWindow {
     }
 }
 
-/// What one non-local temporal resolution attempt yielded.
-///
-/// The two halves are independent: a source can answer with temporal
-/// representations *and* report that part of what was asked for is missing.
-#[derive(Debug, Default)]
-pub struct RemoteTemporalLinkedEntities {
-    /// The history of every entity the source resolved, gathered by entity,
-    /// still in the context-independent form: the traversal compacts it under
-    /// the request context.
-    pub entities: Vec<TemporalHistory>,
-    /// Every Linked Entity the attempt left unresolved.
-    pub failures: Vec<LinkedResolutionFailure>,
-}
-
 /// Fetches the temporal evolution of an `objectType`-annotated Linked Entity
 /// whose history this broker does not hold (clause 4.5.23.1).
 ///
@@ -148,7 +133,7 @@ pub trait RemoteTemporalLinkedSource: fmt::Debug + Send + Sync + 'static {
     ///
     /// Returns [`TemporalError`] when the remainder of the system cannot be
     /// consulted at all. A source that merely fails to produce a temporal
-    /// representation returns none and a [`LinkedResolutionFailure`] describing
+    /// representation returns none and a failure describing
     /// why: clause 4.5.23 leaves an unresolvable Relationship as a plain URI
     /// rather than failing the retrieval.
     #[must_use = "non-local Linked Entity resolutions must be awaited"]
@@ -159,5 +144,5 @@ pub trait RemoteTemporalLinkedSource: fmt::Debug + Send + Sync + 'static {
         visited: &[Identifier],
         window: &TemporalLinkedWindow,
         context: &ContextSpec,
-    ) -> Result<RemoteTemporalLinkedEntities, TemporalError>;
+    ) -> Result<RemoteResolution<TemporalHistory>, TemporalError>;
 }

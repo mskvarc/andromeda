@@ -14,8 +14,11 @@ use crate::intent_application::{
     intent_source::{E, I, IntentSource, S, Te, entry, entry_kind_in, intent, source_entries, write_ordinal},
     scope_judgement::recorded_scope_entry,
 };
-use andromeda_postgresql_codes::{temporal_entry_kind::TemporalEntryKind, value_kind::ValueKind};
-use andromeda_postgresql_query::history_source::entry_values::{attribute_entry_values, recorded_geometry, scope_entry_values};
+use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
+use andromeda_postgresql_query::{
+    history_source::entry_values::{attribute_entry_values, recorded_geometry, scope_entry_values},
+    tombstone::carries_a_value,
+};
 use andromeda_postgresql_schema::{
     queue::TemporalAppendIntents,
     temporal::{AttributeHistory, AttributeHistoryInstanceClaims, ScopeHistory, TemporalAttributeStreams, TemporalEntities, TemporalStreamShapes},
@@ -259,7 +262,7 @@ pub(crate) fn stream_shapes_statement(source: &IntentSource<'_>, schema: Option<
         .column((Ah, AttributeHistory::AttributeKind))
         .expr(recorded_shape())
         .from_subquery(entries, Ah)
-        .and_where(Expr::col((Ah, AttributeHistory::ValueKind)).ne(ValueKind::Tombstone.code()));
+        .and_where(carries_a_value(Ah));
     let mut statement = Query::insert();
     statement
         .into_table(qualified(schema, TemporalStreamShapes::Table))

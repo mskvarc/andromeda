@@ -56,6 +56,12 @@ pub enum TemporalValidationReason {
         #[source]
         source: UnitCodeRefusal,
     },
+    /// A regular expression of the request (a `q` pattern or an `idPattern`,
+    /// clauses 4.9 and 5.7.2) that the database refuses to compile: the
+    /// pattern is the client's input, so the refusal is `BadRequestData`
+    /// (clause 5.5.4), never a broker fault.
+    #[error("a pattern of the request is not a regular expression the broker can evaluate")]
+    UnusablePattern,
     /// The client's `collation` is not a locale the database can honour.
     #[error("'{collation}' does not conform to a valid ICU collation")]
     Collation {

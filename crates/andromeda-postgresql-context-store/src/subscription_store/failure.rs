@@ -1,23 +1,12 @@
 //! How an adapter failure surfaces at the subscription policy boundary.
 
-use crate::{
-    error::violates_unique_constraint,
-    store_fault::{StoreFault, persistence_failure},
-};
+use crate::store_fault::persistence_error;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_postgresql_pool::sql_state::violates_unique_constraint;
 use andromeda_subscription::error::SubscriptionError;
 
 /// The unique constraint the migrations name on `subscriptions.id`.
 const UQ_SUBSCRIPTIONS_ID: &str = "uq_subscriptions_id";
-
-/// Flatten an adapter failure at the policy boundary.
-///
-/// Classify an adapter failure at the port boundary: backpressure keeps the
-/// port's retryable category and every fault becomes its persistence failure.
-#[track_caller]
-pub fn persistence_error(error: impl StoreFault) -> SubscriptionError {
-    SubscriptionError::from(persistence_failure(&error))
-}
 
 /// Preserve a uniqueness race on the identifier as the semantic identifier
 /// conflict.
@@ -31,7 +20,7 @@ pub fn create_error(error: sqlx::Error, identifier: &Identifier) -> Subscription
     if violates_unique_constraint(&error, UQ_SUBSCRIPTIONS_ID) {
         SubscriptionError::already_exists(identifier)
     } else {
-        persistence_error(error)
+        persistence_error::<SubscriptionError>(error)
     }
 }
 
@@ -39,14 +28,21 @@ pub fn create_error(error: sqlx::Error, identifier: &Identifier) -> Subscription
 mod tests {
     use crate::{
         migration_set::branch::branch_migrations,
-        subscription_store::failure::{UQ_SUBSCRIPTIONS_ID, create_error, persistence_error},
+        store_fault::persistence_error,
+        subscription_store::failure::{UQ_SUBSCRIPTIONS_ID, create_error},
     };
     use andromeda_subscription::error::SubscriptionError;
 
     #[test]
     fn a_pool_timeout_becomes_store_saturated() {
-        assert!(matches!(persistence_error(sqlx::Error::PoolTimedOut), SubscriptionError::StoreSaturated));
-        assert!(matches!(persistence_error(sqlx::Error::RowNotFound), SubscriptionError::Persistence(_)));
+        assert!(matches!(
+            persistence_error::<SubscriptionError>(sqlx::Error::PoolTimedOut),
+            SubscriptionError::StoreSaturated
+        ));
+        assert!(matches!(
+            persistence_error::<SubscriptionError>(sqlx::Error::RowNotFound),
+            SubscriptionError::Persistence(_)
+        ));
     }
 
     /// The migrations name every constraint, so the duplicate-identifier

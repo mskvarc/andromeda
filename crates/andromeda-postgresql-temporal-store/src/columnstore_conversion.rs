@@ -40,6 +40,7 @@ use crate::{
     repo::TemporalRepository,
     schema_ddl::timescale_policy::{HypertableName, convert_to_columnstore},
 };
+use andromeda_postgresql_pool::{schema_change_lock::is_lock_not_available, transaction_rollback::is_transaction_rolled_back};
 use andromeda_postgresql_seaquery::{
     advisory_lock::try_advisory_xact_lock,
     setting::{SettingScope, lift_statement_timeout, set_config},
@@ -49,7 +50,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use derive_more::Display;
 use sea_query::{Expr, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, PgConnection, Row, error::DatabaseError};
+use sqlx::{AssertSqlSafe, PgConnection, Row};
 use std::num::NonZeroU32;
 use thiserror::Error;
 
@@ -260,9 +261,10 @@ fn conversion_settings() -> [SelectStatement; 3] {
 }
 
 /// Whether a conversion failed in a way the next sweep can overcome: a
-/// deadlock (SQLSTATE `40P01`) or a lock wait cut short (`55P03`).
+/// transaction rolled back as a deadlock or serialization victim, or a lock
+/// wait cut short.
 fn defers_conversion(error: &sqlx::Error) -> bool {
-    matches!(error.as_database_error().and_then(DatabaseError::code).as_deref(), Some("40P01" | "55P03"))
+    is_transaction_rolled_back(error) || is_lock_not_available(error)
 }
 
 #[cfg(test)]
@@ -275,9 +277,11 @@ mod tests {
         ColumnstoreHorizonOutOfRange,
         chunk_lock_statement,
         conversion_settings,
+        defers_conversion,
         past_horizon,
     };
     use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
+    use andromeda_postgresql_pool::fake_database_error::FakeDatabaseError;
     use chrono::{DateTime, TimeDelta, Utc};
     use pretty_assertions::{assert_eq, assert_ne};
     use sea_query::PostgresQueryBuilder;
@@ -295,6 +299,17 @@ mod tests {
             range_end: instant(range_end),
             storage,
         }
+    }
+
+    #[test]
+    fn a_deadlock_serialization_failure_or_refused_lock_defers_the_conversion() {
+        for code in ["40P01", "40001", "55P03"] {
+            assert!(defers_conversion(&FakeDatabaseError::new("contended", code).into_sqlx()), "{code}");
+        }
+        for code in ["23505", "57014"] {
+            assert!(!defers_conversion(&FakeDatabaseError::new("refused", code).into_sqlx()), "{code}");
+        }
+        assert!(!defers_conversion(&sqlx::Error::PoolTimedOut));
     }
 
     #[test]

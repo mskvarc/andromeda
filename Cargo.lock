@@ -197,6 +197,7 @@ dependencies = [
  "andromeda-jsonld",
  "andromeda-linked-retrieval",
  "andromeda-ngsi-ld-compaction",
+ "andromeda-ngsi-ld-expansion",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-query",
@@ -699,6 +700,7 @@ dependencies = [
  "iso8601-duration",
  "pretty_assertions",
  "serde_urlencoded",
+ "thiserror 2.0.21",
  "tokio",
  "tower",
  "typed-builder",
@@ -1676,6 +1678,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-lexicon",
+ "andromeda-postgresql-schema",
  "cefact-units",
  "derive_more",
  "pretty_assertions",
@@ -1689,6 +1692,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-query",
+ "andromeda-postgresql-pool",
  "dashmap",
  "pretty_assertions",
  "sqlx",
@@ -1876,6 +1880,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "strum",
  "thiserror 2.0.21",
  "tokio",
 ]
@@ -2343,6 +2348,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-lexicon",
+ "andromeda-postgresql-pool",
  "andromeda-tenancy",
  "andromeda-test-client",
  "andromeda-test-fixtures",

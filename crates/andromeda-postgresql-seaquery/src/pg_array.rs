@@ -1,6 +1,7 @@
 //! PostgreSQL array constructs sea-query has no native form for.
 
-use sea_query::{Expr, ExprTrait, Func, Iden, PostgresQueryBuilder, QueryStatementBuilder, SelectStatement, SimpleExpr};
+use crate::literal::{false_literal, true_literal};
+use sea_query::{Expr, ExprTrait, Func, Iden, PostgresQueryBuilder, QueryStatementBuilder, SelectStatement, SimpleExpr, Value};
 
 /// `ARRAY(subquery)` where the subquery carries bound values, collecting a
 /// single-column result set into one Postgres array.
@@ -156,6 +157,43 @@ pub fn all(array: SimpleExpr) -> SimpleExpr {
     Func::cust(AllQuantifier).args([array]).into()
 }
 
+/// `operand = ANY($n)`: whether `operand` is one of `values`.
+///
+/// Every list a request supplies (entity identifiers, attribute names,
+/// `datasetId`s, the dictionary keys they resolve to) is tested this way, so
+/// however long the list grows the statement binds it as one value and stays
+/// far below the wire protocol's 65535-parameter ceiling. An empty list matches
+/// nothing and renders as the constant `FALSE`, which PostgreSQL folds into a
+/// filter that reads no row. The array owns its elements, so a text list is
+/// handed over as owned strings: a bound parameter cannot borrow across the
+/// round trip.
+#[must_use]
+pub fn is_any_of<V>(operand: impl Into<SimpleExpr>, values: impl IntoIterator<Item = V>) -> SimpleExpr
+where
+    Vec<V>: Into<Value>,
+{
+    let values: Vec<V> = values.into_iter().collect();
+    if values.is_empty() {
+        return false_literal();
+    }
+    operand.into().eq(any(Expr::val(values)))
+}
+
+/// `operand <> ALL($n)`: whether `operand` is none of `values`, the list bound
+/// as one value for the reason [`is_any_of`] binds it as one. An empty list
+/// excludes nothing and renders as the constant `TRUE`.
+#[must_use]
+pub fn is_none_of<V>(operand: impl Into<SimpleExpr>, values: impl IntoIterator<Item = V>) -> SimpleExpr
+where
+    Vec<V>: Into<Value>,
+{
+    let values: Vec<V> = values.into_iter().collect();
+    if values.is_empty() {
+        return true_literal();
+    }
+    operand.into().ne(all(Expr::val(values)))
+}
+
 /// A bound `text[]` value from a batch of borrowed strings.
 ///
 /// The array value owns its elements, so each string is copied: a bound
@@ -210,14 +248,52 @@ mod tests {
         array_subquery,
         elements_or_null,
         has_elements,
+        is_any_of,
+        is_none_of,
         nullable_text_array,
         width_bucket,
     };
     use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query, SimpleExpr};
+    use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query, SimpleExpr, Value};
 
     fn render_expr(expr: SimpleExpr) -> String {
         Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
+    }
+
+    /// Seventy thousand identifiers are past the 65535 parameters one
+    /// statement may bind, and still bind as the one array they are.
+    #[test]
+    fn a_membership_list_past_the_parameter_ceiling_binds_as_one_array() {
+        let identifiers: Vec<String> = (0..70_000).map(|index| format!("urn:ngsi-ld:Vehicle:{index}")).collect();
+        let (sql, values) = Query::select()
+            .expr(is_any_of(Expr::col(Alias::new("id")), identifiers.iter().cloned())) // clone: the expectation keeps the list
+            .and_where(is_none_of(Expr::col(Alias::new("name")), ["a".to_owned()]))
+            .to_owned()
+            .build(PostgresQueryBuilder);
+        assert_eq!(sql, "SELECT \"id\" = ANY($1) WHERE \"name\" <> ALL($2)");
+        assert_eq!(values.0.len(), 2);
+        assert!(matches!(&values.0[0], Value::Array(_, Some(elements)) if elements.len() == identifiers.len()));
+    }
+
+    #[test]
+    fn an_empty_list_is_a_constant() {
+        let (sql, values) = Query::select()
+            .expr(is_any_of(Expr::col(Alias::new("id")), Vec::<String>::new()))
+            .expr(is_none_of(Expr::col(Alias::new("id")), Vec::<String>::new()))
+            .to_owned()
+            .build(PostgresQueryBuilder);
+        assert_eq!(sql, "SELECT FALSE, TRUE");
+        assert_eq!(values.0, Vec::new());
+    }
+
+    #[test]
+    fn integer_keys_bind_as_one_array_too() {
+        let (sql, values) = Query::select()
+            .expr(is_any_of(Expr::col(Alias::new("key")), [1_i32, 2, 3]))
+            .to_owned()
+            .build(PostgresQueryBuilder);
+        assert_eq!(sql, "SELECT \"key\" = ANY($1)");
+        assert_eq!(values.0.len(), 1);
     }
 
     #[test]

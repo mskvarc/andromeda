@@ -16,6 +16,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_query::{
+    attribute_name_key::AttributeNameKey,
     dictionary::names_in_key_order::type_names_of,
     history_source::{HistoryBranch, entity_rows::entity_rows},
 };
@@ -23,12 +24,9 @@ use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,
     temporal::{TemporalAttributeStreams, TemporalEntities},
 };
-use andromeda_postgresql_seaquery::{
-    branch::qualified,
-    pg_array::{any, text_array},
-};
+use andromeda_postgresql_seaquery::{branch::qualified, pg_array::is_any_of};
 use andromeda_postgresql_temporal_query::alias::{An, S, Te};
-use sea_query::{Alias, DynIden, Expr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement};
+use sea_query::{Alias, DynIden, Expr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{AssertSqlSafe, Row};
 use std::collections::HashMap;
@@ -86,15 +84,18 @@ impl TemporalRepository {
     ///
     /// # Errors
     ///
-    /// Returns [`TemporalStoreError::Database`] when the statement fails.
+    /// Returns [`TemporalStoreError::NameLookup`] when the dictionary read fails,
+    /// [`TemporalStoreError::Database`] when the statement fails.
     pub(crate) async fn attribute_stream_exists(
         &self,
         target: &ContextTarget,
         entity_id: &Identifier,
         attribute_name: &AttributeName,
     ) -> Result<bool, TemporalStoreError> {
-        let (sql, values) =
-            attribute_stream_exists_query(schema_iden(target).as_ref(), entity_id.as_str(), attribute_name.as_str()).build_sqlx(PostgresQueryBuilder);
+        let Some(attribute) = self.attribute_key(attribute_name).await? else {
+            return Ok(false);
+        };
+        let (sql, values) = attribute_stream_exists_query(schema_iden(target).as_ref(), entity_id.as_str(), attribute).build_sqlx(PostgresQueryBuilder);
         let exists = sqlx::query_scalar_with(AssertSqlSafe(sql), values).fetch_one(&self.pool).await?;
         Ok(exists)
     }
@@ -103,7 +104,8 @@ impl TemporalRepository {
     ///
     /// # Errors
     ///
-    /// Returns [`TemporalStoreError::Database`] when the statement fails and
+    /// Returns [`TemporalStoreError::NameLookup`] when the dictionary read fails,
+    /// [`TemporalStoreError::Database`] when the statement fails and
     /// [`TemporalStoreError::StoredCatalog`] when a stored discriminator is not a
     /// URI.
     pub(crate) async fn attribute_dataset_ids(
@@ -112,8 +114,10 @@ impl TemporalRepository {
         entity_id: &Identifier,
         attribute_name: &AttributeName,
     ) -> Result<Vec<Option<Identifier>>, TemporalStoreError> {
-        let (sql, values) =
-            attribute_dataset_ids_query(schema_iden(target).as_ref(), entity_id.as_str(), attribute_name.as_str()).build_sqlx(PostgresQueryBuilder);
+        let Some(attribute) = self.attribute_key(attribute_name).await? else {
+            return Ok(Vec::new());
+        };
+        let (sql, values) = attribute_dataset_ids_query(schema_iden(target).as_ref(), entity_id.as_str(), attribute).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
         rows.iter()
             .map(|row| {
@@ -144,26 +148,25 @@ impl TemporalRepository {
     }
 }
 
-/// Join a stream to its temporal entity and its attribute name.
+/// Join a stream to its temporal entity.
 ///
-/// Every catalogue read reaches the entity URI and the attribute IRI through
-/// this join rather than through `entities`, so a current-state deletion (clause
-/// 5.6.6) leaves the catalogue answering.
+/// Every catalogue read reaches the entity URI through this join rather than
+/// through `entities`, so a current-state deletion (clause 5.6.6) leaves the
+/// catalogue answering. An attribute is addressed by the dictionary key its
+/// name resolved to ([`of_attribute`]).
 pub(crate) fn stream_catalog_join(statement: &mut SelectStatement, schema: Option<&DynIden>) {
-    statement
-        .from(qualified(schema, TemporalAttributeStreams::Table).alias(S))
-        .join_as(
-            JoinType::Join,
-            qualified(schema, TemporalEntities::Table),
-            Te,
-            Expr::col((Te, TemporalEntities::TemporalEntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)),
-        )
-        .join_as(
-            JoinType::Join,
-            AttributeNames::Table,
-            An,
-            Expr::col((An, AttributeNames::AttributeNameKey)).equals((S, TemporalAttributeStreams::AttributeNameKey)),
-        );
+    statement.from(qualified(schema, TemporalAttributeStreams::Table).alias(S)).join_as(
+        JoinType::Join,
+        qualified(schema, TemporalEntities::Table),
+        Te,
+        Expr::col((Te, TemporalEntities::TemporalEntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)),
+    );
+}
+
+/// The streams of the attribute keyed `attribute` among those
+/// [`stream_catalog_join`] reads.
+pub(crate) fn of_attribute(attribute: AttributeNameKey) -> SimpleExpr {
+    Expr::col((S, TemporalAttributeStreams::AttributeNameKey)).eq(attribute.get())
 }
 
 /// Whether the entity has a Temporal Evolution at all.
@@ -185,31 +188,31 @@ fn temporal_entity_types_query(branch: &HistoryBranch, ids: &[&str]) -> SelectSt
         .column((Te, TemporalEntities::Id))
         .expr_as(type_names_of(Expr::col((Te, TemporalEntities::EntityTypeNameKeys))), Alias::new("types"))
         .from(entity_rows(branch, Te))
-        .and_where(Expr::col((Te, TemporalEntities::Id)).eq(any(text_array(ids))))
+        .and_where(is_any_of(Expr::col((Te, TemporalEntities::Id)), ids.iter().map(|id| (*id).to_owned())))
         .to_owned()
 }
 
 /// Whether the entity records any stream for the named attribute.
-fn attribute_stream_exists_query(schema: Option<&DynIden>, entity_id: &str, attribute_name: &str) -> SelectStatement {
+fn attribute_stream_exists_query(schema: Option<&DynIden>, entity_id: &str, attribute: AttributeNameKey) -> SelectStatement {
     let mut inner = Query::select();
     inner.expr(Expr::val(1));
     stream_catalog_join(&mut inner, schema);
     inner
         .and_where(Expr::col((Te, TemporalEntities::Id)).eq(entity_id))
-        .and_where(Expr::col((An, AttributeNames::Name)).eq(attribute_name));
+        .and_where(of_attribute(attribute));
     let mut statement = Query::select();
     statement.expr(Expr::exists(inner));
     statement
 }
 
 /// The `datasetId` of every stream the entity records for one attribute.
-fn attribute_dataset_ids_query(schema: Option<&DynIden>, entity_id: &str, attribute_name: &str) -> SelectStatement {
+fn attribute_dataset_ids_query(schema: Option<&DynIden>, entity_id: &str, attribute: AttributeNameKey) -> SelectStatement {
     let mut statement = Query::select();
     statement.column((S, TemporalAttributeStreams::DatasetId));
     stream_catalog_join(&mut statement, schema);
     statement
         .and_where(Expr::col((Te, TemporalEntities::Id)).eq(entity_id))
-        .and_where(Expr::col((An, AttributeNames::Name)).eq(attribute_name));
+        .and_where(of_attribute(attribute));
     statement
 }
 
@@ -220,7 +223,14 @@ fn temporal_attribute_names_query(schema: Option<&DynIden>, entity_id: &str) -> 
         .distinct()
         .expr_as(Expr::col((An, AttributeNames::Name)), Alias::new("attribute_name"));
     stream_catalog_join(&mut statement, schema);
-    statement.and_where(Expr::col((Te, TemporalEntities::Id)).eq(entity_id));
+    statement
+        .join_as(
+            JoinType::Join,
+            AttributeNames::Table,
+            An,
+            Expr::col((An, AttributeNames::AttributeNameKey)).equals((S, TemporalAttributeStreams::AttributeNameKey)),
+        )
+        .and_where(Expr::col((Te, TemporalEntities::Id)).eq(entity_id));
     statement
 }
 
@@ -233,15 +243,15 @@ mod tests {
         temporal_entity_exists_query,
         temporal_entity_types_query,
     };
-    use andromeda_postgresql_query::history_source::HistoryBranch;
+    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, history_source::HistoryBranch};
     use sea_query::PostgresQueryBuilder;
 
     #[test]
     fn no_catalogue_question_is_answered_from_current_state() {
         for statement in [
             temporal_entity_exists_query(&HistoryBranch::live(), "urn:x").to_string(PostgresQueryBuilder),
-            attribute_stream_exists_query(None, "urn:x", "https://ex/speed").to_string(PostgresQueryBuilder),
-            attribute_dataset_ids_query(None, "urn:x", "https://ex/speed").to_string(PostgresQueryBuilder),
+            attribute_stream_exists_query(None, "urn:x", AttributeNameKey::from(7)).to_string(PostgresQueryBuilder),
+            attribute_dataset_ids_query(None, "urn:x", AttributeNameKey::from(7)).to_string(PostgresQueryBuilder),
             temporal_attribute_names_query(None, "urn:x").to_string(PostgresQueryBuilder),
         ] {
             assert!(!statement.contains("\"entities\""), "{statement}");

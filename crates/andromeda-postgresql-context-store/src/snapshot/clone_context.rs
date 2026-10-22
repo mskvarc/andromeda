@@ -18,14 +18,13 @@ use crate::{
         branch_version::{condition_of, current_version},
         clone::clone_branch,
         json_value::optional_json,
-        persistence_error,
         preparation_claim::{lock_claimed_preparation, share_claimed_preparation},
         record::status_is_preparing,
         status_code::stored_status,
         status_outbox::enqueue_terminal_notification,
         unencodable_snapshot_error::UnencodableSnapshotError,
     },
-    store_fault::undecodable,
+    store_fault::{persistence_error, undecodable},
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
@@ -51,23 +50,23 @@ pub(crate) async fn promote_staged_branch(
     queries_details: Option<&[ExecutionResultDetails]>,
     temporal_queries_details: Option<&[ExecutionResultDetails]>,
 ) -> Result<(), SnapshotError> {
-    let mut transaction = pool.begin().await.map_err(|error| persistence_error(error))?;
+    let mut transaction = pool.begin().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
     let snapshot_key = lock_preparing_key(&mut transaction, id, claimed_by).await?;
     if status == SnapshotStatus::Failure {
         publish_empty_branch(&mut transaction, snapshot_key)
             .await
-            .map_err(|error| persistence_error(error))?;
+            .map_err(|error| persistence_error::<SnapshotError>(error))?;
     } else {
         analyze_branch_schema(&mut transaction, snapshot_key, SnapshotBranch::Staging)
             .await
-            .map_err(|error| persistence_error(error))?;
+            .map_err(|error| persistence_error::<SnapshotError>(error))?;
         promote_staging_schema(&mut transaction, snapshot_key)
             .await
-            .map_err(|error| persistence_error(error))?;
+            .map_err(|error| persistence_error::<SnapshotError>(error))?;
     }
     finalize_preparation(&mut transaction, snapshot_key, claimed_by, status, queries_details, temporal_queries_details).await?;
     enqueue_terminal_notification(&mut transaction, id).await?;
-    transaction.commit().await.map_err(|error| persistence_error(error))
+    transaction.commit().await.map_err(|error| persistence_error::<SnapshotError>(error))
 }
 
 /// Copy a source Snapshot's published branch into the claimed target's staging
@@ -96,18 +95,18 @@ pub(crate) async fn promote_context_clone(pool: &PgPool, source_id: &Identifier,
 /// renewals, touches or metadata changes. A failure after the commit leaves
 /// only staged rows, which the next restart or claim of the target discards.
 async fn copy_clone_source(pool: &PgPool, source_id: &Identifier, target_id: &Identifier, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
-    let mut transaction = pool.begin().await.map_err(|error| persistence_error(error))?;
+    let mut transaction = pool.begin().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
     sqlx::query(repeatable_read())
         .execute(&mut *transaction)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
     // The copy takes as long as the source is large and no request waits on
     // it, so the database's statement timeout does not bound it.
     let (sql, values) = Query::select().expr(lift_statement_timeout()).build_sqlx(PostgresQueryBuilder);
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(&mut *transaction)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
     let target_key = share_claimed_preparation(&mut transaction, target_id, claimed_by)
         .await?
         .ok_or_else(|| claim_lost(target_id))?;
@@ -116,8 +115,8 @@ async fn copy_clone_source(pool: &PgPool, source_id: &Identifier, target_id: &Id
     let target_schema = snapshot_schema_name(target_key, SnapshotBranch::Staging);
     clone_branch(&mut transaction, &source_schema, &target_schema)
         .await
-        .map_err(|error| persistence_error(error))?;
-    transaction.commit().await.map_err(|error| persistence_error(error))
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
+    transaction.commit().await.map_err(|error| persistence_error::<SnapshotError>(error))
 }
 
 /// The refusal of a preparation whose claim this replica no longer holds.
@@ -165,7 +164,7 @@ async fn source_snapshot_key(transaction: &mut Transaction<'_, Postgres>, source
     let (raw, version) = sqlx::query_as_with::<_, (i64, i32), _>(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_optional(&mut **transaction)
         .await
-        .map_err(|error| persistence_error(error))?
+        .map_err(|error| persistence_error::<SnapshotError>(error))?
         .ok_or_else(|| {
             SnapshotError::from(SnapshotInvariant::CloneSourceMissing {
                 source_snapshot: source_id.clone(), // clone: the error owns the Snapshot it names
@@ -210,7 +209,7 @@ async fn finalize_preparation(
     let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(&mut **transaction)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
     if result.rows_affected() == 1 {
         Ok(())
     } else {

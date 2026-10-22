@@ -18,11 +18,11 @@
 
 /// Returning a connection to its pool after its request let go of it.
 pub mod connection_release;
+/// The one loop that runs an operation again after contention refused it.
+pub mod contention_retry;
 /// A database error the tests can construct without a live driver connection.
-#[cfg(test)]
-mod fake_database_error;
-/// Bounded waiting on the locks a schema change takes.
-pub mod lock_retry;
+#[cfg(any(test, feature = "test-support"))]
+pub mod fake_database_error;
 /// How a `sqlx` error is classified into the failure a port carries.
 pub mod persistence_classification;
 /// The broker's shared pool tuning.
@@ -31,6 +31,10 @@ pub mod pool_options;
 pub mod read_share;
 /// Whether a driver error is the pool or the pooler at capacity.
 pub mod saturation;
+/// Bounded waiting on the locks a schema change takes.
+pub mod schema_change_lock;
+/// The SQLSTATE codes the broker tells apart.
+pub mod sql_state;
 /// Whether a driver error says the store cannot be reached right now.
 pub mod store_unavailability;
 /// Whether a driver error is a transaction rolled back under contention.

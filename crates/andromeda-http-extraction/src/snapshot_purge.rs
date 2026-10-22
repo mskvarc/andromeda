@@ -6,17 +6,36 @@
 //! (clause 6.3.2).
 
 use crate::{addressed_uri::addressed_uri, query_decode_error::QueryDecodeError};
-use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
 use andromeda_ngsi_ld_model::snapshot_filter::{SnapshotPurgeFilter, SnapshotQParseError, parse_snapshot_q};
+use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use serde::Deserialize;
 use std::future::{Future, ready};
 use thiserror::Error;
 
-/// A `q` expression of `DELETE /snapshots` that does not parse as a snapshot filter.
+/// Why the query of `DELETE /snapshots` names no purge filter.
 #[derive(Debug, Error)]
-#[error("invalid snapshot purge q: {0}")]
-struct InvalidSnapshotPurgeQ(#[source] SnapshotQParseError);
+enum SnapshotPurgeRefusal {
+    /// The query string does not decode into parameters.
+    #[error(transparent)]
+    Query(#[from] QueryDecodeError),
+    /// Clause 5.16.7: the operation requires a `q` parameter and the request
+    /// carries none.
+    #[error("a delete of the snapshots requires a 'q' query parameter")]
+    MissingQ,
+    /// The `q` expression does not parse as a snapshot filter.
+    #[error("invalid snapshot purge q: {0}")]
+    InvalidQ(#[source] SnapshotQParseError),
+}
+
+impl RequestRefusal for SnapshotPurgeRefusal {
+    fn error_type(&self) -> NgsiLdErrorType {
+        match self {
+            SnapshotPurgeRefusal::Query(_) | SnapshotPurgeRefusal::MissingQ | SnapshotPurgeRefusal::InvalidQ(_) => NgsiLdErrorType::BadRequestData,
+        }
+    }
+}
 
 /// Axum extractor for the required `?q=` parameter of `DELETE /snapshots`.
 #[derive(Debug)]
@@ -32,14 +51,15 @@ struct RawPurgeQuery {
 /// Read the mandatory `q` expression off the request, rejecting a missing or
 /// malformed value as `BadRequestData` (clauses 5.16.7 and 6.3.2).
 fn resolve_purge_query(parts: &Parts) -> Result<SnapshotPurgeQ, ExtractorRejection> {
-    let uri = addressed_uri(parts);
+    parse_purge_query(parts).map_err(|refusal| refusal.into_rejection(addressed_uri(parts)))
+}
+
+/// The purge filter the request's query string names.
+fn parse_purge_query(parts: &Parts) -> Result<SnapshotPurgeQ, SnapshotPurgeRefusal> {
     let query_str = parts.uri.query().unwrap_or("");
-    let raw: RawPurgeQuery =
-        serde_urlencoded::from_str(query_str).map_err(|error| ExtractorRejection::bad_request_data(QueryDecodeError(error).to_string(), uri.clone()))?;
-    let q_value = raw
-        .q
-        .ok_or_else(|| ExtractorRejection::bad_request_data("DELETE /snapshots requires a 'q' query parameter (ETSI GS CIM 009 clause 5.16.7)", uri.clone()))?;
-    let filter = parse_snapshot_q(&q_value).map_err(|error| ExtractorRejection::bad_request_data(InvalidSnapshotPurgeQ(error).to_string(), uri))?;
+    let raw: RawPurgeQuery = serde_urlencoded::from_str(query_str).map_err(QueryDecodeError)?;
+    let q_value = raw.q.ok_or(SnapshotPurgeRefusal::MissingQ)?;
+    let filter = parse_snapshot_q(&q_value).map_err(SnapshotPurgeRefusal::InvalidQ)?;
     Ok(SnapshotPurgeQ(filter))
 }
 
@@ -63,16 +83,24 @@ mod tests {
     async fn missing_q_produces_bad_request_data() {
         let req = Request::builder().uri("/ngsi-ld/v1/snapshots").body(()).expect("request");
         let (mut parts, ()) = req.into_parts();
-        let result = SnapshotPurgeQ::from_request_parts(&mut parts, &()).await;
-        assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
+        let rejection = SnapshotPurgeQ::from_request_parts(&mut parts, &()).await.expect_err("a missing q is refused");
+        let problem = rejection.problem().expect("a classified rejection");
+        pretty_assertions::assert_eq!(problem.error_type(), NgsiLdErrorType::BadRequestData);
+        pretty_assertions::assert_eq!(
+            problem.detail(),
+            "a delete of the snapshots requires a 'q' query parameter"
+        );
+        pretty_assertions::assert_eq!(problem.instance().map(ToString::to_string).as_deref(), Some("/ngsi-ld/v1/snapshots"));
     }
 
     #[tokio::test]
     async fn malformed_q_produces_bad_request_data() {
         let req = Request::builder().uri("/ngsi-ld/v1/snapshots?q=bogus").body(()).expect("request");
         let (mut parts, ()) = req.into_parts();
-        let result = SnapshotPurgeQ::from_request_parts(&mut parts, &()).await;
-        assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
+        let rejection = SnapshotPurgeQ::from_request_parts(&mut parts, &()).await.expect_err("a malformed q is refused");
+        let problem = rejection.problem().expect("a classified rejection");
+        pretty_assertions::assert_eq!(problem.error_type(), NgsiLdErrorType::BadRequestData);
+        assert!(problem.detail().starts_with("invalid snapshot purge q: "), "{}", problem.detail());
     }
 
     #[tokio::test]

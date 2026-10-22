@@ -8,11 +8,10 @@
 //! to stand in the error's `entityId`, which Table 5.2.17-1 requires to be a
 //! valid URI.
 
-use crate::json_value_budget::RequestJsonValueBudgetExceeded;
-use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
+use crate::{json_value_budget::RequestJsonValueBudgetExceeded, not_json_document::NotJsonDocument};
+use andromeda_http_response::request_refusal::RequestRefusal;
 use andromeda_ngsi_ld_lexicon::uri::UriParseError;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use axum::http::Uri as HttpUri;
 use strum::Display;
 use thiserror::Error;
 
@@ -40,12 +39,8 @@ pub enum BatchBodyRefusal {
     #[error(transparent)]
     TooManyValues(#[from] RequestJsonValueBudgetExceeded),
     /// Clause 5.5.4: the payload body is not a JSON document.
-    #[error("the request body is not a JSON document: {source}")]
-    NotJson {
-        /// Why the body does not parse.
-        #[source]
-        source: serde_json::Error,
-    },
+    #[error(transparent)]
+    NotJson(#[from] NotJsonDocument),
     /// Clauses 5.6.7.3 to 5.6.10.3 and 5.6.20.3: the body is not an array.
     #[error("the request body must be a JSON array of {members}")]
     NotAnArray {
@@ -89,7 +84,7 @@ pub enum BatchBodyRefusal {
     },
 }
 
-impl BatchBodyRefusal {
+impl RequestRefusal for BatchBodyRefusal {
     /// The clause 5.5.2 category the refusal is reported as.
     ///
     /// Clause 5.5.4 raises `InvalidRequest` only for a payload body that "is
@@ -98,11 +93,10 @@ impl BatchBodyRefusal {
     /// item, an `id` that is absent or not a URI -- is `BadRequestData`; and a
     /// body larger than the broker accepts is the clause 6.3.2 "Request Entity
     /// too large".
-    #[must_use]
-    pub const fn error_type(&self) -> NgsiLdErrorType {
+    fn error_type(&self) -> NgsiLdErrorType {
         match self {
             BatchBodyRefusal::TooManyValues(_) => NgsiLdErrorType::RequestEntityTooLarge,
-            BatchBodyRefusal::NotJson { .. } => NgsiLdErrorType::InvalidRequest,
+            BatchBodyRefusal::NotJson(refusal) => refusal.error_type(),
             BatchBodyRefusal::NotAnArray { .. }
             | BatchBodyRefusal::Empty { .. }
             | BatchBodyRefusal::NullItem { .. }
@@ -111,25 +105,29 @@ impl BatchBodyRefusal {
             | BatchBodyRefusal::NotAnEntityId { .. } => NgsiLdErrorType::BadRequestData,
         }
     }
-
-    /// The problem response this refusal answers the request with.
-    #[must_use]
-    pub fn into_problem(self, instance: HttpUri) -> ProblemResponse {
-        ClassifiedReport::public(self.error_type(), self.to_string()).with_instance(instance)
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::batch_body_refusal::{BatchBodyRefusal, BatchMembers};
+    use crate::{
+        batch_body_refusal::{BatchBodyRefusal, BatchMembers},
+        not_json_document::NotJsonDocument,
+    };
+    use andromeda_http_response::request_refusal::RequestRefusal;
     use andromeda_ngsi_ld_lexicon::uri::UriParseError;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use axum::http::{StatusCode, Uri};
 
     fn not_json() -> BatchBodyRefusal {
-        BatchBodyRefusal::NotJson {
-            source: serde_json::from_str::<serde_json::Value>("[,").expect_err("not a JSON document"),
-        }
+        BatchBodyRefusal::NotJson(NotJsonDocument(
+            serde_json::from_str::<serde_json::Value>("[,").expect_err("not a JSON document"),
+        ))
+    }
+
+    /// The batch reader words a body that is no JSON as every other reader does.
+    #[test]
+    fn a_body_that_is_not_json_is_worded_as_every_other_reader_words_it() {
+        assert!(not_json().to_string().starts_with("request body is not a JSON document:"), "{}", not_json());
     }
 
     /// Clause 5.5.4: only a body that is not JSON is `InvalidRequest`.

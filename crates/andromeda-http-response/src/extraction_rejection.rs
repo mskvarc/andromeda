@@ -3,10 +3,10 @@
 //! Maps extractor-level failures to the appropriate NGSI-LD error types
 //! (`InvalidRequest`, `BadRequestData`) as required by the specification.
 
-use crate::{classified_report::ClassifiedReport, not_acceptable::AvailableRepresentations, problem_response::ProblemResponse};
-use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+use crate::{not_acceptable::AvailableRepresentations, problem_response::ProblemResponse};
+use andromeda_ngsi_ld_problem_details::problem_detail::ProblemDetail;
 use axum::{
-    http::{StatusCode, Uri},
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 
@@ -26,38 +26,19 @@ pub enum ExtractorRejection {
     /// message shall contain the list of the available representations of the
     /// resources".
     NotAcceptable(AvailableRepresentations),
-    /// NGSI-LD `InvalidRequest` error (400).
-    InvalidRequest {
-        /// Human-readable error detail.
-        detail: String,
-        /// The request URI that triggered the error.
-        instance: Uri,
-    },
-    /// NGSI-LD `BadRequestData` error (400).
-    BadRequestData {
-        /// Human-readable error detail.
-        detail: String,
-        /// The request URI that triggered the error.
-        instance: Uri,
-    },
-    /// A response already classified by the policy-specific extractor that produced it.
+    /// A problem response already classified by the typed refusal or the
+    /// policy-specific extractor that produced it, bound to its request.
     Classified(ProblemResponse),
 }
 
 impl ExtractorRejection {
-    /// Create an `InvalidRequest` rejection.
-    pub fn invalid_request(detail: impl Into<String>, instance: Uri) -> ExtractorRejection {
-        ExtractorRejection::InvalidRequest {
-            detail: detail.into(),
-            instance,
-        }
-    }
-
-    /// Create a `BadRequestData` rejection.
-    pub fn bad_request_data(detail: impl Into<String>, instance: Uri) -> ExtractorRejection {
-        ExtractorRejection::BadRequestData {
-            detail: detail.into(),
-            instance,
+    /// The problem a classified rejection answers with; `None` for a bare
+    /// status or the `406` representation list.
+    #[must_use]
+    pub const fn problem(&self) -> Option<&ProblemDetail> {
+        match self {
+            ExtractorRejection::Classified(response) => Some(response.problem()),
+            ExtractorRejection::Empty(_) | ExtractorRejection::NotAcceptable(_) => None,
         }
     }
 }
@@ -67,12 +48,6 @@ impl IntoResponse for ExtractorRejection {
         match self {
             ExtractorRejection::Empty(status) => status.into_response(),
             ExtractorRejection::NotAcceptable(representations) => representations.into_response(),
-            ExtractorRejection::InvalidRequest { detail, instance } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, detail)
-                .with_instance(instance)
-                .into_response(),
-            ExtractorRejection::BadRequestData { detail, instance } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail)
-                .with_instance(instance)
-                .into_response(),
             ExtractorRejection::Classified(response) => response.into_response(),
         }
     }

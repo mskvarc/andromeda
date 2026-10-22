@@ -8,8 +8,8 @@
 //! window check). The `TooManyResults` bound is not an extraction concern — it
 //! turns on a pre-count the service runs — so it is not decided here.
 
-use crate::{addressed_uri::addressed_uri, query::classify_query_parse_error};
-use andromeda_http_response::{extraction_rejection::ExtractorRejection, parameter_failure::classify_parameter_error};
+use crate::{addressed_uri::addressed_uri, query_decode_error::QueryDecodeError};
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, parameter_failure::classify_parameter_error, request_refusal::RequestRefusal};
 use andromeda_ngsi_ld_request::query::temporal::delete_parameters::TemporalDeleteParameters;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use std::future::{Future, ready};
@@ -23,7 +23,7 @@ fn resolve_temporal_delete_query(parts: &Parts) -> Result<TemporalDeleteQuery, E
     let uri = addressed_uri(parts);
     let query_str = parts.uri.query().unwrap_or("");
     // clone: the decode refusal and the validation refusal each name the request.
-    let params = serde_urlencoded::from_str::<TemporalDeleteParameters>(query_str).map_err(|error| classify_query_parse_error(error, uri.clone()))?;
+    let params = serde_urlencoded::from_str::<TemporalDeleteParameters>(query_str).map_err(|error| QueryDecodeError(error).into_rejection(uri.clone()))?;
 
     params.validate().map_err(|error| {
         let report = classify_parameter_error(&error);
@@ -47,6 +47,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemDetail};
     use axum::{body::Body, http::Request};
 
     async fn extract(uri: &str) -> Result<TemporalDeleteQuery, ExtractorRejection> {
@@ -78,9 +79,9 @@ mod tests {
     /// request (clause 6.3.20 pattern).
     #[tokio::test]
     async fn a_read_only_parameter_is_rejected() {
-        assert!(matches!(
-            extract("/ngsi-ld/v1/temporal/entities?type=Vehicle&lastN=5").await,
-            Err(ExtractorRejection::InvalidRequest { .. })
-        ));
+        let rejection = extract("/ngsi-ld/v1/temporal/entities?type=Vehicle&lastN=5")
+            .await
+            .expect_err("lastN is refused");
+        pretty_assertions::assert_eq!(rejection.problem().map(ProblemDetail::error_type), Some(NgsiLdErrorType::InvalidRequest));
     }
 }

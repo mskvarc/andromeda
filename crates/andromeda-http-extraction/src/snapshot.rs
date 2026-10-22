@@ -5,11 +5,13 @@
 
 use crate::addressed_uri::addressed_uri;
 use andromeda_http_headers::ngsild_snapshot::NgsiLdSnapshot;
-use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use headers::HeaderMapExt;
 use std::future::{Future, ready};
+use thiserror::Error;
 
 /// Axum extractor for the `NGSILD-Snapshot` request header.
 ///
@@ -32,10 +34,18 @@ fn resolve_snapshot_header(parts: &Parts) -> Result<SnapshotHeader, ExtractorRej
     match parts.headers.typed_try_get::<NgsiLdSnapshot>() {
         Ok(Some(snapshot)) => Ok(SnapshotHeader(Some(snapshot.into_inner()))),
         Ok(None) => Ok(SnapshotHeader(None)),
-        Err(_) => Err(ExtractorRejection::bad_request_data(
-            "NGSILD-Snapshot header must be a valid snapshot URN",
-            addressed_uri(parts),
-        )),
+        Err(error) => Err(InvalidSnapshotHeader(error).into_rejection(addressed_uri(parts))),
+    }
+}
+
+/// An `NGSILD-Snapshot` header whose value is not a snapshot URN.
+#[derive(Debug, Error)]
+#[error("the NGSILD-Snapshot header is not a valid snapshot URN")]
+struct InvalidSnapshotHeader(#[source] headers::Error);
+
+impl RequestRefusal for InvalidSnapshotHeader {
+    fn error_type(&self) -> NgsiLdErrorType {
+        NgsiLdErrorType::BadRequestData
     }
 }
 
@@ -84,7 +94,12 @@ mod tests {
             .body(())
             .expect("valid request");
         let (mut parts, ()) = req.into_parts();
-        let result = SnapshotHeader::from_request_parts(&mut parts, &()).await;
-        assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
+        let rejection = SnapshotHeader::from_request_parts(&mut parts, &())
+            .await
+            .expect_err("a value that is no URN is refused");
+        let problem = rejection.problem().expect("a classified rejection");
+        pretty_assertions::assert_eq!(problem.error_type(), NgsiLdErrorType::BadRequestData);
+        pretty_assertions::assert_eq!(problem.detail(), "the NGSILD-Snapshot header is not a valid snapshot URN");
+        pretty_assertions::assert_eq!(problem.instance().map(ToString::to_string).as_deref(), Some("/test"));
     }
 }

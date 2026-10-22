@@ -2,11 +2,10 @@
 
 use crate::{
     snapshot::{
-        persistence_error,
         reap::{delete_control_record, reap_branch},
         record::victim_order,
     },
-    store_fault::undecodable,
+    store_fault::{persistence_error, undecodable},
 };
 use andromeda_context_space::snapshot_key::SnapshotKey;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -30,13 +29,13 @@ pub(crate) async fn enforce_snapshot_quotas(pool: &PgPool, count_quota: Option<u
         .map(i64::try_from)
         .transpose()
         .map_err(|error| SnapshotError::from(undecodable(&error)))?;
-    let mut transaction = pool.begin().await.map_err(|error| persistence_error(error))?;
+    let mut transaction = pool.begin().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
     let lock = Query::select().expr(advisory_xact_lock(Expr::val("andromeda.snapshot.quota"))).to_owned();
     let (sql, values) = lock.build_sqlx(PostgresQueryBuilder);
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(&mut *transaction)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
     let mut evicted = Vec::new();
     loop {
         let count = snapshot_count(&mut transaction).await?;
@@ -69,16 +68,16 @@ pub(crate) async fn enforce_snapshot_quotas(pool: &PgPool, count_quota: Option<u
         let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_optional(&mut *transaction)
             .await
-            .map_err(|error| persistence_error(error))?
+            .map_err(|error| persistence_error::<SnapshotError>(error))?
             .ok_or(SnapshotInvariant::QuotaWithoutEvictable)?;
-        let raw_key: i64 = row.try_get("snapshot_key").map_err(|error| persistence_error(error))?;
-        let raw_id: String = row.try_get("id").map_err(|error| persistence_error(error))?;
+        let raw_key: i64 = row.try_get("snapshot_key").map_err(|error| persistence_error::<SnapshotError>(error))?;
+        let raw_id: String = row.try_get("id").map_err(|error| persistence_error::<SnapshotError>(error))?;
         let snapshot_key = SnapshotKey::try_from(raw_key).map_err(|error| SnapshotError::from(undecodable(&error)))?;
         reap_branch(&mut transaction, snapshot_key).await?;
         delete_control_record(&mut transaction, snapshot_key).await?;
         evicted.push(raw_id.parse().map_err(|error| SnapshotError::from(undecodable(&error)))?);
     }
-    transaction.commit().await.map_err(|error| persistence_error(error))?;
+    transaction.commit().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
     Ok(evicted)
 }
 
@@ -92,7 +91,7 @@ async fn snapshot_count(transaction: &mut Transaction<'_, Postgres>) -> Result<i
     sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_one(&mut **transaction)
         .await
-        .map_err(|error| persistence_error(error))
+        .map_err(|error| persistence_error::<SnapshotError>(error))
 }
 
 /// The total on-disk size of every Snapshot branch schema.
@@ -111,7 +110,7 @@ async fn branch_bytes(transaction: &mut Transaction<'_, Postgres>) -> Result<i64
     let bytes: i64 = sqlx::query_scalar(BRANCH_BYTES)
         .fetch_one(&mut **transaction)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
     Ok(bytes)
 }
 

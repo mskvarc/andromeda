@@ -22,12 +22,15 @@ use andromeda_ngsi_ld_query::{
     temporal::{compiled::CompiledTemporalQuery, instance_page::InstancePage, period_budget::PeriodBudget, window::TimeInterval},
 };
 use andromeda_postgresql_query::{
+    attribute_name_key::AttributeNameKey,
     dataset_predicate::dataset_condition,
+    dictionary::query_names::QueryNames,
     history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, grain::HistoryGrain},
     scope_intervals::held_at,
 };
 use andromeda_postgresql_schema::{name_dictionary::AttributeNames, temporal::AttributeHistory};
-use andromeda_postgresql_seaquery::postgis::st_as_ewkb;
+use andromeda_postgresql_seaquery::{pg_array::is_any_of, postgis::st_as_ewkb};
+use iri_rs::IriBuf;
 use sea_query::{Alias, Condition, Expr, ExprTrait, JoinType, Order, Query, SelectStatement};
 
 /// Build Stage 2 query: temporal history for a single entity.
@@ -36,16 +39,16 @@ use sea_query::{Alias, Condition, Expr, ExprTrait, JoinType, Order, Query, Selec
 /// its whole placeholder sequence and no two functions have to agree on where
 /// it starts.
 #[must_use]
-pub fn build_temporal_history_query(branch: &HistoryBranch, entity_id: &Identifier, compiled: &CompiledTemporalQuery) -> SelectStatement {
+pub fn build_temporal_history_query(branch: &HistoryBranch, entity_id: &Identifier, compiled: &CompiledTemporalQuery, names: &QueryNames) -> SelectStatement {
     // The ranked, unranked and aggregated shapes read the same entity's rows
     // among the same represented instances, so none can reach a row the others
     // cannot.
     let of = HistoryOf::Entity(Expr::val(entity_id.as_str()));
-    let condition = represented_instances(branch, &of, compiled);
+    let condition = represented_instances(branch, &of, compiled, names);
     match compiled.representation.format {
         // The grouped extension format runs the same aggregation pipeline; the
         // builder adds the group-key columns when `representation.grouping` is set.
-        TemporalFormat::AggregatedValues | TemporalFormat::GroupedValues => build_aggregation_query(branch, &of, compiled, &condition),
+        TemporalFormat::AggregatedValues | TemporalFormat::GroupedValues => build_aggregation_query(branch, &of, compiled, &condition, names),
         TemporalFormat::Normalized | TemporalFormat::TemporalValues => build_history_query(branch, &of, compiled, condition),
     }
 }
@@ -64,7 +67,7 @@ pub fn build_temporal_history_query(branch: &HistoryBranch, entity_id: &Identifi
 /// `deletedAt` exists only on a row that records a deletion, so asking for that
 /// axis asks for those rows and no others; the deletion is recognised by the
 /// axis itself rather than by a sentinel value.
-pub(crate) fn represented_instances(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemporalQuery) -> Condition {
+pub(crate) fn represented_instances(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Condition {
     let axis = axis_column(compiled.window.timeproperty);
     let mut condition = Condition::all().add(Expr::col((Ah, axis)).is_not_null());
 
@@ -77,9 +80,14 @@ pub(crate) fn represented_instances(branch: &HistoryBranch, of: &HistoryOf, comp
         }
     }
 
+    // The `attrs` selection narrows by the dictionary keys its names resolved
+    // to, on the source's own grain column.
     if !compiled.instances.attr_filter.is_empty() {
-        let names = compiled.instances.attr_filter.iter().map(iri_rs::Iri::as_str);
-        condition = condition.add(Expr::col((An, AttributeNames::Name)).is_in(names));
+        let keys = names.attributes.keys_of(compiled.instances.attr_filter.iter().map(IriBuf::as_str));
+        condition = condition.add(is_any_of(
+            Expr::col((Ah, HistoryGrain::AttributeNameKey)),
+            keys.into_iter().map(AttributeNameKey::get),
+        ));
     }
 
     // Clause 5.7.4.4 step S8 (5.7.3.4 for a retrieval): the `datasetId`
@@ -206,7 +214,11 @@ mod tests {
         temporal::{aggregation_period::AggregationPeriod, instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-    use andromeda_postgresql_query::history_source::HistoryBranch;
+    use andromeda_postgresql_query::{
+        attribute_name_key::AttributeNameKey,
+        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
+        history_source::HistoryBranch,
+    };
     use iri_rs::IriBuf;
     use sea_query::{IntoIden, PostgresQueryBuilder};
     use std::num::NonZeroU32;
@@ -239,7 +251,7 @@ mod tests {
     /// The stage-2 statement rendered as SQL with its values inlined, which is
     /// what the shape assertions read.
     fn sql_of(compiled: &CompiledTemporalQuery) -> String {
-        build_temporal_history_query(&HistoryBranch::live(), &vehicle_id(), compiled).to_string(PostgresQueryBuilder)
+        build_temporal_history_query(&HistoryBranch::live(), &vehicle_id(), compiled, &QueryNames::default()).to_string(PostgresQueryBuilder)
     }
 
     #[test]
@@ -368,8 +380,19 @@ mod tests {
     fn build_temporal_history_with_attrs() {
         let mut compiled = minimal_compiled();
         compiled.instances.attr_filter = vec![IriBuf::new("https://uri.etsi.org/ngsi-ld/default-context/speed".to_string()).expect("valid IRI")];
-        let sql = sql_of(&compiled);
-        assert!(sql.contains("\"an\".\"name\" IN ("), "{sql}");
+        let names = QueryNames {
+            attributes: ResolvedNames::from_pairs([(
+                "https://uri.etsi.org/ngsi-ld/default-context/speed".parse().expect("valid attribute name"),
+                AttributeNameKey::from(7),
+            )]),
+            types: ResolvedNames::default(),
+        };
+        let sql = build_temporal_history_query(&HistoryBranch::live_recorded(), &vehicle_id(), &compiled, &names).to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains(r#""ah"."attribute_name_key" = ANY(ARRAY [7])"#),
+            "the attrs narrow by dictionary key: {sql}"
+        );
+        assert!(!sql.contains(r#""an"."name" ="#), "{sql}");
     }
 
     /// Clause 4.5.5: `@none` selects the instance that carries no `datasetId`,
@@ -383,18 +406,18 @@ mod tests {
         compiled.instances.dataset_id_filter = selectors(&["@none"]);
         let sql = sql_of(&compiled);
         assert!(sql.contains("\"ah\".\"dataset_id\" IS NULL"), "{sql}");
-        assert!(!sql.contains("\"ah\".\"dataset_id\" IN"), "{sql}");
+        assert!(!sql.contains("\"ah\".\"dataset_id\" = ANY"), "{sql}");
 
         let mut compiled = minimal_compiled();
         compiled.instances.dataset_id_filter = selectors(&["urn:ngsi-ld:Dataset:one"]);
         let sql = sql_of(&compiled);
-        assert!(sql.contains("\"ah\".\"dataset_id\" IN"), "{sql}");
+        assert!(sql.contains("\"ah\".\"dataset_id\" = ANY"), "{sql}");
         assert!(!sql.contains("\"ah\".\"dataset_id\" IS NULL"), "{sql}");
 
         let mut compiled = minimal_compiled();
         compiled.instances.dataset_id_filter = selectors(&["@none", "urn:ngsi-ld:Dataset:one"]);
         let sql = sql_of(&compiled);
-        assert!(sql.contains("\"ah\".\"dataset_id\" IN"), "{sql}");
+        assert!(sql.contains("\"ah\".\"dataset_id\" = ANY"), "{sql}");
         assert!(sql.contains("OR \"ah\".\"dataset_id\" IS NULL"), "{sql}");
     }
 
@@ -456,7 +479,13 @@ mod tests {
         assert!(sql.contains(r#"UNION ALL (SELECT "pe"."entity_id" AS "entity_id""#), "{sql}");
         assert!(sql.contains(r#""pe"."entity_id" = 'urn:ngsi-ld:Vehicle:1'"#), "{sql}");
         let snapshot = Alias::new("snap_7").into_iden();
-        let recorded = build_temporal_history_query(&HistoryBranch::recorded_in(snapshot), &vehicle_id(), &minimal_compiled()).to_string(PostgresQueryBuilder);
+        let recorded = build_temporal_history_query(
+            &HistoryBranch::recorded_in(snapshot),
+            &vehicle_id(),
+            &minimal_compiled(),
+            &QueryNames::default(),
+        )
+        .to_string(PostgresQueryBuilder);
         assert!(!recorded.contains("temporal_append"), "{recorded}");
     }
 
@@ -475,7 +504,7 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.instances.page = page;
         compiled.window.interval = interval;
-        build_temporal_history_query(&HistoryBranch::live_recorded(), &vehicle_id(), &compiled).to_string(PostgresQueryBuilder)
+        build_temporal_history_query(&HistoryBranch::live_recorded(), &vehicle_id(), &compiled, &QueryNames::default()).to_string(PostgresQueryBuilder)
     }
 
     /// Clauses 5.7.3.4 and 5.7.4.4: `lastN` is the last `n` instances of each
@@ -634,7 +663,8 @@ mod tests {
                 compiled.representation.aggr_methods = vec![AggrMethod::Sum];
                 compiled.representation.aggr_period_duration = AggregationPeriod::parse(period).expect("valid period");
                 compiled.instances.page = page;
-                let sql = build_temporal_history_query(&HistoryBranch::live_recorded(), &vehicle_id(), &compiled).to_string(PostgresQueryBuilder);
+                let sql = build_temporal_history_query(&HistoryBranch::live_recorded(), &vehicle_id(), &compiled, &QueryNames::default())
+                    .to_string(PostgresQueryBuilder);
                 assert!(sql.contains(r#""ah"."observed_at" IS NOT NULL"#), "{period}: {sql}");
                 assert!(!sql.contains(r#""ah"."observed_at" IS NULL"#), "{period}: {sql}");
             }
@@ -675,7 +705,7 @@ mod tests {
         compiled.window.timeproperty = axis;
         compiled.instances.page = page;
         compiled.window.interval = interval;
-        build_temporal_history_query(&HistoryBranch::live_recorded(), &vehicle_id(), &compiled).to_string(PostgresQueryBuilder)
+        build_temporal_history_query(&HistoryBranch::live_recorded(), &vehicle_id(), &compiled, &QueryNames::default()).to_string(PostgresQueryBuilder)
     }
 
     /// Clause 4.8: an appended instance is created and modified at its write

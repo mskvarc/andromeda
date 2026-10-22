@@ -29,7 +29,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
-use andromeda_postgresql_pool::{pool_options::configure_pool_options, saturation::is_pool_saturated};
+use andromeda_postgresql_pool::{pool_options::configure_pool_options, saturation::is_pool_saturated, sql_state::SqlState};
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
 use andromeda_postgresql_seaquery::clock::now;
 use andromeda_subscription::interval_schedule::{interval_duration, next_interval_due};
@@ -41,7 +41,6 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, ExprTrait, PostgresQueryBuilder, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
-use sqlx::error::DatabaseError;
 use std::time::{Duration, SystemTime};
 
 /// The queue and expiry sources of the earliest obligation, as one statement.
@@ -72,7 +71,7 @@ impl PostgresPendingWorkProbe {
     fn classify(error: &sqlx::Error, database: &TenantDatabaseName) -> PendingWorkError {
         if is_pool_saturated(error) {
             PendingWorkError::Saturated { database: database.clone() } // clone: the error outlives this borrow
-        } else if code_is_undefined_database(error.as_database_error().and_then(DatabaseError::code).as_deref()) {
+        } else if is_undefined_database(error) {
             PendingWorkError::DatabaseGone { database: database.clone() } // clone: the error outlives this borrow
         } else {
             PendingWorkError::ProbeFailed {
@@ -83,11 +82,10 @@ impl PostgresPendingWorkProbe {
     }
 }
 
-/// Whether a SQLSTATE is `3D000` (`invalid_catalog_name` -- the database the
-/// probe tried to open does not exist), which a deprovisioned tenant's stale
-/// wake-schedule row produces on connect.
-fn code_is_undefined_database(code: Option<&str>) -> bool {
-    code == Some("3D000")
+/// Whether a failure says the database the probe tried to open does not exist,
+/// which a deprovisioned tenant's stale wake-schedule row produces on connect.
+fn is_undefined_database(error: &sqlx::Error) -> bool {
+    SqlState::of(error) == Some(SqlState::InvalidCatalogName)
 }
 
 #[async_trait]
@@ -224,7 +222,8 @@ fn interval_probe_select() -> SelectStatement {
 
 #[cfg(test)]
 mod tests {
-    use crate::pending_work::{PostgresPendingWorkProbe, code_is_undefined_database, earliest_interval_due, interval_probe_select};
+    use crate::pending_work::{PostgresPendingWorkProbe, earliest_interval_due, interval_probe_select, is_undefined_database};
+    use andromeda_postgresql_pool::fake_database_error::FakeDatabaseError;
     use andromeda_tenancy::{database_name::TenantDatabaseName, pending_work::PendingWorkError};
     use chrono::{Duration, Utc};
     use sea_query::PostgresQueryBuilder;
@@ -233,14 +232,23 @@ mod tests {
     #[test]
     fn a_probe_error_is_classified_database_gone_for_3d000() {
         // SQLSTATE 3D000 (invalid_catalog_name) is the deprovisioned-tenant signal.
-        assert!(code_is_undefined_database(Some("3D000")));
-        assert!(!code_is_undefined_database(Some("42P01")), "an undefined relation is not a gone database");
-        assert!(!code_is_undefined_database(None), "an error with no SQLSTATE is not a gone database");
+        assert!(is_undefined_database(&FakeDatabaseError::new("no database", "3D000").into_sqlx()));
+        assert!(
+            !is_undefined_database(&FakeDatabaseError::new("no table", "42P01").into_sqlx()),
+            "an undefined relation is not a gone database"
+        );
+        assert!(
+            !is_undefined_database(&SqlxError::RowNotFound),
+            "an error with no SQLSTATE is not a gone database"
+        );
 
         // A pool-acquire timeout stays saturation; any other non-3D000 fault stays
-        // a generic probe failure. (A synthesized 3D000 Database error cannot be
-        // built without a driver connection, so the code path above covers it.)
+        // a generic probe failure.
         let database = TenantDatabaseName::from("andromeda_tenant_gone".to_string());
+        assert!(matches!(
+            PostgresPendingWorkProbe::classify(&FakeDatabaseError::new("no database", "3D000").into_sqlx(), &database),
+            PendingWorkError::DatabaseGone { .. }
+        ));
         assert!(matches!(
             PostgresPendingWorkProbe::classify(&SqlxError::PoolTimedOut, &database),
             PendingWorkError::Saturated { .. }

@@ -10,15 +10,16 @@ use crate::{
     schema_ddl::database::{create_database, drop_database},
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_postgresql_pool::{contention_retry::ContentionRetry, sql_state::SqlState, transaction_rollback::is_transaction_rolled_back};
 use andromeda_tenancy::{database_name::TenantDatabaseName, db_name_prefix::DbNamePrefix};
 use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query};
 use sea_query_sqlx::SqlxBinder;
-use sqlx::{Connection, Executor, PgConnection, error::DatabaseError};
+use sqlx::{Connection, Executor, PgConnection};
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
+    num::NonZeroU32,
     time::Duration,
 };
-use tokio::time::sleep;
 use url::Url;
 
 /// Parsed database URL wrapper used by tenancy helpers.
@@ -146,22 +147,19 @@ pub async fn drop_database_unless_in_use(base_url: &DatabaseUrl, database_name: 
     let mut conn = PgConnection::connect(admin_url.as_str()).await?;
     let outcome = match conn.execute(sqlx::AssertSqlSafe(drop_database(database_name.as_str()).as_str())).await {
         Ok(_) => Ok(DatabaseDrop::Dropped),
-        Err(error) if is_object_in_use_sqlstate(error.as_database_error().and_then(DatabaseError::code).as_deref()) => Ok(DatabaseDrop::InUse),
+        Err(error) if SqlState::of(&error) == Some(SqlState::ObjectInUse) => Ok(DatabaseDrop::InUse),
         Err(error) => Err(error.into()),
     };
     conn.close().await?;
     outcome
 }
 
-/// Whether `code` is the `object_in_use` SQLSTATE (55006).
-fn is_object_in_use_sqlstate(code: Option<&str>) -> bool {
-    code == Some("55006")
-}
-
-/// The attempts a contended `CREATE DATABASE` is given before its failure is reported.
-const CREATE_DATABASE_ATTEMPTS: u32 = 6;
-/// The delay between contended `CREATE DATABASE` attempts.
-const CREATE_DATABASE_BACKOFF: Duration = Duration::from_millis(250);
+/// The retry a contended `CREATE DATABASE` runs under: six attempts a quarter
+/// of a second apart.
+const CREATE_DATABASE_RETRY: ContentionRetry<Duration> = ContentionRetry {
+    attempts: NonZeroU32::MIN.saturating_add(5),
+    pause: Duration::from_millis(250),
+};
 
 /// Execute `CREATE DATABASE`, retrying the transient contention that arises when
 /// many tenants are provisioned at once.
@@ -176,41 +174,27 @@ const CREATE_DATABASE_BACKOFF: Duration = Duration::from_millis(250);
 /// new tenant. A create that lost the race to a concurrent create of the same
 /// name (42P04) finds its database already made, which is success.
 async fn create_database_with_retry(conn: &mut PgConnection, sql: &str) -> Result<(), ContextStoreError> {
-    let mut attempt = 0;
-    loop {
-        attempt += 1;
-        match conn.execute(sqlx::AssertSqlSafe(sql)).await {
-            Ok(_) => return Ok(()),
-            Err(error) if is_database_already_exists(&error) => return Ok(()),
-            Err(error) if attempt < CREATE_DATABASE_ATTEMPTS && is_transient_create_failure(&error) => {
-                sleep(CREATE_DATABASE_BACKOFF).await;
-            }
-            Err(error) => return Err(error.into()),
-        }
-    }
+    CREATE_DATABASE_RETRY
+        .run(is_transient_create_failure, async || match conn.execute(sqlx::AssertSqlSafe(sql)).await {
+            Ok(_) => Ok(()),
+            Err(error) if is_database_already_exists(&error) => Ok(()),
+            Err(error) => Err(error),
+        })
+        .await?;
+    Ok(())
 }
 
-/// Whether a `CREATE DATABASE` failure is transient contention a retry can clear.
+/// Whether a `CREATE DATABASE` failure is transient contention a retry can
+/// clear: a template in use by a concurrent create, a serialization failure, a
+/// deadlock or too many connections.
 fn is_transient_create_failure(error: &sqlx::Error) -> bool {
-    is_transient_create_sqlstate(error.as_database_error().and_then(DatabaseError::code).as_deref())
+    is_transaction_rolled_back(error) || matches!(SqlState::of(error), Some(SqlState::ObjectInUse | SqlState::TooManyConnections))
 }
 
 /// Whether a `CREATE DATABASE` failed because a concurrent provisioner already
-/// created the database (SQLSTATE 42P04, `duplicate_database`).
+/// created the database.
 fn is_database_already_exists(error: &sqlx::Error) -> bool {
-    is_duplicate_database_sqlstate(error.as_database_error().and_then(DatabaseError::code).as_deref())
-}
-
-/// Whether `code` is a transient `CREATE DATABASE` SQLSTATE: 55006 (template in
-/// use by a concurrent create), 40001 (serialization), 40P01 (deadlock) or 53300
-/// (too many connections).
-fn is_transient_create_sqlstate(code: Option<&str>) -> bool {
-    code.is_some_and(|code| matches!(code, "55006" | "40001" | "40P01" | "53300"))
-}
-
-/// Whether `code` is the `duplicate_database` SQLSTATE (42P04).
-fn is_duplicate_database_sqlstate(code: Option<&str>) -> bool {
-    code == Some("42P04")
+    SqlState::of(error) == Some(SqlState::DuplicateDatabase)
 }
 
 /// The `SELECT 1 FROM pg_database WHERE datname = $1` existence probe.
@@ -227,9 +211,16 @@ fn database_exists_statement(database_name: &str) -> sea_query::SelectStatement 
 
 #[cfg(test)]
 mod tests {
-    use crate::tenant_database::{DatabaseUrl, database_exists_statement};
+    use crate::tenant_database::{CREATE_DATABASE_RETRY, DatabaseUrl, database_exists_statement, is_database_already_exists, is_transient_create_failure};
+    use andromeda_postgresql_pool::fake_database_error::FakeDatabaseError;
     use andromeda_tenancy::database_name::TenantDatabaseName;
     use sea_query::PostgresQueryBuilder;
+    use std::time::Duration;
+
+    /// A database error reporting the given SQLSTATE.
+    fn database_error(code: &str) -> sqlx::Error {
+        FakeDatabaseError::new("refused", code).into_sqlx()
+    }
 
     #[test]
     fn the_existence_probe_reads_the_catalog_by_bound_name() {
@@ -264,29 +255,25 @@ mod tests {
 
     #[test]
     fn only_the_concurrent_create_database_sqlstates_are_retried() {
-        use crate::tenant_database::is_transient_create_sqlstate;
         for code in ["55006", "40001", "40P01", "53300"] {
-            assert!(is_transient_create_sqlstate(Some(code)), "{code}");
+            assert!(is_transient_create_failure(&database_error(code)), "{code}");
         }
         for code in ["42P04", "42501", "23505", "3D000", "08006"] {
-            assert!(!is_transient_create_sqlstate(Some(code)), "{code}");
+            assert!(!is_transient_create_failure(&database_error(code)), "{code}");
         }
-        assert!(!is_transient_create_sqlstate(None));
+        assert!(!is_transient_create_failure(&sqlx::Error::PoolTimedOut));
     }
 
     #[test]
     fn only_duplicate_database_is_treated_as_already_created() {
-        use crate::tenant_database::is_duplicate_database_sqlstate;
-        assert!(is_duplicate_database_sqlstate(Some("42P04")));
-        assert!(!is_duplicate_database_sqlstate(Some("55006")));
-        assert!(!is_duplicate_database_sqlstate(None));
+        assert!(is_database_already_exists(&database_error("42P04")));
+        assert!(!is_database_already_exists(&database_error("55006")));
+        assert!(!is_database_already_exists(&sqlx::Error::PoolTimedOut));
     }
 
     #[test]
-    fn only_object_in_use_leaves_a_database_in_place() {
-        use crate::tenant_database::is_object_in_use_sqlstate;
-        assert!(is_object_in_use_sqlstate(Some("55006")));
-        assert!(!is_object_in_use_sqlstate(Some("3D000")));
-        assert!(!is_object_in_use_sqlstate(None));
+    fn a_create_runs_six_attempts_a_quarter_second_apart() {
+        pretty_assertions::assert_eq!(CREATE_DATABASE_RETRY.attempts.get(), 6);
+        pretty_assertions::assert_eq!(CREATE_DATABASE_RETRY.pause, Duration::from_millis(250));
     }
 }

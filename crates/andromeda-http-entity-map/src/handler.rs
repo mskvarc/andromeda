@@ -2,7 +2,8 @@
 
 use crate::{
     creation::{CreationRendering, MapCreation, create_map},
-    error::{EntityMapResultExt, bad_request_data},
+    error::EntityMapResultExt,
+    expiry_update_refusal::ExpiryUpdateRefusal,
     forwarded_query_string::{ForwardedFilters, body_query_string, forwarded_query_string, forwarded_temporal_query_string, temporal_body_query_string},
     membership_window::membership_window,
     state::{EntityMapRouteServices, EntityMapTenantState},
@@ -25,7 +26,12 @@ use andromeda_http_extraction::{
     tenant_state,
     typed_path::TypedPath,
 };
-use andromeda_http_response::{problem_response::ProblemResponse, rendered_response::RenderedResponse, single::NgsiLdResponse};
+use andromeda_http_response::{
+    problem_response::ProblemResponse,
+    rendered_response::RenderedResponse,
+    request_refusal::RequestRefusal,
+    single::NgsiLdResponse,
+};
 use andromeda_jsonld::user_context_admission::{SubmittedContext, admit_user_context};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::query::body::Query;
@@ -83,11 +89,11 @@ pub async fn update(
     // The update names no term a context could define, but clause 5.5.7
     // refuses an `@context` embedded below its top level all the same.
     let body = body.context_free(context)?;
-    let expires_at = body.expires_at.ok_or_else(|| bad_request_data("expiresAt is required", &uri))?;
-
-    if expires_at <= chrono::Utc::now() {
-        return Err(bad_request_data("expiresAt must be in the future", &uri));
-    }
+    let expires_at = match body.expires_at {
+        Some(expires_at) if expires_at > chrono::Utc::now() => expires_at,
+        Some(_) => return Err(ExpiryUpdateRefusal::NotInTheFuture.into_problem(uri)),
+        None => return Err(ExpiryUpdateRefusal::Missing.into_problem(uri)),
+    };
 
     state.entity_maps.update(&entity_map_id, expires_at).await.with_entity_map_instance(&uri)?;
 

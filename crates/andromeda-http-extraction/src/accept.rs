@@ -158,14 +158,11 @@ mod tests {
 
     /// The representations a rejection published, or a description of what it
     /// was instead.
-    fn rejected_representations(rejection: ExtractorRejection) -> Vec<&'static str> {
+    fn rejected_representations(rejection: &ExtractorRejection) -> Vec<&'static str> {
         match rejection {
             ExtractorRejection::NotAcceptable(representations) => representations.media_types().iter().map(ResponseMediaType::as_str).collect(),
             ExtractorRejection::Empty(status) => panic!("clause 6.3.4 requires a representation list, not a bare {status}"),
-            ExtractorRejection::InvalidRequest { detail, .. } | ExtractorRejection::BadRequestData { detail, .. } => {
-                panic!("clause 6.3.4 requires a 406, not a problem detail: {detail}")
-            }
-            ExtractorRejection::Classified(_) => panic!("clause 6.3.4 requires a 406 with a representation list"),
+            ExtractorRejection::Classified(_) => panic!("clause 6.3.4 requires a 406 with a representation list, not a problem detail"),
         }
     }
 
@@ -182,7 +179,7 @@ mod tests {
         let (mut parts, _) = req.into_parts();
         let rejection = AcceptFormat::from_request_parts(&mut parts, &()).await.expect_err("application/xml is refused");
         pretty_assertions::assert_eq!(
-            rejected_representations(rejection),
+            rejected_representations(&rejection),
             vec!["application/json", "application/ld+json", "application/geo+json"]
         );
     }
@@ -202,7 +199,7 @@ mod tests {
         let rejection = AcceptFormatNoGeo::from_request_parts(&mut parts, &())
             .await
             .expect_err("application/geo+json is refused here");
-        pretty_assertions::assert_eq!(rejected_representations(rejection), vec!["application/json", "application/ld+json"]);
+        pretty_assertions::assert_eq!(rejected_representations(&rejection), vec!["application/json", "application/ld+json"]);
     }
 
     #[tokio::test]

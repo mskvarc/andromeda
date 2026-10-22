@@ -1,7 +1,7 @@
 //! How a `sqlx` error is classified into the backend-neutral failure a port
 //! carries.
 
-use crate::{saturation::is_pool_saturated, store_unavailability::is_store_unavailable, transaction_rollback::is_transaction_rolled_back};
+use crate::{saturation::is_pool_saturated, sql_state::SqlState, store_unavailability::is_store_unavailable, transaction_rollback::is_transaction_rolled_back};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use sqlx::error::DatabaseError;
 
@@ -65,7 +65,14 @@ pub fn classify(error: &sqlx::Error) -> PersistenceFailure {
 /// violations (an undefined relation or column is a schema drift), `22` data
 /// exceptions (a value the database cannot take). Connection exceptions are
 /// the store being unreachable and are decided before this.
+///
+/// An invalid regular expression (`2201B`, in class `22`) is a pattern the
+/// statement carries, not a value the broker failed to encode: it is a
+/// rejected statement on every path that runs a `RegExp` filter.
 fn classify_database_error(error: &dyn DatabaseError) -> PersistenceFailure {
+    if SqlState::of_database(error) == Some(SqlState::InvalidRegularExpression) {
+        return PersistenceFailure::StatementRejected;
+    }
     let code = error.code();
     match code.as_deref().and_then(|code| code.get(..2)) {
         Some("23") => PersistenceFailure::ConstraintViolated,
@@ -164,6 +171,14 @@ mod tests {
         );
         assert_eq!(
             classify(&FakeDatabaseError::new("statement timeout", "57014").into_sqlx()),
+            PersistenceFailure::StatementRejected
+        );
+    }
+
+    #[test]
+    fn an_invalid_regular_expression_is_a_rejected_statement_not_an_unencodable_value() {
+        assert_eq!(
+            classify(&FakeDatabaseError::new("invalid regular expression", "2201B").into_sqlx()),
             PersistenceFailure::StatementRejected
         );
     }

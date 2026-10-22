@@ -1,12 +1,13 @@
 //! Connection and capability holder for the PostgreSQL temporal repository.
 
-use crate::columnstore_capability::ColumnstoreSupport;
+use crate::{columnstore_capability::ColumnstoreSupport, error::TemporalStoreError};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_postgresql_collation::provisioned_collations::ProvisionedCollations;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_pool::read_share::ReadShare;
+use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use sqlx::postgres::PgPool;
-use std::sync::Arc;
+use std::{slice, sync::Arc};
 
 /// PostgreSQL/TimescaleDB-backed repository for NGSI-LD temporal entity data.
 #[derive(Debug)]
@@ -55,6 +56,18 @@ impl TemporalRepository {
             columnstore,
             collations: ProvisionedCollations::of_pool(pool),
         }
+    }
+
+    /// The dictionary key `name` was minted under, read through the shared
+    /// dictionary cache; `None` when no write ever recorded the attribute, so
+    /// no stream of it exists anywhere.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalStoreError::NameLookup`] when the dictionary read
+    /// fails.
+    pub(crate) async fn attribute_key(&self, name: &AttributeName) -> Result<Option<AttributeNameKey>, TemporalStoreError> {
+        Ok(self.attribute_names.lookup(slice::from_ref(name)).await?.get(name))
     }
 
     /// Whether this tenant's edition provides the columnstore.

@@ -35,7 +35,7 @@ use andromeda_postgresql_attribute_instance::{
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_codes::{attribute_kind_code::stored_attribute_kind, stored_unit_code::stored_unit_code};
 use andromeda_postgresql_encoding::{ewkb::EwkbError, ewkb_binding::geometry_bytes};
-use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
+use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
 use andromeda_temporal::{observed_instance::ObservedInstance, temporal_not_found_reason::TemporalNotFoundReason};
 use chrono::{DateTime, Utc};
 use sqlx::{AssertSqlSafe, PgConnection, postgres::PgRow, types::Json};
@@ -70,9 +70,13 @@ impl TemporalRepository {
         entity_id: &Identifier,
         attribute_name: &AttributeName,
     ) -> Result<(), TemporalStoreError> {
+        // An attribute no write ever recorded holds no instance.
+        let Some(attribute) = self.attribute_key(attribute_name).await? else {
+            return Err(TemporalStoreError::NotFound(instance_not_found(instance)));
+        };
         let mut tx = self.pool.begin().await?;
         let schema = schema_iden(target);
-        let stream_keys = attribute_stream_keys(&mut tx, target, entity_id, attribute_name).await?;
+        let stream_keys = attribute_stream_keys(&mut tx, target, entity_id, attribute).await?;
         lock_stream_evolutions(&mut tx, schema.as_ref(), &stream_keys).await?;
         let generated_sql = delete_instance_sql(InstanceColumn::Generated, target);
         let verbatim_sql = delete_instance_sql(InstanceColumn::Verbatim, target);
@@ -93,7 +97,7 @@ impl TemporalRepository {
             sqlx::query(AssertSqlSafe(release_sql))
                 .bind(identifier.as_str())
                 .bind(entity_id.as_str())
-                .bind(attribute_name.as_str())
+                .bind(attribute.get())
                 .execute(&mut *tx)
                 .await?;
         }
@@ -112,6 +116,9 @@ impl TemporalRepository {
         instance: &InstanceIdentity,
         state: UpdateInstanceState<'_>,
     ) -> Result<(), TemporalStoreError> {
+        let Some(attribute) = self.attribute_key(attribute_name).await? else {
+            return Err(TemporalStoreError::NotFound(instance_not_found(instance)));
+        };
         let mut tx = self.pool.begin().await?;
         let mut mentioned = MentionedNames::default();
         if let Some(metadata) = state.metadata {
@@ -136,7 +143,7 @@ impl TemporalRepository {
             .collect::<Result<Vec<_>, EwkbError>>()?;
         let object_type_keys: Vec<i32> = object_type_keys.into_iter().map(EntityTypeNameKey::get).collect();
         let schema = schema_iden(target);
-        let stream_keys = attribute_stream_keys(&mut tx, target, entity_id, attribute_name).await?;
+        let stream_keys = attribute_stream_keys(&mut tx, target, entity_id, attribute).await?;
         lock_stream_evolutions(&mut tx, schema.as_ref(), &stream_keys).await?;
         let generated_sql = update_instance_sql(InstanceColumn::Generated, target);
         let verbatim_sql = update_instance_sql(InstanceColumn::Verbatim, target);
@@ -196,31 +203,30 @@ impl TemporalRepository {
         entity_id: &Identifier,
         attribute_name: &AttributeName,
     ) -> Result<Option<PgRow>, TemporalStoreError> {
+        let Some(attribute) = self.attribute_key(attribute_name).await? else {
+            return Ok(None);
+        };
         let generated_sql = select_instance_sql(InstanceColumn::Generated, target);
         let verbatim_sql = select_instance_sql(InstanceColumn::Verbatim, target);
         let statement = match instance {
             InstanceIdentity::Generated(uuid) => sqlx::query(AssertSqlSafe(generated_sql)).bind(uuid),
             InstanceIdentity::Verbatim(identifier) => sqlx::query(AssertSqlSafe(verbatim_sql)).bind(identifier.as_str()),
         };
-        Ok(statement
-            .bind(entity_id.as_str())
-            .bind(attribute_name.as_str())
-            .fetch_optional(&self.pool)
-            .await?)
+        Ok(statement.bind(entity_id.as_str()).bind(attribute.get()).fetch_optional(&self.pool).await?)
     }
 }
 
-/// The stream keys of `entity_id`'s attribute `attribute_name`, which the
+/// The stream keys of `entity_id`'s attribute keyed `attribute`, which the
 /// instance statements bind as values.
 async fn attribute_stream_keys(
     connection: &mut PgConnection,
     target: &ContextTarget,
     entity_id: &Identifier,
-    attribute_name: &AttributeName,
+    attribute: AttributeNameKey,
 ) -> Result<Vec<i64>, TemporalStoreError> {
     Ok(sqlx::query_scalar(AssertSqlSafe(attribute_stream_keys_sql(target)))
         .bind(entity_id.as_str())
-        .bind(attribute_name.as_str())
+        .bind(attribute.get())
         .fetch_all(connection)
         .await?)
 }

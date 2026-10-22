@@ -40,6 +40,7 @@ use crate::{
         instance_replacement::{ReplacingEntry, naming_instance},
     },
     scope_assertion::{EVENT_COLUMNS, held_in_force, path_set},
+    tombstone::entry_carries_a_value,
     type_list_union::{TypeListColumn, type_list_union},
 };
 use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
@@ -148,7 +149,7 @@ fn applied(schema: Option<&DynIden>) -> Condition {
         .and_where(has_elements(Expr::col((TypedIntent, TemporalAppendIntents::EntityTypeNameKeys))))
         .cond_where(
             Condition::any()
-                .add(entry(TemporalEntry::EntryKind).ne(SimpleExpr::Constant(TemporalEntryKind::Tombstone.code().into())))
+                .add(entry_carries_a_value(PendingEntry))
                 .add(Expr::col((TypedIntent, TemporalAppendIntents::IntentKey)).lte(entry(TemporalAppendEntries::IntentKey))),
         );
     Condition::any().add(Expr::exists(recorded)).add(Expr::exists(typed))
@@ -383,7 +384,7 @@ mod tests {
             sql.contains(r#"EXISTS(SELECT 1 FROM "temporal_entities" AS "pv" WHERE "pv"."id" = "pe"."entity_id") OR EXISTS(SELECT 1 FROM "temporal_append_intents" AS "pt""#),
             "{sql}"
         );
-        assert!(sql.contains(r#"("pe"."entry_kind" <> 2 OR "pt"."intent_key" <= "pe"."intent_key")"#), "{sql}");
+        assert!(sql.contains(r#"("pe"."entry_kind" <> (2) OR "pt"."intent_key" <= "pe"."intent_key")"#), "{sql}");
     }
 
     /// Clause 4.5.1 makes a type part of every Entity: an observation of an

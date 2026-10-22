@@ -7,11 +7,12 @@
 //! Context Sources are aggregated, so the local rows of a contributed Entity
 //! decide nothing about those filters, and no index of them can exclude it.
 
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::temporal::contributed_entities::ContributedEntities;
 use andromeda_postgresql_query::history_source::{HistoryBranch, PendingEntries};
 use andromeda_postgresql_schema::temporal::TemporalEntities;
-use andromeda_postgresql_seaquery::branch::qualified;
-use sea_query::{Expr, ExprTrait, Query, SelectStatement};
+use andromeda_postgresql_seaquery::{branch::qualified, pg_array::is_any_of};
+use sea_query::{Expr, Query, SelectStatement};
 
 /// The Evolutions of `branch` of every Entity `contributed` names: their
 /// surrogate keys over recorded rows alone, their identifiers where the
@@ -24,12 +25,14 @@ pub(super) fn contributed_candidates(branch: &HistoryBranch, contributed: &Contr
         PendingEntries::Absent => TemporalEntities::TemporalEntityKey,
         PendingEntries::Unioned => TemporalEntities::Id,
     };
-    let ids: Vec<&str> = contributed.as_slice().iter().map(AsRef::as_ref).collect();
     Some(
         Query::select()
             .column((TemporalEntities::Table, column))
             .from(qualified(branch.schema(), TemporalEntities::Table))
-            .and_where(Expr::col((TemporalEntities::Table, TemporalEntities::Id)).is_in(ids))
+            .and_where(is_any_of(
+                Expr::col((TemporalEntities::Table, TemporalEntities::Id)),
+                contributed.as_slice().iter().map(Identifier::to_string),
+            ))
             .take(),
     )
 }
@@ -61,7 +64,7 @@ mod tests {
             sql,
             concat!(
                 r#"SELECT "temporal_entities"."temporal_entity_key" FROM "temporal_entities""#,
-                r#" WHERE "temporal_entities"."id" IN ('urn:ngsi-ld:Sensor:000009', 'urn:ngsi-ld:Sensor:000011')"#
+                r#" WHERE "temporal_entities"."id" = ANY(ARRAY ['urn:ngsi-ld:Sensor:000009','urn:ngsi-ld:Sensor:000011'])"#
             )
         );
     }

@@ -36,21 +36,12 @@ use crate::{
 };
 use andromeda_postgresql_schema::temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams, TemporalEntities};
 use andromeda_postgresql_seaquery::timescale::drop_chunks;
+use andromeda_postgresql_temporal_query::alias::{Ah, S};
 use chrono::{DateTime, TimeDelta, Utc};
 use sea_query::{Condition, DeleteStatement, Expr, ExprTrait, Iden, PostgresQueryBuilder, Query};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::AssertSqlSafe;
 use thiserror::Error;
-
-/// The `attribute_history` alias inside a garbage-collection subquery.
-#[derive(Iden, Clone, Copy)]
-#[iden = "ah"]
-struct Ah;
-
-/// The `temporal_attribute_streams` alias inside a garbage-collection subquery.
-#[derive(Iden, Clone, Copy)]
-#[iden = "s"]
-struct S;
 
 /// The `scope_history` alias inside a garbage-collection subquery.
 #[derive(Iden, Clone, Copy)]

@@ -1,8 +1,5 @@
 //! Persistence layer for snapshot records.
 
-use crate::store_fault::{StoreFault, persistence_failure};
-use andromeda_snapshot::error::SnapshotError;
-
 /// The advisory lock a reap and PostgreSQL maintenance share per Snapshot
 /// branch.
 pub mod branch_lock;
@@ -40,23 +37,20 @@ pub mod stored_snapshot_error;
 /// A Snapshot document the store could not write as JSON.
 pub mod unencodable_snapshot_error;
 
-/// Erase an adapter failure into the snapshot policy's persistence category.
-///
-/// Classify an adapter failure at the port boundary: backpressure keeps the
-/// port's retryable category and every fault becomes its persistence failure.
-#[track_caller]
-fn persistence_error(error: impl StoreFault) -> SnapshotError {
-    SnapshotError::from(persistence_failure(&error))
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::snapshot::persistence_error;
+    use crate::store_fault::persistence_error;
     use andromeda_snapshot::error::SnapshotError;
 
     #[test]
     fn a_pool_timeout_becomes_store_saturated() {
-        assert!(matches!(persistence_error(sqlx::Error::PoolTimedOut), SnapshotError::StoreSaturated));
-        assert!(matches!(persistence_error(sqlx::Error::RowNotFound), SnapshotError::Persistence { .. }));
+        assert!(matches!(
+            persistence_error::<SnapshotError>(sqlx::Error::PoolTimedOut),
+            SnapshotError::StoreSaturated
+        ));
+        assert!(matches!(
+            persistence_error::<SnapshotError>(sqlx::Error::RowNotFound),
+            SnapshotError::Persistence { .. }
+        ));
     }
 }

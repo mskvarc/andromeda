@@ -25,7 +25,7 @@ use std::num::NonZeroU32;
 /// must not send back. It is "only applicable if joinLevel is present"
 /// (Tables 6.4.3.2-1 and 6.5.3.1-1), so the entity alone is asked for without
 /// it, and an empty list is omitted rather than sent empty.
-pub(crate) fn traversal_continuation(depth: NonZeroU32, visited: &[Identifier]) -> (Option<JoinMode>, Option<NonZeroU32>, Option<Vec<Identifier>>) {
+pub(super) fn traversal_continuation(depth: NonZeroU32, visited: &[Identifier]) -> (Option<JoinMode>, Option<NonZeroU32>, Option<Vec<Identifier>>) {
     let join_level = NonZeroU32::new(depth.get() - 1);
     let join = join_level.map(|_| JoinMode::Flat);
     let contained_by = (join_level.is_some() && !visited.is_empty()).then(|| visited.to_vec()); // clone: the forwarded parameters own the identifiers they carry
@@ -34,7 +34,7 @@ pub(crate) fn traversal_continuation(depth: NonZeroU32, visited: &[Identifier]) 
 
 #[cfg(test)]
 mod tests {
-    use crate::linked_traversal_parameters::traversal_continuation;
+    use crate::linked_forwarding::traversal_parameters::traversal_continuation;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
     use std::num::NonZeroU32;

@@ -16,10 +16,13 @@
 
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_codes::value_kind::ValueKind;
-use andromeda_postgresql_schema::{
-    name_dictionary::AttributeNames,
-    temporal::{AttributeHistory, AttributeHistoryInstanceClaims, TemporalAttributeStreams, TemporalEntities, TemporalStreamShapes},
+use andromeda_postgresql_query::tombstone::carries_a_value;
+use andromeda_postgresql_schema::temporal::{
+    AttributeHistory,
+    AttributeHistoryInstanceClaims,
+    TemporalAttributeStreams,
+    TemporalEntities,
+    TemporalStreamShapes,
 };
 use andromeda_postgresql_seaquery::{
     clock::now,
@@ -27,13 +30,15 @@ use andromeda_postgresql_seaquery::{
     placeholder::external_placeholder,
     postgis::{bounding_box_contains, st_collect, st_envelope, validated_geom_from_ewkb},
 };
-use andromeda_postgresql_temporal_query::{alias::Ah, recorded_shape::recorded_shape};
+use andromeda_postgresql_temporal_query::{
+    alias::{Ah, S, Te},
+    recorded_shape::recorded_shape,
+};
 use sea_query::{
     CaseStatement,
     Condition,
     Expr,
     ExprTrait,
-    Iden,
     JoinType,
     Keyword,
     OnConflict,
@@ -43,21 +48,6 @@ use sea_query::{
     SimpleExpr,
     error::Error as SeaQueryError,
 };
-
-/// The `temporal_attribute_streams` alias in the stream-scope subquery.
-#[derive(Iden, Clone, Copy)]
-#[iden = "s"]
-struct S;
-
-/// The `temporal_entities` alias in the stream-scope subquery.
-#[derive(Iden, Clone, Copy)]
-#[iden = "te"]
-struct Te;
-
-/// The `attribute_names` alias in the stream-scope subquery.
-#[derive(Iden, Clone, Copy)]
-#[iden = "an"]
-struct An;
 
 /// Which stored column carries the addressed `instanceId`.
 ///
@@ -87,8 +77,8 @@ impl InstanceColumn {
 /// An `instanceId` is unique across the attribute, so the dataset dimension is
 /// not part of the address clause 5.6.15 defines; every stream of the named
 /// attribute is a candidate and the instance predicate selects within them. The
-/// entity id and attribute name bind to the placeholders `entity` and
-/// `attribute` number.
+/// entity id and the attribute's dictionary key bind to the placeholders
+/// `entity` and `attribute` number.
 fn attribute_streams_query(target: &ContextTarget, entity: usize, attribute: usize) -> SelectStatement {
     Query::select()
         .column((S, TemporalAttributeStreams::StreamKey))
@@ -99,19 +89,13 @@ fn attribute_streams_query(target: &ContextTarget, entity: usize, attribute: usi
             Te,
             Expr::col((Te, TemporalEntities::TemporalEntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)),
         )
-        .join_as(
-            JoinType::InnerJoin,
-            AttributeNames::Table,
-            An,
-            Expr::col((An, AttributeNames::AttributeNameKey)).equals((S, TemporalAttributeStreams::AttributeNameKey)),
-        )
         .and_where(Expr::col((Te, TemporalEntities::Id)).eq(external_placeholder(entity)))
-        .and_where(Expr::col((An, AttributeNames::Name)).eq(external_placeholder(attribute)))
+        .and_where(Expr::col((S, TemporalAttributeStreams::AttributeNameKey)).eq(external_placeholder(attribute)))
         .to_owned()
 }
 
 /// The stream keys of one entity's attribute: the entity id binds to `$1`, the
-/// attribute name to `$2`.
+/// attribute's dictionary key to `$2`.
 pub(crate) fn attribute_stream_keys_sql(target: &ContextTarget) -> String {
     attribute_streams_query(target, 1, 2).to_string(PostgresQueryBuilder)
 }
@@ -135,8 +119,9 @@ pub(crate) fn delete_instance_sql(column: InstanceColumn, target: &ContextTarget
 /// instance held, so a future write may reuse the identifier (clause 4.5.7
 /// does not reserve a deleted instance's identity forever).
 ///
-/// `DELETE … USING` is expressed as two correlated `EXISTS`, since sea-query has
-/// no `USING`: each resolves one of the scope tables the join did.
+/// The claim names its attribute by dictionary key, bound to `$3`; the entity
+/// is resolved through a correlated `EXISTS`, since sea-query has no `DELETE …
+/// USING`.
 pub(crate) fn release_verbatim_instance_claim_sql(target: &ContextTarget) -> String {
     let entity_scope = Query::select()
         .expr(Expr::val(1))
@@ -147,19 +132,11 @@ pub(crate) fn release_verbatim_instance_claim_sql(target: &ContextTarget) -> Str
         )
         .and_where(Expr::col((Te, TemporalEntities::Id)).eq(external_placeholder(2)))
         .to_owned();
-    let attribute_scope = Query::select()
-        .expr(Expr::val(1))
-        .from_as(AttributeNames::Table, An)
-        .and_where(
-            Expr::col((An, AttributeNames::AttributeNameKey)).equals((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::AttributeNameKey)),
-        )
-        .and_where(Expr::col((An, AttributeNames::Name)).eq(external_placeholder(3)))
-        .to_owned();
     Query::delete()
         .from_table(table_of(target, AttributeHistoryInstanceClaims::Table))
         .and_where(Expr::col(AttributeHistoryInstanceClaims::VerbatimInstanceId).eq(external_placeholder(1)))
         .and_where(Expr::exists(entity_scope))
-        .and_where(Expr::exists(attribute_scope))
+        .and_where(Expr::col(AttributeHistoryInstanceClaims::AttributeNameKey).eq(external_placeholder(3)))
         .to_owned()
         .to_string(PostgresQueryBuilder)
 }
@@ -260,7 +237,7 @@ pub(crate) fn record_instance_shape_sql(column: InstanceColumn, target: &Context
         )
         .and_where(Expr::col((Ah, column.column())).eq(external_placeholder(1)))
         .and_where(Expr::col((Ah, AttributeHistory::StreamKey)).eq(any(external_placeholder(2))))
-        .and_where(Expr::col((Ah, AttributeHistory::ValueKind)).ne(ValueKind::Tombstone.code()))
+        .and_where(carries_a_value(Ah))
         .to_owned();
     let mut statement = Query::insert();
     statement
@@ -348,7 +325,7 @@ mod tests {
                 statement.starts_with(r#"INSERT INTO "temporal_stream_shapes" ("stream_key", "attribute_name_key", "attribute_kind", "recorded_shape") SELECT DISTINCT "ah"."stream_key", "s"."attribute_name_key", "ah"."attribute_kind", (CASE"#),
                 "{statement}"
             );
-            assert!(statement.contains(r#""ah"."stream_key" = ANY($2) AND "ah"."value_kind" <> 0"#), "{statement}");
+            assert!(statement.contains(r#""ah"."stream_key" = ANY($2) AND "ah"."value_kind" <> (0)"#), "{statement}");
             assert!(
                 statement.ends_with(r#"ON CONFLICT ("stream_key", "attribute_kind", "recorded_shape") DO NOTHING"#),
                 "{statement}"
@@ -387,7 +364,7 @@ mod tests {
             "{statement}"
         );
         assert!(statement.contains(r#""te"."id" = ($1)"#), "{statement}");
-        assert!(statement.contains(r#""an"."name" = ($2)"#), "{statement}");
+        assert!(statement.contains(r#""s"."attribute_name_key" = ($2)"#), "{statement}");
     }
 
     #[test]
@@ -409,7 +386,7 @@ mod tests {
             let statement = select_instance_sql(column, &ContextTarget::Live);
             assert!(statement.contains(r#"FROM "temporal_attribute_streams" AS "s""#), "{statement}");
             assert!(statement.contains(r#""te"."id" = ($2)"#), "{statement}");
-            assert!(statement.contains(r#""an"."name" = ($3)"#), "{statement}");
+            assert!(statement.contains(r#"attribute_name_key" = ($3)"#), "{statement}");
         }
     }
 
@@ -449,8 +426,8 @@ mod tests {
         assert!(statement.starts_with(r#"DELETE FROM "attribute_history_instance_claims""#), "{statement}");
         assert!(statement.contains(r#""verbatim_instance_id" = ($1)"#), "{statement}");
         assert!(statement.contains(r#""te"."id" = ($2)"#), "{statement}");
-        assert!(statement.contains(r#""an"."name" = ($3)"#), "{statement}");
-        assert_eq!(statement.matches("EXISTS").count(), 2, "{statement}");
+        assert!(statement.contains(r#"attribute_name_key" = ($3)"#), "{statement}");
+        assert_eq!(statement.matches("EXISTS").count(), 1, "{statement}");
     }
 
     #[test]

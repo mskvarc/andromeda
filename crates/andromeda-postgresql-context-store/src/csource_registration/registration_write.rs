@@ -20,8 +20,9 @@ use crate::{
             operation_codes,
             stored_scopes,
         },
-        registration_store::{PostgresRegistrationStore, create_error, persistence_error},
+        registration_store::{PostgresRegistrationStore, create_error},
     },
+    store_fault::persistence_error,
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
@@ -73,7 +74,7 @@ fn swept_select(cutoff: DateTime<Utc>) -> SelectStatement {
 
 /// Delete every registration due at or before `cutoff`, returning the deleted rows and the revision the sweep drew; their information rows go in the same transaction.
 pub(super) async fn delete_expired(store: &PostgresRegistrationStore, cutoff: DateTime<Utc>) -> Result<ExpiredDeletion, RegistrationError> {
-    let mut transaction = store.pool.begin().await.map_err(|error| persistence_error(error))?;
+    let mut transaction = store.pool.begin().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
     // The rows to return are read before either deletion, information rows
     // included; the two deletions then remove exactly the same set, agreeing
     // without depending on the foreign key's referential action. All three run
@@ -82,7 +83,7 @@ pub(super) async fn delete_expired(store: &PostgresRegistrationStore, cutoff: Da
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(select_sql.as_str()), select_values)
         .fetch_all(&mut *transaction)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
     let expired = registrations_of(store.attribute_names.as_ref(), &rows).await?;
 
     let mut expired_ids = Query::select();
@@ -99,7 +100,7 @@ pub(super) async fn delete_expired(store: &PostgresRegistrationStore, cutoff: Da
     sqlx::query_with(sqlx::AssertSqlSafe(info_sql.as_str()), info_values)
         .execute(&mut *transaction)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
 
     let delete_registrations = Query::delete()
         .from_table(Csr::Table)
@@ -110,10 +111,12 @@ pub(super) async fn delete_expired(store: &PostgresRegistrationStore, cutoff: Da
     sqlx::query_with(sqlx::AssertSqlSafe(delete_sql.as_str()), delete_values)
         .execute(&mut *transaction)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
 
-    let revision = advance(&mut *transaction).await.map_err(|error| persistence_error(error))?;
-    transaction.commit().await.map_err(|error| persistence_error(error))?;
+    let revision = advance(&mut *transaction)
+        .await
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
+    transaction.commit().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
     Ok(ExpiredDeletion {
         revision,
         registrations: expired,
@@ -131,10 +134,10 @@ pub(super) async fn create(store: &PostgresRegistrationStore, id: &Identifier, p
     let (management_start, management_end) = interval_columns(params.management_interval.as_ref());
     let management = ManagementColumns::of(params.management.as_ref());
     let (info_keys, info_values) = context_source_info_columns(params.context_source_info.as_deref());
-    let mut transaction = store.pool.begin().await.map_err(|error| persistence_error(error))?;
+    let mut transaction = store.pool.begin().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
     let information = prepare_information(&mut transaction, &params.information, store.attribute_names.as_ref())
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
     let create_sql = csr_create_sql()?;
     sqlx::query(sqlx::AssertSqlSafe(create_sql.as_str()))
         .bind(id.as_str())
@@ -146,9 +149,9 @@ pub(super) async fn create(store: &PostgresRegistrationStore, id: &Identifier, p
         .bind(observation_end)
         .bind(management_start)
         .bind(management_end)
-        .bind(geometry_bytes(params.location.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
-        .bind(geometry_bytes(params.observation_space.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
-        .bind(geometry_bytes(params.operation_space.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
+        .bind(geometry_bytes(params.location.as_ref().map(Geometry::form)).map_err(|error| persistence_error::<RegistrationError>(error))?)
+        .bind(geometry_bytes(params.observation_space.as_ref().map(Geometry::form)).map_err(|error| persistence_error::<RegistrationError>(error))?)
+        .bind(geometry_bytes(params.operation_space.as_ref().map(Geometry::form)).map_err(|error| persistence_error::<RegistrationError>(error))?)
         .bind(params.expires_at)
         .bind(params.endpoint.as_str())
         .bind(params.accept.as_ref().map(ToString::to_string))
@@ -175,13 +178,15 @@ pub(super) async fn create(store: &PostgresRegistrationStore, id: &Identifier, p
         .bind(id.as_str())
         .execute(&mut *transaction)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
     replace_registration_information(&mut transaction, id, &information)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
     let registration = written(&mut transaction, id, &information.key_names()).await?;
-    let revision = advance(&mut *transaction).await.map_err(|error| persistence_error(error))?;
-    transaction.commit().await.map_err(|error| persistence_error(error))?;
+    let revision = advance(&mut *transaction)
+        .await
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
+    transaction.commit().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
     Ok(WrittenRegistration { revision, registration })
 }
 
@@ -198,10 +203,10 @@ pub(super) async fn update(
     let (management_start, management_end) = interval_columns(values.management_interval.as_ref());
     let management = ManagementColumns::of(values.management.as_ref());
     let (info_keys, info_values) = context_source_info_columns(values.context_source_info.as_deref());
-    let mut transaction = store.pool.begin().await.map_err(|error| persistence_error(error))?;
+    let mut transaction = store.pool.begin().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
     let information = prepare_information(&mut transaction, &values.information, store.attribute_names.as_ref())
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
     let update_sql = csr_update_sql();
     let result = sqlx::query(sqlx::AssertSqlSafe(update_sql.as_str()))
         .bind(id.as_str())
@@ -213,9 +218,9 @@ pub(super) async fn update(
         .bind(observation_end)
         .bind(management_start)
         .bind(management_end)
-        .bind(geometry_bytes(values.location.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
-        .bind(geometry_bytes(values.observation_space.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
-        .bind(geometry_bytes(values.operation_space.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
+        .bind(geometry_bytes(values.location.as_ref().map(Geometry::form)).map_err(|error| persistence_error::<RegistrationError>(error))?)
+        .bind(geometry_bytes(values.observation_space.as_ref().map(Geometry::form)).map_err(|error| persistence_error::<RegistrationError>(error))?)
+        .bind(geometry_bytes(values.operation_space.as_ref().map(Geometry::form)).map_err(|error| persistence_error::<RegistrationError>(error))?)
         .bind(values.expires_at)
         .bind(values.endpoint.as_str())
         .bind(values.accept.as_ref().map(ToString::to_string))
@@ -236,19 +241,21 @@ pub(super) async fn update(
         .bind(scopes.written.as_deref())
         .execute(&mut *transaction)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
     // A missing registration has no information rows to replace, and the
     // names interned for it roll back with the transaction.
     if result.rows_affected() == 0 {
-        transaction.rollback().await.map_err(|error| persistence_error(error))?;
+        transaction.rollback().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
         return Ok(RegistrationMutation::Missing);
     }
     replace_registration_information(&mut transaction, id, &information)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
     let registration = written(&mut transaction, id, &information.key_names()).await?;
-    let revision = advance(&mut *transaction).await.map_err(|error| persistence_error(error))?;
-    transaction.commit().await.map_err(|error| persistence_error(error))?;
+    let revision = advance(&mut *transaction)
+        .await
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
+    transaction.commit().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
     Ok(RegistrationMutation::Applied(WrittenRegistration { revision, registration }))
 }
 
@@ -265,13 +272,13 @@ pub(super) async fn record_forwarding_outcome(
         .bind(at)
         .execute(&store.pool)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
     Ok(())
 }
 
 /// Delete a registration and its information rows in one transaction.
 pub(super) async fn delete(store: &PostgresRegistrationStore, id: &Identifier) -> Result<RegistrationMutation<CsourceChangeRevision>, RegistrationError> {
-    let mut transaction = store.pool.begin().await.map_err(|error| persistence_error(error))?;
+    let mut transaction = store.pool.begin().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
     // Removed before the registration row, so the deletion holds whatever
     // referential action the foreign key carries.
     let delete_information = Query::delete()
@@ -282,7 +289,7 @@ pub(super) async fn delete(store: &PostgresRegistrationStore, id: &Identifier) -
     sqlx::query_with(sqlx::AssertSqlSafe(info_sql.as_str()), info_values)
         .execute(&mut *transaction)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
 
     let delete_registration = Query::delete()
         .from_table(Csr::Table)
@@ -292,13 +299,15 @@ pub(super) async fn delete(store: &PostgresRegistrationStore, id: &Identifier) -
     let result = sqlx::query_with(sqlx::AssertSqlSafe(delete_sql.as_str()), delete_values)
         .execute(&mut *transaction)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
     if result.rows_affected() == 0 {
-        transaction.rollback().await.map_err(|error| persistence_error(error))?;
+        transaction.rollback().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
         return Ok(RegistrationMutation::Missing);
     }
-    let revision = advance(&mut *transaction).await.map_err(|error| persistence_error(error))?;
-    transaction.commit().await.map_err(|error| persistence_error(error))?;
+    let revision = advance(&mut *transaction)
+        .await
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
+    transaction.commit().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
     Ok(RegistrationMutation::Applied(revision))
 }
 

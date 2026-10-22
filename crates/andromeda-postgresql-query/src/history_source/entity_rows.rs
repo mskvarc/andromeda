@@ -45,6 +45,7 @@ use andromeda_postgresql_seaquery::{
     branch::qualified,
     cast::typed_null,
     literal::{false_literal, int_literal},
+    pg_array::is_any_of,
     pg_type::PostgresType,
 };
 use sea_query::{Condition, DynIden, Expr, ExprTrait, Iden, IntoIden, Order, Query, SelectStatement, SimpleExpr, TableRef, UnionType};
@@ -295,7 +296,10 @@ fn holder_merge(branch: &HistoryBranch, keys: &[AttributeNameKey], walked: &Walk
             queued
                 .expr_as(Expr::col((QueuedGrain, HistoryGrain::EntityId)), TemporalEntities::Id)
                 .from_subquery(pending::stream_rows(schema, &HistoryOf::EveryEntity), QueuedGrain)
-                .and_where(Expr::col((QueuedGrain, HistoryGrain::AttributeNameKey)).is_in(keys.iter().map(|key| int_literal(i64::from(key.get())))))
+                .and_where(is_any_of(
+                    Expr::col((QueuedGrain, HistoryGrain::AttributeNameKey)),
+                    keys.iter().map(|key| key.get()),
+                ))
                 .order_by(TemporalEntities::Id, Order::Asc);
             let mut holders = Query::select();
             holders
@@ -495,7 +499,7 @@ mod tests {
         );
         assert!(sql.contains(r#"FROM "temporal_append_entries" AS "pe""#), "{sql}");
         assert!(
-            sql.contains(r#") AS "hg" WHERE "hg"."attribute_name_key" IN (7) ORDER BY "id" ASC) AS "hq")"#),
+            sql.contains(r#") AS "hg" WHERE "hg"."attribute_name_key" = ANY(ARRAY [7]) ORDER BY "id" ASC) AS "hq")"#),
             "{sql}"
         );
     }

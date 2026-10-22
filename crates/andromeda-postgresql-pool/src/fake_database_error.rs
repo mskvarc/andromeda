@@ -1,32 +1,46 @@
 //! A database error the classification tests can construct.
 //!
 //! A real `PgDatabaseError` cannot be built without a live driver connection,
-//! so the tests stand in this minimal [`DatabaseError`] carrying a fixed message
-//! and SQLSTATE.
+//! so the tests stand in this minimal [`DatabaseError`] carrying a fixed message,
+//! SQLSTATE and, optionally, constraint name.
 
 use sqlx::error::{DatabaseError, ErrorKind as SqlxErrorKind};
 use std::{borrow::Cow, error::Error as StdError, fmt};
 
 /// A minimal [`DatabaseError`] carrying a fixed message and SQLSTATE.
 #[derive(Debug)]
-pub(crate) struct FakeDatabaseError {
+pub struct FakeDatabaseError {
     /// The error message the classifier inspects.
     message: String,
     /// The SQLSTATE the error reports.
     code: String,
+    /// The constraint the error reports as violated, if any.
+    constraint: Option<String>,
 }
 
 impl FakeDatabaseError {
     /// A database error reporting `code` with `message`.
-    pub(crate) fn new(message: &str, code: &str) -> FakeDatabaseError {
+    #[must_use]
+    pub fn new(message: &str, code: &str) -> FakeDatabaseError {
         FakeDatabaseError {
             message: message.to_string(),
             code: code.to_string(),
+            constraint: None,
+        }
+    }
+
+    /// The same error reporting `constraint` as the violated constraint.
+    #[must_use]
+    pub fn with_constraint(self, constraint: &str) -> FakeDatabaseError {
+        FakeDatabaseError {
+            constraint: Some(constraint.to_string()),
+            ..self
         }
     }
 
     /// Wrap the error the way the driver hands a database error back.
-    pub(crate) fn into_sqlx(self) -> sqlx::Error {
+    #[must_use]
+    pub fn into_sqlx(self) -> sqlx::Error {
         sqlx::Error::Database(Box::new(self))
     }
 }
@@ -48,6 +62,10 @@ impl DatabaseError for FakeDatabaseError {
 
     fn code(&self) -> Option<Cow<'_, str>> {
         Some(Cow::Borrowed(&self.code))
+    }
+
+    fn constraint(&self) -> Option<&str> {
+        self.constraint.as_deref()
     }
 
     fn as_error(&self) -> &(dyn StdError + Send + Sync + 'static) {

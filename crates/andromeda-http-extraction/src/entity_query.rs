@@ -6,8 +6,8 @@
 //! which every binding of the operation calls. This seam owns only the decoding
 //! and the clause 6.3.20 classification of a failure to decode.
 
-use crate::{addressed_uri::addressed_uri, query::classify_query_parse_error};
-use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use crate::{addressed_uri::addressed_uri, query_decode_error::QueryDecodeError};
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use std::future::{Future, ready};
@@ -23,7 +23,7 @@ pub struct EntityQuery(pub EntityQueryParameters);
 fn resolve_entity_query(parts: &Parts) -> Result<EntityQuery, ExtractorRejection> {
     let uri = addressed_uri(parts);
     let query_str = parts.uri.query().unwrap_or("");
-    let params = serde_urlencoded::from_str::<EntityQueryParameters>(query_str).map_err(|error| classify_query_parse_error(error, uri))?;
+    let params = serde_urlencoded::from_str::<EntityQueryParameters>(query_str).map_err(|error| QueryDecodeError(error).into_rejection(uri))?;
 
     Ok(EntityQuery(params))
 }
@@ -42,6 +42,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemDetail};
     use axum::{body::Body, http::Request};
 
     /// A query string the parameter set can decode is extracted whatever the
@@ -66,8 +67,10 @@ mod tests {
             .unwrap();
         let (mut parts, _) = req.into_parts();
 
-        let result = EntityQuery::from_request_parts(&mut parts, &()).await;
-        assert!(matches!(result, Err(ExtractorRejection::InvalidRequest { .. })));
+        let rejection = EntityQuery::from_request_parts(&mut parts, &())
+            .await
+            .expect_err("an unknown parameter is refused");
+        pretty_assertions::assert_eq!(rejection.problem().map(ProblemDetail::error_type), Some(NgsiLdErrorType::InvalidRequest));
     }
 
     #[tokio::test]
@@ -78,7 +81,7 @@ mod tests {
             .unwrap();
         let (mut parts, _) = req.into_parts();
 
-        let result = EntityQuery::from_request_parts(&mut parts, &()).await;
-        assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
+        let rejection = EntityQuery::from_request_parts(&mut parts, &()).await.expect_err("an invalid value is refused");
+        pretty_assertions::assert_eq!(rejection.problem().map(ProblemDetail::error_type), Some(NgsiLdErrorType::BadRequestData));
     }
 }

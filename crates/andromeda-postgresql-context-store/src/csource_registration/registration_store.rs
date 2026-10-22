@@ -2,8 +2,7 @@
 
 use crate::{
     csource_registration::{registration_read, registration_write},
-    error::violates_unique_constraint,
-    store_fault::{StoreFault, persistence_failure},
+    store_fault::persistence_error,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{csource_change_revision::CsourceChangeRevision, registration::ContextSourceRegistration};
@@ -12,6 +11,7 @@ use andromeda_ngsi_ld_query::{
     page_window::PageWindow,
 };
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
+use andromeda_postgresql_pool::sql_state::violates_unique_constraint;
 use andromeda_registration::{
     error::RegistrationError,
     resolved_update::ResolvedCsrUpdate,
@@ -61,15 +61,6 @@ impl PostgresRegistrationStore {
     }
 }
 
-/// Erase an adapter-specific diagnostic at the policy error boundary.
-///
-/// Classify an adapter failure at the port boundary: backpressure keeps the
-/// port's retryable category and every fault becomes its persistence failure.
-#[track_caller]
-pub(super) fn persistence_error(error: impl StoreFault) -> RegistrationError {
-    RegistrationError::from(persistence_failure(&error))
-}
-
 /// Preserve a uniqueness race on the identifier as the registration identifier
 /// conflict.
 ///
@@ -81,13 +72,13 @@ pub(super) fn create_error(error: sqlx::Error, identifier: &Identifier) -> Regis
     if violates_unique_constraint(&error, PK_CONTEXT_SOURCE_REGISTRATIONS) {
         RegistrationError::already_exists(identifier)
     } else {
-        persistence_error(error)
+        persistence_error::<RegistrationError>(error)
     }
 }
 
 /// Convert PostgreSQL's signed count representation to the policy-owned count.
 pub(super) fn registration_count(total: i64) -> Result<u64, RegistrationError> {
-    u64::try_from(total).map_err(|error| persistence_error(error))
+    u64::try_from(total).map_err(|error| persistence_error::<RegistrationError>(error))
 }
 
 #[async_trait]
@@ -146,6 +137,7 @@ mod tests {
     use crate::{
         csource_registration::registration_store::{PK_CONTEXT_SOURCE_REGISTRATIONS, create_error},
         migration_set::tenant::tenant_migrator,
+        store_fault::persistence_error,
     };
     use andromeda_registration::error::RegistrationError;
     use std::{
@@ -187,20 +179,27 @@ mod tests {
 
     #[test]
     fn a_pool_timeout_becomes_store_saturated() {
-        use crate::csource_registration::registration_store::persistence_error;
-        assert!(matches!(persistence_error(sqlx::Error::PoolTimedOut), RegistrationError::StoreSaturated));
-        assert!(matches!(persistence_error(sqlx::Error::RowNotFound), RegistrationError::Persistence(_)));
+        assert!(matches!(
+            persistence_error::<RegistrationError>(sqlx::Error::PoolTimedOut),
+            RegistrationError::StoreSaturated
+        ));
+        assert!(matches!(
+            persistence_error::<RegistrationError>(sqlx::Error::RowNotFound),
+            RegistrationError::Persistence(_)
+        ));
     }
 
     #[test]
     fn a_lost_connection_becomes_store_unavailable() {
-        use crate::csource_registration::registration_store::persistence_error;
         use std::io::{Error as IoError, ErrorKind};
         assert!(matches!(
-            persistence_error(sqlx::Error::Io(IoError::from(ErrorKind::ConnectionReset))),
+            persistence_error::<RegistrationError>(sqlx::Error::Io(IoError::from(ErrorKind::ConnectionReset))),
             RegistrationError::StoreUnavailable
         ));
-        assert!(matches!(persistence_error(sqlx::Error::RowNotFound), RegistrationError::Persistence(_)));
+        assert!(matches!(
+            persistence_error::<RegistrationError>(sqlx::Error::RowNotFound),
+            RegistrationError::Persistence(_)
+        ));
     }
 
     /// How many times the callsite interest cache is rebuilt before a
@@ -253,7 +252,6 @@ mod tests {
     /// `map_err` by name, which would record a location inside `core`.
     #[test]
     fn the_failure_is_recorded_at_the_store_call_site() {
-        use crate::csource_registration::registration_store::persistence_error;
         let locations = Arc::new(Mutex::new(Vec::new()));
         let subscriber = RecordedLocations {
             locations: Arc::clone(&locations),
@@ -267,7 +265,10 @@ mod tests {
             (0..INTEREST_REBUILD_ATTEMPTS).any(|_| {
                 rebuild_interest_cache();
                 let failed: Result<(), sqlx::Error> = Err(sqlx::Error::RowNotFound);
-                assert!(failed.map_err(|error| persistence_error(error)).is_err(), "the statement failed");
+                assert!(
+                    failed.map_err(|error| persistence_error::<RegistrationError>(error)).is_err(),
+                    "the statement failed"
+                );
                 let recorded = locations.lock().is_ok_and(|locations| !locations.is_empty());
                 if !recorded {
                     yield_now();

@@ -25,12 +25,12 @@ use crate::{
     snapshot::branch_upgrade::{BranchUpgradeReport, upgrade_snapshot_branches},
 };
 use andromeda_postgresql_pool::{
-    lock_retry::{SCHEMA_CHANGE_LOCK_RETRY, is_lock_not_available, schema_change_connect_options},
     pool_options::configure_pool_options,
+    schema_change_lock::{SCHEMA_CHANGE_LOCK_RETRY, is_lock_not_available, schema_change_connect_options},
+    sql_state::SqlState,
 };
 use sqlx::{
     PgPool,
-    error::DatabaseError,
     migrate::{MigrateError, Migrator},
 };
 use std::time::Duration;
@@ -239,7 +239,9 @@ fn schema_error_is_migratable(error: &SchemaContractError) -> bool {
     match error {
         SchemaContractError::Unstamped { .. } => true,
         SchemaContractError::SchemaVersionMismatch { expected, found } => found < expected,
-        SchemaContractError::Database(source) => code_is_undefined_relation(source.as_database_error().and_then(DatabaseError::code).as_deref()),
+        // An unmigrated tenant's absent `schema_metadata` table surfaces on the
+        // read as an undefined relation.
+        SchemaContractError::Database(source) => SqlState::of(source) == Some(SqlState::UndefinedTable),
         SchemaContractError::PostGisBelowMinimum { found, .. } | SchemaContractError::TimescaleDbBelowMinimum { found, .. } => {
             matches!(found, ExtensionPresence::Absent)
         }
@@ -254,12 +256,6 @@ fn schema_error_is_migratable(error: &SchemaContractError) -> bool {
     }
 }
 
-/// Whether a SQLSTATE names an undefined relation (`42P01`), which is how an
-/// unmigrated tenant's absent `schema_metadata` table surfaces on the read.
-fn code_is_undefined_relation(code: Option<&str>) -> bool {
-    code == Some("42P01")
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -269,8 +265,9 @@ mod tests {
             schema_version::SchemaVersion,
             server_requirements::{ExtensionPresence, ExtensionVersion, REQUIRED_POSTGIS_VERSION},
         },
-        tenant_migration::{code_is_undefined_relation, migration_lock_not_available, schema_error_is_migratable},
+        tenant_migration::{migration_lock_not_available, schema_error_is_migratable},
     };
+    use andromeda_postgresql_pool::fake_database_error::FakeDatabaseError;
     use sqlx::migrate::MigrateError;
 
     /// The lock classification itself is the pool crate's; what is decided
@@ -316,9 +313,10 @@ mod tests {
     /// does.
     #[test]
     fn an_undefined_schema_metadata_relation_needs_migration() {
-        assert!(code_is_undefined_relation(Some("42P01")));
-        for other in [Some("42703"), Some("08006"), Some("23505"), None] {
-            assert!(!code_is_undefined_relation(other), "{other:?} is not an undefined relation");
+        let read_failed = |code: &str| SchemaContractError::Database(FakeDatabaseError::new("read failed", code).into_sqlx());
+        assert!(schema_error_is_migratable(&read_failed("42P01")));
+        for other in ["42703", "08006", "23505"] {
+            assert!(!schema_error_is_migratable(&read_failed(other)), "{other} is not an undefined relation");
         }
     }
 

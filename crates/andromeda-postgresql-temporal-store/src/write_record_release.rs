@@ -25,16 +25,12 @@ use andromeda_postgresql_schema::{
     temporal::{AttributeHistory, ScopeHistory},
 };
 use andromeda_postgresql_seaquery::{cast::cast, pg_array::any, pg_type::PostgresType};
+use andromeda_postgresql_temporal_query::alias::Ah;
 use chrono::{DateTime, Utc};
 use sea_query::{Cond, DeleteStatement, Expr, ExprTrait, Iden, IntoColumnRef, IntoIden, IntoTableRef, PostgresQueryBuilder, Query, SimpleExpr};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{AssertSqlSafe, Connection, PgConnection, Postgres, Transaction, postgres::PgPool};
 use uuid::Uuid;
-
-/// The `attribute_history` alias inside a protection subquery.
-#[derive(Iden, Clone, Copy)]
-#[iden = "ah"]
-struct Ah;
 
 /// The `scope_history` alias inside a protection subquery.
 #[derive(Iden, Clone, Copy)]

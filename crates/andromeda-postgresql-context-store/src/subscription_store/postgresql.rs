@@ -11,12 +11,13 @@
 
 use crate::{
     csource_subscription::repo::CsourceSubscriptionRepository,
+    store_fault::persistence_error,
     subscription::repo::SubscriptionRepository,
     subscription_store::{
         csource_statements::{bind_csource_create, bind_csource_update, csource_create_sql, csource_update_sql},
         delivery_state::{SlotClaimStatement, outcome_statement, record_interval_tick_statement, slot_claim_statement, state_insert_sql},
         entity_statements::{bind_entity_create, bind_entity_update, entity_create_sql, entity_update_sql},
-        failure::{create_error, persistence_error},
+        failure::create_error,
         interned_attributes::intern_attribute_lists,
         mapper::{row_from_pg, row_to_stored_subscription, rows_to_stored_subscriptions, stored_subscription_uri},
         params::DatasetIdPresence,
@@ -57,10 +58,10 @@ macro_rules! impl_subscription_store {
                 let pg_row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .fetch_optional(&self.pool)
                     .await
-                    .map_err(|error| persistence_error(error))?;
+                    .map_err(|error| persistence_error::<SubscriptionError>(error))?;
                 match pg_row {
                     Some(pg) => {
-                        let row = row_from_pg(&pg, $hdi).map_err(|error| persistence_error(error))?;
+                        let row = row_from_pg(&pg, $hdi).map_err(|error| persistence_error::<SubscriptionError>(error))?;
                         Ok(Some(row_to_stored_subscription(row)))
                     }
                     None => Ok(None),
@@ -75,11 +76,11 @@ macro_rules! impl_subscription_store {
                 let pg_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .fetch_all(&self.pool)
                     .await
-                    .map_err(|error| persistence_error(error))?;
+                    .map_err(|error| persistence_error::<SubscriptionError>(error))?;
                 // A listing renders resources, so the surrogate key each row
                 // carries is dropped rather than threaded into the response.
                 let mut subscriptions: Vec<Subscription> = rows_to_stored_subscriptions(&pg_rows, $hdi)
-                    .map_err(|error| persistence_error(error))?
+                    .map_err(|error| persistence_error::<SubscriptionError>(error))?
                     .into_iter()
                     .map(|stored| stored.subscription)
                     .collect();
@@ -98,7 +99,7 @@ macro_rules! impl_subscription_store {
                 let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .execute(&self.pool)
                     .await
-                    .map_err(|error| persistence_error(error))?;
+                    .map_err(|error| persistence_error::<SubscriptionError>(error))?;
                 Ok(result.rows_affected())
             }
 
@@ -113,7 +114,7 @@ macro_rules! impl_subscription_store {
                 let row: (bool,) = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .fetch_one(&self.pool)
                     .await
-                    .map_err(|error| persistence_error(error))?;
+                    .map_err(|error| persistence_error::<SubscriptionError>(error))?;
                 Ok(row.0)
             }
 
@@ -124,8 +125,8 @@ macro_rules! impl_subscription_store {
                 let pg_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .fetch_all(&self.pool)
                     .await
-                    .map_err(|error| persistence_error(error))?;
-                rows_to_stored_subscriptions(&pg_rows, $hdi).map_err(|error| persistence_error(error))
+                    .map_err(|error| persistence_error::<SubscriptionError>(error))?;
+                rows_to_stored_subscriptions(&pg_rows, $hdi).map_err(|error| persistence_error::<SubscriptionError>(error))
             }
 
             async fn claim_notification_slot(
@@ -142,7 +143,7 @@ macro_rules! impl_subscription_store {
                         let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                             .execute(&self.pool)
                             .await
-                            .map_err(|error| persistence_error(error))?;
+                            .map_err(|error| persistence_error::<SubscriptionError>(error))?;
                         Ok(if result.rows_affected() > 0 {
                             NotificationSlot::Claimed(OutcomeRecord::OutcomeOnly)
                         } else {
@@ -154,7 +155,7 @@ macro_rules! impl_subscription_store {
                         let claimed: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                             .fetch_optional(&self.pool)
                             .await
-                            .map_err(|error| persistence_error(error))?;
+                            .map_err(|error| persistence_error::<SubscriptionError>(error))?;
                         Ok(claimed.map_or(NotificationSlot::Suppressed, |notified_at| {
                             NotificationSlot::Claimed(OutcomeRecord::CountingNotification { notified_at })
                         }))
@@ -173,7 +174,7 @@ macro_rules! impl_subscription_store {
                 sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .execute(&self.pool)
                     .await
-                    .map_err(|error| persistence_error(error))?;
+                    .map_err(|error| persistence_error::<SubscriptionError>(error))?;
                 Ok(())
             }
 
@@ -192,12 +193,12 @@ macro_rules! impl_subscription_store {
                 let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .fetch_all(&self.pool)
                     .await
-                    .map_err(|error| persistence_error(error))?;
+                    .map_err(|error| persistence_error::<SubscriptionError>(error))?;
                 rows.iter()
                     .map(|row| {
                         row.try_get::<String, _>("id")
-                            .map_err(|error| persistence_error(error))
-                            .and_then(|raw| stored_subscription_uri(&raw).map_err(|error| persistence_error(error)))
+                            .map_err(|error| persistence_error::<SubscriptionError>(error))
+                            .and_then(|raw| stored_subscription_uri(&raw).map_err(|error| persistence_error::<SubscriptionError>(error)))
                     })
                     .collect()
             }
@@ -215,17 +216,22 @@ macro_rules! impl_subscription_store {
             ) -> Result<(), SubscriptionError> {
                 let sql = $create(target)?;
                 let state_sql = state_insert_sql(target)?;
-                let mut transaction = self.pool.begin().await.map_err(|error| persistence_error(error))?;
+                let mut transaction = self.pool.begin().await.map_err(|error| persistence_error::<SubscriptionError>(error))?;
                 let interned = intern_attribute_lists(self.attribute_names.as_ref(), &mut transaction, fields).await?;
                 let query = ($create_fn)(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), id, fields, &interned, status)?;
                 let created = query.fetch_one(&mut *transaction).await.map_err(|error| create_error(error, id))?;
-                let subscription_key: i64 = created.try_get("subscription_key").map_err(|error| persistence_error(error))?;
+                let subscription_key: i64 = created
+                    .try_get("subscription_key")
+                    .map_err(|error| persistence_error::<SubscriptionError>(error))?;
                 sqlx::query(sqlx::AssertSqlSafe(state_sql.as_str()))
                     .bind(subscription_key)
                     .execute(&mut *transaction)
                     .await
-                    .map_err(|error| persistence_error(error))?;
-                transaction.commit().await.map_err(|error| persistence_error(error))?;
+                    .map_err(|error| persistence_error::<SubscriptionError>(error))?;
+                transaction
+                    .commit()
+                    .await
+                    .map_err(|error| persistence_error::<SubscriptionError>(error))?;
                 tracing::info!("Created {} subscription: {}", $kind.code().label(), id);
                 Ok(())
             }
@@ -238,11 +244,17 @@ macro_rules! impl_subscription_store {
                 status: SubscriptionStatus,
             ) -> Result<u64, SubscriptionError> {
                 let sql = $update(target);
-                let mut transaction = self.pool.begin().await.map_err(|error| persistence_error(error))?;
+                let mut transaction = self.pool.begin().await.map_err(|error| persistence_error::<SubscriptionError>(error))?;
                 let interned = intern_attribute_lists(self.attribute_names.as_ref(), &mut transaction, fields).await?;
                 let query = ($update_fn)(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), id, fields, &interned, status)?;
-                let result = query.execute(&mut *transaction).await.map_err(|error| persistence_error(error))?;
-                transaction.commit().await.map_err(|error| persistence_error(error))?;
+                let result = query
+                    .execute(&mut *transaction)
+                    .await
+                    .map_err(|error| persistence_error::<SubscriptionError>(error))?;
+                transaction
+                    .commit()
+                    .await
+                    .map_err(|error| persistence_error::<SubscriptionError>(error))?;
                 Ok(result.rows_affected())
             }
 
@@ -255,11 +267,11 @@ macro_rules! impl_subscription_store {
                 let pg_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .fetch_all(&self.pool)
                     .await
-                    .map_err(|error| persistence_error(error))?;
+                    .map_err(|error| persistence_error::<SubscriptionError>(error))?;
                 // An interval notification is sent straight to the endpoint and
                 // never enqueues a delivery, so it needs no surrogate key.
                 Ok(rows_to_stored_subscriptions(&pg_rows, $hdi)
-                    .map_err(|error| persistence_error(error))?
+                    .map_err(|error| persistence_error::<SubscriptionError>(error))?
                     .into_iter()
                     .map(|stored| stored.subscription)
                     .collect())
@@ -274,13 +286,13 @@ macro_rules! impl_subscription_store {
                 let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .fetch_all(&self.pool)
                     .await
-                    .map_err(|error| persistence_error(error))?;
+                    .map_err(|error| persistence_error::<SubscriptionError>(error))?;
                 let mut earliest: Option<chrono::DateTime<chrono::Utc>> = None;
                 for row in &rows {
-                    let anchor: chrono::DateTime<chrono::Utc> = row.try_get("anchor").map_err(|error| persistence_error(error))?;
+                    let anchor: chrono::DateTime<chrono::Utc> = row.try_get("anchor").map_err(|error| persistence_error::<SubscriptionError>(error))?;
                     let interval_seconds: f64 = row
                         .try_get(Subscriptions::TimeInterval.unquoted())
-                        .map_err(|error| persistence_error(error))?;
+                        .map_err(|error| persistence_error::<SubscriptionError>(error))?;
                     // A stored interval that no longer describes a valid grid is
                     // skipped rather than scheduling an impossible wake.
                     let Some(interval) = interval_duration(interval_seconds) else {
@@ -304,7 +316,7 @@ macro_rules! impl_subscription_store {
                 sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .execute(&self.pool)
                     .await
-                    .map_err(|error| persistence_error(error))?;
+                    .map_err(|error| persistence_error::<SubscriptionError>(error))?;
                 Ok(())
             }
         }

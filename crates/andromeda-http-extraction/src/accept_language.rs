@@ -11,7 +11,8 @@
 
 use crate::addressed_uri::addressed_uri;
 use andromeda_http_headers::language::{LanguageFilter, LanguageFilterError};
-use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use andromeda_http_response::request_refusal::RequestRefusal;
+use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{
     extract::Request,
     http::{
@@ -60,6 +61,12 @@ pub(crate) struct AcceptedLanguage(pub(crate) LanguageFilter);
 #[error("the accept-language header is not a language preference list: {0}")]
 struct InvalidAcceptLanguage(#[source] LanguageFilterError);
 
+impl RequestRefusal for InvalidAcceptLanguage {
+    fn error_type(&self) -> NgsiLdErrorType {
+        NgsiLdErrorType::BadRequestData
+    }
+}
+
 /// Decode `Accept-Language` into an [`AcceptedLanguage`] request extension, and
 /// mark the response as varying on the header (RFC 9110 section 12.5.5).
 ///
@@ -75,7 +82,7 @@ async fn negotiate_accept_language(request: Request, next: Next) -> Response {
             }
             next.run(Request::from_parts(parts, body)).await
         }
-        Err(error) => ExtractorRejection::bad_request_data(InvalidAcceptLanguage(error).to_string(), addressed_uri(&parts)).into_response(),
+        Err(error) => InvalidAcceptLanguage(error).into_problem(addressed_uri(&parts)).into_response(),
     };
     response.headers_mut().append(VARY, VARY_ON_LANGUAGE.clone()); // clone: a header value is a cheap shared byte buffer
     response

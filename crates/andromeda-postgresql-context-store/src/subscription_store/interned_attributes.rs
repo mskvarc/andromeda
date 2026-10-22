@@ -9,7 +9,7 @@
 //! back together. Each list keeps the order the subscriber wrote it in; the read
 //! projection resolves the keys back in that order.
 
-use crate::subscription_store::failure::persistence_error;
+use crate::store_fault::persistence_error;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
@@ -49,7 +49,7 @@ pub(super) async fn intern_attribute_lists(
     let keys = attribute_names
         .resolve_or_create(connection, &names)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SubscriptionError>(error))?;
     Ok(InternedAttributeLists {
         watched_attributes: keys_of(fields.watched_attributes, &keys)?,
         expand_values: keys_of(fields.expand_values, &keys)?,

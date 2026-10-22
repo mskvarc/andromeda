@@ -183,7 +183,10 @@ mod tests {
         },
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-    use andromeda_postgresql_query::history_source::{HistoryBranch, HistoryOf};
+    use andromeda_postgresql_query::{
+        dictionary::query_names::QueryNames,
+        history_source::{HistoryBranch, HistoryOf},
+    };
     use sea_query::{Condition, Expr, PostgresQueryBuilder};
     use std::num::{NonZeroU32, NonZeroU64};
 
@@ -221,7 +224,14 @@ mod tests {
     }
 
     fn sql_on(branch: &HistoryBranch, compiled: &CompiledTemporalQuery) -> String {
-        build_aggregation_query(branch, &HistoryOf::Entity(Expr::val("urn:ngsi-ld:Vehicle:1")), compiled, &Condition::all()).to_string(PostgresQueryBuilder)
+        build_aggregation_query(
+            branch,
+            &HistoryOf::Entity(Expr::val("urn:ngsi-ld:Vehicle:1")),
+            compiled,
+            &Condition::all(),
+            &QueryNames::default(),
+        )
+        .to_string(PostgresQueryBuilder)
     }
 
     fn sql_of(compiled: &CompiledTemporalQuery) -> String {

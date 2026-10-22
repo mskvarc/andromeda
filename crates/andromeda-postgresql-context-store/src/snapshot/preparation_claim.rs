@@ -8,10 +8,9 @@ use crate::{
         branch_schema::truncate_branch_schema,
         branch_version::{branch_is_current, current_version},
         mapper::{row_query_context, row_to_snapshot},
-        persistence_error,
         record::{snapshot_select, status_is_preparing},
     },
-    store_fault::undecodable,
+    store_fault::{persistence_error, undecodable},
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
@@ -110,35 +109,38 @@ pub(crate) async fn next_preparing_snapshot(
     lease_until: DateTime<Utc>,
 ) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
     let current = current_version()?;
-    let mut transaction = pool.begin().await.map_err(|error| persistence_error(error))?;
+    let mut transaction = pool.begin().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
     let (sql, values) = next_preparing_statement(current).build_sqlx(PostgresQueryBuilder);
     let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_optional(&mut *transaction)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
     let Some(row) = row else {
-        transaction.rollback().await.map_err(|error| persistence_error(error))?;
+        transaction.rollback().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
         return Ok(None);
     };
-    let snapshot = row_to_snapshot(&row).map_err(|error| persistence_error(error))?;
-    let snapshot_key = SnapshotKey::try_from(row.try_get::<i64, _>("snapshot_key").map_err(|error| persistence_error(error))?)
-        .map_err(|error| SnapshotError::from(undecodable(&error)))?;
+    let snapshot = row_to_snapshot(&row).map_err(|error| persistence_error::<SnapshotError>(error))?;
+    let snapshot_key = SnapshotKey::try_from(
+        row.try_get::<i64, _>("snapshot_key")
+            .map_err(|error| persistence_error::<SnapshotError>(error))?,
+    )
+    .map_err(|error| SnapshotError::from(undecodable(&error)))?;
     let clone_source_id = row
         .try_get::<Option<String>, _>("clone_source_id")
-        .map_err(|error| persistence_error(error))?
+        .map_err(|error| persistence_error::<SnapshotError>(error))?
         .map(|source| source.parse::<Identifier>())
         .transpose()
         .map_err(|error| SnapshotError::from(undecodable(&error)))?;
-    let query_context = row_query_context(&row).map_err(|error| persistence_error(error))?;
+    let query_context = row_query_context(&row).map_err(|error| persistence_error::<SnapshotError>(error))?;
     let (sql, values) = claim_statement(snapshot_key, claimed_by, lease_until).build_sqlx(PostgresQueryBuilder);
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(&mut *transaction)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
     truncate_branch_schema(&mut transaction, snapshot_key, SnapshotBranch::Staging)
         .await
-        .map_err(|error| persistence_error(error))?;
-    transaction.commit().await.map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
+    transaction.commit().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
     Ok(Some(SnapshotPreparationJob {
         snapshot,
         clone_source_id,
@@ -174,7 +176,7 @@ pub(crate) async fn renew_preparation_lease(
     let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(pool)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
     Ok(result.rows_affected() == 1)
 }
 
@@ -242,7 +244,7 @@ async fn claimed_key(transaction: &mut Transaction<'_, Postgres>, statement: &Se
     sqlx::query_scalar_with::<_, i64, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_optional(&mut **transaction)
         .await
-        .map_err(|error| persistence_error(error))?
+        .map_err(|error| persistence_error::<SnapshotError>(error))?
         .map(|raw| SnapshotKey::try_from(raw).map_err(|error| SnapshotError::from(undecodable(&error))))
         .transpose()
 }
@@ -261,20 +263,20 @@ fn lease_statement(snapshot_key: SnapshotKey, lease_until: DateTime<Utc>) -> Upd
 /// into a branch no earlier attempt wrote. Returns false when the claim was
 /// lost or the Snapshot left `preparing`.
 pub(crate) async fn restart_preparation(pool: &PgPool, id: &Identifier, claimed_by: LeaseHolder, lease_until: DateTime<Utc>) -> Result<bool, SnapshotError> {
-    let mut transaction = pool.begin().await.map_err(|error| persistence_error(error))?;
+    let mut transaction = pool.begin().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
     let Some(snapshot_key) = lock_claimed_preparation(&mut transaction, id, claimed_by).await? else {
-        transaction.rollback().await.map_err(|error| persistence_error(error))?;
+        transaction.rollback().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
         return Ok(false);
     };
     let (sql, values) = lease_statement(snapshot_key, lease_until).build_sqlx(PostgresQueryBuilder);
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(&mut *transaction)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
     truncate_branch_schema(&mut transaction, snapshot_key, SnapshotBranch::Staging)
         .await
-        .map_err(|error| persistence_error(error))?;
-    transaction.commit().await.map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
+    transaction.commit().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
     Ok(true)
 }
 
@@ -298,7 +300,7 @@ pub(crate) async fn release_preparation(pool: &PgPool, id: &Identifier, claimed_
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(pool)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
     Ok(())
 }
 

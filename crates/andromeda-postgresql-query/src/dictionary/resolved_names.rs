@@ -49,6 +49,14 @@ impl<N: InternedName> ResolvedNames<N> {
         self.keys.get::<str>(name).copied()
     }
 
+    /// The dictionary keys of those of `names` the broker knows, in the order
+    /// given: a name it does not know was never written, so it has no key and
+    /// is left out.
+    #[must_use]
+    pub fn keys_of<'a>(&self, names: impl IntoIterator<Item = &'a str>) -> Vec<N::Key> {
+        names.into_iter().filter_map(|name| self.get_str(name)).collect()
+    }
+
     /// Whether no name resolved to a dictionary key, in which case every
     /// dictionary-keyed probe the query would compile is already known to be
     /// unsatisfiable.

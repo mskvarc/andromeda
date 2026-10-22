@@ -36,8 +36,10 @@ pub mod schema_ddl;
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-ngsi-ld-query",
+        "andromeda-postgresql-pool",
     ],
     allow_workspace_dev_dependencies: [
+        "andromeda-postgresql-pool",
     ],
     allow_production_dependencies: ["sqlx"],
 }

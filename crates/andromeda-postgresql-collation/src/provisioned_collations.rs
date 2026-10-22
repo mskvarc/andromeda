@@ -2,21 +2,10 @@
 
 use crate::schema_ddl::icu_collation::{STRICT_ICU_LOCALE_VALIDATION, create_icu_collation};
 use andromeda_ngsi_ld_query::ordering::collation::IcuCollation;
+use andromeda_postgresql_pool::sql_state::{SqlState, violates_unique_constraint};
 use dashmap::DashSet;
 use sqlx::postgres::PgPool;
 use thiserror::Error;
-
-/// The `SQLSTATE` PostgreSQL reports an unusable ICU locale under.
-///
-/// Both refusals a collation identifier can draw -- `ICU locale "…" has unknown
-/// language "…"` from the locale validation, and `could not open collator for
-/// locale "…"` from ICU itself -- are raised as `invalid_parameter_value`. The
-/// parameter in question is the client's own `collation`, which is what makes
-/// the failure a clause 5.7.2.4 `BadRequestData` rather than a broker fault.
-const INVALID_PARAMETER_VALUE: &str = "22023";
-
-/// The `SQLSTATE` of a unique violation.
-const UNIQUE_VIOLATION: &str = "23505";
 
 /// The catalog index that makes a collation name unique within its schema.
 ///
@@ -82,11 +71,7 @@ impl ProvisionedCollations {
             return Ok(());
         }
         if let Err(source) = self.create(collation).await {
-            let failure = source.as_database_error().map_or(CreateFailure::Statement, |database| {
-                failure_of(database.code().as_deref(), database.constraint())
-            });
-            // clone: the error outlives the ordering that named the identifier.
-            match failure {
+            match failure_of(&source) {
                 CreateFailure::CreatedConcurrently => {}
                 CreateFailure::LocaleRefused => {
                     return Err(CollationProvisioningError::NotAnIcuCollation {
@@ -137,12 +122,21 @@ enum CreateFailure {
     Statement,
 }
 
-/// The meaning of a database refusal with SQLSTATE `code` on `constraint`.
-fn failure_of(code: Option<&str>, constraint: Option<&str>) -> CreateFailure {
-    match (code, constraint) {
-        (Some(INVALID_PARAMETER_VALUE), _) => CreateFailure::LocaleRefused,
-        (Some(UNIQUE_VIOLATION), Some(COLLATION_NAME_INDEX)) => CreateFailure::CreatedConcurrently,
-        (Some(_) | None, _) => CreateFailure::Statement,
+/// The meaning of a failed `CREATE COLLATION`.
+///
+/// Both refusals a collation identifier can draw (`ICU locale "…" has unknown
+/// language "…"` from the locale validation, and `could not open collator for
+/// locale "…"` from ICU itself) are raised as `invalid_parameter_value`. The
+/// parameter in question is the client's own `collation`, which is what makes
+/// the failure a clause 5.7.2.4 `BadRequestData` rather than a broker fault.
+fn failure_of(error: &sqlx::Error) -> CreateFailure {
+    if violates_unique_constraint(error, COLLATION_NAME_INDEX) {
+        return CreateFailure::CreatedConcurrently;
+    }
+    if SqlState::of(error) == Some(SqlState::InvalidParameterValue) {
+        CreateFailure::LocaleRefused
+    } else {
+        CreateFailure::Statement
     }
 }
 
@@ -173,32 +167,42 @@ pub enum CollationProvisioningError {
 #[cfg(test)]
 mod tests {
     use crate::provisioned_collations::{CreateFailure, failure_of};
+    use andromeda_postgresql_pool::fake_database_error::FakeDatabaseError;
     use pretty_assertions::assert_eq;
+
+    /// A database refusal with SQLSTATE `code` on `constraint`.
+    fn refusal(code: &str, constraint: Option<&str>) -> sqlx::Error {
+        let error = FakeDatabaseError::new("refused", code);
+        match constraint {
+            Some(constraint) => error.with_constraint(constraint).into_sqlx(),
+            None => error.into_sqlx(),
+        }
+    }
 
     /// Clauses 5.7.2.4 and 5.7.4.4: a collation ICU does not hold is the
     /// client's `BadRequestData`.
     #[test]
     fn an_invalid_parameter_value_is_a_refused_locale() {
-        assert_eq!(failure_of(Some("22023"), None), CreateFailure::LocaleRefused);
+        assert_eq!(failure_of(&refusal("22023", None)), CreateFailure::LocaleRefused);
     }
 
     #[test]
     fn a_unique_violation_on_the_collation_name_index_is_a_concurrent_create() {
         assert_eq!(
-            failure_of(Some("23505"), Some("pg_collation_name_enc_nsp_index")),
+            failure_of(&refusal("23505", Some("pg_collation_name_enc_nsp_index"))),
             CreateFailure::CreatedConcurrently
         );
     }
 
     #[test]
     fn a_unique_violation_on_another_index_is_a_statement_failure() {
-        assert_eq!(failure_of(Some("23505"), Some("pg_type_typname_nsp_index")), CreateFailure::Statement);
-        assert_eq!(failure_of(Some("23505"), None), CreateFailure::Statement);
+        assert_eq!(failure_of(&refusal("23505", Some("pg_type_typname_nsp_index"))), CreateFailure::Statement);
+        assert_eq!(failure_of(&refusal("23505", None)), CreateFailure::Statement);
     }
 
     #[test]
     fn any_other_refusal_is_a_statement_failure() {
-        assert_eq!(failure_of(Some("57P01"), None), CreateFailure::Statement);
-        assert_eq!(failure_of(None, None), CreateFailure::Statement);
+        assert_eq!(failure_of(&refusal("57P01", None)), CreateFailure::Statement);
+        assert_eq!(failure_of(&sqlx::Error::PoolTimedOut), CreateFailure::Statement);
     }
 }

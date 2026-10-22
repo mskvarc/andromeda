@@ -16,9 +16,9 @@
 use crate::{
     context_source_change_clock::{advance_clause, advanced_revision},
     json_text::optional_json_text,
+    store_fault::persistence_error,
     subscription_store::{
         conformance_text::stored_conformance,
-        failure::persistence_error,
         interned_attributes::InternedAttributeLists,
         status_code::stored_status,
         stored_kind::{StoredKind, of_kind},
@@ -58,21 +58,21 @@ pub fn bind_csource_create<'q>(
         .bind(id.as_str())
         .bind(fields.subscription_name)
         .bind(fields.description)
-        .bind(optional_json_text(fields.entities).map_err(|error| persistence_error(error))?)
+        .bind(optional_json_text(fields.entities).map_err(|error| persistence_error::<SubscriptionError>(error))?)
         .bind(interned.watched_attributes.as_deref())
         .bind(stored_trigger_list(fields.notification_trigger))
         .bind(fields.time_interval)
         .bind(fields.q.map(ToString::to_string))
-        .bind(optional_json_text(fields.geo_q).map_err(|error| persistence_error(error))?)
+        .bind(optional_json_text(fields.geo_q).map_err(|error| persistence_error::<SubscriptionError>(error))?)
         .bind(fields.scope_q.map(ToString::to_string))
         .bind(fields.csf.map(ToString::to_string))
         .bind(interned.expand_values.as_deref())
         .bind(interned.json_keys.as_deref())
-        .bind(optional_json_text(fields.notification).map_err(|error| persistence_error(error))?)
+        .bind(optional_json_text(fields.notification).map_err(|error| persistence_error::<SubscriptionError>(error))?)
         .bind(fields.expires_at)
         .bind(fields.throttling)
         .bind(stored_status(status).code())
-        .bind(optional_json_text(fields.temporal_q).map_err(|error| persistence_error(error))?)
+        .bind(optional_json_text(fields.temporal_q).map_err(|error| persistence_error::<SubscriptionError>(error))?)
         .bind(fields.lang.map(ToString::to_string))
         .bind(fields.jsonld_context.map(IriBuf::as_str))
         .bind(stored_conformance(fields.ngsild_conformance))
@@ -96,17 +96,17 @@ pub fn bind_csource_update<'q>(
         .bind(id.as_str())
         .bind(fields.subscription_name)
         .bind(fields.description)
-        .bind(optional_json_text(fields.entities).map_err(|error| persistence_error(error))?)
+        .bind(optional_json_text(fields.entities).map_err(|error| persistence_error::<SubscriptionError>(error))?)
         .bind(interned.watched_attributes.as_deref())
         .bind(stored_trigger_list(fields.notification_trigger))
         .bind(fields.time_interval)
         .bind(fields.q.map(ToString::to_string))
-        .bind(optional_json_text(fields.geo_q).map_err(|error| persistence_error(error))?)
+        .bind(optional_json_text(fields.geo_q).map_err(|error| persistence_error::<SubscriptionError>(error))?)
         .bind(fields.scope_q.map(ToString::to_string))
         .bind(fields.csf.map(ToString::to_string))
         .bind(interned.expand_values.as_deref())
         .bind(interned.json_keys.as_deref())
-        .bind(optional_json_text(fields.notification).map_err(|error| persistence_error(error))?)
+        .bind(optional_json_text(fields.notification).map_err(|error| persistence_error::<SubscriptionError>(error))?)
         .bind(fields.expires_at)
         .bind(fields.throttling)
         .bind(stored_status(status).code())
@@ -177,7 +177,7 @@ pub fn csource_create_sql(target: &ContextTarget) -> Result<String, Subscription
             now(),
             now(),
         ])
-        .map_err(|error| persistence_error(error))?
+        .map_err(|error| persistence_error::<SubscriptionError>(error))?
         .returning(Query::returning().column(Subscriptions::SubscriptionKey));
     Ok(insert.to_string(PostgresQueryBuilder))
 }

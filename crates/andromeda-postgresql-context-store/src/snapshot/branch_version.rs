@@ -8,7 +8,7 @@
 use crate::{
     error::ContextStoreError,
     migration_set::branch::{BranchSchemaVersion, current_branch_version},
-    snapshot::persistence_error,
+    store_fault::persistence_error,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
@@ -25,7 +25,7 @@ pub(crate) fn branch_is_current(current: BranchSchemaVersion) -> SimpleExpr {
 
 /// The binary's current branch version, as a Snapshot-policy failure.
 pub(crate) fn current_version() -> Result<BranchSchemaVersion, SnapshotError> {
-    current_branch_version().map_err(|error| persistence_error(ContextStoreError::BranchVersion(error)))
+    current_branch_version().map_err(|error| persistence_error::<SnapshotError>(ContextStoreError::BranchVersion(error)))
 }
 
 /// The branch schema version one Snapshot URI carries.
@@ -50,7 +50,7 @@ pub(crate) async fn read_branch_condition(pool: &PgPool, id: &Identifier) -> Res
     let stored = sqlx::query_scalar_with::<_, i32, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_optional(pool)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
     Ok(stored.map(|version| condition_of(version, current)))
 }
 

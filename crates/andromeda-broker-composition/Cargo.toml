@@ -44,6 +44,7 @@ andromeda-json-literal.workspace = true
 andromeda-jsonld.workspace = true
 andromeda-linked-retrieval.workspace = true
 andromeda-ngsi-ld-compaction.workspace = true
+andromeda-ngsi-ld-expansion.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-query.workspace = true

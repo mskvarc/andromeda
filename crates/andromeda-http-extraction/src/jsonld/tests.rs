@@ -8,7 +8,7 @@ use andromeda_jsonld::{
 };
 use andromeda_ngsi_ld_model::{entity::Entity, request_body::RequestBody};
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemDetail};
 use andromeda_ngsi_ld_representation::embedded_context_admission::find_embedded_context;
 use axum::{
     body::{Body, HttpBody, to_bytes},
@@ -78,6 +78,14 @@ async fn admit(request: Request<Body>) -> Result<JsonLd<AnyObject>, ExtractorRej
     JsonLd::<AnyObject>::from_request(with_content_length(request), &()).await
 }
 
+/// The rejection `request` is refused with.
+async fn refused(request: Request<Body>) -> ExtractorRejection {
+    match admit(request).await {
+        Err(rejection) => rejection,
+        Ok(_) => panic!("the request was admitted"),
+    }
+}
+
 /// A JSON request carrying `body`.
 fn json_request(body: &'static str) -> Request<Body> {
     Request::builder()
@@ -131,11 +139,18 @@ fn literal(value: &Value) -> JsonLiteral {
 
 /// Whether `rejection` is a clause 5.5.4 `BadRequestData`.
 fn is_bad_request_data(rejection: &ExtractorRejection) -> bool {
-    match rejection {
-        ExtractorRejection::Classified(response) => response.problem().error_type() == NgsiLdErrorType::BadRequestData,
-        ExtractorRejection::BadRequestData { .. } => true,
-        ExtractorRejection::Empty(_) | ExtractorRejection::NotAcceptable(_) | ExtractorRejection::InvalidRequest { .. } => false,
-    }
+    error_type_of(rejection) == Some(NgsiLdErrorType::BadRequestData)
+}
+
+/// The error type `rejection` answers with, or `None` for a bare status or the
+/// `406` list.
+fn error_type_of(rejection: &ExtractorRejection) -> Option<NgsiLdErrorType> {
+    rejection.problem().map(ProblemDetail::error_type)
+}
+
+/// The detail `rejection` answers with.
+fn detail_of(rejection: &ExtractorRejection) -> &str {
+    rejection.problem().map_or("", ProblemDetail::detail)
 }
 
 const CONTEXT_A: &str = r#"<https://example.com/a.jsonld>; rel="http://www.w3.org/ns/json-ld#context""#;
@@ -334,7 +349,8 @@ async fn rejects_empty_body_with_bad_request() {
         .body(Body::empty())
         .expect("request builds");
 
-    assert!(matches!(admit(req).await, Err(ExtractorRejection::InvalidRequest { .. })));
+    let rejection = refused(req).await;
+    pretty_assertions::assert_eq!(error_type_of(&rejection), Some(NgsiLdErrorType::InvalidRequest));
 }
 
 #[tokio::test]
@@ -345,7 +361,31 @@ async fn rejects_valid_empty_array_as_bad_request_data() {
         .body(Body::from("[]"))
         .expect("request builds");
 
-    assert!(matches!(admit(req).await, Err(ExtractorRejection::BadRequestData { .. })));
+    let rejection = refused(req).await;
+    pretty_assertions::assert_eq!(error_type_of(&rejection), Some(NgsiLdErrorType::BadRequestData));
+    pretty_assertions::assert_eq!(detail_of(&rejection), "request body is an empty array, expected a JSON object");
+}
+
+/// Clause 5.5.4: a body that is no JSON document is named in the words every
+/// other body reader uses.
+#[tokio::test]
+async fn a_body_that_is_not_json_names_itself_as_every_reader_does() {
+    let rejection = refused(json_request("{")).await;
+    pretty_assertions::assert_eq!(error_type_of(&rejection), Some(NgsiLdErrorType::InvalidRequest));
+    assert!(
+        detail_of(&rejection).starts_with("request body is not a JSON document:"),
+        "{}",
+        detail_of(&rejection)
+    );
+}
+
+/// Clause 6.3.5: an `application/json` body carries its context in a `Link`
+/// header, so an `@context` member in it is refused.
+#[tokio::test]
+async fn a_json_body_carrying_a_context_member_is_bad_request_data() {
+    let rejection = refused(json_request(r#"{"@context":"https://example.org/ctx","id":"urn:ngsi-ld:T:1","type":"T"}"#)).await;
+    pretty_assertions::assert_eq!(error_type_of(&rejection), Some(NgsiLdErrorType::BadRequestData));
+    pretty_assertions::assert_eq!(detail_of(&rejection), "an application/json request body must not contain @context");
 }
 
 /// Clause 6.3.5: the context an `application/ld+json` body names is read from
@@ -432,7 +472,11 @@ async fn a_context_that_is_not_a_string_object_or_array_is_bad_request_data() {
     for context in [json!(42), json!(true), json!([1, "https://example.org/ctx"])] {
         let body = json!({"@context": context, "id": "urn:ngsi-ld:T:1", "type": "T"});
         let result = admit(request_of("application/ld+json", &body)).await;
-        assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })), "{context}");
+        pretty_assertions::assert_eq!(
+            result.err().as_ref().and_then(error_type_of),
+            Some(NgsiLdErrorType::BadRequestData),
+            "{context}"
+        );
     }
 }
 
@@ -472,12 +516,9 @@ async fn an_out_of_range_nested_number_is_bad_request_data_with_its_path() {
         ))
         .expect("request builds");
 
-    match admit(req).await {
-        Err(ExtractorRejection::BadRequestData { detail, .. }) => {
-            assert!(detail.contains("/property/value/nested/0"), "{detail}");
-        }
-        _other => panic!("expected BadRequestData"),
-    }
+    let rejection = refused(req).await;
+    pretty_assertions::assert_eq!(error_type_of(&rejection), Some(NgsiLdErrorType::BadRequestData));
+    assert!(detail_of(&rejection).contains("/property/value/nested/0"), "{}", detail_of(&rejection));
 }
 
 /// Clause 5.5.4: data that is not syntactically correct is `BadRequestData`,
@@ -513,10 +554,14 @@ async fn a_member_named_twice_in_any_object_of_a_body_is_bad_request_data_naming
     ] {
         let request = json_request(body);
         match admit(request).await {
-            Err(ExtractorRejection::BadRequestData { detail, .. }) => {
-                assert!(detail.contains(&format!("the member at {location} is named twice")), "{body}: {detail}");
+            Err(rejection) => {
+                pretty_assertions::assert_eq!(error_type_of(&rejection), Some(NgsiLdErrorType::BadRequestData), "{body}");
+                assert!(
+                    detail_of(&rejection).contains(&format!("the member at {location} is named twice")),
+                    "{body}: {}",
+                    detail_of(&rejection)
+                );
             }
-            Err(other) => panic!("{body}: expected BadRequestData, got {other:?}"),
             Ok(_) => panic!("{body}: a repeated member was admitted"),
         }
     }

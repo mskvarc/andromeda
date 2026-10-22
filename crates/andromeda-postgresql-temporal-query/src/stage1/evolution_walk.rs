@@ -17,6 +17,7 @@ use andromeda_postgresql_query::{
     type_membership::drives,
 };
 use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
+use iri_rs::IriBuf;
 use sea_query::{Asterisk, Expr, ExprTrait, IntoIden, Order, Query, TableRef};
 
 /// How a selector's type is tested on the Evolutions stage 1 reads.
@@ -190,12 +191,7 @@ fn walk(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryN
 /// 5.7.4.4 step S1); an attribute the dictionary never keyed has no history
 /// and no key.
 pub(super) fn concerned_attribute_keys(compiled: &CompiledTemporalQuery, attributes: &ResolvedNames<AttributeName>) -> Vec<AttributeNameKey> {
-    compiled
-        .instances
-        .attr_filter
-        .iter()
-        .filter_map(|name| attributes.get_str(name.as_str()))
-        .collect()
+    attributes.keys_of(compiled.instances.attr_filter.iter().map(IriBuf::as_str))
 }
 
 #[cfg(test)]
@@ -396,7 +392,7 @@ mod tests {
             "{walk}"
         );
         assert!(!sql.contains(r#"FROM "temporal_entities" AS "re" UNION ALL"#), "{sql}");
-        assert!(walk.contains(r#") AS "ah" WHERE "ah"."attribute_name_key" IN ($"#), "{walk}");
+        assert!(walk.contains(r#") AS "ah" WHERE "ah"."attribute_name_key" = ANY($"#), "{walk}");
         assert!(walk.contains(r#"ORDER BY "e"."id" ASC LIMIT $"#), "{walk}");
     }
 
@@ -441,7 +437,7 @@ mod tests {
             assert!(!count.contains(r#"AS "held""#), "{count}");
             assert!(
                 count.contains(concat!(
-                    r#") AS "ah" WHERE "ah"."attribute_name_key" IN (7) AND "ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00'"#,
+                    r#") AS "ah" WHERE "ah"."attribute_name_key" = ANY(ARRAY [7]) AND "ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00'"#,
                     r#" AND "ah"."temporal_entity_key" = "e"."temporal_entity_key")"#
                 )),
                 "{count}"
@@ -457,7 +453,7 @@ mod tests {
         compiled.instances.attr_filter = vec![iri("https://example.com/unknown")];
         let count = recorded_count(&HistoryBranch::live_recorded(), &compiled);
         assert!(count.contains(r#""temporal_entities" AS "e" WHERE"#), "{count}");
-        assert!(count.contains(r#") AS "ah" WHERE 1 = 2 AND"#), "{count}");
+        assert!(count.contains(r#") AS "ah" WHERE (FALSE"#), "{count}");
     }
 
     /// An unbounded window reads no history, so every holder is a match and

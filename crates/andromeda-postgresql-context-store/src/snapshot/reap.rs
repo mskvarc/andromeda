@@ -15,12 +15,13 @@
 //! one whose record is still uncommitted.
 
 use crate::{
-    snapshot::{branch_lock::branch_lock_key, branch_schema::drop_branch_schema, persistence_error},
-    store_fault::undecodable,
+    snapshot::{branch_lock::branch_lock_key, branch_schema::drop_branch_schema},
+    store_fault::{persistence_error, undecodable},
 };
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::SNAPSHOT_SCHEMA_PATTERN;
+use andromeda_postgresql_pool::contention_retry::ContentionRetry;
 use andromeda_postgresql_schema::snapshot::Snapshots;
 use andromeda_postgresql_seaquery::{
     advisory_lock::try_advisory_xact_lock,
@@ -33,8 +34,7 @@ use chrono::{DateTime, Utc};
 use sea_query::{Alias, Expr, ExprTrait, LockType, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Postgres, Transaction};
-use std::time::Duration;
-use tokio::time::sleep;
+use std::{num::NonZeroU32, time::Duration};
 use tracing::info;
 
 /// Bounded retries for a branch-reaping transaction that a deadlock rolls back.
@@ -44,34 +44,28 @@ use tracing::info;
 /// PostgreSQL rolls the victim's whole transaction back, so re-running it from a
 /// fresh transaction clears the contention. Kept small because heavy contention
 /// is rare and each attempt re-runs the entire delete.
-const BRANCH_REAP_ATTEMPTS: u32 = 5;
-/// Backoff between contended branch-reaping attempts.
-const BRANCH_REAP_BACKOFF: Duration = Duration::from_millis(50);
+const BRANCH_REAP_RETRY: ContentionRetry<Duration> = ContentionRetry {
+    attempts: NonZeroU32::MIN.saturating_add(4),
+    pause: Duration::from_millis(50),
+};
+
+/// Whether a reap failed because a deadlock rolled its transaction back.
+const fn is_contended(error: &SnapshotError) -> bool {
+    matches!(error, SnapshotError::Contended)
+}
 
 /// Delete one snapshot by identifier: drop its branch schemas, then delete the
 /// control record, which cascades the preparation and outbox rows. Retries a
-/// transaction a deadlock with branch delivery rolls back.
+/// transaction a deadlock with branch delivery rolls back, up to
+/// [`BRANCH_REAP_RETRY`] attempts.
 pub(crate) async fn delete_snapshot(pool: &PgPool, id: &Identifier) -> Result<u64, SnapshotError> {
-    retry_contended(async || delete_snapshot_once(pool, id).await).await
-}
-
-/// Run one branch-reaping transaction, re-running it from a fresh transaction
-/// while a deadlock rolls it back, up to [`BRANCH_REAP_ATTEMPTS`] attempts.
-async fn retry_contended(mut reap_once: impl AsyncFnMut() -> Result<u64, SnapshotError>) -> Result<u64, SnapshotError> {
-    let mut attempt = 0;
-    loop {
-        attempt += 1;
-        match reap_once().await {
-            Err(SnapshotError::Contended) if attempt < BRANCH_REAP_ATTEMPTS => sleep(BRANCH_REAP_BACKOFF).await,
-            outcome => return outcome,
-        }
-    }
+    BRANCH_REAP_RETRY.run(is_contended, async || delete_snapshot_once(pool, id).await).await
 }
 
 /// Delete one Snapshot's control record and branch schema in a single
 /// transaction, returning the number of control rows removed.
 async fn delete_snapshot_once(pool: &PgPool, id: &Identifier) -> Result<u64, SnapshotError> {
-    let mut transaction = pool.begin().await.map_err(|error| persistence_error(error))?;
+    let mut transaction = pool.begin().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
     let statement = Query::select()
         .column(Snapshots::SnapshotKey)
         .from(Snapshots::Table)
@@ -82,15 +76,15 @@ async fn delete_snapshot_once(pool: &PgPool, id: &Identifier) -> Result<u64, Sna
     let Some(raw) = sqlx::query_scalar_with::<_, i64, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_optional(&mut *transaction)
         .await
-        .map_err(|error| persistence_error(error))?
+        .map_err(|error| persistence_error::<SnapshotError>(error))?
     else {
-        transaction.rollback().await.map_err(|error| persistence_error(error))?;
+        transaction.rollback().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
         return Ok(0);
     };
     let snapshot_key = SnapshotKey::try_from(raw).map_err(|error| SnapshotError::from(undecodable(&error)))?;
     reap_branch(&mut transaction, snapshot_key).await?;
     let deleted = delete_control_record(&mut transaction, snapshot_key).await?;
-    transaction.commit().await.map_err(|error| persistence_error(error))?;
+    transaction.commit().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
     Ok(deleted)
 }
 
@@ -98,8 +92,10 @@ async fn delete_snapshot_once(pool: &PgPool, id: &Identifier) -> Result<u64, Sna
 /// branch schemas no control record owns any more, returning the number of
 /// expired Snapshots deleted.
 pub(crate) async fn delete_expired_snapshots(pool: &PgPool, cutoff: DateTime<Utc>) -> Result<u64, SnapshotError> {
-    let deleted = retry_contended(async || delete_expired_snapshots_once(pool, cutoff).await).await?;
-    let swept = retry_contended(async || sweep_orphan_branches_once(pool).await).await?;
+    let deleted = BRANCH_REAP_RETRY
+        .run(is_contended, async || delete_expired_snapshots_once(pool, cutoff).await)
+        .await?;
+    let swept = BRANCH_REAP_RETRY.run(is_contended, async || sweep_orphan_branches_once(pool).await).await?;
     if swept > 0 {
         info!(
             swept_snapshots = swept,
@@ -113,7 +109,7 @@ pub(crate) async fn delete_expired_snapshots(pool: &PgPool, cutoff: DateTime<Utc
 /// Delete every Snapshot past `cutoff` and its branch schema in a single
 /// transaction, returning the number of control rows removed.
 async fn delete_expired_snapshots_once(pool: &PgPool, cutoff: DateTime<Utc>) -> Result<u64, SnapshotError> {
-    let mut transaction = pool.begin().await.map_err(|error| persistence_error(error))?;
+    let mut transaction = pool.begin().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
     let statement = Query::select()
         .column(Snapshots::SnapshotKey)
         .from(Snapshots::Table)
@@ -124,9 +120,9 @@ async fn delete_expired_snapshots_once(pool: &PgPool, cutoff: DateTime<Utc>) -> 
     let rows = sqlx::query_scalar_with::<_, i64, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_all(&mut *transaction)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
     if rows.is_empty() {
-        transaction.rollback().await.map_err(|error| persistence_error(error))?;
+        transaction.rollback().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
         return Ok(0);
     }
     let mut deleted = 0;
@@ -135,7 +131,7 @@ async fn delete_expired_snapshots_once(pool: &PgPool, cutoff: DateTime<Utc>) -> 
         reap_branch(&mut transaction, snapshot_key).await?;
         deleted += delete_control_record(&mut transaction, snapshot_key).await?;
     }
-    transaction.commit().await.map_err(|error| persistence_error(error))?;
+    transaction.commit().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
     Ok(deleted)
 }
 
@@ -144,12 +140,12 @@ async fn delete_expired_snapshots_once(pool: &PgPool, cutoff: DateTime<Utc>) -> 
 /// schemas were dropped. A schema whose lock maintenance holds stays for the
 /// next sweep.
 async fn sweep_orphan_branches_once(pool: &PgPool) -> Result<u64, SnapshotError> {
-    let mut transaction = pool.begin().await.map_err(|error| persistence_error(error))?;
+    let mut transaction = pool.begin().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
     let (sql, values) = orphan_branch_keys_statement().build_sqlx(PostgresQueryBuilder);
     let keys = sqlx::query_scalar_with::<_, i64, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_all(&mut *transaction)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
     let mut swept = 0;
     for raw in keys {
         let snapshot_key = SnapshotKey::try_from(raw).map_err(|error| SnapshotError::from(undecodable(&error)))?;
@@ -158,7 +154,7 @@ async fn sweep_orphan_branches_once(pool: &PgPool) -> Result<u64, SnapshotError>
             swept += 1;
         }
     }
-    transaction.commit().await.map_err(|error| persistence_error(error))?;
+    transaction.commit().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
     Ok(swept)
 }
 
@@ -204,7 +200,7 @@ async fn try_branch_lock(transaction: &mut Transaction<'_, Postgres>, snapshot_k
     sqlx::query_scalar_with::<_, bool, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_one(&mut **transaction)
         .await
-        .map_err(|error| persistence_error(error))
+        .map_err(|error| persistence_error::<SnapshotError>(error))
 }
 
 /// The statement a reap transaction tries its branch lock with.
@@ -218,10 +214,10 @@ fn branch_lock_statement(snapshot_key: SnapshotKey) -> SelectStatement {
 async fn drop_branch_schemas(transaction: &mut Transaction<'_, Postgres>, snapshot_key: SnapshotKey) -> Result<(), SnapshotError> {
     drop_branch_schema(transaction, snapshot_key, SnapshotBranch::Published)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
     drop_branch_schema(transaction, snapshot_key, SnapshotBranch::Staging)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
     Ok(())
 }
 
@@ -235,7 +231,7 @@ pub(crate) async fn delete_control_record(transaction: &mut Transaction<'_, Post
     let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(&mut **transaction)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
     Ok(result.rows_affected())
 }
 

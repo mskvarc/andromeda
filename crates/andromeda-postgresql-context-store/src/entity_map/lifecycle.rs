@@ -2,7 +2,7 @@
 //! the expiry, delete, and sweep. Everything here names a map by its URI; the
 //! surrogate `entity_map_key` is issued by the database and resolved in-statement.
 
-use crate::entity_map::persistence_error;
+use crate::store_fault::persistence_error;
 use andromeda_entity_map::{error::EntityMapError, store::EntityMapMutation};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
@@ -69,7 +69,7 @@ pub(crate) async fn delete_map_row(connection: &mut PgConnection, id: &Identifie
     let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(connection)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<EntityMapError>(error))?;
     Ok(mutation_outcome(result.rows_affected()))
 }
 
@@ -82,12 +82,12 @@ pub(crate) async fn insert_map_row(connection: &mut PgConnection, map: &EntityMa
         .into_table(EntityMaps::Table)
         .columns([EntityMaps::Id, EntityMaps::ExpiresAt, EntityMaps::RequestFingerprint])
         .values([Expr::val(map.id.as_str()), Expr::val(map.expires_at), Expr::val(fingerprint)])
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<EntityMapError>(error))?;
     let (sql, values) = insert.build_sqlx(PostgresQueryBuilder);
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(connection)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<EntityMapError>(error))?;
     Ok(())
 }
 
@@ -103,13 +103,15 @@ pub(crate) async fn read_live_control(pool: &PgPool, id: &Identifier) -> Result<
     let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_optional(pool)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<EntityMapError>(error))?;
     row.map(|row| {
         Ok(MapControlRecord {
-            expires_at: row.try_get::<DateTime<Utc>, _>("expires_at").map_err(|error| persistence_error(error))?,
+            expires_at: row
+                .try_get::<DateTime<Utc>, _>("expires_at")
+                .map_err(|error| persistence_error::<EntityMapError>(error))?,
             request_fingerprint: row
                 .try_get::<Option<String>, _>("request_fingerprint")
-                .map_err(|error| persistence_error(error))?,
+                .map_err(|error| persistence_error::<EntityMapError>(error))?,
         })
     })
     .transpose()
@@ -126,7 +128,7 @@ pub(crate) async fn update_expiry(pool: &PgPool, id: &Identifier, expires_at: Da
     let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(pool)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<EntityMapError>(error))?;
     Ok(mutation_outcome(result.rows_affected()))
 }
 
@@ -140,7 +142,7 @@ pub(crate) async fn delete_live(pool: &PgPool, id: &Identifier) -> Result<Entity
     let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(pool)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<EntityMapError>(error))?;
     Ok(mutation_outcome(result.rows_affected()))
 }
 
@@ -153,7 +155,7 @@ pub(crate) async fn delete_expired(pool: &PgPool, cutoff: DateTime<Utc>) -> Resu
     let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(pool)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<EntityMapError>(error))?;
     Ok(result.rows_affected())
 }
 

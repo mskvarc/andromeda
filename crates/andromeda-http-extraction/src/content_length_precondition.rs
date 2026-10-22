@@ -18,7 +18,8 @@
 //! header it received as a [`ReceivedContentLength`] before it does.
 
 use crate::addressed_uri::addressed_uri;
-use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use andromeda_http_response::{classified_report::ClassifiedReport, extraction_rejection::ExtractorRejection};
+use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{
     extract::FromRequestParts,
     http::{Extensions, HeaderMap, HeaderValue, StatusCode, Uri, header::CONTENT_LENGTH, request::Parts},
@@ -94,7 +95,7 @@ impl ContentLengthPreconditionError {
         match self {
             ContentLengthPreconditionError::Absent => ExtractorRejection::Empty(StatusCode::LENGTH_REQUIRED),
             ContentLengthPreconditionError::Malformed | ContentLengthPreconditionError::Empty => {
-                ExtractorRejection::invalid_request(self.to_string(), instance)
+                ExtractorRejection::Classified(ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, self.to_string()).with_instance(instance))
             }
         }
     }
@@ -144,6 +145,7 @@ where
 mod tests {
     use crate::content_length_precondition::{ContentLengthPreconditionError, DeclaredBodyLength, ReceivedContentLength, declared_body_length};
     use andromeda_http_response::extraction_rejection::ExtractorRejection;
+    use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use axum::{
         body::{Body, to_bytes},
         extract::FromRequestParts,
@@ -247,6 +249,19 @@ mod tests {
         }
     }
 
+    /// Clause 6.3.4: a malformed or zero `Content-Length` keeps the clause's
+    /// `InvalidRequest`, naming the request.
+    #[test]
+    fn a_malformed_or_empty_length_is_an_invalid_request_naming_the_request() {
+        for error in [ContentLengthPreconditionError::Malformed, ContentLengthPreconditionError::Empty] {
+            let rejection = error.into_rejection("/ngsi-ld/v1/entities".parse().expect("a valid request URI"));
+            let problem = rejection.problem().expect("a classified rejection");
+            pretty_assertions::assert_eq!(problem.error_type(), NgsiLdErrorType::InvalidRequest, "{error}");
+            pretty_assertions::assert_eq!(problem.detail(), error.to_string(), "{error}");
+            pretty_assertions::assert_eq!(problem.instance().map(ToString::to_string).as_deref(), Some("/ngsi-ld/v1/entities"), "{error}");
+        }
+    }
+
     /// The extractor form applies the same precondition to a request's parts.
     #[tokio::test]
     async fn the_extractor_refuses_a_request_that_declares_no_length() {
@@ -263,9 +278,6 @@ mod tests {
         match rejection {
             ExtractorRejection::Empty(status) => pretty_assertions::assert_eq!(status, StatusCode::LENGTH_REQUIRED),
             ExtractorRejection::NotAcceptable(_) | ExtractorRejection::Classified(_) => panic!("clause 6.3.4 requires a bare 411"),
-            ExtractorRejection::InvalidRequest { detail, .. } | ExtractorRejection::BadRequestData { detail, .. } => {
-                panic!("clause 6.3.4 requires a bare 411, not a problem detail: {detail}")
-            }
         }
     }
 

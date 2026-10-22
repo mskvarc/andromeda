@@ -3,9 +3,9 @@
 //! Both are written in bulk through `UNNEST`, so a map over thousands of
 //! entities is one statement per child table rather than one per row.
 
-use crate::entity_map::{
-    lifecycle::{entity_map_key_of, live_entity_map_key_of},
-    persistence_error,
+use crate::{
+    entity_map::lifecycle::{entity_map_key_of, live_entity_map_key_of},
+    store_fault::persistence_error,
 };
 use andromeda_entity_map::{error::EntityMapError, store::EntityMapMutation};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -13,7 +13,7 @@ use andromeda_ngsi_ld_model::entity_map::EntityMap;
 use andromeda_postgresql_schema::entity_map::{EntityMapEntries, EntityMapLinks, EntityMaps as EntityMapsTable};
 use andromeda_postgresql_seaquery::{
     clock::now,
-    pg_array::{any, text_array},
+    pg_array::is_any_of,
     pg_type::PostgresType,
     placeholder::external_placeholder,
     unnest::{UnnestColumn, apply_column_alias, unnest_call},
@@ -64,7 +64,7 @@ pub(crate) fn entries_insert_sql() -> Result<String, EntityMapError> {
         EntityMapEntries::EntityId.into_iden(),
         EntityMapEntries::Source.into_iden(),
     ]);
-    insert.select_from(select).map_err(|error| persistence_error(error))?;
+    insert.select_from(select).map_err(|error| persistence_error::<EntityMapError>(error))?;
     Ok(apply_column_alias(insert.to_string(PostgresQueryBuilder), &D, &columns))
 }
 
@@ -88,7 +88,7 @@ pub(crate) fn links_insert_sql() -> Result<String, EntityMapError> {
         EntityMapLinks::RegistrationId.into_iden(),
         EntityMapLinks::LinkedMapId.into_iden(),
     ]);
-    insert.select_from(select).map_err(|error| persistence_error(error))?;
+    insert.select_from(select).map_err(|error| persistence_error::<EntityMapError>(error))?;
     Ok(apply_column_alias(insert.to_string(PostgresQueryBuilder), &D, &columns))
 }
 
@@ -101,7 +101,7 @@ pub(crate) async fn insert_children(connection: &mut PgConnection, map: &EntityM
         .enumerate()
         .map(|(position, (entity_id, source))| {
             Ok(EntryRow {
-                position: i32::try_from(position).map_err(|error| persistence_error(error))?,
+                position: i32::try_from(position).map_err(|error| persistence_error::<EntityMapError>(error))?,
                 entity_id: entity_id.as_str(),
                 source: source.to_string(),
             })
@@ -119,7 +119,7 @@ pub(crate) async fn insert_children(connection: &mut PgConnection, map: &EntityM
             .bind(&sources)
             .execute(&mut *connection)
             .await
-            .map_err(|error| persistence_error(error))?;
+            .map_err(|error| persistence_error::<EntityMapError>(error))?;
     }
     if !map.linked_maps.is_empty() {
         let registrations: Vec<&str> = map.linked_maps.keys().map(Identifier::as_str).collect();
@@ -131,7 +131,7 @@ pub(crate) async fn insert_children(connection: &mut PgConnection, map: &EntityM
             .bind(&linked)
             .execute(&mut *connection)
             .await
-            .map_err(|error| persistence_error(error))?;
+            .map_err(|error| persistence_error::<EntityMapError>(error))?;
     }
     Ok(())
 }
@@ -161,7 +161,7 @@ fn link_upsert(id: &Identifier, registration: &Identifier, linked_map: &Identifi
                 .update_column(EntityMapLinks::LinkedMapId)
                 .to_owned(),
         );
-    insert.select_from(staged).map_err(|error| persistence_error(error))?;
+    insert.select_from(staged).map_err(|error| persistence_error::<EntityMapError>(error))?;
     Ok(insert)
 }
 
@@ -177,7 +177,7 @@ pub(crate) async fn upsert_link(
     let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(pool)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<EntityMapError>(error))?;
     Ok(match result.rows_affected() {
         0 => EntityMapMutation::Missing,
         1.. => EntityMapMutation::Applied,
@@ -195,7 +195,7 @@ fn entries_delete(id: &Identifier, entity_ids: &[&str]) -> DeleteStatement {
     delete
         .from_table(EntityMapEntries::Table)
         .and_where(Expr::col(EntityMapEntries::EntityMapKey).eq(live_entity_map_key_of(Expr::val(id.as_str()))))
-        .and_where(Expr::col(EntityMapEntries::EntityId).eq(any(text_array(entity_ids))));
+        .and_where(is_any_of(Expr::col(EntityMapEntries::EntityId), entity_ids.iter().map(|id| (*id).to_owned())));
     delete
 }
 
@@ -208,7 +208,7 @@ pub(crate) async fn prune_entries(pool: &PgPool, id: &Identifier, entity_ids: &[
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(pool)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<EntityMapError>(error))?;
     Ok(())
 }
 
@@ -225,12 +225,12 @@ pub(crate) async fn read_entries(pool: &PgPool, id: &Identifier) -> Result<Vec<(
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_all(pool)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<EntityMapError>(error))?;
     rows.iter()
         .map(|row| {
             Ok((
-                row.try_get("entity_id").map_err(|error| persistence_error(error))?,
-                row.try_get("source").map_err(|error| persistence_error(error))?,
+                row.try_get("entity_id").map_err(|error| persistence_error::<EntityMapError>(error))?,
+                row.try_get("source").map_err(|error| persistence_error::<EntityMapError>(error))?,
             ))
         })
         .collect()
@@ -248,12 +248,12 @@ pub(crate) async fn read_links(pool: &PgPool, id: &Identifier) -> Result<Vec<(St
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_all(pool)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<EntityMapError>(error))?;
     rows.iter()
         .map(|row| {
             Ok((
-                row.try_get("registration_id").map_err(|error| persistence_error(error))?,
-                row.try_get("linked_map_id").map_err(|error| persistence_error(error))?,
+                row.try_get("registration_id").map_err(|error| persistence_error::<EntityMapError>(error))?,
+                row.try_get("linked_map_id").map_err(|error| persistence_error::<EntityMapError>(error))?,
             ))
         })
         .collect()

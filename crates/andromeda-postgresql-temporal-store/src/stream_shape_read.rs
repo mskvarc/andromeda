@@ -19,22 +19,23 @@
 
 use crate::{error::TemporalStoreError, repo::TemporalRepository, stored_attribute_shape::StoredAttributeShape, stored_catalog_error::StoredCatalogError};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, recorded_shape::RecordedShape, value_kind::ValueKind};
-use andromeda_postgresql_query::history_source::{
-    HistoryBranch,
-    HistoryOf,
-    attribute_rows::pending_attribute_rows,
-    grain::HistoryGrain,
-    instance_replacement::{kept_beside_pending, queued_instance_replacements},
+use andromeda_postgresql_codes::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
+use andromeda_postgresql_query::{
+    attribute_name_key::AttributeNameKey,
+    history_source::{
+        HistoryBranch,
+        HistoryOf,
+        attribute_rows::pending_attribute_rows,
+        grain::HistoryGrain,
+        instance_replacement::{kept_beside_pending, queued_instance_replacements},
+    },
+    tombstone::carries_a_value,
 };
 use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,
     temporal::{AttributeHistory, TemporalAttributeStreams, TemporalStreamShapes},
 };
-use andromeda_postgresql_seaquery::{
-    branch::qualified,
-    pg_array::{any, text_array},
-};
+use andromeda_postgresql_seaquery::{branch::qualified, pg_array::is_any_of};
 use andromeda_postgresql_temporal_query::{
     alias::{Ah, An},
     recorded_shape::{RecordedShapeColumn, recorded_shape},
@@ -108,7 +109,8 @@ impl TemporalRepository {
     ///
     /// # Errors
     ///
-    /// Returns [`TemporalStoreError::Database`] when the statement fails and
+    /// Returns [`TemporalStoreError::NameLookup`] when the dictionary read
+    /// fails, [`TemporalStoreError::Database`] when the statement fails and
     /// [`TemporalStoreError::StoredCatalog`] when a stored name, family code or
     /// shape code is not one the dictionary or the registries know.
     pub(crate) async fn stored_attribute_shapes(
@@ -119,8 +121,20 @@ impl TemporalRepository {
         if attributes.is_empty() {
             return Ok(HashMap::new());
         }
-        let names: Vec<&str> = attributes.iter().map(AttributeName::as_str).collect();
-        let (sql, values) = recorded_attribute_shapes_query(branch, &names).build_sqlx(PostgresQueryBuilder);
+        // The names resolve through the shared dictionary cache, so the
+        // statement narrows by key; a name never recorded has no shape.
+        let keys: Vec<i32> = self
+            .attribute_names
+            .lookup(attributes)
+            .await?
+            .keys_of(attributes.iter().map(AttributeName::as_str))
+            .into_iter()
+            .map(AttributeNameKey::get)
+            .collect();
+        if keys.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let (sql, values) = recorded_attribute_shapes_query(branch, &keys).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
         let mut shapes_by_attribute: HashMap<AttributeName, HashSet<StoredAttributeShape>> = HashMap::new();
         for row in rows {
@@ -140,20 +154,20 @@ impl TemporalRepository {
 /// recorded with in `branch`: those the stream catalogue holds, and where the
 /// branch reads its queue, those of the streams queued entries replace an
 /// instance of, read from their rows, and those of the queued entries.
-fn recorded_attribute_shapes_query(branch: &HistoryBranch, names: &[&str]) -> SelectStatement {
-    let mut statement = catalogued_shapes(branch, names);
-    if let Some(replaced) = replaced_stream_shapes(branch, names) {
+fn recorded_attribute_shapes_query(branch: &HistoryBranch, keys: &[i32]) -> SelectStatement {
+    let mut statement = catalogued_shapes(branch, keys);
+    if let Some(replaced) = replaced_stream_shapes(branch, keys) {
         statement.union(UnionType::Distinct, replaced);
     }
-    if let Some(queued) = queued_shapes(branch, names) {
+    if let Some(queued) = queued_shapes(branch, keys) {
         statement.union(UnionType::Distinct, queued);
     }
     statement
 }
 
-/// The attribute under `an` is one of `names`.
-fn named(names: &[&str]) -> SimpleExpr {
-    Expr::col((An, AttributeNames::Name)).eq(any(text_array(names)))
+/// The attribute under `an` is one of those keyed `keys`.
+fn named(keys: &[i32]) -> SimpleExpr {
+    is_any_of(Expr::col((An, AttributeNames::AttributeNameKey)), keys.iter().copied())
 }
 
 /// The combinations the stream catalogue of `branch` holds for the named
@@ -166,7 +180,7 @@ fn named(names: &[&str]) -> SimpleExpr {
 /// for a bound pair, and with one shape per attribute it takes every stream as
 /// a match and scans; ordering each step by the index key keeps it on the
 /// index.
-fn catalogued_shapes(branch: &HistoryBranch, names: &[&str]) -> SelectStatement {
+fn catalogued_shapes(branch: &HistoryBranch, keys: &[i32]) -> SelectStatement {
     let columns = [
         TemporalStreamShapes::AttributeNameKey,
         TemporalStreamShapes::AttributeKind,
@@ -181,7 +195,7 @@ fn catalogued_shapes(branch: &HistoryBranch, names: &[&str]) -> SelectStatement 
             Step,
             SimpleExpr::from(true),
         )
-        .and_where(named(names));
+        .and_where(named(keys));
     let mut walk = Query::select();
     walk.columns(columns.map(|column| (Step, column))).from(Held).join_lateral(
         JoinType::Join,
@@ -271,7 +285,7 @@ fn replaced_streams(branch: &HistoryBranch) -> Option<SelectStatement> {
 /// The combinations the rows of the streams queued entries replace an
 /// instance of carry for the named attributes, less the rows the queue
 /// replaces; `None` where `branch` reads no queue.
-fn replaced_stream_shapes(branch: &HistoryBranch, names: &[&str]) -> Option<SelectStatement> {
+fn replaced_stream_shapes(branch: &HistoryBranch, keys: &[i32]) -> Option<SelectStatement> {
     let replaced = replaced_streams(branch)?;
     let mut select = Query::select();
     select
@@ -291,8 +305,8 @@ fn replaced_stream_shapes(branch: &HistoryBranch, names: &[&str]) -> Option<Sele
             Ah,
             Expr::col((Ah, AttributeHistory::StreamKey)).equals((Replaced, TemporalAttributeStreams::StreamKey)),
         )
-        .and_where(named(names))
-        .and_where(Expr::col((Ah, AttributeHistory::ValueKind)).ne(ValueKind::Tombstone.code()));
+        .and_where(named(keys))
+        .and_where(carries_a_value(Ah));
     if let Some(kept) = kept_beside_pending(
         branch.pending(),
         Expr::col((Replaced, TemporalAttributeStreams::Id)),
@@ -307,7 +321,7 @@ fn replaced_stream_shapes(branch: &HistoryBranch, names: &[&str]) -> Option<Sele
 /// The combinations the queued entries of `branch` the application would
 /// write carry for the named attributes; `None` where the branch reads no
 /// queue.
-fn queued_shapes(branch: &HistoryBranch, names: &[&str]) -> Option<SelectStatement> {
+fn queued_shapes(branch: &HistoryBranch, keys: &[i32]) -> Option<SelectStatement> {
     let entries: TableRef = pending_attribute_rows(branch, &HistoryOf::EveryEntity, Ah)?;
     Some(
         Query::select()
@@ -321,8 +335,8 @@ fn queued_shapes(branch: &HistoryBranch, names: &[&str]) -> Option<SelectStateme
                 An,
                 Expr::col((An, AttributeNames::AttributeNameKey)).equals((Ah, HistoryGrain::AttributeNameKey)),
             )
-            .and_where(named(names))
-            .and_where(Expr::col((Ah, AttributeHistory::ValueKind)).ne(ValueKind::Tombstone.code()))
+            .and_where(named(keys))
+            .and_where(carries_a_value(Ah))
             .to_owned(),
     )
 }
@@ -334,7 +348,7 @@ mod tests {
     use sea_query::{Alias, IntoIden, PostgresQueryBuilder};
 
     fn rendered(branch: &HistoryBranch) -> String {
-        recorded_attribute_shapes_query(branch, &["https://ex/speed"]).to_string(PostgresQueryBuilder)
+        recorded_attribute_shapes_query(branch, &[7]).to_string(PostgresQueryBuilder)
     }
 
     /// Over no queue the shapes are the stream catalogue's alone, so the read
@@ -399,6 +413,6 @@ mod tests {
     #[test]
     fn no_part_reads_a_shape_off_a_tombstone() {
         let sql = rendered(&HistoryBranch::live());
-        assert_eq!(sql.matches(r#""ah"."value_kind" <> 0"#).count(), 2, "{sql}");
+        assert_eq!(sql.matches(r#""ah"."value_kind" <> (0)"#).count(), 2, "{sql}");
     }
 }

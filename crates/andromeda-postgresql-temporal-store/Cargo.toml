@@ -49,5 +49,6 @@ uuid = { version = "1.27.0", features = ["v4"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+andromeda-postgresql-pool = { workspace = true, features = ["test-support"] }
 pretty_assertions = "1.4.1"
 tokio = { version = "1.53.2", features = ["full"] }

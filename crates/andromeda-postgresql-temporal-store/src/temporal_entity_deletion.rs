@@ -26,6 +26,7 @@ use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
 use andromeda_postgresql_schema::temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams, TemporalEntities};
 use andromeda_postgresql_seaquery::{aggregate::count_all, branch::qualified};
+use andromeda_postgresql_temporal_query::alias::{Ah, S, Te};
 use andromeda_temporal::temporal_not_found_reason::TemporalNotFoundReason;
 use sea_query::{
     DeleteStatement,
@@ -46,25 +47,10 @@ use sqlx::{AssertSqlSafe, Postgres, Row, Transaction, postgres::PgRow};
 use std::collections::BTreeSet;
 use uuid::Uuid;
 
-/// The `attribute_history` alias in the orphan audit.
-#[derive(Iden, Clone, Copy)]
-#[iden = "ah"]
-struct Ah;
-
-/// The `temporal_attribute_streams` alias in the orphan audit.
-#[derive(Iden, Clone, Copy)]
-#[iden = "s"]
-struct S;
-
 /// The `scope_history` alias in the orphan audit.
 #[derive(Iden, Clone, Copy)]
 #[iden = "sh"]
 struct Sh;
-
-/// The `temporal_entities` alias in the orphan audit.
-#[derive(Iden, Clone, Copy)]
-#[iden = "te"]
-struct Te;
 
 /// The count of attribute-history rows whose stream is gone.
 #[derive(Iden, Clone, Copy)]

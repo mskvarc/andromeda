@@ -11,6 +11,7 @@ use andromeda_context_registry::{detail_level::ContextDetailLevel, identifier::C
 use andromeda_http_extraction::{
     api_root::ApiRoot,
     content_length_precondition::DeclaredBodyLength,
+    not_json_document::NotJsonDocument,
     pagination_policy::RequestPagination,
     query::ValidatedQuery,
     request_payload::RequestPayload,
@@ -24,8 +25,9 @@ use andromeda_http_response::{
     pagination::{PageOutcome, append_page_links},
     parameter_failure::classify_parameter_error,
     problem_response::ProblemResponse,
+    request_refusal::RequestRefusal,
 };
-use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::count_policy::CountPolicy;
 use andromeda_ngsi_ld_request::{
@@ -69,22 +71,10 @@ pub(crate) async fn create(
     RequestPayload(body): RequestPayload,
 ) -> Result<Response, ProblemResponse> {
     let payload = serde_json::from_slice::<&RawValue>(&body)
-        .map_err(|source| JsonLiteralError::Syntax { source })
-        .and_then(JsonLiteral::admit_raw)
-        .map_err(|error| {
-            // Clause 5.5.4: an object naming one member twice is well-formed
-            // JSON whose data is not syntactically correct (IETF RFC 8259
-            // section 4), the same refusal every other body draws.
-            let error_type = match &error {
-                JsonLiteralError::DuplicateMember { .. } => NgsiLdErrorType::BadRequestData,
-                JsonLiteralError::Syntax { .. }
-                | JsonLiteralError::Number { .. }
-                | JsonLiteralError::TooDeep { .. }
-                | JsonLiteralError::ProcessorText { .. } => NgsiLdErrorType::InvalidRequest,
-            };
-            // clone: the refusal names the request, which the response below names too
-            ClassifiedReport::public(error_type, InadmissibleBody(error).to_string()).with_instance(uri.clone())
-        })?;
+        .map_err(|source| InadmissibleBody::NotJson(NotJsonDocument(source)))
+        .and_then(|raw| JsonLiteral::admit_raw(raw).map_err(InadmissibleBody::of))
+        // clone: the refusal names the request, which the response below names too
+        .map_err(|refusal| refusal.into_problem(uri.clone()))?;
     // Clause 5.13.2 records the absolute URL the entry is served under, which a
     // request naming no authority gives nothing to build on (IETF RFC 9112
     // section 3.2 makes such an HTTP/1.1 request malformed).

@@ -66,9 +66,9 @@ impl TemporalRepository {
             .unzip();
         let holders = match holders {
             ShapeHolders::Entity(entity_id) => StatementHolders::Entity(entity_id),
-            ShapeHolders::Selected => StatementHolders::Selected(&names),
+            ShapeHolders::Selected => StatementHolders::Selected,
         };
-        let Some(statement) = build_held_shapes_query(branch, holders, compiled, &combinations).map_err(TemporalStoreError::Render)? else {
+        let Some(statement) = build_held_shapes_query(branch, holders, compiled, &names, &combinations).map_err(TemporalStoreError::Render)? else {
             return Ok(HashMap::new());
         };
         // The candidates a combination names range from none to most of the

@@ -12,73 +12,66 @@
 
 use crate::attempt_failure::AttemptFailure;
 use andromeda_context_commit::{error::CommitError, write_retry::backoff_after_lost_attempts};
-use std::future::Future;
-use tokio::time::sleep;
+use andromeda_postgresql_pool::contention_retry::{ContentionRetry, RetryPause};
+use std::{num::NonZeroU32, time::Duration};
 
-/// How many times a commit is run before its contention is reported.
+/// The jittered backoff between runs of a contended commit, so the contenders
+/// that collided do not restart in lockstep.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CommitBackoff;
+
+impl RetryPause for CommitBackoff {
+    fn after(&self, lost_attempts: NonZeroU32) -> Duration {
+        tracing::debug!(lost_attempts, "atomic context commit rolled back by a concurrent transaction; running it again");
+        backoff_after_lost_attempts(lost_attempts.get())
+    }
+}
+
+/// The retry a contended commit runs under: five runs in all.
 ///
 /// A victim clears on the next attempt unless the same cycle forms again, so a
 /// handful of attempts absorbs every conflict that is not pathological, and the
 /// bound caps what a pathological one adds to the request before the client is
 /// told to retry (503 with `Retry-After`).
-pub(crate) const CONTENDED_COMMIT_ATTEMPTS: u32 = 5;
+pub(crate) const CONTENDED_COMMIT_RETRY: ContentionRetry<CommitBackoff> = ContentionRetry {
+    attempts: NonZeroU32::MIN.saturating_add(4),
+    pause: CommitBackoff,
+};
 
 /// Run `attempt` until it ends in anything but
-/// [`CommitError::TransactionContended`], at most
-/// [`CONTENDED_COMMIT_ATTEMPTS`] times, with a jittered backoff between runs so
-/// the contenders that collided do not restart in lockstep.
-pub(crate) async fn rerun_while_contended<T, F, Attempt>(mut attempt: F) -> Result<T, AttemptFailure>
-where
-    F: FnMut() -> Attempt,
-    Attempt: Future<Output = Result<T, AttemptFailure>>,
-{
-    let mut lost_attempts = 0;
-    loop {
-        match attempt().await {
-            Err(AttemptFailure::Failed(CommitError::TransactionContended)) if lost_attempts + 1 < CONTENDED_COMMIT_ATTEMPTS => {
-                lost_attempts += 1;
-                tracing::debug!(lost_attempts, "atomic context commit rolled back by a concurrent transaction; running it again");
-                sleep(backoff_after_lost_attempts(lost_attempts)).await;
-            }
-            outcome => return outcome,
-        }
-    }
+/// [`CommitError::TransactionContended`], at most as often as
+/// [`CONTENDED_COMMIT_RETRY`] allows.
+pub(crate) async fn rerun_while_contended<T>(attempt: impl AsyncFnMut() -> Result<T, AttemptFailure>) -> Result<T, AttemptFailure> {
+    CONTENDED_COMMIT_RETRY
+        .run(|failure| matches!(failure, AttemptFailure::Failed(CommitError::TransactionContended)), attempt)
+        .await
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
         attempt_failure::{AttemptFailure, RefusedWrite},
-        contention_retry::{CONTENDED_COMMIT_ATTEMPTS, rerun_while_contended},
+        contention_retry::{CONTENDED_COMMIT_RETRY, rerun_while_contended},
     };
     use andromeda_context_commit::{error::CommitError, submission_refusal::SubmissionRefusal};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
-    use std::{
-        cell::Cell,
-        future::{Ready, ready},
-    };
+    use std::cell::Cell;
 
-    /// An attempt that reports contention on its first `contended` runs and
-    /// `settled` afterwards, counting every run.
-    fn attempt_contended_for(
-        contended: u32,
-        runs: &Cell<u32>,
-        settled: fn() -> Result<u32, AttemptFailure>,
-    ) -> impl FnMut() -> Ready<Result<u32, AttemptFailure>> + '_ {
-        move || {
-            runs.set(runs.get() + 1);
-            ready(if runs.get() <= contended {
-                Err(AttemptFailure::Failed(CommitError::TransactionContended))
-            } else {
-                settled()
-            })
+    /// One run of an attempt that reports contention on its first `contended`
+    /// runs and `settled` afterwards, counting every run.
+    fn run_contended_for(contended: u32, runs: &Cell<u32>, settled: fn() -> Result<u32, AttemptFailure>) -> Result<u32, AttemptFailure> {
+        runs.set(runs.get() + 1);
+        if runs.get() <= contended {
+            Err(AttemptFailure::Failed(CommitError::TransactionContended))
+        } else {
+            settled()
         }
     }
 
     #[tokio::test(start_paused = true)]
     async fn a_commit_rolled_back_twice_lands_on_its_third_run() {
         let runs = Cell::new(0);
-        let outcome = rerun_while_contended(attempt_contended_for(2, &runs, || Ok(7))).await;
+        let outcome = rerun_while_contended(async || run_contended_for(2, &runs, || Ok(7))).await;
         assert!(matches!(outcome, Ok(7)), "{outcome:?}");
         pretty_assertions::assert_eq!(runs.get(), 3);
     }
@@ -86,9 +79,9 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_commit_rolled_back_on_every_run_reports_contention_after_the_budget() {
         let runs = Cell::new(0);
-        let outcome = rerun_while_contended(attempt_contended_for(u32::MAX, &runs, || Ok(7))).await;
+        let outcome = rerun_while_contended(async || run_contended_for(u32::MAX, &runs, || Ok(7))).await;
         assert!(matches!(outcome, Err(AttemptFailure::Failed(CommitError::TransactionContended))), "{outcome:?}");
-        pretty_assertions::assert_eq!(runs.get(), CONTENDED_COMMIT_ATTEMPTS);
+        pretty_assertions::assert_eq!(runs.get(), CONTENDED_COMMIT_RETRY.attempts.get());
     }
 
     /// Only a rolled-back transaction is known to have left nothing behind; any
@@ -96,13 +89,15 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_failure_other_than_contention_is_never_run_again() {
         let runs = Cell::new(0);
-        let outcome = rerun_while_contended(attempt_contended_for(0, &runs, || {
-            Err(AttemptFailure::Failed(CommitError::Persistence(PersistenceFailure::StatementRejected)))
-        }))
+        let outcome = rerun_while_contended(async || {
+            run_contended_for(0, &runs, || {
+                Err(AttemptFailure::Failed(CommitError::Persistence(PersistenceFailure::StatementRejected)))
+            })
+        })
         .await;
         assert!(matches!(outcome, Err(AttemptFailure::Failed(CommitError::Persistence(_)))), "{outcome:?}");
         pretty_assertions::assert_eq!(runs.get(), 1);
-        let saturated = rerun_while_contended(|| ready(Err::<u32, AttemptFailure>(AttemptFailure::Failed(CommitError::StoreSaturated)))).await;
+        let saturated = rerun_while_contended(async || Err::<u32, AttemptFailure>(AttemptFailure::Failed(CommitError::StoreSaturated))).await;
         assert!(matches!(saturated, Err(AttemptFailure::Failed(CommitError::StoreSaturated))), "{saturated:?}");
     }
 
@@ -112,7 +107,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn an_unreachable_store_is_not_re_run() {
         let runs = Cell::new(0);
-        let outcome = rerun_while_contended(attempt_contended_for(0, &runs, || Err(AttemptFailure::Failed(CommitError::StoreUnavailable)))).await;
+        let outcome = rerun_while_contended(async || run_contended_for(0, &runs, || Err(AttemptFailure::Failed(CommitError::StoreUnavailable)))).await;
         assert!(matches!(outcome, Err(AttemptFailure::Failed(CommitError::StoreUnavailable))), "{outcome:?}");
         pretty_assertions::assert_eq!(runs.get(), 1);
     }
@@ -122,14 +117,21 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_refused_write_is_handed_back_from_its_first_run() {
         let runs = Cell::new(0);
-        let outcome = rerun_while_contended(attempt_contended_for(0, &runs, || {
-            Err(AttemptFailure::Refused(Box::new(RefusedWrite {
-                entity_id: "urn:ngsi-ld:A".parse().expect("a valid entity URI"),
-                refusal: SubmissionRefusal::RelationshipMissingObject,
-            })))
-        }))
+        let outcome = rerun_while_contended(async || {
+            run_contended_for(0, &runs, || {
+                Err(AttemptFailure::Refused(Box::new(RefusedWrite {
+                    entity_id: "urn:ngsi-ld:A".parse().expect("a valid entity URI"),
+                    refusal: SubmissionRefusal::RelationshipMissingObject,
+                })))
+            })
+        })
         .await;
         assert!(matches!(outcome, Err(AttemptFailure::Refused(_))), "{outcome:?}");
         pretty_assertions::assert_eq!(runs.get(), 1);
+    }
+
+    #[test]
+    fn a_contended_commit_runs_five_times() {
+        pretty_assertions::assert_eq!(CONTENDED_COMMIT_RETRY.attempts.get(), 5);
     }
 }

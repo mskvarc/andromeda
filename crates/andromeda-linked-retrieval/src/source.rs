@@ -14,7 +14,7 @@ use crate::{candidate::LinkedCandidate, edge::LinkedEdge, representation::Linked
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
 use indexmap::IndexMap;
-use std::{future::Future, num::NonZeroU32};
+use std::{fmt, future::Future, num::NonZeroU32};
 
 /// The node type a source reads.
 pub type NodeOf<S> = <<S as LinkedSource>::Representation as LinkedRepresentation>::Node;
@@ -44,6 +44,57 @@ pub struct RemoteRead<N> {
     pub edges: Vec<LinkedEdge>,
     /// Every Linked Entity the fetch left unresolved.
     pub failures: Vec<LinkedResolutionFailure>,
+}
+
+impl<N> RemoteRead<N> {
+    /// A fetch that yielded nothing and reported nothing: there is no
+    /// remainder of the system to ask.
+    #[must_use]
+    pub const fn nothing() -> RemoteRead<N> {
+        RemoteRead {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            failures: Vec::new(),
+        }
+    }
+
+    /// A fetch of `id` that could not consult the remainder of the system,
+    /// for the reason `cause` states.
+    #[must_use]
+    pub fn unreachable(id: &Identifier, cause: &impl fmt::Display) -> RemoteRead<N> {
+        RemoteRead {
+            failures: vec![LinkedResolutionFailure::unreachable(id, cause)],
+            ..RemoteRead::nothing()
+        }
+    }
+}
+
+/// What the remainder of the system answered for one Linked Entity, before
+/// the consumer reads it into nodes: the entities in whatever form the
+/// consumer's port carries them, and what stayed unresolved.
+///
+/// The two halves are independent: the holders can answer with entities
+/// *and* report that part of what was asked for is missing.
+#[derive(Debug)]
+pub struct RemoteResolution<E> {
+    /// The entities the holders resolved: the Linked Entity and whatever they
+    /// resolved around it.
+    pub entities: Vec<E>,
+    /// Every Linked Entity the attempt left unresolved.
+    pub failures: Vec<LinkedResolutionFailure>,
+}
+
+impl<E> RemoteResolution<E> {
+    /// A resolution of `id` whose holders could not be consulted at all, for
+    /// the reason `cause` states. Clause 4.5.23 degrades the join rather than
+    /// the request, so this is an answer, not an error.
+    #[must_use]
+    pub fn unreachable(id: &Identifier, cause: &impl fmt::Display) -> RemoteResolution<E> {
+        RemoteResolution {
+            entities: Vec::new(),
+            failures: vec![LinkedResolutionFailure::unreachable(id, cause)],
+        }
+    }
 }
 
 /// How far the holder of a remote Linked Entity resolves on its own.

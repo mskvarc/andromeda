@@ -26,7 +26,7 @@ use andromeda_postgresql_query::{
     time_interval_predicate::within_interval,
 };
 use andromeda_postgresql_schema::temporal::{AttributeHistory, TemporalAttributeStreams};
-use andromeda_postgresql_seaquery::branch::qualified;
+use andromeda_postgresql_seaquery::{branch::qualified, pg_array::is_any_of};
 use sea_query::{Expr, ExprTrait, JoinType, Query, SelectStatement, UnionType};
 
 /// How many Evolutions a windowed page walks before it reads the candidates:
@@ -111,7 +111,10 @@ impl<'q> WindowRead<'q> {
         match &self.concerned {
             ConcernedAttributes::Every => {}
             ConcernedAttributes::Keyed(keys) => {
-                candidates.and_where(Expr::col((Rs, TemporalAttributeStreams::AttributeNameKey)).is_in(keys.iter().map(|key| key.get())));
+                candidates.and_where(is_any_of(
+                    Expr::col((Rs, TemporalAttributeStreams::AttributeNameKey)),
+                    keys.iter().map(|key| key.get()),
+                ));
             }
         }
         match branch.pending() {
@@ -218,7 +221,7 @@ mod tests {
         let (sql, values) = recorded_stage1(&compiled).select.build(PostgresQueryBuilder);
         let candidates = PageBranches::of(&sql).candidates;
         let (_, keys) = candidates
-            .split_once(r#" AND "rs"."attribute_name_key" IN ($"#)
+            .split_once(r#" AND "rs"."attribute_name_key" = ANY($"#)
             .unwrap_or_else(|| panic!("the concerned keys: {candidates}"));
         let position: usize = keys
             .chars()
@@ -226,7 +229,10 @@ mod tests {
             .collect::<String>()
             .parse()
             .expect("a placeholder");
-        assert_eq!(values.0.get(position - 1), Some(&Value::Int(Some(1))), "{sql}");
+        assert!(
+            matches!(values.0.get(position - 1), Some(Value::Array(_, Some(keys))) if keys.as_slice() == [Value::Int(Some(1))]),
+            "{sql}"
+        );
     }
 
     #[test]

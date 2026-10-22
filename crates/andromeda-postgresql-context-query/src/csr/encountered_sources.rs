@@ -7,15 +7,15 @@
 
 use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
 use andromeda_postgresql_schema::csr::Csr;
-use andromeda_postgresql_seaquery::pg_array::{any, text_array};
+use andromeda_postgresql_seaquery::pg_array::is_none_of;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait};
 
-/// `context_source_alias IS NULL OR NOT (context_source_alias = ANY(ARRAY[...]))`.
+/// `context_source_alias IS NULL OR context_source_alias <> ALL(ARRAY[...])`.
 pub(crate) fn not_encountered(encountered: &[ContextSourcePseudonym]) -> Condition {
-    let aliases: Vec<&str> = encountered.iter().map(ContextSourcePseudonym::as_str).collect();
-    Condition::any()
-        .add(SeaExpr::col(Csr::ContextSourceAlias).is_null())
-        .add(Condition::all().add(SeaExpr::col(Csr::ContextSourceAlias).eq(any(text_array(&aliases)))).not())
+    Condition::any().add(SeaExpr::col(Csr::ContextSourceAlias).is_null()).add(is_none_of(
+        SeaExpr::col(Csr::ContextSourceAlias),
+        encountered.iter().map(|alias| alias.as_str().to_owned()),
+    ))
 }
 
 #[cfg(test)]
@@ -32,7 +32,7 @@ mod tests {
             .cond_where(not_encountered(&encountered))
             .to_string(PostgresQueryBuilder);
         assert!(
-            sql.contains("\"context_source_alias\" IS NULL OR (NOT \"context_source_alias\" = ANY(ARRAY ['broker-b']))"),
+            sql.contains("\"context_source_alias\" IS NULL OR \"context_source_alias\" <> ALL(ARRAY ['broker-b'])"),
             "{sql}"
         );
     }

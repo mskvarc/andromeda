@@ -3,11 +3,10 @@
 use crate::{
     blocking_executor::TokioBlockingExecutor,
     event::{entity_change_sink::BroadcastEntityChangeSink, registration_change_sink::BroadcastRegistrationChangeSink},
-    linked_entity_forwarding::ForwardedLinkedEntitySource,
+    linked_forwarding::LinkedForwarding,
     local_entity_type::EntityStoreTypeResolver,
     registered_entity_probe::EntityStoreRegistrationProbe,
     retry_delay::TokioRetryDelay,
-    temporal_linked_forwarding::ForwardedTemporalLinkedSource,
     tenant_factory::{
         TenantFactoryConfig,
         assembly_invariant::AssemblyInvariant,
@@ -234,7 +233,7 @@ fn compose_temporal_service(
         // Clause 4.5.23.1 applied to the temporal API: an annotated Linked
         // Entity whose history this broker does not record is fetched from the
         // context sources registered for it.
-        Some(Arc::new(ForwardedTemporalLinkedSource::new(
+        Some(Arc::new(LinkedForwarding::new(
             Arc::clone(forwarding),      // clone: request handling and linked resolution share one forwarding service.
             storage.live_target.clone(), // clone: linked resolution runs against the tenant's live branch.
         )) as Arc<dyn RemoteTemporalLinkedSource>),
@@ -277,7 +276,7 @@ fn compose_entity_query_service(config: &TenantFactoryConfig, storage: &TenantSt
         storage.tenant.clone(),  // clone: the query service owns its tenant partition.
         // Clause 4.5.23.1: an `objectType`-annotated Linked Entity this broker
         // does not store is fetched from the context sources registered for it.
-        Some(Arc::new(ForwardedLinkedEntitySource::new(
+        Some(Arc::new(LinkedForwarding::new(
             Arc::clone(forwarding),      // clone: request handling and linked resolution share one forwarding service.
             storage.live_target.clone(), // clone: linked resolution runs against the tenant's live branch.
         )) as Arc<dyn RemoteLinkedEntitySource>),

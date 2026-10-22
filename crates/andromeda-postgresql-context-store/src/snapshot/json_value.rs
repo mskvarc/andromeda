@@ -3,7 +3,8 @@
 use crate::{
     error::ContextStoreError,
     json_text::optional_json_text,
-    snapshot::{persistence_error, unencodable_snapshot_error::UnencodableSnapshotError},
+    snapshot::unencodable_snapshot_error::UnencodableSnapshotError,
+    store_fault::persistence_error,
 };
 use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType};
 use andromeda_snapshot::error::SnapshotError;
@@ -21,7 +22,7 @@ pub(crate) fn document_text<T: Serialize + ?Sized>(
     value: Option<&T>,
     unencodable: fn(serde_json::Error) -> UnencodableSnapshotError,
 ) -> Result<Option<String>, SnapshotError> {
-    optional_json_text(value).map_err(|error| persistence_error(ContextStoreError::from(unencodable(error))))
+    optional_json_text(value).map_err(|error| persistence_error::<SnapshotError>(ContextStoreError::from(unencodable(error))))
 }
 
 /// The statement value for one nullable `json` column: the value's JSON text

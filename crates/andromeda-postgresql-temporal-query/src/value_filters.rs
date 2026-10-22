@@ -17,27 +17,19 @@
 //! catalogue row looked up per probe. A split query reads its leaves for a
 //! list of identifiers and names the Evolution by its identifier.
 
-use crate::{alias::Ahg, axis::axis_column};
+use crate::axis::axis_column;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, contributed_entities::ContributedEntities};
 use andromeda_postgresql_query::{
     dictionary::query_names::QueryNames,
     error::RenderError,
-    geo_predicate::{near_envelope_unindexed_prefilter, relation_expression},
-    history_source::{EvolutionColumns, HistoryBranch, HistoryOf, attribute_rows::attribute_rows, grain::HistoryGrain},
+    history_source::{EvolutionColumns, HistoryBranch, HistoryOf},
     q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, projection as q_filter},
     scope_predicate::{ScopeTarget, condition as scope_condition},
-    time_interval_predicate::within_interval,
 };
-use andromeda_postgresql_schema::{
-    current::E,
-    temporal::{AttributeHistory, TemporalEntities},
-};
-use andromeda_postgresql_seaquery::{
-    cast::cast,
-    literal::{false_literal, int_literal},
-    pg_type::PostgresType,
-};
-use sea_query::{Condition, Expr as SeaExpr, ExprTrait, SelectStatement};
+use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
+use andromeda_postgresql_seaquery::pg_array::is_any_of;
+use sea_query::{Condition, Expr as SeaExpr};
 
 /// The conjunction of the query's `q`, geo and scope filters over the temporal
 /// entity `e`, with the entities a Context Source contributed to a split query
@@ -63,8 +55,8 @@ pub(crate) fn value_filter_condition(branch: &HistoryBranch, compiled: &Compiled
         ));
         present = true;
     }
-    if let Some(probe) = temporal_geo_existential(branch, compiled, names, &of)? {
-        filters = filters.add(SeaExpr::exists(probe));
+    if let Some(geo) = temporal_geo_existential(branch, compiled, names, &of)? {
+        filters = filters.add(geo);
         present = true;
     }
     if let Some(scope_q) = &compiled.entities.scope_q {
@@ -88,8 +80,10 @@ fn exempting_contributed(filters: Condition, contributed: &ContributedEntities) 
     if contributed.is_empty() {
         return filters;
     }
-    let ids: Vec<&str> = contributed.as_slice().iter().map(AsRef::as_ref).collect();
-    Condition::any().add(filters).add(SeaExpr::col((E, TemporalEntities::Id)).is_in(ids))
+    Condition::any().add(filters).add(is_any_of(
+        SeaExpr::col((E, TemporalEntities::Id)),
+        contributed.as_slice().iter().map(Identifier::to_string),
+    ))
 }
 
 /// The scope-history target a temporal `scopeQ` is read against: a validity
@@ -116,31 +110,16 @@ pub(crate) fn windowed_instances(branch: &HistoryBranch, compiled: &CompiledTemp
         .build()
 }
 
-/// The correlated `EXISTS` over the `attribute_history` rows a temporal geo
-/// query (clause 4.10) filters, restricted to the temporal window.
+/// Whether one `GeoProperty` instance of the Evolution `of` names, valid
+/// within the temporal window, meets the query's geo restriction (clause 4.10;
+/// clause 5.7.4.4 step S3); `None` when the query carries none.
 ///
-/// Clause 5.7.4.4 step S3: the geospatial restriction "shall be checked against
-/// the `GeoProperty` instances that are within the interval defined by the
-/// temporal query". Every instance of the target `GeoProperty` - the default
-/// `location` and any named one alike - is an `attribute_history` row carrying a
-/// `value_geometry`, so the probe reaches them uniformly through the history
-/// rows of the Evolution `of` names rather than through the single hoisted
-/// current-state `location` column, which holds only one instant and answers a
-/// different question. Clause 4.10 makes one in-window instance meeting the
-/// restriction enough, which is exactly this existential. `None` when the
-/// query carries no geo restriction.
-///
-/// The `GeoProperty` is compared by the dictionary key the query resolved, on
-/// the source's own grain column, which PostgreSQL pushes into every branch of
-/// the source; one the dictionary never keyed has no history and matches no
-/// instance.
-///
-/// A `near` relation with a `maxDistance` first tests the near envelope as a
-/// box no geometry index serves: the probe reads one Evolution's rows through
-/// its stream index, and an indexable box would have the planner AND a
-/// geometry index into every probe. The spheroidal distance then runs only on
-/// the rows the box keeps. The area relations test the boxes inside their own
-/// functions.
+/// Every instance of the target `GeoProperty`, the default `location` and any
+/// named one alike, is a history row carrying a `value_geometry`, so the probe
+/// reaches them uniformly through the Evolution's history rather than through
+/// the single hoisted current-state `location` column, which holds only one
+/// instant and answers a different question. The instances are the window's
+/// own, read exactly as the `q` filter reads them.
 ///
 /// # Errors
 ///
@@ -151,44 +130,13 @@ pub(crate) fn temporal_geo_existential(
     compiled: &CompiledTemporalQuery,
     names: &QueryNames,
     of: &HistoryOf,
-) -> Result<Option<SelectStatement>, RenderError> {
+) -> Result<Option<Condition>, RenderError> {
     let Some(geo) = &compiled.entities.geo else {
         return Ok(None);
     };
-
-    let planar = SeaExpr::col((Ahg, AttributeHistory::ValueGeometry));
-    let geographic = cast(SeaExpr::col((Ahg, AttributeHistory::ValueGeometry)), PostgresType::Geography);
-    let near_box = near_envelope_unindexed_prefilter(geo, &planar);
-    let spatial = relation_expression(&geo.georel, planar, geographic, &geo.geometry)?;
-    let geoproperty = names
-        .attributes
-        .get(&geo.geoproperty)
-        .map_or_else(false_literal, |key| SeaExpr::col((Ahg, HistoryGrain::AttributeNameKey)).eq(key.get()));
-
-    let mut probe = SelectStatement::new();
-    probe
-        .expr(int_literal(1))
-        .from(attribute_rows(branch, of, Ahg))
-        .and_where(geoproperty)
-        .and_where(SeaExpr::col((Ahg, AttributeHistory::ValueGeometry)).is_not_null())
-        .cond_where(geo_window_condition(compiled));
-    if let Some(near_box) = near_box {
-        probe.and_where(near_box);
-    }
-    probe.cond_where(spatial);
-    Ok(Some(probe.take()))
-}
-
-/// The temporal window as a predicate on the geo existential's own
-/// `attribute_history` axis column.
-///
-/// The same interval the stream match applies (clause 5.2.21), restated against
-/// the `ahg` alias so a `GeoProperty` instance counts only when it falls within
-/// the window (clause 5.7.4.4 S3). The axis is the query's `timeproperty`,
-/// defaulting to `observedAt` (clause 4.11).
-fn geo_window_condition(compiled: &CompiledTemporalQuery) -> Condition {
-    let axis = axis_column(compiled.window.timeproperty);
-    within_interval(&SeaExpr::col((Ahg, axis)), &compiled.window.interval)
+    windowed_instances(branch, compiled, of)
+        .exists_geo(names.attributes.get(&geo.geoproperty), geo)
+        .map(Some)
 }
 
 #[cfg(test)]
@@ -237,7 +185,7 @@ mod tests {
     /// A recorded source narrowed inside to the Evolution's identifier.
     const BY_IDENTIFIER: &str = r#""re"."id" = "e"."id""#;
     /// The geo probe's comparison of the `GeoProperty`'s dictionary key.
-    const GEO_KEY: &str = r#""ahg"."attribute_name_key" = $"#;
+    const GEO_KEY: &str = r#""qh"."attribute_name_key" = $"#;
 
     fn instant(raw: &str) -> DateTime<Utc> {
         raw.parse::<NgsiLdDateTime>().expect("valid instant").get()
@@ -334,12 +282,17 @@ mod tests {
             .to_string(PostgresQueryBuilder)
     }
 
+    /// The geo filter of `compiled` alone, with its bound values.
+    fn geo_filter(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames) -> (String, Values) {
+        let condition = temporal_geo_existential(branch, compiled, names, &stage1_evolution())
+            .expect("renders")
+            .expect("a geo query");
+        Query::select().expr(Expr::val(1)).cond_where(condition).to_owned().build(PostgresQueryBuilder)
+    }
+
     /// The geo probe stage 1 conjoins, with its bound values.
     fn geo_probe(branch: &HistoryBranch, names: &QueryNames) -> (String, Values) {
-        temporal_geo_existential(branch, &near(compiled(before_2030())), names, &stage1_evolution())
-            .expect("renders")
-            .expect("a geo query")
-            .build(PostgresQueryBuilder)
+        geo_filter(branch, &near(compiled(before_2030())), names)
     }
 
     /// The value bound to the placeholder right after the first `fragment`.
@@ -371,25 +324,17 @@ mod tests {
     #[test]
     fn the_temporal_near_probe_prefilters_by_an_unindexed_box() {
         let (sql, _) = geo_probe(&HistoryBranch::live_recorded(), &names());
-        let unindexed = sql.find(r#""ahg"."value_geometry"::box2d && ST_MakeEnvelope("#).expect("the unindexed box");
+        let unindexed = sql.find(r#""qh"."value_geometry"::box2d && ST_MakeEnvelope("#).expect("the unindexed box");
         let distance = sql.find("ST_DWithin").expect("the distance");
         assert!(unindexed < distance, "{sql}");
         assert!(sql[unindexed..distance].contains(")::box2d"), "{sql}");
-        assert!(!sql.contains(r#""ahg"."value_geometry" && ST_MakeEnvelope("#), "{sql}");
+        assert!(!sql.contains(r#""qh"."value_geometry" && ST_MakeEnvelope("#), "{sql}");
     }
 
     #[test]
     fn an_area_relation_carries_no_box_prefilter() {
         for georel in [GeoRel::Within, GeoRel::Intersects] {
-            let sql = temporal_geo_existential(
-                &HistoryBranch::live_recorded(),
-                &area(georel, compiled(before_2030())),
-                &names(),
-                &stage1_evolution(),
-            )
-            .expect("renders")
-            .expect("a geo query")
-            .to_string(PostgresQueryBuilder);
+            let (sql, _) = geo_filter(&HistoryBranch::live_recorded(), &area(georel, compiled(before_2030())), &names());
             assert!(!sql.contains("::box2d"), "{sql}");
         }
     }
@@ -400,8 +345,8 @@ mod tests {
     #[test]
     fn an_unrecorded_geoproperty_matches_no_instance() {
         let (sql, _) = geo_probe(&HistoryBranch::live_recorded(), &QueryNames::default());
-        assert!(sql.contains(r#") AS "ahg" WHERE (FALSE) AND "ahg"."value_geometry" IS NOT NULL"#), "{sql}");
-        assert!(!sql.contains("attribute_names") && !sql.contains(r#""ahg"."attribute_name_key""#), "{sql}");
+        assert!(sql.ends_with("WHERE FALSE"), "{sql}");
+        assert!(!sql.contains("attribute_names") && !sql.contains(r#""qh""#), "{sql}");
     }
 
     #[test]
@@ -421,7 +366,7 @@ mod tests {
         let (sql, values) = geo_probe(&HistoryBranch::live(), &names());
         let recorded = sql.find(r#"FROM "attribute_history" AS "rh""#).expect("the recorded part");
         let queued = sql.find(r#"FROM "temporal_append_entries" AS "pe""#).expect("the queued part");
-        let key = sql.find(&format!(r#") AS "ahg" WHERE {GEO_KEY}"#)).expect("the key comparison on the source");
+        let key = sql.find(&format!(r#") AS "qh" WHERE {GEO_KEY}"#)).expect("the key comparison on the source");
         assert!(recorded < queued && queued < key, "{sql}");
         assert_eq!(sql.matches(GEO_KEY).count(), 1, "{sql}");
         assert_eq!(bound_after(&sql, &values, GEO_KEY), Some(Value::Int(Some(2))), "{sql}");
@@ -450,8 +395,23 @@ mod tests {
     #[test]
     fn a_recorded_branch_correlates_the_geo_probe_by_evolution_key() {
         let sql = filters(&HistoryBranch::live_recorded(), &near(compiled(before_2030())));
-        assert!(sql.contains(&format!(r#"{BY_KEY}) AS "ahg""#)), "{sql}");
+        assert!(sql.contains(&format!(r#"{BY_KEY}) AS "qh""#)), "{sql}");
         assert!(!sql.contains(BY_IDENTIFIER) && !sql.contains("temporal_entities"), "{sql}");
+    }
+
+    /// Clause 5.7.4.4 steps S2 and S3 read the same instances: for one window,
+    /// `q` and `georel` both probe the instances inside it and the instance in
+    /// effect when it opens (the one placed on its stream, `qi`), and neither
+    /// counts a deletion.
+    #[test]
+    fn q_and_georel_read_the_same_window_instances() {
+        let q = filters(&HistoryBranch::live_recorded(), &rare_q(compiled(after_2019())));
+        let (geo, _) = geo_filter(&HistoryBranch::live_recorded(), &near(compiled(after_2019())), &names());
+        for (filter, sql) in [("q", &q), ("georel", &geo)] {
+            assert!(sql.contains(r#" AS "qi""#), "{filter} reads the instance in effect: {sql}");
+            assert!(sql.contains(r#""qh"."observed_at" >"#), "{filter} reads the instances inside: {sql}");
+            assert!(sql.contains(r#""qh"."value_kind" <> "#), "{filter} skips a deletion: {sql}");
+        }
     }
 
     /// Clause 4.18: an `after` window also asks whether a later event of the
@@ -474,7 +434,7 @@ mod tests {
         let sql = filters(&snapshot(), &moved(near(rare_q(compiled(before_2030())))));
         for (relation, correlation) in [
             (r#""snap_7"."attribute_history" AS "rh""#, format!(r#"{BY_KEY}) AS "qh""#)),
-            (r#""snap_7"."attribute_history" AS "rh""#, format!(r#"{BY_KEY}) AS "ahg""#)),
+            (r#""snap_7"."attribute_history" AS "rh""#, format!(r#"{BY_KEY}) AS "qh""#)),
             (r#""snap_7"."scope_history" AS "rsh""#, format!(r#"{SCOPE_BY_KEY}) AS "sh""#)),
         ] {
             assert!(sql.contains(relation), "{relation}: {sql}");
@@ -488,7 +448,11 @@ mod tests {
     #[test]
     fn a_queued_branch_keeps_the_identifier_correlation() {
         let sql = filters(&HistoryBranch::live(), &moved(near(rare_q(compiled(after_2019())))));
-        assert_eq!(sql.matches(BY_IDENTIFIER).count(), 5, "the q, in-effect, placed, geo and Scope sources: {sql}");
+        assert_eq!(
+            sql.matches(BY_IDENTIFIER).count(),
+            7,
+            "the inside, in-effect and placed sources of q and of the geo-query, and the Scope source: {sql}"
+        );
         assert!(sql.contains(r#""pe"."entity_id" = "e"."id""#), "{sql}");
         assert!(sql.contains(r#""re"."id" = "sh"."entity_id""#), "{sql}");
         assert!(!sql.contains(r#""temporal_entity_key" = "e"."temporal_entity_key""#), "{sql}");

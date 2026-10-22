@@ -22,8 +22,8 @@ use andromeda_postgresql_query::{
     time_interval_predicate::within_interval,
 };
 use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
-use andromeda_postgresql_seaquery::literal::int_literal;
-use sea_query::{Condition, DynIden, Expr as SeaExpr, ExprTrait, IntoIden, SelectStatement};
+use andromeda_postgresql_seaquery::{literal::int_literal, pg_array::is_any_of};
+use sea_query::{Condition, DynIden, Expr as SeaExpr, IntoIden, SelectStatement};
 
 /// Build the correlated stream or history predicate shared by result and
 /// count: a bounded window asks for an instance inside it, an unbounded one
@@ -79,7 +79,7 @@ fn build_temporal_stage1_conditions(compiled: &CompiledTemporalQuery, alias: &Dy
     if !compiled.instances.attr_filter.is_empty() {
         let keys: Vec<i32> = concerned_attribute_keys(compiled, attributes).into_iter().map(AttributeNameKey::get).collect();
         // clone: the alias is shared by every condition on the source.
-        condition = condition.add(SeaExpr::col((alias.clone(), HistoryGrain::AttributeNameKey)).is_in(keys));
+        condition = condition.add(is_any_of(SeaExpr::col((alias.clone(), HistoryGrain::AttributeNameKey)), keys));
     }
 
     // Temporal filters (timerel + time_at), on the requested axis alone.
@@ -155,8 +155,14 @@ mod tests {
         compiled.instances.attr_filter = vec![iri("https://example.com/speed")];
         let (sql, values) = built(&compiled, &speed_and_address());
         assert!(!sql.contains("attribute_names"), "{sql}");
-        assert!(sql.contains(r#") AS "ah" WHERE "ah"."attribute_name_key" IN ($"#), "{sql}");
-        assert!(values.0.iter().any(|value| matches!(value, Value::Int(Some(7)))), "{values:?}");
+        assert!(sql.contains(r#") AS "ah" WHERE "ah"."attribute_name_key" = ANY($"#), "{sql}");
+        assert!(
+            values
+                .0
+                .iter()
+                .any(|value| matches!(value, Value::Array(_, Some(keys)) if keys.as_slice() == [Value::Int(Some(7))])),
+            "{values:?}"
+        );
     }
 
     /// An attribute the dictionary never keyed was never recorded, so a
@@ -166,7 +172,7 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.instances.attr_filter = vec![iri("https://example.com/unknown")];
         let (sql, _) = built(&compiled, &speed_and_address());
-        assert!(sql.contains(r#") AS "s" WHERE $1 = $2 AND"#), "{sql}");
+        assert!(sql.contains(r#") AS "s" WHERE (FALSE"#), "{sql}");
     }
 
     /// Over recorded rows alone the page's window match compares the

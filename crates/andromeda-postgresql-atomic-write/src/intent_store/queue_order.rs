@@ -16,7 +16,7 @@ use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_schema::queue::TemporalAppendIntents;
 use andromeda_postgresql_seaquery::{
     literal::int_literal,
-    pg_array::{all, any, text_array},
+    pg_array::{all, any, is_any_of},
 };
 use andromeda_temporal::error::TemporalError;
 use sea_query::{Cond, Expr, ExprTrait, Iden, JoinType, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
@@ -93,12 +93,14 @@ pub(super) fn behind_earlier_statement(intent_keys: &[i64]) -> SelectStatement {
 
 /// The Entities among `entity_ids` with at least one intent queued.
 pub(super) fn queued_entities_statement(entity_ids: &[&Identifier]) -> SelectStatement {
-    let ids: Vec<&str> = entity_ids.iter().map(|id| id.as_str()).collect();
     Query::select()
         .distinct()
         .column(TemporalAppendIntents::EntityId)
         .from(TemporalAppendIntents::Table)
-        .and_where(Expr::col(TemporalAppendIntents::EntityId).eq(any(text_array(&ids))))
+        .and_where(is_any_of(
+            Expr::col(TemporalAppendIntents::EntityId),
+            entity_ids.iter().map(|id| id.as_str().to_owned()),
+        ))
         .to_owned()
 }
 

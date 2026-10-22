@@ -21,7 +21,7 @@
 
 use crate::{
     alias::{Ah, Rs},
-    history::{base_history_source, represented_instances},
+    history::represented_instances,
     recorded_shape::recorded_shape,
     stage1::{
         entity_conditions::{PatternTest, build_entity_conditions_for_temporal},
@@ -32,14 +32,15 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{dataset::DatasetFilter, temporal::compiled::CompiledTemporalQuery};
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, recorded_shape::RecordedShape, value_kind::ValueKind};
+use andromeda_postgresql_codes::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
 use andromeda_postgresql_query::{
     attribute_name_key::AttributeNameKey,
     dataset_predicate::dataset_condition,
     dictionary::query_names::QueryNames,
     error::RenderError,
-    history_source::{BesideComparison, EvolutionColumns, HistoryBranch, HistoryOf, PendingEntries, grain::HistoryGrain},
+    history_source::{BesideComparison, EvolutionColumns, HistoryBranch, HistoryOf, PendingEntries, attribute_rows::attribute_rows, grain::HistoryGrain},
     one_time_gate::{Candidates, materialized},
+    tombstone::carries_a_value,
 };
 use andromeda_postgresql_schema::{
     current::E,
@@ -77,14 +78,14 @@ pub struct ShapeCombination {
 pub enum ShapeHolders<'a> {
     /// The one Entity a retrieval names (clause 5.7.3).
     Entity(&'a Identifier),
-    /// Every Entity stage 1 selects, read with the names the query resolved.
-    Selected(&'a QueryNames),
+    /// Every Entity stage 1 selects.
+    Selected,
 }
 
 /// The statement answering, under [`CombinationColumn`], the position in
 /// `combinations` of each one an instance the representation `compiled`
-/// aggregates carries, for the Entities `holders` names; `None` when there
-/// is nothing to look for.
+/// aggregates carries, for the Entities `holders` names, read with the names
+/// the query resolved; `None` when there is nothing to look for.
 ///
 /// # Errors
 ///
@@ -93,13 +94,14 @@ pub fn build_held_shapes_query(
     branch: &HistoryBranch,
     holders: ShapeHolders<'_>,
     compiled: &CompiledTemporalQuery,
+    names: &QueryNames,
     combinations: &[ShapeCombination],
 ) -> Result<Option<SelectStatement>, RenderError> {
     let mut branches = Vec::with_capacity(combinations.len());
     for (position, combination) in (0_i64..).zip(combinations.iter().copied()) {
         let carried = match holders {
-            ShapeHolders::Entity(entity_id) => carrying_instance(branch, &HistoryOf::Entity(Expr::val(entity_id.as_str())), compiled, combination),
-            ShapeHolders::Selected(names) => selected_holder(branch, compiled, names, combination)?,
+            ShapeHolders::Entity(entity_id) => carrying_instance(branch, &HistoryOf::Entity(Expr::val(entity_id.as_str())), compiled, names, combination),
+            ShapeHolders::Selected => selected_holder(branch, compiled, names, combination)?,
         };
         let mut held = Query::select();
         held.expr_as(int_literal(position), CombinationColumn).and_where(Expr::exists(carried));
@@ -114,7 +116,7 @@ pub fn build_held_shapes_query(
     }
     match holders {
         ShapeHolders::Entity(_) => {}
-        ShapeHolders::Selected(_) => {
+        ShapeHolders::Selected => {
             statement.with_cte(
                 WithClause::new()
                     .cte(materialized(candidates(branch, compiled, combinations), Candidates))
@@ -149,7 +151,7 @@ fn selected_holder(
         .from(narrowed.counted)
         .cond_where(conditions)
         .and_where(Expr::exists(temporal_match_subquery(branch, compiled, names, BesideComparison::Key)))
-        .and_where(Expr::exists(carrying_instance(branch, &evolution, compiled, combination)));
+        .and_where(Expr::exists(carrying_instance(branch, &evolution, compiled, names, combination)));
     Ok(holder.take())
 }
 
@@ -157,15 +159,21 @@ fn selected_holder(
 /// representation `compiled` aggregates and that carries `combination`.
 ///
 /// Tombstones carry no value and so no shape.
-fn carrying_instance(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemporalQuery, combination: ShapeCombination) -> SelectStatement {
+fn carrying_instance(
+    branch: &HistoryBranch,
+    of: &HistoryOf,
+    compiled: &CompiledTemporalQuery,
+    names: &QueryNames,
+    combination: ShapeCombination,
+) -> SelectStatement {
     let mut instance = Query::select();
     instance.expr(int_literal(1));
-    base_history_source(&mut instance, branch, of);
     instance
-        .cond_where(represented_instances(branch, of, compiled))
+        .from(attribute_rows(branch, of, Ah))
+        .cond_where(represented_instances(branch, of, compiled, names))
         .and_where(Expr::col((Ah, HistoryGrain::AttributeNameKey)).eq(combination.attribute.get()))
         .and_where(Expr::col((Ah, AttributeHistory::AttributeKind)).eq(combination.kind.code()))
-        .and_where(Expr::col((Ah, AttributeHistory::ValueKind)).ne(ValueKind::Tombstone.code()))
+        .and_where(carries_a_value(Ah))
         .and_where(recorded_shape().eq(combination.shape.code()));
     instance.take()
 }
@@ -247,8 +255,14 @@ mod tests {
         compiled
     }
 
-    fn rendered(branch: &HistoryBranch, holders: ShapeHolders<'_>, compiled: &CompiledTemporalQuery, combinations: &[ShapeCombination]) -> String {
-        build_held_shapes_query(branch, holders, compiled, combinations)
+    fn rendered(
+        branch: &HistoryBranch,
+        holders: ShapeHolders<'_>,
+        names: &QueryNames,
+        compiled: &CompiledTemporalQuery,
+        combinations: &[ShapeCombination],
+    ) -> String {
+        build_held_shapes_query(branch, holders, compiled, names, combinations)
             .expect("renderable")
             .expect("a combination to look for")
             .to_string(PostgresQueryBuilder)
@@ -256,7 +270,14 @@ mod tests {
 
     #[test]
     fn nothing_to_look_for_builds_no_statement() {
-        let built = build_held_shapes_query(&HistoryBranch::live_recorded(), ShapeHolders::Entity(&truck()), &minimal_compiled(), &[]).expect("renderable");
+        let built = build_held_shapes_query(
+            &HistoryBranch::live_recorded(),
+            ShapeHolders::Entity(&truck()),
+            &minimal_compiled(),
+            &QueryNames::default(),
+            &[],
+        )
+        .expect("renderable");
         assert!(built.is_none());
     }
 
@@ -267,6 +288,7 @@ mod tests {
         let sql = rendered(
             &HistoryBranch::live_recorded(),
             ShapeHolders::Entity(&truck()),
+            &QueryNames::default(),
             &after_2024(TimeProp::Observed),
             &[string_load()],
         );
@@ -275,7 +297,7 @@ mod tests {
         assert!(sql.contains(r#""ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00'"#), "{sql}");
         assert!(sql.contains(r#""ah"."attribute_name_key" = 7"#), "{sql}");
         assert!(sql.contains(r#""ah"."attribute_kind" = 1"#), "{sql}");
-        assert!(sql.contains(r#""ah"."value_kind" <> 0"#), "a tombstone carries no shape: {sql}");
+        assert!(sql.contains(r#""ah"."value_kind" <> (0)"#), "a tombstone carries no shape: {sql}");
         assert!(
             sql.contains("jsonb_typeof(") && sql.contains("END) = 2"),
             "the shape is the refined one the aggregation reads: {sql}"
@@ -290,6 +312,7 @@ mod tests {
         let sql = rendered(
             &HistoryBranch::live_recorded(),
             ShapeHolders::Entity(&truck()),
+            &QueryNames::default(),
             &after_2024(TimeProp::Modified),
             &[string_load()],
         );
@@ -306,6 +329,7 @@ mod tests {
         let sql = rendered(
             &HistoryBranch::live_recorded(),
             ShapeHolders::Entity(&truck()),
+            &QueryNames::default(),
             &after_2024(TimeProp::Observed),
             &[string_load(), array],
         );
@@ -321,7 +345,8 @@ mod tests {
     fn a_query_looks_among_the_selected_holders_of_the_combination() {
         let sql = rendered(
             &HistoryBranch::live_recorded(),
-            ShapeHolders::Selected(&vehicle_is_known()),
+            ShapeHolders::Selected,
+            &vehicle_is_known(),
             &{
                 let mut compiled = typed(vec![vehicle_selector()]);
                 compiled.window.interval = TimeInterval::After(instant("2024-01-01T00:00:00Z"));
@@ -351,12 +376,13 @@ mod tests {
         compiled.instances.dataset_id_filter = vec![DatasetSelector::parse("urn:ngsi-ld:Dataset:one").expect("a valid dataset selector")];
         let sql = rendered(
             &HistoryBranch::live_recorded(),
-            ShapeHolders::Selected(&QueryNames::default()),
+            ShapeHolders::Selected,
+            &QueryNames::default(),
             &compiled,
             &[string_load()],
         );
-        assert!(sql.contains(r#""rs"."dataset_id" IN ('urn:ngsi-ld:Dataset:one')"#), "{sql}");
-        assert!(sql.contains(r#""ah"."dataset_id" IN ('urn:ngsi-ld:Dataset:one')"#), "{sql}");
+        assert!(sql.contains(r#""rs"."dataset_id" = ANY(ARRAY ['urn:ngsi-ld:Dataset:one'])"#), "{sql}");
+        assert!(sql.contains(r#""ah"."dataset_id" = ANY(ARRAY ['urn:ngsi-ld:Dataset:one'])"#), "{sql}");
     }
 
     /// No catalogue row holds a queued entry yet, so every Entity a queued
@@ -366,7 +392,8 @@ mod tests {
     fn a_queued_branch_adds_every_queued_entity_to_the_candidates() {
         let sql = rendered(
             &HistoryBranch::live(),
-            ShapeHolders::Selected(&QueryNames::default()),
+            ShapeHolders::Selected,
+            &QueryNames::default(),
             &after_2024(TimeProp::Observed),
             &[string_load()],
         );
@@ -384,7 +411,8 @@ mod tests {
         let snapshot = HistoryBranch::recorded_in(Alias::new("snap_1").into_iden());
         let sql = rendered(
             &snapshot,
-            ShapeHolders::Selected(&QueryNames::default()),
+            ShapeHolders::Selected,
+            &QueryNames::default(),
             &after_2024(TimeProp::Observed),
             &[string_load()],
         );

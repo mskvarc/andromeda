@@ -30,14 +30,10 @@ use crate::{
     geo_predicate::{near_envelope_prefilter, relation_expression},
     instance_expiry::instance_stands,
 };
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery};
 use andromeda_postgresql_schema::current::{CurrentAttributes, Entities, EntitySearch};
-use andromeda_postgresql_seaquery::{
-    cast::cast,
-    literal::false_literal,
-    pg_array::{any, text_array},
-    pg_type::PostgresType,
-};
+use andromeda_postgresql_seaquery::{cast::cast, literal::false_literal, pg_array::is_any_of, pg_type::PostgresType};
 use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, JoinType, Query, SelectStatement, SimpleExpr, UnionType};
 
 /// Alias the hoisted-instance arm reads `entity_search` under.
@@ -103,7 +99,6 @@ fn default_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, default_location: 
         DefaultLocationNarrowing::Candidates(candidates) if candidates.is_empty() => return Ok(None),
         DefaultLocationNarrowing::Candidates(candidates) => {
             let candidate = Alias::new(CANDIDATE_ALIAS);
-            let ids: Vec<&str> = candidates.iter().map(AsRef::as_ref).collect();
             arm.column((candidate.clone(), Entities::EntityKey))
                 .from_as(rows.table(Entities::Table), candidate.clone())
                 .join_as(
@@ -112,8 +107,7 @@ fn default_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, default_location: 
                     search.clone(),
                     SeaExpr::col((search, EntitySearch::EntityKey)).equals((candidate.clone(), Entities::EntityKey)),
                 )
-                // One bound `text[]` however many candidates the index found.
-                .and_where(SeaExpr::col((candidate, Entities::Id)).eq(any(text_array(&ids))));
+                .and_where(is_any_of(SeaExpr::col((candidate, Entities::Id)), candidates.iter().map(Identifier::to_string)));
         }
     }
     // Clause 4.22: the hoisted default instance matches only while it stands.

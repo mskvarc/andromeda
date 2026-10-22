@@ -34,6 +34,7 @@ mod stream_parts;
 mod stream_probes;
 pub mod structured_json;
 mod value_filters;
+mod value_text;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

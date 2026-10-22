@@ -9,7 +9,7 @@
 //! session keeps it, and is run again under [`SCHEMA_CHANGE_LOCK_RETRY`] when
 //! the lock is refused.
 
-use andromeda_postgresql_pool::lock_retry::{SCHEMA_CHANGE_LOCK_RETRY, SCHEMA_CHANGE_LOCK_TIMEOUT, is_lock_not_available};
+use andromeda_postgresql_pool::schema_change_lock::{SCHEMA_CHANGE_LOCK_RETRY, SCHEMA_CHANGE_LOCK_TIMEOUT, is_lock_not_available};
 use andromeda_postgresql_seaquery::setting::{SettingScope, set_config};
 use sea_query::{PostgresQueryBuilder, Query, SelectStatement, Values};
 use sea_query_sqlx::{SqlxBinder, SqlxValues};

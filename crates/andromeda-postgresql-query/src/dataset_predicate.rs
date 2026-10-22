@@ -6,6 +6,7 @@
 //! test that selects the named ones.
 
 use andromeda_ngsi_ld_query::dataset::DatasetFilter;
+use andromeda_postgresql_seaquery::pg_array::is_any_of;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
 
 /// Whether the instance whose `dataset_id` is `column` is one `filter` selects.
@@ -16,10 +17,10 @@ pub fn dataset_condition(column: &SimpleExpr, filter: &DatasetFilter) -> Conditi
     match filter {
         DatasetFilter::Unfiltered => Condition::all(),
         DatasetFilter::DefaultOnly => Condition::all().add(dataset().is_null()),
-        DatasetFilter::NamedOnly(named) => Condition::all().add(dataset().is_in(named.iter().map(ToString::to_string))),
+        DatasetFilter::NamedOnly(named) => Condition::all().add(is_any_of(dataset(), named.iter().map(ToString::to_string))),
         DatasetFilter::DefaultOrNamed(named) => Condition::all().add(
             Condition::any()
-                .add(dataset().is_in(named.iter().map(ToString::to_string)))
+                .add(is_any_of(dataset(), named.iter().map(ToString::to_string)))
                 .add(dataset().is_null()),
         ),
     }
@@ -47,9 +48,12 @@ mod tests {
         assert!(!render(&DatasetFilter::Unfiltered).contains("dataset_id"));
         assert!(render(&DatasetFilter::DefaultOnly).contains(r#""s"."dataset_id" IS NULL"#));
         let only = render(&DatasetFilter::NamedOnly(named.clone()));
-        assert!(only.contains(r#""s"."dataset_id" IN ('urn:ngsi-ld:Dataset:one')"#), "{only}");
+        assert!(only.contains(r#""s"."dataset_id" = ANY(ARRAY ['urn:ngsi-ld:Dataset:one'])"#), "{only}");
         assert!(!only.contains("IS NULL"), "{only}");
         let both = render(&DatasetFilter::DefaultOrNamed(named));
-        assert!(both.contains(r#"IN ('urn:ngsi-ld:Dataset:one') OR "s"."dataset_id" IS NULL"#), "{both}");
+        assert!(
+            both.contains(r#"= ANY(ARRAY ['urn:ngsi-ld:Dataset:one']) OR "s"."dataset_id" IS NULL"#),
+            "{both}"
+        );
     }
 }

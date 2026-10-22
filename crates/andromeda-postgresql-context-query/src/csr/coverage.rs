@@ -94,7 +94,10 @@ mod tests {
             ids: &ids,
             ..ExpandedEntitySpecification::default()
         });
-        assert!(sql.contains("COALESCE(\"ri\".\"entity_id\", '') IN ('urn:ngsi-ld:Vehicle:1', '')"), "{sql}");
+        assert!(
+            sql.contains("COALESCE(\"ri\".\"entity_id\", '') = ANY(ARRAY ['urn:ngsi-ld:Vehicle:1',''])"),
+            "{sql}"
+        );
         assert!(sql.contains("\"ri\".\"entity_id\" = ANY(ARRAY ['urn:ngsi-ld:Vehicle:1'])"), "{sql}");
         assert!(
             sql.contains("\"ri\".\"entity_id\" IS NULL AND (\"ri\".\"entity_id_pattern_form\" IS NULL OR EXISTS("),
@@ -116,7 +119,7 @@ mod tests {
             ..ExpandedEntitySpecification::default()
         });
         assert!(
-            sql.contains("COALESCE(\"ri\".\"entity_id\", '') IN ('urn:ngsi-ld:Vehicle:1', 'urn:ngsi-ld:Vehicle:2', '')"),
+            sql.contains("COALESCE(\"ri\".\"entity_id\", '') = ANY(ARRAY ['urn:ngsi-ld:Vehicle:1','urn:ngsi-ld:Vehicle:2',''])"),
             "{sql}"
         );
         assert!(sql.contains("UNNEST(ARRAY ['urn:ngsi-ld:Vehicle:1','urn:ngsi-ld:Vehicle:2'])"), "{sql}");

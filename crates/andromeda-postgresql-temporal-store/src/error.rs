@@ -18,7 +18,7 @@ use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_collation::provisioned_collations::CollationProvisioningError;
 use andromeda_postgresql_encoding::ewkb::EwkbError;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
-use andromeda_postgresql_pool::persistence_classification::classify;
+use andromeda_postgresql_pool::{persistence_classification::classify, sql_state::SqlState};
 use andromeda_postgresql_query::error::RenderError;
 use andromeda_postgresql_temporal_query::aggregation_group::MixedAggregationGroup;
 use andromeda_temporal::{
@@ -143,6 +143,7 @@ impl TemporalStoreError {
     pub fn failure_class(&self) -> Option<PersistenceFailure> {
         match self {
             TemporalStoreError::EntityIntent { source, .. } => source.failure_class(),
+            TemporalStoreError::Database(error) if refuses_the_pattern(error) => None,
             TemporalStoreError::Database(error) => Some(classify(error)),
             TemporalStoreError::NameLookup(error) => Some(error.failure_class()),
             TemporalStoreError::StoredHistory(_) | TemporalStoreError::StoredCatalog(_) | TemporalStoreError::StoredAggregation(_) => {
@@ -183,6 +184,12 @@ impl TemporalStoreError {
     }
 }
 
+/// Whether the database refused to compile a regular expression of the
+/// request (SQLSTATE 2201B).
+fn refuses_the_pattern(error: &sqlx::Error) -> bool {
+    matches!(SqlState::of(error), Some(SqlState::InvalidRegularExpression))
+}
+
 impl From<TemporalStoreError> for TemporalError {
     #[track_caller]
     fn from(error: TemporalStoreError) -> TemporalError {
@@ -211,6 +218,9 @@ impl From<TemporalStoreError> for TemporalError {
             TemporalStoreError::Collation(CollationProvisioningError::NotAnIcuCollation { collation, .. }) => {
                 TemporalError::Validation(TemporalValidationReason::Collation { collation })
             }
+            // A regular expression of the request the database cannot compile
+            // is the client's input (clause 5.5.4), exactly as on the Core path.
+            TemporalStoreError::Database(error) if refuses_the_pattern(&error) => TemporalError::Validation(TemporalValidationReason::UnusablePattern),
             fault @ (TemporalStoreError::Database(_)
             | TemporalStoreError::StoredHistory(_)
             | TemporalStoreError::StoredCatalog(_)
@@ -251,6 +261,7 @@ mod tests {
     use andromeda_context_commit::submission_refusal::SubmissionRefusal;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
+    use andromeda_postgresql_pool::fake_database_error::FakeDatabaseError;
     use andromeda_temporal::{error::TemporalError, temporal_validation_reason::TemporalValidationReason};
 
     #[test]
@@ -275,6 +286,18 @@ mod tests {
     fn another_database_failure_stays_a_persistence_fault() {
         let persistence = TemporalError::from(TemporalStoreError::Database(sqlx::Error::RowNotFound));
         assert!(matches!(persistence, TemporalError::Persistence(PersistenceFailure::RecordMissing)));
+    }
+
+    /// Clause 4.9 of ETSI GS CIM 009 v1.9.1: a `RegExp` the database cannot
+    /// compile is classified exactly as the context store classifies it.
+    #[test]
+    fn an_invalid_regular_expression_is_the_requests_pattern_refused_like_the_context_store() {
+        let error = TemporalStoreError::Database(FakeDatabaseError::new("invalid regular expression", "2201B").into_sqlx());
+        pretty_assertions::assert_eq!(error.failure_class(), None);
+        assert!(matches!(
+            TemporalError::from(error),
+            TemporalError::Validation(TemporalValidationReason::UnusablePattern)
+        ));
     }
 
     #[test]

@@ -14,24 +14,11 @@
 
 use crate::error::EntityError;
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_linked_retrieval::source::RemoteResolution;
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
 use futures::future::BoxFuture;
 use std::{fmt, num::NonZeroU32};
-
-/// What one non-local resolution attempt yielded.
-///
-/// The two halves are independent: a source can answer with entities *and*
-/// report that part of what was asked for is missing.
-#[derive(Debug, Default)]
-pub struct RemoteLinkedEntities {
-    /// The entities the source resolved, in the model, each with the Linked
-    /// Entities it nested.
-    pub entities: Vec<ReceivedState>,
-    /// Every Linked Entity the attempt left unresolved.
-    pub failures: Vec<LinkedResolutionFailure>,
-}
 
 /// Fetches an `objectType`-annotated Linked Entity that is not stored locally
 /// (clause 4.5.23.1: a Relationship annotated with an `objectType` declares its
@@ -63,7 +50,7 @@ pub trait RemoteLinkedEntitySource: fmt::Debug + Send + Sync + 'static {
     ///
     /// Returns [`EntityError`] when the remainder of the system cannot be
     /// consulted at all. A source that merely fails to produce an entity
-    /// returns no entity and a [`LinkedResolutionFailure`] describing why:
+    /// returns no entity and a failure describing why:
     /// clause 4.5.23 leaves an unresolvable Relationship as a plain URI rather
     /// than failing the retrieval.
     fn fetch_linked<'life0, 'life1, 'life2, 'life3, 'async_trait>(
@@ -72,7 +59,7 @@ pub trait RemoteLinkedEntitySource: fmt::Debug + Send + Sync + 'static {
         remaining_depth: NonZeroU32,
         visited: &'life2 [Identifier],
         context: &'life3 ContextSpec,
-    ) -> BoxFuture<'async_trait, Result<RemoteLinkedEntities, EntityError>>
+    ) -> BoxFuture<'async_trait, Result<RemoteResolution<ReceivedState>, EntityError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,

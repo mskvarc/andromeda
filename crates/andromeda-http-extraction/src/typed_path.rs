@@ -1,7 +1,8 @@
 //! Typed route parameters with NGSI-LD problem-detail rejections.
 
 use crate::addressed_uri::addressed_uri;
-use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
+use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{
     extract::{FromRequestParts, Path, rejection::PathRejection},
     http::request::Parts,
@@ -27,7 +28,7 @@ where
         Path::<T>::from_request_parts(parts, state)
             .await
             .map(|Path(value)| TypedPath(value))
-            .map_err(|rejection: PathRejection| ExtractorRejection::bad_request_data(InvalidPathParameter(rejection).to_string(), addressed_uri(parts)))
+            .map_err(|rejection: PathRejection| InvalidPathParameter(rejection).into_rejection(addressed_uri(parts)))
     }
 }
 
@@ -35,6 +36,12 @@ where
 #[derive(Debug, Error)]
 #[error("invalid URI path parameter: {0}")]
 struct InvalidPathParameter(#[source] PathRejection);
+
+impl RequestRefusal for InvalidPathParameter {
+    fn error_type(&self) -> NgsiLdErrorType {
+        NgsiLdErrorType::BadRequestData
+    }
+}
 
 #[cfg(test)]
 mod tests {

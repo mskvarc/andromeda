@@ -370,7 +370,7 @@ mod tests {
         q.ids = ids(&["urn:a", "urn:b"]);
         let built = build(&q);
         assert!(
-            built.sql.contains("COALESCE(\"ri\".\"entity_id\", '') IN ('urn:a', 'urn:b', '')"),
+            built.sql.contains("COALESCE(\"ri\".\"entity_id\", '') = ANY(ARRAY ['urn:a','urn:b',''])"),
             "{}",
             built.sql
         );
@@ -530,7 +530,7 @@ mod tests {
         assert!(
             built
                 .sql
-                .contains("COALESCE(\"ri\".\"entity_id\", '') IN ('urn:ngsi-ld:Vehicle:1', '') OR \"ri\".\"entity_id_pattern\" IS NOT NULL"),
+                .contains("COALESCE(\"ri\".\"entity_id\", '') = ANY(ARRAY ['urn:ngsi-ld:Vehicle:1','']) OR \"ri\".\"entity_id_pattern\" IS NOT NULL"),
             "{}",
             built.sql
         );
@@ -760,7 +760,7 @@ mod tests {
         let mut q = empty_query();
         q.encountered_sources = vec![ContextSourcePseudonym::new("broker-b").unwrap()];
         let built = build(&q);
-        assert!(built.sql.contains("(NOT \"context_source_alias\" = ANY(ARRAY ['broker-b']))"), "{}", built.sql);
+        assert!(built.sql.contains("\"context_source_alias\" <> ALL(ARRAY ['broker-b'])"), "{}", built.sql);
     }
 
     #[test]

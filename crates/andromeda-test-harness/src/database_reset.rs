@@ -5,6 +5,7 @@ use crate::{
     discovery_census::rebuild_live_census,
     identifiers::TestIdentifiers,
 };
+use andromeda_postgresql_pool::schema_change_lock::is_lock_not_available;
 use sqlx::{Executor, PgPool, Postgres, Transaction};
 use std::time::Duration;
 use thiserror::Error;
@@ -57,10 +58,6 @@ const RESET_BUSY_DEADLINE: Duration = Duration::from_secs(30);
 /// Pause before a reset that found a table busy is run again.
 const RESET_BUSY_BACKOFF: Duration = Duration::from_millis(20);
 
-/// PostgreSQL SQLSTATE for `lock_not_available`, which the reset script's
-/// `LOCK TABLE ... NOWAIT` raises when a broker transaction holds a table.
-const LOCK_NOT_AVAILABLE_SQLSTATE: &str = "55P03";
-
 /// The retry policy of one reset: the script takes every lock it needs at once
 /// and without waiting, so a broker transaction still open on a table fails it
 /// before it has changed or locked anything, and it is simply run again.
@@ -81,7 +78,8 @@ impl BusyTables {
         }
     }
 
-    /// Wait out `error` when it is a busy table and the deadline has not
+    /// Wait out `error` when it is a busy table (the reset script's `LOCK
+    /// TABLE ... NOWAIT` finding a table held) and the deadline has not
     /// passed, so the caller runs the reset again; otherwise return it.
     async fn wait_out(&self, error: sqlx::Error) -> Result<(), DatabaseResetError> {
         if is_lock_not_available(&error) && Instant::now() < self.deadline {
@@ -90,13 +88,6 @@ impl BusyTables {
         }
         Err(DatabaseResetError::from_sqlx(error))
     }
-}
-
-/// Whether a database error is `LOCK TABLE ... NOWAIT` finding a table busy.
-fn is_lock_not_available(error: &sqlx::Error) -> bool {
-    error
-        .as_database_error()
-        .is_some_and(|database| database.code().is_some_and(|code| code == LOCK_NOT_AVAILABLE_SQLSTATE))
 }
 
 /// Every prefix-scoped delete a cleanup runs, in dependency order.
@@ -193,13 +184,7 @@ impl DatabaseResetError {
 
 #[cfg(test)]
 mod tests {
-    use crate::database_reset::{PREFIX_DELETES, RESET_TENANT_SQL, is_lock_not_available};
-
-    #[test]
-    fn a_non_database_error_is_not_treated_as_a_busy_table() {
-        assert!(!is_lock_not_available(&sqlx::Error::PoolClosed));
-        assert!(!is_lock_not_available(&sqlx::Error::RowNotFound));
-    }
+    use crate::database_reset::{PREFIX_DELETES, RESET_TENANT_SQL};
 
     /// The reset relation list of the script, without the header comment that
     /// explains which relations are deliberately absent from it.

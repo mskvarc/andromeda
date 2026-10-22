@@ -12,10 +12,11 @@ use crate::{
         information_read::RegistrationInformationRows,
         mapper::row_to_csr,
         registration_statements::proxied_mode,
-        registration_store::{PostgresRegistrationStore, persistence_error, registration_count},
+        registration_store::{PostgresRegistrationStore, registration_count},
         stored_registration_error::StoredRegistrationError,
     },
     error::ContextStoreError,
+    store_fault::persistence_error,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
@@ -75,25 +76,25 @@ pub(super) async fn registrations_of(
     attribute_names: &dyn NameLookup<AttributeName>,
     rows: &[PgRow],
 ) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
-    let ids = identifiers(rows).map_err(|error| persistence_error(error))?;
-    let information = RegistrationInformationRows::of(rows).map_err(|error| persistence_error(error))?;
+    let ids = identifiers(rows).map_err(|error| persistence_error::<RegistrationError>(error))?;
+    let information = RegistrationInformationRows::of(rows).map_err(|error| persistence_error::<RegistrationError>(error))?;
     let keys = information
         .held_keys()
-        .map_err(|error| persistence_error(ContextStoreError::from(StoredRegistrationError::Information(error))))?;
+        .map_err(|error| persistence_error::<RegistrationError>(ContextStoreError::from(StoredRegistrationError::Information(error))))?;
     let names = attribute_names
         .names_of(&keys)
         .await
-        .map_err(|error| persistence_error(ContextStoreError::from(error)))?;
-    assemble(rows, &ids, &information, &names).map_err(|error| persistence_error(error))
+        .map_err(|error| persistence_error::<RegistrationError>(ContextStoreError::from(error)))?;
+    assemble(rows, &ids, &information, &names).map_err(|error| persistence_error::<RegistrationError>(error))
 }
 
 /// A transaction whose statements all read one snapshot of the tenant.
 async fn begin_snapshot(store: &PostgresRegistrationStore) -> Result<Transaction<'_, Postgres>, RegistrationError> {
-    let mut transaction = store.pool.begin().await.map_err(|error| persistence_error(error))?;
+    let mut transaction = store.pool.begin().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
     sqlx::query(repeatable_read())
         .execute(&mut *transaction)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
     Ok(transaction)
 }
 
@@ -103,7 +104,7 @@ async fn fetch_rows<'connection>(executor: impl PgExecutor<'connection>, select:
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_all(executor)
         .await
-        .map_err(|error| persistence_error(error))
+        .map_err(|error| persistence_error::<RegistrationError>(error))
 }
 
 /// The registrations `select` finds, each with its `information`.
@@ -140,7 +141,7 @@ pub(super) async fn exists(store: &PostgresRegistrationStore, id: &Identifier) -
     let row: (bool,) = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_one(&store.pool)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
     Ok(row.0)
 }
 
@@ -171,12 +172,12 @@ pub(super) async fn written(
     let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_one(&mut *connection)
         .await
-        .map_err(|error| persistence_error(error))?;
-    let information = RegistrationInformationRows::of(from_ref(&row)).map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
+    let information = RegistrationInformationRows::of(from_ref(&row)).map_err(|error| persistence_error::<RegistrationError>(error))?;
     let assembled = information
         .information_of(id, names)
-        .map_err(|error| persistence_error(ContextStoreError::from(StoredRegistrationError::Information(error))))?;
-    row_to_csr(&row, assembled).map_err(|error| persistence_error(error))
+        .map_err(|error| persistence_error::<RegistrationError>(ContextStoreError::from(StoredRegistrationError::Information(error))))?;
+    row_to_csr(&row, assembled).map_err(|error| persistence_error::<RegistrationError>(error))
 }
 
 /// Run a compiled discovery query: the page `window` selects, ascending by
@@ -186,16 +187,16 @@ pub(super) async fn query_compiled(
     compiled: &CompiledCsrQuery,
     window: &PageWindow,
 ) -> Result<RegistrationPage, RegistrationError> {
-    let built = csr_sql::build_csr_query(compiled, window).map_err(|error| persistence_error(error))?;
+    let built = csr_sql::build_csr_query(compiled, window).map_err(|error| persistence_error::<RegistrationError>(error))?;
     // The total counts the snapshot the page is read from.
     let mut transaction = begin_snapshot(store).await?;
     let (count_sql, count_values) = built.count.build_sqlx(PostgresQueryBuilder);
     let (total,): (i64,) = sqlx::query_as_with(sqlx::AssertSqlSafe(count_sql.as_str()), count_values)
         .fetch_one(&mut *transaction)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
     let rows = fetch_rows(&mut *transaction, &built.select).await?;
-    transaction.commit().await.map_err(|error| persistence_error(error))?;
+    transaction.commit().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
     let mut csrs = registrations_of(store.attribute_names.as_ref(), &rows).await?;
     // Clause 5.5.9.1: a backward or from-end keyset page was read descending so
     // a single `id` index scan could serve it; it is reversed here to the

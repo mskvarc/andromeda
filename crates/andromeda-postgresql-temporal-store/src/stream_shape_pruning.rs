@@ -20,7 +20,7 @@
 //! combination again.
 
 use crate::{error::TemporalStoreError, history_removal::stream_key_array, repo::TemporalRepository, statement_timeout_allowance::allow_unbounded_statements};
-use andromeda_postgresql_codes::value_kind::ValueKind;
+use andromeda_postgresql_query::tombstone::carries_a_value;
 use andromeda_postgresql_schema::temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities, TemporalStreamShapes};
 use andromeda_postgresql_seaquery::{branch::qualified, pg_array::any};
 use andromeda_postgresql_temporal_query::{alias::Ah, recorded_shape::recorded_shape};
@@ -166,7 +166,7 @@ fn prune_statement(schema: Option<&DynIden>, stream_keys: &[i64]) -> DeleteState
         .and_where(Expr::col((Ah, AttributeHistory::StreamKey)).eq(any(stream_key_array(stream_keys))))
         .and_where(Expr::col((Ah, AttributeHistory::StreamKey)).eq(shapes(TemporalStreamShapes::StreamKey)))
         .and_where(Expr::col((Ah, AttributeHistory::AttributeKind)).eq(shapes(TemporalStreamShapes::AttributeKind)))
-        .and_where(Expr::col((Ah, AttributeHistory::ValueKind)).ne(ValueKind::Tombstone.code()))
+        .and_where(carries_a_value(Ah))
         .and_where(recorded_shape().eq(shapes(TemporalStreamShapes::RecordedShape)))
         .to_owned();
     Query::delete()
@@ -189,7 +189,7 @@ mod tests {
     fn a_combination_goes_only_when_no_instance_of_its_stream_carries_it() {
         let sql = prune_statement(None, &[4, 5]).to_string(PostgresQueryBuilder);
         assert!(
-            sql.starts_with(r#"DELETE FROM "temporal_stream_shapes" WHERE "stream_key" = ANY(ARRAY [4,5]) AND (NOT EXISTS(SELECT 1 FROM "attribute_history" AS "ah" WHERE "ah"."stream_key" = ANY(ARRAY [4,5]) AND "ah"."stream_key" = "temporal_stream_shapes"."stream_key" AND "ah"."attribute_kind" = "temporal_stream_shapes"."attribute_kind" AND "ah"."value_kind" <> 0 AND (CASE"#),
+            sql.starts_with(r#"DELETE FROM "temporal_stream_shapes" WHERE "stream_key" = ANY(ARRAY [4,5]) AND (NOT EXISTS(SELECT 1 FROM "attribute_history" AS "ah" WHERE "ah"."stream_key" = ANY(ARRAY [4,5]) AND "ah"."stream_key" = "temporal_stream_shapes"."stream_key" AND "ah"."attribute_kind" = "temporal_stream_shapes"."attribute_kind" AND "ah"."value_kind" <> (0) AND (CASE"#),
             "{sql}"
         );
         assert!(sql.ends_with(r#"END) = "temporal_stream_shapes"."recorded_shape"))"#), "{sql}");

@@ -6,7 +6,10 @@
 //! batch of entities carrying large geometries is never built into one JSON
 //! tree first.
 
-use crate::batch_body_refusal::{BatchBodyRefusal, BatchMembers};
+use crate::{
+    batch_body_refusal::{BatchBodyRefusal, BatchMembers},
+    not_json_document::NotJsonDocument,
+};
 use serde::de::{Deserialize, DeserializeSeed, Deserializer, Error as DeserializeError, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde_json::Deserializer as JsonReader;
 use std::{fmt, marker::PhantomData};
@@ -23,7 +26,7 @@ pub(crate) fn batch_items<'b, T: Deserialize<'b>>(body: &'b [u8], members: Batch
     let read = ArraySeed::<T>(PhantomData)
         .deserialize(&mut reader)
         .and_then(|read| reader.end().map(|()| read))
-        .map_err(|source| BatchBodyRefusal::NotJson { source })?;
+        .map_err(|source| BatchBodyRefusal::NotJson(NotJsonDocument(source)))?;
     match read {
         BodyArray::Items(items) if items.is_empty() => Err(BatchBodyRefusal::Empty { members }),
         BodyArray::Items(items) => Ok(items),
@@ -124,10 +127,15 @@ mod tests {
             ));
         }
         for body in [&b"[1,"[..], b"[1] x", b"{"] {
-            assert!(matches!(
-                batch_items::<Value>(body, BatchMembers::EntityIds),
-                Err(BatchBodyRefusal::NotJson { .. })
-            ));
+            assert!(matches!(batch_items::<Value>(body, BatchMembers::EntityIds), Err(BatchBodyRefusal::NotJson(_))));
         }
+    }
+
+    /// Clause 5.5.4: the batch reader words a body that is no JSON as every
+    /// other body reader does.
+    #[test]
+    fn a_body_that_is_no_json_is_named_as_every_reader_names_it() {
+        let refusal = batch_items::<Value>(b"[1,", BatchMembers::Entities).expect_err("not a JSON document");
+        assert!(refusal.to_string().starts_with("request body is not a JSON document:"), "{refusal}");
     }
 }

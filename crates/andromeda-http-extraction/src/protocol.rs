@@ -13,7 +13,8 @@ use crate::{
     via::IncomingVia,
 };
 use andromeda_http_headers::{language::LanguageFilter, ngsild_entity_map::NgsiLdEntityMap, via::Via};
-use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
+use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use headers::HeaderMapExt;
 use thiserror::Error;
@@ -53,7 +54,13 @@ fn entity_map_header(parts: &Parts) -> Result<Option<NgsiLdEntityMap>, Extractor
     parts
         .headers
         .typed_try_get::<NgsiLdEntityMap>()
-        .map_err(|error| ExtractorRejection::bad_request_data(InvalidEntityMapHeader(error).to_string(), addressed_uri(parts)))
+        .map_err(|error| InvalidEntityMapHeader(error).into_rejection(addressed_uri(parts)))
+}
+
+impl RequestRefusal for InvalidEntityMapHeader {
+    fn error_type(&self) -> NgsiLdErrorType {
+        NgsiLdErrorType::BadRequestData
+    }
 }
 
 impl<S> FromRequestParts<S> for NgsiLdProtocolHeaders
@@ -99,6 +106,7 @@ mod tests {
     use andromeda_http_headers::ngsild_entity_map::NgsiLdEntityMap;
     use andromeda_http_response::extraction_rejection::ExtractorRejection;
     use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
+    use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemDetail};
     use axum::{
         extract::FromRequestParts,
         http::{HeaderValue, Request},
@@ -183,9 +191,14 @@ mod tests {
             ("non-ascii", non_ascii_result),
         ] {
             match result {
-                Err(ExtractorRejection::BadRequestData { detail, instance }) => {
-                    pretty_assertions::assert_eq!(detail, "the ngsild-entitymap header is not a uri", "{value}");
-                    pretty_assertions::assert_eq!(instance, "/ngsi-ld/v1/entities", "{value}");
+                Err(ExtractorRejection::Classified(refusal)) => {
+                    pretty_assertions::assert_eq!(refusal.problem().error_type(), NgsiLdErrorType::BadRequestData, "{value}");
+                    pretty_assertions::assert_eq!(refusal.problem().detail(), "the ngsild-entitymap header is not a uri", "{value}");
+                    pretty_assertions::assert_eq!(
+                        refusal.problem().instance().map(ToString::to_string).as_deref(),
+                        Some("/ngsi-ld/v1/entities"),
+                        "{value}"
+                    );
                 }
                 Err(other) => panic!("{value}: refused as {other:?}"),
                 Ok(_) => panic!("{value}: extracted as an entity map"),
@@ -203,6 +216,9 @@ mod tests {
         let (mut parts, ()) = req.into_parts();
 
         let result = NgsiLdProtocolHeaders::from_request_parts(&mut parts, &()).await;
-        assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
+        pretty_assertions::assert_eq!(
+            result.err().and_then(|rejection| rejection.problem().map(ProblemDetail::error_type)),
+            Some(NgsiLdErrorType::BadRequestData)
+        );
     }
 }

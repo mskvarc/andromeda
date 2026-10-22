@@ -5,13 +5,18 @@
 use crate::{
     error::TemporalError,
     linked::TemporalLinkedJoin,
-    remote_linked::{RemoteTemporalLinkedEntities, RemoteTemporalLinkedSource, TemporalLinkedWindow},
+    remote_linked::{RemoteTemporalLinkedSource, TemporalLinkedWindow},
     service::TemporalService,
     stub_broker::{StubBroker, live_target, service, service_over, uri},
 };
 use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-use andromeda_linked_retrieval::{keyword::Keyword, plan::JoinPlan, representation::LinkedRepresentation, source::RemoteReach};
+use andromeda_linked_retrieval::{
+    keyword::Keyword,
+    plan::JoinPlan,
+    representation::LinkedRepresentation,
+    source::{RemoteReach, RemoteResolution},
+};
 use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_rel::TimeRel};
 use andromeda_ngsi_ld_model::temporal::{temporal_body::TemporalBody, temporal_entity::TemporalEntity, temporal_history::TemporalHistory};
@@ -143,14 +148,14 @@ impl RemoteTemporalLinkedSource for RecordingSource {
         visited: &[Identifier],
         _window: &TemporalLinkedWindow,
         _context: &ContextSpec,
-    ) -> Result<RemoteTemporalLinkedEntities, TemporalError> {
+    ) -> Result<RemoteResolution<TemporalHistory>, TemporalError> {
         self.calls().push(RemoteCall {
             id: id.clone(), // clone: the recording owns the identifier it reports
             remaining_depth,
             visited: visited.to_vec(),
         });
         match &self.outcome {
-            RemoteOutcome::Returns(entities) => Ok(RemoteTemporalLinkedEntities {
+            RemoteOutcome::Returns(entities) => Ok(RemoteResolution {
                 entities: entities.get(id).cloned().unwrap_or_default(), // clone: the source hands back owned values
                 failures: Vec::new(),
             }),

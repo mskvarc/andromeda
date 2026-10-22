@@ -27,7 +27,12 @@ use crate::{
     request_body_limit::RequestBodyLimit,
     request_json_value_limit::RequestJsonValueLimit,
 };
-use andromeda_http_response::{classified_report::ClassifiedReport, extraction_rejection::ExtractorRejection, problem_response::ProblemResponse};
+use andromeda_http_response::{
+    classified_report::ClassifiedReport,
+    extraction_rejection::ExtractorRejection,
+    problem_response::ProblemResponse,
+    request_refusal::RequestRefusal,
+};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{
     body::Bytes,
@@ -106,7 +111,7 @@ where
         if matches!(&rejection, BytesRejection::FailedToBufferBody(FailedToBufferBody::LengthLimitError(_))) {
             payload_too_large(limit, instance, version)
         } else {
-            ExtractorRejection::invalid_request(UnreadablePayload(rejection).to_string(), instance)
+            UnreadablePayload(rejection).into_rejection(instance)
         }
     })
 }
@@ -145,6 +150,12 @@ enum PayloadTooLarge {
 #[derive(Debug, Error)]
 #[error("the request payload body could not be read: {0}")]
 struct UnreadablePayload(#[source] BytesRejection);
+
+impl RequestRefusal for UnreadablePayload {
+    fn error_type(&self) -> NgsiLdErrorType {
+        NgsiLdErrorType::InvalidRequest
+    }
+}
 
 /// Announce the close of an HTTP/1.x connection whose request content the
 /// refusal leaves unread; later versions stop the upload with a stream reset.

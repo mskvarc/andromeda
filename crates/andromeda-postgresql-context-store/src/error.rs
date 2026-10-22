@@ -19,33 +19,15 @@ use andromeda_postgresql_codes::registry::UnknownCompactCode;
 use andromeda_postgresql_collation::provisioned_collations::CollationProvisioningError;
 use andromeda_postgresql_encoding::{copy::CopyFieldError, ewkb::EwkbError};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
-use andromeda_postgresql_pool::{persistence_classification::classify, saturation::is_pool_saturated, transaction_rollback::is_transaction_rolled_back};
+use andromeda_postgresql_pool::{
+    persistence_classification::classify,
+    saturation::is_pool_saturated,
+    sql_state::SqlState,
+    transaction_rollback::is_transaction_rolled_back,
+};
 use andromeda_postgresql_query::error::RenderError;
 use sea_query::error::Error as SeaQueryError;
 use sqlx::migrate::MigrateError;
-
-/// The SQLSTATE of a unique violation.
-const UNIQUE_VIOLATION: &str = "23505";
-
-/// Whether `error` is a unique violation of the named constraint.
-///
-/// A relation can carry more than one unique constraint -- its surrogate key
-/// beside the identifier a client chose -- and only a violation of the
-/// identifier's own constraint is the conflict the client caused. A caller
-/// that reports a create as already existing therefore checks the constraint,
-/// not the SQLSTATE alone.
-#[must_use]
-pub(crate) fn violates_unique_constraint(error: &sqlx::Error, constraint: &str) -> bool {
-    error
-        .as_database_error()
-        .is_some_and(|database| is_unique_violation_of(database.code().as_deref(), database.constraint(), constraint))
-}
-
-/// Whether a reported SQLSTATE and constraint name are a unique violation of
-/// `constraint`.
-fn is_unique_violation_of(code: Option<&str>, violated: Option<&str>, constraint: &str) -> bool {
-    code == Some(UNIQUE_VIOLATION) && violated == Some(constraint)
-}
 
 /// Errors from the PostgreSQL context store.
 ///
@@ -158,12 +140,12 @@ impl From<sqlx::Error> for ContextStoreError {
         if is_pool_saturated(&error) {
             return ContextStoreError::Saturated;
         }
-        if let sqlx::Error::Database(ref db_error) = error {
-            match db_error.code().as_deref() {
-                Some(UNIQUE_VIOLATION) => return ContextStoreError::UniqueViolation(error),
-                Some("2201B") => return ContextStoreError::InvalidRegex(error),
-                Some(_) | None => {}
-            }
+        let state = SqlState::of(&error);
+        if state == Some(SqlState::UniqueViolation) {
+            return ContextStoreError::UniqueViolation(error);
+        }
+        if state == Some(SqlState::InvalidRegularExpression) {
+            return ContextStoreError::InvalidRegex(error);
         }
         ContextStoreError::Database(error)
     }
@@ -194,10 +176,10 @@ impl ContextStoreError {
             return PersistenceFailure::Saturated;
         }
         match self {
-            ContextStoreError::Database(error) => classify(error),
+            ContextStoreError::Database(error) | ContextStoreError::InvalidRegex(error) => classify(error),
             ContextStoreError::NameLookup(error) => error.failure_class(),
             ContextStoreError::UniqueViolation(_) | ContextStoreError::EntityTypes(_) => PersistenceFailure::ConstraintViolated,
-            ContextStoreError::InvalidRegex(_) | ContextStoreError::Collation(_) => PersistenceFailure::StatementRejected,
+            ContextStoreError::Collation(_) => PersistenceFailure::StatementRejected,
             ContextStoreError::Encoding(_)
             | ContextStoreError::CopyField(_)
             | ContextStoreError::ChangeEventRecord(_)
@@ -305,27 +287,28 @@ impl ContextStoreError {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        error::{ContextStoreError, is_unique_violation_of, violates_unique_constraint},
-        schema_contract::error::SchemaContractError,
-    };
+    use crate::{error::ContextStoreError, schema_contract::error::SchemaContractError};
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
+    use andromeda_postgresql_pool::{fake_database_error::FakeDatabaseError, persistence_classification::classify};
 
-    /// Only a unique violation reported against the named constraint matches:
-    /// the surrogate key's violation, another constraint's and another
-    /// SQLSTATE's do not.
     #[test]
-    fn a_unique_violation_matches_only_the_constraint_it_names() {
-        assert!(is_unique_violation_of(Some("23505"), Some("uq_subscriptions_id"), "uq_subscriptions_id"));
-        assert!(!is_unique_violation_of(Some("23505"), Some("pk_subscriptions"), "uq_subscriptions_id"));
-        assert!(!is_unique_violation_of(Some("23505"), None, "uq_subscriptions_id"));
-        assert!(!is_unique_violation_of(Some("23514"), Some("uq_subscriptions_id"), "uq_subscriptions_id"));
-        assert!(!is_unique_violation_of(None, Some("uq_subscriptions_id"), "uq_subscriptions_id"));
+    fn a_unique_violation_becomes_the_unique_violation_variant() {
+        let error = ContextStoreError::from(FakeDatabaseError::new("duplicate key", "23505").into_sqlx());
+        assert!(matches!(error, ContextStoreError::UniqueViolation(_)));
+        pretty_assertions::assert_eq!(error.failure_class(), PersistenceFailure::ConstraintViolated);
     }
 
+    /// Clause 4.9 of ETSI GS CIM 009 v1.9.1: a `RegExp` the database cannot
+    /// compile is a rejected statement. The temporal store classifies the
+    /// same SQLSTATE through the same pool function.
     #[test]
-    fn a_failure_that_is_no_database_error_violates_no_constraint() {
-        assert!(!violates_unique_constraint(&sqlx::Error::RowNotFound, "uq_subscriptions_id"));
+    fn an_invalid_regular_expression_is_a_rejected_statement_exactly_as_the_pool_classifies_it() {
+        let driver_error = || FakeDatabaseError::new("invalid regular expression", "2201B").into_sqlx();
+        let error = ContextStoreError::from(driver_error());
+        assert!(matches!(error, ContextStoreError::InvalidRegex(_)));
+        pretty_assertions::assert_eq!(error.failure_class(), classify(&driver_error()));
+        pretty_assertions::assert_eq!(error.failure_class(), PersistenceFailure::StatementRejected);
     }
 
     #[test]

@@ -3,14 +3,8 @@
 use crate::{
     error::ContextStoreError,
     json_text::JsonText,
-    snapshot::{
-        json_value::optional_json,
-        mapper::row_to_snapshot,
-        persistence_error,
-        record::snapshot_select,
-        unencodable_snapshot_error::UnencodableSnapshotError,
-    },
-    store_fault::undecodable,
+    snapshot::{json_value::optional_json, mapper::row_to_snapshot, record::snapshot_select, unencodable_snapshot_error::UnencodableSnapshotError},
+    store_fault::{persistence_error, undecodable},
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -77,7 +71,7 @@ impl SnapshotStatusOutbox {
     /// the claimed rows or the commit fails, and when a claimed row does not map
     /// back to a delivery because its endpoint or Snapshot URI no longer parses.
     pub async fn claim(&self, worker: LeaseHolder, lease_until: DateTime<Utc>, limit: i32) -> Result<Vec<SnapshotStatusDelivery>, SnapshotError> {
-        let mut transaction = self.pool.begin().await.map_err(|error| persistence_error(error))?;
+        let mut transaction = self.pool.begin().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
         let claimable = || {
             claimable_at(
                 Expr::col(SnapshotNotificationOutbox::NextAttemptAt),
@@ -109,9 +103,9 @@ impl SnapshotStatusOutbox {
         let claimed_ids: Vec<Uuid> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_all(&mut *transaction)
             .await
-            .map_err(|error| persistence_error(error))?;
+            .map_err(|error| persistence_error::<SnapshotError>(error))?;
         if claimed_ids.is_empty() {
-            transaction.commit().await.map_err(|error| persistence_error(error))?;
+            transaction.commit().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
             return Ok(Vec::new());
         }
 
@@ -138,8 +132,8 @@ impl SnapshotStatusOutbox {
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_all(&mut *transaction)
             .await
-            .map_err(|error| persistence_error(error))?;
-        transaction.commit().await.map_err(|error| persistence_error(error))?;
+            .map_err(|error| persistence_error::<SnapshotError>(error))?;
+        transaction.commit().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
         rows.iter().map(map_delivery).collect()
     }
 
@@ -235,23 +229,23 @@ pub(crate) async fn enqueue_terminal_notification(transaction: &mut Transaction<
     let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_one(&mut **transaction)
         .await
-        .map_err(|error| persistence_error(error))?;
-    let snapshot = row_to_snapshot(&row).map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
+    let snapshot = row_to_snapshot(&row).map_err(|error| persistence_error::<SnapshotError>(error))?;
     let Some(endpoint) = snapshot.endpoint.as_ref() else {
         return Ok(());
     };
     if snapshot.status == SnapshotStatus::Preparing {
         return Ok(());
     }
-    let snapshot_key: i64 = row.try_get("snapshot_key").map_err(|error| persistence_error(error))?;
+    let snapshot_key: i64 = row.try_get("snapshot_key").map_err(|error| persistence_error::<SnapshotError>(error))?;
     let payload = serde_json::to_string(&snapshot.build_notification())
-        .map_err(|error| persistence_error(ContextStoreError::from(UnencodableSnapshotError::Notification(error))))?;
+        .map_err(|error| persistence_error::<SnapshotError>(ContextStoreError::from(UnencodableSnapshotError::Notification(error))))?;
     let insert = outbox_insert(snapshot_key, endpoint, snapshot.receiver_info.as_deref(), payload)?;
     let (sql, values) = insert.build_sqlx(PostgresQueryBuilder);
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(&mut **transaction)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
     Ok(())
 }
 
@@ -275,7 +269,7 @@ fn outbox_insert(snapshot_key: i64, endpoint: &Url, receiver_info: Option<&[KeyV
             optional_json(receiver_info, UnencodableSnapshotError::ReceiverInfo)?,
             cast(Expr::val(payload), PostgresType::Json),
         ])
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
     Ok(insert)
 }
 
@@ -285,7 +279,7 @@ async fn execute(pool: &PgPool, statement: impl SqlxBinder) -> Result<u64, Snaps
     let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(pool)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
     Ok(result.rows_affected())
 }
 
@@ -298,23 +292,23 @@ struct NotificationIdentity {
 
 /// Decode one claimed outbox row into its transport-facing delivery value.
 fn map_delivery(row: &PgRow) -> Result<SnapshotStatusDelivery, SnapshotError> {
-    let raw_snapshot: String = row.try_get("snapshot_id").map_err(|error| persistence_error(error))?;
-    let raw_endpoint: String = row.try_get("endpoint").map_err(|error| persistence_error(error))?;
-    let payload: JsonText<'_> = row.try_get("payload").map_err(|error| persistence_error(error))?;
+    let raw_snapshot: String = row.try_get("snapshot_id").map_err(|error| persistence_error::<SnapshotError>(error))?;
+    let raw_endpoint: String = row.try_get("endpoint").map_err(|error| persistence_error::<SnapshotError>(error))?;
+    let payload: JsonText<'_> = row.try_get("payload").map_err(|error| persistence_error::<SnapshotError>(error))?;
     let notification: Box<RawValue> = serde_json::from_slice(payload.as_bytes())?;
     let receiver_info = row
         .try_get::<Option<JsonText<'_>>, _>("receiver_info")
-        .map_err(|error| persistence_error(error))?
+        .map_err(|error| persistence_error::<SnapshotError>(error))?
         .map(|text| serde_json::from_slice(text.as_bytes()))
         .transpose()?;
     Ok(SnapshotStatusDelivery {
-        id: row.try_get("id").map_err(|error| persistence_error(error))?,
+        id: row.try_get("id").map_err(|error| persistence_error::<SnapshotError>(error))?,
         snapshot_id: raw_snapshot.parse().map_err(|error| SnapshotError::from(undecodable(&error)))?,
         endpoint: Url::parse(&raw_endpoint).map_err(|error| SnapshotError::from(undecodable(&error)))?,
         receiver_info,
         notification_id: serde_json::from_str::<NotificationIdentity>(notification.get())?.id,
         notification,
-        attempt_count: row.try_get("attempt_count").map_err(|error| persistence_error(error))?,
+        attempt_count: row.try_get("attempt_count").map_err(|error| persistence_error::<SnapshotError>(error))?,
     })
 }
 

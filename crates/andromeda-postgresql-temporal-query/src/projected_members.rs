@@ -12,35 +12,40 @@
 //! projection keeps `scope`, whether any scope event stage 2 would represent
 //! overlaps the window.
 
-use crate::{
-    alias::An,
-    history::{base_history_source, represented_instances},
-    scope_history::scope_is_selected,
-};
+use crate::{alias::Ah, history::represented_instances, scope_history::scope_is_selected};
 use andromeda_ngsi_ld_query::{
     projection::projected_members::{ProjectedMembers, ScopeRetention},
     temporal::compiled::CompiledTemporalQuery,
 };
 use andromeda_postgresql_query::{
-    history_source::{HistoryBranch, HistoryOf, scope_rows::scope_rows},
+    attribute_name_key::AttributeNameKey,
+    dictionary::query_names::QueryNames,
+    history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, grain::HistoryGrain, scope_rows::scope_rows},
     scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis},
 };
-use andromeda_postgresql_schema::{current::E, name_dictionary::AttributeNames, temporal::TemporalEntities};
-use andromeda_postgresql_seaquery::literal::int_literal;
-use sea_query::{Condition, Expr, ExprTrait, Query, SelectStatement, SimpleExpr};
+use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
+use andromeda_postgresql_seaquery::{
+    literal::int_literal,
+    pg_array::{is_any_of, is_none_of},
+};
+use sea_query::{Condition, Expr, Query, SelectStatement, SimpleExpr};
 
 /// The condition an entity of the stage 1 `e` relation has to satisfy for the
 /// query's projection to leave it a member; `None` when every entity does.
 #[must_use]
-pub fn projected_member_condition(branch: &HistoryBranch, compiled: &CompiledTemporalQuery) -> Option<Condition> {
+pub fn projected_member_condition(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Option<Condition> {
     let projected = &compiled.entities.projected_members;
-    let attribute_name = Expr::col((An, AttributeNames::Name));
+    // The projected names are compared by the dictionary keys they resolved
+    // to: a name never keyed names no recorded attribute, so it neither keeps
+    // nor spares one.
+    let attribute = Expr::col((Ah, HistoryGrain::AttributeNameKey));
+    let keys = names.attributes.keys_of(projected.names()).into_iter().map(AttributeNameKey::get);
     let (kept_names, scope) = match projected {
         ProjectedMembers::Unconditional => return None,
-        ProjectedMembers::AnyOf { scope, .. } => (attribute_name.is_in(projected.names()), *scope),
-        ProjectedMembers::AnyBesides { scope, .. } => (attribute_name.is_not_in(projected.names()), *scope),
+        ProjectedMembers::AnyOf { scope, .. } => (is_any_of(attribute, keys), *scope),
+        ProjectedMembers::AnyBesides { scope, .. } => (is_none_of(attribute, keys), *scope),
     };
-    let attribute = Expr::exists(represented_attribute(branch, compiled, kept_names));
+    let attribute = Expr::exists(represented_attribute(branch, compiled, names, kept_names));
     Some(match scope {
         ScopeRetention::Kept if scope_is_selected(compiled) => Condition::any().add(attribute).add(Expr::exists(represented_scope(branch, compiled))),
         ScopeRetention::Kept | ScopeRetention::Removed => Condition::all().add(attribute),
@@ -49,12 +54,12 @@ pub fn projected_member_condition(branch: &HistoryBranch, compiled: &CompiledTem
 
 /// The instances of the entity stage 2 would represent, restricted to the
 /// Attributes whose names satisfy `kept_names`.
-fn represented_attribute(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, kept_names: SimpleExpr) -> SelectStatement {
+fn represented_attribute(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames, kept_names: SimpleExpr) -> SelectStatement {
     let mut probe = Query::select();
-    probe.expr(int_literal(1));
-    base_history_source(&mut probe, branch, &of_selected_entity());
     probe
-        .cond_where(represented_instances(branch, &of_selected_entity(), compiled))
+        .expr(int_literal(1))
+        .from(attribute_rows(branch, &of_selected_entity(), Ah))
+        .cond_where(represented_instances(branch, &of_selected_entity(), compiled, names))
         .cond_where(kept_names);
     probe.take()
 }
@@ -93,7 +98,11 @@ mod tests {
         },
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-    use andromeda_postgresql_query::history_source::HistoryBranch;
+    use andromeda_postgresql_query::{
+        attribute_name_key::AttributeNameKey,
+        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
+        history_source::HistoryBranch,
+    };
     use iri_rs::IriBuf;
     use sea_query::{PostgresQueryBuilder, Query};
 
@@ -125,8 +134,16 @@ mod tests {
         }
     }
 
+    /// The dictionary knows `speed` under key 7.
+    fn names() -> QueryNames {
+        QueryNames {
+            attributes: ResolvedNames::from_pairs([("https://example.com/speed".parse().expect("valid attribute name"), AttributeNameKey::from(7))]),
+            types: ResolvedNames::default(),
+        }
+    }
+
     fn rendered(compiled: &CompiledTemporalQuery) -> Option<String> {
-        projected_member_condition(&HistoryBranch::live(), compiled)
+        projected_member_condition(&HistoryBranch::live(), compiled, &names())
             .map(|condition| Query::select().cond_where(condition).to_owned().to_string(PostgresQueryBuilder))
     }
 
@@ -142,7 +159,7 @@ mod tests {
     #[test]
     fn a_pick_probes_the_represented_instances_of_the_picked_attributes() {
         let sql = rendered(&compiled(&Projection::builder().pick(vec![speed()]).build())).expect("a condition");
-        assert!(sql.contains(r#""an"."name" IN ('https://example.com/speed')"#), "{sql}");
+        assert!(sql.contains(r#""ah"."attribute_name_key" = ANY(ARRAY [7])"#), "{sql}");
         assert!(sql.contains(r#""re"."id" = "e"."id""#), "{sql}");
         assert!(sql.contains(r#""ah"."observed_at" >="#), "the window bounds the instances: {sql}");
         assert!(!sql.contains("scope_history"), "the pick does not keep the scope: {sql}");
@@ -166,7 +183,7 @@ mod tests {
             &Projection::builder().omit(vec![ProjectionTerm::Id, ProjectionTerm::Type, speed()]).build(),
         ))
         .expect("a condition");
-        assert!(sql.contains(r#""an"."name" NOT IN ('https://example.com/speed'"#), "{sql}");
+        assert!(sql.contains(r#""ah"."attribute_name_key" <> ALL(ARRAY [7])"#), "{sql}");
         assert!(sql.contains(r#"FROM "scope_history""#), "the spared scope keeps an entity: {sql}");
         assert!(sql.contains(" OR "), "{sql}");
     }

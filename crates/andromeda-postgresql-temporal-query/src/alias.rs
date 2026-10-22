@@ -28,14 +28,6 @@ pub struct An;
 #[iden = "te"]
 pub struct Te;
 
-/// Alias `ahg` for the attribute rows the geo existential filters: the
-/// `GeoProperty` instances within the temporal window (clause 5.7.4.4 S3), kept
-/// distinct from [`Ah`] so the probe nested beside the window match cannot
-/// capture its rows.
-#[derive(Iden, Clone, Copy)]
-#[iden = "ahg"]
-pub struct Ahg;
-
 /// Alias `rs` for the `temporal_attribute_streams` rows a candidate read
 /// names the Evolutions of.
 #[derive(Iden, Clone, Copy)]
@@ -55,7 +47,7 @@ pub struct EntityIdColumn;
 
 #[cfg(test)]
 mod tests {
-    use crate::alias::{Ah, Ahg, An, EntityIdColumn, Rh, Rs, S, Te};
+    use crate::alias::{Ah, An, EntityIdColumn, Rh, Rs, S, Te};
     use sea_query::Iden;
 
     #[test]
@@ -64,7 +56,6 @@ mod tests {
         pretty_assertions::assert_eq!(Ah.to_string(), "ah");
         pretty_assertions::assert_eq!(An.to_string(), "an");
         pretty_assertions::assert_eq!(Te.to_string(), "te");
-        pretty_assertions::assert_eq!(Ahg.to_string(), "ahg");
         pretty_assertions::assert_eq!(Rs.to_string(), "rs");
         pretty_assertions::assert_eq!(Rh.to_string(), "rh");
         pretty_assertions::assert_eq!(EntityIdColumn.to_string(), "entity_id");

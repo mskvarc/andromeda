@@ -1,10 +1,8 @@
 //! Every read selects through the one `registration_select` projection that discovery shares; this module owns the writes.
 
-use crate::csource_registration::{
-    mode_code::stored_mode,
-    operation_code::stored_operation,
-    registration_store::persistence_error,
-    status_code::stored_status,
+use crate::{
+    csource_registration::{mode_code::stored_mode, operation_code::stored_operation, status_code::stored_status},
+    store_fault::persistence_error,
 };
 use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
 use andromeda_ngsi_ld_model::{
@@ -107,7 +105,7 @@ pub(super) fn csr_create_sql() -> Result<String, RegistrationError> {
             now(),
             now(),
         ])
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
     Ok(insert.to_string(PostgresQueryBuilder))
 }
 
@@ -164,7 +162,7 @@ pub(super) fn delivery_state_insert_sql() -> Result<String, RegistrationError> {
         .into_table(RegistrationDeliveryState::Table)
         .columns([RegistrationDeliveryState::RegistrationId, RegistrationDeliveryState::Status])
         .values([external_placeholder(1), SeaExpr::val(stored_status(CsrStatus::Ok).code())])
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
     Ok(insert.to_string(PostgresQueryBuilder))
 }
 

@@ -36,7 +36,11 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::aggr_method::AggrMethod;
 use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, window::TimeInterval};
-use andromeda_postgresql_query::history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, grain::HistoryGrain};
+use andromeda_postgresql_query::{
+    dictionary::query_names::QueryNames,
+    history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, grain::HistoryGrain},
+    tombstone::carries_a_value,
+};
 use andromeda_postgresql_schema::{name_dictionary::AttributeNames, temporal::AttributeHistory};
 use andromeda_postgresql_seaquery::{
     aggregate::{bool_or, count_all, count_distinct, row_number, stddev},
@@ -209,13 +213,19 @@ fn whole_range_bound(bound: Option<SimpleExpr>, extreme: SimpleExpr) -> SimpleEx
 /// Clause 4.5.19: the fixed key is the attribute and `datasetId`, which the
 /// stream is; the `aggrGroupBy` extension adds its own keys ahead of the
 /// period.
-fn aggregated_rows(rows: SelectStatement, compiled: &CompiledTemporalQuery, branch: &HistoryBranch, of: &HistoryOf) -> (SelectStatement, Vec<SimpleExpr>) {
+fn aggregated_rows(
+    rows: SelectStatement,
+    compiled: &CompiledTemporalQuery,
+    branch: &HistoryBranch,
+    of: &HistoryOf,
+    names: &QueryNames,
+) -> (SelectStatement, Vec<SimpleExpr>) {
     let axis = axis_column(compiled.window.timeproperty);
     let mut select = Query::select();
     project_group_span(&mut select);
     select.from_subquery(rows, Ah);
     let keys: Vec<SimpleExpr> = match &compiled.representation.grouping {
-        Some(grouping) => apply_grouping(&mut select, grouping, axis, branch, of),
+        Some(grouping) => apply_grouping(&mut select, grouping, axis, branch, of, names),
         None => Vec::new(),
     };
     for (expr, alias) in aggregate_columns(&compiled.representation.aggr_methods) {
@@ -226,15 +236,22 @@ fn aggregated_rows(rows: SelectStatement, compiled: &CompiledTemporalQuery, bran
 
 /// The periods of one stream's page, each with its aggregates, numbered in the
 /// order the representation lists them.
-fn stream_page(rows: StreamRows, grid: Option<&AggregationGrid>, compiled: &CompiledTemporalQuery, branch: &HistoryBranch, of: &HistoryOf) -> SelectStatement {
+fn stream_page(
+    rows: StreamRows,
+    grid: Option<&AggregationGrid>,
+    compiled: &CompiledTemporalQuery,
+    branch: &HistoryBranch,
+    of: &HistoryOf,
+    names: &QueryNames,
+) -> SelectStatement {
     match rows {
-        StreamRows::OnTheGrid(rows) => grouped_page(rows, grid, compiled, branch, of),
+        StreamRows::OnTheGrid(rows) => grouped_page(rows, grid, compiled, branch, of, names),
         StreamRows::AmongListedPeriods(rows) => {
-            let (aggregate, keys) = aggregated_rows(rows, compiled, branch, of);
+            let (aggregate, keys) = aggregated_rows(rows, compiled, branch, of, names);
             placed_among_listed_periods(aggregate, keys, axis_column(compiled.window.timeproperty))
         }
         StreamRows::OfEachListedPeriod(rows) => {
-            let (aggregate, keys) = aggregated_rows(rows, compiled, branch, of);
+            let (aggregate, keys) = aggregated_rows(rows, compiled, branch, of, names);
             each_listed_period(aggregate, keys)
         }
     }
@@ -251,9 +268,10 @@ fn grouped_page(
     compiled: &CompiledTemporalQuery,
     branch: &HistoryBranch,
     of: &HistoryOf,
+    names: &QueryNames,
 ) -> SelectStatement {
     let axis = axis_column(compiled.window.timeproperty);
-    let (mut select, mut keys) = aggregated_rows(rows, compiled, branch, of);
+    let (mut select, mut keys) = aggregated_rows(rows, compiled, branch, of, names);
     let mut order = keys.clone(); // clone: the periods are numbered in the order of their group keys
     if let Some(grid) = grid {
         select
@@ -297,7 +315,13 @@ fn grouped_page(
 /// records a deletion and carries no value, so the rows that record one are
 /// outside every aggregate rather than counted.
 #[must_use]
-pub fn build_aggregation_query(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemporalQuery, condition: &Condition) -> SelectStatement {
+pub fn build_aggregation_query(
+    branch: &HistoryBranch,
+    of: &HistoryOf,
+    compiled: &CompiledTemporalQuery,
+    condition: &Condition,
+    names: &QueryNames,
+) -> SelectStatement {
     let (grid, origin) = match compiled.representation.aggr_period_duration {
         Some(period) => {
             let (origin_expr, origin) = grid_origin(branch, of, compiled);
@@ -306,7 +330,7 @@ pub fn build_aggregation_query(branch: &HistoryBranch, of: &HistoryOf, compiled:
         None => (None, None),
     };
     // clone: the edge places the page on every represented instance, the aggregates fold the valued ones.
-    let aggregated = condition.clone().add(Expr::col((Ah, AttributeHistory::ValueKind)).ne(int_literal(0)));
+    let aggregated = condition.clone().add(carries_a_value(Ah));
     let read = aggregated_stream_read(branch, compiled, condition, &aggregated, grid.as_ref());
 
     let mut select = Query::select();
@@ -325,7 +349,7 @@ pub fn build_aggregation_query(branch: &HistoryBranch, of: &HistoryOf, compiled:
     }
     select.join_lateral(
         JoinType::Join,
-        stream_page(read.rows, grid.as_ref(), compiled, branch, of),
+        stream_page(read.rows, grid.as_ref(), compiled, branch, of, names),
         Page,
         SimpleExpr::from(true),
     );
@@ -354,7 +378,10 @@ mod tests {
         },
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-    use andromeda_postgresql_query::history_source::{HistoryBranch, HistoryOf};
+    use andromeda_postgresql_query::{
+        dictionary::query_names::QueryNames,
+        history_source::{HistoryBranch, HistoryOf},
+    };
     use chrono::{DateTime, Utc};
     use sea_query::{Condition, Expr, PostgresQueryBuilder};
 
@@ -398,11 +425,11 @@ mod tests {
     }
 
     fn sql_of(compiled: &CompiledTemporalQuery) -> String {
-        build_aggregation_query(&HistoryBranch::live(), &vehicle(), compiled, &Condition::all()).to_string(PostgresQueryBuilder)
+        build_aggregation_query(&HistoryBranch::live(), &vehicle(), compiled, &Condition::all(), &QueryNames::default()).to_string(PostgresQueryBuilder)
     }
 
     fn bound_sql_of(compiled: &CompiledTemporalQuery) -> (String, sea_query::Values) {
-        build_aggregation_query(&HistoryBranch::live(), &vehicle(), compiled, &Condition::all()).build(PostgresQueryBuilder)
+        build_aggregation_query(&HistoryBranch::live(), &vehicle(), compiled, &Condition::all(), &QueryNames::default()).build(PostgresQueryBuilder)
     }
 
     /// The keys one stream's periods are grouped by, empty when the statement

@@ -29,7 +29,8 @@ use andromeda_postgresql_query::{
     scope_predicate::pattern_condition,
 };
 use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
-use sea_query::{Alias, Expr as SeaExpr, ExprTrait, SelectStatement};
+use andromeda_postgresql_seaquery::{literal::false_literal, pg_array::is_any_of};
+use sea_query::{Alias, Expr as SeaExpr, SelectStatement};
 
 /// Build the statement reading, for every entity of `entity_ids` this broker
 /// holds a Temporal Evolution of, its identifier and then one boolean column
@@ -53,8 +54,7 @@ pub fn build_filter_leaf_truths(
     for (position, leaf) in SplitFilter::of(&compiled.entities).leaves().enumerate() {
         select.expr_as(leaf_expression(branch, compiled, leaf, names)?, Alias::new(format!("leaf_{position}")));
     }
-    let ids: Vec<&str> = entity_ids.iter().map(AsRef::as_ref).collect();
-    select.and_where(SeaExpr::col((E, TemporalEntities::Id)).is_in(ids));
+    select.and_where(is_any_of(SeaExpr::col((E, TemporalEntities::Id)), entity_ids.iter().map(Identifier::to_string)));
     Ok(select.take())
 }
 
@@ -68,7 +68,7 @@ fn leaf_expression(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, lea
             let term = Expr::Pred(pred.clone());
             Ok(q_filter::compile(&term, &InstanceScan::History(&windowed_instances(branch, compiled, &of)), names).into())
         }
-        FilterLeaf::Geo(_) => Ok(temporal_geo_existential(branch, compiled, names, &of)?.map_or_else(|| SeaExpr::val(false), SeaExpr::exists)),
+        FilterLeaf::Geo(_) => Ok(temporal_geo_existential(branch, compiled, names, &of)?.map_or_else(false_literal, Into::into)),
         FilterLeaf::ScopeRequirement(pattern) => Ok(pattern_condition(pattern, &scope_history_target(branch, compiled, &of))),
     }
 }
@@ -125,7 +125,13 @@ mod tests {
 
     fn speed_known() -> QueryNames {
         QueryNames {
-            attributes: ResolvedNames::from_pairs([("https://example.com/speed".parse().expect("valid attribute name"), AttributeNameKey::from(7))]),
+            attributes: ResolvedNames::from_pairs([
+                ("https://example.com/speed".parse().expect("valid attribute name"), AttributeNameKey::from(7)),
+                (
+                    "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
+                    AttributeNameKey::from(9),
+                ),
+            ]),
             types: ResolvedNames::default(),
         }
     }
@@ -154,9 +160,9 @@ mod tests {
         assert!(leaf_0 < leaf_1 && leaf_1 < leaf_2, "{sql}");
         assert!(!sql.contains("leaf_3"), "{sql}");
         assert!(sql[..leaf_0].contains(r#""qh"."value_number" >"#), "{sql}");
-        assert!(sql[leaf_0..leaf_1].contains(r#""ahg"."value_geometry""#), "{sql}");
+        assert!(sql[leaf_0..leaf_1].contains(r#""qh"."value_geometry""#), "{sql}");
         assert!(sql[leaf_1..leaf_2].contains("scope_history"), "{sql}");
-        assert!(sql.contains(r#") AS "e" WHERE "e"."id" IN ("#), "{sql}");
+        assert!(sql.contains(r#") AS "e" WHERE "e"."id" = ANY("#), "{sql}");
         assert!(format!("{values:?}").contains("urn:ngsi-ld:Vehicle:2"), "{values:?}");
     }
 

@@ -16,7 +16,6 @@ use andromeda_http_response::{
     temporal_failure::classify_temporal_error,
 };
 use andromeda_jsonld::error::JsonLdError;
-use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_temporal::error::TemporalError;
@@ -95,10 +94,6 @@ where
     fn with_entity_map_instance(self, instance: &Uri) -> Result<T, ProblemResponse> {
         self.map_err(|error| error.classify_for_entity_map_http().with_instance(instance.clone()))
     }
-}
-
-pub(crate) fn bad_request_data(detail: impl Into<String>, instance: &Uri) -> ProblemResponse {
-    ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail).with_instance(instance.clone())
 }
 
 #[cfg(test)]

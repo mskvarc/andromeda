@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-postgresql-pool.workspace = true
 andromeda-tenancy.workspace = true
 andromeda-test-client.workspace = true
 andromeda-test-fixtures.workspace = true

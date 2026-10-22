@@ -49,6 +49,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-jsonld",
         "andromeda-linked-retrieval",
         "andromeda-ngsi-ld-compaction",
+        "andromeda-ngsi-ld-expansion",
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",

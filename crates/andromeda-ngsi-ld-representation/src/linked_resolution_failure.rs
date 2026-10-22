@@ -9,6 +9,7 @@
 //! beside [`crate::join_mode`] rather than inside either traversal.
 
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use std::fmt;
 use strum::Display;
 
 /// What stood between a Linked Entity and its resolution.
@@ -45,9 +46,58 @@ pub struct LinkedResolutionFailure {
     pub detail: String,
 }
 
+impl LinkedResolutionFailure {
+    /// The Linked Entity `id` could not be fetched at all, for the reason
+    /// `cause` states.
+    #[must_use]
+    pub fn unreachable(id: &Identifier, cause: &impl fmt::Display) -> LinkedResolutionFailure {
+        LinkedResolutionFailure::stating(id, LinkedResolutionFailureKind::Unreachable, cause)
+    }
+
+    /// The Linked Entity `id` was answered for, but the answer could not be
+    /// read, for the reason `cause` states.
+    #[must_use]
+    pub fn unusable(id: &Identifier, cause: &impl fmt::Display) -> LinkedResolutionFailure {
+        LinkedResolutionFailure::stating(id, LinkedResolutionFailureKind::UnusableResponse, cause)
+    }
+
+    /// The failure of `kind` on `id`, detailed by what `cause` displays.
+    fn stating(id: &Identifier, kind: LinkedResolutionFailureKind, cause: &impl fmt::Display) -> LinkedResolutionFailure {
+        LinkedResolutionFailure {
+            id: id.clone(), // clone: the failure outlives the candidate it names
+            kind,
+            detail: cause.to_string(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::linked_resolution_failure::LinkedResolutionFailureKind;
+    use crate::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+
+    #[test]
+    fn each_constructor_names_its_condition_and_carries_the_cause() {
+        let id: Identifier = "urn:ngsi-ld:Building:1".parse().expect("valid URI");
+        pretty_assertions::assert_eq!(
+            [
+                LinkedResolutionFailure::unreachable(&id, &"timed out"),
+                LinkedResolutionFailure::unusable(&id, &"no id")
+            ],
+            [
+                LinkedResolutionFailure {
+                    id: id.clone(), // clone: the expectation and the built failure both name it
+                    kind: LinkedResolutionFailureKind::Unreachable,
+                    detail: "timed out".to_owned(),
+                },
+                LinkedResolutionFailure {
+                    id: id.clone(), // clone: same
+                    kind: LinkedResolutionFailureKind::UnusableResponse,
+                    detail: "no id".to_owned(),
+                },
+            ]
+        );
+    }
 
     /// The conditions render in kebab-case, which is what a log line and a
     /// warning detail both carry.

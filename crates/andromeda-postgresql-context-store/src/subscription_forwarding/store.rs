@@ -1,8 +1,8 @@
 //! `SubscriptionForwardingStore` implementation over the two mapping tables.
 
 use crate::{
-    store_fault::undecodable,
-    subscription_forwarding::{persistence_error, repo::SubscriptionForwardingRepository},
+    store_fault::{persistence_error, undecodable},
+    subscription_forwarding::repo::SubscriptionForwardingRepository,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::subscription_forwarding::{ForwardedSubscriptions, SubscriptionCompanions};
@@ -27,7 +27,7 @@ fn forwarded_for_registration_statement(registration: &Identifier) -> SelectStat
 
 /// Parse an identifier column back into a URI.
 fn uri_column(row: &PgRow, column: &str) -> Result<Identifier, SubscriptionForwardingError> {
-    let raw: String = row.try_get(column).map_err(|error| persistence_error(error))?;
+    let raw: String = row.try_get(column).map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
     raw.parse::<Identifier>()
         .map_err(|error| SubscriptionForwardingError::from(undecodable(&error)))
 }
@@ -50,7 +50,7 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
                 .into_table(SubscriptionCompanions::Table)
                 .columns([SubscriptionCompanions::LocalSubscriptionId, SubscriptionCompanions::CompanionSubscriptionId])
                 .values([Expr::val(local.as_str()), Expr::val(companion.as_str())])
-                .map_err(|error| persistence_error(error))?
+                .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?
                 .on_conflict(
                     OnConflict::column(SubscriptionCompanions::LocalSubscriptionId)
                         .update_column(SubscriptionCompanions::CompanionSubscriptionId)
@@ -60,7 +60,7 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
             sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                 .execute(self.pool())
                 .await
-                .map_err(|error| persistence_error(error))?;
+                .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
             Ok(())
         })
     }
@@ -83,7 +83,7 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
             let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                 .fetch_optional(self.pool())
                 .await
-                .map_err(|error| persistence_error(error))?;
+                .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
             row.map(|row| uri_column(&row, "companion_subscription_id")).transpose()
         })
     }
@@ -106,7 +106,7 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
             let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                 .fetch_optional(self.pool())
                 .await
-                .map_err(|error| persistence_error(error))?;
+                .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
             row.map(|row| uri_column(&row, "local_subscription_id")).transpose()
         })
     }
@@ -136,7 +136,7 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
                     Expr::val(copy.registration.as_str()),
                     Expr::val(copy.remote_subscription.as_str()),
                 ])
-                .map_err(|error| persistence_error(error))?
+                .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?
                 .on_conflict(
                     OnConflict::columns([ForwardedSubscriptions::LocalSubscriptionId, ForwardedSubscriptions::RegistrationId])
                         .update_column(ForwardedSubscriptions::RemoteSubscriptionId)
@@ -146,7 +146,7 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
             sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                 .execute(self.pool())
                 .await
-                .map_err(|error| persistence_error(error))?;
+                .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
             Ok(())
         })
     }
@@ -170,7 +170,7 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
             let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                 .fetch_all(self.pool())
                 .await
-                .map_err(|error| persistence_error(error))?;
+                .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
             rows.iter()
                 .map(|row| {
                     Ok(ForwardedCopy {
@@ -196,7 +196,7 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
             let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                 .fetch_all(self.pool())
                 .await
-                .map_err(|error| persistence_error(error))?;
+                .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
             rows.iter()
                 .map(|row| {
                     Ok(ForwardedSubscriptionCopy {
@@ -227,7 +227,7 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
             let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                 .fetch_optional(self.pool())
                 .await
-                .map_err(|error| persistence_error(error))?;
+                .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
             row.map(|row| Ok((uri_column(&row, "local_subscription_id")?, uri_column(&row, "registration_id")?)))
                 .transpose()
         })
@@ -253,7 +253,7 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
             sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                 .execute(self.pool())
                 .await
-                .map_err(|error| persistence_error(error))?;
+                .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
             Ok(())
         })
     }

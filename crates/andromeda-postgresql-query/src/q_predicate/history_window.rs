@@ -35,6 +35,8 @@
 
 use crate::{
     attribute_name_key::AttributeNameKey,
+    error::RenderError,
+    geo_predicate::{near_envelope_unindexed_prefilter, relation_expression},
     history_source::{
         HistoryBranch,
         HistoryOf,
@@ -46,10 +48,16 @@ use crate::{
         instance_test::{InstanceTest, non_empty},
     },
     time_interval_predicate::within_interval,
+    tombstone::carries_a_value,
 };
-use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
+use andromeda_ngsi_ld_query::{geo::query::GeoQuery, temporal::window::TimeInterval};
 use andromeda_postgresql_schema::temporal::AttributeHistory;
-use andromeda_postgresql_seaquery::literal::int_literal;
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    literal::{false_literal, int_literal},
+    pg_array::is_any_of,
+    pg_type::PostgresType,
+};
 use chrono::{DateTime, Utc};
 use sea_query::{Alias, Asterisk, Condition, DynIden, Expr as SeaExpr, ExprTrait, JoinType, Query, SelectStatement, SimpleExpr};
 use typed_builder::TypedBuilder;
@@ -234,12 +242,46 @@ impl HistoryWindow {
     /// streams alone rather than for every stream of the entity.
     pub(crate) fn exists_any(&self, tests: Vec<InstanceTest>, aliases: &HistoryAliases) -> Condition {
         let keys: Vec<i32> = tests.iter().map(|test| test.attribute.get()).collect();
-        let streams = SeaExpr::expr(aliases.stream_column(HistoryGrain::AttributeNameKey)).is_in(keys);
+        let streams = is_any_of(aliases.stream_column(HistoryGrain::AttributeNameKey), keys);
         let any = tests.into_iter().fold(Condition::any(), |any, test| {
             let of_attribute = Self::of_attribute(test.attribute, aliases);
             any.add(test.arm(of_attribute))
         });
         self.probes(any, Some(streams), aliases).into_exists()
+    }
+
+    /// Whether one instance of the `GeoProperty` keyed `geoproperty` valid
+    /// within the window meets the relation `geo` states.
+    ///
+    /// Clause 5.7.4.4 step S3 checks the geo-query against "the `GeoProperty`
+    /// instances that are within the interval defined by the temporal query",
+    /// which are the instances a temporal `q` is checked against at step S2:
+    /// those inside the interval and the one in effect when it opens, never a
+    /// deletion. Both filters read them through [`Self::probes`], so for one
+    /// window they test the same instances. A `GeoProperty` the dictionary
+    /// never keyed has no history and matches nothing.
+    ///
+    /// A `near` relation with a `maxDistance` first tests the near envelope as
+    /// a box no geometry index serves: the probe reads one Evolution's rows
+    /// through its stream index, and an indexable box would have the planner
+    /// AND a geometry index into every probe. The spheroidal distance then runs
+    /// only on the rows the box keeps.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] when the reference geometry cannot be encoded or
+    /// the relation cannot be rendered.
+    pub fn exists_geo(&self, geoproperty: Option<AttributeNameKey>, geo: &GeoQuery) -> Result<Condition, RenderError> {
+        let Some(geoproperty) = geoproperty else {
+            return Ok(Condition::all().add(false_literal()));
+        };
+        let aliases = HistoryAliases::top_level();
+        let planar = aliases.instance_column(AttributeHistory::ValueGeometry);
+        let geographic = cast(aliases.instance_column(AttributeHistory::ValueGeometry), PostgresType::Geography);
+        let near_box = near_envelope_unindexed_prefilter(geo, &planar);
+        let spatial = relation_expression(&geo.georel, planar, geographic, &geo.geometry)?;
+        let relation = Condition::all().add_option(near_box).add(spatial);
+        Ok(self.exists(geoproperty, relation, &aliases))
     }
 
     /// The window's correlated probes over the instances of one attribute,
@@ -322,7 +364,7 @@ impl HistoryWindow {
 
     /// Clause 4.5.7: a deletion records no value, so it is no target value.
     fn carries_a_value(aliases: &HistoryAliases) -> SimpleExpr {
-        SeaExpr::expr(aliases.instance_column(AttributeHistory::DeletedAt)).is_null()
+        carries_a_value(aliases.instance())
     }
 }
 
@@ -401,7 +443,7 @@ mod tests {
             r#""re"."id" = "e"."id""#,
             r#""pe"."entity_id" = "e"."id""#,
             r#") AS "qh" WHERE "qh"."attribute_name_key" = 7"#,
-            r#""qh"."deleted_at" IS NULL"#,
+            r#""qh"."value_kind" <> "#,
             r#""qh"."observed_at" >= '2019-01-01"#,
             r#""qh"."value_number" > 100"#,
         ] {
@@ -436,7 +478,7 @@ mod tests {
             r#"AS "qe" ON TRUE"#,
             r#""qi"."observed_at" = "qe"."placed") AS "qh" ON TRUE"#,
             r#""qe"."placed" < '2019-01-01"#,
-            r#""qh"."deleted_at" IS NULL"#,
+            r#""qh"."value_kind" <> "#,
         ] {
             assert!(in_effect.contains(fragment), "{fragment} missing: {in_effect}");
         }
@@ -512,9 +554,9 @@ mod tests {
         let sql = render(window(after_2019()).exists_any(tests, &HistoryAliases::top_level()));
         let arms = r#"(("qh"."attribute_name_key" = 7 AND "qh"."value_number" > 100) OR ("qh"."attribute_name_key" = 9 AND "qh"."value_string" = 'x'))"#;
         pretty_assertions::assert_eq!(sql.matches(arms).count(), 2, "{sql}");
-        pretty_assertions::assert_eq!(sql.matches(r#""qs"."attribute_name_key" IN (7, 9)"#).count(), 1, "{sql}");
+        pretty_assertions::assert_eq!(sql.matches(r#""qs"."attribute_name_key" = ANY(ARRAY [7,9])"#).count(), 1, "{sql}");
         let in_effect = sql.find("JOIN LATERAL").expect("the in-effect probe is rendered");
-        let narrowing = sql.find(r#""qs"."attribute_name_key" IN (7, 9)"#).expect("the narrowing is rendered");
+        let narrowing = sql.find(r#""qs"."attribute_name_key" = ANY(ARRAY [7,9])"#).expect("the narrowing is rendered");
         assert!(in_effect < narrowing, "the narrowing belongs to the in-effect probe: {sql}");
     }
 

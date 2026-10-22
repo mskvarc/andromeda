@@ -17,12 +17,13 @@ use crate::{
     classification::classify_context_link_error,
     content_length_precondition::{ContentLengthPreconditionError, declared_body_length},
     json_value_budget::refuse_values_past_budget,
+    not_json_document::NotJsonDocument,
     request_json_value_limit::RequestJsonValueLimit,
     request_links::{PayloadCarrier, RequestLinks},
     request_payload::buffer_payload,
     undecodable_body::UndecodableBody,
 };
-use andromeda_http_response::problem_response::ProblemResponse;
+use andromeda_http_response::{problem_response::ProblemResponse, request_refusal::RequestRefusal};
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{
     batch_contexts::{BatchContext, BatchContexts},
@@ -251,7 +252,7 @@ impl<'b> BatchArrayItem<'b> {
     /// Returns the [`BatchBodyRefusal`] of an item that is no JSON, which an
     /// item of a body read as a JSON array never is.
     fn read(text: &'b RawValue) -> Result<BatchArrayItem<'b>, BatchBodyRefusal> {
-        let envelope = BodyEnvelope::read(text.get().as_bytes()).map_err(|source| BatchBodyRefusal::NotJson { source })?;
+        let envelope = BodyEnvelope::read(text.get().as_bytes()).map_err(|source| BatchBodyRefusal::NotJson(NotJsonDocument(source)))?;
         Ok(BatchArrayItem { text, envelope })
     }
 

@@ -9,7 +9,7 @@
 
 use crate::{
     config::notifications::NotificationsConfig,
-    linked_entity_forwarding::ForwardedLinkedEntitySource,
+    linked_forwarding::LinkedForwarding,
     tenant_factory::{
         assembly_invariant::AssemblyInvariant,
         background_pacer::BackgroundPacer,
@@ -79,7 +79,7 @@ pub(super) fn compose_notification_query(
         storage.tenant.clone(),  // clone: the query service owns its tenant partition.
         // A notification's join resolves Linked Entities exactly as a request's
         // does, including the ones clause 4.5.23.1 places outside this broker.
-        Some(Arc::new(ForwardedLinkedEntitySource::new(
+        Some(Arc::new(LinkedForwarding::new(
             Arc::clone(forwarding),      // clone: request handling and notification joins share one forwarding service.
             storage.live_target.clone(), // clone: linked resolution runs against the tenant's live branch.
         )) as Arc<dyn RemoteLinkedEntitySource>),

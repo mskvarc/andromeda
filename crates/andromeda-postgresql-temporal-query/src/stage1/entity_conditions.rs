@@ -3,7 +3,7 @@
 //! value, geo and Scope filters, and whether the projection leaves a member.
 
 use crate::{projected_members::projected_member_condition, stage1::evolution_walk::TypeTest, value_filters::value_filter_condition};
-use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     entity_selection::{ConsideredEntities, EntitySelector},
     identifier_axis::IdentifierAxis,
@@ -16,8 +16,8 @@ use andromeda_postgresql_query::{
     type_predicate::condition as type_condition,
 };
 use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
-use andromeda_postgresql_seaquery::{literal::false_literal, operator::regex_match};
-use sea_query::{Condition, Expr as SeaExpr, ExprTrait};
+use andromeda_postgresql_seaquery::{literal::false_literal, operator::regex_match, pg_array::is_any_of};
+use sea_query::{Condition, Expr as SeaExpr};
 
 /// Whether the selectors' identifier patterns are tested on the Evolutions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,7 +79,7 @@ pub(super) fn build_entity_conditions_for_temporal(
     // Clauses 5.7.4.5 and 6.3.13: an entity the `pick` / `omit` projection
     // would reduce to no member is not selected, so it is left out here, where
     // the count and the page are taken.
-    if let Some(members) = projected_member_condition(branch, compiled) {
+    if let Some(members) = projected_member_condition(branch, compiled, names) {
         condition = condition.add(members);
     }
 
@@ -97,8 +97,7 @@ fn temporal_selector_condition(selector: &EntitySelector, types: &ResolvedNames<
     let mut condition = Condition::all();
     match (selector.identifier_axis(), pattern_test) {
         (IdentifierAxis::Ids(ids), PatternTest::Tested | PatternTest::Answered) => {
-            let ids: Vec<&str> = ids.iter().map(AsRef::as_ref).collect();
-            condition = condition.add(SeaExpr::col((E, TemporalEntities::Id)).is_in(ids));
+            condition = condition.add(is_any_of(SeaExpr::col((E, TemporalEntities::Id)), ids.iter().map(Identifier::to_string)));
         }
         (IdentifierAxis::Pattern(pattern), PatternTest::Tested) => {
             condition = condition.add(regex_match(SeaExpr::col((E, TemporalEntities::Id)), SeaExpr::val(pattern.portable().as_str())));
@@ -142,6 +141,26 @@ mod tests {
     };
     use sea_query::{PostgresQueryBuilder, Value};
     use std::str::FromStr;
+
+    /// Seventy thousand identifiers are past the 65535 parameters one statement
+    /// may bind; the selector binds them as the one array they are, beside the
+    /// window's own values.
+    #[test]
+    fn an_identifier_list_past_the_parameter_ceiling_binds_as_one_array() {
+        let raw: Vec<String> = (0..70_000).map(|index| format!("urn:ngsi-ld:Vehicle:{index}")).collect();
+        let mut compiled = minimal_compiled();
+        compiled.entities.selectors = vec![EntitySelector::builder().ids(ids(&raw.iter().map(String::as_str).collect::<Vec<_>>())).build()];
+        let (sql, values) = built(&compiled, &speed_and_address());
+        assert!(sql.contains(r#""e"."id" = ANY($"#), "{sql}");
+        assert!(values.0.len() < 100, "{} parameters", values.0.len());
+        assert!(
+            values
+                .0
+                .iter()
+                .any(|value| matches!(value, Value::Array(_, Some(elements)) if elements.len() == raw.len())),
+            "the identifiers are one bound array"
+        );
+    }
 
     /// The attribute dictionary keying one `GeoProperty`, as 9.
     fn geoproperty_is_known(geoproperty: &str) -> QueryNames {
@@ -254,10 +273,10 @@ mod tests {
         .select
         .to_string(PostgresQueryBuilder);
         let sql = PageBranches::of(&page).walk;
-        let exemption = sql.find(r#" OR "e"."id" IN ("#).expect("the contributed identifiers are exempt");
-        let selector = sql.find(r#""e"."id" IN ("#).expect("the selector");
+        let exemption = sql.find(r#" OR "e"."id" = ANY("#).expect("the contributed identifiers are exempt");
+        let selector = sql.find(r#""e"."id" = ANY("#).expect("the selector");
         let q = sql.find(r#"AS "qh""#).expect("the q probe");
-        let geo = sql.find(r#"AS "ahg""#).expect("the geo probe");
+        let geo = sql.find(r#"AS "qh""#).expect("the geo probe");
         let scope = sql.find("scope_history").expect("the scope probe");
         let catalogue = sql.find(r#") AS "ah" WHERE"#).expect("the window match");
         assert!(selector < q && q < exemption && geo < exemption && scope < exemption, "{sql}");
@@ -275,7 +294,7 @@ mod tests {
     fn no_contributed_identifier_leaves_the_statement_as_it_was() {
         let compiled = filtered_compiled();
         let (sql, _) = built(&compiled, &speed_and_address());
-        assert!(!sql.contains(r#" OR "e"."id" IN ("#), "{sql}");
+        assert!(!sql.contains(r#" OR "e"."id" = ANY("#), "{sql}");
         let mut contributed_elsewhere = filtered_compiled();
         contributed_elsewhere.contributed = ContributedEntities::default();
         pretty_assertions::assert_eq!(built(&contributed_elsewhere, &speed_and_address()).0, sql);
@@ -293,7 +312,7 @@ mod tests {
         let (sql, _) = built(&compiled, &speed_and_address());
         for fragment in [
             r#") AS "qh" WHERE "qh"."attribute_name_key" ="#,
-            r#""qh"."deleted_at" IS NULL"#,
+            r#""qh"."value_kind" <> "#,
             r#""qh"."observed_at" >="#,
             r#""qh"."value_number" >"#,
             r#""re"."id" = "e"."id""#,
@@ -471,8 +490,8 @@ mod tests {
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         });
         let (sql, _) = built(&compiled, &geoproperty_is_known("https://uri.etsi.org/ngsi-ld/location"));
-        assert!(sql.contains(r#") AS "ahg" WHERE "ahg"."attribute_name_key" = $"#), "{sql}");
-        assert!(sql.contains(r#""ahg"."value_geometry""#), "{sql}");
+        assert!(sql.contains(r#") AS "qh" WHERE "qh"."attribute_name_key" = $"#), "{sql}");
+        assert!(sql.contains(r#""qh"."value_geometry""#), "{sql}");
         assert!(sql.contains(r#""re"."id" = "e"."id""#), "correlated to the temporal entity: {sql}");
         assert!(!sql.contains("entity_search"), "the geo restriction no longer reads current state: {sql}");
     }
@@ -492,8 +511,8 @@ mod tests {
             geometry: point(&serde_json::json!([-8.503, 41.202])),
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         });
-        let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(sql.contains(r#""ahg"."observed_at""#), "the window is applied to the geo instances: {sql}");
+        let (sql, _) = built(&compiled, &geoproperty_is_known("https://uri.etsi.org/ngsi-ld/location"));
+        assert!(sql.contains(r#""qh"."observed_at""#), "the window is applied to the geo instances: {sql}");
         assert!(sql.contains("ST_DWithin"), "near renders a distance relation on the geo instances: {sql}");
     }
 
@@ -519,12 +538,12 @@ mod tests {
         });
         let (sql, values) = built(&compiled, &geoproperty_is_known("https://example.com/customGeo"));
         assert!(
-            sql.contains(r#") AS "ahg" WHERE "ahg"."attribute_name_key" = $"#),
+            sql.contains(r#") AS "qh" WHERE "qh"."attribute_name_key" = $"#),
             "the target GeoProperty is compared by its dictionary key: {sql}"
         );
         assert!(values.0.contains(&Value::Int(Some(9))), "{values:?}");
         assert!(!sql.contains("attribute_names"), "{sql}");
-        assert!(sql.contains(r#""ahg"."value_geometry""#), "{sql}");
+        assert!(sql.contains(r#""qh"."value_geometry""#), "{sql}");
         assert!(
             !sql.contains("current_attributes"),
             "a temporal geo query reads history, not current state: {sql}"

@@ -46,9 +46,14 @@ async fn malformed_json_is_invalid_request_with_the_exact_instance() -> Result<(
     let Err(rejection) = JsonLd::<RequiredIdentifier>::from_request(request, &()).await else {
         return Err("malformed JSON was accepted".into());
     };
-    assert!(matches!(rejection, ExtractorRejection::InvalidRequest { .. }));
     let body = rejection_body(rejection).await?;
     pretty_assertions::assert_eq!(body["type"], NgsiLdErrorType::InvalidRequest.type_iri().as_str());
+    assert!(
+        body["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.starts_with("request body is not a JSON document:")),
+        "{body}"
+    );
     pretty_assertions::assert_eq!(body["instance"], "/ngsi-ld/v1/entities");
     Ok(())
 }

@@ -28,7 +28,7 @@ use andromeda_postgresql_schema::csr::RegistrationInformation;
 use andromeda_postgresql_seaquery::{
     literal::int_literal,
     operator::regex_match,
-    pg_array::{any, text_array},
+    pg_array::{is_any_of, text_array},
     pg_operator::PgBinaryOperator,
     unnest::unnest_of,
 };
@@ -155,7 +155,7 @@ fn direct_names(children: &[TypeExpr]) -> Vec<&str> {
 fn identifiers_admitted(ids: &[Identifier]) -> Condition {
     let ids: Vec<&str> = ids.iter().map(Identifier::as_str).collect();
     Condition::any()
-        .add(SeaExpr::expr(ri_col(RegistrationInformation::EntityId)).eq(any(text_array(&ids))))
+        .add(is_any_of(ri_col(RegistrationInformation::EntityId), ids.iter().map(|id| (*id).to_owned())))
         .add(
             Condition::all().add(ri_col(RegistrationInformation::EntityId).is_null()).add(
                 Condition::any()
@@ -284,7 +284,7 @@ mod tests {
             id_pattern: None,
         });
         assert!(
-            sql.contains("COALESCE(\"ri\".\"entity_id\", '') IN ('urn:ngsi-ld:Vehicle:1', 'urn:ngsi-ld:Vehicle:2', '')"),
+            sql.contains("COALESCE(\"ri\".\"entity_id\", '') = ANY(ARRAY ['urn:ngsi-ld:Vehicle:1','urn:ngsi-ld:Vehicle:2',''])"),
             "{sql}"
         );
         assert!(

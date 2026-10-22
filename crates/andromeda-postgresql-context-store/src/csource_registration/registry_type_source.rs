@@ -9,7 +9,7 @@
 
 use crate::{
     csource_registration::registration_store::PostgresRegistrationStore,
-    store_fault::{StoreFault, contract_broken, persistence_failure, undecodable},
+    store_fault::{contract_broken, persistence_error, undecodable},
 };
 use andromeda_entity::{
     error::EntityError,
@@ -74,15 +74,6 @@ fn registered_pairs_sql() -> SelectStatement {
                 .add(SeaExpr::expr(SeaExpr::col((Csr::Table, Csr::ExpiresAt))).gt(now())),
         );
     select
-}
-
-/// Erase an adapter-specific diagnostic at the entity port's boundary.
-///
-/// Classify an adapter failure at the port boundary: backpressure keeps the
-/// port's retryable category and every fault becomes its persistence failure.
-#[track_caller]
-fn persistence_error(error: impl StoreFault) -> EntityError {
-    EntityError::from(persistence_failure(&error))
 }
 
 /// Read a stored type name; the registration write stored it, so a malformed one is an
@@ -174,7 +165,7 @@ impl PostgresRegistrationStore {
         let rows: Vec<(Vec<String>, Option<String>)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_all(&self.pool)
             .await
-            .map_err(|error| persistence_error(error))?;
+            .map_err(|error| persistence_error::<EntityError>(error))?;
         Ok(rows
             .into_iter()
             .map(|(entity_types, attribute_name)| RegisteredPair { entity_types, attribute_name })

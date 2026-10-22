@@ -2,19 +2,18 @@
 //! branch schema, in one transaction.
 
 use crate::{
-    error::violates_unique_constraint,
     snapshot::{
         branch_schema::create_branch_schema,
         branch_version::current_version,
         json_value::document_text,
-        persistence_error,
         status_code::stored_status,
         unencodable_snapshot_error::UnencodableSnapshotError,
     },
-    store_fault::undecodable,
+    store_fault::{persistence_error, undecodable},
 };
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_postgresql_pool::sql_state::violates_unique_constraint;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
 use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
@@ -66,7 +65,7 @@ fn control_insert_sql() -> Result<String, SnapshotError> {
             external_placeholder(10),
             external_placeholder(11),
         ])
-        .map_err(|error| persistence_error(error))?
+        .map_err(|error| persistence_error::<SnapshotError>(error))?
         .returning_col(Snapshots::SnapshotKey);
     Ok(insert.to_string(PostgresQueryBuilder))
 }
@@ -96,7 +95,7 @@ fn preparation_insert_sql() -> Result<String, SnapshotError> {
             external_placeholder_as(6, PostgresType::Json),
             external_placeholder(7),
         ])
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
     Ok(insert.to_string(PostgresQueryBuilder))
 }
 
@@ -105,7 +104,7 @@ fn preparation_insert_sql() -> Result<String, SnapshotError> {
 /// into being only when the preparation renames the staging schema.
 pub(crate) async fn create_snapshot(pool: &PgPool, params: InsertSnapshotParams<'_>) -> Result<(), SnapshotError> {
     let branch_version = current_version()?;
-    let mut tx = pool.begin().await.map_err(|error| persistence_error(error))?;
+    let mut tx = pool.begin().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
     let control_sql = control_insert_sql()?;
     let snapshot_key_raw: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(control_sql.as_str()))
         .bind(params.id.as_str())
@@ -140,11 +139,11 @@ pub(crate) async fn create_snapshot(pool: &PgPool, params: InsertSnapshotParams<
         .bind(branch_version.get())
         .execute(&mut *tx)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
     create_branch_schema(&mut tx, snapshot_key, SnapshotBranch::Staging)
         .await
-        .map_err(|error| persistence_error(error))?;
-    tx.commit().await.map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<SnapshotError>(error))?;
+    tx.commit().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
     Ok(())
 }
 
@@ -156,7 +155,7 @@ fn snapshot_create_error(error: sqlx::Error, id: &Identifier) -> SnapshotError {
     if violates_unique_constraint(&error, UQ_SNAPSHOTS_ID) {
         return SnapshotError::already_exists(id);
     }
-    persistence_error(error)
+    persistence_error::<SnapshotError>(error)
 }
 
 #[cfg(test)]

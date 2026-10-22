@@ -7,7 +7,7 @@
 use crate::dictionary_relation::DictionaryRelation;
 use andromeda_postgresql_seaquery::{
     introspection::transaction_has_not_written,
-    pg_array::{any, text_array},
+    pg_array::{any, is_any_of, text_array},
     pg_type::PostgresType,
     unnest::{UnnestColumn, unnest_call},
 };
@@ -53,7 +53,7 @@ pub(crate) fn name_select_query<N: DictionaryRelation>(names: &[&str]) -> Select
     Query::select()
         .columns([N::key_column(), N::name_column()])
         .from(N::table())
-        .and_where(Expr::col(N::name_column()).eq(any(text_array(names))))
+        .and_where(is_any_of(Expr::col(N::name_column()), names.iter().map(|name| (*name).to_owned())))
         .to_owned()
 }
 

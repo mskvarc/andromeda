@@ -10,27 +10,20 @@
 //! (Tables 6.4.3.2-1 and 6.5.3.1-1), so a holder is always asked for the whole
 //! remaining depth.
 
-use crate::{
-    error::EntityError,
-    port::retrieved_entity::RetrievedEntity,
-    query::{EntityQueryService, remote_linked::RemoteLinkedEntities},
-};
+use crate::{error::EntityError, port::retrieved_entity::RetrievedEntity, query::EntityQueryService};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_linked_retrieval::{
     candidate::LinkedCandidate,
     representation::LinkedRepresentation,
-    source::{LevelRead, LinkedSource, RemoteReach, RemoteRead},
+    source::{LevelRead, LinkedSource, RemoteReach, RemoteRead, RemoteResolution},
     typed::TypedEntities,
 };
 use andromeda_ngsi_ld_compaction::entity_compactor::{EntityCompactor, EntityRead};
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{entity::Entity, entity_system_times::EntitySystemTimes, notification::SysAttrsSnapshot};
-use andromeda_ngsi_ld_representation::{
-    linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind},
-    sys_attrs::SysAttrsInclusion,
-};
+use andromeda_ngsi_ld_representation::{linked_resolution_failure::LinkedResolutionFailure, sys_attrs::SysAttrsInclusion};
 use chrono::Utc;
 use indexmap::IndexMap;
 use std::{
@@ -141,14 +134,10 @@ impl<'s> CoreLinkedSource<'s> {
     /// says what is missing.
     async fn fetch(&self, candidate: &LinkedCandidate, depth: NonZeroU32, held: &[Identifier]) -> RemoteRead<Entity> {
         let Some(remote) = self.service.remote_linked.as_ref() else {
-            return RemoteRead {
-                nodes: Vec::new(),
-                edges: Vec::new(),
-                failures: Vec::new(),
-            };
+            return RemoteRead::nothing();
         };
         match remote.fetch_linked(&candidate.id, depth, held, self.context).await {
-            Ok(RemoteLinkedEntities { entities, mut failures }) => {
+            Ok(RemoteResolution { entities, mut failures }) => {
                 for failure in &failures {
                     tracing::warn!("Linked entity {} was not fully resolved: {} ({})", failure.id, failure.detail, failure.kind);
                 }
@@ -179,26 +168,16 @@ impl<'s> CoreLinkedSource<'s> {
                             TypedEntities::edges(&entity, &mut edges);
                             nodes.push(entity);
                         }
-                        Err(error) => failures.push(LinkedResolutionFailure {
-                            id: version.state.id().clone(), // clone: the failure outlives the version it names
-                            kind: LinkedResolutionFailureKind::Unreachable,
-                            detail: error.to_string(),
-                        }),
+                        // Clause 6.3.17: a payload the broker cannot read is
+                        // an invalid answer, not a missing one.
+                        Err(error) => failures.push(LinkedResolutionFailure::unusable(version.state.id(), &error)),
                     }
                 }
                 RemoteRead { nodes, edges, failures }
             }
             Err(error) => {
                 tracing::warn!("Failed to resolve linked entity {} outside the local store: {}", candidate.id, error);
-                RemoteRead {
-                    nodes: Vec::new(),
-                    edges: Vec::new(),
-                    failures: vec![LinkedResolutionFailure {
-                        id: candidate.id.clone(), // clone: the failure outlives this level's candidates
-                        kind: LinkedResolutionFailureKind::Unreachable,
-                        detail: error.to_string(),
-                    }],
-                }
+                RemoteRead::unreachable(&candidate.id, &error)
             }
         }
     }
@@ -262,6 +241,7 @@ mod tests {
         page_window::PageWindow,
         projection::returned_attributes::ReturnedAttributes,
     };
+    use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailureKind;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_tenancy::tenant_ref::TenantRef;
     use async_trait::async_trait;
@@ -475,7 +455,7 @@ mod tests {
             remaining_depth: NonZeroU32,
             visited: &[Identifier],
             context: &ContextSpec,
-        ) -> Result<RemoteLinkedEntities, EntityError> {
+        ) -> Result<RemoteResolution<ReceivedState>, EntityError> {
             self.calls().push(RemoteCall {
                 id: id.clone(), // clone: the recording owns the identifier it reports
                 remaining_depth,
@@ -492,12 +472,12 @@ mod tests {
                         // clone: the source hands back owned entities
                         received.push(expansion.received(entity).await.expect("the answer reads"));
                     }
-                    Ok(RemoteLinkedEntities {
+                    Ok(RemoteResolution {
                         entities: received,
                         failures: Vec::new(),
                     })
                 }
-                RemoteOutcome::Reports(kind) => Ok(RemoteLinkedEntities {
+                RemoteOutcome::Reports(kind) => Ok(RemoteResolution {
                     entities: Vec::new(),
                     failures: vec![LinkedResolutionFailure {
                         id: id.clone(), // clone: the failure owns the identifier it names

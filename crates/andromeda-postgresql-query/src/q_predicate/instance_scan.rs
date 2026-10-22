@@ -123,7 +123,7 @@ mod tests {
         let window = history();
         let sql = render(InstanceScan::History(&window).exists(AttributeNameKey::from(3), Condition::all()));
         assert!(sql.contains(r#""qh"."attribute_name_key" = 3"#), "{sql}");
-        assert!(sql.contains(r#""qh"."deleted_at" IS NULL"#), "{sql}");
+        assert!(sql.contains(r#""qh"."value_kind" <> "#), "{sql}");
     }
 
     /// Tests that share a probe keep their own attribute keys inside it, over

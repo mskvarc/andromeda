@@ -20,7 +20,7 @@
 //! and widening it to binary floating point to aggregate would report a minimum
 //! or a maximum that was never observed.
 
-use crate::{alias::Ah, structured_json::structured_json};
+use crate::{alias::Ah, structured_json::structured_json, value_text::value_text};
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
@@ -166,15 +166,7 @@ pub fn average_time_expr() -> SimpleExpr {
 /// the fold covers every value column and is never gated on the family.
 #[must_use]
 pub fn distinct_value_expr() -> SimpleExpr {
-    Func::coalesce([
-        cast(Expr::col((Ah, AttributeHistory::ValueNumber)), PostgresType::Text),
-        Expr::col((Ah, AttributeHistory::ValueString)),
-        cast(Expr::col((Ah, AttributeHistory::ValueBoolean)), PostgresType::Text),
-        cast(Expr::col((Ah, AttributeHistory::ValueDateTime)), PostgresType::Text),
-        Expr::col((Ah, AttributeHistory::ValueUri)),
-        cast(Expr::col((Ah, AttributeHistory::ValueObject)), PostgresType::Text),
-    ])
-    .into()
+    value_text(Ah)
 }
 
 #[cfg(test)]

@@ -282,13 +282,13 @@ mod tests {
         assert!(
             branches.candidates.ends_with(concat!(
                 r#" UNION ALL (SELECT "temporal_entities"."temporal_entity_key" FROM "temporal_entities""#,
-                r#" WHERE "temporal_entities"."id" IN ('urn:ngsi-ld:Sensor:000009'))"#
+                r#" WHERE "temporal_entities"."id" = ANY(ARRAY ['urn:ngsi-ld:Sensor:000009']))"#
             )),
             "{}",
             branches.candidates
         );
         assert!(
-            branches.indexed.contains(r#" OR "e"."id" IN ('urn:ngsi-ld:Sensor:000009')"#),
+            branches.indexed.contains(r#" OR "e"."id" = ANY(ARRAY ['urn:ngsi-ld:Sensor:000009'])"#),
             "{}",
             branches.indexed
         );
@@ -298,7 +298,7 @@ mod tests {
         assert!(
             PageBranches::of(&queued).candidates.contains(concat!(
                 r#" UNION ALL (SELECT "temporal_entities"."id" FROM "temporal_entities""#,
-                r#" WHERE "temporal_entities"."id" IN ('urn:ngsi-ld:Sensor:000009'))"#
+                r#" WHERE "temporal_entities"."id" = ANY(ARRAY ['urn:ngsi-ld:Sensor:000009']))"#
             )),
             "{queued}"
         );

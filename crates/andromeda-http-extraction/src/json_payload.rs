@@ -9,12 +9,13 @@
 use crate::{
     addressed_uri::addressed_request_uri,
     content_length_precondition::declared_body_length,
-    invalid_json::InvalidJson,
     json_value_budget::refuse_values_past_budget,
+    not_json_document::NotJsonDocument,
     request_json_value_limit::RequestJsonValueLimit,
     request_payload::buffer_payload,
 };
-use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
+use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{
     extract::{FromRequest, Request},
     http::{HeaderMap, StatusCode},
@@ -23,6 +24,7 @@ use headers::HeaderMapExt;
 use mediatype::{MediaTypeBuf, names};
 use serde::de::DeserializeOwned;
 use serde_json::error::Category;
+use thiserror::Error;
 
 /// A JSON request body decoded into `T`.
 pub struct JsonPayload<T>(pub T);
@@ -49,16 +51,42 @@ where
         let body = buffer_payload(request, state, declared, instance.clone()).await?;
         // clone: a refused payload names the request, which a parse failure below names too.
         refuse_values_past_budget(&body, value_limit).map_err(|refusal| ExtractorRejection::Classified(refusal.report().with_instance(instance.clone())))?;
-        serde_json::from_slice(&body).map(JsonPayload).map_err(|error| {
-            let category = error.classify();
-            let detail = InvalidJson(error).to_string();
-            // Clause 5.5.4: a body that is not a JSON document is an invalid
-            // request; a JSON document of the wrong shape is bad data.
-            match category {
-                Category::Data => ExtractorRejection::bad_request_data(detail, instance),
-                Category::Io | Category::Syntax | Category::Eof => ExtractorRejection::invalid_request(detail, instance),
-            }
-        })
+        serde_json::from_slice(&body)
+            .map(JsonPayload)
+            .map_err(|error| JsonPayloadRefusal::of(error).into_rejection(instance))
+    }
+}
+
+/// Why a plain JSON payload is not decoded into its model.
+#[derive(Debug, Error)]
+pub enum JsonPayloadRefusal {
+    /// The body is not a JSON document.
+    #[error(transparent)]
+    NotJson(#[from] NotJsonDocument),
+    /// The body is a JSON document that does not have the expected shape.
+    #[error("request body does not have the expected shape: {0}")]
+    WrongShape(#[source] serde_json::Error),
+}
+
+impl JsonPayloadRefusal {
+    /// Separate the failure to decode a body into a document that is not JSON
+    /// and a JSON document of the wrong shape.
+    fn of(error: serde_json::Error) -> JsonPayloadRefusal {
+        match error.classify() {
+            Category::Data => JsonPayloadRefusal::WrongShape(error),
+            Category::Io | Category::Syntax | Category::Eof => JsonPayloadRefusal::NotJson(NotJsonDocument(error)),
+        }
+    }
+}
+
+impl RequestRefusal for JsonPayloadRefusal {
+    /// Clause 5.5.4: a body that is not a JSON document is an invalid request;
+    /// a JSON document of the wrong shape is bad data.
+    fn error_type(&self) -> NgsiLdErrorType {
+        match self {
+            JsonPayloadRefusal::NotJson(refusal) => refusal.error_type(),
+            JsonPayloadRefusal::WrongShape(_) => NgsiLdErrorType::BadRequestData,
+        }
     }
 }
 
@@ -119,22 +147,28 @@ mod tests {
         }
     }
 
-    /// Clause 5.5.4: a body that is not a JSON document is `InvalidRequest`.
+    /// The error type and detail a body is refused with.
+    async fn refusal(body: &'static str) -> (NgsiLdErrorType, String) {
+        let rejection = extract(request("application/json", body)).await.err().expect("a refused body");
+        let problem = rejection.problem().expect("a classified rejection");
+        (problem.error_type(), problem.detail().to_owned())
+    }
+
+    /// Clause 5.5.4: a body that is not a JSON document is `InvalidRequest`,
+    /// worded as every other body reader words it.
     #[tokio::test]
     async fn a_body_that_is_not_json_is_an_invalid_request() {
-        assert!(matches!(
-            extract(request("application/json", "{")).await,
-            Err(ExtractorRejection::InvalidRequest { .. })
-        ));
+        let (error_type, detail) = refusal("{").await;
+        pretty_assertions::assert_eq!(error_type, NgsiLdErrorType::InvalidRequest);
+        assert!(detail.starts_with("request body is not a JSON document:"), "{detail}");
     }
 
     /// A JSON document of the wrong shape is `BadRequestData`.
     #[tokio::test]
     async fn a_json_document_of_the_wrong_shape_is_bad_request_data() {
-        assert!(matches!(
-            extract(request("application/json", r#"{"isActive":"no"}"#)).await,
-            Err(ExtractorRejection::BadRequestData { .. })
-        ));
+        let (error_type, detail) = refusal(r#"{"isActive":"no"}"#).await;
+        pretty_assertions::assert_eq!(error_type, NgsiLdErrorType::BadRequestData);
+        assert!(detail.starts_with("request body does not have the expected shape:"), "{detail}");
     }
 
     /// Clause 6.3.4: an unsupported media type is just a 415.

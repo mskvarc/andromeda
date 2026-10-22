@@ -35,46 +35,28 @@ use crate::{
     write_record_release::release_named,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{
-    dataset::DatasetFilter,
-    temporal::{
-        history_delete::{AttributeDeleteScope, TemporalHistoryDeleteScope},
-        window::{TemporalWindow, TimeInterval},
-    },
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_query::temporal::{
+    history_delete::{AttributeDeleteScope, TemporalHistoryDeleteScope},
+    window::{TemporalWindow, TimeInterval},
 };
 use andromeda_postgresql_branch::schema_iden;
-use andromeda_postgresql_schema::{
-    name_dictionary::AttributeNames,
-    temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
+use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dataset_predicate::dataset_condition, dictionary::resolved_names::ResolvedNames};
+use andromeda_postgresql_schema::temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities};
+use andromeda_postgresql_seaquery::{
+    aggregate::count_all,
+    branch::qualified,
+    pg_array::{any, is_any_of, is_none_of},
 };
-use andromeda_postgresql_seaquery::{aggregate::count_all, branch::qualified, pg_array::any};
-use andromeda_postgresql_temporal_query::axis::axis_column;
+use andromeda_postgresql_temporal_query::{
+    alias::{Ah, S, Te},
+    axis::axis_column,
+};
 use iri_rs::IriBuf;
-use sea_query::{Condition, DeleteStatement, DynIden, Expr, ExprTrait, Iden, JoinType, LockType, PostgresQueryBuilder, Query, SelectStatement};
+use sea_query::{Condition, DeleteStatement, DynIden, Expr, ExprTrait, Iden, LockType, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{AssertSqlSafe, PgConnection, Row};
 use uuid::Uuid;
-
-/// The `temporal_attribute_streams` alias in the correlated subquery.
-#[derive(Iden, Clone, Copy)]
-#[iden = "s"]
-struct S;
-
-/// The `attribute_names` alias in the correlated subquery.
-#[derive(Iden, Clone, Copy)]
-#[iden = "an"]
-struct An;
-
-/// The `attribute_history` alias of the surviving-history probe.
-#[derive(Iden, Clone, Copy)]
-#[iden = "ah"]
-struct Ah;
-
-/// The `temporal_entities` alias in the entity-key subquery.
-#[derive(Iden, Clone, Copy)]
-#[iden = "te"]
-struct Te;
 
 /// The count of history instances the window and scope select.
 #[derive(Iden, Clone, Copy)]
@@ -103,7 +85,8 @@ impl TemporalRepository {
         }
         let schema = schema_iden(target);
         let mut connection = self.pool.acquire().await?;
-        let stream_keys = matching_stream_keys(&mut connection, schema.as_ref(), entity_ids, scope).await?;
+        let attributes = self.scoped_attributes(scope).await?;
+        let stream_keys = matching_stream_keys(&mut connection, schema.as_ref(), entity_ids, scope, &attributes).await?;
         if stream_keys.is_empty() {
             return Ok(0);
         }
@@ -136,7 +119,8 @@ impl TemporalRepository {
         let (lock_sql, lock_values) = lock_entities_statement(schema.as_ref(), entity_ids).build_sqlx(PostgresQueryBuilder);
         sqlx::query_with(AssertSqlSafe(lock_sql), lock_values).execute(&mut *tx).await?;
 
-        let stream_keys = matching_stream_keys(&mut tx, schema.as_ref(), entity_ids, scope).await?;
+        let attributes = self.scoped_attributes(scope).await?;
+        let stream_keys = matching_stream_keys(&mut tx, schema.as_ref(), entity_ids, scope, &attributes).await?;
         if stream_keys.is_empty() {
             tx.rollback().await?;
             return Ok(0);
@@ -170,70 +154,71 @@ fn lock_entities_statement(schema: Option<&DynIden>, entity_ids: &[Identifier]) 
     Query::select()
         .column(TemporalEntities::TemporalEntityKey)
         .from(qualified(schema, TemporalEntities::Table))
-        .and_where(Expr::col(TemporalEntities::Id).is_in(entity_ids.iter().map(Identifier::as_str)))
+        .and_where(is_any_of(Expr::col(TemporalEntities::Id), entity_ids.iter().map(Identifier::to_string)))
         .lock(LockType::Update)
         .to_owned()
 }
 
-/// The keys of the streams the request scopes.
+impl TemporalRepository {
+    /// The dictionary keys of the attributes `scope` drops or keeps, read
+    /// through the shared dictionary cache: a name never recorded has no key
+    /// and so no stream to drop or to spare.
+    async fn scoped_attributes(&self, scope: &TemporalHistoryDeleteScope) -> Result<ResolvedNames<AttributeName>, TemporalStoreError> {
+        let names: Vec<AttributeName> = match &scope.attributes {
+            AttributeDeleteScope::All => return Ok(ResolvedNames::default()),
+            AttributeDeleteScope::Drop(iris) | AttributeDeleteScope::Keep(iris) => iris.iter().filter_map(|iri| iri.as_str().parse().ok()).collect(),
+        };
+        Ok(self.attribute_names.lookup(&names).await?)
+    }
+}
+
+/// The keys of the streams the request scopes, its attributes resolved to
+/// `attributes`.
 async fn matching_stream_keys(
     connection: &mut PgConnection,
     schema: Option<&DynIden>,
     entity_ids: &[Identifier],
     scope: &TemporalHistoryDeleteScope,
+    attributes: &ResolvedNames<AttributeName>,
 ) -> Result<Vec<i64>, TemporalStoreError> {
-    let (sql, values) = matching_streams_query(schema, entity_ids, scope).build_sqlx(PostgresQueryBuilder);
+    let (sql, values) = matching_streams_query(schema, entity_ids, scope, attributes).build_sqlx(PostgresQueryBuilder);
     Ok(sqlx::query_scalar_with(AssertSqlSafe(sql), values).fetch_all(connection).await?)
 }
 
 /// The streams the request scopes: those of the addressed entities that carry a
-/// targeted attribute and a selected `datasetId`.
-fn matching_streams_query(schema: Option<&DynIden>, entity_ids: &[Identifier], scope: &TemporalHistoryDeleteScope) -> SelectStatement {
+/// targeted attribute, by the dictionary key in `attributes`, and a selected
+/// `datasetId`.
+fn matching_streams_query(
+    schema: Option<&DynIden>,
+    entity_ids: &[Identifier],
+    scope: &TemporalHistoryDeleteScope,
+    attributes: &ResolvedNames<AttributeName>,
+) -> SelectStatement {
     let owning_entities = Query::select()
         .column((Te, TemporalEntities::TemporalEntityKey))
         .from(qualified(schema, TemporalEntities::Table).alias(Te))
-        .and_where(Expr::col((Te, TemporalEntities::Id)).is_in(entity_ids.iter().map(Identifier::as_str)))
+        .and_where(is_any_of(Expr::col((Te, TemporalEntities::Id)), entity_ids.iter().map(Identifier::to_string)))
         .to_owned();
 
     let mut streams = Query::select();
     streams
         .column((S, TemporalAttributeStreams::StreamKey))
         .from(qualified(schema, TemporalAttributeStreams::Table).alias(S))
-        .join_as(
-            JoinType::Join,
-            AttributeNames::Table,
-            An,
-            Expr::col((An, AttributeNames::AttributeNameKey)).equals((S, TemporalAttributeStreams::AttributeNameKey)),
-        )
         .and_where(Expr::col((S, TemporalAttributeStreams::TemporalEntityKey)).in_subquery(owning_entities));
 
+    let attribute = Expr::col((S, TemporalAttributeStreams::AttributeNameKey));
+    let keys = |iris: &[IriBuf]| attributes.keys_of(iris.iter().map(IriBuf::as_str)).into_iter().map(AttributeNameKey::get);
     match &scope.attributes {
         AttributeDeleteScope::All => {}
         AttributeDeleteScope::Drop(iris) => {
-            streams.and_where(Expr::col((An, AttributeNames::Name)).is_in(iris.iter().map(IriBuf::as_str)));
+            streams.and_where(is_any_of(attribute, keys(iris)));
         }
         AttributeDeleteScope::Keep(iris) => {
-            streams.and_where(Expr::col((An, AttributeNames::Name)).is_not_in(iris.iter().map(IriBuf::as_str)));
+            streams.and_where(is_none_of(attribute, keys(iris)));
         }
     }
 
-    let dataset_column = Expr::col((S, TemporalAttributeStreams::DatasetId));
-    match &scope.dataset {
-        DatasetFilter::Unfiltered => {}
-        DatasetFilter::DefaultOnly => {
-            streams.and_where(dataset_column.is_null());
-        }
-        DatasetFilter::NamedOnly(named) => {
-            streams.and_where(dataset_column.is_in(named.iter().map(ToString::to_string)));
-        }
-        DatasetFilter::DefaultOrNamed(named) => {
-            streams.cond_where(
-                Condition::any()
-                    .add(Expr::col((S, TemporalAttributeStreams::DatasetId)).is_in(named.iter().map(ToString::to_string)))
-                    .add(Expr::col((S, TemporalAttributeStreams::DatasetId)).is_null()),
-            );
-        }
-    }
+    streams.cond_where(dataset_condition(&Expr::col((S, TemporalAttributeStreams::DatasetId)), &scope.dataset));
 
     streams.take()
 }
@@ -326,6 +311,7 @@ mod tests {
             window::{TemporalWindow, TimeInterval},
         },
     };
+    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames};
     use chrono::{DateTime, Utc};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
@@ -356,8 +342,10 @@ mod tests {
         windowed_delete_statement(None, &[1, 2], &scope.window).to_string(PostgresQueryBuilder)
     }
 
+    /// The dictionary knows `speed` under key 7.
     fn streams_sql(scope: &TemporalHistoryDeleteScope) -> String {
-        matching_streams_query(None, &ids(), scope).to_string(PostgresQueryBuilder)
+        let attributes = ResolvedNames::from_pairs([("https://example.com/speed".parse().expect("valid attribute name"), AttributeNameKey::from(7))]);
+        matching_streams_query(None, &ids(), scope, &attributes).to_string(PostgresQueryBuilder)
     }
 
     /// Clause 4.11 defaults the axis to `observedAt`; each time property filters
@@ -424,19 +412,19 @@ mod tests {
             TimeInterval::Unbounded,
             false,
         ));
-        assert!(drop.contains("\"an\".\"name\" IN"), "{drop}");
+        assert!(drop.contains(r#""s"."attribute_name_key" = ANY(ARRAY [7])"#), "{drop}");
         let keep = streams_sql(&scope(
             AttributeDeleteScope::Keep(vec![iri("https://example.com/speed")]),
             DatasetFilter::Unfiltered,
             TimeInterval::Unbounded,
             false,
         ));
-        assert!(keep.contains("\"an\".\"name\" NOT IN"), "{keep}");
+        assert!(keep.contains(r#""s"."attribute_name_key" <> ALL(ARRAY [7])"#), "{keep}");
         let all = streams_sql(&scope(AttributeDeleteScope::All, DatasetFilter::Unfiltered, TimeInterval::Unbounded, false));
         assert!(!all.contains("\"an\".\"name\""), "{all}");
     }
 
-    /// The dataset filter renders `IS NULL`, `IN`, an `OR` of both, or nothing.
+    /// The dataset filter renders `IS NULL`, `= ANY`, an `OR` of both, or nothing.
     #[test]
     fn the_dataset_filter_renders_its_predicate() {
         let default_only = streams_sql(&scope(AttributeDeleteScope::All, DatasetFilter::DefaultOnly, TimeInterval::Unbounded, false));
@@ -447,7 +435,7 @@ mod tests {
             TimeInterval::Unbounded,
             false,
         ));
-        assert!(named.contains("\"dataset_id\" IN"), "{named}");
+        assert!(named.contains("\"dataset_id\" = ANY("), "{named}");
         let both = streams_sql(&scope(
             AttributeDeleteScope::All,
             DatasetFilter::DefaultOrNamed(vec!["urn:ngsi-ld:Dataset:1".parse().expect("valid URI")]),

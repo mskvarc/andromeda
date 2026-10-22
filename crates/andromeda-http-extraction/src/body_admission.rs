@@ -10,19 +10,20 @@
 use crate::{
     addressed_uri::addressed_request_uri,
     blocking_decode::{BlockingDecodePolicy, decode_payload},
+    body_admission_refusal::BodyAdmissionRefusal,
     body_envelope::BodyEnvelope,
     classification::classify_context_link_error,
     content_kind::{ContentKind, classify_content_type},
     content_length_precondition::{ContentLengthPreconditionError, declared_body_length},
-    invalid_json::InvalidJson,
     json_value_budget::refuse_values_past_budget,
+    not_json_document::NotJsonDocument,
     request_json_value_limit::RequestJsonValueLimit,
     request_links::{PayloadCarrier, RequestLinks},
     request_payload::buffer_payload,
 };
-use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
 use andromeda_jsonld::{context_spec::ContextSpec, request_context::RequestContext, user_context_admission::SubmittedContext};
-use andromeda_ngsi_ld_number::json_value::text_admission::{JsonTextRefusal, admit_json_text};
+use andromeda_ngsi_ld_number::json_value::text_admission::admit_json_text;
 use andromeda_ngsi_ld_representation::embedded_context_admission::find_embedded_context;
 use axum::{
     body::Bytes,
@@ -43,19 +44,6 @@ pub(crate) struct AdmittedBody {
     pub(crate) uri: Uri,
 }
 
-/// The refusal of a body whose JSON text is refused: a text that is no JSON is
-/// an `InvalidRequest`, a number the model cannot represent, a member named
-/// like the reader's own tokens, or an object naming one member twice (IETF RFC
-/// 8259 section 4) `BadRequestData` (clause 5.5.4).
-pub(crate) fn text_rejection(refusal: JsonTextRefusal, uri: Uri) -> ExtractorRejection {
-    match refusal {
-        JsonTextRefusal::Syntax(error) => ExtractorRejection::invalid_request(InvalidJson(error).to_string(), uri),
-        refused @ (JsonTextRefusal::OutOfRange(_) | JsonTextRefusal::ReservedMemberName { .. } | JsonTextRefusal::DuplicateMember { .. }) => {
-            ExtractorRejection::bad_request_data(refused.to_string(), uri)
-        }
-    }
-}
-
 /// The user `@context` a client body submitted: the context it names and the
 /// first `@context` it embeds below a document's top level (clause 5.5.7),
 /// which the user `@context` admission refuses.
@@ -65,7 +53,7 @@ pub(crate) fn text_rejection(refusal: JsonTextRefusal, uri: Uri) -> ExtractorRej
 /// Returns an `InvalidRequest` for a text that is no JSON, which the
 /// preceding preconditions refuse first.
 pub(crate) fn submitted_context(context: ContextSpec, text: &[u8], uri: &Uri) -> Result<SubmittedContext, ExtractorRejection> {
-    let embedded = find_embedded_context(text).map_err(|error| text_rejection(JsonTextRefusal::Syntax(error), uri.clone()))?; // clone: the refusal names the request
+    let embedded = find_embedded_context(text).map_err(|error| NotJsonDocument(error).into_rejection(uri.clone()))?; // clone: the refusal names the request
     Ok(SubmittedContext::new(context, embedded))
 }
 
@@ -142,13 +130,13 @@ impl ReadBody {
         // clone: each refusal names the request, which the admitted body keeps naming
         refuse_values_past_budget(&bytes, value_limit).map_err(|refusal| ExtractorRejection::Classified(refusal.report().with_instance(uri.clone())))?;
         // clone: as above
-        admit_json_text(&bytes).map_err(|refusal| text_rejection(refusal, uri.clone()))?;
+        admit_json_text(&bytes).map_err(|refusal| BodyAdmissionRefusal::from(refusal).into_rejection(uri.clone()))?;
         // clone: as above
-        let envelope = BodyEnvelope::read(&bytes).map_err(|error| text_rejection(JsonTextRefusal::Syntax(error), uri.clone()))?;
+        let envelope = BodyEnvelope::read(&bytes).map_err(|error| NotJsonDocument(error).into_rejection(uri.clone()))?;
 
-        // Reject empty arrays -- not a valid NGSI-LD entity or batch payload
+        // An empty array is neither an NGSI-LD entity nor a batch payload.
         if envelope.is_empty_array() {
-            return Err(ExtractorRejection::bad_request_data("Invalid JSON: expected object, got empty array", uri));
+            return Err(BodyAdmissionRefusal::EmptyArray.into_rejection(uri));
         }
 
         // Clause 6.3.21: a profile `Link` announcing the payload's NGSI-LD
@@ -157,14 +145,11 @@ impl ReadBody {
         // amendment of the payload is needed for it to be accepted here.
         // Clause 6.3.5: an application/json body must not carry @context.
         if matches!(content_kind, ContentKind::Json) && envelope.has_context() {
-            return Err(ExtractorRejection::bad_request_data("application/json body must not contain @context", uri));
+            return Err(BodyAdmissionRefusal::ContextInJsonBody.into_rejection(uri));
         }
 
         if !envelope.contexts_are_well_formed() {
-            return Err(ExtractorRejection::bad_request_data(
-                "@context must be a string, an object, or an array of those",
-                uri,
-            ));
+            return Err(BodyAdmissionRefusal::MalformedContext.into_rejection(uri));
         }
 
         // The context is carried by the spec; the member is skipped when the
@@ -173,7 +158,7 @@ impl ReadBody {
             PayloadCarrier::LdJsonBody => ContextSpec::from_body(
                 envelope
                     .into_body_context()
-                    .map_err(|error| ExtractorRejection::bad_request_data(error.to_string(), uri.clone()))?, // clone: as above
+                    .map_err(|error| BodyAdmissionRefusal::from(error).into_rejection(uri.clone()))?, // clone: as above
             ),
             PayloadCarrier::LinkHeader => ContextSpec::from_request(link_context.map_or(RequestContext::Default, RequestContext::Link)),
         };

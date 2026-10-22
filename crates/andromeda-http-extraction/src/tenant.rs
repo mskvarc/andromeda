@@ -4,12 +4,14 @@
 //! a [`TenantHeader`] that carries the tenant name (or `None` for the default tenant).
 
 use crate::addressed_uri::addressed_uri;
-use andromeda_http_headers::ngsild_tenant::NgsiLdTenant;
-use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use andromeda_http_headers::ngsild_tenant::{NgsiLdTenant, NgsiLdTenantError};
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use headers::Header;
 use std::future::{Future, ready};
+use thiserror::Error;
 
 /// Axum extractor for the `NGSILD-Tenant` request header.
 ///
@@ -37,7 +39,18 @@ fn resolve_tenant_header(parts: &Parts) -> Result<TenantHeader, ExtractorRejecti
         .map(NgsiLdTenant::try_from)
         .transpose()
         .map(|tenant| TenantHeader(tenant.map(NgsiLdTenant::into_inner)))
-        .map_err(|error| ExtractorRejection::bad_request_data(error.to_string(), addressed_uri(parts)))
+        .map_err(|error| InvalidTenantHeader(error).into_rejection(addressed_uri(parts)))
+}
+
+/// An `NGSILD-Tenant` header that names no tenant.
+#[derive(Debug, Error)]
+#[error(transparent)]
+struct InvalidTenantHeader(NgsiLdTenantError);
+
+impl RequestRefusal for InvalidTenantHeader {
+    fn error_type(&self) -> NgsiLdErrorType {
+        NgsiLdErrorType::BadRequestData
+    }
 }
 
 impl<S> FromRequestParts<S> for TenantHeader
@@ -55,6 +68,7 @@ where
 mod tests {
     use crate::tenant::TenantHeader;
     use andromeda_http_response::extraction_rejection::ExtractorRejection;
+    use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use axum::{
         extract::FromRequestParts,
         http::{HeaderValue, Request},
@@ -68,7 +82,10 @@ mod tests {
 
     async fn refusal_detail(value: &'static str) -> String {
         match extract(HeaderValue::from_static(value)).await {
-            Err(ExtractorRejection::BadRequestData { detail, .. }) => detail,
+            Err(ExtractorRejection::Classified(refusal)) => {
+                pretty_assertions::assert_eq!(refusal.problem().error_type(), NgsiLdErrorType::BadRequestData, "{value}");
+                refusal.problem().detail().to_owned()
+            }
             other => panic!("{value:?} should be refused as BadRequestData, got {other:?}"),
         }
     }
@@ -118,8 +135,9 @@ mod tests {
     async fn a_header_outside_visible_ascii_is_refused_as_not_text() {
         let value = HeaderValue::from_bytes("café".as_bytes()).expect("obs-text is a valid header value");
         match extract(value).await {
-            Err(ExtractorRejection::BadRequestData { detail, .. }) => {
-                pretty_assertions::assert_eq!(detail, "the NGSILD-Tenant header holds a character outside visible ASCII");
+            Err(ExtractorRejection::Classified(refusal)) => {
+                pretty_assertions::assert_eq!(refusal.problem().error_type(), NgsiLdErrorType::BadRequestData);
+                pretty_assertions::assert_eq!(refusal.problem().detail(), "the NGSILD-Tenant header holds a character outside visible ASCII");
             }
             other => panic!("a non-ASCII tenant should be refused as BadRequestData, got {other:?}"),
         }

@@ -28,7 +28,9 @@ use andromeda_postgresql_collation::provisioned_collations::CollationProvisionin
 /// does not conform to a valid ICU collation (see IETF RFC 6067) then an error
 /// of type `BadRequestData` shall be raised", and whether ICU holds a collation
 /// for a locale is a question only the database can answer. A refusal of the
-/// client's own `collation` is therefore the client's fault, not a 500.
+/// client's own `collation` is therefore the client's fault, not a 500. So is
+/// a regular expression of the request the database cannot compile (SQLSTATE
+/// 2201B): the pattern is the client's.
 fn classify(error: &ContextStoreError) -> EntityError {
     match error {
         ContextStoreError::Collation(CollationProvisioningError::NotAnIcuCollation { collation, .. }) => {
@@ -36,13 +38,13 @@ fn classify(error: &ContextStoreError) -> EntityError {
                 collation: collation.clone(), // clone: the refusal owns the collation the client wrote
             })
         }
+        ContextStoreError::InvalidRegex(_) => EntityError::Validation(EntityValidationReason::UnusablePattern),
         ContextStoreError::Collation(CollationProvisioningError::Statement { .. })
         | ContextStoreError::Saturated
         | ContextStoreError::Database(_)
         | ContextStoreError::Encoding(_)
         | ContextStoreError::CopyField(_)
         | ContextStoreError::UniqueViolation(_)
-        | ContextStoreError::InvalidRegex(_)
         | ContextStoreError::Render(_)
         | ContextStoreError::NameLookup(_)
         | ContextStoreError::EntityTypes(_)
@@ -69,15 +71,23 @@ fn classify(error: &ContextStoreError) -> EntityError {
 
 #[cfg(test)]
 mod tests {
-    use crate::entity::repo::EntityRepository;
-    use andromeda_entity::port::{
-        discovery::EntityDiscoveryStore,
-        expiry::EntityExpirySource,
-        payload_pages::EntityPayloadPages,
-        query::EntityQueryStore,
-        reader::EntityReader,
-        spatial_snapshot::EntitySpatialSnapshotSource,
+    use crate::{
+        entity::{port::classify, repo::EntityRepository},
+        error::ContextStoreError,
     };
+    use andromeda_entity::{
+        entity_validation_reason::EntityValidationReason,
+        error::EntityError,
+        port::{
+            discovery::EntityDiscoveryStore,
+            expiry::EntityExpirySource,
+            payload_pages::EntityPayloadPages,
+            query::EntityQueryStore,
+            reader::EntityReader,
+            spatial_snapshot::EntitySpatialSnapshotSource,
+        },
+    };
+    use andromeda_postgresql_pool::fake_database_error::FakeDatabaseError;
 
     fn assert_reader<T: EntityReader>() {}
     fn assert_query_store<T: EntityQueryStore>() {}
@@ -96,10 +106,18 @@ mod tests {
         assert_spatial_snapshot_source::<EntityRepository>();
     }
 
+    /// SQLSTATE 2201B: the request's own regular expression is refused as
+    /// `BadRequestData`, as on the temporal path.
+    #[test]
+    fn a_regular_expression_the_database_cannot_compile_is_the_requests_pattern_refused() {
+        let refused = classify(&ContextStoreError::from(
+            FakeDatabaseError::new("invalid regular expression", "2201B").into_sqlx(),
+        ));
+        assert!(matches!(refused, EntityError::Validation(EntityValidationReason::UnusablePattern)));
+    }
+
     #[test]
     fn a_pool_timeout_becomes_store_saturated() {
-        use crate::{entity::port::classify, error::ContextStoreError};
-        use andromeda_entity::error::EntityError;
         use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
         assert!(matches!(
             classify(&ContextStoreError::from(sqlx::Error::PoolTimedOut)),

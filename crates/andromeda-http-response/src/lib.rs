@@ -31,6 +31,7 @@ pub mod provision;
 pub mod query_failure;
 pub mod render;
 pub mod rendered_response;
+pub mod request_refusal;
 pub mod single;
 pub mod store_failure;
 pub mod temporal_continuation;

@@ -9,7 +9,7 @@ use crate::{
         rows::{ContextMetadataRow, ContextSummaryRow},
         statement::{delete_by_identifier, hosted_insert, payload_by_identifier_query, record_access_update, replace_download_update, stored_context_query},
     },
-    store_fault::{StoreFault, persistence_failure, undecodable},
+    store_fault::{persistence_error, undecodable},
 };
 use andromeda_context_registry::{
     context_page::ContextPage,
@@ -49,23 +49,23 @@ impl ContextRegistryStore for JsonLdContextRepository {
     fn list<'a>(&'a self, query: ContextListQuery<'a>) -> ContextRegistryFuture<'a, ContextPage> {
         Box::pin(async move {
             let kind = query.kind.map(stored_kind);
-            let (statement, read_order) =
-                listing_page_query(query.detail_level, kind, query.embedded, &query.window.with_lookahead()).map_err(|error| persistence_error(error))?;
+            let (statement, read_order) = listing_page_query(query.detail_level, kind, query.embedded, &query.window.with_lookahead())
+                .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
             let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
             match query.detail_level {
                 ContextDetailLevel::Full => {
                     let mut rows: Vec<ContextMetadataRow> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                         .fetch_all(&self.pool)
                         .await
-                        .map_err(|error| persistence_error(error))?;
+                        .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
                     read_order.present(&mut rows);
                     let (rows, reach) = query.window.settle(rows);
-                    let boundary = page_boundary(&rows, |row| row.local_id.as_str()).map_err(|error| persistence_error(error))?;
+                    let boundary = page_boundary(&rows, |row| row.local_id.as_str()).map_err(|error| persistence_error::<ContextRegistryError>(error))?;
                     let metadata = rows
                         .into_iter()
                         .map(row_to_metadata)
                         .collect::<Result<Vec<ContextMetadata>, _>>()
-                        .map_err(|error| persistence_error(error))?;
+                        .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
                     Ok(ContextPage {
                         contexts: ListedContexts::Detailed(metadata),
                         boundary,
@@ -76,15 +76,15 @@ impl ContextRegistryStore for JsonLdContextRepository {
                     let mut rows: Vec<ContextSummaryRow> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                         .fetch_all(&self.pool)
                         .await
-                        .map_err(|error| persistence_error(error))?;
+                        .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
                     read_order.present(&mut rows);
                     let (rows, reach) = query.window.settle(rows);
-                    let boundary = page_boundary(&rows, |row| row.local_id.as_str()).map_err(|error| persistence_error(error))?;
+                    let boundary = page_boundary(&rows, |row| row.local_id.as_str()).map_err(|error| persistence_error::<ContextRegistryError>(error))?;
                     let identifiers = rows
                         .into_iter()
                         .map(row_to_identifier)
                         .collect::<Result<Vec<Identifier>, _>>()
-                        .map_err(|error| persistence_error(error))?;
+                        .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
                     Ok(ContextPage {
                         contexts: ListedContexts::Summary(identifiers),
                         boundary,
@@ -103,8 +103,11 @@ impl ContextRegistryStore for JsonLdContextRepository {
                     let row: Option<ContextMetadataRow> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                         .fetch_optional(&self.pool)
                         .await
-                        .map_err(|error| persistence_error(error))?;
-                    let metadata = row.map(row_to_metadata).transpose().map_err(|error| persistence_error(error))?;
+                        .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
+                    let metadata = row
+                        .map(row_to_metadata)
+                        .transpose()
+                        .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
                     Ok(metadata.map(|value| FetchedContext::Detailed(Box::new(value))))
                 }
                 ContextDetailLevel::Summary => {
@@ -112,7 +115,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
                     let row: Option<(Json<JsonLiteral>,)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                         .fetch_optional(&self.pool)
                         .await
-                        .map_err(|error| persistence_error(error))?;
+                        .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
                     Ok(row.map(|value| FetchedContext::Payload(value.0.0)))
                 }
             }
@@ -125,7 +128,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
             let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                 .execute(&self.pool)
                 .await
-                .map_err(|error| persistence_error(error))?;
+                .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
             Ok(mutation(result.rows_affected()))
         })
     }
@@ -136,10 +139,12 @@ impl ContextRegistryStore for JsonLdContextRepository {
             let row: Option<(String, i16, Option<String>)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                 .fetch_optional(&self.pool)
                 .await
-                .map_err(|error| persistence_error(error))?;
+                .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
             row.map(|(identifier, kind, source_url)| {
-                let identifier = identifier.parse::<Identifier>().map_err(|error| persistence_error(error))?;
-                let kind = kind_of(JsonldContextKindCode::try_from(kind).map_err(|error| persistence_error(error))?);
+                let identifier = identifier
+                    .parse::<Identifier>()
+                    .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
+                let kind = kind_of(JsonldContextKindCode::try_from(kind).map_err(|error| persistence_error::<ContextRegistryError>(error))?);
                 let source_url = source_url
                     .map(IriBuf::new)
                     .transpose()
@@ -156,7 +161,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
             let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                 .execute(&self.pool)
                 .await
-                .map_err(|error| persistence_error(error))?;
+                .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
             Ok(mutation(result.rows_affected()))
         })
     }
@@ -168,7 +173,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
             let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                 .execute(&self.pool)
                 .await
-                .map_err(|error| persistence_error(error))?;
+                .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
             Ok(mutation(result.rows_affected()))
         })
     }
@@ -183,12 +188,12 @@ async fn insert_context(
     serving_url: &Url,
     kind: ContextCreationKind,
 ) -> Result<ContextInsertion, ContextRegistryError> {
-    let statement = insert_statement(identifier, payload, serving_url, kind).map_err(|error| persistence_error(error))?;
+    let statement = insert_statement(identifier, payload, serving_url, kind).map_err(|error| persistence_error::<ContextRegistryError>(error))?;
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
     let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(&repository.pool)
         .await
-        .map_err(|error| persistence_error(error))?;
+        .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
     Ok(insertion(result.rows_affected()))
 }
 
@@ -219,15 +224,6 @@ const fn insertion(rows_affected: u64) -> ContextInsertion {
     }
 }
 
-/// Collapse an implementation error into the policy's backend-neutral category.
-///
-/// Classify an adapter failure at the port boundary: backpressure keeps the
-/// port's retryable category and every fault becomes its persistence failure.
-#[track_caller]
-fn persistence_error(error: impl StoreFault) -> ContextRegistryError {
-    ContextRegistryError::from(persistence_failure(&error))
-}
-
 /// Convert affected-row counts into a named persistence outcome.
 const fn mutation(rows_affected: u64) -> ContextMutation {
     if rows_affected == 0 {
@@ -239,7 +235,10 @@ const fn mutation(rows_affected: u64) -> ContextMutation {
 
 #[cfg(test)]
 mod tests {
-    use crate::jsonld_context::registry_store::{insert_statement, insertion, mutation, persistence_error};
+    use crate::{
+        jsonld_context::registry_store::{insert_statement, insertion, mutation},
+        store_fault::persistence_error,
+    };
     use andromeda_context_registry::{creation_kind::ContextCreationKind, error::ContextRegistryError, insertion::ContextInsertion, mutation::ContextMutation};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::JsonLdContextId;
@@ -284,7 +283,13 @@ mod tests {
 
     #[test]
     fn a_pool_timeout_becomes_store_saturated() {
-        assert!(matches!(persistence_error(sqlx::Error::PoolTimedOut), ContextRegistryError::StoreSaturated));
-        assert!(matches!(persistence_error(sqlx::Error::RowNotFound), ContextRegistryError::Persistence { .. }));
+        assert!(matches!(
+            persistence_error::<ContextRegistryError>(sqlx::Error::PoolTimedOut),
+            ContextRegistryError::StoreSaturated
+        ));
+        assert!(matches!(
+            persistence_error::<ContextRegistryError>(sqlx::Error::RowNotFound),
+            ContextRegistryError::Persistence { .. }
+        ));
     }
 }

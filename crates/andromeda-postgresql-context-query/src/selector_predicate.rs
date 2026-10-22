@@ -12,7 +12,7 @@
 //! cannot tell which pattern goes with which type.
 
 use crate::entity_relations::RowSource;
-use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     entity_selection::{EntitySelection, EntitySelector},
     identifier_axis::IdentifierAxis,
@@ -27,11 +27,8 @@ use andromeda_postgresql_schema::{
     current::{Entities, EntitySearch},
     type_membership::TypeMembershipRelation,
 };
-use andromeda_postgresql_seaquery::{
-    operator::regex_match,
-    pg_array::{any, text_array},
-};
-use sea_query::{Condition, Expr, ExprTrait};
+use andromeda_postgresql_seaquery::{operator::regex_match, pg_array::is_any_of};
+use sea_query::{Condition, Expr};
 
 /// How a selector's type is tested.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,12 +76,9 @@ fn selector_condition(rows: &EntityRowRefs, selector: &EntitySelector, types: &R
     let mut condition = Condition::all();
     match selector.identifier_axis() {
         IdentifierAxis::Ids(ids) => {
-            let ids: Vec<&str> = ids.iter().map(AsRef::as_ref).collect();
-            // A warm spatial prefilter can push tens of thousands of candidate ids
-            // here; `IN ($1, … $N)` would bind one parameter per id and blow past
-            // PostgreSQL's 65535 parameter ceiling. A single bound `text[]` with
-            // `= ANY($1)` keeps it to one parameter regardless of set size.
-            condition = condition.add(rows.identity_column(Entities::Id).eq(any(text_array(&ids))));
+            // A warm spatial prefilter can push tens of thousands of candidate
+            // ids here, so they bind as one array.
+            condition = condition.add(is_any_of(rows.identity_column(Entities::Id), ids.iter().map(Identifier::to_string)));
         }
         IdentifierAxis::Pattern(pattern) => {
             condition = condition.add(regex_match(rows.identity_column(Entities::Id), Expr::val(pattern.portable().as_str())));

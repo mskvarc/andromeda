@@ -11,7 +11,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, term::ProjectionTerm};
-use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
+use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailureKind;
 use enumset::EnumSet;
 use indexmap::IndexMap;
 use iri_rs::IriBuf;
@@ -262,20 +262,8 @@ impl LinkedSource for FakeSource {
                     failures: Vec::new(),
                 }
             }
-            Some(RemoteAnswer::Unreachable) => RemoteRead {
-                nodes: Vec::new(),
-                edges: Vec::new(),
-                failures: vec![LinkedResolutionFailure {
-                    id: candidate.id.clone(),
-                    kind: LinkedResolutionFailureKind::Unreachable,
-                    detail: "the holder cannot be reached".to_owned(),
-                }],
-            },
-            None => RemoteRead {
-                nodes: Vec::new(),
-                edges: Vec::new(),
-                failures: Vec::new(),
-            },
+            Some(RemoteAnswer::Unreachable) => RemoteRead::unreachable(&candidate.id, &"the holder cannot be reached"),
+            None => RemoteRead::nothing(),
         };
         ready(read)
     }

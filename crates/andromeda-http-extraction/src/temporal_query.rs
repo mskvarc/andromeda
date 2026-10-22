@@ -5,8 +5,8 @@
 //! knows whether the broker retrieves Linked Entities on the temporal
 //! operations (clause 5.14.5.4).
 
-use crate::{addressed_uri::addressed_uri, query::classify_query_parse_error};
-use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use crate::{addressed_uri::addressed_uri, query_decode_error::QueryDecodeError};
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use std::future::{Future, ready};
@@ -18,7 +18,8 @@ pub struct TemporalQuery(pub TemporalQueryParameters);
 /// Deserialize the temporal query string.
 fn resolve_temporal_query(parts: &Parts) -> Result<TemporalQuery, ExtractorRejection> {
     let query_str = parts.uri.query().unwrap_or("");
-    let params = serde_urlencoded::from_str::<TemporalQueryParameters>(query_str).map_err(|error| classify_query_parse_error(error, addressed_uri(parts)))?;
+    let params =
+        serde_urlencoded::from_str::<TemporalQueryParameters>(query_str).map_err(|error| QueryDecodeError(error).into_rejection(addressed_uri(parts)))?;
     Ok(TemporalQuery(params))
 }
 
@@ -36,6 +37,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemDetail};
     use axum::{body::Body, http::Request};
     use std::num::NonZeroU32;
 
@@ -63,8 +65,10 @@ mod tests {
     /// is a value the operation cannot take.
     #[tokio::test]
     async fn a_zero_last_n_is_bad_request_data() {
-        let rejection = extract("/ngsi-ld/v1/temporal/entities?type=Vehicle&timerel=after&timeAt=2020-01-01T00:00:00Z&lastN=0").await;
+        let rejection = extract("/ngsi-ld/v1/temporal/entities?type=Vehicle&timerel=after&timeAt=2020-01-01T00:00:00Z&lastN=0")
+            .await
+            .expect_err("a zero lastN is refused");
 
-        assert!(matches!(rejection, Err(ExtractorRejection::BadRequestData { .. })), "{rejection:?}");
+        pretty_assertions::assert_eq!(rejection.problem().map(ProblemDetail::error_type), Some(NgsiLdErrorType::BadRequestData));
     }
 }

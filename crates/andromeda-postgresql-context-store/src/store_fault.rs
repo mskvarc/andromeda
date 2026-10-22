@@ -89,6 +89,17 @@ pub(crate) fn persistence_failure(error: &impl StoreFault) -> PersistenceFailure
     error.failure_class().record(error)
 }
 
+/// Classify an adapter failure at a port boundary into the port's own error
+/// type `E`: backpressure keeps the port's retryable category and every fault
+/// becomes its persistence failure.
+///
+/// The failure is recorded at the caller's location. Name the port's error
+/// type with a turbofish where the surrounding `?` leaves it open.
+#[track_caller]
+pub(crate) fn persistence_error<E: From<PersistenceFailure>>(error: impl StoreFault) -> E {
+    E::from(persistence_failure(&error))
+}
+
 /// Record a stored value that does not read back as the domain value it was
 /// written from.
 #[track_caller]

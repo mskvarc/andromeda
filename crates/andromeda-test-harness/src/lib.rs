@@ -28,6 +28,7 @@ pub mod tenant_scoped_environment;
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-ngsi-ld-lexicon",
+        "andromeda-postgresql-pool",
         "andromeda-tenancy",
         "andromeda-test-client",
         "andromeda-test-fixtures",

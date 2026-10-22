@@ -1,6 +1,9 @@
 //! Whether a driver error says the store cannot be reached right now.
 
-use crate::saturation::{is_connection_resource_exhausted, is_pooler_backpressure};
+use crate::{
+    saturation::{is_connection_resource_exhausted, is_pooler_backpressure},
+    sql_state::SqlState,
+};
 use sqlx::error::DatabaseError;
 
 /// Whether a [`sqlx::Error`] reports that the store could not be reached, or
@@ -47,7 +50,10 @@ pub fn is_store_unavailable(error: &sqlx::Error) -> bool {
 /// up or shutting down) all describe the server, not the request. The
 /// backend's transaction was rolled back with it.
 fn is_server_going_away(error: &dyn DatabaseError) -> bool {
-    error.code().is_some_and(|code| matches!(code.as_ref(), "57P01" | "57P02" | "57P03"))
+    matches!(
+        SqlState::of_database(error),
+        Some(SqlState::AdminShutdown | SqlState::CrashShutdown | SqlState::CannotConnectNow)
+    )
 }
 
 /// Whether a database error is in SQLSTATE class `08`, a connection exception.

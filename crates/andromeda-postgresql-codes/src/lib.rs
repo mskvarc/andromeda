@@ -99,7 +99,7 @@ andromeda_architecture_checks::forbid_sql!();
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
-    allow_workspace_dependencies: ["andromeda-ngsi-ld-lexicon"],
+    allow_workspace_dependencies: ["andromeda-ngsi-ld-lexicon", "andromeda-postgresql-schema"],
     allow_workspace_dev_dependencies: [],
     allow_production_dependencies: [],
 }

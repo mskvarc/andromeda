@@ -1,13 +1,18 @@
 //! `EntityMapStore` trait implementation for `EntityMapRepository`.
 
-use crate::entity_map::{
-    entries::{insert_children, prune_entries, read_entries, read_links, upsert_link},
-    lifecycle::{delete_expired, delete_live, delete_map_row, insert_map_row, read_live_control, update_expiry},
-    mapper::rows_to_entity_map,
-    persistence_error,
-    repo::EntityMapRepository,
+use crate::{
+    entity_map::{
+        entries::{insert_children, prune_entries, read_entries, read_links, upsert_link},
+        lifecycle::{delete_expired, delete_live, delete_map_row, insert_map_row, read_live_control, update_expiry},
+        mapper::rows_to_entity_map,
+        repo::EntityMapRepository,
+    },
+    store_fault::persistence_error,
 };
-use andromeda_entity_map::store::{EntityMapMutation, EntityMapStore, EntityMapStoreFuture};
+use andromeda_entity_map::{
+    error::EntityMapError,
+    store::{EntityMapMutation, EntityMapStore, EntityMapStoreFuture},
+};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
 use chrono::{DateTime, Utc};
@@ -18,11 +23,11 @@ impl EntityMapStore for EntityMapRepository {
             // The control record and its children land in one transaction, so
             // a follow-up page on another instance never sees a map without
             // its entries.
-            let mut transaction = self.pool().begin().await.map_err(|error| persistence_error(error))?;
+            let mut transaction = self.pool().begin().await.map_err(|error| persistence_error::<EntityMapError>(error))?;
             delete_map_row(&mut transaction, &map.id).await?;
             insert_map_row(&mut transaction, map).await?;
             insert_children(&mut transaction, map).await?;
-            transaction.commit().await.map_err(|error| persistence_error(error))?;
+            transaction.commit().await.map_err(|error| persistence_error::<EntityMapError>(error))?;
             Ok(())
         })
     }
@@ -34,7 +39,7 @@ impl EntityMapStore for EntityMapRepository {
             };
             let entries = read_entries(self.pool(), identifier).await?;
             let links = read_links(self.pool(), identifier).await?;
-            let map = rows_to_entity_map(identifier.clone(), &control, entries, links).map_err(|error| persistence_error(error))?; // clone: the map owns its identifier
+            let map = rows_to_entity_map(identifier.clone(), &control, entries, links).map_err(|error| persistence_error::<EntityMapError>(error))?; // clone: the map owns its identifier
             Ok(Some(map))
         })
     }

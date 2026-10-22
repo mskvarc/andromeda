@@ -18,6 +18,7 @@ use crate::{
     snapshot::{branch_version::branch_is_current, record::status_is_preparing, stored_snapshot_error::StoredSnapshotError},
 };
 use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
+use andromeda_postgresql_pool::sql_state::SqlState;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
 use sea_query::{Expr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
@@ -74,10 +75,10 @@ fn drainable_snapshots_statement(current: BranchSchemaVersion) -> SelectStatemen
 /// enumeration and the claim, so the drain moves on rather than failing.
 #[must_use]
 pub(crate) fn is_reaped_branch(error: &ContextStoreError) -> bool {
-    let ContextStoreError::Database(sqlx::Error::Database(database_error)) = error else {
+    let ContextStoreError::Database(database_error) = error else {
         return false;
     };
-    matches!(database_error.code().as_deref(), Some("3F000" | "42P01"))
+    matches!(SqlState::of(database_error), Some(SqlState::InvalidSchemaName | SqlState::UndefinedTable))
 }
 
 #[cfg(test)]

@@ -535,7 +535,7 @@ fn the_shapes_of_the_recorded_instances_are_added_to_their_streams() {
         "{shapes}"
     );
     assert!(shapes.contains(r#""s"."stream_key", "s"."attribute_name_key""#), "{shapes}");
-    assert!(shapes.contains(r#"WHERE "ah"."value_kind" <> 0"#), "{shapes}");
+    assert!(shapes.contains(r#"WHERE "ah"."value_kind" <> (0)"#), "{shapes}");
     assert!(
         shapes.ends_with(r#"ON CONFLICT ("stream_key", "attribute_kind", "recorded_shape") DO NOTHING"#),
         "{shapes}"
@@ -695,7 +695,7 @@ fn an_observation_without_evolution_or_types_is_named_by_the_pre_check() {
     assert!(sql.starts_with(r#"SELECT "i"."intent_key", "i"."entity_id""#), "{sql}");
     assert!(sql.contains(r#"(NOT cardinality("i"."entity_type_name_keys") > 0)"#), "{sql}");
     assert!(
-        sql.contains(r#""e"."entry_kind" <> 2"#),
+        sql.contains(r#""e"."entry_kind" <> (2)"#),
         "an intent holding an entry that ends nothing observes: {sql}"
     );
     assert!(

@@ -7,6 +7,7 @@ use crate::intent_application::{
     intent_source::{E, I, IntentSource, Te, entry, entry_kind_in, intent, source_entries, source_intents, write_ordinal},
 };
 use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
+use andromeda_postgresql_query::tombstone::entry_carries_a_value;
 use andromeda_postgresql_schema::{
     queue::{TemporalAppendIntents, WriteRecords},
     temporal::{TemporalAttributeStreams, TemporalEntities},
@@ -207,7 +208,7 @@ pub(crate) fn untyped_observations_statement(source: &IntentSource<'_>, schema: 
     ends_nothing
         .expr(Expr::val(1))
         .from_function(unnest_of(intent(TemporalAppendIntents::Entries)), E)
-        .and_where(entry(TemporalEntry::EntryKind).ne(TemporalEntryKind::Tombstone.code()));
+        .and_where(entry_carries_a_value(E));
     let mut evolution = Query::select();
     evolution
         .expr(Expr::val(1))

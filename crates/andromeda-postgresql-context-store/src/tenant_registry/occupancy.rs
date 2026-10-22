@@ -13,12 +13,12 @@
 use crate::{error::ContextStoreError, tenant_database::DatabaseUrl};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
+use andromeda_postgresql_pool::sql_state::SqlState;
 use andromeda_postgresql_schema::{csr::Csr, current::Entities, subscriptions::Subscriptions, temporal::TemporalEntities};
 use andromeda_tenancy::database_name::TenantDatabaseName;
 use sea_query::{Expr, ExprTrait, PostgresQueryBuilder, Query, SelectStatement, TableRef};
 use sea_query_sqlx::SqlxBinder;
-use sqlx::{Connection, PgConnection, error::DatabaseError};
-use std::borrow::Cow;
+use sqlx::{Connection, PgConnection};
 
 /// What a tenant's database holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +39,7 @@ pub(super) async fn occupancy(direct_url: &DatabaseUrl, database: &TenantDatabas
     let url = direct_url.with_database_name(database);
     let mut conn = match PgConnection::connect(url.as_str()).await {
         Ok(conn) => conn,
-        Err(error) if is_absent_sqlstate(sqlstate(&error).as_deref()) => return Ok(Occupancy::Empty),
+        Err(error) if is_absent(&error) => return Ok(Occupancy::Empty),
         Err(error) => return Err(error.into()),
     };
     let (sql, values) = occupancy_query().build_sqlx(PostgresQueryBuilder);
@@ -50,20 +50,17 @@ pub(super) async fn occupancy(direct_url: &DatabaseUrl, database: &TenantDatabas
     match read {
         Ok(true) => Ok(Occupancy::HoldsInformation),
         Ok(false) => Ok(Occupancy::Empty),
-        Err(error) if is_absent_sqlstate(sqlstate(&error).as_deref()) => Ok(Occupancy::Empty),
+        Err(error) if is_absent(&error) => Ok(Occupancy::Empty),
         Err(error) => Err(error.into()),
     }
 }
 
-/// The SQLSTATE a failure carries, if the database reported one.
-fn sqlstate(error: &sqlx::Error) -> Option<String> {
-    error.as_database_error().and_then(DatabaseError::code).map(Cow::into_owned)
-}
-
-/// Whether `code` reports a database (3D000), schema (3F000) or table (42P01)
-/// that does not exist.
-fn is_absent_sqlstate(code: Option<&str>) -> bool {
-    code.is_some_and(|code| matches!(code, "3D000" | "3F000" | "42P01"))
+/// Whether a failure reports a database, schema or table that does not exist.
+fn is_absent(error: &sqlx::Error) -> bool {
+    matches!(
+        SqlState::of(error),
+        Some(SqlState::InvalidCatalogName | SqlState::InvalidSchemaName | SqlState::UndefinedTable)
+    )
 }
 
 /// Whether any table a creating operation writes holds a row, one bounded
@@ -84,7 +81,8 @@ fn holds_a_row(table: TableRef) -> Expr {
 
 #[cfg(test)]
 mod tests {
-    use crate::tenant_registry::occupancy::{is_absent_sqlstate, occupancy_query};
+    use crate::tenant_registry::occupancy::{is_absent, occupancy_query};
+    use andromeda_postgresql_pool::fake_database_error::FakeDatabaseError;
     use sea_query::PostgresQueryBuilder;
 
     #[test]
@@ -99,11 +97,11 @@ mod tests {
     #[test]
     fn a_missing_database_schema_or_table_reads_as_empty() {
         for code in ["3D000", "3F000", "42P01"] {
-            assert!(is_absent_sqlstate(Some(code)), "{code}");
+            assert!(is_absent(&FakeDatabaseError::new("absent", code).into_sqlx()), "{code}");
         }
         for code in ["55006", "53300", "08006"] {
-            assert!(!is_absent_sqlstate(Some(code)), "{code}");
+            assert!(!is_absent(&FakeDatabaseError::new("refused", code).into_sqlx()), "{code}");
         }
-        assert!(!is_absent_sqlstate(None));
+        assert!(!is_absent(&sqlx::Error::PoolTimedOut));
     }
 }

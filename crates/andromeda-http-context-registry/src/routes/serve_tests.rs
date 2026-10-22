@@ -382,3 +382,30 @@ async fn a_context_document_at_the_json_value_limit_is_created() {
 
     pretty_assertions::assert_eq!(response.status(), StatusCode::CREATED);
 }
+
+/// Clause 5.5.4: a creation body that is no JSON document is an
+/// `InvalidRequest` naming the request, worded as every other body reader
+/// words it.
+#[tokio::test]
+async fn a_creation_body_that_is_not_json_is_an_invalid_request_in_the_shared_words() {
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/jsonldContexts")
+        .header("host", "broker.example")
+        .header("content-type", "application/json")
+        .header("content-length", 1)
+        .body(Body::from("{"))
+        .expect("a valid request");
+    let response = match routes().oneshot(request).await {
+        Ok(response) => response,
+        Err(never) => match never {},
+    };
+
+    pretty_assertions::assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await.expect("a readable body");
+    let problem: Value = serde_json::from_slice(&body).expect("a problem detail");
+    pretty_assertions::assert_eq!(problem["type"], "https://uri.etsi.org/ngsi-ld/errors/InvalidRequest");
+    pretty_assertions::assert_eq!(problem["instance"], "/jsonldContexts");
+    let detail = problem["detail"].as_str().expect("a detail");
+    assert!(detail.starts_with("request body is not a JSON document:"), "{detail}");
+}

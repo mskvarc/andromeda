@@ -19,7 +19,7 @@ use crate::{
     body_admission::{AdmittedBody, admit_request_body, submitted_context},
     submitted_body::SubmittedBody,
 };
-use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
 use andromeda_jsonld::user_context_admission::SubmittedContext;
 use andromeda_ngsi_ld_lexicon::{
     identifier::{Identifier, IdentifierParseError},
@@ -229,8 +229,6 @@ mod tests {
         match batch_of(request).await {
             Ok(batch) => panic!("the request was to fail as a whole, parsed {batch:?}"),
             Err(ExtractorRejection::Classified(response)) => (response.problem().error_type(), response.problem().detail().to_owned()),
-            Err(ExtractorRejection::BadRequestData { detail, .. }) => (NgsiLdErrorType::BadRequestData, detail),
-            Err(ExtractorRejection::InvalidRequest { detail, .. }) => (NgsiLdErrorType::InvalidRequest, detail),
             Err(other @ (ExtractorRejection::Empty(_) | ExtractorRejection::NotAcceptable(_))) => panic!("expected a problem, got {other:?}"),
         }
     }

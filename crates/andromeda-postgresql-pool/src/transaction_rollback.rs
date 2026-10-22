@@ -1,6 +1,6 @@
 //! Whether a driver error is a transaction rolled back under contention.
 
-use sqlx::error::DatabaseError;
+use crate::sql_state::SqlState;
 
 /// Whether a `sqlx` error is a transient transaction rollback that re-running
 /// the transaction can clear.
@@ -11,10 +11,7 @@ use sqlx::error::DatabaseError;
 /// transaction rather than a fault. The caller owns the bounded retry budget.
 #[must_use]
 pub fn is_transaction_rolled_back(error: &sqlx::Error) -> bool {
-    error
-        .as_database_error()
-        .and_then(DatabaseError::code)
-        .is_some_and(|code| matches!(code.as_ref(), "40001" | "40P01"))
+    matches!(SqlState::of(error), Some(SqlState::SerializationFailure | SqlState::DeadlockDetected))
 }
 
 #[cfg(test)]

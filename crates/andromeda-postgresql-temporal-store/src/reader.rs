@@ -15,7 +15,15 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow};
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow, split_filter::LeafTruths, temporal::compiled::CompiledTemporalQuery};
+use andromeda_ngsi_ld_query::{
+    count_policy::CountPolicy,
+    page_window::PageWindow,
+    split_filter::LeafTruths,
+    temporal::{
+        compiled::CompiledTemporalQuery,
+        grouping::{AggregationGrouping, group_key::GroupKey},
+    },
+};
 use andromeda_postgresql_codes::{
     attribute_kind_code::{attribute_type_of, stored_attribute_kind},
     recorded_shape::RecordedShape,
@@ -138,10 +146,27 @@ impl TemporalRepository {
         // Clause 5.7.4.3 confines a temporal ordering to the `id` member, which
         // is a column of the temporal catalogue and names no attribute, so the
         // dictionary lookup below has no ordering term to resolve. The `attrs`
-        // selection resolves with the filters, so a statement narrows the
-        // history it reads by key inside the source rather than by name above it.
+        // selection, the `pick`/`omit` projection and the attributes an
+        // `aggrGroupBy` keys by resolve with the filters, so a statement
+        // narrows the history it reads by key inside the source rather than by
+        // name above it.
+        let grouped = compiled
+            .representation
+            .grouping
+            .iter()
+            .flat_map(AggregationGrouping::terms)
+            .filter_map(|term| match &term.key {
+                GroupKey::Path(path) => Some(path.attr.as_str()),
+                GroupKey::Member(_) => None,
+            });
         let attribute_names = projected_attribute_names(
-            compiled.instances.attr_filter.iter().map(IriBuf::as_str),
+            compiled
+                .instances
+                .attr_filter
+                .iter()
+                .map(IriBuf::as_str)
+                .chain(compiled.entities.projected_members.names())
+                .chain(grouped),
             compiled.entities.q_expr.as_ref(),
             compiled.entities.geo.as_ref(),
             &[],
@@ -306,7 +331,8 @@ impl TemporalHistoryReader for TemporalRepository {
         compiled: &CompiledTemporalQuery,
     ) -> Result<TemporalHistoryOutcome, TemporalError> {
         let branch = branch_of(scope);
-        let stage2 = build_temporal_history_query(&branch, entity_id, compiled);
+        let names = self.resolve_query_names(compiled).await?;
+        let stage2 = build_temporal_history_query(&branch, entity_id, compiled, &names);
         let pg_rows = self
             .execute_temporal_query(TemporalStatement::History, &stage2, StatementPlanning::Cached)
             .await?;
@@ -344,7 +370,8 @@ impl TemporalHistoryReader for TemporalRepository {
         entity_id: &Identifier,
         compiled: &CompiledTemporalQuery,
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
-        let stage2 = build_temporal_history_query(&branch_of(scope), entity_id, compiled);
+        let names = self.resolve_query_names(compiled).await?;
+        let stage2 = build_temporal_history_query(&branch_of(scope), entity_id, compiled, &names);
         let pg_rows = self
             .execute_temporal_query(TemporalStatement::Aggregation, &stage2, StatementPlanning::Cached)
             .await?;

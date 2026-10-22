@@ -25,7 +25,10 @@ use crate::{
     },
     schema_ddl::extension::{DEFER_TIMESCALEDB_LOAD, update_extension},
 };
-use andromeda_postgresql_pool::lock_retry::{SCHEMA_CHANGE_LOCK_RETRY, is_lock_not_available, schema_change_connect_options};
+use andromeda_postgresql_pool::{
+    schema_change_lock::{SCHEMA_CHANGE_LOCK_RETRY, is_lock_not_available, schema_change_connect_options},
+    sql_state::SqlState,
+};
 use andromeda_postgresql_seaquery::{
     advisory_lock::advisory_xact_lock,
     introspection::{extension_shipped_version, extension_version},
@@ -40,15 +43,10 @@ use sqlx::{
     Postgres,
     Row,
     Transaction,
-    error::DatabaseError,
     postgres::{PgConnectOptions, PgRow},
 };
 use strum::IntoEnumIterator;
 use url::Url;
-
-/// SQLSTATE `42501`, `insufficient_privilege`: the connecting role does not own
-/// the extension, or may not run an untrusted extension's update script.
-const INSUFFICIENT_PRIVILEGE: &str = "42501";
 
 /// One versioned extension installed below the version the server ships.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -188,9 +186,11 @@ async fn apply_update(options: &PgConnectOptions, pending: PendingExtensionUpdat
     }
 }
 
-/// Whether a failed update was refused for privilege rather than failing.
+/// Whether a failed update was refused for privilege rather than failing: the
+/// connecting role does not own the extension, or may not run an untrusted
+/// extension's update script.
 fn is_insufficient_privilege(error: &sqlx::Error) -> bool {
-    error.as_database_error().and_then(DatabaseError::code).as_deref() == Some(INSUFFICIENT_PRIVILEGE)
+    SqlState::of(error) == Some(SqlState::InsufficientPrivilege)
 }
 
 /// One extension's installed version and the version the server ships, the

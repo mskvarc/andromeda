@@ -8,18 +8,16 @@ use crate::{
     error::TemporalStoreError,
     history_removal::{remove_stream_history, stream_key_array},
     repo::TemporalRepository,
-    temporal_catalog_read::stream_catalog_join,
+    temporal_catalog_read::{of_attribute, stream_catalog_join},
     write_record_release::release_named,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_postgresql_branch::schema_iden;
-use andromeda_postgresql_schema::{
-    name_dictionary::AttributeNames,
-    temporal::{TemporalAttributeStreams, TemporalEntities},
-};
+use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+use andromeda_postgresql_schema::temporal::{TemporalAttributeStreams, TemporalEntities};
 use andromeda_postgresql_seaquery::{branch::qualified, pg_array::any};
-use andromeda_postgresql_temporal_query::alias::{An, S, Te};
+use andromeda_postgresql_temporal_query::alias::{S, Te};
 use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, LockType, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::AssertSqlSafe;
@@ -61,9 +59,11 @@ impl TemporalRepository {
             (AttributeStreamScope::Single, Some(dataset_id)) => DatasetSelector::Named(dataset_id.as_str()),
             (AttributeStreamScope::Single, None) => DatasetSelector::Default,
         };
+        let Some(attribute) = self.attribute_key(attribute_name).await? else {
+            return Ok(0);
+        };
         let (select_sql, select_values) =
-            select_attribute_streams_query(schema_iden(target).as_ref(), entity_id.as_str(), attribute_name.as_str(), dataset_selector)
-                .build_sqlx(PostgresQueryBuilder);
+            select_attribute_streams_query(schema_iden(target).as_ref(), entity_id.as_str(), attribute, dataset_selector).build_sqlx(PostgresQueryBuilder);
         let mut tx = self.pool.begin().await?;
         let stream_keys: Vec<i64> = sqlx::query_scalar_with(AssertSqlSafe(select_sql), select_values).fetch_all(&mut *tx).await?;
         if stream_keys.is_empty() {
@@ -98,13 +98,13 @@ enum DatasetSelector<'a> {
 ///
 /// The default instance is addressed by the absence of a `datasetId`, never by
 /// a sentinel value, so a stream with no dataset is matched by `IS NULL`.
-fn select_attribute_streams_query(schema: Option<&DynIden>, entity_id: &str, attribute_name: &str, dataset: DatasetSelector<'_>) -> SelectStatement {
+fn select_attribute_streams_query(schema: Option<&DynIden>, entity_id: &str, attribute: AttributeNameKey, dataset: DatasetSelector<'_>) -> SelectStatement {
     let mut statement = Query::select();
     statement.column((S, TemporalAttributeStreams::StreamKey));
     stream_catalog_join(&mut statement, schema);
     statement
         .and_where(Expr::col((Te, TemporalEntities::Id)).eq(entity_id))
-        .and_where(Expr::col((An, AttributeNames::Name)).eq(attribute_name));
+        .and_where(of_attribute(attribute));
     match dataset {
         DatasetSelector::AllStreams => {}
         DatasetSelector::Named(dataset_id) => {
@@ -129,25 +129,26 @@ fn delete_streams_query(schema: Option<&DynIden>, stream_keys: &[i64]) -> Delete
 #[cfg(test)]
 mod tests {
     use crate::attribute_stream_deletion::{DatasetSelector, delete_streams_query, select_attribute_streams_query};
+    use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, DynIden, IntoIden, PostgresQueryBuilder};
 
     #[test]
     fn a_stream_selection_is_not_answered_from_current_state() {
-        let sql = select_attribute_streams_query(None, "urn:x", "https://ex/speed", DatasetSelector::AllStreams).to_string(PostgresQueryBuilder);
+        let sql = select_attribute_streams_query(None, "urn:x", AttributeNameKey::from(7), DatasetSelector::AllStreams).to_string(PostgresQueryBuilder);
         assert!(!sql.contains("\"entities\""), "{sql}");
     }
     #[test]
     fn the_default_instance_is_addressed_by_absence_rather_than_by_a_value() {
-        let default = select_attribute_streams_query(None, "urn:x", "a", DatasetSelector::Default).to_string(PostgresQueryBuilder);
-        let named = select_attribute_streams_query(None, "urn:x", "a", DatasetSelector::Named("urn:d")).to_string(PostgresQueryBuilder);
+        let default = select_attribute_streams_query(None, "urn:x", AttributeNameKey::from(7), DatasetSelector::Default).to_string(PostgresQueryBuilder);
+        let named = select_attribute_streams_query(None, "urn:x", AttributeNameKey::from(7), DatasetSelector::Named("urn:d")).to_string(PostgresQueryBuilder);
         assert!(default.contains("\"dataset_id\" IS NULL"), "{default}");
         assert!(named.contains("\"dataset_id\" ="), "{named}");
     }
 
     #[test]
     fn a_stream_selection_locks_the_streams_for_update() {
-        let sql = select_attribute_streams_query(None, "urn:x", "a", DatasetSelector::AllStreams).to_string(PostgresQueryBuilder);
+        let sql = select_attribute_streams_query(None, "urn:x", AttributeNameKey::from(7), DatasetSelector::AllStreams).to_string(PostgresQueryBuilder);
         assert!(sql.contains("FOR UPDATE OF \"s\""), "{sql}");
     }
 

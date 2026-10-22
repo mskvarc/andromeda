@@ -19,7 +19,7 @@ use crate::{
     error::TemporalError,
     port::read_scope::ScopeReach,
     read::{compacted_history::compact_history, rendered_entity::HistoryPresence},
-    remote_linked::{RemoteTemporalLinkedEntities, TemporalLinkedWindow},
+    remote_linked::TemporalLinkedWindow,
     service::TemporalService,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -27,14 +27,14 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_linked_retrieval::{
     candidate::LinkedCandidate,
     representation::LinkedRepresentation,
-    source::{LevelRead, LinkedSource, RemoteReach, RemoteRead},
+    source::{LevelRead, LinkedSource, RemoteReach, RemoteRead, RemoteResolution},
 };
 use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::temporal_body::TemporalBody;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_ngsi_ld_render::temporal::temporal_evolutions::TemporalEvolutions;
-use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
+use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
 use indexmap::IndexMap;
 use std::{future::Future, num::NonZeroU32};
 
@@ -125,14 +125,10 @@ impl<'s> TemporalLinkedSource<'s> {
     /// says what is missing.
     async fn fetch(&self, candidate: &LinkedCandidate, depth: NonZeroU32, held: &[Identifier]) -> RemoteRead<TemporalBody> {
         let Some(remote) = self.service.remote_temporal_linked.as_ref() else {
-            return RemoteRead {
-                nodes: Vec::new(),
-                edges: Vec::new(),
-                failures: Vec::new(),
-            };
+            return RemoteRead::nothing();
         };
         match remote.fetch_linked_temporal(&candidate.id, depth, held, self.window, self.context).await {
-            Ok(RemoteTemporalLinkedEntities { entities, failures }) => {
+            Ok(RemoteResolution { entities, mut failures }) => {
                 for failure in &failures {
                     tracing::warn!("Linked entity {} was not fully resolved: {} ({})", failure.id, failure.detail, failure.kind);
                 }
@@ -141,18 +137,19 @@ impl<'s> TemporalLinkedSource<'s> {
                 let mut nodes = Vec::with_capacity(entities.len());
                 let mut edges = Vec::new();
                 for history in entities {
+                    // A holder resolving a sub-graph answers for entities
+                    // other than the candidate; a history naming none is the
+                    // candidate's. clone: the failure outlives the history the
+                    // compaction consumes.
+                    let named = history.id().unwrap_or(&candidate.id).clone();
                     match compact_history(&compactor, history).await {
                         Ok(body) => {
                             TemporalEvolutions::edges(&body, &mut edges);
                             nodes.push(body);
                         }
-                        Err(error) => {
-                            tracing::debug!(
-                                "Failed to compact the temporal evolution of linked entity {} outside this broker: {}",
-                                candidate.id,
-                                error
-                            );
-                        }
+                        // Clause 6.3.17: a payload the broker cannot read is
+                        // an invalid answer, not a missing one.
+                        Err(error) => failures.push(LinkedResolutionFailure::unusable(&named, &error)),
                     }
                 }
                 RemoteRead { nodes, edges, failures }
@@ -163,15 +160,7 @@ impl<'s> TemporalLinkedSource<'s> {
                     candidate.id,
                     error
                 );
-                RemoteRead {
-                    nodes: Vec::new(),
-                    edges: Vec::new(),
-                    failures: vec![LinkedResolutionFailure {
-                        id: candidate.id.clone(), // clone: the failure outlives this level's candidates
-                        kind: LinkedResolutionFailureKind::Unreachable,
-                        detail: error.to_string(),
-                    }],
-                }
+                RemoteRead::unreachable(&candidate.id, &error)
             }
         }
     }

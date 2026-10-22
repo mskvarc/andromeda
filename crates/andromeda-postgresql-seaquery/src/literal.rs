@@ -39,6 +39,13 @@ pub fn false_literal() -> SimpleExpr {
     Expr::cust("FALSE")
 }
 
+/// The constant `TRUE`, rendered inline: a predicate every row satisfies,
+/// rendered without a placeholder for the reason [`false_literal`] is.
+#[must_use]
+pub fn true_literal() -> SimpleExpr {
+    Expr::cust("TRUE")
+}
+
 /// An integer rendered inline rather than bound.
 ///
 /// For a statement-level constant an `EXISTS` probe's `SELECT 1` marker is the

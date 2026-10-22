@@ -1,13 +1,7 @@
-//! Resolving a Linked Entity's temporal evolution through the registered
-//! context sources.
-//!
-//! Clause 4.5.23.1 lets a Relationship annotate its object with an
-//! `objectType`, which declares that object an Internal Linked Entity: an
-//! entity of the declared type that exists in the distributed system, whether
-//! or not this broker records its history. The traversal in `andromeda-temporal`
-//! answers for the history it holds and asks this source for the rest; this is
-//! where "the rest" becomes a forwarded temporal retrieval against the matching
-//! Context Source Registrations.
+//! The Temporal API half of [`LinkedForwarding`]: a Linked Entity's temporal
+//! evolution is fetched as a clause 5.7.3 retrieval over the requester's
+//! window, and the partial histories several sources hold of one entity are
+//! merged.
 //!
 //! The forwarded retrieval carries the requesting client's own window, so the
 //! roots and their Linked Entities describe one consistent slice of history
@@ -21,47 +15,21 @@
 //! sub-graph only when every source the retrieval reaches advertises the
 //! extension there, and is asked for the entity alone otherwise.
 
-use crate::{linked_resolution_failure_mapping::resolution_failure, linked_traversal_parameters::traversal_continuation};
-use andromeda_context_space::context_target::ContextTarget;
+use crate::linked_forwarding::{LinkedForwarding, linked_request, resolution, traversal_parameters::traversal_continuation};
 use andromeda_extensions::{advertisement::advertises, enabled::Extension};
-use andromeda_federation::{
-    FederationService,
-    forwarded_query::client_query::ClientQuery,
-    request::{CsrModeFilter, EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
-    source_identity::SourceConfiguration,
-};
+use andromeda_federation::{forwarded_query::client_query::ClientQuery, source_identity::SourceConfiguration};
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_linked_retrieval::source::RemoteReach;
+use andromeda_linked_retrieval::source::{RemoteReach, RemoteResolution};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::{temporal_document::MergeMode, temporal_history::TemporalHistory};
-use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_temporal::{
     error::TemporalError,
-    remote_linked::{RemoteTemporalLinkedEntities, RemoteTemporalLinkedSource, TemporalLinkedWindow},
+    remote_linked::{RemoteTemporalLinkedSource, TemporalLinkedWindow},
 };
 use async_trait::async_trait;
-use std::{num::NonZeroU32, sync::Arc};
+use std::num::NonZeroU32;
 use tracing::warn;
-
-/// Fetches the temporal evolution of an `objectType`-annotated Linked Entity
-/// from the context sources registered for its identifier (clause 4.5.23.1).
-#[derive(derive_more::Debug)]
-pub(crate) struct ForwardedTemporalLinkedSource {
-    /// The forwarding service that owns registration matching and transport.
-    #[debug(skip)]
-    federation: Arc<FederationService>,
-    /// Tenant live branch used by linked forwarding.
-    live_target: ContextTarget,
-}
-
-impl ForwardedTemporalLinkedSource {
-    /// Resolve Linked Entities' temporal evolution through the given forwarding
-    /// service.
-    pub(crate) const fn new(federation: Arc<FederationService>, live_target: ContextTarget) -> ForwardedTemporalLinkedSource {
-        ForwardedTemporalLinkedSource { federation, live_target }
-    }
-}
 
 /// The parameters of the forwarded temporal retrieval: the window the answer
 /// must reproduce, so the roots and their Linked Entities describe one
@@ -92,7 +60,7 @@ fn reach_of(configurations: &[SourceConfiguration]) -> RemoteReach {
 }
 
 #[async_trait]
-impl RemoteTemporalLinkedSource for ForwardedTemporalLinkedSource {
+impl RemoteTemporalLinkedSource for LinkedForwarding {
     async fn remote_reach(&self, id: &Identifier, context: &ContextSpec) -> RemoteReach {
         match self.federation.temporal_retrieval_configurations(&self.live_target, id, context).await {
             Ok(configurations) => reach_of(&configurations),
@@ -110,71 +78,24 @@ impl RemoteTemporalLinkedSource for ForwardedTemporalLinkedSource {
         visited: &[Identifier],
         window: &TemporalLinkedWindow,
         context: &ContextSpec,
-    ) -> Result<RemoteTemporalLinkedEntities, TemporalError> {
+    ) -> Result<RemoteResolution<TemporalHistory>, TemporalError> {
         let parameters = linked_temporal_retrieval_parameters(remaining_depth, visited, window);
-        let forwarded = self
-            .federation
-            .forward_temporal_retrieve(
-                &self.live_target,
-                ForwardRetrieveRequest {
-                    entity_id: id,
-                    exclude_registration: None,
-                    client_query: ClientQuery::Temporal(&parameters),
-                    context,
-                    // A linked retrieval starts at this broker rather than being a
-                    // hop of an inbound one, so there is no `Via` chain to extend
-                    // and no headers to pass through.
-                    triggering: TriggeringRequest::default(),
-                    // Clause 4.3.6.2: an auxiliary context source only supplements
-                    // an entity that already exists, never supplies a missing one.
-                    mode_filter: CsrModeFilter::ExcludeAuxiliary,
-                    entity_map: EntityMapInUse::None,
-                },
-            )
-            .await;
-
-        // A Linked Entity that cannot be reached degrades the join instead of
-        // the request (clause 4.5.23): the Relationship keeps its plain URI and
-        // the caller is told what is missing.
-        match forwarded {
-            Ok(outcome) => {
-                let mut resolved = RemoteTemporalLinkedEntities::default();
-                let mut gathered: Vec<TemporalHistory> = Vec::new();
-                for source in outcome.results {
-                    for warning in source.warnings {
-                        warn!("Linked entity {} could not be fully resolved from a context source: {}", id, warning);
-                        resolved.failures.push(resolution_failure(id, warning));
-                    }
-                    // Every source holding part of an entity's history contributes
-                    // it; an instance two of them answer is one instance.
-                    for history in source.entities {
-                        match gathered.iter().position(|held| held.id() == history.id()) {
-                            Some(held) => gathered[held].merge(history, MergeMode::Inclusive, window.timeproperty),
-                            None => gathered.push(history),
-                        }
-                    }
-                }
-                resolved.entities = gathered;
-                Ok(resolved)
+        let request = linked_request(id, ClientQuery::Temporal(&parameters), context);
+        let forwarded = self.federation.forward_temporal_retrieve(&self.live_target, request).await;
+        // Every source holding part of an entity's history contributes it; an
+        // instance two of them answer is one instance.
+        Ok(resolution(id, forwarded, |gathered: &mut Vec<TemporalHistory>, history| {
+            match gathered.iter_mut().find(|held| held.id() == history.id()) {
+                Some(held) => held.merge(history, MergeMode::Inclusive, window.timeproperty),
+                None => gathered.push(history),
             }
-            Err(error) => {
-                warn!("Failed to forward the linked temporal retrieval of {}: {}", id, error);
-                Ok(RemoteTemporalLinkedEntities {
-                    entities: Vec::new(),
-                    failures: vec![LinkedResolutionFailure {
-                        id: id.clone(), // clone: the failure outlives the borrowed candidate id
-                        kind: LinkedResolutionFailureKind::Unreachable,
-                        detail: error.to_string(),
-                    }],
-                })
-            }
-        }
+        }))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::temporal_linked_forwarding::{linked_temporal_retrieval_parameters, reach_of};
+    use crate::linked_forwarding::temporal::{linked_temporal_retrieval_parameters, reach_of};
     use andromeda_federation::source_identity::SourceConfiguration;
     use andromeda_json_literal::JsonLiteral;
     use andromeda_linked_retrieval::source::RemoteReach;
@@ -273,19 +194,5 @@ mod tests {
             RemoteReach::SingleEntity,
             "a retrieval reaching one non-advertising source asks for the entity alone"
         );
-    }
-
-    /// The forwarded retrieval carries exactly the depth it is handed: three
-    /// levels become a two-level flat join, one level the window alone.
-    #[test]
-    fn the_forwarded_retrieval_carries_exactly_the_depth_it_is_handed() {
-        let visited = [uri("urn:ngsi-ld:Building:1")];
-        let three = linked_temporal_retrieval_parameters(depth(3), &visited, &window());
-        pretty_assertions::assert_eq!(three.join, Some(JoinMode::Flat));
-        pretty_assertions::assert_eq!(three.join_level.map(NonZeroU32::get), Some(2));
-        let one = linked_temporal_retrieval_parameters(depth(1), &visited, &window());
-        assert!(one.join.is_none());
-        assert!(one.join_level.is_none());
-        assert!(one.contained_by.is_none());
     }
 }
