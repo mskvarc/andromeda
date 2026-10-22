@@ -11,7 +11,7 @@
 
 use crate::{attribute_name_key::AttributeNameKey, entity_row_refs::EntityRowRefs, instance_expiry::instance_stands};
 use andromeda_postgresql_schema::current::CurrentAttributes;
-use andromeda_postgresql_seaquery::literal::int_literal;
+use andromeda_postgresql_seaquery::{literal::int_literal, postgis::judged_geometry};
 use sea_query::{Alias, Expr as SeaExpr, ExprTrait, Query, SelectStatement, SimpleExpr};
 
 /// A `current_attributes` scan selecting one entity's geometry-valued
@@ -43,11 +43,17 @@ pub fn geometry_instances_of(outer: &EntityRowRefs, subquery_alias: &str, attrib
     scan
 }
 
-/// The subquery's geometry column: the `value_geometry` of the instance rows
-/// [`geometry_instances_of`] selects.
+/// The geometry a spatial predicate or a distance judges of the instance rows
+/// [`geometry_instances_of`] selects: `COALESCE(value_geometry_valid,
+/// value_geometry)`, the repaired form of an invalid written geometry and the
+/// written one otherwise, spelled as `idx_ca_value_geometry` indexes it.
 #[must_use]
 pub fn instance_geometry_column(subquery_alias: &str) -> SimpleExpr {
-    SeaExpr::col((Alias::new(subquery_alias), CurrentAttributes::ValueGeometry))
+    let alias = Alias::new(subquery_alias);
+    judged_geometry(
+        SeaExpr::col((alias.clone(), CurrentAttributes::ValueGeometryValid)), // clone: the alias qualifies both columns
+        SeaExpr::col((alias, CurrentAttributes::ValueGeometry)),
+    )
 }
 
 /// A `SELECT 1` marker for a correlated `EXISTS` built over
@@ -152,5 +158,15 @@ mod tests {
         assert!(!first.contains("geo_order"), "{first}");
         assert!(!second.contains("geo_instance"), "{second}");
         assert!(render_column(instance_geometry_column("geo_order")).contains("\"geo_order\".\"value_geometry\""));
+    }
+
+    /// Clause 4.7.2 stores an invalid geometry as written; a predicate judges
+    /// its repaired form, in the spelling the geometry index holds.
+    #[test]
+    fn the_instance_geometry_is_the_repaired_form_when_there_is_one() {
+        pretty_assertions::assert_eq!(
+            render_column(instance_geometry_column("geo_instance")),
+            r#"SELECT COALESCE("geo_instance"."value_geometry_valid", "geo_instance"."value_geometry")"#
+        );
     }
 }

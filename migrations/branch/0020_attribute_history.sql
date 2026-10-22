@@ -85,6 +85,10 @@ create table attribute_history (
     value_number numeric compression lz4,
     value_string text compression lz4 collate "C",
     value_geometry geometry compression lz4,
+    -- The `ST_MakeValid` form of an invalid `value_geometry`, NULL when the
+    -- written one is valid, held beside the written form as on
+    -- `current_attributes`.
+    value_geometry_valid geometry compression lz4,
     value_geometry_members jsonb compression lz4,
     value_object jsonb compression lz4,
     value_uri text compression lz4 collate "C",
@@ -107,7 +111,7 @@ create table attribute_history (
     -- shape disagrees with where it sits cannot be stored and is never
     -- repaired by guessing. It also bounds `value_kind` to its codes.
     constraint chk_attribute_history_value_kind_column check (value_kind = 0 or (value_kind = 1 and value_number is not null) or (value_kind = 2 and value_string is not null) or (value_kind = 3 and value_boolean is not null) or (value_kind = 4 and value_geometry is not null) or (value_kind = 5 and value_object is not null) or (value_kind = 6 and value_date_time is not null) or (value_kind = 7 and value_uri is not null) or (value_kind = 8 and value_string is not null) or (value_kind = 9 and value_string is not null)),
-    constraint chk_attribute_history_value_geometry_valid check (value_geometry is null or st_isvalid(value_geometry)),
+    constraint chk_attribute_history_value_geometry_valid check (value_geometry_valid is null or (value_geometry is not null and st_isvalid(value_geometry_valid) and not st_isvalid(value_geometry))),
     constraint chk_attribute_history_value_geometry_srid check (value_geometry is null or st_srid(value_geometry) = 4326),
     constraint chk_attribute_history_value_geometry_zm check (value_geometry is null or st_zmflag(value_geometry) in (0, 2)),
     constraint chk_attribute_history_value_geometry_members check (value_geometry_members is null or (value_geometry is not null and jsonb_typeof(value_geometry_members) = 'object')),

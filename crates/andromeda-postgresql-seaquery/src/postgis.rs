@@ -47,6 +47,9 @@ enum PostgisFunction {
     /// `ST_MakeValid(geom)`.
     #[iden = "ST_MakeValid"]
     MakeValid,
+    /// `ST_IsValid(geom)`.
+    #[iden = "ST_IsValid"]
+    IsValid,
     /// `ST_AsGeoJSON(geom)`.
     #[iden = "ST_AsGeoJSON"]
     AsGeoJson,
@@ -217,7 +220,8 @@ pub fn st_collect_rows(geom: SimpleExpr) -> SimpleExpr {
 }
 
 /// `PostGIS`: `ST_GeomFromEWKB(bytes)` - creates geometry from EWKB (SRID embedded).
-fn st_geom_from_ewkb(ewkb: SimpleExpr) -> SimpleExpr {
+#[must_use]
+pub fn st_geom_from_ewkb(ewkb: SimpleExpr) -> SimpleExpr {
     Func::cust(PostgisFunction::GeomFromEwkb).args([ewkb]).into()
 }
 
@@ -225,6 +229,31 @@ fn st_geom_from_ewkb(ewkb: SimpleExpr) -> SimpleExpr {
 #[must_use]
 pub fn st_make_valid(geom: SimpleExpr) -> SimpleExpr {
     Func::cust(PostgisFunction::MakeValid).args([geom]).into()
+}
+
+/// `PostGIS`: `CASE WHEN ST_IsValid(geom) THEN NULL ELSE ST_MakeValid(geom) END`,
+/// the repaired form stored beside a written geometry, NULL when the written
+/// one is already valid.
+///
+/// Clause 4.7.2 admits every IETF RFC 7946 geometry, and RFC 7946 section
+/// 3.1.6 sets no simplicity rule on a ring, so a self-intersecting polygon is
+/// stored as written; spatial predicates judge this repaired form instead.
+#[must_use]
+pub fn repaired_when_invalid(geometry: SimpleExpr) -> SimpleExpr {
+    // clone: the geometry is tested and then repaired.
+    let validity: SimpleExpr = Func::cust(PostgisFunction::IsValid).arg(geometry.clone()).into();
+    Expr::case(validity, Expr::null()).finally(st_make_valid(geometry)).into()
+}
+
+/// `PostGIS`: `COALESCE(repaired, written)`, the geometry a spatial predicate
+/// judges: the repaired form of an invalid written geometry, otherwise the
+/// written one.
+///
+/// Every predicate and every geometry index spells the operand this one way,
+/// so the planner matches a predicate to the `GiST` expression index.
+#[must_use]
+pub fn judged_geometry(repaired: SimpleExpr, written: SimpleExpr) -> SimpleExpr {
+    Func::coalesce([repaired, written]).into()
 }
 
 /// `PostGIS`: Builds a validated geometry from EWKB (SRID 4326 already embedded).
@@ -364,6 +393,22 @@ mod tests {
         // The request-supplied distance must be a bound parameter, never text in
         // the statement, so it cannot appear inline.
         assert!(!sql.contains("1000"), "distance was interpolated, not bound: {sql}");
+    }
+
+    #[test]
+    fn repaired_when_invalid_is_null_for_a_valid_geometry_and_made_valid_otherwise() {
+        pretty_assertions::assert_eq!(
+            render(repaired_when_invalid(Expr::col("x"))),
+            r#"SELECT (CASE WHEN (ST_IsValid("x")) THEN NULL ELSE ST_MakeValid("x") END)"#
+        );
+    }
+
+    #[test]
+    fn the_judged_geometry_prefers_the_repaired_form() {
+        pretty_assertions::assert_eq!(
+            render(judged_geometry(Expr::col(("a", "value_geometry_valid")), Expr::col(("a", "value_geometry")))),
+            r#"SELECT COALESCE("a"."value_geometry_valid", "a"."value_geometry")"#
+        );
     }
 
     #[test]

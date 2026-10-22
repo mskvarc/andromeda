@@ -174,6 +174,10 @@ mod tests {
         let sql = render(geo_order_distance(&name(CUSTOM_GEOPROPERTY), &resolved_custom(), &outer(), REFERENCE).expect("a recorded GeoProperty is measurable"));
         assert!(sql.contains("FROM \"current_attributes\""), "{sql}");
         assert!(sql.contains("MIN(ST_DistanceSphere("), "the nearest instance decides: {sql}");
+        assert!(
+            sql.contains(r#"MIN(ST_DistanceSphere(COALESCE("geo_order"."value_geometry_valid", "geo_order"."value_geometry"), "#),
+            "an invalid written geometry is measured from its repaired form: {sql}"
+        );
         assert!(sql.contains(&format!("\"attribute_name_key\" = {CUSTOM_GEOPROPERTY_ID}")), "{sql}");
         assert!(
             sql.contains("\"geo_order\".\"entity_key\" = \"entities\".\"entity_key\""),

@@ -1056,11 +1056,14 @@ fn the_extent_grows_from_the_geometry_the_history_row_stores() {
         sql.starts_with(concat!(
             r#"UPDATE "temporal_attribute_streams" SET "value_extent" = "#,
             r#"ST_Envelope(ST_Collect("temporal_attribute_streams"."value_extent", "grown"."extent")) FROM (SELECT "s"."stream_key", "#,
-            r#"ST_Envelope(ST_Collect(ST_MakeValid("e"."value_geometry"))) AS "extent" FROM "#
+            r#"ST_Envelope(ST_Collect("e"."value_geometry")) AS "extent" FROM "#
         )),
         "{sql}"
     );
-    assert!(writing("attribute_history").contains(r#"ST_MakeValid("e"."value_geometry")"#));
+    assert!(
+        writing("attribute_history")
+            .contains(r#", "e"."value_geometry", (CASE WHEN (ST_IsValid("e"."value_geometry")) THEN NULL ELSE ST_MakeValid("e"."value_geometry") END), "#)
+    );
     assert!(sql.contains(r#" GROUP BY "s"."stream_key") AS "grown""#), "{sql}");
     assert!(sql.contains(r#""temporal_attribute_streams"."stream_key" = "grown"."stream_key""#), "{sql}");
 }
@@ -1113,6 +1116,9 @@ fn the_rows_land_once_under_their_write_identity() {
         assert!(sql.contains(r#"ON CONFLICT ("recorded_at", "write_id", "write_ordinal") DO NOTHING"#), "{sql}");
     }
     let history = writing("attribute_history");
-    assert!(history.contains(r#"ST_MakeValid("e"."value_geometry")"#), "{history}");
+    assert!(
+        history.contains(r#"(CASE WHEN (ST_IsValid("e"."value_geometry")) THEN NULL ELSE ST_MakeValid("e"."value_geometry") END)"#),
+        "{history}"
+    );
     assert!(writing("scope_history").contains(r#""e"."scope_path"::ltree"#));
 }

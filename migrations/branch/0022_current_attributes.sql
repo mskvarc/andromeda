@@ -97,7 +97,14 @@ create table current_attributes (
     -- `value_long_text`. It has no length bound: no index keys it, and
     -- BCP 47 sets no length on a tag.
     value_language text compression lz4 collate "C",
+    -- The geometry as written: clause 4.7.1 makes the GeoProperty value the
+    -- value read back, and clause 4.7.2 admits every RFC 7946 geometry, whose
+    -- section 3.1.6 sets no simplicity rule on a ring.
     value_geometry geometry compression lz4,
+    -- The `ST_MakeValid` form of an invalid `value_geometry`, NULL when the
+    -- written one is valid. Spatial predicates and the geometry index judge
+    -- `coalesce(value_geometry_valid, value_geometry)`.
+    value_geometry_valid geometry compression lz4,
     -- The members of the GeoJSON geometry beside its type and coordinates:
     -- `bbox` and foreign members (RFC 7946 sections 5 and 6.1).
     value_geometry_members jsonb compression lz4,
@@ -137,7 +144,7 @@ create table current_attributes (
     constraint chk_current_attributes_value_datatype_with_scalar check (value_datatype_key is null or value_kind in (1, 2, 3, 6, 8, 9)),
     constraint chk_current_attributes_value_language_with_string check (value_language is null or (value_kind = 2 and value_datatype_key is null)),
     constraint chk_current_attributes_value_geometry_members_with_geometry check (value_geometry_members is null or value_geometry is not null),
-    constraint chk_current_attributes_value_geometry_valid check (value_geometry is null or st_isvalid(value_geometry)),
+    constraint chk_current_attributes_value_geometry_valid check (value_geometry_valid is null or (value_geometry is not null and st_isvalid(value_geometry_valid) and not st_isvalid(value_geometry))),
     constraint chk_current_attributes_value_geometry_srid check (value_geometry is null or st_srid(value_geometry) = 4326),
     constraint chk_current_attributes_value_geometry_zm check (value_geometry is null or st_zmflag(value_geometry) in (0, 2)),
     constraint chk_current_attributes_value_string_length check (octet_length(value_string) <= 2048),
@@ -222,7 +229,7 @@ where
     value_object is not null;
 
 -- Geo-queries against a named GeoProperty (clause 4.10).
-create index idx_ca_value_geometry on current_attributes using gist (attribute_name_key, value_geometry)
+create index idx_ca_value_geometry on current_attributes using gist (attribute_name_key, coalesce(value_geometry_valid, value_geometry))
 where
     value_geometry is not null;
 

@@ -9,7 +9,7 @@ use andromeda_postgresql_schema::{
     temporal::{AttributeHistory, ScopeHistory},
     temporal_intent::TemporalEntry,
 };
-use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType, postgis::st_make_valid};
+use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType, postgis::repaired_when_invalid};
 use sea_query::SimpleExpr;
 
 /// How an entry field's value is recorded in its column.
@@ -17,8 +17,8 @@ use sea_query::SimpleExpr;
 enum Recorded {
     /// As the entry holds it.
     AsHeld,
-    /// A geometry, made valid.
-    MadeValid,
+    /// The repaired form of a geometry, NULL when the geometry is valid.
+    RepairedWhenInvalid,
     /// A label path, cast to the `ltree` a `scopeQ` matches.
     AsLtree,
 }
@@ -28,18 +28,15 @@ impl Recorded {
     fn of(self, value: SimpleExpr) -> SimpleExpr {
         match self {
             Recorded::AsHeld => value,
-            Recorded::MadeValid => st_make_valid(value),
+            Recorded::RepairedWhenInvalid => repaired_when_invalid(value),
             Recorded::AsLtree => cast(value, PostgresType::Ltree),
         }
     }
 }
 
-/// How an entry's geometry is recorded in `value_geometry`.
-const GEOMETRY_RECORDED: Recorded = Recorded::MadeValid;
-
 /// The `attribute_history` value columns, each beside the entry field it is
 /// recorded from and how, in the table's column order.
-const ATTRIBUTE_FIELDS: [(AttributeHistory, TemporalEntry, Recorded); 22] = [
+const ATTRIBUTE_FIELDS: [(AttributeHistory, TemporalEntry, Recorded); 23] = [
     (AttributeHistory::AttributeKind, TemporalEntry::AttributeKind, Recorded::AsHeld),
     (AttributeHistory::ValueKind, TemporalEntry::ValueKind, Recorded::AsHeld),
     (AttributeHistory::ObservedAt, TemporalEntry::ObservedAt, Recorded::AsHeld),
@@ -55,7 +52,12 @@ const ATTRIBUTE_FIELDS: [(AttributeHistory, TemporalEntry, Recorded); 22] = [
     (AttributeHistory::VerbatimInstanceId, TemporalEntry::VerbatimInstanceId, Recorded::AsHeld),
     (AttributeHistory::ValueNumber, TemporalEntry::ValueNumber, Recorded::AsHeld),
     (AttributeHistory::ValueString, TemporalEntry::ValueString, Recorded::AsHeld),
-    (AttributeHistory::ValueGeometry, TemporalEntry::ValueGeometry, GEOMETRY_RECORDED),
+    (AttributeHistory::ValueGeometry, TemporalEntry::ValueGeometry, Recorded::AsHeld),
+    (
+        AttributeHistory::ValueGeometryValid,
+        TemporalEntry::ValueGeometry,
+        Recorded::RepairedWhenInvalid,
+    ),
     (AttributeHistory::ValueGeometryMembers, TemporalEntry::ValueGeometryMembers, Recorded::AsHeld),
     (AttributeHistory::ValueObject, TemporalEntry::ValueObject, Recorded::AsHeld),
     (AttributeHistory::ValueUri, TemporalEntry::ValueUri, Recorded::AsHeld),
@@ -79,7 +81,7 @@ const SCOPE_FIELDS: [(ScopeHistory, TemporalEntry, Recorded); 7] = [
 /// The `attribute_history` value columns, in the table's column order, beside
 /// the identity (`recorded_at`, `write_id`, `write_ordinal`) and the stream.
 #[must_use]
-pub fn attribute_value_columns() -> [AttributeHistory; 22] {
+pub fn attribute_value_columns() -> [AttributeHistory; 23] {
     ATTRIBUTE_FIELDS.map(|(column, ..)| column)
 }
 
@@ -93,16 +95,18 @@ pub fn scope_value_columns() -> [ScopeHistory; 7] {
 /// Every `attribute_history` value column beside the value an attribute entry
 /// records in it, `field` reading one field of the entry.
 ///
-/// The geometry is made valid, which is the one value the entry does not hold
-/// as it is recorded.
-pub fn attribute_entry_values(field: impl Fn(TemporalEntry) -> SimpleExpr) -> [(AttributeHistory, SimpleExpr); 22] {
+/// The geometry is recorded as written, and `value_geometry_valid` derives
+/// its repaired form from the same field: the one value the entry does not
+/// hold as it is recorded.
+pub fn attribute_entry_values(field: impl Fn(TemporalEntry) -> SimpleExpr) -> [(AttributeHistory, SimpleExpr); 23] {
     ATTRIBUTE_FIELDS.map(|(column, entry, recorded)| (column, recorded.of(field(entry))))
 }
 
-/// The geometry an attribute entry records in `value_geometry`, `field`
-/// reading one field of the entry: `NULL` for an entry holding no geometry.
+/// The geometry an attribute entry records in `value_geometry`, as written,
+/// `field` reading one field of the entry: `NULL` for an entry holding no
+/// geometry.
 pub fn recorded_geometry(field: impl Fn(TemporalEntry) -> SimpleExpr) -> SimpleExpr {
-    GEOMETRY_RECORDED.of(field(TemporalEntry::ValueGeometry))
+    Recorded::AsHeld.of(field(TemporalEntry::ValueGeometry))
 }
 
 /// Every `scope_history` value column beside the value a Scope entry records
@@ -127,16 +131,20 @@ mod tests {
     }
 
     #[test]
-    fn an_attribute_entry_records_each_field_in_its_column_and_the_geometry_made_valid() {
+    fn an_attribute_entry_records_each_field_in_its_column_and_the_geometry_as_written_beside_its_repair() {
         let values =
             rendered(attribute_entry_values(|field: TemporalEntry| Expr::col((Alias::new("e"), field))).map(|(column, value)| (column.to_string(), value)));
         assert!(values.contains(&r#"value_number <- SELECT "e"."value_number""#.to_owned()), "{values:?}");
+        assert!(values.contains(&r#"value_geometry <- SELECT "e"."value_geometry""#.to_owned()), "{values:?}");
         assert!(
-            values.contains(&r#"value_geometry <- SELECT ST_MakeValid("e"."value_geometry")"#.to_owned()),
+            values.contains(
+                &r#"value_geometry_valid <- SELECT (CASE WHEN (ST_IsValid("e"."value_geometry")) THEN NULL ELSE ST_MakeValid("e"."value_geometry") END)"#
+                    .to_owned()
+            ),
             "{values:?}"
         );
         assert!(values.contains(&r#"sub_attributes <- SELECT "e"."sub_attributes""#.to_owned()), "{values:?}");
-        pretty_assertions::assert_eq!(values.len(), 22);
+        pretty_assertions::assert_eq!(values.len(), 23);
     }
 
     #[test]

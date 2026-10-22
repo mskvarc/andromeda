@@ -33,8 +33,8 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery};
 use andromeda_postgresql_schema::current::{CurrentAttributes, Entities, EntitySearch};
-use andromeda_postgresql_seaquery::{cast::cast, literal::false_literal, pg_array::is_any_of, pg_type::PostgresType};
-use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, JoinType, Query, SelectStatement, SimpleExpr, UnionType};
+use andromeda_postgresql_seaquery::{cast::cast, literal::false_literal, pg_array::is_any_of, pg_type::PostgresType, postgis::judged_geometry};
+use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, JoinType, Query, SelectStatement, UnionType};
 
 /// Alias the hoisted-instance arm reads `entity_search` under.
 const DEFAULT_ALIAS: &str = "geo_default";
@@ -123,14 +123,20 @@ fn default_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, default_location: 
 /// `datasetId` is read by both arms, which the semi-join answers once.
 fn dataset_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, location_key: AttributeNameKey) -> Result<SelectStatement, RenderError> {
     let instance = Alias::new(INSTANCE_ALIAS);
-    let geometry: SimpleExpr = SeaExpr::col((instance.clone(), CurrentAttributes::ValueGeometry));
+    // clone: the alias qualifies every column the arm reads
+    let geometry = judged_geometry(
+        SeaExpr::col((instance.clone(), CurrentAttributes::ValueGeometryValid)),
+        SeaExpr::col((instance.clone(), CurrentAttributes::ValueGeometry)),
+    );
     let mut arm = Query::select();
     arm.column((instance.clone(), CurrentAttributes::EntityKey))
         .from_as(rows.table(CurrentAttributes::Table), instance.clone())
         .and_where(SeaExpr::col((instance.clone(), CurrentAttributes::AttributeNameKey)).eq(location_key.get()))
         .and_where(SeaExpr::col((instance.clone(), CurrentAttributes::DatasetId)).is_not_null())
-        .and_where(instance_stands(SeaExpr::col((instance, CurrentAttributes::ExpiresAt))))
-        .and_where(SeaExpr::expr(geometry.clone()).is_not_null()); // clone: the column is read by the presence test and the relation
+        .and_where(instance_stands(SeaExpr::col((instance.clone(), CurrentAttributes::ExpiresAt))))
+        // The written column, which the partial `idx_ca_value_geometry` is
+        // restricted by.
+        .and_where(SeaExpr::col((instance, CurrentAttributes::ValueGeometry)).is_not_null());
     if let Some(prefilter) = near_envelope_prefilter(geo, &geometry) {
         arm.and_where(prefilter);
     }
@@ -203,7 +209,7 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#"UNION ALL (SELECT "geo_location_instance"."entity_key" FROM "current_attributes" AS "geo_location_instance" WHERE "geo_location_instance"."attribute_name_key" = $2 AND "geo_location_instance"."dataset_id" IS NOT NULL AND ("geo_location_instance"."expires_at" IS NULL OR "geo_location_instance"."expires_at" > NOW()) AND "geo_location_instance"."value_geometry" IS NOT NULL AND ST_Within("geo_location_instance"."value_geometry","#),
+            sql.contains(r#"UNION ALL (SELECT "geo_location_instance"."entity_key" FROM "current_attributes" AS "geo_location_instance" WHERE "geo_location_instance"."attribute_name_key" = $2 AND "geo_location_instance"."dataset_id" IS NOT NULL AND ("geo_location_instance"."expires_at" IS NULL OR "geo_location_instance"."expires_at" > NOW()) AND "geo_location_instance"."value_geometry" IS NOT NULL AND ST_Within(COALESCE("geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry"),"#),
             "{sql}"
         );
         assert!(
@@ -291,8 +297,14 @@ mod tests {
             .expect("renders"),
         );
         assert!(sql.contains(r#"ST_DWithin("geo_default"."location_geography","#), "{sql}");
-        assert!(sql.contains(r#""geo_location_instance"."value_geometry" && ST_MakeEnvelope("#), "{sql}");
-        assert!(sql.contains(r#"ST_DWithin("geo_location_instance"."value_geometry"::geography,"#), "{sql}");
+        assert!(
+            sql.contains(r#"COALESCE("geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry") && ST_MakeEnvelope("#),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(r#"ST_DWithin(COALESCE("geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry")::geography,"#),
+            "{sql}"
+        );
     }
 
     /// A reference by the antimeridian reaches both its sides, so the
@@ -314,7 +326,8 @@ mod tests {
             .expect("renders"),
         );
         assert_eq!(
-            sql.matches(r#""geo_location_instance"."value_geometry" && ST_MakeEnvelope("#).count(),
+            sql.matches(r#"COALESCE("geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry") && ST_MakeEnvelope("#)
+                .count(),
             2,
             "{sql}"
         );

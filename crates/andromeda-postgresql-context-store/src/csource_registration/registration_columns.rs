@@ -7,7 +7,7 @@ use crate::{
         ManagementColumns,
         context_source_info_columns,
         dataset_selectors,
-        geometry_write,
+        geometry_writes,
         interval_columns,
         mode_code,
         operation_codes,
@@ -172,11 +172,14 @@ pub(super) fn registration_columns<'a>(
     let (management_start, management_end) = interval_columns(fields.management_interval);
     let management = ManagementColumns::of(fields.management);
     let (info_keys, info_values) = context_source_info_columns(fields.context_source_info);
-    let geometry = |geometry: Option<&Geometry>| {
+    let geometry = |written: Csr, repaired: Csr, geometry: Option<&Geometry>| {
         geometry_bytes(geometry.map(Geometry::form))
-            .map(geometry_write)
+            .map(|ewkb| geometry_writes(written, repaired, ewkb))
             .map_err(|error| persistence_error::<RegistrationError>(error))
     };
+    let [location, location_repaired] = geometry(Csr::Location, Csr::LocationValid, fields.location)?;
+    let [observation_space, observation_space_repaired] = geometry(Csr::ObservationSpace, Csr::ObservationSpaceValid, fields.observation_space)?;
+    let [operation_space, operation_space_repaired] = geometry(Csr::OperationSpace, Csr::OperationSpaceValid, fields.operation_space)?;
     Ok(vec![
         (Csr::RegistrationName, Expr::val(fields.registration_name.map(NonEmptyText::as_str))),
         (Csr::Description, Expr::val(fields.description.map(NonEmptyText::as_str))),
@@ -186,9 +189,12 @@ pub(super) fn registration_columns<'a>(
         (Csr::ObservationIntervalEnd, Expr::val(observation_end)),
         (Csr::ManagementIntervalStart, Expr::val(management_start)),
         (Csr::ManagementIntervalEnd, Expr::val(management_end)),
-        (Csr::Location, geometry(fields.location)?),
-        (Csr::ObservationSpace, geometry(fields.observation_space)?),
-        (Csr::OperationSpace, geometry(fields.operation_space)?),
+        location,
+        location_repaired,
+        observation_space,
+        observation_space_repaired,
+        operation_space,
+        operation_space_repaired,
         (Csr::ExpiresAt, Expr::val(fields.expires_at)),
         (Csr::Endpoint, Expr::val(fields.endpoint.as_str())),
         (Csr::Accept, Expr::val(fields.accept.map(ToString::to_string))),

@@ -61,6 +61,7 @@ use andromeda_postgresql_seaquery::{
     literal::{false_literal, int_literal},
     pg_array::is_any_of,
     pg_type::PostgresType,
+    postgis::judged_geometry,
 };
 use chrono::{DateTime, Utc};
 use sea_query::{Asterisk, Condition, DynIden, Expr as SeaExpr, ExprTrait, IntoIden, JoinType, Query, SelectStatement, SimpleExpr, TableRef};
@@ -186,8 +187,16 @@ impl HistoryWindow {
             return Ok(Condition::all().add(false_literal()));
         };
         let aliases = HistoryAliases::top_level();
-        let planar = aliases.instance_column(AttributeHistory::ValueGeometry);
-        let geographic = cast(aliases.instance_column(AttributeHistory::ValueGeometry), PostgresType::Geography);
+        // Clause 4.7.2 stores an invalid geometry as written; the relation
+        // judges its repaired form.
+        let judged = || {
+            judged_geometry(
+                aliases.instance_column(AttributeHistory::ValueGeometryValid),
+                aliases.instance_column(AttributeHistory::ValueGeometry),
+            )
+        };
+        let planar = judged();
+        let geographic = cast(judged(), PostgresType::Geography);
         let near_box = near_envelope_unindexed_prefilter(geo, &planar);
         let spatial = relation_expression(&geo.georel, planar, geographic, &geo.geometry)?;
         let relation = Condition::all().add_option(near_box).add(spatial);

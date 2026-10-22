@@ -17,7 +17,7 @@
 use crate::{
     current_attribute::{
         staged_grains::Grains,
-        staging::{Instances, ROW_COLUMNS},
+        staging::{Instances, written_columns},
     },
     error::ContextStoreError,
 };
@@ -28,10 +28,10 @@ use andromeda_postgresql_seaquery::{conflict_image::Excluded, literal::int_liter
 use sea_query::{Cond, DeleteStatement, DynIden, Expr, ExprTrait, InsertStatement, IntoIden, JoinType, OnConflict, Query, SimpleExpr, UpdateStatement};
 
 /// The columns a stored row takes from the row an update writes in its place:
-/// every staged column but the grain it is matched by and `created_at`, which
+/// every written column but the grain it is matched by and `created_at`, which
 /// the stored row keeps (clause 4.8).
 fn rewritten_columns() -> impl Iterator<Item = CurrentAttributes> {
-    ROW_COLUMNS.into_iter().filter(|column| {
+    written_columns().filter(|column| {
         !matches!(
             column,
             CurrentAttributes::AttributeNameKey | CurrentAttributes::DatasetId | CurrentAttributes::CreatedAt
@@ -63,10 +63,10 @@ fn stored_row_differs() -> SimpleExpr {
 pub(crate) fn inserted_rows(target: &ContextTarget, anchor: impl IntoIden) -> Result<InsertStatement, ContextStoreError> {
     let anchor = anchor.into_iden();
     let mut columns = vec![CurrentAttributes::EntityKey];
-    columns.extend(ROW_COLUMNS);
+    columns.extend(written_columns());
     let mut select = Query::select();
     select.expr(Expr::col((anchor.clone(), Entities::EntityKey))); // clone: the anchor names both the key and the join
-    for column in ROW_COLUMNS {
+    for column in written_columns() {
         select.expr(Expr::col((Instances, column)));
     }
     select
@@ -277,6 +277,20 @@ mod tests {
             assert!(proposed.contains(&format!(r#""excluded"."{column}""#)), "{column}: {sql}");
         }
         assert!(!guard.contains("created_at"), "{sql}");
+    }
+
+    /// The repaired form of the written geometry is inserted beside it and
+    /// replaced with it, so a rewritten geometry never keeps a stale repair.
+    #[test]
+    fn the_upsert_writes_and_refreshes_the_repaired_geometry() {
+        let sql = written_rows(&ContextTarget::Live, anchor())
+            .expect("the upsert builds")
+            .to_string(PostgresQueryBuilder);
+        let (columns, _) = sql.split_once(") SELECT ").expect("the insert lists its columns");
+        assert!(columns.contains(r#""value_geometry", "#), "{sql}");
+        assert!(columns.contains(r#""value_geometry_valid""#), "{sql}");
+        assert!(sql.contains(r#""instances"."value_geometry_valid""#), "{sql}");
+        assert!(sql.contains(r#""value_geometry_valid" = "excluded"."value_geometry_valid""#), "{sql}");
     }
 
     /// A row that only moves takes its new ordinal and nothing else.

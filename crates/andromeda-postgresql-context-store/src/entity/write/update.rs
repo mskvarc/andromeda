@@ -558,9 +558,11 @@ mod tests {
     }
 
     #[test]
-    fn the_projection_validates_each_geometry_once() {
+    fn the_projection_validates_the_hoisted_geometry_and_repairs_each_instance_geometry_once() {
         let sql = update();
         pretty_assertions::assert_eq!(sql.matches("ST_MakeValid").count(), 2, "{sql}");
+        assert!(sql.contains(r#"ST_MakeValid(ST_GeomFromEWKB("d"."loc"))"#), "{sql}");
+        assert!(sql.contains(r#"(CASE WHEN (ST_IsValid(ST_GeomFromEWKB("r"."value_geometry"))) THEN NULL ELSE ST_MakeValid(ST_GeomFromEWKB("r"."value_geometry")) END) AS "value_geometry_valid""#), "{sql}");
         assert!(sql.starts_with(r#"WITH "proj" AS ("#), "{sql}");
     }
 }

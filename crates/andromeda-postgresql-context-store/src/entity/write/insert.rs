@@ -299,7 +299,7 @@ mod tests {
         pretty_assertions::assert_eq!(
             sql.matches("ST_MakeValid").count(),
             2,
-            "the hoisted geometry is validated once, in the projection, and each instance geometry once, in the row staging: {sql}"
+            "the hoisted geometry is validated once, in the projection, and each instance geometry is repaired once, beside its written form in the row staging: {sql}"
         );
     }
 
@@ -340,11 +340,11 @@ mod tests {
     }
 
     #[test]
-    fn the_insert_validates_every_geometry_from_its_embedded_srid() {
+    fn the_insert_reads_every_geometry_from_its_embedded_srid() {
         let sql = insert();
-        for column in [r#""d"."loc""#, r#""r"."value_geometry""#] {
-            assert!(sql.contains(&format!("ST_MakeValid(ST_GeomFromEWKB({column}))")), "{column}: {sql}");
-        }
+        assert!(sql.contains(r#"ST_MakeValid(ST_GeomFromEWKB("d"."loc"))"#), "{sql}");
+        assert!(sql.contains(r#", ST_GeomFromEWKB("r"."value_geometry") AS "value_geometry""#), "{sql}");
+        assert!(sql.contains(r#"(CASE WHEN (ST_IsValid(ST_GeomFromEWKB("r"."value_geometry"))) THEN NULL ELSE ST_MakeValid(ST_GeomFromEWKB("r"."value_geometry")) END) AS "value_geometry_valid""#), "{sql}");
         assert!(!sql.contains("ST_SetSRID"), "{sql}");
     }
 

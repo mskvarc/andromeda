@@ -333,11 +333,20 @@ mod tests {
     #[test]
     fn the_temporal_near_probe_prefilters_by_an_unindexed_box() {
         let (sql, _) = geo_probe(&HistoryBranch::live_recorded(), &names());
-        let unindexed = sql.find(r#""qh"."value_geometry"::box2d && ST_MakeEnvelope("#).expect("the unindexed box");
+        let unindexed = sql
+            .find(r#"COALESCE("qh"."value_geometry_valid", "qh"."value_geometry")::box2d && ST_MakeEnvelope("#)
+            .expect("the unindexed box");
         let distance = sql.find("ST_DWithin").expect("the distance");
         assert!(unindexed < distance, "{sql}");
+        assert!(
+            sql[distance..].starts_with(r#"ST_DWithin(COALESCE("qh"."value_geometry_valid", "qh"."value_geometry")::geography, "#),
+            "{sql}"
+        );
         assert!(sql[unindexed..distance].contains(")::box2d"), "{sql}");
-        assert!(!sql.contains(r#""qh"."value_geometry" && ST_MakeEnvelope("#), "{sql}");
+        assert!(
+            !sql.contains(r#"COALESCE("qh"."value_geometry_valid", "qh"."value_geometry") && ST_MakeEnvelope("#),
+            "{sql}"
+        );
     }
 
     #[test]

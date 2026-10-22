@@ -146,8 +146,11 @@ pub enum CurrentAttributes {
     ValueString,
     /// Language tag of a language-tagged String, beside `value_string` only
     ValueLanguage,
-    /// Geometry value, when `value_kind` selects it
+    /// Geometry value as written, when `value_kind` selects it
     ValueGeometry,
+    /// The `ST_MakeValid` form of an invalid written geometry, NULL when the
+    /// written one is valid; spatial predicates judge this form when present
+    ValueGeometryValid,
     /// The `GeoJSON` members a geometry value carries beside its coordinates
     /// (`bbox` and foreign members), NULL when it carries none
     ValueGeometryMembers,
@@ -329,6 +332,7 @@ mod tests {
             CurrentAttributes::ValueString,
             CurrentAttributes::ValueLanguage,
             CurrentAttributes::ValueGeometry,
+            CurrentAttributes::ValueGeometryValid,
             CurrentAttributes::ValueGeometryMembers,
             CurrentAttributes::ValueObject,
             CurrentAttributes::ValueUri,
@@ -363,6 +367,7 @@ mod tests {
                 "value_string",
                 "value_language",
                 "value_geometry",
+                "value_geometry_valid",
                 "value_geometry_members",
                 "value_object",
                 "value_uri",

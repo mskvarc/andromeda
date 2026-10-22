@@ -213,8 +213,10 @@ pub(crate) fn history_statement(source: &StagedSource<'_>, schema: Option<&DynId
 /// Grow the extent of every stream an entry of the source records a geometry
 /// on to cover it.
 ///
-/// The box each stream's entries span is taken from the geometry the history
-/// row stores, so the extent covers exactly what was recorded. A stream whose
+/// The box each stream's entries span is taken from the written geometry the
+/// history row stores, so the extent covers exactly what was recorded. It also
+/// bounds the repaired form a spatial predicate judges, which `ST_MakeValid`
+/// builds from the written vertices and so keeps inside their box. A stream whose
 /// extent already covers the box is left alone, so a write inside it updates
 /// no row. An extent never shrinks: one too large still holds every geometry
 /// of its stream.

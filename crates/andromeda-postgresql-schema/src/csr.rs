@@ -37,12 +37,21 @@ pub enum Csr {
     ManagementIntervalStart,
     /// `managementInterval.endAt`; `NULL` when absent or open.
     ManagementIntervalEnd,
-    /// `PostGIS` geometry of the registration `location`.
+    /// `PostGIS` geometry of the registration `location`, as written.
     Location,
-    /// `PostGIS` geometry of the `observationSpace`.
+    /// The `ST_MakeValid` form of an invalid written `location`, NULL when
+    /// the written one is valid.
+    LocationValid,
+    /// `PostGIS` geometry of the `observationSpace`, as written.
     ObservationSpace,
-    /// `PostGIS` geometry of the `operationSpace`.
+    /// The `ST_MakeValid` form of an invalid written `observationSpace`, NULL
+    /// when the written one is valid.
+    ObservationSpaceValid,
+    /// `PostGIS` geometry of the `operationSpace`, as written.
     OperationSpace,
+    /// The `ST_MakeValid` form of an invalid written `operationSpace`, NULL
+    /// when the written one is valid.
+    OperationSpaceValid,
     /// Expiry instant, after which the registration is gone.
     ExpiresAt,
     /// The context source endpoint URI.
@@ -158,6 +167,9 @@ mod tests {
         assert_eq!(Csr::IsManagementDeclared.to_string(), "is_management_declared");
         assert_eq!(Csr::ContextSourceInfoKeys.to_string(), "context_source_info_keys");
         assert_eq!(Csr::ObservationSpace.to_string(), "observation_space");
+        assert_eq!(Csr::LocationValid.to_string(), "location_valid");
+        assert_eq!(Csr::ObservationSpaceValid.to_string(), "observation_space_valid");
+        assert_eq!(Csr::OperationSpaceValid.to_string(), "operation_space_valid");
         assert_eq!(Csr::AdditionalProperties.to_string(), "additional_properties");
     }
 

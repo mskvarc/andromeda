@@ -288,11 +288,12 @@ fn near_expression(geo_col: SimpleExpr, ref_geom: SimpleExpr, max_distance: Opti
 #[cfg(test)]
 mod tests {
     use crate::{
+        attribute_instance_correlation::instance_geometry_column,
         attribute_name_key::AttributeNameKey,
         dictionary::resolved_names::ResolvedNames,
         entity_row_refs::EntityRowRefs,
         error::RenderError,
-        geo_predicate::{bounding_box_prefilter, condition, near_envelope_prefilter, near_envelope_unindexed_prefilter},
+        geo_predicate::{INSTANCE_ALIAS, bounding_box_prefilter, condition, near_envelope_prefilter, near_envelope_unindexed_prefilter},
     };
     use andromeda_ngsi_ld_geometry::{
         dimension::GeometryDimension,
@@ -310,7 +311,7 @@ mod tests {
     use andromeda_postgresql_encoding::ewkb::encode;
     use andromeda_postgresql_schema::current::Entities;
     use pretty_assertions::{assert_eq, assert_ne};
-    use sea_query::{Alias, Condition, Expr, PostgresQueryBuilder, Query, SimpleExpr, Value, Values};
+    use sea_query::{Alias, Condition, PostgresQueryBuilder, Query, SimpleExpr, Value, Values};
     use std::{str::FromStr, sync::LazyLock};
 
     /// The unaliased entity rows the entity path filters.
@@ -563,10 +564,13 @@ mod tests {
             CUSTOM_GEOPROPERTY,
         );
         let sql = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).unwrap());
-        assert!(sql.contains("\"geo_instance\".\"value_geometry\"::geography"), "{sql}");
+        assert!(
+            sql.contains("COALESCE(\"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\")::geography"),
+            "{sql}"
+        );
         assert!(sql.contains("ST_DWithin"), "{sql}");
         assert!(
-            sql.contains("\"geo_instance\".\"value_geometry\" && ST_MakeEnvelope("),
+            sql.contains("COALESCE(\"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\") && ST_MakeEnvelope("),
             "the cast column reaches no index, so a box the geometry GiST answers prefilters it: {sql}"
         );
     }
@@ -599,8 +603,16 @@ mod tests {
     fn a_near_prefilter_across_the_antimeridian_tests_both_halves() {
         let geo = near_query(179.999, -17.0, Some("300"), None);
         let (sql, values) = render_parameterised(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).expect("renders"));
-        assert_eq!(sql.matches("\"geo_instance\".\"value_geometry\" && ST_MakeEnvelope(").count(), 2, "{sql}");
-        assert!(sql.contains(")) OR (\"geo_instance\".\"value_geometry\" && ST_MakeEnvelope("), "{sql}");
+        assert_eq!(
+            sql.matches("COALESCE(\"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\") && ST_MakeEnvelope(")
+                .count(),
+            2,
+            "{sql}"
+        );
+        assert!(
+            sql.contains(")) OR (COALESCE(\"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\") && ST_MakeEnvelope("),
+            "{sql}"
+        );
         let doubles = bound_doubles(&values);
         assert!(doubles.contains(&180.0) && doubles.contains(&-180.0), "{doubles:?}");
     }
@@ -621,9 +633,10 @@ mod tests {
         assert!(north >= 0.045_218, "the box reaches latitude {north}");
     }
 
-    /// The instance geometry column a box test is rendered over.
+    /// The instance geometry a box test is rendered over, as a named
+    /// `GeoProperty`'s predicate judges it.
     fn instance_geometry() -> SimpleExpr {
-        Expr::col((Alias::new("geo_instance"), Alias::new("value_geometry")))
+        instance_geometry_column(INSTANCE_ALIAS)
     }
 
     /// A box test alone, with its bound values.
@@ -636,7 +649,8 @@ mod tests {
         let geo = near_query(4.5, 52.5, Some("2000"), None);
         let (sql, values) = render_box_test(near_envelope_unindexed_prefilter(&geo, &instance_geometry()).expect("a near box"));
         assert_eq!(
-            sql.matches("\"geo_instance\".\"value_geometry\"::box2d && ST_MakeEnvelope(").count(),
+            sql.matches("COALESCE(\"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\")::box2d && ST_MakeEnvelope(")
+                .count(),
             1,
             "{sql}"
         );
@@ -650,12 +664,13 @@ mod tests {
         let across = near_query(179.99, 52.5, Some("2000"), None);
         let (sql, _) = render_box_test(near_envelope_unindexed_prefilter(&across, &instance_geometry()).expect("a near box"));
         assert_eq!(
-            sql.matches("\"geo_instance\".\"value_geometry\"::box2d && ST_MakeEnvelope(").count(),
+            sql.matches("COALESCE(\"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\")::box2d && ST_MakeEnvelope(")
+                .count(),
             2,
             "{sql}"
         );
         assert!(
-            sql.contains(")::box2d) OR (\"geo_instance\".\"value_geometry\"::box2d && ST_MakeEnvelope("),
+            sql.contains(")::box2d) OR (COALESCE(\"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\")::box2d && ST_MakeEnvelope("),
             "{sql}"
         );
     }
@@ -666,10 +681,16 @@ mod tests {
     fn the_entity_and_registration_prefilters_stay_indexable() {
         let geo = near_query(4.5, 52.5, Some("2000"), None);
         let (sql, _) = render_box_test(near_envelope_prefilter(&geo, &instance_geometry()).expect("a near box"));
-        assert!(sql.contains("\"geo_instance\".\"value_geometry\" && ST_MakeEnvelope("), "{sql}");
+        assert!(
+            sql.contains("COALESCE(\"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\") && ST_MakeEnvelope("),
+            "{sql}"
+        );
         assert!(!sql.contains("::box2d"), "{sql}");
         let entity = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).expect("renders"));
-        assert!(entity.contains("\"geo_instance\".\"value_geometry\" && ST_MakeEnvelope("), "{entity}");
+        assert!(
+            entity.contains("COALESCE(\"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\") && ST_MakeEnvelope("),
+            "{entity}"
+        );
         assert!(!entity.contains("::box2d"), "{entity}");
     }
 
@@ -682,7 +703,7 @@ mod tests {
             let geo = point_query(georel, CUSTOM_GEOPROPERTY);
             let (sql, values) = render_box_test(bounding_box_prefilter(&geo, instance_geometry()).expect("renders").expect("an area box"));
             assert_eq!(
-                sql, r#"SELECT "geo_instance"."value_geometry" && ST_MakeValid(ST_GeomFromEWKB($1))"#,
+                sql, r#"SELECT COALESCE("geo_instance"."value_geometry_valid", "geo_instance"."value_geometry") && ST_MakeValid(ST_GeomFromEWKB($1))"#,
                 "{:?}",
                 geo.georel
             );

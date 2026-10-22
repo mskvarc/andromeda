@@ -252,7 +252,10 @@ mod tests {
         let sql = type_page(&near_query(4.5, "2000"));
         let branches = PageBranches::of(&sql);
         for residual in [branches.short, branches.indexed, branches.walk] {
-            assert!(residual.contains(r#"ST_DWithin("qh"."value_geometry"::geography"#), "{residual}");
+            assert!(
+                residual.contains(r#"ST_DWithin(COALESCE("qh"."value_geometry_valid", "qh"."value_geometry")::geography"#),
+                "{residual}"
+            );
         }
     }
 

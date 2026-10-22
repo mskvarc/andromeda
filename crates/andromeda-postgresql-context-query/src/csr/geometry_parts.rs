@@ -17,6 +17,7 @@ use andromeda_postgresql_query::{
     geo_predicate::{near_envelope_prefilter, registration_area},
 };
 use andromeda_postgresql_schema::csr::Csr;
+use andromeda_postgresql_seaquery::postgis::judged_geometry;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait};
 
 /// The registrations a geoquery keeps, as two disjoint conditions over the
@@ -38,30 +39,33 @@ pub struct GeometryParts {
 /// Returns [`RenderError::ReferenceGeometryEncoding`] when the reference
 /// geometry has no EWKB spelling the store can bind.
 pub fn geometry_parts(geo: &GeoQuery) -> Result<Option<GeometryParts>, RenderError> {
-    let geometry = SeaExpr::col(registration_geometry_column(geo));
-    let Some(area) = registration_area(geo, &geometry)? else {
+    let (written, repaired) = registration_geometry_columns(geo);
+    // Clause 4.7.2 stores an invalid geometry as written; the relation judges
+    // its repaired form, spelled as the spatial index holds it.
+    let judged = judged_geometry(SeaExpr::col(repaired), SeaExpr::col(written));
+    let Some(area) = registration_area(geo, &judged)? else {
         return Ok(None);
     };
-    // clone: the null test, the box and the relation each read the column
-    let mut present = Condition::all().add(geometry.clone().is_not_null());
+    // The partial indexes are restricted by the written column.
+    let mut present = Condition::all().add(SeaExpr::col(written).is_not_null());
     // A registration geometry is reduced to a `near` with the query's own
     // `maxDistance`, so the box around the query bounds it as well.
-    if let Some(prefilter) = near_envelope_prefilter(geo, &geometry) {
+    if let Some(prefilter) = near_envelope_prefilter(geo, &judged) {
         present = present.add(prefilter);
     }
     Ok(Some(GeometryParts {
-        absent: Condition::all().add(geometry.is_null()),
+        absent: Condition::all().add(SeaExpr::col(written).is_null()),
         present: present.add(area),
     }))
 }
 
-/// The column holding the registration geometry a geoquery is matched against
-/// (Table 5.2.9-1).
-fn registration_geometry_column(geo: &GeoQuery) -> Csr {
+/// The columns holding the registration geometry a geoquery is matched
+/// against (Table 5.2.9-1): the geometry as written, and its repaired form.
+fn registration_geometry_columns(geo: &GeoQuery) -> (Csr, Csr) {
     match RegistrationGeometry::of(geo) {
-        RegistrationGeometry::Location => Csr::Location,
-        RegistrationGeometry::ObservationSpace => Csr::ObservationSpace,
-        RegistrationGeometry::OperationSpace => Csr::OperationSpace,
+        RegistrationGeometry::Location => (Csr::Location, Csr::LocationValid),
+        RegistrationGeometry::ObservationSpace => (Csr::ObservationSpace, Csr::ObservationSpaceValid),
+        RegistrationGeometry::OperationSpace => (Csr::OperationSpace, Csr::OperationSpaceValid),
     }
 }
 
@@ -110,7 +114,10 @@ mod tests {
     fn a_registration_without_the_geometry_forms_its_own_part() {
         let (absent, present) = parts(&query(GeoRel::Within, LOCATION, &serde_json::json!([1.0, 2.0])));
         assert!(absent.ends_with(r#"WHERE "location" IS NULL"#), "{absent}");
-        assert!(present.contains(r#""location" IS NOT NULL AND ST_Intersects("location""#), "{present}");
+        assert!(
+            present.contains(r#""location" IS NOT NULL AND ST_Intersects(COALESCE("location_valid", "location")"#),
+            "{present}"
+        );
         assert!(!present.contains(" OR "), "the parts are separate statements, not alternatives: {present}");
     }
 
@@ -124,6 +131,7 @@ mod tests {
             let (absent, present) = parts(&query(GeoRel::Intersects, iri, &serde_json::json!([1.0, 2.0])));
             assert!(absent.ends_with(&format!(r#"WHERE "{column}" IS NULL"#)), "{iri}: {absent}");
             assert!(present.contains(&format!(r#""{column}" IS NOT NULL"#)), "{iri}: {present}");
+            assert!(present.contains(&format!(r#"COALESCE("{column}_valid", "{column}")"#)), "{iri}: {present}");
         }
     }
 
@@ -167,8 +175,8 @@ mod tests {
     #[test]
     fn a_near_relation_is_prefiltered_by_a_box_the_spatial_index_answers() {
         let (_, present) = parts(&query(near(Some("500"), None), LOCATION, &serde_json::json!([13.4, 52.5])));
-        assert!(present.contains(r#""location" && ST_MakeEnvelope("#), "{present}");
-        assert!(present.contains(r#""location"::geography"#), "{present}");
+        assert!(present.contains(r#"COALESCE("location_valid", "location") && ST_MakeEnvelope("#), "{present}");
+        assert!(present.contains(r#"COALESCE("location_valid", "location")::geography"#), "{present}");
     }
 
     #[test]

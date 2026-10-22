@@ -4,7 +4,8 @@
 //! The rows are transposed into one array per column and expanded with
 //! `UNNEST` under the alias `r`, then projected once, in the common table
 //! expression `instances`, into the types the columns store: the EWKB of a
-//! geometry is read and validated, and the `objectType` keys and the
+//! geometry is read as written and its repaired form derived beside it, and
+//! the `objectType` keys and the
 //! sub-attribute equality keys are cast from their array literals. Each row's elements travel in a `sub_attribute_tree`,
 //! because PostgreSQL arrays are rectangular; an `UNNEST` of several arrays
 //! expands a composite element into its fields, so the staged column is the
@@ -16,7 +17,7 @@ use andromeda_postgresql_schema::current::{CurrentAttributes, Entities};
 use andromeda_postgresql_seaquery::{
     cast::cast,
     pg_type::PostgresType,
-    postgis::validated_geom_from_ewkb,
+    postgis::{repaired_when_invalid, st_geom_from_ewkb},
     unnest::{UnnestAliased, UnnestColumn, unnest_call},
 };
 use sea_query::{CommonTableExpression, Expr, Iden, Query, SimpleExpr};
@@ -68,6 +69,16 @@ pub(crate) const ROW_COLUMNS: [CurrentAttributes; 27] = [
     CurrentAttributes::SubEqKeys,
 ];
 
+/// The `current_attributes` columns the staging derives from the staged ones
+/// rather than binding: the repaired form of the written geometry.
+const DERIVED_COLUMNS: [CurrentAttributes; 1] = [CurrentAttributes::ValueGeometryValid];
+
+/// Every `current_attributes` column `instances` holds, the Entity's key
+/// aside: the staged columns in bind order, then the derived ones.
+pub(crate) fn written_columns() -> impl Iterator<Item = CurrentAttributes> {
+    ROW_COLUMNS.into_iter().chain(DERIVED_COLUMNS)
+}
+
 /// The array type each staged column binds as: the column's own type, but
 /// EWKB for a geometry, an array literal for the `objectType` keys and for the
 /// sub-attribute equality keys, and the carrier composite for the elements.
@@ -89,6 +100,7 @@ const fn staged_type(column: CurrentAttributes) -> PostgresType {
         CurrentAttributes::SubAttributes => PostgresType::SubAttributeTreeArray,
         CurrentAttributes::Table
         | CurrentAttributes::EntityKey
+        | CurrentAttributes::ValueGeometryValid
         | CurrentAttributes::DatasetId
         | CurrentAttributes::ValueString
         | CurrentAttributes::ValueLongText
@@ -107,12 +119,13 @@ fn staged_columns() -> Vec<UnnestColumn> {
     columns
 }
 
-/// The stored value of one staged column, `r.<column>` as the column stores
-/// it.
+/// The stored value of one column, read from the staged columns: `r.<column>`
+/// as the column stores it, or what a derived column derives from them.
 fn projected(column: CurrentAttributes) -> SimpleExpr {
     let staged: SimpleExpr = Expr::col((Staged, column));
     match column {
-        CurrentAttributes::ValueGeometry => validated_geom_from_ewkb(staged),
+        CurrentAttributes::ValueGeometry => st_geom_from_ewkb(staged),
+        CurrentAttributes::ValueGeometryValid => repaired_when_invalid(st_geom_from_ewkb(Expr::col((Staged, CurrentAttributes::ValueGeometry)))),
         CurrentAttributes::ObjectTypeKeys => cast(staged, PostgresType::IntegerArray),
         CurrentAttributes::SubEqKeys => cast(staged, PostgresType::BigintArray),
         CurrentAttributes::Table
@@ -150,14 +163,14 @@ fn projected(column: CurrentAttributes) -> SimpleExpr {
 /// `instances AS (SELECT r.id, r.attribute_name_key, … FROM UNNEST(…) AS r(id, …))`.
 ///
 /// Its columns carry the names of the `current_attributes` columns they land
-/// in, beside `id`. The statement it joins must be passed through
+/// in ([`written_columns`]), beside `id`. The statement it joins must be passed through
 /// [`with_instances_alias`] to name the source's columns.
 pub(crate) fn instances_cte(arrays: Vec<SimpleExpr>) -> CommonTableExpression {
     let columns = staged_columns();
     let source = unnest_call(columns.iter().zip(arrays));
     let mut select = Query::select();
     select.expr_as(Expr::col((Staged, Entities::Id)), Entities::Id);
-    for column in ROW_COLUMNS {
+    for column in written_columns() {
         select.expr_as(projected(column), column);
     }
     select.from_function(source, Staged);
@@ -189,9 +202,23 @@ mod tests {
         assert!(sql.contains("UNNEST($1::text[], $2::integer[]"), "{sql}");
         assert!(sql.contains("$27::sub_attribute_tree[], $28::text[]) AS r(id, attribute_name_key,"), "{sql}");
         assert!(sql.contains(r#""r"."sub_eq_keys"::bigint[] AS "sub_eq_keys""#), "{sql}");
+        assert!(sql.contains(r#", ST_GeomFromEWKB("r"."value_geometry") AS "value_geometry""#), "{sql}");
+    }
+
+    /// Clause 4.7.2 admits a geometry RFC 7946 section 3.1.6 does not call
+    /// simple: it is stored as written, its repair derived beside it.
+    #[test]
+    fn the_staging_holds_the_written_geometry_and_derives_its_repair() {
+        let mut with_clause = WithClause::new();
+        let arrays = (0..28).map(|index| Expr::val(vec![index])).collect();
+        with_clause.cte(instances_cte(arrays));
+        let sql = text_of(&UnnestAliased::new(with_clause.query(Query::select().take())).with_columns(super::Staged, &staged_columns()));
         assert!(
-            sql.contains(r#"ST_MakeValid(ST_GeomFromEWKB("r"."value_geometry")) AS "value_geometry""#),
+            sql.contains(
+                r#"(CASE WHEN (ST_IsValid(ST_GeomFromEWKB("r"."value_geometry"))) THEN NULL ELSE ST_MakeValid(ST_GeomFromEWKB("r"."value_geometry")) END) AS "value_geometry_valid""#
+            ),
             "{sql}"
         );
+        pretty_assertions::assert_eq!(sql.matches("ST_MakeValid").count(), 1, "{sql}");
     }
 }

@@ -119,8 +119,11 @@ pub enum AttributeHistory {
     ValueString,
     /// Boolean value, when `value_kind` selects it
     ValueBoolean,
-    /// Geometry value, when `value_kind` selects it
+    /// Geometry value as written, when `value_kind` selects it
     ValueGeometry,
+    /// The `ST_MakeValid` form of an invalid written geometry, NULL when the
+    /// written one is valid; spatial predicates judge this form when present
+    ValueGeometryValid,
     /// The `bbox` and foreign members of the geometry value, when it has any
     ValueGeometryMembers,
     /// JSON object or array value, when `value_kind` selects it
@@ -241,9 +244,17 @@ mod tests {
                 AttributeHistory::ProofSeals,
                 AttributeHistory::ExpiresAt,
                 AttributeHistory::SubAttributes,
+                AttributeHistory::ValueGeometryValid,
             ]
             .map(|column| column.to_string()),
-            ["value_type_key", "object_type_keys", "proof_seals", "expires_at", "sub_attributes"]
+            [
+                "value_type_key",
+                "object_type_keys",
+                "proof_seals",
+                "expires_at",
+                "sub_attributes",
+                "value_geometry_valid"
+            ]
         );
     }
 }

@@ -98,15 +98,15 @@ fn an_element_names_its_parent_by_an_integer_position() {
 
 /// A queue holds an Entity's state as `attribute_instance_record`s, which
 /// decode as `current_attributes` rows do: the record is the table's columns
-/// but `entity_key` and the `sub_eq_keys` a write derives from the instance,
-/// in order and with the same types.
+/// but `entity_key` and the `sub_eq_keys` and `value_geometry_valid` a write
+/// derives from the instance, in order and with the same types.
 #[test]
 fn an_instance_record_declares_the_current_attributes_columns_in_order() {
     let schema = DeclaredSchema::of_every_migration();
     let fields = |table: &str, columns: &[DeclaredColumn]| {
         columns
             .iter()
-            .filter(|column| column.table == table && !["entity_key", "sub_eq_keys"].contains(&column.name.as_str()))
+            .filter(|column| column.table == table && !["entity_key", "sub_eq_keys", "value_geometry_valid"].contains(&column.name.as_str()))
             .map(|column| (column.name.clone(), column.type_word()))
             .collect::<Vec<_>>()
     };

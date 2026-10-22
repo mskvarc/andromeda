@@ -14,16 +14,24 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_postgresql_query::ltree::StoredScopePath;
 use andromeda_postgresql_schema::csr::{Csr, RegistrationDeliveryState};
-use andromeda_postgresql_seaquery::{clock::now, postgis::validated_geom_from_ewkb};
+use andromeda_postgresql_seaquery::{
+    clock::now,
+    postgis::{repaired_when_invalid, st_geom_from_ewkb},
+};
 use andromeda_registration::{error::RegistrationError, store::forwarding_outcome::ForwardingOutcome};
 use chrono::{DateTime, Utc};
 use sea_query::{Expr as SeaExpr, ExprTrait, InsertStatement, Query, SimpleExpr, UpdateStatement};
 
-/// The `ST_MakeValid(ST_GeomFromEWKB(ewkb))` a geometry column is written
-/// through: the EWKB carries its SRID, and an absent EWKB writes a NULL
-/// geometry because both functions are strict.
-pub(super) fn geometry_write(ewkb: Option<Vec<u8>>) -> SimpleExpr {
-    validated_geom_from_ewkb(SeaExpr::val(ewkb))
+/// The two columns a registration geometry is written to: `written` holds
+/// `ST_GeomFromEWKB(ewkb)` as given (clause 4.7.1), and `repaired` its
+/// `ST_MakeValid` form when it is invalid, which clause 4.7.2 admits because
+/// IETF RFC 7946 section 3.1.6 sets no simplicity rule on a ring. The EWKB
+/// carries its SRID, and an absent EWKB writes NULL to both because every
+/// function is strict.
+pub(super) fn geometry_writes(written: Csr, repaired: Csr, ewkb: Option<Vec<u8>>) -> [(Csr, SimpleExpr); 2] {
+    let geometry = st_geom_from_ewkb(SeaExpr::val(ewkb));
+    // clone: the written column and its repair both read the geometry.
+    [(written, geometry.clone()), (repaired, repaired_when_invalid(geometry))]
 }
 
 /// The registration insert of `columns`, the values in the order of the
@@ -257,16 +265,19 @@ mod tests {
         assert!(!sql.contains("ContextSourceRegistration"), "the type is never stored: {sql}");
         assert!(!sql.contains("\"type\""), "{sql}");
         assert!(!sql.contains("::csr_mode"), "{sql}");
-        assert!(sql.contains("$18::ltree[]"), "{sql}");
-        for marker in [10, 11, 12] {
+        assert!(sql.contains("$24::ltree[]"), "{sql}");
+        for marker in [10, 13, 16] {
+            let (tested, repaired) = (marker + 1, marker + 2);
             assert!(
-                sql.contains(&format!("ST_MakeValid(ST_GeomFromEWKB(${marker}))")),
-                "geometry {marker} is validated from its EWKB: {sql}"
+                sql.contains(&format!(
+                    "ST_GeomFromEWKB(${marker}), (CASE WHEN (ST_IsValid(ST_GeomFromEWKB(${tested}))) THEN NULL ELSE ST_MakeValid(ST_GeomFromEWKB(${repaired})) END)"
+                )),
+                "geometry {marker} is written as given beside its repair: {sql}"
             );
         }
         assert!(sql.contains("NOW()"), "created_at and modified_at stamp the transaction clock: {sql}");
         assert!(sql.contains(r#""verbatim_scope_paths""#), "{sql}");
-        assert_eq!(values.0.len(), 29, "every column but the Context Source Properties is a bound value: {sql}");
+        assert_eq!(values.0.len(), 35, "every column but the Context Source Properties is a bound value: {sql}");
     }
 
     /// The rendering revision of the registration's pattern restatements is
@@ -280,19 +291,22 @@ mod tests {
         assert!(create.contains(r#""entity_id_pattern_forms_revision""#), "{create}");
         assert!(!create.contains(r#""information""#), "{create}");
         let (update, _) = csr_update_statement(&registration(), columns()).build(PostgresQueryBuilder);
-        assert!(update.contains(r#""entity_id_pattern_forms_revision" = $27"#), "{update}");
+        assert!(update.contains(r#""entity_id_pattern_forms_revision" = $33"#), "{update}");
         assert!(!update.contains(r#""entity_id_pattern_forms""#), "{update}");
     }
 
     #[test]
     fn the_update_pins_the_row_by_id_and_binds_the_mode_code_and_ltree_scopes() {
         let (sql, _) = csr_update_statement(&registration(), columns()).build(PostgresQueryBuilder);
-        assert!(sql.contains(r#""id" = $29"#), "{sql}");
-        assert!(sql.contains(r#""mode" = $15"#), "{sql}");
-        assert!(sql.contains(r#""scope_paths" = $17::ltree[]"#), "{sql}");
-        assert!(sql.contains(r#""verbatim_scope_paths" = $28"#), "{sql}");
+        assert!(sql.contains(r#""id" = $35"#), "{sql}");
+        assert!(sql.contains(r#""mode" = $21"#), "{sql}");
+        assert!(sql.contains(r#""scope_paths" = $23::ltree[]"#), "{sql}");
+        assert!(sql.contains(r#""verbatim_scope_paths" = $34"#), "{sql}");
         assert!(sql.contains(r#""modified_at" = NOW()"#), "{sql}");
-        assert!(sql.contains("ST_MakeValid(ST_GeomFromEWKB($9))"), "{sql}");
+        assert!(
+            sql.contains(r#""location" = ST_GeomFromEWKB($9), "location_valid" = (CASE WHEN (ST_IsValid(ST_GeomFromEWKB($10))) THEN NULL ELSE ST_MakeValid(ST_GeomFromEWKB($11)) END)"#),
+            "{sql}"
+        );
     }
 
     #[test]

@@ -32,7 +32,7 @@ use andromeda_postgresql_seaquery::{
     literal::int_literal,
     pg_array::any,
     pg_type::PostgresType,
-    postgis::{bounding_box_contains, st_collect, st_envelope, validated_geom_from_ewkb},
+    postgis::{bounding_box_contains, repaired_when_invalid, st_collect, st_envelope, st_geom_from_ewkb},
 };
 use andromeda_postgresql_temporal_query::{
     alias::{Ah, S, Te},
@@ -40,14 +40,12 @@ use andromeda_postgresql_temporal_query::{
 };
 use chrono::{DateTime, Utc};
 use sea_query::{
-    CaseStatement,
     Condition,
     DeleteStatement,
     Expr,
     ExprTrait,
     InsertStatement,
     JoinType,
-    Keyword,
     OnConflict,
     Query,
     SelectStatement,
@@ -143,13 +141,15 @@ pub(crate) fn release_verbatim_instance_claim_statement(
         .to_owned()
 }
 
-/// The geometry column's `CASE WHEN ewkb IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(ewkb)) ELSE NULL END`.
-fn geometry_write(ewkb: Option<&[u8]>) -> SimpleExpr {
-    let value = || Expr::val(ewkb.map(<[u8]>::to_vec));
-    CaseStatement::new()
-        .case(Expr::expr(value()).is_not_null(), validated_geom_from_ewkb(value()))
-        .finally(Keyword::Null)
-        .into()
+/// The geometry columns a replacement writes: `value_geometry` as written,
+/// `ST_GeomFromEWKB(ewkb)`, and `value_geometry_valid`, its repaired form when
+/// it is invalid. A NULL `ewkb` writes NULL to both.
+fn geometry_writes(ewkb: Option<&[u8]>) -> [(AttributeHistory, SimpleExpr); 2] {
+    let written = || st_geom_from_ewkb(Expr::val(ewkb.map(<[u8]>::to_vec)));
+    [
+        (AttributeHistory::ValueGeometry, written()),
+        (AttributeHistory::ValueGeometryValid, repaired_when_invalid(written())),
+    ]
 }
 
 /// A JSON text bound as `jsonb`, NULL when there is none.
@@ -202,12 +202,12 @@ pub(crate) fn update_instance_statement(
     let object_type_keys = (!replacement.object_type_keys.is_empty()).then_some(replacement.object_type_keys);
     Query::update()
         .table(table_of(target, AttributeHistory::Table))
+        .values(geometry_writes(replacement.geometry))
         .values([
             (AttributeHistory::ValueKind, Expr::val(value.kind().code())),
             (AttributeHistory::ValueNumber, Expr::val(value.number().cloned())), // clone: the statement owns the value it binds
             (AttributeHistory::ValueString, Expr::val(value.string().map(Cow::into_owned))),
             (AttributeHistory::ValueBoolean, Expr::val(value.boolean())),
-            (AttributeHistory::ValueGeometry, geometry_write(replacement.geometry)),
             (AttributeHistory::ValueObject, jsonb_text(value.object().map(RawValue::get))),
             (AttributeHistory::ValueDateTime, Expr::val(value.date_time())),
             (AttributeHistory::ValueUri, Expr::val(value.uri().map(|uri| uri.as_str().to_owned()))),
@@ -229,14 +229,15 @@ pub(crate) fn update_instance_statement(
 }
 
 /// Grow the extent of `stream_keys` to cover the replacing geometry, `ewkb`,
-/// made valid as the modification stores it.
+/// as written: its box also bounds the repaired form a spatial predicate
+/// judges, which `ST_MakeValid` builds from the written vertices.
 ///
 /// An extent already covering it is left alone, and none shrinks: the
 /// geometry replaced stays inside an extent too large, which still holds
 /// every geometry of its stream.
 pub(crate) fn grow_stream_extent_statement(target: &ContextTarget, stream_keys: &[i64], ewkb: &[u8]) -> UpdateStatement {
     let extent = || Expr::col(TemporalAttributeStreams::ValueExtent);
-    let geometry = || validated_geom_from_ewkb(Expr::val(ewkb.to_vec()));
+    let geometry = || st_geom_from_ewkb(Expr::val(ewkb.to_vec()));
     Query::update()
         .table(table_of(target, TemporalAttributeStreams::Table))
         .value(
@@ -358,10 +359,16 @@ mod tests {
     /// The update of `instance` over the streams 4 and 5, replacing it with a
     /// boolean.
     fn update(instance: &InstanceIdentity) -> (String, usize) {
+        replacement_update(instance, None)
+    }
+
+    /// The update of `instance` over the streams 4 and 5, replacing it with a
+    /// boolean beside `geometry`.
+    fn replacement_update(instance: &InstanceIdentity, geometry: Option<&[u8]>) -> (String, usize) {
         let value = AttributeHistoryValue::of_observation(&TemporalValue::Boolean(true)).expect("the value encodes");
         let replacement = InstanceReplacement {
             value: &value,
-            geometry: None,
+            geometry,
             observed_at: None,
             value_type_key: None,
             unit_code: None,
@@ -384,8 +391,8 @@ mod tests {
         assert_eq!(
             growth,
             concat!(
-                r#"UPDATE "temporal_attribute_streams" SET "value_extent" = ST_Envelope(ST_Collect("value_extent", ST_Envelope(ST_MakeValid(ST_GeomFromEWKB($1)))))"#,
-                r#" WHERE "stream_key" = ANY($2) AND ("value_extent" IS NULL OR (NOT ("value_extent" ~ ST_MakeValid(ST_GeomFromEWKB($3)))))"#
+                r#"UPDATE "temporal_attribute_streams" SET "value_extent" = ST_Envelope(ST_Collect("value_extent", ST_Envelope(ST_GeomFromEWKB($1))))"#,
+                r#" WHERE "stream_key" = ANY($2) AND ("value_extent" IS NULL OR (NOT ("value_extent" ~ ST_GeomFromEWKB($3))))"#
             )
         );
         assert_eq!(values.0.len(), 3);
@@ -519,6 +526,20 @@ mod tests {
         assert!(statement.contains(r#"attribute_name_key" = $3"#), "{statement}");
         assert_eq!(statement.matches("EXISTS").count(), 1, "{statement}");
         assert_eq!(values.0.len(), 3);
+    }
+
+    /// Clause 4.7.1 reads the replacing geometry back as written; clause
+    /// 4.7.2 admits one RFC 7946 section 3.1.6 does not call simple, whose
+    /// repair is stored beside it for spatial predicates.
+    #[test]
+    fn the_instance_modification_writes_the_geometry_as_given_and_its_repair() {
+        for instance in identities() {
+            let (statement, _) = replacement_update(&instance, Some(&[1, 2]));
+            assert!(
+                statement.starts_with(r#"UPDATE "attribute_history" SET "value_geometry" = ST_GeomFromEWKB($1), "value_geometry_valid" = (CASE WHEN (ST_IsValid(ST_GeomFromEWKB($2))) THEN NULL ELSE ST_MakeValid(ST_GeomFromEWKB($3)) END), "value_kind" = "#),
+                "{statement}"
+            );
+        }
     }
 
     #[test]
