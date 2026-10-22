@@ -32,6 +32,11 @@ pub enum FederationInvariant {
     /// can be.
     #[error("a name spelled for a forwarded request is not an NGSI-LD name: {0}")]
     ForwardedName(#[source] NgsiLdReferenceError),
+    /// A core term a split query's filters default to (`location`, `scope`)
+    /// is not an attribute name, although clause 4.6.2 makes every core term
+    /// one.
+    #[error("a core term is not an attribute name: {0}")]
+    CoreAttributeName(#[source] NgsiLdReferenceError),
     /// An identifier a forwarded batch query selects by is not an NGSI-LD
     /// identifier, although the narrowing took it from a parsed query.
     #[error("an identifier of a forwarded batch query is not an NGSI-LD identifier: {0}")]

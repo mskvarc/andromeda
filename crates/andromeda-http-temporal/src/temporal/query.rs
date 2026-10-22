@@ -18,7 +18,8 @@ use crate::{
         complete_history::HistoryCompleteness,
         query::{
             admission::admit_request,
-            forwarding::{QueryScope, TemporalForwarding, forward_temporal_history},
+            forwarding::{InEffectRequest, QueryScope, TemporalForwarding, forward_temporal_history},
+            in_effect_gathering::{GatheringRequest, gather_in_effect},
             merged_page::{MergedPageCut, cut_merged_page},
             request::TemporalQueryRequest,
             request_entity_map::record_query_map,
@@ -42,6 +43,8 @@ use andromeda_temporal::{
 mod admission;
 /// Asking the registered context sources for their part of the history.
 mod forwarding;
+/// Gathering what every part holds in effect when a split query's window opens.
+mod in_effect_gathering;
 /// Folding what those sources returned into the locally read history.
 mod merged_history;
 /// The page the query answers with, cut from the merged history.
@@ -93,8 +96,18 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     // from the value, geo and scope filters (clause 5.7.4.4).
     let sources = TemporalForwarding::new(&state.forwarding, &admitted, &headers, split, shape.reach());
     let forwarded = forward_temporal_history(sources, scope, service.engine(), &target, &params, &context, &uri).await?;
+    let gathering = GatheringRequest {
+        target: &target,
+        query: InEffectRequest {
+            params: &params,
+            context: &context,
+            instance: &uri,
+        },
+        engine: service.engine(),
+    };
+    let in_effect = gather_in_effect(sources, service, gathering, filtering, forwarded.as_ref()).await?;
 
-    let contributed = contributed_entities(filtering, &params, forwarded.as_ref(), shape.rendering());
+    let contributed = contributed_entities(filtering, &params, forwarded.as_ref(), in_effect.as_ref(), shape.rendering());
     let local = page.local_read(forwarded.as_ref());
 
     let local_result = service
@@ -115,7 +128,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         contributed: &contributed,
     };
     let projection = local_result.projection;
-    let mut merged = merge_with_contributions(service, contribution, local_result.entities, forwarded, &uri).await?;
+    let mut merged = merge_with_contributions(service, contribution, local_result.entities, forwarded, in_effect, &uri).await?;
     let timeproperty = params.timeproperty_or_default();
     let cut_short = completeness.trim(&mut merged.entities, timeproperty);
     merged.warnings.extend(cut_short);

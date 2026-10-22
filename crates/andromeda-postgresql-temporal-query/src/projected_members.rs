@@ -22,6 +22,7 @@ use andromeda_postgresql_query::{
     dictionary::query_names::QueryNames,
     history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, grain::HistoryGrain, scope_rows::scope_rows},
     scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis},
+    window_reach::WindowReach,
 };
 use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
 use andromeda_postgresql_seaquery::{
@@ -73,7 +74,13 @@ fn represented_scope(branch: &HistoryBranch, compiled: &CompiledTemporalQuery) -
         .expr(int_literal(1))
         .from(scope_rows(branch, &of_selected_entity(), ScopeEvent))
         .cond_where(positioned_on_axis(axis))
-        .cond_where(overlaps_window(axis, compiled.window.interval, branch, &of_selected_entity()));
+        .cond_where(overlaps_window(
+            axis,
+            compiled.window.interval,
+            WindowReach::InsideAndInEffect,
+            branch,
+            &of_selected_entity(),
+        ));
     probe.take()
 }
 

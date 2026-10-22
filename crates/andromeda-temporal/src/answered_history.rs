@@ -93,35 +93,14 @@ fn instance_row(attribute_name: AttributeName, document: InstanceDocument, recor
 
 #[cfg(test)]
 mod tests {
-    use crate::answered_history::answered_history;
-    use andromeda_json_literal::JsonLiteral;
-    use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-    use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
+    use crate::{answered_fixture::answered, answered_history::answered_history};
     use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
-    use andromeda_ngsi_ld_model::{
-        received::ReceivedElement,
-        temporal::{TemporalHistoryRow, received_temporal::ReceivedTemporalEntities, temporal_body::TemporalBody, temporal_document::TemporalDocument},
-    };
+    use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
     use chrono::{DateTime, Utc};
     use serde_json::{Value, json};
 
     fn at(raw: &str) -> DateTime<Utc> {
         raw.parse::<NgsiLdDateTime>().expect("a valid instant").get()
-    }
-
-    /// The expanded temporal entity a source answered with.
-    pub(crate) async fn answered(answer: &Value) -> TemporalDocument {
-        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("build engine");
-        let context = ContextSpec::from_body(JsonLiteral::admit(&json!({"speed": "https://example.com/speed"}).to_string()).expect("an admissible literal"));
-        let expansion = EntityExpansion::prepare(&engine, &context).await.expect("the context resolves");
-        let ReceivedTemporalEntities(mut elements) = ReceivedTemporalEntities::from_slice(answer.to_string().as_bytes()).expect("an answer");
-        let Some(ReceivedElement::Read(contextual)) = elements.pop() else {
-            panic!("the answer is a temporal entity");
-        };
-        let TemporalBody::Evolution(entity) = contextual.body else {
-            panic!("the answer is a Temporal Evolution");
-        };
-        expansion.temporal(entity).await.expect("the answer expands")
     }
 
     async fn rows_of(answer: &Value) -> Vec<TemporalHistoryRow> {

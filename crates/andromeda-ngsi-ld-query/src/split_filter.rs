@@ -12,16 +12,23 @@
 //! disjunction of conjunctions, and the three filters are conjoined. A
 //! monotone formula over existential leaves evaluated over the union of the
 //! parts is therefore the formula over, for each leaf, whether the leaf held
-//! in any part — which is what lets each part be read on its own, wherever it
-//! is held, and the truths be joined afterwards.
+//! over some of the instances it reads.
+//!
+//! For the instances inside the window that is whether the leaf held in any
+//! part, so each part is read on its own, wherever it is held, and the truths
+//! are joined afterwards. The clause 4.11 instance each stream held when the
+//! window opens is the latest across every part, which no part decides alone,
+//! so those instances are merged into one entity first and its truths joined
+//! with the others.
 
 use crate::{
     entity_selection::EntitySelection,
-    filter::{eval::predicate_holds_in, expression::Expr, predicate::Predicate},
+    filter::{eval::predicate_holds_in, expression::Expr, predicate::Predicate, referenced_attributes::referenced_attributes},
     geo::query::GeoQuery,
     queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
     scope::{pattern::ScopePattern, query::ScopeQuery},
 };
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
 /// One existential leaf of a query's value, geo and scope filters.
 #[derive(Debug, Clone, Copy)]
@@ -114,6 +121,27 @@ impl<'q> SplitFilter<'q> {
             .into_iter()
             .flat_map(|scope| scope.alternatives().flatten().map(FilterLeaf::ScopeRequirement));
         terms.into_iter().map(FilterLeaf::Term).chain(geo).chain(scope)
+    }
+
+    /// The attributes the leaves read the instances of: the first attribute
+    /// every Query Term reads, then the `GeoProperty` of the geo-query, without
+    /// repetition. The Scope is no attribute; [`Self::reads_scope`] says
+    /// whether a leaf reads it.
+    #[must_use]
+    pub fn read_attributes(&self) -> Vec<&'q AttributeName> {
+        let mut attributes = self.q.map(referenced_attributes).unwrap_or_default();
+        if let Some(geo) = self.geo
+            && !attributes.contains(&&geo.geoproperty)
+        {
+            attributes.push(&geo.geoproperty);
+        }
+        attributes
+    }
+
+    /// Whether a leaf reads the entity's Scope.
+    #[must_use]
+    pub const fn reads_scope(&self) -> bool {
+        self.scope.is_some()
     }
 
     /// How many leaves [`Self::leaves`] yields.
@@ -331,6 +359,19 @@ mod tests {
                 "scope /C",
             ]
         );
+    }
+
+    #[test]
+    fn the_read_attributes_are_the_terms_then_the_geoproperty() {
+        let selection = selection(
+            Some("\"https://example.com/speed\">1|\"https://example.com/speed\"<2;\"https://uri.etsi.org/ngsi-ld/location\""),
+            Some(within_berlin()),
+            Some("/A"),
+        );
+        let filter = SplitFilter::of(&selection);
+        let read: Vec<&str> = filter.read_attributes().into_iter().map(AttributeName::as_str).collect();
+        pretty_assertions::assert_eq!(read, ["https://example.com/speed", LOCATION]);
+        assert!(filter.reads_scope());
     }
 
     #[test]

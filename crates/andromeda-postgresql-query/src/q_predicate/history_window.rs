@@ -7,10 +7,10 @@
 //! within the interval when its instant on the requested Temporal Property lies
 //! inside it, and so is the instance still in effect when the interval opens:
 //! the latest one of its stream before the start, unless that latest one is a
-//! deletion. Annex C clause C.5.5 relies on exactly this -- `brandName`,
-//! observed an hour before the window and never since, still answers
-//! `q=brandName!=Mercedes` -- while the in-effect instance is only evaluated,
-//! never rendered. A Query Term matches when one such instance satisfies it,
+//! deletion. This is Andromeda's reading of Annex C clause C.5.5, whose
+//! `q=brandName!=Mercedes` still answers a vehicle whose `brandName` the
+//! fixture observes an hour before the window and never since; the in-effect
+//! instance is only evaluated, never rendered. A Query Term matches when one such instance satisfies it,
 //! which is clause 4.9's multi-instance reading ("the target value shall be any
 //! Value of such instances") applied to the instances valid in the window
 //! rather than to the single current one.
@@ -44,11 +44,13 @@ use crate::{
         grain::HistoryGrain,
     },
     q_predicate::{
+        history_aliases::HistoryAliases,
         in_effect_instance::InEffectInstance,
         instance_test::{InstanceTest, non_empty},
     },
     time_interval_predicate::within_interval,
     tombstone::carries_a_value,
+    window_reach::WindowReach,
 };
 use andromeda_ngsi_ld_query::{geo::query::GeoQuery, temporal::window::TimeInterval};
 use andromeda_postgresql_schema::temporal::AttributeHistory;
@@ -59,7 +61,7 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
 };
 use chrono::{DateTime, Utc};
-use sea_query::{Alias, Asterisk, Condition, DynIden, Expr as SeaExpr, ExprTrait, JoinType, Query, SelectStatement, SimpleExpr};
+use sea_query::{Asterisk, Condition, DynIden, Expr as SeaExpr, ExprTrait, JoinType, Query, SelectStatement, SimpleExpr};
 use typed_builder::TypedBuilder;
 
 /// The instances of one Temporal Evolution a temporal `q` is checked against.
@@ -74,116 +76,8 @@ pub struct HistoryWindow {
     axis: AttributeHistory,
     /// The interval the query selected on that axis.
     interval: TimeInterval,
-}
-
-/// The relations one history probe scans, under the names it gives them.
-///
-/// A probe nested inside another (a linked-entity hop reading a Relationship's
-/// history) takes its own suffix, so its relations cannot shadow the enclosing
-/// probe's.
-#[derive(Debug, Clone)]
-pub(crate) struct HistoryAliases {
-    /// Alias of the stream source scan.
-    stream: String,
-    /// Alias of the attribute source scan.
-    instance: String,
-    /// Alias of the probe finding the latest recorded instance placed on the axis.
-    prior: String,
-    /// Alias of the probe finding the latest recorded deletion with no axis instant.
-    deletion: String,
-    /// Alias of the probe finding the latest queued instance placed on the axis.
-    queued_prior: String,
-    /// Alias of the probe finding the latest queued deletion with no axis instant.
-    queued_deletion: String,
-    /// Alias of the source placing the instance in effect at the start.
-    placement: String,
-    /// Alias of the attribute source the instance at the placement is read from.
-    placed_instance: String,
-}
-
-impl HistoryAliases {
-    /// The aliases of the top-level probe.
-    pub(crate) fn top_level() -> HistoryAliases {
-        HistoryAliases {
-            stream: "qs".to_owned(),
-            instance: "qh".to_owned(),
-            prior: "qp".to_owned(),
-            deletion: "qd".to_owned(),
-            queued_prior: "qpq".to_owned(),
-            queued_deletion: "qdq".to_owned(),
-            placement: "qe".to_owned(),
-            placed_instance: "qi".to_owned(),
-        }
-    }
-
-    /// The aliases of a linked-entity hop `depth` levels into a traversal.
-    pub(crate) fn at_depth(depth: usize) -> HistoryAliases {
-        HistoryAliases {
-            stream: format!("qs_ln{depth}"),
-            instance: format!("qh_ln{depth}"),
-            prior: format!("qp_ln{depth}"),
-            deletion: format!("qd_ln{depth}"),
-            queued_prior: format!("qpq_ln{depth}"),
-            queued_deletion: format!("qdq_ln{depth}"),
-            placement: format!("qe_ln{depth}"),
-            placed_instance: format!("qi_ln{depth}"),
-        }
-    }
-
-    /// The stream source scan.
-    pub(crate) fn stream(&self) -> Alias {
-        Alias::new(self.stream.as_str())
-    }
-
-    /// The attribute source scan.
-    pub(crate) fn instance(&self) -> Alias {
-        Alias::new(self.instance.as_str())
-    }
-
-    /// The probe finding the latest instance placed on the axis.
-    pub(crate) fn prior(&self) -> Alias {
-        Alias::new(self.prior.as_str())
-    }
-
-    /// The probe finding the latest deletion with no axis instant.
-    pub(crate) fn deletion(&self) -> Alias {
-        Alias::new(self.deletion.as_str())
-    }
-
-    /// The probe finding the latest queued instance placed on the axis.
-    pub(crate) fn queued_prior(&self) -> Alias {
-        Alias::new(self.queued_prior.as_str())
-    }
-
-    /// The probe finding the latest queued deletion with no axis instant.
-    pub(crate) fn queued_deletion(&self) -> Alias {
-        Alias::new(self.queued_deletion.as_str())
-    }
-
-    /// The attribute source the instance at the placement is read from.
-    pub(crate) fn placed_instance(&self) -> Alias {
-        Alias::new(self.placed_instance.as_str())
-    }
-
-    /// The source placing the instance in effect at the start.
-    pub(crate) fn placement(&self) -> Alias {
-        Alias::new(self.placement.as_str())
-    }
-
-    /// A column of the instance row this probe scans.
-    pub(crate) fn instance_column(&self, column: AttributeHistory) -> SimpleExpr {
-        SeaExpr::col((self.instance(), column))
-    }
-
-    /// A grain column of the instance row this probe scans.
-    pub(crate) fn instance_grain(&self, column: HistoryGrain) -> SimpleExpr {
-        SeaExpr::col((self.instance(), column))
-    }
-
-    /// A grain column of the stream row this probe scans.
-    pub(crate) fn stream_column(&self, column: HistoryGrain) -> SimpleExpr {
-        SeaExpr::col((self.stream(), column))
-    }
+    /// Which of the instances valid within the interval the probes read.
+    reach: WindowReach,
 }
 
 /// The probes one set of instance tests runs over a window: the instances
@@ -299,7 +193,11 @@ impl HistoryWindow {
     /// enclosing statement's Entity alone. `streams` narrows the streams the
     /// in-effect probe places an instance for.
     fn probes(&self, test: Condition, streams: Option<SimpleExpr>, aliases: &HistoryAliases) -> WindowProbes {
-        let in_effect = self.in_effect_start().map(|start| self.in_effect_probe(start, streams, test.clone(), aliases)); // clone: both probes test their instances alike
+        let in_effect = match self.reach {
+            WindowReach::Inside => None,
+            WindowReach::InsideAndInEffect => self.in_effect_start(),
+        }
+        .map(|start| self.in_effect_probe(start, streams, test.clone(), aliases)); // clone: both probes test their instances alike
         WindowProbes {
             inside: self.inside_probe(test, aliases),
             in_effect,
@@ -345,30 +243,54 @@ impl HistoryWindow {
     /// The streams of the Entity, of every dataset, joined to the instances
     /// they held when the interval opened at `start`, narrowed to the ones
     /// that pass `test` and carry a value.
+    fn in_effect_probe(&self, start: DateTime<Utc>, streams: Option<SimpleExpr>, test: Condition, aliases: &HistoryAliases) -> SelectStatement {
+        let mut probe = self.in_effect_source(start, streams, aliases);
+        probe.expr(int_literal(1)).cond_where(test).and_where(Self::carries_a_value(aliases));
+        probe
+    }
+
+    /// The rows of the instances the streams of the attributes keyed `keys`
+    /// held when the interval opens, deletions included, every column of the
+    /// attribute source; `None` when the interval has no instance in effect
+    /// before it.
+    ///
+    /// A split query merges these with the instances other parts held before
+    /// the start (clause 5.7.4.4), so a stream whose latest instance is a
+    /// deletion answers the deletion: it ends whatever an older instance of
+    /// another part held.
+    #[must_use]
+    pub fn in_effect_rows(&self, keys: &[AttributeNameKey]) -> Option<SelectStatement> {
+        let start = self.in_effect_start()?;
+        let aliases = &HistoryAliases::top_level();
+        let streams = is_any_of(aliases.stream_column(HistoryGrain::AttributeNameKey), keys.iter().map(|key| key.get()));
+        let mut rows = self.in_effect_source(start, Some(streams), aliases);
+        rows.expr(SeaExpr::col((aliases.instance(), Asterisk)));
+        Some(rows)
+    }
+
+    /// The streams of the Entity, of every dataset, joined to the instances
+    /// they held when the interval opened at `start`, `streams` narrowing
+    /// which, with nothing projected yet.
     ///
     /// The instance is read laterally, its stream and placement written inside
     /// the lateral source, so each stream reads its own instances by index.
-    fn in_effect_probe(&self, start: DateTime<Utc>, streams: Option<SimpleExpr>, test: Condition, aliases: &HistoryAliases) -> SelectStatement {
+    fn in_effect_source(&self, start: DateTime<Utc>, streams: Option<SimpleExpr>, aliases: &HistoryAliases) -> SelectStatement {
         let instance = InEffectInstance::builder().branch(&self.branch).axis(self.axis).start(start).build();
         let mut placed = Query::select();
         placed
             .expr(SeaExpr::col((aliases.placed_instance(), Asterisk)))
             .from(attribute_rows(&self.branch, &self.of, aliases.placed_instance()))
             .cond_where(instance.placed_on_stream(aliases, &aliases.placed_instance()));
-        let mut probe = Query::select();
-        probe
-            .expr(int_literal(1))
+        let mut source = Query::select();
+        source
             .from(stream_rows(&self.branch, &self.of, aliases.stream()))
             .join_lateral(JoinType::Join, instance.placement_source(aliases), aliases.placement(), SimpleExpr::from(true))
             .join_lateral(JoinType::Join, placed.take(), aliases.instance(), SimpleExpr::from(true));
         if let Some(streams) = streams {
-            probe.and_where(streams);
+            source.and_where(streams);
         }
-        probe
-            .cond_where(test)
-            .and_where(instance.opens_before_start(aliases))
-            .and_where(Self::carries_a_value(aliases));
-        probe
+        source.and_where(instance.opens_before_start(aliases));
+        source
     }
 
     /// Clause 4.5.7: a deletion records no value, so it is no target value.
@@ -383,9 +305,11 @@ mod tests {
         attribute_name_key::AttributeNameKey,
         history_source::{EvolutionColumns, HistoryBranch, HistoryOf},
         q_predicate::{
-            history_window::{HistoryAliases, HistoryWindow},
+            history_aliases::HistoryAliases,
+            history_window::HistoryWindow,
             instance_test::{InstanceTest, non_empty},
         },
+        window_reach::WindowReach,
     };
     use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
@@ -403,6 +327,7 @@ mod tests {
             .of(HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id")))))
             .axis(axis)
             .interval(interval)
+            .reach(WindowReach::InsideAndInEffect)
             .build()
     }
 
@@ -520,6 +445,43 @@ mod tests {
         }
     }
 
+    /// Clause 5.7.4.4: a window read inside only, as a split query's leaves
+    /// read it, renders no in-effect probe even when the interval has a start.
+    #[test]
+    fn an_inside_reach_renders_no_in_effect_probe() {
+        let window = HistoryWindow::builder()
+            .branch(HistoryBranch::live())
+            .of(HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id")))))
+            .axis(AttributeHistory::ObservedAt)
+            .interval(after_2019())
+            .reach(WindowReach::Inside)
+            .build();
+        let (inside, in_effect) = probes_of(&window, Condition::all());
+        assert!(inside.contains(r#""qh"."observed_at" >= '2019-01-01"#), "{inside}");
+        assert!(in_effect.is_none(), "{in_effect:?}");
+    }
+
+    /// Clause 5.7.4.4: the rows a split query merges are the instances each
+    /// named stream held when the window opened, a deletion included, placed
+    /// as the probe places them.
+    #[test]
+    fn the_in_effect_rows_keep_deletions_of_the_named_streams() {
+        let rows = window(after_2019())
+            .in_effect_rows(&[AttributeNameKey::from(7), AttributeNameKey::from(9)])
+            .expect("an interval with a start has in-effect rows");
+        let sql = statement(&rows);
+        for fragment in [
+            r#"SELECT "qh".* FROM"#,
+            r#""qs"."attribute_name_key" = ANY(ARRAY [7,9])"#,
+            r#""qe"."placed" < '2019-01-01"#,
+            r#""qd"."observed_at" IS NULL AND "qd"."deleted_at" <= '2019-01-01"#,
+        ] {
+            assert!(sql.contains(fragment), "{fragment} missing: {sql}");
+        }
+        assert!(!sql.contains(r#""qh"."value_kind" <> "#), "{sql}");
+        assert!(window(TimeInterval::Unbounded).in_effect_rows(&[AttributeNameKey::from(7)]).is_none());
+    }
+
     /// Every instance before a `before` bound is already inside the interval,
     /// and an unbounded one admits everything, so neither seeks a prior one.
     #[test]
@@ -621,6 +583,7 @@ mod tests {
             }))
             .axis(AttributeHistory::ObservedAt)
             .interval(after_2019())
+            .reach(WindowReach::InsideAndInEffect)
             .build();
         let sql = render(window.exists(AttributeNameKey::from(7), above_100(), &HistoryAliases::top_level()));
         for alias in ["qh", "qs", "qi"] {

@@ -61,6 +61,8 @@ pub mod type_list_union;
 pub mod type_membership;
 pub mod type_membership_moves;
 pub mod type_predicate;
+/// Which of the instances valid within a temporal window a probe reads.
+pub mod window_reach;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

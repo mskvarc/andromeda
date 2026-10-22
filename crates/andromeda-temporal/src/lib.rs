@@ -9,8 +9,12 @@ pub mod aggregation_conflict;
 pub mod aggregation_eligibility;
 /// The part of an entity a Context Source answered a split temporal query with.
 mod answered_evolution;
+/// The temporal entities a Context Source answers with, expanded, for tests.
+#[cfg(test)]
+mod answered_fixture;
 /// The instances a Context Source answered a temporal query with, as history rows.
 mod answered_history;
+
 /// Typed, durable consequences for queued temporal append.
 pub mod append_intent;
 mod attribute_instance_mutation;
@@ -27,6 +31,12 @@ mod evolution_write;
 pub mod forwarded_evolution;
 /// How many grouping terms nest the aggregates of a read.
 mod grouping_depth;
+/// The instances a split query's filters read in effect when its window
+/// opens, merged over every part of an entity.
+mod in_effect_entity;
+/// The datasets a split query asks its sources about one by one for the
+/// instance in effect.
+pub mod in_effect_follow_up;
 /// The page sizes an instance-returning temporal read runs under.
 pub mod instance_limits;
 /// Bounded delivery of queued temporal append intents, and the mutation
@@ -37,6 +47,9 @@ mod intent_preparation;
 pub mod intent_retry_policy;
 /// Clause 4.5.23 join over the temporal evolution of Linked Entities.
 pub mod linked;
+/// What this broker holds in effect of each contributed entity when a split
+/// query's window opens.
+pub mod local_in_effect;
 /// Reading one written attribute instance as the observation a history row records.
 pub mod observed_instance;
 pub mod outcome;

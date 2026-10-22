@@ -24,7 +24,7 @@ use andromeda_ngsi_ld_entity::{
     scope_slot::{ScopeItem, scope_slot},
     value_mode::Fragment,
 };
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, scope::path::ScopePath};
 
 /// The Scope observations one reified Scope instance states: each path its
 /// `value` names, or the end of the entity's Scope.
@@ -108,6 +108,21 @@ pub(crate) fn value_observations(value: &ValueSlot) -> Result<Vec<ScopeObservati
             ValueCarrier::Object | ValueCarrier::LanguageMap | ValueCarrier::Vocab | ValueCarrier::Json | ValueCarrier::ValueList | ValueCarrier::ObjectList,
         ) => Err(ScopeRefusal::NotAProperty),
     }
+}
+
+/// The paths every reified Scope instance of `instances` names; an instance
+/// that ends the Scope names none, and one outside the clause 4.18 grammar
+/// names nothing a filter could match.
+pub(crate) fn reified_paths<'a>(instances: impl IntoIterator<Item = &'a InstanceDocument>) -> Vec<ScopePath> {
+    instances
+        .into_iter()
+        .filter_map(|instance| value_observations(instance.value()).ok())
+        .flatten()
+        .filter_map(|observation| match observation {
+            ScopeObservation::Path(path) => Some(path),
+            ScopeObservation::Deleted => None,
+        })
+        .collect()
 }
 
 /// One value of a reified Scope instance, as a `scope` member item.

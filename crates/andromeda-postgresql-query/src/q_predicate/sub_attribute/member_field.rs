@@ -10,7 +10,7 @@
 
 use crate::{
     operator::{compare, does_not_hold},
-    q_predicate::{history_window::HistoryAliases, instance_row::InstanceRow, projection_probe::projection_column},
+    q_predicate::{history_aliases::HistoryAliases, instance_row::InstanceRow, projection_probe::projection_column},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, unit_code_resolution::resolve_unit_code};
 use andromeda_ngsi_ld_query::filter::{

@@ -1,8 +1,27 @@
 //! Deciding the value, geo and scope filters of a split temporal query over
 //! the gathered parts of every entity a Context Source contributed to (clause
 //! 5.7.4.4).
+//!
+//! Clause 5.7.4.4 applies the filters "after the Entity information from
+//! different Context Sources and local information, if there is any, has been
+//! aggregated". Every leaf of them is existential over the instances valid
+//! within the window (clause 4.11), which are of two kinds. Over the instances
+//! inside the window a leaf holds over the gathered entity when it holds over
+//! any part, so each part is judged on its own and the truths are joined: the
+//! local part by the store, an answered part as the Temporal Evolution it is.
+//! The instance each stream held when the window opens is the latest across
+//! every part, which no part decides alone and which a newer deletion in one
+//! part ends, so the in-effect instances of every part are merged first and
+//! the merged entity is judged once. A leaf holds when either kind holds it.
 
-use crate::{answered_evolution::AnsweredEvolution, error::TemporalError, port::read_scope::ScopeReach, service::TemporalService};
+use crate::{
+    answered_evolution::AnsweredEvolution,
+    error::TemporalError,
+    in_effect_entity::InEffectEntity,
+    local_in_effect::LocalInEffect,
+    port::read_scope::ScopeReach,
+    service::TemporalService,
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -12,7 +31,7 @@ use andromeda_ngsi_ld_query::{
     split_filter::{LeafTruths, SplitFilter},
 };
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Which of the contributed entities the filters keep.
 #[derive(Debug, Default)]
@@ -21,19 +40,24 @@ pub struct SplitSettlement {
     pub retained: HashSet<Identifier>,
 }
 
+/// What the Context Sources answered a split query with.
+#[derive(Debug, Default)]
+pub struct AnsweredParts<'a> {
+    /// The parts answered for the window.
+    pub in_window: Vec<&'a TemporalDocument>,
+    /// The parts answered for the instances in effect when the window opens.
+    pub in_effect: Vec<&'a TemporalDocument>,
+}
+
 impl TemporalService {
     /// Decide the value, geo and scope filters of `params` over every entity
-    /// the Context Sources `answered` with, each judged on its part held here
-    /// together with every part a source answered.
+    /// the Context Sources `answered` with, each judged on its part held here,
+    /// read over the window, beside `local`, what this broker holds in effect
+    /// when the window opens, together with every part a source answered.
     ///
-    /// Clause 5.7.4.4 applies the filters "after the Entity information from
-    /// different Context Sources and local information, if there is any, has
-    /// been aggregated". Every leaf of them is existential over the instances it
-    /// reads, so a leaf holds over the gathered entity when it holds over any
-    /// part, and the filters are decided over the leaves joined across parts.
-    /// The local part is read by the store, over the window and the clause 4.11
-    /// instance in effect when it opens; an answered part is read as the
-    /// Temporal Evolution it is.
+    /// A Query Term crossing a Relationship hop reads its linked entities in
+    /// the store alone, so it is decided over the local part, which the store
+    /// reads over the window and its own instance in effect.
     ///
     /// # Errors
     ///
@@ -44,14 +68,19 @@ impl TemporalService {
         target: &ContextTarget,
         params: &TemporalQueryParameters,
         context: &ContextSpec,
-        answered: &[&TemporalDocument],
+        answered: &AnsweredParts<'_>,
+        local: &LocalInEffect,
     ) -> Result<SplitSettlement, TemporalError> {
         let compiled = self.compile_temporal_query(params, context).await?;
         let filter = SplitFilter::of(&compiled.entities);
-        let parts: Vec<(Identifier, &TemporalDocument)> = answered.iter().filter_map(|answer| Some((answer.id()?.clone(), *answer))).collect(); // clone: the part keeps the identifier the entity is judged under
-        let mut entity_ids: Vec<Identifier> = parts.iter().map(|(entity_id, _)| entity_id.clone()).collect(); // clone: the store reads the identifiers the parts keep
+        let mut parts: HashMap<&Identifier, Vec<&TemporalDocument>> = HashMap::new();
+        for part in answered.in_window.iter().chain(&answered.in_effect) {
+            if let Some(entity_id) = part.id() {
+                parts.entry(entity_id).or_default().push(part);
+            }
+        }
+        let mut entity_ids: Vec<Identifier> = parts.keys().map(|entity_id| (*entity_id).clone()).collect(); // clone: the store reads the identifiers the parts keep
         entity_ids.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
-        entity_ids.dedup();
         if filter.is_empty() {
             return Ok(SplitSettlement {
                 retained: entity_ids.into_iter().collect(),
@@ -60,14 +89,24 @@ impl TemporalService {
 
         let scope = self.reader.read_scope(target, ScopeReach::Every).await?;
         let mut truths = self.reader.filter_leaf_truths(&scope, &compiled, &entity_ids).await?;
-        for (entity_id, answer) in parts {
+        for answer in &answered.in_window {
+            let Some(entity_id) = answer.id() else {
+                continue;
+            };
             truths
-                .entry(entity_id)
+                .entry(entity_id.clone()) // clone: the truths are keyed by the identifier the part is judged under
                 .or_insert_with(|| LeafTruths::none(filter.leaf_count()))
-                // A hop leaf is decided by the store over the local part
-                // alone; an answered part names linked entities this broker
-                // reads nothing of here.
                 .or(&filter.truths_of(&AnsweredEvolution::of(answer, compiled.window), NoLinkedEntities));
+        }
+        for (entity_id, mut held) in parts {
+            held.extend(local.part_of(entity_id));
+            let Some(in_effect) = InEffectEntity::merged(&held, compiled.window) else {
+                continue;
+            };
+            truths
+                .entry(entity_id.clone()) // clone: the truths are keyed by the identifier the parts are judged under
+                .or_insert_with(|| LeafTruths::none(filter.leaf_count()))
+                .or(&filter.truths_of(&in_effect, NoLinkedEntities));
         }
         let retained = entity_ids
             .into_iter()

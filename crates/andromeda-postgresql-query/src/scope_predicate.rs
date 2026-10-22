@@ -14,6 +14,7 @@ use crate::{
     history_source::{HistoryBranch, HistoryOf, scope_rows::scope_rows},
     ltree::pattern_to_lquery,
     scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis},
+    window_reach::WindowReach,
 };
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_query::{
@@ -56,6 +57,8 @@ pub enum ScopeTarget {
         interval: TimeInterval,
         /// The branch whose scope history the probe reads.
         branch: HistoryBranch,
+        /// Which of the events valid within the window count.
+        reach: WindowReach,
     },
 }
 
@@ -75,14 +78,15 @@ impl ScopeTarget {
 
     /// The scope-history target reading the Scope events of the Evolution
     /// `of` names, asking whether a validity interval overlaps `interval` on
-    /// the `timeproperty` axis.
+    /// the `timeproperty` axis, counting the events `reach` names.
     #[must_use]
-    pub fn history(of: HistoryOf, timeproperty: TimeProp, interval: TimeInterval, branch: HistoryBranch) -> ScopeTarget {
+    pub fn history(of: HistoryOf, timeproperty: TimeProp, interval: TimeInterval, branch: HistoryBranch, reach: WindowReach) -> ScopeTarget {
         ScopeTarget::History {
             of: Box::new(of),
             timeproperty,
             interval,
             branch,
+            reach,
         }
     }
 }
@@ -121,9 +125,16 @@ pub fn pattern_condition(pattern: &ScopePattern, target: &ScopeTarget) -> Simple
             timeproperty,
             interval,
             branch,
+            reach,
         } => {
             let axis = scope_history_axis(*timeproperty);
-            SeaExpr::exists(matching_scope_events(&lquery, of, axis, overlaps_window(axis, *interval, branch, of), branch))
+            SeaExpr::exists(matching_scope_events(
+                &lquery,
+                of,
+                axis,
+                overlaps_window(axis, *interval, *reach, branch, of),
+                branch,
+            ))
         }
     }
 }
@@ -173,6 +184,7 @@ mod tests {
             TimeProp::Observed,
             interval,
             HistoryBranch::live(),
+            WindowReach::InsideAndInEffect,
         )
     }
 
@@ -272,6 +284,7 @@ mod tests {
                 timeproperty,
                 TimeInterval::After(instant("2024-01-01T00:00:00Z")),
                 HistoryBranch::live(),
+                WindowReach::InsideAndInEffect,
             );
             let sql = render(condition(&scope("/A"), &target));
             assert!(sql.contains(&format!("\"sh\".\"{column}\" IS NOT NULL")), "{sql}");

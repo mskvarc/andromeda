@@ -18,6 +18,7 @@ use andromeda_federation::{
     FederationService,
     config::SplitEntities,
     entity_budget::{EntityBudget, EntityBudgetExceeded},
+    in_effect_probe::InEffectProbe,
     instance_budget::InstanceBudget,
     outcome::{ForwardReadOutcome, ForwardedTemporalEntities},
     query_forwarding_error::QueryForwardingError,
@@ -30,7 +31,10 @@ use andromeda_http_response::{
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use andromeda_ngsi_ld_query::{filter::expansion::expand_csf_expr, geo::query::GeoQuery};
+use andromeda_ngsi_ld_query::{
+    filter::{expansion::expand_csf_expr, expression::Expr},
+    geo::query::GeoQuery,
+};
 use axum::http::{HeaderMap, Uri};
 use tracing::warn;
 
@@ -86,6 +90,7 @@ pub(crate) enum HistoryReach {
 /// every forwarded copy replays (clause 6.3.18), the `splitEntities` mode they
 /// are asked under (clause 5.7.4.4), and the Entity Map and the geoquery that
 /// fix which of them are contacted (clauses 5.5.14 and 5.10.2.4).
+#[derive(Clone, Copy)]
 pub(crate) struct TemporalForwarding<'a> {
     /// The service that contacts every matching registration.
     pub(crate) forwarding: &'a FederationService,
@@ -196,18 +201,7 @@ pub(crate) async fn forward_temporal_history(
     if scope == QueryScope::Local {
         return Ok(None);
     }
-    // No `jsonKeys` declaration applies to `csf`: Table 5.2.12-1 scopes that
-    // member to Entity attribute names, while `csf` addresses the Context
-    // Source Properties of a registration (clause 4.9), whose values are raw
-    // JSON addressed by their literal keys.
-    let csf_expr = match &params.csf {
-        Some(expr) => {
-            let prepared_context = engine.prepare_term_context(context);
-            let expander = ContextualExpander::new(engine, &prepared_context);
-            Some(expand_csf_expr(expr.clone(), &expander).await.with_instance(instance)?) // clone: the raw filter stays in the query for forwarding
-        }
-        None => None,
-    };
+    let csf_expr = expanded_csf(engine, params, context, instance).await?;
     let budget = EntityBudget::new(forwarding.max_query_entities());
     let instances = InstanceBudget::new(forwarding.max_query_instances());
     let paging = match reach {
@@ -234,27 +228,7 @@ pub(crate) async fn forward_temporal_history(
             },
         )
         .await;
-    // A truncated collection would make the page window and
-    // `NGSILD-Results-Count` silently wrong, so exceeding the budget refuses
-    // the query (clauses 4.12 and 6.3.13); a forwarding that failed at its
-    // sources leaves the query with the local answer, but one that could not
-    // read the registrations because this broker's store is saturated or
-    // unreachable fails it rather than hide every source.
-    let outcome = match forwarded {
-        Ok(outcome) => outcome,
-        Err(QueryForwardingError::TooManyResults(exceeded)) => return Err(too_many_results(exceeded, instance)),
-        Err(QueryForwardingError::TooManyInstances(exceeded)) => {
-            return Err(ClassifiedReport::public(NgsiLdErrorType::TooManyResults, exceeded.to_string()).with_instance(instance.clone())); // clone: the problem response owns the request URI it names
-        }
-        Err(QueryForwardingError::Federation(error)) => {
-            if let Some(report) = local_federation_failure(&error) {
-                // clone: the problem response owns the request URI it names
-                return Err(report.with_instance(instance.clone()));
-            }
-            warn!(%error, "context source forwarding failed during the temporal query");
-            ForwardReadOutcome::empty()
-        }
-    };
+    let outcome = forwarding_outcome(forwarded, instance)?;
     match outcome.sources.single_source_status {
         Some(status) => Err(single_source_declined(status, instance)),
         None => Ok(Some(ForwardedHistory {
@@ -262,6 +236,129 @@ pub(crate) async fn forward_temporal_history(
             budget,
         })),
     }
+}
+
+/// The context source filter of `params` in its expanded form, which selects
+/// registrations; the raw expression travels on as the client wrote it.
+///
+/// No `jsonKeys` declaration applies to `csf`: Table 5.2.12-1 scopes that
+/// member to Entity attribute names, while `csf` addresses the Context Source
+/// Properties of a registration (clause 4.9), whose values are raw JSON
+/// addressed by their literal keys.
+///
+/// # Errors
+///
+/// The classified failure of expanding the filter.
+async fn expanded_csf(engine: &JsonLdEngine, params: &TemporalQueryParameters, context: &ContextSpec, instance: &Uri) -> Result<Option<Expr>, ProblemResponse> {
+    let Some(expr) = &params.csf else {
+        return Ok(None);
+    };
+    let prepared_context = engine.prepare_term_context(context);
+    let expander = ContextualExpander::new(engine, &prepared_context);
+    Ok(Some(expand_csf_expr(expr.clone(), &expander).await.with_instance(instance)?)) // clone: the raw filter stays in the query for forwarding
+}
+
+/// The outcome of one forwarded temporal read, or the failure that ends the
+/// query.
+///
+/// A truncated collection would make the page window and
+/// `NGSILD-Results-Count` silently wrong, so exceeding the budget refuses the
+/// query (clauses 4.12 and 6.3.13); a forwarding that failed at its sources
+/// leaves the query with the local answer, but one that could not read the
+/// registrations because this broker's store is saturated or unreachable
+/// fails it rather than hide every source.
+///
+/// # Errors
+///
+/// The clause 4.12 `TooManyResults` refusal, and the classified failure of a
+/// forwarding this broker's own store failed.
+fn forwarding_outcome(
+    forwarded: Result<ForwardReadOutcome<ForwardedTemporalEntities>, QueryForwardingError>,
+    instance: &Uri,
+) -> Result<ForwardReadOutcome<ForwardedTemporalEntities>, ProblemResponse> {
+    match forwarded {
+        Ok(outcome) => Ok(outcome),
+        Err(QueryForwardingError::TooManyResults(exceeded)) => Err(too_many_results(exceeded, instance)),
+        // clone: the problem response owns the request URI it names
+        Err(QueryForwardingError::TooManyInstances(exceeded)) => {
+            Err(ClassifiedReport::public(NgsiLdErrorType::TooManyResults, exceeded.to_string()).with_instance(instance.clone()))
+        }
+        Err(QueryForwardingError::Federation(error)) => {
+            if let Some(report) = local_federation_failure(&error) {
+                // clone: the problem response owns the request URI it names
+                return Err(report.with_instance(instance.clone()));
+            }
+            warn!(%error, "context source forwarding failed during the temporal query");
+            Ok(ForwardReadOutcome::empty())
+        }
+    }
+}
+
+/// Ask every matching context source, once per probe of `probes`, for the
+/// instances the filters of the query read in effect when its window opens
+/// (clauses 4.11 and 5.7.4.4).
+///
+/// Each probe walks every page of every source's answer under a budget of
+/// its own, the size of the window query's (clause 4.12), and a source that
+/// cannot be reached contributes a clause 6.3.17 warning, as for the window.
+///
+/// # Errors
+///
+/// The classified failure of expanding the context source filter, the clause
+/// 4.12 `TooManyResults` refusal when a probe's answers exceed its budget, and
+/// the classified failure of a forwarding this broker's own store failed.
+pub(crate) async fn forward_in_effect_probes(
+    sources: TemporalForwarding<'_>,
+    engine: &JsonLdEngine,
+    target: &ContextTarget,
+    request: InEffectRequest<'_>,
+    probes: &[InEffectProbe<'_>],
+) -> Result<Vec<ForwardedTemporalEntities>, ProblemResponse> {
+    let TemporalForwarding {
+        forwarding,
+        triggering,
+        split,
+        map_use,
+        geo,
+        reach: _,
+    } = sources;
+    let InEffectRequest { params, context, instance } = request;
+    let csf_expr = expanded_csf(engine, params, context, instance).await?;
+    let mut answers = Vec::new();
+    for probe in probes {
+        let budget = EntityBudget::new(forwarding.max_query_entities());
+        let forwarded = forwarding
+            .forward_in_effect_probe(
+                target,
+                ForwardTemporalQueryRequest {
+                    client_query: params,
+                    split,
+                    context,
+                    operation: ForwardingOperation::QueryTemporalEntity,
+                    triggering,
+                    csf_expr: csf_expr.as_ref(),
+                    geo,
+                    mode_filter: CsrModeFilter::All,
+                    entity_map: EntityMapInUse::from(map_use),
+                    paging: SourcePaging::Walk(&budget),
+                },
+                *probe,
+            )
+            .await;
+        answers.extend(forwarding_outcome(forwarded, instance)?.results);
+    }
+    Ok(answers)
+}
+
+/// The query the in-effect probes are derived from.
+#[derive(Clone, Copy)]
+pub(crate) struct InEffectRequest<'r> {
+    /// The client's query.
+    pub(crate) params: &'r TemporalQueryParameters,
+    /// The request context.
+    pub(crate) context: &'r ContextSpec,
+    /// The request URI a failure names.
+    pub(crate) instance: &'r Uri,
 }
 
 #[cfg(test)]

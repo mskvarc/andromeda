@@ -28,7 +28,8 @@ use crate::{
     entity_row_refs::EntityRowRefs,
     instance_expiry::instance_stands,
     q_predicate::{
-        history_window::{HistoryAliases, HistoryWindow, WindowProbes},
+        history_aliases::HistoryAliases,
+        history_window::{HistoryWindow, WindowProbes},
         instance_scan::InstanceScan,
     },
 };
@@ -338,6 +339,7 @@ mod tests {
         dictionary::resolved_names::ResolvedNames,
         history_source::{HistoryBranch, HistoryOf},
         q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, traversal::LinkedHop},
+        window_reach::WindowReach,
     };
     use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
@@ -356,6 +358,7 @@ mod tests {
             .of(HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id")))))
             .axis(AttributeHistory::ObservedAt)
             .interval(TimeInterval::After(start))
+            .reach(WindowReach::InsideAndInEffect)
             .build();
         let inner = Condition::all().add(Expr::col((Alias::new("le1"), Alias::new("entity_key"))).eq(5));
         let probe = LinkedHop::at_depth(1).probe(
@@ -385,6 +388,7 @@ mod tests {
             .of(HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id")))))
             .axis(AttributeHistory::ObservedAt)
             .interval(TimeInterval::After(start))
+            .reach(WindowReach::InsideAndInEffect)
             .build();
         let probe = LinkedHop::at_depth(1).probe(
             AttributeNameKey::from(4),

@@ -31,7 +31,7 @@
 
 use crate::{
     history_source::{HistoryBranch, HistoryOf, attribute_rows::pending_attribute_rows, grain::HistoryGrain, instance_replacement::kept_beside_pending},
-    q_predicate::history_window::HistoryAliases,
+    q_predicate::history_aliases::HistoryAliases,
 };
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{branch::qualified, pg_operator::PgBinaryOperator};
@@ -162,7 +162,7 @@ impl InEffectInstance<'_> {
 mod tests {
     use crate::{
         history_source::HistoryBranch,
-        q_predicate::{history_window::HistoryAliases, in_effect_instance::InEffectInstance},
+        q_predicate::{history_aliases::HistoryAliases, in_effect_instance::InEffectInstance},
     };
     use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_postgresql_schema::temporal::AttributeHistory;

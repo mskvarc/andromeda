@@ -8,13 +8,15 @@
 //! history of the paths the entity is in, not an attribute, so it is read as
 //! the paths it dates.
 //!
-//! A leaf reads the attribute instances lying in the query's window, as the
-//! local leaf does: an instance carrying no instant on the window's Temporal
-//! Property is represented by no read on it (clause 4.5.7), so it satisfies no
-//! leaf even when a source answers with it.
+//! A leaf reads the instances lying in the query's window, as the local leaf
+//! does: an instance carrying no instant on the window's Temporal Property is
+//! represented by no read on it (clause 4.5.7), so it satisfies no leaf even
+//! when a source answers with it, and the Scope event or instance in effect
+//! when the window opens is the latest across every part, which the merged
+//! in-effect entity decides rather than any one part.
 
-use crate::{reified_scope::value_observations, scope_observation::ScopeObservation};
-use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument};
+use crate::reified_scope::reified_paths;
+use andromeda_ngsi_ld_entity::document::{EntityDocument, instance_document::InstanceDocument};
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::path::ScopePath};
 use andromeda_ngsi_ld_model::temporal::temporal_document::TemporalDocument;
@@ -30,7 +32,8 @@ use std::borrow::Cow;
 pub(crate) struct AnsweredEvolution<'a> {
     /// The instances the answer carries.
     document: &'a EntityDocument,
-    /// The paths the answer's reified Scope instances name (clause 4.5.6).
+    /// The paths the answer's reified Scope instances inside the window name
+    /// (clause 4.5.6).
     scopes: Vec<ScopePath>,
     /// The window whose attribute instances the leaves read.
     window: TemporalWindow,
@@ -43,25 +46,10 @@ impl<'a> AnsweredEvolution<'a> {
         let scopes = document
             .attributes()
             .get(expanded_properties::SCOPE.as_str())
-            .map(reified_paths)
+            .map(|scope| reified_paths(scope.instances().iter().filter(|instance| instance.lies_within(window))))
             .unwrap_or_default();
         AnsweredEvolution { document, scopes, window }
     }
-}
-
-/// The paths every reified Scope instance of `scope` names; an instance that
-/// ends the Scope names none.
-fn reified_paths(scope: &AttributeMember) -> Vec<ScopePath> {
-    scope
-        .instances()
-        .iter()
-        .filter_map(|instance| value_observations(instance.value()).ok())
-        .flatten()
-        .filter_map(|observation| match observation {
-            ScopeObservation::Path(path) => Some(path),
-            ScopeObservation::Deleted => None,
-        })
-        .collect()
 }
 
 impl<'a> QueriedEntity<'a> for &'a AnsweredEvolution<'a> {
@@ -96,15 +84,9 @@ impl<'a> ScopedEntity<'a> for &'a AnsweredEvolution<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::answered_evolution::AnsweredEvolution;
-    use andromeda_json_literal::JsonLiteral;
-    use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-    use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
+    use crate::{answered_evolution::AnsweredEvolution, answered_fixture::answered};
     use andromeda_ngsi_ld_lexicon::{scope::path::ScopePath, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
-    use andromeda_ngsi_ld_model::{
-        received::ReceivedElement,
-        temporal::{received_temporal::ReceivedTemporalEntities, temporal_body::TemporalBody, temporal_document::TemporalDocument},
-    };
+    use andromeda_ngsi_ld_model::temporal::temporal_document::TemporalDocument;
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         queried_entity::{linked_entities::NoLinkedEntities, scoped_entity::ScopedEntity},
@@ -112,44 +94,13 @@ mod tests {
         split_filter::{LeafTruths, SplitFilter},
         temporal::window::{TemporalWindow, TimeInterval},
     };
-    use serde_json::{Value, json};
-
-    fn context() -> ContextSpec {
-        ContextSpec::from_body(
-            JsonLiteral::admit(
-                &json!({
-                    "speed": "https://example.com/speed",
-                    "brand": "https://example.com/brand",
-                    "says": "https://example.com/says",
-                    "settings": "https://example.com/settings",
-                    "gender": "https://example.com/gender",
-                })
-                .to_string(),
-            )
-            .expect("an admissible literal"),
-        )
-    }
+    use serde_json::json;
 
     fn selection(q: Option<&str>, scope: Option<&str>) -> EntitySelection {
         EntitySelection::builder()
             .q_expr(q.map(|raw| raw.parse().expect("a valid q")))
             .scope_q(scope.map(|raw| ScopeQuery::parse(raw).expect("a valid scopeQ")))
             .build()
-    }
-
-    /// The temporal entity a source answered with, expanded under the context.
-    async fn answered(answer: &Value) -> TemporalDocument {
-        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("build engine");
-        let context = context();
-        let expansion = EntityExpansion::prepare(&engine, &context).await.expect("the context resolves");
-        let ReceivedTemporalEntities(mut elements) = ReceivedTemporalEntities::from_slice(answer.to_string().as_bytes()).expect("an answer");
-        let Some(ReceivedElement::Read(contextual)) = elements.pop() else {
-            panic!("the answer is a temporal entity");
-        };
-        let TemporalBody::Evolution(entity) = contextual.body else {
-            panic!("the answer is a Temporal Evolution");
-        };
-        expansion.temporal(entity).await.expect("the answer expands")
     }
 
     /// A window on `observedAt` over `interval`.

@@ -16,7 +16,10 @@
 //! the scope it ended — and why `chk_scope_history_value_presence` can forbid
 //! it from naming one.
 
-use crate::history_source::{HistoryBranch, HistoryOf, scope_rows::scope_rows};
+use crate::{
+    history_source::{HistoryBranch, HistoryOf, scope_rows::scope_rows},
+    window_reach::WindowReach,
+};
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
 use andromeda_postgresql_schema::temporal::ScopeHistory;
@@ -72,22 +75,29 @@ pub fn positioned_on_axis(axis: ScopeHistory) -> SimpleExpr {
 /// bounded it: a window with no closing instant admits an event of any age, and
 /// a window with no opening instant cannot have been preceded by anything.
 ///
+/// Read with [`WindowReach::Inside`], only the events at or after `from`
+/// count: the Scope in force when the window opens is the latest event before
+/// it across every part of a split entity (clause 5.7.4.4), which this part
+/// does not decide alone.
+///
 /// `branch` is the branch the supersession probe reads the scope history of,
 /// so a temporal query over a Snapshot branch tests that branch's own events,
 /// and one over the live branch its queued Scope entries too. `of` is whose
 /// history the event under [`ScopeEvent`] was read from, so the probe names
 /// the same Evolution by what that source projects.
 #[must_use]
-pub fn overlaps_window(axis: ScopeHistory, interval: TimeInterval, branch: &HistoryBranch, of: &HistoryOf) -> Condition {
+pub fn overlaps_window(axis: ScopeHistory, interval: TimeInterval, reach: WindowReach, branch: &HistoryBranch, of: &HistoryOf) -> Condition {
+    let opening = |from| match reach {
+        WindowReach::Inside => Expr::col((ScopeEvent, axis)).gte(from),
+        WindowReach::InsideAndInEffect => not_superseded_by(Expr::val(from), axis, branch, of),
+    };
     let mut condition = Condition::all();
     match interval {
         TimeInterval::Unbounded => {}
         TimeInterval::Before(to) => condition = condition.add(Expr::col((ScopeEvent, axis)).lt(to)),
-        TimeInterval::After(from) => condition = condition.add(not_superseded_by(Expr::val(from), axis, branch, of)),
+        TimeInterval::After(from) => condition = condition.add(opening(from)),
         TimeInterval::Between { from, to } => {
-            condition = condition
-                .add(Expr::col((ScopeEvent, axis)).lt(to))
-                .add(not_superseded_by(Expr::val(from), axis, branch, of));
+            condition = condition.add(Expr::col((ScopeEvent, axis)).lt(to)).add(opening(from));
         }
     }
     condition
@@ -117,6 +127,7 @@ mod tests {
     use crate::{
         history_source::{EvolutionColumns, HistoryBranch, HistoryOf},
         scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis},
+        window_reach::WindowReach,
     };
     use andromeda_ngsi_ld_lexicon::{time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
@@ -161,6 +172,7 @@ mod tests {
                 from: instant("2018-08-01T12:00:00Z"),
                 to: instant("2018-08-01T13:00:00Z"),
             },
+            WindowReach::InsideAndInEffect,
             &HistoryBranch::live(),
             &HistoryOf::EveryEntity,
         ));
@@ -174,6 +186,7 @@ mod tests {
         let sql = render(overlaps_window(
             ScopeHistory::ObservedAt,
             TimeInterval::Unbounded,
+            WindowReach::InsideAndInEffect,
             &HistoryBranch::live(),
             &HistoryOf::EveryEntity,
         ));
@@ -186,6 +199,7 @@ mod tests {
         let sql = render(overlaps_window(
             ScopeHistory::ObservedAt,
             TimeInterval::Before(instant("2018-08-01T13:00:00Z")),
+            WindowReach::InsideAndInEffect,
             &HistoryBranch::live(),
             &HistoryOf::EveryEntity,
         ));
@@ -198,11 +212,31 @@ mod tests {
         let sql = render(overlaps_window(
             ScopeHistory::ObservedAt,
             TimeInterval::After(instant("2018-08-01T12:00:00Z")),
+            WindowReach::InsideAndInEffect,
             &HistoryBranch::live(),
             &HistoryOf::EveryEntity,
         ));
         assert!(!sql.contains("\"sh\".\"observed_at\" < "), "{sql}");
         assert!(sql.contains("NOT EXISTS"), "{sql}");
+    }
+
+    /// Clause 5.7.4.4: read inside only, an event counts when it lies at or
+    /// after the window's opening, and no supersession is probed.
+    #[test]
+    fn an_inside_reach_admits_only_events_inside_the_window() {
+        let sql = render(overlaps_window(
+            ScopeHistory::ObservedAt,
+            TimeInterval::Between {
+                from: instant("2018-08-01T12:00:00Z"),
+                to: instant("2018-08-01T13:00:00Z"),
+            },
+            WindowReach::Inside,
+            &HistoryBranch::live(),
+            &HistoryOf::EveryEntity,
+        ));
+        assert!(sql.contains("\"sh\".\"observed_at\" >= '2018-08-01 12:00:00"), "{sql}");
+        assert!(sql.contains("\"sh\".\"observed_at\" < '2018-08-01 13:00:00"), "{sql}");
+        assert!(!sql.contains("NOT EXISTS"), "{sql}");
     }
 
     /// The supersession probe compares strictly later events and stays inside
@@ -212,6 +246,7 @@ mod tests {
         let sql = render(overlaps_window(
             ScopeHistory::ObservedAt,
             TimeInterval::After(instant("2018-08-01T12:00:00Z")),
+            WindowReach::InsideAndInEffect,
             &HistoryBranch::live(),
             &HistoryOf::EveryEntity,
         ));
@@ -231,10 +266,22 @@ mod tests {
             key: Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))),
         });
         let after = TimeInterval::After(instant("2018-08-01T12:00:00Z"));
-        let recorded = render(overlaps_window(ScopeHistory::ObservedAt, after, &HistoryBranch::live_recorded(), &of));
+        let recorded = render(overlaps_window(
+            ScopeHistory::ObservedAt,
+            after,
+            WindowReach::InsideAndInEffect,
+            &HistoryBranch::live_recorded(),
+            &of,
+        ));
         assert!(recorded.contains(r#""rsh"."temporal_entity_key" = "sh"."temporal_entity_key""#), "{recorded}");
         assert!(!recorded.contains("temporal_entities") && !recorded.contains("entity_id"), "{recorded}");
-        let queued = render(overlaps_window(ScopeHistory::ObservedAt, after, &HistoryBranch::live(), &of));
+        let queued = render(overlaps_window(
+            ScopeHistory::ObservedAt,
+            after,
+            WindowReach::InsideAndInEffect,
+            &HistoryBranch::live(),
+            &of,
+        ));
         assert!(queued.contains(r#""re"."id" = "sh"."entity_id""#), "{queued}");
         assert!(queued.contains(r#""pe"."entity_id" = "sh"."entity_id""#), "{queued}");
     }

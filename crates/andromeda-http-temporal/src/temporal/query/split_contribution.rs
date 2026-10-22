@@ -5,16 +5,19 @@
 //! the Entity information from different Context Sources and local
 //! information, if there is any, has been aggregated". An entity no source
 //! answered with has no part outside this broker, so the local query keeps
-//! deciding it in the store; only the entities a source answered with are
-//! exempt locally and judged here, over every part, once the sources have
-//! answered.
+//! deciding it in the store; only the entities a source answered the window
+//! or an in-effect probe with are exempt locally and judged here, over every
+//! part, once the sources have answered. An entity holding nothing inside the
+//! window in any part is never answered: the judgement only drops entities.
 
 use crate::temporal::{
     ProblemResponse,
     ResultInstanceExt,
     TemporalQueryParameters,
+    collect_temporal_warnings,
     query::{
         forwarding::{ForwardedHistory, HistoryReach},
+        in_effect_gathering::{InEffectGathering, instance_documents},
         merged_history::{MergedTemporalHistory, RemoteParts, merge_forwarded_history},
     },
 };
@@ -25,7 +28,12 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
 use andromeda_ngsi_ld_query::temporal::contributed_entities::{ContributedEntities, ContributedRendering};
-use andromeda_temporal::{error::TemporalError, service::TemporalService, split_settlement::SplitSettlement};
+use andromeda_temporal::{
+    error::TemporalError,
+    local_in_effect::LocalInEffect,
+    service::TemporalService,
+    split_settlement::{AnsweredParts, SplitSettlement},
+};
 use axum::http::Uri;
 
 /// How a split query gathers and renders the entities a source contributed to.
@@ -94,7 +102,7 @@ async fn render_contributions(
         return Ok(None);
     };
     let mut parts: Vec<(Identifier, Vec<TemporalDocument>)> = settlement.retained.iter().map(|entity_id| (entity_id.clone(), Vec::new())).collect(); // clone: each part list owns the identifier it is rendered under
-    for answer in answered_documents(history) {
+    for answer in instance_documents(&history.sources) {
         let Some(entity_id) = answer.id() else {
             continue;
         };
@@ -126,6 +134,8 @@ struct SettledRequest<'r> {
     context: &'r ContextSpec,
     /// What the sources answered.
     forwarded: Option<&'r ForwardedHistory>,
+    /// What every part holds in effect when the window opens.
+    in_effect: Option<&'r InEffectGathering>,
 }
 
 /// Whether the query carries any of the filters clause 5.7.4.4 applies after
@@ -134,8 +144,9 @@ pub(crate) const fn carries_split_filters(params: &TemporalQueryParameters) -> b
     params.q.is_some() || params.geo.0.is_some() || params.scope_q.is_some()
 }
 
-/// The entities a source answered a split query with, which the local read
-/// exempts from the value, geo and scope filters.
+/// The entities a source answered a split query with, for the window or for
+/// the instances in effect when it opens, which the local read exempts from
+/// the value, geo and scope filters.
 ///
 /// Empty unless the query is split, carries one of those filters, and a
 /// source answered: every other query reads exactly as one that was never
@@ -144,6 +155,7 @@ pub(crate) fn contributed_entities(
     filtering: SplitEntities,
     params: &TemporalQueryParameters,
     forwarded: Option<&ForwardedHistory>,
+    in_effect: Option<&InEffectGathering>,
     rendering: ContributedRendering,
 ) -> ContributedEntities {
     let Some(history) = forwarded else {
@@ -151,8 +163,13 @@ pub(crate) fn contributed_entities(
     };
     match filtering {
         SplitEntities::Split if carries_split_filters(params) => {
-            ContributedEntities::new(answered_parts(history).filter_map(|answer| answer.id().cloned()), rendering)
-        } // clone: the set owns the identifiers it exempts
+            let probed = in_effect
+                .into_iter()
+                .flat_map(|gathering| gathering.sources.iter())
+                .flat_map(|source| source.entities.iter());
+            // clone: the set owns the identifiers it exempts
+            ContributedEntities::new(answered_parts(history).chain(probed).filter_map(|answer| answer.id().cloned()), rendering)
+        }
         SplitEntities::Split | SplitEntities::Complete => ContributedEntities::default(),
     }
 }
@@ -160,15 +177,6 @@ pub(crate) fn contributed_entities(
 /// Every entity part any source answered with.
 fn answered_parts(history: &ForwardedHistory) -> impl Iterator<Item = &TemporalHistory> {
     history.sources.iter().flat_map(|source| source.entities.iter())
-}
-
-/// Every part any source answered with its instances; an aggregate holds none
-/// to judge or to aggregate again.
-fn answered_documents(history: &ForwardedHistory) -> impl Iterator<Item = &TemporalDocument> {
-    answered_parts(history).filter_map(|answer| match answer {
-        TemporalHistory::Instances(document) => Some(document),
-        TemporalHistory::Aggregates(_) => None,
-    })
 }
 
 /// What folding the contributed entities into the merge reads of the request.
@@ -202,6 +210,7 @@ pub(crate) async fn merge_with_contributions(
     merge: ContributionMerge<'_>,
     local_entities: Vec<TemporalHistory>,
     forwarded: Option<ForwardedHistory>,
+    in_effect: Option<InEffectGathering>,
     instance: &Uri,
 ) -> Result<MergedTemporalHistory, ProblemResponse> {
     let settled = SettledRequest {
@@ -209,6 +218,7 @@ pub(crate) async fn merge_with_contributions(
         params: merge.params,
         context: merge.context,
         forwarded: forwarded.as_ref(),
+        in_effect: in_effect.as_ref(),
     };
     let settlement = settle_contributions(service, settled, merge.contributed, instance).await?;
     let rendered = render_contributions(service, settled, merge.shape, settlement.as_ref(), instance).await?;
@@ -220,6 +230,9 @@ pub(crate) async fn merge_with_contributions(
     if let Some((entities, warnings)) = rendered {
         merged.entities.extend(entities);
         merged.warnings.extend(warnings);
+    }
+    if let Some(gathering) = &in_effect {
+        merged.warnings.extend(collect_temporal_warnings(&gathering.sources));
     }
     Ok(merged)
 }
@@ -239,9 +252,14 @@ async fn settle_contributions(
     let (Some(history), false) = (request.forwarded, contributed.is_empty()) else {
         return Ok(None);
     };
-    let answered: Vec<&TemporalDocument> = answered_documents(history).collect();
+    let answered = AnsweredParts {
+        in_window: instance_documents(&history.sources).collect(),
+        in_effect: request.in_effect.into_iter().flat_map(InEffectGathering::answered_documents).collect(),
+    };
+    let nothing_local = LocalInEffect::default();
+    let local = request.in_effect.map_or(&nothing_local, |gathering| &gathering.local);
     let settlement = service
-        .settle_split_filters(request.target, request.params, request.context, &answered)
+        .settle_split_filters(request.target, request.params, request.context, &answered, local)
         .await
         .with_instance(instance)?;
     Ok(Some(settlement))
@@ -261,18 +279,24 @@ fn retain_settled(entities: &mut Vec<TemporalHistory>, contributed: &Contributed
 #[cfg(test)]
 mod tests {
     use crate::{
-        temporal::query::split_contribution::{carries_split_filters, retain_settled},
+        temporal::query::{
+            forwarding::ForwardedHistory,
+            in_effect_gathering::InEffectGathering,
+            split_contribution::{carries_split_filters, contributed_entities, retain_settled},
+        },
         test_history::held_history,
     };
+    use andromeda_federation::{config::SplitEntities, entity_budget::EntityBudget, outcome::ForwardedTemporalEntities};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
+    use andromeda_ngsi_ld_model::{registration::forwarding_mode::ForwardingMode, temporal::temporal_history::TemporalHistory};
     use andromeda_ngsi_ld_query::{
         scope::query::ScopeQuery,
         temporal::contributed_entities::{ContributedEntities, ContributedRendering},
     };
     use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
-    use andromeda_temporal::split_settlement::SplitSettlement;
+    use andromeda_temporal::{local_in_effect::LocalInEffect, split_settlement::SplitSettlement};
     use serde_json::json;
+    use std::num::NonZeroU32;
 
     fn id(raw: &str) -> Identifier {
         raw.parse().expect("a valid identifier")
@@ -312,6 +336,65 @@ mod tests {
         pretty_assertions::assert_eq!(
             entities.iter().filter_map(|entity| entity.id().map(ToString::to_string)).collect::<Vec<_>>(),
             vec!["urn:ngsi-ld:Vehicle:2", "urn:ngsi-ld:Vehicle:3"]
+        );
+    }
+
+    /// One source's answer holding `entities`.
+    fn answered_by_source(entities: Vec<TemporalHistory>) -> ForwardedTemporalEntities {
+        ForwardedTemporalEntities {
+            registration_id: None,
+            mode: ForwardingMode::Inclusive,
+            entities,
+            warnings: Vec::new(),
+            linked_map: None,
+            partial_ranges: Vec::new(),
+        }
+    }
+
+    /// Clause 5.7.4.4 judges an entity over every part, so one a source
+    /// answered only the in-effect probe for is exempt locally too.
+    #[tokio::test]
+    async fn probe_answers_join_the_contributed_set() {
+        let forwarded = ForwardedHistory {
+            sources: vec![answered_by_source(vec![history("urn:ngsi-ld:Vehicle:1").await])],
+            budget: EntityBudget::new(NonZeroU32::MIN),
+        };
+        let gathering = InEffectGathering {
+            sources: vec![answered_by_source(vec![history("urn:ngsi-ld:Vehicle:2").await])],
+            local: LocalInEffect::default(),
+        };
+        let params = TemporalQueryParameters {
+            q: Some("speed>50".parse().expect("a valid q")),
+            ..TemporalQueryParameters::default()
+        };
+        let contributed = contributed_entities(SplitEntities::Split, &params, Some(&forwarded), Some(&gathering), ContributedRendering::Local);
+        assert!(contributed.contains(&id("urn:ngsi-ld:Vehicle:1")) && contributed.contains(&id("urn:ngsi-ld:Vehicle:2")));
+        assert!(
+            !contributed_entities(
+                SplitEntities::Complete,
+                &params,
+                Some(&forwarded),
+                Some(&gathering),
+                ContributedRendering::Local
+            )
+            .contains(&id("urn:ngsi-ld:Vehicle:2"))
+        );
+    }
+
+    /// Clause 5.7.4.4 judges the entities with data in the window (set S4):
+    /// one the filters keep that no part answers for the window is never
+    /// added, because the judgement only drops.
+    #[tokio::test]
+    async fn a_probe_only_entity_is_never_rendered() {
+        let mut entities = vec![history("urn:ngsi-ld:Vehicle:1").await];
+        let contributed = ContributedEntities::new([id("urn:ngsi-ld:Vehicle:1"), id("urn:ngsi-ld:Vehicle:2")], ContributedRendering::Local);
+        let settlement = SplitSettlement {
+            retained: [id("urn:ngsi-ld:Vehicle:1"), id("urn:ngsi-ld:Vehicle:2")].into_iter().collect(),
+        };
+        retain_settled(&mut entities, &contributed, &settlement);
+        pretty_assertions::assert_eq!(
+            entities.iter().filter_map(|entity| entity.id().map(ToString::to_string)).collect::<Vec<_>>(),
+            vec!["urn:ngsi-ld:Vehicle:1"]
         );
     }
 }

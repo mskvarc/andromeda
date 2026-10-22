@@ -201,11 +201,13 @@ pub trait TemporalHistoryReader: Send + Sync {
     ///
     /// Clause 5.7.4.4 applies those filters to an entity held in several parts
     /// once the parts are aggregated, and every leaf is existential over the
-    /// instances it reads, so the part held here is judged leaf by leaf, over
-    /// the instances of the window and the clause 4.11 instance in effect when
-    /// it opens, exactly as a query that is not split would read them. An
-    /// entity this view holds no Temporal Evolution of is absent from the
-    /// result.
+    /// instances it reads, so the part held here is judged leaf by leaf over
+    /// the instances inside the window. The clause 4.11 instance in effect
+    /// when the window opens is read apart, by [`Self::in_effect_instances`],
+    /// because it is the latest across every part. A Query Term crossing a
+    /// Relationship hop reads the entities it reaches here alone, so it is
+    /// judged over the window and the local instance in effect. An entity
+    /// this view holds no Temporal Evolution of is absent from the result.
     #[must_use = "filter leaf reads must be awaited"]
     async fn filter_leaf_truths(
         &self,
@@ -213,6 +215,27 @@ pub trait TemporalHistoryReader: Send + Sync {
         compiled: &CompiledTemporalQuery,
         entity_ids: &[Identifier],
     ) -> Result<HashMap<Identifier, LeafTruths>, TemporalError>;
+
+    /// The instances the query's filters read in effect when its window
+    /// opens, in the part of each of `entity_ids` this view holds: the latest
+    /// instance of every stream of the attributes the filters read placed
+    /// before the start, a deletion included, and the Scope event in force at
+    /// the start, as history rows.
+    ///
+    /// Clause 4.11 counts the instance in effect when the window opens among
+    /// the instances valid within it, and under clause 5.7.4.4 that is the
+    /// latest across every part of a split entity, which a deletion in one
+    /// part can end, so each part answers its own and the parts are merged
+    /// before the filters judge the survivor. A window with no instance in
+    /// effect before it reads nothing, and an entity this view holds nothing
+    /// in effect of is absent from the result.
+    #[must_use = "in-effect instance reads must be awaited"]
+    async fn in_effect_instances(
+        &self,
+        scope: &TemporalReadScope<'_>,
+        compiled: &CompiledTemporalQuery,
+        entity_ids: &[Identifier],
+    ) -> Result<HashMap<Identifier, Vec<TemporalHistoryRow>>, TemporalError>;
 
     /// Read neutral temporal observations for one entity.
     #[must_use = "temporal history reads must be awaited"]

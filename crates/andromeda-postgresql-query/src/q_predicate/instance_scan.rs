@@ -12,7 +12,8 @@ use crate::{
     attribute_name_key::AttributeNameKey,
     entity_row_refs::EntityRowRefs,
     q_predicate::{
-        history_window::{HistoryAliases, HistoryWindow},
+        history_aliases::HistoryAliases,
+        history_window::HistoryWindow,
         instance_row::ProbedRow,
         instance_test::InstanceTest,
         projection_probe::{ProbeShape, exists_any_on_projection, exists_on_projection, probe},
@@ -96,6 +97,7 @@ mod tests {
         entity_row_refs::EntityRowRefs,
         history_source::{HistoryBranch, HistoryOf},
         q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, instance_test::InstanceTest},
+        window_reach::WindowReach,
     };
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
     use andromeda_postgresql_schema::temporal::AttributeHistory;
@@ -107,6 +109,7 @@ mod tests {
             .of(HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id")))))
             .axis(AttributeHistory::ModifiedAt)
             .interval(TimeInterval::Unbounded)
+            .reach(WindowReach::InsideAndInEffect)
             .build()
     }
 

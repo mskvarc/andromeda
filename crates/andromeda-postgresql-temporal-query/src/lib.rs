@@ -22,6 +22,7 @@ pub mod aggregation_grouping;
 pub mod alias;
 pub mod axis;
 pub mod history;
+pub mod in_effect_instances;
 mod listed_period_page;
 mod period_edge;
 pub mod projected_members;

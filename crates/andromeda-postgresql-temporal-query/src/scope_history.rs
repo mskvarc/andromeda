@@ -22,6 +22,7 @@ use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_postgresql_query::{
     history_source::{HistoryBranch, HistoryOf, scope_rows::scope_rows},
     scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis},
+    window_reach::WindowReach,
 };
 use andromeda_postgresql_schema::temporal::ScopeHistory;
 use sea_query::{Alias, Expr, Order, Query, SelectStatement};
@@ -74,6 +75,24 @@ pub fn build_scope_history_query(branch: &HistoryBranch, entity_id: &Identifier,
     let axis = scope_history_axis(compiled.window.timeproperty);
 
     let mut select = Query::select();
+    project_scope_event(&mut select, axis);
+
+    // Clause 5.6.6 leaves the Temporal Evolution standing when the entity is
+    // deleted, so the scope source reads the identity from the temporal
+    // catalogue and never from current state.
+    let of = HistoryOf::Entity(Expr::val(entity_id.as_str()));
+    select
+        .from(scope_rows(branch, &of, ScopeEvent))
+        .cond_where(positioned_on_axis(axis))
+        .cond_where(overlaps_window(axis, compiled.window.interval, WindowReach::InsideAndInEffect, branch, &of));
+    order_scope_events(&mut select, axis);
+
+    select.take()
+}
+
+/// Project every column one scope event row is read back from, the event read
+/// under [`ScopeEvent`] and positioned on `axis`.
+pub(crate) fn project_scope_event(select: &mut SelectStatement, axis: ScopeHistory) {
     for column in [
         ScopeHistory::RecordedAt,
         ScopeHistory::WriteId,
@@ -94,21 +113,16 @@ pub fn build_scope_history_query(branch: &HistoryBranch, entity_id: &Identifier,
     // event from the next, and clause 4.5.7 lets one write state several
     // instances of a Property "at a particular point in time" each.
     select.expr_as(Expr::col((ScopeEvent, axis)), Alias::new(SCOPE_EVENT_AT));
+}
 
-    // Clause 5.6.6 leaves the Temporal Evolution standing when the entity is
-    // deleted, so the scope source reads the identity from the temporal
-    // catalogue and never from current state.
-    let of = HistoryOf::Entity(Expr::val(entity_id.as_str()));
+/// Order the scope events read under [`ScopeEvent`] so that the rows of one
+/// event arrive together, events in order on `axis`.
+pub(crate) fn order_scope_events(select: &mut SelectStatement, axis: ScopeHistory) {
     select
-        .from(scope_rows(branch, &of, ScopeEvent))
-        .cond_where(positioned_on_axis(axis))
-        .cond_where(overlaps_window(axis, compiled.window.interval, branch, &of))
         .order_by((ScopeEvent, axis), Order::Asc)
         .order_by((ScopeEvent, ScopeHistory::RecordedAt), Order::Asc)
         .order_by((ScopeEvent, ScopeHistory::WriteId), Order::Asc)
         .order_by((ScopeEvent, ScopeHistory::WriteOrdinal), Order::Asc);
-
-    select.take()
 }
 
 #[cfg(test)]

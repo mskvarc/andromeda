@@ -137,6 +137,15 @@ impl TemporalHistoryReader for ShapedReader {
         panic!("no split query is read")
     }
 
+    async fn in_effect_instances(
+        &self,
+        _scope: &TemporalReadScope<'_>,
+        _compiled: &CompiledTemporalQuery,
+        _entity_ids: &[Identifier],
+    ) -> Result<HashMap<Identifier, Vec<TemporalHistoryRow>>, TemporalError> {
+        panic!("no split query is read")
+    }
+
     async fn query_entity_history(
         &self,
         _scope: &TemporalReadScope<'_>,

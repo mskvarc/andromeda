@@ -11,7 +11,7 @@
 //! elements in `sub_attributes`, so a path into a sub-attribute walks the tree
 //! of whichever [`ProbedRow`] the probe reads.
 
-use crate::q_predicate::{history_window::HistoryAliases, projection_probe::projection_column, value_column::ValueColumn};
+use crate::q_predicate::{history_aliases::HistoryAliases, projection_probe::projection_column, value_column::ValueColumn};
 use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, SubAttribute},

@@ -27,6 +27,13 @@ pub(crate) enum TemporalStatement {
     /// The truth of every leaf of a split query's filters over the entities a
     /// Context Source contributed to (clause 5.7.4.4).
     SplitFilterLeaves,
+    /// The instances a split query's filters read in effect when its window
+    /// opens, over the entities a Context Source contributed to (clauses 4.11
+    /// and 5.7.4.4).
+    InEffectInstances,
+    /// The Scope event in force when a split query's window opens, over the
+    /// entities a Context Source contributed to (clauses 4.18 and 5.7.4.4).
+    InEffectScope,
     /// Which disqualifying shapes the instances an aggregated request
     /// aggregates carry (clause 5.7.4.4).
     HeldShapes,
@@ -42,6 +49,8 @@ impl TemporalStatement {
             TemporalStatement::ScopeHistory => StatementName("temporal-scope-history"),
             TemporalStatement::Aggregation => StatementName("temporal-aggregation"),
             TemporalStatement::SplitFilterLeaves => StatementName("temporal-split-filter-leaves"),
+            TemporalStatement::InEffectInstances => StatementName("temporal-in-effect-instances"),
+            TemporalStatement::InEffectScope => StatementName("temporal-in-effect-scope"),
             TemporalStatement::HeldShapes => StatementName("temporal-held-shapes"),
         }
     }

@@ -53,6 +53,9 @@ pub(crate) mod history_row_decode;
 pub(crate) mod history_row_identity;
 /// The temporal hypertables whose storage policy is reconciled, and their columnstore layout.
 pub mod hypertable_policy;
+/// Reading the instances a split query's filters read in effect when its
+/// window opens.
+pub(crate) mod in_effect_instance_read;
 mod instance_mutation;
 /// The statements addressing one temporal attribute instance by its `instanceId`.
 mod instance_statements;

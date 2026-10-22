@@ -70,6 +70,9 @@ mod forwarding_context;
 pub mod forwarding_url;
 /// Why a single forwarded request failed as a bad gateway.
 pub mod gateway_failure;
+/// Asking a source for the instances a split temporal query's filters read
+/// when its window opens.
+pub mod in_effect_probe;
 /// The warning of a paged answer the walk could not read to its end.
 pub mod incomplete_answer;
 /// The most attribute instances one forwarded temporal query may gather.

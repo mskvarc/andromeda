@@ -151,6 +151,7 @@ mod tests {
             sub_attribute::{element_path::ElementPath, member_field::MemberField},
         },
         sub_attribute_key::path_hash::PathHash,
+        window_reach::WindowReach,
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::{
@@ -190,6 +191,7 @@ mod tests {
             .of(HistoryOf::Entity(SeaExpr::col((Alias::new("e"), Alias::new("id")))))
             .axis(AttributeHistory::ObservedAt)
             .interval(TimeInterval::Unbounded)
+            .reach(WindowReach::InsideAndInEffect)
             .build();
         let names = QueryNames {
             attributes: names(),

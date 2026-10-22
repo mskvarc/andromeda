@@ -26,6 +26,7 @@ use andromeda_postgresql_query::{
     history_source::{EvolutionColumns, HistoryBranch, HistoryOf},
     q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, projection as q_filter},
     scope_predicate::{ScopeTarget, condition as scope_condition},
+    window_reach::WindowReach,
 };
 use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
 use andromeda_postgresql_seaquery::pg_array::is_any_of;
@@ -50,17 +51,20 @@ pub(crate) fn value_filter_condition(branch: &HistoryBranch, compiled: &Compiled
     if let Some(q_expr) = compiled.entities.q_expr.as_ref() {
         filters = filters.add(q_filter::compile(
             q_expr,
-            &InstanceScan::History(&windowed_instances(branch, compiled, &of)),
+            &InstanceScan::History(&windowed_instances(branch, compiled, &of, WindowReach::InsideAndInEffect)),
             names,
         ));
         present = true;
     }
-    if let Some(geo) = temporal_geo_existential(branch, compiled, names, &of)? {
+    if let Some(geo) = temporal_geo_existential(branch, compiled, names, &of, WindowReach::InsideAndInEffect)? {
         filters = filters.add(geo);
         present = true;
     }
     if let Some(scope_q) = &compiled.entities.scope_q {
-        filters = filters.add(scope_condition(scope_q, &scope_history_target(branch, compiled, &of)));
+        filters = filters.add(scope_condition(
+            scope_q,
+            &scope_history_target(branch, compiled, &of, WindowReach::InsideAndInEffect),
+        ));
         present = true;
     }
     Ok(present.then(|| exempting_contributed(filters, &compiled.contributed)))
@@ -88,25 +92,28 @@ fn exempting_contributed(filters: Condition, contributed: &ContributedEntities) 
 
 /// The scope-history target a temporal `scopeQ` is read against: a validity
 /// interval of the Evolution `of` names overlapping the query's window on its
-/// Temporal Property (clause 4.18).
-pub(crate) fn scope_history_target(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, of: &HistoryOf) -> ScopeTarget {
+/// Temporal Property (clause 4.18), among the events `reach` names.
+pub(crate) fn scope_history_target(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, of: &HistoryOf, reach: WindowReach) -> ScopeTarget {
     ScopeTarget::history(
         of.clone(), // clone: the target owns the Evolution its probe reads
         compiled.window.timeproperty,
         compiled.window.interval,
         branch.clone(), // clone: the target owns the branch its probe reads
+        reach,
     )
 }
 
 /// The Attribute instances a temporal `q` is checked against (clause 5.7.4.4
 /// step S2): the history rows of the Evolution `of` names valid within the
-/// window on the requested Temporal Property, of every `datasetId`.
-pub(crate) fn windowed_instances(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, of: &HistoryOf) -> HistoryWindow {
+/// window on the requested Temporal Property, of every `datasetId`, those
+/// `reach` names.
+pub(crate) fn windowed_instances(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, of: &HistoryOf, reach: WindowReach) -> HistoryWindow {
     HistoryWindow::builder()
         .branch(branch.clone()) // clone: the window owns the branch its probes read
         .of(of.clone()) // clone: the window owns the Evolution its probes read
         .axis(axis_column(compiled.window.timeproperty))
         .interval(compiled.window.interval)
+        .reach(reach)
         .build()
 }
 
@@ -130,11 +137,12 @@ pub(crate) fn temporal_geo_existential(
     compiled: &CompiledTemporalQuery,
     names: &QueryNames,
     of: &HistoryOf,
+    reach: WindowReach,
 ) -> Result<Option<Condition>, RenderError> {
     let Some(geo) = &compiled.entities.geo else {
         return Ok(None);
     };
-    windowed_instances(branch, compiled, of)
+    windowed_instances(branch, compiled, of, reach)
         .exists_geo(names.attributes.get(&geo.geoproperty), geo)
         .map(Some)
 }
@@ -166,6 +174,7 @@ mod tests {
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
         entity_type_name_key::EntityTypeNameKey,
         history_source::HistoryBranch,
+        window_reach::WindowReach,
     };
     use chrono::{DateTime, Utc};
     use iri_rs::IriBuf;
@@ -284,7 +293,7 @@ mod tests {
 
     /// The geo filter of `compiled` alone, with its bound values.
     fn geo_filter(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames) -> (String, Values) {
-        let condition = temporal_geo_existential(branch, compiled, names, &stage1_evolution())
+        let condition = temporal_geo_existential(branch, compiled, names, &stage1_evolution(), WindowReach::InsideAndInEffect)
             .expect("renders")
             .expect("a geo query");
         Query::select().expr(Expr::val(1)).cond_where(condition).to_owned().build(PostgresQueryBuilder)

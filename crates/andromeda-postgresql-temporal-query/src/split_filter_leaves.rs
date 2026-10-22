@@ -4,12 +4,18 @@
 //!
 //! An entity a Context Source contributed a part of is judged on the union of
 //! its parts. Every leaf of the filters is existential over the instances it
-//! reads, so the leaf holds over the union when it holds over any part, and
-//! the part held here is read with exactly the probes stage 1 conjoins: a
-//! Query Term reads the in-window history and the clause 4.11 instance in
-//! effect when the window opens, the geo-query the in-window `GeoProperty`
-//! instances, a scope requirement the validity intervals overlapping the
-//! window.
+//! reads, so over the instances inside the window a leaf holds over the union
+//! when it holds over any part, and the part held here is read with the probes
+//! stage 1 conjoins, inside the window only: a Query Term reads the in-window
+//! history, the geo-query the in-window `GeoProperty` instances, a scope
+//! requirement the Scope events inside the window. The clause 4.11 instance in
+//! effect when the window opens is the latest of its stream across every part,
+//! which no part decides alone, so it is read apart and judged once the parts
+//! are merged.
+//!
+//! A Query Term crossing a Relationship hop is the exception: the entities it
+//! reaches are read by the store alone, so the part held here decides it over
+//! the window and the instance in effect, as stage 1 does.
 //!
 //! The leaves are read for a list of identifiers over the catalogue, so each
 //! probe names the Evolution by its identifier.
@@ -17,7 +23,7 @@
 use crate::value_filters::{scope_history_target, temporal_geo_existential, windowed_instances};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
-    filter::expression::Expr,
+    filter::{expression::Expr, path::QueryPath},
     split_filter::{FilterLeaf, SplitFilter},
     temporal::compiled::CompiledTemporalQuery,
 };
@@ -27,6 +33,7 @@ use andromeda_postgresql_query::{
     history_source::{HistoryBranch, HistoryOf, entity_rows::entity_rows},
     q_predicate::{instance_scan::InstanceScan, projection as q_filter},
     scope_predicate::pattern_condition,
+    window_reach::WindowReach,
 };
 use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
 use andromeda_postgresql_seaquery::{literal::false_literal, pg_array::is_any_of};
@@ -63,13 +70,17 @@ fn leaf_expression(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, lea
     let of = HistoryOf::Entity(SeaExpr::col((E, TemporalEntities::Id)));
     match leaf {
         FilterLeaf::Term(pred) => {
+            let reach = match pred.path() {
+                QueryPath::Local(_) => WindowReach::Inside,
+                QueryPath::Linked { .. } => WindowReach::InsideAndInEffect,
+            };
             // clone: the compilation reads an expression tree, and the Query
             // Term is borrowed from the query's own
             let term = Expr::Pred(pred.clone());
-            Ok(q_filter::compile(&term, &InstanceScan::History(&windowed_instances(branch, compiled, &of)), names).into())
+            Ok(q_filter::compile(&term, &InstanceScan::History(&windowed_instances(branch, compiled, &of, reach)), names).into())
         }
-        FilterLeaf::Geo(_) => Ok(temporal_geo_existential(branch, compiled, names, &of)?.map_or_else(false_literal, Into::into)),
-        FilterLeaf::ScopeRequirement(pattern) => Ok(pattern_condition(pattern, &scope_history_target(branch, compiled, &of))),
+        FilterLeaf::Geo(_) => Ok(temporal_geo_existential(branch, compiled, names, &of, WindowReach::Inside)?.map_or_else(false_literal, Into::into)),
+        FilterLeaf::ScopeRequirement(pattern) => Ok(pattern_condition(pattern, &scope_history_target(branch, compiled, &of, WindowReach::Inside))),
     }
 }
 
@@ -166,12 +177,17 @@ mod tests {
         assert!(format!("{values:?}").contains("urn:ngsi-ld:Vehicle:2"), "{values:?}");
     }
 
-    /// Clause 5.7.4.4 checks `q` against the Attribute instances of the window,
-    /// and clause 4.11 (Annex C clause C.5.5) counts the instance in effect when
-    /// the window opens: a local leaf reads both, as stage 1 does.
+    /// Clause 5.7.4.4 with clause 4.11: the instance in effect when the window
+    /// opens is the latest across every part, so a local leaf reads the
+    /// instances inside the window only, for `q`, the geo-query and the Scope.
     #[test]
-    fn a_q_leaf_reads_the_window_and_the_instance_in_effect() {
-        let compiled = compiled("\"https://example.com/speed\">100", None, None);
+    fn a_split_leaf_reads_inside_the_window_only() {
+        let geo = GeoQuery {
+            georel: GeoRel::Within,
+            geometry: serde_json::from_value::<Geometry>(serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("point"),
+            geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
+        };
+        let compiled = compiled("\"https://example.com/speed\">100", Some(geo), Some("/Madrid"));
         let (sql, _) = build_filter_leaf_truths(&HistoryBranch::live(), &compiled, &ids(), &speed_known())
             .expect("renders")
             .build(PostgresQueryBuilder);
@@ -179,10 +195,34 @@ mod tests {
             r#") AS "qh" WHERE "qh"."attribute_name_key" ="#,
             r#""qh"."observed_at" >="#,
             r#""re"."id" = "e"."id""#,
-            r#") AS "qs" JOIN LATERAL"#,
         ] {
             assert!(sql.contains(fragment), "{fragment} missing: {sql}");
         }
+        for alias in [r#""qs""#, r#""qe""#, r#""qi""#, r#""sh_next""#] {
+            assert!(!sql.contains(alias), "{alias} read: {sql}");
+        }
+        assert!(sql.contains(r#""sh"."observed_at" >="#), "{sql}");
+    }
+
+    /// A hop's linked entities are read by the store alone, so a Query Term
+    /// crossing one still reads the local instance in effect.
+    #[test]
+    fn a_hop_leaf_still_reads_the_instance_in_effect() {
+        let compiled = compiled("\"https://example.com/parkedIn\"{\"https://example.com/name\"}==\"Lot\"", None, None);
+        let names = QueryNames {
+            attributes: ResolvedNames::from_pairs([
+                (
+                    "https://example.com/parkedIn".parse().expect("valid attribute name"),
+                    AttributeNameKey::from(11),
+                ),
+                ("https://example.com/name".parse().expect("valid attribute name"), AttributeNameKey::from(12)),
+            ]),
+            types: ResolvedNames::default(),
+        };
+        let sql = build_filter_leaf_truths(&HistoryBranch::live(), &compiled, &ids(), &names)
+            .expect("renders")
+            .to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#"AS "qe_ln1""#), "{sql}");
     }
 
     /// Clause 5.7.4.4: the leaves of a split query judge the part held here,

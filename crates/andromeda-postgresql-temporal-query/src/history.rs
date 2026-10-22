@@ -117,7 +117,14 @@ pub(crate) fn represented_instances(branch: &HistoryBranch, of: &HistoryOf, comp
 /// the ranked and unranked shapes and the aggregation so none can reach a row
 /// the others cannot.
 pub(crate) fn base_history_source(select: &mut SelectStatement, branch: &HistoryBranch, of: &HistoryOf) {
-    select.from(attribute_rows(branch, of, Ah)).join_as(
+    select.from(attribute_rows(branch, of, Ah));
+    join_attribute_names(select);
+}
+
+/// Join the name of the attribute every row read under [`Ah`] keys, which
+/// [`project_base_columns`] projects.
+pub(crate) fn join_attribute_names(select: &mut SelectStatement) {
+    select.join_as(
         JoinType::Join,
         AttributeNames::Table,
         An,

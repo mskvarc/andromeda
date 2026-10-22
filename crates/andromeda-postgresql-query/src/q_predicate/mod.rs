@@ -101,6 +101,7 @@
 
 pub mod attribute_names;
 pub mod equality_term;
+pub mod history_aliases;
 pub mod history_window;
 pub mod in_effect_instance;
 pub mod instance_row;

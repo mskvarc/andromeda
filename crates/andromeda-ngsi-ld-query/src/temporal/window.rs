@@ -165,6 +165,25 @@ pub struct TemporalWindow {
     pub timeproperty: TimeProp,
 }
 
+impl TemporalWindow {
+    /// The instant at which an instance placed before the window may still be
+    /// in effect, if any.
+    ///
+    /// Clause 4.11 selects the values "valid within the specified timeframe",
+    /// which Annex C clause C.5.5 reads as including the value a stream held
+    /// when the window opens. Every instance before a `before` bound lies in
+    /// the window already, and an unbounded window holds every instance. On
+    /// `deletedAt` the instance in effect at the start is a deletion, which
+    /// records no value (clause 4.5.7), so no window on it has one.
+    #[must_use]
+    pub const fn in_effect_start(&self) -> Option<DateTime<Utc>> {
+        match (self.timeproperty, self.interval.opening()) {
+            (TimeProp::Deleted, _) | (_, None) => None,
+            (TimeProp::Observed | TimeProp::Created | TimeProp::Modified, Some(start)) => Some(*start),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,6 +192,23 @@ mod tests {
 
     fn instant(raw: &str) -> DateTime<Utc> {
         raw.parse::<NgsiLdDateTime>().expect("valid instant").get()
+    }
+
+    /// Clause 4.11 with Annex C clause C.5.5: only a window with a start, on
+    /// an axis other than `deletedAt`, has an instance in effect before it.
+    #[test]
+    fn only_a_window_with_a_start_off_deleted_at_has_an_in_effect_start() {
+        let start = instant("2024-01-01T00:00:00Z");
+        let end = instant("2024-02-01T00:00:00Z");
+        let window = |timeproperty, interval| TemporalWindow::builder().timeproperty(timeproperty).interval(interval).build();
+        for interval in [TimeInterval::After(start), TimeInterval::Between { from: start, to: end }] {
+            assert_eq!(window(TimeProp::Observed, interval).in_effect_start(), Some(start), "{interval:?}");
+            assert_eq!(window(TimeProp::Modified, interval).in_effect_start(), Some(start), "{interval:?}");
+            assert_eq!(window(TimeProp::Deleted, interval).in_effect_start(), None, "{interval:?}");
+        }
+        for interval in [TimeInterval::Before(end), TimeInterval::Unbounded] {
+            assert_eq!(window(TimeProp::Observed, interval).in_effect_start(), None, "{interval:?}");
+        }
     }
 
     #[test]

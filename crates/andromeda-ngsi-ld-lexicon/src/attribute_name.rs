@@ -1,6 +1,6 @@
 //! The name under which an attribute is keyed inside an entity.
 
-use crate::reference::{NgsiLdReferenceError, validate_ngsi_ld_name};
+use crate::reference::{NgsiLdReference, NgsiLdReferenceError, validate_ngsi_ld_name};
 use compact_str::CompactString;
 use derive_more::{AsRef, Deref, Display, Into};
 use serde::{Deserialize, Serialize};
@@ -21,6 +21,16 @@ validated_ngsi_name! {
     derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, AsRef, Display, Deref, Into),
     as_ref(str),
     borrow_str
+}
+
+// Hand-written: no derive converts between two newtypes. Total, because an
+// attribute name and a reference are checked against one grammar
+// (`validate_ngsi_ld_name`), so a reference naming a `GeoProperty` names the
+// attribute that keys it.
+impl From<&NgsiLdReference> for AttributeName {
+    fn from(reference: &NgsiLdReference) -> AttributeName {
+        AttributeName(CompactString::from(reference.as_str()))
+    }
 }
 
 #[cfg(test)]

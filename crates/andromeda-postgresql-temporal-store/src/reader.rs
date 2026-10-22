@@ -324,6 +324,15 @@ impl TemporalHistoryReader for TemporalRepository {
         self.read_filter_leaf_truths(&branch_of(scope), compiled, entity_ids).await
     }
 
+    async fn in_effect_instances(
+        &self,
+        scope: &TemporalReadScope<'_>,
+        compiled: &CompiledTemporalQuery,
+        entity_ids: &[Identifier],
+    ) -> Result<HashMap<Identifier, Vec<TemporalHistoryRow>>, TemporalError> {
+        self.read_in_effect_instances(&branch_of(scope), compiled, entity_ids).await
+    }
+
     async fn query_entity_history(
         &self,
         scope: &TemporalReadScope<'_>,
