@@ -137,7 +137,15 @@ where
 -- indexed whole on each axis a window can open on: one entry per chunk is
 -- read however long the stream. `deletedAt` places every row on its own
 -- column and opens no window with an instance in effect.
-create index idx_attribute_history_stream_observed_placement on attribute_history (stream_key, (coalesce(observed_at, deleted_at)) desc);
+--
+-- A row with neither `observedAt` nor `deletedAt` is placed nowhere on the
+-- `observedAt` axis, and the read bounds the placement from above, which no
+-- NULL placement passes, so that index holds only the rows it can return.
+-- Every instance carries `createdAt` and `modifiedAt` (clause 4.8), so the
+-- other two hold every row.
+create index idx_attribute_history_stream_observed_placement on attribute_history (stream_key, (coalesce(observed_at, deleted_at)) desc)
+where
+    coalesce(observed_at, deleted_at) is not null;
 
 create index idx_attribute_history_stream_created_placement on attribute_history (stream_key, (coalesce(created_at, deleted_at)) desc);
 
