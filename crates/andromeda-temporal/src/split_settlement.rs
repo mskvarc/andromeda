@@ -67,7 +67,7 @@ impl TemporalService {
                 // A hop leaf is decided by the store over the local part
                 // alone; an answered part names linked entities this broker
                 // reads nothing of here.
-                .or(&filter.truths_of(&AnsweredEvolution::of(answer), NoLinkedEntities));
+                .or(&filter.truths_of(&AnsweredEvolution::of(answer, compiled.window), NoLinkedEntities));
         }
         let retained = entity_ids
             .into_iter()

@@ -6,9 +6,14 @@
 //! `deletedAt` (clauses 4.5.7, 5.6.11, 5.6.12).
 
 use crate::{
-    document::{attribute_member::AttributeMember, slot::Slot, written_value::ValueSlot},
+    document::{
+        attribute_member::AttributeMember,
+        slot::Slot,
+        written_value::{ValueSlot, WrittenValue},
+    },
     proof_seals::ProofSeals,
 };
+use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
@@ -17,6 +22,7 @@ use andromeda_ngsi_ld_lexicon::{
     time::{date_time::NgsiLdDateTime, system_instant::SystemInstant},
     time_prop::TimeProp,
 };
+use andromeda_ngsi_ld_query::temporal::window::TemporalWindow;
 use cefact_units::UnitCode;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
@@ -207,6 +213,35 @@ impl InstanceDocument {
             TimeProp::Created => self.created_at.map(SystemInstant::get),
             TimeProp::Modified => self.modified_at.map(SystemInstant::get),
             TimeProp::Deleted => self.deleted_at.map(NgsiLdDateTime::get),
+        }
+    }
+
+    /// Whether the instance lies in `window`: it carries an instant on the
+    /// window's time property (clause 4.5.7) inside its interval (clause
+    /// 4.11). An instance with no instant there lies in no window, an
+    /// unbounded one included.
+    #[must_use]
+    pub fn lies_within(&self, window: TemporalWindow) -> bool {
+        self.instant_on(window.timeproperty).is_some_and(|instant| window.interval.holds(instant))
+    }
+
+    /// The geometry the instance sets as its value, `None` for any other value
+    /// or for none.
+    #[must_use]
+    pub const fn geometry(&self) -> Option<&GeometryForm> {
+        match &self.value {
+            ValueSlot::Set(WrittenValue::Geometry(geometry)) => Some(geometry.form()),
+            ValueSlot::Set(
+                WrittenValue::Value(_)
+                | WrittenValue::Object(_)
+                | WrittenValue::LanguageMap(_)
+                | WrittenValue::Vocab(_)
+                | WrittenValue::Json(_)
+                | WrittenValue::ValueList(_)
+                | WrittenValue::ObjectList(_),
+            )
+            | ValueSlot::Absent
+            | ValueSlot::Remove(_) => None,
         }
     }
 

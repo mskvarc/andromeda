@@ -7,13 +7,21 @@
 //! as they read any other entity. The reified Scope (clause 4.5.6) is the
 //! history of the paths the entity is in, not an attribute, so it is read as
 //! the paths it dates.
+//!
+//! A leaf reads the attribute instances lying in the query's window, as the
+//! local leaf does: an instance carrying no instant on the window's Temporal
+//! Property is represented by no read on it (clause 4.5.7), so it satisfies no
+//! leaf even when a source answers with it.
 
 use crate::{reified_scope::value_observations, scope_observation::ScopeObservation};
 use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument};
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::path::ScopePath};
 use andromeda_ngsi_ld_model::temporal::temporal_document::TemporalDocument;
-use andromeda_ngsi_ld_query::queried_entity::{attribute_reading::QueriedEntity, located_entity::LocatedEntity, scoped_entity::ScopedEntity};
+use andromeda_ngsi_ld_query::{
+    queried_entity::{attribute_reading::QueriedEntity, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
+    temporal::window::TemporalWindow,
+};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use std::borrow::Cow;
 
@@ -24,18 +32,20 @@ pub(crate) struct AnsweredEvolution<'a> {
     document: &'a EntityDocument,
     /// The paths the answer's reified Scope instances name (clause 4.5.6).
     scopes: Vec<ScopePath>,
+    /// The window whose attribute instances the leaves read.
+    window: TemporalWindow,
 }
 
 impl<'a> AnsweredEvolution<'a> {
-    /// The part `answer` is.
-    pub(crate) fn of(answer: &'a TemporalDocument) -> AnsweredEvolution<'a> {
+    /// The part `answer` is, read over `window`.
+    pub(crate) fn of(answer: &'a TemporalDocument, window: TemporalWindow) -> AnsweredEvolution<'a> {
         let document = answer.entity();
         let scopes = document
             .attributes()
             .get(expanded_properties::SCOPE.as_str())
             .map(reified_paths)
             .unwrap_or_default();
-        AnsweredEvolution { document, scopes }
+        AnsweredEvolution { document, scopes, window }
     }
 }
 
@@ -60,7 +70,10 @@ impl<'a> QueriedEntity<'a> for &'a AnsweredEvolution<'a> {
     fn attribute_instances(self, attribute: &AttributeName) -> impl Iterator<Item = &'a InstanceDocument> {
         // The Scope is not an attribute a filter reads.
         let named_scope = attribute.as_str() == expanded_properties::SCOPE.as_str();
-        self.document.attribute_instances(attribute).filter(move |_| !named_scope)
+        let window = self.window;
+        self.document
+            .attribute_instances(attribute)
+            .filter(move |instance| !named_scope && instance.lies_within(window))
     }
 
     fn types(self) -> impl Iterator<Item = &'a EntityTypeName> {
@@ -70,7 +83,8 @@ impl<'a> QueriedEntity<'a> for &'a AnsweredEvolution<'a> {
 
 impl<'a> LocatedEntity<'a> for &'a AnsweredEvolution<'a> {
     fn geo_property_geometries(self, attribute: &AttributeName) -> impl Iterator<Item = Cow<'a, GeometryForm>> {
-        self.document.geo_property_geometries(attribute)
+        self.attribute_instances(attribute)
+            .filter_map(|instance| instance.geometry().map(Cow::Borrowed))
     }
 }
 
@@ -86,7 +100,7 @@ mod tests {
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
-    use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
+    use andromeda_ngsi_ld_lexicon::{scope::path::ScopePath, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_model::{
         received::ReceivedElement,
         temporal::{received_temporal::ReceivedTemporalEntities, temporal_body::TemporalBody, temporal_document::TemporalDocument},
@@ -96,6 +110,7 @@ mod tests {
         queried_entity::{linked_entities::NoLinkedEntities, scoped_entity::ScopedEntity},
         scope::query::ScopeQuery,
         split_filter::{LeafTruths, SplitFilter},
+        temporal::window::{TemporalWindow, TimeInterval},
     };
     use serde_json::{Value, json};
 
@@ -137,9 +152,21 @@ mod tests {
         expansion.temporal(entity).await.expect("the answer expands")
     }
 
-    /// The truths of the leaves of `selection` over `answer`.
+    /// A window on `observedAt` over `interval`.
+    fn observed(interval: TimeInterval) -> TemporalWindow {
+        TemporalWindow::builder().timeproperty(TimeProp::Observed).interval(interval).build()
+    }
+
+    /// The truths of the leaves of `selection` over `answer`, read over
+    /// `window`.
+    fn truths_over(selection: &EntitySelection, answer: &TemporalDocument, window: TemporalWindow) -> LeafTruths {
+        SplitFilter::of(selection).truths_of(&AnsweredEvolution::of(answer, window), NoLinkedEntities)
+    }
+
+    /// The truths of the leaves of `selection` over `answer`, read over an
+    /// unbounded window.
     fn truths_of(selection: &EntitySelection, answer: &TemporalDocument) -> LeafTruths {
-        SplitFilter::of(selection).truths_of(&AnsweredEvolution::of(answer), NoLinkedEntities)
+        truths_over(selection, answer, observed(TimeInterval::Unbounded))
     }
 
     /// Clause 4.5.7: the instances of an answered attribute are the ones the
@@ -196,9 +223,40 @@ mod tests {
         }))
         .await;
         let madrid = selection(None, Some("/Madrid"));
-        let part = AnsweredEvolution::of(&answer);
+        let part = AnsweredEvolution::of(&answer, observed(TimeInterval::Unbounded));
         let scopes: Vec<&ScopePath> = ScopedEntity::scopes(&part).collect();
         pretty_assertions::assert_eq!(scopes, vec![&"/Madrid".parse::<ScopePath>().expect("a scope path")]);
         assert!(SplitFilter::of(&madrid).holds(&truths_of(&madrid, &answer)));
+    }
+
+    /// Clause 4.5.7: an instance carrying no `observedAt` is represented by no
+    /// read on `observedAt`, and one outside the window is no instance of it,
+    /// so neither satisfies a leaf of a query on that window, as neither does
+    /// locally.
+    #[tokio::test]
+    async fn undated_remote_instances_do_not_satisfy_a_window_leaf() {
+        let answer = answered(&json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "speed": [
+                {"type": "Property", "value": 60},
+                {"type": "Property", "value": 70, "observedAt": "2020-08-01T11:00:00Z"},
+                {"type": "Property", "value": 40, "observedAt": "2020-08-01T12:30:00Z"}
+            ]
+        }))
+        .await;
+        let above = selection(Some("\"https://example.com/speed\">50"), None);
+        let noon = "2020-08-01T12:00:00Z".parse::<NgsiLdDateTime>().expect("a valid instant").get();
+        for interval in [TimeInterval::Unbounded, TimeInterval::After(noon)] {
+            let held = truths_over(&above, &answer, observed(interval));
+            pretty_assertions::assert_eq!(SplitFilter::of(&above).holds(&held), interval == TimeInterval::Unbounded, "{interval:?}");
+        }
+        let undated_only = answered(&json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "speed": [{"type": "Property", "value": 60}]
+        }))
+        .await;
+        assert!(!SplitFilter::of(&above).holds(&truths_of(&above, &undated_only)));
     }
 }

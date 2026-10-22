@@ -322,14 +322,23 @@ impl HistoryWindow {
 
     /// The instances of the Entity, of every dataset, narrowed to those inside
     /// the interval that pass `test` and carry a value.
+    ///
+    /// An instance carrying no instant on the axis lies in no interval, an
+    /// unbounded one included: clause 4.5.7 places every instance of a
+    /// temporal representation at the instant its Temporal Property records,
+    /// so no read on the axis represents it, and the filters judge the
+    /// instances the read represents.
     fn inside_probe(&self, test: Condition, aliases: &HistoryAliases) -> SelectStatement {
+        let instant = aliases.instance_column(self.axis);
+        let inside = within_interval(&instant, &self.interval);
         let mut probe = Query::select();
         probe
             .expr(int_literal(1))
             .from(attribute_rows(&self.branch, &self.of, aliases.instance()))
             .cond_where(test)
             .and_where(Self::carries_a_value(aliases))
-            .cond_where(within_interval(&aliases.instance_column(self.axis), &self.interval));
+            .and_where(SeaExpr::expr(instant).is_not_null())
+            .cond_where(inside);
         probe
     }
 
@@ -498,6 +507,17 @@ mod tests {
         assert!(inside.contains(r#""qh"."observed_at" < '2019-02-01"#), "{inside}");
         let in_effect = in_effect.expect("an interval with a start has an in-effect probe");
         assert!(!in_effect.contains("2019-02-01"), "{in_effect}");
+    }
+
+    /// Clause 4.5.7: an instance with no instant on the axis is represented by
+    /// no read on it, so the inside probe never reads one, over an unbounded
+    /// interval either.
+    #[test]
+    fn the_inside_probe_reads_only_instances_placed_on_the_axis() {
+        for interval in [TimeInterval::Unbounded, after_2019()] {
+            let (inside, _) = probes_of(&window(interval), Condition::all());
+            assert!(inside.contains(r#""qh"."observed_at" IS NOT NULL"#), "{inside}");
+        }
     }
 
     /// Every instance before a `before` bound is already inside the interval,

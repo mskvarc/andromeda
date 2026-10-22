@@ -176,7 +176,7 @@ impl TemporalDocument {
     pub fn retain_within(&mut self, window: TemporalWindow) {
         self.entity.attributes_mut().retain(|_, member| match member {
             AttributeMember::Instances(instances) => {
-                instances.retain(|instance| instance.instant_on(window.timeproperty).is_some_and(|instant| window.interval.holds(instant)));
+                instances.retain(|instance| instance.lies_within(window));
                 !instances.is_empty()
             }
             AttributeMember::Remove => false,

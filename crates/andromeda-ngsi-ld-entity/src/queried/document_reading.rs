@@ -6,14 +6,7 @@
 //! scope it sets.
 
 use crate::{
-    document::{
-        EntityDocument,
-        attribute_member::AttributeMember,
-        instance_document::InstanceDocument,
-        slot::Slot,
-        written_value::{ValueSlot, WrittenValue},
-    },
-    geo_value::GeoValue,
+    document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot},
     scopes::Scopes,
 };
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
@@ -35,20 +28,8 @@ impl<'a> QueriedEntity<'a> for &'a EntityDocument {
 
 impl<'a> LocatedEntity<'a> for &'a EntityDocument {
     fn geo_property_geometries(self, attribute: &AttributeName) -> impl Iterator<Item = Cow<'a, GeometryForm>> {
-        self.attribute_instances(attribute).filter_map(|instance| match instance.value() {
-            ValueSlot::Set(WrittenValue::Geometry(geometry)) => Some(Cow::Borrowed(GeoValue::form(geometry))),
-            ValueSlot::Set(
-                WrittenValue::Value(_)
-                | WrittenValue::Object(_)
-                | WrittenValue::LanguageMap(_)
-                | WrittenValue::Vocab(_)
-                | WrittenValue::Json(_)
-                | WrittenValue::ValueList(_)
-                | WrittenValue::ObjectList(_),
-            )
-            | ValueSlot::Absent
-            | ValueSlot::Remove(_) => None,
-        })
+        self.attribute_instances(attribute)
+            .filter_map(|instance| instance.geometry().map(Cow::Borrowed))
     }
 }
 
