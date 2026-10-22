@@ -99,3 +99,63 @@ pub(crate) fn part_document(entity_id: &Identifier, rows: Vec<TemporalHistoryRow
     let entity = EntityDocument::new(Some(entity_id.clone()), Vec::new(), None, None, attributes); // clone: the document owns the identifier it names
     Ok(TemporalDocument::new(entity, EntitySystemTimes::default(), IndexMap::new()))
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::local_in_effect::part_document;
+    use andromeda_ngsi_ld_lexicon::{
+        attribute_name::AttributeName,
+        attribute_type::AttributeType,
+        identifier::Identifier,
+        instance_identity::InstanceIdentity,
+        time::date_time::NgsiLdDateTime,
+        time_prop::TimeProp,
+    };
+    use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance};
+    use andromeda_ngsi_ld_number::JsonNumber;
+
+    /// A window on `createdAt` or `modifiedAt` places the local part's
+    /// instances by their system times, so the document keeps them, and a
+    /// deletion keeps the instant it was deleted at.
+    #[test]
+    fn the_part_keeps_the_system_times_and_the_deletion_instant() {
+        let at = |raw: &str| raw.parse::<NgsiLdDateTime>().expect("a valid instant").get();
+        let entity: Identifier = "urn:ngsi-ld:Vehicle:1".parse().expect("a valid identifier");
+        let speed = |value: TemporalValue, observed: Option<&str>, id: &str| TemporalHistoryRow {
+            attribute_name: "https://example.com/speed".parse::<AttributeName>().expect("a valid attribute IRI"),
+            attribute_type: AttributeType::Property,
+            dataset_id: None,
+            value,
+            observed_at: observed.map(at),
+            recorded_at: at("2020-08-01T11:00:00Z"),
+            created_at: Some(at("2020-08-01T10:00:00Z")),
+            modified_at: Some(at("2020-08-01T11:00:00Z")),
+            instance: EvolutionInstance::Attribute(InstanceIdentity::Verbatim(id.parse().expect("a valid URI"))),
+            metadata: None,
+            stream_extent: StreamExtent::Whole,
+        };
+        let rows = vec![
+            speed(
+                TemporalValue::Number(JsonNumber::try_from(60.0).expect("a finite number")),
+                Some("2020-08-01T10:30:00Z"),
+                "urn:ngsi-ld:Instance:1",
+            ),
+            speed(
+                TemporalValue::Tombstone {
+                    deleted_at: at("2020-08-01T11:30:00Z"),
+                },
+                None,
+                "urn:ngsi-ld:Instance:2",
+            ),
+        ];
+        let part = part_document(&entity, rows).expect("the rows read as instances");
+        let instances = part.entity().attributes().get("https://example.com/speed").expect("speed").instances();
+        pretty_assertions::assert_eq!(instances.len(), 2);
+        let value = instances.first().expect("the value");
+        pretty_assertions::assert_eq!(value.instant_on(TimeProp::Modified), Some(at("2020-08-01T11:00:00Z")));
+        pretty_assertions::assert_eq!(value.instant_on(TimeProp::Created), Some(at("2020-08-01T10:00:00Z")));
+        let deletion = instances.get(1).expect("the deletion");
+        pretty_assertions::assert_eq!(deletion.instant_on(TimeProp::Deleted), Some(at("2020-08-01T11:30:00Z")));
+        pretty_assertions::assert_eq!(part.id(), Some(&entity));
+    }
+}

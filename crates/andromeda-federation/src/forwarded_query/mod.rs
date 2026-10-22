@@ -159,7 +159,7 @@ impl ForwardedQuery {
                 query.push_sys_attrs(params.options.as_ref().and_then(WrittenValue::if_supported).map(|options| options.sys_attrs));
                 query.push_traversal(params.join.map(|join| join.to_string()), params.join_level, params.contained_by.as_deref());
             }
-            ClientQuery::Temporal(params) => {
+            ClientQuery::Temporal(params) | ClientQuery::TemporalContinuation(params) => {
                 let Some(selection) = BlockSelection::of(block, params.id.as_deref(), params.id_pattern.as_ref(), params.entity_type.as_ref(), names).await?
                 else {
                     return Ok(None);
@@ -188,6 +188,16 @@ impl ForwardedQuery {
                 query.push_dataset_ids(params.dataset_id.as_deref());
                 query.push_lang(params.lang.as_ref());
                 query.push_temporal_parameters(params, answer);
+                // Clause 4.5.23: only a continuation asks its holder to walk
+                // Linked Entities; a client's own query or retrieval has them
+                // walked here, and a holder not serving the extension refuses
+                // the parameters.
+                match client {
+                    ClientQuery::TemporalContinuation(_) => {
+                        query.push_traversal(params.join.map(|join| join.to_string()), params.join_level, params.contained_by.as_deref());
+                    }
+                    ClientQuery::Temporal(_) | ClientQuery::EntityQuery(_) | ClientQuery::EntityRetrieve { .. } => {}
+                }
             }
         }
         Ok(Some(query))
@@ -714,6 +724,31 @@ mod tests {
                 "attrs=speed&datasetId=urn%3Angsi-ld%3Ads%3A1&join=flat&joinLevel=2&containedBy=urn%3Angsi-ld%3ABuilding%3A1%2Curn%3Angsi-ld%3ABuilding%3A2"
                     .to_string()
             ]
+        );
+    }
+
+    /// Clause 4.5.23 under `temporal_linked_retrieval`: a client's own
+    /// temporal query has its Linked Entities walked by this broker, so no
+    /// source is sent `join`, `joinLevel` or `containedBy`; the continuation
+    /// of a walk is, to the holder that serves it.
+    #[tokio::test]
+    async fn only_a_temporal_continuation_forwards_the_traversal() {
+        let block = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
+        let query = temporal_query("type=Vehicle&timerel=after&timeAt=2020-01-01T00:00:00Z&join=inline&joinLevel=2&containedBy=urn:ngsi-ld:Building:1");
+        let client = strings(&narrow(ClientQuery::Temporal(&query), &block, SplitEntities::Split).await);
+        let [client] = client.as_slice() else {
+            panic!("one block, one query: {client:?}");
+        };
+        for parameter in ["join=", "joinLevel=", "containedBy="] {
+            assert!(!client.contains(parameter), "{parameter} travels: {client}");
+        }
+        let continuation = strings(&narrow(ClientQuery::TemporalContinuation(&query), &block, SplitEntities::Complete).await);
+        let [continuation] = continuation.as_slice() else {
+            panic!("one block, one query: {continuation:?}");
+        };
+        assert!(
+            continuation.contains("join=inline") && continuation.contains("joinLevel=2") && continuation.contains("containedBy=urn%3Angsi-ld%3ABuilding%3A1"),
+            "{continuation}"
         );
     }
 

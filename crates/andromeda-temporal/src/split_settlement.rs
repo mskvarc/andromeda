@@ -136,3 +136,6 @@ impl TemporalService {
         Ok(SplitSettlement { retained })
     }
 }
+
+#[cfg(test)]
+mod tests;

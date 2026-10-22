@@ -28,8 +28,15 @@ pub enum ClientQuery<'a> {
         /// The retrieval parameters as the client wrote them.
         params: &'a GetEntityParams,
     },
-    /// A temporal query or retrieval (clauses 5.7.3 and 5.7.4).
+    /// A temporal query or retrieval (clauses 5.7.3 and 5.7.4) a client sent.
+    /// Its Linked Entities are walked by this broker once every holder has
+    /// answered, so no source is asked to walk them.
     Temporal(&'a TemporalQueryParameters),
+    /// The continuation of a temporal Linked Entity retrieval this broker
+    /// walks (clause 4.5.23 under `temporal_linked_retrieval`): a retrieval
+    /// of one Linked Entity that asks its holder to walk the levels below it,
+    /// sent only to a holder advertising the extension.
+    TemporalContinuation(&'a TemporalQueryParameters),
 }
 
 impl ClientQuery<'_> {
@@ -38,7 +45,7 @@ impl ClientQuery<'_> {
     pub const fn entity_type(&self) -> Option<&TypeExprRaw> {
         match self {
             ClientQuery::EntityQuery(params) => params.entity_type.as_ref(),
-            ClientQuery::Temporal(params) => params.entity_type.as_ref(),
+            ClientQuery::Temporal(params) | ClientQuery::TemporalContinuation(params) => params.entity_type.as_ref(),
             ClientQuery::EntityRetrieve { params, .. } => params.entity_type.as_ref(),
         }
     }
@@ -48,7 +55,7 @@ impl ClientQuery<'_> {
     pub fn entity_ids(&self) -> Option<&[Identifier]> {
         match self {
             ClientQuery::EntityQuery(params) => params.id.as_deref(),
-            ClientQuery::Temporal(params) => params.id.as_deref(),
+            ClientQuery::Temporal(params) | ClientQuery::TemporalContinuation(params) => params.id.as_deref(),
             ClientQuery::EntityRetrieve { .. } => None,
         }
     }
@@ -58,7 +65,7 @@ impl ClientQuery<'_> {
     pub const fn id_pattern(&self) -> Option<&Pattern> {
         match self {
             ClientQuery::EntityQuery(params) => params.id_pattern.as_ref(),
-            ClientQuery::Temporal(params) => params.id_pattern.as_ref(),
+            ClientQuery::Temporal(params) | ClientQuery::TemporalContinuation(params) => params.id_pattern.as_ref(),
             ClientQuery::EntityRetrieve { .. } => None,
         }
     }
@@ -69,7 +76,7 @@ impl ClientQuery<'_> {
     #[must_use]
     pub fn timeproperty(&self) -> TimeProp {
         match self {
-            ClientQuery::Temporal(params) => params.timeproperty_or_default(),
+            ClientQuery::Temporal(params) | ClientQuery::TemporalContinuation(params) => params.timeproperty_or_default(),
             ClientQuery::EntityQuery(_) | ClientQuery::EntityRetrieve { .. } => TimeProp::Observed,
         }
     }
@@ -80,7 +87,7 @@ impl ClientQuery<'_> {
     pub const fn scope_q(&self) -> Option<&ScopeQuery> {
         match self {
             ClientQuery::EntityQuery(params) => params.scope_q.as_ref(),
-            ClientQuery::Temporal(params) => params.scope_q.as_ref(),
+            ClientQuery::Temporal(params) | ClientQuery::TemporalContinuation(params) => params.scope_q.as_ref(),
             ClientQuery::EntityRetrieve { .. } => None,
         }
     }

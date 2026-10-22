@@ -108,27 +108,27 @@ impl TemporalHistoryReader for StubBroker {
         &self,
         _scope: &TemporalReadScope<'_>,
         _compiled: &CompiledTemporalQuery,
-        _entity_ids: &[Identifier],
+        entity_ids: &[Identifier],
     ) -> Result<HashMap<Identifier, LeafTruths>, TemporalError> {
-        Err(unsupported("filter_leaf_truths"))
+        Ok(self.leaf_truths_of(entity_ids))
     }
 
     async fn in_effect_instances(
         &self,
         _scope: &TemporalReadScope<'_>,
         _compiled: &CompiledTemporalQuery,
-        _entity_ids: &[Identifier],
+        entity_ids: &[Identifier],
     ) -> Result<HashMap<Identifier, Vec<TemporalHistoryRow>>, TemporalError> {
-        Err(unsupported("in_effect_instances"))
+        Ok(self.in_effect_of(entity_ids))
     }
 
     async fn window_relationship_instances(
         &self,
         _scope: &TemporalReadScope<'_>,
         _compiled: &CompiledTemporalQuery,
-        _entity_ids: &[Identifier],
+        entity_ids: &[Identifier],
     ) -> Result<HashMap<Identifier, Vec<TemporalHistoryRow>>, TemporalError> {
-        Err(unsupported("window_relationship_instances"))
+        Ok(self.window_relationships_of(entity_ids))
     }
 
     async fn query_entity_history(

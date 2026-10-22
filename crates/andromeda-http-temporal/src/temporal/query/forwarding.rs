@@ -363,10 +363,15 @@ pub(crate) struct InEffectRequest<'r> {
 
 #[cfg(test)]
 mod tests {
-    use crate::temporal::query::forwarding::QueryScope;
+    use crate::temporal::query::forwarding::{QueryScope, forwarding_outcome};
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_federation::config::SplitEntities;
+    use andromeda_federation::{config::SplitEntities, entity_budget::EntityBudget, outcome::ForwardReadOutcome, query_forwarding_error::QueryForwardingError};
     use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
+    use axum::{
+        http::{StatusCode, Uri},
+        response::IntoResponse,
+    };
+    use std::num::NonZeroU32;
 
     /// The tenant's ordinary live branch, which a distributed read may leave.
     fn live_target() -> ContextTarget {
@@ -403,5 +408,29 @@ mod tests {
         pretty_assertions::assert_eq!(QueryScope::Local.splitting(SplitEntities::Split), SplitEntities::Complete);
         pretty_assertions::assert_eq!(QueryScope::Distributed.splitting(SplitEntities::Split), SplitEntities::Split);
         pretty_assertions::assert_eq!(QueryScope::Distributed.splitting(SplitEntities::Complete), SplitEntities::Complete);
+    }
+
+    /// Clause 4.12: a probe whose sources answer more entities than one
+    /// request gathers refuses the query as the window query does, with
+    /// `TooManyResults` (403).
+    #[test]
+    fn a_probe_over_its_budget_is_too_many_results() {
+        let budget = EntityBudget::new(NonZeroU32::MIN);
+        let exceeded = budget.charge(2).expect_err("two entities exceed a budget of one");
+        let instance: Uri = "/ngsi-ld/v1/temporal/entities".parse().expect("a valid URI");
+        let Err(refusal) = forwarding_outcome(Err(QueryForwardingError::TooManyResults(exceeded)), &instance) else {
+            panic!("a probe over its budget is refused");
+        };
+        pretty_assertions::assert_eq!(refusal.into_response().status(), StatusCode::FORBIDDEN);
+    }
+
+    /// A forwarding that succeeded hands its outcome on unchanged.
+    #[test]
+    fn a_forwarded_outcome_is_handed_on() {
+        let instance: Uri = "/ngsi-ld/v1/temporal/entities".parse().expect("a valid URI");
+        let Ok(outcome) = forwarding_outcome(Ok(ForwardReadOutcome::empty()), &instance) else {
+            panic!("the outcome is handed on");
+        };
+        assert!(outcome.results.is_empty());
     }
 }

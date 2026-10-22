@@ -80,7 +80,7 @@ impl RemoteTemporalLinkedSource for LinkedForwarding {
         context: &ContextSpec,
     ) -> Result<RemoteResolution<TemporalHistory>, TemporalError> {
         let parameters = linked_temporal_retrieval_parameters(remaining_depth, visited, window);
-        let request = linked_request(id, ClientQuery::Temporal(&parameters), context);
+        let request = linked_request(id, ClientQuery::TemporalContinuation(&parameters), context);
         let forwarded = self.federation.forward_temporal_retrieve(&self.live_target, request).await;
         // Every source holding part of an entity's history contributes it; an
         // instance two of them answer is one instance.

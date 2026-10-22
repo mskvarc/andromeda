@@ -312,4 +312,55 @@ mod tests {
         pretty_assertions::assert_eq!(objects, vec!["urn:ngsi-ld:Parking:1".parse::<Identifier>().expect("a valid identifier")]);
         pretty_assertions::assert_eq!(objects_of([&first].into_iter(), None), Vec::<Identifier>::new());
     }
+
+    /// Clause 4.9: hops nest, so a two-hop term reaches the entity the
+    /// target's own Relationship names, judged over the same window.
+    #[tokio::test]
+    async fn a_two_hop_term_reaches_the_second_level() {
+        let part = answered(&parked()).await;
+        let parking = json!({
+            "id": "urn:ngsi-ld:Parking:1",
+            "type": "Parking",
+            "https://example.com/operator": [{"type": "Relationship", "object": "urn:ngsi-ld:Company:1", "observedAt": "2020-08-01T12:20:00Z"}]
+        });
+        let company = |name: &str| {
+            json!({
+                "id": "urn:ngsi-ld:Company:1",
+                "type": "Company",
+                "https://example.com/name": [{"type": "Property", "value": name, "observedAt": "2020-08-01T12:30:00Z"}]
+            })
+        };
+        let selection = EntitySelection::builder()
+            .q_expr(Some(
+                "\"https://example.com/parkedIn\"{\"https://example.com/operator\"{\"https://example.com/name\"}}==\"Acme\""
+                    .parse()
+                    .expect("a valid q"),
+            ))
+            .build();
+        let filter = SplitFilter::of(&selection);
+        for (name, expected) in [("Acme", true), ("Other", false)] {
+            let documents = vec![answered(&parking).await, answered(&company(name)).await];
+            let linked = HopTargets::of(&documents, noon_to_one());
+            pretty_assertions::assert_eq!(
+                filter.holds(&filter.truths_of(&AnsweredEvolution::of(&part, noon_to_one()), &linked)),
+                expected,
+                "{name}"
+            );
+        }
+    }
+
+    /// Clause 4.5.22: a `ListRelationship` names every object of its list.
+    #[tokio::test]
+    async fn a_list_relationship_names_every_object() {
+        let part = answered(&json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            PARKED_IN: [{"type": "ListRelationship", "objectList": [{"object": "urn:ngsi-ld:Parking:1"}, {"object": "urn:ngsi-ld:Parking:2"}], "observedAt": "2020-08-01T12:10:00Z"}]
+        }))
+        .await;
+        let parked_in: AttributeName = PARKED_IN.parse().expect("a valid attribute name");
+        let level = vec![&parked_in];
+        let objects: Vec<String> = objects_of([&part].into_iter(), Some(&level)).iter().map(ToString::to_string).collect();
+        pretty_assertions::assert_eq!(objects, ["urn:ngsi-ld:Parking:1", "urn:ngsi-ld:Parking:2"]);
+    }
 }

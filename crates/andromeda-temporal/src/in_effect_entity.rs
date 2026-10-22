@@ -301,4 +301,69 @@ mod tests {
         assert!(holds(&madrid, &[&local]));
         assert!(!holds(&madrid, &[&local, &remote, &later]));
     }
+
+    /// Clause 4.9 matches "any Value of such instances": every instance at the
+    /// latest placement is in effect, a repeated write at one instant included.
+    #[tokio::test]
+    async fn every_instance_at_the_latest_placement_is_in_effect() {
+        let local = located(&json!([point(0.0, 0.0, "2020-08-01T11:00:00Z")])).await;
+        let remote = located(&json!([point(13.4, 52.5, "2020-08-01T11:00:00Z")])).await;
+        assert!(holds(&within_berlin(), &[&local, &remote]));
+    }
+
+    /// Clause 4.11 opens the window inclusively: an instance at the start, or
+    /// later, lies inside the window and is never the one in effect.
+    #[tokio::test]
+    async fn an_instance_at_or_after_the_start_is_not_in_effect() {
+        let at_start = located(&json!([point(13.4, 52.5, "2020-08-01T12:00:00Z")])).await;
+        let later = located(&json!([point(13.4, 52.5, "2020-08-01T12:30:00Z")])).await;
+        assert!(!holds(&within_berlin(), &[&at_start, &later]));
+    }
+
+    /// A window with no start holds every instance before its end already, so
+    /// no instance is in effect before it.
+    #[tokio::test]
+    async fn a_window_without_a_start_merges_nothing() {
+        let part = located(&json!([point(13.4, 52.5, "2020-08-01T11:00:00Z")])).await;
+        let before = TemporalWindow::builder()
+            .timeproperty(TimeProp::Observed)
+            .interval(TimeInterval::Before(
+                "2020-08-01T13:00:00Z".parse::<NgsiLdDateTime>().expect("a valid instant").get(),
+            ))
+            .build();
+        assert!(InEffectEntity::merged(&[&part], before).is_none());
+    }
+
+    /// Clause 5.2.21: each axis places on its own Temporal Property, so on
+    /// `modifiedAt` the latest modification wins whatever was observed.
+    #[tokio::test]
+    async fn the_window_axis_places_the_instances() {
+        let older = answered(&json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "speed": [{"type": "Property", "value": 60, "observedAt": "2020-08-01T11:50:00Z", "modifiedAt": "2020-08-01T11:00:00Z"}]
+        }))
+        .await;
+        let newer = answered(&json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "speed": [{"type": "Property", "value": 40, "observedAt": "2020-08-01T11:10:00Z", "modifiedAt": "2020-08-01T11:30:00Z"}]
+        }))
+        .await;
+        let above = EntitySelection::builder()
+            .q_expr(Some("\"https://example.com/speed\">50".parse().expect("a valid q")))
+            .build();
+        let filter = SplitFilter::of(&above);
+        let at = |raw: &str| raw.parse::<NgsiLdDateTime>().expect("a valid instant").get();
+        let on = |timeproperty| {
+            TemporalWindow::builder()
+                .timeproperty(timeproperty)
+                .interval(TimeInterval::After(at("2020-08-01T12:00:00Z")))
+                .build()
+        };
+        let observed = InEffectEntity::merged(&[&older, &newer], on(TimeProp::Observed)).expect("a window with a start");
+        assert!(filter.holds(&filter.truths_of(&observed, NoLinkedEntities)));
+        let modified = InEffectEntity::merged(&[&older, &newer], on(TimeProp::Modified)).expect("a window with a start");
+        assert!(!filter.holds(&filter.truths_of(&modified, NoLinkedEntities)));
+    }
 }

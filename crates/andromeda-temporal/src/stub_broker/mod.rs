@@ -32,7 +32,7 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalAggregationRow, TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance};
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_query::{entity_selection::EntitySelection, geo::near_distance_band::NearDistanceBand};
+use andromeda_ngsi_ld_query::{entity_selection::EntitySelection, geo::near_distance_band::NearDistanceBand, split_filter::LeafTruths};
 use async_trait::async_trait;
 use std::{
     collections::HashMap,
@@ -72,6 +72,12 @@ pub(crate) struct StubBroker {
     listed_selections: Mutex<Vec<EntitySelection>>,
     /// The page of history an entity reads as in place of its links.
     pages: HashMap<Identifier, Vec<TemporalHistoryRow>>,
+    /// What the store reads of a split query's filter leaves over each entity.
+    leaf_truths: HashMap<Identifier, LeafTruths>,
+    /// What each entity holds in effect when a split query's window opens.
+    in_effect: HashMap<Identifier, Vec<TemporalHistoryRow>>,
+    /// Each entity's hop Relationship instances inside a split query's window.
+    window_relationships: HashMap<Identifier, Vec<TemporalHistoryRow>>,
 }
 
 /// Whether the stubbed entities have current state.
@@ -92,7 +98,54 @@ impl StubBroker {
             merged_answers: Mutex::new(Vec::new()),
             listed_selections: Mutex::new(Vec::new()),
             pages: HashMap::new(),
+            leaf_truths: HashMap::new(),
+            in_effect: HashMap::new(),
+            window_relationships: HashMap::new(),
         }
+    }
+
+    /// The same broker reading `truths` as a split query's leaves over
+    /// `entity_id`.
+    pub(crate) fn judging(mut self, entity_id: Identifier, truths: LeafTruths) -> StubBroker {
+        self.leaf_truths.insert(entity_id, truths);
+        self
+    }
+
+    /// The same broker holding `rows` of `entity_id` in effect when a split
+    /// query's window opens.
+    pub(crate) fn holding_in_effect(mut self, entity_id: Identifier, rows: Vec<TemporalHistoryRow>) -> StubBroker {
+        self.in_effect.insert(entity_id, rows);
+        self
+    }
+
+    /// The same broker holding `rows` of `entity_id`'s hop Relationships
+    /// inside a split query's window.
+    pub(crate) fn relating(mut self, entity_id: Identifier, rows: Vec<TemporalHistoryRow>) -> StubBroker {
+        self.window_relationships.insert(entity_id, rows);
+        self
+    }
+
+    /// The entries of `held` for the entities of `entity_ids`.
+    fn of_entities<T: Clone>(held: &HashMap<Identifier, T>, entity_ids: &[Identifier]) -> HashMap<Identifier, T> {
+        entity_ids
+            .iter()
+            .filter_map(|entity_id| Some((entity_id.clone(), held.get(entity_id)?.clone()))) // clone: every read answers what the broker holds
+            .collect()
+    }
+
+    /// The leaf truths the broker reads over `entity_ids`.
+    pub(crate) fn leaf_truths_of(&self, entity_ids: &[Identifier]) -> HashMap<Identifier, LeafTruths> {
+        StubBroker::of_entities(&self.leaf_truths, entity_ids)
+    }
+
+    /// The in-effect rows the broker holds of `entity_ids`.
+    pub(crate) fn in_effect_of(&self, entity_ids: &[Identifier]) -> HashMap<Identifier, Vec<TemporalHistoryRow>> {
+        StubBroker::of_entities(&self.in_effect, entity_ids)
+    }
+
+    /// The window Relationship rows the broker holds of `entity_ids`.
+    pub(crate) fn window_relationships_of(&self, entity_ids: &[Identifier]) -> HashMap<Identifier, Vec<TemporalHistoryRow>> {
+        StubBroker::of_entities(&self.window_relationships, entity_ids)
     }
 
     /// The same graph with `entity_id` known and reading as `rows`, whatever

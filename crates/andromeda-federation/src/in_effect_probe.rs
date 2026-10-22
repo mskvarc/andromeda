@@ -57,8 +57,12 @@ impl InEffectProbe<'_> {
     ///
     /// The probe keeps the client's entity selection and context source
     /// filter, and reads the filter attributes alone: the first attribute
-    /// every Query Term reads, the `GeoProperty` of the geo-query, and the
-    /// Scope of a scope query. No filter travels, as under `splitEntities`.
+    /// every Query Term reads and the `GeoProperty` of the geo-query. No
+    /// filter travels, as under `splitEntities`. A scope query reads the Scope,
+    /// which is no Attribute, and clause 5.7.4.4 selects an Entity by its
+    /// Attribute instances alone, so `attrs` naming the Scope would select
+    /// nothing: a probe for a scope query names no `attrs`, and every
+    /// attribute's latest instance and the Scope come back.
     ///
     /// # Errors
     ///
@@ -71,9 +75,10 @@ impl InEffectProbe<'_> {
             return Ok(None);
         };
         let attributes = filter_attributes(client)?;
-        if attributes.is_empty() {
+        if attributes.is_empty() && client.scope_q.is_none() {
             return Ok(None);
         }
+        let attrs = client.scope_q.is_none().then_some(attributes);
         let timeproperty = match self.reading {
             InEffectReading::Placed => client.timeproperty_or_default(),
             InEffectReading::Deletion => TimeProp::Deleted,
@@ -84,7 +89,7 @@ impl InEffectProbe<'_> {
             entity_type: client.entity_type.clone(),
             id_pattern: client.id_pattern.clone(),
             csf: client.csf.clone(),
-            attrs: Some(attributes),
+            attrs,
             timerel: Some(TimeRel::Before),
             time_at: Some(start),
             timeproperty: Some(timeproperty),
@@ -95,13 +100,12 @@ impl InEffectProbe<'_> {
     }
 }
 
-/// The attributes the value, geo and scope filters of `client` read, in that
-/// order and without repetition.
+/// The attributes the value and geo filters of `client` read, in that order
+/// and without repetition.
 ///
 /// # Errors
 ///
-/// Returns [`NgsiLdReferenceError`] when `location` or `scope` is not an
-/// attribute name.
+/// Returns [`NgsiLdReferenceError`] when `location` is not an attribute name.
 fn filter_attributes(client: &TemporalQueryParameters) -> Result<Vec<AttributeName>, NgsiLdReferenceError> {
     let mut attributes: Vec<AttributeName> = client.q.as_ref().map(referenced_attributes).unwrap_or_default().into_iter().cloned().collect(); // clone: the probe owns the names it forwards
     if let Some(geo) = client.geo.0.as_ref() {
@@ -111,9 +115,6 @@ fn filter_attributes(client: &TemporalQueryParameters) -> Result<Vec<AttributeNa
             None => core_attribute(compact_properties::LOCATION)?,
         };
         attributes.push(geoproperty);
-    }
-    if client.scope_q.is_some() {
-        attributes.push(core_attribute(compact_properties::SCOPE)?);
     }
     let mut distinct: Vec<AttributeName> = Vec::with_capacity(attributes.len());
     for attribute in attributes {
@@ -191,7 +192,7 @@ mod tests {
     use serde_json::json;
 
     const WINDOW: &str = "timerel=between&timeAt=2020-08-01T12:00:00Z&endTimeAt=2020-08-01T13:00:00Z";
-    const FILTERS: &str = "q=speed>50&georel=within&geometry=Polygon&coordinates=[[[13,52],[14,52],[14,53],[13,53],[13,52]]]&scopeQ=/Madrid";
+    const FILTERS: &str = "q=speed>50&georel=within&geometry=Polygon&coordinates=[[[13,52],[14,52],[14,53],[13,53],[13,52]]]";
 
     fn registration() -> ContextSourceRegistration {
         serde_json::from_value(json!({
@@ -252,7 +253,7 @@ mod tests {
             .await
             .expect("a window with a start is probed");
         for fragment in [
-            "attrs=speed%2Clocation%2Cscope",
+            "attrs=speed%2Clocation",
             "timerel=before",
             "timeAt=2020-08-01T12%3A00%3A00Z",
             "timeproperty=observedAt",
@@ -263,6 +264,21 @@ mod tests {
         for parameter in ["q=", "georel=", "geometry=", "scopeQ=", "endTimeAt=", "datasetId=", "brand"] {
             assert!(!query.contains(parameter), "{parameter} travels: {query}");
         }
+    }
+
+    /// Clause 5.7.4.4 selects an Entity by its Attribute instances, and the
+    /// Scope is none, so a probe for a scope query names no `attrs` and the
+    /// Scope comes back beside every attribute's latest instance.
+    #[tokio::test]
+    async fn a_scope_query_probes_every_attribute() {
+        let query = forwarded(&format!("type=Vehicle&{WINDOW}&q=speed>50&scopeQ=/Madrid"), placed())
+            .await
+            .expect("a scope query is probed");
+        assert!(!query.contains("attrs=") && !query.contains("scopeQ") && query.contains("lastN=1"), "{query}");
+        let scope_only = forwarded(&format!("type=Vehicle&{WINDOW}&scopeQ=/Madrid"), placed())
+            .await
+            .expect("a scope query is probed");
+        assert!(!scope_only.contains("attrs="), "{scope_only}");
     }
 
     /// Clause 4.5.7 places a deletion without an instant on the window's
@@ -303,5 +319,65 @@ mod tests {
         ] {
             assert!(forwarded(&query, placed()).await.is_none(), "{query}");
         }
+    }
+
+    /// Clause 4.8: an instance carries its system times only when asked, so a
+    /// probe on `modifiedAt` asks for them, and the deletion probe, on
+    /// `deletedAt`, does not.
+    #[tokio::test]
+    async fn a_probe_on_a_system_time_asks_for_system_attributes() {
+        let query = format!("type=Vehicle&{WINDOW}&timeproperty=modifiedAt&q=speed>50");
+        let placed = forwarded(&query, placed()).await.expect("probed");
+        assert!(placed.contains("timeproperty=modifiedAt") && placed.contains("options=sysAttrs"), "{placed}");
+        let deletion = InEffectProbe {
+            reading: InEffectReading::Deletion,
+            dataset: None,
+        };
+        let deleted = forwarded(&query, deletion).await.expect("probed");
+        assert!(deleted.contains("timeproperty=deletedAt") && !deleted.contains("sysAttrs"), "{deleted}");
+    }
+
+    /// The probe reaches the entities the client's query selects, so the
+    /// identifiers, the identifier pattern and the context source filter
+    /// travel as they do with the window query.
+    #[tokio::test]
+    async fn a_probe_keeps_the_selection_and_the_context_source_filter() {
+        let query = forwarded(
+            &format!("type=Vehicle&id=urn:ngsi-ld:Vehicle:1&idPattern=urn:ngsi-ld:Vehicle:.*&csf=region==%22north%22&{WINDOW}&q=speed>50"),
+            placed(),
+        )
+        .await
+        .expect("probed");
+        for fragment in ["id=urn%3Angsi-ld%3AVehicle%3A1", "idPattern=urn%3Angsi-ld%3AVehicle%3A.*", "csf="] {
+            assert!(query.contains(fragment), "{fragment} missing: {query}");
+        }
+    }
+
+    /// Clause 4.10 lets the geo-query name any `GeoProperty`, and a Query Term
+    /// crossing a hop reads the Relationship it starts from (clause 4.9), so
+    /// the probe asks for those.
+    #[tokio::test]
+    async fn a_named_geoproperty_and_a_hop_relationship_are_probed() {
+        let query = forwarded(
+            &format!(
+                "type=Vehicle&{WINDOW}&q=parkedIn{{free}}>0&georel=within&geometry=Polygon&coordinates=[[[13,52],[14,52],[14,53],[13,53],[13,52]]]&geoproperty=position"
+            ),
+            placed(),
+        )
+        .await
+        .expect("probed");
+        assert!(query.contains("attrs=parkedIn%2Cposition"), "{query}");
+    }
+
+    /// Clause 4.5.5: the default instance is addressed as `@none`, so a
+    /// follow-up for it names that.
+    #[tokio::test]
+    async fn a_default_dataset_follow_up_names_none() {
+        let probe = InEffectProbe {
+            reading: InEffectReading::Placed,
+            dataset: Some(&DatasetSelector::Default),
+        };
+        let query = forwarded(&format!("type=Vehicle&{WINDOW}&q=speed>50"), probe).await.expect("probed");
+        assert!(query.contains("datasetId=%40none"), "{query}");
     }
 }

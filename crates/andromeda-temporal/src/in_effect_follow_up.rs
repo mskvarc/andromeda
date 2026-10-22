@@ -109,4 +109,35 @@ mod tests {
         .await;
         pretty_assertions::assert_eq!(follow_up_datasets(&[Vec::new()], [&local]), Vec::<DatasetSelector>::new());
     }
+
+    /// Each source is asked again for the datasets it alone left out: the
+    /// first answered `d1`, the second `d2`, and the local part holds both.
+    #[tokio::test]
+    async fn each_source_is_asked_about_the_datasets_it_left_out() {
+        let speed = |dataset: &str| {
+            json!({
+                "id": "urn:ngsi-ld:Vehicle:1",
+                "type": "Vehicle",
+                "speed": [{"type": "Property", "value": 1, "datasetId": dataset, "observedAt": "2020-08-01T11:00:00Z"}]
+            })
+        };
+        let first = answered(&speed("urn:ngsi-ld:dataset:d1")).await;
+        let second = answered(&speed("urn:ngsi-ld:dataset:d2")).await;
+        let local = answered(&json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "speed": [
+                {"type": "Property", "value": 1, "datasetId": "urn:ngsi-ld:dataset:d1", "observedAt": "2020-08-01T10:00:00Z"},
+                {"type": "Property", "value": 1, "datasetId": "urn:ngsi-ld:dataset:d2", "observedAt": "2020-08-01T10:00:00Z"},
+                {"type": "Property", "value": 1, "observedAt": "2020-08-01T10:00:00Z"}
+            ]
+        }))
+        .await;
+        let mut datasets: Vec<String> = follow_up_datasets(&[vec![&first], vec![&second]], [&local])
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        datasets.sort();
+        pretty_assertions::assert_eq!(datasets, ["@none", "urn:ngsi-ld:dataset:d1", "urn:ngsi-ld:dataset:d2"]);
+    }
 }

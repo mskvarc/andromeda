@@ -12,8 +12,7 @@ use andromeda_ngsi_ld_request::{query::temporal::TemporalQueryParameters, repres
 
 impl ForwardedQuery {
     /// The temporal window, representation and aggregation parameters a temporal
-    /// query forwards (clauses 5.7.3.4, 5.7.4.4, 6.3.12), and its clause 4.5.23
-    /// traversal continuation.
+    /// query forwards (clauses 5.7.3.4, 5.7.4.4, 6.3.12).
     ///
     /// A source asked for [`TemporalAnswer::Instances`] is sent the window
     /// alone: no `format`, no aggregation and no `lastN`, so it answers with
@@ -29,7 +28,6 @@ impl ForwardedQuery {
             TemporalAnswer::AsRequested => self.push_requested_representation(params),
             TemporalAnswer::Instances => self.push_instance_representation(params),
         }
-        self.push_traversal(params.join.map(|join| join.to_string()), params.join_level, params.contained_by.as_deref());
     }
 
     /// The representation and aggregation the client asked for.
