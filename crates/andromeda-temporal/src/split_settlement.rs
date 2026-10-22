@@ -13,12 +13,18 @@
 //! every part, which no part decides alone and which a newer deletion in one
 //! part ends, so the in-effect instances of every part are merged first and
 //! the merged entity is judged once. A leaf holds when either kind holds it.
+//!
+//! A Query Term crossing a Relationship hop reaches entities any part may name
+//! and any broker may hold, so every part, this broker's Relationship
+//! instances inside the window among them, is judged in memory over the
+//! targets the hops reach, each read over the window.
 
 use crate::{
     answered_evolution::AnsweredEvolution,
     error::TemporalError,
+    hop_targets::HopTargets,
     in_effect_entity::InEffectEntity,
-    local_in_effect::LocalInEffect,
+    local_in_effect::{LocalInEffect, part_document},
     port::read_scope::ScopeReach,
     service::TemporalService,
 };
@@ -26,10 +32,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::temporal_document::TemporalDocument;
-use andromeda_ngsi_ld_query::{
-    queried_entity::linked_entities::NoLinkedEntities,
-    split_filter::{LeafTruths, SplitFilter},
-};
+use andromeda_ngsi_ld_query::split_filter::{LeafTruths, SplitFilter};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use std::collections::{HashMap, HashSet};
 
@@ -54,10 +57,6 @@ impl TemporalService {
     /// the Context Sources `answered` with, each judged on its part held here,
     /// read over the window, beside `local`, what this broker holds in effect
     /// when the window opens, together with every part a source answered.
-    ///
-    /// A Query Term crossing a Relationship hop reads its linked entities in
-    /// the store alone, so it is decided over the local part, which the store
-    /// reads over the window and its own instance in effect.
     ///
     /// # Errors
     ///
@@ -89,14 +88,36 @@ impl TemporalService {
 
         let scope = self.reader.read_scope(target, ScopeReach::Every).await?;
         let mut truths = self.reader.filter_leaf_truths(&scope, &compiled, &entity_ids).await?;
-        for answer in &answered.in_window {
-            let Some(entity_id) = answer.id() else {
+        let hops = filter.hop_relationships();
+        let local_links = if hops.is_empty() {
+            Vec::new()
+        } else {
+            let rows = self.reader.window_relationship_instances(&scope, &compiled, &entity_ids).await?;
+            rows.into_iter()
+                .map(|(entity_id, rows)| part_document(&entity_id, rows))
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let windowed: Vec<&TemporalDocument> = answered.in_window.iter().copied().chain(&local_links).collect();
+        let targets = if hops.is_empty() {
+            Vec::new()
+        } else {
+            let reached: Vec<&TemporalDocument> = windowed
+                .iter()
+                .copied()
+                .chain(answered.in_effect.iter().copied())
+                .chain(local.parts())
+                .collect();
+            self.read_hop_targets(target, params, context, &hops, &reached).await?
+        };
+        let linked = HopTargets::of(&targets, compiled.window);
+        for part in windowed {
+            let Some(entity_id) = part.id() else {
                 continue;
             };
             truths
                 .entry(entity_id.clone()) // clone: the truths are keyed by the identifier the part is judged under
                 .or_insert_with(|| LeafTruths::none(filter.leaf_count()))
-                .or(&filter.truths_of(&AnsweredEvolution::of(answer, compiled.window), NoLinkedEntities));
+                .or(&filter.truths_of(&AnsweredEvolution::of(part, compiled.window), &linked));
         }
         for (entity_id, mut held) in parts {
             held.extend(local.part_of(entity_id));
@@ -106,7 +127,7 @@ impl TemporalService {
             truths
                 .entry(entity_id.clone()) // clone: the truths are keyed by the identifier the parts are judged under
                 .or_insert_with(|| LeafTruths::none(filter.leaf_count()))
-                .or(&filter.truths_of(&in_effect, NoLinkedEntities));
+                .or(&filter.truths_of(&in_effect, &linked));
         }
         let retained = entity_ids
             .into_iter()

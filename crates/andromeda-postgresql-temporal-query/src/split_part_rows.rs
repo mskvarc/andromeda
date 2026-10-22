@@ -1,6 +1,6 @@
-//! The instances a split temporal query's filters read in effect when its
-//! window opens, in the part of each contributed entity this broker holds
-//! (clauses 4.11 and 5.7.4.4).
+//! The rows of the part of each contributed entity this broker holds that a
+//! split temporal query judges in memory, beside the parts the Context Sources
+//! answered (clauses 4.11 and 5.7.4.4).
 //!
 //! The instance in effect when a window opens is the latest of its stream
 //! before the start across every part of a split entity, so no part decides it
@@ -9,9 +9,15 @@
 //! because a newer deletion in one part ends what an older instance of another
 //! part held. The Scope in force at the start is the latest Scope event before
 //! it (clause 4.18), read the same way.
+//!
+//! A Query Term crossing a Relationship hop reaches entities any part may
+//! hold, so the local instances inside the window of the Relationships its
+//! hops start from are read as rows too, and the term is judged in memory
+//! over the targets of every part.
 
 use crate::{
     alias::Ah,
+    axis::axis_column,
     history::{join_attribute_names, project_base_columns},
     scope_history::{order_scope_events, project_scope_event},
     stream_page::project_whole_streams,
@@ -21,16 +27,17 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, window::TimeInterval};
 use andromeda_postgresql_query::{
     attribute_name_key::AttributeNameKey,
-    history_source::{HistoryBranch, HistoryOf, entity_rows::entity_rows, scope_rows::scope_rows},
+    history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, entity_rows::entity_rows, grain::HistoryGrain, scope_rows::scope_rows},
     scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis},
+    time_interval_predicate::within_interval,
     window_reach::WindowReach,
 };
 use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
 use andromeda_postgresql_seaquery::pg_array::is_any_of;
-use sea_query::{Alias, Asterisk, Expr as SeaExpr, ExprTrait, JoinType, Order, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, Asterisk, Expr as SeaExpr, ExprTrait, Iden, JoinType, Order, Query, SelectStatement, SimpleExpr};
 
-/// The name both statements project each row's entity identifier under.
-pub const IN_EFFECT_ENTITY_ID: &str = "in_effect_entity_id";
+/// The name every statement here projects each row's entity identifier under.
+pub const PART_ENTITY_ID: &str = "part_entity_id";
 
 /// Build the statement reading, for every entity of `entity_ids` this broker
 /// holds a Temporal Evolution of, the instance each stream of the attributes
@@ -50,7 +57,7 @@ pub fn build_in_effect_attribute_instances(
     project_base_columns(&mut select);
     project_whole_streams(&mut select);
     select
-        .expr_as(SeaExpr::col((E, TemporalEntities::Id)), Alias::new(IN_EFFECT_ENTITY_ID))
+        .expr_as(SeaExpr::col((E, TemporalEntities::Id)), Alias::new(PART_ENTITY_ID))
         .from(entity_rows(branch, E))
         .join_lateral(JoinType::Join, rows, Ah, SimpleExpr::from(true));
     join_attribute_names(&mut select);
@@ -81,7 +88,7 @@ pub fn build_in_effect_scope(branch: &HistoryBranch, compiled: &CompiledTemporal
     let mut select = Query::select();
     project_scope_event(&mut select, axis);
     select
-        .expr_as(SeaExpr::col((E, TemporalEntities::Id)), Alias::new(IN_EFFECT_ENTITY_ID))
+        .expr_as(SeaExpr::col((E, TemporalEntities::Id)), Alias::new(PART_ENTITY_ID))
         .from(entity_rows(branch, E))
         .join_lateral(JoinType::Join, events.take(), ScopeEvent, SimpleExpr::from(true))
         .and_where(of_entities(entity_ids))
@@ -90,6 +97,50 @@ pub fn build_in_effect_scope(branch: &HistoryBranch, compiled: &CompiledTemporal
     Some(select.take())
 }
 
+/// Build the statement reading, for every entity of `entity_ids` this broker
+/// holds a Temporal Evolution of, its instances inside the window of the
+/// Relationships keyed `relationships`, as history rows beside the entity's
+/// identifier, ordered by it.
+///
+/// An instance carrying no instant on the window's axis lies in no window
+/// (clause 4.5.7), an unbounded one included.
+#[must_use]
+pub fn build_window_relationship_instances(
+    branch: &HistoryBranch,
+    compiled: &CompiledTemporalQuery,
+    entity_ids: &[Identifier],
+    relationships: &[AttributeNameKey],
+) -> SelectStatement {
+    let of = HistoryOf::Entity(SeaExpr::col((E, TemporalEntities::Id)));
+    let axis = SeaExpr::col((WindowRow, axis_column(compiled.window.timeproperty)));
+    let inside = within_interval(&axis, &compiled.window.interval);
+    let mut rows = Query::select();
+    rows.column((WindowRow, Asterisk))
+        .from(attribute_rows(branch, &of, WindowRow))
+        .and_where(is_any_of(
+            SeaExpr::col((WindowRow, HistoryGrain::AttributeNameKey)),
+            relationships.iter().map(|key| key.get()),
+        ))
+        .and_where(axis.is_not_null())
+        .cond_where(inside);
+    let mut select = Query::select();
+    project_base_columns(&mut select);
+    project_whole_streams(&mut select);
+    select
+        .expr_as(SeaExpr::col((E, TemporalEntities::Id)), Alias::new(PART_ENTITY_ID))
+        .from(entity_rows(branch, E))
+        .join_lateral(JoinType::Join, rows.take(), Ah, SimpleExpr::from(true));
+    join_attribute_names(&mut select);
+    select.and_where(of_entities(entity_ids)).order_by((E, TemporalEntities::Id), Order::Asc);
+    select.take()
+}
+
+/// The alias the window's Relationship rows are read under inside the lateral
+/// source.
+#[derive(Iden, Clone, Copy)]
+#[iden = "wr"]
+struct WindowRow;
+
 /// The temporal entity `e` names is one of `entity_ids`.
 fn of_entities(entity_ids: &[Identifier]) -> SimpleExpr {
     is_any_of(SeaExpr::col((E, TemporalEntities::Id)), entity_ids.iter().map(Identifier::to_string))
@@ -97,7 +148,7 @@ fn of_entities(entity_ids: &[Identifier]) -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use crate::in_effect_instances::{build_in_effect_attribute_instances, build_in_effect_scope};
+    use crate::split_part_rows::{build_in_effect_attribute_instances, build_in_effect_scope, build_window_relationship_instances};
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
@@ -147,7 +198,7 @@ mod tests {
             r#""qe"."placed" < '2020-08-01 12:00:00"#,
             r#""qs"."attribute_name_key" = ANY(ARRAY [7])"#,
             r#") AS "ah" ON TRUE JOIN "attribute_names" AS "an""#,
-            r#"AS "in_effect_entity_id""#,
+            r#"AS "part_entity_id""#,
             r#""e"."id" = ANY(ARRAY ['urn:ngsi-ld:Vehicle:1'])"#,
         ] {
             assert!(sql.contains(fragment), "{fragment} missing: {sql}");
@@ -166,10 +217,27 @@ mod tests {
             r#""sh"."observed_at" < '2020-08-01 12:00:00"#,
             r#""sh_next"."observed_at" <= '2020-08-01 12:00:00"#,
             r#"AS "scope_event_at""#,
-            r#"AS "in_effect_entity_id""#,
+            r#"AS "part_entity_id""#,
         ] {
             assert!(sql.contains(fragment), "{fragment} missing: {sql}");
         }
+    }
+
+    /// Clause 4.5.7: the hop Relationships are read inside the window only,
+    /// every instance placed on the axis.
+    #[test]
+    fn the_window_relationships_are_read_inside_the_window() {
+        let sql = build_window_relationship_instances(&HistoryBranch::live_recorded(), &compiled(noon()), &ids(), &[AttributeNameKey::from(4)])
+            .to_string(PostgresQueryBuilder);
+        for fragment in [
+            r#""wr"."attribute_name_key" = ANY(ARRAY [4])"#,
+            r#""wr"."observed_at" IS NOT NULL"#,
+            r#""wr"."observed_at" >= '2020-08-01 12:00:00"#,
+            r#"AS "part_entity_id""#,
+        ] {
+            assert!(sql.contains(fragment), "{fragment} missing: {sql}");
+        }
+        assert!(!sql.contains(r#""qe""#), "{sql}");
     }
 
     /// Neither read has an instance in effect to find for a window with no

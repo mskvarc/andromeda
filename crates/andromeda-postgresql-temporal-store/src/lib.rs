@@ -111,6 +111,9 @@ pub(crate) mod temporal_query_execution;
 pub mod temporal_store_invariant;
 /// Windowed temporal history deletion (the delete-by-query extension).
 pub mod temporal_windowed_deletion;
+/// Reading the instances inside a split query's window of the Relationships
+/// its hops start from.
+pub(crate) mod window_relationship_read;
 /// When one write's idempotency record may be released.
 pub(crate) mod write_record_release;
 

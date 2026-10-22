@@ -70,20 +70,20 @@ impl TemporalService {
         let rows = self.reader.in_effect_instances(&scope, &compiled, entity_ids).await?;
         let parts = rows
             .into_iter()
-            .map(|(entity_id, rows)| in_effect_part(&entity_id, rows).map(|part| (entity_id, part)))
+            .map(|(entity_id, rows)| part_document(&entity_id, rows).map(|part| (entity_id, part)))
             .collect::<Result<_, _>>()?;
         Ok(LocalInEffect { parts })
     }
 }
 
-/// The document the in-effect `rows` of `entity_id` make up, every instance
-/// carrying its system times.
+/// The document the `rows` this broker holds of `entity_id` make up, every
+/// instance carrying its system times, as a split query judges a part.
 ///
 /// # Errors
 ///
 /// Returns [`TemporalInvariant::RenderedInstance`] when a stored row no longer
 /// reads as the instance it recorded.
-fn in_effect_part(entity_id: &Identifier, rows: Vec<TemporalHistoryRow>) -> Result<TemporalDocument, TemporalError> {
+pub(crate) fn part_document(entity_id: &Identifier, rows: Vec<TemporalHistoryRow>) -> Result<TemporalDocument, TemporalError> {
     let mut instances: IndexMap<AttributeName, Vec<InstanceDocument>> = IndexMap::new();
     for row in rows {
         // clone: the document keys each attribute by the name its rows carry

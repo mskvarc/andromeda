@@ -11,11 +11,9 @@
 //! requirement the Scope events inside the window. The clause 4.11 instance in
 //! effect when the window opens is the latest of its stream across every part,
 //! which no part decides alone, so it is read apart and judged once the parts
-//! are merged.
-//!
-//! A Query Term crossing a Relationship hop is the exception: the entities it
-//! reaches are read by the store alone, so the part held here decides it over
-//! the window and the instance in effect, as stage 1 does.
+//! are merged. A Query Term crossing a Relationship hop reads the linked
+//! entities this broker holds; the settlement judges it again in memory over
+//! the targets of every part.
 //!
 //! The leaves are read for a list of identifiers over the catalogue, so each
 //! probe names the Evolution by its identifier.
@@ -23,7 +21,7 @@
 use crate::value_filters::{scope_history_target, temporal_geo_existential, windowed_instances};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
-    filter::{expression::Expr, path::QueryPath},
+    filter::expression::Expr,
     split_filter::{FilterLeaf, SplitFilter},
     temporal::compiled::CompiledTemporalQuery,
 };
@@ -70,14 +68,11 @@ fn leaf_expression(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, lea
     let of = HistoryOf::Entity(SeaExpr::col((E, TemporalEntities::Id)));
     match leaf {
         FilterLeaf::Term(pred) => {
-            let reach = match pred.path() {
-                QueryPath::Local(_) => WindowReach::Inside,
-                QueryPath::Linked { .. } => WindowReach::InsideAndInEffect,
-            };
             // clone: the compilation reads an expression tree, and the Query
             // Term is borrowed from the query's own
             let term = Expr::Pred(pred.clone());
-            Ok(q_filter::compile(&term, &InstanceScan::History(&windowed_instances(branch, compiled, &of, reach)), names).into())
+            let window = windowed_instances(branch, compiled, &of, WindowReach::Inside);
+            Ok(q_filter::compile(&term, &InstanceScan::History(&window), names).into())
         }
         FilterLeaf::Geo(_) => Ok(temporal_geo_existential(branch, compiled, names, &of, WindowReach::Inside)?.map_or_else(false_literal, Into::into)),
         FilterLeaf::ScopeRequirement(pattern) => Ok(pattern_condition(pattern, &scope_history_target(branch, compiled, &of, WindowReach::Inside))),
@@ -204,12 +199,11 @@ mod tests {
         assert!(sql.contains(r#""sh"."observed_at" >="#), "{sql}");
     }
 
-    /// A hop's linked entities are read by the store alone, so a Query Term
-    /// crossing one still reads the local instance in effect, and under the
-    /// `temporal_linked_retrieval` extension it lands on the linked entity's
-    /// Temporal Evolution and reads its history over the same window.
+    /// A hop leaf reads the local Relationship inside the window only, and
+    /// under the `temporal_linked_retrieval` extension it lands on the linked
+    /// entity's Temporal Evolution and reads its history over the same window.
     #[test]
-    fn a_hop_leaf_still_reads_the_instance_in_effect() {
+    fn a_hop_leaf_reads_inside_the_window_and_the_linked_history() {
         let compiled = compiled("\"https://example.com/parkedIn\"{\"https://example.com/name\"}==\"Lot\"", None, None);
         let names = QueryNames {
             attributes: ResolvedNames::from_pairs([
@@ -224,7 +218,7 @@ mod tests {
         let sql = build_filter_leaf_truths(&HistoryBranch::live(), &compiled, &ids(), &names)
             .expect("renders")
             .to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#"AS "qe_ln1""#), "{sql}");
+        assert!(!sql.contains(r#""qe_ln1""#) && !sql.contains(r#""qe""#), "{sql}");
         assert!(!sql.contains(r#""entities" AS "le1""#), "{sql}");
         assert!(sql.contains(r#""re"."id" = "le1"."id""#), "the inner term reads the linked evolution: {sql}");
         assert!(

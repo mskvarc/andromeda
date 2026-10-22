@@ -333,6 +333,15 @@ impl TemporalHistoryReader for TemporalRepository {
         self.read_in_effect_instances(&branch_of(scope), compiled, entity_ids).await
     }
 
+    async fn window_relationship_instances(
+        &self,
+        scope: &TemporalReadScope<'_>,
+        compiled: &CompiledTemporalQuery,
+        entity_ids: &[Identifier],
+    ) -> Result<HashMap<Identifier, Vec<TemporalHistoryRow>>, TemporalError> {
+        self.read_window_relationship_instances(&branch_of(scope), compiled, entity_ids).await
+    }
+
     async fn query_entity_history(
         &self,
         scope: &TemporalReadScope<'_>,

@@ -11,6 +11,7 @@ use crate::{
         slot::Slot,
         written_value::{ValueSlot, WrittenValue},
     },
+    list_object::ListObject,
     proof_seals::ProofSeals,
 };
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
@@ -21,6 +22,7 @@ use andromeda_ngsi_ld_lexicon::{
     reference::NgsiLdReference,
     time::{date_time::NgsiLdDateTime, system_instant::SystemInstant},
     time_prop::TimeProp,
+    uri::Uri,
 };
 use andromeda_ngsi_ld_query::temporal::window::TemporalWindow;
 use cefact_units::UnitCode;
@@ -243,6 +245,27 @@ impl InstanceDocument {
             | ValueSlot::Absent
             | ValueSlot::Remove(_) => None,
         }
+    }
+
+    /// The objects the instance sets: a Relationship's `object` or a
+    /// `ListRelationship`'s `objectList` (clauses 4.5.3 and 4.5.22), none for
+    /// any other value or for none.
+    pub fn objects(&self) -> impl Iterator<Item = &Uri> {
+        let (single, listed): (&[Uri], &[ListObject]) = match &self.value {
+            ValueSlot::Set(WrittenValue::Object(objects)) => (objects.as_slice(), &[]),
+            ValueSlot::Set(WrittenValue::ObjectList(objects)) => (&[], objects.as_slice()),
+            ValueSlot::Set(
+                WrittenValue::Value(_)
+                | WrittenValue::Geometry(_)
+                | WrittenValue::LanguageMap(_)
+                | WrittenValue::Vocab(_)
+                | WrittenValue::Json(_)
+                | WrittenValue::ValueList(_),
+            )
+            | ValueSlot::Absent
+            | ValueSlot::Remove(_) => (&[], &[]),
+        };
+        single.iter().chain(listed.iter().map(ListObject::uri))
     }
 
     /// The written sub-attributes.

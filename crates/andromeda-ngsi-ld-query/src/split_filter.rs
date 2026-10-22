@@ -23,7 +23,7 @@
 
 use crate::{
     entity_selection::EntitySelection,
-    filter::{eval::predicate_holds_in, expression::Expr, predicate::Predicate, referenced_attributes::referenced_attributes},
+    filter::{eval::predicate_holds_in, expression::Expr, path::QueryPath, predicate::Predicate, referenced_attributes::referenced_attributes},
     geo::query::GeoQuery,
     queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
     scope::{pattern::ScopePattern, query::ScopeQuery},
@@ -136,6 +136,35 @@ impl<'q> SplitFilter<'q> {
             attributes.push(&geo.geoproperty);
         }
         attributes
+    }
+
+    /// The Relationships the Query Terms' hops cross, by depth: the first
+    /// entry holds those an entity under evaluation is read through, the next
+    /// those of the entities they link to, and so on, each without repetition.
+    /// Empty when no Query Term crosses a hop.
+    #[must_use]
+    pub fn hop_relationships(&self) -> Vec<Vec<&'q AttributeName>> {
+        let mut levels: Vec<Vec<&'q AttributeName>> = Vec::new();
+        for leaf in self.leaves() {
+            let FilterLeaf::Term(pred) = leaf else {
+                continue;
+            };
+            let mut path = pred.path();
+            let mut depth = 0;
+            while let QueryPath::Linked { relationship, inner, .. } = path {
+                if levels.len() <= depth {
+                    levels.push(Vec::new());
+                }
+                if let Some(level) = levels.get_mut(depth)
+                    && !level.contains(&relationship)
+                {
+                    level.push(relationship);
+                }
+                path = inner;
+                depth += 1;
+            }
+        }
+        levels
     }
 
     /// Whether a leaf reads the entity's Scope.
@@ -372,6 +401,23 @@ mod tests {
         let read: Vec<&str> = filter.read_attributes().into_iter().map(AttributeName::as_str).collect();
         pretty_assertions::assert_eq!(read, ["https://example.com/speed", LOCATION]);
         assert!(filter.reads_scope());
+    }
+
+    #[test]
+    fn the_hop_relationships_are_grouped_by_depth() {
+        let selection = selection(
+            Some(
+                "\"https://example.com/parkedIn\"{\"https://example.com/operator\"{\"https://example.com/name\"}}==\"x\"|\"https://example.com/parkedIn\"{\"https://example.com/free\"}>0;\"https://example.com/speed\">1",
+            ),
+            None,
+            None,
+        );
+        let levels: Vec<Vec<&str>> = SplitFilter::of(&selection)
+            .hop_relationships()
+            .into_iter()
+            .map(|level| level.into_iter().map(AttributeName::as_str).collect())
+            .collect();
+        pretty_assertions::assert_eq!(levels, [vec!["https://example.com/parkedIn"], vec!["https://example.com/operator"]]);
     }
 
     #[test]

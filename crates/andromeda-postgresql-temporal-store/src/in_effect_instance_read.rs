@@ -15,7 +15,7 @@ use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
 use andromeda_ngsi_ld_query::{split_filter::SplitFilter, temporal::compiled::CompiledTemporalQuery};
 use andromeda_postgresql_query::history_source::HistoryBranch;
 use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
-use andromeda_postgresql_temporal_query::in_effect_instances::{IN_EFFECT_ENTITY_ID, build_in_effect_attribute_instances, build_in_effect_scope};
+use andromeda_postgresql_temporal_query::split_part_rows::{PART_ENTITY_ID, build_in_effect_attribute_instances, build_in_effect_scope};
 use andromeda_temporal::error::TemporalError;
 use sqlx::{Row, postgres::PgRow};
 use std::collections::HashMap;
@@ -74,8 +74,8 @@ impl TemporalRepository {
 }
 
 /// The entity a row was read for.
-fn entity_of(row: &PgRow) -> Result<Identifier, TemporalStoreError> {
-    let raw: String = row.try_get(IN_EFFECT_ENTITY_ID)?;
+pub(crate) fn entity_of(row: &PgRow) -> Result<Identifier, TemporalStoreError> {
+    let raw: String = row.try_get(PART_ENTITY_ID)?;
     Ok(raw.parse::<Identifier>().map_err(StoredCatalogError::EntityId)?)
 }
 

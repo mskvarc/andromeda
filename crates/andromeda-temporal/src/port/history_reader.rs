@@ -204,10 +204,10 @@ pub trait TemporalHistoryReader: Send + Sync {
     /// instances it reads, so the part held here is judged leaf by leaf over
     /// the instances inside the window. The clause 4.11 instance in effect
     /// when the window opens is read apart, by [`Self::in_effect_instances`],
-    /// because it is the latest across every part. A Query Term crossing a
-    /// Relationship hop reads the entities it reaches here alone, so it is
-    /// judged over the window and the local instance in effect. An entity
-    /// this view holds no Temporal Evolution of is absent from the result.
+    /// because it is the latest across every part, and a Query Term crossing a
+    /// Relationship hop is judged again in memory over the targets of every
+    /// part ([`Self::window_relationship_instances`]). An entity this view
+    /// holds no Temporal Evolution of is absent from the result.
     #[must_use = "filter leaf reads must be awaited"]
     async fn filter_leaf_truths(
         &self,
@@ -231,6 +231,22 @@ pub trait TemporalHistoryReader: Send + Sync {
     /// in effect of is absent from the result.
     #[must_use = "in-effect instance reads must be awaited"]
     async fn in_effect_instances(
+        &self,
+        scope: &TemporalReadScope<'_>,
+        compiled: &CompiledTemporalQuery,
+        entity_ids: &[Identifier],
+    ) -> Result<HashMap<Identifier, Vec<TemporalHistoryRow>>, TemporalError>;
+
+    /// The instances inside the window of the Relationships the first hop of
+    /// every Query Term of the query crosses, in the part of each of
+    /// `entity_ids` this view holds, as history rows.
+    ///
+    /// Clause 4.9 follows a hop through every object the Relationship names,
+    /// and under clause 5.7.4.4 the entity it names may be held in any part,
+    /// so a split query judges a hop in memory over the targets of every part,
+    /// this view's among them. An entity holding none is absent.
+    #[must_use = "window Relationship reads must be awaited"]
+    async fn window_relationship_instances(
         &self,
         scope: &TemporalReadScope<'_>,
         compiled: &CompiledTemporalQuery,

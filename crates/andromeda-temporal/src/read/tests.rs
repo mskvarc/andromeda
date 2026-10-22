@@ -116,6 +116,16 @@ impl TemporalHistoryReader for RefusingReader {
         panic!("query must not execute")
     }
 
+    async fn window_relationship_instances(
+        &self,
+        _scope: &TemporalReadScope<'_>,
+        _compiled: &CompiledTemporalQuery,
+        _entity_ids: &[Identifier],
+    ) -> Result<HashMap<Identifier, Vec<TemporalHistoryRow>>, TemporalError> {
+        self.query_calls.fetch_add(1, Ordering::Relaxed);
+        panic!("query must not execute")
+    }
+
     async fn query_entity_history(
         &self,
         _scope: &TemporalReadScope<'_>,

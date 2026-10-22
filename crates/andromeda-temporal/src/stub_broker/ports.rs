@@ -122,6 +122,15 @@ impl TemporalHistoryReader for StubBroker {
         Err(unsupported("in_effect_instances"))
     }
 
+    async fn window_relationship_instances(
+        &self,
+        _scope: &TemporalReadScope<'_>,
+        _compiled: &CompiledTemporalQuery,
+        _entity_ids: &[Identifier],
+    ) -> Result<HashMap<Identifier, Vec<TemporalHistoryRow>>, TemporalError> {
+        Err(unsupported("window_relationship_instances"))
+    }
+
     async fn query_entity_history(
         &self,
         _scope: &TemporalReadScope<'_>,
