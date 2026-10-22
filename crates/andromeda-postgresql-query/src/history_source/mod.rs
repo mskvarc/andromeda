@@ -54,6 +54,8 @@ pub mod instance_replacement;
 mod pending;
 /// The rows of scope history.
 pub mod scope_rows;
+/// The attribute history of one stream, read in parts.
+pub mod stream_parts;
 
 use crate::history_source::grain::HistoryGrain;
 use sea_query::{DynIden, Expr, ExprTrait, IntoIden, SelectStatement, SimpleExpr};
@@ -268,13 +270,39 @@ impl HistoryOf {
 pub struct HistoryStream {
     /// The alias the stream row is read under, usually a lateral reference.
     row: DynIden,
+    /// The grain column the stream row names its Evolution by: the
+    /// identifier, or the surrogate key a stream read by key carries.
+    evolution: HistoryGrain,
 }
 
 impl HistoryStream {
-    /// The stream the row under `row` names.
+    /// The stream the row under `row` names, the row naming its Evolution by
+    /// identifier.
     #[must_use]
     pub fn under(row: impl IntoIden) -> HistoryStream {
-        HistoryStream { row: row.into_iden() }
+        HistoryStream {
+            row: row.into_iden(),
+            evolution: HistoryGrain::EntityId,
+        }
+    }
+
+    /// The stream the row under `row` names, the row read from the stream
+    /// source of `branch` for `of`, which names the Evolution by key where it
+    /// reads it by key.
+    #[must_use]
+    pub fn read_for(branch: &HistoryBranch, of: &HistoryOf, row: impl IntoIden) -> HistoryStream {
+        HistoryStream {
+            row: row.into_iden(),
+            evolution: match branch.evolution_key(of) {
+                Some(_) => HistoryGrain::TemporalEntityKey,
+                None => HistoryGrain::EntityId,
+            },
+        }
+    }
+
+    /// The grain column the stream row names its Evolution by.
+    pub(crate) const fn evolution(&self) -> HistoryGrain {
+        self.evolution
     }
 
     /// One grain column of the stream row.

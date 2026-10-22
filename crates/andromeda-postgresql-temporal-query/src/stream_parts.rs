@@ -15,8 +15,9 @@ use andromeda_postgresql_query::history_source::{
     HistoryBranch,
     HistoryOf,
     HistoryStream,
-    attribute_rows::{stream_attribute_parts, stream_rows},
+    attribute_rows::stream_rows,
     grain::HistoryGrain,
+    stream_parts::stream_attribute_parts,
 };
 use andromeda_postgresql_schema::name_dictionary::AttributeNames;
 use sea_query::{Asterisk, Condition, Expr, ExprTrait, Iden, IntoIden, JoinType, Query, SelectStatement, SimpleExpr, TableRef, UnionType};

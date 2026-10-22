@@ -76,6 +76,13 @@ pub fn within(cte: impl Iden + 'static, bound: u64) -> SimpleExpr {
     count_of(cte).lte(bound)
 }
 
+/// `(SELECT COUNT(*) FROM <cte>) > <bound>`: the bounded read stopped short of
+/// a row that qualifies.
+#[must_use]
+pub fn beyond(cte: impl Iden + 'static, bound: u64) -> SimpleExpr {
+    count_of(cte).gt(bound)
+}
+
 /// How many candidates a keyed statement reads before it walks the selection
 /// instead.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -111,7 +118,7 @@ impl CandidateBound {
 
 #[cfg(test)]
 mod tests {
-    use crate::one_time_gate::{Candidates, bounded, column_of, within};
+    use crate::one_time_gate::{Candidates, beyond, bounded, column_of, within};
     use andromeda_postgresql_schema::temporal::TemporalEntities;
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
@@ -126,6 +133,12 @@ mod tests {
     fn the_gate_admits_a_read_that_stayed_within_its_bound() {
         let gate = Query::select().expr(within(Candidates, 1000)).take();
         assert_eq!(gate.to_string(PostgresQueryBuilder), r#"SELECT (SELECT COUNT(*) FROM "candidates") <= 1000"#);
+    }
+
+    #[test]
+    fn the_gate_past_the_bound_admits_a_read_that_stopped_short() {
+        let gate = Query::select().expr(beyond(Candidates, 1000)).take();
+        assert_eq!(gate.to_string(PostgresQueryBuilder), r#"SELECT (SELECT COUNT(*) FROM "candidates") > 1000"#);
     }
 
     #[test]

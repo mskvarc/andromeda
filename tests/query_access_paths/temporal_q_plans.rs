@@ -5,10 +5,11 @@
 //! within the temporal window, and clause 4.11 with Annex C clause C.5.5 counts
 //! among them the instance in effect when an interval with a start opens. The
 //! stage-1 statement reads the instances inside the window as one range of
-//! `idx_attribute_history_stream_observed_at` per stream, and places the
-//! instance in effect with one descending probe on that index and one on
-//! `idx_attribute_history_stream_deletion`. The statement is the one the
-//! broker builds, rendered with its values inline, as a custom plan.
+//! `idx_attribute_history_stream_observed_at` per stream, and the instance in
+//! effect with one descending read per stream of
+//! `idx_attribute_history_stream_observed_placement`, stopped after the rows
+//! tied with its first. The statement is the one the broker builds, rendered
+//! with its values inline, as a custom plan.
 
 use crate::{
     seeded_corpus::{SEED_PREFIX, explain},
@@ -220,62 +221,42 @@ async fn temporal_plans_the_window_probe_is_a_bounded_range() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// The latest observation at or before the start is one descending probe per
-/// stream on the observed index.
+/// The latest row placed at or before the start, an observation or a
+/// deletion with no `observedAt`, is one limited descending read per stream
+/// on the placement index.
 #[tokio::test]
-async fn temporal_plans_the_prior_instance_is_found_by_one_descending_probe_per_stream() {
+async fn temporal_plans_the_instance_in_effect_is_one_limited_read_per_stream_on_the_placement_index() {
     let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
     let corpus = seed_window_and_prior(pool, SEED_PREFIX, SHORT_HISTORY).await;
 
     let plan = explain(pool, page_statement(&corpus)).await;
     assert!(
-        limited_scan(&plan, "idx_attribute_history_stream_observed_at", "qp"),
-        "the prior instance must be one limited probe on the observed index: {plan}"
+        limited_scan(&plan, "idx_attribute_history_stream_observed_placement", "rh"),
+        "the instance in effect must be one limited read on the placement index: {plan}"
     );
-
-    scope.finish().await.expect("cleanup failed");
-}
-
-/// The latest deletion with no `observedAt` at or before the start is one
-/// descending probe per stream on the deletion index.
-#[tokio::test]
-async fn temporal_plans_the_prior_deletion_is_found_on_the_deletion_index() {
-    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
-    let pool = scope.database_pool();
-    let corpus = seed_window_and_prior(pool, SEED_PREFIX, SHORT_HISTORY).await;
-
-    let plan = explain(pool, page_statement(&corpus)).await;
-    assert!(
-        limited_scan(&plan, "idx_attribute_history_stream_deletion", "qd"),
-        "the prior deletion must be one limited probe on the deletion index: {plan}"
-    );
+    assert!(!plan.contains("Sort Key: (COALESCE"), "the placement order must come from the index: {plan}");
 
     scope.finish().await.expect("cleanup failed");
 }
 
 /// The broker runs the statement prepared, and PostgreSQL plans a prepared
 /// statement generically once it has run a few times, without the bound
-/// instants. Each placement probe must still be one limited probe on its own
-/// index: priced without the start, a deletion probe on a predicate naming
-/// only `deleted_at` lost to the `observedAt` block summary, which it then read
-/// as a lossy bitmap once per stream.
+/// instants. The in-effect read must still be one limited read on the
+/// placement index rather than a block summary read as a lossy bitmap once
+/// per stream.
 #[tokio::test]
-async fn temporal_plans_the_generic_plan_keeps_each_placement_probe_on_its_index() {
+async fn temporal_plans_the_generic_plan_keeps_the_in_effect_read_on_the_placement_index() {
     let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
     let corpus = seed_window_and_prior(pool, SEED_PREFIX, SHORT_HISTORY).await;
 
     let plan = explain_generic(pool, stage1(&corpus).select).await;
     assert!(
-        limited_scan(&plan, "idx_attribute_history_stream_observed_at", "qp"),
-        "the prior instance must stay one limited probe on the observed index: {plan}"
+        limited_scan(&plan, "idx_attribute_history_stream_observed_placement", "rh"),
+        "the instance in effect must stay one limited read on the placement index: {plan}"
     );
-    assert!(
-        limited_scan(&plan, "idx_attribute_history_stream_deletion", "qd"),
-        "the prior deletion must stay one limited probe on the deletion index: {plan}"
-    );
-    assert!(!plan.contains("observed_at_brin"), "{plan}");
+    assert!(!plan.contains("observed_at_brin") && !plan.contains("deleted_at_brin"), "{plan}");
 
     scope.finish().await.expect("cleanup failed");
 }

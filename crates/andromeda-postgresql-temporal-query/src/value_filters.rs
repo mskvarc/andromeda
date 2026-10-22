@@ -390,14 +390,16 @@ mod tests {
     }
 
     /// Clause 4.11 with Annex C clause C.5.5: an `after` window also reads the
-    /// instance in effect when it opens, through the stream source and the
-    /// instance placed on it, each narrowed by the key.
+    /// instance in effect when it opens, through the stream source narrowed
+    /// by the key and the rows of each stream read by its stream key.
     #[test]
     fn a_recorded_branch_correlates_the_in_effect_instance_by_evolution_key() {
         let sql = filters(&HistoryBranch::live_recorded(), &rare_q(compiled(after_2019())));
-        for alias in ["qh", "qs", "qi"] {
+        for alias in ["qh", "qs"] {
             assert!(sql.contains(&format!(r#"{BY_KEY}) AS "{alias}""#)), "{alias}: {sql}");
         }
+        assert!(sql.contains(r#""rh"."stream_key" = "qs"."stream_key") AS "qi""#), "{sql}");
+        assert!(sql.contains(r#""qs"."temporal_entity_key" AS "temporal_entity_key""#), "{sql}");
         assert!(!sql.contains(BY_IDENTIFIER) && !sql.contains("temporal_entities"), "{sql}");
     }
 
@@ -459,8 +461,8 @@ mod tests {
         let sql = filters(&HistoryBranch::live(), &moved(near(rare_q(compiled(after_2019())))));
         assert_eq!(
             sql.matches(BY_IDENTIFIER).count(),
-            7,
-            "the inside, in-effect and placed sources of q and of the geo-query, and the Scope source: {sql}"
+            5,
+            "the inside and stream sources of q and of the geo-query, and the Scope source: {sql}"
         );
         assert!(sql.contains(r#""pe"."entity_id" = "e"."id""#), "{sql}");
         assert!(sql.contains(r#""re"."id" = "sh"."entity_id""#), "{sql}");

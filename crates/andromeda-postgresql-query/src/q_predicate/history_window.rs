@@ -26,8 +26,9 @@
 //! The two kinds of valid instance are read by two probes, each one an index
 //! range rather than a disjunction no index can drive: the instances inside
 //! the interval, on the stream-led index of the axis, and the instance in
-//! effect when it opens, which [`InEffectInstance`] places with one descending
-//! probe per stream.
+//! effect when it opens, which [`InEffectInstance`] reads down from the start
+//! on the stream-led index of its placement, one stream of a tested attribute
+//! at a time.
 //!
 //! Both probes read the history sources of the branch, so on the live branch
 //! the entries still queued for the Temporal Evolution are instances like the
@@ -144,15 +145,11 @@ impl HistoryWindow {
     /// orders them.
     pub(crate) fn exists(&self, id: AttributeNameKey, value: Condition, aliases: &HistoryAliases) -> Condition {
         let test = Condition::all().add(Self::of_attribute(id, aliases)).add_option(non_empty(value));
-        self.probes(test, None, aliases).into_exists()
+        self.probes(test, Self::streams_of(id, aliases), aliases).into_exists()
     }
 
     /// Wrap several tests in correlated probes over the window's instances,
     /// holding when one instance passes any of them under its own attribute key.
-    ///
-    /// The in-effect probe is also narrowed to the streams of the tested
-    /// attributes as a whole, so the instance in effect is placed for those
-    /// streams alone rather than for every stream of the entity.
     pub(crate) fn exists_any(&self, tests: Vec<InstanceTest>, aliases: &HistoryAliases) -> Condition {
         let keys: Vec<i32> = tests.iter().map(|test| test.attribute.get()).collect();
         let streams = is_any_of(aliases.stream_column(HistoryGrain::AttributeNameKey), keys);
@@ -160,7 +157,7 @@ impl HistoryWindow {
             let of_attribute = Self::of_attribute(test.attribute, aliases);
             any.add(test.arm(of_attribute))
         });
-        self.probes(any, Some(streams), aliases).into_exists()
+        self.probes(any, streams, aliases).into_exists()
     }
 
     /// Whether one instance of the `GeoProperty` keyed `geoproperty` valid
@@ -200,7 +197,7 @@ impl HistoryWindow {
     /// The window's correlated probes over the instances of one attribute,
     /// for a traversal to join the entities they name.
     pub(crate) fn probes_of(&self, id: AttributeNameKey, aliases: &HistoryAliases) -> WindowProbes {
-        self.probes(Condition::all().add(Self::of_attribute(id, aliases)), None, aliases)
+        self.probes(Condition::all().add(Self::of_attribute(id, aliases)), Self::streams_of(id, aliases), aliases)
     }
 
     /// An instance of the attribute with this dictionary key.
@@ -208,10 +205,18 @@ impl HistoryWindow {
         SeaExpr::expr(aliases.instance_grain(HistoryGrain::AttributeNameKey)).eq(id.get())
     }
 
+    /// A stream of the attribute with this dictionary key.
+    fn streams_of(id: AttributeNameKey, aliases: &HistoryAliases) -> SimpleExpr {
+        SeaExpr::expr(aliases.stream_column(HistoryGrain::AttributeNameKey)).eq(id.get())
+    }
+
     /// The probes over the valid instances that pass `test`, each reading the
-    /// enclosing statement's Entity alone. `streams` narrows the streams the
-    /// in-effect probe places an instance for.
-    fn probes(&self, test: Condition, streams: Option<SimpleExpr>, aliases: &HistoryAliases) -> WindowProbes {
+    /// enclosing statement's Entity alone.
+    ///
+    /// `streams` narrows the streams the in-effect probe places an instance
+    /// for to those of the tested attributes, so no other stream of the
+    /// Entity is read.
+    fn probes(&self, test: Condition, streams: SimpleExpr, aliases: &HistoryAliases) -> WindowProbes {
         let in_effect = match self.reach {
             WindowReach::Inside => None,
             WindowReach::InsideAndInEffect => self.in_effect_start(),
@@ -262,7 +267,7 @@ impl HistoryWindow {
     /// The streams of the Entity, of every dataset, joined to the instances
     /// they held when the interval opened at `start`, narrowed to the ones
     /// that pass `test` and carry a value.
-    fn in_effect_probe(&self, start: DateTime<Utc>, streams: Option<SimpleExpr>, test: Condition, aliases: &HistoryAliases) -> SelectStatement {
+    fn in_effect_probe(&self, start: DateTime<Utc>, streams: SimpleExpr, test: Condition, aliases: &HistoryAliases) -> SelectStatement {
         let mut probe = self.in_effect_source(start, streams, aliases);
         probe.expr(int_literal(1)).cond_where(test).and_where(Self::carries_a_value(aliases));
         probe
@@ -282,7 +287,7 @@ impl HistoryWindow {
         let start = self.in_effect_start()?;
         let aliases = &HistoryAliases::top_level();
         let streams = is_any_of(aliases.stream_column(HistoryGrain::AttributeNameKey), keys.iter().map(|key| key.get()));
-        let mut rows = self.in_effect_source(start, Some(streams), aliases);
+        let mut rows = self.in_effect_source(start, streams, aliases);
         rows.expr(SeaExpr::col((aliases.instance(), Asterisk)));
         Some(rows)
     }
@@ -291,24 +296,21 @@ impl HistoryWindow {
     /// they held when the interval opened at `start`, `streams` narrowing
     /// which, with nothing projected yet.
     ///
-    /// The instance is read laterally, its stream and placement written inside
-    /// the lateral source, so each stream reads its own instances by index.
-    fn in_effect_source(&self, start: DateTime<Utc>, streams: Option<SimpleExpr>, aliases: &HistoryAliases) -> SelectStatement {
-        let instance = InEffectInstance::builder().branch(&self.branch).axis(self.axis).start(start).build();
-        let mut placed = Query::select();
-        placed
-            .expr(SeaExpr::col((aliases.placed_instance(), Asterisk)))
-            .from(attribute_rows(&self.branch, &self.of, aliases.placed_instance()))
-            .cond_where(instance.placed_on_stream(aliases, &aliases.placed_instance()));
+    /// The instance is read laterally, its stream written inside the lateral
+    /// source, so each stream reads its own instances by index.
+    fn in_effect_source(&self, start: DateTime<Utc>, streams: SimpleExpr, aliases: &HistoryAliases) -> SelectStatement {
+        let instance = InEffectInstance::builder()
+            .branch(&self.branch)
+            .of(&self.of)
+            .axis(self.axis)
+            .start(start)
+            .build();
         let mut source = Query::select();
         source
             .from(stream_rows(&self.branch, &self.of, aliases.stream()))
-            .join_lateral(JoinType::Join, instance.placement_source(aliases), aliases.placement(), SimpleExpr::from(true))
-            .join_lateral(JoinType::Join, placed.take(), aliases.instance(), SimpleExpr::from(true));
-        if let Some(streams) = streams {
-            source.and_where(streams);
-        }
-        source.and_where(instance.opens_before_start(aliases));
+            .join_lateral(JoinType::Join, instance.rows(aliases), aliases.instance(), SimpleExpr::from(true))
+            .and_where(streams)
+            .and_where(instance.opens_before_start(aliases));
         source
     }
 
@@ -373,7 +375,7 @@ mod tests {
         let test = Condition::all()
             .add(HistoryWindow::of_attribute(AttributeNameKey::from(7), &aliases))
             .add_option(non_empty(value));
-        let probes = window.probes(test, None, &aliases);
+        let probes = window.probes(test, HistoryWindow::streams_of(AttributeNameKey::from(7), &aliases), &aliases);
         (statement(&probes.inside), probes.in_effect.as_ref().map(statement))
     }
 
@@ -428,14 +430,14 @@ mod tests {
         assert!(!inside.contains(r#""qe""#), "{inside}");
         let in_effect = in_effect.expect("an interval with a start has an in-effect probe");
         for fragment in [
-            r#"AS "qe" ON TRUE"#,
-            r#""qi"."observed_at" = "qe"."placed") AS "qh" ON TRUE"#,
-            r#""qe"."placed" < '2019-01-01"#,
+            r#"FETCH FIRST 1 ROW WITH TIES) AS "qe") AS "qh" ON TRUE"#,
+            r#""qs"."attribute_name_key" = 7"#,
+            r#""qh"."placed" < '2019-01-01"#,
             r#""qh"."value_kind" <> "#,
         ] {
             assert!(in_effect.contains(fragment), "{fragment} missing: {in_effect}");
         }
-        assert!(!in_effect.contains("COALESCE("), "{in_effect}");
+        assert!(!in_effect.contains("MAX(") && !in_effect.contains("GREATEST("), "{in_effect}");
     }
 
     /// Clause 4.11 bounds `between` above exclusively, and only the instances
@@ -492,8 +494,8 @@ mod tests {
         for fragment in [
             r#"SELECT "qh".* FROM"#,
             r#""qs"."attribute_name_key" = ANY(ARRAY [7,9])"#,
-            r#""qe"."placed" < '2019-01-01"#,
-            r#""qd"."observed_at" IS NULL AND "qd"."deleted_at" <= '2019-01-01"#,
+            r#""qh"."placed" < '2019-01-01"#,
+            r#"COALESCE("qi"."observed_at", "qi"."deleted_at") <= '2019-01-01"#,
         ] {
             assert!(sql.contains(fragment), "{fragment} missing: {sql}");
         }
@@ -508,7 +510,7 @@ mod tests {
         for interval in [TimeInterval::Before(instant("2019-01-01T00:00:00Z")), TimeInterval::Unbounded] {
             let sql = render(window(interval).exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::top_level()));
             assert!(!sql.contains(") OR EXISTS(SELECT 1 FROM (SELECT"), "{sql}");
-            for alias in [r#""qe""#, r#""qp""#, r#""qd""#, r#""qs""#] {
+            for alias in [r#""qe""#, r#""qi""#, r#""qs""#] {
                 assert!(!sql.contains(alias), "{alias}: {sql}");
             }
         }
@@ -534,7 +536,7 @@ mod tests {
         );
         let sql = render(snapshot.exists(AttributeNameKey::from(7), above_100(), &HistoryAliases::top_level()));
         pretty_assertions::assert_eq!(sql.matches(r#""qh"."value_number" > 100"#).count(), 2, "{sql}");
-        pretty_assertions::assert_eq!(sql.matches(r#""re"."id" = "e"."id""#).count(), 3, "{sql}");
+        pretty_assertions::assert_eq!(sql.matches(r#""re"."id" = "e"."id""#).count(), 2, "{sql}");
     }
 
     /// The terms of a disjunction share each probe, each arm keeping its own
@@ -565,7 +567,7 @@ mod tests {
     #[test]
     fn a_hop_seeks_its_prior_instance_under_its_own_alias() {
         let sql = render(window(after_2019()).exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::at_depth(2)));
-        for alias in [r#"AS "qp_ln2""#, r#"AS "qd_ln2""#, r#"AS "qe_ln2""#] {
+        for alias in [r#"AS "qi_ln2""#, r#"AS "qe_ln2""#, r#"AS "qh_ln2""#] {
             assert!(sql.contains(alias), "{alias} missing: {sql}");
         }
     }
@@ -605,17 +607,19 @@ mod tests {
             .reach(WindowReach::InsideAndInEffect)
             .build();
         let sql = render(window.exists(AttributeNameKey::from(7), above_100(), &HistoryAliases::top_level()));
-        for alias in ["qh", "qs", "qi"] {
+        for alias in ["qh", "qs"] {
             assert!(
                 sql.contains(&format!(r#""rs"."temporal_entity_key" = "e"."temporal_entity_key") AS "{alias}""#)),
                 "{alias}: {sql}"
             );
         }
+        assert!(sql.contains(r#""qs"."temporal_entity_key" AS "temporal_entity_key""#), "{sql}");
         assert!(!sql.contains("temporal_entities") && !sql.contains("entity_id"), "{sql}");
     }
 
     /// A Snapshot reads its own branch: every history relation of both probes,
-    /// the two placement probes included, is qualified with the branch schema.
+    /// the stream the instance in effect is placed in included, is qualified
+    /// with the branch schema.
     #[test]
     fn both_probes_are_qualified_with_the_branch_schema() {
         let window = window_on(
@@ -624,10 +628,10 @@ mod tests {
             after_2019(),
         );
         let sql = render(window.exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::top_level()));
-        pretty_assertions::assert_eq!(sql.matches(r#""attribute_history""#).count(), 4, "{sql}");
-        pretty_assertions::assert_eq!(sql.matches(r#""snap_7"."attribute_history""#).count(), 4, "{sql}");
-        pretty_assertions::assert_eq!(sql.matches(r#""temporal_attribute_streams""#).count(), 3, "{sql}");
-        pretty_assertions::assert_eq!(sql.matches(r#""snap_7"."temporal_attribute_streams""#).count(), 3, "{sql}");
+        pretty_assertions::assert_eq!(sql.matches(r#""attribute_history""#).count(), 2, "{sql}");
+        pretty_assertions::assert_eq!(sql.matches(r#""snap_7"."attribute_history""#).count(), 2, "{sql}");
+        pretty_assertions::assert_eq!(sql.matches(r#""temporal_attribute_streams""#).count(), 2, "{sql}");
+        pretty_assertions::assert_eq!(sql.matches(r#""snap_7"."temporal_attribute_streams""#).count(), 2, "{sql}");
         assert!(!sql.contains("temporal_append"), "{sql}");
     }
 }

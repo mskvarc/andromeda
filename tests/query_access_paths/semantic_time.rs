@@ -8,14 +8,14 @@
 //!
 //! The schema deliberately indexes one axis for windows. `idx_attribute_history_stream_observed_at`
 //! exists because `observedAt` is the default and carries the query volume;
-//! a created or modified index is benchmark-gated and none was accepted. The
-//! one stream-led index on `deleted_at`, `idx_attribute_history_stream_deletion`,
-//! was accepted because a measurement asked for it: the instance-in-effect
-//! probe of a temporal `q` seeks the latest deletion with no `observedAt` per
-//! stream, and reading it from the BRIN made a 78 ms statement take 310 ms on
-//! a four-million-row tenant. These tests assert both
-//! halves of that decision — the indexed axis reaches its index, the other
-//! three are exact and stay on the stream-led path — so a later index is added
+//! a window index on `createdAt` or `modifiedAt` is benchmark-gated and none
+//! is accepted. The placement indexes, `(stream_key, coalesce(axis,
+//! deleted_at) desc)` on `observedAt`, `createdAt` and `modifiedAt`, serve
+//! the instance in effect when a window opens, never a window itself: on a
+//! stream of 5,000 instances that read takes 8 ms on `observedAt` and 64 ms on
+//! `createdAt` with them, 358 ms and 403 ms without. These tests assert both
+//! halves of the window decision, the indexed axis reaching its index and the
+//! other three exact on the stream-led path, so a later index is added
 //! because a measurement asked for it rather than by accident.
 
 use crate::{

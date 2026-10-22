@@ -125,13 +125,19 @@ create index idx_attribute_history_stream_observed_at on attribute_history (stre
 where
     observed_at is not null;
 
--- A deletion with no `observedAt` is placed at its `deleted_at`; the
--- instance-in-effect probe of a temporal `q` seeks the latest one per stream.
--- The predicate names `observed_at` so that a generic plan, which cannot see
--- the bound instant, still prices the index by how few rows it holds.
-create index idx_attribute_history_stream_deletion on attribute_history (stream_key, deleted_at desc)
-where
-    deleted_at is not null and observed_at is null;
+-- The instance a stream held when a temporal window opens is its latest row
+-- placed at or before the start, a row placed at its instant on the window's
+-- axis and a deletion without one at its `deleted_at` (clause 4.5.7). A
+-- temporal `q` or geo-query reads each tested stream down from the start in
+-- this order and stops after the rows tied with the first, so the order is
+-- indexed whole on each axis a window can open on: one entry per chunk is
+-- read however long the stream. `deletedAt` places every row on its own
+-- column and opens no window with an instance in effect.
+create index idx_attribute_history_stream_observed_placement on attribute_history (stream_key, (coalesce(observed_at, deleted_at)) desc);
+
+create index idx_attribute_history_stream_created_placement on attribute_history (stream_key, (coalesce(created_at, deleted_at)) desc);
+
+create index idx_attribute_history_stream_modified_placement on attribute_history (stream_key, (coalesce(modified_at, deleted_at)) desc);
 
 -- The broker stamps `createdAt` and `modifiedAt` itself (clause 4.8), and an
 -- appended row records both at its write instant, so a stream's rows in

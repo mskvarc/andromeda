@@ -1,8 +1,8 @@
 //! The names one history probe gives the relations it scans.
 //!
 //! A probe over a Temporal Evolution reads its stream source, its attribute
-//! source and the placement probes of the instance in effect when a window
-//! opens, each under an alias of its own, and a probe nested inside another
+//! source and the parts of a stream it places the instance in effect when a
+//! window opens from, each under an alias of its own, and a probe nested inside another
 //! takes a suffix so neither shadows the other.
 
 use crate::history_source::grain::HistoryGrain;
@@ -20,17 +20,9 @@ pub(crate) struct HistoryAliases {
     stream: String,
     /// Alias of the attribute source scan.
     instance: String,
-    /// Alias of the probe finding the latest recorded instance placed on the axis.
-    prior: String,
-    /// Alias of the probe finding the latest recorded deletion with no axis instant.
-    deletion: String,
-    /// Alias of the probe finding the latest queued instance placed on the axis.
-    queued_prior: String,
-    /// Alias of the probe finding the latest queued deletion with no axis instant.
-    queued_deletion: String,
-    /// Alias of the source placing the instance in effect at the start.
+    /// Alias of a read limited to the rows at the latest placement.
     placement: String,
-    /// Alias of the attribute source the instance at the placement is read from.
+    /// Alias of one part of a stream the instance in effect is placed in.
     placed_instance: String,
 }
 
@@ -40,10 +32,6 @@ impl HistoryAliases {
         HistoryAliases {
             stream: "qs".to_owned(),
             instance: "qh".to_owned(),
-            prior: "qp".to_owned(),
-            deletion: "qd".to_owned(),
-            queued_prior: "qpq".to_owned(),
-            queued_deletion: "qdq".to_owned(),
             placement: "qe".to_owned(),
             placed_instance: "qi".to_owned(),
         }
@@ -54,10 +42,6 @@ impl HistoryAliases {
         HistoryAliases {
             stream: format!("qs_ln{depth}"),
             instance: format!("qh_ln{depth}"),
-            prior: format!("qp_ln{depth}"),
-            deletion: format!("qd_ln{depth}"),
-            queued_prior: format!("qpq_ln{depth}"),
-            queued_deletion: format!("qdq_ln{depth}"),
             placement: format!("qe_ln{depth}"),
             placed_instance: format!("qi_ln{depth}"),
         }
@@ -73,32 +57,12 @@ impl HistoryAliases {
         Alias::new(self.instance.as_str())
     }
 
-    /// The probe finding the latest instance placed on the axis.
-    pub(crate) fn prior(&self) -> Alias {
-        Alias::new(self.prior.as_str())
-    }
-
-    /// The probe finding the latest deletion with no axis instant.
-    pub(crate) fn deletion(&self) -> Alias {
-        Alias::new(self.deletion.as_str())
-    }
-
-    /// The probe finding the latest queued instance placed on the axis.
-    pub(crate) fn queued_prior(&self) -> Alias {
-        Alias::new(self.queued_prior.as_str())
-    }
-
-    /// The probe finding the latest queued deletion with no axis instant.
-    pub(crate) fn queued_deletion(&self) -> Alias {
-        Alias::new(self.queued_deletion.as_str())
-    }
-
-    /// The attribute source the instance at the placement is read from.
+    /// One part of a stream the instance in effect is placed in.
     pub(crate) fn placed_instance(&self) -> Alias {
         Alias::new(self.placed_instance.as_str())
     }
 
-    /// The source placing the instance in effect at the start.
+    /// A read limited to the rows at the latest placement.
     pub(crate) fn placement(&self) -> Alias {
         Alias::new(self.placement.as_str())
     }

@@ -43,7 +43,7 @@ pub(super) fn pattern_candidates(branch: &HistoryBranch, pattern: &Pattern) -> S
 mod tests {
     use crate::stage1::{
         Stage1Query,
-        query_fixture::{PageBranches, id_pattern, recorded_stage1, stage1_on},
+        query_fixture::{CountParts, PageBranches, id_pattern, recorded_stage1, stage1_on},
     };
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelector,
@@ -206,16 +206,23 @@ mod tests {
         let count = stage1.count.expect("count requested");
         let (sql, values) = count.build(PostgresQueryBuilder);
         assert!(sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED ("#), "{sql}");
-        assert!(sql.contains(r#"CASE WHEN ((SELECT COUNT(*) FROM "candidates") <= $"#), "{sql}");
         assert!(values.0.contains(&Value::BigUnsigned(Some(10_001))), "{:?}", values.0);
         assert!(values.0.contains(&Value::BigUnsigned(Some(10_000))), "{:?}", values.0);
-        let (_, arms) = sql.split_once(" THEN ").unwrap_or_else(|| panic!("a gated count: {sql}"));
-        let (indexed, walked) = arms.split_once(" ELSE ").unwrap_or_else(|| panic!("a walk past the bound: {sql}"));
+        let parts = CountParts::of(&sql);
         assert!(
-            indexed.contains(r#""e"."temporal_entity_key" IN (SELECT "temporal_entity_key" FROM "candidates")"#),
-            "{indexed}"
+            parts
+                .indexed
+                .contains(r#""e"."temporal_entity_key" IN (SELECT "temporal_entity_key" FROM "candidates")"#),
+            "{}",
+            parts.indexed
         );
-        assert!(!indexed.contains(r#""e"."id" ~"#), "{indexed}");
-        assert!(walked.contains(r#""e"."id" ~ $"#) && !walked.contains("candidates"), "{walked}");
+        assert_eq!(parts.walked.matches("candidates").count(), 2, "the two gates alone: {}", parts.walked);
+        assert!(
+            parts.filtered.contains(r#""e"."id" ~ $"#),
+            "the pattern is tested once, on every looked-up Evolution: {}",
+            parts.filtered
+        );
+        assert!(!parts.indexed.contains(r#""e"."id" ~"#) && !parts.walked.contains(r#""e"."id" ~"#), "{sql}");
+        assert!(!sql.contains("CASE WHEN"), "{sql}");
     }
 }

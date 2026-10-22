@@ -334,7 +334,7 @@ mod tests {
         compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\">100").unwrap());
         let count = built_count(&compiled, &speed_and_address());
         assert!(count.contains("JOIN LATERAL"), "{count}");
-        assert!(count.contains(r#""qe"."placed" <"#), "{count}");
+        assert!(count.contains(r#""qh"."placed" <"#), "{count}");
         pretty_assertions::assert_eq!(count.matches(r#"AS "qh""#).count(), 2, "{count}");
     }
 

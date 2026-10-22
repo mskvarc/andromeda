@@ -85,7 +85,7 @@ fn recorded_scope_matches(branch: &HistoryBranch, scope_q: &ScopeQuery) -> Selec
 mod tests {
     use crate::{
         split_filter_leaves::build_filter_leaf_truths,
-        stage1::query_fixture::{PageBranches, ids, instant, recorded_stage1, scope_query, sensor_names, stage1_on},
+        stage1::query_fixture::{CountParts, PageBranches, ids, instant, recorded_stage1, scope_query, sensor_names, stage1_on},
     };
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use andromeda_ngsi_ld_query::{
@@ -313,18 +313,19 @@ mod tests {
             sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED (SELECT "scope_history"."temporal_entity_key" FROM"#),
             "{sql}"
         );
-        assert!(sql.contains(r#"CASE WHEN ((SELECT COUNT(*) FROM "candidates") <= $"#), "{sql}");
         assert!(values.0.contains(&Value::BigUnsigned(Some(10_001))), "{:?}", values.0);
         assert!(values.0.contains(&Value::BigUnsigned(Some(10_000))), "{:?}", values.0);
-        let (_, arms) = sql.split_once(" THEN ").unwrap_or_else(|| panic!("a gated count: {sql}"));
-        let (indexed, walked) = arms.split_once(" ELSE ").unwrap_or_else(|| panic!("a walk past the bound: {sql}"));
+        let parts = CountParts::of(&sql);
         assert!(
-            indexed.contains(r#""temporal_entity_key" IN (SELECT "temporal_entity_key" FROM "candidates")"#),
-            "{indexed}"
+            parts
+                .indexed
+                .contains(r#""temporal_entity_key" IN (SELECT "temporal_entity_key" FROM "candidates")"#),
+            "{}",
+            parts.indexed
         );
-        for arm in [indexed, walked] {
-            assert!(arm.contains(r#"FROM "scope_history" AS "rsh""#), "{arm}");
-        }
-        assert!(!walked.contains("candidates"), "{walked}");
+        assert_eq!(parts.walked.matches("candidates").count(), 2, "the two gates alone: {}", parts.walked);
+        assert!(parts.filtered.contains(r#"FROM "scope_history" AS "rsh""#), "{}", parts.filtered);
+        assert!(!parts.indexed.contains("scope_history") && !parts.walked.contains("scope_history"), "{sql}");
+        assert!(!sql.contains("CASE WHEN"), "{sql}");
     }
 }

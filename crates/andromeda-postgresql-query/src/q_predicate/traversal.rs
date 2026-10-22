@@ -403,7 +403,7 @@ mod tests {
         for fragment in [r#") AS "le1" ON "le1"."id" = "lo1""#, r#""le1"."entity_key" = 5"#] {
             assert_eq!(sql.matches(fragment).count(), 2, "{fragment}: {sql}");
         }
-        assert!(sql.contains(r#"AS "qe_ln1" ON TRUE"#), "{sql}");
+        assert!(sql.contains(r#"AS "qe_ln1") AS "qh_ln1" ON TRUE"#), "{sql}");
     }
 
     /// Clause 4.9: a hop's type guard names the types the linked entity

@@ -254,3 +254,32 @@ impl PageBranches<'_> {
         }
     }
 }
+
+/// The parts of a gated count, each asserted on alone.
+pub(super) struct CountParts<'s> {
+    /// The keys of the walk narrowed to the candidates.
+    pub(super) indexed: &'s str,
+    /// Both gates and the keys of the whole walk.
+    pub(super) walked: &'s str,
+    /// The lookup of every key and the filters the count tests.
+    pub(super) filtered: &'s str,
+}
+
+impl CountParts<'_> {
+    /// The parts of the gated count `sql`.
+    pub(super) fn of(sql: &str) -> CountParts<'_> {
+        let keys_marker = r#"SELECT COUNT("e"."id") FROM (SELECT "e".* FROM ("#;
+        let keys_start = sql
+            .find(keys_marker)
+            .map_or_else(|| panic!("a count over gated keys: {sql}"), |at| at + keys_marker.len());
+        let within = sql
+            .find(r#"(SELECT COUNT(*) FROM "candidates") <= "#)
+            .unwrap_or_else(|| panic!("the gate within the bound: {sql}"));
+        let lookup = sql.find(r#") AS "k" JOIN LATERAL"#).unwrap_or_else(|| panic!("the lookup of each key: {sql}"));
+        CountParts {
+            indexed: &sql[keys_start..within],
+            walked: &sql[within..lookup],
+            filtered: &sql[lookup..],
+        }
+    }
+}

@@ -113,6 +113,16 @@ pub(super) fn evolution_rows(branch: &HistoryBranch, compiled: &CompiledTemporal
     }
 }
 
+/// The column the Evolutions a walk yields and the candidates name each other
+/// by: the surrogate key over recorded rows alone, the identifier where the
+/// branch reads its queue, the one column an Evolution only queued carries.
+pub(super) const fn walked_key(branch: &HistoryBranch) -> TemporalEntities {
+    match branch.pending() {
+        PendingEntries::Absent => TemporalEntities::TemporalEntityKey,
+        PendingEntries::Unioned => TemporalEntities::Id,
+    }
+}
+
 /// What a walk of the Evolutions reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WalkSource {
