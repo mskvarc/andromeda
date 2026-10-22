@@ -20,6 +20,7 @@
 
 use crate::{document_context::ResolvedContext, error::JsonLdError, loader::http::HttpContextLoader};
 use andromeda_json_literal::piece::{JsonKind, JsonPiece};
+use andromeda_ngsi_ld_vocabulary::keyword;
 use iri_rs::{IriBuf, IriRef};
 use std::vec::IntoIter;
 use thiserror::Error;
@@ -133,7 +134,7 @@ async fn walk(loader: &HttpContextLoader, roots: Vec<IriBuf>) -> Result<(), Json
 /// Collect the absolute references of the `@context` member of the object
 /// `document`.
 fn collect_member(document: JsonPiece<'_>, references: &mut Vec<IriBuf>) {
-    if let Some(slot) = document.member(CONTEXT) {
+    if let Some(slot) = document.member(keyword::CONTEXT) {
         collect_slot(slot, references);
     }
 }
@@ -148,19 +149,13 @@ fn collect_slot(slot: JsonPiece<'_>, references: &mut Vec<IriBuf>) {
             .into_iter()
             .for_each(|entry| collect_slot(entry, references)),
         JsonKind::Object => {
-            if let Some(import) = slot.member(IMPORT).and_then(JsonPiece::as_str) {
+            if let Some(import) = slot.member(keyword::IMPORT).and_then(JsonPiece::as_str) {
                 references.extend(reference_iri(&import, None));
             }
         }
         JsonKind::Null | JsonKind::Boolean | JsonKind::Number => {}
     }
 }
-
-/// The keyword a context slot is named by.
-const CONTEXT: &str = "@context";
-
-/// The keyword JSON-LD 1.1 section 4.1.10 imports a context through.
-const IMPORT: &str = "@import";
 
 /// The IRI `reference` names: itself when absolute, else its resolution
 /// against `base`. A reference that is no IRI reference, or is relative with

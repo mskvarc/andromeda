@@ -19,12 +19,12 @@
 use crate::{
     context_value::ContextEntry,
     core_context::is_ngsi_ld_core_context_url,
-    core_context_precedence::{IMPORT_KEYWORD, defines_nothing_but_an_import},
+    core_context_precedence::defines_nothing_but_an_import,
     engine::context_url::is_absolute_iri,
     hosted_context_recognizer::{HostedContextRecognizer, HostedReference},
 };
 use andromeda_json_literal::piece::{JsonKind, JsonPiece};
-use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+use andromeda_ngsi_ld_vocabulary::{NGSI_LD_CORE_CONTEXT_URL, keyword};
 use iri_rs::{Iri, IriBuf, IriRefBuf};
 
 /// The last context a `@context` value leaves in force.
@@ -168,7 +168,7 @@ impl ContextTail {
         let imported = members
             .iter()
             .rev()
-            .find_map(|(key, value)| (key == IMPORT_KEYWORD).then_some(*value))
+            .find_map(|(key, value)| (key == keyword::IMPORT).then_some(*value))
             .and_then(JsonPiece::as_str);
         match imported {
             Some(imported) if defines_nothing_but_an_import(members.iter().map(|(key, _)| key.as_ref())) => ContextTail::of_reference(&imported),

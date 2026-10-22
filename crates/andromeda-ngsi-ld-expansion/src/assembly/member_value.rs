@@ -14,12 +14,12 @@ use crate::{
 use andromeda_ngsi_ld_entity::{document::slot::Slot, member_shape::MemberShape, refusal::EntityRefusal};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
-    default_instance::DEFAULT_INSTANCE_TOKEN,
     identifier::Identifier,
     reference::NgsiLdReference,
     time::{date_time::NgsiLdDateTime, system_instant::SystemInstant},
     unit_code_resolution::{UnitCodeRefusal, resolve_unit_code},
 };
+use andromeda_ngsi_ld_vocabulary::keyword;
 use cefact_units::UnitCode;
 
 /// The refusal of a member not shaped as its expanded form shapes it.
@@ -123,7 +123,7 @@ pub fn dataset_id(items: &[ExpandedItem], attribute: &AttributeName) -> Result<O
         });
     }
     let text = single_reference(items, attribute, MemberShape::DatasetId)?;
-    if text == DEFAULT_INSTANCE_TOKEN {
+    if text == keyword::NONE {
         return Ok(None);
     }
     text.parse::<Identifier>().map(Some).map_err(|source| EntityRefusal::DatasetId {

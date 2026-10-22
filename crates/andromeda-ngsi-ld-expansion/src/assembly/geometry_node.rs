@@ -17,6 +17,7 @@ use crate::{
     expanded_tree::{ExpandedGeometry, ExpandedItem, ExpandedNode, Scalar},
 };
 use andromeda_ngsi_ld_entity::{
+    expanded_geometry_type::{expanded_geometry_type, geometry_type_iri},
     expanded_value::{ExpandedValue, ValueNode},
     expanded_value_name::ExpandedValueName,
     geometry_value::{ExpandedGeoJsonMembers, GeometryValue},
@@ -27,23 +28,15 @@ use andromeda_ngsi_ld_entity::{
 };
 use andromeda_ngsi_ld_geometry::{
     bounding_box::{BoundingBox, BoundingBoxError},
-    coordinate_path::CoordinatePath,
+    coordinate_tape::CoordinateTape,
     form::{GeometryForm, PolygonRings},
     geojson::GeometryError,
-    geometry_type::GeometryType,
-    line_string_coordinates::LineStringCoordinates,
-    linear_ring::LinearRing,
-    position::{Position, PositionError},
+    position::Position,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_vocabulary::{expanded::properties, prefix};
+use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use indexmap::IndexMap;
-use std::str::FromStr;
-
-/// The `GeoJSON` type token of a `GeometryCollection`, which clause 4.7.1 does
-/// not admit as a `GeoProperty` value and [`GeometryType`] does not name.
-const GEOMETRY_COLLECTION_TOKEN: &str = "GeometryCollection";
 
 /// Read an expanded `GeoJSON` node as the geometry it describes, with its
 /// `bbox` and its foreign members.
@@ -104,132 +97,41 @@ pub fn geometry_value(attribute: &AttributeName, geometry: ExpandedGeometry) -> 
 
 /// The positions an expanded `GeoJSON` node describes.
 fn geometry_form(node: &ExpandedNode) -> Result<GeometryForm, GeometryError> {
-    let token = node
-        .types
-        .first()
-        .and_then(|iri| iri.strip_prefix(prefix::GEOJSON.as_str()))
-        .ok_or(GeometryError::MissingType)?;
-    if token == GEOMETRY_COLLECTION_TOKEN {
-        return Err(GeometryError::GeometryCollectionUnsupported);
-    }
-    let geometry_type = GeometryType::from_str(token).map_err(GeometryError::UnknownType)?;
+    let geometry_type = expanded_geometry_type(&node.types)?;
     let coordinates = node.member(properties::COORDINATES.as_str()).ok_or(GeometryError::MissingCoordinates)?;
-    // A `coordinates` member the `@list` container did not wrap names no
-    // nesting the reader below can follow.
-    let [coordinates @ ExpandedItem::List(_)] = coordinates else {
-        return Err(GeometryError::MissingCoordinates);
-    };
-    let reader = CoordinateReader { geometry_type };
-    let enclosing = &mut Vec::new();
-    let form = match geometry_type {
-        GeometryType::Point => GeometryForm::Point(reader.position(coordinates, enclosing)?),
-        GeometryType::MultiPoint => GeometryForm::MultiPoint(reader.each(coordinates, enclosing, |reader, item, enclosing: &mut Vec<usize>| {
-            reader.position(item, enclosing)
-        })?),
-        GeometryType::LineString => GeometryForm::LineString(reader.line_string(coordinates, enclosing)?),
-        GeometryType::MultiLineString => GeometryForm::MultiLineString(reader.each(coordinates, enclosing, CoordinateReader::line_string)?),
-        GeometryType::Polygon => GeometryForm::Polygon(reader.rings(coordinates, enclosing)?),
-        GeometryType::MultiPolygon => GeometryForm::MultiPolygon(reader.each(coordinates, enclosing, CoordinateReader::rings)?),
-    };
-    form.with_uniform_arity()
+    coordinate_tape(coordinates).read_as(geometry_type)
 }
 
-/// Reads the expanded `coordinates` of one geometry the way its type nests
-/// them (IETF RFC 7946 sections 3.1.2 through 3.1.7).
-#[derive(Clone, Copy, Debug)]
-struct CoordinateReader {
-    /// The geometry type whose nesting is read, named in a nesting refusal.
-    geometry_type: GeometryType,
+/// The items of an expanded `coordinates` member recorded onto a coordinate
+/// tape, which reads them as the geometry type nests them: the member holds
+/// its one `@list`, each list is an array and each numeric value object an
+/// ordinate. A member holding anything but one item is one member that is no
+/// array, refused at the root.
+fn coordinate_tape(items: &[ExpandedItem]) -> CoordinateTape {
+    let mut tape = CoordinateTape::default();
+    match items {
+        [item] => record(&mut tape, item),
+        [] | [_, _, ..] => tape.other(),
+    }
+    tape
 }
 
-impl CoordinateReader {
-    /// The refusal of an item found where the type nests something else.
-    fn misnested(self, enclosing: &[usize]) -> GeometryError {
-        GeometryError::Misnested {
-            geometry_type: self.geometry_type,
-            at: CoordinatePath::new(enclosing.to_vec()),
+/// Record one expanded coordinate item, and every item below it.
+fn record(tape: &mut CoordinateTape, item: &ExpandedItem) {
+    match item {
+        ExpandedItem::List(items) => {
+            tape.open();
+            for item in items {
+                record(tape, item);
+            }
+            tape.close();
         }
-    }
-
-    /// The items of the list `item` must be.
-    fn list<'a>(self, item: &'a ExpandedItem, enclosing: &[usize]) -> Result<&'a [ExpandedItem], GeometryError> {
-        match item {
-            ExpandedItem::List(items) => Ok(items),
-            ExpandedItem::Value(_) | ExpandedItem::Json(_) | ExpandedItem::Node(_) | ExpandedItem::Geometry(_) => Err(self.misnested(enclosing)),
-        }
-    }
-
-    /// Read `item` as one position.
-    fn position(self, item: &ExpandedItem, enclosing: &[usize]) -> Result<Position, GeometryError> {
-        let ordinates = self.list(item, enclosing)?;
-        if ordinates.iter().any(|ordinate| matches!(ordinate, ExpandedItem::List(_))) {
-            return Err(self.misnested(enclosing));
-        }
-        position(ordinates).map_err(|source| GeometryError::Position {
-            at: CoordinatePath::new(enclosing.to_vec()),
-            source,
-        })
-    }
-
-    /// Read `item` as the positions of one `LineString`.
-    fn line_string(self, item: &ExpandedItem, enclosing: &mut Vec<usize>) -> Result<LineStringCoordinates, GeometryError> {
-        let positions = self.each(item, enclosing, |reader, item, enclosing: &mut Vec<usize>| reader.position(item, enclosing))?;
-        LineStringCoordinates::try_new(positions).map_err(|source| GeometryError::LineString {
-            at: CoordinatePath::new(enclosing.clone()), // clone: the refusal owns the path of the one line it names
-            source,
-        })
-    }
-
-    /// Read `item` as one Polygon ring.
-    fn ring(self, item: &ExpandedItem, enclosing: &mut Vec<usize>) -> Result<LinearRing, GeometryError> {
-        let positions = self.each(item, enclosing, |reader, item, enclosing: &mut Vec<usize>| reader.position(item, enclosing))?;
-        LinearRing::try_new(positions).map_err(|source| GeometryError::LinearRing {
-            at: CoordinatePath::new(enclosing.clone()), // clone: the refusal owns the path of the one ring it names
-            source,
-        })
-    }
-
-    /// Read `item` as the rings of one Polygon, exterior ring first.
-    fn rings(self, item: &ExpandedItem, enclosing: &mut Vec<usize>) -> Result<PolygonRings, GeometryError> {
-        self.each(item, enclosing, CoordinateReader::ring).map(PolygonRings::new)
-    }
-
-    /// Read every item of the list `item` with `read`, each one level deeper.
-    fn each<T>(
-        self,
-        item: &ExpandedItem,
-        enclosing: &mut Vec<usize>,
-        read: impl Fn(CoordinateReader, &ExpandedItem, &mut Vec<usize>) -> Result<T, GeometryError>,
-    ) -> Result<Vec<T>, GeometryError> {
-        let items = self.list(item, enclosing)?;
-        let mut read_items = Vec::with_capacity(items.len());
-        for (index, nested) in items.iter().enumerate() {
-            enclosing.push(index);
-            let read_item = read(self, nested, enclosing);
-            enclosing.pop();
-            read_items.push(read_item?);
-        }
-        Ok(read_items)
+        ExpandedItem::Value(_) | ExpandedItem::Json(_) | ExpandedItem::Node(_) | ExpandedItem::Geometry(_) => tape.number(ordinate_value(item)),
     }
 }
 
-/// Read one position: every member a number, two or three of them, longitude
-/// and latitude on the CRS84 axes.
-fn position(ordinates: &[ExpandedItem]) -> Result<Position, PositionError> {
-    let numbers = ordinates
-        .iter()
-        .enumerate()
-        .map(|(index, ordinate)| ordinate_value(ordinate).ok_or(PositionError::NonNumericOrdinate { index }))
-        .collect::<Result<Vec<f64>, PositionError>>()?;
-    match numbers.as_slice() {
-        [longitude, latitude] => Position::try_new(*longitude, *latitude, None),
-        [longitude, latitude, altitude] => Position::try_new(*longitude, *latitude, Some(*altitude)),
-        [] | [_] => Err(PositionError::TooFewOrdinates { ordinates: numbers.len() }),
-        [_, _, _, _, ..] => Err(PositionError::TooManyOrdinates { ordinates: numbers.len() }),
-    }
-}
-
-/// The double one ordinate reads as, the nearest to its exact text.
+/// The double one ordinate reads as, the nearest to its exact text; `None`
+/// for an item that is no number.
 fn ordinate_value(item: &ExpandedItem) -> Option<f64> {
     match item {
         ExpandedItem::Value(value) => match &value.scalar {
@@ -257,8 +159,7 @@ pub fn geometry_value_node<M: MemberMode>(attribute: &AttributeName, geometry: E
         member: MemberShape::Geometry,
     };
     let ExpandedGeometry { form, bbox, foreign } = geometry;
-    let type_iri = format!("{}{}", prefix::GEOJSON.as_str(), form.geometry_type());
-    let type_name = type_iri.parse::<ExpandedValueName>().map_err(|_| malformed())?;
+    let type_name = geometry_type_iri(form.geometry_type()).parse::<ExpandedValueName>().map_err(|_| malformed())?;
     let coordinates = properties::COORDINATES.as_str().parse::<ExpandedValueName>().map_err(|_| malformed())?;
     let list = coordinate_list::<M>(&form).ok_or_else(malformed)?;
     let mut members = IndexMap::with_capacity(2 + foreign.len());

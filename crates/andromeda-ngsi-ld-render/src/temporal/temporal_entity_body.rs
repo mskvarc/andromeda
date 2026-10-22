@@ -27,8 +27,7 @@ use andromeda_json_literal::JsonLiteral;
 use andromeda_linked_retrieval::{keyword::Keyword, narrowing::member::MemberRule, plan::InlineCursor};
 use andromeda_ngsi_ld_lexicon::{time::rendering::instant_text, time_prop::TimeProp};
 use andromeda_ngsi_ld_model::temporal::{temporal_attribute::TemporalAttribute, temporal_entity::TemporalEntity};
-use andromeda_ngsi_ld_query::projection::term::ProjectionTerm;
-use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Serializer, ser::SerializeMap};
 
@@ -134,12 +133,12 @@ impl Serialize for TemporalEntityBody<'_> {
         let entity = self.entity;
         let mut object = open_object(serializer, self.context, None)?;
         if self.keeps(Keyword::Id) {
-            object.serialize_entry(ProjectionTerm::ID_KEYWORD, &entity.id)?;
+            object.serialize_entry(keyword::ID_ALIAS, &entity.id)?;
         }
         if self.keeps(Keyword::Type) {
             match entity.type_.iter().next() {
-                Some(first) if self.walk.writes_single_type() => object.serialize_entry(ProjectionTerm::TYPE_KEYWORD, first)?,
-                Some(_) | None => object.serialize_entry(ProjectionTerm::TYPE_KEYWORD, &entity.type_)?,
+                Some(first) if self.walk.writes_single_type() => object.serialize_entry(keyword::TYPE_ALIAS, first)?,
+                Some(_) | None => object.serialize_entry(keyword::TYPE_ALIAS, &entity.type_)?,
             }
         }
         // The Scope history is an attribute of the evolution; the keyword

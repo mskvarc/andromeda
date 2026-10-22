@@ -1,7 +1,6 @@
 //! Append Attributes (clause 5.6.3).
 
 use crate::{
-    attribute_instances::AttributeInstances,
     document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot, written_value::ValueSlot},
     entity_state::EntityState,
     operation::{
@@ -98,17 +97,8 @@ impl EntityState {
                 continue;
             }
             let instance = new_instance(name, document, None)?;
-            match self.attributes_mut().get_mut(name) {
-                // clone: the instance is keyed by its own copy of the written identity.
-                Some(held) => {
-                    held.insert(dataset_id.cloned(), instance);
-                }
-                // clone: the entity owns the attribute name and the instance identity it gains.
-                None => {
-                    self.attributes_mut()
-                        .insert(name.clone(), AttributeInstances::one(dataset_id.cloned(), instance));
-                }
-            }
+            // clone: the instance is keyed by its own copy of the written identity.
+            self.attributes_mut().insert_instance(name, dataset_id.cloned(), instance);
         }
         Ok(appended)
     }

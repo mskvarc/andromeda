@@ -17,12 +17,13 @@ use crate::{
     foreign_members::ForeignMemberName,
     geojson::GeometryError,
     geometry::Geometry,
+    geometry_member::GeometryMember,
     geometry_members::{ForeignMemberReading, GeometriesMember, GeometryMembers, JsonLdKeywords, TypeMember},
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_number::json_value::value_census::{MemberName, MemberNameSeed};
 use serde::de::{Deserialize, DeserializeSeed, Deserializer, Error as DeserializeError, IgnoredAny, MapAccess, SeqAccess, Visitor};
-use std::fmt;
+use std::{fmt, str::FromStr};
 
 /// A compact `GeoJSON` geometry object as written: the geometry it reads as,
 /// or why it reads as none, and whether it carries a JSON-LD keyword member.
@@ -251,12 +252,12 @@ impl Visitor<'_> for GeometryKeySeed {
     }
 
     fn visit_str<E: DeserializeError>(self, name: &str) -> Result<GeometryKey, E> {
-        Ok(match name {
-            "type" => GeometryKey::Type,
-            "coordinates" => GeometryKey::Coordinates,
-            "bbox" => GeometryKey::Bbox,
-            "geometries" => GeometryKey::Geometries,
-            other => GeometryKey::Other(Box::from(other)),
+        Ok(match GeometryMember::from_str(name) {
+            Ok(GeometryMember::Type) => GeometryKey::Type,
+            Ok(GeometryMember::Coordinates) => GeometryKey::Coordinates,
+            Ok(GeometryMember::Bbox) => GeometryKey::Bbox,
+            Ok(GeometryMember::Geometries) => GeometryKey::Geometries,
+            Err(_) => GeometryKey::Other(Box::from(name)),
         })
     }
 }

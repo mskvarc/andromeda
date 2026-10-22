@@ -18,6 +18,7 @@ pub mod produced_node;
 
 use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, written_geometry::WrittenGeometry};
+use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::is_ngsi_ld_null;
 use serde::de::{DeserializeOwned, value::BorrowedStrDeserializer};
 use std::{borrow::Cow, error::Error, vec::IntoIter};
 
@@ -69,6 +70,12 @@ pub trait CompactNode<'n>: Copy + 'n {
             NodeShape::String(text) => Some(text),
             NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::Array(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => None,
         }
+    }
+
+    /// Whether the node is the NGSI-LD Null written as a string (clause
+    /// 4.5.0).
+    fn is_ngsi_ld_null(self) -> bool {
+        self.text().is_some_and(|text| is_ngsi_ld_null(&text))
     }
 }
 

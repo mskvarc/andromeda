@@ -12,7 +12,7 @@ use andromeda_ngsi_ld_lexicon::{
     uri::Uri,
 };
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_vocabulary::NULL_URI;
+use andromeda_ngsi_ld_vocabulary::{keyword, ngsi_ld_null::NULL_URI};
 use chrono::{DateTime, Utc};
 
 /// Reading the aggregated representation a peer answered with.
@@ -242,23 +242,12 @@ pub enum GroupKeyValue {
 }
 
 impl GroupKeyValue {
-    /// The `@none` map key of an absent group value.
-    pub const NONE_KEY: &'static str = "@none";
-
-    /// The map key of an explicit NGSI-LD Null: the clause 4.5.0
-    /// `urn:ngsi-ld:null` sentinel, taken from the validated vocabulary constant
-    /// rather than spelled as a raw string.
-    #[must_use]
-    pub fn null_key() -> &'static str {
-        NULL_URI.as_str()
-    }
-
     /// The JSON object key this group value nests its triples under.
     #[must_use]
     pub fn as_map_key(&self) -> &str {
         match self {
-            GroupKeyValue::Absent => GroupKeyValue::NONE_KEY,
-            GroupKeyValue::Null => GroupKeyValue::null_key(),
+            GroupKeyValue::Absent => keyword::NONE,
+            GroupKeyValue::Null => NULL_URI.as_str(),
             GroupKeyValue::Value(value) => value,
         }
     }

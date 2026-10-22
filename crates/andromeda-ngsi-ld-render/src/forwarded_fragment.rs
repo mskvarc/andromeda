@@ -25,11 +25,8 @@ use andromeda_ngsi_ld_model::attribute::{
     nested_null::NullProperty,
     patched::Patched,
 };
-use andromeda_ngsi_ld_vocabulary::{NULL_URI, compact::properties as compact_properties};
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword, ngsi_ld_null::NULL_URI};
 use serde::{Serialize, Serializer, ser::SerializeMap};
-
-/// The member an instance names its family in.
-const TYPE_MEMBER: &str = "type";
 
 /// Where a fragment member stands, which decides how its NGSI-LD Null is
 /// written.
@@ -142,7 +139,7 @@ impl Serialize for FragmentInstance<'_> {
         let instance = self.instance;
         let mut map = serializer.serialize_map(None)?;
         if let Some(family) = self.written_family() {
-            map.serialize_entry(TYPE_MEMBER, family.short_name())?;
+            map.serialize_entry(keyword::TYPE_ALIAS, family.short_name())?;
             if let Some(value) = &instance.value {
                 map.serialize_entry(family.compact_value_key(), &WrittenValue::of(value, family))?;
             }

@@ -9,14 +9,12 @@
 //! observation could have, so it is refused as the unusable code it is.
 
 use crate::{error::TemporalError, temporal_validation_reason::TemporalValidationReason};
-use andromeda_ngsi_ld_entity::document::{
-    EntityDocument,
-    attribute_member::AttributeMember,
-    instance_document::InstanceDocument,
-    slot::Slot,
-    written_value::ValueSlot,
+use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    unit_code_admission::{UnitCodeAdmission, unit_code_admission},
+    unit_code_resolution::UnitCodeRefusal,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, unit_code_resolution::UnitCodeRefusal};
 
 /// Refuse a written Temporal Evolution document carrying an attribute instance
 /// whose family forbids the `unitCode` it carries.
@@ -45,30 +43,14 @@ pub(crate) fn admit_instance_unit_code(attribute: &AttributeName, instance: &Ins
             source: UnitCodeRefusal::NotACommonCode,
         }
         .into()),
-        Some(Slot::Set(_)) => match family_of(instance) {
-            Some(
-                family @ (AttributeType::Relationship
-                | AttributeType::LanguageProperty
-                | AttributeType::VocabProperty
-                | AttributeType::JsonProperty
-                | AttributeType::ListRelationship),
-            ) => Err(TemporalValidationReason::InstanceUnitCodeForbidden {
+        Some(Slot::Set(_)) => match instance.implied_family() {
+            Some(family) if unit_code_admission(family) == UnitCodeAdmission::Forbidden => Err(TemporalValidationReason::InstanceUnitCodeForbidden {
                 family,
                 attribute: attribute.clone(), // clone: the refusal owns the attribute it names
             }
             .into()),
-            Some(AttributeType::Property | AttributeType::GeoProperty | AttributeType::ListProperty) | None => Ok(()),
+            Some(_) | None => Ok(()),
         },
-    }
-}
-
-/// The family an instance declares, or the one its value member implies.
-const fn family_of(instance: &InstanceDocument) -> Option<AttributeType> {
-    match (instance.family(), instance.value()) {
-        (Some(family), _) => Some(family),
-        (None, ValueSlot::Set(value)) => Some(value.carrier().implied_family()),
-        (None, ValueSlot::Remove(carrier)) => Some(carrier.implied_family()),
-        (None, ValueSlot::Absent) => None,
     }
 }
 

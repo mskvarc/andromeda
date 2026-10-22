@@ -29,17 +29,14 @@ use crate::{
     context_graph::reference_iri,
     context_tail::ContextTail,
     core_context::is_ngsi_ld_core_context_url,
-    core_context_precedence::{IMPORT_KEYWORD, defines_nothing_but_an_import, is_core_context_json_string},
+    core_context_precedence::{defines_nothing_but_an_import, is_core_context_json_string},
     loader::remote_document::ld_json_media_type,
 };
 use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
+use andromeda_ngsi_ld_vocabulary::keyword;
 use iri_rs::{IriBuf, IriRef};
 use jsonld::RemoteDocument;
 use jstrict::{Object, Value};
-
-/// The keyword a context slot is named by, at the top of a context document and
-/// inside a term definition.
-const CONTEXT_KEYWORD: &str = "@context";
 
 /// A context document, prepared for the JSON-LD processor.
 #[derive(Debug)]
@@ -105,7 +102,7 @@ impl ContextDocument {
     pub(crate) fn context_references(&self, base: Option<&IriBuf>) -> Vec<IriBuf> {
         let mut references = Vec::new();
         if let Value::Object(members) = &self.json
-            && let Ok(Some(slot)) = members.get_unique(CONTEXT_KEYWORD)
+            && let Ok(Some(slot)) = members.get_unique(keyword::CONTEXT)
         {
             collect_slot_references(slot, base, &mut references);
         }
@@ -124,7 +121,7 @@ fn collect_slot_references(slot: &Value, base: Option<&IriBuf>, references: &mut
         Value::String(reference) => references.extend(reference_iri(reference.as_str(), base)),
         Value::Array(entries) => entries.iter().for_each(|entry| collect_slot_references(entry, base, references)),
         Value::Object(definition) => {
-            if let Ok(Some(Value::String(import))) = definition.get_unique(IMPORT_KEYWORD) {
+            if let Ok(Some(Value::String(import))) = definition.get_unique(keyword::IMPORT) {
                 references.extend(reference_iri(import.as_str(), base));
             }
         }
@@ -139,7 +136,7 @@ fn collect_slot_references(slot: &Value, base: Option<&IriBuf>, references: &mut
 /// as written: the processor then reports it exactly as it would have.
 fn resolve_relative_context_references(document: &mut Value, document_url: &IriBuf) {
     if let Value::Object(members) = document
-        && let Ok(Some(slot)) = members.get_unique_mut(CONTEXT_KEYWORD)
+        && let Ok(Some(slot)) = members.get_unique_mut(keyword::CONTEXT)
     {
         resolve_slot(slot, document_url);
     }
@@ -165,13 +162,13 @@ fn resolve_slot(slot: &mut Value, document_url: &IriBuf) {
 fn resolve_definition(definition: &mut Object, document_url: &IriBuf) {
     for (key, value) in definition.iter_mut() {
         match value {
-            Value::String(import) if key.as_str() == IMPORT_KEYWORD => {
+            Value::String(import) if key.as_str() == keyword::IMPORT => {
                 if let Some(resolved) = resolved_reference(import.as_str(), document_url) {
                     *import = resolved.into();
                 }
             }
             Value::Object(term_definition) => {
-                if let Ok(Some(scoped)) = term_definition.get_unique_mut(CONTEXT_KEYWORD) {
+                if let Ok(Some(scoped)) = term_definition.get_unique_mut(keyword::CONTEXT) {
                     resolve_slot(scoped, document_url);
                 }
             }
@@ -197,7 +194,7 @@ fn resolved_reference(reference: &str, document_url: &IriBuf) -> Option<String> 
 fn remove_embedded_core_references(value: &mut Value) {
     match value {
         Value::Object(members) => {
-            if let Ok(Some(context)) = members.get_unique_mut(CONTEXT_KEYWORD) {
+            if let Ok(Some(context)) = members.get_unique_mut(keyword::CONTEXT) {
                 strip_core_references_from_context_slot(context);
             }
             for (_, inner) in members.iter_mut() {
@@ -238,7 +235,7 @@ fn strip_core_references_from_context_slot(context: &mut Value) {
 /// Drop an `@import` of a core context from one context definition, emptying a
 /// definition that defined nothing else ([`defines_nothing_but_an_import`]).
 fn drop_core_import(definition: &mut Object) {
-    let imports_core = matches!(definition.get_unique(IMPORT_KEYWORD), Ok(Some(Value::String(import))) if is_core_context_json_string(import.as_str()));
+    let imports_core = matches!(definition.get_unique(keyword::IMPORT), Ok(Some(Value::String(import))) if is_core_context_json_string(import.as_str()));
     if !imports_core {
         return;
     }
@@ -247,7 +244,7 @@ fn drop_core_import(definition: &mut Object) {
     } else {
         // The admitted document names every member once, so this removes the
         // one import.
-        definition.remove(IMPORT_KEYWORD).for_each(drop);
+        definition.remove(keyword::IMPORT).for_each(drop);
     }
 }
 

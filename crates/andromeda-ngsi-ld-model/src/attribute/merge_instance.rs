@@ -23,7 +23,7 @@ use crate::{
         merge_value::MergeValue,
         nested_null::NestedMergeMember,
         one_or_many::OneOrMany,
-        patched::{Patched, is_ngsi_ld_null, patched_instant_member, patched_member},
+        patched::{Patched, patched_instant_member, patched_member},
         value::NgsiLdValue,
     },
     node_refusal::{NodeReadError, NodeRefusal, RefusedMember, RefusedNode},
@@ -37,15 +37,12 @@ use andromeda_ngsi_ld_lexicon::{
     time::rendering::instant_text,
 };
 use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeMembers};
-use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use cefact_units::UnitCode;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::{Serialize, Serializer, ser::SerializeMap};
 use std::str::FromStr;
-
-/// The member an instance names its family in.
-const TYPE_MEMBER: &str = "type";
 
 /// How a merge fragment wrote an instance.
 ///
@@ -110,14 +107,18 @@ impl MergeInstance {
         node: N,
         members: NodeMembers<'n, N>,
     ) -> Result<MergeInstance, ReadError<'n, N>> {
-        let declaration = if members.contains(TYPE_MEMBER) { Declaration::Typed } else { concise(node)? };
+        let declaration = if members.contains(keyword::TYPE_ALIAS) {
+            Declaration::Typed
+        } else {
+            concise(node)?
+        };
         // An instance that names no family is read as the Property clause
         // 4.5.2.3 infers for it; it carries no value member to read as one.
         let reading = family.unwrap_or(AttributeType::Property);
         let members = InstanceMembers::sorted(name, reading, members)?;
         let value = match members.value {
             None => None,
-            Some(node) if is_ngsi_ld_null(node) => Some(Patched::Null),
+            Some(node) if node.is_ngsi_ld_null() => Some(Patched::Null),
             Some(node) => Some(Patched::Set(MergeValue::from_node(reading, required(node, RefusedMember::Value(reading))?)?)),
         };
         let system = &members.system;
@@ -219,7 +220,7 @@ impl Serialize for MergeInstance {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(None)?;
         if let Some(family) = self.family {
-            map.serialize_entry(TYPE_MEMBER, family.short_name())?;
+            map.serialize_entry(keyword::TYPE_ALIAS, family.short_name())?;
             if let Some(value) = &self.value {
                 map.serialize_entry(family.compact_value_key(), value)?;
             }

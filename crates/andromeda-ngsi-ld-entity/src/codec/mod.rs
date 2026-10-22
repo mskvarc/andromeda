@@ -9,7 +9,6 @@
 
 mod carrier_decode;
 mod carrier_encode;
-mod coordinate_list;
 mod coordinates_decode;
 mod decode_context;
 mod document_codec;

@@ -29,14 +29,11 @@ use andromeda_ngsi_ld_number::json_value::{
     json_pointer::{JsonPointer, JsonPointerSegment},
     value_census::MemberName,
 };
-use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use serde::de::{DeserializeSeed, Deserializer, Error as DeserializeError, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde_json::Deserializer as JsonReader;
 use std::{cell::RefCell, fmt};
 use thiserror::Error;
-
-/// The member a JSON-LD document declares its context in.
-const CONTEXT_MEMBER: &str = "@context";
 
 /// The compacted members the NGSI-LD Core `@context` coerces to
 /// `@type: "@json"`, whose content is a native JSON literal rather than
@@ -189,7 +186,7 @@ impl<'de> Visitor<'de> for EmbeddedSeed<'_> {
         let top_level = self.walk.at_top_level();
         let mut name = first;
         loop {
-            if &*name == CONTEXT_MEMBER && !top_level {
+            if &*name == keyword::CONTEXT && !top_level {
                 self.walk.find();
             }
             if is_native_json_member(&name) {

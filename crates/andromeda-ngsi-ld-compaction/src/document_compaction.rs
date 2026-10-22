@@ -26,7 +26,7 @@ use andromeda_ngsi_ld_entity::{
     value_mode::Fragment,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReference, time::date_time::NgsiLdDateTime, uri::Uri};
-use andromeda_ngsi_ld_vocabulary::NULL_URI;
+use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::NULL_URI;
 use indexmap::IndexMap;
 use jsonld::{BlankIdBuf, IriBuf, Term};
 use std::slice::from_ref;

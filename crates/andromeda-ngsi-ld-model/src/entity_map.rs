@@ -6,6 +6,7 @@ use andromeda_ngsi_ld_lexicon::{
     identifier::{Identifier, IdentifierParseError},
     time::instant_serde,
 };
+use andromeda_ngsi_ld_vocabulary::keyword;
 use chrono::{DateTime, Utc};
 use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
@@ -13,9 +14,6 @@ use std::fmt;
 use typed_builder::TypedBuilder;
 
 constant_string!(EntityMapType, "EntityMap");
-
-/// The reserved `entityMap` value naming this broker as the holder of an entity.
-pub const LOCAL_SOURCE_TOKEN: &str = "@none";
 
 /// Where one entity of a map is held: locally, or in a registered context source
 /// (Table 5.2.39-2 `entityMap` values).
@@ -37,7 +35,7 @@ impl TryFrom<String> for EntityMapSource {
     type Error = EntityMapSourceError;
 
     fn try_from(raw: String) -> Result<EntityMapSource, EntityMapSourceError> {
-        if raw == LOCAL_SOURCE_TOKEN {
+        if raw == keyword::NONE {
             return Ok(EntityMapSource::Local);
         }
         raw.parse::<Identifier>().map(EntityMapSource::Registration).map_err(EntityMapSourceError)
@@ -49,7 +47,7 @@ impl TryFrom<String> for EntityMapSource {
 impl fmt::Display for EntityMapSource {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            EntityMapSource::Local => formatter.write_str(LOCAL_SOURCE_TOKEN),
+            EntityMapSource::Local => formatter.write_str(keyword::NONE),
             EntityMapSource::Registration(uri) => write!(formatter, "{uri}"),
         }
     }

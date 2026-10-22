@@ -10,6 +10,7 @@
 use crate::{csr_member::CsrMember, nullable_member::NullableMember, registration_body::RegistrationBody};
 use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_vocabulary::keyword;
 use serde::{
     Deserialize,
     Deserializer,
@@ -22,10 +23,6 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[error("the Context Source Property {0} is named twice")]
 struct DuplicateProperty(AttributeName);
-
-/// The member a JSON-LD document names its context in; it is no member of the
-/// registration (clause 6.3.5).
-const CONTEXT_MEMBER: &str = "@context";
 
 /// The read-only members of Table 5.2.9-2, which a body may repeat from a
 /// retrieved registration and which no client sets.
@@ -63,7 +60,7 @@ impl Visitor<'_> for MemberNameVisitor {
         if name == "id" {
             return Ok(MemberName::Id);
         }
-        if name == CONTEXT_MEMBER || READ_ONLY_MEMBERS.contains(&name) {
+        if name == keyword::CONTEXT || READ_ONLY_MEMBERS.contains(&name) {
             return Ok(MemberName::Ignored);
         }
         match CsrMember::from_str(name) {

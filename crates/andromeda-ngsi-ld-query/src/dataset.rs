@@ -2,7 +2,8 @@
 //! (clause 4.5.5).
 
 use crate::error::QueryError;
-use andromeda_ngsi_ld_lexicon::{default_instance::DEFAULT_INSTANCE_TOKEN, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_vocabulary::keyword;
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
@@ -26,7 +27,7 @@ impl DatasetSelector {
     /// Returns [`QueryError::ParamDatasetIdInvalid`] when `raw` is neither the
     /// `@none` token of clause 4.5.5 nor a URI.
     pub fn parse(raw: &str) -> Result<DatasetSelector, QueryError> {
-        if raw == DEFAULT_INSTANCE_TOKEN {
+        if raw == keyword::NONE {
             return Ok(DatasetSelector::Default);
         }
         raw.parse::<Identifier>().map(DatasetSelector::Id).map_err(QueryError::ParamDatasetIdInvalid)
@@ -46,9 +47,16 @@ impl DatasetSelector {
     /// `dataset_id`, `None` being the default instance (clause 4.5.5).
     #[must_use]
     pub fn selects(&self, dataset_id: Option<&Identifier>) -> bool {
+        self.selects_written(dataset_id.map(Identifier::as_str))
+    }
+
+    /// Whether this selector names the Attribute instance whose `datasetId`
+    /// is written as `dataset_id`, as a rendered instance carries it.
+    #[must_use]
+    pub fn selects_written(&self, dataset_id: Option<&str>) -> bool {
         match self {
             DatasetSelector::Default => dataset_id.is_none(),
-            DatasetSelector::Id(named) => dataset_id == Some(named),
+            DatasetSelector::Id(named) => dataset_id == Some(named.as_str()),
         }
     }
 }
@@ -77,7 +85,7 @@ impl TryFrom<String> for DatasetSelector {
 impl fmt::Display for DatasetSelector {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DatasetSelector::Default => formatter.write_str(DEFAULT_INSTANCE_TOKEN),
+            DatasetSelector::Default => formatter.write_str(keyword::NONE),
             DatasetSelector::Id(uri) => write!(formatter, "{uri}"),
         }
     }

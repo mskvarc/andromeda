@@ -57,6 +57,7 @@ use andromeda_ngsi_ld_lexicon::{
     },
 };
 use andromeda_ngsi_ld_query::filter::scalar::Scalar;
+use andromeda_ngsi_ld_vocabulary::keyword;
 use andromeda_postgresql_schema::name_dictionary::EntityTypeNames;
 use andromeda_postgresql_seaquery::{
     cast::cast,
@@ -66,15 +67,6 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
 };
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Query, QueryStatementBuilder, SimpleExpr};
-
-/// The JSON-LD keyword a value node carries its value under.
-const VALUE_KEYWORD: &str = "@value";
-
-/// The JSON-LD keyword a value node carries its datatype under.
-const TYPE_KEYWORD: &str = "@type";
-
-/// The JSON-LD keyword a `languageMap` entry carries its language tag under.
-const LANGUAGE_KEYWORD: &str = "@language";
 
 /// The clause 4.9 target value a Query Term is compared against inside one
 /// stored structured value.
@@ -114,12 +106,14 @@ pub fn carries_operand(column: &SimpleExpr, value_type: &SimpleExpr, target: Str
         (MemberText::Declared { form, text }, StructuredTarget::AnyValue) => {
             let plain = Condition::any()
                 .add(contains(column, json_element(&format!("[\"{text}\"]"))))
-                .add(contains(column, json_element(&format!("[{{\"{VALUE_KEYWORD}\": \"{text}\"}}]"))));
+                .add(contains(column, json_element(&format!("[{{\"{}\": \"{text}\"}}]", keyword::VALUE))));
             Condition::any()
                 .add(contains(
                     column,
                     json_element(&format!(
-                        "[{{\"{VALUE_KEYWORD}\": \"{text}\", \"{TYPE_KEYWORD}\": \"{}\"}}]",
+                        "[{{\"{}\": \"{text}\", \"{}\": \"{}\"}}]",
+                        keyword::VALUE,
+                        keyword::TYPE,
                         form.iri().as_str()
                     )),
                 ))
@@ -177,7 +171,7 @@ fn value_type_names(value_type: &SimpleExpr, form: TimeValueForm) -> SimpleExpr 
 /// language-selected path.
 #[must_use]
 pub fn carries_target_language(column: &SimpleExpr, language: &AttributeName) -> Condition {
-    let element = jsonb_build_array(jsonb_build_object([text_literal(LANGUAGE_KEYWORD), language_operand(language)]));
+    let element = jsonb_build_array(jsonb_build_object([text_literal(keyword::LANGUAGE), language_operand(language)]));
     Condition::all().add(contains(column, element))
 }
 
@@ -197,7 +191,7 @@ fn bare_element(operand: SimpleExpr) -> SimpleExpr {
 /// The one-element array holding the operand as an expanded value node, which is
 /// the element shape a `languageMap` and a `valueList` carry.
 fn value_element(operand: SimpleExpr) -> SimpleExpr {
-    jsonb_build_array(jsonb_build_object([text_literal(VALUE_KEYWORD), operand]))
+    jsonb_build_array(jsonb_build_object([text_literal(keyword::VALUE), operand]))
 }
 
 /// The one-element array holding the operand as a `languageMap` entry under one
@@ -208,9 +202,9 @@ fn value_element(operand: SimpleExpr) -> SimpleExpr {
 /// and an entry under another language never does.
 fn tagged_element(language: &AttributeName, operand: SimpleExpr) -> SimpleExpr {
     jsonb_build_array(jsonb_build_object([
-        text_literal(LANGUAGE_KEYWORD),
+        text_literal(keyword::LANGUAGE),
         language_operand(language),
-        text_literal(VALUE_KEYWORD),
+        text_literal(keyword::VALUE),
         operand,
     ]))
 }

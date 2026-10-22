@@ -31,12 +31,9 @@ use andromeda_ngsi_ld_model::attribute::{
     patched::Patched,
     value::NgsiLdValue,
 };
-use andromeda_ngsi_ld_vocabulary::{NULL_URI, compact::properties as compact_properties};
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword, ngsi_ld_null::NULL_URI};
 use jsonld::Type;
 use std::slice::from_ref;
-
-/// The member of an instance that names its family.
-const TYPE_MEMBER: &str = "type";
 
 /// The expanded name and items of the merge member written under `key` in
 /// `scope`; `None` for a key expansion drops.
@@ -65,7 +62,7 @@ fn instance_items(parent: &TermScope<'_>, key: &str, instance: &MergeInstance) -
     // An instance that names no family is merged into the family of the
     // attribute it updates (clauses 5.6.4 and 5.6.17), so none is written.
     if let Some(family) = instance.family {
-        add_serialized(&mut node, &scope, TYPE_MEMBER, family.short_name())?;
+        add_serialized(&mut node, &scope, keyword::TYPE_ALIAS, family.short_name())?;
         match &instance.value {
             Some(Patched::Set(value)) => match coerced_time_literal(parent, key, instance) {
                 Some(literal) => {

@@ -19,13 +19,13 @@ use andromeda_ngsi_ld_entity::{
     expanded_value_name::ExpandedValueName,
     literal::{Literal, LiteralValue},
     member_shape::MemberShape,
-    ngsi_ld_null::is_ngsi_ld_null,
     node_id::NodeId,
     refusal::EntityRefusal,
     value_mode::{Fragment, FragmentMember, Stored, ValueMode},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReference};
 use andromeda_ngsi_ld_number::JsonNumber;
+use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::is_ngsi_ld_null;
 use compact_str::CompactString;
 use indexmap::IndexMap;
 use langtag::LangTagBuf;

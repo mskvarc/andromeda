@@ -13,6 +13,7 @@
 
 use andromeda_json_literal::{JsonLiteral, piece::JsonKind};
 use andromeda_ngsi_ld_number::json_value::value_census::MemberName;
+use andromeda_ngsi_ld_vocabulary::keyword;
 use serde::{
     Deserialize,
     de::{DeserializeSeed, Deserializer, Error as DeserializeError, IgnoredAny, MapAccess, SeqAccess, Visitor},
@@ -20,12 +21,6 @@ use serde::{
 use serde_json::Deserializer as JsonReader;
 use std::fmt;
 use thiserror::Error;
-
-/// The member a JSON-LD document names its context in.
-const CONTEXT_MEMBER: &str = "@context";
-
-/// The member an NGSI-LD entity names its identifier in.
-const ID_MEMBER: &str = "id";
 
 /// Why the `@context` of an `application/ld+json` body cannot be read.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -343,8 +338,8 @@ fn read_object<'de, A: MapAccess<'de>>(mut members: A) -> Result<Option<ObjectEn
         }
         first = false;
         match name.as_str() {
-            CONTEXT_MEMBER => envelope.context = Some(members.next_value()?),
-            ID_MEMBER => envelope.id = members.next_value::<IdMember>()?.0,
+            keyword::CONTEXT => envelope.context = Some(members.next_value()?),
+            keyword::ID_ALIAS => envelope.id = members.next_value::<IdMember>()?.0,
             _other => {
                 members.next_value::<IgnoredAny>()?;
             }

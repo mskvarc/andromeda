@@ -157,7 +157,6 @@ mod tests {
             other @ (GeometryError::LineString { .. }
             | GeometryError::LinearRing { .. }
             | GeometryError::MixedArity { .. }
-            | GeometryError::Misnested { .. }
             | GeometryError::NotAnObject
             | GeometryError::EncodedNotJson(_)
             | GeometryError::MissingType
@@ -166,7 +165,6 @@ mod tests {
             | GeometryError::MissingGeometries
             | GeometryError::InvalidBbox(_)
             | GeometryError::NotAnArray { .. }
-            | GeometryError::NonNumericOrdinate { .. }
             | GeometryError::GeometryCollectionUnsupported
             | GeometryError::ForeignMember(_)) => {
                 panic!("expected a refused position, got {other:?}")
@@ -296,7 +294,16 @@ mod tests {
     #[test]
     fn a_coordinate_outside_the_finite_f64_domain_is_no_ordinate() {
         let error = Geometry::from_geojson_text(r#"{"type": "Point", "coordinates": [1e400, 52.5]}"#).expect_err("coordinate must be rejected");
-        assert!(matches!(error, GeometryError::NonNumericOrdinate { .. }), "got {error:?}");
+        assert!(
+            matches!(
+                error,
+                GeometryError::Position {
+                    source: PositionError::NonNumericOrdinate { index: 0 },
+                    ..
+                }
+            ),
+            "got {error:?}"
+        );
     }
 
     #[test]

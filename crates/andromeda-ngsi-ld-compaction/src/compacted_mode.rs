@@ -10,7 +10,7 @@ use andromeda_ngsi_ld_entity::{
     expanded_value::ExpandedValue,
     value_mode::{Fragment, FragmentMember, FragmentText, Stored, ValueMode},
 };
-use andromeda_ngsi_ld_vocabulary::NULL_URI;
+use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::NULL_URI;
 
 /// One structured member, as the walk reads it.
 pub(crate) enum MemberValues<'a, M: ValueMode> {

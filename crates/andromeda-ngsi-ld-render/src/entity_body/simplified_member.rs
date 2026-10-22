@@ -30,10 +30,13 @@ use crate::{
     },
     language_negotiation::negotiated_entry,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, default_instance::DEFAULT_INSTANCE_TOKEN, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_type::{AttributeType, SimplifiedValueEncoding},
+    identifier::Identifier,
+};
 use andromeda_ngsi_ld_model::attribute::instance::{Attribute, AttributeValue};
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
-use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use serde::{Serialize, Serializer, ser::SerializeMap};
 
 /// One attribute member in the simplified representation.
@@ -153,7 +156,7 @@ impl Serialize for DatasetMap<'_, '_> {
 
 /// The `dataset` map key of an instance: its `datasetId`, or `@none`.
 fn dataset_key(dataset_id: Option<&str>) -> &str {
-    dataset_id.unwrap_or(DEFAULT_INSTANCE_TOKEN)
+    dataset_id.unwrap_or(keyword::NONE)
 }
 
 /// One attribute instance in the simplified representation.
@@ -185,11 +188,9 @@ impl Serialize for SimplifiedInstance<'_> {
 /// member takes, in the one member clause 4.5.4 keeps for the families that
 /// keep one.
 fn simplified_null<S: Serializer>(serializer: S, family: AttributeType, null: NullValue) -> Result<S::Ok, S::Error> {
-    match family {
-        AttributeType::LanguageProperty | AttributeType::VocabProperty | AttributeType::JsonProperty => wrapped(serializer, family, &null),
-        AttributeType::Property | AttributeType::GeoProperty | AttributeType::Relationship | AttributeType::ListProperty | AttributeType::ListRelationship => {
-            null.serialize(serializer)
-        }
+    match family.simplified_value_encoding() {
+        SimplifiedValueEncoding::Wrapped => wrapped(serializer, family, &null),
+        SimplifiedValueEncoding::Bare => null.serialize(serializer),
     }
 }
 
@@ -198,11 +199,9 @@ fn simplified_null<S: Serializer>(serializer: S, family: AttributeType, null: Nu
 /// Property is written as one, and every other family as itself, since its
 /// simplified rendering is the same whether it is reformatted or not.
 const fn simplified_family(walk: MemberWalk<'_>, family: AttributeType) -> AttributeType {
-    match family {
-        AttributeType::LanguageProperty | AttributeType::VocabProperty | AttributeType::JsonProperty => walk.written_family(family),
-        AttributeType::Property | AttributeType::GeoProperty | AttributeType::Relationship | AttributeType::ListProperty | AttributeType::ListRelationship => {
-            family
-        }
+    match family.simplified_value_encoding() {
+        SimplifiedValueEncoding::Wrapped => walk.written_family(family),
+        SimplifiedValueEncoding::Bare => family,
     }
 }
 

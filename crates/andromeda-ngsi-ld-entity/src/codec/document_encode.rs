@@ -33,7 +33,7 @@ use crate::{
     value_mode::Fragment,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_vocabulary::{NULL_URI, expanded::properties};
+use andromeda_ngsi_ld_vocabulary::{expanded::properties, ngsi_ld_null::NULL_URI};
 use indexmap::IndexMap;
 use serde::{Serialize, Serializer, ser::SerializeMap};
 

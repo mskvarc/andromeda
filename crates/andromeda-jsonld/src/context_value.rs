@@ -12,11 +12,12 @@
 //! assembled from such entries ([`written_entries`]): every entry is already
 //! JSON text, so the assembly writes text and builds no tree.
 
-use crate::core_context_precedence::{IMPORT_KEYWORD, defines_nothing_but_an_import, is_core_context_json_string};
+use crate::core_context_precedence::{defines_nothing_but_an_import, is_core_context_json_string};
 use andromeda_json_literal::{
     json_text::quoted,
     piece::{JsonKind, JsonPiece},
 };
+use andromeda_ngsi_ld_vocabulary::keyword;
 use std::borrow::Cow;
 
 /// One context a `@context` value names.
@@ -108,7 +109,7 @@ impl<'a> ContextDefinition<'a> {
     #[must_use]
     pub fn import(&self) -> Option<Cow<'a, str>> {
         match self.core_import {
-            CoreImport::Kept => self.written.member(IMPORT_KEYWORD).and_then(JsonPiece::as_str),
+            CoreImport::Kept => self.written.member(keyword::IMPORT).and_then(JsonPiece::as_str),
             CoreImport::Dropped => None,
         }
     }
@@ -125,7 +126,7 @@ impl<'a> ContextDefinition<'a> {
     fn without_core_import(self) -> DefinitionWithoutCore<'a> {
         let imports_core = self
             .written
-            .member(IMPORT_KEYWORD)
+            .member(keyword::IMPORT)
             .and_then(JsonPiece::as_str)
             .is_some_and(|import| is_core_context_json_string(&import));
         if !imports_core {
@@ -149,7 +150,7 @@ impl<'a> ContextDefinition<'a> {
             CoreImport::Kept => written.push_str(self.written.text().trim()),
             CoreImport::Dropped => {
                 written.push('{');
-                let kept = self.written.members().unwrap_or_default().into_iter().filter(|(key, _)| key != IMPORT_KEYWORD);
+                let kept = self.written.members().unwrap_or_default().into_iter().filter(|(key, _)| key != keyword::IMPORT);
                 for (index, (key, value)) in kept.enumerate() {
                     if index > 0 {
                         written.push(',');

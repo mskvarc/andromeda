@@ -1,6 +1,7 @@
 //! The complete ordering definition carried by a clause-5.2.23 `Query`.
 
 use crate::{
+    comma_separated_list::{ListedItem, parse_listed},
     error::QueryError,
     ordering::{
         collation::IcuCollation,
@@ -112,11 +113,7 @@ impl<'de> Visitor<'de> for OrderByVisitor {
     }
 
     fn visit_str<E: DeserializeError>(self, terms: &str) -> Result<Vec<OrderTerm>, E> {
-        terms
-            .split(',')
-            .map(str::trim)
-            .map(|term| term.parse().map_err(DeserializeError::custom))
-            .collect()
+        parse_listed(terms, ListedItem::OrderingTerm).map_err(DeserializeError::custom)
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut terms: A) -> Result<Vec<OrderTerm>, A::Error> {

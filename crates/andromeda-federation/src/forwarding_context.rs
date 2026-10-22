@@ -36,13 +36,9 @@ use andromeda_json_literal::{
 };
 use andromeda_jsonld::{batch_contexts::BatchContext, context_spec::ContextSpec, error::JsonLdError, request_context::RequestContext};
 use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfo;
-use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+use andromeda_ngsi_ld_vocabulary::{NGSI_LD_CORE_CONTEXT_URL, keyword};
 use iri_rs::{Iri, IriBuf};
 use mediatype::{MediaType, MediaTypeBuf};
-
-/// The JSON-LD 1.1 keyword a context definition imports another context with
-/// (JSON-LD 1.1 section 4.1.10).
-const IMPORT_KEYWORD: &str = "@import";
 
 /// Whether the forwarded request carries a body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,7 +210,7 @@ fn holds_only_absolute_references(context: JsonPiece<'_>) -> bool {
     match context.kind() {
         JsonKind::String => context.as_str().is_some_and(|reference| Iri::parse(reference.as_ref()).is_ok()),
         JsonKind::Array => context.elements().unwrap_or_default().into_iter().all(holds_only_absolute_references),
-        JsonKind::Object => match context.member(IMPORT_KEYWORD) {
+        JsonKind::Object => match context.member(keyword::IMPORT) {
             Some(imported) if imported.kind() == JsonKind::String => imported.as_str().is_some_and(|imported| Iri::parse(imported.as_ref()).is_ok()),
             Some(_) | None => true,
         },

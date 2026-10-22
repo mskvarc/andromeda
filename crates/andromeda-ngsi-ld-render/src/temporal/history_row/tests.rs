@@ -15,7 +15,7 @@ use andromeda_ngsi_ld_model::temporal::{
 };
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_vocabulary::{NULL_URI, expanded::properties as expanded_properties};
+use andromeda_ngsi_ld_vocabulary::{expanded::properties as expanded_properties, ngsi_ld_null::NULL_URI};
 use chrono::{DateTime, TimeZone, Utc};
 use serde_json::{Value, json};
 use uuid::Uuid;

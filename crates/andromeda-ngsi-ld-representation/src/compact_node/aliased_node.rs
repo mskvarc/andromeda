@@ -12,11 +12,9 @@
 use crate::compact_node::{CompactNode, NodeMembers, NodeShape};
 use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_ngsi_ld_geometry::written_geometry::WrittenGeometry;
+use andromeda_ngsi_ld_vocabulary::keyword;
 use serde::de::DeserializeOwned;
 use std::{borrow::Cow, collections::HashMap};
-
-/// The core term a node names its types under.
-const TYPE_MEMBER: &str = "type";
 
 /// The terms a context defines for reserved NGSI-LD members, each mapped to
 /// the core term it stands for.
@@ -115,7 +113,7 @@ impl<'a: 'n, 'n, N: CompactNode<'n>> CompactNode<'n> for AliasedNode<'a, N> {
                     .into_iter()
                     .map(|(name, node)| {
                         let name = self.aliases.core_name(name);
-                        let standing = if name == TYPE_MEMBER { Standing::Types } else { Standing::Node };
+                        let standing = if name == keyword::TYPE_ALIAS { Standing::Types } else { Standing::Node };
                         (name, self.standing(node, standing))
                     })
                     .collect(),

@@ -13,7 +13,6 @@ use crate::{
     bounding_box::BoundingBoxError,
     coordinate_path::CoordinatePath,
     form::{GeometryForm, PolygonRings},
-    geometry_type::GeometryType,
     line_string_coordinates::LineStringError,
     linear_ring::LinearRingError,
     position::{Position, PositionError},
@@ -82,16 +81,6 @@ pub enum GeometryError {
         /// `coordinates`.
         at: CoordinatePath,
     },
-    /// An expanded `coordinates` member did not nest the way its geometry type
-    /// requires: a number where a position list belongs, or a list where a
-    /// number does.
-    #[error("GeoJSON coordinates do not nest as a {geometry_type} requires (at {at})")]
-    Misnested {
-        /// The geometry type whose nesting the coordinates break.
-        geometry_type: GeometryType,
-        /// Where the misplaced member sits in the geometry's `coordinates`.
-        at: CoordinatePath,
-    },
     /// The value is not a JSON object, so no `GeoJSON` geometry (IETF RFC 7946
     /// section 3.1).
     #[error("a GeoJSON geometry must be an object")]
@@ -115,18 +104,12 @@ pub enum GeometryError {
     /// The `bbox` member is no RFC 7946 section 5 bounding box.
     #[error(transparent)]
     InvalidBbox(#[from] BoundingBoxError),
-    /// A compact `coordinates` member held a non-array where an array belongs.
+    /// A `coordinates` member held a non-array where an array belongs.
     #[error("GeoJSON coordinates hold a non-array where {expected} belongs (at {at})")]
     NotAnArray {
         /// What the array was to hold.
         expected: CoordinateShape,
         /// Where the non-array sits in the geometry's `coordinates`.
-        at: CoordinatePath,
-    },
-    /// A position held a member that is not a number.
-    #[error("a GeoJSON position holds a member that is not a number (at {at})")]
-    NonNumericOrdinate {
-        /// Where the position sits in the geometry's `coordinates`.
         at: CoordinatePath,
     },
     /// The value is a `GeoJSON` `GeometryCollection`. ETSI GS CIM 009 v1.9.1 clause

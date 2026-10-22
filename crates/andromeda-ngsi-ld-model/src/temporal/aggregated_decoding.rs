@@ -26,25 +26,13 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeShape};
-use andromeda_ngsi_ld_vocabulary::NULL_URI;
+use andromeda_ngsi_ld_vocabulary::{keyword, ngsi_ld_null::is_ngsi_ld_null};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::de::DeserializeOwned;
 use std::str::FromStr;
 use strum::ParseError;
 use thiserror::Error;
-
-/// The member an entity's identifier is written under.
-const ID_MEMBER: &str = "id";
-
-/// The member an entity's types are written under.
-const TYPE_MEMBER: &str = "type";
-
-/// The member a JSON-LD document names its context in.
-const CONTEXT_MEMBER: &str = "@context";
-
-/// The member an aggregated attribute names its family in.
-const FAMILY_MEMBER: &str = "type";
 
 /// The member an aggregated attribute names its dataset in.
 const DATASET_MEMBER: &str = "datasetId";
@@ -99,9 +87,9 @@ impl AggregatedTemporalEntity {
         for (name, member) in members {
             let at = |error: ReadError<'n, N>| error.within_member(&name);
             match name.as_ref() {
-                CONTEXT_MEMBER => {}
-                ID_MEMBER => id = Some(required(member, RefusedMember::Id).map_err(at)?),
-                TYPE_MEMBER => type_ = Some(required(member, RefusedMember::Type).map_err(at)?),
+                keyword::CONTEXT => {}
+                keyword::ID_ALIAS => id = Some(required(member, RefusedMember::Id).map_err(at)?),
+                keyword::TYPE_ALIAS => type_ = Some(required(member, RefusedMember::Type).map_err(at)?),
                 attribute => {
                     let attribute_name = AttributeName::from_str(attribute).map_err(|source| at(NodeRefusal::AttributeName(source).into()))?;
                     attrs.insert(attribute_name, attribute_instances(member).map_err(at)?);
@@ -148,7 +136,7 @@ fn aggregated_attribute<'n, N: CompactNode<'n>>(node: N) -> Result<AggregatedAtt
     for (name, member) in members {
         let at = |error: ReadError<'n, N>| error.within_member(&name);
         match name.as_ref() {
-            FAMILY_MEMBER => family = Some(required(member, RefusedMember::Type).map_err(at)?),
+            keyword::TYPE_ALIAS => family = Some(required(member, RefusedMember::Type).map_err(at)?),
             DATASET_MEMBER => {
                 dataset_id = decoded_optional(member).map_err(NodeReadError::Unreadable).map_err(at)?.map_err(|source| {
                     at(NodeRefusal::Member {
@@ -204,9 +192,9 @@ fn aggregated_values<'n, N: CompactNode<'n>>(node: N) -> Result<AggregatedValues
 /// The group a map key names: the reserved keys of an absent and a Null value,
 /// or the group value itself.
 fn group_key(key: &str) -> GroupKeyValue {
-    if key == GroupKeyValue::NONE_KEY {
+    if key == keyword::NONE {
         GroupKeyValue::Absent
-    } else if key == NULL_URI.as_str() {
+    } else if is_ngsi_ld_null(key) {
         GroupKeyValue::Null
     } else {
         GroupKeyValue::Value(key.to_owned())

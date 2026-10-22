@@ -213,12 +213,18 @@ fn a_bare_null_member_reads_as_the_ngsi_ld_null() {
 /// A `GeoProperty` whose value is the NGSI-LD Null (clause 4.5.0).
 #[test]
 fn a_geo_property_null_value_reads_typed() {
-    for spelling in ["urn:ngsi-ld:null", "https://uri.etsi.org/ngsi-ld/null"] {
-        let Attribute::GeoProperty(geo) = single(&json!({"type": "GeoProperty", "value": spelling})) else {
-            panic!("a GeoProperty");
-        };
-        assert_eq!(geo.value, GeoPropertyValue::Null);
-    }
+    let Attribute::GeoProperty(geo) = single(&json!({"type": "GeoProperty", "value": "urn:ngsi-ld:null"})) else {
+        panic!("a GeoProperty");
+    };
+    assert_eq!(geo.value, GeoPropertyValue::Null);
+}
+
+/// Clause 3.1 names the URN alone, so a `GeoProperty` valued with the IRI the
+/// `ngsi-ld` prefix makes of `ngsi-ld:null` holds a string that is no
+/// geometry.
+#[test]
+fn a_geo_property_valued_with_the_null_lookalike_iri_is_refused() {
+    assert!(read("location", &json!({"type": "GeoProperty", "value": "https://uri.etsi.org/ngsi-ld/null"})).is_err());
 }
 
 /// No member admits a JSON `null` directly (clause 5.2.1).

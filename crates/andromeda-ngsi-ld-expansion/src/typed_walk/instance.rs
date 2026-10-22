@@ -25,18 +25,14 @@ use andromeda_ngsi_ld_model::attribute::{
     common_fields::CommonAttributeFields,
     geo_property_value::GeoPropertyValue,
     instance::{Attribute, AttributeValue},
-    merge_member::MergeMember,
     value::NgsiLdValue,
 };
 use andromeda_ngsi_ld_representation::compact_node::CompactNode;
-use andromeda_ngsi_ld_vocabulary::{NULL_URI, compact::properties as compact_properties};
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword, ngsi_ld_null::NULL_URI};
 use jsonld::Term;
 use serde::{Serialize, Serializer};
 use serde_json::value::RawValue;
 use std::{borrow::Cow, slice::from_ref};
-
-/// The member of an instance that names its family.
-const TYPE_MEMBER: &str = "type";
 
 /// The concise Property clause 4.5.2.3 reads the NGSI-LD Null written in place
 /// of a member as, wherever no deletion of the whole member is meant.
@@ -73,15 +69,6 @@ pub(crate) fn expanded<M: WrittenMember>(member: &M, scope: &TermScope<'_>, key:
     }
 }
 
-/// Whether the member is the NGSI-LD Null written in place of the whole
-/// member.
-pub(crate) fn is_ngsi_ld_null<M: WrittenMember>(member: &M) -> bool {
-    match member.written() {
-        WrittenMemberRef::Attribute(member) => matches!(member, AttributeValue::NgsiLdNull),
-        WrittenMemberRef::Merge(member) => matches!(member, MergeMember::NgsiLdNull),
-    }
-}
-
 /// The concise Property clause 4.5.2.3 reads the NGSI-LD Null written in place
 /// of the member `key` as.
 pub(crate) fn null_property(scope: &TermScope<'_>, key: &str) -> Result<Option<(String, Vec<ExpandedItem>)>, Decline> {
@@ -104,7 +91,7 @@ pub fn add_member<M: WrittenMember>(node: &mut NodeBuilder, scope: &TermScope<'_
 fn instance_items(parent: &TermScope<'_>, key: &str, instance: &Attribute) -> Result<Vec<ExpandedItem>, Decline> {
     let scope = parent.object_scope(Some(key))?;
     let mut node = NodeBuilder::default();
-    add_serialized(&mut node, &scope, TYPE_MEMBER, instance.attribute_type().short_name())?;
+    add_serialized(&mut node, &scope, keyword::TYPE_ALIAS, instance.attribute_type().short_name())?;
     family_members(&mut node, &scope, instance)?;
     common_members(&mut node, &scope, instance.common())?;
     Ok(node.finish(Some(key)).into_items())

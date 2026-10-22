@@ -27,19 +27,10 @@ use crate::{
 use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReferenceError};
 use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeShape};
-use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, de::DeserializeOwned};
 use std::str::FromStr;
-
-/// The member an entity's identifier is written under.
-const ID_MEMBER: &str = "id";
-
-/// The member an entity's types are written under.
-const TYPE_MEMBER: &str = "type";
-
-/// The member a JSON-LD document names its context in.
-const CONTEXT_MEMBER: &str = "@context";
 
 /// A Temporal Evolution of an Entity, compact and normalized.
 #[derive(Clone, Debug)]
@@ -81,9 +72,9 @@ impl TemporalEntity {
         for (name, member) in members {
             let at = |error: ReadError<'n, N>| error.within_member(&name);
             match name.as_ref() {
-                CONTEXT_MEMBER | compact_properties::EXPIRES_AT => {}
-                ID_MEMBER => id = Some(required(member, RefusedMember::Id).map_err(at)?),
-                TYPE_MEMBER => type_ = Some(required(member, RefusedMember::Type).map_err(at)?),
+                keyword::CONTEXT | compact_properties::EXPIRES_AT => {}
+                keyword::ID_ALIAS => id = Some(required(member, RefusedMember::Id).map_err(at)?),
+                keyword::TYPE_ALIAS => type_ = Some(required(member, RefusedMember::Type).map_err(at)?),
                 compact_properties::SCOPE => scope = TemporalAttribute::from_node(compact_properties::SCOPE, member).map_err(at)?,
                 compact_properties::CREATED_AT => system_times.created_at = optional_instant_member(Some(member), RefusedMember::CreatedAt).map_err(at)?,
                 compact_properties::MODIFIED_AT => system_times.modified_at = optional_instant_member(Some(member), RefusedMember::ModifiedAt).map_err(at)?,

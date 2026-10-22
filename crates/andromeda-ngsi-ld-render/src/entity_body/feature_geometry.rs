@@ -18,12 +18,12 @@
 
 use crate::{
     entity_body::{instance_fallback::kept_instance, typed_entity::TypedEntity},
-    geometry_selection::{GeometrySelection, selects},
+    geometry_selection::GeometrySelection,
     version::fallback::InstanceMember,
 };
 use andromeda_json_literal::piece::JsonPiece;
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry};
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use andromeda_ngsi_ld_model::attribute::{
     common_fields::CommonAttributeFields,
     geo_property::GeoProperty,
@@ -158,7 +158,7 @@ fn sole_instance<'a>(geo_property: &'a GeoProperty, layout: InstanceLayout, sele
     };
     match rendered_dataset_id {
         Some(dataset_id) if !selectors.is_empty() => {
-            if selectors.iter().any(|selector| selects(selector, Some(dataset_id.as_str()))) {
+            if selectors.iter().any(|selector| selector.selects(Some(dataset_id))) {
                 typed(&geo_property.value)
             } else {
                 FeatureGeometry::Undefined
@@ -175,7 +175,7 @@ fn sole_instance<'a>(geo_property: &'a GeoProperty, layout: InstanceLayout, sele
 /// keeps, for each key, the instance written last.
 fn selected_instance<'a>(instances: &[&'a GeoProperty], layout: InstanceLayout, selectors: &[DatasetSelector]) -> FeatureGeometry<'a> {
     let named = |selector: &DatasetSelector| {
-        let carries = |instance: &&&'a GeoProperty| selects(selector, instance.common.dataset_id.as_ref().map(Identifier::as_str));
+        let carries = |instance: &&&'a GeoProperty| selector.selects(instance.common.dataset_id.as_ref());
         match layout {
             InstanceLayout::Reified => instances.iter().find(carries),
             InstanceLayout::Simplified => instances.iter().rev().find(carries),

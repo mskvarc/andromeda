@@ -1,5 +1,5 @@
-//! The NGSI-LD Null (clause 4.5.0) in both its spellings, in every place a
-//! write may carry it, through every write kind.
+//! The NGSI-LD Null (clauses 3.1 and 4.5.0) in every place a write may carry
+//! it, through every write kind.
 
 use crate::{
     expansion_fixture::{attribute, decoded_both_ways, engine, entity, patch},
@@ -19,8 +19,12 @@ use andromeda_ngsi_ld_entity::{
 };
 use serde_json::{Value, json};
 
-/// The two spellings of the NGSI-LD Null.
-const SPELLINGS: [&str; 2] = ["urn:ngsi-ld:null", "https://uri.etsi.org/ngsi-ld/null"];
+/// The NGSI-LD Null.
+const NULL: &str = "urn:ngsi-ld:null";
+
+/// The IRI the core context's `ngsi-ld` prefix makes of `ngsi-ld:null`, which
+/// clause 3.1 does not name as the Null.
+const NULL_LOOKALIKE: &str = "https://uri.etsi.org/ngsi-ld/null";
 
 /// The expanded IRI of a term the core context does not define.
 fn term(name: &str) -> String {
@@ -77,21 +81,19 @@ fn deleting_entity(cases: &[(&'static str, Value, ValueCarrier)]) -> Value {
     body
 }
 
-/// Every family's deletion encoding, in both spellings, through a typed
+/// Every family's deletion encoding, through a typed
 /// entity, a typed merge fragment and an entity fragment held as JSON.
 #[tokio::test]
 async fn every_deletion_encoding_reads_as_the_removal_of_its_value() {
     let engine = engine();
-    for sentinel in SPELLINGS {
-        let cases = deletions(sentinel);
-        let body = deleting_entity(&cases);
-        let typed = entity(&engine, body.clone(), Normalization::Entity).await.expect("expands").agreed(); // clone: the body is expanded three ways
-        assert_removed(&typed, &cases);
-        let merged = patch(&engine, body.clone(), Normalization::MemberDeletions).await.expect("expands").agreed(); // clone: the body is expanded three ways
-        assert_removed(&merged, &cases);
-        let appended = patch(&engine, body, Normalization::Entity).await.expect("expands").agreed();
-        assert_removed(&appended, &cases);
-    }
+    let cases = deletions(NULL);
+    let body = deleting_entity(&cases);
+    let typed = entity(&engine, body.clone(), Normalization::Entity).await.expect("expands").agreed(); // clone: the body is expanded three ways
+    assert_removed(&typed, &cases);
+    let merged = patch(&engine, body.clone(), Normalization::MemberDeletions).await.expect("expands").agreed(); // clone: the body is expanded three ways
+    assert_removed(&merged, &cases);
+    let appended = patch(&engine, body, Normalization::Entity).await.expect("expands").agreed();
+    assert_removed(&appended, &cases);
 }
 
 /// Clause 5.6.20.4 runs the Merge Entity of clause 5.6.17 on whole entities:
@@ -115,35 +117,21 @@ async fn a_merge_fragment_entity_keeps_a_first_level_null_member_as_the_deletion
 }
 
 /// Clause 5.5.12: a merge member that is `urn:ngsi-ld:null` removes the whole
-/// member; any other write, and the IRI spelling the merge rewrite does not
-/// keep, read it as a concise Property value deleting its value.
+/// member; any other write reads it as a concise Property value deleting its
+/// value.
 #[tokio::test]
 async fn a_first_level_null_removes_the_member_of_a_merge_only() {
     let engine = engine();
-    let [urn, iri] = SPELLINGS;
-    let merged = patch(&engine, json!({"speed": urn}), Normalization::MemberDeletions)
+    let merged = patch(&engine, json!({"speed": NULL}), Normalization::MemberDeletions)
         .await
         .expect("expands")
         .agreed();
     pretty_assertions::assert_eq!(merged.attributes()[term("speed").as_str()], AttributeMember::Remove);
-    let merged = patch(&engine, json!({"speed": iri}), Normalization::MemberDeletions)
-        .await
-        .expect("expands")
-        .agreed();
+    let updated = patch(&engine, json!({"speed": NULL}), Normalization::Entity).await.expect("expands").agreed();
     pretty_assertions::assert_eq!(
-        merged.attributes()[term("speed").as_str()].instances()[0].value(),
+        updated.attributes()[term("speed").as_str()].instances()[0].value(),
         &ValueSlot::Remove(ValueCarrier::Value)
     );
-    for sentinel in SPELLINGS {
-        let updated = patch(&engine, json!({"speed": sentinel}), Normalization::Entity)
-            .await
-            .expect("expands")
-            .agreed();
-        pretty_assertions::assert_eq!(
-            updated.attributes()[term("speed").as_str()].instances()[0].value(),
-            &ValueSlot::Remove(ValueCarrier::Value)
-        );
-    }
 }
 
 /// Clauses 4.18, 5.5.8: the entity's scope, which clause 4.18 deletes by the
@@ -152,27 +140,23 @@ async fn a_first_level_null_removes_the_member_of_a_merge_only() {
 #[tokio::test]
 async fn members_beside_the_value_are_deleted_by_the_null() {
     let engine = engine();
-    let scope = patch(&engine, json!({"scope": SPELLINGS[0]}), Normalization::MemberDeletions)
+    let scope = patch(&engine, json!({"scope": NULL}), Normalization::MemberDeletions)
         .await
         .expect("expands")
         .agreed();
     pretty_assertions::assert_eq!(scope.scope(), Some(&Slot::Remove));
-    // The typed members read the URN spelling alone; the IRI spelling is the
-    // one of an expanded value.
-    for sentinel in &SPELLINGS[..1] {
-        let document = patch(
-            &engine,
-            json!({"speed": {"value": 1, "observedAt": sentinel, "unitCode": sentinel, "valueType": sentinel}}),
-            Normalization::MemberDeletions,
-        )
-        .await
-        .expect("expands")
-        .agreed();
-        let speed = &document.attributes()[term("speed").as_str()].instances()[0];
-        pretty_assertions::assert_eq!(speed.observed_at(), Some(&Slot::Remove));
-        pretty_assertions::assert_eq!(speed.unit_code(), Some(&Slot::Remove));
-        pretty_assertions::assert_eq!(speed.value_type(), Some(&Slot::Remove));
-    }
+    let document = patch(
+        &engine,
+        json!({"speed": {"value": 1, "observedAt": NULL, "unitCode": NULL, "valueType": NULL}}),
+        Normalization::MemberDeletions,
+    )
+    .await
+    .expect("expands")
+    .agreed();
+    let speed = &document.attributes()[term("speed").as_str()].instances()[0];
+    pretty_assertions::assert_eq!(speed.observed_at(), Some(&Slot::Remove));
+    pretty_assertions::assert_eq!(speed.unit_code(), Some(&Slot::Remove));
+    pretty_assertions::assert_eq!(speed.value_type(), Some(&Slot::Remove));
 }
 
 /// Clause 5.5.12: inside a merged structured value, a member set to the Null
@@ -180,23 +164,21 @@ async fn members_beside_the_value_are_deleted_by_the_null() {
 #[tokio::test]
 async fn a_nested_null_in_a_merged_structured_value_deletes_that_member() {
     let engine = engine();
-    for sentinel in SPELLINGS {
-        let document = patch(
-            &engine,
-            json!({"address": {"type": "Property", "value": {"street": sentinel, "city": "x"}}}),
-            Normalization::MemberDeletions,
-        )
-        .await
-        .expect("expands")
-        .agreed();
-        let ValueSlot::Set(WrittenValue::Value(values)) = document.attributes()[term("address").as_str()].instances()[0].value() else {
-            panic!("a value");
-        };
-        let [ExpandedValue::Node(node)] = values.as_slice() else {
-            panic!("a node");
-        };
-        pretty_assertions::assert_eq!(node.members().get(term("street").as_str()), Some(&FragmentMember::Remove));
-    }
+    let document = patch(
+        &engine,
+        json!({"address": {"type": "Property", "value": {"street": NULL, "city": "x"}}}),
+        Normalization::MemberDeletions,
+    )
+    .await
+    .expect("expands")
+    .agreed();
+    let ValueSlot::Set(WrittenValue::Value(values)) = document.attributes()[term("address").as_str()].instances()[0].value() else {
+        panic!("a value");
+    };
+    let [ExpandedValue::Node(node)] = values.as_slice() else {
+        panic!("a node");
+    };
+    pretty_assertions::assert_eq!(node.members().get(term("street").as_str()), Some(&FragmentMember::Remove));
 }
 
 /// Clauses 5.5.8 and 5.5.12: a `datasetId` is never deleted by the Null; both
@@ -204,17 +186,15 @@ async fn a_nested_null_in_a_merged_structured_value_deletes_that_member() {
 #[tokio::test]
 async fn a_null_dataset_id_is_refused_both_ways() {
     let engine = engine();
-    for sentinel in SPELLINGS {
-        let refusal = patch(
-            &engine,
-            json!({"speed": {"type": "Property", "value": 1, "datasetId": sentinel}}),
-            Normalization::Entity,
-        )
-        .await
-        .expect("expands")
-        .refused();
-        assert!(refusal.contains("datasetId"), "{refusal}");
-    }
+    let refusal = patch(
+        &engine,
+        json!({"speed": {"type": "Property", "value": 1, "datasetId": NULL}}),
+        Normalization::Entity,
+    )
+    .await
+    .expect("expands")
+    .refused();
+    assert!(refusal.contains("datasetId"), "{refusal}");
 }
 
 /// One instance of each value member holding the Null beside data, at the
@@ -244,18 +224,16 @@ fn nulls_beside_data(sentinel: &str) -> Vec<(&'static str, Value)> {
 #[tokio::test]
 async fn the_null_beside_data_is_refused_by_every_write_kind() {
     let engine = engine();
-    for sentinel in SPELLINGS {
-        for (name, instance) in nulls_beside_data(sentinel) {
-            let body = json!({"id": "urn:ngsi-ld:Device:null", "type": "Device", name: instance});
-            let refusals = [
-                entity(&engine, body.clone(), Normalization::Entity).await.expect("expands").refused(), // clone: the body is expanded four ways
-                patch(&engine, body.clone(), Normalization::MemberDeletions).await.expect("expands").refused(), // clone: the body is expanded four ways
-                patch(&engine, body, Normalization::Entity).await.expect("expands").refused(),
-                attribute(&engine, name, instance).await.expect("expands").refused(),
-            ];
-            for refusal in refusals {
-                assert!(refusal.contains("the NGSI-LD Null stands beside other values"), "{name} {sentinel}: {refusal}");
-            }
+    for (name, instance) in nulls_beside_data(NULL) {
+        let body = json!({"id": "urn:ngsi-ld:Device:null", "type": "Device", name: instance});
+        let refusals = [
+            entity(&engine, body.clone(), Normalization::Entity).await.expect("expands").refused(), // clone: the body is expanded four ways
+            patch(&engine, body.clone(), Normalization::MemberDeletions).await.expect("expands").refused(), // clone: the body is expanded four ways
+            patch(&engine, body, Normalization::Entity).await.expect("expands").refused(),
+            attribute(&engine, name, instance).await.expect("expands").refused(),
+        ];
+        for refusal in refusals {
+            assert!(refusal.contains("the NGSI-LD Null stands beside other values"), "{name}: {refusal}");
         }
     }
 }
@@ -266,13 +244,11 @@ async fn the_null_beside_data_is_refused_by_every_write_kind() {
 #[tokio::test]
 async fn the_stored_document_decoder_refuses_what_the_write_refuses() {
     let engine = engine();
-    for sentinel in SPELLINGS {
-        for (name, instance) in nulls_beside_data(sentinel) {
-            let body = json!({"id": "urn:ngsi-ld:Device:null", "type": "Device", name: instance});
-            let (decoded, canonical) = decoded_both_ways(&engine, body, Normalization::Entity).await.expect("expands");
-            assert!(matches!(decoded, Err(EntityRefusal::NullBesideData { .. })), "{name} {sentinel}: {decoded:?}");
-            assert!(canonical.is_err(), "{name} {sentinel}: {canonical:?}");
-        }
+    for (name, instance) in nulls_beside_data(NULL) {
+        let body = json!({"id": "urn:ngsi-ld:Device:null", "type": "Device", name: instance});
+        let (decoded, canonical) = decoded_both_ways(&engine, body, Normalization::Entity).await.expect("expands");
+        assert!(matches!(decoded, Err(EntityRefusal::NullBesideData { .. })), "{name}: {decoded:?}");
+        assert!(canonical.is_err(), "{name}: {canonical:?}");
     }
 }
 
@@ -281,8 +257,34 @@ async fn the_stored_document_decoder_refuses_what_the_write_refuses() {
 #[tokio::test]
 async fn an_attribute_fragment_deletes_its_value_with_the_null() {
     let engine = engine();
-    for sentinel in SPELLINGS {
-        let fragment = attribute(&engine, "speed", json!({"value": sentinel})).await.expect("expands").agreed();
-        pretty_assertions::assert_eq!(fragment.instance().value(), &ValueSlot::Remove(ValueCarrier::Value));
+    let fragment = attribute(&engine, "speed", json!({"value": NULL})).await.expect("expands").agreed();
+    pretty_assertions::assert_eq!(fragment.instance().value(), &ValueSlot::Remove(ValueCarrier::Value));
+}
+
+/// Clause 3.1 defines the Null as `urn:ngsi-ld:null` alone: the IRI the core
+/// context's `ngsi-ld` prefix makes of `ngsi-ld:null` is written data in every
+/// place the Null would delete, through every write kind.
+#[tokio::test]
+async fn the_null_lookalike_iri_is_data_wherever_the_null_deletes() {
+    let engine = engine();
+    let body = json!({
+        "id": "urn:ngsi-ld:Device:null",
+        "type": "Device",
+        "speed": NULL_LOOKALIKE,
+        "label": {"type": "Property", "value": NULL_LOOKALIKE},
+        "owner": {"type": "Relationship", "object": NULL_LOOKALIKE},
+        "readings": {"type": "ListProperty", "valueList": [NULL_LOOKALIKE]}
+    });
+    let documents = [
+        entity(&engine, body.clone(), Normalization::Entity).await.expect("expands").agreed(), // clone: the body is expanded three ways
+        patch(&engine, body.clone(), Normalization::MemberDeletions).await.expect("expands").agreed(), // clone: the body is expanded three ways
+        patch(&engine, body, Normalization::Entity).await.expect("expands").agreed(),
+    ];
+    for document in documents {
+        for name in ["speed", "label", "owner", "readings"] {
+            let member = &document.attributes()[term(name).as_str()];
+            assert!(matches!(member, AttributeMember::Instances(_)), "{name}: {member:?}");
+            assert!(matches!(member.instances()[0].value(), ValueSlot::Set(_)), "{name}: {member:?}");
+        }
     }
 }

@@ -13,6 +13,7 @@ use crate::{
     bounding_box::BoundingBox,
     form::{GeometryForm, PolygonRings},
     geometry::Geometry,
+    geometry_member::GeometryMember,
     line_string_coordinates::LineStringCoordinates,
     linear_ring::LinearRing,
     position::Position,
@@ -23,17 +24,6 @@ use serde::{
     ser::{SerializeMap, SerializeSeq},
 };
 
-/// The member naming a `GeoJSON` geometry's type (IETF RFC 7946 section 3.1).
-const TYPE_MEMBER: &str = "type";
-
-/// The member holding a `GeoJSON` geometry's positions (IETF RFC 7946 section
-/// 3.1).
-const COORDINATES_MEMBER: &str = "coordinates";
-
-/// The member holding a `GeoJSON` geometry's bounding box (IETF RFC 7946
-/// section 5).
-const BBOX_MEMBER: &str = "bbox";
-
 // Hand-written: the geometry object is written member by member from the
 // typed form, which no derive over the fields expresses.
 impl Serialize for Geometry {
@@ -42,11 +32,11 @@ impl Serialize for Geometry {
         let members = self.members();
         let entries = members.map_or(0, |members| usize::from(members.bbox().is_some()) + members.foreign().iter().count());
         let mut object = serializer.serialize_map(Some(2 + entries))?;
-        object.serialize_entry(TYPE_MEMBER, &form.geometry_type())?;
-        object.serialize_entry(COORDINATES_MEMBER, &Coordinates(form))?;
+        object.serialize_entry(GeometryMember::Type.as_str(), &form.geometry_type())?;
+        object.serialize_entry(GeometryMember::Coordinates.as_str(), &Coordinates(form))?;
         if let Some(members) = members {
             if let Some(bbox) = members.bbox() {
-                object.serialize_entry(BBOX_MEMBER, &BoundingBoxBody(bbox))?;
+                object.serialize_entry(GeometryMember::Bbox.as_str(), &BoundingBoxBody(bbox))?;
             }
             for (name, value) in members.foreign().iter() {
                 object.serialize_entry(name.as_ref(), value)?;
@@ -61,8 +51,8 @@ impl Serialize for Geometry {
 impl Serialize for GeometryForm {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut object = serializer.serialize_map(Some(2))?;
-        object.serialize_entry(TYPE_MEMBER, &self.geometry_type())?;
-        object.serialize_entry(COORDINATES_MEMBER, &Coordinates(self))?;
+        object.serialize_entry(GeometryMember::Type.as_str(), &self.geometry_type())?;
+        object.serialize_entry(GeometryMember::Coordinates.as_str(), &Coordinates(self))?;
         object.end()
     }
 }

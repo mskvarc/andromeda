@@ -12,8 +12,8 @@ use crate::{
     node_refusal::RefusedMember,
 };
 use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
-use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeShape};
-use andromeda_ngsi_ld_vocabulary::NULL_URI;
+use andromeda_ngsi_ld_representation::compact_node::CompactNode;
+use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::NULL_URI;
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Serializer, de::DeserializeOwned};
 
@@ -47,14 +47,6 @@ impl<T: Serialize> Serialize for Patched<T> {
     }
 }
 
-/// Whether `node` is the NGSI-LD Null written as a JSON string.
-pub(crate) fn is_ngsi_ld_null<'n, N: CompactNode<'n>>(node: N) -> bool {
-    match node.shape() {
-        NodeShape::String(text) => text == NULL_URI.as_str(),
-        NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::Array(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => false,
-    }
-}
-
 /// Read an optional member of a merge fragment: absent and JSON `null` are no
 /// member, the NGSI-LD Null is a removal, anything else the `T` it decodes as.
 ///
@@ -67,7 +59,7 @@ pub(crate) fn patched_member<'n, T: DeserializeOwned, N: CompactNode<'n>>(
     name: RefusedMember,
 ) -> Result<Option<Patched<T>>, ReadError<'n, N>> {
     match member {
-        Some(node) if is_ngsi_ld_null(node) => Ok(Some(Patched::Null)),
+        Some(node) if node.is_ngsi_ld_null() => Ok(Some(Patched::Null)),
         Some(_) | None => Ok(optional_member(member, name)?.map(Patched::Set)),
     }
 }

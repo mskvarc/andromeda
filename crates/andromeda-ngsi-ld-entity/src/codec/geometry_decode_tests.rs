@@ -6,8 +6,7 @@ use andromeda_ngsi_ld_geometry::{
     coordinate_path::CoordinatePath,
     dimension::GeometryDimension,
     form::GeometryForm,
-    geojson::GeometryError,
-    geometry_type::GeometryType,
+    geojson::{CoordinateShape, GeometryError},
     line_string_coordinates::LineStringError,
     linear_ring::LinearRingError,
     position::PositionError,
@@ -212,12 +211,12 @@ fn a_polygon_nested_one_level_short_is_refused() {
         &expanded_positions(&[[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 0.0]]),
     ));
     assert!(
-        matches!(error, GeometryError::Misnested { geometry_type: GeometryType::Polygon, ref at } if *at == CoordinatePath::new(vec![0, 0])),
+        matches!(error, GeometryError::NotAnArray { expected: CoordinateShape::Position, ref at } if *at == CoordinatePath::new(vec![0, 0])),
         "got {error:?}"
     );
     pretty_assertions::assert_eq!(
         error.to_string(),
-        "GeoJSON coordinates do not nest as a Polygon requires (at coordinates[0][0])"
+        "GeoJSON coordinates hold a non-array where a position belongs (at coordinates[0][0])"
     );
 }
 
@@ -295,4 +294,31 @@ fn a_string_geometry_reads_as_its_geometry_and_the_null_as_a_deletion() {
     assert!(matches!(encoded, Some(GeoValue::Encoded(_))));
     let refusal = EntityState::from_slice(&serde_json::to_vec(&document("urn:ngsi-ld:null")).expect("JSON")).expect_err("state holds no deletion");
     assert!(matches!(refusal, EntityRefusal::ReservedNullValue { .. }), "{refusal:?}");
+}
+
+/// JSON-LD orders no member of a node, so coordinates written before the
+/// `@type` that decides how they nest read as the same geometry.
+#[test]
+fn coordinates_written_before_the_type_read_as_the_same_geometry() {
+    let text = r#"[{"@id": "urn:ngsi-ld:Building:1", "@type": ["https://ex.org/Building"], "https://uri.etsi.org/ngsi-ld/location": [{"@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"https://purl.org/geojson/vocab#coordinates": [{"@list": [{"@list": [{"@value": 0}, {"@value": 0}]}, {"@list": [{"@value": 1}, {"@value": 1}]}]}], "@type": ["https://purl.org/geojson/vocab#LineString"]}]}]}]"#;
+    let state = EntityState::from_slice(text.as_bytes()).expect("a decoded entity");
+    pretty_assertions::assert_eq!(
+        state.location_geometry().cloned(),
+        Some(compact(&json!({"type": "LineString", "coordinates": [[0, 0], [1, 1]]})))
+    );
+}
+
+/// An expanded `coordinates` member holds its one list; beside a second one,
+/// or with none, it holds no coordinates the type could nest.
+#[test]
+fn a_coordinates_member_holding_other_than_one_list_is_refused_at_its_root() {
+    let point = json!({"@list": [{"@value": 1}, {"@value": 2}]});
+    for coordinates in [json!([point, point]), json!([])] {
+        let node = json!({"@type": ["https://purl.org/geojson/vocab#Point"], "https://purl.org/geojson/vocab#coordinates": coordinates});
+        let error = geometry_error(&node);
+        assert!(
+            matches!(error, GeometryError::NotAnArray { expected: CoordinateShape::Position, ref at } if *at == CoordinatePath::default()),
+            "{coordinates}: {error:?}"
+        );
+    }
 }

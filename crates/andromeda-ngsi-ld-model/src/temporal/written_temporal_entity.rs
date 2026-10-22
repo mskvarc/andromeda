@@ -42,21 +42,12 @@ use andromeda_ngsi_ld_representation::{
     compact_node::{CompactNode, NodeShape, produced_node::ProducedNode},
     embedded_context_admission::is_native_json_member,
 };
-use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::DeserializeOwned, ser::SerializeMap};
 use serde_json::value::RawValue;
 use std::str::FromStr;
-
-/// The member an entity's identifier is written under.
-const ID_MEMBER: &str = "id";
-
-/// The member an entity's types are written under.
-const TYPE_MEMBER: &str = "type";
-
-/// The member a JSON-LD document names its context in.
-const CONTEXT_MEMBER: &str = "@context";
 
 /// The Scope of a written Temporal Evolution.
 #[derive(Clone, Debug)]
@@ -118,9 +109,9 @@ impl WrittenTemporalEntity {
         for (name, member) in members {
             let at = |error: ReadError<'n, N>| error.within_member(&name);
             match name.as_ref() {
-                CONTEXT_MEMBER | compact_properties::CREATED_AT | compact_properties::MODIFIED_AT | compact_properties::DELETED_AT => {}
-                ID_MEMBER => written.id = optional(member, RefusedMember::Id).map_err(at)?,
-                TYPE_MEMBER => written.type_ = optional(member, RefusedMember::Type).map_err(at)?,
+                keyword::CONTEXT | compact_properties::CREATED_AT | compact_properties::MODIFIED_AT | compact_properties::DELETED_AT => {}
+                keyword::ID_ALIAS => written.id = optional(member, RefusedMember::Id).map_err(at)?,
+                keyword::TYPE_ALIAS => written.type_ = optional(member, RefusedMember::Type).map_err(at)?,
                 compact_properties::EXPIRES_AT => written.expires_at = optional(member, RefusedMember::ExpiresAt).map_err(at)?.map(NgsiLdDateTime::get),
                 compact_properties::SCOPE => written.scope = written_scope(member).map_err(at)?,
                 attribute => {
@@ -210,10 +201,10 @@ impl Serialize for WrittenTemporalEntity {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut object = serializer.serialize_map(None)?;
         if let Some(id) = &self.id {
-            object.serialize_entry(ID_MEMBER, id)?;
+            object.serialize_entry(keyword::ID_ALIAS, id)?;
         }
         if let Some(type_) = &self.type_ {
-            object.serialize_entry(TYPE_MEMBER, type_)?;
+            object.serialize_entry(keyword::TYPE_ALIAS, type_)?;
         }
         match &self.scope {
             Some(WrittenScope::Paths(paths)) => object.serialize_entry(compact_properties::SCOPE, paths)?,

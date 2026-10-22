@@ -10,7 +10,10 @@ use andromeda_ngsi_ld_query::filter::{
     predicate::{CmpOp, OrderingOp, PatternPolarity, Predicate, SetMembership},
     scalar::{CompareValue, Scalar},
 };
-use andromeda_ngsi_ld_vocabulary::compact::classes::{DATE, DATE_TIME, TIME};
+use andromeda_ngsi_ld_vocabulary::{
+    compact::classes::{DATE, DATE_TIME, TIME},
+    keyword,
+};
 use andromeda_postgresql_query::{
     jsonb::lift_comparison,
     operator::{compare, pattern as pattern_predicate},
@@ -24,12 +27,6 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
 };
 use sea_query::{Alias, CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Query, QueryStatementBuilder, SimpleExpr};
-
-/// The JSON-LD keyword a value object carries its value under.
-const VALUE_KEYWORD: &str = "@value";
-
-/// The JSON-LD keyword a value object carries its datatype under.
-const TYPE_KEYWORD: &str = "@type";
 
 /// The registration's `additional_properties` JSONB document, read fresh each
 /// time it opens an extraction.
@@ -173,7 +170,7 @@ fn stored_text(extract: SimpleExpr) -> SimpleExpr {
 fn csr_reading(extract: SimpleExpr, scalar: &Scalar) -> (SimpleExpr, SimpleExpr) {
     match scalar {
         Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_) => {
-            let datatype = extract.clone().json_get_text(text_literal(TYPE_KEYWORD)); // clone: the value and the datatype read one extraction
+            let datatype = extract.clone().json_get_text(text_literal(keyword::TYPE)); // clone: the value and the datatype read one extraction
             let declared = [(TimeValueForm::DateTime, DATE_TIME), (TimeValueForm::Date, DATE), (TimeValueForm::Time, TIME)]
                 .into_iter()
                 .fold(CaseStatement::new(), |case, (form, term)| {
@@ -183,7 +180,7 @@ fn csr_reading(extract: SimpleExpr, scalar: &Scalar) -> (SimpleExpr, SimpleExpr)
                         text_literal(iri.as_str()),
                     ) // clone: every arm reads the one datatype
                 });
-            (extract.json_get_text(text_literal(VALUE_KEYWORD)), declared.into())
+            (extract.json_get_text(text_literal(keyword::VALUE)), declared.into())
         }
         Scalar::Number(_) | Scalar::Bool(_) | Scalar::Str(_) | Scalar::Uri(_) => (stored_text(extract), typed_null(PostgresType::Text)),
     }

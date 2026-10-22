@@ -5,6 +5,7 @@ use crate::{
     filter::{path::AttrPath, serialize::serialize_attr_path, value_path::parse_attribute_path},
     ordering::collation::IcuCollation,
 };
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 use strum::{Display, EnumString};
@@ -60,17 +61,6 @@ pub enum RawOrderTarget<'a> {
 }
 
 impl<'a> RawOrderTarget<'a> {
-    /// The `id` keyword of clause 4.23.
-    pub const ID_KEYWORD: &'static str = "id";
-    /// The `type` keyword of clause 4.23.
-    pub const TYPE_KEYWORD: &'static str = "type";
-    /// The `scope` keyword of clause 4.23.
-    pub const SCOPE_KEYWORD: &'static str = "scope";
-    /// The `createdAt` system timestamp keyword (clause 4.8).
-    pub const CREATED_AT_KEYWORD: &'static str = "createdAt";
-    /// The `modifiedAt` system timestamp keyword (clause 4.8).
-    pub const MODIFIED_AT_KEYWORD: &'static str = "modifiedAt";
-
     /// Classifies a raw `orderBy` path. A keyword is only a keyword when the path names it and nothing else: clause 4.23.3 spells each as a bare `AttrName`, so `id.foo` descends into an attribute spelled `id`, and `name.createdAt` is an attribute path into a temporal sub-member rather than the entity's own `createdAt` column.
     #[must_use]
     pub fn classify(raw: &'a AttrPath) -> RawOrderTarget<'a> {
@@ -78,11 +68,11 @@ impl<'a> RawOrderTarget<'a> {
             return RawOrderTarget::Attribute(raw);
         }
         match raw.attr.as_str() {
-            RawOrderTarget::ID_KEYWORD => RawOrderTarget::Id,
-            RawOrderTarget::TYPE_KEYWORD => RawOrderTarget::Type,
-            RawOrderTarget::SCOPE_KEYWORD => RawOrderTarget::Scope,
-            RawOrderTarget::CREATED_AT_KEYWORD => RawOrderTarget::CreatedAt,
-            RawOrderTarget::MODIFIED_AT_KEYWORD => RawOrderTarget::ModifiedAt,
+            keyword::ID_ALIAS => RawOrderTarget::Id,
+            keyword::TYPE_ALIAS => RawOrderTarget::Type,
+            compact_properties::SCOPE => RawOrderTarget::Scope,
+            compact_properties::CREATED_AT => RawOrderTarget::CreatedAt,
+            compact_properties::MODIFIED_AT => RawOrderTarget::ModifiedAt,
             // `&str` is unbounded; any name that is not a keyword is an attribute name.
             _other => RawOrderTarget::Attribute(raw),
         }

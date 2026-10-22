@@ -1,7 +1,7 @@
 //! The `objectList` / `previousObjectList` member (ETSI GS CIM 009 clause 5.2.37).
 
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_vocabulary::{NULL_IRI, NULL_URI};
+use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::is_ngsi_ld_null;
 use derive_more::{AsRef, Deref, From};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{slice::Iter, vec::IntoIter};
@@ -54,10 +54,7 @@ impl<'a, T: AsRef<str>> NormalizedObjectList<'a, T> {
     /// Whether the targets encode a deletion rather than a list of
     /// Relationship Objects (clause 4.5.22.2).
     fn is_deletion_encoding(&self) -> bool {
-        let [only] = self.targets else {
-            return false;
-        };
-        only.as_ref() == NULL_URI.as_str() || only.as_ref() == NULL_IRI.as_str()
+        matches!(self.targets, [only] if is_ngsi_ld_null(only.as_ref()))
     }
 }
 
@@ -172,7 +169,11 @@ mod tests {
     #[test]
     fn the_deletion_encoding_survives_both_readings_of_the_normalized_representation() {
         pretty_assertions::assert_eq!(normalized(&["urn:ngsi-ld:null"]), json!(["urn:ngsi-ld:null"]));
-        pretty_assertions::assert_eq!(normalized(&["https://uri.etsi.org/ngsi-ld/null"]), json!(["https://uri.etsi.org/ngsi-ld/null"]));
+        pretty_assertions::assert_eq!(
+            normalized(&["https://uri.etsi.org/ngsi-ld/null"]),
+            json!([{"object": "https://uri.etsi.org/ngsi-ld/null"}]),
+            "clause 3.1 names the URN alone, so the IRI is a target like any other"
+        );
 
         let deleted = RelationshipObjectList(vec![Uri::from_str("urn:ngsi-ld:null").expect("the NGSI-LD Null is a URN")]);
         pretty_assertions::assert_eq!(serde_json::to_value(&deleted).expect("serialises"), json!(["urn:ngsi-ld:null"]));

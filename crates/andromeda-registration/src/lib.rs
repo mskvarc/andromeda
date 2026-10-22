@@ -125,6 +125,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-request",
+        "andromeda-ngsi-ld-vocabulary",
         "andromeda-persistence-failure",
     ],
     allow_workspace_dev_dependencies: [],

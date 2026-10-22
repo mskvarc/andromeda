@@ -27,15 +27,9 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{spec_version::SpecVersion, time::rendering::instant_text};
 use andromeda_ngsi_ld_model::{attribute::instance::AttributeValue, entity::EntityPatch};
-use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use serde::{Serialize, Serializer, ser::SerializeMap};
 use std::slice::from_ref;
-
-/// The member the entity's identifier is written under.
-const ID_MEMBER: &str = "id";
-
-/// The member the entity's types are written under.
-const TYPE_MEMBER: &str = "type";
 
 /// What an attribute's JSON array holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,12 +97,12 @@ impl Serialize for ForwardedEntity<'_> {
         let patch = self.patch;
         let mut object = serializer.serialize_map(None)?;
         if let Some(id) = &patch.id {
-            object.serialize_entry(ID_MEMBER, id)?;
+            object.serialize_entry(keyword::ID_ALIAS, id)?;
         }
         if let Some(types) = &patch.type_ {
             match types.iter().next() {
-                Some(first) if self.walk.writes_single_type() => object.serialize_entry(TYPE_MEMBER, first)?,
-                Some(_) | None => object.serialize_entry(TYPE_MEMBER, types)?,
+                Some(first) if self.walk.writes_single_type() => object.serialize_entry(keyword::TYPE_ALIAS, first)?,
+                Some(_) | None => object.serialize_entry(keyword::TYPE_ALIAS, types)?,
             }
         }
         if let Some(scope) = &patch.scope

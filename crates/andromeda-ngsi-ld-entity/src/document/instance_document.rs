@@ -111,6 +111,19 @@ impl InstanceDocument {
         self.family
     }
 
+    /// The family the instance declares, else the one its value member
+    /// implies (clause 4.5.2.3): `None` for an instance declaring none and
+    /// writing no value member, which a write reads against the family held.
+    #[must_use]
+    pub const fn implied_family(&self) -> Option<AttributeType> {
+        match (self.family, &self.value) {
+            (Some(family), _) => Some(family),
+            (None, ValueSlot::Set(value)) => Some(value.implied_family()),
+            (None, ValueSlot::Remove(carrier)) => Some(carrier.implied_family()),
+            (None, ValueSlot::Absent) => None,
+        }
+    }
+
     /// `datasetId`.
     #[must_use]
     pub const fn dataset_id(&self) -> Option<&Identifier> {
@@ -256,5 +269,51 @@ impl InstanceDocument {
             proof_seals: self.proof_seals,
             sub_attributes: self.sub_attributes,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        document::{
+            instance_document::InstanceDocument,
+            value_carrier::ValueCarrier,
+            written_value::{ValueSlot, WrittenValue},
+        },
+        geo_value::{EncodedGeometry, GeoValue},
+        non_empty::NonEmpty,
+    };
+    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
+    use std::str::FromStr;
+
+    fn typeless(value: ValueSlot) -> InstanceDocument {
+        InstanceDocument::builder().value(value).build()
+    }
+
+    /// Clause 4.5.2.3: an instance naming no `type` is the family its value
+    /// member implies, a geometry under `value` a `GeoProperty`.
+    #[test]
+    fn a_typeless_instance_is_the_family_its_value_implies() {
+        let point = EncodedGeometry::parse(r#"{"type":"Point","coordinates":[1,2]}"#.to_owned()).expect("a point");
+        let target = Uri::from_str("urn:ngsi-ld:Vehicle:1").expect("a URI");
+        for (value, family) in [
+            (ValueSlot::Set(WrittenValue::Value(Vec::new())), AttributeType::Property),
+            (ValueSlot::Set(WrittenValue::Geometry(GeoValue::Encoded(point))), AttributeType::GeoProperty),
+            (ValueSlot::Set(WrittenValue::Object(NonEmpty::one(target))), AttributeType::Relationship),
+            (ValueSlot::Remove(ValueCarrier::Object), AttributeType::Relationship),
+            (ValueSlot::Remove(ValueCarrier::ValueList), AttributeType::ListProperty),
+        ] {
+            pretty_assertions::assert_eq!(typeless(value.clone()).implied_family(), Some(family), "{value:?}"); // clone: the value is reported on failure
+        }
+        pretty_assertions::assert_eq!(typeless(ValueSlot::Absent).implied_family(), None);
+    }
+
+    #[test]
+    fn a_declared_family_wins_over_the_one_the_value_implies() {
+        let declared = InstanceDocument::builder()
+            .family(Some(AttributeType::VocabProperty))
+            .value(ValueSlot::Remove(ValueCarrier::Object))
+            .build();
+        pretty_assertions::assert_eq!(declared.implied_family(), Some(AttributeType::VocabProperty));
     }
 }

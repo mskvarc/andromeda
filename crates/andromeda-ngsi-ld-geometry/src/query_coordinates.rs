@@ -38,10 +38,9 @@ impl WrittenCoordinates {
     ///
     /// # Errors
     ///
-    /// Returns [`GeometryError::NotAnArray`] or
-    /// [`GeometryError::NonNumericOrdinate`] for a member that breaks the
+    /// Returns [`GeometryError::NotAnArray`] for a member that breaks the
     /// nesting, [`GeometryError::Position`] for a position RFC 7946 gives no
-    /// meaning, [`GeometryError::LineString`] for a line of fewer than two
+    /// meaning or that holds a member that is no number, [`GeometryError::LineString`] for a line of fewer than two
     /// positions and [`GeometryError::LinearRing`] for a ring that is open or
     /// holds fewer than four.
     pub fn read_as(&self, geometry_type: GeometryType) -> Result<Geometry, GeometryError> {
@@ -221,7 +220,16 @@ mod tests {
     #[test]
     fn a_coordinate_outside_the_finite_f64_domain_is_no_ordinate() {
         let refused = WrittenCoordinates::from_text("[1e400, 52.5]").expect("valid JSON").read_as(GeometryType::Point);
-        assert!(matches!(refused, Err(GeometryError::NonNumericOrdinate { .. })), "{refused:?}");
+        assert!(
+            matches!(
+                refused,
+                Err(GeometryError::Position {
+                    source: PositionError::NonNumericOrdinate { index: 0 },
+                    ..
+                })
+            ),
+            "{refused:?}"
+        );
     }
 
     #[test]

@@ -4,12 +4,15 @@
 //! value is declared as.
 
 use crate::{
-    attribute_value_datatype::{ARRAY_TYPE, NUMBER_TYPE, OBJECT_TYPE, OrderedValue, VALUE_MEMBER},
+    attribute_value_datatype::{ARRAY_TYPE, NUMBER_TYPE, OBJECT_TYPE, OrderedValue},
     attribute_value_order::ELEMENT_COLUMN,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::filter::path::AttrPath;
-use andromeda_ngsi_ld_vocabulary::expanded::classes::{DATE, TIME};
+use andromeda_ngsi_ld_vocabulary::{
+    expanded::classes::{DATE, TIME},
+    keyword,
+};
 use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_query::q_predicate::{
     sub_attribute::{element_path::ElementPath, member_field::MemberField},
@@ -25,9 +28,6 @@ use andromeda_postgresql_seaquery::{
     unnest::composite_field,
 };
 use sea_query::{Alias, CaseStatement, Expr as SeaExpr, ExprTrait, Func, SimpleExpr};
-
-/// The JSON-LD keyword holding a value node's datatype.
-const TYPE_MEMBER: &str = "@type";
 
 /// The typed value the read instance holds for the path, read off the
 /// columns of `source`.
@@ -145,9 +145,9 @@ impl Holder {
         let object = self.field(CurrentAttributes::ValueObject, SubAttribute::ValueObject);
         let json_property = is_json_property(self.field(CurrentAttributes::AttributeKind, SubAttribute::AttributeKind));
         let node_path = expanded_jsonpath(&path.value_path);
-        let declared = jsonb_path_query_first(object.clone(), &format!("{node_path}.\"{TYPE_MEMBER}\"")).json_path_text(text_literal("{}")); // clone: every reading walks the one value
+        let declared = jsonb_path_query_first(object.clone(), &format!("{node_path}.\"{}\"", keyword::TYPE)).json_path_text(text_literal("{}")); // clone: every reading walks the one value
         let mut readings = vec![
-            jsonb_path_query_first(object.clone(), &format!("{node_path}.\"{VALUE_MEMBER}\"")), // clone: as above
+            jsonb_path_query_first(object.clone(), &format!("{node_path}.\"{}\"", keyword::VALUE)), // clone: as above
             CaseStatement::new()
                 .case(
                     json_property,
@@ -172,7 +172,12 @@ impl Holder {
 
 /// The jsonpath selecting the value of one language of a `languageMap`.
 fn target_language_jsonpath(language: &AttributeName) -> String {
-    format!("$[*] ? (@.\"@language\" == \"{}\").\"{VALUE_MEMBER}\"", escape_jsonpath_key(language.as_str()))
+    format!(
+        "$[*] ? (@.\"{}\" == \"{}\").\"{}\"",
+        keyword::LANGUAGE,
+        escape_jsonpath_key(language.as_str()),
+        keyword::VALUE
+    )
 }
 
 /// `json` read as a number when it is a JSON number.

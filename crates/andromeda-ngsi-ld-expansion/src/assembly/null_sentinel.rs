@@ -2,7 +2,8 @@
 //!
 //! Expansion leaves the Null a value object (`{"@value": "urn:ngsi-ld:null"}`
 //! for a plain term) or a node reference (`{"@id": "urn:ngsi-ld:null"}` under
-//! the `@id`- and `@vocab`-typed terms), in either of its two spellings. A
+//! the `@id`- and `@vocab`-typed terms): the URN is an absolute IRI, which
+//! expansion keeps as written. A
 //! family's deletion encoding puts it on the right-hand side of the family's
 //! value member (clauses 4.5.2.2, 4.5.3.2, 4.5.18, 4.5.20.2, 4.5.24.2), and a
 //! list family's in a list holding it alone (clauses 4.5.21.2, 4.5.22.2), where
@@ -15,9 +16,8 @@
 //! refused rather than stored as a value the stored document could not hold.
 
 use crate::expanded_tree::{ExpandedItem, ExpandedNode};
-use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_entity::{document::value_carrier::ValueCarrier, ngsi_ld_null::is_ngsi_ld_null};
-use andromeda_ngsi_ld_vocabulary::expanded::properties;
+use andromeda_ngsi_ld_entity::document::value_carrier::ValueCarrier;
+use andromeda_ngsi_ld_vocabulary::{expanded::properties, ngsi_ld_null::is_ngsi_ld_null};
 
 /// Whether one expanded item is the NGSI-LD Null.
 #[must_use]
@@ -25,7 +25,7 @@ pub fn is_null(item: &ExpandedItem) -> bool {
     match item {
         ExpandedItem::Value(value) => value.as_str().is_some_and(is_ngsi_ld_null),
         ExpandedItem::Node(node) => node.is_reference() && node.id.as_deref().is_some_and(is_ngsi_ld_null),
-        ExpandedItem::Json(literal) => is_null_literal(literal),
+        ExpandedItem::Json(literal) => literal.is_null_sentinel(),
         ExpandedItem::List(_) | ExpandedItem::Geometry(_) => false,
     }
 }
@@ -51,7 +51,7 @@ pub fn is_deletion(carrier: ValueCarrier, items: &[ExpandedItem]) -> bool {
         (ValueCarrier::ValueList | ValueCarrier::ObjectList, [ExpandedItem::List(members)]) => {
             matches!(members.as_slice(), [member] if is_list_object_null(member))
         }
-        (ValueCarrier::Json, [ExpandedItem::Json(literal)]) => is_null_literal(literal),
+        (ValueCarrier::Json, [ExpandedItem::Json(literal)]) => literal.is_null_sentinel(),
         // Clause 4.5.18 spells the deletion `{"@none": "urn:ngsi-ld:null"}`:
         // the Null under a language deletes that one language of a merged
         // map (clause 5.5.12), not the instance.
@@ -79,12 +79,6 @@ fn is_wrapped_null(member: &ExpandedItem) -> bool {
     }
 }
 
-/// Whether a JSON literal is the NGSI-LD Null string, in either spelling
-/// clause 4.5.0 gives it.
-fn is_null_literal(literal: &JsonLiteral) -> bool {
-    literal.piece().as_str().is_some_and(|text| is_ngsi_ld_null(&text))
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -110,12 +104,20 @@ mod tests {
     }
 
     #[test]
-    fn both_spellings_are_the_null_as_a_value_and_as_a_reference() {
-        for spelling in ["urn:ngsi-ld:null", "https://uri.etsi.org/ngsi-ld/null"] {
-            assert!(is_null(&text(spelling)), "{spelling}");
-            assert!(is_null(&reference(spelling)), "{spelling}");
+    fn the_null_is_the_null_as_a_value_and_as_a_reference() {
+        assert!(is_null(&text("urn:ngsi-ld:null")));
+        assert!(is_null(&reference("urn:ngsi-ld:null")));
+    }
+
+    /// Clause 3.1 defines the Null as the URN alone, so the IRI the core
+    /// context's `ngsi-ld` prefix makes of `ngsi-ld:null` is data.
+    #[test]
+    fn no_other_spelling_is_the_null() {
+        for spelling in ["https://uri.etsi.org/ngsi-ld/null", "urn:ngsi-ld:nil"] {
+            assert!(!is_null(&text(spelling)), "{spelling}");
+            assert!(!is_null(&reference(spelling)), "{spelling}");
+            assert!(!is_null(&ExpandedItem::Json(literal(&format!("{spelling:?}")))), "{spelling}");
         }
-        assert!(!is_null(&text("urn:ngsi-ld:nil")));
     }
 
     /// The stored document spells a JSON literal as a value object, which the

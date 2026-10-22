@@ -17,6 +17,7 @@
 use crate::q_predicate::{instance_row::InstanceRow, json_value_term::JsonTarget, value_column::ValueColumn};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::filter::path::AttrPath;
+use andromeda_ngsi_ld_vocabulary::keyword;
 use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_seaquery::{
     cast::typed_null,
@@ -30,12 +31,6 @@ use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, Query, SimpleExpr}
 /// The alias one member the path reaches is read under, which is also the name
 /// of its one column.
 const MEMBER: &str = "member";
-
-/// The JSON-LD keyword a value node carries its value under.
-const VALUE_KEYWORD: &str = "@value";
-
-/// The JSON-LD keyword a value node carries its datatype under.
-const TYPE_KEYWORD: &str = "@type";
 
 /// How one member the path reaches holds its value.
 #[derive(Debug, Clone, Copy)]
@@ -73,8 +68,8 @@ fn members_passing(object: SimpleExpr, jsonpath: &str, shape: MemberShape, test:
     let member = SeaExpr::col((Alias::new(MEMBER), Alias::new(MEMBER)));
     let (value, datatype) = match shape {
         MemberShape::ValueNode => (
-            member.clone().json_get(text_literal(VALUE_KEYWORD)), // clone: the datatype reads the same member
-            member.json_get_text(text_literal(TYPE_KEYWORD)),
+            member.clone().json_get(text_literal(keyword::VALUE)), // clone: the datatype reads the same member
+            member.json_get_text(text_literal(keyword::TYPE)),
         ),
         MemberShape::JsonLiteral => (member, typed_null(PostgresType::Text)),
     };

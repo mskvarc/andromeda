@@ -12,6 +12,10 @@
 //! An ordinate is recorded as the double nearest to the number written, so a
 //! number no finite double stands for is recorded as a member that is not an
 //! ordinate at all.
+//!
+//! The tape is also what an expanded geometry's `coordinates` are recorded
+//! onto, whatever holds them, so one reader decides how every geometry's
+//! coordinates nest and refuses them with the same reasons.
 
 use andromeda_ngsi_ld_number::json_value::value_census::{MemberName, MemberNameSeed};
 use serde::de::{DeserializeSeed, Deserializer, Error as DeserializeError, IgnoredAny, MapAccess, SeqAccess, Visitor};
@@ -35,7 +39,7 @@ enum CoordinateStep {
 
 /// A `coordinates` member, recorded in document order.
 #[derive(Debug, Default)]
-pub(crate) struct CoordinateTape {
+pub struct CoordinateTape {
     /// Every array boundary and member, in document order.
     steps: Vec<CoordinateStep>,
     /// The double of every [`CoordinateStep::Ordinate`], in the same order.
@@ -70,16 +74,31 @@ impl CoordinateTape {
         Ok(tape)
     }
 
+    /// Record an array opening.
+    pub fn open(&mut self) {
+        self.steps.push(CoordinateStep::Open);
+    }
+
+    /// Record the innermost open array closing.
+    pub fn close(&mut self) {
+        self.steps.push(CoordinateStep::Close);
+    }
+
     /// Record a number by the double that stands for it, if a finite one
-    /// does.
-    fn record_number(&mut self, ordinate: Option<f64>) {
+    /// does, and as a member that is no ordinate otherwise.
+    pub fn number(&mut self, ordinate: Option<f64>) {
         match ordinate.filter(|ordinate| ordinate.is_finite()) {
             Some(ordinate) => {
                 self.steps.push(CoordinateStep::Ordinate);
                 self.ordinates.push(ordinate);
             }
-            None => self.steps.push(CoordinateStep::Other),
+            None => self.other(),
         }
+    }
+
+    /// Record a member that is neither an array nor a number.
+    pub fn other(&mut self) {
+        self.steps.push(CoordinateStep::Other);
     }
 
     /// Read the tape back from its first step.
@@ -161,56 +180,56 @@ impl<'de> Visitor<'de> for CoordinateTapeSeed<'_> {
     }
 
     fn visit_bool<E: DeserializeError>(self, _value: bool) -> Result<(), E> {
-        self.tape.steps.push(CoordinateStep::Other);
+        self.tape.other();
         Ok(())
     }
 
     // An integer reads as the double `serde_json::Value::as_f64` gives for
     // it, the double nearest to it.
     fn visit_i64<E: DeserializeError>(self, value: i64) -> Result<(), E> {
-        self.tape.record_number(Number::from(value).as_f64());
+        self.tape.number(Number::from(value).as_f64());
         Ok(())
     }
 
     fn visit_u64<E: DeserializeError>(self, value: u64) -> Result<(), E> {
-        self.tape.record_number(Number::from(value).as_f64());
+        self.tape.number(Number::from(value).as_f64());
         Ok(())
     }
 
     fn visit_i128<E: DeserializeError>(self, value: i128) -> Result<(), E> {
-        self.tape.record_number(Number::from_i128(value).and_then(|number| number.as_f64()));
+        self.tape.number(Number::from_i128(value).and_then(|number| number.as_f64()));
         Ok(())
     }
 
     fn visit_u128<E: DeserializeError>(self, value: u128) -> Result<(), E> {
-        self.tape.record_number(Number::from_u128(value).and_then(|number| number.as_f64()));
+        self.tape.number(Number::from_u128(value).and_then(|number| number.as_f64()));
         Ok(())
     }
 
     fn visit_f64<E: DeserializeError>(self, value: f64) -> Result<(), E> {
-        self.tape.record_number(Some(value));
+        self.tape.number(Some(value));
         Ok(())
     }
 
     fn visit_str<E: DeserializeError>(self, _value: &str) -> Result<(), E> {
-        self.tape.steps.push(CoordinateStep::Other);
+        self.tape.other();
         Ok(())
     }
 
     fn visit_unit<E: DeserializeError>(self) -> Result<(), E> {
-        self.tape.steps.push(CoordinateStep::Other);
+        self.tape.other();
         Ok(())
     }
 
     fn visit_none<E: DeserializeError>(self) -> Result<(), E> {
-        self.tape.steps.push(CoordinateStep::Other);
+        self.tape.other();
         Ok(())
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut items: A) -> Result<(), A::Error> {
-        self.tape.steps.push(CoordinateStep::Open);
+        self.tape.open();
         while items.next_element_seed(CoordinateTapeSeed { tape: &mut *self.tape })?.is_some() {}
-        self.tape.steps.push(CoordinateStep::Close);
+        self.tape.close();
         Ok(())
     }
 
@@ -219,14 +238,14 @@ impl<'de> Visitor<'de> for CoordinateTapeSeed<'_> {
             // The reader's spelling of a number that is not a 64-bit integer.
             Some(MemberName::NumberToken) => {
                 let ordinate = members.next_value_seed(OrdinateTokenSeed)?;
-                self.tape.record_number(ordinate);
+                self.tape.number(ordinate);
             }
             Some(MemberName::Member) => {
                 members.next_value::<IgnoredAny>()?;
                 while members.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
-                self.tape.steps.push(CoordinateStep::Other);
+                self.tape.other();
             }
-            None => self.tape.steps.push(CoordinateStep::Other),
+            None => self.tape.other(),
         }
         Ok(())
     }

@@ -17,13 +17,8 @@ use crate::{
     geojson::GeometryError,
     geojson_members::GeoJsonMembers,
     geometry::Geometry,
-    geometry_type::GeometryType,
+    geometry_object_type::GeometryObjectType,
 };
-use std::str::FromStr;
-
-/// The `GeoJSON` `type` token of a `GeometryCollection`, which ETSI GS CIM 009
-/// v1.9.1 clause 4.7.1 excludes from a `GeoProperty` value.
-const GEOMETRY_COLLECTION_TOKEN: &str = "GeometryCollection";
 
 /// What the `type` member of a geometry object says.
 #[derive(Clone, Copy, Debug, Default)]
@@ -31,10 +26,8 @@ pub(crate) enum TypeMember {
     /// No `type` member, or one that is not a string.
     #[default]
     Missing,
-    /// A `GeometryCollection`.
-    Collection,
     /// A geometry type RFC 7946 section 1.4 defines.
-    Known(GeometryType),
+    Known(GeometryObjectType),
     /// A string naming no geometry type RFC 7946 defines.
     Unknown(strum::ParseError),
 }
@@ -42,10 +35,7 @@ pub(crate) enum TypeMember {
 impl TypeMember {
     /// What the string `token` says as a `type` member.
     pub(crate) fn of(token: &str) -> TypeMember {
-        if token == GEOMETRY_COLLECTION_TOKEN {
-            return TypeMember::Collection;
-        }
-        GeometryType::from_str(token).map_or_else(TypeMember::Unknown, TypeMember::Known)
+        token.parse().map_or_else(TypeMember::Unknown, TypeMember::Known)
     }
 }
 
@@ -141,16 +131,11 @@ impl GeometryMembers {
 
     /// The form and the bounding box the members spell.
     fn read_with_box(&self) -> Result<(GeometryForm, Option<BoundingBox>), GeometryError> {
-        let geometry_type = match self.geometry_type {
-            TypeMember::Missing => return Err(GeometryError::MissingType),
-            TypeMember::Collection => {
-                return Err(match self.geometries {
-                    GeometriesMember::Array => GeometryError::GeometryCollectionUnsupported,
-                    GeometriesMember::Absent => GeometryError::MissingGeometries,
-                });
-            }
-            TypeMember::Unknown(refusal) => return Err(GeometryError::UnknownType(refusal)),
-            TypeMember::Known(geometry_type) => geometry_type,
+        let geometry_type = match (self.geometry_type, self.geometries) {
+            (TypeMember::Missing, _) => return Err(GeometryError::MissingType),
+            (TypeMember::Unknown(refusal), _) => return Err(GeometryError::UnknownType(refusal)),
+            (TypeMember::Known(GeometryObjectType::Collection), GeometriesMember::Absent) => return Err(GeometryError::MissingGeometries),
+            (TypeMember::Known(object_type), GeometriesMember::Absent | GeometriesMember::Array) => object_type.geo_property_type()?,
         };
         let bbox = self.bbox.as_ref().map(BoundingBox::of_tape).transpose()?;
         let form = self

@@ -9,10 +9,11 @@
 
 use crate::{
     node_refusal::NodeReadError,
-    received::{CONTEXT_MEMBER, ElementRefusal, ElementRefusalReason, ReceivedDocumentError, ReceivedElement, inadmissible_text, named_id, received_elements},
+    received::{ElementRefusal, ElementRefusalReason, ReceivedDocumentError, ReceivedElement, inadmissible_text, named_id, received_elements},
     temporal::temporal_body::TemporalBody,
 };
 use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
+use andromeda_ngsi_ld_vocabulary::keyword;
 
 /// A Temporal Evolution as a peer wrote it, with the `@context` it named for
 /// itself (JSON-LD 1.1: a node object's own context applies to that node).
@@ -61,7 +62,7 @@ fn contextual_temporal_entity(index: usize, element: JsonPiece<'_>) -> ReceivedE
     if let Some(inadmissible) = inadmissible_text(element) {
         return refused(inadmissible);
     }
-    let context = match element.member(CONTEXT_MEMBER).map(JsonPiece::to_literal).transpose() {
+    let context = match element.member(keyword::CONTEXT).map(JsonPiece::to_literal).transpose() {
         Ok(context) => context,
         Err(error) => return refused(ElementRefusalReason::Context(error)),
     };

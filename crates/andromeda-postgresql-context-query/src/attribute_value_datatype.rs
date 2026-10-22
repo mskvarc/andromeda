@@ -21,7 +21,10 @@
 //! not exist" belongs, in both directions.
 
 use andromeda_ngsi_ld_query::ordering::sort_direction::SortDirection;
-use andromeda_ngsi_ld_vocabulary::expanded::classes::{DATE, DATE_TIME, TIME};
+use andromeda_ngsi_ld_vocabulary::{
+    expanded::classes::{DATE, DATE_TIME, TIME},
+    keyword,
+};
 use andromeda_postgresql_seaquery::{
     cast::cast,
     jsonb::{jsonb_key_exists, jsonb_typeof},
@@ -30,16 +33,6 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
 };
 use sea_query::{CaseStatement, ExprTrait, SimpleExpr};
-
-/// The JSON-LD keyword holding a value node's literal value.
-pub(crate) const VALUE_MEMBER: &str = "@value";
-
-/// The JSON-LD keyword holding the elements of an ordered list.
-///
-/// Clauses 5.2.24 and 5.2.25 give the two list families an ordered value, held
-/// as the `@list` body, or under this keyword where a structured value nests
-/// one.
-const LIST_MEMBER: &str = "@list";
 
 /// The token for a number.
 pub(crate) const NUMBER_TYPE: &str = "number";
@@ -92,7 +85,7 @@ pub(crate) fn datatype_token(value: &OrderedValue) -> SimpleExpr {
     // its own copy of the columns the lateral projects once.
     let listed = jsonb_typeof(value.object.clone())
         .eq(text_literal(ARRAY_TYPE))
-        .or(jsonb_key_exists(value.object.clone(), text_literal(LIST_MEMBER)));
+        .or(jsonb_key_exists(value.object.clone(), text_literal(keyword::LIST)));
     CaseStatement::new()
         .case(value.number.clone().is_not_null(), text_literal(NUMBER_TYPE))
         .case(value.boolean.clone().is_not_null(), text_literal(BOOLEAN_TYPE))

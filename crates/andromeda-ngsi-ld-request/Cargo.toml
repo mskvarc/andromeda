@@ -22,6 +22,7 @@ andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
+andromeda-ngsi-ld-vocabulary.workspace = true
 chrono = "0.4.45"
 derive_more = { version = "2.1.1", features = ["display"] }
 iri-rs = "3.4.1"

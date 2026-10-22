@@ -16,7 +16,7 @@ use crate::{
     value_mode::Fragment,
 };
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, reference::NgsiLdReference, uri::Uri};
 
 /// A written value, by its carrying member.
 #[derive(Clone, Debug, PartialEq)]
@@ -55,6 +55,23 @@ impl WrittenValue {
             WrittenValue::Json(_) => ValueCarrier::Json,
             WrittenValue::ValueList(_) => ValueCarrier::ValueList,
             WrittenValue::ObjectList(_) => ValueCarrier::ObjectList,
+        }
+    }
+
+    /// The family an instance declaring none is read as when it writes this
+    /// value: a `GeoProperty` for a geometry, else the family its member
+    /// names.
+    #[must_use]
+    pub const fn implied_family(&self) -> AttributeType {
+        match self {
+            WrittenValue::Geometry(_) => AttributeType::GeoProperty,
+            WrittenValue::Value(_)
+            | WrittenValue::Object(_)
+            | WrittenValue::LanguageMap(_)
+            | WrittenValue::Vocab(_)
+            | WrittenValue::Json(_)
+            | WrittenValue::ValueList(_)
+            | WrittenValue::ObjectList(_) => self.carrier().implied_family(),
         }
     }
 }

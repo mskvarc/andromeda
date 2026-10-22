@@ -10,6 +10,7 @@
 pub mod attribute_member;
 pub mod attribute_nesting;
 pub mod instance_document;
+pub(crate) mod instance_identities;
 pub mod slot;
 pub mod value_carrier;
 pub mod written_value;

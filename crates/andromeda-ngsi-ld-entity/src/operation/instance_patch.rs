@@ -43,19 +43,15 @@ pub(crate) enum InstancePatchDepth {
 /// family `held` (`None` when nothing is held).
 ///
 /// The declared family wins. A fragment declaring none keeps the held family
-/// when it writes the member that family reads its value from, so a typeless
-/// `value` written onto a `GeoProperty` is a geometry; otherwise the member it
-/// writes names the family, and an instance writing none is a Property
-/// (clause 4.5.2).
+/// unless it writes the value member of another one, so a typeless `value`
+/// written onto a `GeoProperty` is a geometry; otherwise it takes the family
+/// its value member implies, and an instance implying none is a Property
+/// (clause 4.5.2.3).
 pub(crate) fn written_family(document: &InstanceDocument, held: Option<AttributeType>) -> AttributeType {
-    if let Some(family) = document.family() {
-        return family;
-    }
-    match (document.value(), held) {
-        (ValueSlot::Set(written), Some(family)) if ValueCarrier::of(family) == written.carrier() => family,
-        (ValueSlot::Set(written), Some(_) | None) => written.carrier().implied_family(),
-        (ValueSlot::Absent | ValueSlot::Remove(_), Some(family)) => family,
-        (ValueSlot::Absent | ValueSlot::Remove(_), None) => AttributeType::Property,
+    match (document.family(), document.value(), held) {
+        (None, ValueSlot::Set(written), Some(family)) if ValueCarrier::of(family) == written.carrier() => family,
+        (None, ValueSlot::Absent | ValueSlot::Remove(_), Some(family)) => family,
+        (Some(_) | None, _, _) => document.implied_family().unwrap_or(AttributeType::Property),
     }
 }
 

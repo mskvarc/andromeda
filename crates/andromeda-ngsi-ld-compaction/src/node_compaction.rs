@@ -17,7 +17,7 @@ use crate::{
     walk::{Walk, member_term},
 };
 use andromeda_ngsi_ld_entity::{document::value_carrier::ValueCarrier, expanded_value::ValueNode, value_mode::Stored};
-use andromeda_ngsi_ld_vocabulary::NULL_URI;
+use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::NULL_URI;
 use jsonld::Term;
 
 impl Walk<'_> {

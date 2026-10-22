@@ -25,15 +25,12 @@ use crate::{
 use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
-    attribute_type::{AttributeType, TemporalValueEncoding},
+    attribute_type::{AttributeType, SimplifiedValueEncoding},
 };
 use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeMembers, NodeShape};
-use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use serde_json::value::RawValue;
 use std::{borrow::Cow, convert::Infallible, str::FromStr};
-
-/// The member an attribute instance names its family in.
-const TYPE_MEMBER: &str = "type";
 
 /// What is wrong with an attribute object holding its plural member, before
 /// the attribute is named.
@@ -53,7 +50,7 @@ enum PairFault<'a> {
 
 /// The family of an attribute object that holds its family's plural member.
 pub(crate) fn plural_family<'n, N: CompactNode<'n>>(members: &NodeMembers<'n, N>) -> Option<AttributeType> {
-    let family = members.get(TYPE_MEMBER)?.text()?.parse::<AttributeType>().ok()?;
+    let family = members.get(keyword::TYPE_ALIAS)?.text()?.parse::<AttributeType>().ok()?;
     members.contains(family.temporal_values_key()).then_some(family)
 }
 
@@ -78,7 +75,7 @@ pub(crate) fn unfold<'n, N: CompactNode<'n>>(
     let mut beside: Option<Cow<'n, str>> = None;
     for (member, node) in members {
         match member.as_ref() {
-            TYPE_MEMBER => {}
+            keyword::TYPE_ALIAS => {}
             key if key == plural => pairs = Some(node),
             _other => beside = beside.or(Some(member)),
         }
@@ -147,8 +144,8 @@ fn pair_text<'n, N: CompactNode<'n>>(attribute: &str, family: AttributeType, pai
         return Err(refused(PairFault::NotAPair));
     };
     let value_member = family.compact_value_key();
-    let value = match family.temporal_value_encoding() {
-        TemporalValueEncoding::Wrapped => {
+    let value = match family.simplified_value_encoding() {
+        SimplifiedValueEncoding::Wrapped => {
             let wrapped = match value.shape() {
                 NodeShape::Object(members) if members.len() == 1 => members.get(value_member),
                 NodeShape::Null
@@ -161,14 +158,15 @@ fn pair_text<'n, N: CompactNode<'n>>(attribute: &str, family: AttributeType, pai
             };
             literal_text(wrapped.ok_or_else(|| refused(PairFault::UnwrappedValue))?, RefusedMember::Value(family))?
         }
-        TemporalValueEncoding::Bare => literal_text(*value, RefusedMember::Value(family))?,
+        SimplifiedValueEncoding::Bare => literal_text(*value, RefusedMember::Value(family))?,
     };
     let NodeShape::String(_) = instant.shape() else {
         return Err(refused(PairFault::InstantNotAString));
     };
     let observed_at = literal_text(*instant, RefusedMember::ObservedAt)?;
     Ok(format!(
-        r#"{{"{TYPE_MEMBER}":"{}","{value_member}":{value},"{}":{observed_at}}}"#,
+        r#"{{"{}":"{}","{value_member}":{value},"{}":{observed_at}}}"#,
+        keyword::TYPE_ALIAS,
         family.short_name(),
         compact_properties::OBSERVED_AT
     ))

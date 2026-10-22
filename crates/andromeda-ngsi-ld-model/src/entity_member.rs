@@ -13,16 +13,10 @@ use crate::{
     scope_member::ScopeMember,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReferenceError};
-use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use std::str::FromStr;
-
-/// The member an entity's identifier is written under.
-const ID_MEMBER: &str = "id";
-
-/// The member an entity's types are written under.
-const TYPE_MEMBER: &str = "type";
 
 /// A member of an entity, by the name it is written under.
 #[derive(Debug)]
@@ -71,8 +65,8 @@ impl EntityMember {
     /// is no attribute name.
     pub(crate) fn named(name: &str, form: EntityForm) -> Result<EntityMember, NgsiLdReferenceError> {
         Ok(match (name, form) {
-            (ID_MEMBER, EntityForm::Entity | EntityForm::Patch) => EntityMember::Id,
-            (TYPE_MEMBER, EntityForm::Entity | EntityForm::Patch) => EntityMember::Type,
+            (keyword::ID_ALIAS, EntityForm::Entity | EntityForm::Patch) => EntityMember::Id,
+            (keyword::TYPE_ALIAS, EntityForm::Entity | EntityForm::Patch) => EntityMember::Type,
             (compact_properties::SCOPE, EntityForm::Entity | EntityForm::Patch) => EntityMember::Scope,
             (compact_properties::EXPIRES_AT, EntityForm::Entity | EntityForm::Patch) => EntityMember::ExpiresAt,
             (compact_properties::LOCATION, EntityForm::Entity | EntityForm::Patch) => EntityMember::Location,

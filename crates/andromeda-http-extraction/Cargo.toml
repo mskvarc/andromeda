@@ -20,6 +20,7 @@ andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-problem-details.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-request.workspace = true
+andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-persistence-failure.workspace = true
 andromeda-tenancy.workspace = true
 axum = "0.8.9"

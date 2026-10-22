@@ -2,10 +2,7 @@
 
 use crate::error::ParameterError;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-
-/// The `scope` Entity member as a request spells it in `attrs`, `pick` and
-/// `omit`.
-const SCOPE_MEMBER: &str = "scope";
+use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 
 /// Which Entity members the deprecated `attrs` synonym admits beside Attribute names.
 ///
@@ -23,7 +20,7 @@ impl AttrsAdmission {
     fn admits(self, name: &AttributeName) -> bool {
         match self {
             AttrsAdmission::AttributeNamesOnly => false,
-            AttrsAdmission::ReifiedScopeAdmitted => name.as_str() == SCOPE_MEMBER,
+            AttrsAdmission::ReifiedScopeAdmitted => name.as_str() == compact_properties::SCOPE,
         }
     }
 }
@@ -33,7 +30,7 @@ pub(crate) fn validate_attrs(attrs: Option<&[AttributeName]>, admission: AttrsAd
     let reserved = attrs
         .into_iter()
         .flatten()
-        .filter(|attribute| matches!(attribute.as_str(), "id" | "type" | SCOPE_MEMBER))
+        .filter(|attribute| matches!(attribute.as_str(), "id" | "type" | compact_properties::SCOPE))
         .find(|attribute| !admission.admits(attribute));
     match reserved {
         Some(attribute) => Err(ParameterError::AttrsReservedMember(attribute.clone())),

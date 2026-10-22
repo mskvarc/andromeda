@@ -1,5 +1,6 @@
 //! Terms of the `attrs`, `pick` and `omit` selection lists (clause 4.21).
 
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use iri_rs::IriBuf;
 
 /// One member of an attribute selection list.
@@ -37,20 +38,13 @@ pub enum ProjectionTerm {
 }
 
 impl ProjectionTerm {
-    /// The `id` keyword of clause 4.21.
-    pub const ID_KEYWORD: &'static str = "id";
-    /// The `type` keyword of clause 4.21.
-    pub const TYPE_KEYWORD: &'static str = "type";
-    /// The `scope` keyword of clause 4.21.
-    pub const SCOPE_KEYWORD: &'static str = "scope";
-
     /// The clause 4.21 keyword term `name` spells, if it spells one.
     #[must_use]
     pub fn keyword(name: &str) -> Option<ProjectionTerm> {
         match name {
-            ProjectionTerm::ID_KEYWORD => Some(ProjectionTerm::Id),
-            ProjectionTerm::TYPE_KEYWORD => Some(ProjectionTerm::Type),
-            ProjectionTerm::SCOPE_KEYWORD => Some(ProjectionTerm::Scope),
+            keyword::ID_ALIAS => Some(ProjectionTerm::Id),
+            keyword::TYPE_ALIAS => Some(ProjectionTerm::Type),
+            compact_properties::SCOPE => Some(ProjectionTerm::Scope),
             // `&str` is unbounded, so a catch-all is the only way to close
             // this match; anything else names an attribute.
             _ => None,

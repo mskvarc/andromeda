@@ -9,14 +9,12 @@
 //! refusal names it. The second decoding reads the text itself, never a JSON
 //! tree built from it.
 
+use andromeda_ngsi_ld_vocabulary::keyword;
 use serde::de::DeserializeOwned;
 use serde_json::{Deserializer as JsonReader, value::RawValue};
 use serde_path_to_error::Path;
 use std::collections::BTreeMap;
 use thiserror::Error;
-
-/// The member a JSON-LD document names its context in.
-const CONTEXT_MEMBER: &str = "@context";
 
 /// Why a request body does not decode, and where in it the decoding failed.
 #[derive(Debug, Error)]
@@ -67,7 +65,7 @@ impl UndecodableBody {
 /// the body is built; their order is not kept, which no failing path depends on.
 fn without_context(text: &[u8]) -> Option<Vec<u8>> {
     let mut members: BTreeMap<String, &RawValue> = serde_json::from_slice(text).ok()?;
-    members.remove(CONTEXT_MEMBER)?;
+    members.remove(keyword::CONTEXT)?;
     serde_json::to_vec(&members).ok()
 }
 

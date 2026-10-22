@@ -20,12 +20,10 @@ use andromeda_json_literal::{
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_number::json_value::text_admission::{JsonTextRefusal, admit_json_text};
 use andromeda_ngsi_ld_representation::compact_node::CompactNode;
+use andromeda_ngsi_ld_vocabulary::keyword;
 use serde::de::DeserializeOwned;
 use serde_json::value::RawValue;
 use thiserror::Error;
-
-/// The member a JSON-LD node object names its own context in.
-pub(crate) const CONTEXT_MEMBER: &str = "@context";
 
 /// One element of a received array, decoded on its own.
 #[derive(Debug)]
@@ -183,7 +181,7 @@ fn contextual_entity(index: usize, element: JsonPiece<'_>) -> ReceivedElement<Co
     if let Some(inadmissible) = inadmissible_text(element) {
         return refused(inadmissible);
     }
-    let context = match element.member(CONTEXT_MEMBER).map(JsonPiece::to_literal).transpose() {
+    let context = match element.member(keyword::CONTEXT).map(JsonPiece::to_literal).transpose() {
         Ok(context) => context,
         Err(error) => return refused(ElementRefusalReason::Context(error)),
     };

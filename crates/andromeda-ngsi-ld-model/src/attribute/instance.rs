@@ -13,7 +13,7 @@ use crate::attribute::{
     vocab_property::VocabProperty,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier};
-use andromeda_ngsi_ld_vocabulary::NULL_URI;
+use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::NULL_URI;
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Serializer};
 use std::slice::{Iter, IterMut, from_mut, from_ref};

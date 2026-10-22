@@ -35,16 +35,14 @@
 //! them to the contexts a request named is [`crate::context_value`]'s.
 
 use crate::core_context::is_ngsi_ld_core_context_url;
+use andromeda_ngsi_ld_vocabulary::keyword;
 use iri_rs::Iri;
-
-/// The keyword JSON-LD 1.1 section 4.1.10 imports a context through.
-pub(crate) const IMPORT_KEYWORD: &str = "@import";
 
 /// The keywords that may stand beside `@import` in a definition that leaves
 /// the imported context in force: `@version` states the processing mode and
 /// `@protected` protects the definitions that follow, and neither defines a
 /// term or changes an active-context setting (JSON-LD 1.1 section 9.15).
-pub(crate) const IMPORT_ONLY_KEYWORDS: [&str; 3] = [IMPORT_KEYWORD, "@version", "@protected"];
+pub(crate) const IMPORT_ONLY_KEYWORDS: [&str; 3] = [keyword::IMPORT, "@version", "@protected"];
 
 /// Whether a context definition whose members are named `keys` defines
 /// nothing but an import: every member is `@import`, `@version` or

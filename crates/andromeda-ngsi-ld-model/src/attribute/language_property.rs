@@ -2,6 +2,7 @@
 
 use crate::attribute::common_fields::CommonAttributeFields;
 use andromeda_ngsi_ld_lexicon::coerced_term::CoercedTerm;
+use andromeda_ngsi_ld_vocabulary::keyword;
 use derive_more::{Deref, DerefMut, From};
 use indexmap::IndexMap;
 use langtag::{InvalidLangTag, LangTagBuf};
@@ -22,7 +23,7 @@ pub enum LanguageMapKey {
 impl fmt::Display for LanguageMapKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            LanguageMapKey::None => f.write_str("@none"),
+            LanguageMapKey::None => f.write_str(keyword::NONE),
             LanguageMapKey::Tag(tag) => write!(f, "{tag}"),
         }
     }
@@ -40,7 +41,7 @@ impl Serialize for LanguageMapKey {
 impl<'de> Deserialize<'de> for LanguageMapKey {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<LanguageMapKey, D::Error> {
         let raw = String::deserialize(deserializer)?;
-        if raw == "@none" {
+        if raw == keyword::NONE {
             return Ok(LanguageMapKey::None);
         }
         LangTagBuf::new(raw)

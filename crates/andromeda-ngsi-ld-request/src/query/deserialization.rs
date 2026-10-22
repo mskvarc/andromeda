@@ -4,7 +4,7 @@ use crate::query::parameter_error::QueryParameterError;
 use andromeda_ngsi_ld_geometry::query_coordinates::QueryCoordinates;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReference};
 use andromeda_ngsi_ld_query::{
-    comma_separated_list::{CommaSeparatedListError, ListedItem},
+    comma_separated_list::{ListedItem, parse_listed},
     dataset::DatasetSelector,
     filter::{expression::Expr, parser},
     geo::input::{GeoQueryInput, GeoQueryInputError},
@@ -107,21 +107,8 @@ where
     D: Deserializer<'de>,
 {
     let raw = Option::<String>::deserialize(deserializer)?;
-    raw.map(|value| {
-        value
-            .split(',')
-            .map(str::trim)
-            .map(|member| {
-                if member.is_empty() {
-                    return Err(DeserializeError::custom(CommaSeparatedListError::EmptyMember {
-                        list: ListedItem::EntityIdentifier,
-                    }));
-                }
-                member.parse::<Identifier>().map_err(DeserializeError::custom)
-            })
-            .collect()
-    })
-    .transpose()
+    raw.map(|value| parse_listed(&value, ListedItem::EntityIdentifier).map_err(DeserializeError::custom))
+        .transpose()
 }
 
 /// Deserialize an optional non-empty `idPattern` as a compiled regular expression.
@@ -169,21 +156,8 @@ where
     D: Deserializer<'de>,
 {
     let raw = Option::<String>::deserialize(deserializer)?;
-    raw.map(|value| {
-        value
-            .split(',')
-            .map(str::trim)
-            .map(|member| {
-                if member.is_empty() {
-                    return Err(DeserializeError::custom(CommaSeparatedListError::EmptyMember {
-                        list: ListedItem::AttributeName,
-                    }));
-                }
-                member.parse().map_err(DeserializeError::custom)
-            })
-            .collect()
-    })
-    .transpose()
+    raw.map(|value| parse_listed(&value, ListedItem::AttributeName).map_err(DeserializeError::custom))
+        .transpose()
 }
 
 /// Deserialize an optional `pick` / `omit` raw projection list (clause 4.21,
@@ -222,21 +196,8 @@ where
     D: Deserializer<'de>,
 {
     let raw = Option::<String>::deserialize(deserializer)?;
-    raw.map(|value| {
-        value
-            .split(',')
-            .map(str::trim)
-            .map(|member| {
-                if member.is_empty() {
-                    return Err(DeserializeError::custom(CommaSeparatedListError::EmptyMember {
-                        list: ListedItem::DatasetIdentifier,
-                    }));
-                }
-                member.parse().map_err(DeserializeError::custom)
-            })
-            .collect()
-    })
-    .transpose()
+    raw.map(|value| parse_listed(&value, ListedItem::DatasetIdentifier).map_err(DeserializeError::custom))
+        .transpose()
 }
 
 /// Deserialize one dataset selector for a mutation endpoint.

@@ -18,6 +18,7 @@ use crate::{
 };
 use andromeda_json_literal::piece::JsonPiece;
 use andromeda_ngsi_ld_representation::compact_node::produced_node::ProducedNode;
+use andromeda_ngsi_ld_vocabulary::keyword;
 use serde::{
     Deserialize,
     Deserializer,
@@ -33,9 +34,6 @@ use serde::{
 };
 use serde_json::{Deserializer as JsonReader, value::RawValue};
 use std::{convert::Infallible, fmt, marker::PhantomData};
-
-/// The member an `application/ld+json` body names its context in.
-const CONTEXT_MEMBER: &str = "@context";
 
 /// A resource an NGSI-LD request body is decoded into.
 pub trait RequestBody: DeserializeOwned {
@@ -135,10 +133,10 @@ impl<'de, A: MapAccess<'de>> MapAccess<'de> for ContextFreeMembers<A> {
         loop {
             match self.members.next_key::<MemberName<'de>>()? {
                 None => return Ok(None),
-                Some(MemberName::Borrowed(CONTEXT_MEMBER)) => {
+                Some(MemberName::Borrowed(keyword::CONTEXT)) => {
                     self.members.next_value::<IgnoredAny>()?;
                 }
-                Some(MemberName::Owned(name)) if name == CONTEXT_MEMBER => {
+                Some(MemberName::Owned(name)) if name == keyword::CONTEXT => {
                     self.members.next_value::<IgnoredAny>()?;
                 }
                 Some(MemberName::Borrowed(name)) => return seed.deserialize(BorrowedStrDeserializer::new(name)).map(Some),

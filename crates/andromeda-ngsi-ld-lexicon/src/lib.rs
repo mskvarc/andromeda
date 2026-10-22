@@ -26,7 +26,6 @@ pub mod coerced_term;
 pub mod constant_string;
 pub mod context_source_pseudonym;
 pub mod datatype;
-pub mod default_instance;
 pub mod dereferenceable_uri;
 pub mod entity_type_name;
 pub mod identifier;

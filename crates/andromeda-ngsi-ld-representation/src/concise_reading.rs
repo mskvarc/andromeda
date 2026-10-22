@@ -28,27 +28,10 @@
 //! element is, and is refused when it mixes the two.
 
 use crate::compact_node::{CompactNode, NodeMembers, NodeShape};
-use andromeda_ngsi_ld_geometry::geometry_type::GeometryType;
+use andromeda_ngsi_ld_geometry::geometry_object_type::GeometryObjectType;
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
-use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use std::str::FromStr;
-
-/// The member an attribute names its type in, and a geometry its kind.
-const TYPE_MEMBER: &str = "type";
-
-/// The geometry type IETF RFC 7946 section 3.1.8 defines beside the six
-/// [`GeometryType`] holds. Clause 4.7.1 admits no `GeoProperty` of it, and
-/// reading one as a geometry is what routes it to the geometry validation that
-/// refuses it, rather than letting it pass as an ordinary Property value.
-const GEOMETRY_COLLECTION: &str = "GeometryCollection";
-
-/// The member a `GeometryCollection` carries its geometries in (RFC 7946
-/// section 3.1.8).
-const GEOMETRIES_MEMBER: &str = "geometries";
-
-/// The member every other geometry carries its coordinates in (RFC 7946
-/// section 3.1.1).
-const COORDINATES_MEMBER: &str = "coordinates";
 
 /// What one object written where an attribute stands reads as.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,7 +92,7 @@ pub enum ArrayRefusal {
 ///
 /// Returns the [`ObjectRefusal`] of an object the clauses do not admit there.
 pub fn read_object<'n, N: CompactNode<'n>>(object: &NodeMembers<'n, N>) -> Result<ObjectReading, ObjectRefusal> {
-    match object.get(TYPE_MEMBER).map(CompactNode::shape) {
+    match object.get(keyword::TYPE_ALIAS).map(CompactNode::shape) {
         Some(NodeShape::String(token)) => read_declared(object, &token),
         Some(NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::Array(_) | NodeShape::Object(_) | NodeShape::Geometry(_)) => {
             Err(ObjectRefusal::TypeNotAString)
@@ -221,19 +204,21 @@ fn is_instance<'n, N: CompactNode<'n>>(item: N) -> Result<bool, ObjectRefusal> {
 /// member holding its coordinates.
 fn is_geometry<'n, N: CompactNode<'n>>(object: &NodeMembers<'n, N>) -> bool {
     object
-        .get(TYPE_MEMBER)
+        .get(keyword::TYPE_ALIAS)
         .and_then(CompactNode::text)
         .and_then(|token| coordinates_member(&token))
         .is_some_and(|member| object.contains(member))
 }
 
-/// The member a geometry whose `type` is `token` holds its coordinates in, or
-/// `None` when `token` names no `GeoJSON` geometry type.
+/// The member a geometry whose `type` is `token` holds what it is made of in,
+/// or `None` when `token` names no `GeoJSON` geometry type.
+///
+/// A `GeometryCollection` is read as a geometry too: clause 4.7.1 admits no
+/// `GeoProperty` of it, and reading it as one routes it to the geometry
+/// validation that refuses it, rather than letting it pass as an ordinary
+/// Property value.
 fn coordinates_member(token: &str) -> Option<&'static str> {
-    if token == GEOMETRY_COLLECTION {
-        return Some(GEOMETRIES_MEMBER);
-    }
-    GeometryType::from_str(token).ok().map(|_| COORDINATES_MEMBER)
+    token.parse().ok().map(|object_type: GeometryObjectType| object_type.holding_member().as_str())
 }
 
 #[cfg(test)]

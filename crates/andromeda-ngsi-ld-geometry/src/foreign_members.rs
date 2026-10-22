@@ -10,14 +10,11 @@
 //! members of any JSON object are (IETF RFC 8259 section 4: "An object is an
 //! unordered collection").
 
+use crate::geometry_member::GeometryMember;
 use andromeda_json_literal::JsonLiteral;
 use derive_more::{AsRef, Display};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, str::FromStr};
 use thiserror::Error;
-
-/// The members RFC 7946 describes for a geometry object, which no foreign
-/// member may be named.
-const GEOJSON_MEMBERS: [&str; 4] = ["type", "coordinates", "bbox", "geometries"];
 
 /// The name of a foreign member: any member name but the ones RFC 7946
 /// describes for a geometry, and no JSON-LD keyword, which is JSON-LD rather
@@ -41,7 +38,7 @@ impl TryFrom<&str> for ForeignMemberName {
     type Error = ForeignMemberNameError;
 
     fn try_from(name: &str) -> Result<ForeignMemberName, ForeignMemberNameError> {
-        if GEOJSON_MEMBERS.contains(&name) {
+        if GeometryMember::from_str(name).is_ok() {
             return Err(ForeignMemberNameError::GeoJsonMember);
         }
         if name.starts_with('@') {

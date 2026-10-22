@@ -47,13 +47,13 @@ use crate::{
     embedded_context_admission::is_native_json_member,
 };
 use andromeda_ngsi_ld_number::json_value::json_pointer::{JsonPointer, JsonPointerSegment};
-use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use jsonld_syntax::{is_keyword, is_keyword_like};
 use thiserror::Error;
 
 /// The members a node object declares its types in: the core `@context`'s
 /// protected alias and the keyword itself.
-const TYPE_MEMBERS: &[&str] = &["type", "@type"];
+const TYPE_MEMBERS: &[&str] = &[keyword::TYPE_ALIAS, keyword::TYPE];
 
 /// The compacted members the NGSI-LD Core `@context` declares as language
 /// maps, whose keys are language tags rather than terms.

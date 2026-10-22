@@ -4,7 +4,7 @@ use crate::scope::{
     grammar::Scope,
     level::{LEVEL_CHARACTER_LIMIT, ScopeLevelError, checked_level},
 };
-use andromeda_ngsi_ld_vocabulary::NULL_URI;
+use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::{NULL_URI, is_ngsi_ld_null};
 use compact_str::CompactString;
 use derive_more::{AsRef, Display, Into};
 use serde::{Deserialize, Serialize};
@@ -116,7 +116,7 @@ impl FromStr for ScopePath {
     type Err = ScopePathError;
 
     fn from_str(raw: &str) -> Result<ScopePath, ScopePathError> {
-        if raw == NULL_URI.as_str() {
+        if is_ngsi_ld_null(raw) {
             return Err(ScopePathError::NullSentinel);
         }
         Scope::new(raw).map_err(|_| ScopePathError::Malformed)?;

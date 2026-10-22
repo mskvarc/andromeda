@@ -7,6 +7,7 @@
 //! message echoes the raw input, only typed values the broker already validated.
 
 use crate::{
+    attribute_instances::RepeatedInstance,
     expanded_value_name::ExpandedValueNameError,
     member_shape::MemberShape,
     refusal_wording::{attribute_prefix, compact_term, forbidden_member_subject},
@@ -305,6 +306,18 @@ impl EntityRefusal {
             | AttributeType::JsonProperty
             | AttributeType::ListProperty
             | AttributeType::ListRelationship => EntityRefusal::MissingFamilyValue { family, attribute },
+        }
+    }
+
+    /// The refusal of two instances of `attribute` naming one instance
+    /// (clause 4.5.5.1).
+    #[must_use]
+    pub fn repeated_instance(attribute: &AttributeName, repeated: RepeatedInstance) -> EntityRefusal {
+        // clone: the refusal outlives the borrowed attribute name.
+        let attribute = attribute.clone();
+        match repeated {
+            RepeatedInstance::Default => EntityRefusal::MultipleDefaultInstances { attribute },
+            RepeatedInstance::Dataset(dataset_id) => EntityRefusal::RepeatedInstance { attribute, dataset_id },
         }
     }
 

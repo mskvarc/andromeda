@@ -10,6 +10,7 @@
 
 use crate::{error::QueryError, projection::term::ProjectionTerm};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use derive_more::{Deref, From, Into};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -59,9 +60,9 @@ impl TryFrom<&ProjectionTerm> for RawProjectionTerm {
 
     fn try_from(term: &ProjectionTerm) -> Result<RawProjectionTerm, QueryError> {
         let (name, linked) = match term {
-            ProjectionTerm::Id => (ProjectionTerm::ID_KEYWORD, &[][..]),
-            ProjectionTerm::Type => (ProjectionTerm::TYPE_KEYWORD, &[][..]),
-            ProjectionTerm::Scope => (ProjectionTerm::SCOPE_KEYWORD, &[][..]),
+            ProjectionTerm::Id => (keyword::ID_ALIAS, &[][..]),
+            ProjectionTerm::Type => (keyword::TYPE_ALIAS, &[][..]),
+            ProjectionTerm::Scope => (compact_properties::SCOPE, &[][..]),
             ProjectionTerm::Attribute { iri, linked } => (iri.as_str(), linked.as_slice()),
         };
         Ok(RawProjectionTerm {

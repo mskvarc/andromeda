@@ -18,10 +18,8 @@ use crate::{
     node_refusal::{NodeReadError, NodeRefusal, RefusedMember},
 };
 use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeShape};
+use andromeda_ngsi_ld_vocabulary::keyword;
 use serde::de::DeserializeOwned;
-
-/// The member a JSON-LD document names its context in.
-const CONTEXT_MEMBER: &str = "@context";
 
 impl<M: MemberReading> Entity<M> {
     /// The entity a compact node is.
@@ -94,7 +92,7 @@ fn shared_members<'n, M: MemberReading, N: CompactNode<'n>>(
     for (name, member) in members {
         // Clause 6.3.5: the `@context` of an `application/ld+json` document is
         // the document's, not a member of the entity it holds.
-        if name == CONTEXT_MEMBER {
+        if name == keyword::CONTEXT {
             continue;
         }
         let at = |error: ReadError<'n, N>| error.within_member(&name);

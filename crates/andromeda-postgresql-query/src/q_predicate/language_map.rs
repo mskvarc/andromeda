@@ -20,6 +20,7 @@
 
 use crate::q_predicate::{instance_row::InstanceRow, value_column::ValueColumn};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_vocabulary::keyword;
 use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_seaquery::{
     cast::cast,
@@ -35,12 +36,6 @@ const ENTRY: &str = "ls";
 
 /// The output column of `jsonb_array_elements`.
 const ENTRY_VALUE: &str = "value";
-
-/// The JSON-LD keyword an entry carries its language tag under.
-const LANGUAGE_KEYWORD: &str = "@language";
-
-/// The JSON-LD keyword an entry carries its string under.
-const VALUE_KEYWORD: &str = "@value";
 
 /// Which strings of a `languageMap` a Query Term reads (clause 4.9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,7 +84,7 @@ impl LanguageMap {
     /// string's text.
     #[must_use]
     pub fn some_string(&self, selection: LanguageSelection<'_>, test: impl FnOnce(SimpleExpr) -> SimpleExpr) -> SimpleExpr {
-        SeaExpr::exists(self.entries(selection, Some(test(entry_text(VALUE_KEYWORD)))))
+        SeaExpr::exists(self.entries(selection, Some(test(entry_text(keyword::VALUE)))))
     }
 
     /// Whether the map holds a string in any language and none under
@@ -112,7 +107,7 @@ impl LanguageMap {
         // clone: the map is read by every probe a term builds over it
         scan.expr(int_literal(1)).from_function(jsonb_array_elements(self.0.clone()), Alias::new(ENTRY));
         if let LanguageSelection::TargetLanguage(language) = selection {
-            scan.and_where(entry_text(LANGUAGE_KEYWORD).eq(cast(SeaExpr::val(language.as_str()), PostgresType::Text)));
+            scan.and_where(entry_text(keyword::LANGUAGE).eq(cast(SeaExpr::val(language.as_str()), PostgresType::Text)));
         }
         if let Some(test) = test {
             scan.and_where(test);

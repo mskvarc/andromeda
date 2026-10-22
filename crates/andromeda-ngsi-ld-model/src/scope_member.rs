@@ -14,7 +14,7 @@ use andromeda_ngsi_ld_entity::{
     scopes::Scopes,
 };
 use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
-use andromeda_ngsi_ld_vocabulary::NULL_URI;
+use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::NULL_URI;
 use derive_more::From;
 use serde::{Deserialize, Serialize, Serializer};
 

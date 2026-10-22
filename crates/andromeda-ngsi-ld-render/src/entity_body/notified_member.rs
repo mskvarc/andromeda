@@ -10,13 +10,10 @@
 use crate::notified_changes::{HeldAttributes, NotifiedChanges};
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier};
 use andromeda_ngsi_ld_model::attribute::instance::{Attribute, AttributeValue};
-use andromeda_ngsi_ld_vocabulary::NULL_URI;
+use andromeda_ngsi_ld_vocabulary::{keyword, ngsi_ld_null::NULL_URI};
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Serializer, ser::SerializeMap};
 use std::iter::once;
-
-/// The JSON-LD keyword a language map keys an untagged string by.
-const NONE_KEY: &str = "@none";
 
 /// One attribute member as the walk writes it.
 #[derive(Debug, Clone, Copy)]
@@ -122,7 +119,7 @@ impl Serialize for NullValue {
             NullValue::List => serializer.collect_seq(once(NULL_URI.as_str())),
             NullValue::LanguageMap => {
                 let mut map = serializer.serialize_map(Some(1))?;
-                map.serialize_entry(NONE_KEY, NULL_URI.as_str())?;
+                map.serialize_entry(keyword::NONE, NULL_URI.as_str())?;
                 map.end()
             }
         }

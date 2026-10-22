@@ -12,6 +12,18 @@ pub enum WrittenMemberRef<'a> {
     Merge(&'a MergeMember),
 }
 
+impl WrittenMemberRef<'_> {
+    /// Whether the member is the NGSI-LD Null written in place of the whole
+    /// member.
+    #[must_use]
+    pub const fn is_ngsi_ld_null(self) -> bool {
+        matches!(
+            self,
+            WrittenMemberRef::Attribute(AttributeValue::NgsiLdNull) | WrittenMemberRef::Merge(MergeMember::NgsiLdNull)
+        )
+    }
+}
+
 /// An attribute member the typed walk expands: a member of an entity, or a
 /// member of a merge fragment.
 ///

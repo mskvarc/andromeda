@@ -16,8 +16,8 @@ use crate::{
 use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, time::date_time::NgsiLdDateTime, uri::Uri};
 use andromeda_ngsi_ld_vocabulary::{
-    NULL_URI,
     expanded::{classes, properties},
+    ngsi_ld_null::NULL_URI,
 };
 use serde::{Serialize, Serializer, ser::SerializeMap};
 use std::iter::once;

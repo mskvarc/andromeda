@@ -25,6 +25,9 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod keyword;
+pub mod ngsi_ld_null;
+
 use iri_rs::{Iri, iri};
 
 jsonld::vocab! {
@@ -40,16 +43,6 @@ jsonld::vocab! {
 /// `ngsi-ld-core-context.jsonld` alias is accepted on inbound documents and
 /// resolves to the same v1.9 payload.
 pub const NGSI_LD_CORE_CONTEXT_URL: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld");
-
-/// The NGSI-LD null sentinel, `urn:ngsi-ld:null` (clause 5.5.12).
-///
-/// Written by a client as an attribute's value to delete that member in a
-/// merge patch. It appears as data rather than as an `@context` term, so the
-/// core context declares no term for it.
-pub const NULL_URI: Iri<&'static str> = iri!("urn:ngsi-ld:null");
-
-/// The expanded-IRI spelling of the NGSI-LD null sentinel (clause 5.5.12).
-pub const NULL_IRI: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/null");
 
 #[cfg(test)]
 mod tests {
@@ -138,12 +131,6 @@ mod tests {
     fn prefix_constants_are_correct() {
         pretty_assertions::assert_eq!(prefix::NGSI_LD.as_str(), "https://uri.etsi.org/ngsi-ld/");
         pretty_assertions::assert_eq!(prefix::GEOJSON.as_str(), "https://purl.org/geojson/vocab#");
-    }
-
-    #[test]
-    fn external_iri_constants_are_correct() {
-        pretty_assertions::assert_eq!(crate::NULL_URI.as_str(), "urn:ngsi-ld:null");
-        pretty_assertions::assert_eq!(crate::NULL_IRI.as_str(), "https://uri.etsi.org/ngsi-ld/null");
     }
 
     #[test]

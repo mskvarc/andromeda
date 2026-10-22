@@ -1,15 +1,14 @@
 //! The NGSI-LD Null inside a literal (clauses 4.5.0, 4.5.24.2 and 5.5.4).
 //!
 //! Inside a literal the NGSI-LD Null is the string `urn:ngsi-ld:null`, never a
-//! JSON `null`: expansion never descends into an `@json` value, so nothing
-//! there was ever expanded into the IRI spelling, and a JSON `null` survives
-//! expansion untouched as ordinary data.
+//! JSON `null`: expansion never descends into an `@json` value, so a JSON
+//! `null` survives it untouched as ordinary data.
 
 use crate::{
     JsonLiteral,
     piece::{JsonKind, JsonPiece},
 };
-use andromeda_ngsi_ld_vocabulary::NULL_URI;
+use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::is_ngsi_ld_null;
 
 impl JsonLiteral {
     /// Whether the literal is itself the NGSI-LD Null: the deletion encoding
@@ -34,7 +33,7 @@ impl JsonLiteral {
 
 /// Whether `piece` is the NGSI-LD Null string.
 pub(crate) fn is_null_string(piece: JsonPiece<'_>) -> bool {
-    piece.as_str().is_some_and(|text| text == NULL_URI.as_str())
+    piece.as_str().is_some_and(|text| is_ngsi_ld_null(&text))
 }
 
 /// Whether some member below `piece` holds the NGSI-LD Null string.

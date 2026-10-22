@@ -13,6 +13,7 @@ use crate::{
         geojson_members_codec::write_members,
         value_encode::{ListOut, TextOut},
     },
+    expanded_geometry_type::geometry_type_iri,
     geo_value::GeoValue,
     geometry_value::GeometryValue,
 };
@@ -24,7 +25,7 @@ use andromeda_ngsi_ld_geometry::{
     position::Position,
 };
 use andromeda_ngsi_ld_number::float_spelling::canonical_float_text;
-use andromeda_ngsi_ld_vocabulary::{expanded::properties, prefix};
+use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use serde::{
     Serialize,
     Serializer,
@@ -51,7 +52,7 @@ impl Serialize for GeometryOut<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let form = self.0.form();
         let members = self.0.members();
-        let type_iri = format!("{}{}", prefix::GEOJSON.as_str(), form.geometry_type());
+        let type_iri = geometry_type_iri(form.geometry_type());
         let entries = members.map_or(0, |members| usize::from(members.bbox().is_some()) + members.foreign().len());
         let mut map = serializer.serialize_map(Some(2 + entries))?;
         map.serialize_entry("@type", &[type_iri])?;

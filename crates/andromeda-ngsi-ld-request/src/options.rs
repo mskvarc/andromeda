@@ -6,7 +6,10 @@ use crate::{
     unsupported_representation::UnsupportedRepresentation,
 };
 use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
-use andromeda_ngsi_ld_query::count_policy::CountPolicy;
+use andromeda_ngsi_ld_query::{
+    comma_separated_list::{ListedItem, listed_members},
+    count_policy::CountPolicy,
+};
 use andromeda_ngsi_ld_representation::{response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use serde::Deserialize;
 use strum::{Display, EnumString};
@@ -248,12 +251,13 @@ fn single_token(written: &str) -> Result<OptionsToken, UnsupportedRepresentation
     written.parse().map_err(|_| UnsupportedRepresentation::UnknownOptionsToken)
 }
 
-/// Validate and read a comma-separated option list.
+/// Validate and read a comma-separated option list: an empty token anywhere
+/// refuses the list before any token is read.
 fn option_tokens(raw: &str) -> Result<Vec<OptionsToken>, UnsupportedRepresentation> {
-    if raw.is_empty() || raw.split(',').any(|token| token.trim().is_empty()) {
-        return Err(UnsupportedRepresentation::EmptyOptionsToken);
-    }
-    raw.split(',').map(|token| single_token(token.trim())).collect()
+    let tokens = listed_members(raw, ListedItem::OptionsToken)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| UnsupportedRepresentation::EmptyOptionsToken)?;
+    tokens.into_iter().map(single_token).collect()
 }
 
 /// Ask for the system-generated temporal properties, refusing a second ask.

@@ -21,7 +21,6 @@ use crate::{
     expanded_value::ExpandedValue,
     member_role::{MemberRole, ProofSeal},
     member_shape::MemberShape,
-    ngsi_ld_null::is_ngsi_ld_null,
     proof_seals::ProofSeals,
     refusal::EntityRefusal,
 };
@@ -32,6 +31,7 @@ use andromeda_ngsi_ld_lexicon::{
     reference::NgsiLdReference,
     time::{date_time::NgsiLdDateTime, system_instant::SystemInstant},
 };
+use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::is_ngsi_ld_null;
 use cefact_units::UnitCode;
 use indexmap::IndexMap;
 use serde::{

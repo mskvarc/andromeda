@@ -20,12 +20,12 @@ use crate::{
     expanded_value_name::ExpandedValueName,
     literal::{Direction, Literal, LiteralValue},
     member_shape::MemberShape,
-    ngsi_ld_null::is_ngsi_ld_null,
     node_id::NodeId,
     refusal::EntityRefusal,
     value_mode::{Fragment, FragmentMember},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReference};
+use andromeda_ngsi_ld_vocabulary::{keyword, ngsi_ld_null::is_ngsi_ld_null};
 use compact_str::CompactString;
 use indexmap::IndexMap;
 use langtag::LangTagBuf;
@@ -35,9 +35,6 @@ use serde::{
     de::{DeserializeSeed, MapAccess, SeqAccess, Visitor},
 };
 use std::fmt;
-
-/// The JSON-LD keyword marking a JSON literal's datatype.
-pub(crate) const JSON_DATATYPE: &str = "@json";
 
 /// One element of an expanded array.
 #[derive(Debug)]
@@ -241,7 +238,7 @@ impl ElementParts<'_> {
         }
         let datatype = match types {
             None => None,
-            Some(TypeEntries::Single(datatype)) if datatype == JSON_DATATYPE => {
+            Some(TypeEntries::Single(datatype)) if datatype == keyword::JSON => {
                 if language.is_some() || direction.is_some() {
                     return Err(malformed(owner));
                 }

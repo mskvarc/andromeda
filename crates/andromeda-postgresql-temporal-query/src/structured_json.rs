@@ -11,18 +11,10 @@
 //! value object first; any other stored JSON already is the value.
 
 use crate::alias::Ah;
+use andromeda_ngsi_ld_vocabulary::keyword;
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{literal::text_literal, pg_operator::PgBinaryOperator};
 use sea_query::{CaseStatement, Expr, ExprTrait, Func, SimpleExpr};
-
-/// The JSON-LD keyword naming a value object's datatype.
-const TYPE_KEYWORD: &str = "@type";
-
-/// The JSON-LD keyword holding a value object's value.
-const VALUE_KEYWORD: &str = "@value";
-
-/// The datatype of a JSON literal value object.
-const JSON_DATATYPE: &str = "@json";
 
 /// The JSON the structured column of the row aliased `ah` stands for: the
 /// literal inside a `@json` value object, and the stored JSON otherwise.
@@ -39,8 +31,8 @@ pub fn structured_json() -> SimpleExpr {
     let value_object = || SimpleExpr::from(Expr::col((Ah, AttributeHistory::ValueObject)));
     let literal: SimpleExpr = CaseStatement::new()
         .case(
-            value_object().json_get_text(text_literal(TYPE_KEYWORD)).eq(text_literal(JSON_DATATYPE)),
-            value_object().json_get(text_literal(VALUE_KEYWORD)),
+            value_object().json_get_text(text_literal(keyword::TYPE)).eq(text_literal(keyword::JSON)),
+            value_object().json_get(text_literal(keyword::VALUE)),
         )
         .into();
     Func::coalesce([literal, value_object()]).into()

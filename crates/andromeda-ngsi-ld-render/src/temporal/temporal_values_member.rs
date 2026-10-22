@@ -21,7 +21,7 @@ use crate::{
     version::fallback::InstanceMember,
 };
 use andromeda_ngsi_ld_lexicon::{
-    attribute_type::{AttributeType, TemporalValueEncoding},
+    attribute_type::{AttributeType, SimplifiedValueEncoding},
     identifier::Identifier,
     time::rendering::instant_text,
     time_prop::TimeProp,
@@ -206,13 +206,13 @@ struct PairValue<'a> {
 impl Serialize for PairValue<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let value = FamilyValue::current(self.instance, Reification::Concise).written_as(self.written_family);
-        match self.written_family.temporal_value_encoding() {
-            TemporalValueEncoding::Wrapped => {
+        match self.written_family.simplified_value_encoding() {
+            SimplifiedValueEncoding::Wrapped => {
                 let mut wrapper = serializer.serialize_map(Some(1))?;
                 wrapper.serialize_entry(self.written_family.compact_value_key(), &value)?;
                 wrapper.end()
             }
-            TemporalValueEncoding::Bare => value.serialize(serializer),
+            SimplifiedValueEncoding::Bare => value.serialize(serializer),
         }
     }
 }

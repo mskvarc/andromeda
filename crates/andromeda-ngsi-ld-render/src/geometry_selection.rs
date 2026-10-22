@@ -21,25 +21,11 @@
 //! that clause 4.5.4 gives the simplified one.
 
 use andromeda_json_literal::piece::{JsonKind, JsonPiece};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, default_instance::DEFAULT_INSTANCE_TOKEN};
+use andromeda_ngsi_ld_geometry::{geometry_member::GeometryMember, geometry_object_type::GeometryObjectType};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
-use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use std::borrow::Cow;
-
-/// The `GeoJSON` geometry types clause 4.7.1 admits as a `GeoProperty` value.
-///
-/// `GeometryCollection` is absent by design: ETSI GS CIM 009 v1.9.1 clause
-/// 4.7.1 excludes it from `GeoProperty` geometries, so no stored `GeoProperty`
-/// can be one.
-const GEOMETRY_TYPES: &[&str] = &["Point", "MultiPoint", "LineString", "MultiLineString", "Polygon", "MultiPolygon"];
-
-/// The member naming a `GeoJSON` object's geometry type (IETF RFC 7946 section
-/// 3.1), which is not the NGSI-LD attribute `type` of clause 4.5.2.2.
-const GEOMETRY_TYPE_MEMBER: &str = "type";
-
-/// The member holding a `GeoJSON` geometry's positions (IETF RFC 7946 section
-/// 3.1). Every geometry clause 4.7.1 admits carries one.
-const GEOMETRY_COORDINATES_MEMBER: &str = "coordinates";
 
 /// Which `GeoProperty`, and which of its instances, a `GeoJSON` rendering takes
 /// its geometry from (clause 4.5.16.1).
@@ -127,7 +113,7 @@ impl GeometrySelection<'_> {
             Some(dataset_id) if !self.dataset_ids.is_empty() => self
                 .dataset_ids
                 .iter()
-                .any(|selector| selects(selector, Some(dataset_id.as_ref())))
+                .any(|selector| selector.selects_written(Some(dataset_id.as_ref())))
                 .then_some(instance),
             Some(_) | None => Some(instance),
         }
@@ -143,17 +129,17 @@ impl GeometrySelection<'_> {
             instances
                 .iter()
                 .copied()
-                .find(|instance| selects(selector, instance_dataset_id(*instance).as_deref()))
+                .find(|instance| selector.selects_written(instance_dataset_id(*instance).as_deref()))
         })
     }
 
     /// Select one member out of the clause 4.5.4 `dataset` map.
     fn select_dataset_member<'e>(&self, datasets: JsonPiece<'e>) -> Option<JsonPiece<'e>> {
         if self.dataset_ids.is_empty() {
-            return datasets.member(DEFAULT_INSTANCE_TOKEN);
+            return datasets.member(keyword::NONE);
         }
         self.dataset_ids.iter().find_map(|selector| match selector {
-            DatasetSelector::Default => datasets.member(DEFAULT_INSTANCE_TOKEN),
+            DatasetSelector::Default => datasets.member(keyword::NONE),
             DatasetSelector::Id(uri) => datasets.member(uri.as_str()),
         })
     }
@@ -162,14 +148,6 @@ impl GeometrySelection<'_> {
 /// The `datasetId` one rendered attribute instance carries, if any.
 fn instance_dataset_id(instance: JsonPiece<'_>) -> Option<Cow<'_, str>> {
     instance.member(compact_properties::DATASET_ID).and_then(JsonPiece::as_str)
-}
-
-/// Whether one `datasetId` selector names the instance carrying `dataset_id`.
-pub(crate) fn selects(selector: &DatasetSelector, dataset_id: Option<&str>) -> bool {
-    match selector {
-        DatasetSelector::Default => dataset_id.is_none(),
-        DatasetSelector::Id(uri) => dataset_id == Some(uri.as_str()),
-    }
 }
 
 /// Read the `GeoJSON` geometry out of one `GeoProperty` instance.
@@ -195,10 +173,11 @@ fn geojson_geometry(instance: JsonPiece<'_>) -> Option<JsonPiece<'_>> {
 /// required here.
 fn is_geojson_geometry(value: JsonPiece<'_>) -> bool {
     value
-        .member(GEOMETRY_TYPE_MEMBER)
+        .member(GeometryMember::Type.as_str())
         .and_then(JsonPiece::as_str)
-        .is_some_and(|kind| GEOMETRY_TYPES.contains(&&*kind))
-        && value.member(GEOMETRY_COORDINATES_MEMBER).is_some()
+        .and_then(|token| token.parse::<GeometryObjectType>().ok())
+        .filter(|object_type| object_type.geo_property_type().is_ok())
+        .is_some_and(|object_type| value.member(object_type.holding_member().as_str()).is_some())
 }
 
 #[cfg(test)]

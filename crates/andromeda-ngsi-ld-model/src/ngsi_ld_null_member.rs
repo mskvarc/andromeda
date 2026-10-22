@@ -18,7 +18,7 @@
 //! not.
 
 use crate::clearable::Clearable;
-use andromeda_ngsi_ld_entity::ngsi_ld_null::is_ngsi_ld_null;
+use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::is_ngsi_ld_null;
 use serde::{
     Deserialize,
     Deserializer,

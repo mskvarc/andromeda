@@ -9,14 +9,8 @@
 //! -- never takes the Null for a string value of a term.
 
 use crate::attribute::{instance::AttributeValue, merge_member::MergeMember};
-use andromeda_ngsi_ld_vocabulary::NULL_URI;
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword, ngsi_ld_null::NULL_URI};
 use serde::{Serialize, Serializer, ser::SerializeMap};
-
-/// The member an instance names its family in.
-const TYPE_MEMBER: &str = "type";
-
-/// The member a Property holds its value in.
-const VALUE_MEMBER: &str = "value";
 
 /// The Property the NGSI-LD Null written where an attribute stands, and not
 /// as its deletion, stands for (clause 4.5.2.3).
@@ -27,8 +21,8 @@ pub struct NullProperty;
 impl Serialize for NullProperty {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut object = serializer.serialize_map(Some(2))?;
-        object.serialize_entry(TYPE_MEMBER, "Property")?;
-        object.serialize_entry(VALUE_MEMBER, NULL_URI.as_str())?;
+        object.serialize_entry(keyword::TYPE_ALIAS, "Property")?;
+        object.serialize_entry(compact_properties::VALUE, NULL_URI.as_str())?;
         object.end()
     }
 }

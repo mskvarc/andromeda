@@ -7,14 +7,9 @@
 //! follows. The scan of a context named by URL is kept per URL, for as long as
 //! the loader holds the document it was taken from.
 
-use crate::{
-    context_term::ContextTerm,
-    core_context_precedence::IMPORT_KEYWORD,
-    engine::context_document::ContextDocument,
-    error::JsonLdError,
-    loader::http::HttpContextLoader,
-};
+use crate::{context_term::ContextTerm, engine::context_document::ContextDocument, error::JsonLdError, loader::http::HttpContextLoader};
 use andromeda_json_literal::piece::JsonPiece;
+use andromeda_ngsi_ld_vocabulary::keyword;
 use dashmap::DashMap;
 use iri_rs::IriBuf;
 use jstrict::Value;
@@ -125,7 +120,7 @@ fn scan_into(value: &Value, scan: &mut UserContextScan) {
             // JSON-LD 1.1 section 4.1.10 merges an `@import`ed context into
             // this definition, scoped term definitions included, so the
             // document it names is followed like any other remote reference.
-            if let Some(imported) = map.get(IMPORT_KEYWORD).next() {
+            if let Some(imported) = map.get(keyword::IMPORT).next() {
                 scan_into(imported, scan);
             }
             map.iter()

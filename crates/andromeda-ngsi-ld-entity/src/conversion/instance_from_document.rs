@@ -11,7 +11,7 @@
 //! given an identity of the broker's own (clause 4.5.7).
 
 use crate::{
-    attribute_instances::{AttributeInstances, RepeatedInstance},
+    attribute_instances::AttributeInstances,
     attributes::Attributes,
     codec::geometry_decode::{GeoDecoded, geo_value_of},
     conversion::stored_value::into_stored_values,
@@ -36,7 +36,7 @@ use andromeda_ngsi_ld_lexicon::{
     reference::NgsiLdReference,
     unit_code_admission::{UnitCodeAdmission, unit_code_admission},
 };
-use andromeda_ngsi_ld_vocabulary::expanded::properties;
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, expanded::properties};
 use cefact_units::UnitCode;
 use indexmap::IndexMap;
 
@@ -50,8 +50,8 @@ impl Instance {
     /// `unitCode`, the NGSI-LD Null anywhere, a repeated sub-attribute
     /// instance.
     pub fn try_from_document(attribute: &AttributeName, document: InstanceDocument) -> Result<(Option<Identifier>, Instance), EntityRefusal> {
+        let family = document.implied_family().unwrap_or(AttributeType::Property);
         let parts = document.into_parts();
-        let family = resolved_family(&parts);
         reject_nulls(attribute, &parts)?;
         let envelope = Envelope {
             unit_code: parts.unit_code.and_then(Slot::into_set),
@@ -64,11 +64,10 @@ impl Instance {
                 attribute: attribute.clone(),
             });
         }
-        let relationship_family = matches!(family, AttributeType::Relationship | AttributeType::ListRelationship);
-        if relationship_family && envelope.value_type.is_some() {
+        if envelope.value_type.is_some() && !family.defines_member(compact_properties::VALUE_TYPE) {
             return Err(EntityRefusal::member_forbidden(Some(attribute), Some(family), properties::VALUE_TYPE));
         }
-        if !relationship_family && !envelope.object_types.is_empty() {
+        if !envelope.object_types.is_empty() && !family.defines_member(compact_properties::OBJECT_TYPE) {
             return Err(EntityRefusal::member_forbidden(Some(attribute), Some(family), properties::OBJECT_TYPE));
         }
         if parts.deleted_at.is_some() {
@@ -100,17 +99,6 @@ struct Envelope {
     value_type: Option<NgsiLdReference>,
     /// `objectType`.
     object_types: Vec<NgsiLdReference>,
-}
-
-/// The family a written instance is stored as: the one it declares, else the
-/// one its value member names, else a Property (clause 4.5.2).
-fn resolved_family(parts: &InstanceDocumentParts) -> AttributeType {
-    parts.family.unwrap_or_else(|| match &parts.value {
-        ValueSlot::Set(WrittenValue::Geometry(_)) => AttributeType::GeoProperty,
-        ValueSlot::Set(value) => value.carrier().implied_family(),
-        ValueSlot::Remove(carrier) => carrier.implied_family(),
-        ValueSlot::Absent => AttributeType::Property,
-    })
 }
 
 /// Refuse a written instance deleting any of its members: state holds no
@@ -219,13 +207,7 @@ impl Attributes {
                 .map(|instance| Instance::try_from_document(&name, instance))
                 .collect::<Result<Vec<_>, _>>()?;
             // clone: the refusal owns the attribute name it reports.
-            let held = AttributeInstances::try_from_instances(converted).map_err(|repeated| match repeated {
-                RepeatedInstance::Default => EntityRefusal::MultipleDefaultInstances { attribute: name.clone() },
-                RepeatedInstance::Dataset(dataset_id) => EntityRefusal::RepeatedInstance {
-                    attribute: name.clone(),
-                    dataset_id,
-                },
-            })?;
+            let held = AttributeInstances::try_from_instances(converted).map_err(|repeated| EntityRefusal::repeated_instance(&name, repeated))?;
             if let Some(held) = held {
                 attributes.insert(name, held);
             }

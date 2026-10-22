@@ -32,7 +32,7 @@ use andromeda_ngsi_ld_geometry::{
     position::Position,
 };
 use andromeda_ngsi_ld_number::float_spelling::canonical_float_text;
-use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use jsonld::{
     ContainerKind,
     IriBuf,
@@ -42,9 +42,6 @@ use jsonld::{
     syntax::NumberBuf,
 };
 use std::slice::from_ref;
-
-/// The `GeoJSON` member naming a geometry's type (IETF RFC 7946 section 3.1).
-const GEOJSON_TYPE: &str = "type";
 
 impl Walk<'_> {
     /// Compact one geometry node.
@@ -170,5 +167,5 @@ impl Walk<'_> {
 /// token of the geometry.
 fn reads_as_geometry(result: &CompactedObject<'_>, form: &GeometryForm) -> bool {
     let token = form.geometry_type().to_string();
-    result.len() == 1 && result.get(GEOJSON_TYPE).and_then(Compacted::as_str) == Some(token.as_str())
+    result.len() == 1 && result.get(keyword::TYPE_ALIAS).and_then(Compacted::as_str) == Some(token.as_str())
 }

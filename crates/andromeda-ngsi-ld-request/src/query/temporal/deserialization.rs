@@ -1,6 +1,7 @@
 //! Boundary deserialisers for the temporal-only query parameters.
 
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, time_prop::TimeProp, time_rel::TimeRel};
+use andromeda_ngsi_ld_query::comma_separated_list::{ListedItem, parse_listed};
 use serde::{Deserialize, Deserializer, de::Error};
 
 /// Deserialise the `timerel` query parameter as the [`TimeRel`] it names
@@ -60,7 +61,7 @@ where
     D: Deserializer<'de>,
 {
     let raw: Option<String> = Option::deserialize(deserializer)?;
-    raw.map(|value| value.split(',').map(str::trim).map(|method| method.parse().map_err(Error::custom)).collect())
+    raw.map(|value| parse_listed(&value, ListedItem::AggregationMethod).map_err(Error::custom))
         .transpose()
 }
 

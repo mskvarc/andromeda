@@ -6,8 +6,8 @@
 //! Property of an entity that also holds a geometry of a million positions
 //! copies that Property's instances and nothing else.
 
-use crate::attribute_instances::AttributeInstances;
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use crate::{attribute_instances::AttributeInstances, instance::Instance};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use indexmap::IndexMap;
 use std::sync::Arc;
 
@@ -51,6 +51,21 @@ impl Attributes {
     /// instances it replaced.
     pub fn insert(&mut self, name: AttributeName, instances: AttributeInstances) -> Option<Arc<AttributeInstances>> {
         self.0.insert(name, Arc::new(instances))
+    }
+
+    /// Put `instance` as the instance of `name` with `dataset_id`: beside the
+    /// attribute's other instances, or as a new attribute's only one. An
+    /// instance with that identity is replaced.
+    pub fn insert_instance(&mut self, name: &AttributeName, dataset_id: Option<Identifier>, instance: Instance) {
+        match self.get_mut(name) {
+            Some(instances) => {
+                instances.insert(dataset_id, instance);
+            }
+            None => {
+                // clone: the entity owns the name of the attribute it gains.
+                self.insert(name.clone(), AttributeInstances::one(dataset_id, instance));
+            }
+        }
     }
 
     /// Put an already shared attribute, in place when it exists, else last.

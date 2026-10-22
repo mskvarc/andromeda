@@ -72,13 +72,11 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-request",
+        "andromeda-ngsi-ld-vocabulary",
         "andromeda-persistence-failure",
         "andromeda-tenancy",
     ],
-    allow_workspace_dev_dependencies: [
-        "andromeda-ngsi-ld-vocabulary",
-        "andromeda-test-allocator",
-    ],
+    allow_workspace_dev_dependencies: ["andromeda-test-allocator"],
     allow_production_dependencies: ["axum", "tokio"],
 }
 

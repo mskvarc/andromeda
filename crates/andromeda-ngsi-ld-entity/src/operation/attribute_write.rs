@@ -7,7 +7,7 @@
 //! deletion from swallowing the instances that follow it.
 
 use crate::{
-    attribute_instances::{AttributeInstances, InstanceRemoval},
+    attribute_instances::InstanceRemoval,
     attributes::Attributes,
     document::{instance_document::InstanceDocument, slot::Slot, written_value::ValueSlot},
     operation::{
@@ -67,18 +67,12 @@ fn apply_instance(
     let stamp = default_observed_at
         .filter(|_| document.observed_at().is_none() && previously_observed(attributes, name, dataset_id))
         .map(Slot::Set);
-    let Some(instances) = attributes.get_mut(name) else {
-        let instance = new_instance(name, document, stamp.as_ref())?;
-        // clone: the entity owns the attribute name and the instance identity it gains.
-        attributes.insert(name.clone(), AttributeInstances::one(dataset_id.cloned(), instance));
-        return Ok(());
-    };
-    if let Some(held) = instances.get_mut(dataset_id) {
+    if let Some(held) = attributes.get_mut(name).and_then(|instances| instances.get_mut(dataset_id)) {
         return patch_instance(name, held, document, depth, stamp.as_ref());
     }
     let instance = new_instance(name, document, stamp.as_ref())?;
     // clone: the instance is keyed by its own copy of the written identity.
-    instances.insert(dataset_id.cloned(), instance);
+    attributes.insert_instance(name, dataset_id.cloned(), instance);
     Ok(())
 }
 

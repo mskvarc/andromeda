@@ -8,19 +8,21 @@ use iri_rs::Iri;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 
-/// How clause 4.5.9 carries one attribute value inside a simplified temporal
-/// pair.
+/// How the simplified representations carry one attribute value.
 ///
-/// The first element of each `[value, Temporal Property]` pair is either the
-/// value itself or a one-member object naming it, and which of the two a family
-/// takes is fixed by the clause rather than by the value at hand.
+/// Clause 4.5.4 writes the simplified value of a `LanguageProperty`, a
+/// `VocabProperty` and a `JsonProperty` as a one-member object naming its
+/// value member, and every other family's value bare; clause 4.5.9 carries the
+/// first element of each simplified temporal `[value, Temporal Property]` pair
+/// the same way. Which of the two a family takes is fixed by the clauses rather
+/// than by the value at hand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum TemporalValueEncoding {
+pub enum SimplifiedValueEncoding {
     /// The value stands alone: a Property or `GeoProperty` value, a
     /// Relationship object, and the ordered arrays of the two list families.
     Bare,
     /// The value is wrapped in a one-member object keyed by the family's value
-    /// member, which clause 4.5.9 requires of `languageMap`, `json` and
+    /// member, which clauses 4.5.4 and 4.5.9 require of `languageMap`, `json` and
     /// `vocab`.
     Wrapped,
 }
@@ -168,7 +170,7 @@ impl AttributeType {
     ///
     /// The value inside each pair is read from
     /// [`AttributeType::compact_value_key`] and carried as
-    /// [`AttributeType::temporal_value_encoding`] prescribes.
+    /// [`AttributeType::simplified_value_encoding`] prescribes.
     #[must_use]
     pub const fn temporal_values_key(self) -> &'static str {
         match self {
@@ -208,13 +210,13 @@ impl AttributeType {
         self.expanded_temporal_values_key().into_inner()
     }
 
-    /// Returns how clause 4.5.9 carries this attribute type's value inside one
-    /// simplified temporal pair.
+    /// Returns how the simplified representations of clauses 4.5.4 and 4.5.9
+    /// carry this attribute type's value.
     #[must_use]
-    pub const fn temporal_value_encoding(self) -> TemporalValueEncoding {
+    pub const fn simplified_value_encoding(self) -> SimplifiedValueEncoding {
         match self {
-            Self::LanguageProperty | Self::JsonProperty | Self::VocabProperty => TemporalValueEncoding::Wrapped,
-            Self::Property | Self::GeoProperty | Self::Relationship | Self::ListProperty | Self::ListRelationship => TemporalValueEncoding::Bare,
+            Self::LanguageProperty | Self::JsonProperty | Self::VocabProperty => SimplifiedValueEncoding::Wrapped,
+            Self::Property | Self::GeoProperty | Self::Relationship | Self::ListProperty | Self::ListRelationship => SimplifiedValueEncoding::Bare,
         }
     }
 
@@ -291,6 +293,15 @@ impl AttributeType {
         }
     }
 
+    /// Whether the family defines the compact member `member`, one of its
+    /// [`AttributeType::reserved_fields`]: the clause that defines the family
+    /// lists it, and a member of that name on an instance of the family is the
+    /// family's own rather than a sub-attribute.
+    #[must_use]
+    pub fn defines_member(self, member: &str) -> bool {
+        self.reserved_fields().contains(&member)
+    }
+
     /// Returns the short (compacted) name for this attribute type as a static string.
     ///
     /// Equivalent to `Display` / `IntoStaticStr` output (e.g. `"Property"`).
@@ -321,7 +332,6 @@ impl AttributeType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::unit_code_admission::{UnitCodeAdmission, unit_code_admission};
     use std::str::FromStr;
 
     #[test]
@@ -445,34 +455,34 @@ mod tests {
         }
     }
 
-    /// Clause 4.5.9 wraps a `languageMap`, a `json` and a `vocab` in a
-    /// one-member object and leaves every other family's value bare.
+    /// Clauses 4.5.4 and 4.5.9 wrap a `languageMap`, a `json` and a `vocab`
+    /// in a one-member object and leave every other family's value bare.
     #[test]
-    fn only_the_three_wrapped_families_name_their_value_inside_the_temporal_pair() {
+    fn only_the_three_wrapped_families_name_their_simplified_value() {
         let wrapped = [AttributeType::LanguageProperty, AttributeType::JsonProperty, AttributeType::VocabProperty];
         for variant in AttributeType::ALL {
             let expected = if wrapped.contains(&variant) {
-                TemporalValueEncoding::Wrapped
+                SimplifiedValueEncoding::Wrapped
             } else {
-                TemporalValueEncoding::Bare
+                SimplifiedValueEncoding::Bare
             };
-            pretty_assertions::assert_eq!(variant.temporal_value_encoding(), expected, "{variant}");
+            pretty_assertions::assert_eq!(variant.simplified_value_encoding(), expected, "{variant}");
         }
     }
 
-    /// A family that admits a `unitCode` has to reserve it as an envelope
-    /// member, and one that does not must not. Without the reservation the
-    /// member is walked as a sub-attribute: normalization reifies the code into
-    /// `{"type": "Property", "value": "MMT"}` and the store, which reads the
-    /// unit out of a single `@value` node, then refuses a write the two
-    /// clauses admit.
+    /// Only the Relationship families define `objectType` and the inline
+    /// target members; every other family defines `valueType` (clauses 4.5.2,
+    /// 4.5.3, 4.5.18, 4.5.20, 4.5.21, 4.5.22, 4.5.24).
     #[test]
-    fn exactly_the_families_that_admit_a_unit_code_reserve_it_as_an_envelope_member() {
+    fn the_relationship_families_alone_define_the_object_members() {
         for variant in AttributeType::ALL {
-            let reserved = variant.reserved_fields().contains(&compact_properties::UNIT_CODE);
-            let admitted = unit_code_admission(variant) == UnitCodeAdmission::Admitted;
-            pretty_assertions::assert_eq!(reserved, admitted, "{variant}");
+            let relationship = matches!(variant, AttributeType::Relationship | AttributeType::ListRelationship);
+            pretty_assertions::assert_eq!(variant.defines_member(compact_properties::OBJECT_TYPE), relationship, "{variant}");
+            pretty_assertions::assert_eq!(variant.defines_member(compact_properties::VALUE_TYPE), !relationship, "{variant}");
         }
+        assert!(AttributeType::Relationship.defines_member(compact_properties::ENTITY));
+        assert!(AttributeType::ListRelationship.defines_member(compact_properties::ENTITY_LIST));
+        assert!(!AttributeType::Property.defines_member("speed"));
     }
 
     #[test]

@@ -28,9 +28,8 @@ use andromeda_json_literal::JsonLiteral;
 use andromeda_linked_retrieval::{keyword::Keyword, narrowing::member::MemberRule, plan::InlineCursor, typed::TypedEntities};
 use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 use andromeda_ngsi_ld_model::{attribute::instance::AttributeValue, entity::Entity};
-use andromeda_ngsi_ld_query::projection::term::ProjectionTerm;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
-use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Serializer, ser::SerializeMap};
 
@@ -99,19 +98,19 @@ impl Serialize for TypedEntity<'_> {
             IdentifierMember::Promoted => false,
         };
         if writes_id {
-            object.serialize_entry(ProjectionTerm::ID_KEYWORD, &entity.id)?;
+            object.serialize_entry(keyword::ID_ALIAS, &entity.id)?;
         }
         if self.keeps(Keyword::Type) {
             match entity.type_.iter().next() {
-                Some(first) if self.walk.writes_single_type() => object.serialize_entry(ProjectionTerm::TYPE_KEYWORD, first)?,
-                Some(_) | None => object.serialize_entry(ProjectionTerm::TYPE_KEYWORD, &entity.type_)?,
+                Some(first) if self.walk.writes_single_type() => object.serialize_entry(keyword::TYPE_ALIAS, first)?,
+                Some(_) | None => object.serialize_entry(keyword::TYPE_ALIAS, &entity.type_)?,
             }
         }
         if let Some(scope) = &entity.scope
             && self.keeps(Keyword::Scope)
             && self.walk.keeps_entity_member(EntityMember::Scope)
         {
-            object.serialize_entry(ProjectionTerm::SCOPE_KEYWORD, scope)?;
+            object.serialize_entry(compact_properties::SCOPE, scope)?;
         }
         let stamped = self.stamped.copied().unwrap_or_default();
         // The expiry a notification stamps is the entity's own member as much

@@ -21,6 +21,7 @@ use crate::{
         EntityDocument,
         attribute_member::AttributeMember,
         instance_document::InstanceDocument,
+        instance_identities::admit_distinct_identities,
         slot::Slot,
         value_carrier::ValueCarrier,
         written_value::{ValueSlot, WrittenValue},
@@ -34,11 +35,9 @@ use andromeda_json_literal::{JsonLiteral, piece::JsonKind};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
-    identifier::Identifier,
     unit_code_admission::{UnitCodeAdmission, unit_code_admission},
 };
 use andromeda_ngsi_ld_representation::family_member_admission::MemberAdmission;
-use std::collections::HashSet;
 
 impl EntityDocument {
     /// Hold the document to the rules of an operation writing it under
@@ -147,27 +146,6 @@ fn admit_envelopes(name: &AttributeName, member: &AttributeMember, value_omissio
     let instances = member.instances();
     admit_distinct_identities(name, instances)?;
     instances.iter().try_for_each(|instance| admit_envelope(name, instance, value_omission))
-}
-
-/// The written instances of the attribute `name` name distinct instances: no
-/// two share a `datasetId` and at most one is the default instance (clause
-/// 4.5.5.1). Every write lands its instances one by one on the held instance
-/// with the same identity, so a repeated identity would silently land twice.
-fn admit_distinct_identities(name: &AttributeName, instances: &[InstanceDocument]) -> Result<(), EntityRefusal> {
-    let mut seen: HashSet<Option<&Identifier>> = HashSet::with_capacity(instances.len());
-    instances.iter().try_for_each(|instance| {
-        if seen.insert(instance.dataset_id()) {
-            return Ok(());
-        }
-        // clone: the refusal outlives the borrowed request.
-        Err(match instance.dataset_id() {
-            Some(dataset_id) => EntityRefusal::RepeatedInstance {
-                attribute: name.clone(),
-                dataset_id: dataset_id.clone(),
-            },
-            None => EntityRefusal::MultipleDefaultInstances { attribute: name.clone() },
-        })
-    })
 }
 
 /// Clause 4.5.5.1 at every depth below `instance`: a sub-attribute is an

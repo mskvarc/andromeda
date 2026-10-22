@@ -13,9 +13,14 @@
 //! `datasetId` (clause 5.6.5.4).
 
 use crate::{
-    attribute_instances::{AttributeInstances, RepeatedInstance},
+    attribute_instances::AttributeInstances,
     attributes::Attributes,
-    document::{attribute_member::AttributeMember, instance_document::InstanceDocument, written_value::ValueSlot},
+    document::{
+        attribute_member::AttributeMember,
+        instance_document::InstanceDocument,
+        instance_identities::admit_distinct_identities,
+        written_value::ValueSlot,
+    },
     operation::{
         attribute_write::apply_instances,
         instance_patch::{InstancePatchDepth, new_instance},
@@ -32,13 +37,14 @@ use indexmap::IndexMap;
 /// # Errors
 ///
 /// Returns the refusal of a written sub-attribute instance that cannot
-/// become state, or of two that share a `datasetId`.
+/// become state, or of two that name one instance.
 pub(crate) fn new_sub_attributes(written: &IndexMap<AttributeName, AttributeMember>) -> Result<Attributes, MutationError> {
     let mut attributes = Attributes::new();
     for (name, member) in written {
         match member {
             AttributeMember::Remove => {}
             AttributeMember::Instances(documents) => {
+                admit_distinct_identities(name, documents)?;
                 if let Some(instances) = settled_instances(name, documents)? {
                     // clone: the stored instance owns the sub-attribute name.
                     attributes.insert(name.clone(), instances);
@@ -55,8 +61,7 @@ pub(crate) fn new_sub_attributes(written: &IndexMap<AttributeName, AttributeMemb
 /// 5.5.12): on the held instance with its `datasetId` under `depth`, or
 /// added, and a deletion encoding removes only the instance with its
 /// `datasetId`. A sub-attribute set to the bare NGSI-LD Null is removed with
-/// every instance. Admission has already refused two written instances of
-/// one sub-attribute sharing an identity (clause 4.5.5.1).
+/// every instance.
 ///
 /// No default `observedAt` is stamped: Table 6.5.3.4-1 gives it to the
 /// merged Attributes only (clause 5.6.17.4).
@@ -64,7 +69,7 @@ pub(crate) fn new_sub_attributes(written: &IndexMap<AttributeName, AttributeMemb
 /// # Errors
 ///
 /// Returns the refusal of a written sub-attribute instance that cannot
-/// become state.
+/// become state, or of two that name one instance.
 pub(crate) fn patch_sub_attributes(
     held: &mut Attributes,
     written: &IndexMap<AttributeName, AttributeMember>,
@@ -75,7 +80,10 @@ pub(crate) fn patch_sub_attributes(
             held.remove(name);
             Ok(())
         }
-        AttributeMember::Instances(documents) => apply_instances(held, name, documents, depth, None),
+        AttributeMember::Instances(documents) => {
+            admit_distinct_identities(name, documents)?;
+            apply_instances(held, name, documents, depth, None)
+        }
     })
 }
 
@@ -87,26 +95,14 @@ fn settled_instances(name: &AttributeName, documents: &[InstanceDocument]) -> Re
         .filter(|document| !matches!(document.value(), ValueSlot::Remove(_)))
         .map(|document| new_instance(name, document, None).map(|instance| (document.dataset_id().cloned(), instance))) // clone: the instance is keyed by its own copy of the written identity.
         .collect::<Result<Vec<_>, MutationError>>()?;
-    AttributeInstances::try_from_instances(instances).map_err(|repeated| repeated_instance(name, repeated))
-}
-
-/// The refusal of two written instances of one attribute sharing an identity
-/// (clause 4.5.5).
-fn repeated_instance(name: &AttributeName, repeated: RepeatedInstance) -> MutationError {
-    // clone: the refusal outlives the borrowed request.
-    let attribute = name.clone();
-    match repeated {
-        RepeatedInstance::Default => EntityRefusal::MultipleDefaultInstances { attribute },
-        RepeatedInstance::Dataset(dataset_id) => EntityRefusal::RepeatedInstance { attribute, dataset_id },
-    }
-    .into()
+    AttributeInstances::try_from_instances(instances).map_err(|repeated| EntityRefusal::repeated_instance(name, repeated).into())
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
         attributes::Attributes,
-        document::{attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot},
+        document::{attribute_member::AttributeMember, instance_document::InstanceDocument},
         instance::Instance,
         operation::{
             instance_patch::InstancePatchDepth,
@@ -338,20 +334,44 @@ mod tests {
         pretty_assertions::assert_eq!(observed_at(&held, None), None);
     }
 
-    /// Clause 4.5.5: two written default instances of one sub-attribute are
-    /// refused.
+    /// Clause 4.5.5.1: two written instances of one sub-attribute naming one
+    /// instance are refused alike whether the sub-attributes land on held ones
+    /// or make new ones, a deletion among them included.
     #[test]
-    fn two_default_instances_of_a_sub_attribute_are_refused() {
-        let mut observed = property_document(number(1), None);
-        observed.set_observed_at(Some(Slot::Set(date_time(OBSERVED))));
-        let written = written(vec![
-            observed,
-            InstanceDocument::builder().value(property_document(number(2), None).value().clone()).build(),
-        ]);
-        let refused = new_sub_attributes(&written).expect_err("a repeated default instance");
-        assert!(
-            matches!(refused, MutationError::Refused(ref refusal) if matches!(**refusal, EntityRefusal::MultipleDefaultInstances { .. })),
-            "{refused:?}"
-        );
+    fn a_repeated_sub_attribute_instance_is_refused_by_both_landings() {
+        let cases = [
+            (
+                vec![property_document(number(1), None), property_document(number(2), None)],
+                "the default instance twice",
+            ),
+            (
+                vec![property_document(number(1), Some(A)), property_document(number(2), Some(A))],
+                "one datasetId twice",
+            ),
+            (
+                vec![property_deletion(Some(A)), property_document(number(2), Some(A))],
+                "a deletion and a value of one datasetId",
+            ),
+        ];
+        for (documents, case) in cases {
+            let written = written(documents);
+            let mut held = accuracy(vec![(Some(A), observed(7))]);
+            let refusals = [
+                new_sub_attributes(&written).expect_err("a repeated instance makes no sub-attributes"),
+                patch_sub_attributes(&mut held, &written, InstancePatchDepth::DeepMerge).expect_err("a repeated instance lands on nothing"),
+                patch_sub_attributes(&mut held, &written, InstancePatchDepth::ReplaceInstance).expect_err("a repeated instance lands on nothing"),
+            ];
+            for refused in refusals {
+                assert!(
+                    matches!(
+                        refused,
+                        MutationError::Refused(ref refusal)
+                            if matches!(**refusal, EntityRefusal::MultipleDefaultInstances { .. } | EntityRefusal::RepeatedInstance { .. })
+                    ),
+                    "{case}: {refused:?}"
+                );
+            }
+            pretty_assertions::assert_eq!(observed_at(&held, Some(A)), Some(date_time(OBSERVED)), "{case}: the held instance is untouched");
+        }
     }
 }

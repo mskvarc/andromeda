@@ -8,15 +8,13 @@
 //! the members into serde's `Content` tree first.
 
 use andromeda_json_literal::JsonLiteral;
+use andromeda_ngsi_ld_vocabulary::keyword;
 use serde::{
     Serialize,
     Serializer,
     ser::{Error, Impossible, SerializeMap, SerializeSeq, SerializeStruct},
 };
 use thiserror::Error;
-
-/// The member name a JSON-LD document names its context by.
-const CONTEXT_MEMBER: &str = "@context";
 
 /// An object opened on `serializer` with the `@context` member written first
 /// when `context` is given.
@@ -33,7 +31,7 @@ pub(crate) fn open_object<S: Serializer>(serializer: S, context: Option<&JsonLit
         None => serializer.serialize_map(length),
         Some(context) => {
             let mut map = serializer.serialize_map(length.map(|members| members + 1))?;
-            map.serialize_entry(CONTEXT_MEMBER, context)?;
+            map.serialize_entry(keyword::CONTEXT, context)?;
             Ok(map)
         }
     }

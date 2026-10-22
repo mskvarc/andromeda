@@ -8,10 +8,10 @@
 //! evolution reports deleted.
 
 use crate::attribute::geo_property::{TypedGeometryRefusal, typed_geometry};
-use andromeda_ngsi_ld_entity::{geo_value::EncodedGeometry, ngsi_ld_null::is_ngsi_ld_null};
+use andromeda_ngsi_ld_entity::geo_value::EncodedGeometry;
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, geojson::GeometryError, geometry::Geometry};
 use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeShape};
-use andromeda_ngsi_ld_vocabulary::NULL_URI;
+use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::{NULL_URI, is_ngsi_ld_null};
 use serde::{Serialize, Serializer};
 use thiserror::Error;
 

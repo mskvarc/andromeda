@@ -3,14 +3,9 @@
 use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, geojson::GeometryError, geometry::Geometry};
 use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeMembers, NodeShape};
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use serde::{Serialize, Serializer};
 use thiserror::Error;
-
-/// The member a geometry names its kind in.
-const TYPE_MEMBER: &str = "type";
-
-/// The member a geometry carries its positions in.
-const COORDINATES_MEMBER: &str = "coordinates";
 
 /// NGSI-LD value family from clause 4.6.3.
 ///
@@ -111,7 +106,7 @@ impl NgsiLdValue {
 
 /// Whether an object carries both members a `GeoJSON` geometry is made of.
 fn is_geojson_shaped<'n, N: CompactNode<'n>>(members: &NodeMembers<'n, N>) -> bool {
-    members.contains(TYPE_MEMBER) && members.contains(COORDINATES_MEMBER)
+    members.contains(keyword::TYPE_ALIAS) && members.contains(compact_properties::COORDINATES)
 }
 
 /// The geometry a node holds typed.

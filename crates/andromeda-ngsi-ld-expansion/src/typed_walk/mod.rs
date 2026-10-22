@@ -16,18 +16,12 @@ use crate::{
     decline::Decline,
     normalization::Normalization,
     term_scope::TermScope,
-    typed_walk::instance::{add_member, add_optional, add_serialized, is_ngsi_ld_null},
+    typed_walk::instance::{add_member, add_optional, add_serialized},
     written_member::WrittenMember,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::rendering::instant_text};
 use andromeda_ngsi_ld_model::entity::{Entity, EntityPatch};
-use andromeda_ngsi_ld_vocabulary::{NULL_URI, compact::properties as compact_properties};
-
-/// The member naming an entity.
-const ID_MEMBER: &str = "id";
-
-/// The member naming an entity's types.
-const TYPE_MEMBER: &str = "type";
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword, ngsi_ld_null::NULL_URI};
 
 /// Expand a typed entity written at the top of a request.
 ///
@@ -36,8 +30,8 @@ const TYPE_MEMBER: &str = "type";
 /// Declines whatever the walk does not model.
 pub fn entity_node<M: WrittenMember>(scope: &TermScope<'_>, entity: &Entity<M>, normalization: Normalization) -> Result<Expanded, Decline> {
     let mut node = NodeBuilder::default();
-    add_serialized(&mut node, scope, ID_MEMBER, &entity.id)?;
-    add_serialized(&mut node, scope, TYPE_MEMBER, &entity.type_)?;
+    add_serialized(&mut node, scope, keyword::ID_ALIAS, &entity.id)?;
+    add_serialized(&mut node, scope, keyword::TYPE_ALIAS, &entity.type_)?;
     add_optional(&mut node, scope, compact_properties::SCOPE, entity.scope.as_ref())?;
     add_optional(&mut node, scope, compact_properties::EXPIRES_AT, entity.expires_at.map(instant_text).as_ref())?;
     add_optional(&mut node, scope, compact_properties::CREATED_AT, entity.created_at.map(instant_text).as_ref())?;
@@ -59,8 +53,8 @@ pub fn entity_node<M: WrittenMember>(scope: &TermScope<'_>, entity: &Entity<M>, 
 /// Declines whatever the walk does not model.
 pub fn patch_node<M: WrittenMember>(scope: &TermScope<'_>, patch: &EntityPatch<M>, normalization: Normalization) -> Result<Expanded, Decline> {
     let mut node = NodeBuilder::default();
-    add_optional(&mut node, scope, ID_MEMBER, patch.id.as_ref())?;
-    add_optional(&mut node, scope, TYPE_MEMBER, patch.type_.as_ref())?;
+    add_optional(&mut node, scope, keyword::ID_ALIAS, patch.id.as_ref())?;
+    add_optional(&mut node, scope, keyword::TYPE_ALIAS, patch.type_.as_ref())?;
     add_optional(&mut node, scope, compact_properties::SCOPE, patch.scope.as_ref())?;
     add_optional(&mut node, scope, compact_properties::EXPIRES_AT, patch.expires_at.map(instant_text).as_ref())?;
     let geo_members = [
@@ -86,7 +80,7 @@ fn attributes<'a, M: WrittenMember + 'a>(
         match normalization {
             // A merge removes the whole member by the Null (clause 5.5.12), and
             // a notification reports it deleted by it (clause 5.8.6).
-            Normalization::MemberDeletions if is_ngsi_ld_null(member) => add_serialized(node, scope, key, NULL_URI.as_str())?,
+            Normalization::MemberDeletions if member.written().is_ngsi_ld_null() => add_serialized(node, scope, key, NULL_URI.as_str())?,
             Normalization::MemberDeletions | Normalization::Entity => add_member(node, scope, key, member)?,
         }
     }

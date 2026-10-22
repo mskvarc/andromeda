@@ -4,44 +4,38 @@
 //! from a geometry object, the clause 4.7.2 string literal, or the NGSI-LD
 //! Null of a deletion. Clause 4.7.1 admits nothing else: a `GeometryCollection`,
 //! a JSON literal, or any other value is refused. The node's `coordinates` are
-//! read straight into positions when its `@type` came first, as it does in
-//! every document the broker or PostgreSQL writes; otherwise they are kept as
-//! expanded values and read once the type is known. Its `bbox` (IETF RFC 7946
+//! recorded onto a coordinate tape, whichever of them and its `@type` came
+//! first, and read as the type nests them once the node is closed. Its `bbox` (IETF RFC 7946
 //! section 5, the core context's `geojson:bbox` `@list` term) and its foreign
 //! members (section 6.1, any other expanded name) are read beside them; the
 //! NGSI-LD Null is refused inside either, as entity state never holds it.
 
 use crate::{
     codec::{
-        coordinate_list::GeometryReading,
         coordinates_decode::CoordinatesSeed,
         decode_context::DecodeContext,
-        element::{ElementsSeed, TypeEntries, values_without_null},
+        element::TypeEntries,
         geojson_members_codec::MembersRead,
         object_key::ObjectKey,
         raw_scalar::RawScalar,
         value_encode::ValuesOut,
     },
+    expanded_geometry_type::expanded_geometry_type,
     expanded_value::ExpandedValue,
     geo_value::{EncodedGeometry, GeoValue},
     geometry_value::GeometryValue,
     member_shape::MemberShape,
-    ngsi_ld_null::is_ngsi_ld_null,
     refusal::EntityRefusal,
     value_mode::Fragment,
 };
-use andromeda_ngsi_ld_geometry::{form::GeometryForm, geojson::GeometryError, geometry_type::GeometryType};
+use andromeda_ngsi_ld_geometry::{coordinate_tape::CoordinateTape, geojson::GeometryError, geometry_type::GeometryType};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_vocabulary::{expanded::properties, prefix};
+use andromeda_ngsi_ld_vocabulary::{expanded::properties, ngsi_ld_null::is_ngsi_ld_null};
 use serde::{
     Deserializer,
     de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor},
 };
-use std::{fmt, str::FromStr};
-
-/// The `GeoJSON` `type` token of a `GeometryCollection`, which clause 4.7.1
-/// names only to exclude.
-const GEOMETRY_COLLECTION_TOKEN: &str = "GeometryCollection";
+use std::fmt;
 
 /// What a `GeoProperty`'s `value` holds.
 #[derive(Debug)]
@@ -135,25 +129,12 @@ impl<'de> Visitor<'de> for GeoElementSeed<'_> {
             match key {
                 ObjectKey::Value => parts.value = Some(map.next_value::<RawScalar>()?),
                 ObjectKey::Type => match map.next_value::<TypeEntries>()? {
-                    TypeEntries::Array(types) => parts.geometry_type = Some(geometry_type(&types).map_err(|source| refuse(seed.geometry(source)))?),
+                    TypeEntries::Array(types) => {
+                        parts.geometry_type = Some(expanded_geometry_type(&types).map_err(|source| refuse(seed.geometry(source)))?);
+                    }
                     TypeEntries::Single(_) => return Err(refuse(seed.malformed(MemberShape::Geometry))),
                 },
-                ObjectKey::Name(name) if name.as_str() == properties::COORDINATES.as_str() => {
-                    if let Some(geometry_type) = parts.geometry_type {
-                        let reading = GeometryReading {
-                            context: seed.context,
-                            attribute: seed.attribute,
-                            geometry_type,
-                        };
-                        parts.form = Some(map.next_value_seed(CoordinatesSeed { reading: &reading })?);
-                    } else {
-                        let elements = map.next_value_seed(ElementsSeed {
-                            context: seed.context,
-                            owner: Some(seed.attribute),
-                        })?;
-                        parts.pending = Some(values_without_null(elements, Some(seed.attribute)).map_err(refuse)?);
-                    }
-                }
+                ObjectKey::Name(name) if name.as_str() == properties::COORDINATES.as_str() => parts.coordinates = Some(map.next_value_seed(CoordinatesSeed)?),
                 ObjectKey::Name(name) => parts.members.read(seed.context, seed.attribute, name, &mut map)?,
                 ObjectKey::Id | ObjectKey::Language | ObjectKey::Direction | ObjectKey::List | ObjectKey::OtherKeyword | ObjectKey::InvalidName(_) => {
                     return Err(refuse(seed.malformed(MemberShape::Geometry)));
@@ -171,10 +152,8 @@ struct GeoParts<'de> {
     value: Option<RawScalar<'de>>,
     /// The geometry type the node's `@type` names.
     geometry_type: Option<GeometryType>,
-    /// The coordinates, read after the type.
-    form: Option<GeometryForm>,
-    /// The coordinates, read before the type was known.
-    pending: Option<Vec<ExpandedValue<Fragment>>>,
+    /// The coordinates, recorded before or after the type.
+    coordinates: Option<CoordinateTape>,
     /// The `bbox` and the foreign members.
     members: MembersRead,
 }
@@ -185,64 +164,30 @@ impl GeoParts<'_> {
         let GeoParts {
             value,
             geometry_type,
-            form,
-            pending,
+            coordinates,
             members,
         } = self;
         let members = members.finish();
         // A value object carries no member beside its `@value`.
         let beside_value = members.is_some();
-        let geometry = |form: GeometryForm| {
-            form.with_uniform_arity()
-                .map(|form| GeoDecoded::Value(GeoValue::Geometry(GeometryValue::with_members(form, members))))
-                .map_err(|source| seed.geometry(source))
-        };
-        match (value, geometry_type, form, pending) {
-            (Some(_), None, None, None) if beside_value => Err(seed.malformed(MemberShape::Geometry)),
-            (Some(value), None, None, None) => match value.into_text() {
+        match (value, geometry_type, coordinates) {
+            (Some(_), None, None) if beside_value => Err(seed.malformed(MemberShape::Geometry)),
+            (Some(value), None, None) => match value.into_text() {
                 Some(text) if is_ngsi_ld_null(&text) => Ok(GeoDecoded::Null),
                 Some(text) => EncodedGeometry::parse(text)
                     .map(|encoded| GeoDecoded::Value(GeoValue::Encoded(encoded)))
                     .map_err(|source| seed.geometry(source)),
                 None => Err(seed.geometry(GeometryError::NotAnObject)),
             },
-            (None, Some(_), Some(form), None) => geometry(form),
-            (None, Some(geometry_type), None, Some(pending)) => read_pending(seed, geometry_type, &pending).and_then(geometry),
-            (None, Some(_), None, None) => Err(seed.geometry(GeometryError::MissingCoordinates)),
-            (None, None, None, _) => Err(seed.geometry(GeometryError::MissingType)),
-            (Some(_), _, _, _) | (None, None, Some(_), _) | (None, Some(_), Some(_), Some(_)) => Err(seed.malformed(MemberShape::Geometry)),
+            (None, Some(geometry_type), Some(coordinates)) => coordinates
+                .read_as(geometry_type)
+                .map(|form| GeoDecoded::Value(GeoValue::Geometry(GeometryValue::with_members(form, members))))
+                .map_err(|source| seed.geometry(source)),
+            (None, Some(_), None) => Err(seed.geometry(GeometryError::MissingCoordinates)),
+            (None, None, _) => Err(seed.geometry(GeometryError::MissingType)),
+            (Some(_), Some(_), _) | (Some(_), None, Some(_)) => Err(seed.malformed(MemberShape::Geometry)),
         }
     }
-}
-
-/// The geometry type a node's `@type` names, refusing a `GeometryCollection`
-/// (clause 4.7.1) and any type RFC 7946 does not define.
-fn geometry_type(types: &[String]) -> Result<GeometryType, GeometryError> {
-    let token = types
-        .first()
-        .and_then(|iri| iri.strip_prefix(prefix::GEOJSON.as_str()))
-        .ok_or(GeometryError::MissingType)?;
-    if token == GEOMETRY_COLLECTION_TOKEN {
-        return Err(GeometryError::GeometryCollectionUnsupported);
-    }
-    GeometryType::from_str(token).map_err(GeometryError::UnknownType)
-}
-
-/// Read coordinates that arrived before the node's type: they are written back
-/// in their expanded form and read again with the type known, so one reader
-/// decides every geometry.
-fn read_pending(seed: GeoValueSeed<'_>, geometry_type: GeometryType, pending: &[ExpandedValue<Fragment>]) -> Result<GeometryForm, EntityRefusal> {
-    let bytes = serde_json::to_vec(&ValuesOut(pending)).map_err(|_| seed.malformed(MemberShape::Geometry))?;
-    let context = DecodeContext::default();
-    let reading = GeometryReading {
-        context: &context,
-        attribute: seed.attribute,
-        geometry_type,
-    };
-    let mut deserializer = serde_json::Deserializer::from_slice(&bytes);
-    CoordinatesSeed { reading: &reading }
-        .deserialize(&mut deserializer)
-        .map_err(|error| context.into_refusal(&error))
 }
 
 /// Read the expanded values of a written `value` as a `GeoProperty` geometry:

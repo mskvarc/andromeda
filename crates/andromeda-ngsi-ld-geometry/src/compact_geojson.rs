@@ -28,8 +28,8 @@ impl GeometryForm {
     /// JSON value, [`GeometryError::NotAnObject`], [`GeometryError::MissingType`],
     /// [`GeometryError::UnknownType`], [`GeometryError::MissingCoordinates`],
     /// [`GeometryError::MissingGeometries`], [`GeometryError::InvalidBbox`],
-    /// [`GeometryError::NotAnArray`] or [`GeometryError::NonNumericOrdinate`]
-    /// for a value that is not a `GeoJSON` geometry object,
+    /// [`GeometryError::NotAnArray`] for a value that is not a `GeoJSON`
+    /// geometry object,
     /// [`GeometryError::GeometryCollectionUnsupported`]
     /// for a `GeometryCollection`, [`GeometryError::Position`] for a position
     /// RFC 7946 section 3.1.1 or section 4 gives no meaning,
@@ -72,7 +72,10 @@ mod tests {
                 | GeometryError::MissingGeometries
                 | GeometryError::InvalidBbox(_)
                 | GeometryError::NotAnArray { .. }
-                | GeometryError::NonNumericOrdinate { .. }
+                | GeometryError::Position {
+                    source: PositionError::NonNumericOrdinate { .. },
+                    ..
+                }
         )
     }
 
@@ -195,7 +198,10 @@ mod tests {
             "GeoJSON coordinates hold a non-array where a position belongs (at coordinates[1])"
         );
         let refused = read(&json!({"type": "Point", "coordinates": [0.0, "secret"]})).expect_err("a string is no ordinate");
-        pretty_assertions::assert_eq!(refused.to_string(), "a GeoJSON position holds a member that is not a number (at coordinates)");
+        pretty_assertions::assert_eq!(
+            refused.to_string(),
+            "GeoJSON position has a non-numeric ordinate at index 1; RFC 7946 requires every ordinate to be a number (at coordinates)"
+        );
     }
 
     /// The form is the positions alone: a foreign member the geometry itself

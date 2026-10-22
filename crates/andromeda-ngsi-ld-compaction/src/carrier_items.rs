@@ -16,7 +16,7 @@ use andromeda_ngsi_ld_entity::{
     language_entries::LanguageEntries,
     list_object::ListObject,
 };
-use andromeda_ngsi_ld_vocabulary::NULL_URI;
+use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::NULL_URI;
 use jsonld::Value;
 
 /// One node reference per IRI.

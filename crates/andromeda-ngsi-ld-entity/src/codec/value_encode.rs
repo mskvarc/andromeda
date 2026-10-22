@@ -6,14 +6,13 @@
 //! keeps.
 
 use crate::{
-    codec::element::JSON_DATATYPE,
     expanded_value::{ExpandedValue, ValueNode},
     expanded_value_name::ExpandedValueName,
     literal::{Literal, LiteralValue},
     value_mode::{Fragment, FragmentMember, FragmentText, Stored, ValueMode},
 };
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_vocabulary::NULL_URI;
+use andromeda_ngsi_ld_vocabulary::{keyword, ngsi_ld_null::NULL_URI};
 use serde::{Serialize, Serializer, ser::SerializeMap};
 
 /// How the members and texts of one value mode are written.
@@ -105,7 +104,7 @@ pub(crate) struct JsonLiteralOut<'a>(pub(crate) &'a JsonLiteral);
 impl Serialize for JsonLiteralOut<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(Some(2))?;
-        map.serialize_entry("@type", JSON_DATATYPE)?;
+        map.serialize_entry(keyword::TYPE, keyword::JSON)?;
         map.serialize_entry("@value", self.0)?;
         map.end()
     }
@@ -118,7 +117,7 @@ pub(crate) struct NullJsonOut;
 impl Serialize for NullJsonOut {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(Some(2))?;
-        map.serialize_entry("@type", JSON_DATATYPE)?;
+        map.serialize_entry(keyword::TYPE, keyword::JSON)?;
         map.serialize_entry("@value", NULL_URI.as_str())?;
         map.end()
     }

@@ -1,6 +1,7 @@
 //! Which attribute families the specification defines a `unitCode` member for.
 
 use crate::attribute_type::AttributeType;
+use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 
 /// Whether one attribute family may carry a `unitCode` member.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -19,15 +20,14 @@ pub enum UnitCodeAdmission {
 /// under the same rule. Their values are not quantities: a unit on them names
 /// nothing the broker could store or render back, so the write is refused
 /// rather than silently stripped.
+///
+/// The family's reserved members are the one list of what each family defines.
 #[must_use]
-pub const fn unit_code_admission(attribute_type: AttributeType) -> UnitCodeAdmission {
-    match attribute_type {
-        AttributeType::Property | AttributeType::GeoProperty | AttributeType::ListProperty => UnitCodeAdmission::Admitted,
-        AttributeType::Relationship
-        | AttributeType::VocabProperty
-        | AttributeType::LanguageProperty
-        | AttributeType::JsonProperty
-        | AttributeType::ListRelationship => UnitCodeAdmission::Forbidden,
+pub fn unit_code_admission(attribute_type: AttributeType) -> UnitCodeAdmission {
+    if attribute_type.defines_member(compact_properties::UNIT_CODE) {
+        UnitCodeAdmission::Admitted
+    } else {
+        UnitCodeAdmission::Forbidden
     }
 }
 

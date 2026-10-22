@@ -16,12 +16,15 @@
 //! answer.
 
 use crate::{
-    attribute_value_datatype::{NUMBER_TYPE, VALUE_MEMBER, datatype_rank, datatype_token},
+    attribute_value_datatype::{NUMBER_TYPE, datatype_rank, datatype_token},
     attribute_value_holder::ordered_value,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{filter::path::AttrPath, ordering::sort_direction::SortDirection};
-use andromeda_ngsi_ld_vocabulary::expanded::classes::{DATE_TIME, TIME};
+use andromeda_ngsi_ld_vocabulary::{
+    expanded::classes::{DATE_TIME, TIME},
+    keyword,
+};
 use andromeda_postgresql_query::{
     dictionary::resolved_names::ResolvedNames,
     entity_row_refs::EntityRowRefs,
@@ -181,7 +184,7 @@ impl AttributeValue {
             )
             .finally(Func::coalesce([
                 self.column(Projected::Text),
-                first.json_get_text(text_literal(VALUE_MEMBER)),
+                first.json_get_text(text_literal(keyword::VALUE)),
                 self.column(Projected::Object).json_get_text(int_literal(0)),
             ]));
         collate(comparable.into(), collation)

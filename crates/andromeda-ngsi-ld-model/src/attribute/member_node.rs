@@ -31,7 +31,6 @@ use andromeda_ngsi_ld_representation::{
     compact_node::{CompactNode, NodeShape},
     concise_reading::{ArrayReading, ArrayRefusal, ObjectReading, read_array, read_object},
 };
-use andromeda_ngsi_ld_vocabulary::NULL_URI;
 
 impl MemberReading for AttributeValue {
     fn from_node<'n, N: CompactNode<'n>>(name: &str, member: N) -> Result<AttributeValue, ReadError<'n, N>> {
@@ -71,8 +70,10 @@ impl Attribute {
 
 /// Read one attribute member on the stack the caller left.
 fn member_value<'n, N: CompactNode<'n>>(name: &str, member: N) -> Result<AttributeValue, ReadError<'n, N>> {
+    if member.is_ngsi_ld_null() {
+        return Ok(AttributeValue::NgsiLdNull);
+    }
     match member.shape() {
-        NodeShape::String(text) if text == NULL_URI.as_str() => Ok(AttributeValue::NgsiLdNull),
         NodeShape::Array(items) => match read_array(&items).map_err(array_refusal::<N>)? {
             ArrayReading::Instances => items
                 .into_iter()

@@ -6,13 +6,7 @@
 //! entity's members does.
 
 use crate::{
-    attribute::{
-        instance_member::ReadError,
-        member_node::array_refusal,
-        member_reading::MemberReading,
-        merge_instance::MergeInstance,
-        patched::is_ngsi_ld_null,
-    },
+    attribute::{instance_member::ReadError, member_node::array_refusal, member_reading::MemberReading, merge_instance::MergeInstance},
     node_refusal::NodeRefusal,
 };
 use andromeda_native_stack::on_sufficient_stack;
@@ -21,7 +15,7 @@ use andromeda_ngsi_ld_representation::{
     compact_node::{CompactNode, NodeShape},
     concise_reading::{ArrayReading, ObjectReading, read_array, read_object},
 };
-use andromeda_ngsi_ld_vocabulary::NULL_URI;
+use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::NULL_URI;
 use serde::{Serialize, Serializer};
 use std::slice::{from_mut, from_ref};
 
@@ -93,7 +87,7 @@ impl Serialize for MergeMember {
 
 /// Read one merge member on the stack the caller left.
 fn member_value<'n, N: CompactNode<'n>>(name: &str, member: N) -> Result<MergeMember, ReadError<'n, N>> {
-    if is_ngsi_ld_null(member) {
+    if member.is_ngsi_ld_null() {
         return Ok(MergeMember::NgsiLdNull);
     }
     match member.shape() {

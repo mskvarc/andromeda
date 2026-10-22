@@ -40,7 +40,7 @@
 pub mod bounding_box;
 pub mod compact_geojson;
 pub mod coordinate_path;
-mod coordinate_tape;
+pub mod coordinate_tape;
 pub mod coordinates_member;
 pub mod dimension;
 pub mod foreign_members;
@@ -52,7 +52,9 @@ pub mod geojson_members;
 mod geojson_oracle;
 pub mod geometry;
 pub mod geometry_census;
+pub mod geometry_member;
 pub mod geometry_members;
+pub mod geometry_object_type;
 pub mod geometry_type;
 pub mod geometry_writer;
 pub mod great_circle;

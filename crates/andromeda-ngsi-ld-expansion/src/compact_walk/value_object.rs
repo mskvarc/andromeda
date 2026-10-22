@@ -13,6 +13,7 @@ use crate::{
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeShape};
+use andromeda_ngsi_ld_vocabulary::keyword;
 use jsonld::{Direction as JsonLdDirection, Id, Term, ValidId, syntax::Keyword};
 
 /// Expand the entries of a value object.
@@ -39,7 +40,7 @@ pub fn expand_value_object<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, entrie
             }
             Term::Keyword(Keyword::Language) => {
                 let tag = entry.value.text().ok_or(Decline::MalformedJsonLd)?;
-                if tag != "@none" {
+                if tag != keyword::NONE {
                     language = Some(tag.into_owned());
                 }
             }

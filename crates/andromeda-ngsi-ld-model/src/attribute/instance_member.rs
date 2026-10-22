@@ -32,15 +32,12 @@ use andromeda_ngsi_ld_representation::{
     family_member_admission::{MemberAdmission, prohibited_member},
     proof_seal_admission::{ProofSealMember, proof_seal_admission},
 };
-use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use cefact_units::UnitCode;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::de::DeserializeOwned;
 use std::{borrow::Cow, str::FromStr};
-
-/// The member an attribute instance names its family in.
-pub(crate) const TYPE_MEMBER: &str = "type";
 
 /// The failure of reading a member of a node of type `N`.
 pub(crate) type ReadError<'n, N> = NodeReadError<<N as CompactNode<'n>>::Unreadable>;
@@ -111,23 +108,13 @@ impl InstanceMember {
             return Err(AttributeNodeFault::ValueMemberOfAnotherFamily { family, member });
         }
         Ok(match (name, family) {
-            (TYPE_MEMBER, _) => InstanceMember::Family,
+            (keyword::TYPE_ALIAS, _) => InstanceMember::Family,
             (own, family) if own == family.compact_value_key() => InstanceMember::Value,
             (own, family) if own == family.previous_key() => InstanceMember::Previous,
-            (compact_properties::UNIT_CODE, AttributeType::Property | AttributeType::GeoProperty | AttributeType::ListProperty) => InstanceMember::UnitCode,
-            (
-                compact_properties::VALUE_TYPE,
-                AttributeType::Property
-                | AttributeType::GeoProperty
-                | AttributeType::VocabProperty
-                | AttributeType::LanguageProperty
-                | AttributeType::JsonProperty
-                | AttributeType::ListProperty,
-            ) => InstanceMember::ValueType,
-            (compact_properties::OBJECT_TYPE, AttributeType::Relationship | AttributeType::ListRelationship) => InstanceMember::ObjectType,
-            (compact_properties::ENTITY, AttributeType::Relationship) | (compact_properties::ENTITY_LIST, AttributeType::ListRelationship) => {
-                InstanceMember::Inline
-            }
+            (compact_properties::UNIT_CODE, family) if family.defines_member(name) => InstanceMember::UnitCode,
+            (compact_properties::VALUE_TYPE, family) if family.defines_member(name) => InstanceMember::ValueType,
+            (compact_properties::OBJECT_TYPE, family) if family.defines_member(name) => InstanceMember::ObjectType,
+            (compact_properties::ENTITY | compact_properties::ENTITY_LIST, family) if family.defines_member(name) => InstanceMember::Inline,
             (compact_properties::CREATED_AT, _) => InstanceMember::CreatedAt,
             (compact_properties::DATASET_ID, _) => InstanceMember::DatasetId,
             (compact_properties::DELETED_AT, _) => InstanceMember::DeletedAt,

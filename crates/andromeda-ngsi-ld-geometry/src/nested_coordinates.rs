@@ -23,15 +23,15 @@ impl CoordinateTape {
     ///
     /// # Errors
     ///
-    /// Returns [`GeometryError::NotAnArray`] or
-    /// [`GeometryError::NonNumericOrdinate`] for a member that breaks the
+    /// Returns [`GeometryError::NotAnArray`] for a member that breaks the
     /// nesting, [`GeometryError::Position`] for a position RFC 7946 section
-    /// 3.1.1 or section 4 gives no meaning, [`GeometryError::LineString`] for a
+    /// 3.1.1 or section 4 gives no meaning or that holds a member that is no
+    /// number, [`GeometryError::LineString`] for a
     /// `LineString` of fewer than two positions,
     /// [`GeometryError::LinearRing`] for a Polygon ring that is open or holds
     /// fewer than four, and [`GeometryError::MixedArity`] for positions that
     /// disagree on altitude.
-    pub(crate) fn read_as(&self, geometry_type: GeometryType) -> Result<GeometryForm, GeometryError> {
+    pub fn read_as(&self, geometry_type: GeometryType) -> Result<GeometryForm, GeometryError> {
         let reader = &mut self.reader();
         let mut enclosing = Vec::new();
         let form = match geometry_type {
@@ -62,7 +62,8 @@ fn open(reader: &mut TapeReader<'_>, expected: CoordinateShape, enclosing: &[usi
 ///
 /// The ordinates are read into a fixed buffer: a position of more than three
 /// has no meaning and is refused by its count alone, once every member has
-/// been found to be a number.
+/// been found to be a number. The first member that is none is refused by its
+/// index, an array among them too.
 fn position(reader: &mut TapeReader<'_>, enclosing: &[usize]) -> Result<Position, GeometryError> {
     open(reader, CoordinateShape::Position, enclosing)?;
     let mut ordinates = [0.0_f64; 3];
@@ -77,8 +78,9 @@ fn position(reader: &mut TapeReader<'_>, enclosing: &[usize]) -> Result<Position
                 count += 1;
             }
             Some(TapeItem::Open | TapeItem::Other) => {
-                return Err(GeometryError::NonNumericOrdinate {
+                return Err(GeometryError::Position {
                     at: CoordinatePath::new(enclosing.to_vec()),
+                    source: PositionError::NonNumericOrdinate { index: count },
                 });
             }
         }
