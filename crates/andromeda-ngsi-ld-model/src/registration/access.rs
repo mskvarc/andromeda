@@ -5,8 +5,7 @@ use crate::{
     registration::{forwarding_mode::ForwardingMode, operation::CsrOperation},
     registration_management::RegistrationManagementInfo,
 };
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, dereferenceable_uri::DereferenceableUri};
-use iso8601_duration::Duration as Iso8601Duration;
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, dereferenceable_uri::DereferenceableUri, duration::Iso8601Duration};
 use mediatype::MediaTypeBuf;
 use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;

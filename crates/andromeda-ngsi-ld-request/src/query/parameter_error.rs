@@ -1,5 +1,6 @@
 //! The refusals a structured query-string parameter reports while it is read.
 
+use andromeda_ngsi_ld_lexicon::duration::Iso8601DurationError;
 use std::num::ParseIntError;
 use thiserror::Error;
 
@@ -25,16 +26,14 @@ pub enum QueryParameterError {
     #[error("joinLevel is not a positive integer: {0}")]
     JoinLevelOverflow(#[source] ParseIntError),
     /// A duration parameter was not an ISO 8601 duration.
-    #[error("not an ISO 8601 duration at position {position}")]
-    DurationInvalid {
-        /// Zero-based byte offset at which the duration grammar failed.
-        position: usize,
-    },
+    #[error(transparent)]
+    DurationInvalid(Iso8601DurationError),
 }
 
 #[cfg(test)]
 mod tests {
     use crate::query::parameter_error::QueryParameterError;
+    use andromeda_ngsi_ld_lexicon::duration::Iso8601DurationError;
 
     #[test]
     fn an_out_of_range_join_level_names_the_integer_it_carried() {
@@ -47,7 +46,7 @@ mod tests {
     #[test]
     fn a_malformed_duration_names_where_the_grammar_failed() {
         pretty_assertions::assert_eq!(
-            QueryParameterError::DurationInvalid { position: 2 }.to_string(),
+            QueryParameterError::DurationInvalid(Iso8601DurationError::Malformed { position: 2 }).to_string(),
             "not an ISO 8601 duration at position 2"
         );
     }

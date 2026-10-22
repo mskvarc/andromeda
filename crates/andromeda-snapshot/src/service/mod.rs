@@ -17,7 +17,7 @@ use crate::{
     executor::{SnapshotPreparation, SnapshotPreparationOutcome},
     prepare::to_insert_params,
     query_validation::validate_snapshot_query_shapes,
-    service::lifetime::{effective_snapshot_lifetime, iso8601_lifetime},
+    service::lifetime::effective_snapshot_lifetime,
     snapshot_invariant::SnapshotInvariant,
     snapshot_validation_reason::SnapshotValidationReason,
     status_delivery_signal::StatusDeliverySignal,
@@ -25,7 +25,7 @@ use crate::{
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{context_spec::ContextSpec, user_context_admission::AdmittedContext};
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::SnapshotId, time::system_instant::SystemInstant};
+use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, identifier::Identifier, ngsi_ld_urn::SnapshotId, time::system_instant::SystemInstant};
 use andromeda_ngsi_ld_model::{
     snapshot::{Snapshot, SnapshotStatus},
     snapshot_clone::SnapshotCloneInput,
@@ -150,7 +150,7 @@ impl SnapshotService {
         let now = system_now();
         let requested_lifetime = match input.snapshot_lifetime {
             Some(lifetime) => lifetime,
-            None => iso8601_lifetime(self.config.default_lifetime)?,
+            None => Iso8601Duration::from_std(self.config.default_lifetime),
         };
         let (snapshot_lifetime, expires_at) = effective_snapshot_lifetime(now, &requested_lifetime, self.config.maximum_lifetime)?;
 
@@ -302,7 +302,7 @@ impl SnapshotService {
 
         let requested_lifetime = match input.snapshot_lifetime.or(source.snapshot_lifetime) {
             Some(lifetime) => lifetime,
-            None => iso8601_lifetime(self.config.default_lifetime)?,
+            None => Iso8601Duration::from_std(self.config.default_lifetime),
         };
         let now = system_now();
         let (lifetime, expires_at) = effective_snapshot_lifetime(now, &requested_lifetime, self.config.maximum_lifetime)?;

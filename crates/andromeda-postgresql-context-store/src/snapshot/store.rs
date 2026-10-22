@@ -26,7 +26,7 @@ use crate::snapshot::{
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::snapshot_target::SnapshotTarget;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
@@ -39,7 +39,6 @@ use andromeda_snapshot::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use iso8601_duration::Duration as Iso8601Duration;
 
 #[async_trait]
 impl SnapshotStore for SnapshotRepository {

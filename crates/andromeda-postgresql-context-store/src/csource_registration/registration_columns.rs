@@ -21,6 +21,7 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     context_source_pseudonym::ContextSourcePseudonym,
     dereferenceable_uri::DereferenceableUri,
+    duration::Iso8601Duration,
     non_empty_text::NonEmptyText,
     scope::path::ScopePath,
     tenant::TenantName,
@@ -38,7 +39,6 @@ use andromeda_postgresql_seaquery::{cast::cast, external_arguments::ExternalArgu
 use andromeda_registration::{error::RegistrationError, resolved_update::ResolvedCsrUpdate, store::create_params::CreateCsrParams};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
-use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;
 use sea_query::{Expr, SimpleExpr};
 use sqlx::types::Json;

@@ -9,6 +9,7 @@ use crate::csource_registration::stored_information_error::StoredInformationErro
 use andromeda_ngsi_ld_lexicon::{
     context_source_pseudonym::ContextSourcePseudonymError,
     dereferenceable_uri::NotDereferenceable,
+    duration::Iso8601DurationError,
     identifier::IdentifierParseError,
     non_empty_text::NonEmptyTextError,
     positive_milliseconds::PositiveMillisecondsError,
@@ -76,21 +77,15 @@ pub enum StoredRegistrationError {
     #[error("a stored registration operation is not a known code: {0}")]
     Operation(#[source] UnknownCompactCode),
     /// The `refresh_rate` column is not an ISO 8601 duration.
-    #[error("a stored registration refreshRate is not an ISO 8601 duration past position {position}")]
-    RefreshRate {
-        /// Offset of the first character the duration grammar rejected.
-        position: usize,
-    },
+    #[error("a stored registration refreshRate does not parse: {0}")]
+    RefreshRate(#[source] Iso8601DurationError),
     /// A `management_*` column holds a member of a registration that declares
     /// no `management`.
     #[error("a stored registration holds management members without declaring management")]
     UndeclaredManagement,
     /// The `management_cache_duration` column is not an ISO 8601 duration.
-    #[error("a stored registration management cacheDuration is not an ISO 8601 duration past position {position}")]
-    ManagementCacheDuration {
-        /// Offset of the first character the duration grammar rejected.
-        position: usize,
-    },
+    #[error("a stored registration management cacheDuration does not parse: {0}")]
+    ManagementCacheDuration(#[source] Iso8601DurationError),
     /// The `management_cooldown` column is not a positive millisecond count.
     #[error("a stored registration management cooldown is not a positive millisecond count: {0}")]
     ManagementCooldown(#[source] PositiveMillisecondsError),

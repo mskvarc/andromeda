@@ -4,7 +4,7 @@ use crate::{
     attribute_name_csv,
     query::{aggregation_parameters::AggregationParameters, entity_selector::QueryEntitySelector, non_empty_member, temporal_query::TemporalQuery},
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, duration::Iso8601Duration, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     filter::expression::Expr,
@@ -14,7 +14,6 @@ use andromeda_ngsi_ld_query::{
     scope::query::ScopeQuery,
 };
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
-use iso8601_duration::Duration as Iso8601Duration;
 use langtag::LangTagBuf;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;

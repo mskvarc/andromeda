@@ -9,9 +9,8 @@
 //! year and month parts, adds the day-and-below part as a fixed offset, and
 //! reports an unrepresentable result as [`None`] rather than panicking.
 
-use andromeda_ngsi_ld_lexicon::time::resolution::to_microsecond;
+use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, time::resolution::to_microsecond};
 use chrono::{DateTime, Datelike, Months, TimeDelta, Utc};
-use iso8601_duration::Duration as Iso8601Duration;
 use std::time::Duration as StdDuration;
 
 /// Largest whole-month advance considered. `DateTime<Utc>` spans roughly
@@ -33,7 +32,7 @@ const MAX_WHOLE_MONTHS: u32 = 4_000_000;
 /// how to treat an unusable lifetime instead of inheriting a panic.
 #[must_use]
 pub fn expiry(start: DateTime<Utc>, lifetime: &Iso8601Duration) -> Option<DateTime<Utc>> {
-    let total_months = f64::from(lifetime.year) * 12.0 + f64::from(lifetime.month);
+    let total_months = f64::from(lifetime.years()) * 12.0 + f64::from(lifetime.months());
     if !total_months.is_finite() || total_months < 0.0 {
         return None;
     }
@@ -54,7 +53,7 @@ pub fn expiry(start: DateTime<Utc>, lifetime: &Iso8601Duration) -> Option<DateTi
     }
 
     let mut offset_seconds =
-        f64::from(lifetime.day) * 86_400.0 + f64::from(lifetime.hour) * 3_600.0 + f64::from(lifetime.minute) * 60.0 + f64::from(lifetime.second);
+        f64::from(lifetime.days()) * 86_400.0 + f64::from(lifetime.hours()) * 3_600.0 + f64::from(lifetime.minutes()) * 60.0 + f64::from(lifetime.seconds());
     if fractional_months > 0.0 {
         offset_seconds += fractional_months * f64::from(days_in_month(advanced)?) * 86_400.0;
     }
@@ -73,9 +72,8 @@ fn days_in_month(instant: DateTime<Utc>) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use crate::lifetime_expiry::expiry;
-    use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
+    use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, time::rendering::instant_text};
     use chrono::{DateTime, TimeDelta, TimeZone, Utc};
-    use iso8601_duration::Duration as Iso8601Duration;
 
     fn at(year: i32, month: u32, day: u32, hour: u32, minute: u32, second: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(year, month, day, hour, minute, second)
@@ -148,7 +146,7 @@ mod tests {
     #[test]
     fn out_of_range_lifetime_returns_none_instead_of_panicking() {
         let start = at(2020, 1, 1, 0, 0, 0);
-        let lifetime = Iso8601Duration::new(1_000_000_000.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+        let lifetime: Iso8601Duration = "P1000000000Y".parse().expect("valid duration");
         pretty_assertions::assert_eq!(expiry(start, &lifetime), None);
     }
 }

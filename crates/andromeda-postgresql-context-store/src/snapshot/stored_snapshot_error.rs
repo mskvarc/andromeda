@@ -7,7 +7,7 @@
 //! column and carries the parser's own rejection.
 
 use andromeda_context_space::snapshot_key::SnapshotKeyError;
-use andromeda_ngsi_ld_lexicon::identifier::IdentifierParseError;
+use andromeda_ngsi_ld_lexicon::{duration::Iso8601DurationError, identifier::IdentifierParseError};
 use andromeda_ngsi_ld_model::snapshot::SnapshotPriorityParseError;
 use andromeda_postgresql_codes::registry::UnknownCompactCode;
 use std::num::TryFromIntError;
@@ -26,11 +26,8 @@ pub enum StoredSnapshotError {
     #[error("a stored snapshot status is not a known code: {0}")]
     Status(#[source] UnknownCompactCode),
     /// The `snapshot_lifetime` column is not an ISO 8601 duration.
-    #[error("a stored snapshotLifetime is not an ISO 8601 duration past position {position}")]
-    Lifetime {
-        /// Offset of the first character the duration grammar rejected.
-        position: usize,
-    },
+    #[error("a stored snapshotLifetime does not parse: {0}")]
+    Lifetime(#[source] Iso8601DurationError),
     /// The `snapshot_priority` column is outside the range a priority allows.
     #[error("a stored snapshotPriority is not a valid priority: {0}")]
     Priority(#[source] SnapshotPriorityParseError),

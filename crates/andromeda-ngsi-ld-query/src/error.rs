@@ -34,6 +34,7 @@ use crate::{
 use andromeda_ngsi_ld_geometry::{geo_rel::GeoRelParseError, geojson::GeometryError, geometry_census::GeometryOverLimit};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
+    duration::Iso8601DurationError,
     identifier::IdentifierParseError,
     reference::NgsiLdReferenceError,
     time::{date::NgsiLdDateError, date_time::NgsiLdDateTimeError, time_of_day::NgsiLdTimeError},
@@ -280,11 +281,8 @@ pub enum QueryError {
     #[error("timerel and timeAt must both be present or both absent")]
     ParamTimerelTimeatPair,
     /// The `aggrPeriodDuration` value was not an ISO 8601 duration.
-    #[error("invalid aggrPeriodDuration value: not an ISO 8601 duration at position {position}")]
-    ParamAggrPeriodDurationInvalid {
-        /// Zero-based byte offset at which the duration grammar failed.
-        position: usize,
-    },
+    #[error("invalid aggrPeriodDuration value: {0}")]
+    ParamAggrPeriodDurationInvalid(#[source] Iso8601DurationError),
     /// A `datasetId` entry was neither `@none` nor a URI short enough to be
     /// an identifier.
     #[error("invalid datasetId value: {0}")]

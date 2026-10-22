@@ -51,7 +51,7 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         | QueryError::TemporalOrderingMember(_)
         | QueryError::TemporalOrderingDirection(_)
         | QueryError::ParamTimerelTimeatPair
-        | QueryError::ParamAggrPeriodDurationInvalid { .. }
+        | QueryError::ParamAggrPeriodDurationInvalid(_)
         | QueryError::ParamDatasetIdInvalid { .. }
         | QueryError::ParamEndTimeAtRequired
         | QueryError::ParamEndTimeAtWithoutBetween

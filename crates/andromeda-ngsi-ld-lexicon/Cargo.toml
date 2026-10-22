@@ -17,8 +17,10 @@ chrono = "0.4.45"
 compact_str = { version = "0.10.0", features = ["serde"] }
 derive_more = { version = "2.1.1", features = ["as_ref", "deref", "display", "from", "from_str", "into"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
+iso8601-duration = "0.2.0"
 rdfx = "0.24.0"
 serde = { version = "1.0.229", features = ["derive"] }
+serde_with = "3.24.0"
 static-regular-grammar = "2.0.2"
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"

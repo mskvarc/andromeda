@@ -30,7 +30,6 @@ andromeda-tenancy.workspace = true
 axum = "0.8.9"
 chrono = "0.4.45"
 futures = "0.3.34"
-iso8601-duration = { version = "0.2.0", features = ["chrono", "serde"] }
 thiserror = "2.0.21"
 typed-builder = "0.23.2"
 url = { version = "2.5.8", features = ["serde"] }

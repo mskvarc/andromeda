@@ -2,7 +2,7 @@
 //! (clause 4.5.19).
 
 use crate::{error::QueryError, temporal::period_grid::PeriodGrid};
-use iso8601_duration::Duration;
+use andromeda_ngsi_ld_lexicon::duration::Iso8601Duration;
 
 /// A non-zero aggregation bucket width.
 ///
@@ -12,7 +12,7 @@ use iso8601_duration::Duration;
 /// ever hold a width that actually buckets. A SQL builder needs no
 /// `"" | "PT0S" | "P0D"` test: a zero period cannot reach it.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AggregationPeriod(Duration);
+pub struct AggregationPeriod(Iso8601Duration);
 
 impl AggregationPeriod {
     /// Parse an `aggrPeriodDuration` value.
@@ -30,8 +30,8 @@ impl AggregationPeriod {
         if trimmed.is_empty() {
             return Ok(None);
         }
-        let duration = Duration::parse(trimmed).map_err(|error| QueryError::ParamAggrPeriodDurationInvalid { position: error.position })?;
-        if is_zero(&duration) {
+        let duration = trimmed.parse::<Iso8601Duration>().map_err(QueryError::ParamAggrPeriodDurationInvalid)?;
+        if duration.is_zero() {
             return Ok(None);
         }
         Ok(Some(AggregationPeriod(duration)))
@@ -39,9 +39,7 @@ impl AggregationPeriod {
 
     /// The ISO 8601 rendering of the bucket width.
     ///
-    /// This is the clause 4.5.19 form the client wrote. The rendering is only
-    /// well formed because a zero duration cannot be constructed — the upstream
-    /// `Display` writes a bare `P` for one, which is not a valid duration.
+    /// This is the clause 4.5.19 form the client wrote.
     #[must_use]
     pub fn as_iso8601(&self) -> String {
         self.0.to_string()
@@ -52,7 +50,7 @@ impl AggregationPeriod {
     /// fractional ones included.
     #[must_use]
     pub const fn grid(&self) -> PeriodGrid {
-        if self.0.year == 0.0 && self.0.month == 0.0 {
+        if self.0.years() == 0.0 && self.0.months() == 0.0 {
             PeriodGrid::Exact
         } else {
             PeriodGrid::Calendar
@@ -105,17 +103,6 @@ pub mod optional {
     }
 }
 
-/// Whether every component of a duration is zero.
-///
-/// The upstream type has no such predicate, and comparing against a
-/// `Duration::new(0.0, …)` would compare `f32`s just as directly with more
-/// ceremony.
-fn is_zero(duration: &Duration) -> bool {
-    [duration.year, duration.month, duration.day, duration.hour, duration.minute, duration.second]
-        .iter()
-        .all(|component| *component == 0.0)
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -142,7 +129,7 @@ mod tests {
     #[test]
     fn a_value_that_is_not_an_iso_8601_duration_is_rejected() {
         let error = AggregationPeriod::parse("one hour").expect_err("must reject");
-        assert!(matches!(error, QueryError::ParamAggrPeriodDurationInvalid { .. }), "got {error:?}");
+        assert!(matches!(error, QueryError::ParamAggrPeriodDurationInvalid(_)), "got {error:?}");
     }
 
     #[test]

@@ -27,6 +27,7 @@ pub mod constant_string;
 pub mod context_source_pseudonym;
 pub mod datatype;
 pub mod dereferenceable_uri;
+pub mod duration;
 pub mod entity_type_name;
 pub mod identifier;
 pub mod identifier_length;

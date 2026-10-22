@@ -10,7 +10,7 @@ use crate::{branch_condition::BranchCondition, error::SnapshotError};
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::snapshot_target::SnapshotTarget;
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     query::body::Query,
@@ -19,7 +19,6 @@ use andromeda_ngsi_ld_model::{
 };
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
-use iso8601_duration::Duration as Iso8601Duration;
 use url::Url;
 
 /// The typed columns of a snapshot record.

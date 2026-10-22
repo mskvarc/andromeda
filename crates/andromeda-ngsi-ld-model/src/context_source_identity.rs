@@ -1,11 +1,15 @@
 //! The identity a Context Source answers `/info/sourceIdentity` with (clauses 5.2.40 and 6.33.3.1).
 
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_lexicon::{constant_string, context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, time::instant_serde};
+use andromeda_ngsi_ld_lexicon::{
+    constant_string,
+    context_source_pseudonym::ContextSourcePseudonym,
+    duration::Iso8601Duration,
+    identifier::Identifier,
+    time::instant_serde,
+};
 use chrono::{DateTime, Utc};
-use iso8601_duration::Duration as Iso8601Duration;
 use serde::Serialize;
-use std::time::Duration;
 
 constant_string!(ContextSourceIdentityType, "ContextSourceIdentity");
 
@@ -38,52 +42,11 @@ pub struct ContextSourceIdentity {
     pub context_source_extras: Option<JsonLiteral>,
 }
 
-/// Seconds in one day, for decomposing an uptime.
-const SECONDS_PER_DAY: u64 = 86_400;
-/// Seconds in one hour, for decomposing an uptime.
-const SECONDS_PER_HOUR: u64 = 3_600;
-/// Seconds in one minute, for decomposing an uptime.
-const SECONDS_PER_MINUTE: u64 = 60;
-
-/// Render one whole-number component of an uptime as the `f32` the ISO 8601
-/// duration type carries.
-///
-/// `f32` represents every `u16` exactly, and the hour, minute and second
-/// components are bounded by their own moduli. The day count is the only
-/// unbounded one and saturates at 65 535 — over 179 years of continuous
-/// uptime — rather than being rendered with a silent loss of precision.
-fn uptime_component(value: u64) -> f32 {
-    f32::from(u16::try_from(value).unwrap_or(u16::MAX))
-}
-
-/// Render an elapsed duration as the ISO 8601 duration `contextSourceUptime` carries.
-///
-/// Decomposed into days, hours, minutes and seconds so each component stays a
-/// small whole number; only the seconds carry a millisecond fraction, so the
-/// rendering is exact for any realistic uptime.
-#[must_use]
-pub fn uptime_duration(elapsed: Duration) -> Iso8601Duration {
-    let whole_seconds = elapsed.as_secs();
-    let days = whole_seconds / SECONDS_PER_DAY;
-    let hours = (whole_seconds % SECONDS_PER_DAY) / SECONDS_PER_HOUR;
-    let minutes = (whole_seconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE;
-    let seconds = whole_seconds % SECONDS_PER_MINUTE;
-    let millis = u64::from(elapsed.subsec_millis());
-    let seconds_with_fraction = uptime_component(seconds) + uptime_component(millis) / 1_000.0;
-    Iso8601Duration::new(
-        0.0,
-        0.0,
-        uptime_component(days),
-        uptime_component(hours),
-        uptime_component(minutes),
-        seconds_with_fraction,
-    )
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::context_source_identity::{ContextSourceIdentity, ContextSourceIdentityType, uptime_duration};
+    use crate::context_source_identity::{ContextSourceIdentity, ContextSourceIdentityType};
     use andromeda_json_literal::JsonLiteral;
+    use andromeda_ngsi_ld_lexicon::duration::Iso8601Duration;
     use chrono::{TimeZone, Utc};
     use serde_json::json;
     use std::time::Duration;
@@ -94,7 +57,7 @@ mod tests {
             id: "urn:ngsi-ld:ContextSourceIdentity:andromeda".parse().expect("valid context source id"),
             type_: ContextSourceIdentityType,
             context_source_alias: "andromeda".parse().expect("valid context source alias"),
-            context_source_uptime: uptime_duration(Duration::from_secs(90_061)),
+            context_source_uptime: Iso8601Duration::from_std(Duration::from_secs(90_061)),
             context_source_time_at: Utc.with_ymd_and_hms(2026, 8, 21, 12, 0, 0).single().expect("valid instant"),
             context_source_extras: extras,
         }
@@ -117,12 +80,5 @@ mod tests {
         let extras = json!({"region": "eu-west", "nested": {"raw": [1, 2, 3]}});
         let rendered = serde_json::to_value(identity(Some(extras.clone()))).expect("serialises"); // clone: compared below
         pretty_assertions::assert_eq!(rendered["contextSourceExtras"], extras);
-    }
-
-    #[test]
-    fn an_uptime_decomposes_into_iso_8601_components() {
-        pretty_assertions::assert_eq!(uptime_duration(Duration::from_millis(1_500)).to_string(), "PT1.5S");
-        pretty_assertions::assert_eq!(uptime_duration(Duration::from_secs(3_600)).to_string(), "PT1H");
-        pretty_assertions::assert_eq!(uptime_duration(Duration::from_secs(2 * 86_400 + 30)).to_string(), "P2DT30S");
     }
 }

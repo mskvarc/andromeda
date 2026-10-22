@@ -20,7 +20,7 @@ use crate::{
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::{snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
@@ -32,7 +32,6 @@ use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
 use andromeda_postgresql_seaquery::{clock::now, statement::Statement};
 use andromeda_snapshot::error::SnapshotError;
 use chrono::{DateTime, Utc};
-use iso8601_duration::Duration as Iso8601Duration;
 use sea_query::{Expr, ExprTrait, Func, JoinType, Keyword, LockBehavior, LockType, Order, Query, SelectStatement, SimpleExpr, UpdateStatement};
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use url::Url;

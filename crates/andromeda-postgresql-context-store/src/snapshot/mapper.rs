@@ -6,7 +6,7 @@ use crate::{
     snapshot::{status_code::status_of, stored_snapshot_error::StoredSnapshotError},
 };
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     query::body::Query,
@@ -14,7 +14,6 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_postgresql_codes::snapshot_status::SnapshotStatusCode;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
-use iso8601_duration::Duration as Iso8601Duration;
 use sea_query::Iden;
 use serde::de::DeserializeOwned;
 use sqlx::{Row, postgres::PgRow};
@@ -74,7 +73,7 @@ pub fn row_to_snapshot(row: &PgRow) -> Result<Snapshot, ContextStoreError> {
         .as_deref()
         .map(str::parse::<Iso8601Duration>)
         .transpose()
-        .map_err(|error| StoredSnapshotError::Lifetime { position: error.position })?;
+        .map_err(StoredSnapshotError::Lifetime)?;
     // The `snapshot_priority` column is `SMALLINT`; narrow it back to the byte
     // the domain type validates before the domain range check runs.
     let snapshot_priority_raw: i16 = row.try_get("snapshot_priority")?;

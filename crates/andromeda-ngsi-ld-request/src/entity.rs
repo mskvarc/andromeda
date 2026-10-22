@@ -18,7 +18,7 @@ use crate::{
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_linked_retrieval::admission::{LinkedOperation, LinkedRequest, admit_request};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::date_time::NgsiLdDateTime};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, duration::Iso8601Duration, identifier::Identifier, time::date_time::NgsiLdDateTime};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     projection::{
@@ -33,7 +33,6 @@ use andromeda_ngsi_ld_representation::{
     response_format::ResponseFormat,
     sys_attrs::SysAttrsInclusion,
 };
-use iso8601_duration::Duration as Iso8601Duration;
 use langtag::LangTagBuf;
 use serde::Deserialize;
 use std::num::NonZeroU32;

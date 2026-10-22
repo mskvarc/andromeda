@@ -2,7 +2,7 @@
 
 use crate::query::parameter_error::QueryParameterError;
 use andromeda_ngsi_ld_geometry::query_coordinates::QueryCoordinates;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReference};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, duration::Iso8601Duration, identifier::Identifier, reference::NgsiLdReference};
 use andromeda_ngsi_ld_query::{
     comma_separated_list::{ListedItem, parse_listed},
     dataset::DatasetSelector,
@@ -11,7 +11,6 @@ use andromeda_ngsi_ld_query::{
     pattern::Pattern,
     projection::grammar::{ProjectionList, RawProjectionTerm},
 };
-use iso8601_duration::{Duration as Iso8601Duration, ParseDurationError};
 use serde::{Deserialize, Deserializer, de::Error as DeserializeError};
 use std::num::{IntErrorKind, NonZeroU32};
 
@@ -275,7 +274,7 @@ where
     raw.map(|value| {
         value
             .parse()
-            .map_err(|error: ParseDurationError| DeserializeError::custom(QueryParameterError::DurationInvalid { position: error.position }))
+            .map_err(|error| DeserializeError::custom(QueryParameterError::DurationInvalid(error)))
     })
     .transpose()
 }

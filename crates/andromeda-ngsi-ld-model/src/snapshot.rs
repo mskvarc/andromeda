@@ -1,13 +1,12 @@
 //! The Snapshot resource and its notification payload (ETSI GS CIM 009 clauses 5.2.41 and 5.3.4).
 
 use crate::{key_value_pair::KeyValuePair, query::body::Query};
-use andromeda_ngsi_ld_lexicon::{constant_string, identifier::Identifier, ngsi_ld_urn::SnapshotNotificationId, time::instant_serde};
+use andromeda_ngsi_ld_lexicon::{constant_string, duration::Iso8601Duration, identifier::Identifier, ngsi_ld_urn::SnapshotNotificationId, time::instant_serde};
 use andromeda_ngsi_ld_problem_details::problem_detail::ProblemDetail;
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use chrono::{DateTime, Utc};
 use derive_more::{Display, Into};
 use iri_rs::Iri;
-use iso8601_duration::Duration as Iso8601Duration;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use strum::{Display as StrumDisplay, EnumIter, EnumString, IntoStaticStr};
@@ -253,6 +252,7 @@ mod tests {
     use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
     use andromeda_ngsi_ld_lexicon::{
         aggr_method::AggrMethod,
+        duration::Iso8601Duration,
         identifier::Identifier,
         ngsi_ld_urn::SnapshotNotificationId,
         time::date_time::NgsiLdDateTime,
@@ -261,7 +261,6 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::geo::reference_geometry::ReferenceGeometry;
     use chrono::{DateTime, TimeDelta, TimeZone, Utc};
-    use iso8601_duration::Duration as Iso8601Duration;
     use std::num::NonZeroU32;
 
     #[test]

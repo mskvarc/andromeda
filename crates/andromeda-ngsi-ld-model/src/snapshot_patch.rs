@@ -4,8 +4,7 @@ use crate::{
     key_value_pair::KeyValuePair,
     snapshot::{SnapshotPriority, SnapshotType},
 };
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use iso8601_duration::Duration as Iso8601Duration;
+use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, identifier::Identifier};
 use serde::{Deserialize, Deserializer, de::IgnoredAny};
 use url::Url;
 

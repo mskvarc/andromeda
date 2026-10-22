@@ -7,15 +7,14 @@ use crate::{
     reuse::{EntityMapFlag, EntityMapUse},
     store::{EntityMapMutation, EntityMapStore},
 };
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::EntityMapId};
+use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, identifier::Identifier, ngsi_ld_urn::EntityMapId};
 use andromeda_ngsi_ld_model::{
     entity_map::EntityMap,
     entity_map_fingerprint::{RequestComparison, RequestFingerprint},
     lifetime_expiry::expiry,
 };
 use chrono::{DateTime, Utc};
-use iso8601_duration::Duration as Iso8601Duration;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 /// Manages NGSI-LD Entity Maps independently of their storage backend.
 pub struct EntityMapService {
@@ -233,9 +232,9 @@ impl EntityMapService {
     }
 }
 
-/// Build the default one-hour Entity Map lifetime without parsing text at runtime.
+/// The one-hour Entity Map lifetime a request suggesting none is given.
 fn default_lifetime() -> Iso8601Duration {
-    Iso8601Duration::new(0.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+    Iso8601Duration::from_std(Duration::from_secs(3_600))
 }
 
 /// Mint a new Entity Map identifier in the NGSI-LD URN namespace.

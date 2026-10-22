@@ -22,9 +22,6 @@ pub enum SnapshotInvariant {
     /// The configured maximum lifetime cannot be expressed as a calendar duration.
     #[error("the configured maximum Snapshot lifetime is out of range: {0}")]
     MaximumLifetime(#[source] OutOfRangeError),
-    /// The configured default lifetime does not read as an ISO 8601 duration.
-    #[error("the configured default Snapshot lifetime is not an ISO 8601 duration")]
-    DefaultLifetime,
     /// A Snapshot that is being prepared owns no durable staging branch.
     #[error("Snapshot {snapshot} has no durable staging context target")]
     NoStagingTarget {

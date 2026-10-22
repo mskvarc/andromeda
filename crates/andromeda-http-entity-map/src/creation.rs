@@ -18,7 +18,7 @@ use andromeda_http_response::{
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::user_context_admission::AdmittedContext;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, identifier::Identifier};
 use andromeda_ngsi_ld_model::{entity_map::EntityMap, entity_map_fingerprint::RequestFingerprint};
 use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
 use andromeda_ngsi_ld_render::entity_map_body::EntityMapBody;
@@ -26,7 +26,6 @@ use axum::{
     http::{StatusCode, Uri as HttpUri},
     response::{IntoResponse, Response},
 };
-use iso8601_duration::Duration as Iso8601Duration;
 use std::sync::Arc;
 use typed_builder::TypedBuilder;
 

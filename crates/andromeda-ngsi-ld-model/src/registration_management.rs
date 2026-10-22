@@ -1,7 +1,6 @@
 //! Registration management information (ETSI GS CIM 009 clause 5.2.34).
 
-use andromeda_ngsi_ld_lexicon::positive_milliseconds::PositiveMilliseconds;
-use iso8601_duration::Duration as Iso8601Duration;
+use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, positive_milliseconds::PositiveMilliseconds};
 use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
 
@@ -94,6 +93,14 @@ mod tests {
                 "{wire} must be rejected"
             ); // clone: reported on failure
         }
+    }
+
+    /// Table 5.2.34-1 bounds `cacheDuration` by nothing but the ISO 8601
+    /// grammar, so a zero duration is accepted and written back as it came.
+    #[test]
+    fn a_zero_cache_duration_round_trips() {
+        let management: RegistrationManagementInfo = serde_json::from_value(json!({"cacheDuration": "PT0S"})).expect("a zero duration is valid");
+        pretty_assertions::assert_eq!(serde_json::to_value(&management).expect("serialises"), json!({"cacheDuration": "PT0S"}));
     }
 
     #[test]

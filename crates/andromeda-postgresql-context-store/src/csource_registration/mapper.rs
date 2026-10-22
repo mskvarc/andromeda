@@ -14,6 +14,7 @@ use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
     context_source_pseudonym::ContextSourcePseudonym,
     dereferenceable_uri::DereferenceableUri,
+    duration::{Iso8601Duration, Iso8601DurationError},
     identifier::Identifier,
     non_empty_text::NonEmptyText,
     positive_milliseconds::PositiveMilliseconds,
@@ -38,7 +39,6 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_postgresql_codes::{csr_mode::CsrModeCode, csr_operation::CsrOperationCode, csr_status::CsrStatusCode};
 use chrono::{DateTime, Utc};
-use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;
 use serde::de::DeserializeOwned;
 use sqlx::{Row, postgres::PgRow};
@@ -159,11 +159,7 @@ fn row_to_access(row: &PgRow) -> Result<ContextSourceAccess, ContextStoreError> 
                 .collect::<Result<Vec<_>, _>>()
         })
         .transpose()?;
-    let refresh_rate: Option<Iso8601Duration> = row
-        .try_get::<Option<String>, _>("refresh_rate")?
-        .map(|raw| raw.parse::<Iso8601Duration>())
-        .transpose()
-        .map_err(|error| StoredRegistrationError::RefreshRate { position: error.position })?;
+    let refresh_rate = duration_of(row.try_get("refresh_rate")?, StoredRegistrationError::RefreshRate)?;
     let management = management_of(StoredManagement {
         declared: row.try_get("is_management_declared")?,
         cache_duration: row.try_get("management_cache_duration")?,
@@ -197,6 +193,15 @@ fn interval_of(start_at: Option<DateTime<Utc>>, end_at: Option<DateTime<Utc>>) -
     }
 }
 
+/// The ISO 8601 duration a nullable text column holds, with `unreadable`
+/// naming the column when its text does not parse.
+fn duration_of(
+    stored: Option<String>,
+    unreadable: fn(Iso8601DurationError) -> StoredRegistrationError,
+) -> Result<Option<Iso8601Duration>, StoredRegistrationError> {
+    stored.map(|text| text.parse::<Iso8601Duration>()).transpose().map_err(unreadable)
+}
+
 /// The `management` columns of one registration row.
 #[derive(Debug)]
 struct StoredManagement {
@@ -223,11 +228,7 @@ fn management_of(stored: StoredManagement) -> Result<Option<RegistrationManageme
             Ok(None)
         };
     }
-    let cache_duration = stored
-        .cache_duration
-        .map(|raw| raw.parse::<Iso8601Duration>())
-        .transpose()
-        .map_err(|error| StoredRegistrationError::ManagementCacheDuration { position: error.position })?;
+    let cache_duration = duration_of(stored.cache_duration, StoredRegistrationError::ManagementCacheDuration)?;
     let cooldown = stored
         .cooldown
         .map(PositiveMilliseconds::try_from)
@@ -346,17 +347,26 @@ fn row_to_lifecycle(row: &PgRow) -> Result<RegistrationLifecycle, ContextStoreEr
 #[cfg(test)]
 mod tests {
     use crate::csource_registration::{
-        mapper::{StoredManagement, context_source_info_of, interval_of, management_of},
+        mapper::{StoredManagement, context_source_info_of, duration_of, interval_of, management_of},
+        registration_columns::{RegistrationFields, registration_columns},
         stored_registration_error::{StoredIntervalError, StoredRegistrationError},
     };
-    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
+    use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, time::date_time::NgsiLdDateTime};
     use andromeda_ngsi_ld_model::{
         key_value_pair::KeyValuePair,
         registration_management::{LocalScope, RegistrationManagementInfo},
         time_interval::TimeInterval,
     };
+    use andromeda_postgresql_schema::csr::Csr;
+    use andromeda_postgresql_seaquery::external_arguments::ExternalArguments;
+    use andromeda_registration::{
+        nullable_member::NullableMember,
+        resolved_update::apply_fragment,
+        store::{create_params::CreateCsrParams, update_fragment::CsrUpdateFragment},
+    };
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
+    use sea_query::{SimpleExpr, Value};
     use serde_json::json;
 
     fn instant(raw: &str) -> DateTime<Utc> {
@@ -418,11 +428,93 @@ mod tests {
         assert_eq!(management_of(undeclared).expect("no management reads back"), None);
     }
 
+    fn zero() -> Iso8601Duration {
+        "PT0S".parse().expect("a zero duration")
+    }
+
+    fn zero_cache_duration() -> RegistrationManagementInfo {
+        serde_json::from_value(json!({"cacheDuration": "PT0S"})).expect("valid management")
+    }
+
+    /// `fields` binds `PT0S` to the `refresh_rate` and
+    /// `management_cache_duration` columns, and each reads back as the zero
+    /// duration it was written from.
+    fn assert_zero_durations_round_trip(fields: &RegistrationFields<'_>) {
+        let mut external = ExternalArguments::default();
+        let columns = registration_columns(fields, None, &mut external).expect("the columns build");
+        let bound = |wanted: fn(&Csr) -> bool| {
+            columns.iter().find(|(column, _)| wanted(column)).and_then(|(_, value)| {
+                if let SimpleExpr::Value(Value::String(text)) = value {
+                    text.clone() // clone: the columns are borrowed and the test owns what it reads back
+                } else {
+                    None
+                }
+            })
+        };
+        let refresh_rate = bound(|column| matches!(column, Csr::RefreshRate));
+        let cache_duration = bound(|column| matches!(column, Csr::ManagementCacheDuration));
+        assert_eq!(refresh_rate.as_deref(), Some("PT0S"));
+        assert_eq!(cache_duration.as_deref(), Some("PT0S"));
+        let read_cache_duration = management_of(management(cache_duration.as_deref(), None, None, None))
+            .expect("the management reads back")
+            .and_then(|management| management.cache_duration);
+        assert_eq!(read_cache_duration, Some(zero()));
+        assert_eq!(
+            duration_of(refresh_rate, StoredRegistrationError::RefreshRate).expect("the refreshRate reads back"),
+            Some(zero())
+        );
+    }
+
+    /// Tables 5.2.9-1 and 5.2.34-1 bound neither duration below, so a zero one
+    /// is stored as text the store reads back.
+    #[test]
+    fn a_registration_created_with_zero_durations_stores_and_reads_back_pt0s() {
+        let params = CreateCsrParams::builder()
+            .information(Vec::new())
+            .endpoint("https://example.org/csource".parse().expect("a dereferenceable URI"))
+            .operations(Vec::new())
+            .refresh_rate(Some(zero()))
+            .management(Some(zero_cache_duration()))
+            .build();
+        assert_zero_durations_round_trip(&RegistrationFields::from(&params));
+    }
+
+    #[test]
+    fn a_registration_updated_to_zero_durations_stores_and_reads_back_pt0s() {
+        let existing = serde_json::from_value(json!({
+            "id": "urn:ngsi-ld:ContextSourceRegistration:zero-durations",
+            "type": "ContextSourceRegistration",
+            "information": [{"propertyNames": ["speed"]}],
+            "endpoint": "https://example.org/csource",
+            "refreshRate": "PT1H",
+            "management": {"cacheDuration": "PT10S"},
+            "createdAt": "2026-01-01T00:00:00Z",
+            "modifiedAt": "2026-01-01T00:00:00Z"
+        }))
+        .expect("a stored registration");
+        let fragment = CsrUpdateFragment {
+            refresh_rate: NullableMember::Set(zero()),
+            management: NullableMember::Set(zero_cache_duration()),
+            ..CsrUpdateFragment::default()
+        };
+        let resolved = apply_fragment(existing, &fragment);
+        assert_zero_durations_round_trip(&RegistrationFields::from(&resolved));
+    }
+
+    /// A bare `P` has no component, so it is no ISO 8601 duration.
+    #[test]
+    fn a_stored_bare_designator_is_refused() {
+        assert!(matches!(
+            duration_of(Some("P".to_owned()), StoredRegistrationError::RefreshRate),
+            Err(StoredRegistrationError::RefreshRate(_))
+        ));
+    }
+
     #[test]
     fn a_stored_duration_that_does_not_parse_is_refused() {
         assert!(matches!(
             management_of(management(Some("ten seconds"), None, None, None)),
-            Err(StoredRegistrationError::ManagementCacheDuration { .. })
+            Err(StoredRegistrationError::ManagementCacheDuration(_))
         ));
     }
 

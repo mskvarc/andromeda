@@ -6,6 +6,7 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     context_source_pseudonym::ContextSourcePseudonym,
     dereferenceable_uri::DereferenceableUri,
+    duration::Iso8601Duration,
     non_empty_text::NonEmptyText,
     scope::path::ScopePath,
     tenant::TenantName,
@@ -19,7 +20,6 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
-use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;
 use typed_builder::TypedBuilder;
 

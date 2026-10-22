@@ -3,8 +3,8 @@
 use crate::default_tenant_contexts::DefaultTenantContextsResolver;
 use andromeda_extensions::{advertisement::enabled_extension_extras, enabled::EnabledExtensions};
 use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::context_source_identity::{ContextSourceIdentity, ContextSourceIdentityType, uptime_duration};
+use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, identifier::Identifier};
+use andromeda_ngsi_ld_model::context_source_identity::{ContextSourceIdentity, ContextSourceIdentityType};
 use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
 use chrono::{DateTime, Utc};
 use std::{sync::Arc, time::Duration};
@@ -95,7 +95,7 @@ impl SourceIdentityState {
             id: self.configured.id.clone(), // clone: every response document owns its identifier
             type_: ContextSourceIdentityType,
             context_source_alias: self.configured.aliases.for_tenant(tenant),
-            context_source_uptime: uptime_duration(elapsed),
+            context_source_uptime: Iso8601Duration::from_std(elapsed),
             context_source_time_at: now,
             // clone: every response document owns its extras
             context_source_extras: self.configured.extras.clone(),
@@ -158,18 +158,18 @@ mod tests {
         let now = Utc::now();
         let earlier = state.identity_at(&TenantRef::UnnamedDefault, now);
         let later = state.identity_at(&TenantRef::UnnamedDefault, now + Duration::minutes(5));
-        let earlier_seconds = earlier.context_source_uptime.num_seconds().ok_or("finite uptime")?;
-        let later_seconds = later.context_source_uptime.num_seconds().ok_or("finite uptime")?;
-        assert!(later_seconds > earlier_seconds, "{later_seconds} must exceed {earlier_seconds}");
+        let earlier_seconds = earlier.context_source_uptime.to_std().ok_or("a fixed-length uptime")?;
+        let later_seconds = later.context_source_uptime.to_std().ok_or("a fixed-length uptime")?;
+        assert!(later_seconds > earlier_seconds, "{later_seconds:?} must exceed {earlier_seconds:?}");
         pretty_assertions::assert_eq!(later.context_source_time_at, now + Duration::minutes(5));
         Ok(())
     }
 
     #[test]
-    fn an_observation_before_the_start_reports_a_zero_uptime_rather_than_failing() -> Result<(), Box<dyn Error>> {
+    fn an_observation_before_the_start_reports_a_zero_uptime_written_as_pt0s() -> Result<(), Box<dyn Error>> {
         let state = state()?;
         let identity = state.identity_at(&TenantRef::UnnamedDefault, Utc::now() - Duration::days(1));
-        pretty_assertions::assert_eq!(identity.context_source_uptime.num_seconds(), Some(0.0));
+        pretty_assertions::assert_eq!(identity.context_source_uptime.to_string(), "PT0S");
         Ok(())
     }
 

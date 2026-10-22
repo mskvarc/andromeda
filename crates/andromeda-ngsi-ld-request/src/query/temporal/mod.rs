@@ -27,6 +27,7 @@ use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{
     aggr_method::AggrMethod,
     attribute_name::AttributeName,
+    duration::Iso8601Duration,
     identifier::Identifier,
     temporal_format::TemporalFormat,
     time::instant_serde,
@@ -48,7 +49,6 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use chrono::{DateTime, Utc};
-use iso8601_duration::Duration as Iso8601Duration;
 use serde::Deserialize;
 use std::num::NonZeroU32;
 
