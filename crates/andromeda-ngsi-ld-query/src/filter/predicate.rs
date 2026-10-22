@@ -8,6 +8,7 @@ use crate::{
     },
     pattern::Pattern,
 };
+use std::cmp::Ordering;
 
 /// A single filter predicate within a `q` expression.
 ///
@@ -106,6 +107,22 @@ pub enum CmpOp {
     Less,
     /// Less than or equal (`<=`).
     LessEq,
+}
+
+impl CmpOp {
+    /// Whether a target ordered `ord` against the operand satisfies the
+    /// comparison.
+    #[must_use]
+    pub const fn holds(self, ord: Ordering) -> bool {
+        match self {
+            CmpOp::Equal => ord.is_eq(),
+            CmpOp::Unequal => !ord.is_eq(),
+            CmpOp::Greater => ord.is_gt(),
+            CmpOp::GreaterEq => ord.is_ge(),
+            CmpOp::Less => ord.is_lt(),
+            CmpOp::LessEq => ord.is_le(),
+        }
+    }
 }
 
 /// The four clause 4.9 ordering operators.

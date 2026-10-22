@@ -1893,6 +1893,7 @@ dependencies = [
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
  "bigdecimal",
+ "cefact-units",
  "chrono",
  "derive_more",
  "iri-rs",

@@ -19,7 +19,7 @@ use crate::{
     queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities},
 };
 use andromeda_ngsi_ld_lexicon::time::value::TimeValue;
-use std::{borrow::Cow, cmp::Ordering};
+use std::borrow::Cow;
 
 /// Evaluate a parsed `q` expression (clause 4.9) against an entity, reading
 /// the entities its `rel{…}` hops cross into from `linked`.
@@ -209,37 +209,25 @@ fn compare(value: &TargetValue<'_>, op: CmpOp, scalar: &Scalar) -> bool {
 /// comparable in the scalar's domain.
 fn compare_in_domain(value: &TargetValue<'_>, op: CmpOp, scalar: &Scalar) -> Option<bool> {
     match scalar {
-        Scalar::Number(rhs) => Some(cmp_op(value.as_number()?.as_ref().cmp(rhs), op)),
-        Scalar::Bool(rhs) => Some(cmp_op(value.as_boolean()?.cmp(rhs), op)),
-        Scalar::Str(rhs) => Some(cmp_op(string_order(&value.as_lexical()?, rhs, op), op)),
-        Scalar::Uri(rhs) => Some(cmp_op(value.as_lexical()?.as_ref().cmp(rhs.as_str()), op)),
+        Scalar::Number(rhs) => Some(op.holds(value.as_number()?.as_ref().cmp(rhs))),
+        Scalar::Bool(rhs) => Some(op.holds(value.as_boolean()?.cmp(rhs))),
+        Scalar::Str(rhs) => Some(op.holds(string_order(&value.as_lexical()?, rhs, op))),
+        Scalar::Uri(rhs) => Some(op.holds(value.as_lexical()?.as_ref().cmp(rhs.as_str()))),
         // A time operand compares only with a value declared as one of its form
         // (clause 4.9: no equality of data types, no match), in the temporal
         // order clause 4.9 asks for.
         Scalar::DateTime(rhs) => match value.as_time()? {
-            TimeValue::DateTime(held) => Some(cmp_op(held.get().cmp(rhs), op)),
+            TimeValue::DateTime(held) => Some(op.holds(held.get().cmp(rhs))),
             TimeValue::Date(_) | TimeValue::Time(_) => None,
         },
         Scalar::Date(rhs) => match value.as_time()? {
-            TimeValue::Date(held) => Some(cmp_op(held.get().cmp(rhs), op)),
+            TimeValue::Date(held) => Some(op.holds(held.get().cmp(rhs))),
             TimeValue::DateTime(_) | TimeValue::Time(_) => None,
         },
         Scalar::Time(rhs) => match value.as_time()? {
-            TimeValue::Time(held) => Some(cmp_op(held.get().cmp(rhs), op)),
+            TimeValue::Time(held) => Some(op.holds(held.get().cmp(rhs))),
             TimeValue::DateTime(_) | TimeValue::Date(_) => None,
         },
-    }
-}
-
-/// Apply a comparison operator to an ordering.
-const fn cmp_op(ord: Ordering, op: CmpOp) -> bool {
-    match op {
-        CmpOp::Equal => ord.is_eq(),
-        CmpOp::Unequal => !ord.is_eq(),
-        CmpOp::Greater => ord.is_gt(),
-        CmpOp::GreaterEq => ord.is_ge(),
-        CmpOp::Less => ord.is_lt(),
-        CmpOp::LessEq => ord.is_le(),
     }
 }
 

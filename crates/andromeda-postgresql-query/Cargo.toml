@@ -19,6 +19,7 @@ andromeda-postgresql-encoding.workspace = true
 andromeda-postgresql-schema.workspace = true
 andromeda-postgresql-seaquery.workspace = true
 bigdecimal = "0.4.11"
+cefact-units = "1.0.0"
 chrono = "0.4.45"
 derive_more = { version = "2.1.1", features = ["from"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
