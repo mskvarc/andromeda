@@ -12,17 +12,16 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_attribute_instance::{flatten::FlattenError, name_keys::NameKeys};
 use andromeda_postgresql_schema::current::{CurrentAttributes, Entities};
 use andromeda_postgresql_seaquery::{
+    pg_array::{nullable_array, text_array},
     pg_type::PostgresType,
-    placeholder::external_placeholder,
-    unnest::{UnnestColumn, apply_column_alias, unnest_call},
+    unnest::{UnnestAliased, UnnestColumn, unnest_call},
 };
-use sea_query::{CommonTableExpression, Expr, Iden, Query};
-use sqlx::{Postgres, postgres::PgArguments, query::QueryAs};
+use sea_query::{CommonTableExpression, Expr, Iden, Query, SimpleExpr};
 
 /// The grain staging alias, `g`.
 ///
 /// Spelled nowhere else in a statement, so the single `AS "g"` its table
-/// source emits is the one [`apply_grains_alias`] rewrites.
+/// source emits is the one [`with_grains_alias`] names the columns of.
 #[derive(Iden, Clone, Copy)]
 #[iden = "g"]
 struct Staged;
@@ -32,10 +31,6 @@ struct Staged;
 #[derive(Iden, Clone, Copy)]
 #[iden = "grains"]
 pub(crate) struct Grains;
-
-/// The number of binds the grains take: the four grain columns, then the
-/// identifiers of the Entities whose rows are overwritten.
-pub(crate) const GRAIN_BINDS: usize = 5;
 
 /// The grain staging columns, `AS g(id, attribute_name_key, dataset_id, ordinal)`.
 fn staged_columns() -> [UnnestColumn; 4] {
@@ -47,11 +42,23 @@ fn staged_columns() -> [UnnestColumn; 4] {
     ]
 }
 
-/// The `grains` CTE over the binds from placeholder `first` on:
-/// `grains AS (SELECT g.id, g.attribute_name_key, g.dataset_id, g.ordinal FROM UNNEST($first::text[], …) AS g(…))`.
-pub(crate) fn grains_cte(first: usize) -> CommonTableExpression {
+/// The arrays an update's grains stage, as the expressions standing for them
+/// in the statement.
+pub(crate) struct GrainArrays {
+    /// One array per grain staging column, in [`staged_columns`] order.
+    pub(crate) grains: [SimpleExpr; 4],
+    /// The identifiers of the Entities whose rows are overwritten.
+    pub(crate) overwritten: SimpleExpr,
+}
+
+/// The `grains` CTE over the four grain `arrays`:
+/// `grains AS (SELECT g.id, g.attribute_name_key, g.dataset_id, g.ordinal FROM UNNEST(…) AS g(…))`.
+///
+/// The statement it joins must be passed through [`with_grains_alias`] to name
+/// the source's columns.
+pub(crate) fn grains_cte(arrays: [SimpleExpr; 4]) -> CommonTableExpression {
     let columns = staged_columns();
-    let source = unnest_call(columns.iter().enumerate().map(|(index, column)| (column, external_placeholder(first + index))));
+    let source = unnest_call(columns.iter().zip(arrays));
     let select = Query::select()
         .expr_as(Expr::col((Staged, Entities::Id)), Entities::Id)
         .expr_as(Expr::col((Staged, CurrentAttributes::AttributeNameKey)), CurrentAttributes::AttributeNameKey)
@@ -62,9 +69,9 @@ pub(crate) fn grains_cte(first: usize) -> CommonTableExpression {
     CommonTableExpression::new().table_name(Grains).query(select).to_owned()
 }
 
-/// Rewrite the grain staging's `AS "g"` into `AS g(id, …)`.
-pub(crate) fn apply_grains_alias(sql: String) -> String {
-    apply_column_alias(sql, &Staged, &staged_columns())
+/// `statement`, the grain staging's source named `g(id, …)` after its columns.
+pub(crate) fn with_grains_alias<S>(statement: UnnestAliased<S>) -> UnnestAliased<S> {
+    statement.with_columns(Staged, &staged_columns())
 }
 
 /// The grains of many Entities' edits, one vector per staged column, and the
@@ -119,30 +126,34 @@ impl<'a> StagedGrains<'a> {
         self.entity_ids.is_empty()
     }
 
-    /// Bind the grain columns, then the overwritten Entities, to `query`, in
-    /// the order [`grains_cte`] and the statement read them.
-    pub(crate) fn bind_to<'q, O>(self, query: QueryAs<'q, Postgres, O, PgArguments>) -> QueryAs<'q, Postgres, O, PgArguments>
-    where
-        'a: 'q,
-    {
-        query
-            .bind(self.entity_ids)
-            .bind(self.attribute_name_keys)
-            .bind(self.dataset_ids)
-            .bind(self.ordinals)
-            .bind(self.overwritten)
+    /// The grain columns and the overwritten Entities as the expressions
+    /// standing for them in the statement.
+    pub(crate) fn into_arrays(self) -> GrainArrays {
+        GrainArrays {
+            grains: [
+                text_array(&self.entity_ids),
+                Expr::val(self.attribute_name_keys),
+                nullable_array(self.dataset_ids.into_iter().map(|dataset| dataset.map(str::to_owned))),
+                nullable_array(self.ordinals),
+            ],
+            overwritten: text_array(&self.overwritten),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::current_attribute::{
-        row_edit::{EditReach, InstanceGrain, MovedInstance, RowEdit},
-        staged_grains::{StagedGrains, apply_grains_alias, grains_cte},
+    use crate::{
+        current_attribute::{
+            row_edit::{EditReach, InstanceGrain, MovedInstance, RowEdit},
+            staged_grains::{GrainArrays, StagedGrains, grains_cte, with_grains_alias},
+        },
+        statement_text::text_of,
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
     use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames};
+    use andromeda_postgresql_seaquery::unnest::UnnestAliased;
     use sea_query::{PostgresQueryBuilder, Query, WithClause};
 
     fn name(raw: &str) -> AttributeName {
@@ -222,13 +233,45 @@ mod tests {
     }
 
     #[test]
-    fn the_grain_staging_names_one_column_per_bind() {
+    fn the_grain_staging_names_one_column_per_array() {
+        let id = entity();
+        let mut grains = StagedGrains::default();
+        grains
+            .push(
+                &id,
+                &RowEdit {
+                    reach: EditReach::EveryRow,
+                    written: Vec::new(),
+                    moved: Vec::new(),
+                    removed: Vec::new(),
+                },
+                &NameKeys::default(),
+            )
+            .expect("no grain to resolve");
+        let GrainArrays { grains, .. } = grains.into_arrays();
         let mut with_clause = WithClause::new();
-        with_clause.cte(grains_cte(4));
-        let sql = apply_grains_alias(with_clause.query(Query::select().take()).to_string(PostgresQueryBuilder));
+        with_clause.cte(grains_cte(grains));
+        let sql = text_of(&with_grains_alias(UnnestAliased::new(with_clause.query(Query::select().take()))));
         assert!(
-            sql.contains("UNNEST($4::text[], $5::integer[], $6::text[], $7::integer[]) AS g(id, attribute_name_key, dataset_id, ordinal)"),
+            sql.contains("UNNEST($1::text[], $2::integer[], $3::text[], $4::integer[]) AS g(id, attribute_name_key, dataset_id, ordinal)"),
             "{sql}"
         );
+    }
+
+    /// The overwritten Entities travel beside the grains as one text array.
+    #[test]
+    fn the_overwritten_entities_travel_as_one_text_array() {
+        let edit = RowEdit {
+            reach: EditReach::EveryRow,
+            written: Vec::new(),
+            moved: Vec::new(),
+            removed: Vec::new(),
+        };
+        let id = entity();
+        let mut grains = StagedGrains::default();
+        grains.push(&id, &edit, &NameKeys::default()).expect("no grain to resolve");
+        let (sql, values) = Query::select().expr(grains.into_arrays().overwritten).build(PostgresQueryBuilder);
+        pretty_assertions::assert_eq!(sql, "SELECT $1");
+        pretty_assertions::assert_eq!(values.0.len(), 1);
     }
 }

@@ -13,9 +13,8 @@ use crate::{
     catalog_counter::{CatalogCounter, non_negative, percent},
     error::MaintenanceError,
 };
-use andromeda_postgresql_seaquery::{cast::cast, introspection::current_setting, pg_type::PostgresType};
-use sea_query::{Alias, Asterisk, Expr, ExprTrait, Func, Iden, JoinType, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use andromeda_postgresql_seaquery::{cast::cast, introspection::current_setting, pg_type::PostgresType, setting::Setting, statement::Statement};
+use sea_query::{Alias, Asterisk, Expr, ExprTrait, Func, Iden, JoinType, Query, SelectStatement};
 use sqlx::{PgConnection, Row, postgres::PgRow};
 use std::{num::NonZeroU64, str::FromStr};
 
@@ -85,8 +84,7 @@ pub(crate) struct BtreeEstimate {
 /// An index never analyzed (`reltuples` of -1), or with an indexed column
 /// `pg_stats` does not describe, has no estimate.
 pub(crate) async fn btree_estimates(connection: &mut PgConnection, branch: Branch) -> Result<Vec<BtreeEstimate>, MaintenanceError> {
-    let (sql, values) = btree_layouts_statement(branch).build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
+    let rows = btree_layouts_statement(branch).to_query().fetch_all(connection).await?;
     rows.iter()
         .map(|row| {
             let name = row.try_get::<String, _>("relname")?;
@@ -131,7 +129,7 @@ fn btree_layouts_statement(branch: Branch) -> SelectStatement {
             cast(Func::sum(catalog_column("s", "avg_width")).into(), PostgresType::Bigint),
             LayoutColumn::KeyWidth,
         )
-        .expr_as(cast(current_setting("block_size"), PostgresType::Bigint), LayoutColumn::BlockSize)
+        .expr_as(cast(current_setting(Setting::BlockSize), PostgresType::Bigint), LayoutColumn::BlockSize)
         .from_as(Alias::new("pg_class"), Alias::new("c"))
         .join_as(
             JoinType::InnerJoin,

@@ -10,12 +10,10 @@
 //! latest converted chunk, and those before the earliest chunk, where no
 //! history row can exist at all.
 
-use crate::{error::TemporalStoreError, schema_ddl::timescale_policy::HypertableName};
-use andromeda_postgresql_seaquery::timescale::chunk_span_statement;
+use crate::{error::TemporalStoreError, hypertable_policy::HypertableName};
+use andromeda_postgresql_seaquery::{statement::Statement, timescale::chunk_span_statement};
 use chrono::{DateTime, Utc};
-use sea_query::PostgresQueryBuilder;
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, PgConnection, Row};
+use sqlx::{PgConnection, Row};
 use strum::IntoEnumIterator;
 
 /// Where the chunks of the history hypertables lie on the write clock.
@@ -38,8 +36,7 @@ impl HistoryChunkSpan {
     /// Returns [`TemporalStoreError::Database`] when the catalogue cannot be
     /// read.
     pub(crate) async fn read(connection: &mut PgConnection) -> Result<HistoryChunkSpan, TemporalStoreError> {
-        let (sql, values) = chunk_span_statement(&history_hypertables()).build_sqlx(PostgresQueryBuilder);
-        let row = sqlx::query_with(AssertSqlSafe(sql), values).fetch_one(connection).await?;
+        let row = chunk_span_statement(&history_hypertables()).to_query().fetch_one(connection).await?;
         Ok(HistoryChunkSpan {
             compressed_until: row.try_get("compressed_until")?,
             history_from: row.try_get("history_from")?,

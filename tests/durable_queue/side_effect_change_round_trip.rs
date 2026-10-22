@@ -15,7 +15,7 @@
 use crate::{
     broker_committer::committer,
     live_side_effect_drain::live_side_effect_drain,
-    queue_database::{live_target, queue_database},
+    queue_database::{live_target, queue_database, row_count},
     queue_workers::side_effect_worker,
 };
 use andromeda_context_commit::{
@@ -38,8 +38,15 @@ use andromeda_ngsi_ld_model::{
     entity_change::{EntityChange, EntityLifecycle},
     notification::ChangeOrigin,
 };
+use andromeda_postgresql_schema::{pending_change_event::PendingChangeEvent, queue::PendingSideEffects};
+use andromeda_postgresql_seaquery::{
+    pg_array::{array_element, cardinality},
+    statement::Statement,
+    unnest::composite_field,
+};
 use chrono::Utc;
 use pretty_assertions::assert_eq;
+use sea_query::{Expr, ExprTrait, Query};
 use serde_json::{Value, json};
 use serial_test::serial;
 use std::{sync::Arc, time::Duration};
@@ -115,11 +122,16 @@ async fn durable_queue_a_job_hands_each_write_its_whole_change_back() {
         .build();
     committer(&pool).commit(&live_target(), vec![write]).await.expect("the write commits its job");
 
-    let (events, lifecycle, stored_state): (i32, i16, bool) =
-        sqlx::query_as("SELECT cardinality(events), (events[1]).lifecycle, (events[1]).entity_snapshot IS NOT NULL FROM pending_side_effects")
-            .fetch_one(&pool)
-            .await
-            .expect("the queued job");
+    let first_event = || array_element(Expr::col(PendingSideEffects::Events), 1);
+    let (events, lifecycle, stored_state): (i32, i16, bool) = Query::select()
+        .expr(cardinality(Expr::col(PendingSideEffects::Events)))
+        .expr(composite_field(first_event(), &PendingChangeEvent::Lifecycle))
+        .expr(composite_field(first_event(), &PendingChangeEvent::EntitySnapshot).is_not_null())
+        .from(PendingSideEffects::Table)
+        .to_query_as()
+        .fetch_one(&pool)
+        .await
+        .expect("the queued job");
     assert_eq!(events, 1, "one write defers one change");
     assert_eq!(lifecycle, 2, "the change is stored as a modification");
     assert!(stored_state, "the change stores the Entity the write left behind");
@@ -145,10 +157,7 @@ async fn durable_queue_a_job_hands_each_write_its_whole_change_back() {
         Some(&modified_entity()),
         "the change carries the full Entity the write left behind"
     );
-    let remaining: i64 = sqlx::query_scalar("SELECT count(*) FROM pending_side_effects")
-        .fetch_one(&pool)
-        .await
-        .expect("remaining jobs");
+    let remaining = row_count(&pool, PendingSideEffects::Table).await;
     assert_eq!(remaining, 0, "the drained job left the queue");
     pool.close().await;
 }

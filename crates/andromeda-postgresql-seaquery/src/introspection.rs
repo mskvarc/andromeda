@@ -8,6 +8,7 @@
 //! setting name passed as a bound value or a named iden rather than
 //! interpolated into a statement string.
 
+use crate::setting::Setting;
 use sea_query::{Alias, Expr, ExprTrait, Func, Iden, QueryStatementBuilder, SelectStatement, SimpleExpr};
 
 /// The `pg_extension` system catalog.
@@ -27,8 +28,8 @@ struct PgAvailableExtensions;
 /// setting is unknown; use [`current_setting_missing_ok`] for settings that may
 /// be absent.
 #[must_use]
-pub fn current_setting(name: &str) -> SimpleExpr {
-    Func::cust(CurrentSetting).args([SimpleExpr::from(Expr::val(name.to_owned()))]).into()
+pub fn current_setting(setting: Setting) -> SimpleExpr {
+    Func::cust(CurrentSetting).args([setting.name_value()]).into()
 }
 
 /// `current_setting(name, true)` - the value of a runtime setting, or `NULL`
@@ -38,9 +39,9 @@ pub fn current_setting(name: &str) -> SimpleExpr {
 /// optional setting, such as a license marker an extension only sets when
 /// loaded.
 #[must_use]
-pub fn current_setting_missing_ok(name: &str) -> SimpleExpr {
+pub fn current_setting_missing_ok(setting: Setting) -> SimpleExpr {
     Func::cust(CurrentSetting)
-        .args([SimpleExpr::from(Expr::val(name.to_owned())), SimpleExpr::from(Expr::val(true))])
+        .args([setting.name_value(), SimpleExpr::from(Expr::val(true))])
         .into()
 }
 
@@ -105,6 +106,18 @@ pub fn current_role_is_member_of(role: &str) -> SimpleExpr {
     SimpleExpr::SubQuery(None, Box::new(subquery.into_sub_query_statement()))
 }
 
+/// `pg_table_is_visible(oid)` - whether the relation `oid` names is the one an
+/// unqualified name resolves to in the session's search path.
+#[must_use]
+pub fn table_is_visible(oid: SimpleExpr) -> SimpleExpr {
+    Func::cust(PgTableIsVisible).args([oid]).into()
+}
+
+/// The `pg_table_is_visible` system function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "pg_table_is_visible"]
+struct PgTableIsVisible;
+
 /// `to_regnamespace(name) IS NOT NULL` - whether a schema of that name exists.
 ///
 /// The schema name is bound; `to_regnamespace` answers `NULL` rather than
@@ -148,6 +161,18 @@ pub fn current_database() -> SimpleExpr {
     Func::cust(CurrentDatabase).args::<[SimpleExpr; 0]>([]).into()
 }
 
+/// `current_schema()` - the first schema of the session's search path that
+/// exists, the one an unqualified relation name resolves into.
+#[must_use]
+pub fn current_schema() -> SimpleExpr {
+    Func::cust(CurrentSchema).args::<[SimpleExpr; 0]>([]).into()
+}
+
+/// The `current_schema` system function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "current_schema"]
+struct CurrentSchema;
+
 /// `pg_database_size(current_database())` - the total on-disk size, in bytes, of
 /// the database the session is attached to.
 ///
@@ -169,17 +194,29 @@ struct PgDatabaseSize;
 
 #[cfg(test)]
 mod tests {
-    use crate::introspection::{
-        current_role_is_member_of,
-        current_role_is_superuser,
-        current_setting,
-        current_setting_missing_ok,
-        extension_shipped_version,
-        extension_version,
-        transaction_has_not_written,
+    use crate::{
+        introspection::{
+            current_role_is_member_of,
+            current_role_is_superuser,
+            current_schema,
+            current_setting,
+            current_setting_missing_ok,
+            extension_shipped_version,
+            extension_version,
+            transaction_has_not_written,
+        },
+        setting::Setting,
     };
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, PostgresQueryBuilder, Query};
+
+    #[test]
+    fn the_current_schema_is_a_call_without_arguments() {
+        assert_eq!(
+            Query::select().expr(current_schema()).to_string(PostgresQueryBuilder),
+            "SELECT current_schema()"
+        );
+    }
 
     #[test]
     fn the_session_role_is_read_from_pg_roles_by_its_own_name() {
@@ -214,7 +251,7 @@ mod tests {
     #[test]
     fn current_setting_binds_the_setting_name() {
         let (sql, values) = Query::select()
-            .expr_as(current_setting("server_version"), Alias::new("v"))
+            .expr_as(current_setting(Setting::ServerVersion), Alias::new("v"))
             .to_owned()
             .build(PostgresQueryBuilder);
         assert!(sql.contains("current_setting($1)"), "{sql}");
@@ -224,10 +261,21 @@ mod tests {
     #[test]
     fn a_missing_setting_is_tolerated_with_the_second_argument() {
         let sql = Query::select()
-            .expr_as(current_setting_missing_ok("timescaledb.license"), Alias::new("v"))
+            .expr_as(current_setting_missing_ok(Setting::TimescaledbLicense), Alias::new("v"))
             .to_owned()
             .to_string(PostgresQueryBuilder);
         assert!(sql.contains("current_setting('timescaledb.license', TRUE)"), "{sql}");
+    }
+
+    #[test]
+    fn visibility_asks_the_search_path_about_the_relation_oid() {
+        use crate::introspection::table_is_visible;
+        use sea_query::Expr;
+        let sql = Query::select()
+            .expr(table_is_visible(Expr::col(Alias::new("oid"))))
+            .to_owned()
+            .to_string(PostgresQueryBuilder);
+        assert_eq!(sql, r#"SELECT pg_table_is_visible("oid")"#);
     }
 
     #[test]

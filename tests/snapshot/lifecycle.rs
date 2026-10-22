@@ -15,9 +15,20 @@ use crate::support::{
     wait_for_snapshot_terminal,
 };
 use andromeda_postgresql_codes::snapshot_status::SnapshotStatusCode;
+use andromeda_postgresql_schema::{
+    current::CurrentAttributes,
+    snapshot::{SnapshotPreparation, Snapshots},
+};
+use andromeda_postgresql_seaquery::{
+    command::Command,
+    literal::int_literal,
+    relation_lock::{LockMode, RelationLock},
+    row_rejection::{RejectedEvent, RejectingTrigger},
+};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use futures::future::join_all;
 use reqwest::StatusCode;
+use sea_query::{Alias, Expr, ExprTrait, Query, TableName};
 use serde_json::{Value, json};
 use serial_test::serial;
 use sqlx::PgPool;
@@ -336,18 +347,22 @@ async fn snapshot_clone_failure_is_atomic_and_terminal_failure() {
     let pool = PgPool::connect(&env::var("ANDROMEDA_TEST_DATABASE_URL").expect("Snapshot database URL"))
         .await
         .expect("Snapshot database connection");
-    // The status code is the registry's own constant, never caller input.
     let success = SnapshotStatusCode::Success.code();
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "CREATE OR REPLACE FUNCTION snapshot_clone_failure_injection() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.status = {success} AND EXISTS (SELECT 1 FROM snapshots WHERE snapshot_key = NEW.snapshot_key AND id LIKE '%:fault') THEN RAISE EXCEPTION 'deterministic clone fault'; END IF; RETURN NEW; END $$"
-    )))
-    .execute(&pool)
-    .await
-    .expect("clone failure function");
-    sqlx::query("CREATE TRIGGER snapshot_clone_failure BEFORE UPDATE ON snapshot_preparation FOR EACH ROW EXECUTE FUNCTION snapshot_clone_failure_injection()")
-        .execute(&pool)
-        .await
-        .expect("clone failure trigger");
+    let clone_failure = RejectingTrigger::new(
+        Alias::new("snapshot_clone_failure"),
+        SnapshotPreparation::Table,
+        RejectedEvent::Update,
+        Expr::col((Alias::new("new"), SnapshotPreparation::Status)).eq(success).and(Expr::exists(
+            Query::select()
+                .expr(int_literal(1))
+                .from(Snapshots::Table)
+                .and_where(Expr::col(Snapshots::SnapshotKey).equals((Alias::new("new"), SnapshotPreparation::SnapshotKey)))
+                .and_where(Expr::col(Snapshots::Id).like("%:fault"))
+                .to_owned(),
+        )),
+        "deterministic clone fault",
+    );
+    clone_failure.install().to_query().execute(&pool).await.expect("clone failure trigger");
     pretty_assertions::assert_eq!(
         clone_snapshot_raw(&client(), source, &json!({"id": target, "type": "Snapshot"})).await.0,
         StatusCode::CREATED
@@ -364,14 +379,7 @@ async fn snapshot_clone_failure_is_atomic_and_terminal_failure() {
             .len(),
         1
     );
-    sqlx::query("DROP TRIGGER snapshot_clone_failure ON snapshot_preparation")
-        .execute(&pool)
-        .await
-        .expect("drop clone failure trigger");
-    sqlx::query("DROP FUNCTION snapshot_clone_failure_injection()")
-        .execute(&pool)
-        .await
-        .expect("drop clone failure function");
+    clone_failure.remove().to_query().execute(&pool).await.expect("drop clone failure trigger");
 }
 
 #[tokio::test]
@@ -434,7 +442,8 @@ async fn snapshot_clone_of_a_preparing_source_waits_and_copies_the_source_data()
         .await
         .expect("Snapshot database connection");
     let mut holder = pool.begin().await.expect("lock holder transaction");
-    sqlx::query("LOCK TABLE current_attributes IN ACCESS EXCLUSIVE MODE")
+    RelationLock::waiting(vec![TableName::from(CurrentAttributes::Table)], LockMode::AccessExclusive)
+        .to_query()
         .execute(&mut *holder)
         .await
         .expect("hold the live attribute rows");

@@ -1,7 +1,10 @@
 //! Per-database validation of the extension and privileges maintenance needs.
 
-use crate::{branch::Branch, error::MaintenanceError, scalar_query::select_bool};
-use andromeda_postgresql_seaquery::maintenance::{current_user_has_function_privilege, current_user_has_table_privilege, to_regprocedure};
+use crate::{branch::Branch, error::MaintenanceError};
+use andromeda_postgresql_seaquery::{
+    maintenance::{current_user_has_function_privilege, current_user_has_table_privilege, to_regprocedure},
+    statement::Statement,
+};
 use sea_query::{Alias, Expr, ExprTrait, Query, SelectStatement};
 use sqlx::PgConnection;
 
@@ -29,10 +32,10 @@ pub(crate) enum MutationPrivilege {
 
 /// Validate the optional diagnostic extension and role privileges.
 pub(crate) async fn validate_capabilities(connection: &mut PgConnection, mutation: MutationPrivilege) -> Result<CapabilityStatus, MaintenanceError> {
-    if !select_bool(connection, extension_present_statement()).await? {
+    if !extension_present_statement().to_query_scalar::<bool>().fetch_one(&mut *connection).await? {
         return Ok(CapabilityStatus::MissingPgstattuple);
     }
-    if !select_bool(connection, inspection_privilege_statement()).await? {
+    if !inspection_privilege_statement().to_query_scalar::<bool>().fetch_one(&mut *connection).await? {
         return Ok(CapabilityStatus::MissingPgstattupleExecute);
     }
     if mutation == MutationPrivilege::Required && !branch_maintainable(connection, Branch::Live).await? {
@@ -43,7 +46,7 @@ pub(crate) async fn validate_capabilities(connection: &mut PgConnection, mutatio
 
 /// Whether the role holds `MAINTAIN` on every allowlisted heap `branch` holds.
 pub(crate) async fn branch_maintainable(connection: &mut PgConnection, branch: Branch) -> Result<bool, MaintenanceError> {
-    select_bool(connection, maintain_privilege_statement(branch)).await
+    Ok(maintain_privilege_statement(branch).to_query_scalar::<bool>().fetch_one(connection).await?)
 }
 
 /// `pg_extension` presence query.

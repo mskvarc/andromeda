@@ -5,7 +5,7 @@ use crate::{
     snapshot::{
         branch_schema::create_branch_schema,
         branch_version::current_version,
-        json_value::document_text,
+        json_value::optional_json,
         status_code::stored_status,
         unencodable_snapshot_error::UnencodableSnapshotError,
     },
@@ -15,65 +15,67 @@ use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::Sna
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_pool::sql_state::violates_unique_constraint;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
-use andromeda_postgresql_seaquery::{
-    pg_type::PostgresType,
-    placeholder::{external_placeholder, external_placeholder_as},
-};
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_snapshot::{error::SnapshotError, store::InsertSnapshotParams};
-use sea_query::{PostgresQueryBuilder, Query};
+use sea_query::{Expr, InsertStatement, Query, SimpleExpr};
 use sqlx::PgPool;
 use url::Url;
 
-/// The immutable control columns a create binds, in placeholder order; the
-/// surrogate key is issued by the database.
+/// The control-record insert of `params`, returning the database-issued
+/// surrogate key.
 ///
-/// The four documents are `json` columns bound as their JSON text, so their
-/// markers cast that text to `json` and the server keeps it as written.
-const fn control_columns() -> [Snapshots; 11] {
-    [
-        Snapshots::Id,
-        Snapshots::SnapshotQueries,
-        Snapshots::SnapshotTemporalQueries,
-        Snapshots::QueryContext,
-        Snapshots::SnapshotLifetime,
-        Snapshots::SnapshotPriority,
-        Snapshots::Endpoint,
-        Snapshots::ReceiverInfo,
-        Snapshots::CloneSourceId,
-        Snapshots::CreatedAt,
-        Snapshots::ExpiresAt,
-    ]
-}
-
-/// The control-record insert, its eleven values bound by the caller, returning
-/// the database-issued surrogate key.
-fn control_insert_sql() -> Result<String, SnapshotError> {
+/// The four documents are `json` columns bound as their JSON text cast to
+/// `json`, so the server keeps each as written.
+fn control_insert(params: &InsertSnapshotParams<'_>) -> Result<InsertStatement, SnapshotError> {
+    let values: [SimpleExpr; 11] = [
+        Expr::val(params.id.as_str()),
+        optional_json(params.snapshot_queries, UnencodableSnapshotError::SnapshotQueries)?,
+        optional_json(params.snapshot_temporal_queries, UnencodableSnapshotError::SnapshotTemporalQueries)?,
+        optional_json(Some(&params.query_context), UnencodableSnapshotError::QueryContext)?,
+        Expr::val(params.snapshot_lifetime.map(ToString::to_string)),
+        Expr::val(params.snapshot_priority),
+        Expr::val(params.endpoint.map(Url::as_str)),
+        optional_json(params.receiver_info, UnencodableSnapshotError::ReceiverInfo)?,
+        Expr::val(params.clone_source_id.map(Identifier::as_str)),
+        Expr::val(params.created_at),
+        Expr::val(params.expires_at),
+    ];
     let mut insert = Query::insert();
     insert
         .into_table(Snapshots::Table)
-        .columns(control_columns())
-        .values([
-            external_placeholder(1),
-            external_placeholder_as(2, PostgresType::Json),
-            external_placeholder_as(3, PostgresType::Json),
-            external_placeholder_as(4, PostgresType::Json),
-            external_placeholder(5),
-            external_placeholder(6),
-            external_placeholder(7),
-            external_placeholder_as(8, PostgresType::Json),
-            external_placeholder(9),
-            external_placeholder(10),
-            external_placeholder(11),
+        .columns([
+            Snapshots::Id,
+            Snapshots::SnapshotQueries,
+            Snapshots::SnapshotTemporalQueries,
+            Snapshots::QueryContext,
+            Snapshots::SnapshotLifetime,
+            Snapshots::SnapshotPriority,
+            Snapshots::Endpoint,
+            Snapshots::ReceiverInfo,
+            Snapshots::CloneSourceId,
+            Snapshots::CreatedAt,
+            Snapshots::ExpiresAt,
         ])
+        .values(values)
         .map_err(|error| persistence_error::<SnapshotError>(error))?
         .returning_col(Snapshots::SnapshotKey);
-    Ok(insert.to_string(PostgresQueryBuilder))
+    Ok(insert)
 }
 
-/// The preparation-record insert; the lease triple starts null, and the branch
-/// version is the binary's own, since the branch schemas are created by it.
-/// The two details documents are `json` columns bound as their JSON text.
-fn preparation_insert_sql() -> Result<String, SnapshotError> {
+/// The preparation-record insert of `params` for the Snapshot `snapshot_key`;
+/// the lease triple starts null, and the branch version is the binary's own,
+/// since the branch schemas are created by it. The two details documents are
+/// `json` columns bound as their JSON text.
+fn preparation_insert(params: &InsertSnapshotParams<'_>, snapshot_key: SnapshotKey, branch_version: i32) -> Result<InsertStatement, SnapshotError> {
+    let values: [SimpleExpr; 7] = [
+        Expr::val(snapshot_key.as_i64()),
+        Expr::val(stored_status(params.status).code()),
+        Expr::val(params.modified_at),
+        Expr::val(params.last_used_at),
+        optional_json(params.queries_details, UnencodableSnapshotError::QueriesDetails)?,
+        optional_json(params.temporal_queries_details, UnencodableSnapshotError::TemporalQueriesDetails)?,
+        Expr::val(branch_version),
+    ];
     let mut insert = Query::insert();
     insert
         .into_table(SnapshotPreparation::Table)
@@ -86,17 +88,9 @@ fn preparation_insert_sql() -> Result<String, SnapshotError> {
             SnapshotPreparation::TemporalQueriesDetails,
             SnapshotPreparation::BranchSchemaVersion,
         ])
-        .values([
-            external_placeholder(1),
-            external_placeholder(2),
-            external_placeholder(3),
-            external_placeholder(4),
-            external_placeholder_as(5, PostgresType::Json),
-            external_placeholder_as(6, PostgresType::Json),
-            external_placeholder(7),
-        ])
+        .values(values)
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
-    Ok(insert.to_string(PostgresQueryBuilder))
+    Ok(insert)
 }
 
 /// Write one Snapshot: the control record, its preparation row, and its empty
@@ -105,38 +99,14 @@ fn preparation_insert_sql() -> Result<String, SnapshotError> {
 pub(crate) async fn create_snapshot(pool: &PgPool, params: InsertSnapshotParams<'_>) -> Result<(), SnapshotError> {
     let branch_version = current_version()?;
     let mut tx = pool.begin().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
-    let control_sql = control_insert_sql()?;
-    let snapshot_key_raw: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(control_sql.as_str()))
-        .bind(params.id.as_str())
-        .bind(document_text(params.snapshot_queries, UnencodableSnapshotError::SnapshotQueries)?)
-        .bind(document_text(
-            params.snapshot_temporal_queries,
-            UnencodableSnapshotError::SnapshotTemporalQueries,
-        )?)
-        .bind(document_text(Some(&params.query_context), UnencodableSnapshotError::QueryContext)?)
-        .bind(params.snapshot_lifetime.map(ToString::to_string))
-        .bind(params.snapshot_priority)
-        .bind(params.endpoint.map(Url::as_str))
-        .bind(document_text(params.receiver_info, UnencodableSnapshotError::ReceiverInfo)?)
-        .bind(params.clone_source_id.map(Identifier::as_str))
-        .bind(params.created_at)
-        .bind(params.expires_at)
+    let snapshot_key_raw: i64 = control_insert(&params)?
+        .to_query_scalar()
         .fetch_one(&mut *tx)
         .await
         .map_err(|error| snapshot_create_error(error, params.id))?;
     let snapshot_key = SnapshotKey::try_from(snapshot_key_raw).map_err(|error| SnapshotError::from(undecodable(&error)))?;
-    let preparation_sql = preparation_insert_sql()?;
-    sqlx::query(sqlx::AssertSqlSafe(preparation_sql.as_str()))
-        .bind(snapshot_key.as_i64())
-        .bind(stored_status(params.status).code())
-        .bind(params.modified_at)
-        .bind(params.last_used_at)
-        .bind(document_text(params.queries_details, UnencodableSnapshotError::QueriesDetails)?)
-        .bind(document_text(
-            params.temporal_queries_details,
-            UnencodableSnapshotError::TemporalQueriesDetails,
-        )?)
-        .bind(branch_version.get())
+    preparation_insert(&params, snapshot_key, branch_version.get())?
+        .to_query()
         .execute(&mut *tx)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
@@ -162,9 +132,16 @@ fn snapshot_create_error(error: sqlx::Error, id: &Identifier) -> SnapshotError {
 mod tests {
     use crate::{
         migration_set::tenant::tenant_migrator,
-        snapshot::creation::{UQ_SNAPSHOTS_ID, control_insert_sql, preparation_insert_sql},
+        snapshot::creation::{UQ_SNAPSHOTS_ID, control_insert, preparation_insert},
     };
+    use andromeda_context_space::snapshot_key::SnapshotKey;
+    use andromeda_json_literal::JsonLiteral;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_model::snapshot::SnapshotStatus;
+    use andromeda_snapshot::store::InsertSnapshotParams;
+    use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
+    use sea_query::PostgresQueryBuilder;
 
     /// Every constraint is named by the migrations, so the duplicate-identity
     /// refusal matches the declared name rather than one PostgreSQL generated.
@@ -179,37 +156,51 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_control_insert_binds_eleven_values_and_returns_the_surrogate_key() {
-        let sql = control_insert_sql().expect("the control insert builds");
-        for marker in 1..=11 {
-            assert!(sql.contains(&format!("${marker}")), "missing ${marker}: {sql}");
+    fn params(id: &Identifier) -> InsertSnapshotParams<'_> {
+        let instant = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).expect("a valid instant");
+        InsertSnapshotParams {
+            id,
+            snapshot_queries: None,
+            snapshot_temporal_queries: None,
+            query_context: JsonLiteral::null(),
+            snapshot_lifetime: None,
+            snapshot_priority: 3,
+            endpoint: None,
+            receiver_info: None,
+            status: SnapshotStatus::Preparing,
+            clone_source_id: None,
+            queries_details: None,
+            temporal_queries_details: None,
+            created_at: instant,
+            modified_at: instant,
+            expires_at: instant,
+            last_used_at: None,
         }
-        assert!(!sql.contains("$12"), "the control insert binds exactly eleven values: {sql}");
-        assert!(sql.contains("RETURNING \"snapshot_key\""), "the surrogate key is returned: {sql}");
-        assert!(!sql.contains("\"status\""), "the status lives on the preparation row: {sql}");
+    }
+
+    #[test]
+    fn the_control_insert_binds_eleven_values_casts_its_documents_and_returns_the_surrogate_key() {
+        let id: Identifier = "urn:ngsi-ld:Snapshot:a".parse().expect("a valid identifier");
+        let (sql, values) = control_insert(&params(&id)).expect("the control insert builds").build(PostgresQueryBuilder);
+        assert!(sql.ends_with(r#"RETURNING "snapshot_key""#), "the surrogate key is returned: {sql}");
+        assert!(!sql.contains(r#""status""#), "the status lives on the preparation row: {sql}");
+        assert_eq!(
+            sql.matches("::json").count(),
+            1,
+            "the query context is a json document; absent documents are NULL: {sql}"
+        );
+        assert_eq!(values.0.len(), 8, "{sql}");
     }
 
     #[test]
     fn the_preparation_insert_binds_the_status_code_and_the_branch_version() {
-        let sql = preparation_insert_sql().expect("the preparation insert builds");
-        assert!(sql.contains("snapshot_preparation"), "{sql}");
-        assert!(sql.contains("\"branch_schema_version\""), "{sql}");
-        assert!(sql.contains("$7"), "{sql}");
-        assert!(
-            sql.contains("$5::json") && sql.contains("$6::json"),
-            "the details documents are bound as json: {sql}"
-        );
-        assert_eq!(sql.matches("::").count(), 2, "no enum cast remains: {sql}");
-    }
-
-    #[test]
-    fn the_control_insert_casts_every_document_to_json() {
-        let sql = control_insert_sql().expect("the control insert builds");
-        for marker in ["$2::json", "$3::json", "$4::json", "$8::json"] {
-            assert!(sql.contains(marker), "{marker}: {sql}");
-        }
-        assert_eq!(sql.matches("::json").count(), 4, "{sql}");
-        assert!(!sql.contains("::jsonb"), "{sql}");
+        let id: Identifier = "urn:ngsi-ld:Snapshot:a".parse().expect("a valid identifier");
+        let key = SnapshotKey::try_from(7).expect("a positive key");
+        let (sql, values) = preparation_insert(&params(&id), key, 24)
+            .expect("the preparation insert builds")
+            .build(PostgresQueryBuilder);
+        assert!(sql.starts_with(r#"INSERT INTO "snapshot_preparation""#), "{sql}");
+        assert!(sql.contains(r#""branch_schema_version""#), "{sql}");
+        assert_eq!(values.0.len(), 5, "the two absent details documents are NULL: {sql}");
     }
 }

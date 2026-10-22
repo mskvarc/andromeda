@@ -10,15 +10,17 @@
 //! apart, one row each, keyed by the entity identifier
 //! ([`instances_cte`](crate::current_attribute::staging::instances_cte)).
 
+use crate::entity::params::{PreparedEntityColumns, literal_texts};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
     cast::cast,
+    external_arguments::ExternalArguments,
     jsonb::jsonb_array_elements_text,
-    pg_array::array_subquery,
+    pg_array::{array_of_subquery, nullable_array, text_array},
     pg_type::PostgresType,
-    placeholder::external_placeholder,
     postgis::validated_geom_from_ewkb,
-    unnest::{UnnestColumn, apply_column_alias, unnest_call},
+    unnest::{UnnestAliased, UnnestColumn, unnest_call},
 };
 use sea_query::{
     CaseStatement,
@@ -39,7 +41,7 @@ use sea_query::{
 /// The staging alias, `d`, each set-write reads its parallel arrays under.
 ///
 /// Spelled nowhere else in a statement, so the single `AS "d"` its table source
-/// emits is the one `apply_column_alias` rewrites into the column-list alias.
+/// emits is the one `with_staged_alias` gives the column-list alias.
 #[derive(Iden, Clone, Copy)]
 #[iden = "d"]
 pub(super) struct Staged;
@@ -197,10 +199,10 @@ fn geometry(column: StagedColumn) -> SimpleExpr {
 }
 
 /// The `ltree[]` projection of a staged JSONB array column:
-/// `ARRAY(SELECT jsonb_array_elements_text(d.<col>)::element_type)`.
+/// `ARRAY (SELECT jsonb_array_elements_text(d.<col>)::element_type)`.
 fn array_of(column: StagedColumn, element_type: PostgresType) -> SimpleExpr {
     let element: SimpleExpr = jsonb_array_elements_text(staged(column)).into();
-    array_subquery(&Query::select().expr(cast(element, element_type)).to_owned())
+    array_of_subquery(Query::select().expr(cast(element, element_type)).to_owned())
 }
 
 /// The eleven projected staging columns every insert and update stages, in
@@ -247,19 +249,47 @@ pub(super) fn delete_staging_columns() -> Vec<UnnestColumn> {
     ]
 }
 
-/// The `UNNEST($1::t[], …)` staging source over `columns`, bound positionally.
-pub(super) fn staging_source(columns: &[UnnestColumn]) -> FunctionCall {
-    unnest_call(columns.iter().enumerate().map(|(index, column)| (column, external_placeholder(index + 1))))
+/// The eleven arrays the entity columns stage in `value_staging_columns`
+/// order, as the expressions standing for them in the statement.
+///
+/// The scope arrays are `jsonb[]` values sea-query has no form for, so they
+/// travel as external arguments pushed onto `external`. `locations` is the
+/// hoisted geometry column the write stages: the EWKB of each row, or none.
+pub(super) fn entity_arrays<'entities>(
+    entities: &'entities PreparedEntityColumns,
+    locations: Vec<Option<&[u8]>>,
+    external: &mut ExternalArguments<'entities>,
+) -> Vec<SimpleExpr> {
+    let ids = entities.ids.iter().map(Identifier::as_str).collect::<Vec<_>>();
+    vec![
+        text_array(&ids),
+        text_array(&literal_texts(&entities.entity_type_name_keys)),
+        text_array(&literal_texts(&entities.attribute_name_keys)),
+        text_array(&literal_texts(&entities.attribute_instance_name_keys)),
+        text_array(&literal_texts(&entities.attribute_instance_kinds)),
+        external.push(entities.scope_paths_bind()),
+        external.push(entities.verbatim_scope_paths_bind()),
+        nullable_array(locations.into_iter().map(|ewkb| ewkb.map(<[u8]>::to_vec))),
+        nullable_array(entities.location_expires_ats.iter().copied()),
+        nullable_array(entities.expires_ats.iter().copied()),
+        nullable_array(entities.min_attribute_expires_ats.iter().copied()),
+    ]
 }
 
-/// The projection CTE `proj` over the staged `columns`, whose output columns
-/// carry the names of the relation columns they land in.
+/// The `UNNEST(…)` staging source over `columns`, one array expression per
+/// column in column order.
+pub(super) fn staging_source(columns: &[UnnestColumn], arrays: Vec<SimpleExpr>) -> FunctionCall {
+    unnest_call(columns.iter().zip(arrays))
+}
+
+/// The projection CTE `proj` over the staged `columns` and their `arrays`,
+/// whose output columns carry the names of the relation columns they land in.
 ///
 /// What only an update stages (whether the geometry is kept, and the
 /// expectation) is projected for the update alone, so the insert and the
 /// update share this one builder. A kept geometry stages no EWKB, so its
 /// projection validates nothing.
-pub(super) fn projection_cte(columns: &[UnnestColumn], write: ProjectedWrite) -> CommonTableExpression {
+pub(super) fn projection_cte(columns: &[UnnestColumn], arrays: Vec<SimpleExpr>, write: ProjectedWrite) -> CommonTableExpression {
     let mut select = Query::select();
     select
         .expr_as(staged(StagedColumn::Id), Entities::Id)
@@ -294,14 +324,14 @@ pub(super) fn projection_cte(columns: &[UnnestColumn], write: ProjectedWrite) ->
         }
         ProjectedWrite::Insert => {}
     }
-    select.from_function(staging_source(columns), Staged);
+    select.from_function(staging_source(columns, arrays), Staged);
     let select: SelectStatement = select.take();
     CommonTableExpression::new().table_name(Proj).query(select).to_owned()
 }
 
-/// Rewrite the projection source's `AS "d"` into `AS d(<columns>)`.
-pub(super) fn apply_staged_alias(sql: String, columns: &[UnnestColumn]) -> String {
-    apply_column_alias(sql, &Staged, columns)
+/// `statement`, the projection source named `d(<columns>)` after its columns.
+pub(super) fn with_staged_alias<S>(statement: UnnestAliased<S>, columns: &[UnnestColumn]) -> UnnestAliased<S> {
+    statement.with_columns(Staged, columns)
 }
 
 /// Which set-write a projection serves.

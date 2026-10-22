@@ -22,10 +22,18 @@
 //! carrying an old relation's name over a new one — so an operator's only
 //! recovery is the runbook's verified backup.
 
-use crate::SUITE;
+use crate::{
+    SUITE,
+    schema_stamp::{read_stamp_row, restamp, restamp_version},
+};
 use andromeda_postgresql_context_store::{
     migration_set::tenant::tenant_migrator,
     schema_contract::{contract::SchemaContract, error::SchemaContractError, schema_metadata::verify_schema_contract},
+};
+use andromeda_postgresql_seaquery::{
+    aggregate::count_all,
+    statement::Statement,
+    system_catalog::{InformationSchema, InformationSchemaViews},
 };
 use andromeda_test_harness::{
     configuration::TestRunConfiguration,
@@ -34,7 +42,8 @@ use andromeda_test_harness::{
     serialized_environment::SerializedEnvironment,
 };
 use pretty_assertions::assert_eq;
-use sqlx::{PgPool, Row};
+use sea_query::{Expr, ExprTrait, Query};
+use sqlx::PgPool;
 use std::{fs, path::Path};
 
 /// The directories the tenant migrator runs, as one version space.
@@ -72,19 +81,10 @@ fn statement_count(body: &str) -> usize {
 /// happens whatever the verification said: a test that failed while the tenant
 /// was left drifted would refuse the broker its next start.
 async fn under_partial_cutover(pool: &PgPool, applied_version: i32) -> Result<(), SchemaContractError> {
-    let stamped = sqlx::query("SELECT schema_version, migrations_sha256 FROM schema_metadata WHERE singleton")
-        .fetch_optional(pool)
-        .await
-        .expect("the stamp must be readable")
-        .map(|row| {
-            (
-                row.try_get::<i32, _>("schema_version").expect("the schema_version column decodes"),
-                row.try_get::<String, _>("migrations_sha256").expect("the migrations_sha256 column decodes"),
-            )
-        });
+    let stamped = read_stamp_row(pool).await;
 
-    sqlx::query("UPDATE schema_metadata SET schema_version = $1 WHERE singleton")
-        .bind(applied_version)
+    restamp_version(applied_version)
+        .to_query()
         .execute(pool)
         .await
         .expect("the partial-cutover stamp must apply");
@@ -93,9 +93,8 @@ async fn under_partial_cutover(pool: &PgPool, applied_version: i32) -> Result<()
     drop(connection);
 
     if let Some((version, digest)) = stamped {
-        sqlx::query("UPDATE schema_metadata SET schema_version = $1, migrations_sha256 = $2 WHERE singleton")
-            .bind(version)
-            .bind(digest)
+        restamp(version, digest)
+            .to_query()
             .execute(pool)
             .await
             .expect("the original stamp must be restorable");
@@ -177,8 +176,12 @@ async fn the_cutover_leaves_no_compatibility_view_over_a_replaced_relation() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
 
     for relation in REPLACED_RELATIONS {
-        let surviving: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM information_schema.views WHERE table_schema = 'public' AND table_name = $1")
-            .bind(relation)
+        let surviving: i64 = Query::select()
+            .expr(count_all())
+            .from((InformationSchema, InformationSchemaViews::Table))
+            .and_where(Expr::col(InformationSchemaViews::TableSchema).eq("public"))
+            .and_where(Expr::col(InformationSchemaViews::TableName).eq(*relation))
+            .to_query_scalar()
             .fetch_one(scope.database_pool())
             .await
             .expect("the view catalogue must be readable");

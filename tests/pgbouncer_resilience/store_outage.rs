@@ -10,13 +10,12 @@
 //! reading the tenant's registrations, so that lookup is what meets the
 //! outage first; it is this broker's own store, never a context source.
 
-use crate::{client, context_source_adapter::ContextSourceAdapter, control_pool, link_header, reset};
+use crate::{client, context_source_adapter::ContextSourceAdapter, control_pool, link_header, reset, tenant_database};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::pooler_probe::{endpoints, pooler_console::PoolerConsole, tenant_load};
 use axum::http::Method;
 use reqwest::Client;
 use serde_json::{Value, json};
-use sqlx::PgPool;
 use std::{collections::BTreeMap, slice, time::Duration};
 use tokio::time::{Instant, sleep};
 
@@ -35,14 +34,6 @@ const REQUEST_SPACING: Duration = Duration::from_millis(200);
 /// One answer: its status and its `Retry-After`, or `None` when the request
 /// got no answer at all.
 type Answer = Option<(u16, Option<String>)>;
-
-/// The one tenant database the reset tier holds once `tenant` is provisioned.
-async fn tenant_database(pool: &PgPool) -> String {
-    sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_%' LIMIT 1")
-        .fetch_one(pool)
-        .await
-        .expect("the tenant database exists")
-}
 
 /// Kill the pooler's pool for `database`, and resume it after [`KILLED_FOR`].
 async fn kill_then_resume(database: &str) {

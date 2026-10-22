@@ -13,13 +13,12 @@ use andromeda_ngsi_ld_model::entity_map::EntityMap;
 use andromeda_postgresql_schema::entity_map::{EntityMapEntries, EntityMapLinks, EntityMaps as EntityMapsTable};
 use andromeda_postgresql_seaquery::{
     clock::now,
-    pg_array::is_any_of,
+    pg_array::{is_any_of, text_array},
     pg_type::PostgresType,
-    placeholder::external_placeholder,
-    unnest::{UnnestColumn, apply_column_alias, unnest_call},
+    statement::Statement,
+    unnest::{UnnestAliased, UnnestColumn, unnest_call},
 };
-use sea_query::{DeleteStatement, Expr, ExprTrait, Iden, InsertStatement, IntoIden, OnConflict, Order, PostgresQueryBuilder, Query};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{DeleteStatement, Expr, ExprTrait, Iden, InsertStatement, IntoIden, OnConflict, Order, Query};
 use sqlx::{PgConnection, PgPool, Row};
 
 /// The `UNNEST` staging alias a batch of child rows is expanded under.
@@ -37,22 +36,27 @@ struct EntryRow<'a> {
     source: String,
 }
 
-/// The bulk insert of a map's entries: the map's URI bound as `$1`, the
-/// positions, entity ids and sources as `$2`/`$3`/`$4`.
-pub(crate) fn entries_insert_sql() -> Result<String, EntityMapError> {
+/// The bulk insert of a map's entries: the map's URI, then the positions,
+/// entity ids and sources as one bound array each.
+pub(crate) fn entries_insert_statement(
+    map: &Identifier,
+    positions: Vec<i32>,
+    entity_ids: &[&str],
+    sources: &[&str],
+) -> Result<UnnestAliased<InsertStatement>, EntityMapError> {
     let columns = [
         UnnestColumn::new(EntityMapEntries::Position, PostgresType::IntegerArray),
         UnnestColumn::new(EntityMapEntries::EntityId, PostgresType::TextArray),
         UnnestColumn::new(EntityMapEntries::Source, PostgresType::TextArray),
     ];
     let call = unnest_call([
-        (&columns[0], external_placeholder(2)),
-        (&columns[1], external_placeholder(3)),
-        (&columns[2], external_placeholder(4)),
+        (&columns[0], Expr::val(positions)),
+        (&columns[1], text_array(entity_ids)),
+        (&columns[2], text_array(sources)),
     ]);
     let mut select = Query::select();
     select
-        .expr(entity_map_key_of(external_placeholder(1)))
+        .expr(entity_map_key_of(Expr::val(map.as_str())))
         .expr(Expr::col((D, EntityMapEntries::Position)))
         .expr(Expr::col((D, EntityMapEntries::EntityId)))
         .expr(Expr::col((D, EntityMapEntries::Source)))
@@ -65,20 +69,20 @@ pub(crate) fn entries_insert_sql() -> Result<String, EntityMapError> {
         EntityMapEntries::Source.into_iden(),
     ]);
     insert.select_from(select).map_err(|error| persistence_error::<EntityMapError>(error))?;
-    Ok(apply_column_alias(insert.to_string(PostgresQueryBuilder), &D, &columns))
+    Ok(UnnestAliased::new(insert).with_columns(D, &columns))
 }
 
-/// The bulk insert of a map's links: the map's URI bound as `$1`, the
-/// registration ids and linked map ids as `$2`/`$3`.
-pub(crate) fn links_insert_sql() -> Result<String, EntityMapError> {
+/// The bulk insert of a map's links: the map's URI, then the registration ids
+/// and linked map ids as one bound array each.
+pub(crate) fn links_insert_statement(map: &Identifier, registrations: &[&str], linked: &[&str]) -> Result<UnnestAliased<InsertStatement>, EntityMapError> {
     let columns = [
         UnnestColumn::new(EntityMapLinks::RegistrationId, PostgresType::TextArray),
         UnnestColumn::new(EntityMapLinks::LinkedMapId, PostgresType::TextArray),
     ];
-    let call = unnest_call([(&columns[0], external_placeholder(2)), (&columns[1], external_placeholder(3))]);
+    let call = unnest_call([(&columns[0], text_array(registrations)), (&columns[1], text_array(linked))]);
     let mut select = Query::select();
     select
-        .expr(entity_map_key_of(external_placeholder(1)))
+        .expr(entity_map_key_of(Expr::val(map.as_str())))
         .expr(Expr::col((D, EntityMapLinks::RegistrationId)))
         .expr(Expr::col((D, EntityMapLinks::LinkedMapId)))
         .from_function(call, D);
@@ -89,7 +93,7 @@ pub(crate) fn links_insert_sql() -> Result<String, EntityMapError> {
         EntityMapLinks::LinkedMapId.into_iden(),
     ]);
     insert.select_from(select).map_err(|error| persistence_error::<EntityMapError>(error))?;
-    Ok(apply_column_alias(insert.to_string(PostgresQueryBuilder), &D, &columns))
+    Ok(UnnestAliased::new(insert).with_columns(D, &columns))
 }
 
 /// Write a map's entries and links.
@@ -111,12 +115,8 @@ pub(crate) async fn insert_children(connection: &mut PgConnection, map: &EntityM
         let positions: Vec<i32> = rows.iter().map(|row| row.position).collect();
         let entity_ids: Vec<&str> = rows.iter().map(|row| row.entity_id).collect();
         let sources: Vec<&str> = rows.iter().map(|row| row.source.as_str()).collect();
-        let sql = entries_insert_sql()?;
-        sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
-            .bind(map.id.as_str())
-            .bind(&positions)
-            .bind(&entity_ids)
-            .bind(&sources)
+        entries_insert_statement(&map.id, positions, &entity_ids, &sources)?
+            .to_query()
             .execute(&mut *connection)
             .await
             .map_err(|error| persistence_error::<EntityMapError>(error))?;
@@ -124,11 +124,8 @@ pub(crate) async fn insert_children(connection: &mut PgConnection, map: &EntityM
     if !map.linked_maps.is_empty() {
         let registrations: Vec<&str> = map.linked_maps.keys().map(Identifier::as_str).collect();
         let linked: Vec<&str> = map.linked_maps.values().map(Identifier::as_str).collect();
-        let sql = links_insert_sql()?;
-        sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
-            .bind(map.id.as_str())
-            .bind(&registrations)
-            .bind(&linked)
+        links_insert_statement(&map.id, &registrations, &linked)?
+            .to_query()
             .execute(&mut *connection)
             .await
             .map_err(|error| persistence_error::<EntityMapError>(error))?;
@@ -173,8 +170,8 @@ pub(crate) async fn upsert_link(
     registration: &Identifier,
     linked_map: &Identifier,
 ) -> Result<EntityMapMutation, EntityMapError> {
-    let (sql, values) = link_upsert(id, registration, linked_map)?.build_sqlx(PostgresQueryBuilder);
-    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let result = link_upsert(id, registration, linked_map)?
+        .to_query()
         .execute(pool)
         .await
         .map_err(|error| persistence_error::<EntityMapError>(error))?;
@@ -204,8 +201,8 @@ fn entries_delete(id: &Identifier, entity_ids: &[&str]) -> DeleteStatement {
 /// stop being considered by the pages that follow.
 pub(crate) async fn prune_entries(pool: &PgPool, id: &Identifier, entity_ids: &[Identifier]) -> Result<(), EntityMapError> {
     let entity_ids: Vec<&str> = entity_ids.iter().map(Identifier::as_str).collect();
-    let (sql, values) = entries_delete(id, &entity_ids).build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    entries_delete(id, &entity_ids)
+        .to_query()
         .execute(pool)
         .await
         .map_err(|error| persistence_error::<EntityMapError>(error))?;
@@ -215,14 +212,14 @@ pub(crate) async fn prune_entries(pool: &PgPool, id: &Identifier, entity_ids: &[
 /// A map's `(entity_id, source)` pairs in the order they were produced, which
 /// is the order of the table's key, so the read needs no sort.
 pub(crate) async fn read_entries(pool: &PgPool, id: &Identifier) -> Result<Vec<(String, String)>, EntityMapError> {
-    let (sql, values) = Query::select()
+    let rows = Query::select()
         .column(EntityMapEntries::EntityId)
         .column(EntityMapEntries::Source)
         .from(EntityMapEntries::Table)
         .and_where(Expr::col(EntityMapEntries::EntityMapKey).eq(entity_map_key_of(Expr::val(id.as_str()))))
         .order_by(EntityMapEntries::Position, Order::Asc)
-        .build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .to_owned()
+        .to_query()
         .fetch_all(pool)
         .await
         .map_err(|error| persistence_error::<EntityMapError>(error))?;
@@ -238,14 +235,14 @@ pub(crate) async fn read_entries(pool: &PgPool, id: &Identifier) -> Result<Vec<(
 
 /// A map's `(registration_id, linked_map_id)` pairs.
 pub(crate) async fn read_links(pool: &PgPool, id: &Identifier) -> Result<Vec<(String, String)>, EntityMapError> {
-    let (sql, values) = Query::select()
+    let rows = Query::select()
         .column(EntityMapLinks::RegistrationId)
         .column(EntityMapLinks::LinkedMapId)
         .from(EntityMapLinks::Table)
         .and_where(Expr::col(EntityMapLinks::EntityMapKey).eq(entity_map_key_of(Expr::val(id.as_str()))))
         .order_by(EntityMapLinks::RegistrationId, Order::Asc)
-        .build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .to_owned()
+        .to_query()
         .fetch_all(pool)
         .await
         .map_err(|error| persistence_error::<EntityMapError>(error))?;
@@ -261,19 +258,27 @@ pub(crate) async fn read_links(pool: &PgPool, id: &Identifier) -> Result<Vec<(St
 
 #[cfg(test)]
 mod tests {
-    use crate::entity_map::entries::{entries_delete, entries_insert_sql, link_upsert, links_insert_sql};
+    use crate::{
+        entity_map::entries::{entries_delete, entries_insert_statement, link_upsert, links_insert_statement},
+        statement_text::text_of,
+    };
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
+    fn map() -> Identifier {
+        "urn:ngsi-ld:EntityMap:1".parse().expect("valid URI")
+    }
+
     #[test]
     fn the_entries_insert_stages_three_arrays_under_the_resolved_entity_map_key() {
-        let sql = entries_insert_sql().expect("builds");
+        let sql = text_of(&entries_insert_statement(&map(), Vec::new(), &[], &[]).expect("builds"));
         assert!(
             sql.contains(r#"INSERT INTO "entity_map_entries" ("entity_map_key", "position", "entity_id", "source")"#),
             "{sql}"
         );
         assert!(
-            sql.contains(r#"(SELECT "entity_maps"."entity_map_key" FROM "entity_maps" WHERE "entity_maps"."id" = ($1))"#),
+            sql.contains(r#"(SELECT "entity_maps"."entity_map_key" FROM "entity_maps" WHERE "entity_maps"."id" = $1)"#),
             "{sql}"
         );
         assert!(
@@ -284,7 +289,7 @@ mod tests {
 
     #[test]
     fn the_links_insert_stages_two_arrays_under_the_resolved_entity_map_key() {
-        let sql = links_insert_sql().expect("builds");
+        let sql = text_of(&links_insert_statement(&map(), &[], &[]).expect("builds"));
         assert!(
             sql.contains(r#"INSERT INTO "entity_map_links" ("entity_map_key", "registration_id", "linked_map_id")"#),
             "{sql}"

@@ -15,10 +15,9 @@ use crate::{
     error::MaintenanceError,
     observation::{Finding, ObservationDecision, ObservationLevel},
 };
-use andromeda_postgresql_seaquery::maintenance::wal_written_since;
+use andromeda_postgresql_seaquery::{maintenance::wal_written_since, statement::Statement};
 use andromeda_telemetry::maintenance::record_replication_slot_wal;
-use sea_query::{Alias, Expr, Iden, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Alias, Expr, Iden, Query, SelectStatement};
 use sqlx::{PgConnection, Row, postgres::PgRow};
 use std::str::FromStr;
 use strum::EnumString;
@@ -73,8 +72,7 @@ impl ReplicationSlot {
 /// Read every replication slot, report the most WAL one keeps, and log each
 /// slot that warrants it.
 pub(crate) async fn observe_replication_slots(platform: &mut PgConnection) -> Result<(), MaintenanceError> {
-    let (sql, values) = replication_slots_statement().build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(platform).await?;
+    let rows = replication_slots_statement().to_query().fetch_all(platform).await?;
     let slots = rows.iter().map(replication_slot_of).collect::<Result<Vec<_>, _>>()?;
     record_replication_slot_wal(slots.iter().filter_map(|slot| slot.retained_bytes).max().unwrap_or_default());
     for slot in &slots {

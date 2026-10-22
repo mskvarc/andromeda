@@ -18,7 +18,7 @@
 
 use crate::{
     notification_fixture::{delivery_ids, queue_notification},
-    queue_database::{delivery_queue, queue_database},
+    queue_database::{delivery_of, delivery_queue, queue_database},
 };
 use andromeda_notification::{
     delivery_config::DeliveryConfig,
@@ -26,9 +26,12 @@ use andromeda_notification::{
     delivery_entry::{DeliveryEntry, DeliveryKey},
     delivery_store::DeliveryStore,
 };
+use andromeda_postgresql_schema::notification::NotificationDeliveries;
+use andromeda_postgresql_seaquery::{aggregate::count_all, clock::now, statement::Statement};
 use chrono::{DateTime, TimeDelta, Utc};
 use futures::future::BoxFuture;
 use pretty_assertions::assert_eq;
+use sea_query::{Alias, Expr, ExprTrait, Func, Query};
 use serde_json::json;
 use serial_test::serial;
 use sqlx::PgPool;
@@ -95,13 +98,23 @@ struct HoldingTransport {
 impl HoldingTransport {
     /// The most live, unacknowledged claims any one worker holds right now.
     async fn widest_live_claim(&self) -> i64 {
-        sqlx::query_scalar(
-            "SELECT COALESCE(max(held), 0) FROM (SELECT count(*) AS held FROM notification_deliveries \
-             WHERE delivered_at IS NULL AND exhausted_at IS NULL AND lease_until > now() GROUP BY claimed_by) AS leases",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .expect("live leases")
+        Query::select()
+            .expr(Func::coalesce::<_, Expr>([Func::max(Expr::col(Alias::new("held"))).into(), Expr::val(0_i64)]))
+            .from_subquery(
+                Query::select()
+                    .expr_as(count_all(), Alias::new("held"))
+                    .from(NotificationDeliveries::Table)
+                    .and_where(Expr::col(NotificationDeliveries::DeliveredAt).is_null())
+                    .and_where(Expr::col(NotificationDeliveries::ExhaustedAt).is_null())
+                    .and_where(Expr::col(NotificationDeliveries::LeaseUntil).gt(now()))
+                    .group_by_col(NotificationDeliveries::ClaimedBy)
+                    .to_owned(),
+                Alias::new("leases"),
+            )
+            .to_query_scalar()
+            .fetch_one(&self.pool)
+            .await
+            .expect("live leases")
     }
 }
 
@@ -166,7 +179,11 @@ async fn durable_queue_a_delivery_pass_holds_no_more_unacknowledged_claims_than_
         (0, 0),
         "no lease lapsed before it was acknowledged"
     );
-    let delivered: i64 = sqlx::query_scalar("SELECT count(*) FROM notification_deliveries WHERE delivered_at IS NOT NULL")
+    let delivered: i64 = Query::select()
+        .expr(count_all())
+        .from(NotificationDeliveries::Table)
+        .and_where(Expr::col(NotificationDeliveries::DeliveredAt).is_not_null())
+        .to_query_scalar()
         .fetch_one(&pool)
         .await
         .expect("delivered count");
@@ -264,12 +281,13 @@ async fn durable_queue_a_slow_endpoint_holds_up_only_its_own_slot_and_its_retry_
         .lock()
         .expect("slow endpoint lock")
         .expect("the slow endpoint received a delivery");
-    let (attempts, next_attempt_at, delivered): (i32, DateTime<Utc>, bool) =
-        sqlx::query_as("SELECT attempt_count, next_attempt_at, delivered_at IS NOT NULL FROM notification_deliveries WHERE delivery_key = $1")
-            .bind(slow.into_inner())
-            .fetch_one(&pool)
-            .await
-            .expect("the slow delivery's state");
+    let (attempts, next_attempt_at, delivered): (i32, DateTime<Utc>, bool) = delivery_of(slow.into_inner())
+        .columns([NotificationDeliveries::AttemptCount, NotificationDeliveries::NextAttemptAt])
+        .expr(Expr::col(NotificationDeliveries::DeliveredAt).is_not_null())
+        .to_query_as()
+        .fetch_one(&pool)
+        .await
+        .expect("the slow delivery's state");
     assert!(!delivered, "the slow delivery failed");
     assert_eq!(attempts, 1, "its failed attempt is counted");
     // The pass's instant is `origin` advanced by the monotonic time since the

@@ -47,15 +47,15 @@ use andromeda_postgresql_seaquery::{
     aggregate::count_all,
     branch::qualified,
     pg_array::{any, is_any_of, is_none_of},
+    statement::Statement,
 };
 use andromeda_postgresql_temporal_query::{
     alias::{Ah, S, Te},
     axis::axis_column,
 };
 use iri_rs::IriBuf;
-use sea_query::{Condition, DeleteStatement, DynIden, Expr, ExprTrait, Iden, LockType, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, PgConnection, Row};
+use sea_query::{Condition, DeleteStatement, DynIden, Expr, ExprTrait, Iden, LockType, Query, SelectStatement};
+use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
 /// The count of history instances the window and scope select.
@@ -90,8 +90,10 @@ impl TemporalRepository {
         if stream_keys.is_empty() {
             return Ok(0);
         }
-        let (sql, values) = windowed_count_statement(schema.as_ref(), &stream_keys, &scope.window).build_sqlx(PostgresQueryBuilder);
-        let row = sqlx::query_with(AssertSqlSafe(sql), values).fetch_one(&mut *connection).await?;
+        let row = windowed_count_statement(schema.as_ref(), &stream_keys, &scope.window)
+            .to_query()
+            .fetch_one(&mut *connection)
+            .await?;
         let matched: i64 = row.try_get("matched")?;
         Ok(u64::try_from(matched).map_err(|_| StoredCatalogError::NegativeCount { count: matched })?)
     }
@@ -116,8 +118,7 @@ impl TemporalRepository {
 
         // Lock the addressed entities so a concurrent temporal write cannot
         // interleave a new instant into the window mid-delete.
-        let (lock_sql, lock_values) = lock_entities_statement(schema.as_ref(), entity_ids).build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(AssertSqlSafe(lock_sql), lock_values).execute(&mut *tx).await?;
+        lock_entities_statement(schema.as_ref(), entity_ids).to_query().execute(&mut *tx).await?;
 
         let attributes = self.scoped_attributes(scope).await?;
         let stream_keys = matching_stream_keys(&mut tx, schema.as_ref(), entity_ids, scope, &attributes).await?;
@@ -126,10 +127,12 @@ impl TemporalRepository {
             return Ok(0);
         }
         allow_confined_decompression(&mut tx).await?;
-        let (writes_sql, writes_values) = windowed_writes_statement(schema.as_ref(), &stream_keys, &scope.window).build_sqlx(PostgresQueryBuilder);
-        let write_ids: Vec<Uuid> = sqlx::query_scalar_with(AssertSqlSafe(writes_sql), writes_values).fetch_all(&mut *tx).await?;
-        let (delete_sql, delete_values) = windowed_delete_statement(schema.as_ref(), &stream_keys, &scope.window).build_sqlx(PostgresQueryBuilder);
-        let removed = sqlx::query_with(AssertSqlSafe(delete_sql), delete_values)
+        let write_ids: Vec<Uuid> = windowed_writes_statement(schema.as_ref(), &stream_keys, &scope.window)
+            .to_query_scalar()
+            .fetch_all(&mut *tx)
+            .await?;
+        let removed = windowed_delete_statement(schema.as_ref(), &stream_keys, &scope.window)
+            .to_query()
             .execute(&mut *tx)
             .await?
             .rows_affected();
@@ -138,8 +141,10 @@ impl TemporalRepository {
         // bounded window removes a slice and the stream still holds instants
         // outside it, so its catalogue row stays (clause 5.6.13 equivalent).
         if scope.empties_streams() {
-            let (cleanup_sql, cleanup_values) = empty_stream_cleanup_statement(schema.as_ref(), &stream_keys).build_sqlx(PostgresQueryBuilder);
-            sqlx::query_with(AssertSqlSafe(cleanup_sql), cleanup_values).execute(&mut *tx).await?;
+            empty_stream_cleanup_statement(schema.as_ref(), &stream_keys)
+                .to_query()
+                .execute(&mut *tx)
+                .await?;
         }
         prune_stream_shapes(&mut tx, schema.as_ref(), &stream_keys).await?;
 
@@ -181,8 +186,10 @@ async fn matching_stream_keys(
     scope: &TemporalHistoryDeleteScope,
     attributes: &ResolvedNames<AttributeName>,
 ) -> Result<Vec<i64>, TemporalStoreError> {
-    let (sql, values) = matching_streams_query(schema, entity_ids, scope, attributes).build_sqlx(PostgresQueryBuilder);
-    Ok(sqlx::query_scalar_with(AssertSqlSafe(sql), values).fetch_all(connection).await?)
+    Ok(matching_streams_query(schema, entity_ids, scope, attributes)
+        .to_query_scalar()
+        .fetch_all(connection)
+        .await?)
 }
 
 /// The streams the request scopes: those of the addressed entities that carry a

@@ -30,7 +30,10 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::census::{AttributeCensus, EntityTypeAttributeCensus, EntityTypeCensus};
-use andromeda_postgresql_seaquery::unnest::unnest_of;
+use andromeda_postgresql_seaquery::{
+    literal::{int_literal, true_literal},
+    unnest::unnest_of,
+};
 use sea_query::{
     CommonTableExpression,
     DynIden,
@@ -217,7 +220,7 @@ fn signed_rows(source: &DynIden, side: ImageSide, sign: i32) -> SelectStatement 
         .expr_as(column(side.types()), Shape::Types)
         .expr_as(column(side.instance_names()), Shape::Names)
         .expr_as(column(side.instance_kinds()), Shape::Kinds)
-        .expr_as(Expr::val(sign), Shape::Sign)
+        .expr_as(int_literal(i64::from(sign)), Shape::Sign)
         .from(source.clone()) // clone: as above.
         .take()
 }
@@ -233,7 +236,7 @@ fn shapes(signed: SelectStatement) -> SelectStatement {
     shapes
         .expr_as(total(), Shape::Rows)
         .from_subquery(signed, Shape::Signed)
-        .and_having(total().ne(0));
+        .and_having(total().ne(int_literal(0)));
     shapes.take()
 }
 
@@ -264,7 +267,7 @@ fn expanded(types: ExpandTypes, instances: ExpandInstances) -> SelectStatement {
             let type_keys = Query::select()
                 .expr_as(SimpleExpr::from(unnest_of(Expr::col((CensusCte::Shapes, Shape::Types)))), Expansion::TypeKey)
                 .take();
-            rows.join_lateral(JoinType::InnerJoin, type_keys, Types, SimpleExpr::from(Expr::val(true)));
+            rows.join_lateral(JoinType::InnerJoin, type_keys, Types, true_literal());
         }
         ExpandTypes::No => {}
     }
@@ -274,7 +277,7 @@ fn expanded(types: ExpandTypes, instances: ExpandInstances) -> SelectStatement {
                 .expr_as(SimpleExpr::from(unnest_of(Expr::col((CensusCte::Shapes, Shape::Names)))), Expansion::NameKey)
                 .expr_as(SimpleExpr::from(unnest_of(Expr::col((CensusCte::Shapes, Shape::Kinds)))), Expansion::Kind)
                 .take();
-            rows.join_lateral(JoinType::InnerJoin, instance_keys, Instances, SimpleExpr::from(Expr::val(true)));
+            rows.join_lateral(JoinType::InnerJoin, instance_keys, Instances, true_literal());
         }
         ExpandInstances::No => {}
     }
@@ -294,7 +297,7 @@ fn ledger_insert(
     for (relation, key) in keys {
         rows.column((relation.clone(), *key)).group_by_col((relation.clone(), *key)); // clone: the select and its grouping each own the relation.
     }
-    rows.expr(total()).and_having(total().ne(0));
+    rows.expr(total()).and_having(total().ne(int_literal(0)));
     let mut insert = Query::insert();
     insert
         .into_table(table_of(target, ledger))
@@ -344,13 +347,13 @@ mod tests {
             concat!(
                 r#"SELECT "signed"."types", "signed"."names", "signed"."kinds", SUM("signed"."sign") AS "rows" "#,
                 r#"FROM (SELECT "srch"."new_types" AS "types", "srch"."new_instance_names" AS "names", "srch"."new_instance_kinds" AS "kinds", 1 AS "sign" FROM "srch") AS "signed" "#,
-                r#"GROUP BY "signed"."types", "signed"."names", "signed"."kinds" HAVING SUM("signed"."sign") <> 0"#
+                r#"GROUP BY "signed"."types", "signed"."names", "signed"."kinds" HAVING SUM("signed"."sign") <> (0)"#
             )
         );
         for (_, ledger) in &statements[1..] {
             assert!(ledger.contains(r#"FROM "census_shapes""#), "{ledger}");
             assert!(!ledger.contains(r#""srch""#), "a ledger reads the shapes only: {ledger}");
-            assert!(ledger.ends_with(r#"HAVING SUM("census_shapes"."rows") <> 0"#), "{ledger}");
+            assert!(ledger.ends_with(r#"HAVING SUM("census_shapes"."rows") <> (0)"#), "{ledger}");
         }
     }
 

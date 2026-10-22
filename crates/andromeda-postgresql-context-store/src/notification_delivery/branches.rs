@@ -20,8 +20,8 @@ use crate::{
 use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
 use andromeda_postgresql_pool::sql_state::SqlState;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
-use sea_query::{Expr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use andromeda_postgresql_seaquery::statement::Statement;
+use sea_query::{Expr, ExprTrait, JoinType, Query, SelectStatement};
 use sqlx::{Row, postgres::PgPool};
 
 /// The branches a per-branch drain sweeps: the live branch, then every
@@ -37,8 +37,7 @@ use sqlx::{Row, postgres::PgPool};
 /// has no version, or [`ContextStoreError::StoredSnapshot`] when a stored Snapshot key or URI cannot
 /// be read back as its domain type.
 pub(crate) async fn drainable_targets(pool: &PgPool) -> Result<Vec<ContextTarget>, ContextStoreError> {
-    let (sql, values) = drainable_snapshots_statement(current_branch_version()?).build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(pool).await?;
+    let rows = drainable_snapshots_statement(current_branch_version()?).to_query().fetch_all(pool).await?;
 
     let mut targets = Vec::with_capacity(rows.len() + 1);
     targets.push(ContextTarget::Live);

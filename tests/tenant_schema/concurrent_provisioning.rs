@@ -16,10 +16,18 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
+use andromeda_postgresql_seaquery::{
+    command::Command,
+    database_definition::{ConnectedSessions, DatabaseDefinition},
+    introspection::current_database,
+    statement::Statement,
+    system_catalog::PgDatabase,
+};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, database_access::connect_test_database};
 use futures::future::join_all;
 use reqwest::{Client, StatusCode};
+use sea_query::{Alias, Expr, ExprTrait, Query};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::time::Duration;
@@ -105,17 +113,20 @@ async fn suspend_tenants(client: &Client) {
 /// cannot remove. Scoping to the suite's own prefix keeps this cleanup from
 /// dropping a concurrent suite's tenant databases.
 async fn drop_tenant_databases(pool: &PgPool) {
-    let current: String = sqlx::query_scalar("SELECT current_database()").fetch_one(pool).await.unwrap_or_default();
-    let like = format!("andromeda_tenant_{TENANT_PREFIX}%");
-    let databases: Vec<String> = sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE $1 AND datname <> $2")
-        .bind(&like)
-        .bind(&current)
+    let databases: Vec<String> = Query::select()
+        .column(PgDatabase::Datname)
+        .from(PgDatabase::Table)
+        .and_where(Expr::col(PgDatabase::Datname).like(format!("andromeda_tenant_{TENANT_PREFIX}%")))
+        .and_where(Expr::col(PgDatabase::Datname).ne(current_database()))
+        .to_query_scalar()
         .fetch_all(pool)
         .await
         .unwrap_or_default();
     for database in databases {
-        let statement = format!("DROP DATABASE IF EXISTS \"{database}\" WITH (FORCE)");
-        let _ = sqlx::query(sqlx::AssertSqlSafe(statement)).execute(pool).await;
+        let _ = DatabaseDefinition::drop(Alias::new(database), ConnectedSessions::Terminate)
+            .to_query()
+            .execute(pool)
+            .await;
     }
 }
 

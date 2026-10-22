@@ -417,7 +417,7 @@ mod tests {
             sql,
             concat!(
                 r#"SELECT "entry" ->> $1 AS "kind", "#,
-                r#"ARRAY((SELECT jsonb_array_elements_text(jsonb_path_query_array("entry", '$.column[*]')))) AS "columns" "#,
+                r#"ARRAY (SELECT jsonb_array_elements_text(jsonb_path_query_array("entry", '$.column[*]'))) AS "columns" "#,
                 r#"FROM "_timescaledb_catalog"."compression_settings" AS "cs", "#,
                 r#"jsonb_path_query("cs"."index", '$[*] ? (@.source == "config")') AS "entry" "#,
                 r#"WHERE "cs"."relid" = ($2::regclass)"#

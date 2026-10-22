@@ -12,10 +12,13 @@
 //! shall be present") means no item leaves every axis unconstrained at once,
 //! so the absent axes are reached one pair at a time.
 
+use andromeda_postgresql_schema::csr::{Csr, RegistrationInformation};
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Expr, ExprTrait, Order, Query};
 use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
 
@@ -24,13 +27,20 @@ const SUITE: &str = "csr";
 
 /// The information rows of one registration, ordered so two runs compare.
 async fn information_rows(pool: &PgPool, registration_id: &str) -> Vec<Value> {
-    sqlx::query(
-        "SELECT entity_types, entity_id, entity_id_pattern, property_name_keys, relationship_name_keys \
-         FROM registration_information WHERE registration_id = $1 \
-         ORDER BY item_ordinal, selector_ordinal",
-    )
-    .bind(registration_id)
-    .fetch_all(pool)
+    Query::select()
+        .columns([
+            RegistrationInformation::EntityTypes,
+            RegistrationInformation::EntityId,
+            RegistrationInformation::EntityIdPattern,
+            RegistrationInformation::PropertyNameKeys,
+            RegistrationInformation::RelationshipNameKeys,
+        ])
+        .from(RegistrationInformation::Table)
+        .and_where(Expr::col(RegistrationInformation::RegistrationId).eq(registration_id))
+        .order_by(RegistrationInformation::ItemOrdinal, Order::Asc)
+        .order_by(RegistrationInformation::SelectorOrdinal, Order::Asc)
+        .to_query()
+        .fetch_all(pool)
     .await
     .expect("the information rows must be readable")
     .into_iter()
@@ -109,8 +119,11 @@ async fn a_registration_stores_every_axis_its_information_declares() {
     // Operations stay on the registration: the group token of Table 4.20-2 is
     // a member in its own right rather than being expanded into the operations
     // it stands for.
-    let operations: Option<Vec<i16>> = sqlx::query_scalar("SELECT operations FROM context_source_registrations WHERE id = $1")
-        .bind(&registration_id)
+    let operations: Option<Vec<i16>> = Query::select()
+        .column(Csr::Operations)
+        .from(Csr::Table)
+        .and_where(Expr::col(Csr::Id).eq(registration_id.as_str()))
+        .to_query_scalar()
         .fetch_one(scope.database_pool())
         .await
         .expect("the registration's operations must be readable");

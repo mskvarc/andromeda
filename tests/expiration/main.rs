@@ -7,12 +7,15 @@
 mod entity_expiry;
 
 use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
+use andromeda_postgresql_schema::current::Entities;
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use chrono::{DateTime, Utc};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Expr, ExprTrait, Query};
 use serde_json::{Value, json};
 use std::{future::Future, time::Duration};
 use tokio::time::{Instant, sleep};
@@ -401,10 +404,17 @@ where
     }
 }
 
-/// The earliest instance expiry the write path recorded on the entity's row.
-async fn recorded_minimum_expiry(scope: &TestEnvironment, id: &str) -> Option<String> {
-    sqlx::query_scalar::<_, Option<DateTime<Utc>>>("SELECT min_attribute_expires_at FROM entities WHERE id = $1")
-        .bind(id)
+/// The expiry instant the write path recorded in `column` of the entity's row.
+///
+/// # Panics
+///
+/// Panics when the entity's row cannot be read.
+pub async fn recorded_expiry(scope: &TestEnvironment, id: &str, column: Entities) -> Option<String> {
+    Query::select()
+        .column(column)
+        .from(Entities::Table)
+        .and_where(Expr::col(Entities::Id).eq(id))
+        .to_query_scalar::<Option<DateTime<Utc>>>()
         .fetch_one(scope.database_pool())
         .await
         .expect("the entity row must be readable")
@@ -438,7 +448,7 @@ async fn expiration_worker_partial_multi_instance_expired_instance_removed() {
     // the read path filters an expired instance out on its own, so the array
     // length below is already correct before any sweep runs.
     wait_for_expiry_sweep("the purge to re-record the surviving instance's expiry", || async {
-        recorded_minimum_expiry(&scope, &id).await.as_deref() == Some("2099-12-31T23:59:59Z")
+        recorded_expiry(&scope, &id, Entities::MinAttributeExpiresAt).await.as_deref() == Some("2099-12-31T23:59:59Z")
     })
     .await;
 
@@ -446,7 +456,7 @@ async fn expiration_worker_partial_multi_instance_expired_instance_removed() {
     let speed = body["speed"].as_array().expect("speed must be multi-instance array");
     assert_eq!(speed.len(), 2, "expired instance must be removed");
 
-    let recorded = recorded_minimum_expiry(&scope, &id).await;
+    let recorded = recorded_expiry(&scope, &id, Entities::MinAttributeExpiresAt).await;
     assert_eq!(
         recorded.as_deref(),
         Some("2099-12-31T23:59:59Z"),
@@ -605,13 +615,13 @@ async fn expiration_worker_expired_attribute_purged_within_sweep_bound_right_aft
         .expect("batch create request");
     assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
     assert_eq!(
-        recorded_minimum_expiry(&scope, &id).await.as_deref(),
+        recorded_expiry(&scope, &id, Entities::MinAttributeExpiresAt).await.as_deref(),
         Some("2020-01-01T00:00:00Z"),
         "the batch write records the attribute's expiry for the sweep to find"
     );
 
     wait_for_expiry_sweep("the sweep to purge the expired attribute after a batch write", || async {
-        recorded_minimum_expiry(&scope, &id).await.is_none()
+        recorded_expiry(&scope, &id, Entities::MinAttributeExpiresAt).await.is_none()
     })
     .await;
 

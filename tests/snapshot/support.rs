@@ -1,7 +1,10 @@
 //! Public-API fixtures shared by the focused Snapshot acceptance modules.
 
+use andromeda_postgresql_schema::snapshot::Snapshots;
+use andromeda_postgresql_seaquery::{aggregate::count_all, statement::Statement};
 use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
 use reqwest::{Client, Method, Response, StatusCode, header::HeaderMap};
+use sea_query::{Expr, ExprTrait, Query, TableName};
 use serde_json::Value;
 use sqlx::PgPool;
 use std::time::Duration;
@@ -145,14 +148,32 @@ pub(crate) async fn scoped_json(method: Method, path: &str, snapshot: &str, body
         .expect("Snapshot-scoped request")
 }
 
-/// The schema holding a published Snapshot's branch, `snap_<snapshot_key>`.
-pub(crate) async fn published_branch_schema(pool: &PgPool, snapshot_id: &str) -> String {
-    let key: i64 = sqlx::query_scalar("SELECT snapshot_key FROM snapshots WHERE id = $1")
-        .bind(snapshot_id)
+/// The control-table key of the Snapshot `snapshot_id`.
+pub(crate) async fn snapshot_key(pool: &PgPool, snapshot_id: &str) -> i64 {
+    Query::select()
+        .column(Snapshots::SnapshotKey)
+        .from(Snapshots::Table)
+        .and_where(Expr::col(Snapshots::Id).eq(snapshot_id))
+        .to_query_scalar()
         .fetch_one(pool)
         .await
-        .expect("the Snapshot's key");
-    format!("snap_{key}")
+        .expect("the Snapshot's key")
+}
+
+/// The schema holding a published Snapshot's branch, `snap_<snapshot_key>`.
+pub(crate) async fn published_branch_schema(pool: &PgPool, snapshot_id: &str) -> String {
+    format!("snap_{}", snapshot_key(pool, snapshot_id).await)
+}
+
+/// The number of rows `relation` holds.
+pub(crate) async fn relation_row_count(pool: &PgPool, relation: TableName) -> i64 {
+    Query::select()
+        .expr(count_all())
+        .from(relation)
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await
+        .expect("the relation's row count")
 }
 
 pub(crate) async fn wait_for_snapshot_terminal(client: &Client, id: &str, deadline: Duration) -> Value {

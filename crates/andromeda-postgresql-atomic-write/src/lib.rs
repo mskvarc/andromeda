@@ -60,7 +60,7 @@ andromeda_architecture_checks::dependency_boundary! {
     ],
     // `tokio` for the backoff between runs of a commit PostgreSQL rolled back
     // as a deadlock or serialization victim (`contention_retry`).
-    allow_production_dependencies: ["sea-query", "sea-query-sqlx", "sqlx", "tokio"],
+    allow_production_dependencies: ["sea-query", "sqlx", "tokio"],
 }
 
 #[cfg(test)]

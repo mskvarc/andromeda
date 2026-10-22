@@ -17,8 +17,11 @@ use crate::{
 };
 use andromeda_context_commit::write_id::WriteId;
 use andromeda_entity::{side_effect_drain::EntitySideEffectDrainConfig, side_effect_queue::SideEffectQueue};
+use andromeda_postgresql_schema::queue::PendingSideEffects;
+use andromeda_postgresql_seaquery::{catalog_function::num_nonnulls, statement::Statement};
 use chrono::Utc;
 use pretty_assertions::assert_eq;
+use sea_query::{Expr, ExprTrait, Query};
 use serial_test::serial;
 use sqlx::PgPool;
 use std::time::Duration;
@@ -53,13 +56,20 @@ fn ceiling_configuration() -> EntitySideEffectDrainConfig {
 /// [`MAX_ATTEMPTS`] attempts, no lease, and a recorded reason, and is never
 /// handed out again.
 async fn assert_dead_lettered_at_the_ceiling(pool: &PgPool, write_id: WriteId) {
-    let (dead, attempts, lock_columns, last_error): (bool, i32, i32, Option<String>) = sqlx::query_as(
-        "SELECT exhausted_at IS NOT NULL, attempt_count, num_nonnulls(lease_until, claimed_by), last_error FROM pending_side_effects WHERE write_id = $1",
-    )
-    .bind(write_id.as_uuid())
-    .fetch_one(pool)
-    .await
-    .expect("the dead-lettered job is kept as evidence");
+    let (dead, attempts, lock_columns, last_error): (bool, i32, i32, Option<String>) = Query::select()
+        .expr(Expr::col(PendingSideEffects::ExhaustedAt).is_not_null())
+        .column(PendingSideEffects::AttemptCount)
+        .expr(num_nonnulls([
+            Expr::col(PendingSideEffects::LeaseUntil),
+            Expr::col(PendingSideEffects::ClaimedBy),
+        ]))
+        .column(PendingSideEffects::LastError)
+        .from(PendingSideEffects::Table)
+        .and_where(Expr::col(PendingSideEffects::WriteId).eq(write_id.as_uuid()))
+        .to_query_as()
+        .fetch_one(pool)
+        .await
+        .expect("the dead-lettered job is kept as evidence");
     assert!(dead, "the job is dead-lettered");
     assert_eq!(
         attempts,

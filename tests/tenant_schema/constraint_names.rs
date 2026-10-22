@@ -15,7 +15,18 @@
 //! whose names start with an underscore and whose shape sqlx dictates.
 
 use crate::SUITE;
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    catalog_function::left,
+    introspection::current_schema,
+    literal::{int_literal, text_literal},
+    pg_operator::PgBinaryOperator,
+    pg_type::PostgresType,
+    statement::Statement,
+    system_catalog::{PgClass, PgNamespace},
+};
 use andromeda_test_harness::{database_access::connect_test_database, environment::TestEnvironment};
+use sea_query::{Alias, Expr, ExprTrait, Order, Query};
 use sqlx::PgPool;
 
 /// The suffixes PostgreSQL gives a primary key, unique, foreign key and check
@@ -25,21 +36,43 @@ const GENERATED_SUFFIXES: [&str; 4] = ["_pkey", "_key", "_fkey", "_check"];
 /// Every `relation.constraint` in the connection's current schema that belongs
 /// to an Andromeda relation and is not a `NOT NULL` constraint.
 async fn declared_constraints(pool: &PgPool) -> Vec<String> {
-    sqlx::query_scalar(
-        "SELECT c.relname::text || '.' || con.conname::text FROM pg_constraint AS con \
-         JOIN pg_class AS c ON c.oid = con.conrelid \
-         JOIN pg_namespace AS n ON n.oid = c.relnamespace \
-         WHERE n.nspname = current_schema() \
-           AND con.contype <> 'n' \
-           AND left(c.relname, 1) <> '_' \
-           AND NOT EXISTS ( \
-               SELECT 1 FROM pg_depend AS d \
-               WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e') \
-         ORDER BY 1",
-    )
-    .fetch_all(pool)
-    .await
-    .expect("the constraint catalogue must be readable")
+    let constraint = |column: &str| Expr::col((Alias::new("pg_constraint"), Alias::new(column)));
+    let dependency = |column: &str| Expr::col((Alias::new("pg_depend"), Alias::new(column)));
+    Query::select()
+        .expr(
+            cast(Expr::col((PgClass::Table, PgClass::Relname)), PostgresType::Text)
+                .concat_text(text_literal("."))
+                .concat_text(cast(constraint("conname"), PostgresType::Text)),
+        )
+        .from(Alias::new("pg_constraint"))
+        .inner_join(
+            PgClass::Table,
+            Expr::col((PgClass::Table, PgClass::Oid)).equals((Alias::new("pg_constraint"), Alias::new("conrelid"))),
+        )
+        .inner_join(
+            PgNamespace::Table,
+            Expr::col((PgNamespace::Table, PgNamespace::Oid)).equals((PgClass::Table, PgClass::Relnamespace)),
+        )
+        .and_where(Expr::col((PgNamespace::Table, PgNamespace::Nspname)).eq(current_schema()))
+        .and_where(constraint("contype").ne(text_literal("n")))
+        .and_where(left(Expr::col((PgClass::Table, PgClass::Relname)), Expr::val(1)).ne("_"))
+        .and_where(
+            Expr::exists(
+                Query::select()
+                    .expr(int_literal(1))
+                    .from(Alias::new("pg_depend"))
+                    .and_where(dependency("classid").eq(cast(text_literal("pg_class"), PostgresType::Regclass)))
+                    .and_where(dependency("objid").equals((PgClass::Table, PgClass::Oid)))
+                    .and_where(dependency("deptype").eq(text_literal("e")))
+                    .to_owned(),
+            )
+            .not(),
+        )
+        .order_by_expr(int_literal(1), Order::Asc)
+        .to_query_scalar()
+        .fetch_all(pool)
+        .await
+        .expect("the constraint catalogue must be readable")
 }
 
 /// The constraints among `declared` whose name PostgreSQL generated.

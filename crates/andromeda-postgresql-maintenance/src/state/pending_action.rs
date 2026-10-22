@@ -16,9 +16,9 @@ use crate::{
 use andromeda_context_space::snapshot_key::SnapshotKey;
 use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;
 use andromeda_postgresql_schema::maintenance::PostgresqlMaintenanceTargets;
+use andromeda_postgresql_seaquery::statement::Statement;
 use chrono::{DateTime, Utc};
-use sea_query::{Expr, ExprTrait, Iden, NullOrdering, Order, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Expr, ExprTrait, Iden, NullOrdering, Order, Query, SelectStatement};
 use sqlx::{PgConnection, Row};
 
 /// One queued action of one tenant's branch.
@@ -116,8 +116,7 @@ fn pending_actions_statement() -> SelectStatement {
 /// Run a pending-action statement and decode each row with its tenant and
 /// branch.
 async fn read_pending_actions(connection: &mut PgConnection, statement: &SelectStatement) -> Result<Vec<PendingRow>, MaintenanceError> {
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
+    let rows = statement.to_query().fetch_all(connection).await?;
     rows.iter()
         .map(|row| {
             let snapshot_key = row.try_get::<Option<i64>, _>(PostgresqlMaintenanceTargets::SnapshotKey.to_string().as_str())?;

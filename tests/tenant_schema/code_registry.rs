@@ -12,18 +12,48 @@
 
 use crate::SUITE;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, csr_operation::CsrOperationCode, scope_value_kind::ScopeValueKind, value_kind::ValueKind};
+use andromeda_postgresql_schema::{
+    csr::Csr,
+    current::CurrentAttributes,
+    temporal::{AttributeHistory, ScopeHistory},
+};
+use andromeda_postgresql_seaquery::{
+    aggregate::count_all,
+    cast::cast,
+    pg_array::array_literal,
+    pg_type::PostgresType,
+    statement::Statement,
+    unnest::unnest_of,
+};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Condition, Expr, ExprTrait, IntoIden, IntoTableRef, Query, SelectStatement, UpdateStatement};
 use serde_json::json;
+
+/// The distinct values of the code column `column` of `table`.
+fn distinct_codes(table: impl IntoTableRef, column: impl IntoIden) -> SelectStatement {
+    Query::select().distinct().column(column).from(table).to_owned()
+}
+
+/// The update that stores `operation` as the one operation of the registration
+/// `registration_id`.
+fn registered_operation(registration_id: &str, operation: i16) -> UpdateStatement {
+    Query::update()
+        .table(Csr::Table)
+        .value(Csr::Operations, array_literal([cast(Expr::val(operation), PostgresType::Smallint)]))
+        .and_where(Expr::col(Csr::Id).eq(registration_id))
+        .to_owned()
+}
 
 #[tokio::test]
 async fn every_stored_code_decodes_through_the_registry_that_owns_its_column() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
     let pool = scope.database_pool();
 
-    let attribute_kinds: Vec<i16> = sqlx::query_scalar("SELECT DISTINCT attribute_kind FROM attribute_history")
+    let attribute_kinds: Vec<i16> = distinct_codes(AttributeHistory::Table, AttributeHistory::AttributeKind)
+        .to_query_scalar()
         .fetch_all(pool)
         .await
         .expect("history attribute kinds must be readable");
@@ -34,7 +64,8 @@ async fn every_stored_code_decodes_through_the_registry_that_owns_its_column() {
         );
     }
 
-    let value_kinds: Vec<i16> = sqlx::query_scalar("SELECT DISTINCT value_kind FROM attribute_history")
+    let value_kinds: Vec<i16> = distinct_codes(AttributeHistory::Table, AttributeHistory::ValueKind)
+        .to_query_scalar()
         .fetch_all(pool)
         .await
         .expect("history value kinds must be readable");
@@ -45,7 +76,8 @@ async fn every_stored_code_decodes_through_the_registry_that_owns_its_column() {
         );
     }
 
-    let projected_kinds: Vec<i16> = sqlx::query_scalar("SELECT DISTINCT value_kind FROM current_attributes")
+    let projected_kinds: Vec<i16> = distinct_codes(CurrentAttributes::Table, CurrentAttributes::ValueKind)
+        .to_query_scalar()
         .fetch_all(pool)
         .await
         .expect("current value kinds must be readable");
@@ -56,7 +88,8 @@ async fn every_stored_code_decodes_through_the_registry_that_owns_its_column() {
         );
     }
 
-    let scope_kinds: Vec<i16> = sqlx::query_scalar("SELECT DISTINCT value_kind FROM scope_history")
+    let scope_kinds: Vec<i16> = distinct_codes(ScopeHistory::Table, ScopeHistory::ValueKind)
+        .to_query_scalar()
         .fetch_all(pool)
         .await
         .expect("scope value kinds must be readable");
@@ -67,7 +100,12 @@ async fn every_stored_code_decodes_through_the_registry_that_owns_its_column() {
         );
     }
 
-    let operations: Vec<i16> = sqlx::query_scalar("SELECT DISTINCT unnest(operations) FROM context_source_registrations WHERE operations IS NOT NULL")
+    let operations: Vec<i16> = Query::select()
+        .distinct()
+        .expr(unnest_of(Expr::col(Csr::Operations)))
+        .from(Csr::Table)
+        .and_where(Expr::col(Csr::Operations).is_not_null())
+        .to_query_scalar()
         .fetch_all(pool)
         .await
         .expect("registered operations must be readable");
@@ -91,14 +129,24 @@ async fn the_tombstone_code_stays_zero_and_names_rows_carrying_no_typed_value() 
     assert_eq!(ValueKind::Tombstone.code(), 0, "the attribute tombstone is reserved at zero");
     assert_eq!(ScopeValueKind::Tombstone.code(), 0, "the scope tombstone is reserved at zero");
 
-    let typed_tombstones: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM attribute_history \
-         WHERE value_kind = 0 AND (value_number IS NOT NULL OR value_string IS NOT NULL OR value_boolean IS NOT NULL \
-             OR value_date_time IS NOT NULL OR value_geometry IS NOT NULL OR value_object IS NOT NULL OR value_uri IS NOT NULL)",
-    )
-    .fetch_one(scope.database_pool())
-    .await
-    .expect("the tombstone audit must be readable");
+    let typed_tombstones: i64 = Query::select()
+        .expr(count_all())
+        .from(AttributeHistory::Table)
+        .and_where(Expr::col(AttributeHistory::ValueKind).eq(0))
+        .cond_where(
+            Condition::any()
+                .add(Expr::col(AttributeHistory::ValueNumber).is_not_null())
+                .add(Expr::col(AttributeHistory::ValueString).is_not_null())
+                .add(Expr::col(AttributeHistory::ValueBoolean).is_not_null())
+                .add(Expr::col(AttributeHistory::ValueDateTime).is_not_null())
+                .add(Expr::col(AttributeHistory::ValueGeometry).is_not_null())
+                .add(Expr::col(AttributeHistory::ValueObject).is_not_null())
+                .add(Expr::col(AttributeHistory::ValueUri).is_not_null()),
+        )
+        .to_query_scalar()
+        .fetch_one(scope.database_pool())
+        .await
+        .expect("the tombstone audit must be readable");
     assert_eq!(typed_tombstones, 0, "a tombstone row carries no typed value at all");
 
     scope.finish().await.expect("cleanup failed");
@@ -125,9 +173,8 @@ async fn a_registration_refuses_an_operation_number_no_release_assigned() {
 
     let highest = CsrOperationCode::ALL.last().expect("the operation registry is not empty").code();
     let unassigned = highest + 1;
-    let refused = sqlx::query("UPDATE context_source_registrations SET operations = ARRAY[$2::SMALLINT] WHERE id = $1")
-        .bind(&registration_id)
-        .bind(unassigned)
+    let refused = registered_operation(&registration_id, unassigned)
+        .to_query()
         .execute(scope.database_pool())
         .await;
     let violation = refused.expect_err("an unassigned operation number must be refused");
@@ -136,11 +183,7 @@ async fn a_registration_refuses_an_operation_number_no_release_assigned() {
 
     // The highest number the registry does assign is accepted, so the check
     // pins the registry's range rather than an arbitrary smaller one.
-    let accepted = sqlx::query("UPDATE context_source_registrations SET operations = ARRAY[$2::SMALLINT] WHERE id = $1")
-        .bind(&registration_id)
-        .bind(highest)
-        .execute(scope.database_pool())
-        .await;
+    let accepted = registered_operation(&registration_id, highest).to_query().execute(scope.database_pool()).await;
     assert!(accepted.is_ok(), "the registry's own highest operation must be storable: {accepted:?}");
 
     let deleted = client.delete_registration(&registration_id).await.expect("delete registration request failed");

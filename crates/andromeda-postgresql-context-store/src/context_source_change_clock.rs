@@ -10,8 +10,8 @@
 
 use andromeda_ngsi_ld_model::csource_change_revision::CsourceChangeRevision;
 use andromeda_postgresql_schema::context_source_change_clock::ContextSourceChangeClock;
-use sea_query::{CommonTableExpression, Expr, ExprTrait, Iden, PostgresQueryBuilder, Query, QueryStatementBuilder, SimpleExpr, UpdateStatement, WithClause};
-use sea_query_sqlx::SqlxBinder;
+use andromeda_postgresql_seaquery::{literal::int_literal, statement::Statement};
+use sea_query::{CommonTableExpression, Expr, ExprTrait, Iden, Query, QueryStatementBuilder, SimpleExpr, UpdateStatement, WithClause};
 use sqlx::PgExecutor;
 
 /// The common table expression one statement advances the clock in.
@@ -23,7 +23,10 @@ struct AdvancedClock;
 fn advance_statement() -> UpdateStatement {
     Query::update()
         .table(ContextSourceChangeClock::Table)
-        .value(ContextSourceChangeClock::Revision, Expr::col(ContextSourceChangeClock::Revision).add(1))
+        .value(
+            ContextSourceChangeClock::Revision,
+            Expr::col(ContextSourceChangeClock::Revision).add(int_literal(1)),
+        )
         .returning_col(ContextSourceChangeClock::Revision)
         .to_owned()
 }
@@ -35,8 +38,7 @@ fn advance_statement() -> UpdateStatement {
 ///
 /// Returns the driver error when the statement fails.
 pub(crate) async fn advance<'e>(executor: impl PgExecutor<'e>) -> Result<CsourceChangeRevision, sqlx::Error> {
-    let (sql, values) = advance_statement().build_sqlx(PostgresQueryBuilder);
-    let (revision,): (i64,) = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(executor).await?;
+    let (revision,): (i64,) = advance_statement().to_query_as().fetch_one(executor).await?;
     Ok(CsourceChangeRevision::from(revision))
 }
 
@@ -65,7 +67,7 @@ mod tests {
         let (sql, _) = advance_statement().build(PostgresQueryBuilder);
         assert_eq!(
             sql,
-            r#"UPDATE "context_source_change_clock" SET "revision" = "revision" + $1 RETURNING "revision""#
+            r#"UPDATE "context_source_change_clock" SET "revision" = "revision" + (1) RETURNING "revision""#
         );
     }
 
@@ -78,7 +80,7 @@ mod tests {
             .to_string(PostgresQueryBuilder);
         assert_eq!(
             sql,
-            r#"WITH "advanced_clock" AS (UPDATE "context_source_change_clock" SET "revision" = "revision" + 1 RETURNING "revision") SELECT (SELECT "revision" FROM "advanced_clock")"#
+            r#"WITH "advanced_clock" AS (UPDATE "context_source_change_clock" SET "revision" = "revision" + (1) RETURNING "revision") SELECT (SELECT "revision" FROM "advanced_clock")"#
         );
     }
 }

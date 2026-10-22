@@ -13,6 +13,8 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
+use andromeda_postgresql_schema::{name_dictionary::AttributeNames, temporal::TemporalAttributeStreams, tenancy::Tenants};
+use andromeda_postgresql_seaquery::{aggregate::count_all, pg_array::any, statement::Statement};
 use andromeda_test_client::{broker_endpoint::BrokerEndpoint, tenant_name::TenantName, test_client::TestClient};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::{
@@ -22,6 +24,7 @@ use andromeda_test_harness::{
 };
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Expr, ExprTrait, Query};
 use serde_json::{Map, Value, json};
 use sqlx::postgres::PgPool;
 use std::{env, slice, time::Duration};
@@ -93,21 +96,29 @@ async fn cold_dictionary_concurrent_cold_mints_commit_without_a_foreign_key_viol
         assert_eq!(*status, StatusCode::CREATED, "a concurrent cold mint failed with {status}");
     }
 
-    let minted: Vec<String> = sqlx::query_scalar("SELECT name FROM attribute_names WHERE name = ANY($1)")
-        .bind(&cold)
+    let minted: Vec<String> = Query::select()
+        .column(AttributeNames::Name)
+        .from(AttributeNames::Table)
+        .and_where(Expr::col(AttributeNames::Name).eq(any(Expr::val(cold.clone()))))
+        .to_query_scalar()
         .fetch_all(scope.database_pool())
         .await
         .expect("dictionary query");
     assert_eq!(minted.len(), cold.len(), "every cold name is minted exactly once despite the concurrent race");
 
-    let orphans: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM temporal_attribute_streams s \
-         LEFT JOIN attribute_names n ON s.attribute_name_key = n.attribute_name_key \
-         WHERE n.attribute_name_key IS NULL",
-    )
-    .fetch_one(scope.database_pool())
-    .await
-    .expect("orphan query");
+    let orphans: i64 = Query::select()
+        .expr(count_all())
+        .from(TemporalAttributeStreams::Table)
+        .left_join(
+            AttributeNames::Table,
+            Expr::col((TemporalAttributeStreams::Table, TemporalAttributeStreams::AttributeNameKey))
+                .equals((AttributeNames::Table, AttributeNames::AttributeNameKey)),
+        )
+        .and_where(Expr::col((AttributeNames::Table, AttributeNames::AttributeNameKey)).is_null())
+        .to_query_scalar()
+        .fetch_one(scope.database_pool())
+        .await
+        .expect("orphan query");
     assert_eq!(orphans, 0, "no committed stream references a missing attribute name");
 
     scope.finish().await.expect("cleanup");
@@ -147,8 +158,11 @@ async fn cold_dictionary_a_rolled_back_mint_leaves_its_sibling_committing_a_vali
     assert_eq!(aborted, StatusCode::CONFLICT, "re-creating an existing id conflicts and rolls back");
     assert_eq!(committed, StatusCode::CREATED, "the sibling commits its own mint of the contended name");
 
-    let minted: Vec<String> = sqlx::query_scalar("SELECT name FROM attribute_names WHERE name = $1")
-        .bind(&cold)
+    let minted: Vec<String> = Query::select()
+        .column(AttributeNames::Name)
+        .from(AttributeNames::Table)
+        .and_where(Expr::col(AttributeNames::Name).eq(cold.as_str()))
+        .to_query_scalar()
         .fetch_all(scope.database_pool())
         .await
         .expect("dictionary query");
@@ -184,8 +198,11 @@ async fn cold_dictionary_a_recreated_tenant_schema_refreshes_the_name_cache() {
     }
 
     let admin = PgPool::connect(&database_base()).await.expect("admin pool");
-    let database: String = sqlx::query_scalar("SELECT database_name FROM tenants WHERE name = $1")
-        .bind(&tenant_raw)
+    let database: String = Query::select()
+        .column(Tenants::DatabaseName)
+        .from(Tenants::Table)
+        .and_where(Expr::col(Tenants::Name).eq(tenant_raw.as_str()))
+        .to_query_scalar()
         .fetch_one(&admin)
         .await
         .expect("tenant registry row");
@@ -206,8 +223,11 @@ async fn cold_dictionary_a_recreated_tenant_schema_refreshes_the_name_cache() {
         "the recreated schema is detected and the stale cache refreshed"
     );
 
-    let present: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attribute_names WHERE name = $1")
-        .bind(&cold)
+    let present: i64 = Query::select()
+        .expr(count_all())
+        .from(AttributeNames::Table)
+        .and_where(Expr::col(AttributeNames::Name).eq(cold.as_str()))
+        .to_query_scalar()
         .fetch_one(&tenant_pool)
         .await
         .expect("dictionary query");

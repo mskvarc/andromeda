@@ -13,10 +13,9 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_query::history_source::HistoryBranch;
 use andromeda_postgresql_schema::queue::TemporalAppendIntents;
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_temporal::port::read_scope::{ScopeReach, TemporalReadScope, UnrecordedHistory};
-use sea_query::{Expr, ExprTrait, Order, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::AssertSqlSafe;
+use sea_query::{Expr, ExprTrait, Order, Query, SelectStatement};
 
 impl TemporalRepository {
     /// The scope a read of `target` that begins now runs in: a Snapshot
@@ -30,8 +29,7 @@ impl TemporalRepository {
         let unrecorded = match target {
             ContextTarget::Snapshot(_) => UnrecordedHistory::Absent,
             ContextTarget::Live => {
-                let (sql, values) = first_held_intent(reach).build_sqlx(PostgresQueryBuilder);
-                let first: Option<i64> = sqlx::query_scalar_with(AssertSqlSafe(sql), values).fetch_optional(&self.pool).await?;
+                let first: Option<i64> = first_held_intent(reach).to_query_scalar().fetch_optional(&self.pool).await?;
                 if first.is_some() {
                     UnrecordedHistory::Held
                 } else {

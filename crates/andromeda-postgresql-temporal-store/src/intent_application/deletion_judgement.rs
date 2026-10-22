@@ -16,7 +16,7 @@
 //! answers with (clause 5.7.4) is the same before the drain and after it,
 //! however the drain groups the intents.
 
-use crate::intent_application::intent_source::{I, IntentSource, Te, entry, intent, source_intents_as};
+use crate::intent_application::intent_source::{I, StagedSource, Te, entry, intent, source_intents_as};
 use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
 use andromeda_postgresql_schema::{queue::TemporalAppendIntents, temporal::TemporalEntities, temporal_intent::TemporalEntry};
 use andromeda_postgresql_seaquery::{
@@ -35,7 +35,7 @@ struct AnchoringIntent;
 /// a Temporal Evolution the application created (`created` holds for it)
 /// before any intent of the source stating types for its Entity, so it
 /// records nothing.
-pub(crate) fn ended_before_evolution(source: &IntentSource<'_>, created: SimpleExpr) -> SimpleExpr {
+pub(crate) fn ended_before_evolution(source: &StagedSource<'_>, created: SimpleExpr) -> SimpleExpr {
     let mut anchoring = Query::select();
     anchoring.expr(int_literal(1));
     source_intents_as(&mut anchoring, source, AnchoringIntent);
@@ -51,7 +51,7 @@ pub(crate) fn ended_before_evolution(source: &IntentSource<'_>, created: SimpleE
 
 /// Whether the Temporal Evolution under `te` is one the evolution upsert of
 /// the application created, its key among the ones the upsert returned.
-pub(crate) fn created_by_application(source: &IntentSource<'_>) -> SimpleExpr {
+pub(crate) fn created_by_application(source: &StagedSource<'_>) -> SimpleExpr {
     Expr::col((Te, TemporalEntities::TemporalEntityKey)).eq(any(source.created_evolutions()))
 }
 
@@ -60,7 +60,7 @@ mod tests {
     use crate::{
         intent_application::{
             deletion_judgement::{created_by_application, ended_before_evolution},
-            intent_source::IntentSource,
+            intent_source::{EntryReads, IntentSource, StagedSource},
         },
         temporal_entry_record::tests::recorded_at,
     };
@@ -68,10 +68,11 @@ mod tests {
     use andromeda_postgresql_codes::temporal_intent_reach::TemporalIntentReach;
     use sea_query::{Asterisk, PostgresQueryBuilder, Query};
 
-    fn rendered(source: &IntentSource<'_>) -> String {
+    fn rendered(source: &IntentSource<'_>, created: &[i64]) -> String {
+        let staged = StagedSource::new(source, EntryReads::Nothing, created);
         Query::select()
             .column(Asterisk)
-            .and_where(ended_before_evolution(source, created_by_application(source)))
+            .and_where(ended_before_evolution(&staged, created_by_application(&staged)))
             .to_owned()
             .to_string(PostgresQueryBuilder)
     }
@@ -81,14 +82,17 @@ mod tests {
     /// read shows it.
     #[test]
     fn only_the_end_of_an_instance_before_the_first_typed_intent_of_a_created_evolution_is_dropped() {
-        let sql = rendered(&IntentSource::Queued {
-            keys: &[3, 5],
-            reach: TemporalIntentReach::ALL.to_vec(),
-        });
+        let sql = rendered(
+            &IntentSource::Queued {
+                keys: &[3, 5],
+                reach: TemporalIntentReach::ALL.to_vec(),
+            },
+            &[7],
+        );
         assert!(
             sql.contains(concat!(
-                r#""e"."entry_kind" = 2 AND "te"."temporal_entity_key" = ANY($2::bigint[]) AND (NOT EXISTS(SELECT 1 FROM "#,
-                r#"(SELECT * FROM "temporal_append_intents" WHERE "intent_key" = ANY($1::bigint[])) AS "ai" "#,
+                r#""e"."entry_kind" = 2 AND "te"."temporal_entity_key" = ANY(ARRAY [7]::bigint[]) AND (NOT EXISTS(SELECT 1 FROM "#,
+                r#"(SELECT * FROM "temporal_append_intents" WHERE "intent_key" = ANY(ARRAY [3,5]::bigint[])) AS "ai" "#,
                 r#"WHERE "ai"."entity_id" = "i"."entity_id" AND cardinality("ai"."entity_type_name_keys") > 0 "#,
                 r#"AND "ai"."intent_key" <= "i"."intent_key"))"#
             )),
@@ -96,13 +100,12 @@ mod tests {
         );
     }
 
-    /// The created keys follow the values the source binds: the claimed keys
-    /// of the drain, or the intents, write identity and instant of a commit.
+    /// A commit's source names the created keys the way the drain's does,
+    /// whatever else it binds.
     #[test]
-    fn the_created_keys_follow_the_values_the_source_binds() {
+    fn the_created_keys_are_named_the_same_for_a_bound_source() {
         let record = WriteRecord::restored(WriteId::mint(), recorded_at());
-        let sql = rendered(&IntentSource::Bound { record: &record, intents: &[] });
-        assert!(sql.contains(r#""te"."temporal_entity_key" = ANY($4::bigint[])"#), "{sql}");
-        assert!(!sql.contains("$2::bigint[]"), "{sql}");
+        let sql = rendered(&IntentSource::Bound { record: &record, intents: &[] }, &[7, 9]);
+        assert!(sql.contains(r#""te"."temporal_entity_key" = ANY(ARRAY [7,9]::bigint[])"#), "{sql}");
     }
 }

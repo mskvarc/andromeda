@@ -12,10 +12,9 @@
 //! every columnstore procedure in `pg_proc` and refuses each call with
 //! "functionality not supported under the current "apache" license".
 
-use andromeda_postgresql_seaquery::columnstore_chunk::columnstore_licensed;
-use sea_query::{Alias, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, PgPool};
+use andromeda_postgresql_seaquery::{columnstore_chunk::columnstore_licensed, statement::Statement};
+use sea_query::{Alias, Query, SelectStatement};
+use sqlx::PgPool;
 
 /// Whether the attached `TimescaleDB` edition provides the hypercore columnstore.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -37,8 +36,7 @@ impl ColumnstoreSupport {
     ///
     /// Returns [`sqlx::Error`] when the probe cannot be executed against the pool.
     pub async fn detect(pool: &PgPool) -> Result<ColumnstoreSupport, sqlx::Error> {
-        let (sql, values) = detect_statement().build_sqlx(PostgresQueryBuilder);
-        let licensed: bool = sqlx::query_scalar_with(AssertSqlSafe(sql), values).fetch_one(pool).await?;
+        let licensed: bool = detect_statement().to_query_scalar().fetch_one(pool).await?;
         Ok(ColumnstoreSupport::of_license(licensed))
     }
 

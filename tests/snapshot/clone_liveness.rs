@@ -19,13 +19,31 @@ use crate::support::{
     create_entities_batch,
     create_snapshot_raw,
     published_branch_schema,
+    snapshot_key,
     wait_for_snapshot_terminal,
+};
+use andromeda_postgresql_schema::snapshot::{SnapshotNotificationOutbox, SnapshotPreparation, Snapshots};
+use andromeda_postgresql_seaquery::{
+    aggregate::count_all,
+    cast::cast,
+    clock::now,
+    command::Command,
+    interval::make_interval_secs,
+    introspection::current_database,
+    maintenance::to_regclass,
+    pg_type::PostgresType,
+    relation_lock::{LockMode, RelationLock},
+    scalar_subquery::scalar_subquery,
+    statement::Statement,
+    system_catalog::{PgClass, PgDatabase, PgNamespace, PgStatActivity},
+    transaction::{Isolation, TransactionStart},
 };
 use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, discovery_census::census_drift};
 use reqwest::{Client, StatusCode};
+use sea_query::{Alias, Expr, ExprTrait, LockBehavior, LockType, Query, SelectStatement, TableName};
 use serde_json::{Value, json};
 use serial_test::serial;
-use sqlx::{Connection, Executor, PgConnection, PgPool};
+use sqlx::{PgPool, Postgres, Transaction, postgres::PgPoolOptions};
 use std::{collections::BTreeSet, time::Duration};
 use tokio::time::{Instant, sleep, sleep_until, timeout};
 
@@ -72,38 +90,57 @@ async fn source_of_cars(pool: &PgPool, source: &str) -> String {
 /// A source relation the test holds `ACCESS EXCLUSIVE`, on a connection of its
 /// own, so a copy reaching that relation waits until it is released.
 struct RelationHold {
-    connection: PgConnection,
+    transaction: Transaction<'static, Postgres>,
 }
 
 impl RelationHold {
     /// Commit the holding transaction, letting the copy proceed.
-    async fn release(mut self) {
-        self.connection.execute("COMMIT").await.expect("the test releases the relation");
+    async fn release(self) {
+        self.transaction.commit().await.expect("the test releases the relation");
     }
 }
 
 /// Hold `schema.table` against every other backend until it is released.
 async fn hold_relation(pool: &PgPool, schema: &str, table: &str) -> RelationHold {
-    let mut connection = PgConnection::connect_with(&pool.connect_options()).await.expect("the holding connection");
-    connection.execute("BEGIN").await.expect("the holding transaction");
-    connection
-        .execute(sqlx::AssertSqlSafe(format!("LOCK TABLE {schema}.{table} IN ACCESS EXCLUSIVE MODE")))
+    // clone: the dedicated pool needs its own copy of the connect options, which `connect_options` only lends.
+    let options = pool.connect_options().as_ref().clone();
+    let holder = PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .expect("the holding connection");
+    let mut transaction = TransactionStart::at(Isolation::ReadCommitted)
+        .begin_in(&holder)
+        .await
+        .expect("the holding transaction");
+    RelationLock::waiting(vec![TableName::from((Alias::new(schema), Alias::new(table)))], LockMode::AccessExclusive)
+        .to_query()
+        .execute(&mut *transaction)
         .await
         .expect("the test holds the relation");
-    RelationHold { connection }
+    RelationHold { transaction }
 }
 
 /// How many backends wait for a lock on `schema.table`.
 async fn waiting_on(pool: &PgPool, schema: &str, table: &str) -> i64 {
-    sqlx::query_scalar(
-        "SELECT count(*) FROM pg_locks \
-         WHERE NOT granted AND relation = to_regclass($1) \
-         AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
-    )
-    .bind(format!("{schema}.{table}"))
-    .fetch_one(pool)
-    .await
-    .expect("the lock waits on the relation")
+    Query::select()
+        .expr(count_all())
+        .from(Alias::new("pg_locks"))
+        .and_where(Expr::col(Alias::new("granted")).not())
+        .and_where(Expr::col(Alias::new("relation")).eq(to_regclass(Expr::val(format!("{schema}.{table}")))))
+        .and_where(
+            Expr::col(Alias::new("database")).eq(scalar_subquery(
+                Query::select()
+                    .column(Alias::new("oid"))
+                    .from(PgDatabase::Table)
+                    .and_where(Expr::col(PgDatabase::Datname).eq(current_database()))
+                    .to_owned(),
+            )),
+        )
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await
+        .expect("the lock waits on the relation")
 }
 
 /// Wait until a copy waits on the relation the test holds.
@@ -170,22 +207,30 @@ fn captured_ids() -> BTreeSet<String> {
 /// Backends of this database idle inside a transaction over a branch statement
 /// for longer than 3 s: a copy nobody resumes.
 async fn stalled_copies(pool: &PgPool) -> i64 {
-    sqlx::query_scalar(
-        "SELECT count(*) FROM pg_stat_activity \
-         WHERE datname = current_database() AND state = 'idle in transaction' \
-         AND query LIKE '%snap\\_%' AND now() - state_change > interval '3 seconds'",
-    )
-    .fetch_one(pool)
-    .await
-    .expect("the backend activity")
-}
-
-async fn snapshot_key(pool: &PgPool, snapshot: &str) -> i64 {
-    sqlx::query_scalar("SELECT snapshot_key FROM snapshots WHERE id = $1")
-        .bind(snapshot)
+    Query::select()
+        .expr(count_all())
+        .from(PgStatActivity::Table)
+        .and_where(Expr::col(PgStatActivity::Datname).eq(current_database()))
+        .and_where(Expr::col(Alias::new("state")).eq("idle in transaction"))
+        .and_where(Expr::col(Alias::new("query")).like("%snap\\_%"))
+        .and_where(
+            Expr::expr(now())
+                .sub(Expr::col(Alias::new("state_change")))
+                .gt(make_interval_secs(Expr::val(3.0))),
+        )
+        .to_query_scalar()
         .fetch_one(pool)
         .await
-        .expect("the Snapshot's key")
+        .expect("the backend activity")
+}
+
+/// The preparation row's claimant of the Snapshot keyed `key`, as text.
+fn claimant_statement(key: i64) -> SelectStatement {
+    Query::select()
+        .expr(cast(Expr::col(SnapshotPreparation::ClaimedBy), PostgresType::Text))
+        .from(SnapshotPreparation::Table)
+        .and_where(Expr::col(SnapshotPreparation::SnapshotKey).eq(key))
+        .to_owned()
 }
 
 /// The clone ended `success` and holds exactly the captured cars, with a
@@ -231,32 +276,53 @@ async fn assert_delete_during_copy_completes(pool: &PgPool, clone_base: &str, de
         let problem: Value = response.json().await.expect("ProblemDetails");
         pretty_assertions::assert_eq!(problem["type"], "https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound");
     }
-    let schemas: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_namespace WHERE nspname IN ($1, $2)")
-        .bind(format!("snap_{key}"))
-        .bind(format!("snap_{key}_stg"))
+    let branch_schemas = [format!("snap_{key}"), format!("snap_{key}_stg")];
+    let schemas: i64 = Query::select()
+        .expr(count_all())
+        .from(PgNamespace::Table)
+        .and_where(Expr::col(PgNamespace::Nspname).is_in(branch_schemas.iter().map(String::as_str)))
+        .to_query_scalar()
         .fetch_one(pool)
         .await
         .expect("the branch schemas");
     pretty_assertions::assert_eq!(schemas, 0, "no branch schema of the clone remains");
     sleep(Duration::from_secs(5)).await;
-    let remains: (i64, i64) = sqlx::query_as(
-        "SELECT (SELECT count(*) FROM snapshot_preparation WHERE snapshot_key = $1), \
-         (SELECT count(*) FROM snapshot_notification_outbox WHERE snapshot_key = $1)",
-    )
-    .bind(key)
-    .fetch_one(pool)
-    .await
-    .expect("the clone's control rows");
+    let remains: (i64, i64) = Query::select()
+        .expr(scalar_subquery(
+            Query::select()
+                .expr(count_all())
+                .from(SnapshotPreparation::Table)
+                .and_where(Expr::col(SnapshotPreparation::SnapshotKey).eq(key))
+                .to_owned(),
+        ))
+        .expr(scalar_subquery(
+            Query::select()
+                .expr(count_all())
+                .from(SnapshotNotificationOutbox::Table)
+                .and_where(Expr::col(SnapshotNotificationOutbox::SnapshotKey).eq(key))
+                .to_owned(),
+        ))
+        .to_query_as()
+        .fetch_one(pool)
+        .await
+        .expect("the clone's control rows");
     pretty_assertions::assert_eq!(remains, (0, 0), "no preparation row and no status notification for the deleted clone");
-    let locks_left: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM pg_locks JOIN pg_class ON pg_class.oid = pg_locks.relation \
-         JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE pg_namespace.nspname IN ($1, $2)",
-    )
-    .bind(format!("snap_{key}"))
-    .bind(format!("snap_{key}_stg"))
-    .fetch_one(pool)
-    .await
-    .expect("the locks on the clone's schemas");
+    let locks_left: i64 = Query::select()
+        .expr(count_all())
+        .from(Alias::new("pg_locks"))
+        .inner_join(
+            PgClass::Table,
+            Expr::col((PgClass::Table, PgClass::Oid)).equals((Alias::new("pg_locks"), Alias::new("relation"))),
+        )
+        .inner_join(
+            PgNamespace::Table,
+            Expr::col((PgNamespace::Table, PgNamespace::Oid)).equals((PgClass::Table, PgClass::Relnamespace)),
+        )
+        .and_where(Expr::col((PgNamespace::Table, PgNamespace::Nspname)).is_in(branch_schemas.iter().map(String::as_str)))
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await
+        .expect("the locks on the clone's schemas");
     pretty_assertions::assert_eq!(locks_left, 0, "no backend holds or waits on a lock in the clone's schemas");
 }
 
@@ -390,11 +456,7 @@ async fn a_clone_is_copied_by_exactly_one_replica_and_read_through_any() {
         if sampling.elapsed() >= Duration::from_secs(20) {
             break;
         }
-        let claimant: Option<String> = sqlx::query_scalar("SELECT claimed_by::text FROM snapshot_preparation WHERE snapshot_key = $1")
-            .bind(key)
-            .fetch_one(pool)
-            .await
-            .expect("the clone's claim");
+        let claimant: Option<String> = claimant_statement(key).to_query_scalar().fetch_one(pool).await.expect("the clone's claim");
         claimants.insert(claimant.expect("the copying process holds the claim"));
         pretty_assertions::assert_eq!(waiting_on(pool, &schema, "entity_search").await, 1, "exactly one copy runs");
         pretty_assertions::assert_eq!(status_within_deadline(base, clone).await["snapshotStatus"], "preparing");
@@ -425,45 +487,52 @@ async fn a_lapsed_clone_lease_is_not_taken_over_while_the_copy_holds_its_fence()
     start_clone(&primary(), source, clone).await;
     until_the_copy_waits_on(pool, &schema, "entity_search").await;
     let key = snapshot_key(pool, clone).await;
-    let claimant: Option<String> = sqlx::query_scalar("SELECT claimed_by::text FROM snapshot_preparation WHERE snapshot_key = $1")
-        .bind(key)
-        .fetch_one(pool)
-        .await
-        .expect("the clone's claim");
-    let lapse = sqlx::query("UPDATE snapshot_preparation SET lease_until = now() - interval '1 second' WHERE snapshot_key = $1").bind(key);
+    let claimant: Option<String> = claimant_statement(key).to_query_scalar().fetch_one(pool).await.expect("the clone's claim");
+    let lapse = Query::update()
+        .table(SnapshotPreparation::Table)
+        .value(SnapshotPreparation::LeaseUntil, Expr::expr(now()).sub(make_interval_secs(Expr::val(1.0))))
+        .and_where(Expr::col(SnapshotPreparation::SnapshotKey).eq(key))
+        .to_query();
     timeout(Duration::from_secs(1), lapse.execute(pool))
         .await
         .expect("the lapse does not wait for the copy")
         .expect("the lease lapses");
     let mut claim = pool.begin().await.expect("the claim transaction");
-    let claimed: Option<i64> = sqlx::query_scalar(
-        "SELECT snapshot_preparation.snapshot_key FROM snapshots \
-         JOIN snapshot_preparation ON snapshot_preparation.snapshot_key = snapshots.snapshot_key \
-         WHERE snapshots.id = $1 AND snapshot_preparation.status = 1 \
-         AND (snapshot_preparation.lease_until IS NULL OR snapshot_preparation.lease_until <= CURRENT_TIMESTAMP) \
-         FOR UPDATE OF snapshot_preparation SKIP LOCKED",
-    )
-    .bind(clone)
-    .fetch_optional(&mut *claim)
-    .await
-    .expect("the claim statement");
+    let claimed: Option<i64> = Query::select()
+        .column((SnapshotPreparation::Table, SnapshotPreparation::SnapshotKey))
+        .from(Snapshots::Table)
+        .inner_join(
+            SnapshotPreparation::Table,
+            Expr::col((SnapshotPreparation::Table, SnapshotPreparation::SnapshotKey)).equals((Snapshots::Table, Snapshots::SnapshotKey)),
+        )
+        .and_where(Expr::col((Snapshots::Table, Snapshots::Id)).eq(clone))
+        .and_where(Expr::col((SnapshotPreparation::Table, SnapshotPreparation::Status)).eq(1))
+        .and_where(
+            Expr::col((SnapshotPreparation::Table, SnapshotPreparation::LeaseUntil))
+                .is_null()
+                .or(Expr::col((SnapshotPreparation::Table, SnapshotPreparation::LeaseUntil)).lte(Expr::current_timestamp())),
+        )
+        .lock_with_tables_behavior(LockType::Update, [SnapshotPreparation::Table], LockBehavior::SkipLocked)
+        .to_query_scalar()
+        .fetch_optional(&mut *claim)
+        .await
+        .expect("the claim statement");
     claim.rollback().await.expect("the claim is given up");
     pretty_assertions::assert_eq!(claimed, None, "the copy's fence keeps the clone from being claimed");
-    let still: Option<String> = sqlx::query_scalar("SELECT claimed_by::text FROM snapshot_preparation WHERE snapshot_key = $1")
-        .bind(key)
-        .fetch_one(pool)
-        .await
-        .expect("the clone's claim");
+    let still: Option<String> = claimant_statement(key).to_query_scalar().fetch_one(pool).await.expect("the clone's claim");
     pretty_assertions::assert_eq!(still, claimant, "the claim is unchanged");
     hold.release().await;
 
     assert_complete_clone(pool, clone).await;
-    let published: (Option<String>, Option<String>) =
-        sqlx::query_as("SELECT claimed_by::text, lease_until::text FROM snapshot_preparation WHERE snapshot_key = $1")
-            .bind(key)
-            .fetch_one(pool)
-            .await
-            .expect("the published clone's preparation row");
+    let published: (Option<String>, Option<String>) = Query::select()
+        .expr(cast(Expr::col(SnapshotPreparation::ClaimedBy), PostgresType::Text))
+        .expr(cast(Expr::col(SnapshotPreparation::LeaseUntil), PostgresType::Text))
+        .from(SnapshotPreparation::Table)
+        .and_where(Expr::col(SnapshotPreparation::SnapshotKey).eq(key))
+        .to_query_as()
+        .fetch_one(pool)
+        .await
+        .expect("the published clone's preparation row");
     pretty_assertions::assert_eq!(published, (None, None), "the publication cleared the claim");
 
     environment.reset_and_finish().await.expect("reset");

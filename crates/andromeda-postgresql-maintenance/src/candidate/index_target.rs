@@ -1,7 +1,7 @@
 //! The allowlisted indexes and the columns their density-measured GINs cover.
 
 use crate::{branch::Branch, candidate::heap_target::HeapTarget};
-use andromeda_postgresql_seaquery::maintenance::{MaintenanceStatement, reindex_index_concurrently};
+use andromeda_postgresql_seaquery::maintenance::{MaintenanceCommand, reindex_index_concurrently};
 use sea_query::Iden;
 use strum::{Display, EnumString, IntoStaticStr};
 
@@ -246,8 +246,8 @@ impl IndexTarget {
 
     /// A fixed concurrent rebuild statement in `branch`'s schema; no external
     /// identifier enters SQL.
-    pub(crate) fn reindex_statement(self, branch: Branch) -> MaintenanceStatement {
-        reindex_index_concurrently(&branch.schema(), &self)
+    pub(crate) fn reindex_statement(self, branch: Branch) -> MaintenanceCommand {
+        reindex_index_concurrently(branch.schema(), self)
     }
 }
 
@@ -261,14 +261,24 @@ mod tests {
         },
     };
     use andromeda_context_space::snapshot_key::SnapshotKey;
+    use andromeda_postgresql_seaquery::maintenance::reindex_index_concurrently;
     use pretty_assertions::assert_eq;
+    use sea_query::Alias;
     use std::{collections::HashSet, str::FromStr};
 
     #[test]
     fn every_allowlisted_index_has_one_fixed_concurrent_command() {
-        let commands = IndexTarget::ALL.map(|target| target.reindex_statement(Branch::Live).as_sql().to_owned());
-        assert!(commands.iter().all(|command| command.starts_with("REINDEX INDEX CONCURRENTLY \"public\".")));
-        assert_eq!(commands.into_iter().collect::<HashSet<_>>().len(), IndexTarget::ALL.len());
+        for target in IndexTarget::ALL {
+            assert_eq!(
+                target.reindex_statement(Branch::Live),
+                reindex_index_concurrently(Alias::new("public"), Alias::new(target.relation_name())),
+                "{target}"
+            );
+        }
+        assert_eq!(
+            IndexTarget::ALL.map(IndexTarget::relation_name).into_iter().collect::<HashSet<_>>().len(),
+            IndexTarget::ALL.len()
+        );
     }
 
     /// `pgstattuple` reads no GIN index.
@@ -373,8 +383,8 @@ mod tests {
             assert!(IndexTarget::PROBEABLE.contains(&target), "{target}");
             assert_eq!(IndexTarget::from_str(target.relation_name()), Ok(target));
             assert_eq!(
-                target.reindex_statement(branch).as_sql(),
-                format!("REINDEX INDEX CONCURRENTLY \"snap_7\".\"{}\"", target.relation_name())
+                target.reindex_statement(branch),
+                reindex_index_concurrently(Alias::new("snap_7"), Alias::new(target.relation_name()))
             );
         }
     }

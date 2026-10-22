@@ -5,16 +5,19 @@
 //! [`crate::tenant_migration`]'s concern, and its session defaults are
 //! [`crate::database_defaults`]'s.
 
-use crate::{
-    error::ContextStoreError,
-    schema_ddl::database::{create_database, drop_database},
-};
+use crate::error::ContextStoreError;
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_postgresql_pool::{contention_retry::ContentionRetry, sql_state::SqlState, transaction_rollback::is_transaction_rolled_back};
+use andromeda_postgresql_seaquery::{
+    command::Command,
+    database_definition::{ConnectedSessions, DatabaseDefinition},
+    literal::int_literal,
+    statement::Statement,
+    system_catalog::PgDatabase,
+};
 use andromeda_tenancy::{database_name::TenantDatabaseName, db_name_prefix::DbNamePrefix};
-use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{Connection, Executor, PgConnection};
+use sea_query::{Alias, Expr, ExprTrait, Query};
+use sqlx::{Connection, PgConnection};
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
     num::NonZeroU32,
@@ -110,14 +113,9 @@ pub async fn create_database_if_missing(base_url: &DatabaseUrl, database_name: &
     let admin_url = base_url.with_database_name(&admin_database);
     let database_name = database_name.as_str();
     let mut conn = PgConnection::connect(admin_url.as_str()).await?;
-    let (sql, values) = database_exists_statement(database_name).build_sqlx(PostgresQueryBuilder);
-    let exists = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-        .fetch_optional(&mut conn)
-        .await?
-        .is_some();
+    let exists = database_exists_statement(database_name).to_query().fetch_optional(&mut conn).await?.is_some();
     if !exists {
-        let sql = create_database(database_name);
-        create_database_with_retry(&mut conn, &sql).await?;
+        create_database_with_retry(&mut conn, database_name).await?;
     }
     conn.close().await?;
     Ok(())
@@ -145,7 +143,11 @@ pub enum DatabaseDrop {
 pub async fn drop_database_unless_in_use(base_url: &DatabaseUrl, database_name: &TenantDatabaseName) -> Result<DatabaseDrop, ContextStoreError> {
     let admin_url = base_url.with_database_name(&TenantDatabaseName::from("postgres".to_owned()));
     let mut conn = PgConnection::connect(admin_url.as_str()).await?;
-    let outcome = match conn.execute(sqlx::AssertSqlSafe(drop_database(database_name.as_str()).as_str())).await {
+    let outcome = match DatabaseDefinition::drop(Alias::new(database_name.as_str()), ConnectedSessions::Refuse)
+        .to_query()
+        .execute(&mut conn)
+        .await
+    {
         Ok(_) => Ok(DatabaseDrop::Dropped),
         Err(error) if SqlState::of(&error) == Some(SqlState::ObjectInUse) => Ok(DatabaseDrop::InUse),
         Err(error) => Err(error.into()),
@@ -173,12 +175,14 @@ const CREATE_DATABASE_RETRY: ContentionRetry<Duration> = ContentionRetry {
 /// which otherwise surfaces to the client as a 500 on the first request in the
 /// new tenant. A create that lost the race to a concurrent create of the same
 /// name (42P04) finds its database already made, which is success.
-async fn create_database_with_retry(conn: &mut PgConnection, sql: &str) -> Result<(), ContextStoreError> {
+async fn create_database_with_retry(conn: &mut PgConnection, database_name: &str) -> Result<(), ContextStoreError> {
     CREATE_DATABASE_RETRY
-        .run(is_transient_create_failure, async || match conn.execute(sqlx::AssertSqlSafe(sql)).await {
-            Ok(_) => Ok(()),
-            Err(error) if is_database_already_exists(&error) => Ok(()),
-            Err(error) => Err(error),
+        .run(is_transient_create_failure, async || {
+            match DatabaseDefinition::create(Alias::new(database_name)).to_query().execute(&mut *conn).await {
+                Ok(_) => Ok(()),
+                Err(error) if is_database_already_exists(&error) => Ok(()),
+                Err(error) => Err(error),
+            }
         })
         .await?;
     Ok(())
@@ -203,9 +207,9 @@ fn is_database_already_exists(error: &sqlx::Error) -> bool {
 /// schema, so it is named by aliases; the database name is a bound value.
 fn database_exists_statement(database_name: &str) -> sea_query::SelectStatement {
     Query::select()
-        .expr(Expr::val(1))
-        .from(Alias::new("pg_database"))
-        .and_where(Expr::col(Alias::new("datname")).eq(database_name))
+        .expr(int_literal(1))
+        .from(PgDatabase::Table)
+        .and_where(Expr::col(PgDatabase::Datname).eq(database_name))
         .to_owned()
 }
 
@@ -226,9 +230,8 @@ mod tests {
     fn the_existence_probe_reads_the_catalog_by_bound_name() {
         let (sql, values) = database_exists_statement("andromeda_acme").build(PostgresQueryBuilder);
         assert!(sql.contains(r#"FROM "pg_database""#), "{sql}");
-        assert!(sql.contains(r#""datname" = $2"#), "{sql}");
-        // The constant `1` and the database name are both bound values.
-        assert_eq!(values.0.len(), 2, "the name is bound, not interpolated: {sql}");
+        assert!(sql.contains(r#""datname" = $1"#), "{sql}");
+        assert_eq!(values.0.len(), 1, "the name is bound, not interpolated: {sql}");
     }
 
     #[test]

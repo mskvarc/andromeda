@@ -16,16 +16,15 @@ use andromeda_postgresql_schema::current::{CurrentAttributes, Entities};
 use andromeda_postgresql_seaquery::{
     cast::cast,
     pg_type::PostgresType,
-    placeholder::external_placeholder,
     postgis::validated_geom_from_ewkb,
-    unnest::{UnnestColumn, apply_column_alias, unnest_call},
+    unnest::{UnnestAliased, UnnestColumn, unnest_call},
 };
 use sea_query::{CommonTableExpression, Expr, Iden, Query, SimpleExpr};
 
 /// The row staging alias, `r`.
 ///
 /// Spelled nowhere else in a statement, so the single `AS "r"` its table
-/// source emits is the one [`apply_instances_alias`] rewrites.
+/// source emits is the one [`with_instances_alias`] names the columns of.
 #[derive(Iden, Clone, Copy)]
 #[iden = "r"]
 struct Staged;
@@ -145,14 +144,17 @@ fn projected(column: CurrentAttributes) -> SimpleExpr {
     }
 }
 
-/// The `instances` CTE over the staging binds from placeholder `first` on:
-/// `instances AS (SELECT r.id, r.attribute_name_key, … FROM UNNEST($first::text[], …) AS r(id, …))`.
+/// The `instances` CTE over `arrays`, one expression per staged column in
+/// [`staged_columns`] order
+/// ([`StagedRows::into_arrays`](crate::current_attribute::staged_rows::StagedRows::into_arrays)):
+/// `instances AS (SELECT r.id, r.attribute_name_key, … FROM UNNEST(…) AS r(id, …))`.
 ///
 /// Its columns carry the names of the `current_attributes` columns they land
-/// in, beside `id`.
-pub(crate) fn instances_cte(first: usize) -> CommonTableExpression {
+/// in, beside `id`. The statement it joins must be passed through
+/// [`with_instances_alias`] to name the source's columns.
+pub(crate) fn instances_cte(arrays: Vec<SimpleExpr>) -> CommonTableExpression {
     let columns = staged_columns();
-    let source = unnest_call(columns.iter().enumerate().map(|(index, column)| (column, external_placeholder(first + index))));
+    let source = unnest_call(columns.iter().zip(arrays));
     let mut select = Query::select();
     select.expr_as(Expr::col((Staged, Entities::Id)), Entities::Id);
     for column in ROW_COLUMNS {
@@ -162,25 +164,30 @@ pub(crate) fn instances_cte(first: usize) -> CommonTableExpression {
     CommonTableExpression::new().table_name(Instances).query(select.take()).to_owned()
 }
 
-/// Rewrite the row staging's `AS "r"` into `AS r(id, …)`.
-pub(crate) fn apply_instances_alias(sql: String) -> String {
-    apply_column_alias(sql, &Staged, &staged_columns())
+/// `statement`, the row staging's source named `r(id, …)` after its columns.
+pub(crate) fn with_instances_alias<S>(statement: UnnestAliased<S>) -> UnnestAliased<S> {
+    statement.with_columns(Staged, &staged_columns())
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::current_attribute::staging::{apply_instances_alias, instances_cte, staged_columns};
-    use sea_query::{PostgresQueryBuilder, Query, WithClause};
+    use crate::{
+        current_attribute::staging::{instances_cte, staged_columns},
+        statement_text::text_of,
+    };
+    use andromeda_postgresql_seaquery::unnest::UnnestAliased;
+    use sea_query::{Expr, Query, WithClause};
 
-    /// One bind per staged column: the identifier, then every row column.
+    /// One array per staged column: the identifier, then every row column.
     #[test]
-    fn the_staging_names_one_column_per_bind() {
+    fn the_staging_names_one_column_per_array() {
         let mut with_clause = WithClause::new();
-        with_clause.cte(instances_cte(7));
-        let sql = apply_instances_alias(with_clause.query(Query::select().take()).to_string(PostgresQueryBuilder));
+        let arrays = (0..28).map(|index| Expr::val(vec![index])).collect();
+        with_clause.cte(instances_cte(arrays));
+        let sql = text_of(&UnnestAliased::new(with_clause.query(Query::select().take())).with_columns(super::Staged, &staged_columns()));
         pretty_assertions::assert_eq!(staged_columns().len(), 28);
-        assert!(sql.contains("UNNEST($7::text[], $8::integer[]"), "{sql}");
-        assert!(sql.contains("$33::sub_attribute_tree[], $34::text[]) AS r(id, attribute_name_key,"), "{sql}");
+        assert!(sql.contains("UNNEST($1::text[], $2::integer[]"), "{sql}");
+        assert!(sql.contains("$27::sub_attribute_tree[], $28::text[]) AS r(id, attribute_name_key,"), "{sql}");
         assert!(sql.contains(r#""r"."sub_eq_keys"::bigint[] AS "sub_eq_keys""#), "{sql}");
         assert!(
             sql.contains(r#"ST_MakeValid(ST_GeomFromEWKB("r"."value_geometry")) AS "value_geometry""#),

@@ -1,10 +1,16 @@
 //! PostgreSQL advisory-lock capabilities coordinating parallel test processes.
 
 use crate::configuration::DatabaseEndpoint;
+use andromeda_postgresql_seaquery::{
+    advisory_lock::{advisory_lock_exclusive, advisory_lock_shared, advisory_unlock_exclusive, advisory_unlock_shared},
+    statement::Statement,
+};
+use sea_query::Query;
 use sqlx::{PgPool, Postgres, pool::PoolConnection, postgres::PgPoolOptions};
 use std::time::Duration;
 use thiserror::Error;
 
+/// The advisory-lock key every test process contends on.
 const ISOLATION_LOCK_KEY: i64 = 0x414e_4452_4f4d_4544;
 
 /// Shared lease held by an ordinary prefix-isolated test.
@@ -20,8 +26,9 @@ impl IsolatedLease {
     /// Returns [`DatabaseIsolationError::Sqlx`] when the pool cannot hand out a connection or the `pg_advisory_lock_shared` call fails.
     pub async fn acquire(pool: &PgPool) -> Result<IsolatedLease, DatabaseIsolationError> {
         let mut connection = pool.acquire().await.map_err(DatabaseIsolationError::from_sqlx)?;
-        sqlx::query("SELECT pg_advisory_lock_shared($1)")
-            .bind(ISOLATION_LOCK_KEY)
+        Query::select()
+            .expr(advisory_lock_shared(ISOLATION_LOCK_KEY))
+            .to_query()
             .execute(&mut *connection)
             .await
             .map_err(DatabaseIsolationError::from_sqlx)?;
@@ -35,8 +42,9 @@ impl IsolatedLease {
     /// Returns [`DatabaseIsolationError::Sqlx`] when the `pg_advisory_unlock_shared` statement fails, and [`DatabaseIsolationError::LockNotHeld`] when the server reports that this session held no shared lock.
     pub async fn release(mut self) -> Result<(), DatabaseIsolationError> {
         if let Some(mut connection) = self.connection.take() {
-            let released: bool = sqlx::query_scalar("SELECT pg_advisory_unlock_shared($1)")
-                .bind(ISOLATION_LOCK_KEY)
+            let released: bool = Query::select()
+                .expr(advisory_unlock_shared(ISOLATION_LOCK_KEY))
+                .to_query_scalar()
                 .fetch_one(&mut *connection)
                 .await
                 .map_err(DatabaseIsolationError::from_sqlx)?;
@@ -69,8 +77,9 @@ impl SerializedLease {
     /// Returns [`DatabaseIsolationError::Sqlx`] when the pool cannot hand out a connection or the `pg_advisory_lock` call fails.
     pub async fn acquire(pool: &PgPool) -> Result<SerializedLease, DatabaseIsolationError> {
         let mut connection = pool.acquire().await.map_err(DatabaseIsolationError::from_sqlx)?;
-        sqlx::query("SELECT pg_advisory_lock($1)")
-            .bind(ISOLATION_LOCK_KEY)
+        Query::select()
+            .expr(advisory_lock_exclusive(ISOLATION_LOCK_KEY))
+            .to_query()
             .execute(&mut *connection)
             .await
             .map_err(DatabaseIsolationError::from_sqlx)?;
@@ -89,8 +98,9 @@ impl SerializedLease {
     /// Returns [`DatabaseIsolationError::Sqlx`] when the `pg_advisory_unlock` statement fails, and [`DatabaseIsolationError::LockNotHeld`] when the server reports that this session held no exclusive lock.
     pub async fn release(mut self) -> Result<(), DatabaseIsolationError> {
         if let Some(mut connection) = self.connection.take() {
-            let released: bool = sqlx::query_scalar("SELECT pg_advisory_unlock($1)")
-                .bind(ISOLATION_LOCK_KEY)
+            let released: bool = Query::select()
+                .expr(advisory_unlock_exclusive(ISOLATION_LOCK_KEY))
+                .to_query_scalar()
                 .fetch_one(&mut *connection)
                 .await
                 .map_err(DatabaseIsolationError::from_sqlx)?;

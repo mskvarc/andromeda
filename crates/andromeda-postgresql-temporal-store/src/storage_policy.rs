@@ -16,19 +16,21 @@
 //! ([`crate::columnstore_conversion`]).
 
 use crate::{
-    bounded_lock_wait::execute_with_bounded_lock_wait,
+    bounded_lock_wait::{StatementWrite, execute_with_bounded_lock_wait},
     columnstore_capability::ColumnstoreSupport,
     columnstore_enablement::reconcile_columnstore_enablement,
     error::TemporalStoreError,
+    hypertable_policy::HypertableName,
     repo::TemporalRepository,
-    schema_ddl::timescale_policy::HypertableName,
     temporal_store_invariant::TemporalStoreInvariant,
 };
-use andromeda_postgresql_seaquery::timescale::{chunk_interval_statement, set_chunk_time_interval};
+use andromeda_postgresql_seaquery::{
+    statement::Statement,
+    timescale::{chunk_interval_statement, set_chunk_time_interval},
+};
 use andromeda_temporal::storage_policy::TemporalStoragePolicy;
-use sea_query::{Expr, PostgresQueryBuilder, Query};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, PgPool, postgres::types::PgInterval};
+use sea_query::{Expr, Query};
+use sqlx::{PgPool, postgres::types::PgInterval};
 use std::num::NonZeroU32;
 use strum::IntoEnumIterator;
 
@@ -152,17 +154,15 @@ const fn plan_columnstore_reconciliation(support: ColumnstoreSupport) -> Columns
 
 /// Set the chunk interval of `hypertable` to `days` unless it already is.
 async fn reconcile_chunk_interval(pool: &PgPool, hypertable: HypertableName, days: NonZeroU32) -> Result<PolicyReconciliation, TemporalStoreError> {
-    let (sql, values) = chunk_interval_statement(hypertable.into()).build_sqlx(PostgresQueryBuilder);
-    let stored: Option<PgInterval> = sqlx::query_scalar_with(AssertSqlSafe(sql), values).fetch_optional(pool).await?;
+    let stored: Option<PgInterval> = chunk_interval_statement(hypertable.into()).to_query_scalar().fetch_optional(pool).await?;
     let stored = stored.ok_or(TemporalStoreInvariant::NoTimeDimension(hypertable))?;
     if interval_seconds(&stored) == day_seconds(days) {
         return Ok(PolicyReconciliation::Unchanged);
     }
-    let (sql, values) = Query::select()
+    let set_interval = Query::select()
         .expr(set_chunk_time_interval(hypertable.into(), Expr::val(day_count(days))))
-        .to_owned()
-        .build(PostgresQueryBuilder);
-    execute_with_bounded_lock_wait(pool, &sql, &values).await?;
+        .to_owned();
+    execute_with_bounded_lock_wait(pool, &StatementWrite(set_interval)).await?;
     Ok(PolicyReconciliation::Adjusted)
 }
 
@@ -192,7 +192,7 @@ const fn day_count(days: NonZeroU32) -> i32 {
 mod tests {
     use crate::{
         columnstore_capability::ColumnstoreSupport,
-        schema_ddl::timescale_policy::HypertableName,
+        hypertable_policy::HypertableName,
         storage_policy::{
             ColumnstoreReconciliation,
             HypertableReconciliation,

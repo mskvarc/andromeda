@@ -33,6 +33,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_pool::persistence_classification::classify;
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_postgresql_temporal_store::intent_application::{apply_intents_in_tx, intent_source::IntentSource};
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use andromeda_temporal::{
@@ -45,8 +46,6 @@ use andromeda_temporal::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sea_query::PostgresQueryBuilder;
-use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Row, postgres::PgRow};
 use std::time::Duration;
 use uuid::Uuid;
@@ -104,10 +103,12 @@ impl PostgresTemporalIntentStore {
         limit: TemporalIntentBatchSize,
         lease_until: DateTime<Utc>,
     ) -> Result<Vec<ClaimedTemporalIntent>, TemporalError> {
-        let (sql, values) = claim_statement(owner, scope, limit.get(), lease_until).build_sqlx(PostgresQueryBuilder);
-        let rows = observe_statement(INTENT_CLAIM, sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool))
-            .await
-            .map_err(|error| persistence(&error))?;
+        let rows = observe_statement(
+            INTENT_CLAIM,
+            claim_statement(owner, scope, limit.get(), lease_until).to_query().fetch_all(&self.pool),
+        )
+        .await
+        .map_err(|error| persistence(&error))?;
         let mut claimed = rows
             .iter()
             .map(PostgresTemporalIntentStore::decode)
@@ -122,8 +123,8 @@ impl PostgresTemporalIntentStore {
     async fn apply_held(&self, owner: LeaseHolder, intents: &[ClaimedTemporalIntent]) -> Result<TemporalIntentApplicationOutcome, TemporalError> {
         let keys: Vec<i64> = intents.iter().map(|intent| intent.key.get()).collect();
         let mut tx = self.pool.begin().await.map_err(|error| persistence(&error))?;
-        let (sql, values) = behind_earlier_statement(&keys).build_sqlx(PostgresQueryBuilder);
-        let behind: bool = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let behind: bool = behind_earlier_statement(&keys)
+            .to_query_scalar()
             .fetch_one(&mut *tx)
             .await
             .map_err(|error| persistence(&error))?;
@@ -133,8 +134,8 @@ impl PostgresTemporalIntentStore {
         }
         let source = IntentSource::claimed(&mut tx, &keys).await.map_err(TemporalError::from)?;
         apply_intents_in_tx(&mut tx, &source, &ContextTarget::Live).await.map_err(TemporalError::from)?;
-        let (sql, values) = applied_removal_statement(&keys, owner).build_sqlx(PostgresQueryBuilder);
-        let removed = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let removed = applied_removal_statement(&keys, owner)
+            .to_query()
             .execute(&mut *tx)
             .await
             .map_err(|error| persistence(&error))?
@@ -167,8 +168,8 @@ impl TemporalIntentQueue for PostgresTemporalIntentStore {
     }
 
     async fn last_intent_for(&self, entity_id: &Identifier) -> Result<Option<TemporalIntentKey>, TemporalError> {
-        let (sql, values) = last_intent_statement(entity_id).build_sqlx(PostgresQueryBuilder);
-        let newest: Option<i64> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let newest: Option<i64> = last_intent_statement(entity_id)
+            .to_query_scalar()
             .fetch_one(&self.pool)
             .await
             .map_err(|error| persistence(&error))?;
@@ -182,11 +183,14 @@ impl TemporalIntentQueue for PostgresTemporalIntentStore {
     }
 
     async fn retry(&self, owner: LeaseHolder, intent: &ClaimedTemporalIntent, retry: TemporalIntentRetry) -> Result<LeaseAcknowledgement, TemporalError> {
-        let (sql, values) =
-            retry_statement(retry.eligible_at, &retry.summary, intent.key.get(), intent.write_id.as_uuid(), owner).build_sqlx(PostgresQueryBuilder);
-        let result = observe_statement(INTENT_RETRY, sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&self.pool))
-            .await
-            .map_err(|error| persistence(&error))?;
+        let result = observe_statement(
+            INTENT_RETRY,
+            retry_statement(retry.eligible_at, &retry.summary, intent.key.get(), intent.write_id.as_uuid(), owner)
+                .to_query()
+                .execute(&self.pool),
+        )
+        .await
+        .map_err(|error| persistence(&error))?;
         held(result.rows_affected())
     }
 
@@ -195,8 +199,7 @@ impl TemporalIntentQueue for PostgresTemporalIntentStore {
             return Ok(LeaseAcknowledgement::Applied);
         }
         let keys: Vec<i64> = intents.iter().map(|intent| intent.key.get()).collect();
-        let (sql, values) = release_statement(&keys, owner).build_sqlx(PostgresQueryBuilder);
-        let released = observe_statement(INTENT_RELEASE, sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&self.pool))
+        let released = observe_statement(INTENT_RELEASE, release_statement(&keys, owner).to_query().execute(&self.pool))
             .await
             .map_err(|error| persistence(&error))?
             .rows_affected();

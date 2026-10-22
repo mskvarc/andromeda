@@ -5,27 +5,15 @@ use crate::{
     error::MaintenanceError,
     evidence::inspection_result::InspectionResult,
     fleet_observation::ChangeCounters,
-    state::{RegisteredTenant, TenantKey, execute_update},
+    state::{RegisteredTenant, TenantKey},
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
 use andromeda_postgresql_schema::{maintenance::PostgresqlMaintenanceTenants, tenancy::Tenants};
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_tenancy::database_name::TenantDatabaseName;
 use chrono::{DateTime, Utc};
-use sea_query::{
-    Expr,
-    ExprTrait,
-    Iden,
-    InsertStatement,
-    JoinType,
-    OnConflict,
-    PostgresQueryBuilder,
-    Query,
-    SelectStatement,
-    UpdateStatement,
-    error::Error as SeaQueryError,
-};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Expr, ExprTrait, Iden, InsertStatement, JoinType, OnConflict, Query, SelectStatement, UpdateStatement, error::Error as SeaQueryError};
 use sqlx::{PgConnection, Row, postgres::PgRow};
 
 /// One active registry row with what its inspections recorded.
@@ -43,8 +31,7 @@ pub(crate) struct InspectionRecord {
 /// Read every active registry row, the unnamed default included, with its
 /// recorded inspection state.
 pub(crate) async fn inspection_records(connection: &mut PgConnection) -> Result<Vec<InspectionRecord>, MaintenanceError> {
-    let (sql, values) = inspection_records_statement().build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
+    let rows = inspection_records_statement().to_query().fetch_all(connection).await?;
     rows.iter().map(inspection_record_of).collect()
 }
 
@@ -53,7 +40,8 @@ pub(crate) async fn inspection_records(connection: &mut PgConnection) -> Result<
 /// database the observation did not see keeps its earlier counters.
 pub(crate) async fn mark_started(connection: &mut PgConnection, tenant: &RegisteredTenant, observed: Option<ChangeCounters>) -> Result<(), MaintenanceError> {
     ensure_tenant_state(connection, tenant).await?;
-    execute_update(connection, started_update(tenant, observed)?).await
+    started_update(tenant, observed)?.to_query().execute(connection).await?;
+    Ok(())
 }
 
 /// The start marker's update, carrying the observed counters when there are
@@ -74,7 +62,8 @@ fn started_update(tenant: &RegisteredTenant, observed: Option<ChangeCounters>) -
 /// Persist that a tenant received its turn even when it was unavailable.
 pub(crate) async fn mark_inspected(connection: &mut PgConnection, tenant: &RegisteredTenant, result: InspectionResult) -> Result<(), MaintenanceError> {
     ensure_tenant_state(connection, tenant).await?;
-    execute_update(connection, inspection_update(tenant, result)).await
+    inspection_update(tenant, result).to_query().execute(connection).await?;
+    Ok(())
 }
 
 /// Record that reaching one tenant database failed without starving later tenants.
@@ -90,7 +79,8 @@ pub(crate) async fn mark_tenant_failure(connection: &mut PgConnection, tenant: &
         .value(PostgresqlMaintenanceTenants::LastResult, InspectionResult::Unavailable.code().code())
         .and_where(Expr::col(PostgresqlMaintenanceTenants::TenantKey).eq(tenant.key.0))
         .to_owned();
-    execute_update(connection, statement).await
+    statement.to_query().execute(connection).await?;
+    Ok(())
 }
 
 /// The update stamping one inspection result; a result concluding the pass
@@ -156,8 +146,7 @@ fn inspection_record_of(row: &PgRow) -> Result<InspectionRecord, MaintenanceErro
 
 /// Insert a tenant-state row if this is its first maintenance pass.
 async fn ensure_tenant_state(connection: &mut PgConnection, tenant: &RegisteredTenant) -> Result<(), MaintenanceError> {
-    let (sql, values) = tenant_state_insert(tenant.key)?.build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(connection).await?;
+    tenant_state_insert(tenant.key)?.to_query().execute(connection).await?;
     Ok(())
 }
 

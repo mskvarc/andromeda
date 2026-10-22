@@ -2,22 +2,33 @@
 //! current-state relation, its attribute instances included.
 
 use crate::{
-    branch_statement::BranchStatement,
     current_attribute::{
         staged_rows::StagedRows,
-        staging::{apply_instances_alias, instances_cte},
+        staging::{instances_cte, with_instances_alias},
         write::inserted_rows,
     },
     entity::{
         census::delta::{CensusChange, CensusStatements},
         mapper::stored_uri,
-        params::{PreparedEntityColumns, literal_texts},
+        params::PreparedEntityColumns,
         repo::EntityRepository,
         staged_geometry::written_column,
         types_present::{entity_write_failure, types_present},
         write::{
             search_image::SearchImage,
-            staging::{Attrs, Ins, Proj, ProjectedWrite, Srch, apply_staged_alias, from_inserted, insert_staging_columns, projected, projection_cte},
+            staging::{
+                Attrs,
+                Ins,
+                Proj,
+                ProjectedWrite,
+                Srch,
+                entity_arrays,
+                from_inserted,
+                insert_staging_columns,
+                projected,
+                projection_cte,
+                with_staged_alias,
+            },
             type_membership::{Mbrs, created_memberships},
         },
     },
@@ -27,17 +38,19 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
+use andromeda_postgresql_seaquery::{
+    external_arguments::{ExternalArguments, ExternallyBound},
+    unnest::UnnestAliased,
+};
 use andromeda_telemetry::statement::{StatementName, observe_statement};
-use sea_query::{CommonTableExpression, Expr, IntoIden, OnConflict, PostgresQueryBuilder, Query, WithClause};
+use sea_query::{CommonTableExpression, Expr, IntoIden, OnConflict, Query, WithClause, WithQuery};
 use sqlx::{Postgres, Transaction};
 
 /// The statement name the entity set-insert is observed under.
 const ENTITY_INSERT: StatementName = StatementName("entity-insert");
 
-/// The batch insert's text, built once for the live branch.
-static ENTITY_INSERT_STATEMENT: BranchStatement = BranchStatement::new(entity_insert_sql);
-
-/// Build the batch insert.
+/// Build the batch insert of `entities` and the attribute instance rows
+/// `rows` stages for them.
 ///
 /// ```sql
 /// WITH proj AS (SELECT … FROM UNNEST($1::text[], …, $11::timestamptz[]) AS d(…)),
@@ -78,8 +91,15 @@ static ENTITY_INSERT_STATEMENT: BranchStatement = BranchStatement::new(entity_in
 ///
 /// Returns [`ContextStoreError::StatementBuild`] if a child projection ever stops
 /// matching its column list, which the fixed shapes here make unreachable.
-pub(super) fn entity_insert_sql(target: &ContextTarget) -> Result<String, ContextStoreError> {
+pub(super) fn entity_insert_statement<'entities>(
+    target: &ContextTarget,
+    entities: &'entities PreparedEntityColumns,
+    rows: StagedRows<'_>,
+) -> Result<ExternallyBound<'entities, UnnestAliased<WithQuery>>, ContextStoreError> {
     let columns = insert_staging_columns();
+    let mut external = ExternalArguments::default();
+    let staged_entities = entity_arrays(entities, written_column(&entities.locations)?, &mut external);
+    let instance_arrays = rows.into_arrays(&mut external);
 
     let mut identity = Query::insert();
     identity
@@ -132,7 +152,7 @@ pub(super) fn entity_insert_sql(target: &ContextTarget) -> Result<String, Contex
     ]));
 
     let mut with = WithClause::new();
-    with.cte(projection_cte(&columns, ProjectedWrite::Insert))
+    with.cte(projection_cte(&columns, staged_entities, ProjectedWrite::Insert))
         .cte(CommonTableExpression::new().table_name(Ins).query(identity).to_owned())
         .cte(
             CommonTableExpression::new()
@@ -147,15 +167,15 @@ pub(super) fn entity_insert_sql(target: &ContextTarget) -> Result<String, Contex
                 .to_owned(),
         )
         .cte(CommonTableExpression::new().table_name(Mbrs).query(created_memberships(target)?).to_owned())
-        .cte(instances_cte(columns.len() + 1))
+        .cte(instances_cte(instance_arrays))
         .cte(CommonTableExpression::new().table_name(Attrs).query(inserted_rows(target, Ins)?).to_owned());
     for census in CensusStatements::of(target, Srch, CensusChange::Added)?.ctes() {
         with.cte(census);
     }
     let statement = with.query(Query::select().column(Entities::Id).from(Ins).take());
 
-    let sql = statement.to_string(PostgresQueryBuilder);
-    Ok(apply_instances_alias(apply_staged_alias(sql, &columns)))
+    let statement = with_instances_alias(with_staged_alias(UnnestAliased::new(statement), &columns));
+    Ok(ExternallyBound::new(statement, external))
 }
 
 impl EntityRepository {
@@ -179,23 +199,10 @@ impl EntityRepository {
         }
         types_present(entities)?;
 
-        let ids = entities.ids.iter().map(Identifier::as_str).collect::<Vec<_>>();
-        let locations = written_column(&entities.locations)?;
-        let sql = ENTITY_INSERT_STATEMENT.text(target)?;
-        let query = sqlx::query_as(sqlx::AssertSqlSafe(&*sql))
-            .bind(&ids)
-            .bind(literal_texts(&entities.entity_type_name_keys))
-            .bind(literal_texts(&entities.attribute_name_keys))
-            .bind(literal_texts(&entities.attribute_instance_name_keys))
-            .bind(literal_texts(&entities.attribute_instance_kinds))
-            .bind(entities.scope_paths_bind())
-            .bind(entities.verbatim_scope_paths_bind())
-            .bind(&locations)
-            .bind(&entities.location_expires_ats)
-            .bind(&entities.expires_ats)
-            .bind(&entities.min_attribute_expires_ats);
-        let rows = rows.bind_to(query).fetch_all(&mut **tx);
-        let rows: Vec<(String,)> = observe_statement(ENTITY_INSERT, rows).await.map_err(entity_write_failure)?;
+        let rows = entity_insert_statement(target, entities, rows)?
+            .into_query_as::<(String,)>()
+            .fetch_all(&mut **tx);
+        let rows = observe_statement(ENTITY_INSERT, rows).await.map_err(entity_write_failure)?;
 
         rows.iter().map(|(id,)| stored_uri(id)).collect()
     }
@@ -204,15 +211,29 @@ impl EntityRepository {
 #[cfg(test)]
 mod tests {
     use crate::{
-        current_attribute::staging::ROW_COLUMNS,
-        entity::write::{insert::entity_insert_sql, placeholders, staging::insert_staging_columns},
+        current_attribute::{staged_rows::StagedRows, staging::ROW_COLUMNS},
+        entity::{
+            params::PreparedEntityColumns,
+            write::{insert::entity_insert_statement, placeholders, staging::insert_staging_columns},
+        },
+        statement_text::text_of_query,
     };
     use andromeda_context_space::context_target::ContextTarget;
     use std::collections::BTreeSet;
 
+    /// The rendered insert of no entity, unwrapped for assertion.
+    fn entity_insert_sql(target: &ContextTarget) -> String {
+        let entities = PreparedEntityColumns::with_capacity(0);
+        text_of_query(
+            entity_insert_statement(target, &entities, StagedRows::default())
+                .expect("the fixed insert builds")
+                .into_query(),
+        )
+    }
+
     /// The rendered insert, unwrapped for assertion.
     fn insert() -> String {
-        entity_insert_sql(&ContextTarget::Live).expect("the fixed insert builds")
+        entity_insert_sql(&ContextTarget::Live)
     }
 
     #[test]
@@ -244,8 +265,8 @@ mod tests {
             "{sql}"
         );
         assert!(sql.contains(r#""instances" AS (SELECT "r"."id" AS "id""#), "{sql}");
-        assert!(sql.contains(r"FROM UNNEST($12::text[]"), "{sql}");
-        assert!(sql.contains(r"$38::sub_attribute_tree[], $39::text[]) AS r("), "{sql}");
+        assert!(sql.contains(r"FROM UNNEST($10::text[]"), "{sql}");
+        assert!(sql.contains(r"$39::sub_attribute_tree[], $33::text[]) AS r("), "{sql}");
         assert!(sql.contains(r#""r"."sub_attributes" AS "sub_attributes""#), "{sql}");
         assert!(sql.contains(r#""r"."sub_eq_keys"::bigint[] AS "sub_eq_keys""#), "{sql}");
         assert!(!sql.contains("WITH RECURSIVE"), "{sql}");
@@ -308,11 +329,11 @@ mod tests {
             assert!(sql.contains(&format!(r#""d"."{literal}"::{element}[] AS "{column}""#)), "{column}: {sql}");
         }
         assert!(
-            sql.contains(r#"ARRAY(SELECT jsonb_array_elements_text("d"."scope_paths_json")::ltree) AS "scope_paths""#),
+            sql.contains(r#"ARRAY (SELECT jsonb_array_elements_text("d"."scope_paths_json")::ltree) AS "scope_paths""#),
             "{sql}"
         );
         assert!(
-            sql.contains(r#"ARRAY(SELECT jsonb_array_elements_text("d"."verbatim_scope_paths_json")::text) AS "verbatim_scope_paths""#),
+            sql.contains(r#"ARRAY (SELECT jsonb_array_elements_text("d"."verbatim_scope_paths_json")::text) AS "verbatim_scope_paths""#),
             "{sql}"
         );
         assert!(sql.contains(r#""r"."object_type_keys"::integer[] AS "object_type_keys""#), "{sql}");
@@ -367,7 +388,7 @@ mod tests {
         let key = SnapshotKey::try_from(5).expect("positive key");
         let id = "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri");
         let target = ContextTarget::Snapshot(SnapshotTarget::staging(key, id));
-        let sql = entity_insert_sql(&target).expect("insert builds");
+        let sql = entity_insert_sql(&target);
         for relation in [
             "entities",
             "entity_search",

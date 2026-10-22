@@ -6,12 +6,12 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::subscription_forwarding::{ForwardedSubscriptions, SubscriptionCompanions};
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_registration::removal_hook::ForwardedSubscriptionCopy;
 use andromeda_subscription::forwarding_hook::ForwardedCopy;
 use andromeda_subscription_forwarding::{error::SubscriptionForwardingError, mapping::SubscriptionForwardingStore};
 use futures::future::BoxFuture;
-use sea_query::{Expr, ExprTrait, OnConflict, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Expr, ExprTrait, OnConflict, Query, SelectStatement};
 use sqlx::{Row, postgres::PgRow};
 
 /// Every copy held at `registration`'s context source, served by
@@ -56,8 +56,8 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
                         .update_column(SubscriptionCompanions::CompanionSubscriptionId)
                         .to_owned(),
                 );
-            let (sql, values) = insert.build_sqlx(PostgresQueryBuilder);
-            sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            insert
+                .to_query()
                 .execute(self.pool())
                 .await
                 .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
@@ -75,12 +75,12 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let (sql, values) = Query::select()
+            let row = Query::select()
                 .column(SubscriptionCompanions::CompanionSubscriptionId)
                 .from(SubscriptionCompanions::Table)
                 .and_where(Expr::col(SubscriptionCompanions::LocalSubscriptionId).eq(local.as_str()))
-                .build_sqlx(PostgresQueryBuilder);
-            let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                .to_owned()
+                .to_query()
                 .fetch_optional(self.pool())
                 .await
                 .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
@@ -98,12 +98,12 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let (sql, values) = Query::select()
+            let row = Query::select()
                 .column(SubscriptionCompanions::LocalSubscriptionId)
                 .from(SubscriptionCompanions::Table)
                 .and_where(Expr::col(SubscriptionCompanions::CompanionSubscriptionId).eq(companion.as_str()))
-                .build_sqlx(PostgresQueryBuilder);
-            let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                .to_owned()
+                .to_query()
                 .fetch_optional(self.pool())
                 .await
                 .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
@@ -142,8 +142,8 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
                         .update_column(ForwardedSubscriptions::RemoteSubscriptionId)
                         .to_owned(),
                 );
-            let (sql, values) = insert.build_sqlx(PostgresQueryBuilder);
-            sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            insert
+                .to_query()
                 .execute(self.pool())
                 .await
                 .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
@@ -161,13 +161,13 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let (sql, values) = Query::select()
+            let rows = Query::select()
                 .column(ForwardedSubscriptions::RegistrationId)
                 .column(ForwardedSubscriptions::RemoteSubscriptionId)
                 .from(ForwardedSubscriptions::Table)
                 .and_where(Expr::col(ForwardedSubscriptions::LocalSubscriptionId).eq(local.as_str()))
-                .build_sqlx(PostgresQueryBuilder);
-            let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                .to_owned()
+                .to_query()
                 .fetch_all(self.pool())
                 .await
                 .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
@@ -192,8 +192,8 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let (sql, values) = forwarded_for_registration_statement(registration).build_sqlx(PostgresQueryBuilder);
-            let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            let rows = forwarded_for_registration_statement(registration)
+                .to_query()
                 .fetch_all(self.pool())
                 .await
                 .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
@@ -218,13 +218,13 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let (sql, values) = Query::select()
+            let row = Query::select()
                 .column(ForwardedSubscriptions::LocalSubscriptionId)
                 .column(ForwardedSubscriptions::RegistrationId)
                 .from(ForwardedSubscriptions::Table)
                 .and_where(Expr::col(ForwardedSubscriptions::RemoteSubscriptionId).eq(remote_subscription.as_str()))
-                .build_sqlx(PostgresQueryBuilder);
-            let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                .to_owned()
+                .to_query()
                 .fetch_optional(self.pool())
                 .await
                 .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
@@ -245,12 +245,12 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let (sql, values) = Query::delete()
+            Query::delete()
                 .from_table(ForwardedSubscriptions::Table)
                 .and_where(Expr::col(ForwardedSubscriptions::LocalSubscriptionId).eq(local.as_str()))
                 .and_where(Expr::col(ForwardedSubscriptions::RegistrationId).eq(registration.as_str()))
-                .build_sqlx(PostgresQueryBuilder);
-            sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                .to_owned()
+                .to_query()
                 .execute(self.pool())
                 .await
                 .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;

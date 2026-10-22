@@ -16,12 +16,12 @@ use andromeda_postgresql_seaquery::{
     branch::qualified,
     pg_array::any,
     pg_type::PostgresType,
-    unnest::{UnnestColumn, apply_column_alias, unnest_call},
+    statement::Statement,
+    unnest::{UnnestAliased, UnnestColumn, unnest_call},
 };
 use chrono::{DateTime, Utc};
-use sea_query::{DynIden, Expr, ExprTrait, Iden, PostgresQueryBuilder, Query};
-use sea_query_sqlx::{SqlxBinder, SqlxValues};
-use sqlx::{AssertSqlSafe, PgConnection, Row, postgres::PgRow};
+use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, Iden, Query};
+use sqlx::{PgConnection, Row, postgres::PgRow};
 use uuid::Uuid;
 
 /// The `UNNEST` source of the replaced identities.
@@ -72,7 +72,7 @@ impl ReplacedRow {
 }
 
 /// The delete of exactly `rows`, which must not be empty.
-fn delete_statement(schema: Option<&DynIden>, rows: &[ReplacedRow]) -> (String, SqlxValues) {
+fn delete_statement(schema: Option<&DynIden>, rows: &[ReplacedRow]) -> DeleteStatement {
     let mut statement = Query::delete().from_table(qualified(schema, AttributeHistory::Table)).to_owned();
     let streams = rows.iter().map(|row| row.stream_key).collect::<Vec<i64>>();
     let instants = rows.iter().map(|row| row.recorded_at).collect::<Vec<DateTime<Utc>>>();
@@ -106,8 +106,7 @@ fn delete_statement(schema: Option<&DynIden>, rows: &[ReplacedRow]) -> (String, 
         ])
         .in_subquery(identities),
     );
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    (apply_column_alias(sql, &Replaced, &columns), values)
+    statement
 }
 
 /// The columns of the identity source, in projection order.
@@ -136,8 +135,11 @@ pub(crate) async fn remove_replaced(connection: &mut PgConnection, schema: Optio
         return Ok(Vec::new());
     }
     allow_confined_decompression(connection).await?;
-    let (sql, values) = delete_statement(schema, &replaced);
-    sqlx::query_with(AssertSqlSafe(sql), values).execute(connection).await?;
+    UnnestAliased::new(delete_statement(schema, &replaced))
+        .with_columns(Replaced, &identity_columns())
+        .to_query()
+        .execute(connection)
+        .await?;
     Ok(replaced_streams(&replaced))
 }
 
@@ -155,7 +157,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
-    use sea_query::{Alias, DynIden, IntoIden};
+    use sea_query::{Alias, DynIden, IntoIden, PostgresQueryBuilder};
     use uuid::Uuid;
 
     fn instant(raw: &str) -> DateTime<Utc> {
@@ -181,14 +183,14 @@ mod tests {
 
     #[test]
     fn a_replaced_instance_is_removed_by_its_stream_its_instant_span_and_its_exact_identity() {
-        let (sql, values) = delete_statement(None, &rows());
+        let (sql, values) = delete_statement(None, &rows()).build(PostgresQueryBuilder);
         assert_eq!(
             sql,
-            r#"DELETE FROM "attribute_history" WHERE "stream_key" = ANY($1) AND "recorded_at" >= $2 AND "recorded_at" <= $3 AND ("recorded_at", "write_id", "write_ordinal") IN (SELECT "replaced"."recorded_at", "replaced"."write_id", "replaced"."write_ordinal" FROM UNNEST($4::timestamptz[], $5::uuid[], $6::integer[]) AS replaced(recorded_at, write_id, write_ordinal))"#
+            r#"DELETE FROM "attribute_history" WHERE "stream_key" = ANY($1) AND "recorded_at" >= $2 AND "recorded_at" <= $3 AND ("recorded_at", "write_id", "write_ordinal") IN (SELECT "replaced"."recorded_at", "replaced"."write_id", "replaced"."write_ordinal" FROM UNNEST($4::timestamptz[], $5::uuid[], $6::integer[]) AS "replaced")"#
         );
         let bound = format!("{values:?}");
         assert!(bound.contains("2026-04-01") && bound.contains("2026-05-02"), "{bound}");
-        assert_eq!(values.0.0.len(), 6, "{bound}");
+        assert_eq!(values.0.len(), 6, "{bound}");
     }
 
     #[test]
@@ -201,7 +203,7 @@ mod tests {
     #[test]
     fn a_replacement_removes_the_rows_of_the_addressed_branch_schema() {
         let schema: DynIden = Alias::new("snap_3").into_iden();
-        let (sql, _) = delete_statement(Some(&schema), &rows());
+        let (sql, _) = delete_statement(Some(&schema), &rows()).build(PostgresQueryBuilder);
         assert!(sql.starts_with(r#"DELETE FROM "snap_3"."attribute_history""#), "{sql}");
     }
 }

@@ -174,15 +174,16 @@ impl AggregationGrid {
 mod tests {
     use crate::aggregation_grid::AggregationGrid;
     use andromeda_ngsi_ld_query::temporal::aggregation_period::AggregationPeriod;
+    use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType};
     use sea_query::{Alias, Expr, PostgresQueryBuilder};
 
     fn grid(period: &str) -> AggregationGrid {
         let period = AggregationPeriod::parse(period).expect("a valid period").expect("a non-zero period");
-        AggregationGrid::new(period, Expr::cust("'2026-03-15T00:00:00Z'::timestamptz"))
+        AggregationGrid::new(period, cast(Expr::val("2026-03-15T00:00:00Z"), PostgresType::Timestamptz))
     }
 
     fn period_of(period: &str) -> String {
-        grid(period).period_of(Expr::cust("t")).to_string(PostgresQueryBuilder)
+        grid(period).period_of(Expr::col(Alias::new("t"))).to_string(PostgresQueryBuilder)
     }
 
     /// An exact period is `time_bucket` at the origin, its end the start plus
@@ -192,7 +193,7 @@ mod tests {
         let sql = period_of("PT1H");
         pretty_assertions::assert_eq!(
             sql,
-            r#"SELECT time_bucket('PT1H'::interval, t, '2026-03-15T00:00:00Z'::timestamptz::timestamptz) AS "bucket_start""#
+            r#"SELECT time_bucket('PT1H'::interval, "t", '2026-03-15T00:00:00Z'::timestamptz::timestamptz) AS "bucket_start""#
         );
         let end = sea_query::Query::select()
             .expr(grid("PT1H").end_under(Alias::new("p")))

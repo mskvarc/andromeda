@@ -119,6 +119,13 @@ pub fn count_all() -> SimpleExpr {
     Expr::cust("COUNT(*)")
 }
 
+/// `COUNT(*) FILTER (WHERE predicate)` - the number of rows of the group the
+/// predicate holds on.
+#[must_use]
+pub fn count_filtered(predicate: SimpleExpr) -> SimpleExpr {
+    Expr::cust_with_exprs("COUNT(*) FILTER (WHERE $1)", [predicate])
+}
+
 /// `COUNT(*) OVER ()` - the total number of rows the query returns, evaluated
 /// once over the whole result and repeated on every row.
 ///
@@ -159,6 +166,16 @@ mod tests {
         );
         assert!(render(count_distinct(Expr::col(Alias::new("id")))).contains(r#"COUNT(DISTINCT "id")"#));
         assert!(render(count_all()).contains("COUNT(*)"));
+    }
+
+    #[test]
+    fn a_filtered_count_restricts_the_rows_it_counts() {
+        use crate::aggregate::count_filtered;
+        let sql = Query::select()
+            .expr(count_filtered(Expr::col(Alias::new("ok"))))
+            .to_owned()
+            .to_string(PostgresQueryBuilder);
+        assert_eq!(sql, r#"SELECT COUNT(*) FILTER (WHERE "ok")"#);
     }
 
     #[test]

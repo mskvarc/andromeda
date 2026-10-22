@@ -86,10 +86,7 @@ mod tests {
         let rejection = SnapshotPurgeQ::from_request_parts(&mut parts, &()).await.expect_err("a missing q is refused");
         let problem = rejection.problem().expect("a classified rejection");
         pretty_assertions::assert_eq!(problem.error_type(), NgsiLdErrorType::BadRequestData);
-        pretty_assertions::assert_eq!(
-            problem.detail(),
-            "a delete of the snapshots requires a 'q' query parameter"
-        );
+        pretty_assertions::assert_eq!(problem.detail(), "a delete of the snapshots requires a 'q' query parameter");
         pretty_assertions::assert_eq!(problem.instance().map(ToString::to_string).as_deref(), Some("/ngsi-ld/v1/snapshots"));
     }
 

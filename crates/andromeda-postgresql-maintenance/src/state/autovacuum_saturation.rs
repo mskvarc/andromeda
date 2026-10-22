@@ -6,17 +6,14 @@
 
 use crate::{catalog_counter::CatalogCounter, error::MaintenanceError};
 use andromeda_postgresql_schema::maintenance::PostgresqlMaintenanceFleet;
-use sea_query::{InsertStatement, OnConflict, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use andromeda_postgresql_seaquery::statement::Statement;
+use sea_query::{InsertStatement, OnConflict, Query, SelectStatement};
 use sqlx::PgConnection;
 
 /// Read how many consecutive passes found every worker slot busy, zero
 /// before the first pass recorded any.
 pub(crate) async fn saturated_passes(connection: &mut PgConnection) -> Result<u32, MaintenanceError> {
-    let (sql, values) = saturated_passes_statement().build_sqlx(PostgresQueryBuilder);
-    let recorded = sqlx::query_scalar_with::<_, i32, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
-        .fetch_optional(connection)
-        .await?;
+    let recorded = saturated_passes_statement().to_query_scalar::<i32>().fetch_optional(connection).await?;
     recorded.map_or(Ok(0), |passes| {
         u32::try_from(passes).map_err(|_| MaintenanceError::NegativeCatalogValue {
             counter: CatalogCounter::SaturatedPasses,
@@ -27,8 +24,7 @@ pub(crate) async fn saturated_passes(connection: &mut PgConnection) -> Result<u3
 
 /// Record how many consecutive passes found every worker slot busy.
 pub(crate) async fn record_saturated_passes(connection: &mut PgConnection, passes: u32) -> Result<(), MaintenanceError> {
-    let (sql, values) = saturated_passes_upsert(passes)?.build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(connection).await?;
+    saturated_passes_upsert(passes)?.to_query().execute(connection).await?;
     Ok(())
 }
 

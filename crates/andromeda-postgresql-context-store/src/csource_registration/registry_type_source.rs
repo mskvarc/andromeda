@@ -24,10 +24,9 @@ use andromeda_postgresql_schema::{
     csr::{Csr, RegistrationInformation},
     name_dictionary::AttributeNames,
 };
-use andromeda_postgresql_seaquery::{clock::now, pg_array::any};
+use andromeda_postgresql_seaquery::{clock::now, pg_array::any, statement::Statement};
 use async_trait::async_trait;
-use sea_query::{Alias, Cond, Expr as SeaExpr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement, extension::postgres::PgExpr};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Alias, Cond, Expr as SeaExpr, ExprTrait, JoinType, Query, SelectStatement, extension::postgres::PgExpr};
 
 /// One information row joined to the dictionary: the row's type names and one
 /// attribute name its item declares, or none when it declares no attribute.
@@ -161,8 +160,8 @@ impl PostgresRegistrationStore {
     /// Every (entity types, attribute name) pair the live registrations
     /// declare, as their information rows hold them.
     async fn registered_pairs(&self) -> Result<Vec<RegisteredPair>, EntityError> {
-        let (sql, values) = registered_pairs_sql().build_sqlx(PostgresQueryBuilder);
-        let rows: Vec<(Vec<String>, Option<String>)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let rows: Vec<(Vec<String>, Option<String>)> = registered_pairs_sql()
+            .to_query_as()
             .fetch_all(&self.pool)
             .await
             .map_err(|error| persistence_error::<EntityError>(error))?;
@@ -187,6 +186,7 @@ impl RegistryTypeSource for PostgresRegistrationStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sea_query::PostgresQueryBuilder;
 
     fn pair(entity_types: &[&str], attribute_name: Option<&str>) -> RegisteredPair {
         RegisteredPair {

@@ -11,10 +11,21 @@
 //! reads or writes, waits until the broker's backend queues behind it, and
 //! terminates that backend.
 
+use andromeda_postgresql_schema::{csr::Csr, current::Entities};
+use andromeda_postgresql_seaquery::{
+    catalog_function::terminate_backend,
+    command::Command,
+    introspection::current_database,
+    maintenance::backend_pid,
+    relation_lock::{LockMode, RelationLock},
+    statement::Statement,
+    system_catalog::PgStatActivity,
+};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Alias, Expr, ExprTrait, Query, TableName, extension::postgres::PgExpr};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::time::Duration;
@@ -37,12 +48,13 @@ enum LockedRelation {
 }
 
 impl LockedRelation {
-    /// The statement that takes the lock.
-    const fn lock_statement(self) -> &'static str {
-        match self {
-            LockedRelation::Registrations => "LOCK TABLE public.context_source_registrations IN ACCESS EXCLUSIVE MODE",
-            LockedRelation::Entities => "LOCK TABLE public.entities IN ACCESS EXCLUSIVE MODE",
-        }
+    /// The command that takes the lock.
+    fn lock(self) -> RelationLock {
+        let relation = match self {
+            LockedRelation::Registrations => TableName::from((Alias::new("public"), Csr::Table)),
+            LockedRelation::Entities => TableName::from((Alias::new("public"), Entities::Table)),
+        };
+        RelationLock::waiting(vec![relation], LockMode::AccessExclusive)
     }
 
     /// A pattern the text of a statement naming the relation matches.
@@ -64,15 +76,17 @@ fn entity(scope: &TenantScopedEnvironment, local: &str) -> Value {
 async fn terminate_the_backend_queued_on(database: &PgPool, relation: LockedRelation) {
     let deadline = Instant::now() + QUEUE_DEADLINE;
     loop {
-        let terminated: Vec<bool> = sqlx::query_scalar(
-            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
-             WHERE datname = current_database() AND pid <> pg_backend_pid() \
-             AND wait_event_type = 'Lock' AND query ILIKE $1",
-        )
-        .bind(relation.statement_pattern())
-        .fetch_all(database)
-        .await
-        .expect("the activity view is readable");
+        let terminated: Vec<bool> = Query::select()
+            .expr(terminate_backend(Expr::col(Alias::new("pid"))))
+            .from(PgStatActivity::Table)
+            .and_where(Expr::col(PgStatActivity::Datname).eq(current_database()))
+            .and_where(Expr::col(Alias::new("pid")).ne(backend_pid()))
+            .and_where(Expr::col(Alias::new("wait_event_type")).eq("Lock"))
+            .and_where(Expr::col(Alias::new("query")).ilike(relation.statement_pattern()))
+            .to_query_scalar()
+            .fetch_all(database)
+            .await
+            .expect("the activity view is readable");
         if terminated.iter().any(|done| *done) {
             return;
         }
@@ -103,10 +117,7 @@ async fn upsert_through_a_terminated_backend(scope: &TenantScopedEnvironment, re
 
     let database = scope.tenant_database().await.expect("the tenant database exists");
     let mut lock = database.begin().await.expect("a transaction to hold the lock in");
-    sqlx::query(relation.lock_statement())
-        .execute(&mut *lock)
-        .await
-        .expect("the relation is locked");
+    relation.lock().to_query().execute(&mut *lock).await.expect("the relation is locked");
 
     let probe = entity(scope, "probe");
     let (answer, ()) = tokio::join!(client.batch_upsert(&probe), terminate_the_backend_queued_on(&database, relation));

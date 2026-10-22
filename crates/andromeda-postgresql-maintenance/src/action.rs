@@ -19,10 +19,10 @@ use crate::{
     vacuum_horizon::{self, HorizonHolder, HorizonScope},
 };
 use andromeda_postgresql_context_store::maintenance_config::MaintenanceMode;
-use andromeda_postgresql_seaquery::maintenance::MaintenanceStatement;
+use andromeda_postgresql_seaquery::{command::Command, maintenance::MaintenanceCommand};
 use andromeda_telemetry::maintenance::{MaintenanceAction, MaintenanceActionOutcome, record_action};
 use chrono::Utc;
-use sqlx::{Executor, PgConnection};
+use sqlx::PgConnection;
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -258,11 +258,11 @@ enum StatementOutcome {
     Failed(sqlx::Error),
 }
 
-/// Execute a statement built by the PostgreSQL `SeaQuery` dialect extension.
-async fn execute_statement(connection: &mut PgConnection, statement: &MaintenanceStatement, cancellation: &CancellationToken) -> StatementOutcome {
+/// Execute a maintenance command, abandoning it when `cancellation` fires.
+async fn execute_statement(connection: &mut PgConnection, statement: &MaintenanceCommand, cancellation: &CancellationToken) -> StatementOutcome {
     tokio::select! {
         () = cancellation.cancelled() => StatementOutcome::Cancelled,
-        result = connection.execute(sqlx::AssertSqlSafe(statement.as_sql())) => match result {
+        result = statement.to_query().execute(connection) => match result {
             Ok(_) => StatementOutcome::Succeeded,
             Err(error) => StatementOutcome::Failed(error),
         },

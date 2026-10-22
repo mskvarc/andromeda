@@ -11,11 +11,11 @@ use crate::intent_store::{
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use andromeda_temporal::{append_intent::TemporalIntentKey, error::TemporalError, port::temporal_intent_queue::EntityRelease};
 use chrono::{DateTime, Utc};
-use sea_query::{Iden, PostgresQueryBuilder};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::Iden;
 use sqlx::{PgPool, Row};
 use std::time::Duration;
 use tokio::time::{Instant, sleep};
@@ -48,13 +48,9 @@ pub(super) async fn await_release(pool: &PgPool, entity_id: &Identifier, through
 
 /// Read once what holds the intents of `entity_id` keyed at most `through`.
 async fn probe(pool: &PgPool, entity_id: &Identifier, through: TemporalIntentKey) -> Result<EntityRelease, TemporalError> {
-    let (sql, values) = release_probe_statement(entity_id, through).build_sqlx(PostgresQueryBuilder);
-    let row = observe_statement(
-        INTENT_RELEASE_PROBE,
-        sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(pool),
-    )
-    .await
-    .map_err(|error| persistence(&error))?;
+    let row = observe_statement(INTENT_RELEASE_PROBE, release_probe_statement(entity_id, through).to_query().fetch_one(pool))
+        .await
+        .map_err(|error| persistence(&error))?;
     let queued: i64 = row.try_get(ReleaseProbe::Queued.unquoted()).map_err(|error| persistence(&error))?;
     let claimable: i64 = row.try_get(ReleaseProbe::Claimable.unquoted()).map_err(|error| persistence(&error))?;
     let latest_lease: Option<DateTime<Utc>> = row.try_get(ReleaseProbe::LatestLease.unquoted()).map_err(|error| persistence(&error))?;

@@ -21,13 +21,14 @@ pub(crate) fn not_encountered(encountered: &[ContextSourcePseudonym]) -> Conditi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use andromeda_postgresql_seaquery::literal::int_literal;
     use sea_query::{Alias, PostgresQueryBuilder, Query};
 
     #[test]
     fn an_aliased_registration_is_excluded_when_its_alias_was_encountered() {
         let encountered = [ContextSourcePseudonym::new("broker-b").expect("valid pseudonym")];
         let sql = Query::select()
-            .expr(SeaExpr::cust("1"))
+            .expr(int_literal(1))
             .from(Alias::new("context_source_registrations"))
             .cond_where(not_encountered(&encountered))
             .to_string(PostgresQueryBuilder);

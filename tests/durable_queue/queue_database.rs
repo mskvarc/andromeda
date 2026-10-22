@@ -37,12 +37,19 @@ use andromeda_postgresql_context_store::{
 };
 use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_cache_config::NameCacheConfig, name_lookup::NameLookup};
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames};
+use andromeda_postgresql_schema::{
+    notification::{NotificationDeliveries, NotificationEvents},
+    subscriptions::Subscriptions,
+};
+use andromeda_postgresql_seaquery::{aggregate::count_all, cast::cast, clock::now, pg_array::array_literal, pg_type::PostgresType, statement::Statement};
 use andromeda_tenancy::database_name::TenantDatabaseName;
 use andromeda_test_harness::{configuration::TestRunConfiguration, database_reset::reset_owned_tenant, dictionary_seed::attribute_name_key};
 use chrono::Utc;
+use sea_query::{Expr, ExprTrait, InsertStatement, IntoTableRef, Query, SelectStatement, SimpleExpr};
 use serde_json::json;
 use sqlx::{PgPool, Postgres, Transaction, postgres::PgPoolOptions};
 use std::sync::Arc;
+use uuid::Uuid;
 
 /// Database these verifications own outright.
 const QUEUE_DATABASE: &str = "andromeda_verification_durable_queue";
@@ -85,14 +92,81 @@ pub async fn subscription(pool: &PgPool, id: &str) -> i64 {
         "endpoint": {"uri": "http://127.0.0.1:8085/notify", "accept": "application/json"},
         "format": "normalized"
     });
-    sqlx::query_scalar("INSERT INTO subscriptions (id, kind, status, notification) VALUES ($1, $2, $3, $4) RETURNING subscription_key")
-        .bind(id)
-        .bind(SubscriptionKindCode::Entity.code())
-        .bind(SubscriptionStatusCode::Active.code())
-        .bind(notification)
+    Query::insert()
+        .into_table(Subscriptions::Table)
+        .columns([Subscriptions::Id, Subscriptions::Kind, Subscriptions::Status, Subscriptions::Notification])
+        .values([
+            Expr::val(id),
+            Expr::val(SubscriptionKindCode::Entity.code()),
+            Expr::val(SubscriptionStatusCode::Active.code()),
+            cast(Expr::val(notification.to_string()), PostgresType::Json),
+        ])
+        .expect("one value per column")
+        .returning_col(Subscriptions::SubscriptionKey)
+        .to_query_scalar()
         .fetch_one(pool)
         .await
         .expect("seeded subscription")
+}
+
+/// The row of the delivery `delivery`, before any column is selected.
+pub fn delivery_of(delivery: i64) -> SelectStatement {
+    Query::select()
+        .from(NotificationDeliveries::Table)
+        .and_where(Expr::col(NotificationDeliveries::DeliveryKey).eq(delivery))
+        .to_owned()
+}
+
+/// The deliveries the events of the write `write_id` owe, before any column is
+/// selected.
+pub fn deliveries_of_write(write_id: Uuid) -> SelectStatement {
+    Query::select()
+        .from(NotificationDeliveries::Table)
+        .inner_join(
+            NotificationEvents::Table,
+            Expr::col((NotificationEvents::Table, NotificationEvents::EventKey)).equals((NotificationDeliveries::Table, NotificationDeliveries::EventKey)),
+        )
+        .and_where(Expr::col((NotificationEvents::Table, NotificationEvents::WriteId)).eq(write_id))
+        .to_owned()
+}
+
+/// The insert of a delivery of `event` to `subscription_key`, due now,
+/// returning its key.
+pub fn due_delivery_insert(event: i64, subscription_key: i64) -> InsertStatement {
+    Query::insert()
+        .into_table(NotificationDeliveries::Table)
+        .columns([
+            NotificationDeliveries::EventKey,
+            NotificationDeliveries::SubscriptionKey,
+            NotificationDeliveries::NextAttemptAt,
+        ])
+        .values([Expr::val(event), Expr::val(subscription_key), now()])
+        .expect("one value per column")
+        .returning_col(NotificationDeliveries::DeliveryKey)
+        .to_owned()
+}
+
+/// How many rows the relation `table` currently holds.
+pub async fn row_count(pool: &PgPool, table: impl IntoTableRef) -> i64 {
+    Query::select()
+        .expr(count_all())
+        .from(table)
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await
+        .expect("row count")
+}
+
+/// The surrogate key the Subscription with external identifier `id` carries.
+pub async fn stored_subscription_key(pool: &PgPool, id: &str) -> i64 {
+    Query::select()
+        .column(Subscriptions::SubscriptionKey)
+        .from(Subscriptions::Table)
+        .and_where(Expr::col(Subscriptions::Id).eq(id))
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await
+        .expect("stored surrogate key")
 }
 
 /// The typed surrogate key of a seeded Subscription, as a matcher would carry it.
@@ -157,8 +231,11 @@ pub async fn state_keys(
 
 /// Count the deliveries the queue currently holds for one Subscription key.
 pub async fn deliveries_of(pool: &PgPool, subscription_key: i64) -> i64 {
-    sqlx::query_scalar("SELECT count(*) FROM notification_deliveries WHERE subscription_key = $1")
-        .bind(subscription_key)
+    Query::select()
+        .expr(count_all())
+        .from(NotificationDeliveries::Table)
+        .and_where(Expr::col(NotificationDeliveries::SubscriptionKey).eq(subscription_key))
+        .to_query_scalar()
         .fetch_one(pool)
         .await
         .expect("delivery count")
@@ -166,8 +243,11 @@ pub async fn deliveries_of(pool: &PgPool, subscription_key: i64) -> i64 {
 
 /// Count the events one write left behind.
 pub async fn events_of(pool: &PgPool, record: &WriteRecord) -> i64 {
-    sqlx::query_scalar("SELECT count(*) FROM notification_events WHERE write_id = $1")
-        .bind(record.write_id().as_uuid())
+    Query::select()
+        .expr(count_all())
+        .from(NotificationEvents::Table)
+        .and_where(Expr::col(NotificationEvents::WriteId).eq(record.write_id().as_uuid()))
+        .to_query_scalar()
         .fetch_one(pool)
         .await
         .expect("event count")
@@ -223,8 +303,25 @@ pub async fn enqueue_changes_under(pool: &PgPool, record: &WriteRecord, events: 
 }
 
 /// One owed change no release can read back, its origin a number the
-/// registry never assigned, as the SQL of an `events` value.
-pub const UNREADABLE_EVENTS: &str = "ARRAY[ROW(2, 'urn:ngsi-ld:Vehicle:unreadable', '{}'::integer[], '{}'::smallint[], '{}'::integer[], '{}'::text[], now(), 99, NULL, NULL, NULL, NULL, NULL)::pending_change_event]";
+/// registry never assigned, as an `events` value.
+pub fn unreadable_events() -> SimpleExpr {
+    let owed = Expr::tuple([
+        Expr::val(2),
+        Expr::val("urn:ngsi-ld:Vehicle:unreadable"),
+        Expr::val(Vec::<i32>::new()),
+        Expr::val(Vec::<i16>::new()),
+        Expr::val(Vec::<i32>::new()),
+        Expr::val(Vec::<String>::new()),
+        now(),
+        Expr::val(99),
+        Expr::null(),
+        Expr::null(),
+        Expr::null(),
+        Expr::null(),
+        Expr::null(),
+    ]);
+    array_literal([cast(owed, PostgresType::PendingChangeEvent)])
+}
 
 /// Enqueue one decodable side-effect job owing one change, returning the
 /// identity of the write it belongs to.

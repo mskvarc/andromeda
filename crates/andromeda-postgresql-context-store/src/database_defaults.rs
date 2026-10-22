@@ -24,11 +24,18 @@
 //! which is why a caller that sees [`DefaultsReconciliation::Adjusted`] opens
 //! its pool again.
 
-use crate::{config::SynchronousCommit, error::ContextStoreError, schema_ddl::database_settings::set_database_default};
-use andromeda_postgresql_seaquery::{advisory_lock::advisory_xact_lock, introspection::current_database, scalar_subquery::scalar_subquery};
-use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{Executor, PgPool, Row};
+use crate::{config::SynchronousCommit, error::ContextStoreError};
+use andromeda_postgresql_seaquery::{
+    advisory_lock::advisory_xact_lock,
+    command::Command,
+    database_definition::DatabaseDefinition,
+    introspection::current_database,
+    scalar_subquery::scalar_subquery,
+    setting::Setting,
+    statement::Statement,
+};
+use sea_query::{Alias, Expr, ExprTrait, Query, SelectStatement};
+use sqlx::{PgPool, Row};
 use std::time::Duration;
 
 /// How far past the HTTP request deadline a statement may still run.
@@ -92,7 +99,7 @@ pub struct DatabaseDefaults {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DatabaseDefault {
     /// The run-time parameter.
-    pub parameter: &'static str,
+    pub parameter: Setting,
     /// Its value, as `ALTER DATABASE ... SET` takes and `pg_db_role_setting`
     /// stores it.
     pub value: String,
@@ -111,15 +118,15 @@ impl DatabaseDefaults {
     pub fn entries(&self) -> [DatabaseDefault; 3] {
         [
             DatabaseDefault {
-                parameter: "synchronous_commit",
+                parameter: Setting::SynchronousCommit,
                 value: self.synchronous_commit.as_postgres_setting().to_owned(),
             },
             DatabaseDefault {
-                parameter: "statement_timeout",
+                parameter: Setting::StatementTimeout,
                 value: self.statement_timeout.setting(),
             },
             DatabaseDefault {
-                parameter: "client_connection_check_interval",
+                parameter: Setting::ClientConnectionCheckInterval,
                 value: milliseconds_setting(CLIENT_CONNECTION_CHECK_INTERVAL),
             },
         ]
@@ -151,19 +158,11 @@ pub enum DefaultsReconciliation {
 /// read or an `ALTER DATABASE` fails.
 pub async fn reconcile_database_defaults(pool: &PgPool, defaults: &DatabaseDefaults) -> Result<DefaultsReconciliation, ContextStoreError> {
     let mut transaction = pool.begin().await?;
-    let (sql, values) = stored_defaults_statement().build_sqlx(PostgresQueryBuilder);
-    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(&mut *transaction).await?;
+    let row = stored_defaults_statement().to_query().fetch_one(&mut *transaction).await?;
     let database: String = row.try_get("database")?;
-    let (lock_sql, lock_values) = configuration_lock(&database).build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(lock_sql.as_str()), lock_values)
-        .execute(&mut *transaction)
-        .await?;
+    configuration_lock(&database).to_query().execute(&mut *transaction).await?;
     // Read again under the lock: a broker that held it may have just written.
-    let (sql, values) = stored_defaults_statement().build_sqlx(PostgresQueryBuilder);
-    let stored: Option<Vec<String>> = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-        .fetch_one(&mut *transaction)
-        .await?
-        .try_get("settings")?;
+    let stored: Option<Vec<String>> = stored_defaults_statement().to_query().fetch_one(&mut *transaction).await?.try_get("settings")?;
     let entries = defaults.entries();
     let missing = missing_defaults(&entries, stored.as_deref().unwrap_or_default());
     if missing.is_empty() {
@@ -171,8 +170,9 @@ pub async fn reconcile_database_defaults(pool: &PgPool, defaults: &DatabaseDefau
         return Ok(DefaultsReconciliation::Unchanged);
     }
     for default in missing {
-        transaction
-            .execute(sqlx::AssertSqlSafe(set_database_default(&database, default.parameter, &default.value)))
+        DatabaseDefinition::set_default(Alias::new(&database), default.parameter, default.value.as_str())
+            .to_query()
+            .execute(&mut *transaction)
             .await?;
     }
     transaction.commit().await?;
@@ -217,6 +217,7 @@ mod tests {
         config::SynchronousCommit,
         database_defaults::{DatabaseDefault, DatabaseDefaults, StatementTimeout, configuration_lock, missing_defaults, stored_defaults_statement},
     };
+    use andromeda_postgresql_seaquery::setting::Setting;
     use pretty_assertions::{assert_eq, assert_ne};
     use sea_query::PostgresQueryBuilder;
     use std::time::Duration;
@@ -259,7 +260,10 @@ mod tests {
             "client_connection_check_interval=1000ms".to_owned(),
         ];
         let missing = missing_defaults(&entries, &stored);
-        assert_eq!(missing.iter().map(|default| default.parameter).collect::<Vec<_>>(), vec!["statement_timeout"]);
+        assert_eq!(
+            missing.iter().map(|default| default.parameter).collect::<Vec<_>>(),
+            vec![Setting::StatementTimeout]
+        );
         let stored = vec![
             "statement_timeout=35000ms".to_owned(),
             "search_path=public".to_owned(),

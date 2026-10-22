@@ -15,9 +15,9 @@ use crate::{
     observation::{Finding, ObservationDecision},
     observed_heap::WatchedHeap,
 };
+use andromeda_postgresql_seaquery::statement::Statement;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use sea_query::{ExprTrait, Func, Iden, PostgresQueryBuilder, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{ExprTrait, Func, Iden, SelectStatement};
 use sqlx::{PgConnection, Row, postgres::PgRow};
 use std::str::FromStr;
 
@@ -85,8 +85,7 @@ impl HeapStatistics {
 
 /// Read every watched heap of `branch` against its analyze trigger.
 pub(crate) async fn heap_statistics(connection: &mut PgConnection, branch: Branch) -> Result<Vec<HeapStatistics>, MaintenanceError> {
-    let (sql, values) = heap_statistics_statement(branch).build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
+    let rows = heap_statistics_statement(branch).to_query().fetch_all(connection).await?;
     rows.iter().map(heap_statistics_of).collect()
 }
 
@@ -95,8 +94,7 @@ pub(crate) async fn modified_since_analyze(connection: &mut PgConnection, branch
     let statement = heap_statistics_statement(branch)
         .and_where(statistics_column("relname").eq(heap.relation_name()))
         .to_owned();
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(connection).await?;
+    let row = statement.to_query().fetch_one(connection).await?;
     Ok(heap_statistics_of(&row)?.modified_since_analyze)
 }
 

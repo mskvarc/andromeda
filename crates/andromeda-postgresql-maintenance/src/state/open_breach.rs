@@ -7,9 +7,9 @@
 
 use crate::{error::MaintenanceError, state::TenantKey};
 use andromeda_postgresql_schema::maintenance::PostgresqlMaintenanceTargets;
+use andromeda_postgresql_seaquery::statement::Statement;
 use chrono::{DateTime, Utc};
-use sea_query::{Expr, ExprTrait, Func, Iden, Order, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Expr, ExprTrait, Func, Iden, Order, Query, SelectStatement};
 use sqlx::{PgConnection, Row};
 
 /// The oldest open breach run of one tenant's targets, in any branch.
@@ -25,8 +25,7 @@ pub(crate) struct OpenBreach {
 /// paired with its oldest run's start. A queued action reaches triage as due
 /// work instead.
 pub(crate) async fn open_breaches(connection: &mut PgConnection) -> Result<Vec<OpenBreach>, MaintenanceError> {
-    let (sql, values) = open_breaches_statement().build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
+    let rows = open_breaches_statement().to_query().fetch_all(connection).await?;
     rows.iter()
         .map(|row| {
             Ok(OpenBreach {

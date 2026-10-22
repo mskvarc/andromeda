@@ -12,10 +12,9 @@
 use crate::error::TemporalStoreError;
 use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
 use andromeda_postgresql_schema::temporal::{AttributeHistory, ScopeHistory};
-use andromeda_postgresql_seaquery::{branch::qualified, pg_array::any};
-use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, Postgres, Transaction};
+use andromeda_postgresql_seaquery::{branch::qualified, pg_array::any, statement::Statement};
+use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, Query, SelectStatement, SimpleExpr};
+use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
 /// What removing the history of one segment did.
@@ -63,13 +62,8 @@ pub(crate) async fn remove_scope_history(
 
 /// Read the write identities `writes` selects, then run `delete`.
 async fn remove(tx: &mut Transaction<'_, Postgres>, writes: SelectStatement, delete: DeleteStatement) -> Result<RemovedHistory, TemporalStoreError> {
-    let (writes_sql, writes_values) = writes.build_sqlx(PostgresQueryBuilder);
-    let writes: Vec<Uuid> = sqlx::query_scalar_with(AssertSqlSafe(writes_sql), writes_values).fetch_all(&mut **tx).await?;
-    let (delete_sql, delete_values) = delete.build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(AssertSqlSafe(delete_sql), delete_values)
-        .execute(&mut **tx)
-        .await?
-        .rows_affected();
+    let writes: Vec<Uuid> = writes.to_query_scalar().fetch_all(&mut **tx).await?;
+    let rows = delete.to_query().execute(&mut **tx).await?.rows_affected();
     Ok(RemovedHistory { rows, writes })
 }
 

@@ -76,6 +76,12 @@ mod rest_temporal_queries;
 mod value_type_utilization;
 mod vehicle_entity;
 
+use andromeda_postgresql_seaquery::{
+    command::Command,
+    database_definition::{ConnectedSessions, DatabaseDefinition},
+    statement::Statement,
+    system_catalog::PgDatabase,
+};
 use andromeda_test_harness::{
     configuration::{RUNTIME_BROKER_BASE as BASE_URL, TestRunConfiguration},
     database_isolation::connect_pool,
@@ -88,6 +94,7 @@ use reqwest::{
     StatusCode,
     header::{HeaderMap, HeaderValue},
 };
+use sea_query::{Alias, Expr, ExprTrait, Query};
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -146,16 +153,21 @@ impl AnnexTenant {
             .send()
             .await;
         let like = format!("andromeda_tenant_{}_%", self.label);
-        if let Ok(databases) = sqlx::query_scalar::<_, String>("SELECT datname FROM pg_database WHERE datname LIKE $1")
-            .bind(&like)
+        if let Ok(databases) = Query::select()
+            .column(PgDatabase::Datname)
+            .from(PgDatabase::Table)
+            .and_where(Expr::col(PgDatabase::Datname).like(like))
+            .to_query_scalar::<String>()
             .fetch_all(&self.pool)
             .await
         {
             for database in databases {
                 // `WITH (FORCE)` evicts the tenant's background workers that hold
                 // the database open; the name comes from `pg_database`.
-                let statement = format!("DROP DATABASE IF EXISTS \"{database}\" WITH (FORCE)");
-                let _ = sqlx::query(sqlx::AssertSqlSafe(statement)).execute(&self.pool).await;
+                let _ = DatabaseDefinition::drop(Alias::new(database), ConnectedSessions::Terminate)
+                    .to_query()
+                    .execute(&self.pool)
+                    .await;
             }
         }
         self.pool.close().await;

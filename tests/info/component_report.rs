@@ -2,9 +2,15 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
+use andromeda_postgresql_seaquery::{
+    introspection::{current_setting, current_setting_missing_ok, extension_version},
+    setting::Setting,
+    statement::Statement,
+};
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode, header::CONTENT_TYPE};
+use sea_query::{Alias, Query};
 use serde_json::{Map, Value};
 use sqlx::Row;
 use std::collections::BTreeSet;
@@ -87,15 +93,15 @@ async fn info_component_report_storage_entries_match_active_database_components(
         .collect::<BTreeSet<_>>();
     assert_eq!(component_names.len(), components.len(), "component names must not be duplicated");
 
-    let row = sqlx::query(
-        "SELECT current_setting('server_version') AS pg_version, \
-         (SELECT extversion FROM pg_extension WHERE extname = 'postgis') AS postgis_version, \
-         (SELECT extversion FROM pg_extension WHERE extname = 'timescaledb') AS timescaledb_version, \
-         current_setting('timescaledb.license', true) AS timescaledb_license",
-    )
-    .fetch_one(scope.database_pool())
-    .await
-    .expect("active database component query failed");
+    let row = Query::select()
+        .expr_as(current_setting(Setting::ServerVersion), Alias::new("pg_version"))
+        .expr_as(extension_version("postgis"), Alias::new("postgis_version"))
+        .expr_as(extension_version("timescaledb"), Alias::new("timescaledb_version"))
+        .expr_as(current_setting_missing_ok(Setting::TimescaledbLicense), Alias::new("timescaledb_license"))
+        .to_query()
+        .fetch_one(scope.database_pool())
+        .await
+        .expect("active database component query failed");
     let postgresql_version: String = row.try_get("pg_version").expect("the pg_version column decodes");
     let postgis_version: Option<String> = row.try_get("postgis_version").expect("the postgis_version column decodes");
     let timescaledb_version: Option<String> = row.try_get("timescaledb_version").expect("the timescaledb_version column decodes");

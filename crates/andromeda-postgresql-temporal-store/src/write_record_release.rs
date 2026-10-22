@@ -24,12 +24,11 @@ use andromeda_postgresql_schema::{
     queue::{TemporalAppendIntents, WriteRecords},
     temporal::{AttributeHistory, ScopeHistory},
 };
-use andromeda_postgresql_seaquery::{cast::cast, pg_array::any, pg_type::PostgresType};
+use andromeda_postgresql_seaquery::{cast::cast, pg_array::any, pg_type::PostgresType, statement::Statement};
 use andromeda_postgresql_temporal_query::alias::Ah;
 use chrono::{DateTime, Utc};
-use sea_query::{Cond, DeleteStatement, Expr, ExprTrait, Iden, IntoColumnRef, IntoIden, IntoTableRef, PostgresQueryBuilder, Query, SimpleExpr};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, Connection, PgConnection, Postgres, Transaction, postgres::PgPool};
+use sea_query::{Cond, DeleteStatement, Expr, ExprTrait, Iden, IntoColumnRef, IntoIden, IntoTableRef, Query, SimpleExpr};
+use sqlx::{Connection, PgConnection, Postgres, Transaction, postgres::PgPool};
 use uuid::Uuid;
 
 /// The `scope_history` alias inside a protection subquery.
@@ -114,7 +113,7 @@ pub(crate) async fn release_named(tx: &mut Transaction<'_, Postgres>, write_ids:
     let span = HistoryChunkSpan::read(tx).await?;
     let mut statement = base_release(named_window(span));
     statement.and_where(Expr::col(WriteRecords::WriteId).eq(any(cast(Expr::val(write_ids.to_vec()), PostgresType::UuidArray))));
-    execute(tx, &statement).await
+    Ok(statement.to_query().execute(&mut **tx).await?.rows_affected())
 }
 
 /// Release every unprotected idempotency record recorded before a cutoff.
@@ -136,19 +135,12 @@ pub(crate) async fn release_behind_horizon(pool: &PgPool, cutoff: DateTime<Utc>)
     Ok(released)
 }
 
-/// Run one release statement, reporting how many records it removed.
-async fn execute(connection: &mut PgConnection, statement: &DeleteStatement) -> Result<u64, TemporalStoreError> {
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    Ok(sqlx::query_with(AssertSqlSafe(sql), values).execute(connection).await?.rows_affected())
-}
-
 /// Run one sweep release statement in a transaction of its own, with no
 /// statement timeout, reporting how many records it removed.
 async fn execute_unbounded(connection: &mut PgConnection, statement: &DeleteStatement) -> Result<u64, TemporalStoreError> {
     let mut transaction = connection.begin().await?;
     allow_unbounded_statements(&mut transaction).await?;
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let released = sqlx::query_with(AssertSqlSafe(sql), values).execute(&mut *transaction).await?.rows_affected();
+    let released = statement.to_query().execute(&mut *transaction).await?.rows_affected();
     transaction.commit().await?;
     Ok(released)
 }

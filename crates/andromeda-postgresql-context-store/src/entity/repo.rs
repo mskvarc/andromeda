@@ -19,8 +19,8 @@ use andromeda_ngsi_ld_query::ordering::compiled::ResultOrdering;
 use andromeda_postgresql_collation::provisioned_collations::ProvisionedCollations;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_pool::read_share::{PoolLane, ReadShare};
-use sea_query::{PostgresQueryBuilder, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use andromeda_postgresql_seaquery::statement::Statement;
+use sea_query::SelectStatement;
 use sqlx::postgres::{PgPool, PgRow};
 use std::sync::Arc;
 
@@ -73,8 +73,7 @@ impl EntityRepository {
     /// Returns the driver's error when no connection is free within the
     /// acquire deadline or the statement fails.
     pub(super) async fn fetch_on(&self, lane: PoolLane, statement: &SelectStatement) -> Result<Vec<PgRow>, sqlx::Error> {
-        let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        let query = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values);
+        let query = statement.to_query();
         match lane {
             PoolLane::Whole => query.fetch_all(&self.pool).await,
             PoolLane::Reads => query.fetch_all(&mut **self.reads.acquire().await?).await,

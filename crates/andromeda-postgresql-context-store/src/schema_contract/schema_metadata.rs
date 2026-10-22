@@ -11,20 +11,8 @@ use crate::{
     },
 };
 use andromeda_postgresql_schema::tenancy::SchemaMetadata;
-use sea_query::{
-    Alias,
-    Expr,
-    ExprTrait,
-    InsertStatement,
-    OnConflict,
-    Order,
-    PostgresQueryBuilder,
-    Query,
-    SelectStatement,
-    UpdateStatement,
-    error::Error as SeaQueryError,
-};
-use sea_query_sqlx::SqlxBinder;
+use andromeda_postgresql_seaquery::statement::Statement;
+use sea_query::{Alias, Expr, ExprTrait, InsertStatement, OnConflict, Order, Query, SelectStatement, UpdateStatement, error::Error as SeaQueryError};
 use sqlx::{Executor, PgConnection, PgPool, Postgres, Row};
 
 /// Refuse a tenant whose schema is not the one this binary was built against,
@@ -123,8 +111,10 @@ async fn reconcile_upgrade(pool: &PgPool, stamped: &StampedContract, contract: &
 /// The digest of a tenant's actually-applied migrations up to and including
 /// `up_to_version`, as the tenant ledger itself records them.
 async fn applied_migrations_digest_up_to(pool: &PgPool, up_to_version: SchemaVersion) -> Result<MigrationsDigest, SchemaContractError> {
-    let (sql, values) = applied_migrations_digest_statement(i64::from(up_to_version.get())).build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(pool).await?;
+    let rows = applied_migrations_digest_statement(i64::from(up_to_version.get()))
+        .to_query()
+        .fetch_all(pool)
+        .await?;
     let records = rows
         .iter()
         .map(|row| -> Result<(i64, String, Vec<u8>), sqlx::Error> { Ok((row.try_get("version")?, row.try_get("description")?, row.try_get("checksum")?)) })
@@ -189,8 +179,7 @@ fn refuse_on_mismatch(stamped: &StampedContract, contract: &SchemaContract) -> R
 async fn stamp(pool: &PgPool, contract: &SchemaContract) -> Result<(), SchemaContractError> {
     let statement = stamp_statement(contract.version().get(), contract.digest().to_string())
         .map_err(|error| SchemaContractError::Database(sqlx::Error::Protocol(error.to_string())))?;
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool).await?;
+    statement.to_query().execute(pool).await?;
     Ok(())
 }
 
@@ -205,8 +194,10 @@ async fn stamp(pool: &PgPool, contract: &SchemaContract) -> Result<(), SchemaCon
 /// lost race here converges on the same values rather than clobbering a
 /// competing write with a different one.
 async fn restamp(pool: &PgPool, contract: &SchemaContract) -> Result<(), SchemaContractError> {
-    let (sql, values) = restamp_statement(contract.version().get(), contract.digest().to_string()).build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool).await?;
+    restamp_statement(contract.version().get(), contract.digest().to_string())
+        .to_query()
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -215,8 +206,7 @@ async fn read_stamp<'e, E>(executor: E) -> Result<Option<StampedContract>, Schem
 where
     E: Executor<'e, Database = Postgres>,
 {
-    let (sql, values) = read_stamp_statement().build_sqlx(PostgresQueryBuilder);
-    let Some(row) = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(executor).await? else {
+    let Some(row) = read_stamp_statement().to_query().fetch_optional(executor).await? else {
         return Ok(None);
     };
     let version = SchemaVersion::try_from(i64::from(row.try_get::<i32, _>("schema_version")?))?;

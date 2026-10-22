@@ -7,8 +7,6 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
-/// Write statements whose text depends on the branch alone.
-mod branch_statement;
 /// Active PostgreSQL-family component discovery.
 pub mod component_report;
 /// PostgreSQL connection and pool configuration.
@@ -58,10 +56,11 @@ pub mod pending_side_effects;
 pub mod pending_work;
 /// The schema contract one tenant database carries, and what it is checked against.
 pub mod schema_contract;
-/// Dialect DDL and session statements SeaQuery cannot express.
-pub mod schema_ddl;
 /// Persistence layer for snapshot records.
 pub mod snapshot;
+/// The text of a statement as the driver receives it.
+#[cfg(test)]
+mod statement_text;
 /// How the context store's own failures reach the ports it implements.
 mod store_fault;
 /// Conditions the context store's own callers guarantee.
@@ -130,5 +129,5 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-postgresql-pool",
         "andromeda-test-fixtures",
     ],
-    allow_production_dependencies: ["sea-query", "sea-query-sqlx", "sqlx", "tokio"],
+    allow_production_dependencies: ["sea-query", "sqlx", "tokio"],
 }

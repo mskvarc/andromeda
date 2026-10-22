@@ -45,7 +45,8 @@ mod tests {
     use super::*;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExpr};
-    use sea_query::{Expr as SeaExpr, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::literal::int_literal;
+    use sea_query::{PostgresQueryBuilder, Query};
 
     fn iri(value: &str) -> IriBuf {
         IriBuf::new(value.to_string()).expect("valid IRI")
@@ -57,7 +58,7 @@ mod tests {
 
     fn render(coverage: &Coverage<'_>) -> String {
         Query::select()
-            .expr(SeaExpr::cust("1"))
+            .expr(int_literal(1))
             .from(sea_query::Alias::new("context_source_registrations"))
             .and_where(coverage.predicate().expect("something is asked"))
             .to_string(PostgresQueryBuilder)

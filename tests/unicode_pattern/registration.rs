@@ -12,12 +12,15 @@
 
 use andromeda_ngsi_ld_query::{pattern::Pattern, portable_pattern::PortablePattern};
 use andromeda_postgresql_context_store::csource_registration::pattern_forms_refresh::refresh_stale_pattern_forms;
+use andromeda_postgresql_schema::csr::{Csr, RegistrationInformation};
+use andromeda_postgresql_seaquery::{jsonb::jsonb_object_agg, statement::Statement};
 use andromeda_test_client::response::TestResponse;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use andromeda_test_mocks::{callback_path::CallbackPath, context_source_server::ContextSourceServer, server_config::MockServerConfig};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Expr, ExprTrait, Query};
 use serde_json::{Map, Value, json};
 use std::{collections::BTreeSet, time::Duration};
 
@@ -70,14 +73,18 @@ fn identifier_criteria(identifier: &str) -> String {
 /// The restatements the registration's information rows persisted, keyed by
 /// the pattern as written.
 async fn stored_forms(scope: &TestEnvironment, registration: &str) -> Option<Value> {
-    sqlx::query_scalar::<_, Option<Value>>(
-        "SELECT jsonb_object_agg(entity_id_pattern, entity_id_pattern_form) FROM registration_information \
-         WHERE registration_id = $1 AND entity_id_pattern IS NOT NULL",
-    )
-    .bind(registration)
-    .fetch_one(scope.database_pool())
-    .await
-    .expect("the registration row exists")
+    Query::select()
+        .expr(jsonb_object_agg(
+            Expr::col(RegistrationInformation::EntityIdPattern),
+            Expr::col(RegistrationInformation::EntityIdPatternForm),
+        ))
+        .from(RegistrationInformation::Table)
+        .and_where(Expr::col(RegistrationInformation::RegistrationId).eq(registration))
+        .and_where(Expr::col(RegistrationInformation::EntityIdPattern).is_not_null())
+        .to_query_scalar::<Option<Value>>()
+        .fetch_one(scope.database_pool())
+        .await
+        .expect("the registration row exists")
 }
 
 /// The stored restatements of a registration declaring `pattern` alone.
@@ -245,13 +252,19 @@ async fn unicode_pattern_registration_a_restatement_an_older_rendering_stored_is
     .await;
     let covered = identifier_criteria(&scope.id("HIVE:1"));
 
-    sqlx::query("UPDATE registration_information SET entity_id_pattern_form = '^never$' WHERE registration_id = $1")
-        .bind(&registration)
+    Query::update()
+        .table(RegistrationInformation::Table)
+        .value(RegistrationInformation::EntityIdPatternForm, "^never$")
+        .and_where(Expr::col(RegistrationInformation::RegistrationId).eq(registration.as_str()))
+        .to_query()
         .execute(scope.database_pool())
         .await
         .expect("the rows are set back to an older rendering");
-    sqlx::query("UPDATE context_source_registrations SET entity_id_pattern_forms_revision = 0 WHERE id = $1")
-        .bind(&registration)
+    Query::update()
+        .table(Csr::Table)
+        .value(Csr::EntityIdPatternFormsRevision, 0)
+        .and_where(Expr::col(Csr::Id).eq(registration.as_str()))
+        .to_query()
         .execute(scope.database_pool())
         .await
         .expect("the registration is set back to an older revision");
@@ -263,8 +276,11 @@ async fn unicode_pattern_registration_a_restatement_an_older_rendering_stored_is
     let rewritten = refresh_stale_pattern_forms(scope.database_pool()).await.expect("the refresh runs");
     assert!(rewritten >= 1, "the outdated row is rewritten");
     assert_eq!(stored_forms(&scope, &registration).await, Some(stored_member(&pattern)));
-    let revision: Option<i16> = sqlx::query_scalar("SELECT entity_id_pattern_forms_revision FROM context_source_registrations WHERE id = $1")
-        .bind(&registration)
+    let revision: Option<i16> = Query::select()
+        .column(Csr::EntityIdPatternFormsRevision)
+        .from(Csr::Table)
+        .and_where(Expr::col(Csr::Id).eq(registration.as_str()))
+        .to_query_scalar()
         .fetch_one(scope.database_pool())
         .await
         .expect("the registration row exists");

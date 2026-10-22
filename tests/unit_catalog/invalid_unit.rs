@@ -7,11 +7,17 @@
 //! and no history row may carry a unit identity no listed code holds.
 
 use crate::fixtures::{SUITE, default_context_iri, device_with_unit, history_unit_identities};
+use andromeda_postgresql_schema::{
+    current::{CurrentAttributes, Entities},
+    temporal::AttributeHistory,
+};
+use andromeda_postgresql_seaquery::{scalar_subquery::scalar_subquery, statement::Statement};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use cefact_units::UnitCode;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Expr, ExprTrait, Query};
 use serde_json::json;
 
 /// A three-letter token of the right shape that Recommendation 20 never assigned.
@@ -97,13 +103,21 @@ async fn a_bypass_write_of_a_non_positive_unit_identity_is_refused_by_the_check(
         .expect("create entity request failed");
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
 
-    let bypass = sqlx::query(
-        "UPDATE current_attributes SET unit_code_id = 0 \
-         WHERE entity_key = (SELECT entity_key FROM entities WHERE id = $1)",
-    )
-    .bind(&id)
-    .execute(scope.database_pool())
-    .await;
+    let bypass = Query::update()
+        .table(CurrentAttributes::Table)
+        .value(CurrentAttributes::UnitCodeId, 0)
+        .and_where(
+            Expr::col(CurrentAttributes::EntityKey).eq(scalar_subquery(
+                Query::select()
+                    .column(Entities::EntityKey)
+                    .from(Entities::Table)
+                    .and_where(Expr::col(Entities::Id).eq(id.as_str()))
+                    .to_owned(),
+            )),
+        )
+        .to_query()
+        .execute(scope.database_pool())
+        .await;
 
     let refusal = bypass.expect_err("the check must refuse a non-positive unit identity");
     let database_error = refusal.as_database_error().expect("the refusal comes from the database");
@@ -132,7 +146,12 @@ async fn no_history_row_carries_a_unit_only_as_leftover_metadata() {
 
     // The whole hypertable, not only this test's rows: an identity no listed
     // code holds is what a hand-written row leaves.
-    let stored: Vec<i16> = sqlx::query_scalar("SELECT DISTINCT unit_code_id FROM attribute_history WHERE unit_code_id IS NOT NULL")
+    let stored: Vec<i16> = Query::select()
+        .distinct()
+        .column(AttributeHistory::UnitCodeId)
+        .from(AttributeHistory::Table)
+        .and_where(Expr::col(AttributeHistory::UnitCodeId).is_not_null())
+        .to_query_scalar()
         .fetch_all(scope.database_pool())
         .await
         .expect("the unit audit must be readable");

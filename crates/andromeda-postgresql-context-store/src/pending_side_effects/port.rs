@@ -20,25 +20,11 @@ use andromeda_entity::{
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_attribute_instance::name_resolution::names_of;
 use andromeda_postgresql_schema::queue::PendingSideEffects;
-use andromeda_postgresql_seaquery::interval::make_interval_secs;
+use andromeda_postgresql_seaquery::{interval::make_interval_secs, statement::Statement};
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sea_query::{
-    CaseStatement,
-    DeleteStatement,
-    Expr,
-    ExprTrait,
-    Keyword,
-    LockBehavior,
-    LockType,
-    Order,
-    PostgresQueryBuilder,
-    Query,
-    SimpleExpr,
-    UpdateStatement,
-};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{CaseStatement, DeleteStatement, Expr, ExprTrait, Keyword, LockBehavior, LockType, Order, Query, SimpleExpr, UpdateStatement};
 use sqlx::postgres::PgRow;
 use tracing::error;
 use uuid::Uuid;
@@ -86,10 +72,9 @@ impl SideEffectQueue for PendingSideEffectsRepository {
     }
 
     async fn nack(&self, id: SideEffectJobId, owner: &LeaseHolder, error: &str, next_attempt_at: DateTime<Utc>) -> Result<LeaseAcknowledgement, EntityError> {
-        let (sql, values) = nack_statement(id.as_uuid(), *owner, error, next_attempt_at).build_sqlx(PostgresQueryBuilder);
         let result = observe_statement(
             SIDE_EFFECT_RELEASE,
-            sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(self.pool()),
+            nack_statement(id.as_uuid(), *owner, error, next_attempt_at).to_query().execute(self.pool()),
         )
         .await
         .map_err(|error| persistence(&error))?;
@@ -97,10 +82,9 @@ impl SideEffectQueue for PendingSideEffectsRepository {
     }
 
     async fn mark_dead(&self, id: SideEffectJobId, owner: &LeaseHolder, error: &str, attempt: DeadLetterAttempt) -> Result<LeaseAcknowledgement, EntityError> {
-        let (sql, values) = mark_dead_statement(id.as_uuid(), *owner, error, attempt).build_sqlx(PostgresQueryBuilder);
         let result = observe_statement(
             SIDE_EFFECT_RELEASE,
-            sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(self.pool()),
+            mark_dead_statement(id.as_uuid(), *owner, error, attempt).to_query().execute(self.pool()),
         )
         .await
         .map_err(|error| persistence(&error))?;
@@ -108,8 +92,8 @@ impl SideEffectQueue for PendingSideEffectsRepository {
     }
 
     async fn purge_dead_before(&self, cutoff: DateTime<Utc>) -> Result<u64, EntityError> {
-        let (sql, values) = purge_dead_statement(cutoff).build_sqlx(PostgresQueryBuilder);
-        let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let result = purge_dead_statement(cutoff)
+            .to_query()
             .execute(self.pool())
             .await
             .map_err(|error| persistence(&error))?;
@@ -121,10 +105,9 @@ impl PendingSideEffectsRepository {
     /// Claim up to `limit` due rows for `owner` in one statement.
     async fn claim_rows(&self, owner: &LeaseHolder, limit: usize, lease_seconds: i32) -> Result<Vec<PgRow>, EntityError> {
         let limit = u64::try_from(limit).map_err(|error| EntityError::from(PersistenceFailure::Unencodable.record(&error)))?;
-        let (sql, values) = lease_batch_statement(*owner, limit, f64::from(lease_seconds)).build_sqlx(PostgresQueryBuilder);
         observe_statement(
             SIDE_EFFECT_CLAIM,
-            sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(self.pool()),
+            lease_batch_statement(*owner, limit, f64::from(lease_seconds)).to_query().fetch_all(self.pool()),
         )
         .await
         .map_err(|error| persistence(&error))

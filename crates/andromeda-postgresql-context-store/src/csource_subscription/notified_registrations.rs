@@ -19,11 +19,11 @@ use andromeda_notification::{
 use andromeda_postgresql_schema::subscriptions::{SubscriptionNotifiedRegistrations, Subscriptions};
 use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
-    unnest::{UnnestColumn, apply_column_alias, unnest_call},
+    statement::Statement,
+    unnest::{UnnestAliased, UnnestColumn, unnest_call},
 };
 use futures::future::BoxFuture;
-use sea_query::{Alias, DeleteStatement, Expr, ExprTrait, InsertStatement, JoinType, LockType, OnConflict, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Alias, DeleteStatement, Expr, ExprTrait, InsertStatement, JoinType, LockType, OnConflict, Query, SelectStatement};
 use sqlx::{PgExecutor, PgPool};
 
 /// The PostgreSQL store of notified registrations.
@@ -49,8 +49,8 @@ impl NotifiedRegistrationStore for NotifiedRegistrationLedger {
 
     fn release<'a>(&'a self, subscription: &'a Identifier, registration: &'a Identifier) -> BoxFuture<'a, Result<Release, NotificationError>> {
         Box::pin(async move {
-            let (sql, values) = release_statement(subscription, registration).build_sqlx(PostgresQueryBuilder);
-            let removed: Option<(String,)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            let removed: Option<(String,)> = release_statement(subscription, registration)
+                .to_query_as()
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(|error| persistence(&ContextStoreError::from(error)))?;
@@ -60,8 +60,8 @@ impl NotifiedRegistrationStore for NotifiedRegistrationLedger {
 
     fn notified_subscriptions<'a>(&'a self, registration: &'a Identifier) -> BoxFuture<'a, Result<Vec<Identifier>, NotificationError>> {
         Box::pin(async move {
-            let (sql, values) = notified_subscriptions_statement(registration).build_sqlx(PostgresQueryBuilder);
-            let subscriptions: Vec<(String,)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            let subscriptions: Vec<(String,)> = notified_subscriptions_statement(registration)
+                .to_query_as()
                 .fetch_all(&self.pool)
                 .await
                 .map_err(|error| persistence(&ContextStoreError::from(error)))?;
@@ -78,8 +78,8 @@ impl NotifiedRegistrationStore for NotifiedRegistrationLedger {
 
     fn registrations_notified_to<'a>(&'a self, subscription: &'a Identifier) -> BoxFuture<'a, Result<Vec<Identifier>, NotificationError>> {
         Box::pin(async move {
-            let (sql, values) = notified_registrations_statement(subscription).build_sqlx(PostgresQueryBuilder);
-            let registrations: Vec<(String,)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            let registrations: Vec<(String,)> = notified_registrations_statement(subscription)
+                .to_query_as()
                 .fetch_all(&self.pool)
                 .await
                 .map_err(|error| persistence(&ContextStoreError::from(error)))?;
@@ -107,10 +107,7 @@ async fn claim<'e>(executor: impl PgExecutor<'e>, subscription: &Identifier, reg
     if registrations.is_empty() {
         return Ok(Vec::new());
     }
-    let (sql, values) = claim_statement(subscription, registrations)?.build_sqlx(PostgresQueryBuilder);
-    let (alias, columns) = registration_source();
-    let sql = apply_column_alias(sql, &alias, &columns);
-    let recorded: Vec<(String,)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(executor).await?;
+    let recorded: Vec<(String,)> = claim_statement(subscription, registrations)?.to_query_as().fetch_all(executor).await?;
     recorded
         .into_iter()
         .map(|(registration,)| {
@@ -137,8 +134,10 @@ fn registration_source() -> (Alias, [UnnestColumn; 1]) {
 /// pair of a subscription that no longer exists. `FOR KEY SHARE OF s` holds off
 /// a deletion in flight until this insert commits, so the foreign key never
 /// refuses the insert; a deletion that commits first leaves nothing to join.
-fn claim_statement(subscription: &Identifier, registrations: &[Identifier]) -> Result<InsertStatement, ContextStoreError> {
+fn claim_statement(subscription: &Identifier, registrations: &[Identifier]) -> Result<UnnestAliased<InsertStatement>, ContextStoreError> {
     let (source_alias, columns) = registration_source();
+    // clone: the aliased source names the same alias the statement reads.
+    let aliased = source_alias.clone();
     let subscription_alias = Alias::new("s");
     // Sorted, so two claims of overlapping registrations for one subscription
     // take their unique-index row locks in the same order and never deadlock.
@@ -177,7 +176,7 @@ fn claim_statement(subscription: &Identifier, registrations: &[Identifier]) -> R
             .to_owned(),
         )
         .returning_col(SubscriptionNotifiedRegistrations::RegistrationId);
-    Ok(statement.clone())
+    Ok(UnnestAliased::new(statement.clone()).with_columns(aliased, &columns))
 }
 
 /// The surrogate key of `subscription`, as a subquery.
@@ -236,15 +235,16 @@ fn notified_registrations_statement(subscription: &Identifier) -> SelectStatemen
 
 #[cfg(test)]
 mod tests {
-    use crate::csource_subscription::notified_registrations::{
-        claim_statement,
-        notified_registrations_statement,
-        notified_subscriptions_statement,
-        registration_source,
-        release_statement,
+    use crate::{
+        csource_subscription::notified_registrations::{
+            claim_statement,
+            notified_registrations_statement,
+            notified_subscriptions_statement,
+            release_statement,
+        },
+        statement_text::text_of,
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_postgresql_seaquery::unnest::apply_column_alias;
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
@@ -259,9 +259,7 @@ mod tests {
             &[uri("urn:ngsi-ld:ContextSourceRegistration:1"), uri("urn:ngsi-ld:ContextSourceRegistration:2")],
         )
         .expect("the claim builds");
-        let (sql, _) = statement.build(PostgresQueryBuilder);
-        let (alias, columns) = registration_source();
-        let sql = apply_column_alias(sql, &alias, &columns);
+        let sql = text_of(&statement);
         assert_eq!(
             sql,
             r#"INSERT INTO "subscription_notified_registrations" ("subscription_key", "registration_id") SELECT "s"."subscription_key", "r"."registration_id" FROM UNNEST($1::text[]) AS r(registration_id) INNER JOIN "subscriptions" AS "s" ON "s"."id" = $2 FOR KEY SHARE OF "s" ON CONFLICT ("subscription_key", "registration_id") DO NOTHING RETURNING "registration_id""#

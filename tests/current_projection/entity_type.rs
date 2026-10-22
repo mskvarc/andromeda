@@ -4,10 +4,16 @@
 //! empty array at the API boundary, and `chk_entity_search_entity_type_name_keys_present`
 //! refuses it again for any writer that bypasses the API.
 
+use andromeda_postgresql_schema::{
+    current::{Entities, EntitySearch},
+    name_dictionary::EntityTypeNames,
+};
+use andromeda_postgresql_seaquery::{pg_array::any, statement::Statement};
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Alias, CommonTableExpression, Expr, ExprTrait, Order, Query, WithClause};
 use serde_json::json;
 
 /// Expanded Building type of the ETSI test-suite context.
@@ -41,15 +47,42 @@ async fn current_projection_database_refuses_a_typeless_entity_row() {
     let scope = TestEnvironment::from_suite("current-projection").await.expect("isolated test environment");
     let id = scope.id("Building:empty-type-sql");
 
-    let failure = sqlx::query(
-        "WITH ins AS (INSERT INTO entities (id) VALUES ($1) RETURNING entity_key) \
-         INSERT INTO entity_search (entity_key, entity_type_name_keys, attribute_name_keys, attribute_instance_name_keys, attribute_instance_kinds) \
-         SELECT entity_key, ARRAY[]::integer[], ARRAY[]::integer[], ARRAY[]::integer[], ARRAY[]::smallint[] FROM ins",
-    )
-    .bind(&id)
-    .execute(scope.database_pool())
-    .await
-    .expect_err("a typeless Entity row must be refused");
+    let entity = Query::insert()
+        .into_table(Entities::Table)
+        .columns([Entities::Id])
+        .values([Expr::val(id.as_str())])
+        .expect("one value per column")
+        .returning_col(Entities::EntityKey)
+        .to_owned();
+    let search = Query::insert()
+        .into_table(EntitySearch::Table)
+        .columns([
+            EntitySearch::EntityKey,
+            EntitySearch::EntityTypeNameKeys,
+            EntitySearch::AttributeNameKeys,
+            EntitySearch::AttributeInstanceNameKeys,
+            EntitySearch::AttributeInstanceKinds,
+        ])
+        .select_from(
+            Query::select()
+                .column(Entities::EntityKey)
+                .expr(Expr::val(Vec::<i32>::new()))
+                .expr(Expr::val(Vec::<i32>::new()))
+                .expr(Expr::val(Vec::<i32>::new()))
+                .expr(Expr::val(Vec::<i16>::new()))
+                .from(Alias::new("ins"))
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .to_owned();
+    let failure = WithClause::new()
+        .cte(CommonTableExpression::new().table_name(Alias::new("ins")).query(entity).to_owned())
+        .to_owned()
+        .query(search)
+        .to_query()
+        .execute(scope.database_pool())
+        .await
+        .expect_err("a typeless Entity row must be refused");
     let database_error = failure.as_database_error().expect("the refusal must come from the database");
     assert_eq!(
         database_error.code().as_deref(),
@@ -75,14 +108,23 @@ async fn current_projection_persists_every_type_of_a_multi_type_entity() {
     let created = client.post_entity(&entity).send().await.expect("create entity failed");
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
 
-    let types: Vec<String> = sqlx::query_scalar(
-        "SELECT n.name FROM entities e JOIN entity_search s ON s.entity_key = e.entity_key \
-         CROSS JOIN unnest(s.entity_type_name_keys) AS t(key) JOIN entity_type_names n ON n.entity_type_name_key = t.key WHERE e.id = $1 ORDER BY 1",
-    )
-    .bind(&id)
-    .fetch_all(scope.database_pool())
-    .await
-    .expect("types must be readable");
+    let types: Vec<String> = Query::select()
+        .column((EntityTypeNames::Table, EntityTypeNames::Name))
+        .from(Entities::Table)
+        .inner_join(
+            EntitySearch::Table,
+            Expr::col((EntitySearch::Table, EntitySearch::EntityKey)).equals((Entities::Table, Entities::EntityKey)),
+        )
+        .inner_join(
+            EntityTypeNames::Table,
+            Expr::col((EntityTypeNames::Table, EntityTypeNames::EntityTypeNameKey)).eq(any(Expr::col((EntitySearch::Table, EntitySearch::EntityTypeNameKeys)))),
+        )
+        .and_where(Expr::col((Entities::Table, Entities::Id)).eq(id.as_str()))
+        .order_by((EntityTypeNames::Table, EntityTypeNames::Name), Order::Asc)
+        .to_query_scalar()
+        .fetch_all(scope.database_pool())
+        .await
+        .expect("types must be readable");
     assert!(
         types.contains(&BUILDING_TYPE.to_owned()),
         "the expanded Building type must be stored: {types:?}"

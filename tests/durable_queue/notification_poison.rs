@@ -10,7 +10,7 @@
 
 use crate::{
     notification_fixture::{delivery_ids, queue_notification},
-    queue_database::{delivery_queue, queue_database},
+    queue_database::{delivery_of, delivery_queue, due_delivery_insert, queue_database},
 };
 use andromeda_notification::{
     delivery_config::DeliveryConfig,
@@ -19,9 +19,12 @@ use andromeda_notification::{
     delivery_store::DeliveryStore,
 };
 use andromeda_postgresql_context_store::pending_work::earliest_obligation;
+use andromeda_postgresql_schema::notification::{NotificationDeliveries, NotificationEvents};
+use andromeda_postgresql_seaquery::{catalog_function::num_nonnulls, clock::now, statement::Statement};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use pretty_assertions::assert_eq;
+use sea_query::{Expr, Query};
 use serial_test::serial;
 use sqlx::PgPool;
 use std::{
@@ -51,18 +54,36 @@ impl NotificationDeliveryTransport for AcceptingTransport {
 /// Queue one delivery, for `subscription_key`, of an event whose entity
 /// identifier cannot be read back, and return the delivery's key.
 async fn queue_unreadable_delivery(pool: &PgPool, subscription_key: i64) -> i64 {
-    let event: i64 = sqlx::query_scalar(
-        "INSERT INTO notification_events (created_at, event_ordinal, lifecycle, write_id, entity_id, change_kinds, change_attribute_name_keys, change_dataset_ids) \
-         VALUES (NOW(), 0, 1, $1, $2, '{}', '{}', '{}') RETURNING event_key",
-    )
-    .bind(Uuid::new_v4())
-    .bind(UNREADABLE_ENTITY_ID)
-    .fetch_one(pool)
-    .await
-    .expect("queue the unreadable event");
-    sqlx::query_scalar("INSERT INTO notification_deliveries (event_key, subscription_key, next_attempt_at) VALUES ($1, $2, NOW()) RETURNING delivery_key")
-        .bind(event)
-        .bind(subscription_key)
+    let event: i64 = Query::insert()
+        .into_table(NotificationEvents::Table)
+        .columns([
+            NotificationEvents::CreatedAt,
+            NotificationEvents::EventOrdinal,
+            NotificationEvents::Lifecycle,
+            NotificationEvents::WriteId,
+            NotificationEvents::EntityId,
+            NotificationEvents::ChangeKinds,
+            NotificationEvents::ChangeAttributeNameKeys,
+            NotificationEvents::ChangeDatasetIds,
+        ])
+        .values([
+            now(),
+            Expr::val(0_i32),
+            Expr::val(1_i16),
+            Expr::val(Uuid::new_v4()),
+            Expr::val(UNREADABLE_ENTITY_ID),
+            Expr::val(Vec::<i16>::new()),
+            Expr::val(Vec::<i32>::new()),
+            Expr::val(Vec::<String>::new()),
+        ])
+        .expect("one value per column")
+        .returning_col(NotificationEvents::EventKey)
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await
+        .expect("queue the unreadable event");
+    due_delivery_insert(event, subscription_key)
+        .to_query_scalar()
         .fetch_one(pool)
         .await
         .expect("queue the unreadable delivery")
@@ -72,14 +93,22 @@ async fn queue_unreadable_delivery(pool: &PgPool, subscription_key: i64) -> i64 
 /// exhausted, the attempts counted, the claim columns still held, and the
 /// recorded failure.
 async fn delivery_state(pool: &PgPool, delivery: i64) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>, i32, i32, Option<String>) {
-    sqlx::query_as(
-        "SELECT delivered_at, exhausted_at, attempt_count, num_nonnulls(claimed_at, claimed_by, lease_until), last_error \
-         FROM notification_deliveries WHERE delivery_key = $1",
-    )
-    .bind(delivery)
-    .fetch_one(pool)
-    .await
-    .expect("delivery state")
+    delivery_of(delivery)
+        .columns([
+            NotificationDeliveries::DeliveredAt,
+            NotificationDeliveries::ExhaustedAt,
+            NotificationDeliveries::AttemptCount,
+        ])
+        .expr(num_nonnulls([
+            Expr::col(NotificationDeliveries::ClaimedAt),
+            Expr::col(NotificationDeliveries::ClaimedBy),
+            Expr::col(NotificationDeliveries::LeaseUntil),
+        ]))
+        .column(NotificationDeliveries::LastError)
+        .to_query_as()
+        .fetch_one(pool)
+        .await
+        .expect("delivery state")
 }
 
 #[tokio::test]

@@ -154,9 +154,9 @@ mod tests {
         let sql = rendered();
         assert!(sql.contains(r#""sas"."verbatim_scope_path" IS NOT NULL"#), "{sql}");
         assert!(
-            sql.contains(r#"ORDER BY ("sas"."verbatim_scope_path") COLLATE "C" ASC))) COLLATE "C") = ((ARRAY((SELECT "verbatim_scope_path" FROM "asserted" ORDER BY ("verbatim_scope_path") COLLATE "C" ASC))) COLLATE "C")"#),
+            sql.contains(r#"ORDER BY ("sas"."verbatim_scope_path") COLLATE "C" ASC)) COLLATE "C") = ((ARRAY (SELECT "verbatim_scope_path" FROM "asserted" ORDER BY ("verbatim_scope_path") COLLATE "C" ASC)) COLLATE "C")"#),
             "{sql}"
         );
-        assert_eq!(sql.matches(r#"= ((ARRAY((SELECT "verbatim_scope_path" FROM "asserted""#).count(), 2, "{sql}");
+        assert_eq!(sql.matches(r#"= ((ARRAY (SELECT "verbatim_scope_path" FROM "asserted""#).count(), 2, "{sql}");
     }
 }

@@ -10,9 +10,26 @@
 
 use crate::{
     notification_adapter::NotificationAdapter,
-    support::{clean_database, client, clone_snapshot_raw, create_entity, create_snapshot_raw, published_branch_schema, scoped, wait_for_snapshot_terminal},
+    support::{
+        clean_database,
+        client,
+        clone_snapshot_raw,
+        create_entity,
+        create_snapshot_raw,
+        published_branch_schema,
+        relation_row_count,
+        scoped,
+        wait_for_snapshot_terminal,
+    },
+};
+use andromeda_postgresql_schema::notification::NotificationDeliveries;
+use andromeda_postgresql_seaquery::{
+    scalar_subquery::scalar_subquery,
+    sequence::{identity_sequence, sequence_last_value},
+    statement::Statement,
 };
 use reqwest::{Method, StatusCode};
+use sea_query::{Alias, Expr, Func, IntoIden, Query, TableName};
 use serde_json::{Value, json};
 use serial_test::serial;
 use sqlx::PgPool;
@@ -88,16 +105,16 @@ async fn write(method: Method, path: &str, snapshot: &str, body: &Value) -> (Sta
 /// The largest key the relation holds and the position of the sequence behind
 /// it, in `schema`.
 async fn key_and_sequence(pool: &PgPool, schema: &str, table: &str, column: &str) -> (Option<i64>, Option<i64>) {
-    sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT (SELECT max({column}) FROM {schema}.{table}), \
-         (SELECT last_value FROM pg_sequences \
-         WHERE format('%I.%I', schemaname, sequencename)::regclass = pg_get_serial_sequence($1, $2)::regclass)"
-    )))
-    .bind(format!("{schema}.{table}"))
-    .bind(column)
-    .fetch_one(pool)
-    .await
-    .expect("the key and the sequence position")
+    let relation = TableName::from((Alias::new(schema), Alias::new(table)));
+    let column = Alias::new(column).into_iden();
+    let sequence = identity_sequence(&relation, &column);
+    Query::select()
+        .expr(scalar_subquery(Query::select().expr(Func::max(Expr::col(column))).from(relation).to_owned()))
+        .expr(sequence_last_value(sequence))
+        .to_query_as()
+        .fetch_one(pool)
+        .await
+        .expect("the key and the sequence position")
 }
 
 /// Every identity sequence of the relations a clone copies stands at or past
@@ -239,19 +256,13 @@ async fn snapshot_clone_copies_no_subscription_and_no_pending_notification() {
     pretty_assertions::assert_eq!(status, StatusCode::CREATED, "{problem}");
     receiver.wait_for_subscription_notification(delivered, Duration::from_secs(10)).await;
     let source_schema = published_branch_schema(pool, source).await;
-    let queued: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {source_schema}.notification_deliveries")))
-        .fetch_one(pool)
-        .await
-        .expect("the source's delivery queue");
+    let queued = relation_row_count(pool, TableName::from((Alias::new(source_schema.as_str()), NotificationDeliveries::Table))).await;
     assert!(queued > 0, "the source's queue holds its deliveries, which the retention reap has not reached");
 
     clone_into(source, target).await;
     let target_schema = published_branch_schema(pool, target).await;
     for relation in SUBSCRIPTION_RELATIONS {
-        let rows: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {target_schema}.{relation}")))
-            .fetch_one(pool)
-            .await
-            .expect("the clone's subscription relations");
+        let rows = relation_row_count(pool, TableName::from((Alias::new(target_schema.as_str()), Alias::new(relation)))).await;
         pretty_assertions::assert_eq!(rows, 0, "{target_schema}.{relation} is not copied");
     }
     let listed = scoped(Method::GET, "/subscriptions", target, None).await;

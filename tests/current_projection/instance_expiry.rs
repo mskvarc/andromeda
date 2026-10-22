@@ -5,11 +5,17 @@
 //! whether the attribute-expiry sweep has run yet.
 
 use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
+use andromeda_postgresql_schema::{
+    current::{CurrentAttributes, Entities},
+    name_dictionary::AttributeNames,
+};
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use chrono::{DateTime, Utc};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Expr, ExprTrait, Query};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use urlencoding::encode;
@@ -34,16 +40,23 @@ fn vehicle(id: &str, expires_at: &str) -> Value {
 /// The `expires_at` of the projection row of one Entity's `speed`, absent when
 /// no row exists.
 async fn projected_speed_expiry(pool: &PgPool, entity_id: &str) -> Option<Option<DateTime<Utc>>> {
-    sqlx::query_scalar(
-        "SELECT c.expires_at FROM current_attributes AS c \
-         JOIN entities AS e ON e.entity_key = c.entity_key \
-         JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
-         WHERE e.id = $1 AND an.name LIKE '%speed'",
-    )
-    .bind(entity_id)
-    .fetch_optional(pool)
-    .await
-    .expect("the projected expiry must be readable")
+    Query::select()
+        .column((CurrentAttributes::Table, CurrentAttributes::ExpiresAt))
+        .from(CurrentAttributes::Table)
+        .inner_join(
+            Entities::Table,
+            Expr::col((Entities::Table, Entities::EntityKey)).equals((CurrentAttributes::Table, CurrentAttributes::EntityKey)),
+        )
+        .inner_join(
+            AttributeNames::Table,
+            Expr::col((AttributeNames::Table, AttributeNames::AttributeNameKey)).equals((CurrentAttributes::Table, CurrentAttributes::AttributeNameKey)),
+        )
+        .and_where(Expr::col((Entities::Table, Entities::Id)).eq(entity_id))
+        .and_where(Expr::col((AttributeNames::Table, AttributeNames::Name)).like("%speed"))
+        .to_query_scalar()
+        .fetch_optional(pool)
+        .await
+        .expect("the projected expiry must be readable")
 }
 
 #[tokio::test]

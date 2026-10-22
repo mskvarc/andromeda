@@ -2,17 +2,16 @@
 //! attribute instances and rewrites its search and lifecycle rows.
 
 use crate::{
-    branch_statement::BranchStatement,
     current_attribute::{
-        staged_grains::{GRAIN_BINDS, StagedGrains, apply_grains_alias, grains_cte},
+        staged_grains::{GrainArrays, StagedGrains, grains_cte, with_grains_alias},
         staged_rows::StagedRows,
-        staging::{ROW_COLUMNS, apply_instances_alias, instances_cte},
+        staging::{instances_cte, with_instances_alias},
         write::{dropped_rows, moved_rows, vanished_rows, written_rows},
     },
     entity::{
         census::delta::{CensusChange, CensusStatements},
         mapper::stored_uri,
-        params::{PreparedEntityColumns, literal_texts},
+        params::PreparedEntityColumns,
         repo::EntityRepository,
         staged_geometry::{kept_column, staged_column},
         types_present::{entity_write_failure, types_present},
@@ -29,11 +28,12 @@ use crate::{
                 ProjectedWrite,
                 Srch,
                 StagedColumn,
-                apply_staged_alias,
+                entity_arrays,
                 expectation,
                 projected,
                 projection_cte,
                 update_staging_columns,
+                with_staged_alias,
             },
             type_membership::{Mbrs, Strays, added_memberships, dropped_memberships},
         },
@@ -48,24 +48,25 @@ use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
     cast::cast,
     clock::now,
+    external_arguments::{ExternalArguments, ExternallyBound},
+    pg_array::nullable_array,
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
-    placeholder::external_placeholder,
     returning_image::{New, Old},
     transaction_id::current_transaction_id,
+    unnest::UnnestAliased,
 };
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use chrono::{DateTime, Utc};
-use sea_query::{CaseStatement, CommonTableExpression, Cond, Expr, ExprTrait, IntoIden, PostgresQueryBuilder, Query, SimpleExpr, UpdateStatement, WithClause};
+use sea_query::{CaseStatement, CommonTableExpression, Cond, Expr, ExprTrait, IntoIden, Query, SimpleExpr, UpdateStatement, WithClause, WithQuery};
 use sqlx::{Postgres, Transaction};
 
 /// The statement name the entity set-update is observed under.
 const ENTITY_UPDATE: StatementName = StatementName("entity-update");
 
-/// The batch update's text, built once for the live branch.
-static ENTITY_UPDATE_STATEMENT: BranchStatement = BranchStatement::new(entity_update_sql);
-
-/// Build the batch update.
+/// Build the batch update of `entities`, each held to its entry of
+/// `expected_modified_at`, with the attribute instance rows `rows` and the
+/// grains `grains` stage for them.
 ///
 /// ```sql
 /// WITH proj AS (SELECT … FROM UNNEST($1::text[], …, $13::timestamptz[]) AS d(…)),
@@ -137,13 +138,23 @@ static ENTITY_UPDATE_STATEMENT: BranchStatement = BranchStatement::new(entity_up
 /// Returns [`ContextStoreError::StatementBuild`] if the membership or row
 /// insert ever stops matching its column list, which their fixed shapes make
 /// unreachable.
-pub(super) fn entity_update_sql(target: &ContextTarget) -> Result<String, ContextStoreError> {
+pub(super) fn entity_update_statement<'entities>(
+    target: &ContextTarget,
+    entities: &'entities PreparedEntityColumns,
+    rows: StagedRows<'_>,
+    grains: StagedGrains<'_>,
+    expected_modified_at: &[Option<DateTime<Utc>>],
+) -> Result<ExternallyBound<'entities, UnnestAliased<WithQuery>>, ContextStoreError> {
     let columns = update_staging_columns();
-    // The binds run entity columns, row columns (the identifier first), grain
-    // columns, then the overwritten entities.
-    let rows_first = columns.len() + 1;
-    let grains_first = rows_first + ROW_COLUMNS.len() + 1;
-    let overwritten = external_placeholder(grains_first + GRAIN_BINDS - 1);
+    let mut external = ExternalArguments::default();
+    let mut staged_entities = entity_arrays(entities, staged_column(&entities.locations), &mut external);
+    staged_entities.push(Expr::val(kept_column(&entities.locations)));
+    staged_entities.push(nullable_array(expected_modified_at.iter().copied()));
+    let instance_arrays = rows.into_arrays(&mut external);
+    let GrainArrays {
+        grains: grain_arrays,
+        overwritten,
+    } = grains.into_arrays();
 
     let mut search = Query::update();
     search.table(table_of(target, EntitySearch::Table));
@@ -176,7 +187,7 @@ pub(super) fn entity_update_sql(target: &ContextTarget) -> Result<String, Contex
     ]));
 
     let mut with = WithClause::new();
-    with.cte(projection_cte(&columns, ProjectedWrite::Update))
+    with.cte(projection_cte(&columns, staged_entities, ProjectedWrite::Update))
         .cte(CommonTableExpression::new().table_name(Ents).query(entity_write(target)).to_owned())
         .cte(
             CommonTableExpression::new()
@@ -196,8 +207,8 @@ pub(super) fn entity_update_sql(target: &ContextTarget) -> Result<String, Contex
         )
         .cte(CommonTableExpression::new().table_name(Strays).query(dropped_memberships(target)).to_owned())
         .cte(CommonTableExpression::new().table_name(Mbrs).query(added_memberships(target)?).to_owned())
-        .cte(instances_cte(rows_first))
-        .cte(grains_cte(grains_first))
+        .cte(instances_cte(instance_arrays))
+        .cte(grains_cte(grain_arrays))
         .cte(
             CommonTableExpression::new()
                 .table_name(Gone)
@@ -212,8 +223,8 @@ pub(super) fn entity_update_sql(target: &ContextTarget) -> Result<String, Contex
     }
     let statement = with.query(Query::select().column(Entities::Id).from(Ents).take());
 
-    let sql = statement.to_string(PostgresQueryBuilder);
-    Ok(apply_grains_alias(apply_instances_alias(apply_staged_alias(sql, &columns))))
+    let statement = with_grains_alias(with_instances_alias(with_staged_alias(UnnestAliased::new(statement), &columns)));
+    Ok(ExternallyBound::new(statement, external))
 }
 
 /// The update's anchor, `ents`: each identity row whose expectation still
@@ -308,26 +319,10 @@ impl EntityRepository {
         }
         types_present(entities)?;
 
-        let ids = entities.ids.iter().map(Identifier::as_str).collect::<Vec<_>>();
-        let locations = staged_column(&entities.locations);
-        let locations_kept = kept_column(&entities.locations);
-        let sql = ENTITY_UPDATE_STATEMENT.text(target)?;
-        let query = sqlx::query_as(sqlx::AssertSqlSafe(&*sql))
-            .bind(&ids)
-            .bind(literal_texts(&entities.entity_type_name_keys))
-            .bind(literal_texts(&entities.attribute_name_keys))
-            .bind(literal_texts(&entities.attribute_instance_name_keys))
-            .bind(literal_texts(&entities.attribute_instance_kinds))
-            .bind(entities.scope_paths_bind())
-            .bind(entities.verbatim_scope_paths_bind())
-            .bind(&locations)
-            .bind(&entities.location_expires_ats)
-            .bind(&entities.expires_ats)
-            .bind(&entities.min_attribute_expires_ats)
-            .bind(&locations_kept)
-            .bind(expected_modified_at);
-        let rows = grains.bind_to(rows.bind_to(query)).fetch_all(&mut **tx);
-        let rows: Vec<(String,)> = observe_statement(ENTITY_UPDATE, rows).await.map_err(entity_write_failure)?;
+        let rows = entity_update_statement(target, entities, rows, grains, expected_modified_at)?
+            .into_query_as::<(String,)>()
+            .fetch_all(&mut **tx);
+        let rows = observe_statement(ENTITY_UPDATE, rows).await.map_err(entity_write_failure)?;
 
         rows.iter().map(|(id,)| stored_uri(id)).collect()
     }
@@ -336,33 +331,36 @@ impl EntityRepository {
 #[cfg(test)]
 mod tests {
     use crate::{
-        current_attribute::{staged_grains::GRAIN_BINDS, staging::ROW_COLUMNS},
-        entity::write::{
-            placeholders,
-            staging::update_staging_columns,
-            update::{ENTITY_UPDATE_STATEMENT, entity_update_sql},
+        current_attribute::{staged_grains::StagedGrains, staged_rows::StagedRows, staging::ROW_COLUMNS},
+        entity::{
+            params::PreparedEntityColumns,
+            write::{placeholders, staging::update_staging_columns, update::entity_update_statement},
         },
+        statement_text::text_of_query,
     };
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
-    use std::{borrow::Cow, collections::BTreeSet, ptr};
+    use std::collections::BTreeSet;
 
-    fn update() -> String {
-        entity_update_sql(&ContextTarget::Live).expect("the fixed update builds")
+    /// The rendered update of no entity on `target`.
+    fn update_on(target: &ContextTarget) -> String {
+        let entities = PreparedEntityColumns::with_capacity(0);
+        text_of_query(
+            entity_update_statement(target, &entities, StagedRows::default(), StagedGrains::default(), &[])
+                .expect("the fixed update builds")
+                .into_query(),
+        )
     }
 
-    /// The live branch's update text is built once and lent to every write;
-    /// a Snapshot branch's is built for its own schema each time.
-    #[test]
-    fn the_live_update_text_is_built_once_and_a_snapshot_text_for_each_write() {
-        let first = ENTITY_UPDATE_STATEMENT.text(&ContextTarget::Live).expect("the fixed update builds");
-        let second = ENTITY_UPDATE_STATEMENT.text(&ContextTarget::Live).expect("the fixed update builds");
-        assert!(matches!((&first, &second), (Cow::Borrowed(a), Cow::Borrowed(b)) if ptr::eq(*a, *b)));
-        pretty_assertions::assert_eq!(first, update());
+    fn update() -> String {
+        update_on(&ContextTarget::Live)
+    }
 
+    /// A Snapshot branch's update lands in the Snapshot's own schema.
+    #[test]
+    fn a_snapshot_update_names_the_branch_schema() {
         let key = SnapshotKey::try_from(5).expect("positive key");
         let snapshot = ContextTarget::Snapshot(SnapshotTarget::staging(key, "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri")));
-        let text = ENTITY_UPDATE_STATEMENT.text(&snapshot).expect("the fixed update builds");
-        assert!(matches!(text, Cow::Owned(_)));
+        let text = update_on(&snapshot);
         for relation in ["entities", "entity_search", "current_attributes"] {
             assert!(text.contains(&format!(r#""snap_5_stg"."{relation}""#)), "{relation}: {text}");
         }
@@ -371,7 +369,7 @@ mod tests {
     #[test]
     fn the_update_binds_contiguous_placeholders_and_names_its_staging_columns() {
         let sql = update();
-        let binds = update_staging_columns().len() + ROW_COLUMNS.len() + 1 + GRAIN_BINDS;
+        let binds = update_staging_columns().len() + ROW_COLUMNS.len() + 1 + 5;
         pretty_assertions::assert_eq!(
             placeholders(&sql),
             (1..=u32::try_from(binds).expect("a small count")).collect::<BTreeSet<u32>>()
@@ -431,11 +429,11 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#""gone" AS (DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "entity_key" FROM "ents" WHERE "id" = ANY($46::text[]))"#),
+            sql.contains(r#""gone" AS (DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "entity_key" FROM "ents" WHERE "id" = ANY($40::text[]))"#),
             "{sql}"
         );
         assert!(
-            sql.contains(r"$42::text[], $43::integer[], $44::text[], $45::integer[]) AS g(id, attribute_name_key, dataset_id, ordinal)"),
+            sql.contains(r"$36::text[], $37::integer[], $38::text[], $39::integer[]) AS g(id, attribute_name_key, dataset_id, ordinal)"),
             "{sql}"
         );
     }

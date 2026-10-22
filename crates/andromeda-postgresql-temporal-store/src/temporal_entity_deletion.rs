@@ -25,25 +25,11 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
 use andromeda_postgresql_schema::temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams, TemporalEntities};
-use andromeda_postgresql_seaquery::{aggregate::count_all, branch::qualified};
+use andromeda_postgresql_seaquery::{aggregate::count_all, branch::qualified, statement::Statement};
 use andromeda_postgresql_temporal_query::alias::{Ah, S, Te};
 use andromeda_temporal::temporal_not_found_reason::TemporalNotFoundReason;
-use sea_query::{
-    DeleteStatement,
-    DynIden,
-    Expr,
-    ExprTrait,
-    Iden,
-    JoinType,
-    LockType,
-    PostgresQueryBuilder,
-    Query,
-    QueryStatementBuilder,
-    SelectStatement,
-    SimpleExpr,
-};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, Postgres, Row, Transaction, postgres::PgRow};
+use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, Iden, JoinType, LockType, Query, QueryStatementBuilder, SelectStatement, SimpleExpr};
+use sqlx::{Postgres, Row, Transaction, postgres::PgRow};
 use std::collections::BTreeSet;
 use uuid::Uuid;
 
@@ -110,17 +96,21 @@ impl TemporalRepository {
         let mut tx = self.pool.begin().await?;
         let schema = schema_iden(target);
         let entity_key = locate_temporal_entity(&mut tx, schema.as_ref(), entity_id).await?;
-        let (owned_sql, owned_values) = owned_streams_statement(schema.as_ref(), entity_key).build_sqlx(PostgresQueryBuilder);
-        let stream_keys: Vec<i64> = sqlx::query_scalar_with(AssertSqlSafe(owned_sql), owned_values).fetch_all(&mut *tx).await?;
+        let stream_keys: Vec<i64> = owned_streams_statement(schema.as_ref(), entity_key)
+            .to_query_scalar()
+            .fetch_all(&mut *tx)
+            .await?;
         let attribute = remove_stream_history(&mut tx, schema.as_ref(), &stream_keys).await?;
         let scope = remove_scope_history(&mut tx, schema.as_ref(), entity_key).await?;
-        let (streams_sql, streams_values) = delete_attribute_streams_statement(schema.as_ref(), entity_key).build_sqlx(PostgresQueryBuilder);
-        let streams = sqlx::query_with(AssertSqlSafe(streams_sql), streams_values)
+        let streams = delete_attribute_streams_statement(schema.as_ref(), entity_key)
+            .to_query()
             .execute(&mut *tx)
             .await?
             .rows_affected();
-        let (entity_sql, entity_values) = delete_temporal_entity_statement(schema.as_ref(), entity_key).build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(AssertSqlSafe(entity_sql), entity_values).execute(&mut *tx).await?;
+        delete_temporal_entity_statement(schema.as_ref(), entity_key)
+            .to_query()
+            .execute(&mut *tx)
+            .await?;
         let touched_writes = attribute.writes.iter().chain(scope.writes.iter()).copied().collect::<BTreeSet<Uuid>>();
         let touched_writes = touched_writes.into_iter().collect::<Vec<Uuid>>();
         let released_write_records = release_named(&mut tx, &touched_writes).await?;
@@ -144,8 +134,7 @@ impl TemporalRepository {
     /// Returns [`TemporalStoreError::Database`] when the audit statement fails
     /// and when a returned count does not carry the expected type.
     pub async fn audit_orphaned_temporal_rows(&self) -> Result<OrphanedTemporalRows, TemporalStoreError> {
-        let (sql, values) = audit_orphaned_statement().build_sqlx(PostgresQueryBuilder);
-        let row = sqlx::query_with(AssertSqlSafe(sql), values).fetch_one(&self.pool).await?;
+        let row = audit_orphaned_statement().to_query().fetch_one(&self.pool).await?;
         Ok(OrphanedTemporalRows {
             attribute_history_rows: count(&row, "orphaned_attribute_history_rows")?,
             scope_history_rows: count(&row, "orphaned_scope_history_rows")?,
@@ -166,8 +155,10 @@ async fn locate_temporal_entity(
     schema: Option<&DynIden>,
     entity_id: &Identifier,
 ) -> Result<TemporalEntityKey, TemporalStoreError> {
-    let (sql, values) = lock_temporal_entity_statement(schema, entity_id.as_str()).build_sqlx(PostgresQueryBuilder);
-    let located = sqlx::query_with(AssertSqlSafe(sql), values).fetch_optional(&mut **tx).await?;
+    let located = lock_temporal_entity_statement(schema, entity_id.as_str())
+        .to_query()
+        .fetch_optional(&mut **tx)
+        .await?;
     let Some(row) = located else {
         return Err(TemporalStoreError::NotFound(TemporalNotFoundReason::Entity { id: entity_id.clone() })); // clone: the reason owns the entity it names
     };

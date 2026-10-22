@@ -8,14 +8,16 @@ use crate::{
     catalog_counter::{CatalogCounter, non_negative, percent},
     error::MaintenanceError,
     policy::{DegradationSample, PolicyProfile},
-    scalar_query::select_i64,
 };
 use andromeda_context_space::snapshot_key::SnapshotKey;
 use andromeda_postgresql_branch::{PUBLISHED_SNAPSHOT_SCHEMA_PATTERN, published_snapshot_key};
-use andromeda_postgresql_seaquery::maintenance::{pgstattuple, relation_size, session_settings, to_regclass, total_relation_size};
-use sea_query::{Alias, Expr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr, extension::postgres::PgBinOper};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{Executor, PgConnection, Row};
+use andromeda_postgresql_seaquery::{
+    command::Command,
+    maintenance::{pgstattuple, relation_size, session_settings, to_regclass, total_relation_size},
+    statement::Statement,
+};
+use sea_query::{Alias, Expr, ExprTrait, JoinType, Query, SelectStatement, SimpleExpr, extension::postgres::PgBinOper};
+use sqlx::{PgConnection, Row};
 use std::str::FromStr;
 
 /// An allowlisted index's cheap catalog size.
@@ -67,7 +69,7 @@ impl InvalidIndex {
 /// Configure one short-lived maintenance session.
 pub(crate) async fn configure_session(connection: &mut PgConnection) -> Result<(), MaintenanceError> {
     for statement in session_settings() {
-        connection.execute(sqlx::AssertSqlSafe(statement.as_sql())).await?;
+        statement.to_query().execute(&mut *connection).await?;
     }
     Ok(())
 }
@@ -75,8 +77,7 @@ pub(crate) async fn configure_session(connection: &mut PgConnection) -> Result<(
 /// Inspect the sizes of every allowlisted index of `branch` from cheap
 /// catalogs.
 pub(crate) async fn index_sizes(connection: &mut PgConnection, branch: Branch) -> Result<Vec<IndexSize>, MaintenanceError> {
-    let (sql, values) = index_sizes_statement(branch).build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
+    let rows = index_sizes_statement(branch).to_query().fetch_all(connection).await?;
     rows.into_iter()
         .map(|row| {
             let name = row.try_get::<String, _>(CatalogColumn::Indexrelname.as_str())?;
@@ -93,8 +94,7 @@ pub(crate) async fn index_sizes(connection: &mut PgConnection, branch: Branch) -
 /// Inspect the dead-tuple estimates of every allowlisted heap `branch` holds
 /// from cheap statistics.
 pub(crate) async fn heap_samples(connection: &mut PgConnection, branch: Branch, profile: PolicyProfile) -> Result<Vec<HeapSample>, MaintenanceError> {
-    let (sql, values) = heap_samples_statement(branch).build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
+    let rows = heap_samples_statement(branch).to_query().fetch_all(connection).await?;
     rows.into_iter()
         .map(|row| {
             let name = row.try_get::<String, _>(CatalogColumn::Relname.as_str())?;
@@ -119,8 +119,7 @@ pub(crate) async fn heap_samples(connection: &mut PgConnection, branch: Branch, 
 /// Perform the one detailed physical probe allowed in a pass.
 pub(crate) async fn probe_index(connection: &mut PgConnection, size: IndexSize, profile: PolicyProfile) -> Result<DegradationSample, MaintenanceError> {
     let qualified = size.branch.qualified(size.target.relation_name());
-    let (sql, values) = pgstattuple_statement(&qualified).build_sqlx(PostgresQueryBuilder);
-    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(connection).await?;
+    let row = pgstattuple_statement(&qualified).to_query().fetch_one(connection).await?;
     let reclaimable_bytes = non_negative(row.try_get(CatalogColumn::FreeSpace.as_str())?, CatalogCounter::IndexFreeBytes)?;
     let physical_bytes = non_negative(row.try_get(CatalogColumn::TableLength.as_str())?, CatalogCounter::IndexPhysicalBytes)?;
     Ok(DegradationSample {
@@ -137,8 +136,7 @@ pub(crate) async fn probe_index(connection: &mut PgConnection, size: IndexSize, 
 /// Read every invalid index of the live branch and of every published
 /// Snapshot branch, so unrelated corruption is still visible.
 pub(crate) async fn invalid_indexes(connection: &mut PgConnection) -> Result<Vec<InvalidIndex>, MaintenanceError> {
-    let (sql, values) = invalid_indexes_statement().build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
+    let rows = invalid_indexes_statement().to_query().fetch_all(connection).await?;
     rows.into_iter()
         .map(|row| {
             let schema = row.try_get::<String, _>(CatalogColumn::Nspname.as_str())?;
@@ -154,10 +152,7 @@ pub(crate) async fn invalid_indexes(connection: &mut PgConnection) -> Result<Vec
 /// Read the Snapshot key of every published branch schema the tenant
 /// database holds.
 pub(crate) async fn published_branches(connection: &mut PgConnection) -> Result<Vec<SnapshotKey>, MaintenanceError> {
-    let (sql, values) = published_branches_statement().build_sqlx(PostgresQueryBuilder);
-    let schemas = sqlx::query_scalar_with::<_, String, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
-        .fetch_all(connection)
-        .await?;
+    let schemas = published_branches_statement().to_query_scalar::<String>().fetch_all(connection).await?;
     schemas
         .into_iter()
         .map(|schema| published_snapshot_key(&schema).ok_or(MaintenanceError::UnknownBranchSchema))
@@ -170,7 +165,7 @@ pub(crate) async fn index_bytes(connection: &mut PgConnection, branch: Branch, i
     let statement = Query::select()
         .expr(total_relation_size(to_regclass(Expr::val(branch.qualified(index.relation_name())))))
         .to_owned();
-    non_negative(select_i64(connection, statement).await?, CatalogCounter::RelationBytes)
+    non_negative(statement.to_query_scalar::<i64>().fetch_one(connection).await?, CatalogCounter::RelationBytes)
 }
 
 /// Read a heap's current tuple counts in `branch`, compared across its
@@ -180,8 +175,7 @@ pub(crate) async fn index_bytes(connection: &mut PgConnection, branch: Branch, i
 /// sees the statistics snapshot an earlier read cached; a vacuum publishes its
 /// remaining dead tuples as `n_dead_tup` when it finishes.
 pub(crate) async fn heap_tuple_counts(connection: &mut PgConnection, branch: Branch, heap: HeapTarget) -> Result<TupleCounts, MaintenanceError> {
-    let (sql, values) = heap_tuple_counts_statement(branch, heap).build_sqlx(PostgresQueryBuilder);
-    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(connection).await?;
+    let row = heap_tuple_counts_statement(branch, heap).to_query().fetch_one(connection).await?;
     Ok(TupleCounts {
         dead: non_negative(row.try_get(CatalogColumn::DeadTuples.as_str())?, CatalogCounter::DeadTuples)?,
         live: non_negative(row.try_get(CatalogColumn::LiveTuples.as_str())?, CatalogCounter::LiveTuples)?,

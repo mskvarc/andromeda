@@ -12,7 +12,14 @@
 //! the server backend it leases. A backend that renames its own session, such as
 //! the maintenance controller's, is not attributed to any broker.
 
-use sqlx::postgres::PgPoolOptions;
+use andromeda_postgresql_seaquery::{
+    aggregate::count_all,
+    pg_array::{any, text_array},
+    statement::Statement,
+    system_catalog::PgStatActivity,
+};
+use sea_query::{Expr, ExprTrait, Query, SimpleExpr};
+use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::{
     sync::{
         Arc,
@@ -97,11 +104,8 @@ impl BackendSampler {
 /// # Errors
 ///
 /// Returns the [`sqlx::Error`] the count query reported.
-pub async fn client_backends(pool: &sqlx::PgPool, application_names: &[&str]) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar::<_, i64>("SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend' AND application_name = ANY($1)")
-        .bind(application_names)
-        .fetch_one(pool)
-        .await
+pub async fn client_backends(pool: &PgPool, application_names: &[&str]) -> Result<i64, sqlx::Error> {
+    client_backend_count(pool, [connected_under(application_names)]).await
 }
 
 /// The number of client backends bound to database `datname`, over `pool`.
@@ -109,11 +113,8 @@ pub async fn client_backends(pool: &sqlx::PgPool, application_names: &[&str]) ->
 /// # Errors
 ///
 /// Returns the [`sqlx::Error`] the count query reported.
-pub async fn client_backends_for(pool: &sqlx::PgPool, datname: &str) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar::<_, i64>("SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend' AND datname = $1")
-        .bind(datname)
-        .fetch_one(pool)
-        .await
+pub async fn client_backends_for(pool: &PgPool, datname: &str) -> Result<i64, sqlx::Error> {
+    client_backend_count(pool, [bound_to(datname)]).await
 }
 
 /// The number of client backends bound to database `datname` and connected
@@ -126,10 +127,29 @@ pub async fn client_backends_for(pool: &sqlx::PgPool, datname: &str) -> Result<i
 /// # Errors
 ///
 /// Returns the [`sqlx::Error`] the count query reported.
-pub async fn client_backends_of(pool: &sqlx::PgPool, datname: &str, application_names: &[&str]) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar::<_, i64>("SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend' AND datname = $1 AND application_name = ANY($2)")
-        .bind(datname)
-        .bind(application_names)
-        .fetch_one(pool)
-        .await
+pub async fn client_backends_of(pool: &PgPool, datname: &str, application_names: &[&str]) -> Result<i64, sqlx::Error> {
+    client_backend_count(pool, [bound_to(datname), connected_under(application_names)]).await
+}
+
+/// The number of client backends `filters` all hold for.
+async fn client_backend_count(pool: &PgPool, filters: impl IntoIterator<Item = SimpleExpr>) -> Result<i64, sqlx::Error> {
+    let mut statement = Query::select();
+    statement
+        .expr(count_all())
+        .from(PgStatActivity::Table)
+        .and_where(Expr::col(PgStatActivity::BackendType).eq("client backend"));
+    for filter in filters {
+        statement.and_where(filter);
+    }
+    statement.to_query_scalar().fetch_one(pool).await
+}
+
+/// Whether the session is bound to database `datname`.
+fn bound_to(datname: &str) -> SimpleExpr {
+    Expr::col(PgStatActivity::Datname).eq(datname)
+}
+
+/// Whether the session runs under any of `application_names`.
+fn connected_under(application_names: &[&str]) -> SimpleExpr {
+    Expr::col(PgStatActivity::ApplicationName).eq(any(text_array(application_names)))
 }

@@ -31,9 +31,15 @@ use andromeda_context_commit::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_postgresql_schema::{
+    current::{CurrentAttributes, Entities},
+    temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
+};
+use andromeda_postgresql_seaquery::{aggregate::count_all, statement::Statement};
 use andromeda_test_harness::environment::TestEnvironment;
 use cefact_units::UnitCode;
 use pretty_assertions::assert_eq;
+use sea_query::{Expr, ExprTrait, Query};
 use serde_json::{Map, json};
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -217,24 +223,37 @@ async fn current_projection_writes_landed_after_a_refusal_hold_exactly_what_they
     assert_eq!(rows.len(), 1, "one projection row, not one per attempt: {rows:?}");
     assert_eq!(rows[0].value_text.as_deref(), Some("21.5"));
     let celsius = UnitCode::from_code(CELSIUS).expect("CEL is a common code").id();
-    let unit_rows: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM current_attributes AS c JOIN entities AS e ON e.entity_key = c.entity_key \
-         WHERE e.id = $1 AND c.unit_code_id = $2",
-    )
-    .bind(&kept)
-    .bind(celsius.to_smallint())
-    .fetch_one(pool)
-    .await
-    .expect("the projected unit must be readable");
+    let unit_rows: i64 = Query::select()
+        .expr(count_all())
+        .from(CurrentAttributes::Table)
+        .inner_join(
+            Entities::Table,
+            Expr::col((Entities::Table, Entities::EntityKey)).equals((CurrentAttributes::Table, CurrentAttributes::EntityKey)),
+        )
+        .and_where(Expr::col((Entities::Table, Entities::Id)).eq(kept.as_str()))
+        .and_where(Expr::col((CurrentAttributes::Table, CurrentAttributes::UnitCodeId)).eq(celsius.to_smallint()))
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await
+        .expect("the projected unit must be readable");
     assert_eq!(unit_rows, 1, "the landed write keeps its unit");
-    let history_rows: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM attribute_history AS h JOIN temporal_attribute_streams AS s ON s.stream_key = h.stream_key \
-         JOIN temporal_entities AS t ON t.temporal_entity_key = s.temporal_entity_key WHERE t.id = $1",
-    )
-    .bind(&kept)
-    .fetch_one(pool)
-    .await
-    .expect("the recorded history must be readable");
+    let history_rows: i64 = Query::select()
+        .expr(count_all())
+        .from(AttributeHistory::Table)
+        .inner_join(
+            TemporalAttributeStreams::Table,
+            Expr::col((TemporalAttributeStreams::Table, TemporalAttributeStreams::StreamKey)).equals((AttributeHistory::Table, AttributeHistory::StreamKey)),
+        )
+        .inner_join(
+            TemporalEntities::Table,
+            Expr::col((TemporalEntities::Table, TemporalEntities::TemporalEntityKey))
+                .equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::TemporalEntityKey)),
+        )
+        .and_where(Expr::col((TemporalEntities::Table, TemporalEntities::Id)).eq(kept.as_str()))
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await
+        .expect("the recorded history must be readable");
     assert_eq!(history_rows, 1, "one history row, not one per attempt");
 
     scope.finish().await.expect("cleanup failed");

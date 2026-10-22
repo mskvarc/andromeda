@@ -6,24 +6,13 @@
 //! document every write stores: a write whose document no longer carries
 //! `expiresAt` leaves no instant behind.
 
-use crate::{create, fetch};
-use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
+use crate::{create, fetch, recorded_expiry};
+use andromeda_postgresql_schema::current::Entities;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
-use chrono::{DateTime, Utc};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
-
-/// The entity-level expiry instant the write path recorded on the entity's row.
-async fn recorded_entity_expiry(scope: &TestEnvironment, id: &str) -> Option<String> {
-    sqlx::query_scalar::<_, Option<DateTime<Utc>>>("SELECT expires_at FROM entities WHERE id = $1")
-        .bind(id)
-        .fetch_one(scope.database_pool())
-        .await
-        .expect("the entity row must be readable")
-        .map(instant_text)
-}
 
 /// A Replace Entity (clause 5.6.18) whose replacement carries no `expiresAt`
 /// leaves the entity without one, so the recorded instant is cleared rather
@@ -44,7 +33,7 @@ async fn expiration_replacing_an_entity_without_expires_at_clears_its_recorded_e
         }),
     )
     .await;
-    assert_eq!(recorded_entity_expiry(&scope, &id).await.as_deref(), Some("2099-01-01T00:00:00Z"));
+    assert_eq!(recorded_expiry(&scope, &id, Entities::ExpiresAt).await.as_deref(), Some("2099-01-01T00:00:00Z"));
 
     let replaced = client
         .replace_entity(
@@ -63,7 +52,7 @@ async fn expiration_replacing_an_entity_without_expires_at_clears_its_recorded_e
     assert_eq!(replaced.status, StatusCode::NO_CONTENT, "{:?}", replaced.body);
 
     assert_eq!(
-        recorded_entity_expiry(&scope, &id).await,
+        recorded_expiry(&scope, &id, Entities::ExpiresAt).await,
         None,
         "an expiry the stored document dropped must not stay recorded"
     );
@@ -105,6 +94,6 @@ async fn expiration_replacing_an_entity_with_a_new_expires_at_records_the_new_in
         .expect("replace_entity failed");
     assert_eq!(replaced.status, StatusCode::NO_CONTENT, "{:?}", replaced.body);
 
-    assert_eq!(recorded_entity_expiry(&scope, &id).await.as_deref(), Some("2098-06-01T00:00:00Z"));
+    assert_eq!(recorded_expiry(&scope, &id, Entities::ExpiresAt).await.as_deref(), Some("2098-06-01T00:00:00Z"));
     scope.finish().await.expect("cleanup failed");
 }

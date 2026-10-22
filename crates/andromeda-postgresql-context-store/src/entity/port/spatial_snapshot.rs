@@ -29,11 +29,11 @@ use andromeda_postgresql_seaquery::{
     cast::{cast, typed_null},
     pg_type::PostgresType,
     setting::lift_statement_timeout,
+    statement::Statement,
     transaction_id::{as_transaction_id, snapshot_xmin},
 };
 use async_trait::async_trait;
-use sea_query::{Expr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement, UnionType};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Expr, ExprTrait, JoinType, Query, SelectStatement, UnionType};
 use tracing::warn;
 
 /// Which entities a location read returns.
@@ -91,15 +91,11 @@ impl EntityRepository {
         let mut transaction = self.pool.begin().await?;
         match filter {
             LocationFilter::Located => {
-                let (sql, values) = Query::select().expr(lift_statement_timeout()).build_sqlx(PostgresQueryBuilder);
-                sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut *transaction).await?;
+                Query::select().expr(lift_statement_timeout()).to_query().execute(&mut *transaction).await?;
             }
             LocationFilter::WrittenSince(_) => {}
         }
-        let (sql, values) = locations_statement(filter).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_as_with::<_, LocationRow, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
-            .fetch_all(&mut *transaction)
-            .await?;
+        let rows = locations_statement(filter).to_query_as::<LocationRow>().fetch_all(&mut *transaction).await?;
         transaction.commit().await?;
         Ok(rows)
     }
@@ -191,12 +187,11 @@ mod tests {
     use andromeda_entity::port::spatial_snapshot::EntitySpatialSnapshotSource;
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
-    use sea_query_sqlx::SqlxBinder;
 
     fn assert_spatial_source<T: EntitySpatialSnapshotSource>() {}
 
     /// The dictionary lookup every read projects the type IRIs through.
-    const TYPE_NAMES: &str = r#"ARRAY(SELECT "entity_type_names"."name" FROM "entity_type_names" WHERE "entity_type_names"."entity_type_name_key" = ANY("entity_search"."entity_type_name_keys") ORDER BY array_position("entity_search"."entity_type_name_keys", "entity_type_names"."entity_type_name_key") ASC)"#;
+    const TYPE_NAMES: &str = r#"ARRAY (SELECT "entity_type_names"."name" FROM "entity_type_names" WHERE "entity_type_names"."entity_type_name_key" = ANY("entity_search"."entity_type_name_keys") ORDER BY array_position("entity_search"."entity_type_name_keys", "entity_type_names"."entity_type_name_key") ASC)"#;
 
     #[test]
     fn entity_repository_directly_implements_the_spatial_snapshot_source() {
@@ -205,7 +200,7 @@ mod tests {
 
     #[test]
     fn a_full_read_returns_the_snapshot_horizon_beside_every_located_entity() {
-        let (sql, values) = locations_statement(LocationFilter::Located).build_sqlx(PostgresQueryBuilder);
+        let (sql, values) = locations_statement(LocationFilter::Located).build(PostgresQueryBuilder);
         assert_eq!(
             sql,
             format!(
@@ -213,12 +208,12 @@ mod tests {
             ),
             "{sql}"
         );
-        assert_eq!(values.0.0.len(), 0, "the full read binds nothing: {sql}");
+        assert_eq!(values.0.len(), 0, "the full read binds nothing: {sql}");
     }
 
     #[test]
     fn a_change_read_returns_every_entity_written_at_or_above_the_horizon_located_or_not() {
-        let (sql, values) = locations_statement(LocationFilter::WrittenSince(42)).build_sqlx(PostgresQueryBuilder);
+        let (sql, values) = locations_statement(LocationFilter::WrittenSince(42)).build(PostgresQueryBuilder);
         assert_eq!(
             sql,
             format!(
@@ -226,6 +221,6 @@ mod tests {
             ),
             "{sql}"
         );
-        assert_eq!(values.0.0.len(), 1, "the change read binds its horizon: {sql}");
+        assert_eq!(values.0.len(), 1, "the change read binds its horizon: {sql}");
     }
 }

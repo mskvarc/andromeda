@@ -10,6 +10,15 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
+use andromeda_postgresql_schema::tenancy::Tenants;
+use andromeda_postgresql_seaquery::{
+    command::Command,
+    database_definition::{ConnectedSessions, DatabaseDefinition},
+    introspection::current_database,
+    maintenance::to_regclass,
+    statement::Statement,
+    system_catalog::PgDatabase,
+};
 use andromeda_test_fixtures::{context::CORE_CONTEXT, problem_detail as error};
 use andromeda_test_harness::{
     configuration::RUNTIME_BROKER_BASE as BASE_URL,
@@ -28,6 +37,7 @@ use reqwest::{
     StatusCode,
     header::{CONTENT_TYPE, HeaderMap, HeaderValue},
 };
+use sea_query::{Alias, Expr, ExprTrait, Query};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::time::Duration;
@@ -160,26 +170,38 @@ impl Environment {
 
 /// Delete every named-tenant registry row.
 async fn clean_tenants(pool: &PgPool) {
-    let has_table: bool = sqlx::query_scalar("SELECT to_regclass('public.tenants') IS NOT NULL")
+    let has_table: bool = Query::select()
+        .expr(to_regclass(Expr::val("public.tenants")).is_not_null())
+        .to_query_scalar()
         .fetch_one(pool)
         .await
         .unwrap_or(false);
     if has_table {
-        let _ = sqlx::query("DELETE FROM tenants WHERE is_unnamed_default = false").execute(pool).await;
+        let _ = Query::delete()
+            .from_table(Tenants::Table)
+            .and_where(Expr::col(Tenants::IsUnnamedDefault).eq(false))
+            .to_query()
+            .execute(pool)
+            .await;
     }
 }
 
 /// Drop every `andromeda_tenant_%` database, forcing off residual backends.
 async fn drop_tenant_databases(pool: &PgPool) {
-    let current: String = sqlx::query_scalar("SELECT current_database()").fetch_one(pool).await.unwrap_or_default();
-    let dbs: Vec<String> = sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_%' AND datname <> $1")
-        .bind(&current)
+    let dbs: Vec<String> = Query::select()
+        .column(PgDatabase::Datname)
+        .from(PgDatabase::Table)
+        .and_where(Expr::col(PgDatabase::Datname).like("andromeda_tenant_%"))
+        .and_where(Expr::col(PgDatabase::Datname).ne(current_database()))
+        .to_query_scalar()
         .fetch_all(pool)
         .await
         .unwrap_or_default();
     for db in dbs {
-        let statement = format!("DROP DATABASE IF EXISTS \"{db}\" WITH (FORCE)");
-        let _ = sqlx::query(sqlx::AssertSqlSafe(statement)).execute(pool).await;
+        let _ = DatabaseDefinition::drop(Alias::new(db), ConnectedSessions::Terminate)
+            .to_query()
+            .execute(pool)
+            .await;
     }
 }
 

@@ -22,6 +22,7 @@ pub(crate) fn dataset_rule(selectors: &[DatasetSelector]) -> Condition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use andromeda_postgresql_seaquery::literal::int_literal;
     use sea_query::{Alias, PostgresQueryBuilder, Query};
 
     #[test]
@@ -31,7 +32,7 @@ mod tests {
             DatasetSelector::Id("urn:ngsi-ld:dataset:1".parse().expect("valid URI")),
         ];
         let sql = Query::select()
-            .expr(SeaExpr::cust("1"))
+            .expr(int_literal(1))
             .from(Alias::new("context_source_registrations"))
             .cond_where(dataset_rule(&selectors))
             .to_string(PostgresQueryBuilder);

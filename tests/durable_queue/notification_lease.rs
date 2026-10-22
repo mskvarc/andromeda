@@ -7,12 +7,14 @@
 
 use crate::{
     notification_fixture::{delivery_ids, queue_notification, readable},
-    queue_database::{delivery_queue, queue_database},
+    queue_database::{delivery_of, delivery_queue, queue_database},
     queue_workers::{delivery_worker, expiring_lease, holding_lease},
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_notification::{delivery_entry::DeliveryKey, delivery_lease::DeliveryLeaseError, delivery_store::DeliveryStore, held_events::HeldEvents};
+use andromeda_postgresql_schema::notification::NotificationDeliveries;
+use andromeda_postgresql_seaquery::statement::Statement;
 use chrono::{DateTime, Utc};
 use pretty_assertions::assert_eq;
 use serial_test::serial;
@@ -26,8 +28,13 @@ const BATCH_SIZE: i32 = 10;
 
 /// The claim triple one delivery row currently holds.
 async fn claim_triple(pool: &PgPool, delivery: i64) -> (Option<DateTime<Utc>>, Option<Uuid>, Option<DateTime<Utc>>) {
-    sqlx::query_as("SELECT claimed_at, claimed_by, lease_until FROM notification_deliveries WHERE delivery_key = $1")
-        .bind(delivery)
+    delivery_of(delivery)
+        .columns([
+            NotificationDeliveries::ClaimedAt,
+            NotificationDeliveries::ClaimedBy,
+            NotificationDeliveries::LeaseUntil,
+        ])
+        .to_query_as()
         .fetch_one(pool)
         .await
         .expect("claim triple")
@@ -132,8 +139,9 @@ async fn durable_queue_a_stale_worker_cannot_acknowledge_a_reclaimed_delivery() 
         .mark_delivered(DeliveryKey::from(delivery), &reclaiming, &ContextTarget::Live)
         .await
         .expect("the reclaiming worker acknowledges");
-    let delivered: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT delivered_at FROM notification_deliveries WHERE delivery_key = $1")
-        .bind(delivery)
+    let delivered: Option<DateTime<Utc>> = delivery_of(delivery)
+        .column(NotificationDeliveries::DeliveredAt)
+        .to_query_scalar()
         .fetch_one(&pool)
         .await
         .expect("delivery acknowledgement");

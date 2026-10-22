@@ -22,10 +22,16 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
 use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
 use andromeda_postgresql_context_store::notification_delivery::{event_insert::insert_events_in_tx, rows::NewNotificationEvent};
+use andromeda_postgresql_schema::{
+    notification::{NotificationDeliveries, NotificationEvents},
+    subscriptions::Subscriptions,
+};
+use andromeda_postgresql_seaquery::{aggregate::count_all, literal::int_literal, maintenance::backend_pid, statement::Statement};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::{database_access::connect_test_database, environment::TestEnvironment};
 use chrono::Utc;
 use reqwest::StatusCode;
+use sea_query::{Alias, Expr, ExprTrait, Query};
 use serde_json::json;
 use sqlx::{PgPool, Postgres, Transaction};
 use std::time::Duration;
@@ -33,8 +39,16 @@ use tokio::time::{sleep, timeout};
 
 /// Whether backend `pid` is waiting for a lock.
 async fn backend_waits(pool: &PgPool, pid: i32) -> bool {
-    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = $1 AND NOT granted)")
-        .bind(pid)
+    Query::select()
+        .expr(Expr::exists(
+            Query::select()
+                .expr(int_literal(1))
+                .from(Alias::new("pg_locks"))
+                .and_where(Expr::col(Alias::new("pid")).eq(pid))
+                .and_where(Expr::col(Alias::new("granted")).not())
+                .to_owned(),
+        ))
+        .to_query_scalar()
         .fetch_one(pool)
         .await
         .expect("the lock catalogue must be readable")
@@ -69,8 +83,11 @@ async fn delivery_insert_waits_out_a_concurrent_subscription_deletion_and_owes_i
         .await
         .expect("create subscription request failed");
     pretty_assertions::assert_eq!(subscribed.status, StatusCode::CREATED, "{:?}", subscribed.body);
-    let key: i64 = sqlx::query_scalar("SELECT subscription_key FROM subscriptions WHERE id = $1")
-        .bind(&subscription_id)
+    let key: i64 = Query::select()
+        .column(Subscriptions::SubscriptionKey)
+        .from(Subscriptions::Table)
+        .and_where(Expr::col(Subscriptions::Id).eq(subscription_id.as_str()))
+        .to_query_scalar()
         .fetch_one(pool)
         .await
         .expect("subscription surrogate key");
@@ -80,15 +97,19 @@ async fn delivery_insert_waits_out_a_concurrent_subscription_deletion_and_owes_i
     // stays free to poll the lock catalogue.
     let racing = connect_test_database().await.expect("racing connections");
     let mut deletion = racing.begin().await.expect("deletion transaction");
-    let deleted = sqlx::query("DELETE FROM subscriptions WHERE subscription_key = $1")
-        .bind(key)
+    let deleted = Query::delete()
+        .from_table(Subscriptions::Table)
+        .and_where(Expr::col(Subscriptions::SubscriptionKey).eq(key))
+        .to_query()
         .execute(&mut *deletion)
         .await
         .expect("delete the subscription, uncommitted");
     pretty_assertions::assert_eq!(deleted.rows_affected(), 1);
 
     let mut write = racing.begin().await.expect("write transaction");
-    let writer_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+    let writer_pid: i32 = Query::select()
+        .expr(backend_pid())
+        .to_query_scalar()
         .fetch_one(&mut *write)
         .await
         .expect("writer backend pid");
@@ -110,13 +131,18 @@ async fn delivery_insert_waits_out_a_concurrent_subscription_deletion_and_owes_i
     let insert = insert_events_in_tx(&mut write, &ContextTarget::Live, &record, &events, &keys);
     let (inserted, ()) = tokio::join!(insert, commit_once_the_insert_waits(pool, writer_pid, deletion));
     assert!(inserted.is_ok(), "the write must not fail on a subscription deleted under it: {inserted:?}");
-    let owed: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM notification_deliveries AS d JOIN notification_events AS e ON e.event_key = d.event_key WHERE e.write_id = $1",
-    )
-    .bind(record.write_id().as_uuid())
-    .fetch_one(&mut *write)
-    .await
-    .expect("delivery count");
+    let owed: i64 = Query::select()
+        .expr(count_all())
+        .from(NotificationDeliveries::Table)
+        .inner_join(
+            NotificationEvents::Table,
+            Expr::col((NotificationEvents::Table, NotificationEvents::EventKey)).equals((NotificationDeliveries::Table, NotificationDeliveries::EventKey)),
+        )
+        .and_where(Expr::col((NotificationEvents::Table, NotificationEvents::WriteId)).eq(record.write_id().as_uuid()))
+        .to_query_scalar()
+        .fetch_one(&mut *write)
+        .await
+        .expect("delivery count");
     pretty_assertions::assert_eq!(owed, 0, "the deleted subscription is owed no delivery");
     write.rollback().await.expect("discard the probe event");
     racing.close().await;

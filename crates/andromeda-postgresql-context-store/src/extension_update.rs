@@ -23,7 +23,6 @@ use crate::{
         server_requirements::{ExtensionPresence, ExtensionVersion},
         versioned_extension::VersionedExtension,
     },
-    schema_ddl::extension::{DEFER_TIMESCALEDB_LOAD, update_extension},
 };
 use andromeda_postgresql_pool::{
     schema_change_lock::{SCHEMA_CHANGE_LOCK_RETRY, is_lock_not_available, schema_change_connect_options},
@@ -31,14 +30,16 @@ use andromeda_postgresql_pool::{
 };
 use andromeda_postgresql_seaquery::{
     advisory_lock::advisory_xact_lock,
+    command::Command,
+    extension_update::ExtensionUpdate,
     introspection::{extension_shipped_version, extension_version},
+    setting::{Setting, SettingAssignment, SettingScope},
+    statement::Statement,
 };
-use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Alias, Expr, Query, SelectStatement};
 use sqlx::{
     Acquire,
     Connection,
-    Executor,
     PgConnection,
     Postgres,
     Row,
@@ -76,7 +77,15 @@ where
     A: Acquire<'c, Database = Postgres>,
 {
     let mut transaction = connection.begin().await?;
-    transaction.execute(sqlx::AssertSqlSafe(DEFER_TIMESCALEDB_LOAD)).await?;
+    // A `SET`, not `set_config`: the `TimescaleDB` loader loads the extension
+    // library while it analyses any other statement, a `SELECT set_config(...)`
+    // included, before that statement could turn loading off. `LOCAL` scopes
+    // it to this transaction, which a transaction-pooling proxy keeps on one
+    // backend and which hands the backend back with loading restored.
+    SettingAssignment::new(Setting::TimescaledbDisableLoad, "on", SettingScope::Transaction)
+        .to_query()
+        .execute(&mut *transaction)
+        .await?;
     Ok(transaction)
 }
 
@@ -96,8 +105,7 @@ where
 /// [`ContextStoreError::SchemaContract`] when a reported version cannot be
 /// read.
 pub async fn pending_extension_updates(connection: &mut PgConnection) -> Result<Vec<PendingExtensionUpdate>, ContextStoreError> {
-    let (sql, values) = extension_versions_statement().build_sqlx(PostgresQueryBuilder);
-    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(connection).await?;
+    let row = extension_versions_statement().to_query().fetch_one(connection).await?;
     VersionedExtension::iter()
         .filter_map(|extension| {
             read_versions(&row, extension)
@@ -137,10 +145,7 @@ pub async fn update_extensions(database_url: &Url) -> Result<(), ContextStoreErr
 async fn update_under_lock(lock_holder: &mut PgConnection, options: &PgConnectOptions) -> Result<(), ContextStoreError> {
     let database = options.get_database().ok_or(ContextStoreError::DatabaseUrlUnnamed)?;
     let mut transaction = begin_without_timescaledb(&mut *lock_holder).await?;
-    let (lock_sql, lock_values) = extension_update_lock(database).build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(lock_sql.as_str()), lock_values)
-        .execute(&mut *transaction)
-        .await?;
+    extension_update_lock(database).to_query().execute(&mut *transaction).await?;
     for pending in pending_extension_updates(&mut transaction).await? {
         apply_update(options, pending).await?;
     }
@@ -155,7 +160,7 @@ async fn apply_update(options: &PgConnectOptions, pending: PendingExtensionUpdat
     let outcome = SCHEMA_CHANGE_LOCK_RETRY
         .run(is_lock_not_available, || async move {
             let mut connection = PgConnection::connect_with(options).await?;
-            let outcome = connection.execute(sqlx::AssertSqlSafe(update_extension(extension))).await;
+            let outcome = ExtensionUpdate::new(extension).to_query().execute(&mut connection).await;
             connection.close().await?;
             outcome
         })

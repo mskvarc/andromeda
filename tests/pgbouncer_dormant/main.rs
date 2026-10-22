@@ -12,6 +12,8 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, time::rendering::instant_text};
+use andromeda_postgresql_schema::current::Entities;
+use andromeda_postgresql_seaquery::{aggregate::count_all, statement::Statement};
 use andromeda_tenancy::database_name::TenantDatabaseName;
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::pooler_probe::{
@@ -31,6 +33,7 @@ use andromeda_test_mocks::{
 };
 use chrono::Utc;
 use reqwest::{Client, Method, StatusCode};
+use sea_query::Query;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::{slice, time::Duration};
@@ -407,7 +410,8 @@ async fn count_entities(database: &TenantDatabaseName) -> i64 {
             return -1;
         }
     };
-    let count = match sqlx::query_scalar::<_, i64>("SELECT count(*) FROM entities").fetch_one(&tenant_pool).await {
+    let count_statement = Query::select().expr(count_all()).from(Entities::Table).to_owned();
+    let count = match count_statement.to_query_scalar::<i64>().fetch_one(&tenant_pool).await {
         Ok(count) => count,
         Err(error) => {
             eprintln!("count_entities query on {database} failed: {error}");

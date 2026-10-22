@@ -14,10 +14,22 @@
 //! that dropped or shifted one would show only on characters no corpus names.
 
 use andromeda_ngsi_ld_query::pattern::Pattern;
+use andromeda_postgresql_seaquery::{
+    aggregate::count_filtered,
+    cast::cast,
+    catalog_function::{chr, generate_series},
+    collation::{PostgresCollation, collate},
+    operator::regex_match,
+    pg_operator::PgBinaryOperator,
+    pg_type::PostgresType,
+    statement::Statement,
+    unnest::{UnnestAliased, UnnestColumn, unnest_call},
+};
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
+use sea_query::{Alias, CommonTableExpression, Expr, ExprTrait, Query, SelectStatement, SimpleExpr, WithClause, WithQuery};
 use sqlx::PgPool;
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, slice};
 
 /// Admitted patterns: the case-insensitive option set, scoped and cleared,
 /// over letters whose fold sets hold two, three or no partners, the shorthand
@@ -217,47 +229,72 @@ enum OperandCollation {
 }
 
 impl OperandCollation {
-    /// The statement selecting the subjects the pattern bound as `$1` matches.
-    const fn statement(self) -> &'static str {
+    /// `operand` read under the collation, which the database default leaves
+    /// as it is.
+    fn collated(self, operand: SimpleExpr) -> SimpleExpr {
         match self {
-            OperandCollation::Bytewise => r#"SELECT subject FROM unnest($2::text[]) AS s(subject) WHERE subject COLLATE "C" ~ $1"#,
-            OperandCollation::DatabaseDefault => "SELECT subject FROM unnest($2::text[]) AS s(subject) WHERE subject ~ $1",
-            OperandCollation::UnicodeFast => "SELECT subject FROM unnest($2::text[]) AS s(subject) WHERE subject COLLATE pg_unicode_fast ~ $1",
+            OperandCollation::Bytewise => collate(operand, &PostgresCollation::new("C")),
+            OperandCollation::DatabaseDefault => operand,
+            OperandCollation::UnicodeFast => collate(operand, &PostgresCollation::new("pg_unicode_fast")),
         }
     }
 
-    /// The statement counting the code points on which the pattern bound as
-    /// `$1` disagrees with the set bound as `$2`, and the code points it
-    /// matches.
-    const fn code_point_statement(self) -> &'static str {
-        match self {
-            OperandCollation::Bytewise => {
-                r#"WITH e AS MATERIALIZED (SELECT $2::text::int4multirange AS expected)
-                   SELECT count(*) FILTER (WHERE (chr(cp) COLLATE "C" ~ $1) IS DISTINCT FROM (e.expected @> cp)),
-                          count(*) FILTER (WHERE chr(cp) COLLATE "C" ~ $1)
-                   FROM e, generate_series(1, 1114111) AS c(cp) WHERE cp NOT BETWEEN 55296 AND 57343"#
-            }
-            OperandCollation::DatabaseDefault => {
-                "WITH e AS MATERIALIZED (SELECT $2::text::int4multirange AS expected)
-                 SELECT count(*) FILTER (WHERE (chr(cp) ~ $1) IS DISTINCT FROM (e.expected @> cp)),
-                        count(*) FILTER (WHERE chr(cp) ~ $1)
-                 FROM e, generate_series(1, 1114111) AS c(cp) WHERE cp NOT BETWEEN 55296 AND 57343"
-            }
-            OperandCollation::UnicodeFast => {
-                "WITH e AS MATERIALIZED (SELECT $2::text::int4multirange AS expected)
-                 SELECT count(*) FILTER (WHERE (chr(cp) COLLATE pg_unicode_fast ~ $1) IS DISTINCT FROM (e.expected @> cp)),
-                        count(*) FILTER (WHERE chr(cp) COLLATE pg_unicode_fast ~ $1)
-                 FROM e, generate_series(1, 1114111) AS c(cp) WHERE cp NOT BETWEEN 55296 AND 57343"
-            }
-        }
+    /// The statement selecting the subjects the pattern `regex` matches.
+    fn statement(self, regex: &str) -> SelectStatement {
+        let subjects = UnnestColumn::new(Alias::new("subject"), PostgresType::TextArray);
+        let subject = || Expr::col(Alias::new("subject"));
+        Query::select()
+            .expr(subject())
+            .from_function(
+                unnest_call([(
+                    &subjects,
+                    Expr::val(SUBJECTS.iter().map(|subject| (*subject).to_owned()).collect::<Vec<String>>()),
+                )]),
+                Alias::new("subject"),
+            )
+            .and_where(regex_match(self.collated(subject()), Expr::val(regex)))
+            .to_owned()
+    }
+
+    /// The statement counting the code points on which the pattern `regex`
+    /// disagrees with the set `matched`, and the code points it matches.
+    fn code_point_statement(self, regex: &str, matched: &str) -> WithQuery {
+        let expected = Expr::col((Alias::new("e"), Alias::new("expected")));
+        let code_point = || Expr::col(Alias::new("cp"));
+        let pattern_matches = || regex_match(self.collated(chr(code_point())), Expr::val(regex));
+        WithClause::new()
+            .cte(
+                CommonTableExpression::new()
+                    .table_name(Alias::new("e"))
+                    .query(
+                        Query::select()
+                            .expr_as(
+                                cast(cast(Expr::val(matched), PostgresType::Text), PostgresType::Int4Multirange),
+                                Alias::new("expected"),
+                            )
+                            .to_owned(),
+                    )
+                    .materialized(true)
+                    .to_owned(),
+            )
+            .to_owned()
+            .query(
+                Query::select()
+                    .expr(count_filtered(pattern_matches().distinct_from(expected.array_contains(code_point()))))
+                    .expr(count_filtered(pattern_matches()))
+                    .from(Alias::new("e"))
+                    .from_function(generate_series(Expr::val(1), Expr::val(1_114_111)), Alias::new("cp"))
+                    .and_where(code_point().not_between(55_296, 57_343))
+                    .to_owned(),
+            )
     }
 }
 
 /// The subjects PostgreSQL finds `regex` matches, under `collation`.
 async fn postgresql_selects(pool: &PgPool, regex: &str, collation: OperandCollation) -> BTreeSet<String> {
-    sqlx::query_scalar::<_, String>(collation.statement())
-        .bind(regex)
-        .bind(SUBJECTS)
+    collation
+        .statement(regex)
+        .to_query_scalar::<String>()
         .fetch_all(pool)
         .await
         .map_err(|error| format!("{regex:?}: {error}"))
@@ -335,19 +372,33 @@ async fn unicode_pattern_engine_agreement_every_european_letter_folds_alike_in_b
         }) // clone: each matched pair owns its letter.
         .collect();
     let portable: Vec<&str> = patterns.iter().map(|pattern| pattern.portable().as_str()).collect();
-    let selected: BTreeSet<(i64, String)> = sqlx::query_as::<_, (i64, String)>(
-        r#"SELECT p.ordinal, s.letter
-           FROM unnest($1::text[]) WITH ORDINALITY AS p(pattern, ordinal)
-           CROSS JOIN unnest($2::text[]) AS s(letter)
-           WHERE s.letter COLLATE "C" ~ p.pattern"#,
-    )
-    .bind(&portable)
-    .bind(&letters)
-    .fetch_all(scope.database_pool())
-    .await
-    .expect("PostgreSQL compiles every restatement")
-    .into_iter()
-    .collect();
+    let pattern_column = UnnestColumn::new(Alias::new("pattern"), PostgresType::TextArray);
+    let letter_column = UnnestColumn::new(Alias::new("letter"), PostgresType::TextArray);
+    let selection = Query::select()
+        .expr(Expr::col((Alias::new("p"), Alias::new("ordinal"))))
+        .expr(Expr::col((Alias::new("s"), Alias::new("letter"))))
+        .from_function(
+            unnest_call([(
+                &pattern_column,
+                Expr::val(portable.iter().map(|pattern| (*pattern).to_owned()).collect::<Vec<String>>()),
+            )]),
+            Alias::new("p"),
+        )
+        .from_function(unnest_call([(&letter_column, Expr::val(letters))]), Alias::new("s"))
+        .and_where(regex_match(
+            collate(Expr::col((Alias::new("s"), Alias::new("letter"))), &PostgresCollation::new("C")),
+            Expr::col((Alias::new("p"), Alias::new("pattern"))),
+        ))
+        .to_owned();
+    let selected: BTreeSet<(i64, String)> = UnnestAliased::new(selection)
+        .with_ordinality(Alias::new("p"), slice::from_ref(&pattern_column), Alias::new("ordinal"))
+        .with_columns(Alias::new("s"), slice::from_ref(&letter_column))
+        .to_query_as::<(i64, String)>()
+        .fetch_all(scope.database_pool())
+        .await
+        .expect("PostgreSQL compiles every restatement")
+        .into_iter()
+        .collect();
 
     assert_eq!(selected.len(), expected.len(), "one pair per letter and fold partner");
     assert_eq!(selected, expected);
@@ -392,9 +443,9 @@ fn code_points_matched(class: &str, haystack: &str) -> (String, i64) {
 /// Every code point PostgreSQL classifies differently from the `regex` crate,
 /// and how many it matches, under `collation`.
 async fn code_point_disagreement(pool: &PgPool, regex: &str, matched: &str, collation: OperandCollation) -> (i64, i64) {
-    sqlx::query_as::<_, (i64, i64)>(collation.code_point_statement())
-        .bind(regex)
-        .bind(matched)
+    collation
+        .code_point_statement(regex, matched)
+        .to_query_as::<(i64, i64)>()
         .fetch_one(pool)
         .await
         .map_err(|error| format!("{regex:?}: {error}"))

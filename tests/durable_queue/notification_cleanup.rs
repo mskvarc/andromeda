@@ -8,35 +8,22 @@
 
 use crate::{
     notification_fixture::{delivery_ids, queue_notification, readable},
-    queue_database::{deliveries_of, delivery_queue, queue_database},
+    queue_database::{deliveries_of, delivery_queue, queue_database, row_count},
     queue_workers::{delivery_worker, holding_lease},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_notification::{delivery_entry::DeliveryKey, delivery_store::DeliveryStore, held_events::HeldEvents};
+use andromeda_postgresql_schema::notification::{NotificationDeliveries, NotificationEvents};
+use andromeda_postgresql_seaquery::{cast::cast, clock::now, interval::make_interval_secs, pg_type::PostgresType, statement::Statement};
 use chrono::{Duration, Utc};
 use pretty_assertions::assert_eq;
+use sea_query::{Expr, ExprTrait, Query};
 use serial_test::serial;
 use sqlx::PgPool;
 
 /// The attempt ceiling the delivery worker is configured with; the queue does
 /// not know it.
 const MAX_ATTEMPTS: i32 = 5;
-
-/// How many events the queue currently holds.
-async fn stored_events(pool: &PgPool) -> i64 {
-    sqlx::query_scalar("SELECT count(*) FROM notification_events")
-        .fetch_one(pool)
-        .await
-        .expect("stored event count")
-}
-
-/// How many deliveries the queue currently holds.
-async fn stored_deliveries(pool: &PgPool) -> i64 {
-    sqlx::query_scalar("SELECT count(*) FROM notification_deliveries")
-        .fetch_one(pool)
-        .await
-        .expect("stored delivery count")
-}
 
 #[tokio::test]
 #[serial(durable_queue)]
@@ -99,8 +86,16 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
     assert!(stored.is_some(), "the event stores the state it was written with");
     let removed = queue.delete_delivered_before(Utc::now() + Duration::minutes(1)).await.expect("first reap");
     assert_eq!(removed, 2, "only the acknowledged deliveries are past the horizon");
-    assert_eq!(stored_deliveries(&pool).await, 2, "the exhausted and retained deliveries stay");
-    assert_eq!(stored_events(&pool).await, 1, "the event survives while any delivery references it");
+    assert_eq!(
+        row_count(&pool, NotificationDeliveries::Table).await,
+        2,
+        "the exhausted and retained deliveries stay"
+    );
+    assert_eq!(
+        row_count(&pool, NotificationEvents::Table).await,
+        1,
+        "the event survives while any delivery references it"
+    );
     assert_eq!(stored_snapshot(&pool).await, stored, "no surviving delivery loses its payload");
 
     // Dead-letter retention removes the exhausted delivery kept as evidence;
@@ -110,8 +105,16 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
         .await
         .expect("dead-letter reap");
     assert_eq!(dead_lettered, 1, "only the exhausted delivery is past the dead-letter horizon");
-    assert_eq!(stored_deliveries(&pool).await, 1, "the retained delivery is untouched by dead-letter retention");
-    assert_eq!(stored_events(&pool).await, 1, "an event referenced by the retained delivery still survives");
+    assert_eq!(
+        row_count(&pool, NotificationDeliveries::Table).await,
+        1,
+        "the retained delivery is untouched by dead-letter retention"
+    );
+    assert_eq!(
+        row_count(&pool, NotificationEvents::Table).await,
+        1,
+        "an event referenced by the retained delivery still survives"
+    );
 
     // The orphan-event pass does not touch this event either: the retained
     // delivery still references it, so it is not orphaned yet.
@@ -121,8 +124,11 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
         .expect("orphan-event reap");
     assert_eq!(orphaned, 0, "an event a live delivery still references is not orphaned");
 
-    sqlx::query("UPDATE notification_deliveries SET next_attempt_at = NOW() - INTERVAL '1 second' WHERE delivery_key = $1")
-        .bind(deliveries[3])
+    Query::update()
+        .table(NotificationDeliveries::Table)
+        .value(NotificationDeliveries::NextAttemptAt, Expr::expr(now()).sub(make_interval_secs(Expr::val(1.0))))
+        .and_where(Expr::col(NotificationDeliveries::DeliveryKey).eq(deliveries[3]))
+        .to_query()
         .execute(&pool)
         .await
         .expect("make the retained delivery due");
@@ -145,8 +151,8 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
 
     let final_removal = queue.delete_delivered_before(Utc::now() + Duration::minutes(1)).await.expect("final reap");
     assert_eq!(final_removal, 1);
-    assert_eq!(stored_deliveries(&pool).await, 0, "every delivery is past its horizon");
-    assert_eq!(stored_events(&pool).await, 0, "no unreferenced event survives cleanup");
+    assert_eq!(row_count(&pool, NotificationDeliveries::Table).await, 0, "every delivery is past its horizon");
+    assert_eq!(row_count(&pool, NotificationEvents::Table).await, 0, "no unreferenced event survives cleanup");
     pool.close().await;
 }
 
@@ -213,20 +219,27 @@ async fn durable_queue_a_delivery_exhausted_by_repeated_retries_is_reaped() {
         dead_lettered, 1,
         "the retry-exhausted delivery is reaped by the same pass as a terminally failed one"
     );
-    assert_eq!(stored_deliveries(&pool).await, 0, "no delivery survives dead-letter retention");
+    assert_eq!(
+        row_count(&pool, NotificationDeliveries::Table).await,
+        0,
+        "no delivery survives dead-letter retention"
+    );
 
     let orphaned = queue
         .delete_orphan_events_before(Utc::now() + Duration::minutes(1))
         .await
         .expect("orphan-event reap");
     assert_eq!(orphaned, 1, "the event the reaped delivery released is picked up by the orphan pass");
-    assert_eq!(stored_events(&pool).await, 0, "no unreferenced event survives cleanup");
+    assert_eq!(row_count(&pool, NotificationEvents::Table).await, 0, "no unreferenced event survives cleanup");
     pool.close().await;
 }
 
 /// The stored state of the one event the queue holds, as its record's text.
 async fn stored_snapshot(pool: &PgPool) -> Option<String> {
-    sqlx::query_scalar("SELECT entity_snapshot::text FROM notification_events")
+    Query::select()
+        .expr(cast(Expr::col(NotificationEvents::EntitySnapshot), PostgresType::Text))
+        .from(NotificationEvents::Table)
+        .to_query_scalar()
         .fetch_one(pool)
         .await
         .expect("the stored payload")

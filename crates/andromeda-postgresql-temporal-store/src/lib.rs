@@ -51,6 +51,8 @@ pub(crate) mod history_removal;
 pub(crate) mod history_row_decode;
 /// The identity and column reads the two history hypertables share.
 pub(crate) mod history_row_identity;
+/// The temporal hypertables whose storage policy is reconciled, and their columnstore layout.
+pub mod hypertable_policy;
 mod instance_mutation;
 /// The statements addressing one temporal attribute instance by its `instanceId`.
 mod instance_statements;
@@ -69,8 +71,6 @@ pub mod recorder;
 pub mod repo;
 /// Operator retention: ageing temporal storage out without NGSI-LD semantics.
 pub mod retention_sweep;
-/// TimescaleDB procedural DDL SeaQuery has no form for.
-pub mod schema_ddl;
 pub(crate) mod scope_history_read;
 /// The value one scope-history row carries.
 pub mod scope_history_value;
@@ -142,7 +142,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dev_dependencies: [
         "andromeda-postgresql-pool",
     ],
-    allow_production_dependencies: ["sea-query", "sea-query-sqlx", "sqlx", "tokio"],
+    allow_production_dependencies: ["sea-query", "sqlx", "tokio"],
 }
 
 #[cfg(test)]

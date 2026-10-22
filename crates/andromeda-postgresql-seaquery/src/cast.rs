@@ -7,30 +7,51 @@
 //! and query crates already pins, so a converted statement's cast stays
 //! byte-for-byte what it was.
 //!
-//! The operand is expected to be atomic — a column, a value placeholder, or an
-//! already-parenthesised expression. `::` binds tighter than every arithmetic
-//! and comparison operator, so a compound operand must carry its own
-//! parentheses before it reaches [`cast`].
+//! `::` binds tighter than every arithmetic and comparison operator, so an
+//! operand built from an infix or prefix operator is parenthesised before the
+//! cast; an operand spelled as custom text carries an operator the builder
+//! cannot see, so it goes through [`cast_compound`].
 
 use crate::pg_type::PostgresType;
 use sea_query::{Expr, SimpleExpr};
 
-/// Cast an atomic expression to `ty`, rendered `expr::ty`.
+/// Cast `expr` to `ty`, rendered `expr::ty`, or `(expr)::ty` when the
+/// operand is an operator expression the cast would otherwise bind into.
 #[must_use]
 pub fn cast(expr: SimpleExpr, ty: PostgresType) -> SimpleExpr {
-    // The crate is the sanctioned home for a hand-spelled fragment; the type
-    // token still comes from the iden so the cast and the column that carries
-    // the type name it identically.
-    Expr::cust_with_exprs(format!("$1::{ty}", ty = type_token(ty)), [expr])
+    // `::` binds tighter than every operator, so an operator expression is
+    // parenthesised. The crate is the sanctioned home for a hand-spelled
+    // fragment; the type token still comes from the iden so the cast and the
+    // column that carries the type name it identically.
+    let operand = match &expr {
+        SimpleExpr::Binary(..) | SimpleExpr::Unary(..) => "($1)",
+        SimpleExpr::Column(_)
+        | SimpleExpr::Tuple(_)
+        | SimpleExpr::FunctionCall(_)
+        | SimpleExpr::SubQuery(..)
+        | SimpleExpr::Value(_)
+        | SimpleExpr::Values(_)
+        | SimpleExpr::Custom(_)
+        | SimpleExpr::CustomWithExpr(..)
+        | SimpleExpr::Keyword(_)
+        | SimpleExpr::AsEnum(..)
+        | SimpleExpr::Case(_)
+        | SimpleExpr::Constant(_)
+        | SimpleExpr::TypeName(_) => "$1",
+        // sea-query's expression enum is non-exhaustive; parentheses are correct
+        // around any operand, so a variant added upstream is cast as compound.
+        _unforeseen => "($1)",
+    };
+    Expr::cust_with_exprs(format!("{operand}::{ty}", ty = type_token(ty)), [expr])
 }
 
 /// Cast a compound expression to `ty`, rendered `(expr)::ty`.
 ///
 /// `::` binds tighter than every arithmetic and comparison operator, so a
-/// compound operand — anything with its own infix operator, such as a JSONB
-/// `#>>` extraction — must be parenthesised or the cast would bind to only its
-/// right-hand side. [`cast`] leaves that to the caller; this applies the
-/// parentheses for operands that carry an operator.
+/// compound operand (anything with its own infix operator, such as a JSONB
+/// `#>>` extraction) must be parenthesised or the cast would bind to only its
+/// right-hand side. [`cast`] does so for the operators the builder models; this
+/// is for an operand whose operator is spelled as custom text.
 #[must_use]
 pub fn cast_compound(expr: SimpleExpr, ty: PostgresType) -> SimpleExpr {
     Expr::cust_with_exprs(format!("($1)::{ty}", ty = type_token(ty)), [expr])
@@ -92,6 +113,13 @@ mod tests {
         let extraction = Expr::cust(r#""inst"."value" #>> $1"#);
         let sql = render(cast_compound(extraction, PostgresType::Timestamptz));
         assert!(sql.contains(r#"("inst"."value" #>> $1)::timestamptz"#), "{sql}");
+    }
+
+    #[test]
+    fn an_operator_operand_is_parenthesised_before_the_cast() {
+        use sea_query::ExprTrait;
+        let sql = render(cast(Expr::col(sea_query::Alias::new("g")).modulo(5000), PostgresType::Text));
+        assert!(sql.contains(r#"("g" % 5000)::text"#), "{sql}");
     }
 
     #[test]

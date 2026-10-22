@@ -15,6 +15,8 @@ pub mod operation_code;
 /// Rendering stored identifier-pattern restatements again after a rendering
 /// change.
 pub mod pattern_forms_refresh;
+/// The columns of a registration row as the values a write binds.
+mod registration_columns;
 /// The read side of the registration store.
 mod registration_read;
 /// The statements the registration store builds on.

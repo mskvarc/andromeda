@@ -35,12 +35,10 @@ use crate::{
     write_record_release::release_behind_horizon,
 };
 use andromeda_postgresql_schema::temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams, TemporalEntities};
-use andromeda_postgresql_seaquery::timescale::drop_chunks;
+use andromeda_postgresql_seaquery::{statement::Statement, timescale::drop_chunks};
 use andromeda_postgresql_temporal_query::alias::{Ah, S};
 use chrono::{DateTime, TimeDelta, Utc};
-use sea_query::{Condition, DeleteStatement, Expr, ExprTrait, Iden, PostgresQueryBuilder, Query};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::AssertSqlSafe;
+use sea_query::{Condition, DeleteStatement, Expr, ExprTrait, Iden, Query};
 use thiserror::Error;
 
 /// The `scope_history` alias inside a garbage-collection subquery.
@@ -179,8 +177,7 @@ impl TemporalRepository {
     async fn delete(&self, statement: &DeleteStatement) -> Result<u64, TemporalStoreError> {
         let mut transaction = self.pool.begin().await?;
         allow_unbounded_statements(&mut transaction).await?;
-        let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        let removed = sqlx::query_with(AssertSqlSafe(sql), values).execute(&mut *transaction).await?.rows_affected();
+        let removed = statement.to_query().execute(&mut *transaction).await?.rows_affected();
         transaction.commit().await?;
         Ok(removed)
     }
@@ -190,8 +187,7 @@ impl TemporalRepository {
         let mut transaction = self.pool.begin().await?;
         allow_unbounded_statements(&mut transaction).await?;
         let statement = Query::select().expr(drop_chunks(hypertable, Expr::val(cutoff))).to_owned();
-        let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        let dropped = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&mut *transaction).await?.len();
+        let dropped = statement.to_query().fetch_all(&mut *transaction).await?.len();
         transaction.commit().await?;
         Ok(dropped)
     }

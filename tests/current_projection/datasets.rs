@@ -7,11 +7,17 @@
 //! dataset_id)`, so a second default write updates the one grain instead of
 //! adding a second.
 
-use crate::projection_rows::{attribute_name_key, entity_key, rows_for_attribute};
+use crate::{
+    bypass_writes::current_attribute_insert,
+    projection_rows::{attribute_name_key, entity_key, rows_for_attribute},
+};
+use andromeda_postgresql_schema::current::CurrentAttributes;
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::Expr;
 use serde_json::json;
 
 /// An absolute-IRI `datasetId`.
@@ -78,16 +84,11 @@ async fn current_projection_refuses_a_second_default_row_for_one_attribute() {
     // A writer bypassing the broker still cannot create a second default
     // instance: `NULLS NOT DISTINCT` makes two absent dataset identifiers the
     // same grain, which a plain unique constraint would not.
-    let failure = sqlx::query(
-        "INSERT INTO current_attributes \
-         (entity_key, attribute_name_key, ordinal, attribute_kind, value_kind, value_number, created_at, modified_at) \
-         VALUES ($1, $2, 1, 1, 1, 9, now(), now())",
-    )
-    .bind(key)
-    .bind(name_key)
-    .execute(scope.database_pool())
-    .await
-    .expect_err("a second default instance must conflict");
+    let failure = current_attribute_insert(key, name_key, 1, 1, CurrentAttributes::ValueNumber, Expr::val(9))
+        .to_query()
+        .execute(scope.database_pool())
+        .await
+        .expect_err("a second default instance must conflict");
     let database_error = failure.as_database_error().expect("the refusal must come from the database");
     assert_eq!(
         database_error.code().as_deref(),

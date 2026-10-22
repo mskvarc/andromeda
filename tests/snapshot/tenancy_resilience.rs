@@ -11,6 +11,11 @@ use crate::support::{
     query_snapshot_entities,
     wait_for_snapshot_terminal,
 };
+use andromeda_postgresql_schema::{
+    snapshot::{SnapshotPreparation, Snapshots},
+    tenancy::Tenants,
+};
+use andromeda_postgresql_seaquery::{aggregate::count_all, clock::now, interval::make_interval_secs, scalar_subquery::scalar_subquery, statement::Statement};
 use andromeda_test_harness::database_reset::reset_owned_tenant;
 use andromeda_test_mocks::{
     callback_path::CallbackPath,
@@ -23,6 +28,7 @@ use axum::{
 };
 use futures::future::join_all;
 use reqwest::StatusCode;
+use sea_query::{Expr, ExprTrait, Query};
 use serde_json::{Value, json};
 use serial_test::serial;
 use sqlx::PgPool;
@@ -107,10 +113,12 @@ async fn snapshot_missing_tenant_is_not_created_implicitly() {
     let pool = PgPool::connect(&env::var("ANDROMEDA_TEST_DATABASE_URL").expect("Snapshot database URL"))
         .await
         .expect("default database connection");
-    let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tenants WHERE name = 'snapshot-missing'")
-        .fetch_one(&pool)
-        .await
-        .expect("tenant count before scope");
+    let missing_tenants = Query::select()
+        .expr(count_all())
+        .from(Tenants::Table)
+        .and_where(Expr::col(Tenants::Name).eq("snapshot-missing"))
+        .to_owned();
+    let before: i64 = missing_tenants.to_query_scalar().fetch_one(&pool).await.expect("tenant count before scope");
     let response = client()
         .get(broker_url("/entities"))
         .header("NGSILD-Tenant", "snapshot-missing")
@@ -119,10 +127,7 @@ async fn snapshot_missing_tenant_is_not_created_implicitly() {
         .await
         .expect("missing tenant scoped request");
     pretty_assertions::assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tenants WHERE name = 'snapshot-missing'")
-        .fetch_one(&pool)
-        .await
-        .expect("tenant count after scope");
+    let after: i64 = missing_tenants.to_query_scalar().fetch_one(&pool).await.expect("tenant count after scope");
     pretty_assertions::assert_eq!((before, after), (0, 0));
 }
 
@@ -521,9 +526,21 @@ async fn snapshot_orphaned_preparation_claim_is_reclaimed_after_lease() {
     let pool = PgPool::connect(&env::var("ANDROMEDA_TEST_DATABASE_URL").expect("Snapshot database URL"))
         .await
         .expect("Snapshot database connection");
-    sqlx::query("UPDATE snapshot_preparation SET claimed_by = $2, claimed_at = NOW() - INTERVAL '1 minute', lease_until = NOW() - INTERVAL '1 second' WHERE snapshot_key = (SELECT snapshot_key FROM snapshots WHERE id = $1)")
-        .bind(id)
-        .bind(uuid::Uuid::new_v4())
+    Query::update()
+        .table(SnapshotPreparation::Table)
+        .value(SnapshotPreparation::ClaimedBy, uuid::Uuid::new_v4())
+        .value(SnapshotPreparation::ClaimedAt, Expr::expr(now()).sub(make_interval_secs(Expr::val(60.0))))
+        .value(SnapshotPreparation::LeaseUntil, Expr::expr(now()).sub(make_interval_secs(Expr::val(1.0))))
+        .and_where(
+            Expr::col(SnapshotPreparation::SnapshotKey).eq(scalar_subquery(
+                Query::select()
+                    .column(Snapshots::SnapshotKey)
+                    .from(Snapshots::Table)
+                    .and_where(Expr::col(Snapshots::Id).eq(id))
+                    .to_owned(),
+            )),
+        )
+        .to_query()
         .execute(&pool)
         .await
         .expect("simulate abandoned expired lease");
@@ -535,13 +552,20 @@ async fn snapshot_orphaned_preparation_claim_is_reclaimed_after_lease() {
     let terminal = wait_for_snapshot_terminal(&client(), id, Duration::from_secs(8)).await;
     pretty_assertions::assert_eq!(terminal["snapshotStatus"], "empty");
     pretty_assertions::assert_eq!(terminal["snapshotQueriesDetails"].as_array().expect("one detail").len(), 1);
-    let published: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM snapshot_preparation p JOIN snapshots s ON s.snapshot_key = p.snapshot_key WHERE s.id = $1 AND p.claimed_by IS NULL AND p.lease_until IS NULL",
-    )
-    .bind(id)
-    .fetch_one(&pool)
-    .await
-    .expect("one fenced promotion");
+    let published: i64 = Query::select()
+        .expr(count_all())
+        .from(SnapshotPreparation::Table)
+        .inner_join(
+            Snapshots::Table,
+            Expr::col((Snapshots::Table, Snapshots::SnapshotKey)).equals((SnapshotPreparation::Table, SnapshotPreparation::SnapshotKey)),
+        )
+        .and_where(Expr::col((Snapshots::Table, Snapshots::Id)).eq(id))
+        .and_where(Expr::col((SnapshotPreparation::Table, SnapshotPreparation::ClaimedBy)).is_null())
+        .and_where(Expr::col((SnapshotPreparation::Table, SnapshotPreparation::LeaseUntil)).is_null())
+        .to_query_scalar()
+        .fetch_one(&pool)
+        .await
+        .expect("one fenced promotion");
     pretty_assertions::assert_eq!(published, 1);
     callback.shutdown().await.expect("orphan context source shuts down");
 }

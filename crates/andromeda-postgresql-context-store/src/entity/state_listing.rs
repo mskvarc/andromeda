@@ -14,9 +14,8 @@ use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_postgresql_pool::read_share::PoolLane;
 use andromeda_postgresql_schema::current::{E, Entities, EntitySearch};
-use andromeda_postgresql_seaquery::operator::array_contains_key;
-use sea_query::{Expr, Order, PostgresQueryBuilder, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use andromeda_postgresql_seaquery::{operator::array_contains_key, statement::Statement};
+use sea_query::{Expr, Order, SelectStatement};
 use std::{slice::from_ref, sync::Arc};
 
 /// The unsigned page bound a signed `limit` or `offset` names.
@@ -65,8 +64,7 @@ impl EntityRepository {
     /// Run a statement selecting heads and read the states of the Entities it
     /// selected, in its order.
     async fn stored_states(&self, target: &ContextTarget, statement: SelectStatement) -> Result<Vec<EntityState>, ContextStoreError> {
-        let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        let heads = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
+        let heads = statement.to_query().fetch_all(&self.pool).await?;
         Ok(self
             .entities_of_heads(PoolLane::Whole, target, &heads, &RowSelection::Every)
             .await?

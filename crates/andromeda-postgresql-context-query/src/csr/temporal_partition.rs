@@ -99,6 +99,7 @@ fn window_instant(instant: DateTime<Utc>) -> SimpleExpr {
 mod tests {
     use super::*;
     use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
+    use andromeda_postgresql_seaquery::literal::int_literal;
     use sea_query::{Alias, PostgresQueryBuilder, Query};
 
     fn dt(s: &str) -> DateTime<Utc> {
@@ -107,7 +108,7 @@ mod tests {
 
     fn render(temporal: Option<&CompiledCsrTemporalFilter>) -> String {
         Query::select()
-            .expr(SeaExpr::cust("1"))
+            .expr(int_literal(1))
             .from(Alias::new("context_source_registrations"))
             .cond_where(temporal_partition(temporal))
             .to_string(PostgresQueryBuilder)

@@ -28,9 +28,11 @@ use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_context_query::entity_head::select_head;
 use andromeda_postgresql_pool::read_share::PoolLane;
 use andromeda_postgresql_schema::current::{CurrentAttributes, E, Entities, EntitySearch};
-use andromeda_postgresql_seaquery::pg_array::{any, text_array};
-use sea_query::{Expr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
-use sea_query_sqlx::SqlxBinder;
+use andromeda_postgresql_seaquery::{
+    pg_array::{any, text_array},
+    statement::Statement,
+};
+use sea_query::{Expr, ExprTrait, JoinType, Query, SelectStatement, SimpleExpr};
 use sqlx::{Row, postgres::PgRow};
 use std::{collections::HashMap, sync::Arc};
 
@@ -143,8 +145,7 @@ impl EntityRepository {
     ///
     /// Returns [`ContextStoreError`] when the system-attribute query fails.
     pub async fn get_sys_attrs(&self, target: &ContextTarget, id: &Identifier) -> Result<Option<SysAttrsSnapshot>, ContextStoreError> {
-        let (sql, values) = sys_attrs_query(target, Expr::val(id.as_str())).build_sqlx(PostgresQueryBuilder);
-        let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(&self.pool).await?;
+        let row = sys_attrs_query(target, Expr::val(id.as_str())).to_query().fetch_optional(&self.pool).await?;
         row.as_ref().map(sys_attrs_of).transpose()
     }
 
@@ -159,8 +160,7 @@ impl EntityRepository {
             return Ok(HashMap::new());
         }
         let id_strs: Vec<&str> = ids.iter().map(Identifier::as_str).collect();
-        let (sql, values) = sys_attrs_query(target, any(text_array(&id_strs))).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
+        let rows = sys_attrs_query(target, any(text_array(&id_strs))).to_query().fetch_all(&self.pool).await?;
         rows.iter()
             .map(|row| -> Result<(Identifier, SysAttrsSnapshot), ContextStoreError> { Ok((stored_uri(row.try_get("id")?)?, sys_attrs_of(row)?)) })
             .collect()

@@ -6,9 +6,19 @@
 //! every one of them keeps a positive, distinct key that the same array-bound
 //! lookup the broker issues reads back unchanged.
 
-use crate::run_name_prefix;
+use crate::{generated_names_insert, run_name_prefix};
+use andromeda_postgresql_schema::name_dictionary::AttributeNames;
+use andromeda_postgresql_seaquery::{
+    aggregate::{count_all, count_distinct},
+    cast::cast,
+    pg_array::any,
+    pg_type::PostgresType,
+    statement::Statement,
+    system_catalog::{InformationSchema, InformationSchemaColumns},
+};
 use andromeda_test_harness::{configuration::TestRunConfiguration, database_access::connect_test_database, serialized_environment::SerializedEnvironment};
 use pretty_assertions::assert_eq;
+use sea_query::{Alias, Expr, ExprTrait, Func, Query};
 use sqlx::Row;
 
 /// How many distinct names the capacity check interns.
@@ -29,28 +39,28 @@ async fn thirty_two_thousand_distinct_attribute_names_keep_positive_distinct_key
     let pool = connect_test_database().await.expect("test database connection");
 
     let prefix = run_name_prefix();
-    let interned =
-        sqlx::query("INSERT INTO attribute_names (name) SELECT $1 || generated::TEXT FROM generate_series(1, $2) AS generated ON CONFLICT (name) DO NOTHING")
-            .bind(&prefix)
-            .bind(GENERATED_NAMES)
-            .execute(&pool)
-            .await
-            .expect("interning distinct attribute names must not fail");
+    let interned = generated_names_insert(AttributeNames::Table, AttributeNames::Name, &prefix, GENERATED_NAMES)
+        .to_query()
+        .execute(&pool)
+        .await
+        .expect("interning distinct attribute names must not fail");
     assert_eq!(
         i64::try_from(interned.rows_affected()).expect("a row count fits a signed integer"),
         i64::from(GENERATED_NAMES),
         "every generated name is distinct, so every one of them is a new dictionary entry"
     );
 
-    let row = sqlx::query(
-        "SELECT COUNT(*) AS interned, COUNT(DISTINCT attribute_name_key) AS distinct_keys, \
-         MIN(attribute_name_key) AS lowest, MAX(attribute_name_key) AS highest \
-         FROM attribute_names WHERE name LIKE $1",
-    )
-    .bind(format!("{prefix}%"))
-    .fetch_one(&pool)
-    .await
-    .expect("the dictionary must be readable");
+    let row = Query::select()
+        .expr_as(count_all(), Alias::new("interned"))
+        .expr_as(count_distinct(Expr::col(AttributeNames::AttributeNameKey)), Alias::new("distinct_keys"))
+        .expr_as(Func::min(Expr::col(AttributeNames::AttributeNameKey)), Alias::new("lowest"))
+        .expr_as(Func::max(Expr::col(AttributeNames::AttributeNameKey)), Alias::new("highest"))
+        .from(AttributeNames::Table)
+        .and_where(Expr::col(AttributeNames::Name).like(format!("{prefix}%")))
+        .to_query()
+        .fetch_one(&pool)
+        .await
+        .expect("the dictionary must be readable");
     let interned_rows: i64 = row.try_get("interned").expect("the interned column decodes");
     let distinct_keys: i64 = row.try_get("distinct_keys").expect("the distinct_keys column decodes");
     let lowest: i32 = row.try_get("lowest").expect("the lowest column decodes");
@@ -68,12 +78,16 @@ async fn thirty_two_thousand_distinct_attribute_names_keep_positive_distinct_key
     // rather than a placeholder per name, which is what keeps a large batch
     // from exhausting the protocol's parameter space.
     let batch: Vec<String> = (1..=LOOKUP_BATCH).map(|position| format!("{prefix}{position}")).collect();
-    let resolved = sqlx::query("SELECT attribute_name_key, name FROM attribute_names WHERE name = ANY($1)")
-        .bind(&batch)
+    let requested = batch.len();
+    let resolved = Query::select()
+        .columns([AttributeNames::AttributeNameKey, AttributeNames::Name])
+        .from(AttributeNames::Table)
+        .and_where(Expr::col(AttributeNames::Name).eq(any(Expr::val(batch))))
+        .to_query()
         .fetch_all(&pool)
         .await
         .expect("an array-bound lookup of a large batch must not fail");
-    assert_eq!(resolved.len(), batch.len(), "every requested name resolves to exactly one key");
+    assert_eq!(resolved.len(), requested, "every requested name resolves to exactly one key");
     for resolved_row in &resolved {
         let key: i32 = resolved_row.try_get("attribute_name_key").expect("the attribute_name_key column decodes");
         let name: String = resolved_row.try_get("name").expect("the name column decodes");
@@ -88,13 +102,16 @@ async fn thirty_two_thousand_distinct_attribute_names_keep_positive_distinct_key
 async fn the_dictionary_key_is_declared_wide_enough_to_number_more_than_a_two_byte_key() {
     let pool = connect_test_database().await.expect("test database connection");
 
-    let declared: String = sqlx::query_scalar(
-        "SELECT data_type FROM information_schema.columns \
-         WHERE table_schema = 'public' AND table_name = 'attribute_names' AND column_name = 'attribute_name_key'",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("the dictionary key column must be declared");
+    let declared: String = Query::select()
+        .expr(cast(Expr::col(Alias::new("data_type")), PostgresType::Text))
+        .from((InformationSchema, InformationSchemaColumns::Table))
+        .and_where(Expr::col(InformationSchemaColumns::TableSchema).eq("public"))
+        .and_where(Expr::col(InformationSchemaColumns::TableName).eq("attribute_names"))
+        .and_where(Expr::col(InformationSchemaColumns::ColumnName).eq("attribute_name_key"))
+        .to_query_scalar()
+        .fetch_one(&pool)
+        .await
+        .expect("the dictionary key column must be declared");
     assert_eq!(declared, "integer", "a two-byte key would cap the dictionary at 32,767 entries again");
 
     pool.close().await;

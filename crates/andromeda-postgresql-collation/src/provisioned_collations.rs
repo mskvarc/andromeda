@@ -1,8 +1,11 @@
 //! The ICU collations already created on one tenant's database.
 
-use crate::schema_ddl::icu_collation::{STRICT_ICU_LOCALE_VALIDATION, create_icu_collation};
 use andromeda_ngsi_ld_query::ordering::collation::IcuCollation;
 use andromeda_postgresql_pool::sql_state::{SqlState, violates_unique_constraint};
+use andromeda_postgresql_seaquery::{
+    collation::{CreateIcuCollation, PostgresCollation},
+    command::Command,
+};
 use dashmap::DashSet;
 use sqlx::postgres::PgPool;
 use thiserror::Error;
@@ -54,11 +57,15 @@ impl ProvisionedCollations {
     /// The identifier was accepted by [`IcuCollation::parse`] as a well-formed
     /// BCP47 tag whose Unicode keywords are the ones IETF RFC 6067 registers.
     /// Whether ICU holds a collation for the locale itself is asked here, in
-    /// the one place that can ask it: the statement runs in its own transaction
-    /// under [`STRICT_ICU_LOCALE_VALIDATION`], so an unknown locale is refused
-    /// rather than silently creating an object that sorts by the root
-    /// collation. A create refused because a concurrent create of the same
-    /// name committed first has provisioned the object all the same.
+    /// the one place that can ask it: the collation is created under strict
+    /// locale validation, so an unknown locale is refused rather than silently
+    /// creating an object that sorts by the root collation, a successful
+    /// response in an order the client never asked for. Clauses 5.7.2.4 and
+    /// 5.7.4.4 make that refusal the client's: "if a preferred collation
+    /// setting is present and it does not conform to a valid ICU collation
+    /// (see IETF RFC 6067) then an error of type `BadRequestData` shall be
+    /// raised". A create refused because a concurrent create of the same name
+    /// committed first has provisioned the object all the same.
     ///
     /// # Errors
     ///
@@ -93,17 +100,16 @@ impl ProvisionedCollations {
         Ok(())
     }
 
-    /// Create the collation object in a transaction of its own.
+    /// Create the collation object, named and collating by its identifier, in
+    /// a transaction of its own.
     ///
-    /// The transaction exists for the `SET LOCAL`: the strict validation level
-    /// has to hold for the `CREATE COLLATION` and has to be gone before the
-    /// connection returns to the pool.
+    /// The transaction exists for the strict validation level, which has to
+    /// hold for the creation and has to be gone before the connection returns
+    /// to the pool.
     async fn create(&self, collation: &IcuCollation) -> Result<(), sqlx::Error> {
         let mut transaction = self.pool.begin().await?;
-        sqlx::query(sqlx::AssertSqlSafe(STRICT_ICU_LOCALE_VALIDATION))
-            .execute(&mut *transaction)
-            .await?;
-        sqlx::query(sqlx::AssertSqlSafe(create_icu_collation(collation)))
+        CreateIcuCollation::new(PostgresCollation::new(collation.as_str()), collation.as_str())
+            .to_query()
             .execute(&mut *transaction)
             .await?;
         transaction.commit().await

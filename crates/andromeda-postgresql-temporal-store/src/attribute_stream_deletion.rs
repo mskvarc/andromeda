@@ -16,11 +16,9 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use andromeda_postgresql_schema::temporal::{TemporalAttributeStreams, TemporalEntities};
-use andromeda_postgresql_seaquery::{branch::qualified, pg_array::any};
+use andromeda_postgresql_seaquery::{branch::qualified, pg_array::any, statement::Statement};
 use andromeda_postgresql_temporal_query::alias::{S, Te};
-use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, LockType, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::AssertSqlSafe;
+use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, LockType, Query, SelectStatement};
 
 /// Which dataset instances of one attribute a deletion addresses.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -62,18 +60,17 @@ impl TemporalRepository {
         let Some(attribute) = self.attribute_key(attribute_name).await? else {
             return Ok(0);
         };
-        let (select_sql, select_values) =
-            select_attribute_streams_query(schema_iden(target).as_ref(), entity_id.as_str(), attribute, dataset_selector).build_sqlx(PostgresQueryBuilder);
+        let select = select_attribute_streams_query(schema_iden(target).as_ref(), entity_id.as_str(), attribute, dataset_selector);
         let mut tx = self.pool.begin().await?;
-        let stream_keys: Vec<i64> = sqlx::query_scalar_with(AssertSqlSafe(select_sql), select_values).fetch_all(&mut *tx).await?;
+        let stream_keys: Vec<i64> = select.to_query_scalar().fetch_all(&mut *tx).await?;
         if stream_keys.is_empty() {
             tx.rollback().await?;
             return Ok(0);
         }
         let schema = schema_iden(target);
         let removed = remove_stream_history(&mut tx, schema.as_ref(), &stream_keys).await?;
-        let (streams_sql, streams_values) = delete_streams_query(schema.as_ref(), &stream_keys).build_sqlx(PostgresQueryBuilder);
-        let streams = sqlx::query_with(AssertSqlSafe(streams_sql), streams_values)
+        let streams = delete_streams_query(schema.as_ref(), &stream_keys)
+            .to_query()
             .execute(&mut *tx)
             .await?
             .rows_affected();

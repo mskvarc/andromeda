@@ -33,12 +33,15 @@ use andromeda_postgresql_context_query::csr::{
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use andromeda_postgresql_schema::csr::Csr;
-use andromeda_postgresql_seaquery::transaction::repeatable_read;
+use andromeda_postgresql_seaquery::{
+    literal::int_literal,
+    statement::Statement,
+    transaction::{Isolation, TransactionStart},
+};
 use andromeda_registration::{error::RegistrationError, store::page::RegistrationPage};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
-use sea_query::{Expr as SeaExpr, ExprTrait, Iden, Order, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Expr as SeaExpr, ExprTrait, Iden, Order, Query, SelectStatement};
 use sqlx::{PgConnection, PgExecutor, Postgres, Row, Transaction, postgres::PgRow};
 use std::{collections::HashMap, hash::BuildHasher, slice::from_ref};
 
@@ -90,18 +93,16 @@ pub(super) async fn registrations_of(
 
 /// A transaction whose statements all read one snapshot of the tenant.
 async fn begin_snapshot(store: &PostgresRegistrationStore) -> Result<Transaction<'_, Postgres>, RegistrationError> {
-    let mut transaction = store.pool.begin().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
-    sqlx::query(repeatable_read())
-        .execute(&mut *transaction)
+    TransactionStart::at(Isolation::RepeatableRead)
+        .begin_in(&store.pool)
         .await
-        .map_err(|error| persistence_error::<RegistrationError>(error))?;
-    Ok(transaction)
+        .map_err(|error| persistence_error::<RegistrationError>(error))
 }
 
 /// The rows `select` finds, on `executor`.
 async fn fetch_rows<'connection>(executor: impl PgExecutor<'connection>, select: &SelectStatement) -> Result<Vec<PgRow>, RegistrationError> {
-    let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    select
+        .to_query()
         .fetch_all(executor)
         .await
         .map_err(|error| persistence_error::<RegistrationError>(error))
@@ -132,13 +133,13 @@ pub(super) async fn find_expired(store: &PostgresRegistrationStore, cutoff: Date
 /// Whether a registration with `id` exists.
 pub(super) async fn exists(store: &PostgresRegistrationStore, id: &Identifier) -> Result<bool, RegistrationError> {
     let inner = Query::select()
-        .expr(SeaExpr::val(1))
+        .expr(int_literal(1))
         .from(Csr::Table)
         .and_where(SeaExpr::col(Csr::Id).eq(id.as_str()))
         .to_owned();
     let statement = Query::select().expr(SeaExpr::exists(inner)).to_owned();
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let row: (bool,) = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let row: (bool,) = statement
+        .to_query_as()
         .fetch_one(&store.pool)
         .await
         .map_err(|error| persistence_error::<RegistrationError>(error))?;
@@ -168,8 +169,8 @@ pub(super) async fn written(
 ) -> Result<ContextSourceRegistration, RegistrationError> {
     let mut select = registration_select();
     select.and_where(SeaExpr::col(Csr::Id).eq(id.as_str()));
-    let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let row = select
+        .to_query()
         .fetch_one(&mut *connection)
         .await
         .map_err(|error| persistence_error::<RegistrationError>(error))?;
@@ -190,8 +191,9 @@ pub(super) async fn query_compiled(
     let built = csr_sql::build_csr_query(compiled, window).map_err(|error| persistence_error::<RegistrationError>(error))?;
     // The total counts the snapshot the page is read from.
     let mut transaction = begin_snapshot(store).await?;
-    let (count_sql, count_values) = built.count.build_sqlx(PostgresQueryBuilder);
-    let (total,): (i64,) = sqlx::query_as_with(sqlx::AssertSqlSafe(count_sql.as_str()), count_values)
+    let (total,): (i64,) = built
+        .count
+        .to_query_as()
         .fetch_one(&mut *transaction)
         .await
         .map_err(|error| persistence_error::<RegistrationError>(error))?;

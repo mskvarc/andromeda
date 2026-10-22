@@ -3,7 +3,8 @@
 use proc_macro2::Ident;
 use thiserror::Error;
 
-/// One syntactic shape that builds SQL by hand, carrying the name it reports.
+/// One syntactic shape that spells SQL or hands it to the driver outside the
+/// adapter, carrying the name it reports.
 ///
 /// Ordering and equality follow the variant then the name, which keeps the
 /// sorted, deduplicated site list stable.
@@ -22,27 +23,36 @@ pub enum RawSqlShape {
         name: Ident,
     },
     /// A sea-query escape hatch such as `Func::cust`.
-    #[error("{function} spells a raw SQL fragment")]
+    #[error("{name} spells a raw SQL fragment")]
     CustomFragment {
-        /// The called function's name.
-        function: Ident,
+        /// The escape hatch's name.
+        name: Ident,
     },
-    /// A `query*` function called with a raw SQL string.
-    #[error("{function} is built from a raw SQL string")]
-    RawStringFunction {
-        /// The called function's name.
-        function: Ident,
+    /// A driver item that takes statement text: a `sqlx` statement
+    /// constructor, `AssertSqlSafe`, `sqlx`'s own query builder, or the
+    /// `sea-query-sqlx` binder.
+    #[error("{name} hands statement text to the driver")]
+    DriverText {
+        /// The item's name.
+        name: Ident,
     },
-    /// A `query*` method called with a raw SQL string.
-    #[error("{method} is built from a raw SQL string")]
-    RawStringMethod {
-        /// The called method's name.
+    /// A method that takes or produces statement text, or an executor method
+    /// given a string.
+    #[error("{method} runs statement text")]
+    TextMethod {
+        /// The method's name.
         method: Ident,
     },
     /// A formatting macro whose template reads as SQL.
     #[error("{name}! assembles a SQL string")]
     AssembledString {
         /// The macro's name without the bang.
+        name: Ident,
+    },
+    /// Production code rendering a statement to text.
+    #[error("{name} renders a statement to text")]
+    Rendering {
+        /// The builder's name.
         name: Ident,
     },
 }

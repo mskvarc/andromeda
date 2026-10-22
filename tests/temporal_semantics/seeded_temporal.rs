@@ -7,9 +7,19 @@
 //! are inserted through the tenant connection and then read back through the
 //! ordinary paths.
 
+use andromeda_postgresql_schema::{
+    name_dictionary::{AttributeNames, EntityTypeNames},
+    queue::WriteRecords,
+    temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
+};
+use andromeda_postgresql_seaquery::{clock::now, pg_array::array_literal, statement::Statement};
 use chrono::{DateTime, Utc};
-use sqlx::{PgPool, Row};
+use sea_query::{Alias, CommonTableExpression, Expr, ExprTrait, OnConflict, Query, WithClause};
+use sqlx::PgPool;
 use uuid::Uuid;
+
+/// The common table expression holding the interned entity type.
+const TYPE_NAME: &str = "type_name";
 
 /// One directly seeded `attribute_history` row.
 pub struct SeededHistoryRow {
@@ -28,94 +38,136 @@ pub struct SeededHistoryRow {
 }
 
 /// Insert a temporal Entity and return its narrow key.
+///
+/// The type is interned through the dictionary inside the same statement, so
+/// the catalogue row carries the key the broker's own write path would have
+/// minted for it.
 pub async fn seed_temporal_entity(pool: &PgPool, entity_id: &str, entity_type: &str) -> i64 {
-    sqlx::query(SEED_TEMPORAL_ENTITY_SQL)
-        .bind(entity_id)
-        .bind(entity_type)
+    let type_name = Query::insert()
+        .into_table(EntityTypeNames::Table)
+        .columns([EntityTypeNames::Name])
+        .values([Expr::val(entity_type)])
+        .expect("one value per column")
+        .on_conflict(OnConflict::column(EntityTypeNames::Name).update_column(EntityTypeNames::Name).to_owned())
+        .returning_col(EntityTypeNames::EntityTypeNameKey)
+        .to_owned();
+    let entity = Query::insert()
+        .into_table(TemporalEntities::Table)
+        .columns([
+            TemporalEntities::CreatedAt,
+            TemporalEntities::ModifiedAt,
+            TemporalEntities::Id,
+            TemporalEntities::EntityTypeNameKeys,
+        ])
+        .select_from(
+            Query::select()
+                .expr(now())
+                .expr(now())
+                .expr(Expr::val(entity_id))
+                .expr(array_literal([Expr::col((Alias::new(TYPE_NAME), EntityTypeNames::EntityTypeNameKey))]))
+                .from(Alias::new(TYPE_NAME))
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .returning_col(TemporalEntities::TemporalEntityKey)
+        .to_owned();
+    WithClause::new()
+        .cte(CommonTableExpression::new().table_name(Alias::new(TYPE_NAME)).query(type_name).to_owned())
+        .to_owned()
+        .query(entity)
+        .to_query_scalar()
         .fetch_one(pool)
         .await
         .expect("seeded temporal entity")
-        .try_get("temporal_entity_key")
-        .expect("the temporal_entity_key column decodes")
 }
 
 /// Resolve, creating if needed, the dictionary identity of one attribute name.
 pub async fn attribute_name_key(pool: &PgPool, attribute_name: &str) -> i32 {
-    sqlx::query(ATTRIBUTE_NAME_KEY_SQL)
-        .bind(attribute_name)
+    Query::insert()
+        .into_table(AttributeNames::Table)
+        .columns([AttributeNames::Name])
+        .values([Expr::val(attribute_name)])
+        .expect("one value per column")
+        .on_conflict(OnConflict::column(AttributeNames::Name).update_column(AttributeNames::Name).to_owned())
+        .returning_col(AttributeNames::AttributeNameKey)
+        .to_query_scalar()
         .fetch_one(pool)
         .await
         .expect("attribute dictionary identity")
-        .try_get("attribute_name_key")
-        .expect("the attribute_name_key column decodes")
 }
 
 /// Insert one attribute stream and return the key the database generated for it.
 pub async fn seed_stream(pool: &PgPool, temporal_entity_key: i64, attribute_name_key: i32) -> i64 {
-    sqlx::query(SEED_STREAM_SQL)
-        .bind(temporal_entity_key)
-        .bind(attribute_name_key)
+    Query::insert()
+        .into_table(TemporalAttributeStreams::Table)
+        .columns([
+            TemporalAttributeStreams::TemporalEntityKey,
+            TemporalAttributeStreams::Id,
+            TemporalAttributeStreams::AttributeNameKey,
+        ])
+        .select_from(
+            Query::select()
+                .column(TemporalEntities::TemporalEntityKey)
+                .column(TemporalEntities::Id)
+                .expr(Expr::val(attribute_name_key))
+                .from(TemporalEntities::Table)
+                .and_where(Expr::col(TemporalEntities::TemporalEntityKey).eq(temporal_entity_key))
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .returning_col(TemporalAttributeStreams::StreamKey)
+        .to_query_scalar()
         .fetch_one(pool)
         .await
         .expect("seeded attribute stream")
-        .try_get("stream_key")
-        .expect("the stream_key column decodes")
 }
 
 /// Insert one history row and the idempotency record that protects it.
 pub async fn seed_history_row(pool: &PgPool, row: &SeededHistoryRow) {
-    sqlx::query(SEED_WRITE_RECORD_SQL)
-        .bind(row.write_id)
-        .bind(row.recorded_at)
+    Query::insert()
+        .into_table(WriteRecords::Table)
+        .columns([WriteRecords::WriteId, WriteRecords::RecordedAt, WriteRecords::AcceptedAt])
+        .values([Expr::val(row.write_id), Expr::val(row.recorded_at), Expr::val(row.recorded_at)])
+        .expect("one value per column")
+        .to_query()
         .execute(pool)
         .await
         .expect("seeded idempotency record");
-    sqlx::query(SEED_HISTORY_ROW_SQL)
-        .bind(row.recorded_at)
-        .bind(row.write_id)
-        .bind(row.stream_key)
-        .bind(row.generated_instance_id)
-        .bind(row.observed_at)
-        .bind(row.value_number)
+    Query::insert()
+        .into_table(AttributeHistory::Table)
+        .columns([
+            AttributeHistory::RecordedAt,
+            AttributeHistory::WriteId,
+            AttributeHistory::StreamKey,
+            AttributeHistory::WriteOrdinal,
+            AttributeHistory::AttributeKind,
+            AttributeHistory::ValueKind,
+            AttributeHistory::GeneratedInstanceId,
+            AttributeHistory::ObservedAt,
+            AttributeHistory::CreatedAt,
+            AttributeHistory::ModifiedAt,
+            AttributeHistory::ValueNumber,
+        ])
+        .select_from(
+            Query::select()
+                .expr(Expr::val(row.recorded_at))
+                .expr(Expr::val(row.write_id))
+                .column(TemporalAttributeStreams::StreamKey)
+                .expr(Expr::val(0))
+                .expr(Expr::val(1))
+                .expr(Expr::val(1))
+                .expr(Expr::val(row.generated_instance_id))
+                .expr(Expr::val(row.observed_at))
+                .expr(Expr::val(row.recorded_at))
+                .expr(Expr::val(row.recorded_at))
+                .expr(Expr::val(row.value_number))
+                .from(TemporalAttributeStreams::Table)
+                .and_where(Expr::col(TemporalAttributeStreams::StreamKey).eq(row.stream_key))
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .to_query()
         .execute(pool)
         .await
         .expect("seeded history row");
 }
-
-/// The type is interned through the dictionary inside the same statement, so
-/// the catalogue row carries the key the broker's own write path would have
-/// minted for it.
-const SEED_TEMPORAL_ENTITY_SQL: &str = r"
-WITH type_name AS (
-    INSERT INTO entity_type_names (name) VALUES ($2)
-    ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
-    RETURNING entity_type_name_key
-)
-INSERT INTO temporal_entities (created_at, modified_at, id, entity_type_name_keys)
-SELECT NOW(), NOW(), $1, ARRAY[type_name.entity_type_name_key] FROM type_name
-RETURNING temporal_entity_key
-";
-
-const ATTRIBUTE_NAME_KEY_SQL: &str = r"
-INSERT INTO attribute_names (name) VALUES ($1)
-ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
-RETURNING attribute_name_key
-";
-
-const SEED_STREAM_SQL: &str = r"
-INSERT INTO temporal_attribute_streams (temporal_entity_key, id, attribute_name_key)
-SELECT temporal_entity_key, id, $2 FROM temporal_entities WHERE temporal_entity_key = $1
-RETURNING stream_key
-";
-
-const SEED_WRITE_RECORD_SQL: &str = r"
-INSERT INTO write_records (write_id, recorded_at, accepted_at) VALUES ($1, $2, $2)
-";
-
-const SEED_HISTORY_ROW_SQL: &str = r"
-INSERT INTO attribute_history
-    (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind,
-     generated_instance_id, observed_at, created_at, modified_at, value_number)
-SELECT $1, $2, stream_key, 0, 1, 1, $4, $5, $1, $1, $6
-FROM temporal_attribute_streams WHERE stream_key = $3
-";

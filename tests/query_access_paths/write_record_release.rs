@@ -11,10 +11,30 @@
 //! scanning every chunk the history spans.
 
 use crate::seeded_corpus::{PlannerPaths, SEED_PREFIX, explain_rolled_back};
+use andromeda_postgresql_schema::{
+    queue::{TemporalAppendIntents, WriteRecords},
+    temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams, TemporalEntities},
+};
+use andromeda_postgresql_seaquery::{
+    aggregate::count_all,
+    cast::cast,
+    catalog_function::{generate_series, random_uuid},
+    clock::now,
+    command::Command,
+    interval::make_interval_secs,
+    literal::{int_literal, text_literal},
+    maintenance::{MaintenanceSchema, analyze},
+    pg_array::{any, array_literal},
+    pg_operator::PgBinaryOperator,
+    pg_type::PostgresType,
+    statement::Statement,
+};
 use andromeda_test_harness::{
     dictionary_seed::{attribute_name_key, entity_type_name_key},
     serialized_environment::SerializedEnvironment,
 };
+use chrono::{DateTime, Utc};
+use sea_query::{Alias, Expr, ExprTrait, IntoIden, Query};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -27,6 +47,9 @@ const WRITES_PER_WEEK: i64 = 2_000;
 
 /// Writes whose release is planned.
 const RELEASED_WRITES: i64 = 3;
+
+/// Seconds in the seven days between two seeded weeks.
+const WEEK_SECONDS: i64 = 7 * 24 * 60 * 60;
 
 /// Type of the temporal Entity the seeded history belongs to.
 const HISTORIC_TYPE: &str = "https://example.test/query-access-paths/Historic";
@@ -42,81 +65,220 @@ const RELEASE_ATTRIBUTE: &str = "https://example.test/query-access-paths/release
 /// the invariant the committer keeps and the release correlation relies on.
 async fn seed_released_history(pool: &PgPool, prefix: &str) {
     let type_key = entity_type_name_key(pool, HISTORIC_TYPE).await.expect("type dictionary seed must succeed");
-    let entity_key: i64 = sqlx::query_scalar(
-        "INSERT INTO temporal_entities (created_at, modified_at, id, entity_type_name_keys) \
-         VALUES (now(), now(), $1::text || ':release', ARRAY[$2::integer]) RETURNING temporal_entity_key",
-    )
-    .bind(prefix)
-    .bind(type_key)
-    .fetch_one(pool)
-    .await
-    .expect("temporal catalogue insert must succeed");
-
+    let entity_key = insert_release_entity(pool, prefix, type_key).await;
     let attribute_name_key = attribute_name_key(pool, RELEASE_ATTRIBUTE)
         .await
         .expect("attribute dictionary seed must succeed");
-    let stream_key: i64 = sqlx::query_scalar(
-        "INSERT INTO temporal_attribute_streams (temporal_entity_key, id, attribute_name_key) \
-             SELECT temporal_entity_key, id, $2 FROM temporal_entities WHERE temporal_entity_key = $1 RETURNING stream_key",
-    )
-    .bind(entity_key)
-    .bind(attribute_name_key)
-    .fetch_one(pool)
-    .await
-    .expect("stream insert must succeed");
+    let stream_key = insert_release_stream(pool, entity_key, attribute_name_key).await;
+    insert_write_records(pool).await;
+    insert_released_attribute_history(pool, stream_key).await;
+    insert_released_scope_history(pool, entity_key).await;
 
-    sqlx::query(
-        "INSERT INTO write_records (recorded_at, accepted_at, write_id) \
-         SELECT TIMESTAMPTZ '2026-01-05 00:00:00Z' + (g % $1) * INTERVAL '7 days' + (g / $1) * INTERVAL '1 minute', \
-                now(), gen_random_uuid() \
-         FROM generate_series(1, $1 * $2) AS g",
-    )
-    .bind(SEEDED_WEEKS)
-    .bind(WRITES_PER_WEEK)
-    .execute(pool)
-    .await
-    .expect("write record corpus must be writable");
-
-    sqlx::query(
-        "INSERT INTO attribute_history \
-         (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind, \
-          observed_at, generated_instance_id, value_number) \
-         SELECT w.recorded_at, w.write_id, $1, 0, 1, 1, w.recorded_at, gen_random_uuid(), 1 \
-         FROM write_records AS w",
-    )
-    .bind(stream_key)
-    .execute(pool)
-    .await
-    .expect("attribute history corpus must be writable");
-
-    sqlx::query(
-        "INSERT INTO scope_history \
-         (recorded_at, temporal_entity_key, write_id, write_ordinal, value_kind, observed_at, scope_path, verbatim_scope_path) \
-         SELECT w.recorded_at, $1, w.write_id, 0, 1, w.recorded_at, 'seed.release'::ltree, '/seed/release' \
-         FROM write_records AS w",
-    )
-    .bind(entity_key)
-    .execute(pool)
-    .await
-    .expect("scope history corpus must be writable");
-
-    for statement in [
-        "ANALYZE write_records",
-        "ANALYZE attribute_history",
-        "ANALYZE scope_history",
-        "ANALYZE temporal_append_intents",
+    for relation in [
+        WriteRecords::Table.into_iden(),
+        AttributeHistory::Table.into_iden(),
+        ScopeHistory::Table.into_iden(),
+        TemporalAppendIntents::Table.into_iden(),
     ] {
-        sqlx::query(statement).execute(pool).await.expect("analyze must succeed");
+        analyze(MaintenanceSchema::Public, relation)
+            .to_query()
+            .execute(pool)
+            .await
+            .expect("analyze must succeed");
     }
+}
+
+/// Column `column` of the write record aliased `w`.
+fn record(column: WriteRecords) -> Expr {
+    Expr::col((Alias::new("w"), column))
+}
+
+/// Insert the one temporal Entity of the corpus and return its key.
+async fn insert_release_entity(pool: &PgPool, prefix: &str, type_key: i32) -> i64 {
+    Query::insert()
+        .into_table(TemporalEntities::Table)
+        .columns([
+            TemporalEntities::CreatedAt,
+            TemporalEntities::ModifiedAt,
+            TemporalEntities::Id,
+            TemporalEntities::EntityTypeNameKeys,
+        ])
+        .values([
+            now(),
+            now(),
+            cast(Expr::val(prefix), PostgresType::Text).concat_text(text_literal(":release")),
+            array_literal([cast(Expr::val(type_key), PostgresType::Integer)]),
+        ])
+        .expect("one value per column")
+        .returning_col(TemporalEntities::TemporalEntityKey)
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await
+        .expect("temporal catalogue insert must succeed")
+}
+
+/// Insert the one stream of the attribute for the Entity and return its key.
+async fn insert_release_stream(pool: &PgPool, entity_key: i64, attribute_name_key: i32) -> i64 {
+    Query::insert()
+        .into_table(TemporalAttributeStreams::Table)
+        .columns([
+            TemporalAttributeStreams::TemporalEntityKey,
+            TemporalAttributeStreams::Id,
+            TemporalAttributeStreams::AttributeNameKey,
+        ])
+        .select_from(
+            Query::select()
+                .column(TemporalEntities::TemporalEntityKey)
+                .column(TemporalEntities::Id)
+                .expr(Expr::val(attribute_name_key))
+                .from(TemporalEntities::Table)
+                .and_where(Expr::col(TemporalEntities::TemporalEntityKey).eq(entity_key))
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .returning_col(TemporalAttributeStreams::StreamKey)
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await
+        .expect("stream insert must succeed")
+}
+
+/// Insert the write records, spread over [`SEEDED_WEEKS`] weekly chunks.
+async fn insert_write_records(pool: &PgPool) {
+    let series = || Expr::col(Alias::new("g"));
+    // 2026-01-05T00:00:00Z, a Monday.
+    let first_week: DateTime<Utc> = DateTime::from_timestamp(1_767_571_200, 0).expect("the first week is a representable instant");
+    let weeks_in = Expr::expr(series().modulo(SEEDED_WEEKS)).mul(WEEK_SECONDS);
+    let minutes_in = Expr::expr(series().div(SEEDED_WEEKS)).mul(60);
+    Query::insert()
+        .into_table(WriteRecords::Table)
+        .columns([WriteRecords::RecordedAt, WriteRecords::AcceptedAt, WriteRecords::WriteId])
+        .select_from(
+            Query::select()
+                .expr(Expr::val(first_week).add(make_interval_secs(weeks_in)).add(make_interval_secs(minutes_in)))
+                .expr(now())
+                .expr(random_uuid())
+                .from_function(generate_series(Expr::val(1), Expr::val(SEEDED_WEEKS * WRITES_PER_WEEK)), Alias::new("g"))
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .to_query()
+        .execute(pool)
+        .await
+        .expect("write record corpus must be writable");
+}
+
+/// Insert one attribute history row per write record.
+async fn insert_released_attribute_history(pool: &PgPool, stream_key: i64) {
+    Query::insert()
+        .into_table(AttributeHistory::Table)
+        .columns([
+            AttributeHistory::RecordedAt,
+            AttributeHistory::WriteId,
+            AttributeHistory::StreamKey,
+            AttributeHistory::WriteOrdinal,
+            AttributeHistory::AttributeKind,
+            AttributeHistory::ValueKind,
+            AttributeHistory::ObservedAt,
+            AttributeHistory::GeneratedInstanceId,
+            AttributeHistory::ValueNumber,
+        ])
+        .select_from(
+            Query::select()
+                .expr(record(WriteRecords::RecordedAt))
+                .expr(record(WriteRecords::WriteId))
+                .expr(Expr::val(stream_key))
+                .expr(Expr::val(0))
+                .expr(Expr::val(1))
+                .expr(Expr::val(1))
+                .expr(record(WriteRecords::RecordedAt))
+                .expr(random_uuid())
+                .expr(Expr::val(1))
+                .from_as(WriteRecords::Table, Alias::new("w"))
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .to_query()
+        .execute(pool)
+        .await
+        .expect("attribute history corpus must be writable");
+}
+
+/// Insert one scope history row per write record.
+async fn insert_released_scope_history(pool: &PgPool, entity_key: i64) {
+    Query::insert()
+        .into_table(ScopeHistory::Table)
+        .columns([
+            ScopeHistory::RecordedAt,
+            ScopeHistory::TemporalEntityKey,
+            ScopeHistory::WriteId,
+            ScopeHistory::WriteOrdinal,
+            ScopeHistory::ValueKind,
+            ScopeHistory::ObservedAt,
+            ScopeHistory::ScopePath,
+            ScopeHistory::VerbatimScopePath,
+        ])
+        .select_from(
+            Query::select()
+                .expr(record(WriteRecords::RecordedAt))
+                .expr(Expr::val(entity_key))
+                .expr(record(WriteRecords::WriteId))
+                .expr(Expr::val(0))
+                .expr(Expr::val(1))
+                .expr(record(WriteRecords::RecordedAt))
+                .expr(cast(text_literal("seed.release"), PostgresType::Ltree))
+                .expr(text_literal("/seed/release"))
+                .from_as(WriteRecords::Table, Alias::new("w"))
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .to_query()
+        .execute(pool)
+        .await
+        .expect("scope history corpus must be writable");
 }
 
 /// The number of distinct weekly chunks a history hypertable was split into.
 async fn chunk_count(pool: &PgPool, hypertable: &str) -> i64 {
-    sqlx::query_scalar("SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_name = $1")
-        .bind(hypertable)
+    Query::select()
+        .expr(count_all())
+        .from((Alias::new("timescaledb_information"), Alias::new("chunks")))
+        .and_where(Expr::col(Alias::new("hypertable_name")).eq(hypertable))
+        .to_query_scalar()
         .fetch_one(pool)
         .await
         .expect("the chunk catalogue must be readable")
+}
+
+/// The statement the release issues for a clause 5.6.16 deletion of `released`.
+fn release_statement(released: Vec<Uuid>) -> sea_query::DeleteStatement {
+    let history_probe = |table: &str| {
+        Expr::exists(
+            Query::select()
+                .expr(int_literal(1))
+                .from(Alias::new(table))
+                .and_where(Expr::col((Alias::new(table), Alias::new("recorded_at"))).equals((WriteRecords::Table, WriteRecords::RecordedAt)))
+                .and_where(Expr::col((Alias::new(table), Alias::new("write_id"))).equals((WriteRecords::Table, WriteRecords::WriteId)))
+                .to_owned(),
+        )
+        .not()
+    };
+    Query::delete()
+        .from_table(WriteRecords::Table)
+        .and_where(history_probe("attribute_history"))
+        .and_where(history_probe("scope_history"))
+        .and_where(
+            Expr::exists(
+                Query::select()
+                    .expr(int_literal(1))
+                    .from(TemporalAppendIntents::Table)
+                    .and_where(Expr::col((TemporalAppendIntents::Table, TemporalAppendIntents::WriteId)).equals((WriteRecords::Table, WriteRecords::WriteId)))
+                    .to_owned(),
+            )
+            .not(),
+        )
+        .and_where(Expr::col((WriteRecords::Table, WriteRecords::WriteId)).eq(any(cast(Expr::val(released), PostgresType::UuidArray))))
+        .to_owned()
 }
 
 #[tokio::test]
@@ -129,27 +291,19 @@ async fn write_record_release_seeks_the_history_write_index_instead_of_scanning_
         "the seeded attribute_history must span one chunk per week for the plan to mean anything"
     );
 
-    let released: Vec<Uuid> = sqlx::query_scalar("SELECT write_id FROM write_records ORDER BY write_id LIMIT $1")
-        .bind(RELEASED_WRITES)
+    let released: Vec<Uuid> = Query::select()
+        .column(WriteRecords::WriteId)
+        .from(WriteRecords::Table)
+        .order_by(WriteRecords::WriteId, sea_query::Order::Asc)
+        .limit(u64::try_from(RELEASED_WRITES).expect("fits"))
+        .to_query_scalar()
         .fetch_all(pool)
         .await
         .expect("the released writes must be readable");
-    let released = released.iter().map(|write_id| format!("'{write_id}'")).collect::<Vec<String>>().join(", ");
 
-    // The statement the release issues for a clause 5.6.16 deletion, with its
-    // bound write identities inlined so the plan reads them as constants.
-    let statement = format!(
-        "DELETE FROM write_records \
-         WHERE NOT EXISTS (SELECT 1 FROM attribute_history AS ah \
-                           WHERE ah.recorded_at = write_records.recorded_at AND ah.write_id = write_records.write_id) \
-           AND NOT EXISTS (SELECT 1 FROM scope_history AS sh \
-                           WHERE sh.recorded_at = write_records.recorded_at AND sh.write_id = write_records.write_id) \
-           AND NOT EXISTS (SELECT 1 FROM temporal_append_intents AS ti WHERE ti.write_id = write_records.write_id) \
-           AND write_records.write_id = ANY (ARRAY[{released}]::uuid[])"
-    );
     // Every seeded record is protected, so the delete removes nothing; the
     // rollback keeps that true whatever the plan does.
-    let plan = explain_rolled_back(pool, PlannerPaths::Unrestricted, &statement).await;
+    let plan = explain_rolled_back(pool, PlannerPaths::Unrestricted, release_statement(released)).await;
     for index in ["uq_attribute_history_write_identity", "uq_scope_history_write_identity"] {
         assert!(plan.contains(index), "the release must seek {index}: {plan}");
     }

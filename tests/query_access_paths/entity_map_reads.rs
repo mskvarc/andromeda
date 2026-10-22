@@ -9,8 +9,25 @@
 //! (clause 4.3.6.7) is answered by the `(entity_map_key, entity_id)` index.
 
 use crate::seeded_corpus::{PlannerPaths, SEED_PREFIX, explain, explain_rolled_back};
+use andromeda_postgresql_schema::entity_map::{EntityMapEntries, EntityMaps};
+use andromeda_postgresql_seaquery::{
+    aggregate::count_all,
+    cast::cast,
+    catalog_function::{generate_series, md5},
+    clock::now,
+    command::Command,
+    interval::make_interval_secs,
+    literal::text_literal,
+    maintenance::{MaintenanceSchema, analyze},
+    pg_array::any,
+    pg_operator::PgBinaryOperator,
+    pg_type::PostgresType,
+    scalar_subquery::scalar_subquery,
+    statement::Statement,
+};
 use andromeda_test_harness::serialized_environment::SerializedEnvironment;
 use pretty_assertions::assert_eq;
+use sea_query::{Alias, CaseStatement, Expr, ExprTrait, IntoIden, Order, Query, SelectStatement, SimpleExpr};
 use sqlx::PgPool;
 use std::iter::{once, repeat_n};
 
@@ -35,33 +52,109 @@ fn probed_map() -> String {
 /// unrelated to production order, as it is for a real query's result. One
 /// entity in five is attributed to a registration, the rest to `@none`.
 async fn seed_maps(pool: &PgPool, prefix: &str) {
-    sqlx::query("INSERT INTO entity_maps (expires_at, id) SELECT now() + interval '1 hour', $1 || ':EntityMap:' || m FROM generate_series(1, $2) AS m")
-        .bind(prefix)
-        .bind(SEEDED_MAPS)
+    let series = |name: &str| Expr::col(Alias::new(name));
+    Query::insert()
+        .into_table(EntityMaps::Table)
+        .columns([EntityMaps::ExpiresAt, EntityMaps::Id])
+        .select_from(
+            Query::select()
+                .expr(Expr::expr(now()).add(make_interval_secs(Expr::val(3600.0))))
+                .expr(
+                    cast(Expr::val(prefix), PostgresType::Text)
+                        .concat_text(text_literal(":EntityMap:"))
+                        .concat_text(series("m")),
+                )
+                .from_function(generate_series(Expr::val(1), Expr::val(SEEDED_MAPS)), Alias::new("m"))
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .to_query()
         .execute(pool)
         .await
         .expect("the map control records must be seeded");
-    sqlx::query(
-        "INSERT INTO entity_map_entries (entity_map_key, position, entity_id, source) \
-         SELECT em.entity_map_key, n - 1, $1 || ':Vehicle:' || md5(em.entity_map_key || ':' || n), \
-                CASE WHEN n % 5 = 0 THEN $1 || ':ContextSourceRegistration:' || (n % 7) ELSE '@none' END \
-         FROM entity_maps AS em CROSS JOIN generate_series(1, $2) AS n \
-         WHERE em.id LIKE $1 || '%' \
-         ORDER BY em.entity_map_key, n",
-    )
-    .bind(prefix)
-    .bind(ENTRIES_PER_MAP)
-    .execute(pool)
-    .await
-    .expect("the map entries must be seeded");
-    for statement in ["ANALYZE entity_maps", "ANALYZE entity_map_entries"] {
-        sqlx::query(statement).execute(pool).await.expect("analyze must succeed");
+    let map_key = || Expr::col((Alias::new("em"), EntityMaps::EntityMapKey));
+    let registration = cast(Expr::val(prefix), PostgresType::Text)
+        .concat_text(text_literal(":ContextSourceRegistration:"))
+        .concat_text(Expr::expr(series("n").modulo(7)));
+    Query::insert()
+        .into_table(EntityMapEntries::Table)
+        .columns([
+            EntityMapEntries::EntityMapKey,
+            EntityMapEntries::Position,
+            EntityMapEntries::EntityId,
+            EntityMapEntries::Source,
+        ])
+        .select_from(
+            Query::select()
+                .expr(map_key())
+                .expr(Expr::expr(series("n")).sub(1))
+                .expr(
+                    cast(Expr::val(prefix), PostgresType::Text)
+                        .concat_text(text_literal(":Vehicle:"))
+                        .concat_text(md5(map_key().concat_text(text_literal(":")).concat_text(series("n")))),
+                )
+                .expr(
+                    CaseStatement::new()
+                        .case(series("n").modulo(5).eq(0), registration)
+                        .finally(text_literal("@none")),
+                )
+                .from_as(EntityMaps::Table, Alias::new("em"))
+                .from_function(generate_series(Expr::val(1), Expr::val(ENTRIES_PER_MAP)), Alias::new("n"))
+                .and_where(Expr::col((Alias::new("em"), EntityMaps::Id)).like(format!("{prefix}%")))
+                .order_by((Alias::new("em"), EntityMaps::EntityMapKey), Order::Asc)
+                .order_by(Alias::new("n"), Order::Asc)
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .to_query()
+        .execute(pool)
+        .await
+        .expect("the map entries must be seeded");
+    for relation in [EntityMaps::Table.into_iden(), EntityMapEntries::Table.into_iden()] {
+        analyze(MaintenanceSchema::Public, relation)
+            .to_query()
+            .execute(pool)
+            .await
+            .expect("analyze must succeed");
     }
 }
 
 /// The scalar subquery the store resolves a map's identifier with.
-fn entity_map_key_of(id: &str) -> String {
-    format!(r#"(SELECT "entity_maps"."entity_map_key" FROM "entity_maps" WHERE "entity_maps"."id" = '{id}')"#)
+fn entity_map_key_of(id: &str) -> SimpleExpr {
+    scalar_subquery(
+        Query::select()
+            .column((EntityMaps::Table, EntityMaps::EntityMapKey))
+            .from(EntityMaps::Table)
+            .and_where(Expr::col((EntityMaps::Table, EntityMaps::Id)).eq(id))
+            .to_owned(),
+    )
+}
+
+/// The whole-map read exactly as the store renders it, for the map `id`.
+fn map_read(id: &str) -> SelectStatement {
+    Query::select()
+        .from(EntityMapEntries::Table)
+        .and_where(Expr::col(EntityMapEntries::EntityMapKey).eq(entity_map_key_of(id)))
+        .order_by(EntityMapEntries::Position, Order::Asc)
+        .to_owned()
+}
+
+/// The delete the store issues for a page of the map `id` that shed `shed`.
+fn prune(id: &str, shed: Vec<String>) -> sea_query::DeleteStatement {
+    Query::delete()
+        .from_table(EntityMapEntries::Table)
+        .and_where(
+            Expr::col(EntityMapEntries::EntityMapKey).eq(scalar_subquery(
+                Query::select()
+                    .column((EntityMaps::Table, EntityMaps::EntityMapKey))
+                    .from(EntityMaps::Table)
+                    .and_where(Expr::col((EntityMaps::Table, EntityMaps::Id)).eq(id))
+                    .and_where(Expr::col((EntityMaps::Table, EntityMaps::ExpiresAt)).gt(now()))
+                    .to_owned(),
+            )),
+        )
+        .and_where(Expr::col(EntityMapEntries::EntityId).eq(any(Expr::val(shed))))
+        .to_owned()
 }
 
 #[tokio::test]
@@ -69,24 +162,27 @@ async fn entity_map_read_walks_the_position_key_without_a_sort() {
     let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
     seed_maps(pool, SEED_PREFIX).await;
-    let key = entity_map_key_of(&probed_map());
 
-    // The whole-map read exactly as the store renders it, with the map's
-    // identifier inlined.
-    let read = format!(r#"SELECT "entity_id", "source" FROM "entity_map_entries" WHERE "entity_map_key" = {key} ORDER BY "position" ASC"#);
-    let plan = explain(pool, &read).await;
+    // The whole-map read exactly as the store renders it.
+    let plan = explain(
+        pool,
+        map_read(&probed_map())
+            .columns([EntityMapEntries::EntityId, EntityMapEntries::Source])
+            .to_owned(),
+    )
+    .await;
     assert!(
         plan.contains("Index Scan using pk_entity_map_entries on entity_map_entries"),
         "the read must walk the position key: {plan}"
     );
     assert!(!plan.contains("Sort"), "the key already gives production order, so nothing is sorted: {plan}");
 
-    let positions: Vec<i32> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        r#"SELECT "position" FROM "entity_map_entries" WHERE "entity_map_key" = {key} ORDER BY "position" ASC"#
-    )))
-    .fetch_all(pool)
-    .await
-    .expect("the positions must be readable");
+    let positions: Vec<i32> = map_read(&probed_map())
+        .column(EntityMapEntries::Position)
+        .to_query_scalar()
+        .fetch_all(pool)
+        .await
+        .expect("the positions must be readable");
     assert_eq!(
         positions,
         (0..ENTRIES_PER_MAP).collect::<Vec<i32>>(),
@@ -101,43 +197,44 @@ async fn entity_map_prune_seeks_the_entity_index_and_removes_only_the_named_enti
     let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
     seed_maps(pool, SEED_PREFIX).await;
-    let key = entity_map_key_of(&probed_map());
 
-    let shed: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        r#"SELECT "entity_id" FROM "entity_map_entries" WHERE "entity_map_key" = {key} ORDER BY "position" ASC LIMIT {SHED_ENTITIES}"#
-    )))
-    .fetch_all(pool)
-    .await
-    .expect("the shed entities must be readable");
-    let shed = shed.iter().map(|entity_id| format!("'{entity_id}'")).collect::<Vec<String>>().join(", ");
+    let shed: Vec<String> = map_read(&probed_map())
+        .column(EntityMapEntries::EntityId)
+        .limit(u64::try_from(SHED_ENTITIES).expect("fits"))
+        .to_query_scalar()
+        .fetch_all(pool)
+        .await
+        .expect("the shed entities must be readable");
 
-    // The delete the store issues for a page that shed entities, with its bound
-    // values inlined so the plan reads them as constants.
-    let prune = format!(
-        r#"DELETE FROM "entity_map_entries" WHERE "entity_map_key" = (SELECT "entity_maps"."entity_map_key" FROM "entity_maps" WHERE "entity_maps"."id" = '{}' AND "entity_maps"."expires_at" > now()) AND "entity_id" = ANY(ARRAY[{shed}])"#,
-        probed_map()
-    );
-    let plan = explain_rolled_back(pool, PlannerPaths::Unrestricted, &prune).await;
+    // The delete the store issues for a page that shed entities.
+    let plan = explain_rolled_back(pool, PlannerPaths::Unrestricted, prune(&probed_map(), shed.clone())).await; // clone: the plan and the run each own the shed set.
     assert!(
         plan.contains("idx_entity_map_entries_entity_id"),
         "the prune must seek the entity index: {plan}"
     );
     assert!(!plan.contains("Seq Scan on entity_map_entries"), "the prune must not scan the entries: {plan}");
 
-    let removed = sqlx::query(sqlx::AssertSqlSafe(prune))
+    let removed = prune(&probed_map(), shed)
+        .to_query()
         .execute(pool)
         .await
         .expect("the prune must run")
         .rows_affected();
     assert_eq!(removed, u64::try_from(SHED_ENTITIES).expect("fits"), "every pair of the named entities goes");
-    let remaining: Vec<i64> = sqlx::query_scalar(
-        "SELECT count(*) FROM entity_maps AS em JOIN entity_map_entries AS e USING (entity_map_key) \
-         WHERE em.id LIKE $1 || '%' GROUP BY em.entity_map_key ORDER BY count(*)",
-    )
-    .bind(SEED_PREFIX)
-    .fetch_all(pool)
-    .await
-    .expect("the remaining entries must be countable");
+    let remaining: Vec<i64> = Query::select()
+        .expr(count_all())
+        .from(EntityMaps::Table)
+        .inner_join(
+            EntityMapEntries::Table,
+            Expr::col((EntityMapEntries::Table, EntityMapEntries::EntityMapKey)).equals((EntityMaps::Table, EntityMaps::EntityMapKey)),
+        )
+        .and_where(Expr::col((EntityMaps::Table, EntityMaps::Id)).like(format!("{SEED_PREFIX}%")))
+        .group_by_col((EntityMaps::Table, EntityMaps::EntityMapKey))
+        .order_by_expr(count_all(), Order::Asc)
+        .to_query_scalar()
+        .fetch_all(pool)
+        .await
+        .expect("the remaining entries must be countable");
     let expected: Vec<i64> = once(i64::from(ENTRIES_PER_MAP - SHED_ENTITIES))
         .chain(repeat_n(i64::from(ENTRIES_PER_MAP), usize::try_from(SEEDED_MAPS - 1).expect("fits")))
         .collect();

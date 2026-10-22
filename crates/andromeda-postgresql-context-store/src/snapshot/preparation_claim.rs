@@ -17,25 +17,10 @@ use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::Sna
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_codes::snapshot_status::SnapshotStatusCode;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
-use andromeda_postgresql_seaquery::clock::now;
+use andromeda_postgresql_seaquery::{clock::now, statement::Statement};
 use andromeda_snapshot::{error::SnapshotError, store::SnapshotPreparationJob};
 use chrono::{DateTime, Utc};
-use sea_query::{
-    Alias,
-    Expr,
-    ExprTrait,
-    JoinType,
-    Keyword,
-    LockBehavior,
-    LockType,
-    Order,
-    PostgresQueryBuilder,
-    Query,
-    SelectStatement,
-    SimpleExpr,
-    UpdateStatement,
-};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Alias, Expr, ExprTrait, JoinType, Keyword, LockBehavior, LockType, Order, Query, SelectStatement, SimpleExpr, UpdateStatement};
 use sqlx::{PgPool, Postgres, Row, Transaction};
 
 /// The alias the clone-source lookup reads the source's control record under.
@@ -110,8 +95,8 @@ pub(crate) async fn next_preparing_snapshot(
 ) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
     let current = current_version()?;
     let mut transaction = pool.begin().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
-    let (sql, values) = next_preparing_statement(current).build_sqlx(PostgresQueryBuilder);
-    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let row = next_preparing_statement(current)
+        .to_query()
         .fetch_optional(&mut *transaction)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
@@ -132,8 +117,8 @@ pub(crate) async fn next_preparing_snapshot(
         .transpose()
         .map_err(|error| SnapshotError::from(undecodable(&error)))?;
     let query_context = row_query_context(&row).map_err(|error| persistence_error::<SnapshotError>(error))?;
-    let (sql, values) = claim_statement(snapshot_key, claimed_by, lease_until).build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    claim_statement(snapshot_key, claimed_by, lease_until)
+        .to_query()
         .execute(&mut *transaction)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
@@ -172,8 +157,8 @@ pub(crate) async fn renew_preparation_lease(
         .and_where(Expr::col(SnapshotPreparation::ClaimedBy).eq(claimed_by.as_uuid()))
         .and_where(status_is_preparing())
         .to_owned();
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let result = statement
+        .to_query()
         .execute(pool)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
@@ -240,8 +225,8 @@ pub(crate) async fn share_claimed_preparation(
 
 /// Run one claimed-preparation lookup, decoding the key it finds.
 async fn claimed_key(transaction: &mut Transaction<'_, Postgres>, statement: &SelectStatement) -> Result<Option<SnapshotKey>, SnapshotError> {
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    sqlx::query_scalar_with::<_, i64, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
+    statement
+        .to_query_scalar::<i64>()
         .fetch_optional(&mut **transaction)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?
@@ -268,8 +253,8 @@ pub(crate) async fn restart_preparation(pool: &PgPool, id: &Identifier, claimed_
         transaction.rollback().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
         return Ok(false);
     };
-    let (sql, values) = lease_statement(snapshot_key, lease_until).build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    lease_statement(snapshot_key, lease_until)
+        .to_query()
         .execute(&mut *transaction)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
@@ -296,8 +281,8 @@ fn release_statement(id: &Identifier, claimed_by: LeaseHolder) -> UpdateStatemen
 /// Give up the claim this replica holds, so any worker's next pass claims the
 /// Snapshot without waiting out the lease; a claim already lost is left alone.
 pub(crate) async fn release_preparation(pool: &PgPool, id: &Identifier, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
-    let (sql, values) = release_statement(id, claimed_by).build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    release_statement(id, claimed_by)
+        .to_query()
         .execute(pool)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;

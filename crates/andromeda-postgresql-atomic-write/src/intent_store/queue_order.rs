@@ -17,10 +17,10 @@ use andromeda_postgresql_schema::queue::TemporalAppendIntents;
 use andromeda_postgresql_seaquery::{
     literal::int_literal,
     pg_array::{all, any, is_any_of},
+    statement::Statement,
 };
 use andromeda_temporal::error::TemporalError;
-use sea_query::{Cond, Expr, ExprTrait, Iden, JoinType, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Cond, Expr, ExprTrait, Iden, JoinType, Query, SelectStatement, SimpleExpr};
 use sqlx::PgConnection;
 use std::collections::HashSet;
 
@@ -116,8 +116,8 @@ impl PostgresTemporalIntentStore {
         if entity_ids.is_empty() {
             return Ok(HashSet::new());
         }
-        let (sql, values) = queued_entities_statement(entity_ids).build_sqlx(PostgresQueryBuilder);
-        let queued: Vec<String> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let queued: Vec<String> = queued_entities_statement(entity_ids)
+            .to_query_scalar()
             .fetch_all(connection)
             .await
             .map_err(|error| persistence(&error))?;

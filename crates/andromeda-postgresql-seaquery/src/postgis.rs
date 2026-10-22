@@ -59,6 +59,21 @@ enum PostgisFunction {
     /// `ST_Collect(a, b)`, and the aggregate `ST_Collect(geom)`.
     #[iden = "ST_Collect"]
     Collect,
+    /// `ST_AsText(geom)`.
+    #[iden = "ST_AsText"]
+    AsText,
+    /// `ST_GeomFromText(wkt, srid)`.
+    #[iden = "ST_GeomFromText"]
+    GeomFromText,
+    /// `ST_MakePoint(x, y)`.
+    #[iden = "ST_MakePoint"]
+    MakePoint,
+    /// `ST_SetSRID(geom, srid)`.
+    #[iden = "ST_SetSRID"]
+    SetSrid,
+    /// `ST_Zmflag(geom)`.
+    #[iden = "ST_Zmflag"]
+    Zmflag,
 }
 
 /// The `PostGIS` bounding-box overlap operator `&&`, true when two geometries'
@@ -234,6 +249,34 @@ pub fn st_as_ewkb(geometry: SimpleExpr) -> SimpleExpr {
     Func::cust(PostgisFunction::AsEwkb).args([geometry]).into()
 }
 
+/// `PostGIS`: `ST_AsText(geometry)` - the well-known text of a geometry.
+#[must_use]
+pub fn st_as_text(geometry: SimpleExpr) -> SimpleExpr {
+    Func::cust(PostgisFunction::AsText).args([geometry]).into()
+}
+
+/// `PostGIS`: `ST_GeomFromText(wkt, 4326)` - a WGS 84 geometry from its
+/// well-known text.
+#[must_use]
+pub fn st_geom_from_text_wgs84(wkt: SimpleExpr) -> SimpleExpr {
+    Func::cust(PostgisFunction::GeomFromText).args([wkt, Expr::val(WGS84_SRID)]).into()
+}
+
+/// `PostGIS`: `ST_SetSRID(ST_MakePoint(x, y), 4326)` - the WGS 84 point at
+/// longitude `x`, latitude `y`.
+#[must_use]
+pub fn st_point_wgs84(x: SimpleExpr, y: SimpleExpr) -> SimpleExpr {
+    let point = Func::cust(PostgisFunction::MakePoint).args([x, y]);
+    Func::cust(PostgisFunction::SetSrid).args([point.into(), Expr::val(WGS84_SRID)]).into()
+}
+
+/// `PostGIS`: `ST_Zmflag(geometry)` - 0 for a 2D geometry, 1 for one with a
+/// measure, 2 for one with a height, 3 for both.
+#[must_use]
+pub fn st_zmflag(geometry: SimpleExpr) -> SimpleExpr {
+    Func::cust(PostgisFunction::Zmflag).args([geometry]).into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,6 +284,24 @@ mod tests {
 
     fn render(expr: SimpleExpr) -> String {
         Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
+    }
+
+    #[test]
+    fn a_wgs84_point_names_its_srid_around_the_made_point() {
+        pretty_assertions::assert_eq!(
+            render(st_point_wgs84(Expr::val(13.5), Expr::val(52.5))),
+            "SELECT ST_SetSRID(ST_MakePoint(13.5, 52.5), 4326)"
+        );
+    }
+
+    #[test]
+    fn the_text_and_flag_functions_take_the_geometry_positionally() {
+        pretty_assertions::assert_eq!(render(st_as_text(Expr::col("location"))), r#"SELECT ST_AsText("location")"#);
+        pretty_assertions::assert_eq!(render(st_zmflag(Expr::col("location"))), r#"SELECT ST_Zmflag("location")"#);
+        pretty_assertions::assert_eq!(
+            render(st_geom_from_text_wgs84(Expr::val("POINT(1 2)"))),
+            "SELECT ST_GeomFromText('POINT(1 2)', 4326)"
+        );
     }
 
     #[test]

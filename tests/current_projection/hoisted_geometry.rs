@@ -13,9 +13,20 @@ use crate::{
     projection_rows::entity_key,
     write_consequences::{core_context, create, temporal_instances, write},
 };
+use andromeda_postgresql_schema::{
+    current::{CurrentAttributes, EntitySearch},
+    name_dictionary::AttributeNames,
+};
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    pg_type::PostgresType,
+    postgis::{st_as_text, st_geom_from_text_wgs84},
+    statement::Statement,
+};
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
+use sea_query::{Alias, Expr, ExprTrait, Query};
 use serde_json::json;
 use sqlx::PgPool;
 use urlencoding::encode;
@@ -27,8 +38,12 @@ const MARKER: &str = "POINT(1 2)";
 /// The stored search row of one Entity: its `location` as text, and the
 /// transaction that last wrote the row version.
 async fn search_row(pool: &PgPool, key: i64) -> (String, String) {
-    sqlx::query_as("SELECT ST_AsText(location), xmin::text FROM entity_search WHERE entity_key = $1")
-        .bind(key)
+    Query::select()
+        .expr(st_as_text(Expr::col(EntitySearch::Location)))
+        .expr(cast(Expr::col(Alias::new("xmin")), PostgresType::Text))
+        .from(EntitySearch::Table)
+        .and_where(Expr::col(EntitySearch::EntityKey).eq(key))
+        .to_query_as()
         .fetch_one(pool)
         .await
         .expect("the search row must be readable")
@@ -37,15 +52,19 @@ async fn search_row(pool: &PgPool, key: i64) -> (String, String) {
 /// The transaction that last wrote the `location` row of the current-value
 /// projection.
 async fn location_projection_version(pool: &PgPool, key: i64) -> String {
-    sqlx::query_scalar(
-        "SELECT c.xmin::text FROM current_attributes AS c \
-         JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
-         WHERE c.entity_key = $1 AND an.name = 'https://uri.etsi.org/ngsi-ld/location'",
-    )
-    .bind(key)
-    .fetch_one(pool)
-    .await
-    .expect("the location projection row must be readable")
+    Query::select()
+        .expr(cast(Expr::col((CurrentAttributes::Table, Alias::new("xmin"))), PostgresType::Text))
+        .from(CurrentAttributes::Table)
+        .inner_join(
+            AttributeNames::Table,
+            Expr::col((AttributeNames::Table, AttributeNames::AttributeNameKey)).equals((CurrentAttributes::Table, CurrentAttributes::AttributeNameKey)),
+        )
+        .and_where(Expr::col((CurrentAttributes::Table, CurrentAttributes::EntityKey)).eq(key))
+        .and_where(Expr::col((AttributeNames::Table, AttributeNames::Name)).eq("https://uri.etsi.org/ngsi-ld/location"))
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await
+        .expect("the location projection row must be readable")
 }
 
 #[tokio::test]
@@ -66,9 +85,11 @@ async fn current_projection_a_write_leaving_the_location_keeps_its_search_column
     )
     .await;
     let key = entity_key(pool, &id).await.expect("the created Entity has a row");
-    sqlx::query("UPDATE entity_search SET location = ST_GeomFromText($1, 4326) WHERE entity_key = $2")
-        .bind(MARKER)
-        .bind(key)
+    Query::update()
+        .table(EntitySearch::Table)
+        .value(EntitySearch::Location, st_geom_from_text_wgs84(Expr::val(MARKER)))
+        .and_where(Expr::col(EntitySearch::EntityKey).eq(key))
+        .to_query()
         .execute(pool)
         .await
         .expect("the marker must be writable");

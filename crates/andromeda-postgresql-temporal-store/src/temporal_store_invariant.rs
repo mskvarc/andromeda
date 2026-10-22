@@ -6,7 +6,7 @@
 //! cannot give when the store is correct, so reaching one means the adapter or
 //! the tenant's schema is wrong rather than the request.
 
-use crate::schema_ddl::timescale_policy::HypertableName;
+use crate::hypertable_policy::HypertableName;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use std::num::TryFromIntError;
 use thiserror::Error;

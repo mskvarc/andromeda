@@ -8,13 +8,16 @@
 
 use crate::{
     notification_fixture::{delivery_ids, queue_notification, readable},
-    queue_database::{delivery_queue, queue_database},
+    queue_database::{delivery_of, delivery_queue, queue_database},
     queue_workers::{delivery_worker, holding_lease},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_notification::{delivery_entry::DeliveryKey, delivery_store::DeliveryStore, held_events::HeldEvents};
+use andromeda_postgresql_schema::notification::NotificationDeliveries;
+use andromeda_postgresql_seaquery::{aggregate::count_all, catalog_function::num_nonnulls, statement::Statement};
 use chrono::{Duration, Utc};
 use pretty_assertions::assert_eq;
+use sea_query::{Expr, ExprTrait};
 use serial_test::serial;
 use sqlx::PgPool;
 
@@ -27,8 +30,14 @@ const MAX_ATTEMPTS: i32 = 5;
 
 /// Attempts recorded against one delivery, and how many of the claim columns it holds.
 async fn attempts_and_claim_columns(pool: &PgPool, delivery: i64) -> (i32, i32) {
-    sqlx::query_as("SELECT attempt_count, num_nonnulls(claimed_at, claimed_by, lease_until) FROM notification_deliveries WHERE delivery_key = $1")
-        .bind(delivery)
+    delivery_of(delivery)
+        .column(NotificationDeliveries::AttemptCount)
+        .expr(num_nonnulls([
+            Expr::col(NotificationDeliveries::ClaimedAt),
+            Expr::col(NotificationDeliveries::ClaimedBy),
+            Expr::col(NotificationDeliveries::LeaseUntil),
+        ]))
+        .to_query_as()
         .fetch_one(pool)
         .await
         .expect("delivery retry state")
@@ -36,8 +45,9 @@ async fn attempts_and_claim_columns(pool: &PgPool, delivery: i64) -> (i32, i32) 
 
 /// Whether the delivery has been stamped exhausted.
 async fn is_exhausted(pool: &PgPool, delivery: i64) -> bool {
-    sqlx::query_scalar("SELECT exhausted_at IS NOT NULL FROM notification_deliveries WHERE delivery_key = $1")
-        .bind(delivery)
+    delivery_of(delivery)
+        .expr(Expr::col(NotificationDeliveries::ExhaustedAt).is_not_null())
+        .to_query_scalar()
         .fetch_one(pool)
         .await
         .expect("delivery exhaustion state")
@@ -144,8 +154,10 @@ async fn durable_queue_a_terminal_failure_retires_the_delivery_and_releases_its_
     );
     assert!(retired.is_empty(), "a retired delivery is permanently unclaimable");
 
-    let undelivered: i64 = sqlx::query_scalar("SELECT count(*) FROM notification_deliveries WHERE delivery_key = $1 AND delivered_at IS NULL")
-        .bind(delivery)
+    let undelivered: i64 = delivery_of(delivery)
+        .expr(count_all())
+        .and_where(Expr::col(NotificationDeliveries::DeliveredAt).is_null())
+        .to_query_scalar()
         .fetch_one(&pool)
         .await
         .expect("retired delivery state");

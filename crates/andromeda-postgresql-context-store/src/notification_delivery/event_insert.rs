@@ -20,14 +20,16 @@ use andromeda_postgresql_schema::{
     subscriptions::Subscriptions,
 };
 use andromeda_postgresql_seaquery::{
+    cast::cast,
+    external_arguments::{ExternalArguments, ExternallyBound},
+    pg_array::nullable_array,
     pg_type::PostgresType,
-    placeholder::{external_placeholder, external_placeholder_as},
-    unnest::{UnnestColumn, apply_column_alias, unnest_call},
+    statement::Statement,
+    unnest::{UnnestAliased, UnnestColumn, unnest_call},
 };
 use chrono::{DateTime, Utc};
-use sea_query::{Alias, Expr, ExprTrait, InsertStatement, JoinType, Keyword, LockType, OnConflict, PostgresQueryBuilder, Query, SimpleExpr};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{Postgres, Transaction, postgres::PgArguments, query::QueryAs};
+use sea_query::{Alias, Expr, ExprTrait, InsertStatement, JoinType, Keyword, LockType, OnConflict, Query, SimpleExpr};
+use sqlx::{Postgres, Transaction};
 
 /// Persist the notification events of one write and the deliveries they owe.
 ///
@@ -76,27 +78,21 @@ pub async fn insert_events_in_tx(
     }
 
     let rows = events.iter().map(|event| EventRow::of(event, keys)).collect::<Result<Vec<_>, _>>()?;
-    let sql = insert_events_statement(target, &rows)?.to_string(PostgresQueryBuilder);
-    let mut insert = sqlx::query_as::<_, (i64, i32)>(sqlx::AssertSqlSafe(sql.as_str()))
-        .bind(record.recorded_at())
-        .bind(record.write_id().as_uuid());
-    for row in rows {
-        insert = row.bind(insert);
-    }
+    let mut external = ExternalArguments::default();
+    let insert = insert_events_statement(target, record, rows, &mut external)?;
     // The conflict clause suppresses a replayed event, so a replay reads back
     // only the events this transaction actually inserted; every one of them is
     // then owed its deliveries.
-    let inserted: Vec<(i64, i32)> = insert.fetch_all(&mut **tx).await?;
+    let inserted: Vec<(i64, i32)> = ExternallyBound::new(insert, external).into_query_as().fetch_all(&mut **tx).await?;
 
     let (event_keys, subscription_keys) = owed_deliveries(events, &inserted);
     if event_keys.is_empty() {
         return Ok(());
     }
-    let statement = insert_deliveries_statement(target, event_keys, subscription_keys, record.recorded_at())?;
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let (alias, columns) = pair_source();
-    let sql = apply_column_alias(sql, &alias, &columns);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut **tx).await?;
+    insert_deliveries_statement(target, event_keys, subscription_keys, record.recorded_at())?
+        .to_query()
+        .execute(&mut **tx)
+        .await?;
 
     Ok(())
 }
@@ -120,8 +116,7 @@ fn matches_ordinal(event: &NewNotificationEvent<'_>, ordinal: i32) -> bool {
     event.ordinal.as_i32().is_ok_and(|value| value == ordinal)
 }
 
-/// The values one event row binds, after the write's instant and identity,
-/// which every row shares as `$1` and `$2`.
+/// The values one event row binds.
 #[derive(Debug)]
 struct EventRow<'a> {
     /// `event_ordinal`.
@@ -184,97 +179,42 @@ impl<'a> EventRow<'a> {
         })
     }
 
-    /// The row's markers in column order, numbered on from `markers`; an
-    /// absent state is the literal `NULL` and takes no marker.
-    fn values(&self, markers: &mut Markers) -> [SimpleExpr; 13] {
-        let state = |present: bool, markers: &mut Markers| {
-            if present {
-                markers.next_as(PostgresType::EntityStateRecord)
-            } else {
-                SimpleExpr::Keyword(Keyword::Null)
-            }
+    /// The row's values in column order, `record` stamping the write's
+    /// instant and identity that every row shares.
+    ///
+    /// A state is one `entity_state_record`, a composite sea-query cannot
+    /// carry, so it is pushed onto `external`; an absent state is the literal
+    /// `NULL`.
+    fn values(self, record: &WriteRecord, external: &mut ExternalArguments<'a>) -> [SimpleExpr; 13] {
+        let mut state = |state: Option<EntityStateRecord>| match state {
+            Some(state) => cast(external.push(state), PostgresType::EntityStateRecord),
+            None => SimpleExpr::Keyword(Keyword::Null),
         };
         [
-            external_placeholder(RECORDED_AT),
-            external_placeholder(WRITE_ID),
-            markers.next(),
-            markers.next(),
-            markers.next(),
-            markers.next(),
-            markers.next(),
-            markers.next(),
-            state(self.entity_snapshot.is_some(), markers),
-            state(self.previous_snapshot.is_some(), markers),
-            markers.next(),
-            markers.next(),
-            markers.next(),
+            Expr::val(record.recorded_at()),
+            Expr::val(record.write_id().as_uuid()),
+            Expr::val(self.event_ordinal),
+            Expr::val(self.lifecycle),
+            Expr::val(self.entity_id),
+            Expr::val(self.change_kinds),
+            Expr::val(self.change_attribute_name_keys),
+            nullable_array(self.change_dataset_ids.into_iter().map(|dataset| dataset.map(str::to_owned))),
+            state(self.entity_snapshot),
+            state(self.previous_snapshot),
+            Expr::val(self.entity_created_at),
+            Expr::val(self.entity_modified_at),
+            Expr::val(self.entity_expires_at),
         ]
     }
-
-    /// Bind the row's values onto `insert` in the order [`EventRow::values`]
-    /// numbers them.
-    fn bind<'q>(self, insert: QueryAs<'q, Postgres, (i64, i32), PgArguments>) -> QueryAs<'q, Postgres, (i64, i32), PgArguments>
-    where
-        'a: 'q,
-    {
-        let insert = insert
-            .bind(self.event_ordinal)
-            .bind(self.lifecycle)
-            .bind(self.entity_id)
-            .bind(self.change_kinds)
-            .bind(self.change_attribute_name_keys)
-            .bind(self.change_dataset_ids);
-        let insert = match self.entity_snapshot {
-            Some(state) => insert.bind(state),
-            None => insert,
-        };
-        let insert = match self.previous_snapshot {
-            Some(state) => insert.bind(state),
-            None => insert,
-        };
-        insert.bind(self.entity_created_at).bind(self.entity_modified_at).bind(self.entity_expires_at)
-    }
 }
 
-/// The marker of the write's instant, which every event row records as its
-/// `created_at`.
-const RECORDED_AT: usize = 1;
-
-/// The marker of the write's identity, which every event row records.
-const WRITE_ID: usize = 2;
-
-/// The next free positional marker of a statement whose values are all bound
-/// outside sea-query.
-#[derive(Debug)]
-struct Markers(usize);
-
-impl Markers {
-    /// Markers numbered on after the two every row shares.
-    const fn after_shared() -> Markers {
-        Markers(WRITE_ID + 1)
-    }
-
-    /// The next marker.
-    fn next(&mut self) -> SimpleExpr {
-        let marker = external_placeholder(self.0);
-        self.0 += 1;
-        marker
-    }
-
-    /// The next marker, cast to `ty`.
-    fn next_as(&mut self, ty: PostgresType) -> SimpleExpr {
-        let marker = external_placeholder_as(self.0, ty);
-        self.0 += 1;
-        marker
-    }
-}
-
-/// Insert every event of one write in a single statement, returning the
-/// surrogate key and ordinal of each event actually written.
+/// Insert every event of `rows`, the events of the write `record` stamps, in
+/// a single statement, returning the surrogate key and ordinal of each event
+/// actually written.
 ///
-/// Every value is a bare marker bound by the caller: a state is one
-/// `entity_state_record`, a composite sea-query cannot carry, and a change's
-/// `datasetId`s an array with NULL elements, which it cannot carry either.
+/// A change's `datasetId`s are an array with NULL elements and a state is an
+/// `entity_state_record`; neither is a plain value, so the states travel as
+/// external arguments pushed onto `external`.
 ///
 /// `ON CONFLICT (write_id, event_ordinal) DO NOTHING` is what makes a commit
 /// replayed under its original write identity insert no second copy of an event
@@ -282,7 +222,12 @@ impl Markers {
 /// no delivery for it either. The conflict target is the columns
 /// `uq_notification_events_write_identity` is declared on, which is the unique
 /// index PostgreSQL matches the conflict against.
-fn insert_events_statement(target: &ContextTarget, rows: &[EventRow<'_>]) -> Result<InsertStatement, ContextStoreError> {
+fn insert_events_statement<'a>(
+    target: &ContextTarget,
+    record: &WriteRecord,
+    rows: Vec<EventRow<'a>>,
+    external: &mut ExternalArguments<'a>,
+) -> Result<InsertStatement, ContextStoreError> {
     let mut statement = Query::insert();
     statement.into_table(table_of(target, NotificationEvents::Table)).columns([
         NotificationEvents::CreatedAt,
@@ -299,9 +244,8 @@ fn insert_events_statement(target: &ContextTarget, rows: &[EventRow<'_>]) -> Res
         NotificationEvents::EntityModifiedAt,
         NotificationEvents::EntityExpiresAt,
     ]);
-    let mut markers = Markers::after_shared();
     for row in rows {
-        statement.values(row.values(&mut markers))?;
+        statement.values(row.values(record, external))?;
     }
     statement
         .on_conflict(
@@ -316,8 +260,8 @@ fn insert_events_statement(target: &ContextTarget, rows: &[EventRow<'_>]) -> Res
 /// The `UNNEST(…) AS p(event_key, subscription_key)` source the delivery
 /// set-write reads its pairs from.
 ///
-/// [`apply_column_alias`] rewrites the alias sea-query renders into this
-/// column-list form; the names must match what the projection reads.
+/// The delivery statement names the source's alias after these columns, which
+/// must match what the projection reads.
 fn pair_source() -> (Alias, [UnnestColumn; 2]) {
     (
         Alias::new("p"),
@@ -352,8 +296,9 @@ fn insert_deliveries_statement(
     event_keys: Vec<i64>,
     subscription_keys: Vec<i64>,
     next_attempt_at: DateTime<Utc>,
-) -> Result<InsertStatement, ContextStoreError> {
+) -> Result<UnnestAliased<InsertStatement>, ContextStoreError> {
     let (pairs, columns) = pair_source();
+    let aliased = pairs.clone(); // clone: the aliased source names the alias the projection reads.
     let subscription = Alias::new("s");
     let source = Query::select()
         .column((pairs.clone(), NotificationDeliveries::EventKey))
@@ -382,16 +327,19 @@ fn insert_deliveries_statement(
             NotificationDeliveries::NextAttemptAt,
         ])
         .select_from(source)?;
-    Ok(statement.clone())
+    Ok(UnnestAliased::new(statement.clone()).with_columns(aliased, &columns))
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::notification_delivery::{
-        event_insert::{EventRow, insert_deliveries_statement, insert_events_statement, owed_deliveries, pair_source},
-        rows::NewNotificationEvent,
+    use crate::{
+        notification_delivery::{
+            event_insert::{EventRow, insert_deliveries_statement, insert_events_statement, owed_deliveries},
+            rows::NewNotificationEvent,
+        },
+        statement_text::text_of,
     };
-    use andromeda_context_commit::{subscription_key::SubscriptionKey, write_ordinal::WriteOrdinal};
+    use andromeda_context_commit::{subscription_key::SubscriptionKey, write_ordinal::WriteOrdinal, write_record::WriteRecord};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_entity::{
         entity_state::EntityState,
@@ -412,7 +360,7 @@ mod tests {
         dictionary::resolved_names::ResolvedNames,
         entity_type_name_key::EntityTypeNameKey,
     };
-    use andromeda_postgresql_seaquery::unnest::apply_column_alias;
+    use andromeda_postgresql_seaquery::external_arguments::ExternalArguments;
     use chrono::{TimeZone, Utc};
     use sea_query::PostgresQueryBuilder;
 
@@ -478,9 +426,11 @@ mod tests {
             .iter()
             .map(|event| EventRow::of(event, &keys()).expect("a representable event"))
             .collect::<Vec<_>>();
-        insert_events_statement(&target(), &rows)
+        let mut external = ExternalArguments::default();
+        insert_events_statement(&target(), &WriteRecord::mint(Utc::now()), rows, &mut external)
             .expect("a valid insert")
-            .to_string(PostgresQueryBuilder)
+            .build(PostgresQueryBuilder)
+            .0
     }
 
     #[test]
@@ -493,15 +443,15 @@ mod tests {
         assert!(sql.contains(r#"RETURNING "event_key", "event_ordinal""#), "{sql}");
     }
 
-    /// Every row records the write's instant and identity, bound once.
+    /// Every row records the write's instant and identity first.
     #[test]
-    fn every_event_of_a_write_shares_its_instant_and_identity() {
+    fn every_event_of_a_write_records_its_instant_and_identity() {
         let entity = entity();
         let snapshot = vehicle();
         let change = change(EntityLifecycle::Modified);
         let sql = statement(&[event(&entity, &change, 3, &[1], &snapshot), event(&entity, &change, 4, &[1], &snapshot)]);
         assert!(sql.contains("VALUES ($1, $2, $3, $4,"), "{sql}");
-        assert!(sql.contains("($1, $2, $13, $14,"), "{sql}");
+        assert!(sql.contains("($12, $13, $14, $15,"), "{sql}");
     }
 
     #[test]
@@ -544,7 +494,7 @@ mod tests {
         modification.previous_snapshot = Some(&previous);
         let sql = statement(&[modification]);
         pretty_assertions::assert_eq!(sql.matches("::entity_state_record").count(), 2, "{sql}");
-        assert!(sql.contains("$9::entity_state_record, $10::entity_state_record, $11, $12, $13)"), "{sql}");
+        assert!(sql.contains("::entity_state_record, $9, $10, $11)"), "{sql}");
         assert!(!sql.contains("json"), "{sql}");
     }
 
@@ -561,7 +511,7 @@ mod tests {
         assert!(row.entity_snapshot.is_some());
         assert!(row.previous_snapshot.is_none());
         let sql = statement(&[deletion]);
-        assert!(sql.contains("$9::entity_state_record, NULL, $10, $11, $12)"), "{sql}");
+        assert!(sql.contains("::entity_state_record, NULL, $9, $10, $11)"), "{sql}");
     }
 
     /// A deletion handed its removed state as the previous state alone still
@@ -613,22 +563,18 @@ mod tests {
         assert!(row.previous_snapshot.is_none());
         assert!(row.entity_created_at.is_none() && row.entity_modified_at.is_none() && row.entity_expires_at.is_none());
         let sql = statement(&[event(&entity, &change, 1, &[1], &current)]);
-        assert!(sql.contains("$9::entity_state_record, NULL, $10, $11, $12)"), "{sql}");
+        assert!(sql.contains("::entity_state_record, NULL, $9, $10, $11)"), "{sql}");
     }
 
     #[test]
     fn every_delivery_of_every_written_event_is_inserted_from_one_pair_of_arrays() {
-        let sql = insert_deliveries_statement(&target(), vec![42, 42, 43], vec![1, 2, 1], Utc::now())
-            .expect("a valid insert")
-            .to_string(PostgresQueryBuilder);
-        let (alias, columns) = pair_source();
-        let sql = apply_column_alias(sql, &alias, &columns);
+        let sql = text_of(&insert_deliveries_statement(&target(), vec![42, 42, 43], vec![1, 2, 1], Utc::now()).expect("a valid insert"));
         assert!(
             sql.contains(r#"INSERT INTO "notification_deliveries" ("event_key", "subscription_key", "next_attempt_at")"#),
             "{sql}"
         );
         assert!(
-            sql.contains(r"FROM UNNEST(ARRAY [42,42,43]::bigint[], ARRAY [1,2,1]::bigint[]) AS p(event_key, subscription_key)"),
+            sql.contains(r"FROM UNNEST($2::bigint[], $3::bigint[]) AS p(event_key, subscription_key)"),
             "{sql}"
         );
         assert!(
@@ -640,9 +586,7 @@ mod tests {
 
     #[test]
     fn the_delivery_insert_key_share_locks_only_the_subscriptions_it_joins() {
-        let sql = insert_deliveries_statement(&target(), vec![42], vec![1], Utc::now())
-            .expect("a valid insert")
-            .to_string(PostgresQueryBuilder);
+        let sql = text_of(&insert_deliveries_statement(&target(), vec![42], vec![1], Utc::now()).expect("a valid insert"));
         assert!(sql.ends_with(r#"FOR KEY SHARE OF "s""#), "{sql}");
     }
 

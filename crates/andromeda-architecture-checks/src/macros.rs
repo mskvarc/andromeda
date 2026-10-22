@@ -84,10 +84,11 @@ macro_rules! workspace_architecture {
                 $crate::raw_constant::assert_no_raw_iri_or_media_constants(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
-            /// No unsanctioned, non-baseline source builds SQL by hand.
+            /// No source outside the sea-query adapter spells SQL or hands
+            /// statement text to the driver.
             #[test]
             fn statements_are_built_through_sea_query_not_hand_written_sql() {
-                $crate::raw_sql::assert_no_new_raw_sql(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root), $crate::raw_sql::RAW_SQL_BASELINE);
+                $crate::raw_sql::assert_no_raw_sql(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
             /// Retired architecture surfaces remain absent.

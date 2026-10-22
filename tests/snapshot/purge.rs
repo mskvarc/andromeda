@@ -1,7 +1,13 @@
 //! Snapshot purge, expiry, and resource-pressure acceptance cases.
 
 use crate::support::{assert_problem_details, broker_url, clean_database, client, create_snapshot_raw, get_snapshot};
+use andromeda_postgresql_schema::snapshot::Snapshots;
+use andromeda_postgresql_seaquery::{
+    command::Command,
+    row_rejection::{RejectedEvent, RejectingTrigger},
+};
 use reqwest::StatusCode;
+use sea_query::{Alias, Expr, ExprTrait};
 use serde_json::{Value, json};
 use serial_test::serial;
 use sqlx::PgPool;
@@ -139,16 +145,14 @@ async fn snapshot_purge_partial_and_all_failed_return_exact_207_results() {
     let pool = PgPool::connect(&env::var("ANDROMEDA_TEST_DATABASE_URL").expect("Snapshot database URL"))
         .await
         .expect("Snapshot database connection");
-    sqlx::query(
-        "CREATE OR REPLACE FUNCTION snapshot_purge_failure_injection() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF OLD.id LIKE '%:fault' THEN RAISE EXCEPTION 'deterministic purge fault'; END IF; RETURN OLD; END $$",
-    )
-    .execute(&pool)
-    .await
-    .expect("purge failure function");
-    sqlx::query("CREATE TRIGGER snapshot_purge_failure BEFORE DELETE ON snapshots FOR EACH ROW EXECUTE FUNCTION snapshot_purge_failure_injection()")
-        .execute(&pool)
-        .await
-        .expect("purge failure trigger");
+    let purge_failure = RejectingTrigger::new(
+        Alias::new("snapshot_purge_failure"),
+        Snapshots::Table,
+        RejectedEvent::Delete,
+        Expr::col((Alias::new("old"), Snapshots::Id)).like("%:fault"),
+        "deterministic purge fault",
+    );
+    purge_failure.install().to_query().execute(&pool).await.expect("purge failure trigger");
 
     for id in ["urn:ngsi-ld:Snapshot:partial-ok", "urn:ngsi-ld:Snapshot:partial:fault"] {
         pretty_assertions::assert_eq!(create_snapshot_raw(&client, &snapshot(id, 8, None)).await.0, StatusCode::CREATED);
@@ -170,12 +174,5 @@ async fn snapshot_purge_partial_and_all_failed_return_exact_207_results() {
     pretty_assertions::assert_eq!(all_failed_body["success"], json!([]));
     pretty_assertions::assert_eq!(all_failed_body["errors"].as_array().expect("all-failed errors").len(), 2);
 
-    sqlx::query("DROP TRIGGER snapshot_purge_failure ON snapshots")
-        .execute(&pool)
-        .await
-        .expect("drop purge failure trigger");
-    sqlx::query("DROP FUNCTION snapshot_purge_failure_injection()")
-        .execute(&pool)
-        .await
-        .expect("drop purge failure function");
+    purge_failure.remove().to_query().execute(&pool).await.expect("drop purge failure trigger");
 }

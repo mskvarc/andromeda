@@ -12,9 +12,9 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_snapshot::{branch_condition::BranchCondition, error::SnapshotError};
-use sea_query::{Expr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Expr, ExprTrait, JoinType, Query, SelectStatement, SimpleExpr};
 use sqlx::PgPool;
 
 /// `snapshot_preparation.branch_schema_version >= current`: the Snapshot's
@@ -46,8 +46,8 @@ fn branch_version_statement(id: &Identifier) -> SelectStatement {
 /// when no such Snapshot exists.
 pub(crate) async fn read_branch_condition(pool: &PgPool, id: &Identifier) -> Result<Option<BranchCondition>, SnapshotError> {
     let current = current_version()?;
-    let (sql, values) = branch_version_statement(id).build_sqlx(PostgresQueryBuilder);
-    let stored = sqlx::query_scalar_with::<_, i32, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let stored = branch_version_statement(id)
+        .to_query_scalar::<i32>()
         .fetch_optional(pool)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;

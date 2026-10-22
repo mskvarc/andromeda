@@ -5,6 +5,7 @@
 pub mod broker_process;
 pub mod configuration;
 pub mod database_access;
+pub mod database_catalogue;
 pub mod database_isolation;
 pub mod database_reset;
 pub mod dictionary_seed;
@@ -29,6 +30,8 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-ngsi-ld-lexicon",
         "andromeda-postgresql-pool",
+        "andromeda-postgresql-schema",
+        "andromeda-postgresql-seaquery",
         "andromeda-tenancy",
         "andromeda-test-client",
         "andromeda-test-fixtures",

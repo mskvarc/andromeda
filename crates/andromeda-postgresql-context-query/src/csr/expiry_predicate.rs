@@ -22,12 +22,13 @@ pub fn not_expired() -> Condition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use andromeda_postgresql_seaquery::literal::int_literal;
     use sea_query::{Alias, PostgresQueryBuilder, Query};
 
     #[test]
     fn an_expired_registration_is_excluded_and_one_without_expiry_is_kept() {
         let sql = Query::select()
-            .expr(SeaExpr::cust("1"))
+            .expr(int_literal(1))
             .from(Alias::new("context_source_registrations"))
             .cond_where(not_expired())
             .to_string(PostgresQueryBuilder);

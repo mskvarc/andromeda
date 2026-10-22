@@ -10,28 +10,50 @@
 //! the lock is refused.
 
 use andromeda_postgresql_pool::schema_change_lock::{SCHEMA_CHANGE_LOCK_RETRY, SCHEMA_CHANGE_LOCK_TIMEOUT, is_lock_not_available};
-use andromeda_postgresql_seaquery::setting::{SettingScope, set_config};
-use sea_query::{PostgresQueryBuilder, Query, SelectStatement, Values};
-use sea_query_sqlx::{SqlxBinder, SqlxValues};
-use sqlx::{AssertSqlSafe, PgPool};
+use andromeda_postgresql_seaquery::{
+    command::Command,
+    setting::{Setting, SettingScope, set_config},
+    statement::Statement,
+};
+use sea_query::{Query, SelectStatement};
+use sqlx::{PgConnection, PgPool};
 
-/// Execute `sql` with `values` bound, in a transaction whose lock waits end
-/// after [`SCHEMA_CHANGE_LOCK_TIMEOUT`], running it again while the lock is
-/// refused.
+/// A storage-policy write: one statement or one command.
+pub(crate) trait BoundedWrite: Sync {
+    /// Run the write on `connection`.
+    fn execute(&self, connection: &mut PgConnection) -> impl Future<Output = Result<(), sqlx::Error>> + Send;
+}
+
+/// A write that is a statement with bound values.
+pub(crate) struct StatementWrite<S>(pub(crate) S);
+
+impl<S: Statement + Sync> BoundedWrite for StatementWrite<S> {
+    async fn execute(&self, connection: &mut PgConnection) -> Result<(), sqlx::Error> {
+        self.0.to_query().execute(connection).await.map(drop)
+    }
+}
+
+/// A write that is a utility command.
+pub(crate) struct CommandWrite<C>(pub(crate) C);
+
+impl<C: Command + Sync> BoundedWrite for CommandWrite<C> {
+    async fn execute(&self, connection: &mut PgConnection) -> Result<(), sqlx::Error> {
+        self.0.to_query().execute(connection).await.map(drop)
+    }
+}
+
+/// Run `write` in a transaction whose lock waits end after
+/// [`SCHEMA_CHANGE_LOCK_TIMEOUT`], running it again while the lock is refused.
 ///
 /// # Errors
 ///
-/// Returns the statement's error, or the refused lock once every attempt is
-/// spent.
-pub(crate) async fn execute_with_bounded_lock_wait(pool: &PgPool, sql: &str, values: &Values) -> Result<(), sqlx::Error> {
+/// Returns the write's error, or the refused lock once every attempt is spent.
+pub(crate) async fn execute_with_bounded_lock_wait(pool: &PgPool, write: &impl BoundedWrite) -> Result<(), sqlx::Error> {
     SCHEMA_CHANGE_LOCK_RETRY
-        .run(is_lock_not_available, || async {
+        .run(is_lock_not_available, async || {
             let mut transaction = pool.begin().await?;
-            let (bound_sql, bound_values) = lock_timeout_statement().build_sqlx(PostgresQueryBuilder);
-            sqlx::query_with(AssertSqlSafe(bound_sql), bound_values).execute(&mut *transaction).await?;
-            sqlx::query_with(AssertSqlSafe(sql), SqlxValues(values.clone()))
-                .execute(&mut *transaction)
-                .await?;
+            lock_timeout_statement().to_query().execute(&mut *transaction).await?;
+            write.execute(&mut transaction).await?;
             transaction.commit().await
         })
         .await
@@ -41,7 +63,7 @@ pub(crate) async fn execute_with_bounded_lock_wait(pool: &PgPool, sql: &str, val
 pub(crate) fn lock_timeout_statement() -> SelectStatement {
     Query::select()
         .expr(set_config(
-            "lock_timeout",
+            Setting::LockTimeout,
             &format!("{}ms", SCHEMA_CHANGE_LOCK_TIMEOUT.as_millis()),
             SettingScope::Transaction,
         ))

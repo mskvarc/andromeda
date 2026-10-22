@@ -534,7 +534,7 @@ mod tests {
             "{}",
             built.sql
         );
-        assert!(built.sql.contains("\"ri\".\"property_name_keys\" && (ARRAY((SELECT"), "{}", built.sql);
+        assert!(built.sql.contains("\"ri\".\"property_name_keys\" && (ARRAY (SELECT"), "{}", built.sql);
         assert!(!built.sql.contains("NOT EXISTS"), "{}", built.sql);
     }
 
@@ -581,7 +581,7 @@ mod tests {
         assert!(
             built
                 .sql
-                .contains(r#""id" = ANY(array_cat(ARRAY((SELECT "id" FROM "context_source_registrations" WHERE "#),
+                .contains(r#""id" = ANY(array_cat(ARRAY (SELECT "id" FROM "context_source_registrations" WHERE "#),
             "{}",
             built.sql
         );

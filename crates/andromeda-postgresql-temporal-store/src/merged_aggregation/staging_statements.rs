@@ -28,7 +28,7 @@ use andromeda_postgresql_schema::{
 use andromeda_postgresql_seaquery::{
     branch::qualified,
     pg_operator::PgBinaryOperator,
-    temporary_table::{TemporarySchema, temporary_copy_of},
+    temporary_table::{TemporaryCopy, TemporarySchema},
 };
 use andromeda_postgresql_temporal_query::axis::axis_column;
 use chrono::{DateTime, Utc};
@@ -128,17 +128,14 @@ fn temporary(table: impl IntoIden) -> TableRef {
     qualified(Some(&temporary_schema()), table)
 }
 
-/// The three `CREATE TEMPORARY TABLE` statements copying the shape of the
-/// branch's temporal catalogue, stream catalogue and history.
-pub(crate) fn staging_tables(branch: &DynIden) -> [String; 3] {
+/// The three temporary copies of the shape of the branch's temporal
+/// catalogue, stream catalogue and history.
+pub(crate) fn staging_tables(branch: &DynIden) -> [TemporaryCopy; 3] {
+    // clone: a table name owns the schema iden it qualifies with, a cheap shared handle
     [
-        temporary_copy_of(&TemporalEntities::Table.into_iden(), branch, &TemporalEntities::Table.into_iden()),
-        temporary_copy_of(
-            &TemporalAttributeStreams::Table.into_iden(),
-            branch,
-            &TemporalAttributeStreams::Table.into_iden(),
-        ),
-        temporary_copy_of(&AttributeHistory::Table.into_iden(), branch, &AttributeHistory::Table.into_iden()),
+        TemporaryCopy::new(TemporalEntities::Table, (branch.clone(), TemporalEntities::Table.into_iden())),
+        TemporaryCopy::new(TemporalAttributeStreams::Table, (branch.clone(), TemporalAttributeStreams::Table.into_iden())),
+        TemporaryCopy::new(AttributeHistory::Table, (branch.clone(), AttributeHistory::Table.into_iden())),
     ]
 }
 
@@ -346,6 +343,7 @@ mod tests {
     use crate::merged_aggregation::staging_statements::{CopiedHistory, branch_schema, copy_history, queued_grains, staging_tables};
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
+    use andromeda_postgresql_seaquery::temporary_table::TemporaryCopy;
     use sea_query::{Alias, IntoIden, PostgresQueryBuilder};
 
     fn vehicle() -> Identifier {
@@ -360,7 +358,7 @@ mod tests {
         let live = branch_schema(None);
         pretty_assertions::assert_eq!(
             staging_tables(&live)[0],
-            r#"CREATE TEMPORARY TABLE "temporal_entities" (LIKE "public"."temporal_entities" INCLUDING DEFAULTS INCLUDING INDEXES) ON COMMIT DROP"#
+            TemporaryCopy::new(Alias::new("temporal_entities"), (Alias::new("public"), Alias::new("temporal_entities")))
         );
         let copy = copy_history(None, &vehicle(), CopiedHistory::Whole)
             .expect("the copy builds")
@@ -370,7 +368,10 @@ mod tests {
         assert!(copy.contains(r#"JOIN "pg_temp"."temporal_attribute_streams" AS "ts""#), "{copy}");
 
         let snapshot = branch_schema(Some(Alias::new("snap_7").into_iden()));
-        assert!(staging_tables(&snapshot)[2].contains(r#"(LIKE "snap_7"."attribute_history""#));
+        pretty_assertions::assert_eq!(
+            staging_tables(&snapshot)[2],
+            TemporaryCopy::new(Alias::new("attribute_history"), (Alias::new("snap_7"), Alias::new("attribute_history")))
+        );
     }
 
     /// A copied local row keeps every column the branch's row holds, the typed

@@ -1,9 +1,9 @@
 use crate::{
     intent_application::{
-        CreatedKeys,
         StepRole,
+        StepStatement,
         application_steps,
-        intent_source::{EntryReads, IntentSource, reach_statement},
+        intent_source::{EntryReads, IntentSource, StagedSource, reach_statement},
     },
     temporal_entry_record::{
         TemporalIntentRecord,
@@ -21,26 +21,77 @@ use andromeda_temporal::{
     scope_observation::ScopeObservation,
 };
 use pretty_assertions::assert_eq;
-use sea_query::{Alias, DynIden, IntoIden, PostgresQueryBuilder};
-use std::collections::BTreeSet;
+use sea_query::{Alias, DynIden, Expr, IntoIden, PostgresQueryBuilder, Query};
+use std::{collections::BTreeSet, sync::LazyLock};
 
 /// The queue rows the drain reads, as every statement names them.
-const QUEUED: &str = r#"(SELECT * FROM "temporal_append_intents" WHERE "intent_key" = ANY($1::bigint[])) AS "i""#;
+const QUEUED: &str = r#"(SELECT * FROM "temporal_append_intents" WHERE "intent_key" = ANY(ARRAY [3,5]::bigint[])) AS "i""#;
 
-/// The intents a commit binds, as every statement names them.
-const BOUND: &str = concat!(
-    r#"(SELECT $2::uuid AS "write_id", $3::timestamptz AS "recorded_at", "input"."entity_id", "input"."entity_type_name_keys", "#,
-    r#""input"."base_ordinal", "input"."entries", "input"."ordinality" AS "intent_key" "#,
-    r#"FROM UNNEST($1::temporal_intent[]) WITH ORDINALITY AS "input") AS "i""#,
-);
+/// The write record every commit statement is built over, so the text of the
+/// bound source is the same in every statement.
+static COMMIT_RECORD: LazyLock<WriteRecord> = LazyLock::new(|| WriteRecord::restored(WriteId::mint(), recorded_at()));
+
+/// The text a value renders to inline.
+fn inlined(value: sea_query::SimpleExpr) -> String {
+    Query::select()
+        .expr(value)
+        .to_owned()
+        .to_string(PostgresQueryBuilder)
+        .trim_start_matches("SELECT ")
+        .to_owned()
+}
+
+/// The intents a commit binds, as every statement names them: the intents
+/// travel as the one external argument, which renders as its marker.
+fn bound() -> String {
+    let write_id = inlined(Expr::val(COMMIT_RECORD.write_id().as_uuid()));
+    let recorded_at = inlined(Expr::val(COMMIT_RECORD.recorded_at()));
+    format!(
+        concat!(
+            r#"(SELECT {write_id}::uuid AS "write_id", {recorded_at}::timestamptz AS "recorded_at", "input"."entity_id", "#,
+            r#""input"."entity_type_name_keys", "input"."base_ordinal", "input"."entries", "input"."ordinality" AS "intent_key" "#,
+            r#"FROM UNNEST({intents}::temporal_intent[]) AS "input") AS "i""#,
+        ),
+        write_id = write_id,
+        recorded_at = recorded_at,
+        intents = "\u{0}0\u{0}",
+    )
+}
+
+/// The keys of the evolutions the statements are built over.
+const CREATED: [i64; 2] = [7, 9];
+
+/// The keys of the evolutions the application created, as a statement names
+/// them.
+const CREATED_ARRAY: &str = "ARRAY [7,9]::bigint[]";
+
+/// A statement as the text sea-query renders it, its values inline.
+fn text_of(statement: &StepStatement) -> String {
+    match statement {
+        StepStatement::Select(statement) => statement.to_string(PostgresQueryBuilder),
+        StepStatement::Insert(statement) => statement.to_string(PostgresQueryBuilder),
+        StepStatement::Delete(statement) => statement.to_string(PostgresQueryBuilder),
+        StepStatement::Update(statement) => statement.to_string(PostgresQueryBuilder),
+        StepStatement::With(statement) => statement.to_string(PostgresQueryBuilder),
+    }
+}
 
 /// The statements of an application over `source` in the branch `schema`, in
-/// order.
+/// order, built over the created keys [`CREATED`].
 fn steps_over(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Vec<(StepRole, String)> {
-    application_steps(source, schema)
-        .expect("every statement builds")
+    steps_with_reads(source, schema).into_iter().map(|(role, _, sql)| (role, sql)).collect()
+}
+
+/// The statements of an application over `source` in the branch `schema`, in
+/// order, each with the entries it reads.
+fn steps_with_reads(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Vec<(StepRole, EntryReads, String)> {
+    application_steps()
         .into_iter()
-        .map(|step| (step.role, step.sql))
+        .map(|step| {
+            let staged = StagedSource::new(source, step.reads, &CREATED);
+            let statement = (step.build)(&staged, schema).expect("every statement builds");
+            (step.role, step.reads, text_of(&statement))
+        })
         .collect()
 }
 
@@ -57,8 +108,13 @@ fn rendered_steps() -> Vec<(StepRole, String)> {
 
 /// The statements of a commit recording no intent, in the live branch.
 fn commit_steps() -> Vec<(StepRole, String)> {
-    let record = WriteRecord::restored(WriteId::mint(), recorded_at());
-    steps_over(&IntentSource::Bound { record: &record, intents: &[] }, None)
+    steps_over(
+        &IntentSource::Bound {
+            record: &COMMIT_RECORD,
+            intents: &[],
+        },
+        None,
+    )
 }
 
 /// The statement among `steps` that writes into `table`.
@@ -162,10 +218,7 @@ fn tombstone() -> TemporalAppendEntry {
 #[test]
 fn the_application_reads_the_entries_from_the_queue_rows_it_holds() {
     let history = writing("attribute_history");
-    assert!(
-        history.contains(&format!(r#"FROM {QUEUED}, UNNEST("i"."entries") WITH ORDINALITY AS "e""#)),
-        "{history}"
-    );
+    assert!(history.contains(&format!(r#"FROM {QUEUED}, UNNEST("i"."entries") AS "e""#)), "{history}");
     for (_, sql) in rendered_steps() {
         assert!(sql.contains(QUEUED), "every statement reads the claimed rows: {sql}");
         assert!(!sql.contains("payload") && !sql.contains("::json"), "{sql}");
@@ -190,14 +243,6 @@ fn anchoring(relation: &str) -> String {
     relation.replace(r#"AS "i""#, r#"AS "ai""#)
 }
 
-/// The keys of the evolutions the application created, as the drain binds
-/// them after its claimed keys.
-const DRAIN_CREATED: &str = "$2::bigint[]";
-
-/// The keys of the evolutions the application created, as a commit binds
-/// them after its intents, write identity and instant.
-const COMMIT_CREATED: &str = "$4::bigint[]";
-
 #[test]
 fn the_commit_and_the_drain_render_one_statement_shape() {
     let drain: Vec<(StepRole, String)> = rendered_steps()
@@ -208,21 +253,20 @@ fn the_commit_and_the_drain_render_one_statement_shape() {
                 sql.replace(QUEUED, "<source>")
                     .replace(&earlier(QUEUED), "<source>")
                     .replace(&stating(QUEUED), "<source>")
-                    .replace(&anchoring(QUEUED), "<source>")
-                    .replace(DRAIN_CREATED, "<created>"),
+                    .replace(&anchoring(QUEUED), "<source>"),
             )
         })
         .collect();
+    let bound = bound();
     let commit: Vec<(StepRole, String)> = commit_steps()
         .into_iter()
         .map(|(role, sql)| {
             (
                 role,
-                sql.replace(BOUND, "<source>")
-                    .replace(&earlier(BOUND), "<source>")
-                    .replace(&stating(BOUND), "<source>")
-                    .replace(&anchoring(BOUND), "<source>")
-                    .replace(COMMIT_CREATED, "<created>"),
+                sql.replace(&bound, "<source>")
+                    .replace(&earlier(&bound), "<source>")
+                    .replace(&stating(&bound), "<source>")
+                    .replace(&anchoring(&bound), "<source>"),
             )
         })
         .collect();
@@ -232,11 +276,15 @@ fn the_commit_and_the_drain_render_one_statement_shape() {
 
 #[test]
 fn a_commit_binds_its_intents_as_one_typed_array() {
+    let bound = bound();
     for (_, sql) in commit_steps() {
-        assert!(sql.contains(BOUND), "{sql}");
+        assert!(sql.contains(&bound), "{sql}");
         assert_eq!(
-            sql.matches("$1::temporal_intent[]").count(),
-            sql.matches(BOUND).count() + sql.matches(&earlier(BOUND)).count() + sql.matches(&stating(BOUND)).count() + sql.matches(&anchoring(BOUND)).count(),
+            sql.matches("::temporal_intent[]").count(),
+            sql.matches(&bound).count()
+                + sql.matches(&earlier(&bound)).count()
+                + sql.matches(&stating(&bound)).count()
+                + sql.matches(&anchoring(&bound)).count(),
             "{sql}"
         );
         assert!(!sql.contains("temporal_append_intents"), "{sql}");
@@ -269,7 +317,7 @@ fn an_assertion_is_inserted_only_when_either_head_differs() {
         sql.contains(r#"FROM UNNEST("i"."entries") AS "sa" WHERE "sa"."entry_kind" = 4 ORDER BY ("sa"."verbatim_scope_path") COLLATE "C" ASC"#),
         "{sql}"
     );
-    assert_eq!(sql.matches(r#"COLLATE "C") = ((ARRAY("#).count(), 2, "{sql}");
+    assert_eq!(sql.matches(r#"COLLATE "C") = ((ARRAY ("#).count(), 2, "{sql}");
 }
 
 /// A change of Scope, a reified instance and a removal are events whatever
@@ -434,10 +482,10 @@ fn a_queued_source_runs_the_statements_its_claimed_intents_reach() {
 /// code once, and never from the entries.
 #[test]
 fn the_reach_of_claimed_intents_is_read_without_their_entries() {
-    let sql = reach_statement().to_string(PostgresQueryBuilder);
+    let sql = reach_statement(&[3, 5]).to_string(PostgresQueryBuilder);
     assert_eq!(
         sql,
-        r#"SELECT DISTINCT UNNEST("entry_needs") FROM "temporal_append_intents" WHERE "intent_key" = ANY($1::bigint[])"#
+        r#"SELECT DISTINCT UNNEST("entry_needs") FROM "temporal_append_intents" WHERE "intent_key" = ANY(ARRAY [3,5]::bigint[])"#
     );
 }
 
@@ -452,13 +500,16 @@ fn each_statement_reads_no_entry_field_beyond_what_it_is_bound() {
         "generated_instance_id",
         "verbatim_instance_id",
     ]);
-    let record = WriteRecord::restored(WriteId::mint(), recorded_at());
-    for step in application_steps(&IntentSource::Bound { record: &record, intents: &[] }, None).expect("every statement builds") {
-        let read = entry_fields_read(&step.sql);
-        match step.reads {
-            EntryReads::Nothing => assert!(read.is_empty() && !step.sql.contains(r#"UNNEST("i"."entries")"#), "{}", step.sql),
-            EntryReads::Identities => assert!(read.is_subset(&identity), "{read:?} in {}", step.sql),
-            EntryReads::Everything => assert!(!read.is_empty(), "{}", step.sql),
+    let source = IntentSource::Bound {
+        record: &COMMIT_RECORD,
+        intents: &[],
+    };
+    for (_, reads, sql) in steps_with_reads(&source, None) {
+        let read = entry_fields_read(&sql);
+        match reads {
+            EntryReads::Nothing => assert!(read.is_empty() && !sql.contains(r#"UNNEST("i"."entries")"#), "{sql}"),
+            EntryReads::Identities => assert!(read.is_subset(&identity), "{read:?} in {sql}"),
+            EntryReads::Everything => assert!(!read.is_empty(), "{sql}"),
         }
     }
 }
@@ -579,9 +630,9 @@ fn an_existing_evolution_keeps_its_types_and_gains_the_ones_it_lacks() {
     assert!(
         evolutions.contains(concat!(
             r#"DO UPDATE SET "modified_at" = GREATEST("temporal_entities"."modified_at", "excluded"."modified_at"), "entity_type_name_keys" = array_cat("temporal_entities"."entity_type_name_keys", "#,
-            r#"ARRAY((SELECT "added"."added" FROM UNNEST("excluded"."entity_type_name_keys") AS "added" "#,
+            r#"ARRAY (SELECT "added"."added" FROM UNNEST("excluded"."entity_type_name_keys") AS "added" "#,
             r#"WHERE "added"."added" <> ALL("temporal_entities"."entity_type_name_keys") "#,
-            r#"ORDER BY array_position("excluded"."entity_type_name_keys", "added"."added") ASC)))"#
+            r#"ORDER BY array_position("excluded"."entity_type_name_keys", "added"."added") ASC))"#
         )),
         "{evolutions}"
     );
@@ -754,8 +805,8 @@ fn the_evolution_statement_returns_the_keys_of_the_evolutions_it_created() {
 /// The judgement shared by every statement reading the attribute entries of
 /// an evolution, its created keys bound after the drain's claimed keys.
 const JUDGED: &str = concat!(
-    r#"(NOT ("e"."entry_kind" = 2 AND "te"."temporal_entity_key" = ANY($2::bigint[]) AND (NOT EXISTS(SELECT 1 FROM "#,
-    r#"(SELECT * FROM "temporal_append_intents" WHERE "intent_key" = ANY($1::bigint[])) AS "ai" "#,
+    r#"(NOT ("e"."entry_kind" = 2 AND "te"."temporal_entity_key" = ANY(ARRAY [7,9]::bigint[]) AND (NOT EXISTS(SELECT 1 FROM "#,
+    r#"(SELECT * FROM "temporal_append_intents" WHERE "intent_key" = ANY(ARRAY [3,5]::bigint[])) AS "ai" "#,
     r#"WHERE "ai"."entity_id" = "i"."entity_id" AND cardinality("ai"."entity_type_name_keys") > 0 "#,
     r#"AND "ai"."intent_key" <= "i"."intent_key"))))"#
 );
@@ -805,29 +856,42 @@ fn the_grains_of_a_created_evolution_leave_out_the_ends_of_an_instance_before_it
 #[test]
 fn a_scope_entry_is_not_judged_by_the_evolutions_created() {
     let scopes = scope_insert();
-    assert!(!scopes.contains(DRAIN_CREATED) && !scopes.contains(r#"AS "ai""#), "{scopes}");
+    assert!(!scopes.contains(CREATED_ARRAY) && !scopes.contains(r#"AS "ai""#), "{scopes}");
 }
 
-/// Postgres refuses a statement bound more or fewer values than it names, so
-/// a step is sent the created keys exactly when its text reads them, in the
-/// drain and in a commit alike.
+/// Only the statements that decide the end of an instance by the evolutions the
+/// application created name their keys, in the drain and in a commit alike.
 #[test]
-fn a_step_is_sent_the_created_keys_exactly_when_it_reads_them() {
+fn only_the_statements_after_the_evolutions_name_the_created_keys() {
     let record = WriteRecord::restored(WriteId::mint(), recorded_at());
     let sources = [
-        (
-            IntentSource::Queued {
-                keys: &[3, 5],
-                reach: TemporalIntentReach::ALL.to_vec(),
-            },
-            DRAIN_CREATED,
-        ),
-        (IntentSource::Bound { record: &record, intents: &[] }, COMMIT_CREATED),
+        IntentSource::Queued {
+            keys: &[3, 5],
+            reach: TemporalIntentReach::ALL.to_vec(),
+        },
+        IntentSource::Bound { record: &record, intents: &[] },
     ];
-    for (source, marker) in &sources {
-        for step in application_steps(source, None).expect("every statement builds") {
-            assert_eq!(step.created == CreatedKeys::Read, step.sql.contains(marker), "{}", step.sql);
-        }
+    for source in &sources {
+        let naming: Vec<(StepRole, bool)> = steps_over(source, None)
+            .into_iter()
+            .map(|(role, sql)| (role, sql.contains(CREATED_ARRAY)))
+            .collect();
+        assert_eq!(
+            naming,
+            [
+                (StepRole::Write, false),
+                (StepRole::Evolve, false),
+                (StepRole::RefuseUntyped, false),
+                (StepRole::Write, true),
+                (StepRole::Replace, true),
+                (StepRole::Write, true),
+                (StepRole::Claim, true),
+                (StepRole::Write, true),
+                (StepRole::Write, true),
+                (StepRole::Write, true),
+                (StepRole::Write, false),
+            ]
+        );
     }
 }
 

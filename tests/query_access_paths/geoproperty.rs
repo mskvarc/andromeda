@@ -7,11 +7,14 @@
 //! composite geometry index on the projection.
 
 use crate::seeded_corpus::{SEED_PREFIX, explain, seed};
+use andromeda_postgresql_schema::current::CurrentAttributes;
+use andromeda_postgresql_seaquery::postgis::{st_intersects, st_point_wgs84};
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::{environment::TestEnvironment, serialized_environment::SerializedEnvironment};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Alias, Expr, ExprTrait, Query};
 use serde_json::{Value, json};
 
 /// `datasetId` of the second `entrance` instance, deliberately far away from
@@ -163,12 +166,15 @@ async fn arbitrary_geoproperty_topological_queries_use_the_projection_geometry_i
 
     let plan = explain(
         pool,
-        &format!(
-            "SELECT c.entity_key FROM current_attributes AS c \
-             WHERE c.attribute_name_key = {} \
-               AND ST_Intersects(c.value_geometry, ST_SetSRID(ST_MakePoint(13.005, 52.005), 4326))",
-            corpus.entrance()
-        ),
+        Query::select()
+            .column((Alias::new("c"), CurrentAttributes::EntityKey))
+            .from_as(CurrentAttributes::Table, Alias::new("c"))
+            .and_where(Expr::col((Alias::new("c"), CurrentAttributes::AttributeNameKey)).eq(corpus.entrance()))
+            .and_where(st_intersects(
+                Expr::col((Alias::new("c"), CurrentAttributes::ValueGeometry)),
+                st_point_wgs84(Expr::val(13.005), Expr::val(52.005)),
+            ))
+            .to_owned(),
     )
     .await;
     assert!(

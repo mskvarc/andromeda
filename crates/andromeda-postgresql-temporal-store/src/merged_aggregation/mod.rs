@@ -47,12 +47,11 @@ use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_postgresql_attribute_instance::{name_keys::MentionedNames, name_resolution::resolve_mentioned};
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_query::history_source::HistoryBranch;
+use andromeda_postgresql_seaquery::{command::Command, statement::Statement};
 use andromeda_postgresql_temporal_query::history::build_temporal_history_query;
 use andromeda_temporal::error::TemporalError;
 use chrono::Utc;
-use sea_query::{DeleteStatement, InsertStatement, PostgresQueryBuilder, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, Connection, PgConnection, Row, postgres::PgRow};
+use sqlx::{Connection, PgConnection, Row};
 use std::collections::HashSet;
 
 /// The key the staging counts its own catalogue and stream keys down from:
@@ -84,10 +83,7 @@ impl TemporalRepository {
         let mut tx = connection.begin().await.map_err(TemporalStoreError::from)?;
         let branch = branch_schema(schema_iden(target));
         for statement in staging_tables(&branch) {
-            sqlx::query(AssertSqlSafe(statement))
-                .execute(&mut *tx)
-                .await
-                .map_err(TemporalStoreError::from)?;
+            statement.to_query().execute(&mut *tx).await.map_err(TemporalStoreError::from)?;
         }
         let copied = if compiled.representation.format.is_grouped() {
             CopiedHistory::Whole
@@ -98,16 +94,31 @@ impl TemporalRepository {
             }
         };
         let snapshot = schema_iden(target);
-        execute_insert(&mut tx, copy_entity(&branch, entity_id).map_err(TemporalStoreError::from)?).await?;
-        execute_insert(&mut tx, copy_streams(&branch).map_err(TemporalStoreError::from)?).await?;
+        copy_entity(&branch, entity_id)
+            .map_err(TemporalStoreError::from)?
+            .to_query()
+            .execute(&mut *tx)
+            .await
+            .map_err(TemporalStoreError::from)?;
+        copy_streams(&branch)
+            .map_err(TemporalStoreError::from)?
+            .to_query()
+            .execute(&mut *tx)
+            .await
+            .map_err(TemporalStoreError::from)?;
         if snapshot.is_none() {
             self.stage_queued_streams(&mut tx, entity_id, entity_types).await?;
         }
-        execute_insert(&mut tx, copy_history(snapshot.as_ref(), entity_id, copied).map_err(TemporalStoreError::from)?).await?;
+        copy_history(snapshot.as_ref(), entity_id, copied)
+            .map_err(TemporalStoreError::from)?
+            .to_query()
+            .execute(&mut *tx)
+            .await
+            .map_err(TemporalStoreError::from)?;
         self.stage_answered(&mut tx, entity_id, entity_types, answered).await?;
         let names = self.resolve_query_names(compiled).await?;
         let statement = build_temporal_history_query(&HistoryBranch::recorded_in(temporary_schema()), entity_id, compiled, &names);
-        let pg_rows = fetch(&mut tx, statement).await?;
+        let pg_rows = statement.to_query().fetch_all(&mut *tx).await.map_err(TemporalStoreError::from)?;
         let rows = decode_aggregation_rows(&pg_rows, entity_id, compiled)?;
         tx.commit().await.map_err(TemporalStoreError::from)?;
         Ok(rows)
@@ -149,16 +160,15 @@ impl TemporalRepository {
             let name_key = keys
                 .attribute(name)
                 .ok_or_else(|| TemporalStoreInvariant::AttributeNameUnresolved(name.clone()))?; // clone: the invariant owns the name it failed on
-            execute_insert(
-                tx,
-                stage_stream(
-                    staged_key(first_position.saturating_add(position)),
-                    entity_key,
-                    entity_id,
-                    name_key.get(),
-                    dataset_id,
-                )?,
-            )
+            stage_stream(
+                staged_key(first_position.saturating_add(position)),
+                entity_key,
+                entity_id,
+                name_key.get(),
+                dataset_id,
+            )?
+            .to_query()
+            .execute(&mut *tx)
             .await?;
         }
         let entries = answered
@@ -176,14 +186,15 @@ impl TemporalRepository {
             &temporary_schema(),
         )
         .await?;
-        execute_delete(tx, drop_restated_instances(staged.write_id().as_uuid())).await
+        drop_restated_instances(staged.write_id().as_uuid()).to_query().execute(tx).await?;
+        Ok(())
     }
 
     /// Stage a stream for every grain the live branch's queued entries of the
     /// entity extend that no recorded stream holds, so the copied history
     /// lands those entries too.
     async fn stage_queued_streams(&self, tx: &mut PgConnection, entity_id: &Identifier, entity_types: &[EntityTypeName]) -> Result<(), TemporalStoreError> {
-        let grains = fetch(tx, queued_grains(entity_id)).await?;
+        let grains = queued_grains(entity_id).to_query().fetch_all(&mut *tx).await?;
         if grains.is_empty() {
             return Ok(());
         }
@@ -195,16 +206,15 @@ impl TemporalRepository {
                 .map(|raw| raw.parse::<Identifier>())
                 .transpose()
                 .map_err(StoredCatalogError::StreamDatasetId)?;
-            execute_insert(
-                tx,
-                stage_stream(
-                    staged_key(position.saturating_add(1)),
-                    entity_key,
-                    entity_id,
-                    attribute_name_key,
-                    dataset_id.as_ref(),
-                )?,
-            )
+            stage_stream(
+                staged_key(position.saturating_add(1)),
+                entity_key,
+                entity_id,
+                attribute_name_key,
+                dataset_id.as_ref(),
+            )?
+            .to_query()
+            .execute(&mut *tx)
             .await?;
         }
         Ok(())
@@ -213,13 +223,13 @@ impl TemporalRepository {
     /// The staged catalogue key of the entity: its copied local one, or one
     /// staged for an entity this branch holds none of.
     async fn staged_entity(&self, tx: &mut PgConnection, entity_id: &Identifier, entity_types: &[EntityTypeName]) -> Result<i64, TemporalStoreError> {
-        if let Some(row) = fetch(tx, staged_entity_key()).await?.first() {
+        if let Some(row) = staged_entity_key().to_query().fetch_all(&mut *tx).await?.first() {
             return Ok(row.try_get::<i64, _>(0)?);
         }
         let type_keys = self.entity_type_names.resolve_or_create(&mut *tx, entity_types).await?;
         let type_keys: Vec<i32> = entity_types.iter().filter_map(|name| type_keys.get(name)).map(|key| key.get()).collect();
         let key = staged_key(0);
-        execute_insert(tx, stage_entity(key, entity_id, type_keys, Utc::now())?).await?;
+        stage_entity(key, entity_id, type_keys, Utc::now())?.to_query().execute(&mut *tx).await?;
         Ok(key)
     }
 }
@@ -240,7 +250,9 @@ fn distinct_instances(answered: &[TemporalHistoryRow]) -> Vec<&TemporalHistoryRo
 
 /// The grains the staging holds a stream of.
 async fn read_staged_streams(tx: &mut PgConnection) -> Result<HashSet<Grain>, TemporalStoreError> {
-    fetch(tx, staged_streams())
+    staged_streams()
+        .to_query()
+        .fetch_all(tx)
         .await?
         .iter()
         .map(|row| {
@@ -256,24 +268,4 @@ async fn read_staged_streams(tx: &mut PgConnection) -> Result<HashSet<Grain>, Te
             Ok((name, dataset_id))
         })
         .collect()
-}
-
-/// Run one select on the staging transaction.
-async fn fetch(tx: &mut PgConnection, statement: SelectStatement) -> Result<Vec<PgRow>, TemporalStoreError> {
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    Ok(sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(tx).await?)
-}
-
-/// Run one insert on the staging transaction.
-async fn execute_insert(tx: &mut PgConnection, statement: InsertStatement) -> Result<(), TemporalStoreError> {
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(AssertSqlSafe(sql), values).execute(tx).await?;
-    Ok(())
-}
-
-/// Run one delete on the staging transaction.
-async fn execute_delete(tx: &mut PgConnection, statement: DeleteStatement) -> Result<(), TemporalStoreError> {
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(AssertSqlSafe(sql), values).execute(tx).await?;
-    Ok(())
 }

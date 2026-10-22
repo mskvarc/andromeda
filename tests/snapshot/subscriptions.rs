@@ -4,7 +4,13 @@ use crate::{
     notification_adapter::NotificationAdapter,
     support::{broker_url, clean_database, client, create_entity, create_snapshot_raw, delete_snapshot_raw, get_snapshot, scoped, wait_for_snapshot_terminal},
 };
+use andromeda_postgresql_schema::{
+    notification::{NotificationDeliveries, NotificationEvents},
+    subscriptions::Subscriptions,
+};
+use andromeda_postgresql_seaquery::{aggregate::count_all, scalar_subquery::scalar_subquery, statement::Statement};
 use reqwest::{Method, Response, StatusCode};
+use sea_query::{DynIden, Expr, ExprTrait, IntoIden, Query};
 use serde_json::{Value, json};
 use serial_test::serial;
 use sqlx::PgPool;
@@ -283,11 +289,16 @@ async fn snapshot_delete_and_expiry_remove_subscriptions_and_pending_deliveries(
     let pool = PgPool::connect(&env::var("ANDROMEDA_TEST_DATABASE_URL").expect("Snapshot database URL"))
         .await
         .expect("Snapshot database connection");
-    let orphaned: i64 = sqlx::query_scalar(
-        "SELECT (SELECT COUNT(*) FROM subscriptions) + (SELECT COUNT(*) FROM notification_events) + (SELECT COUNT(*) FROM notification_deliveries)",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("branch delivery cleanup count");
+    let rows_of = |table: DynIden| scalar_subquery(Query::select().expr(count_all()).from(table).to_owned());
+    let orphaned: i64 = Query::select()
+        .expr(
+            Expr::expr(rows_of(Subscriptions::Table.into_iden()))
+                .add(rows_of(NotificationEvents::Table.into_iden()))
+                .add(rows_of(NotificationDeliveries::Table.into_iden())),
+        )
+        .to_query_scalar()
+        .fetch_one(&pool)
+        .await
+        .expect("branch delivery cleanup count");
     pretty_assertions::assert_eq!(orphaned, 0);
 }

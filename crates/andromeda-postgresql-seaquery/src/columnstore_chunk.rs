@@ -11,6 +11,7 @@ use crate::{
     introspection::current_setting_missing_ok,
     maintenance::relation_size,
     pg_type::PostgresType,
+    setting::Setting,
     timescale::{ChunkRelationColumn, Chunks, TimescaleInformation},
 };
 use sea_query::{Asterisk, Expr, ExprTrait, Func, Iden, Order, Query, SelectStatement, SimpleExpr};
@@ -29,7 +30,7 @@ const TIMESCALE_LICENSE: &str = "timescale";
 /// undefined setting, on a server without `TimescaleDB`, reads as false.
 #[must_use]
 pub fn columnstore_licensed() -> SimpleExpr {
-    Func::coalesce([current_setting_missing_ok("timescaledb.license").eq(TIMESCALE_LICENSE), Expr::val(false)]).into()
+    Func::coalesce([current_setting_missing_ok(Setting::TimescaledbLicense).eq(TIMESCALE_LICENSE), Expr::val(false)]).into()
 }
 
 /// The `overdue_chunks` projection of [`overdue_rowstore_chunks_statement`].

@@ -7,7 +7,11 @@
 //! best-effort: a run's setup calls it to start from a clean slate and its
 //! teardown to leave one, and the force drop closes any backend a suspend missed.
 
+use crate::database_catalogue::{ControlDatabase, databases_like, force_drop};
+use andromeda_postgresql_schema::tenancy::Tenants;
+use andromeda_postgresql_seaquery::statement::Statement;
 use reqwest::Client;
+use sea_query::{Expr, ExprTrait, Query};
 use sqlx::PgPool;
 
 /// The default per-tenant database name prefix the broker provisions under.
@@ -67,8 +71,11 @@ pub async fn suspend_tenants_on(client: &Client, broker_bases: &[&str]) {
 /// Returns the [`sqlx::Error`] the delete reported.
 pub async fn deprovision_registry(pool: &PgPool, prefix: &str) -> Result<(), sqlx::Error> {
     let pattern = format!("{prefix}%");
-    sqlx::query("DELETE FROM tenants WHERE is_unnamed_default = FALSE AND database_name LIKE $1")
-        .bind(&pattern)
+    Query::delete()
+        .from_table(Tenants::Table)
+        .and_where(Expr::col(Tenants::IsUnnamedDefault).eq(false))
+        .and_where(Expr::col(Tenants::DatabaseName).like(pattern))
+        .to_query()
         .execute(pool)
         .await?;
     Ok(())
@@ -83,16 +90,9 @@ pub async fn deprovision_registry(pool: &PgPool, prefix: &str) -> Result<(), sql
 /// best-effort and their failures are ignored (a database a backend still holds
 /// is retried on the next run's cleanup).
 pub async fn drop_tenant_databases(pool: &PgPool, prefix: &str) -> Result<(), sqlx::Error> {
-    let current: String = sqlx::query_scalar("SELECT current_database()").fetch_one(pool).await?;
     let pattern = format!("{prefix}%");
-    let databases: Vec<String> = sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE $1 AND datname <> $2")
-        .bind(&pattern)
-        .bind(&current)
-        .fetch_all(pool)
-        .await?;
-    for database in databases {
-        let statement = format!("DROP DATABASE IF EXISTS \"{database}\" WITH (FORCE)");
-        let _ = sqlx::query(sqlx::AssertSqlSafe(statement)).execute(pool).await;
+    for database in databases_like(pool, &pattern, ControlDatabase::Excluded).await? {
+        let _ = force_drop(pool, &database).await;
     }
     Ok(())
 }

@@ -19,9 +19,8 @@ use andromeda_postgresql_schema::{
     census::{AttributeCensus, EntityTypeAttributeCensus},
     name_dictionary::{AttributeNames, EntityTypeNames},
 };
-use andromeda_postgresql_seaquery::aggregate::array_agg_distinct;
-use sea_query::{Cond, Expr, ExprTrait, Func, JoinType, Order, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use andromeda_postgresql_seaquery::{aggregate::array_agg_distinct, statement::Statement};
+use sea_query::{Cond, Expr, ExprTrait, Func, JoinType, Order, Query, SelectStatement};
 use std::slice::from_ref;
 
 /// Clauses 5.7.8 and 5.7.9: every attribute some Entity carries with the types
@@ -100,8 +99,8 @@ impl EntityRepository {
     /// Returns [`ContextStoreError`] when the read fails or a dictionary name
     /// no longer parses.
     pub async fn census_attribute_entity_types(&self, target: &ContextTarget) -> Result<Vec<AttributeEntityTypes>, ContextStoreError> {
-        let (sql, values) = attribute_entity_types_statement(target).build_sqlx(PostgresQueryBuilder);
-        let rows: Vec<(String, Vec<String>)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let rows: Vec<(String, Vec<String>)> = attribute_entity_types_statement(target)
+            .to_query_as()
             .fetch_all(&mut **self.reads.acquire().await?)
             .await?;
         rows.into_iter()
@@ -125,8 +124,8 @@ impl EntityRepository {
         let Some(attribute_key) = self.attribute_names.lookup(from_ref(attribute)).await?.get(attribute) else {
             return Ok(None);
         };
-        let (sql, values) = attribute_summary_statement(target, attribute_key).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let rows = attribute_summary_statement(target, attribute_key)
+            .to_query_as()
             .fetch_all(&mut **self.reads.acquire().await?)
             .await?;
         attribute_summary_of(attribute, &rows)

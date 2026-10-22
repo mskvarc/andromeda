@@ -4,7 +4,7 @@
 use crate::intent_application::{
     deletion_judgement::{created_by_application, ended_before_evolution},
     evolution_upsert::{Created, Evolved, with_evolutions},
-    intent_source::{E, I, IntentSource, Te, entry, entry_kind_in, intent, source_entries, source_intents, write_ordinal},
+    intent_source::{E, I, StagedSource, Te, entry, entry_kind_in, intent, source_entries, source_intents, write_ordinal},
 };
 use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
 use andromeda_postgresql_query::tombstone::entry_carries_a_value;
@@ -78,7 +78,7 @@ const GRAIN_COLUMNS: [TemporalAttributeStreams; 3] = [
 /// record itself was written. The record is no gate: a write replayed under
 /// its original identity changes nothing here, and its rows collide on their
 /// own write identity.
-pub(crate) fn write_records_statement(source: &IntentSource<'_>) -> Result<InsertStatement, SeaQueryError> {
+pub(crate) fn write_records_statement(source: &StagedSource<'_>) -> Result<InsertStatement, SeaQueryError> {
     let mut select = Query::select();
     select
         .distinct()
@@ -119,7 +119,7 @@ pub(crate) fn write_records_statement(source: &IntentSource<'_>) -> Result<Inser
 /// writes its stream. The evolutions and the type memberships a temporal type
 /// selection walks are written first, in the same statement
 /// ([`with_evolutions`]).
-pub(crate) fn evolutions_and_streams_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<WithQuery, SeaQueryError> {
+pub(crate) fn evolutions_and_streams_statement(source: &StagedSource<'_>, schema: Option<&DynIden>) -> Result<WithQuery, SeaQueryError> {
     let stream_columns = [
         TemporalAttributeStreams::TemporalEntityKey,
         TemporalAttributeStreams::Id,
@@ -203,7 +203,7 @@ fn created_evolution() -> SimpleExpr {
 /// observes when it holds no entry or any entry that does not end an
 /// instance: clause 4.5.1 requires only `id` and `type` of an Entity, so a
 /// write observing one with no attribute still extends its evolution.
-pub(crate) fn untyped_observations_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
+pub(crate) fn untyped_observations_statement(source: &StagedSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
     let mut ends_nothing = Query::select();
     ends_nothing
         .expr(Expr::val(1))
@@ -241,7 +241,7 @@ pub(crate) fn untyped_observations_statement(source: &IntentSource<'_>, schema: 
 /// evolution clause 5.6.16 already deleted records nothing. Neither does the
 /// end of an instance of an evolution the application created before every
 /// intent of its Entity stating types ([`ended_before_evolution`]).
-pub(crate) fn untyped_streams_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
+pub(crate) fn untyped_streams_statement(source: &StagedSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
     let mut select = Query::select();
     select
         .distinct()

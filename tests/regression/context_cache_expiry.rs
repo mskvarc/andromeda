@@ -21,6 +21,8 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 use crate::hosted_context::{forget_cached, serve};
+use andromeda_postgresql_schema::jsonld::JsonldContexts;
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_test_client::response::TestResponse;
 use andromeda_test_harness::environment::TestEnvironment;
 use andromeda_test_mocks::{callback_path::CallbackPath, jsonld_context_server::JsonLdContextServer, server_config::MockServerConfig};
@@ -32,6 +34,7 @@ use axum::http::{
 use chrono::{TimeDelta, Utc};
 use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
+use sea_query::{Expr, ExprTrait, Query};
 use serde_json::{Value, json};
 use sqlx::types::Json;
 use std::{
@@ -111,8 +114,11 @@ async fn create_entity_naming(scope: &TestEnvironment, context_url: &str, local_
 
 /// The `@context` document the broker holds under `context_url`, if any.
 async fn cached_payload(scope: &TestEnvironment, context_url: &str) -> Option<Value> {
-    let stored: Option<Json<Value>> = sqlx::query_scalar("SELECT payload FROM jsonld_contexts WHERE url = $1")
-        .bind(context_url)
+    let stored: Option<Json<Value>> = Query::select()
+        .column(JsonldContexts::Payload)
+        .from(JsonldContexts::Table)
+        .and_where(Expr::col(JsonldContexts::Url).eq(context_url))
+        .to_query_scalar()
         .fetch_optional(scope.database_pool())
         .await
         .expect("the stored context row must be readable");

@@ -18,9 +18,8 @@ use andromeda_postgresql_schema::{
     current::{E, Entities, EntitySearch},
     name_dictionary::EntityTypeNames,
 };
-use andromeda_postgresql_seaquery::pg_array::any;
-use sea_query::{Expr, ExprTrait, Iden, JoinType, Order, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use andromeda_postgresql_seaquery::{pg_array::any, statement::Statement};
+use sea_query::{Expr, ExprTrait, Iden, JoinType, Order, Query, SelectStatement};
 use sqlx::Row;
 
 /// Alias `s` for the entity's search row.
@@ -67,8 +66,7 @@ impl EntityRepository {
     /// Returns [`ContextStoreError`] when the read fails or a stored type name
     /// does not read back as one.
     pub async fn entity_types(&self, target: &ContextTarget, id: &Identifier) -> Result<Option<Vec<EntityTypeName>>, ContextStoreError> {
-        let (sql, values) = entity_types_statement(target, id.as_str()).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
+        let rows = entity_types_statement(target, id.as_str()).to_query().fetch_all(&self.pool).await?;
         if rows.is_empty() {
             return Ok(None);
         }

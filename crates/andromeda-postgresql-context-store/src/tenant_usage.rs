@@ -14,11 +14,11 @@ use andromeda_postgresql_schema::{current::EntitySearch, snapshot::Snapshots};
 use andromeda_postgresql_seaquery::{
     aggregate::count_all,
     introspection::{current_database, current_database_size},
+    statement::Statement,
 };
 use andromeda_tenancy::{database_name::TenantDatabaseName, error::TenancyError, tenant_usage::TenantUsage, usage_probe::TenantUsageProbe};
 use async_trait::async_trait;
-use sea_query::{Alias, Expr, ExprTrait, Func, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Alias, Expr, ExprTrait, Func, Query, SelectStatement};
 use sqlx::PgPool;
 use std::{num::TryFromIntError, time::Duration};
 
@@ -92,11 +92,7 @@ struct NegativeUsageCount {
 
 /// Run one single-scalar `bigint` count over the probe pool and widen it.
 async fn fetch_count(pool: &PgPool, statement: SelectStatement) -> Result<u64, TenancyError> {
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let value: i64 = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-        .fetch_one(pool)
-        .await
-        .map_err(|error| usage_read_failure(&error))?;
+    let value: i64 = statement.to_query_scalar().fetch_one(pool).await.map_err(|error| usage_read_failure(&error))?;
     usage_count(value)
 }
 

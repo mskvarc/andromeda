@@ -20,9 +20,9 @@ use andromeda_notification::{
     error::NotificationError,
 };
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
+use andromeda_postgresql_seaquery::statement::Statement;
 use futures::future::BoxFuture;
-use sea_query::{Cond, Expr, ExprTrait, PostgresQueryBuilder, Query, SelectStatement, UpdateStatement};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Cond, Expr, ExprTrait, Query, SelectStatement, UpdateStatement};
 use sqlx::PgPool;
 use std::collections::HashSet;
 
@@ -45,8 +45,8 @@ impl CsourceRevisionLedger {
 impl CsourceChangeOrder for CsourceRevisionLedger {
     fn written_after(&self, revision: CsourceChangeRevision) -> BoxFuture<'_, Result<HashSet<Identifier>, NotificationError>> {
         Box::pin(async move {
-            let (sql, values) = written_after_statement(revision).build_sqlx(PostgresQueryBuilder);
-            let subscriptions: Vec<(String,)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            let subscriptions: Vec<(String,)> = written_after_statement(revision)
+                .to_query_as()
                 .fetch_all(&self.pool)
                 .await
                 .map_err(|error| persistence(&ContextStoreError::from(error)))?;
@@ -63,8 +63,8 @@ impl CsourceChangeOrder for CsourceRevisionLedger {
 
     fn claim_latest_write<'a>(&'a self, subscription: &'a Identifier) -> BoxFuture<'a, Result<LatestWriteClaim, NotificationError>> {
         Box::pin(async move {
-            let (sql, values) = claim_statement(subscription).build_sqlx(PostgresQueryBuilder);
-            let claimed: Option<(i64,)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            let claimed: Option<(i64,)> = claim_statement(subscription)
+                .to_query_as()
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(|error| persistence(&ContextStoreError::from(error)))?;
@@ -76,8 +76,8 @@ impl CsourceChangeOrder for CsourceRevisionLedger {
 
     fn latest_write<'a>(&'a self, subscription: &'a Identifier) -> BoxFuture<'a, Result<Option<CsourceChangeRevision>, NotificationError>> {
         Box::pin(async move {
-            let (sql, values) = latest_write_statement(subscription).build_sqlx(PostgresQueryBuilder);
-            let latest: Option<(i64,)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            let latest: Option<(i64,)> = latest_write_statement(subscription)
+                .to_query_as()
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(|error| persistence(&ContextStoreError::from(error)))?;

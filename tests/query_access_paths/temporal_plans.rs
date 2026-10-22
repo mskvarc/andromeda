@@ -7,7 +7,22 @@
 //! scanning the whole catalogue.
 
 use crate::seeded_corpus::{SEED_PREFIX, explain};
+use andromeda_postgresql_schema::temporal::TemporalEntities;
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    catalog_function::{generate_series, lpad},
+    clock::now,
+    command::Command,
+    literal::text_literal,
+    maintenance::{MaintenanceSchema, analyze},
+    operator::regex_match,
+    pg_array::array_literal,
+    pg_operator::PgBinaryOperator,
+    pg_type::PostgresType,
+    statement::Statement,
+};
 use andromeda_test_harness::{dictionary_seed::entity_type_name_key, serialized_environment::SerializedEnvironment};
+use sea_query::{Alias, CaseStatement, Expr, ExprTrait, Query};
 use sqlx::PgPool;
 
 /// Temporal Entities written per seeded catalogue.
@@ -23,21 +38,49 @@ const TEMPORAL_TYPE: &str = "https://example.test/query-access-paths/Instrument"
 /// cheaper plan.
 async fn seed_temporal_entities(pool: &PgPool, prefix: &str) {
     let type_key = entity_type_name_key(pool, TEMPORAL_TYPE).await.expect("type dictionary seed must succeed");
-    sqlx::query(
-        "INSERT INTO temporal_entities (created_at, modified_at, id, entity_type_name_keys) \
-         SELECT now(), now(), \
-                $1::text || ':' || CASE WHEN g % 1000 = 0 THEN 'sensor' ELSE 'device' END || ':' || lpad(g::text, 6, '0'), \
-                ARRAY[$2::integer] \
-         FROM generate_series(1, $3::bigint) AS g",
-    )
-    .bind(prefix)
-    .bind(type_key)
-    .bind(SEEDED_TEMPORAL_ENTITIES)
-    .execute(pool)
-    .await
-    .expect("temporal catalogue corpus must be writable");
+    let series = || Expr::col(Alias::new("g"));
+    Query::insert()
+        .into_table(TemporalEntities::Table)
+        .columns([
+            TemporalEntities::CreatedAt,
+            TemporalEntities::ModifiedAt,
+            TemporalEntities::Id,
+            TemporalEntities::EntityTypeNameKeys,
+        ])
+        .select_from(
+            Query::select()
+                .expr(now())
+                .expr(now())
+                .expr(
+                    cast(Expr::val(prefix), PostgresType::Text)
+                        .concat_text(text_literal(":"))
+                        .concat_text(
+                            CaseStatement::new()
+                                .case(series().modulo(1000).eq(0), text_literal("sensor"))
+                                .finally(text_literal("device"))
+                                .into(),
+                        )
+                        .concat_text(text_literal(":"))
+                        .concat_text(lpad(cast(series(), PostgresType::Text), Expr::val(6), text_literal("0"))),
+                )
+                .expr(array_literal([cast(Expr::val(type_key), PostgresType::Integer)]))
+                .from_function(
+                    generate_series(Expr::val(1), cast(Expr::val(SEEDED_TEMPORAL_ENTITIES), PostgresType::Bigint)),
+                    Alias::new("g"),
+                )
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .to_query()
+        .execute(pool)
+        .await
+        .expect("temporal catalogue corpus must be writable");
 
-    sqlx::query("ANALYZE temporal_entities").execute(pool).await.expect("analyze must succeed");
+    analyze(MaintenanceSchema::Public, TemporalEntities::Table)
+        .to_query()
+        .execute(pool)
+        .await
+        .expect("analyze must succeed");
 }
 
 #[tokio::test]
@@ -48,7 +91,15 @@ async fn temporal_plans_an_unanchored_id_pattern_uses_the_trigram_index() {
 
     // The stage 1 shape: the selector's pattern against the `e` alias the
     // temporal query selects `temporal_entities` under.
-    let plan = explain(pool, "SELECT e.temporal_entity_key, e.id FROM temporal_entities AS e WHERE e.id ~ '.*sensor.*'").await;
+    let plan = explain(
+        pool,
+        Query::select()
+            .columns([TemporalEntities::TemporalEntityKey, TemporalEntities::Id])
+            .from_as(TemporalEntities::Table, Alias::new("e"))
+            .and_where(regex_match(Expr::col((Alias::new("e"), TemporalEntities::Id)), Expr::val(".*sensor.*")))
+            .to_owned(),
+    )
+    .await;
     assert!(
         plan.contains("idx_temporal_entities_id_trgm"),
         "an unanchored temporal idPattern must use the trigram index: {plan}"

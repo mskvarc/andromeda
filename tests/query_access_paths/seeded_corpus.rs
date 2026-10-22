@@ -7,8 +7,26 @@
 //! rows are written directly and cleared again by the exclusive serialized
 //! reset that runs before each test in this suite.
 
+use andromeda_postgresql_schema::current::{CurrentAttributes, Entities, EntitySearch, EntityTypeMembers};
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    catalog_function::{generate_series, lpad},
+    clock::now,
+    command::Command,
+    explain::{Explain, ExplainOption},
+    literal::text_literal,
+    maintenance::{MaintenanceSchema, analyze as analyze_relation},
+    pg_array::array_literal,
+    pg_operator::PgBinaryOperator,
+    pg_type::PostgresType,
+    postgis::st_point_wgs84,
+    setting::{Setting, SettingAssignment, SettingScope},
+    statement::Statement,
+    unnest::{UnnestAliased, UnnestColumn, unnest_call},
+};
 use andromeda_test_fixtures::high_entropy_text::high_entropy_text;
 use andromeda_test_harness::dictionary_seed::{attribute_name_key, entity_type_name_key};
+use sea_query::{Alias, CaseStatement, CommonTableExpression, Expr, ExprTrait, InsertStatement, IntoIden, Query, SimpleExpr, WithClause, WithQuery};
 use sqlx::{Executor, PgPool, Postgres};
 
 /// Identifier prefix every resource this suite seeds carries.
@@ -170,28 +188,166 @@ pub fn owner_object(ordinal: usize) -> String {
     format!("{OWNER_PREFIX}{ordinal}")
 }
 
-/// The Entity rows of the corpus: `$1` the identifier prefix, `$2`/`$3` the
-/// rare and common type keys, `$4` the Entity count, `$5`/`$6` the city and
-/// alarm attribute keys. Every 997th Entity is of the rare type, and each type
-/// is stated on the search row and as a membership.
-const ENTITY_CORPUS: &str = "WITH seeded AS ( \
-         SELECT g, $1::text || ':seed:' || lpad(g::text, 6, '0') AS id FROM generate_series(1, $4::bigint) AS g), \
-     ins AS ( \
-         INSERT INTO entities (id) SELECT id FROM seeded RETURNING entity_key, id), \
-     typed AS ( \
-         SELECT ins.entity_key, ins.id, seeded.g, CASE WHEN seeded.g % 997 = 0 THEN $2::integer ELSE $3::integer END AS type_key \
-         FROM ins JOIN seeded ON seeded.id = ins.id), \
-     members AS ( \
-         INSERT INTO entity_type_members (entity_key, entity_type_name_key, id) SELECT entity_key, type_key, id FROM typed) \
-     INSERT INTO entity_search (entity_key, entity_type_name_keys, attribute_name_keys, attribute_instance_name_keys, attribute_instance_kinds, scope_paths, location) \
-     SELECT typed.entity_key, \
-            ARRAY[typed.type_key], \
-            CASE WHEN typed.g % 1000 = 0 THEN ARRAY[$5::integer, $6::integer] ELSE ARRAY[$5::integer] END, \
-            CASE WHEN typed.g % 1000 = 0 THEN ARRAY[$5::integer, $6::integer] ELSE ARRAY[$5::integer] END, \
-            CASE WHEN typed.g % 1000 = 0 THEN ARRAY[1, 1]::smallint[] ELSE ARRAY[1]::smallint[] END, \
-            ARRAY[('seed.' || (typed.g % 997)::text)::ltree], \
-            ST_SetSRID(ST_MakePoint(13.0 + (typed.g % 1000) * 0.001, 52.0 + (typed.g % 1000) * 0.001), 4326) \
-     FROM typed";
+/// The common table expression numbering the corpus identifiers.
+const SEEDED: &str = "seeded";
+
+/// The common table expression holding the inserted Entity rows.
+const INSERTED: &str = "ins";
+
+/// The common table expression pairing each inserted Entity with its type.
+const TYPED: &str = "typed";
+
+/// `CASE WHEN column % modulus = 0 THEN rare ELSE common END`.
+fn every_nth(column: (Alias, Alias), modulus: i64, rare: SimpleExpr, common: SimpleExpr) -> SimpleExpr {
+    CaseStatement::new().case(Expr::col(column).modulo(modulus).eq(0), rare).finally(common).into()
+}
+
+/// The Entity rows of the corpus. Every 997th Entity is of the rare type, and
+/// each type is stated on the search row and as a membership.
+fn entity_corpus(prefix: &str, rare_type: i32, common_type: i32, count: i64, city: i32, alarm: i32) -> WithQuery {
+    let identifier = cast(Expr::val(prefix), PostgresType::Text)
+        .concat_text(text_literal(":seed:"))
+        .concat_text(lpad(cast(Expr::col(Alias::new("g")), PostgresType::Text), Expr::val(6), text_literal("0")));
+    let seeded = Query::select()
+        .column(Alias::new("g"))
+        .expr_as(identifier, Alias::new("id"))
+        .from_function(generate_series(Expr::val(1), cast(Expr::val(count), PostgresType::Bigint)), Alias::new("g"))
+        .to_owned();
+    let inserted = Query::insert()
+        .into_table(Entities::Table)
+        .columns([Entities::Id])
+        .select_from(Query::select().column(Alias::new("id")).from(Alias::new(SEEDED)).to_owned())
+        .expect("the projection matches the column list")
+        .returning(Query::returning().columns([Entities::EntityKey, Entities::Id]))
+        .to_owned();
+    let typed = Query::select()
+        .column((Alias::new(INSERTED), Entities::EntityKey))
+        .column((Alias::new(INSERTED), Entities::Id))
+        .column((Alias::new(SEEDED), Alias::new("g")))
+        .expr_as(
+            every_nth(
+                (Alias::new(SEEDED), Alias::new("g")),
+                997,
+                cast(Expr::val(rare_type), PostgresType::Integer),
+                cast(Expr::val(common_type), PostgresType::Integer),
+            ),
+            Alias::new("type_key"),
+        )
+        .from(Alias::new(INSERTED))
+        .inner_join(
+            Alias::new(SEEDED),
+            Expr::col((Alias::new(SEEDED), Alias::new("id"))).equals((Alias::new(INSERTED), Entities::Id)),
+        )
+        .to_owned();
+    let members = Query::insert()
+        .into_table(EntityTypeMembers::Table)
+        .columns([EntityTypeMembers::EntityKey, EntityTypeMembers::EntityTypeNameKey, EntityTypeMembers::Id])
+        .select_from(
+            Query::select()
+                .columns([Alias::new("entity_key"), Alias::new("type_key"), Alias::new("id")])
+                .from(Alias::new(TYPED))
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .to_owned();
+    let typed_g = || (Alias::new(TYPED), Alias::new("g"));
+    let attribute_keys = || {
+        every_nth(
+            typed_g(),
+            1000,
+            array_literal([cast(Expr::val(city), PostgresType::Integer), cast(Expr::val(alarm), PostgresType::Integer)]),
+            array_literal([cast(Expr::val(city), PostgresType::Integer)]),
+        )
+    };
+    let search = Query::insert()
+        .into_table(EntitySearch::Table)
+        .columns([
+            EntitySearch::EntityKey,
+            EntitySearch::EntityTypeNameKeys,
+            EntitySearch::AttributeNameKeys,
+            EntitySearch::AttributeInstanceNameKeys,
+            EntitySearch::AttributeInstanceKinds,
+            EntitySearch::ScopePaths,
+            EntitySearch::Location,
+        ])
+        .select_from(
+            Query::select()
+                .column((Alias::new(TYPED), Alias::new("entity_key")))
+                .expr(array_literal([Expr::col((Alias::new(TYPED), Alias::new("type_key")))]))
+                .expr(attribute_keys())
+                .expr(attribute_keys())
+                .expr(every_nth(
+                    typed_g(),
+                    1000,
+                    cast(Expr::val(vec![1_i16, 1]), PostgresType::SmallintArray),
+                    cast(Expr::val(vec![1_i16]), PostgresType::SmallintArray),
+                ))
+                .expr(array_literal([cast(
+                    text_literal("seed.").concat_text(cast(Expr::col(typed_g()).modulo(997), PostgresType::Text)),
+                    PostgresType::Ltree,
+                )]))
+                .expr(corpus_point(&|| Expr::col(typed_g())))
+                .from(Alias::new(TYPED))
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .to_owned();
+    WithClause::new()
+        .cte(CommonTableExpression::new().table_name(Alias::new(SEEDED)).query(seeded).to_owned())
+        .cte(CommonTableExpression::new().table_name(Alias::new(INSERTED)).query(inserted).to_owned())
+        .cte(CommonTableExpression::new().table_name(Alias::new(TYPED)).query(typed).to_owned())
+        .cte(CommonTableExpression::new().table_name(Alias::new("members")).query(members).to_owned())
+        .to_owned()
+        .query(search)
+}
+
+/// The point `(13.0 + (key % 1000) * 0.001, 52.0 + (key % 1000) * 0.001)`, in
+/// WGS 84.
+fn corpus_point(key: &dyn Fn() -> Expr) -> SimpleExpr {
+    let offset = || Expr::expr(key().modulo(1000)).mul(0.001);
+    st_point_wgs84(Expr::val(13.0).add(offset()), Expr::val(52.0).add(offset()))
+}
+
+/// The insert of one projection row per seeded Entity, `key` the column the
+/// value is derived from, `value` the cell it lands in.
+fn projected_corpus_insert(
+    attribute: i32,
+    ordinal: i32,
+    attribute_kind: i16,
+    value_kind: i16,
+    value_column: CurrentAttributes,
+    value: SimpleExpr,
+    like: &str,
+) -> InsertStatement {
+    Query::insert()
+        .into_table(CurrentAttributes::Table)
+        .columns([
+            CurrentAttributes::EntityKey,
+            CurrentAttributes::AttributeNameKey,
+            CurrentAttributes::Ordinal,
+            CurrentAttributes::AttributeKind,
+            CurrentAttributes::ValueKind,
+            value_column,
+            CurrentAttributes::CreatedAt,
+            CurrentAttributes::ModifiedAt,
+        ])
+        .select_from(
+            Query::select()
+                .column((Entities::Table, Entities::EntityKey))
+                .expr(Expr::val(attribute))
+                .expr(Expr::val(ordinal))
+                .expr(Expr::val(attribute_kind))
+                .expr(Expr::val(value_kind))
+                .expr(value)
+                .expr(now())
+                .expr(now())
+                .from(Entities::Table)
+                .and_where(Expr::col((Entities::Table, Entities::Id)).like(like))
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .to_owned()
+}
 
 /// Write the corpus and analyze the relations the plans read.
 ///
@@ -213,64 +369,58 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
     let rare_type = entity_type_name_key(pool, RARE_TYPE).await.expect("type dictionary seed must succeed");
     let common_type = entity_type_name_key(pool, COMMON_TYPE).await.expect("type dictionary seed must succeed");
 
-    sqlx::query(ENTITY_CORPUS)
-        .bind(prefix)
-        .bind(rare_type)
-        .bind(common_type)
-        .bind(SEEDED_ENTITIES)
-        .bind(city)
-        .bind(alarm)
+    entity_corpus(prefix, rare_type, common_type, SEEDED_ENTITIES, city, alarm)
+        .to_query()
         .execute(pool)
         .await
         .expect("entity corpus must be writable");
 
     let like = format!("{prefix}:seed:%");
-    sqlx::query(
-        "INSERT INTO current_attributes \
-         (entity_key, attribute_name_key, ordinal, attribute_kind, value_kind, value_number, created_at, modified_at) \
-         SELECT e.entity_key, $1, 0, 1, 1, (e.entity_key % 20000)::numeric, now(), now() \
-         FROM entities AS e WHERE e.id LIKE $2::text",
+    let entity_key = || Expr::col((Entities::Table, Entities::EntityKey));
+    projected_corpus_insert(
+        reading,
+        0,
+        1,
+        1,
+        CurrentAttributes::ValueNumber,
+        cast(Expr::expr(entity_key().modulo(20_000)), PostgresType::Numeric),
+        &like,
     )
-    .bind(reading)
-    .bind(&like)
+    .to_query()
     .execute(pool)
     .await
     .expect("numeric projection corpus must be writable");
 
-    sqlx::query(
-        "INSERT INTO current_attributes \
-         (entity_key, attribute_name_key, ordinal, attribute_kind, value_kind, value_geometry, created_at, modified_at) \
-         SELECT e.entity_key, $1, 1, 3, 4, \
-                ST_SetSRID(ST_MakePoint(13.0 + (e.entity_key % 1000) * 0.001, 52.0 + (e.entity_key % 1000) * 0.001), 4326), now(), now() \
-         FROM entities AS e WHERE e.id LIKE $2::text",
-    )
-    .bind(entrance)
-    .bind(&like)
-    .execute(pool)
-    .await
-    .expect("geometry projection corpus must be writable");
+    projected_corpus_insert(entrance, 1, 3, 4, CurrentAttributes::ValueGeometry, corpus_point(&entity_key), &like)
+        .to_query()
+        .execute(pool)
+        .await
+        .expect("geometry projection corpus must be writable");
 
-    sqlx::query(
-        "INSERT INTO current_attributes \
-         (entity_key, attribute_name_key, ordinal, attribute_kind, value_kind, value_string, created_at, modified_at) \
-         SELECT e.entity_key, $1, 2, 1, 2, 'city-' || (e.entity_key % 1000)::text, now(), now() \
-         FROM entities AS e WHERE e.id LIKE $2::text",
+    projected_corpus_insert(
+        city,
+        2,
+        1,
+        2,
+        CurrentAttributes::ValueString,
+        text_literal("city-").concat_text(cast(Expr::expr(entity_key().modulo(1000)), PostgresType::Text)),
+        &like,
     )
-    .bind(city)
-    .bind(&like)
+    .to_query()
     .execute(pool)
     .await
     .expect("string projection corpus must be writable");
 
-    sqlx::query(
-        "INSERT INTO current_attributes \
-         (entity_key, attribute_name_key, ordinal, attribute_kind, value_kind, value_uri, created_at, modified_at) \
-         SELECT e.entity_key, $1, 3, 2, 7, $3::text || (e.entity_key % 2000)::text, now(), now() \
-         FROM entities AS e WHERE e.id LIKE $2::text",
+    projected_corpus_insert(
+        owner,
+        3,
+        2,
+        7,
+        CurrentAttributes::ValueUri,
+        cast(Expr::val(OWNER_PREFIX), PostgresType::Text).concat_text(cast(Expr::expr(entity_key().modulo(2000)), PostgresType::Text)),
+        &like,
     )
-    .bind(owner)
-    .bind(&like)
-    .bind(OWNER_PREFIX)
+    .to_query()
     .execute(pool)
     .await
     .expect("relationship projection corpus must be writable");
@@ -304,19 +454,47 @@ pub async fn seed_essays(pool: &PgPool, corpus: &SeededCorpus) -> SeededEssays {
         .expect("the probed essay is seeded and ASCII")
         .to_owned();
 
-    sqlx::query(
-        "INSERT INTO current_attributes \
-         (entity_key, attribute_name_key, ordinal, attribute_kind, value_kind, value_long_text, created_at, modified_at) \
-         SELECT e.entity_key, $1, 4, 1, 2, essay.body, now(), now() \
-         FROM unnest($2::text[]) WITH ORDINALITY AS essay(body, ordinal) \
-         JOIN entities AS e ON e.id = $3::text || ':seed:' || lpad(essay.ordinal::text, 6, '0')",
-    )
-    .bind(attribute)
-    .bind(&essays)
-    .bind(corpus.prefix())
-    .execute(pool)
-    .await
-    .expect("overflow projection corpus must be writable");
+    let bodies = [UnnestColumn::new(Alias::new("body"), PostgresType::TextArray)];
+    let essay = |column: &str| Expr::col((Alias::new("essay"), Alias::new(column)));
+    let insert = Query::insert()
+        .into_table(CurrentAttributes::Table)
+        .columns([
+            CurrentAttributes::EntityKey,
+            CurrentAttributes::AttributeNameKey,
+            CurrentAttributes::Ordinal,
+            CurrentAttributes::AttributeKind,
+            CurrentAttributes::ValueKind,
+            CurrentAttributes::ValueLongText,
+            CurrentAttributes::CreatedAt,
+            CurrentAttributes::ModifiedAt,
+        ])
+        .select_from(
+            Query::select()
+                .column((Entities::Table, Entities::EntityKey))
+                .expr(Expr::val(attribute))
+                .expr(Expr::val(4))
+                .expr(Expr::val(1_i16))
+                .expr(Expr::val(2_i16))
+                .expr(essay("body"))
+                .expr(now())
+                .expr(now())
+                .from_function(unnest_call([(&bodies[0], Expr::val(essays))]), Alias::new("essay"))
+                .inner_join(
+                    Entities::Table,
+                    Expr::col((Entities::Table, Entities::Id)).eq(cast(Expr::val(corpus.prefix()), PostgresType::Text)
+                        .concat_text(text_literal(":seed:"))
+                        .concat_text(lpad(cast(essay("ordinal"), PostgresType::Text), Expr::val(6), text_literal("0")))),
+                )
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .to_owned();
+    UnnestAliased::new(insert)
+        .with_ordinality(Alias::new("essay"), &bodies, Alias::new("ordinal"))
+        .to_query()
+        .execute(pool)
+        .await
+        .expect("overflow projection corpus must be writable");
 
     analyze(pool).await;
 
@@ -325,8 +503,16 @@ pub async fn seed_essays(pool: &PgPool, corpus: &SeededCorpus) -> SeededEssays {
 
 /// Refresh the statistics the planner reads for every relation the plans touch.
 pub async fn analyze(pool: &PgPool) {
-    for statement in ["ANALYZE entities", "ANALYZE entity_search", "ANALYZE current_attributes"] {
-        sqlx::query(statement).execute(pool).await.expect("analyze must succeed");
+    for relation in [
+        Entities::Table.into_iden(),
+        EntitySearch::Table.into_iden(),
+        CurrentAttributes::Table.into_iden(),
+    ] {
+        analyze_relation(MaintenanceSchema::Public, relation)
+            .to_query()
+            .execute(pool)
+            .await
+            .expect("analyze must succeed");
     }
 }
 
@@ -343,11 +529,14 @@ pub enum PlannerPaths {
 
 /// Run `EXPLAIN (ANALYZE, BUFFERS)` on one executor and return the plan as one
 /// text block.
-pub async fn explain<'e, E>(executor: E, statement: &str) -> String
+pub async fn explain<'e, E>(executor: E, statement: impl Statement) -> String
 where
     E: Executor<'e, Database = Postgres>,
 {
-    let lines: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("EXPLAIN (ANALYZE, BUFFERS) {statement}")))
+    let lines: Vec<String> = Explain::new(statement)
+        .with(ExplainOption::Analyze)
+        .with(ExplainOption::Buffers)
+        .to_query_scalar()
         .fetch_all(executor)
         .await
         .expect("the plan must be readable");
@@ -357,12 +546,13 @@ where
 /// Run `EXPLAIN (ANALYZE, BUFFERS)` inside a transaction that is rolled back
 /// afterwards, so a planner setting stays local to the one statement and a
 /// planned write leaves nothing behind.
-pub async fn explain_rolled_back(pool: &PgPool, paths: PlannerPaths, statement: &str) -> String {
+pub async fn explain_rolled_back(pool: &PgPool, paths: PlannerPaths, statement: impl Statement) -> String {
     let mut transaction = pool.begin().await.expect("the plan transaction must open");
     match paths {
         PlannerPaths::Unrestricted => (),
         PlannerPaths::WithoutSequentialScans => {
-            sqlx::query("SET LOCAL enable_seqscan = off")
+            SettingAssignment::new(Setting::EnableSeqscan, "off", SettingScope::Transaction)
+                .to_query()
                 .execute(&mut *transaction)
                 .await
                 .expect("the planner setting must apply");

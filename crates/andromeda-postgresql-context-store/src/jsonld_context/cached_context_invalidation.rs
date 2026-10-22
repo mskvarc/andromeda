@@ -14,14 +14,13 @@ use andromeda_context_registry::{
     cached_context_invalidation::{CachedContextInvalidation, CachedContextInvalidationFuture, InvalidatedContexts},
     error::ContextRegistryError,
 };
-use sea_query::PostgresQueryBuilder;
-use sea_query_sqlx::SqlxBinder;
+use andromeda_postgresql_seaquery::statement::Statement;
 
 impl CachedContextInvalidation for JsonLdContextRepository {
     fn invalidate_expired(&self) -> CachedContextInvalidationFuture<'_> {
         Box::pin(async move {
-            let (sql, values) = delete_expired_cached().build_sqlx(PostgresQueryBuilder);
-            let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            let result = delete_expired_cached()
+                .to_query()
                 .execute(&self.pool)
                 .await
                 .map_err(|error| ContextRegistryError::from(persistence_failure(&error)))?;

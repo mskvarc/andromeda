@@ -19,6 +19,7 @@ use andromeda_postgresql_seaquery::{
     maintenance::storage_parameter,
     operator::null_if,
     pg_type::PostgresType,
+    setting::Setting,
 };
 use sea_query::{Alias, Expr, ExprTrait, Func, Iden, JoinType, Query, SelectStatement, SimpleExpr};
 
@@ -89,12 +90,12 @@ pub(crate) fn autovacuum_triggers_statement(branch: Branch) -> SelectStatement {
 /// and a server without `autovacuum_vacuum_max_threshold` (read missing-ok)
 /// leave the uncapped trigger.
 fn vacuum_trigger() -> SimpleExpr {
-    let uncapped = uncapped_trigger("autovacuum_vacuum_threshold", "autovacuum_vacuum_scale_factor");
+    let uncapped = uncapped_trigger(Setting::AutovacuumVacuumThreshold, Setting::AutovacuumVacuumScaleFactor);
     let cap = cast(
         null_if(
             Func::coalesce([
-                table_parameter("autovacuum_vacuum_max_threshold"),
-                current_setting_missing_ok("autovacuum_vacuum_max_threshold"),
+                table_parameter(Setting::AutovacuumVacuumMaxThreshold),
+                current_setting_missing_ok(Setting::AutovacuumVacuumMaxThreshold),
             ])
             .into(),
             Expr::val("-1"),
@@ -108,14 +109,14 @@ fn vacuum_trigger() -> SimpleExpr {
 /// parameters, each the table's own or the server's.
 fn analyze_trigger() -> SimpleExpr {
     cast(
-        uncapped_trigger("autovacuum_analyze_threshold", "autovacuum_analyze_scale_factor"),
+        uncapped_trigger(Setting::AutovacuumAnalyzeThreshold, Setting::AutovacuumAnalyzeScaleFactor),
         PostgresType::Bigint,
     )
 }
 
 /// `threshold + scale_factor * reltuples` in `numeric`, the two named
 /// parameters each the table's own or the server's.
-fn uncapped_trigger(threshold: &'static str, scale_factor: &'static str) -> SimpleExpr {
+fn uncapped_trigger(threshold: Setting, scale_factor: Setting) -> SimpleExpr {
     let reltuples: SimpleExpr = Func::greatest([
         cast(Expr::col((Alias::new(TABLE_CLASS), Alias::new("reltuples"))), PostgresType::Numeric),
         Expr::val(0),
@@ -128,12 +129,12 @@ fn uncapped_trigger(threshold: &'static str, scale_factor: &'static str) -> Simp
 
 /// A storage parameter as the table sets it, falling back to the server
 /// setting of the same name.
-fn effective_parameter(name: &'static str) -> SimpleExpr {
+fn effective_parameter(name: Setting) -> SimpleExpr {
     Func::coalesce([table_parameter(name), current_setting(name)]).into()
 }
 
 /// A storage parameter as the table sets it, NULL when it does not.
-fn table_parameter(name: &'static str) -> SimpleExpr {
+fn table_parameter(name: Setting) -> SimpleExpr {
     storage_parameter(Expr::col((Alias::new(TABLE_CLASS), Alias::new("reloptions"))), name)
 }
 
@@ -141,6 +142,7 @@ fn table_parameter(name: &'static str) -> SimpleExpr {
 mod tests {
     use crate::{autovacuum_trigger::autovacuum_triggers_statement, branch::Branch, candidate::heap_target::HeapTarget, observed_heap::ObservedHeap};
     use andromeda_context_space::snapshot_key::SnapshotKey;
+    use andromeda_postgresql_seaquery::setting::Setting;
     use sea_query::PostgresQueryBuilder;
 
     #[test]
@@ -148,10 +150,10 @@ mod tests {
         let sql = autovacuum_triggers_statement(Branch::Live).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"pg_options_to_table("c"."reloptions")"#), "{sql}");
         for parameter in [
-            "autovacuum_vacuum_threshold",
-            "autovacuum_vacuum_scale_factor",
-            "autovacuum_analyze_threshold",
-            "autovacuum_analyze_scale_factor",
+            Setting::AutovacuumVacuumThreshold,
+            Setting::AutovacuumVacuumScaleFactor,
+            Setting::AutovacuumAnalyzeThreshold,
+            Setting::AutovacuumAnalyzeScaleFactor,
         ] {
             assert!(sql.contains(&format!("\"option_name\" = '{parameter}'")), "{parameter}: {sql}");
             assert!(sql.contains(&format!("current_setting('{parameter}')")), "{parameter}: {sql}");

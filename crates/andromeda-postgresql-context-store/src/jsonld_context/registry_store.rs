@@ -29,9 +29,9 @@ use andromeda_jsonld::context_cache::DownloadedContext;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
 use andromeda_ngsi_ld_model::jsonld_context::ContextMetadata;
 use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
+use andromeda_postgresql_seaquery::statement::Statement;
 use iri_rs::IriBuf;
-use sea_query::{InsertStatement, PostgresQueryBuilder, error::Error as SeaQueryError};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{InsertStatement, error::Error as SeaQueryError};
 use sqlx::types::Json;
 use url::Url;
 
@@ -51,10 +51,10 @@ impl ContextRegistryStore for JsonLdContextRepository {
             let kind = query.kind.map(stored_kind);
             let (statement, read_order) = listing_page_query(query.detail_level, kind, query.embedded, &query.window.with_lookahead())
                 .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
-            let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
             match query.detail_level {
                 ContextDetailLevel::Full => {
-                    let mut rows: Vec<ContextMetadataRow> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                    let mut rows: Vec<ContextMetadataRow> = statement
+                        .to_query_as()
                         .fetch_all(&self.pool)
                         .await
                         .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
@@ -73,7 +73,8 @@ impl ContextRegistryStore for JsonLdContextRepository {
                     })
                 }
                 ContextDetailLevel::Summary => {
-                    let mut rows: Vec<ContextSummaryRow> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                    let mut rows: Vec<ContextSummaryRow> = statement
+                        .to_query_as()
                         .fetch_all(&self.pool)
                         .await
                         .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
@@ -99,8 +100,8 @@ impl ContextRegistryStore for JsonLdContextRepository {
         Box::pin(async move {
             match detail_level {
                 ContextDetailLevel::Full => {
-                    let (sql, values) = metadata_by_identifier_query(identifier.as_str()).build_sqlx(PostgresQueryBuilder);
-                    let row: Option<ContextMetadataRow> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                    let row: Option<ContextMetadataRow> = metadata_by_identifier_query(identifier.as_str())
+                        .to_query_as()
                         .fetch_optional(&self.pool)
                         .await
                         .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
@@ -111,8 +112,8 @@ impl ContextRegistryStore for JsonLdContextRepository {
                     Ok(metadata.map(|value| FetchedContext::Detailed(Box::new(value))))
                 }
                 ContextDetailLevel::Summary => {
-                    let (sql, values) = payload_by_identifier_query(identifier.as_str()).build_sqlx(PostgresQueryBuilder);
-                    let row: Option<(Json<JsonLiteral>,)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                    let row: Option<(Json<JsonLiteral>,)> = payload_by_identifier_query(identifier.as_str())
+                        .to_query_as()
                         .fetch_optional(&self.pool)
                         .await
                         .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
@@ -124,8 +125,8 @@ impl ContextRegistryStore for JsonLdContextRepository {
 
     fn record_access<'a>(&'a self, identifier: &'a Identifier) -> ContextRegistryFuture<'a, ContextMutation> {
         Box::pin(async move {
-            let (sql, values) = record_access_update(identifier.as_str()).build_sqlx(PostgresQueryBuilder);
-            let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            let result = record_access_update(identifier.as_str())
+                .to_query()
                 .execute(&self.pool)
                 .await
                 .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
@@ -135,8 +136,8 @@ impl ContextRegistryStore for JsonLdContextRepository {
 
     fn lookup<'a>(&'a self, identifier: &'a Identifier) -> ContextRegistryFuture<'a, Option<StoredContext>> {
         Box::pin(async move {
-            let (sql, values) = stored_context_query(identifier.as_str()).build_sqlx(PostgresQueryBuilder);
-            let row: Option<(String, i16, Option<String>)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            let row: Option<(String, i16, Option<String>)> = stored_context_query(identifier.as_str())
+                .to_query_as()
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
@@ -157,8 +158,8 @@ impl ContextRegistryStore for JsonLdContextRepository {
 
     fn delete<'a>(&'a self, identifier: &'a Identifier) -> ContextRegistryFuture<'a, ContextMutation> {
         Box::pin(async move {
-            let (sql, values) = delete_by_identifier(identifier.as_str()).build_sqlx(PostgresQueryBuilder);
-            let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            let result = delete_by_identifier(identifier.as_str())
+                .to_query()
                 .execute(&self.pool)
                 .await
                 .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
@@ -168,9 +169,8 @@ impl ContextRegistryStore for JsonLdContextRepository {
 
     fn replace_download<'a>(&'a self, identifier: &'a Identifier, download: &'a DownloadedContext) -> ContextRegistryFuture<'a, ContextMutation> {
         Box::pin(async move {
-            let (sql, values) =
-                replace_download_update(identifier.as_str(), download.document_url.as_str(), &download.document).build_sqlx(PostgresQueryBuilder);
-            let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            let result = replace_download_update(identifier.as_str(), download.document_url.as_str(), &download.document)
+                .to_query()
                 .execute(&self.pool)
                 .await
                 .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
@@ -189,8 +189,8 @@ async fn insert_context(
     kind: ContextCreationKind,
 ) -> Result<ContextInsertion, ContextRegistryError> {
     let statement = insert_statement(identifier, payload, serving_url, kind).map_err(|error| persistence_error::<ContextRegistryError>(error))?;
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let result = statement
+        .to_query()
         .execute(&repository.pool)
         .await
         .map_err(|error| persistence_error::<ContextRegistryError>(error))?;

@@ -15,49 +15,63 @@
 //! ([`crate::snapshot::branch_upgrade`]). History relations stay plain tables
 //! in a branch schema; only the live branch converts them to hypertables.
 //!
-//! The statements here that sea-query cannot express (`CREATE SCHEMA`,
-//! `ALTER SCHEMA ... RENAME`, `DROP SCHEMA`, `TRUNCATE`) interpolate a fixed
-//! table catalogue and a schema name derived from a positive integer key, never
-//! client input, so the rendered DDL carries nothing that could inject.
-
 use crate::{error::ContextStoreError, migration_set::branch::BranchMigrationSet};
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
-use andromeda_postgresql_branch::snapshot_schema_name;
-use andromeda_postgresql_seaquery::{
-    introspection::current_setting,
-    setting::{SettingScope, set_config},
+use andromeda_postgresql_branch::{snapshot_schema, snapshot_schema_name};
+use andromeda_postgresql_schema::{
+    census::{AttributeCensus, EntityTypeAttributeCensus, EntityTypeCensus},
+    current::{CurrentAttributes, Entities, EntitySearch, EntityTypeMembers},
+    notification::{NotificationDeliveries, NotificationEvents},
+    subscriptions::{SubscriptionDeliveryState, Subscriptions},
+    temporal::{
+        AttributeHistory,
+        AttributeHistoryInstanceClaims,
+        ScopeHistory,
+        TemporalAttributeStreams,
+        TemporalEntities,
+        TemporalEntityTypeMembers,
+        TemporalStreamShapes,
+    },
 };
-use sea_query::{PostgresQueryBuilder, Query};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{Executor, PgConnection};
-
-/// The runtime setting a branch migration is steered into its schema by.
-const SEARCH_PATH: &str = "search_path";
+use andromeda_postgresql_seaquery::{
+    command::Command,
+    introspection::current_setting,
+    maintenance::MaintenanceCommand,
+    relation_truncation::RelationTruncation,
+    schema_definition::SchemaDefinition,
+    setting::{Setting, SettingScope, set_config},
+    statement::Statement,
+};
+use sea_query::{DynIden, IntoIden, Query, TableName};
+use sqlx::PgConnection;
 
 /// The branch relations every Snapshot schema holds, in an order that respects
 /// intra-branch references, foreign keys and statement-level checks alike
-/// (parents before children), which the relations a clone copies keep. The branch migrations create them; this list only orders
-/// the truncation and the copies.
-pub(crate) const BRANCH_TABLES: [&str; 18] = [
-    "entities",
-    "temporal_entities",
-    "subscriptions",
-    "notification_events",
-    "entity_search",
-    "entity_type_census",
-    "entity_type_attribute_census",
-    "attribute_census",
-    "entity_type_members",
-    "current_attributes",
-    "temporal_entity_type_members",
-    "temporal_attribute_streams",
-    "temporal_stream_shapes",
-    "attribute_history",
-    "scope_history",
-    "attribute_history_instance_claims",
-    "subscription_delivery_state",
-    "notification_deliveries",
-];
+/// (parents before children), which the relations a clone copies keep. The
+/// branch migrations create them; this list only orders the truncation and
+/// the copies.
+pub(crate) fn branch_tables() -> [DynIden; 18] {
+    [
+        Entities::Table.into_iden(),
+        TemporalEntities::Table.into_iden(),
+        Subscriptions::Table.into_iden(),
+        NotificationEvents::Table.into_iden(),
+        EntitySearch::Table.into_iden(),
+        EntityTypeCensus::Table.into_iden(),
+        EntityTypeAttributeCensus::Table.into_iden(),
+        AttributeCensus::Table.into_iden(),
+        EntityTypeMembers::Table.into_iden(),
+        CurrentAttributes::Table.into_iden(),
+        TemporalEntityTypeMembers::Table.into_iden(),
+        TemporalAttributeStreams::Table.into_iden(),
+        TemporalStreamShapes::Table.into_iden(),
+        AttributeHistory::Table.into_iden(),
+        ScopeHistory::Table.into_iden(),
+        AttributeHistoryInstanceClaims::Table.into_iden(),
+        SubscriptionDeliveryState::Table.into_iden(),
+        NotificationDeliveries::Table.into_iden(),
+    ]
+}
 
 /// Create a branch schema by running the branch migration set inside it.
 ///
@@ -73,8 +87,8 @@ pub(crate) const BRANCH_TABLES: [&str; 18] = [
 /// Returns [`ContextStoreError`] when the schema cannot be created, the search
 /// path cannot be set or restored, or a branch migration fails.
 pub(crate) async fn create_branch_schema(conn: &mut PgConnection, key: SnapshotKey, branch: SnapshotBranch) -> Result<(), ContextStoreError> {
+    SchemaDefinition::create(snapshot_schema(key, branch)).to_query().execute(&mut *conn).await?;
     let schema = snapshot_schema_name(key, branch);
-    exec_ddl(conn, format!("CREATE SCHEMA {schema}")).await?;
     let previous = current_search_path(conn).await?;
     steer_search_path(conn, &branch_search_path(&schema), SettingScope::Transaction).await?;
     let mut migrator = BranchMigrationSet::embedded().migrator(&schema);
@@ -95,26 +109,22 @@ pub(crate) fn branch_search_path(schema: &str) -> String {
 
 /// Read the connection's current search path.
 async fn current_search_path(conn: &mut PgConnection) -> Result<String, ContextStoreError> {
-    let (sql, values) = Query::select().expr(current_setting(SEARCH_PATH)).build_sqlx(PostgresQueryBuilder);
-    Ok(sqlx::query_scalar_with::<_, String, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
+    Ok(Query::select()
+        .expr(current_setting(Setting::SearchPath))
+        .to_owned()
+        .to_query_scalar::<String>()
         .fetch_one(conn)
         .await?)
 }
 
 /// Set the connection's search path for `scope`.
 pub(crate) async fn steer_search_path(conn: &mut PgConnection, search_path: &str, scope: SettingScope) -> Result<(), ContextStoreError> {
-    let (sql, values) = Query::select()
-        .expr(set_config(SEARCH_PATH, search_path, scope))
-        .build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(conn).await?;
-    Ok(())
-}
-
-/// Execute one branch-DDL statement built from the trusted table catalogue and
-/// a schema name derived from a positive key, never client input, so the
-/// dynamic text is asserted safe.
-async fn exec_ddl(conn: &mut PgConnection, sql: String) -> Result<(), ContextStoreError> {
-    conn.execute(sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))).await?;
+    Query::select()
+        .expr(set_config(Setting::SearchPath, search_path, scope))
+        .to_owned()
+        .to_query()
+        .execute(conn)
+        .await?;
     Ok(())
 }
 
@@ -124,8 +134,8 @@ async fn exec_ddl(conn: &mut PgConnection, sql: String) -> Result<(), ContextSto
 ///
 /// Returns [`ContextStoreError`] when the `DROP SCHEMA` fails.
 pub(crate) async fn drop_branch_schema(conn: &mut PgConnection, key: SnapshotKey, branch: SnapshotBranch) -> Result<(), ContextStoreError> {
-    let schema = snapshot_schema_name(key, branch);
-    exec_ddl(conn, format!("DROP SCHEMA IF EXISTS {schema} CASCADE")).await
+    SchemaDefinition::drop_cascade(snapshot_schema(key, branch)).to_query().execute(conn).await?;
+    Ok(())
 }
 
 /// Empty the staging branch in place, resetting its identity sequences.
@@ -138,8 +148,11 @@ pub(crate) async fn drop_branch_schema(conn: &mut PgConnection, key: SnapshotKey
 ///
 /// Returns [`ContextStoreError`] when the `TRUNCATE` fails.
 pub(crate) async fn truncate_branch_schema(conn: &mut PgConnection, key: SnapshotKey, branch: SnapshotBranch) -> Result<(), ContextStoreError> {
-    let schema = snapshot_schema_name(key, branch);
-    exec_ddl(conn, format!("TRUNCATE {} RESTART IDENTITY CASCADE", qualified_branch_tables(&schema))).await
+    RelationTruncation::new(branch_relations(&snapshot_schema(key, branch)))
+        .to_query()
+        .execute(conn)
+        .await?;
+    Ok(())
 }
 
 /// Gather the planner statistics of every relation in a branch.
@@ -154,18 +167,17 @@ pub(crate) async fn truncate_branch_schema(conn: &mut PgConnection, key: Snapsho
 ///
 /// Returns [`ContextStoreError`] when the `ANALYZE` fails.
 pub(crate) async fn analyze_branch_schema(conn: &mut PgConnection, key: SnapshotKey, branch: SnapshotBranch) -> Result<(), ContextStoreError> {
-    exec_ddl(conn, analyze_sql(&snapshot_schema_name(key, branch))).await
+    MaintenanceCommand::Analyze(branch_relations(&snapshot_schema(key, branch)))
+        .to_query()
+        .execute(conn)
+        .await?;
+    Ok(())
 }
 
-/// The statement gathering the statistics of every relation in `schema`.
-fn analyze_sql(schema: &str) -> String {
-    format!("ANALYZE {}", qualified_branch_tables(schema))
-}
-
-/// Every branch relation qualified by `schema`, comma-separated, in
-/// [`BRANCH_TABLES`] order.
-fn qualified_branch_tables(schema: &str) -> String {
-    BRANCH_TABLES.iter().map(|table| format!("{schema}.{table}")).collect::<Vec<_>>().join(", ")
+/// Every branch relation qualified by `schema`, in [`branch_tables`] order.
+pub(crate) fn branch_relations(schema: &DynIden) -> Vec<TableName> {
+    // clone: each qualified name owns its schema identifier.
+    branch_tables().into_iter().map(|table| TableName::from((schema.clone(), table))).collect()
 }
 
 /// Publish a Snapshot's prepared branch by renaming its staging schema to the
@@ -176,9 +188,11 @@ fn qualified_branch_tables(schema: &str) -> String {
 ///
 /// Returns [`ContextStoreError`] when the rename fails.
 pub(crate) async fn promote_staging_schema(conn: &mut PgConnection, key: SnapshotKey) -> Result<(), ContextStoreError> {
-    let published = snapshot_schema_name(key, SnapshotBranch::Published);
-    let staging = snapshot_schema_name(key, SnapshotBranch::Staging);
-    exec_ddl(conn, format!("ALTER SCHEMA {staging} RENAME TO {published}")).await
+    SchemaDefinition::rename(snapshot_schema(key, SnapshotBranch::Staging), snapshot_schema(key, SnapshotBranch::Published))
+        .to_query()
+        .execute(conn)
+        .await?;
+    Ok(())
 }
 
 /// Publish an empty branch for a Snapshot whose preparation failed: whatever
@@ -198,15 +212,19 @@ pub(crate) async fn publish_empty_branch(conn: &mut PgConnection, key: SnapshotK
 mod tests {
     use crate::{
         migration_set::branch::branch_migrations,
-        snapshot::branch_schema::{BRANCH_TABLES, analyze_sql, branch_search_path},
+        snapshot::branch_schema::{branch_relations, branch_search_path, branch_tables},
     };
     use pretty_assertions::assert_eq;
+    use sea_query::{Alias, IntoIden, TableName};
 
     #[test]
-    fn the_branch_analyze_names_every_branch_relation_of_its_schema_and_nothing_else() {
-        let sql = analyze_sql("snap_7_stg");
-        let expected: Vec<String> = BRANCH_TABLES.iter().map(|table| format!("snap_7_stg.{table}")).collect();
-        assert_eq!(sql, format!("ANALYZE {}", expected.join(", ")));
+    fn every_branch_relation_is_qualified_by_its_schema_in_branch_order() {
+        let schema = Alias::new("snap_7_stg").into_iden();
+        let relations = branch_relations(&schema);
+        assert_eq!(relations.len(), branch_tables().len());
+        for (relation, table) in relations.into_iter().zip(branch_tables()) {
+            assert_eq!(relation, TableName::from((Alias::new("snap_7_stg"), table)));
+        }
     }
 
     #[test]
@@ -233,7 +251,7 @@ mod tests {
             .collect();
         created.sort();
         let created = created;
-        let mut ordered: Vec<String> = BRANCH_TABLES.iter().map(|table| (*table).to_owned()).collect();
+        let mut ordered: Vec<String> = branch_tables().iter().map(ToString::to_string).collect();
         ordered.sort();
         let ordered = ordered;
         assert_eq!(ordered, created);

@@ -14,6 +14,14 @@
 /// Brokers in different notification delivery modes sharing one tenant.
 mod mixed_delivery_modes;
 
+use andromeda_postgresql_seaquery::{
+    aggregate::count_all,
+    catalog_function::{client_host, host},
+    literal::int_literal,
+    statement::Statement,
+    system_catalog::{PgClass, PgDatabase, PgStatActivity},
+    unnest::unnest_of,
+};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::pooler_probe::{
     endpoints,
@@ -26,6 +34,7 @@ use andromeda_test_harness::pooler_probe::{
 use andromeda_test_mocks::{notification_server::NotificationServer, server_config::MockServerConfig};
 use futures::future::join_all;
 use reqwest::Client;
+use sea_query::{Alias, Expr, ExprTrait, Query};
 use serde_json::{Value, json};
 use sqlx::{Connection, PgConnection, PgPool};
 use std::{slice, time::Duration};
@@ -68,7 +77,9 @@ async fn reset(client: &Client, pool: &PgPool) {
 /// connection so it is the pooler's own server-side peer address.
 async fn pooler_client_addr() -> String {
     let mut connection = PgConnection::connect(&endpoints::pooler_url()).await.expect("connect through the pooler");
-    let addr = sqlx::query_scalar("SELECT host(inet_client_addr())")
+    let addr = Query::select()
+        .expr(client_host())
+        .to_query_scalar()
         .fetch_one(&mut connection)
         .await
         .expect("read the pooler's client address");
@@ -78,7 +89,11 @@ async fn pooler_client_addr() -> String {
 
 /// Every provisioned tenant database name.
 async fn tenant_databases(pool: &PgPool) -> Vec<String> {
-    sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_%'")
+    Query::select()
+        .column(PgDatabase::Datname)
+        .from(PgDatabase::Table)
+        .and_where(Expr::col(PgDatabase::Datname).like("andromeda_tenant_%"))
+        .to_query_scalar()
         .fetch_all(pool)
         .await
         .unwrap_or_default()
@@ -152,7 +167,15 @@ async fn copy_staged_batches_commit_atomically_across_concurrent_tenants() {
     for database in tenant_databases(&pool).await {
         let url = endpoints::database_url().replace("/postgres", &format!("/{database}"));
         if let Ok(tenant_pool) = PgPool::connect(&url).await {
-            let staged: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_class WHERE relname LIKE 'stage\\_%' OR relname LIKE 'staging\\_%'")
+            let staged: i64 = Query::select()
+                .expr(count_all())
+                .from(PgClass::Table)
+                .and_where(
+                    Expr::col(PgClass::Relname)
+                        .like("stage\\_%")
+                        .or(Expr::col(PgClass::Relname).like("staging\\_%")),
+                )
+                .to_query_scalar()
                 .fetch_one(&tenant_pool)
                 .await
                 .unwrap_or(0);
@@ -370,7 +393,11 @@ async fn durable_notifications_are_delivered_exactly_per_change_through_the_pool
     while server.next_request(Duration::from_secs(5)).await.is_ok() {
         delivered += 1;
     }
-    let outbox: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity WHERE query LIKE '%notification_deliveries%'")
+    let outbox: i64 = Query::select()
+        .expr(count_all())
+        .from(PgStatActivity::Table)
+        .and_where(Expr::col(Alias::new("query")).like("%notification_deliveries%"))
+        .to_query_scalar()
         .fetch_one(&pool)
         .await
         .unwrap_or(0);
@@ -420,12 +447,18 @@ async fn synchronous_commit_is_a_database_default_not_session_state() {
 
     // The broker applies synchronous_commit with ALTER DATABASE, so it appears in
     // pg_db_role_setting for the tenant database rather than as session state.
-    let settings: Vec<String> = sqlx::query_scalar(
-        "SELECT unnest(setconfig) FROM pg_db_role_setting r JOIN pg_database d ON d.oid = r.setdatabase WHERE d.datname LIKE 'andromeda_tenant_%'",
-    )
-    .fetch_all(&pool)
-    .await
-    .unwrap_or_default();
+    let settings: Vec<String> = Query::select()
+        .expr(unnest_of(Expr::col((Alias::new("pg_db_role_setting"), Alias::new("setconfig")))))
+        .from(Alias::new("pg_db_role_setting"))
+        .inner_join(
+            PgDatabase::Table,
+            Expr::col((PgDatabase::Table, Alias::new("oid"))).equals((Alias::new("pg_db_role_setting"), Alias::new("setdatabase"))),
+        )
+        .and_where(Expr::col((PgDatabase::Table, PgDatabase::Datname)).like("andromeda_tenant_%"))
+        .to_query_scalar()
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
 
     println!("tenant database settings: {settings:?}");
     assert!(
@@ -501,14 +534,19 @@ async fn maintenance_holds_its_session_lock_on_a_direct_connection_while_request
     let after = maintenance_decisions(&client, &broker).await;
 
     let pooler_addr = pooler_client_addr().await;
-    let pooler_held: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid \
-         WHERE l.locktype = 'advisory' AND host(a.client_addr) = $1",
-    )
-    .bind(&pooler_addr)
-    .fetch_one(&pool)
-    .await
-    .expect("count advisory locks held over the pooler");
+    let pooler_held: i64 = Query::select()
+        .expr(count_all())
+        .from(Alias::new("pg_locks"))
+        .inner_join(
+            PgStatActivity::Table,
+            Expr::col((PgStatActivity::Table, Alias::new("pid"))).equals((Alias::new("pg_locks"), Alias::new("pid"))),
+        )
+        .and_where(Expr::col((Alias::new("pg_locks"), Alias::new("locktype"))).eq("advisory"))
+        .and_where(host(Expr::col((PgStatActivity::Table, Alias::new("client_addr")))).eq(pooler_addr.as_str()))
+        .to_query_scalar()
+        .fetch_one(&pool)
+        .await
+        .expect("count advisory locks held over the pooler");
 
     println!(
         "maintenance: decisions advanced by {}, advisory locks held via pooler {pooler_addr} {pooler_held}",
@@ -579,5 +617,10 @@ async fn concurrent_writes_to_one_entity_serialise_correctly_on_two_backends() {
 
 /// A trivial control-database probe, kept so the control pool is exercised.
 async fn pool_has_rows(pool: &PgPool) -> bool {
-    sqlx::query("SELECT 1").fetch_optional(pool).await.is_ok_and(|row| row.is_some())
+    Query::select()
+        .expr(int_literal(1))
+        .to_query()
+        .fetch_optional(pool)
+        .await
+        .is_ok_and(|row| row.is_some())
 }

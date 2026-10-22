@@ -80,6 +80,7 @@ andromeda-postgresql-name-dictionary.workspace = true
 andromeda-postgresql-pool.workspace = true
 andromeda-postgresql-query.workspace = true
 andromeda-postgresql-schema.workspace = true
+andromeda-postgresql-seaquery.workspace = true
 andromeda-postgresql-temporal-query.workspace = true
 andromeda-postgresql-temporal-store.workspace = true
 andromeda-temporal.workspace = true
@@ -107,7 +108,7 @@ reqwest = { version = "0.13.5", features = ["json"] }
 rumqttc = { version = "0.25.1", features = ["use-rustls"] }
 rustls = { version = "0.23.45", default-features = false, features = ["aws_lc_rs", "std"] }
 rustls-pki-types = "1.15.1"
-sea-query = { version = "1.0.2", features = ["backend-postgres"] }
+sea-query = { version = "1.0.2", features = ["backend-postgres", "postgres-array", "with-chrono", "with-uuid"] }
 serde_json = "1.0.151"
 serde_norway = "0.9.42"
 serial_test = "4.0.1"

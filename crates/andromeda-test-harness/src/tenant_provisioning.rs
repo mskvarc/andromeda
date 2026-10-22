@@ -8,11 +8,14 @@
 
 use crate::configuration::DatabaseEndpoint;
 use andromeda_ngsi_ld_lexicon::tenant::{InvalidTenantName, TenantName};
+use andromeda_postgresql_schema::tenancy::Tenants;
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_tenancy::database_name::TenantDatabaseName;
 use andromeda_test_client::{entity::EntityRequestError, test_client::TestClient};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use dashmap::DashMap;
 use http::StatusCode;
+use sea_query::{Expr, ExprTrait, Query};
 use serde_json::json;
 use sqlx::PgPool;
 use std::sync::{Arc, LazyLock};
@@ -97,8 +100,11 @@ pub async fn provisioned_tenant_database(
 ///
 /// Returns the [`sqlx::Error`] the registry read reported.
 pub async fn registered_tenant_database(platform: &PgPool, tenant: &TenantName) -> Result<Option<TenantDatabaseName>, sqlx::Error> {
-    let database: Option<String> = sqlx::query_scalar("SELECT database_name FROM tenants WHERE name = $1")
-        .bind(tenant.as_str())
+    let database: Option<String> = Query::select()
+        .column(Tenants::DatabaseName)
+        .from(Tenants::Table)
+        .and_where(Expr::col(Tenants::Name).eq(tenant.as_str()))
+        .to_query_scalar()
         .fetch_optional(platform)
         .await?;
     Ok(database.map(TenantDatabaseName::from))

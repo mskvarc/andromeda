@@ -5,13 +5,16 @@
 //! failure takes the Entity row down with it.
 
 use crate::{
-    bypass_writes::{insert_attribute_name, insert_typed_entity},
-    projection_rows::{ProjectionRow, rows_for_attribute},
+    bypass_writes::{current_attribute_insert, insert_attribute_name, insert_typed_entity},
+    projection_rows::{ProjectionRow, entities_with_id, rows_for_attribute},
 };
+use andromeda_postgresql_schema::current::CurrentAttributes;
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::Expr;
 use serde_json::{Value, json};
 
 /// The expanded Building type of the ETSI test-suite context.
@@ -82,16 +85,11 @@ async fn current_projection_constraint_violation_rolls_back_the_entity_row() {
     // exactly the corruption `chk_current_attributes_value_kind_column` exists
     // to refuse.
     let name_key = insert_attribute_name(&mut transaction, "https://example.test/current-projection/rollback").await;
-    let failure = sqlx::query(
-        "INSERT INTO current_attributes \
-         (entity_key, attribute_name_key, ordinal, attribute_kind, value_kind, value_string, created_at, modified_at) \
-         VALUES ($1, $2, 0, 1, 1, 'not a number', now(), now())",
-    )
-    .bind(entity_key)
-    .bind(name_key)
-    .execute(&mut *transaction)
-    .await
-    .expect_err("a projection row contradicting its value kind must be refused");
+    let failure = current_attribute_insert(entity_key, name_key, 0, 1, CurrentAttributes::ValueString, Expr::val("not a number"))
+        .to_query()
+        .execute(&mut *transaction)
+        .await
+        .expect_err("a projection row contradicting its value kind must be refused");
     let database_error = failure.as_database_error().expect("the refusal must come from the database");
     assert_eq!(
         database_error.code().as_deref(),
@@ -101,8 +99,8 @@ async fn current_projection_constraint_violation_rolls_back_the_entity_row() {
 
     transaction.rollback().await.expect("rollback must succeed");
 
-    let survivors: i64 = sqlx::query_scalar("SELECT count(*) FROM entities WHERE id = $1")
-        .bind(&id)
+    let survivors: i64 = entities_with_id(&id)
+        .to_query_scalar()
         .fetch_one(scope.database_pool())
         .await
         .expect("entity count must be readable");
@@ -209,8 +207,8 @@ async fn current_projection_rejects_an_out_of_range_number_without_mutation() {
         "problem details: {problem}"
     );
 
-    let entity_rows: i64 = sqlx::query_scalar("SELECT count(*) FROM entities WHERE id = $1")
-        .bind(&id)
+    let entity_rows: i64 = entities_with_id(&id)
+        .to_query_scalar()
         .fetch_one(scope.database_pool())
         .await
         .expect("entity count must be readable");
@@ -236,16 +234,11 @@ async fn a_short_string_in_the_overflow_column_is_refused() {
     // so a writer parking it in the overflow column would leave the B-tree
     // blind to it; `chk_current_attributes_value_long_text_length`
     // refuses that placement.
-    let failure = sqlx::query(
-        "INSERT INTO current_attributes \
-         (entity_key, attribute_name_key, ordinal, attribute_kind, value_kind, value_long_text, created_at, modified_at) \
-         VALUES ($1, $2, 0, 1, 2, '0123456789', now(), now())",
-    )
-    .bind(entity_key)
-    .bind(name_key)
-    .execute(&mut *transaction)
-    .await
-    .expect_err("a short string in the overflow column must be refused");
+    let failure = current_attribute_insert(entity_key, name_key, 0, 2, CurrentAttributes::ValueLongText, Expr::val("0123456789"))
+        .to_query()
+        .execute(&mut *transaction)
+        .await
+        .expect_err("a short string in the overflow column must be refused");
     let database_error = failure.as_database_error().expect("the refusal must come from the database");
     assert_eq!(
         (database_error.code().as_deref(), database_error.constraint()),

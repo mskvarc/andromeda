@@ -1,13 +1,16 @@
 //! The event and deliveries a notification verification starts from.
 
-use crate::queue_database::{record_events, subscription, subscription_key};
+use crate::queue_database::{deliveries_of_write, record_events, subscription, subscription_key};
 use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
 use andromeda_notification::{delivery_claim::DeliveryClaim, delivery_entry::DeliveryEntry};
 use andromeda_postgresql_context_store::notification_delivery::rows::NewNotificationEvent;
+use andromeda_postgresql_schema::notification::NotificationDeliveries;
+use andromeda_postgresql_seaquery::statement::Statement;
 use chrono::{TimeZone, Utc};
+use sea_query::Order;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -49,8 +52,10 @@ pub async fn queue_notification(pool: &PgPool, subscriptions: usize) -> QueuedNo
 
 /// Identifiers of the deliveries one write owes, in queue order.
 pub async fn delivery_ids(pool: &PgPool, record: &WriteRecord) -> Vec<i64> {
-    sqlx::query_scalar("SELECT d.delivery_key FROM notification_deliveries d JOIN notification_events e ON e.event_key = d.event_key WHERE e.write_id = $1 ORDER BY d.delivery_key")
-        .bind(record.write_id().as_uuid())
+    deliveries_of_write(record.write_id().as_uuid())
+        .column((NotificationDeliveries::Table, NotificationDeliveries::DeliveryKey))
+        .order_by((NotificationDeliveries::Table, NotificationDeliveries::DeliveryKey), Order::Asc)
+        .to_query_scalar()
         .fetch_all(pool)
         .await
         .expect("delivery identifiers")

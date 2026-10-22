@@ -17,7 +17,7 @@ use crate::{
     safety_gate_inspection::{self, GateScope},
     statistics_freshness,
 };
-use andromeda_postgresql_seaquery::maintenance::{MaintenanceStatement, recompress_chunk};
+use andromeda_postgresql_seaquery::maintenance::{MaintenanceCommand, recompress_chunk};
 use sqlx::PgConnection;
 
 /// What one pending action runs with once its subject is resolved: the gates
@@ -29,7 +29,7 @@ pub(crate) struct PreparedAction {
     /// The measure read before the action.
     pub(crate) baseline: ActionBaseline,
     /// The fixed statement the action runs.
-    pub(crate) statement: MaintenanceStatement,
+    pub(crate) statement: MaintenanceCommand,
     /// The relation the statement works on.
     pub(crate) relation: String,
 }

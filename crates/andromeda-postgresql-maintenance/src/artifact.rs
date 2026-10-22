@@ -1,7 +1,7 @@
 //! Validation of PostgreSQL concurrent-reindex recovery artifacts.
 
 use crate::{branch::Branch, candidate::index_target::IndexTarget};
-use andromeda_postgresql_seaquery::maintenance::{MaintenanceStatement, drop_index_concurrently};
+use andromeda_postgresql_seaquery::maintenance::{MaintenanceCommand, drop_index_concurrently};
 use sea_query::Alias;
 
 /// PostgreSQL's documented invalid concurrent-reindex artifact class.
@@ -25,9 +25,9 @@ pub(crate) struct ArtifactIndexName {
 }
 
 impl ArtifactIndexName {
-    /// Render the concurrently safe drop command for the validated identifier.
-    pub(crate) fn drop_statement(&self) -> MaintenanceStatement {
-        drop_index_concurrently(&self.branch.schema(), &Alias::new(&self.name))
+    /// The concurrently safe drop command for the validated identifier.
+    pub(crate) fn drop_statement(&self) -> MaintenanceCommand {
+        drop_index_concurrently(self.branch.schema(), Alias::new(&self.name))
     }
 
     /// The branch whose schema holds the artifact.
@@ -90,7 +90,9 @@ mod tests {
         branch::Branch,
     };
     use andromeda_context_space::snapshot_key::SnapshotKey;
+    use andromeda_postgresql_seaquery::maintenance::drop_index_concurrently;
     use pretty_assertions::assert_eq;
+    use sea_query::Alias;
 
     #[test]
     fn documented_artifacts_for_allowlisted_indexes_are_recognized() {
@@ -113,13 +115,13 @@ mod tests {
     }
 
     #[test]
-    fn recognized_identifier_is_quoted_in_the_fixed_drop_shape() {
+    fn recognized_identifier_is_dropped_by_the_fixed_drop_command() {
         let Some(RecoveryArtifact { name, kind: ArtifactKind::Old }) = RecoveryArtifact::parse(Branch::Live, "idx_ca_value_string_ccold2") else {
             panic!("a well-formed ccold artifact of an allowlisted index is recognized");
         };
         assert_eq!(
-            name.drop_statement().as_sql(),
-            "DROP INDEX CONCURRENTLY \"public\".\"idx_ca_value_string_ccold2\""
+            name.drop_statement(),
+            drop_index_concurrently(Alias::new("public"), Alias::new("idx_ca_value_string_ccold2"))
         );
     }
 
@@ -130,8 +132,8 @@ mod tests {
             panic!("a well-formed ccnew artifact of an allowlisted index is recognized in a branch");
         };
         assert_eq!(
-            artifact.name.drop_statement().as_sql(),
-            "DROP INDEX CONCURRENTLY \"snap_42\".\"idx_ca_value_number_ccnew\""
+            artifact.name.drop_statement(),
+            drop_index_concurrently(Alias::new("snap_42"), Alias::new("idx_ca_value_number_ccnew"))
         );
     }
 }

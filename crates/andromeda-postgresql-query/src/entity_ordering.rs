@@ -49,6 +49,7 @@ pub fn entity_identifier_key(identifier: SimpleExpr, direction: SortDirection, c
 mod tests {
     use crate::entity_ordering::{entity_identifier_key, ordering_collation, sql_order};
     use andromeda_ngsi_ld_query::ordering::{collation::IcuCollation, sort_direction::SortDirection};
+    use andromeda_postgresql_seaquery::collation::PostgresCollation;
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, Order, PostgresQueryBuilder, Query};
 
@@ -69,13 +70,13 @@ mod tests {
     /// request that named none still compares under it.
     #[test]
     fn an_unnamed_collation_falls_back_to_the_icu_root_order() {
-        assert_eq!(ordering_collation(None).as_str(), "und-x-icu");
+        assert_eq!(ordering_collation(None), PostgresCollation::new("und-x-icu"));
     }
 
     #[test]
     fn a_named_collation_is_the_one_the_request_asked_for() {
         let requested = IcuCollation::parse("de-u-co-phonebk").expect("valid collation");
-        assert_eq!(ordering_collation(Some(&requested)).as_str(), "de-u-co-phonebk");
+        assert_eq!(ordering_collation(Some(&requested)), PostgresCollation::new("de-u-co-phonebk"));
     }
 
     #[test]

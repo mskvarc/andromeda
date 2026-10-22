@@ -13,11 +13,10 @@
 //! statement the same way.
 
 use crate::write_reserve::WriteReserve;
-use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
+use andromeda_postgresql_seaquery::{statement::Statement, statement_planning::StatementPlanning};
 use derive_more::{Deref, DerefMut};
-use sea_query::{PostgresQueryBuilder, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, Connection, PgPool, Postgres, pool::PoolConnection, postgres::PgRow};
+use sea_query::SelectStatement;
+use sqlx::{PgPool, Postgres, pool::PoolConnection, postgres::PgRow};
 use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::{OwnedSemaphorePermit, Semaphore},
@@ -102,12 +101,11 @@ impl ReadConnection {
     /// Returns the driver's error when the statement fails, or the
     /// transaction it runs in cannot begin or commit.
     pub async fn fetch_planned(&mut self, statement: &SelectStatement, planning: StatementPlanning) -> Result<Vec<PgRow>, sqlx::Error> {
-        let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        let query = sqlx::query_with(AssertSqlSafe(sql.as_str()), values);
-        let Some(begin) = planning.begin() else {
+        let query = statement.to_query();
+        let Some(start) = planning.transaction() else {
             return query.fetch_all(&mut *self.connection).await;
         };
-        let mut transaction = self.connection.begin_with(begin).await?;
+        let mut transaction = start.begin_on(&mut self.connection).await?;
         let rows = query.fetch_all(&mut *transaction).await?;
         transaction.commit().await?;
         Ok(rows)

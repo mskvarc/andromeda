@@ -7,7 +7,7 @@
 //! have pushed one another out, and a preload must stop at what the budget
 //! holds instead of failing on a dictionary larger than it.
 
-use crate::run_name_prefix;
+use crate::{generated_names_insert, run_name_prefix};
 use andromeda_configuration_scalars::human_byte_size::HumanByteSize;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_postgresql_name_dictionary::{
@@ -15,8 +15,11 @@ use andromeda_postgresql_name_dictionary::{
     name_cache_config::{IdleEviction, NameCacheConfig, Unlimited},
     name_lookup::NameLookup,
 };
+use andromeda_postgresql_schema::name_dictionary::AttributeNames;
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_test_harness::{configuration::TestRunConfiguration, database_access::connect_test_database, serialized_environment::SerializedEnvironment};
 use pretty_assertions::assert_eq;
+use sea_query::{Expr, ExprTrait, Query};
 use sqlx::{PgPool, Row};
 use std::collections::HashMap;
 
@@ -28,8 +31,11 @@ const TINY_BUDGET: HumanByteSize = HumanByteSize::kib(8);
 
 /// The key the dictionary table holds for every name minted under `prefix`.
 async fn stored_keys(pool: &PgPool, prefix: &str) -> HashMap<String, i32> {
-    sqlx::query("SELECT name, attribute_name_key FROM attribute_names WHERE name LIKE $1")
-        .bind(format!("{prefix}%"))
+    Query::select()
+        .columns([AttributeNames::Name, AttributeNames::AttributeNameKey])
+        .from(AttributeNames::Table)
+        .and_where(Expr::col(AttributeNames::Name).like(format!("{prefix}%")))
+        .to_query()
         .fetch_all(pool)
         .await
         .expect("the dictionary must be readable")
@@ -61,9 +67,8 @@ async fn names_evicted_from_a_tiny_cache_still_resolve_to_the_keys_the_dictionar
     let pool = connect_test_database().await.expect("test database connection");
 
     let prefix = run_name_prefix();
-    sqlx::query("INSERT INTO attribute_names (name) SELECT $1 || generated::TEXT FROM generate_series(1, $2) AS generated ON CONFLICT (name) DO NOTHING")
-        .bind(&prefix)
-        .bind(GENERATED_NAMES)
+    generated_names_insert(AttributeNames::Table, AttributeNames::Name, &prefix, GENERATED_NAMES)
+        .to_query()
         .execute(&pool)
         .await
         .expect("interning distinct attribute names must not fail");

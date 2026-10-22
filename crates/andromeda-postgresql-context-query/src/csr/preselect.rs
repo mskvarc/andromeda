@@ -136,6 +136,7 @@ pub fn attribute_name_candidate(attribute_names: &[IriBuf]) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use andromeda_postgresql_seaquery::literal::int_literal;
     use sea_query::{PostgresQueryBuilder, Query};
 
     /// The migration that declares the indexes the tests here must hit.
@@ -235,7 +236,7 @@ mod tests {
     #[test]
     fn the_type_test_overlaps_the_requested_types_beside_the_wildcard_sentinel() {
         let (sql, values) = Query::select()
-            .expr(SeaExpr::cust("1"))
+            .expr(int_literal(1))
             .and_where(entity_type_candidate(&[iri("https://example.com/Vehicle")]))
             .build(PostgresQueryBuilder);
         assert!(sql.contains("COALESCE(\"ri\".\"entity_types\", '{*}') && $1"), "{sql}");
@@ -264,7 +265,7 @@ mod tests {
     fn each_axis_overlaps_the_requested_keys_as_stored_beside_the_branch_for_an_item_declaring_no_name() {
         let sql = render(attribute_name_candidate(&[iri("https://example.com/speed")]));
         for axis in ["property_name_keys", "relationship_name_keys"] {
-            assert!(sql.contains(&format!("\"ri\".\"{axis}\" && (ARRAY((SELECT")), "{axis}: {sql}");
+            assert!(sql.contains(&format!("\"ri\".\"{axis}\" && (ARRAY (SELECT")), "{axis}: {sql}");
         }
         assert!(
             sql.ends_with(" OR (\"ri\".\"property_name_keys\" IS NULL AND \"ri\".\"relationship_name_keys\" IS NULL)"),

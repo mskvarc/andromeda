@@ -21,12 +21,13 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_schema::queue::PendingSideEffects;
 use andromeda_postgresql_seaquery::{
+    cast::cast,
     clock::wall_clock,
+    external_arguments::{ExternalArguments, ExternallyBound},
     pg_type::PostgresType,
-    placeholder::{external_placeholder, external_placeholder_as},
+    statement::Statement,
 };
-use sea_query::{DeleteStatement, Expr, ExprTrait, InsertStatement, OnConflict, PostgresQueryBuilder, Query, error::Error as SeaQueryError};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{DeleteStatement, Expr, ExprTrait, InsertStatement, OnConflict, Query, error::Error as SeaQueryError};
 use sqlx::{Postgres, Transaction, postgres::PgPool};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -44,10 +45,15 @@ use uuid::Uuid;
 /// ordinal base the enqueueing commit used, and resume its notification
 /// consequences under them rather than under a freshly minted identity.
 ///
-/// Every value is a marker the caller binds: the row identity `$1`, the write
-/// identity `$2`, its instant `$3`, the base `$4`, and the events as one
-/// `$5::pending_change_event[]`, a composite array sea-query cannot carry.
-fn enqueue_statement() -> Result<InsertStatement, SeaQueryError> {
+/// The events travel as one `pending_change_event[]`, a composite array
+/// sea-query cannot carry, so it is pushed onto `external`.
+fn enqueue_statement(
+    id: Uuid,
+    record: &WriteRecord,
+    base_ordinal: i32,
+    events: Vec<PendingChangeEvent>,
+    external: &mut ExternalArguments<'_>,
+) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
         .into_table(PendingSideEffects::Table)
@@ -59,11 +65,11 @@ fn enqueue_statement() -> Result<InsertStatement, SeaQueryError> {
             PendingSideEffects::Events,
         ])
         .values([
-            external_placeholder(1),
-            external_placeholder(2),
-            external_placeholder(3),
-            external_placeholder(4),
-            external_placeholder_as(5, PostgresType::PendingChangeEventArray),
+            Expr::val(id),
+            Expr::val(record.write_id().as_uuid()),
+            Expr::val(record.recorded_at()),
+            Expr::val(base_ordinal),
+            cast(external.push(events), PostgresType::PendingChangeEventArray),
         ])?
         .on_conflict(OnConflict::column(PendingSideEffects::WriteId).do_nothing().to_owned());
     Ok(statement)
@@ -153,15 +159,9 @@ impl PendingSideEffectsRepository {
         events: Vec<PendingChangeEvent>,
     ) -> Result<(), ContextStoreError> {
         let base_ordinal = base_ordinal.as_i32()?;
-        let sql = enqueue_statement()?.to_string(PostgresQueryBuilder);
-        sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
-            .bind(SideEffectJobId::mint().as_uuid())
-            .bind(record.write_id().as_uuid())
-            .bind(record.recorded_at())
-            .bind(base_ordinal)
-            .bind(events)
-            .execute(&mut **tx)
-            .await?;
+        let mut external = ExternalArguments::default();
+        let statement = enqueue_statement(SideEffectJobId::mint().as_uuid(), record, base_ordinal, events, &mut external)?;
+        ExternallyBound::new(statement, external).into_query().execute(&mut **tx).await?;
         Ok(())
     }
 
@@ -179,8 +179,7 @@ impl PendingSideEffectsRepository {
     ///
     /// Returns [`ContextStoreError::Database`] when the statement fails.
     pub async fn settle_in_tx(tx: &mut Transaction<'_, Postgres>, lease: JobLease) -> Result<LeaseAcknowledgement, ContextStoreError> {
-        let (sql, values) = settle_statement(lease.job.as_uuid(), lease.holder).build_sqlx(PostgresQueryBuilder);
-        let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut **tx).await?;
+        let result = settle_statement(lease.job.as_uuid(), lease.holder).to_query().execute(&mut **tx).await?;
         Ok(LeaseAcknowledgement::of_guarded_update(result.rows_affected()))
     }
 }
@@ -188,12 +187,19 @@ impl PendingSideEffectsRepository {
 #[cfg(test)]
 mod tests {
     use crate::pending_side_effects::repo::{enqueue_statement, settle_statement};
-    use andromeda_context_commit::lease_holder::LeaseHolder;
+    use andromeda_context_commit::{lease_holder::LeaseHolder, write_record::WriteRecord};
+    use andromeda_postgresql_seaquery::external_arguments::ExternalArguments;
+    use chrono::Utc;
     use sea_query::PostgresQueryBuilder;
     use uuid::Uuid;
 
     fn rendered() -> String {
-        enqueue_statement().expect("arity").to_string(PostgresQueryBuilder)
+        let mut external = ExternalArguments::default();
+        let record = WriteRecord::mint(Utc::now());
+        enqueue_statement(Uuid::nil(), &record, 0, Vec::new(), &mut external)
+            .expect("arity")
+            .build(PostgresQueryBuilder)
+            .0
     }
 
     #[test]
@@ -207,7 +213,8 @@ mod tests {
     #[test]
     fn the_job_binds_its_events_as_one_typed_array() {
         let sql = rendered();
-        assert!(sql.contains("VALUES ($1, $2, $3, $4, $5::pending_change_event[])"), "{sql}");
+        assert!(sql.contains("VALUES ($1, $2, $3, $4, "), "{sql}");
+        assert!(sql.contains("::pending_change_event[])"), "{sql}");
         assert!(!sql.contains("json"), "{sql}");
     }
 

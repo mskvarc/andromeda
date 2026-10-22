@@ -78,6 +78,12 @@ pub enum PostgresType {
     /// `xid8`, the 64-bit transaction identifier a write is stamped with.
     #[iden = "xid8"]
     Xid8,
+    /// `float8`, double precision.
+    #[iden = "float8"]
+    Float8,
+    /// `int4multirange`, a set of integer ranges.
+    #[iden = "int4multirange"]
+    Int4Multirange,
     /// `integer[]`.
     #[iden = "integer[]"]
     IntegerArray,
@@ -124,6 +130,9 @@ pub enum PostgresType {
     /// `temporal_intent[]`: the temporal append intents of one commit.
     #[iden = "temporal_intent[]"]
     TemporalIntentArray,
+    /// `pending_change_event`: one change a respond-async job owes.
+    #[iden = "pending_change_event"]
+    PendingChangeEvent,
     /// `pending_change_event[]`: the changes one respond-async job owes.
     #[iden = "pending_change_event[]"]
     PendingChangeEventArray,

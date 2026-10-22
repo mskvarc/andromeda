@@ -28,11 +28,11 @@ use andromeda_postgresql_seaquery::{
     cast::cast,
     operator::{regex_match, regex_substring},
     pg_type::PostgresType,
+    statement::Statement,
 };
 use andromeda_snapshot::error::SnapshotError;
 use chrono::{DateTime, Utc};
-use sea_query::{Alias, Expr, ExprTrait, LockType, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Alias, Expr, ExprTrait, LockType, Query, SelectStatement};
 use sqlx::{PgPool, Postgres, Transaction};
 use std::{num::NonZeroU32, time::Duration};
 use tracing::info;
@@ -72,8 +72,8 @@ async fn delete_snapshot_once(pool: &PgPool, id: &Identifier) -> Result<u64, Sna
         .and_where(Expr::col(Snapshots::Id).eq(id.as_str()))
         .lock(LockType::Update)
         .to_owned();
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let Some(raw) = sqlx::query_scalar_with::<_, i64, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let Some(raw) = statement
+        .to_query_scalar::<i64>()
         .fetch_optional(&mut *transaction)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?
@@ -116,8 +116,8 @@ async fn delete_expired_snapshots_once(pool: &PgPool, cutoff: DateTime<Utc>) -> 
         .and_where(Expr::col(Snapshots::ExpiresAt).lte(cutoff))
         .lock(LockType::Update)
         .to_owned();
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_scalar_with::<_, i64, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let rows = statement
+        .to_query_scalar::<i64>()
         .fetch_all(&mut *transaction)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
@@ -141,8 +141,8 @@ async fn delete_expired_snapshots_once(pool: &PgPool, cutoff: DateTime<Utc>) -> 
 /// next sweep.
 async fn sweep_orphan_branches_once(pool: &PgPool) -> Result<u64, SnapshotError> {
     let mut transaction = pool.begin().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
-    let (sql, values) = orphan_branch_keys_statement().build_sqlx(PostgresQueryBuilder);
-    let keys = sqlx::query_scalar_with::<_, i64, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let keys = orphan_branch_keys_statement()
+        .to_query_scalar::<i64>()
         .fetch_all(&mut *transaction)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
@@ -196,8 +196,8 @@ pub(crate) async fn reap_branch(transaction: &mut Transaction<'_, Postgres>, sna
 /// Try the Snapshot's branch lock for the rest of the transaction, without
 /// waiting for it.
 async fn try_branch_lock(transaction: &mut Transaction<'_, Postgres>, snapshot_key: SnapshotKey) -> Result<bool, SnapshotError> {
-    let (sql, values) = branch_lock_statement(snapshot_key).build_sqlx(PostgresQueryBuilder);
-    sqlx::query_scalar_with::<_, bool, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
+    branch_lock_statement(snapshot_key)
+        .to_query_scalar::<bool>()
         .fetch_one(&mut **transaction)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))
@@ -227,8 +227,8 @@ pub(crate) async fn delete_control_record(transaction: &mut Transaction<'_, Post
         .from_table(Snapshots::Table)
         .and_where(Expr::col(Snapshots::SnapshotKey).eq(snapshot_key.as_i64()))
         .to_owned();
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let result = statement
+        .to_query()
         .execute(&mut **transaction)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;

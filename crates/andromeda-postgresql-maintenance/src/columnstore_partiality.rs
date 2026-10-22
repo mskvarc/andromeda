@@ -22,14 +22,13 @@ use crate::{
     catalog_counter::{CatalogCounter, non_negative, object_id},
     columnstore_edition::{ColumnstoreEdition, columnstore_edition},
     error::MaintenanceError,
-    scalar_query::select_bool,
 };
 use andromeda_postgresql_seaquery::{
     columnstore_chunk::{ChunkOidColumn, PartialChunks, UncompressedBytes, chunk_partiality_statement, partial_chunks_statement},
+    statement::Statement,
     timescale::ChunkRelationColumn,
 };
-use sea_query::{Iden, PostgresQueryBuilder};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::Iden;
 use sqlx::{PgConnection, Row};
 
 /// Whether a converted chunk holds rows outside its compressed batches.
@@ -115,8 +114,7 @@ pub(crate) async fn oldest_partial_chunk(
     connection: &mut PgConnection,
     table: HistoryTable,
 ) -> Result<Option<(HistoryChunk, ColumnstorePartiality)>, MaintenanceError> {
-    let (sql, values) = partial_chunks_statement(table.relation_name()).build_sqlx(PostgresQueryBuilder);
-    let Some(row) = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(connection).await? else {
+    let Some(row) = partial_chunks_statement(table.relation_name()).to_query().fetch_optional(connection).await? else {
         return Ok(None);
     };
     let chunk = HistoryChunk {
@@ -133,7 +131,10 @@ pub(crate) async fn oldest_partial_chunk(
 
 /// Whether the chunk with OID `chunk` is partial now.
 pub(crate) async fn chunk_partiality(connection: &mut PgConnection, chunk: u32) -> Result<ChunkPartiality, MaintenanceError> {
-    let partial = select_bool(connection, chunk_partiality_statement(i64::from(chunk))).await?;
+    let partial = chunk_partiality_statement(i64::from(chunk))
+        .to_query_scalar::<bool>()
+        .fetch_one(connection)
+        .await?;
     Ok(if partial { ChunkPartiality::Partial } else { ChunkPartiality::Whole })
 }
 

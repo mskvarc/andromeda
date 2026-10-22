@@ -1,7 +1,7 @@
 //! Rendering the names behind a column of dictionary keys, in the column's order.
 
 use andromeda_postgresql_schema::name_dictionary::{AttributeNames, EntityTypeNames};
-use andromeda_postgresql_seaquery::pg_array::{any, array_position, array_subquery};
+use andromeda_postgresql_seaquery::pg_array::{any, array_of_subquery, array_position};
 use sea_query::{Expr, ExprTrait, IntoIden, Order, Query, SimpleExpr};
 
 /// The type IRIs an `entity_type_name_keys` array refers to, in the array's own
@@ -30,7 +30,7 @@ pub fn attribute_names_of(attribute_name_keys: SimpleExpr) -> SimpleExpr {
     )
 }
 
-/// `ARRAY(SELECT n.name FROM <dictionary> n WHERE n.<key> = ANY(keys) ORDER BY array_position(keys, n.<key>))`.
+/// `ARRAY (SELECT n.name FROM <dictionary> n WHERE n.<key> = ANY(keys) ORDER BY array_position(keys, n.<key>))`.
 ///
 /// Rendered as a scalar subquery rather than a join so the statement that
 /// projects the names keeps its own shape and cardinality: joining the
@@ -43,7 +43,7 @@ fn names_in_key_order(keys: SimpleExpr, table: impl IntoIden + Copy, key: impl I
         .from(table)
         .and_where(Expr::col((table, key)).eq(any(keys.clone()))) // clone: the array is named twice in one subquery
         .order_by_expr(array_position(keys, Expr::col((table, key))), Order::Asc);
-    array_subquery(&names)
+    array_of_subquery(names)
 }
 
 #[cfg(test)]
@@ -60,7 +60,7 @@ mod tests {
             .to_string(PostgresQueryBuilder);
         pretty_assertions::assert_eq!(
             sql,
-            "SELECT ARRAY(SELECT \"entity_type_names\".\"name\" FROM \"entity_type_names\" WHERE \"entity_type_names\".\"entity_type_name_key\" = ANY(\"entity_type_name_keys\") ORDER BY array_position(\"entity_type_name_keys\", \"entity_type_names\".\"entity_type_name_key\") ASC)"
+            "SELECT ARRAY (SELECT \"entity_type_names\".\"name\" FROM \"entity_type_names\" WHERE \"entity_type_names\".\"entity_type_name_key\" = ANY(\"entity_type_name_keys\") ORDER BY array_position(\"entity_type_name_keys\", \"entity_type_names\".\"entity_type_name_key\") ASC)"
         );
     }
 
@@ -72,7 +72,7 @@ mod tests {
             .to_string(PostgresQueryBuilder);
         pretty_assertions::assert_eq!(
             sql,
-            "SELECT ARRAY(SELECT \"attribute_names\".\"name\" FROM \"attribute_names\" WHERE \"attribute_names\".\"attribute_name_key\" = ANY(\"watched_attributes\") ORDER BY array_position(\"watched_attributes\", \"attribute_names\".\"attribute_name_key\") ASC)"
+            "SELECT ARRAY (SELECT \"attribute_names\".\"name\" FROM \"attribute_names\" WHERE \"attribute_names\".\"attribute_name_key\" = ANY(\"watched_attributes\") ORDER BY array_position(\"watched_attributes\", \"attribute_names\".\"attribute_name_key\") ASC)"
         );
     }
 }

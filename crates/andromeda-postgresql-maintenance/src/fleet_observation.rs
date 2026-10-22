@@ -23,12 +23,13 @@ use andromeda_postgresql_seaquery::{
     introspection::current_setting,
     maintenance::{multixact_age, transaction_age},
     pg_type::PostgresType,
+    setting::Setting,
+    statement::Statement,
 };
 use andromeda_telemetry::maintenance::{FreezePressureLevel, record_fleet_freeze};
 use andromeda_tenancy::db_name_prefix::DbNamePrefix;
 use chrono::{DateTime, Utc};
-use sea_query::{Alias, Expr, ExprTrait, Iden, JoinType, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Alias, Expr, ExprTrait, Iden, JoinType, Query, SelectStatement};
 use sqlx::{PgConnection, Row, postgres::PgRow};
 
 /// The freeze ages of one database.
@@ -156,8 +157,7 @@ impl FleetObservation {
 
 /// Read every database's freeze ages and change counters.
 pub(crate) async fn observe_fleet(connection: &mut PgConnection) -> Result<FleetObservation, MaintenanceError> {
-    let (sql, values) = fleet_observation_statement().build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
+    let rows = fleet_observation_statement().to_query().fetch_all(connection).await?;
     let mut fleet = FleetObservation {
         databases: Vec::new(),
         unvisited: Vec::new(),
@@ -221,12 +221,12 @@ fn fleet_observation_statement() -> SelectStatement {
         .expr_as(Expr::col((Tenants::Table, Tenants::Status)), FleetLabel::TenantStatus)
         .expr_as(transaction_age(catalog_column("pg_database", "datfrozenxid")), FleetColumn::TransactionIdAge)
         .expr_as(
-            cast(current_setting("autovacuum_freeze_max_age"), PostgresType::Bigint),
+            cast(current_setting(Setting::AutovacuumFreezeMaxAge), PostgresType::Bigint),
             FleetColumn::TransactionFreezeMaximum,
         )
         .expr_as(multixact_age(catalog_column("pg_database", "datminmxid")), FleetColumn::MultixactIdAge)
         .expr_as(
-            cast(current_setting("autovacuum_multixact_freeze_max_age"), PostgresType::Bigint),
+            cast(current_setting(Setting::AutovacuumMultixactFreezeMaxAge), PostgresType::Bigint),
             FleetColumn::MultixactFreezeMaximum,
         )
         .expr_as(

@@ -13,7 +13,7 @@
 //! entry an assertion is judged against is therefore recorded or in the
 //! source.
 
-use crate::intent_application::intent_source::{I, IntentSource, Te, entry, intent, source_intents_as};
+use crate::intent_application::intent_source::{I, StagedSource, Te, entry, intent, source_intents_as};
 use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
 use andromeda_postgresql_query::scope_assertion::{EVENT_COLUMNS, held_in_force, path_set};
 use andromeda_postgresql_schema::{
@@ -51,7 +51,7 @@ const SCOPE_KINDS: [i16; 2] = [TemporalEntryKind::Scope.code(), TemporalEntryKin
 /// Temporal Evolution under `te`, is recorded in the branch `schema` names:
 /// it is an event, or the Scope in force at its write is not the one it
 /// asserts.
-pub(crate) fn recorded_scope_entry(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Condition {
+pub(crate) fn recorded_scope_entry(source: &StagedSource<'_>, schema: Option<&DynIden>) -> Condition {
     let judged = held_in_force(&judging_events(source, schema), &asserted_paths(), &intent(TemporalAppendIntents::RecordedAt)).not();
     Condition::any()
         .add(entry(TemporalEntry::EntryKind).ne(TemporalEntryKind::ScopeAssertion.code()))
@@ -61,7 +61,7 @@ pub(crate) fn recorded_scope_entry(source: &IntentSource<'_>, schema: Option<&Dy
 /// The Scope events the assertion under `e` is judged against: its Entity's
 /// recorded in `schema`, and the Scope entries of the Entity's intents before
 /// its own in the source.
-fn judging_events(source: &IntentSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
+fn judging_events(source: &StagedSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
     let mut recorded = Query::select();
     recorded
         .exprs(EVENT_COLUMNS.map(|column| Expr::col((RecordedEvent, column))))
@@ -93,14 +93,18 @@ fn asserted_paths() -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use crate::intent_application::{intent_source::IntentSource, scope_judgement::recorded_scope_entry};
+    use crate::intent_application::{
+        intent_source::{EntryReads, IntentSource, StagedSource},
+        scope_judgement::recorded_scope_entry,
+    };
     use andromeda_postgresql_codes::temporal_intent_reach::TemporalIntentReach;
     use sea_query::{Alias, Asterisk, DynIden, IntoIden, PostgresQueryBuilder, Query};
 
     fn rendered(source: &IntentSource<'_>, schema: Option<&DynIden>) -> String {
+        let staged = StagedSource::new(source, EntryReads::Everything, &[]);
         Query::select()
             .column(Asterisk)
-            .cond_where(recorded_scope_entry(source, schema))
+            .cond_where(recorded_scope_entry(&staged, schema))
             .to_owned()
             .to_string(PostgresQueryBuilder)
     }

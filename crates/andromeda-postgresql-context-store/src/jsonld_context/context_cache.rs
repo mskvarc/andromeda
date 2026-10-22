@@ -27,17 +27,16 @@ use andromeda_jsonld::{
     loader::cache_lifetime::{CacheLifetime, ResidualLifetime},
 };
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::JsonLdContextId;
+use andromeda_postgresql_seaquery::statement::Statement;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
-use sea_query::PostgresQueryBuilder;
-use sea_query_sqlx::SqlxBinder;
 
 #[async_trait]
 impl ContextCache for JsonLdContextRepository {
     async fn get(&self, url: &IriBuf) -> Result<Option<CachedContext>, ContextCacheError> {
-        let (sql, values) = fresh_cached_context_query(url.as_str()).build_sqlx(PostgresQueryBuilder);
-        let row: Option<FreshContextRow> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let row: Option<FreshContextRow> = fresh_cached_context_query(url.as_str())
+            .to_query_as()
             .fetch_optional(&self.pool)
             .await
             .map_err(|error| ContextCacheError::Read(persistence_failure(&error)))?;
@@ -68,11 +67,7 @@ impl ContextCache for JsonLdContextRepository {
         let local_id = cached_context_identifier()?;
         let statement =
             cached_upsert(local_id.as_ref(), url.as_str(), document_url.as_str(), payload, lifetime.as_seconds()).map_err(|error| write_failure(error))?;
-        let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-            .execute(&self.pool)
-            .await
-            .map_err(|error| write_failure(error))?;
+        statement.to_query().execute(&self.pool).await.map_err(|error| write_failure(error))?;
         Ok(())
     }
 }

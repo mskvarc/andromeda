@@ -29,26 +29,11 @@ use andromeda_ngsi_ld_model::{
 use andromeda_postgresql_codes::snapshot_status::SnapshotStatusCode;
 use andromeda_postgresql_context_query::snapshot_purge::build_match_query;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
-use andromeda_postgresql_seaquery::clock::now;
+use andromeda_postgresql_seaquery::{clock::now, statement::Statement};
 use andromeda_snapshot::error::SnapshotError;
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
-use sea_query::{
-    Expr,
-    ExprTrait,
-    Func,
-    JoinType,
-    Keyword,
-    LockBehavior,
-    LockType,
-    Order,
-    PostgresQueryBuilder,
-    Query,
-    SelectStatement,
-    SimpleExpr,
-    UpdateStatement,
-};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Expr, ExprTrait, Func, JoinType, Keyword, LockBehavior, LockType, Order, Query, SelectStatement, SimpleExpr, UpdateStatement};
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use url::Url;
 
@@ -97,8 +82,8 @@ where
         .from(Snapshots::Table)
         .and_where(Expr::col(Snapshots::Id).eq(id.as_str()))
         .to_owned();
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let raw = sqlx::query_scalar_with::<_, i64, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let raw = statement
+        .to_query_scalar::<i64>()
         .fetch_optional(executor)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
@@ -110,8 +95,8 @@ where
 pub(crate) async fn read_snapshot(pool: &PgPool, id: &Identifier) -> Result<Option<Snapshot>, SnapshotError> {
     let mut select = snapshot_select();
     select.and_where(Expr::col((Snapshots::Table, Snapshots::Id)).eq(id.as_str()));
-    let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let row = select
+        .to_query()
         .fetch_optional(pool)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
@@ -191,8 +176,8 @@ pub(crate) async fn update_snapshot_metadata(
         }
     }
     statement.and_where(Expr::col(Snapshots::Id).eq(id.as_str()));
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let result = statement
+        .to_query()
         .execute(&mut *transaction)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
@@ -211,8 +196,8 @@ async fn bump_modified_at(transaction: &mut Transaction<'_, Postgres>, id: &Iden
         .value(SnapshotPreparation::ModifiedAt, now())
         .and_where(Expr::col(SnapshotPreparation::SnapshotKey).in_subquery(snapshot_key_subquery(id)))
         .to_owned();
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    statement
+        .to_query()
         .execute(&mut **transaction)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
@@ -264,8 +249,8 @@ pub(crate) async fn update_status(
         .and_where(Expr::col(SnapshotPreparation::ClaimedBy).eq(claimed_by.as_uuid()))
         .and_where(status_is_preparing())
         .to_owned();
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let result = statement
+        .to_query()
         .execute(&mut *transaction)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
@@ -284,8 +269,8 @@ pub(crate) async fn update_status(
 
 /// The identifiers of every snapshot a purge filter (clause 5.16.7) matches.
 pub(crate) async fn match_snapshots_by_filter(pool: &PgPool, filter: &SnapshotPurgeFilter) -> Result<Vec<Identifier>, SnapshotError> {
-    let (sql, values) = build_match_query(filter).build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let rows = build_match_query(filter)
+        .to_query()
         .fetch_all(pool)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
@@ -331,8 +316,8 @@ fn touch_statement(id: &Identifier) -> UpdateStatement {
 /// Stamp the last-used instant of one Snapshot, skipping a preparation row a
 /// lifecycle transition holds.
 pub(crate) async fn touch_last_used(pool: &PgPool, id: &Identifier) -> Result<(), SnapshotError> {
-    let (sql, values) = touch_statement(id).build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    touch_statement(id)
+        .to_query()
         .execute(pool)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;

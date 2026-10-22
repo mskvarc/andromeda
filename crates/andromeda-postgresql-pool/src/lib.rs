@@ -46,7 +46,7 @@ pub mod write_reserve;
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: ["andromeda-persistence-failure", "andromeda-postgresql-seaquery"],
     allow_workspace_dev_dependencies: [],
-    allow_production_dependencies: ["sea-query", "sea-query-sqlx", "sqlx", "tokio"],
+    allow_production_dependencies: ["sea-query", "sqlx", "tokio"],
 }
 
 #[cfg(test)]

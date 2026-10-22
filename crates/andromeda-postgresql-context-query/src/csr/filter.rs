@@ -250,6 +250,7 @@ mod tests {
         q_predicate::{instance_scan::InstanceScan, projection::compile},
     };
     use andromeda_postgresql_schema::current::Entities;
+    use andromeda_postgresql_seaquery::literal::int_literal;
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Condition, PostgresQueryBuilder, Query};
 
@@ -257,7 +258,7 @@ mod tests {
         let expr = parser::parse(q).expect("parse q");
         let condition = csr_expr_to_condition(&expr);
         Query::select()
-            .expr(SeaExpr::cust("1"))
+            .expr(int_literal(1))
             .from(Alias::new("context_source_registrations"))
             .cond_where(condition)
             .to_string(PostgresQueryBuilder)

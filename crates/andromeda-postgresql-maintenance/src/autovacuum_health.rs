@@ -17,10 +17,9 @@ use crate::{
     observed_heap::WatchedHeap,
     state::{RegisteredTenant, autovacuum_saturation},
 };
-use andromeda_postgresql_seaquery::{cast::cast, introspection::current_setting, pg_type::PostgresType};
+use andromeda_postgresql_seaquery::{cast::cast, introspection::current_setting, pg_type::PostgresType, setting::Setting, statement::Statement};
 use andromeda_telemetry::maintenance::record_autovacuum_workers;
-use sea_query::{Alias, Asterisk, Expr, ExprTrait, Func, Iden, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Alias, Asterisk, Expr, ExprTrait, Func, Iden, Query, SelectStatement};
 use sqlx::{PgConnection, Row, postgres::PgRow};
 use std::str::FromStr;
 use tracing::warn;
@@ -93,8 +92,7 @@ pub(crate) const fn is_saturated(saturated_passes: u32) -> bool {
 /// Read every watched heap of `branch` against its trigger and log each
 /// overdue one, returning how many were.
 pub(crate) async fn report_overdue_heaps(connection: &mut PgConnection, tenant: &RegisteredTenant, branch: Branch) -> Result<usize, MaintenanceError> {
-    let (sql, values) = heap_autovacuum_statement(branch).build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
+    let rows = heap_autovacuum_statement(branch).to_query().fetch_all(connection).await?;
     let heaps = rows.iter().map(heap_autovacuum_of).collect::<Result<Vec<_>, _>>()?;
     let mut overdue = 0;
     for heap in heaps {
@@ -109,8 +107,7 @@ pub(crate) async fn report_overdue_heaps(connection: &mut PgConnection, tenant: 
 /// Read the cluster's autovacuum workers, report them, and extend or reset
 /// the recorded run of passes that found every slot busy.
 pub(crate) async fn observe_workers(platform: &mut PgConnection) -> Result<(), MaintenanceError> {
-    let (sql, values) = autovacuum_workers_statement().build_sqlx(PostgresQueryBuilder);
-    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(&mut *platform).await?;
+    let row = autovacuum_workers_statement().to_query().fetch_one(&mut *platform).await?;
     let workers = AutovacuumWorkers {
         busy: non_negative(row.try_get(WorkerColumn::BusyWorkers.to_string().as_str())?, CatalogCounter::AutovacuumWorkers)?,
         max: non_negative(
@@ -168,7 +165,10 @@ fn heap_autovacuum_statement(branch: Branch) -> SelectStatement {
 fn autovacuum_workers_statement() -> SelectStatement {
     Query::select()
         .expr_as(Func::count(Expr::col(Asterisk)), WorkerColumn::BusyWorkers)
-        .expr_as(cast(current_setting("autovacuum_max_workers"), PostgresType::Bigint), WorkerColumn::MaxWorkers)
+        .expr_as(
+            cast(current_setting(Setting::AutovacuumMaxWorkers), PostgresType::Bigint),
+            WorkerColumn::MaxWorkers,
+        )
         .from(Alias::new("pg_stat_activity"))
         .and_where(Expr::col(Alias::new("backend_type")).eq("autovacuum worker"))
         .to_owned()

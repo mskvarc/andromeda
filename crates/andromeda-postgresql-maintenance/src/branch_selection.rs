@@ -18,7 +18,6 @@ use crate::{
     capability::{self, MutationPrivilege},
     catalog_counter::{CatalogCounter, non_negative},
     error::MaintenanceError,
-    scalar_query::select_bool,
     state::RegisteredTenant,
 };
 use andromeda_context_space::snapshot_key::SnapshotKey;
@@ -30,10 +29,10 @@ use andromeda_postgresql_seaquery::{
     advisory_lock::{advisory_unlock, try_advisory_lock},
     cast::cast,
     pg_type::PostgresType,
+    statement::Statement,
 };
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use sea_query::{Alias, Expr, ExprTrait, Func, Iden, JoinType, PostgresQueryBuilder, Query, SelectStatement, extension::postgres::PgBinOper};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Alias, Expr, ExprTrait, Func, Iden, JoinType, Query, SelectStatement, extension::postgres::PgBinOper};
 use sqlx::{PgConnection, Row};
 use std::cmp::Reverse;
 use strum::Display;
@@ -150,7 +149,13 @@ async fn lock_branch(
     key: SnapshotKey,
     mutation: MutationPrivilege,
 ) -> Result<bool, MaintenanceError> {
-    if !select_bool(connection, Query::select().expr(try_advisory_lock(branch_lock_key(key))).to_owned()).await? {
+    let acquired = Query::select()
+        .expr(try_advisory_lock(branch_lock_key(key)))
+        .to_owned()
+        .to_query_scalar::<bool>()
+        .fetch_one(&mut *connection)
+        .await?;
+    if !acquired {
         info!(tenant = tenant.log_name(), database = %tenant.database, snapshot_key = key.as_i64(), decision = "deferred", reason = "branch-locked", "PostgreSQL maintenance skipped a Snapshot branch another session holds");
         return Ok(false);
     }
@@ -187,7 +192,13 @@ async fn decline(connection: &mut PgConnection, key: SnapshotKey, mutation: Muta
 
 /// Release one Snapshot's branch lock.
 async fn release_branch_lock(connection: &mut PgConnection, key: SnapshotKey) -> Result<(), MaintenanceError> {
-    if select_bool(connection, Query::select().expr(advisory_unlock(branch_lock_key(key))).to_owned()).await? {
+    let released = Query::select()
+        .expr(advisory_unlock(branch_lock_key(key)))
+        .to_owned()
+        .to_query_scalar::<bool>()
+        .fetch_one(connection)
+        .await?;
+    if released {
         Ok(())
     } else {
         Err(MaintenanceError::BranchLockNotHeld { snapshot: key })
@@ -196,8 +207,7 @@ async fn release_branch_lock(connection: &mut PgConnection, key: SnapshotKey) ->
 
 /// Read the control records of every Snapshot, or of `only` that one.
 async fn snapshot_records(connection: &mut PgConnection, only: Option<SnapshotKey>) -> Result<Vec<SnapshotRecord>, MaintenanceError> {
-    let (sql, values) = snapshot_records_statement(only).build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
+    let rows = snapshot_records_statement(only).to_query().fetch_all(connection).await?;
     rows.iter()
         .map(|row| {
             let status = row.try_get::<i16, _>(SnapshotPreparation::Status.to_string().as_str())?;
@@ -231,8 +241,7 @@ fn snapshot_records_statement(only: Option<SnapshotKey>) -> SelectStatement {
 
 /// Read the churn of every published Snapshot branch.
 async fn branch_churn(connection: &mut PgConnection) -> Result<Vec<BranchChurn>, MaintenanceError> {
-    let (sql, values) = branch_churn_statement().build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
+    let rows = branch_churn_statement().to_query().fetch_all(connection).await?;
     rows.iter()
         .map(|row| {
             let schema = row.try_get::<String, _>(ChurnColumn::Schemaname.to_string().as_str())?;

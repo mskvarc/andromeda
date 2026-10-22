@@ -27,10 +27,10 @@ use andromeda_ngsi_ld_query::{
 use andromeda_postgresql_schema::csr::{Csr, RegistrationInformation};
 use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
-    placeholder::external_placeholder,
-    unnest::{UnnestColumn, apply_column_alias, unnest_call},
+    statement::Statement,
+    unnest::{UnnestAliased, UnnestColumn, unnest_call},
 };
-use sea_query::{Expr, ExprTrait, Iden, IntoIden, JoinType, PostgresQueryBuilder, Query, TableRef};
+use sea_query::{Expr, ExprTrait, Iden, IntoIden, JoinType, Query, SelectStatement, TableRef, UpdateStatement};
 use sqlx::PgPool;
 
 /// The `UNNEST` alias the rewritten restatements are expanded under.
@@ -60,7 +60,7 @@ struct StoredPattern;
 
 /// Every stored pattern of the registrations a revision older than `current`
 /// rendered, grouped by registration.
-fn stale_patterns_sql(current: RenderingRevision) -> String {
+fn stale_patterns_statement(current: RenderingRevision) -> SelectStatement {
     Query::select()
         .column((Csr::Table, Csr::Id))
         .column((Csr::Table, Csr::EntityIdPatternFormsRevision))
@@ -77,22 +77,21 @@ fn stale_patterns_sql(current: RenderingRevision) -> String {
         .and_where(Expr::col((Csr::Table, Csr::EntityIdPatternFormsRevision)).lt(current.get()))
         .and_where(Expr::col((StoredPattern, RegistrationInformation::EntityIdPattern)).is_not_null())
         .order_by((Csr::Table, Csr::Id), sea_query::Order::Asc)
-        .to_string(PostgresQueryBuilder)
+        .to_owned()
 }
 
-/// Move one registration's revision on, provided it is still the revision its
-/// rows were read at: `$1` the registration, `$2` the new revision, `$3` the
-/// revision read.
-fn revision_update_sql() -> String {
+/// Move the revision of `registration` on to `current`, provided it is still
+/// `read`, the revision its rows were read at.
+fn revision_update_statement(registration: &str, current: RenderingRevision, read: i16) -> UpdateStatement {
     Query::update()
         .table(Csr::Table)
-        .value(Csr::EntityIdPatternFormsRevision, external_placeholder(2))
-        .and_where(Expr::col(Csr::Id).eq(external_placeholder(1)))
-        .and_where(Expr::col(Csr::EntityIdPatternFormsRevision).eq(external_placeholder(3)))
-        .to_string(PostgresQueryBuilder)
+        .value(Csr::EntityIdPatternFormsRevision, Expr::val(current.get()))
+        .and_where(Expr::col(Csr::Id).eq(registration))
+        .and_where(Expr::col(Csr::EntityIdPatternFormsRevision).eq(read))
+        .to_owned()
 }
 
-/// The staged restatements, `$2` to `$4`.
+/// The staged restatements: the two positions of a pattern row and its form.
 fn rendered_columns() -> [UnnestColumn; 3] {
     [
         UnnestColumn::new(RegistrationInformation::ItemOrdinal, PostgresType::IntegerArray),
@@ -101,25 +100,30 @@ fn rendered_columns() -> [UnnestColumn; 3] {
     ]
 }
 
-/// Rewrite the restatement of each pattern row of the registration `$1` at
-/// the positions `$2` and `$3` to `$4`.
-fn forms_update_sql() -> String {
+/// Rewrite the restatement of each pattern row of `registration` at the
+/// positions `item_ordinals` and `selector_ordinals` name to the form in
+/// `rendered` beside them.
+fn forms_update_statement(registration: &str, item_ordinals: Vec<i32>, selector_ordinals: Vec<i32>, rendered: Vec<String>) -> UnnestAliased<UpdateStatement> {
     let columns = rendered_columns();
-    let source = unnest_call(columns.iter().enumerate().map(|(index, column)| (column, external_placeholder(index + 2))));
-    let sql = Query::update()
+    let source = unnest_call(
+        columns
+            .iter()
+            .zip([Expr::val(item_ordinals), Expr::val(selector_ordinals), Expr::val(rendered)]),
+    );
+    let statement = Query::update()
         .table(RegistrationInformation::Table)
         .value(
             RegistrationInformation::EntityIdPatternForm,
             Expr::col((Rendered, RegistrationInformation::EntityIdPatternForm)),
         )
         .from(TableRef::FunctionCall(source, Rendered.into_iden()))
-        .and_where(Expr::col((RegistrationInformation::Table, RegistrationInformation::RegistrationId)).eq(external_placeholder(1)))
+        .and_where(Expr::col((RegistrationInformation::Table, RegistrationInformation::RegistrationId)).eq(registration))
         .and_where(Expr::col((RegistrationInformation::Table, RegistrationInformation::ItemOrdinal)).equals((Rendered, RegistrationInformation::ItemOrdinal)))
         .and_where(
             Expr::col((RegistrationInformation::Table, RegistrationInformation::SelectorOrdinal)).equals((Rendered, RegistrationInformation::SelectorOrdinal)),
         )
-        .to_string(PostgresQueryBuilder);
-    apply_column_alias(sql, &Rendered, &columns)
+        .to_owned();
+    UnnestAliased::new(statement).with_columns(Rendered, &columns)
 }
 
 /// Render again the identifier-pattern restatements of every registration an
@@ -132,9 +136,7 @@ fn forms_update_sql() -> String {
 /// compiles.
 pub async fn refresh_stale_pattern_forms(pool: &PgPool) -> Result<u64, ContextStoreError> {
     let current = PortablePattern::RENDERING_REVISION;
-    let stale: Vec<StalePattern> = sqlx::query_as(sqlx::AssertSqlSafe(stale_patterns_sql(current))).fetch_all(pool).await?;
-    let revision_update = revision_update_sql();
-    let forms_update = forms_update_sql();
+    let stale: Vec<StalePattern> = stale_patterns_statement(current).to_query_as().fetch_all(pool).await?;
     let mut rewritten = 0;
     for patterns in stale.chunk_by(|left, right| left.id == right.id) {
         let Some(first) = patterns.first() else {
@@ -148,10 +150,8 @@ pub async fn refresh_stale_pattern_forms(pool: &PgPool) -> Result<u64, ContextSt
         let item_ordinals: Vec<i32> = patterns.iter().map(|pattern| pattern.item_ordinal).collect();
         let selector_ordinals: Vec<i32> = patterns.iter().map(|pattern| pattern.selector_ordinal).collect();
         let mut transaction = pool.begin().await?;
-        let moved = sqlx::query(sqlx::AssertSqlSafe(revision_update.as_str()))
-            .bind(&first.id)
-            .bind(current.get())
-            .bind(first.entity_id_pattern_forms_revision)
+        let moved = revision_update_statement(&first.id, current, first.entity_id_pattern_forms_revision)
+            .to_query()
             .execute(&mut *transaction)
             .await?
             .rows_affected();
@@ -159,11 +159,8 @@ pub async fn refresh_stale_pattern_forms(pool: &PgPool) -> Result<u64, ContextSt
             transaction.rollback().await?;
             continue;
         }
-        sqlx::query(sqlx::AssertSqlSafe(forms_update.as_str()))
-            .bind(&first.id)
-            .bind(&item_ordinals)
-            .bind(&selector_ordinals)
-            .bind(&rendered)
+        forms_update_statement(&first.id, item_ordinals, selector_ordinals, rendered)
+            .to_query()
             .execute(&mut *transaction)
             .await?;
         transaction.commit().await?;
@@ -174,22 +171,24 @@ pub async fn refresh_stale_pattern_forms(pool: &PgPool) -> Result<u64, ContextSt
 
 #[cfg(test)]
 mod tests {
-    use crate::csource_registration::pattern_forms_refresh::{forms_update_sql, revision_update_sql, stale_patterns_sql};
+    use crate::{
+        csource_registration::pattern_forms_refresh::{forms_update_statement, revision_update_statement, stale_patterns_statement},
+        statement_text::text_of,
+    };
     use andromeda_ngsi_ld_query::portable_pattern::PortablePattern;
     use pretty_assertions::assert_eq;
+    use sea_query::PostgresQueryBuilder;
 
     /// Only rows an older revision rendered are read: a registration this build
     /// or a newer one rendered, and one declaring no pattern (`NULL`), are not.
     #[test]
     fn only_rows_an_older_revision_rendered_are_read() {
-        let sql = stale_patterns_sql(PortablePattern::RENDERING_REVISION);
+        let (sql, values) = stale_patterns_statement(PortablePattern::RENDERING_REVISION).build(PostgresQueryBuilder);
         assert!(
-            sql.contains(&format!(
-                r#""context_source_registrations"."entity_id_pattern_forms_revision" < {}"#,
-                PortablePattern::RENDERING_REVISION.get()
-            )),
+            sql.contains(r#""context_source_registrations"."entity_id_pattern_forms_revision" < $1"#),
             "{sql}"
         );
+        assert_eq!(values.0.len(), 1, "the revision is bound: {sql}");
         assert!(
             sql.contains(r#"INNER JOIN "registration_information" AS "i" ON "i"."registration_id" = "context_source_registrations"."id""#),
             "{sql}"
@@ -203,16 +202,23 @@ mod tests {
     /// `registration_information.entity_id_pattern_form` by position.
     #[test]
     fn the_rewrite_is_guarded_by_the_revision_it_read() {
-        let revision = revision_update_sql();
-        assert!(revision.contains(r#""entity_id_pattern_forms_revision" = $2"#), "{revision}");
-        assert!(revision.contains(r#""id" = ($1)"#), "{revision}");
-        assert!(revision.contains(r#""entity_id_pattern_forms_revision" = ($3)"#), "{revision}");
+        let (revision, values) =
+            revision_update_statement("urn:ngsi-ld:ContextSourceRegistration:1", PortablePattern::RENDERING_REVISION, 0).build(PostgresQueryBuilder);
+        assert!(revision.contains(r#""entity_id_pattern_forms_revision" = $1"#), "{revision}");
+        assert!(revision.contains(r#""id" = $2"#), "{revision}");
+        assert!(revision.contains(r#""entity_id_pattern_forms_revision" = $3"#), "{revision}");
+        assert_eq!(values.0.len(), 3, "{revision}");
         assert_eq!(
-            forms_update_sql(),
+            text_of(&forms_update_statement(
+                "urn:ngsi-ld:ContextSourceRegistration:1",
+                Vec::new(),
+                Vec::new(),
+                Vec::new()
+            )),
             concat!(
                 r#"UPDATE "registration_information" SET "entity_id_pattern_form" = "f"."entity_id_pattern_form" "#,
-                r#"FROM UNNEST($2::integer[], $3::integer[], $4::text[]) AS f(item_ordinal, selector_ordinal, entity_id_pattern_form) "#,
-                r#"WHERE "registration_information"."registration_id" = ($1) AND "registration_information"."item_ordinal" = "f"."item_ordinal" AND "registration_information"."selector_ordinal" = "f"."selector_ordinal""#,
+                r#"FROM UNNEST($1::integer[], $2::integer[], $3::text[]) AS f(item_ordinal, selector_ordinal, entity_id_pattern_form) "#,
+                r#"WHERE "registration_information"."registration_id" = $4 AND "registration_information"."item_ordinal" = "f"."item_ordinal" AND "registration_information"."selector_ordinal" = "f"."selector_ordinal""#,
             )
         );
     }

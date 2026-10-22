@@ -23,12 +23,12 @@ use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use andromeda_postgresql_schema::csr::RegistrationInformation;
 use andromeda_postgresql_seaquery::{
     cast::cast,
+    pg_array::nullable_array,
     pg_type::PostgresType,
-    placeholder::external_placeholder,
-    unnest::{UnnestColumn, apply_column_alias, unnest_call},
+    statement::Statement,
+    unnest::{UnnestAliased, UnnestColumn, unnest_call},
 };
-use sea_query::{Expr, ExprTrait, Iden, IntoIden, PostgresQueryBuilder, Query};
-use sea_query_sqlx::{SqlxBinder, SqlxValues};
+use sea_query::{DeleteStatement, Expr, ExprTrait, Iden, InsertStatement, IntoIden, Query, SimpleExpr};
 use sqlx::PgConnection;
 use std::collections::HashMap;
 
@@ -85,15 +85,14 @@ pub async fn prepare_information<'info>(
 }
 
 /// The delete half of the replacement: every row of one registration.
-fn delete_rows_statement(registration: &Identifier) -> (String, SqlxValues) {
+fn delete_rows_statement(registration: &Identifier) -> DeleteStatement {
     Query::delete()
         .from_table(RegistrationInformation::Table)
         .and_where(Expr::col(RegistrationInformation::RegistrationId).eq(registration.as_str()))
-        .build_sqlx(PostgresQueryBuilder)
+        .to_owned()
 }
 
-/// The staged columns, in bind order from `$2`, and the array type each binds
-/// as.
+/// The staged columns, in staging order, and the array type each binds as.
 fn staged_columns() -> [UnnestColumn; 9] {
     [
         UnnestColumn::new(RegistrationInformation::ItemOrdinal, PostgresType::IntegerArray),
@@ -108,15 +107,15 @@ fn staged_columns() -> [UnnestColumn; 9] {
     ]
 }
 
-/// The insert half of the replacement: the registration as `$1`, the staged
-/// columns as `$2` to `$10`.
-fn insert_rows_sql() -> Result<String, ContextStoreError> {
+/// The insert half of the replacement: `registration` beside the rows
+/// `staged` stages, one bound array per staged column.
+fn insert_rows_statement(registration: &Identifier, staged: StagedColumns<'_>) -> Result<UnnestAliased<InsertStatement>, ContextStoreError> {
     let columns = staged_columns();
-    let source = unnest_call(columns.iter().enumerate().map(|(index, column)| (column, external_placeholder(index + 2))));
+    let source = unnest_call(columns.iter().zip(staged.into_arrays()));
     let staged = |column: RegistrationInformation| Expr::col((Staged, column));
     let mut select = Query::select();
     select
-        .expr(external_placeholder(1))
+        .expr(Expr::val(registration.as_str()))
         .expr(staged(RegistrationInformation::ItemOrdinal))
         .expr(staged(RegistrationInformation::SelectorOrdinal))
         .expr(cast(staged(RegistrationInformation::EntityTypes), PostgresType::TextArray))
@@ -141,7 +140,7 @@ fn insert_rows_sql() -> Result<String, ContextStoreError> {
         RegistrationInformation::RelationshipNameKeys.into_iden(),
     ]);
     insert.select_from(select)?;
-    Ok(apply_column_alias(insert.to_string(PostgresQueryBuilder), &Staged, &columns))
+    Ok(UnnestAliased::new(insert).with_columns(Staged, &columns))
 }
 
 /// The rows transposed into one array per staged column.
@@ -187,6 +186,26 @@ impl<'info> StagedColumns<'info> {
         }
         columns
     }
+
+    /// One array expression per staged column, in [`staged_columns`] order.
+    fn into_arrays(self) -> Vec<SimpleExpr> {
+        vec![
+            Expr::val(self.item_ordinals),
+            Expr::val(self.selector_ordinals),
+            owned_texts(literal_texts(&self.entity_types, TextArrayLiteral::as_str)),
+            nullable_array(self.entity_type_shapes),
+            owned_texts(self.entity_ids),
+            owned_texts(self.entity_id_patterns),
+            owned_texts(self.entity_id_pattern_forms),
+            owned_texts(literal_texts(&self.property_name_keys, IntegerArrayLiteral::as_str)),
+            owned_texts(literal_texts(&self.relationship_name_keys, IntegerArrayLiteral::as_str)),
+        ]
+    }
+}
+
+/// A column of optional texts as the one `text[]` value that carries it.
+fn owned_texts(column: Vec<Option<&str>>) -> SimpleExpr {
+    nullable_array(column.into_iter().map(|text| text.map(str::to_owned)))
 }
 
 /// The array literal of one name axis, `None` when the axis is absent.
@@ -213,26 +232,12 @@ pub async fn replace_registration_information(
     registration: &Identifier,
     prepared: &PreparedInformation<'_>,
 ) -> Result<(), ContextStoreError> {
-    let (delete_sql, delete_values) = delete_rows_statement(registration);
-    sqlx::query_with(sqlx::AssertSqlSafe(delete_sql.as_str()), delete_values)
-        .execute(&mut *connection)
-        .await?;
+    delete_rows_statement(registration).to_query().execute(&mut *connection).await?;
     if prepared.rows.is_empty() {
         return Ok(());
     }
-    let columns = StagedColumns::of(&prepared.rows);
-    let insert_sql = insert_rows_sql()?;
-    sqlx::query(sqlx::AssertSqlSafe(insert_sql.as_str()))
-        .bind(registration.as_str())
-        .bind(&columns.item_ordinals)
-        .bind(&columns.selector_ordinals)
-        .bind(literal_texts(&columns.entity_types, TextArrayLiteral::as_str))
-        .bind(&columns.entity_type_shapes)
-        .bind(&columns.entity_ids)
-        .bind(&columns.entity_id_patterns)
-        .bind(&columns.entity_id_pattern_forms)
-        .bind(literal_texts(&columns.property_name_keys, IntegerArrayLiteral::as_str))
-        .bind(literal_texts(&columns.relationship_name_keys, IntegerArrayLiteral::as_str))
+    insert_rows_statement(registration, StagedColumns::of(&prepared.rows))?
+        .to_query()
         .execute(connection)
         .await?;
     Ok(())
@@ -240,11 +245,14 @@ pub async fn replace_registration_information(
 
 #[cfg(test)]
 mod tests {
-    use crate::csource_registration::{
-        information_rows::rows_of,
-        information_write::{StagedColumns, insert_rows_sql, literal_texts},
+    use crate::{
+        csource_registration::{
+            information_rows::rows_of,
+            information_write::{StagedColumns, insert_rows_statement, literal_texts},
+        },
+        statement_text::text_of,
     };
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::registration::info::RegistrationInfo;
     use andromeda_postgresql_encoding::array_literal::{IntegerArrayLiteral, TextArrayLiteral};
     use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
@@ -254,7 +262,8 @@ mod tests {
 
     #[test]
     fn the_insert_binds_one_typed_array_per_column() {
-        let sql = insert_rows_sql().expect("the insert builds");
+        let registration: Identifier = "urn:ngsi-ld:ContextSourceRegistration:1".parse().expect("a valid identifier");
+        let sql = text_of(&insert_rows_statement(&registration, StagedColumns::default()).expect("the insert builds"));
         assert_eq!(
             sql,
             concat!(

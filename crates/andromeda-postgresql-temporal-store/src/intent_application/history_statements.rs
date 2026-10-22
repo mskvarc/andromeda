@@ -11,7 +11,7 @@
 
 use crate::intent_application::{
     deletion_judgement::{created_by_application, ended_before_evolution},
-    intent_source::{E, I, IntentSource, S, Te, entry, entry_kind_in, intent, source_entries, write_ordinal},
+    intent_source::{E, I, S, StagedSource, Te, entry, entry_kind_in, intent, source_entries, write_ordinal},
     scope_judgement::recorded_scope_entry,
 };
 use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
@@ -70,7 +70,7 @@ fn attribute_entries() -> SimpleExpr {
 
 /// The entries of `kinds` of Entities with a Temporal Evolution, the
 /// evolution under `te`.
-fn entries_with_evolution(source: &IntentSource<'_>, schema: Option<&DynIden>, kinds: SimpleExpr) -> SelectStatement {
+fn entries_with_evolution(source: &StagedSource<'_>, schema: Option<&DynIden>, kinds: SimpleExpr) -> SelectStatement {
     let mut select = Query::select();
     source_entries(&mut select, source);
     select
@@ -81,7 +81,7 @@ fn entries_with_evolution(source: &IntentSource<'_>, schema: Option<&DynIden>, k
 }
 
 /// The attribute entries the application records, the evolution under `te`.
-fn recorded_attribute_entries(source: &IntentSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
+fn recorded_attribute_entries(source: &StagedSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
     let mut select = entries_with_evolution(source, schema, attribute_entries());
     select.and_where(ended_before_evolution(source, created_by_application(source)).not());
     select
@@ -89,7 +89,7 @@ fn recorded_attribute_entries(source: &IntentSource<'_>, schema: Option<&DynIden
 
 /// The attribute entries the application records beside the stream each
 /// extends, under `s`.
-fn entries_with_stream(source: &IntentSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
+fn entries_with_stream(source: &StagedSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
     let mut select = recorded_attribute_entries(source, schema);
     select
         .from_as(qualified(schema, TemporalAttributeStreams::Table), S)
@@ -101,7 +101,7 @@ fn entries_with_stream(source: &IntentSource<'_>, schema: Option<&DynIden>) -> S
 
 /// The attribute entries the application records that carry a
 /// client-supplied `instanceId`.
-fn verbatim_entries(source: &IntentSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
+fn verbatim_entries(source: &StagedSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
     let mut select = recorded_attribute_entries(source, schema);
     select.and_where(entry(TemporalEntry::VerbatimInstanceId).is_not_null());
     select
@@ -111,7 +111,7 @@ fn verbatim_entries(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Sele
 /// client that supplied its own `instanceId` (clause 4.5.7) names one
 /// instance of the attribute across every `datasetId`, so the row holding it
 /// on any sibling stream goes first.
-pub(crate) fn replaced_instances_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
+pub(crate) fn replaced_instances_statement(source: &StagedSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
     let mut replaced = verbatim_entries(source, schema);
     replaced
         .column((AttributeHistory::Table, AttributeHistory::StreamKey))
@@ -130,7 +130,7 @@ pub(crate) fn replaced_instances_statement(source: &IntentSource<'_>, schema: Op
 /// Release the instance claims the entries are about to stake again,
 /// so a replacement is not refused as a conflict with the instance it
 /// replaces.
-pub(crate) fn released_claims_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> DeleteStatement {
+pub(crate) fn released_claims_statement(source: &StagedSource<'_>, schema: Option<&DynIden>) -> DeleteStatement {
     let mut released = verbatim_entries(source, schema);
     released
         .expr(Expr::val(1))
@@ -155,7 +155,7 @@ pub(crate) fn released_claims_statement(source: &IntentSource<'_>, schema: Optio
 /// carry; the claims' primary key refuses two instances of one attribute
 /// naming one `instanceId`, within the source or against another writer, so
 /// the insert carries no `ON CONFLICT`.
-pub(crate) fn claims_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
+pub(crate) fn claims_statement(source: &StagedSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
     let mut select = verbatim_entries(source, schema);
     select
         .column((Te, TemporalEntities::TemporalEntityKey))
@@ -179,7 +179,7 @@ pub(crate) fn claims_statement(source: &IntentSource<'_>, schema: Option<&DynIde
 /// The values are the ones a temporal read of the live branch projects from
 /// the entry while it is still queued. The conflict target is the write
 /// identity, so an entry recorded once is never recorded twice.
-pub(crate) fn history_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
+pub(crate) fn history_statement(source: &StagedSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
     let (value_columns, values): (Vec<AttributeHistory>, Vec<SimpleExpr>) = attribute_entry_values(entry).into_iter().unzip();
     let mut select = entries_with_stream(source, schema);
     select
@@ -218,7 +218,7 @@ pub(crate) fn history_statement(source: &IntentSource<'_>, schema: Option<&DynId
 /// extent already covers the box is left alone, so a write inside it updates
 /// no row. An extent never shrinks: one too large still holds every geometry
 /// of its stream.
-pub(crate) fn extent_growth_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> UpdateStatement {
+pub(crate) fn extent_growth_statement(source: &StagedSource<'_>, schema: Option<&DynIden>) -> UpdateStatement {
     let geometry = recorded_geometry(entry);
     let mut grown = entries_with_stream(source, schema);
     grown
@@ -246,7 +246,7 @@ pub(crate) fn extent_growth_statement(source: &IntentSource<'_>, schema: Option<
 /// shapes the stream's rows carry. A combination the stream already holds
 /// conflicts and writes nothing, which is the steady state of a stream. A
 /// tombstone carries no value and adds no shape.
-pub(crate) fn stream_shapes_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
+pub(crate) fn stream_shapes_statement(source: &StagedSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
     let mut entries = entries_with_stream(source, schema);
     entries
         .column((S, TemporalAttributeStreams::StreamKey))
@@ -287,7 +287,7 @@ pub(crate) fn stream_shapes_statement(source: &IntentSource<'_>, schema: Option<
 
 /// The Scope entries of Entities with a Temporal Evolution, events and
 /// assertions alike.
-fn scope_entries(source: &IntentSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
+fn scope_entries(source: &StagedSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
     entries_with_evolution(
         source,
         schema,
@@ -303,7 +303,7 @@ fn scope_entries(source: &IntentSource<'_>, schema: Option<&DynIden>) -> SelectS
 /// The conflict target is the write identity, which is what names a Scope
 /// row: clause 4.5.6 gives the temporal Scope no `instanceId`. An entry
 /// recorded once is never recorded twice.
-pub(crate) fn scope_history_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
+pub(crate) fn scope_history_statement(source: &StagedSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
     let (value_columns, values): (Vec<ScopeHistory>, Vec<SimpleExpr>) = scope_entry_values(entry).into_iter().unzip();
     let mut select = scope_entries(source, schema);
     select

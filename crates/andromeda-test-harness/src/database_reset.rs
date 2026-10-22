@@ -1,30 +1,259 @@
 //! Authoritative global reset and complete prefix-owned cleanup.
+//!
+//! Every mutable tenant table is truncated between test cases. Four tables are
+//! deliberately absent. `attribute_names` and `entity_type_names` are
+//! dictionaries whose keys are cached in-process, so truncating either would
+//! strand every cached key. `schema_metadata` carries the schema contract the
+//! broker stamps once after migrating and verifies on every later connection to
+//! the tenant: removing the singleton makes the tenant read as never-stamped,
+//! and every connection after the reset is refused as drift.
+//! `context_source_change_clock` is a singleton a migration seeds and every
+//! registration write advances: emptying it would leave those writes nothing to
+//! advance, and a revision only has to grow, never to restart.
+//!
+//! `attribute_history_instance_claims` is named explicitly rather than left to
+//! the cascade from `temporal_entities`. It carries the clause 4.5.7 uniqueness
+//! of a client-supplied `instanceId`, which `attribute_history` cannot carry
+//! itself, so a claim surviving the reset would refuse an identifier the next
+//! test case is entitled to use, and relying on a cascade to reclaim it makes
+//! that depend on a foreign key rather than on the list. The same holds for
+//! `registration_delivery_state`, `subscription_companions`,
+//! `forwarded_subscriptions`, `subscription_notified_registrations`,
+//! `snapshot_notification_outbox`, `entity_map_entries` and `entity_map_links`:
+//! each is also reclaimed by a cascade from the row it hangs off, and each is
+//! named so the reset does not depend on that edge.
+//!
+//! The reset is one transaction that takes every lock it needs before it
+//! changes anything: the reset relations, every relation `TRUNCATE ... CASCADE`
+//! reaches from them through a foreign key, and every table of every Snapshot
+//! branch schema, in one `LOCK TABLE ... NOWAIT`. A broker transaction still
+//! open on any of them makes the lock fail at once with `lock_not_available`
+//! (55P03) while holding nothing, and the harness runs the reset again once that
+//! transaction has finished. The reset therefore never waits for a lock while
+//! holding another, so it can never form a deadlock with a broker's expiry sweep
+//! or notification drain, and never makes PostgreSQL abort a broker transaction
+//! as the victim of one.
+//!
+//! The live branch is the default schema, reset by the truncation. Each Snapshot
+//! branch is its own schema `snap_<key>` (and `snap_<key>_stg` while
+//! preparing), test-owned and unreachable from the control tables, so every such
+//! schema is dropped after the control rows that named them are gone.
 
 use crate::{
     database_isolation::{DatabaseIsolationError, SerializedLease},
-    discovery_census::rebuild_live_census,
+    discovery_census::{CensusError, rebuild_live_census},
     identifiers::TestIdentifiers,
 };
 use andromeda_postgresql_pool::schema_change_lock::is_lock_not_available;
-use sqlx::{Executor, PgPool, Postgres, Transaction};
+use andromeda_postgresql_schema::{
+    census::{AttributeCensus, EntityTypeAttributeCensus, EntityTypeCensus},
+    csr::{Csr, RegistrationDeliveryState, RegistrationInformation},
+    current::{CurrentAttributes, Entities, EntitySearch, EntityTypeMembers},
+    entity_map::{EntityMapEntries, EntityMapLinks, EntityMaps},
+    jsonld::JsonldContexts,
+    notification::{NotificationDeliveries, NotificationEvents},
+    queue::{PendingSideEffects, TemporalAppendIntents, WriteRecords},
+    snapshot::{SnapshotNotificationOutbox, SnapshotPreparation, Snapshots},
+    subscription_forwarding::{ForwardedSubscriptions, SubscriptionCompanions},
+    subscriptions::{SubscriptionDeliveryState, SubscriptionNotifiedRegistrations, Subscriptions},
+    temporal::{
+        AttributeHistory,
+        AttributeHistoryInstanceClaims,
+        ScopeHistory,
+        TemporalAttributeStreams,
+        TemporalEntities,
+        TemporalEntityTypeMembers,
+        TemporalStreamShapes,
+    },
+};
+use andromeda_postgresql_seaquery::{
+    command::Command,
+    introspection::table_is_visible,
+    literal::text_literal,
+    relation_lock::RelationLock,
+    relation_truncation::RelationTruncation,
+    schema_definition::SchemaDefinition,
+    statement::Statement,
+    system_catalog::{PgClass, PgConstraint, PgNamespace},
+};
+use sea_query::{
+    Alias,
+    CommonTableExpression,
+    DeleteStatement,
+    DynIden,
+    Expr,
+    ExprTrait,
+    Iden,
+    IntoIden,
+    JoinType,
+    Query,
+    SelectStatement,
+    TableName,
+    UnionType,
+    WithClause,
+    WithQuery,
+};
+use sqlx::{Connection, PgConnection, PgPool, Row};
 use std::time::Duration;
 use thiserror::Error;
 use tokio::time::{Instant, sleep};
 
-/// Authoritative tenant reset SQL maintained alongside the test harness.
-pub const RESET_TENANT_SQL: &str = include_str!("../sql/reset-tenant.sql");
+/// The relations the reset empties, in the order they are truncated.
+fn reset_relations() -> Vec<DynIden> {
+    vec![
+        WriteRecords::Table.into_iden(),
+        TemporalAppendIntents::Table.into_iden(),
+        PendingSideEffects::Table.into_iden(),
+        CurrentAttributes::Table.into_iden(),
+        NotificationDeliveries::Table.into_iden(),
+        NotificationEvents::Table.into_iden(),
+        ScopeHistory::Table.into_iden(),
+        SnapshotNotificationOutbox::Table.into_iden(),
+        SnapshotPreparation::Table.into_iden(),
+        Snapshots::Table.into_iden(),
+        ForwardedSubscriptions::Table.into_iden(),
+        SubscriptionCompanions::Table.into_iden(),
+        RegistrationInformation::Table.into_iden(),
+        RegistrationDeliveryState::Table.into_iden(),
+        Csr::Table.into_iden(),
+        SubscriptionNotifiedRegistrations::Table.into_iden(),
+        SubscriptionDeliveryState::Table.into_iden(),
+        Subscriptions::Table.into_iden(),
+        AttributeHistoryInstanceClaims::Table.into_iden(),
+        AttributeHistory::Table.into_iden(),
+        TemporalStreamShapes::Table.into_iden(),
+        TemporalAttributeStreams::Table.into_iden(),
+        TemporalEntityTypeMembers::Table.into_iden(),
+        TemporalEntities::Table.into_iden(),
+        EntityTypeMembers::Table.into_iden(),
+        EntityTypeCensus::Table.into_iden(),
+        EntityTypeAttributeCensus::Table.into_iden(),
+        AttributeCensus::Table.into_iden(),
+        EntitySearch::Table.into_iden(),
+        Entities::Table.into_iden(),
+        EntityMapLinks::Table.into_iden(),
+        EntityMapEntries::Table.into_iden(),
+        EntityMaps::Table.into_iden(),
+        JsonldContexts::Table.into_iden(),
+    ]
+}
+
+/// The pattern every Snapshot branch schema name matches, `snap_<key>` and
+/// `snap_<key>_stg` alike.
+const BRANCH_SCHEMA_PATTERN: &str = r"snap\_%";
+
+/// The recursive set of relation oids the truncation reaches.
+#[derive(Iden, Clone, Copy)]
+#[iden = "reached"]
+struct Reached;
+
+/// The oids of the tables of every Snapshot branch schema.
+#[derive(Iden, Clone, Copy)]
+#[iden = "branch_tables"]
+struct BranchTables;
+
+/// The column of a set of relation oids.
+#[derive(Iden, Clone, Copy)]
+#[iden = "relation"]
+struct Relation;
+
+/// The `pg_class` row of a relation, `c`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "c"]
+struct RelationRow;
+
+/// The `pg_namespace` row of a schema, `n`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "n"]
+struct SchemaRow;
+
+/// The `pg_constraint` row of a constraint, `k`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "k"]
+struct ConstraintRow;
+
+/// Every relation the reset locks: the reset relations, every relation a
+/// foreign key reaches from them, and every table of every Snapshot branch,
+/// each as its schema and name.
+fn lock_set_statement() -> WithQuery {
+    let names: Vec<String> = reset_relations().iter().map(ToString::to_string).collect();
+    let mut roots = Query::select();
+    roots
+        .expr_as(Expr::col((RelationRow, PgClass::Oid)), Relation)
+        .from_as(PgClass::Table, RelationRow)
+        .and_where(Expr::col((RelationRow, PgClass::Relname)).is_in(names))
+        .and_where(table_is_visible(Expr::col((RelationRow, PgClass::Oid))));
+    let mut referencing = Query::select();
+    referencing
+        .expr_as(Expr::col((ConstraintRow, PgConstraint::Conrelid)), Relation)
+        .from_as(PgConstraint::Table, ConstraintRow)
+        .join(
+            JoinType::InnerJoin,
+            Reached,
+            Expr::col((ConstraintRow, PgConstraint::Confrelid)).equals((Reached, Relation)),
+        )
+        .and_where(Expr::col((ConstraintRow, PgConstraint::Contype)).eq(text_literal("f")));
+    roots.union(UnionType::Distinct, referencing);
+    let mut branch_tables = Query::select();
+    branch_tables
+        .expr_as(Expr::col((RelationRow, PgClass::Oid)), Relation)
+        .from_as(PgClass::Table, RelationRow)
+        .join_as(
+            JoinType::InnerJoin,
+            PgNamespace::Table,
+            SchemaRow,
+            Expr::col((SchemaRow, PgNamespace::Oid)).equals((RelationRow, PgClass::Relnamespace)),
+        )
+        .and_where(Expr::col((SchemaRow, PgNamespace::Nspname)).like(BRANCH_SCHEMA_PATTERN))
+        .and_where(Expr::col((RelationRow, PgClass::Relkind)).is_in([text_literal("r"), text_literal("p")]));
+    let mut every_relation = Query::select();
+    every_relation.column(Relation).from(Reached);
+    every_relation.union(UnionType::Distinct, Query::select().column(Relation).from(BranchTables).to_owned());
+    let mut with = WithClause::new();
+    with.recursive(true)
+        .cte(CommonTableExpression::new().table_name(Reached).columns([Relation]).query(roots).to_owned())
+        .cte(
+            CommonTableExpression::new()
+                .table_name(BranchTables)
+                .columns([Relation])
+                .query(branch_tables)
+                .to_owned(),
+        );
+    let mut locked = Query::select();
+    locked
+        .column((SchemaRow, PgNamespace::Nspname))
+        .column((RelationRow, PgClass::Relname))
+        .from_as(PgClass::Table, RelationRow)
+        .join_as(
+            JoinType::InnerJoin,
+            PgNamespace::Table,
+            SchemaRow,
+            Expr::col((SchemaRow, PgNamespace::Oid)).equals((RelationRow, PgClass::Relnamespace)),
+        )
+        .and_where(Expr::col((RelationRow, PgClass::Oid)).in_subquery(every_relation));
+    locked.with(with)
+}
+
+/// The names of the Snapshot branch schemas the tenant database holds.
+fn branch_schemas_statement() -> SelectStatement {
+    Query::select()
+        .column(PgNamespace::Nspname)
+        .from(PgNamespace::Table)
+        .and_where(Expr::col(PgNamespace::Nspname).like(BRANCH_SCHEMA_PATTERN))
+        .to_owned()
+}
 
 /// Reset every mutable tenant table while preserving the cached `attribute_names` and `entity_type_names` dictionaries, the `schema_metadata` contract row, the seeded unit-code catalogue, and the `context_source_change_clock` singleton.
 ///
 /// # Errors
 ///
-/// Returns [`DatabaseResetError::Isolation`] when the exclusive lease no longer holds its connection, and [`DatabaseResetError::Sqlx`] when the reset script fails for any reason other than a busy table, or when a table stays busy past [`RESET_BUSY_DEADLINE`].
+/// Returns [`DatabaseResetError::Isolation`] when the exclusive lease no longer holds its connection, and [`DatabaseResetError::Sqlx`] when the reset fails for any reason other than a busy table, or when a table stays busy past [`RESET_BUSY_DEADLINE`].
 pub async fn reset_tenant(lease: &mut SerializedLease) -> Result<(), DatabaseResetError> {
     let busy = BusyTables::starting_now();
     loop {
         let connection = lease.connection()?;
-        match connection.execute(RESET_TENANT_SQL).await {
-            Ok(_) => return Ok(()),
+        match reset_in_one_transaction(connection).await {
+            Ok(()) => return Ok(()),
             Err(error) => busy.wait_out(error).await?,
         }
     }
@@ -39,15 +268,44 @@ pub async fn reset_tenant(lease: &mut SerializedLease) -> Result<(), DatabaseRes
 ///
 /// # Errors
 ///
-/// Returns [`DatabaseResetError::Sqlx`] when the reset script fails for any reason other than a busy table, or when a table stays busy past [`RESET_BUSY_DEADLINE`].
+/// Returns [`DatabaseResetError::Sqlx`] when the reset fails for any reason other than a busy table, or when a table stays busy past [`RESET_BUSY_DEADLINE`].
 pub async fn reset_owned_tenant(pool: &PgPool) -> Result<(), DatabaseResetError> {
     let busy = BusyTables::starting_now();
     loop {
-        match pool.execute(RESET_TENANT_SQL).await {
-            Ok(_) => return Ok(()),
+        let mut connection = pool.acquire().await.map_err(DatabaseResetError::from_sqlx)?;
+        match reset_in_one_transaction(&mut connection).await {
+            Ok(()) => return Ok(()),
             Err(error) => busy.wait_out(error).await?,
         }
     }
+}
+
+/// Lock everything the reset touches without waiting, then truncate the reset
+/// relations and drop every Snapshot branch schema, all in one transaction.
+async fn reset_in_one_transaction(connection: &mut PgConnection) -> Result<(), sqlx::Error> {
+    let mut transaction = connection.begin().await?;
+    let locked = lock_set_statement()
+        .to_query()
+        .fetch_all(&mut *transaction)
+        .await?
+        .iter()
+        .map(|row| {
+            Ok(TableName::from((
+                Alias::new(row.try_get::<String, _>(0)?),
+                Alias::new(row.try_get::<String, _>(1)?),
+            )))
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()?;
+    RelationLock::exclusive_nowait(locked).to_query().execute(&mut *transaction).await?;
+    RelationTruncation::new(reset_relations().into_iter().map(TableName::from).collect())
+        .to_query()
+        .execute(&mut *transaction)
+        .await?;
+    let branches: Vec<String> = branch_schemas_statement().to_query_scalar().fetch_all(&mut *transaction).await?;
+    for branch in branches {
+        SchemaDefinition::drop_cascade(Alias::new(branch)).to_query().execute(&mut *transaction).await?;
+    }
+    transaction.commit().await
 }
 
 /// How long a reset keeps retrying while a broker transaction holds one of its
@@ -58,11 +316,11 @@ const RESET_BUSY_DEADLINE: Duration = Duration::from_secs(30);
 /// Pause before a reset that found a table busy is run again.
 const RESET_BUSY_BACKOFF: Duration = Duration::from_millis(20);
 
-/// The retry policy of one reset: the script takes every lock it needs at once
+/// The retry policy of one reset: the reset takes every lock it needs at once
 /// and without waiting, so a broker transaction still open on a table fails it
 /// before it has changed or locked anything, and it is simply run again.
 ///
-/// Only that failure is retried. A deadlock cannot involve a script that never
+/// Only that failure is retried. A deadlock cannot involve a reset that never
 /// waits for a lock while holding one, so it is reported rather than retried,
 /// as is every other failure.
 struct BusyTables {
@@ -78,9 +336,9 @@ impl BusyTables {
         }
     }
 
-    /// Wait out `error` when it is a busy table (the reset script's `LOCK
-    /// TABLE ... NOWAIT` finding a table held) and the deadline has not
-    /// passed, so the caller runs the reset again; otherwise return it.
+    /// Wait out `error` when it is a busy table (the reset's `LOCK TABLE ...
+    /// NOWAIT` finding a table held) and the deadline has not passed, so the
+    /// caller runs the reset again; otherwise return it.
     async fn wait_out(&self, error: sqlx::Error) -> Result<(), DatabaseResetError> {
         if is_lock_not_available(&error) && Instant::now() < self.deadline {
             sleep(RESET_BUSY_BACKOFF).await;
@@ -88,6 +346,16 @@ impl BusyTables {
         }
         Err(DatabaseResetError::from_sqlx(error))
     }
+}
+
+/// `DELETE FROM table WHERE column LIKE like`.
+fn delete_like(table: impl IntoIden, column: impl IntoIden, like: &str) -> DeleteStatement {
+    Query::delete().from_table(table).and_where(Expr::col(column).like(like)).to_owned()
+}
+
+/// `DELETE FROM table WHERE column IN (subquery)`.
+fn delete_in(table: impl IntoIden, column: impl IntoIden, subquery: SelectStatement) -> DeleteStatement {
+    Query::delete().from_table(table).and_where(Expr::col(column).in_subquery(subquery)).to_owned()
 }
 
 /// Every prefix-scoped delete a cleanup runs, in dependency order.
@@ -104,21 +372,45 @@ impl BusyTables {
 /// ordinary table whose foreign key cascades from `temporal_entities`, so the
 /// catalogue delete below reclaims every claim the prefix staked. The global
 /// reset still names it, because a `TRUNCATE` list is not a cascade.
-const PREFIX_DELETES: &[&str] = &[
-    // `notification_events` carries the Entity id as text and has no foreign key
-    // to `subscriptions` (a subscription delete cascades its deliveries but
-    // never the events), so it is reclaimed here by the Entity-id prefix rather
-    // than through any cascade.
-    "DELETE FROM notification_events WHERE entity_id LIKE $1",
-    "DELETE FROM subscriptions WHERE id LIKE $1",
-    "DELETE FROM context_source_registrations WHERE id LIKE $1",
-    "DELETE FROM snapshots WHERE id LIKE $1",
-    "DELETE FROM entities WHERE id LIKE $1",
-    "DELETE FROM attribute_history WHERE stream_key IN (SELECT s.stream_key FROM temporal_attribute_streams s \
-     JOIN temporal_entities te ON te.temporal_entity_key = s.temporal_entity_key WHERE te.id LIKE $1)",
-    "DELETE FROM scope_history WHERE temporal_entity_key IN (SELECT temporal_entity_key FROM temporal_entities WHERE id LIKE $1)",
-    "DELETE FROM temporal_entities WHERE id LIKE $1",
-];
+fn prefix_deletes(like: &str) -> Vec<DeleteStatement> {
+    let queued_writes = Query::select()
+        .column(TemporalAppendIntents::WriteId)
+        .from(TemporalAppendIntents::Table)
+        .and_where(Expr::col(TemporalAppendIntents::EntityId).like(like))
+        .to_owned();
+    let streams_of_prefix = Query::select()
+        .column((TemporalAttributeStreams::Table, TemporalAttributeStreams::StreamKey))
+        .from(TemporalAttributeStreams::Table)
+        .join(
+            JoinType::InnerJoin,
+            TemporalEntities::Table,
+            Expr::col((TemporalEntities::Table, TemporalEntities::TemporalEntityKey))
+                .equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::TemporalEntityKey)),
+        )
+        .and_where(Expr::col((TemporalEntities::Table, TemporalEntities::Id)).like(like))
+        .to_owned();
+    let entities_of_prefix = Query::select()
+        .column(TemporalEntities::TemporalEntityKey)
+        .from(TemporalEntities::Table)
+        .and_where(Expr::col(TemporalEntities::Id).like(like))
+        .to_owned();
+    vec![
+        delete_in(WriteRecords::Table, WriteRecords::WriteId, queued_writes),
+        delete_like(TemporalAppendIntents::Table, TemporalAppendIntents::EntityId, like),
+        // `notification_events` carries the Entity id as text and has no foreign key
+        // to `subscriptions` (a subscription delete cascades its deliveries but
+        // never the events), so it is reclaimed here by the Entity-id prefix rather
+        // than through any cascade.
+        delete_like(NotificationEvents::Table, NotificationEvents::EntityId, like),
+        delete_like(Subscriptions::Table, Subscriptions::Id, like),
+        delete_like(Csr::Table, Csr::Id, like),
+        delete_like(Snapshots::Table, Snapshots::Id, like),
+        delete_like(Entities::Table, Entities::Id, like),
+        delete_in(AttributeHistory::Table, AttributeHistory::StreamKey, streams_of_prefix),
+        delete_in(ScopeHistory::Table, ScopeHistory::TemporalEntityKey, entities_of_prefix),
+        delete_like(TemporalEntities::Table, TemporalEntities::Id, like),
+    ]
+}
 
 /// Delete every row discoverably owned by one isolated identifier prefix.
 ///
@@ -128,34 +420,15 @@ const PREFIX_DELETES: &[&str] = &[
 ///
 /// # Errors
 ///
-/// Returns [`DatabaseResetError::Sqlx`] when the transaction cannot be opened, when any prefix-scoped delete fails, or when the commit fails.
+/// Returns [`DatabaseResetError::Sqlx`] when the transaction cannot be opened, when any prefix-scoped delete fails, or when the commit fails, and [`DatabaseResetError::Census`] when the census cannot be rebuilt.
 pub async fn cleanup_prefix(pool: &PgPool, identifiers: &TestIdentifiers) -> Result<(), DatabaseResetError> {
     let like = format!("{}%", identifiers.prefix());
     let mut transaction = pool.begin().await.map_err(DatabaseResetError::from_sqlx)?;
-    delete_temporal_intents(&mut transaction, &like).await?;
-    for statement in PREFIX_DELETES {
-        sqlx::query(*statement)
-            .bind(&like)
-            .execute(&mut *transaction)
-            .await
-            .map_err(DatabaseResetError::from_sqlx)?;
+    for statement in prefix_deletes(&like) {
+        statement.to_query().execute(&mut *transaction).await.map_err(DatabaseResetError::from_sqlx)?;
     }
-    rebuild_live_census(&mut transaction).await.map_err(DatabaseResetError::from_sqlx)?;
+    rebuild_live_census(&mut transaction).await?;
     transaction.commit().await.map_err(DatabaseResetError::from_sqlx)?;
-    Ok(())
-}
-
-async fn delete_temporal_intents(transaction: &mut Transaction<'_, Postgres>, like: &str) -> Result<(), DatabaseResetError> {
-    sqlx::query("DELETE FROM write_records WHERE write_id IN (SELECT write_id FROM temporal_append_intents WHERE entity_id LIKE $1)")
-        .bind(like)
-        .execute(&mut **transaction)
-        .await
-        .map_err(DatabaseResetError::from_sqlx)?;
-    sqlx::query("DELETE FROM temporal_append_intents WHERE entity_id LIKE $1")
-        .bind(like)
-        .execute(&mut **transaction)
-        .await
-        .map_err(DatabaseResetError::from_sqlx)?;
     Ok(())
 }
 
@@ -172,6 +445,9 @@ pub enum DatabaseResetError {
     /// prefix cleanup the harness runs.
     #[error("test database reset failed: {0}")]
     Sqlx(#[source] Box<sqlx::Error>),
+    /// The discovery census could not be rebuilt after the cleanup.
+    #[error("the discovery census could not be rebuilt: {0}")]
+    Census(#[from] CensusError),
 }
 
 impl DatabaseResetError {
@@ -184,42 +460,30 @@ impl DatabaseResetError {
 
 #[cfg(test)]
 mod tests {
-    use crate::database_reset::{PREFIX_DELETES, RESET_TENANT_SQL};
+    use crate::database_reset::{branch_schemas_statement, lock_set_statement, prefix_deletes, reset_relations};
+    use sea_query::PostgresQueryBuilder;
 
-    /// The reset relation list of the script, without the header comment that
-    /// explains which relations are deliberately absent from it.
-    fn truncated_relations() -> &'static str {
-        let (_, declaration) = RESET_TENANT_SQL
-            .split_once("reset_relations CONSTANT regclass[] := ARRAY[")
-            .unwrap_or_else(|| panic!("the reset script declares its relations"));
-        let (relations, _) = declaration.split_once("]::regclass[]").unwrap_or_else(|| panic!("the relation list is closed"));
-        relations
+    /// The names of the relations the reset truncates.
+    fn truncated_relations() -> Vec<String> {
+        reset_relations().iter().map(ToString::to_string).collect()
     }
 
-    /// The script must take every lock before it changes anything, and never
-    /// wait for one: that is what keeps it out of every deadlock with the
-    /// brokers' own transactions.
+    /// The reset locks what the truncation reaches through a foreign key as
+    /// well as the reset relations and every Snapshot branch table, so none of
+    /// them is first locked by the truncation itself.
     #[test]
-    fn reset_script_locks_everything_it_touches_without_waiting_before_it_truncates() {
-        let lock = RESET_TENANT_SQL
-            .find("IN ACCESS EXCLUSIVE MODE NOWAIT")
-            .unwrap_or_else(|| panic!("the script locks without waiting"));
-        let truncate = RESET_TENANT_SQL
-            .find("EXECUTE format('TRUNCATE")
-            .unwrap_or_else(|| panic!("the script truncates"));
-        let drop = RESET_TENANT_SQL
-            .find("DROP SCHEMA")
-            .unwrap_or_else(|| panic!("the script drops the branch schemas"));
-        assert!(lock < truncate && lock < drop, "the locks must precede every change");
-        assert!(
-            RESET_TENANT_SQL.contains("constraint_row.contype = 'f'"),
-            "the lock covers what the cascade reaches"
-        );
-        assert!(RESET_TENANT_SQL.contains("TRUNCATE %s RESTART IDENTITY CASCADE"));
+    fn the_lock_set_covers_what_the_truncation_cascades_to_and_every_branch_table() {
+        let sql = lock_set_statement().to_string(PostgresQueryBuilder);
+        assert!(sql.starts_with(r#"WITH RECURSIVE "reached" ("relation") AS"#), "{sql}");
+        assert!(sql.contains(r#""k"."contype" = ('f')"#), "{sql}");
+        assert!(sql.contains(r#""k"."confrelid" = "reached"."relation""#), "{sql}");
+        assert!(sql.contains(r"LIKE E'snap\\_%'"), "{sql}");
+        assert!(sql.contains(r#""c"."relkind" IN ('r', 'p')"#), "{sql}");
     }
 
     #[test]
-    fn reset_script_covers_mutable_tables_and_preserves_cached_dictionaries() {
+    fn the_reset_covers_mutable_tables_and_preserves_cached_dictionaries() {
+        let relations = truncated_relations();
         for table in [
             "entities",
             "entity_search",
@@ -252,18 +516,25 @@ mod tests {
             "entity_map_entries",
             "entity_map_links",
         ] {
-            assert!(truncated_relations().contains(table), "reset SQL must cover {table}");
+            assert!(relations.iter().any(|relation| relation == table), "the reset must cover {table}");
         }
-        assert!(!truncated_relations().contains("attribute_names"));
-        assert!(!truncated_relations().contains("entity_type_names"));
+        assert!(
+            !relations
+                .iter()
+                .any(|relation| relation == "attribute_names" || relation == "entity_type_names")
+        );
     }
 
     /// Temporal Evolution is detached from current entity state, so
     /// prefix cleanup has to name every temporal relation itself; relying on a
     /// cascade from `entities` would leak history across runs.
     #[test]
-    fn prefix_cleanup_reaches_every_relation_the_reset_script_truncates() {
-        let deletes = PREFIX_DELETES.join(" ");
+    fn prefix_cleanup_reaches_every_relation_the_reset_truncates() {
+        let deletes = prefix_deletes("p%")
+            .iter()
+            .map(|statement| statement.to_string(PostgresQueryBuilder))
+            .collect::<Vec<_>>()
+            .join(" ");
         for relation in [
             "notification_events",
             "subscriptions",
@@ -274,7 +545,10 @@ mod tests {
             "scope_history",
             "temporal_entities",
         ] {
-            assert!(deletes.contains(relation), "prefix cleanup must delete from {relation}");
+            assert!(
+                deletes.contains(&format!(r#"DELETE FROM "{relation}""#)),
+                "prefix cleanup must delete from {relation}"
+            );
         }
     }
 
@@ -282,39 +556,37 @@ mod tests {
     /// history rows through it still find their catalogue rows.
     #[test]
     fn prefix_cleanup_removes_the_temporal_catalogue_after_the_rows_that_name_it() {
-        let catalogue = PREFIX_DELETES
+        let deletes = prefix_deletes("p%")
             .iter()
-            .position(|statement| statement.starts_with("DELETE FROM temporal_entities"))
-            .unwrap_or_else(|| panic!("the catalogue is deleted"));
-        for relation in ["DELETE FROM attribute_history", "DELETE FROM scope_history"] {
-            let dependent = PREFIX_DELETES
+            .map(|statement| statement.to_string(PostgresQueryBuilder))
+            .collect::<Vec<_>>();
+        let position = |prefix: &str| {
+            deletes
                 .iter()
-                .position(|statement| statement.starts_with(relation))
-                .unwrap_or_else(|| panic!("{relation} is deleted"));
-            assert!(dependent < catalogue, "{relation} must run before the catalogue it reads");
+                .position(|statement| statement.starts_with(prefix))
+                .unwrap_or_else(|| panic!("{prefix} is deleted"))
+        };
+        let catalogue = position(r#"DELETE FROM "temporal_entities""#);
+        for relation in [r#"DELETE FROM "attribute_history""#, r#"DELETE FROM "scope_history""#] {
+            assert!(position(relation) < catalogue, "{relation} must run before the catalogue it reads");
         }
     }
 
     #[test]
-    fn reset_script_drops_every_snapshot_branch_schema_and_keeps_the_live_default_schema() {
-        // Each Snapshot branch is a `snap_<key>` schema; the reset drops them all
-        // and has no `context_spaces` table to name.
-        assert!(RESET_TENANT_SQL.contains("DROP SCHEMA"));
-        assert!(RESET_TENANT_SQL.contains(r"snap\_%"));
-        assert!(!RESET_TENANT_SQL.contains("context_spaces"));
+    fn the_reset_drops_every_snapshot_branch_schema_and_keeps_the_live_default_schema() {
+        let sql = branch_schemas_statement().to_string(PostgresQueryBuilder);
+        assert_eq!(sql, r#"SELECT "nspname" FROM "pg_namespace" WHERE "nspname" LIKE E'snap\\_%'"#);
+        assert!(!truncated_relations().iter().any(|relation| relation == "context_spaces"));
     }
 
+    /// Truncating `schema_metadata` makes the tenant read as never-stamped, and
+    /// the startup verification refuses every connection after it. Every
+    /// registration write advances the one seeded `context_source_change_clock`
+    /// row; an emptied clock leaves those writes nothing to advance.
     #[test]
-    fn reset_script_leaves_the_schema_contract_singleton_in_place() {
-        // Truncating `schema_metadata` makes the tenant read as never-stamped,
-        // and the startup verification refuses every connection after it.
-        assert!(!truncated_relations().contains("schema_metadata"));
-    }
-
-    #[test]
-    fn reset_script_leaves_the_context_source_change_clock_singleton_in_place() {
-        // Every registration write advances the one seeded row; an emptied
-        // clock leaves those writes nothing to advance.
-        assert!(!truncated_relations().contains("context_source_change_clock"));
+    fn the_reset_leaves_the_schema_contract_and_change_clock_singletons_in_place() {
+        let relations = truncated_relations();
+        assert!(!relations.iter().any(|relation| relation == "schema_metadata"));
+        assert!(!relations.iter().any(|relation| relation == "context_source_change_clock"));
     }
 }

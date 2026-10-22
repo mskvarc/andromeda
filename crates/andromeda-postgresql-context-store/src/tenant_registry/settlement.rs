@@ -18,13 +18,12 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_tenancy::{
     database_name::TenantDatabaseName,
     provisional::{Establishment, Retirement},
 };
 use chrono::{DateTime, Utc};
-use sea_query::PostgresQueryBuilder;
-use sea_query_sqlx::SqlxBinder;
 use sqlx::{Postgres, Row, Transaction};
 use std::time::Duration;
 
@@ -55,7 +54,7 @@ impl PostgresTenantRegistry {
                 ..
             }) => match occupancy(&self.direct_url, &database).await? {
                 Occupancy::HoldsInformation => {
-                    execute_establish(&mut tx, name).await?;
+                    establish_update(name.as_str()).to_query().execute(&mut *tx).await?;
                     Establishment::Established
                 }
                 Occupancy::Empty => Establishment::Empty,
@@ -86,14 +85,13 @@ impl PostgresTenantRegistry {
                 ..
             }) => match occupancy(&self.direct_url, &database).await? {
                 Occupancy::HoldsInformation => {
-                    execute_establish(&mut tx, name).await?;
+                    establish_update(name.as_str()).to_query().execute(&mut *tx).await?;
                     Retirement::Established
                 }
                 Occupancy::Empty => match drop_database_unless_in_use(&self.direct_url, &database).await? {
                     DatabaseDrop::InUse => Retirement::Kept,
                     DatabaseDrop::Dropped => {
-                        let (sql, values) = provisional_delete(name.as_str()).build_sqlx(PostgresQueryBuilder);
-                        sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut *tx).await?;
+                        provisional_delete(name.as_str()).to_query().execute(&mut *tx).await?;
                         Retirement::Retired
                     }
                 },
@@ -106,16 +104,14 @@ impl PostgresTenantRegistry {
     /// A platform transaction holding the tenant's advisory lock.
     async fn locked(&self, name: &TenantName) -> Result<Transaction<'static, Postgres>, ContextStoreError> {
         let mut tx = self.main_pool.begin().await?;
-        let (sql, values) = advisory_lock_query(name.as_str()).build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut *tx).await?;
+        advisory_lock_query(name.as_str()).to_query().execute(&mut *tx).await?;
         Ok(tx)
     }
 }
 
 /// Read the named tenant's row for a settlement, if it is registered.
 async fn settlement_row(tx: &mut Transaction<'static, Postgres>, name: &TenantName) -> Result<Option<SettlementRow>, ContextStoreError> {
-    let (sql, values) = settlement_query(name.as_str()).build_sqlx(PostgresQueryBuilder);
-    let Some(row) = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(&mut **tx).await? else {
+    let Some(row) = settlement_query(name.as_str()).to_query().fetch_optional(&mut **tx).await? else {
         return Ok(None);
     };
     let status: i16 = row.try_get("status")?;
@@ -127,11 +123,4 @@ async fn settlement_row(tx: &mut Transaction<'static, Postgres>, name: &TenantNa
         database: TenantDatabaseName::from(database_name),
         untouched_for: (observed_at - modified_at).to_std().unwrap_or(Duration::ZERO),
     }))
-}
-
-/// Establish the named provisional tenant inside the settlement's transaction.
-async fn execute_establish(tx: &mut Transaction<'static, Postgres>, name: &TenantName) -> Result<(), ContextStoreError> {
-    let (sql, values) = establish_update(name.as_str()).build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut **tx).await?;
-    Ok(())
 }

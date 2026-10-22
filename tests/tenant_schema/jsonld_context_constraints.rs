@@ -14,8 +14,11 @@
 
 use crate::SUITE;
 use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
+use andromeda_postgresql_schema::jsonld::JsonldContexts;
+use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType, statement::Statement};
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
+use sea_query::{Expr, Query};
 use sqlx::PgPool;
 use std::borrow::Cow;
 
@@ -34,11 +37,24 @@ struct ContextRow<'a> {
 /// return what the database made of it.
 async fn insert_context(pool: &PgPool, row: ContextRow<'_>) -> Result<(), sqlx::Error> {
     let mut transaction = pool.begin().await.expect("transaction");
-    let outcome = sqlx::query("INSERT INTO jsonld_contexts (kind, id, url, document_url, payload) VALUES ($1, $2, $3, $4, '{\"@context\": {}}'::json)")
-        .bind(row.kind.code())
-        .bind(row.id)
-        .bind(row.url)
-        .bind(row.document_url)
+    let outcome = Query::insert()
+        .into_table(JsonldContexts::Table)
+        .columns([
+            JsonldContexts::Kind,
+            JsonldContexts::Id,
+            JsonldContexts::Url,
+            JsonldContexts::DocumentUrl,
+            JsonldContexts::Payload,
+        ])
+        .values([
+            Expr::val(row.kind.code()),
+            Expr::val(row.id),
+            Expr::val(row.url),
+            Expr::val(row.document_url),
+            cast(Expr::val("{\"@context\": {}}"), PostgresType::Json),
+        ])
+        .expect("one value per column")
+        .to_query()
         .execute(&mut *transaction)
         .await;
     transaction.rollback().await.expect("rollback");

@@ -5,9 +5,10 @@ use andromeda_postgresql_seaquery::{
     cast::cast,
     introspection::{current_role_is_member_of, current_role_is_superuser, current_setting, current_setting_missing_ok, extension_version},
     pg_type::PostgresType,
+    setting::Setting,
+    statement::Statement,
 };
-use sea_query::{Alias, PostgresQueryBuilder, Query};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Alias, Query};
 use sqlx::{PgPool, Row};
 
 /// The predefined role whose members may take the `reserved_connections`
@@ -51,8 +52,7 @@ impl ReservedSlots {
 /// against the pool, or when the returned row does not carry the expected
 /// version, license and connection columns.
 pub async fn discover(pool: &PgPool, broker_ceiling: u32) -> Result<Vec<ComponentReport>, sqlx::Error> {
-    let (sql, values) = discover_statement().build_sqlx(PostgresQueryBuilder);
-    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(pool).await?;
+    let row = discover_statement().to_query().fetch_one(pool).await?;
 
     let pg_version: String = row.try_get("pg_version")?;
     let postgis_version: Option<String> = row.try_get("postgis_version")?;
@@ -99,17 +99,20 @@ fn setting_count(value: i32) -> u32 {
 /// reads are bound values, not interpolated text.
 fn discover_statement() -> sea_query::SelectStatement {
     Query::select()
-        .expr_as(current_setting("server_version"), Alias::new("pg_version"))
+        .expr_as(current_setting(Setting::ServerVersion), Alias::new("pg_version"))
         .expr_as(extension_version("postgis"), Alias::new("postgis_version"))
         .expr_as(extension_version("timescaledb"), Alias::new("timescaledb_version"))
-        .expr_as(current_setting_missing_ok("timescaledb.license"), Alias::new("timescaledb_license"))
-        .expr_as(cast(current_setting("max_connections"), PostgresType::Integer), Alias::new("max_connections"))
+        .expr_as(current_setting_missing_ok(Setting::TimescaledbLicense), Alias::new("timescaledb_license"))
         .expr_as(
-            cast(current_setting("superuser_reserved_connections"), PostgresType::Integer),
+            cast(current_setting(Setting::MaxConnections), PostgresType::Integer),
+            Alias::new("max_connections"),
+        )
+        .expr_as(
+            cast(current_setting(Setting::SuperuserReservedConnections), PostgresType::Integer),
             Alias::new("superuser_reserved_connections"),
         )
         .expr_as(
-            cast(current_setting_missing_ok("reserved_connections"), PostgresType::Integer),
+            cast(current_setting_missing_ok(Setting::ReservedConnections), PostgresType::Integer),
             Alias::new("reserved_connections"),
         )
         .expr_as(current_role_is_superuser(), Alias::new("is_superuser"))

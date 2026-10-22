@@ -17,10 +17,10 @@ use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, leas
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::notification::NotificationDeliveries;
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use chrono::{DateTime, Utc};
-use sea_query::{Expr, ExprTrait, Keyword, PostgresQueryBuilder, Query, SimpleExpr, UpdateStatement};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Expr, ExprTrait, Keyword, Query, SimpleExpr, UpdateStatement};
 use sqlx::postgres::PgPool;
 
 /// The statement name every delivery acknowledgement (delivered, failed,
@@ -43,8 +43,11 @@ pub async fn mark_delivered(
     worker_id: LeaseHolder,
     target: &ContextTarget,
 ) -> Result<LeaseAcknowledgement, ContextStoreError> {
-    let (sql, values) = mark_delivered_statement(delivery_key, worker_id, target).build_sqlx(PostgresQueryBuilder);
-    let result = observe_statement(DELIVERY_ACKNOWLEDGE, sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool)).await?;
+    let result = observe_statement(
+        DELIVERY_ACKNOWLEDGE,
+        mark_delivered_statement(delivery_key, worker_id, target).to_query().execute(pool),
+    )
+    .await?;
     Ok(LeaseAcknowledgement::of_guarded_update(result.rows_affected()))
 }
 
@@ -61,8 +64,13 @@ pub async fn mark_failed(
     next_attempt_at: DateTime<Utc>,
     target: &ContextTarget,
 ) -> Result<LeaseAcknowledgement, ContextStoreError> {
-    let (sql, values) = mark_failed_statement(delivery_key, worker_id, failure, next_attempt_at, target).build_sqlx(PostgresQueryBuilder);
-    let result = observe_statement(DELIVERY_ACKNOWLEDGE, sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool)).await?;
+    let result = observe_statement(
+        DELIVERY_ACKNOWLEDGE,
+        mark_failed_statement(delivery_key, worker_id, failure, next_attempt_at, target)
+            .to_query()
+            .execute(pool),
+    )
+    .await?;
     Ok(LeaseAcknowledgement::of_guarded_update(result.rows_affected()))
 }
 
@@ -83,8 +91,11 @@ pub async fn mark_exhausted(
     failure: &str,
     target: &ContextTarget,
 ) -> Result<LeaseAcknowledgement, ContextStoreError> {
-    let (sql, values) = mark_exhausted_statement(delivery_key, worker_id, failure, target).build_sqlx(PostgresQueryBuilder);
-    let result = observe_statement(DELIVERY_ACKNOWLEDGE, sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool)).await?;
+    let result = observe_statement(
+        DELIVERY_ACKNOWLEDGE,
+        mark_exhausted_statement(delivery_key, worker_id, failure, target).to_query().execute(pool),
+    )
+    .await?;
     Ok(LeaseAcknowledgement::of_guarded_update(result.rows_affected()))
 }
 

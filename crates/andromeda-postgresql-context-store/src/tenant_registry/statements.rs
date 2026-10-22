@@ -415,12 +415,9 @@ mod tests {
 
     #[test]
     fn the_advisory_lock_hashes_the_bound_name() {
-        let (sql, values) = {
-            use sea_query_sqlx::SqlxBinder;
-            advisory_lock_query("acme").build_sqlx(PostgresQueryBuilder)
-        };
+        let (sql, values) = advisory_lock_query("acme").build(PostgresQueryBuilder);
         assert!(sql.contains("pg_advisory_xact_lock(hashtext("), "{sql}");
-        assert_eq!(values.0.0.len(), 1, "the name is bound, not interpolated: {sql}");
+        assert_eq!(values.0.len(), 1, "the name is bound, not interpolated: {sql}");
     }
 
     #[test]

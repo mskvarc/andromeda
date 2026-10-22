@@ -41,7 +41,7 @@ andromeda_architecture_checks::dependency_boundary! {
     ],
     allow_workspace_dev_dependencies: [
     ],
-    allow_production_dependencies: ["sea-query", "sea-query-sqlx", "sqlx"],
+    allow_production_dependencies: ["sea-query", "sqlx"],
 }
 
 #[cfg(test)]

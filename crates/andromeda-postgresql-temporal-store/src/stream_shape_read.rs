@@ -35,7 +35,7 @@ use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,
     temporal::{AttributeHistory, TemporalAttributeStreams, TemporalStreamShapes},
 };
-use andromeda_postgresql_seaquery::{branch::qualified, pg_array::is_any_of};
+use andromeda_postgresql_seaquery::{branch::qualified, pg_array::is_any_of, statement::Statement};
 use andromeda_postgresql_temporal_query::{
     alias::{Ah, An},
     recorded_shape::{RecordedShapeColumn, recorded_shape},
@@ -49,7 +49,6 @@ use sea_query::{
     IntoIden,
     JoinType,
     Order,
-    PostgresQueryBuilder,
     Query,
     SelectStatement,
     SimpleExpr,
@@ -57,8 +56,7 @@ use sea_query::{
     UnionType,
     WithClause,
 };
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, Row};
+use sqlx::Row;
 use std::collections::{HashMap, HashSet};
 
 /// Alias `ss`: a row of `temporal_stream_shapes`.
@@ -134,8 +132,7 @@ impl TemporalRepository {
         if keys.is_empty() {
             return Ok(HashMap::new());
         }
-        let (sql, values) = recorded_attribute_shapes_query(branch, &keys).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
+        let rows = recorded_attribute_shapes_query(branch, &keys).to_query().fetch_all(&self.pool).await?;
         let mut shapes_by_attribute: HashMap<AttributeName, HashSet<StoredAttributeShape>> = HashMap::new();
         for row in rows {
             let raw_name: String = row.try_get(Iden::to_string(&AttributeNames::Name).as_str())?;

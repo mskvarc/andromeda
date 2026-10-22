@@ -6,7 +6,9 @@
 //! never the dictionary itself, so a write that brings a new name is accepted
 //! at any dictionary size and a write of an existing name keeps resolving it.
 
-use crate::{SUITE, run_name_prefix};
+use crate::{SUITE, generated_names_insert, name_count, run_name_prefix};
+use andromeda_postgresql_schema::name_dictionary::AttributeNames;
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::{configuration::TestRunConfiguration, database_access::connect_test_database, serialized_environment::SerializedEnvironment};
@@ -59,13 +61,13 @@ async fn a_dictionary_past_ten_thousand_names_still_mints_new_names_and_serves_e
         .expect("create entity request failed");
     assert_eq!(established.status, StatusCode::CREATED, "create: {:?}", established.body);
 
-    sqlx::query("INSERT INTO attribute_names (name) SELECT $1 || generated::TEXT FROM generate_series(1, $2) AS generated ON CONFLICT (name) DO NOTHING")
-        .bind(&prefix)
-        .bind(NAMES_INTERNED_FIRST)
+    generated_names_insert(AttributeNames::Table, AttributeNames::Name, &prefix, NAMES_INTERNED_FIRST)
+        .to_query()
         .execute(&pool)
         .await
         .expect("interning distinct attribute names must not fail");
-    let size: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attribute_names")
+    let size: i64 = name_count(AttributeNames::Table, AttributeNames::Name, None)
+        .to_query_scalar()
         .fetch_one(&pool)
         .await
         .expect("the dictionary size must be observable");
@@ -75,8 +77,8 @@ async fn a_dictionary_past_ten_thousand_names_still_mints_new_names_and_serves_e
         .send()
         .await
         .expect("create entity request failed");
-    let novel_names: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attribute_names WHERE name LIKE $1")
-        .bind(format!("%{novel_term}"))
+    let novel_names: i64 = name_count(AttributeNames::Table, AttributeNames::Name, Some(format!("%{novel_term}")))
+        .to_query_scalar()
         .fetch_one(&pool)
         .await
         .expect("the dictionary must be readable");

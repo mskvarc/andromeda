@@ -8,8 +8,8 @@ use andromeda_postgresql_schema::{
     snapshot::SnapshotNotificationOutbox,
     subscriptions::SubscriptionDeliveryState,
 };
-use andromeda_postgresql_seaquery::maintenance::{MaintenanceStatement, analyze, vacuum_non_truncating};
-use sea_query::Iden;
+use andromeda_postgresql_seaquery::maintenance::{MaintenanceCommand, analyze, vacuum_non_truncating};
+use sea_query::{DynIden, IntoIden};
 use strum::{Display, EnumString, IntoStaticStr};
 
 /// A heap relation eligible for catch-up ordinary vacuum and for `ANALYZE`.
@@ -69,28 +69,27 @@ impl HeapTarget {
 
     /// A fixed non-truncating, non-parallel ordinary vacuum statement in
     /// `branch`'s schema.
-    pub(crate) fn vacuum_statement(self, branch: Branch) -> MaintenanceStatement {
-        self.statement(branch, vacuum_non_truncating)
+    pub(crate) fn vacuum_statement(self, branch: Branch) -> MaintenanceCommand {
+        vacuum_non_truncating(branch.schema(), self.table())
     }
 
     /// A fixed `ANALYZE` statement in `branch`'s schema.
-    pub(crate) fn analyze_statement(self, branch: Branch) -> MaintenanceStatement {
-        self.statement(branch, analyze)
+    pub(crate) fn analyze_statement(self, branch: Branch) -> MaintenanceCommand {
+        analyze(branch.schema(), self.table())
     }
 
-    /// `build` applied to `branch`'s schema and this heap's table identifier.
-    fn statement(self, branch: Branch, build: fn(&dyn Iden, &dyn Iden) -> MaintenanceStatement) -> MaintenanceStatement {
-        let schema = branch.schema();
+    /// This heap's table identifier.
+    fn table(self) -> DynIden {
         match self {
-            HeapTarget::CurrentAttributes => build(&schema, &CurrentAttributes::Table),
-            HeapTarget::Entities => build(&schema, &Entities::Table),
-            HeapTarget::SubscriptionDeliveryState => build(&schema, &SubscriptionDeliveryState::Table),
-            HeapTarget::NotificationEvents => build(&schema, &NotificationEvents::Table),
-            HeapTarget::NotificationDeliveries => build(&schema, &NotificationDeliveries::Table),
-            HeapTarget::PendingSideEffects => build(&schema, &PendingSideEffects::Table),
-            HeapTarget::TemporalAppendIntents => build(&schema, &TemporalAppendIntents::Table),
-            HeapTarget::SnapshotNotificationOutbox => build(&schema, &SnapshotNotificationOutbox::Table),
-            HeapTarget::EntitySearch => build(&schema, &EntitySearch::Table),
+            HeapTarget::CurrentAttributes => CurrentAttributes::Table.into_iden(),
+            HeapTarget::Entities => Entities::Table.into_iden(),
+            HeapTarget::SubscriptionDeliveryState => SubscriptionDeliveryState::Table.into_iden(),
+            HeapTarget::NotificationEvents => NotificationEvents::Table.into_iden(),
+            HeapTarget::NotificationDeliveries => NotificationDeliveries::Table.into_iden(),
+            HeapTarget::PendingSideEffects => PendingSideEffects::Table.into_iden(),
+            HeapTarget::TemporalAppendIntents => TemporalAppendIntents::Table.into_iden(),
+            HeapTarget::SnapshotNotificationOutbox => SnapshotNotificationOutbox::Table.into_iden(),
+            HeapTarget::EntitySearch => EntitySearch::Table.into_iden(),
         }
     }
 
@@ -122,14 +121,18 @@ pub enum RelationPresence {
 #[cfg(test)]
 mod tests {
     use crate::{branch::Branch, candidate::heap_target::HeapTarget};
+    use andromeda_postgresql_seaquery::maintenance::{analyze, vacuum_non_truncating};
     use pretty_assertions::assert_eq;
+    use sea_query::Alias;
 
     #[test]
     fn every_heap_command_disables_truncation_and_parallel_workers() {
         for target in HeapTarget::ALL {
-            let statement = target.vacuum_statement(Branch::Live);
-            let command = statement.as_sql();
-            assert!(command.starts_with("VACUUM (TRUNCATE FALSE, PARALLEL 0) \"public\"."), "{command}");
+            assert_eq!(
+                target.vacuum_statement(Branch::Live),
+                vacuum_non_truncating(Alias::new("public"), Alias::new(target.relation_name())),
+                "{target}"
+            );
         }
     }
 
@@ -137,8 +140,8 @@ mod tests {
     fn analyze_statement_is_fixed_per_table() {
         for heap in HeapTarget::ALL {
             assert_eq!(
-                heap.analyze_statement(Branch::Live).as_sql(),
-                format!("ANALYZE \"public\".\"{}\"", heap.relation_name()),
+                heap.analyze_statement(Branch::Live),
+                analyze(Alias::new("public"), Alias::new(heap.relation_name())),
                 "{heap}"
             );
         }
@@ -171,10 +174,9 @@ mod tests {
             (HeapTarget::TemporalAppendIntents, "temporal_append_intents"),
             (HeapTarget::SnapshotNotificationOutbox, "snapshot_notification_outbox"),
         ] {
-            let statement = heap.vacuum_statement(Branch::Live);
             assert_eq!(
-                statement.as_sql(),
-                format!("VACUUM (TRUNCATE FALSE, PARALLEL 0) \"public\".\"{table}\""),
+                heap.vacuum_statement(Branch::Live),
+                vacuum_non_truncating(Alias::new("public"), Alias::new(table)),
                 "{heap}"
             );
         }

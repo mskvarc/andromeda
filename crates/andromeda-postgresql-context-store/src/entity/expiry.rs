@@ -12,9 +12,9 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_pool::read_share::PoolLane;
 use andromeda_postgresql_schema::current::{E, Entities};
+use andromeda_postgresql_seaquery::statement::Statement;
 use chrono::{DateTime, Utc};
-use sea_query::{Expr, ExprTrait, Order, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Expr, ExprTrait, Order, Query, SelectStatement};
 
 impl EntityRepository {
     /// Read identifiers of entities whose `expiresAt` has passed.
@@ -29,8 +29,10 @@ impl EntityRepository {
         cutoff: DateTime<Utc>,
         batch_size: EntityExpiryBatchSize,
     ) -> Result<Vec<Identifier>, ContextStoreError> {
-        let (sql, values) = entities_due_for_expiry_statement(target, cutoff, u64::from(batch_size.get())).build_sqlx(PostgresQueryBuilder);
-        let rows: Vec<(String,)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
+        let rows: Vec<(String,)> = entities_due_for_expiry_statement(target, cutoff, u64::from(batch_size.get()))
+            .to_query_as()
+            .fetch_all(&self.pool)
+            .await?;
 
         rows.iter().map(|(id,)| stored_uri(id)).collect()
     }
@@ -47,8 +49,10 @@ impl EntityRepository {
         cutoff: DateTime<Utc>,
         batch_size: EntityExpiryBatchSize,
     ) -> Result<Vec<(Identifier, EntitySnapshot)>, ContextStoreError> {
-        let (sql, values) = entities_with_expired_attributes_statement(target, cutoff, u64::from(batch_size.get())).build_sqlx(PostgresQueryBuilder);
-        let heads = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
+        let heads = entities_with_expired_attributes_statement(target, cutoff, u64::from(batch_size.get()))
+            .to_query()
+            .fetch_all(&self.pool)
+            .await?;
         Ok(self
             .entities_of_heads(PoolLane::Whole, target, &heads, &RowSelection::Every)
             .await?
@@ -117,7 +121,6 @@ mod tests {
     use chrono::{TimeZone, Utc};
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
-    use sea_query_sqlx::SqlxBinder;
 
     fn cutoff() -> chrono::DateTime<Utc> {
         Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant")
@@ -125,25 +128,25 @@ mod tests {
 
     #[test]
     fn the_entity_level_candidate_query_only_reads_due_rows_in_order() {
-        let (sql, values) = entities_due_for_expiry_statement(&ContextTarget::Live, cutoff(), 100).build_sqlx(PostgresQueryBuilder);
+        let (sql, values) = entities_due_for_expiry_statement(&ContextTarget::Live, cutoff(), 100).build(PostgresQueryBuilder);
         assert!(sql.starts_with(r#"SELECT "id" FROM "entities""#), "{sql}");
         assert!(sql.contains(r#""expires_at" IS NOT NULL"#), "{sql}");
         assert!(sql.contains(r#""expires_at" <= $1"#), "{sql}");
         assert!(sql.contains(r#"ORDER BY "expires_at" ASC, "id" ASC"#), "{sql}");
         assert!(!sql.contains("DELETE") && !sql.contains("UPDATE") && !sql.contains("NOW()"), "{sql}");
-        assert_eq!(values.0.0.len(), 2, "the cutoff and limit are bound: {sql}");
+        assert_eq!(values.0.len(), 2, "the cutoff and limit are bound: {sql}");
     }
 
     #[test]
     fn the_attribute_expiry_query_ranges_over_the_recorded_minimum_and_reads_the_version_token() {
-        let (sql, values) = entities_with_expired_attributes_statement(&ContextTarget::Live, cutoff(), 100).build_sqlx(PostgresQueryBuilder);
+        let (sql, values) = entities_with_expired_attributes_statement(&ContextTarget::Live, cutoff(), 100).build(PostgresQueryBuilder);
         assert!(sql.contains(r#""e"."min_attribute_expires_at" <= $1"#), "{sql}");
-        assert_eq!(values.0.0.len(), 2, "the cutoff and limit are bound: {sql}");
+        assert_eq!(values.0.len(), 2, "the cutoff and limit are bound: {sql}");
     }
 
     #[test]
     fn the_attribute_expiry_query_reads_heads_and_writes_nothing() {
-        let (sql, _values) = entities_with_expired_attributes_statement(&ContextTarget::Live, cutoff(), 100).build_sqlx(PostgresQueryBuilder);
+        let (sql, _values) = entities_with_expired_attributes_statement(&ContextTarget::Live, cutoff(), 100).build(PostgresQueryBuilder);
         assert!(sql.contains(r#""e"."modified_at" AS "entity_modified_at""#), "{sql}");
         for fragment in ["current_attributes", "UPDATE ", "DELETE ", "INSERT "] {
             assert!(!sql.contains(fragment), "the candidate query must not contain {fragment}: {sql}");

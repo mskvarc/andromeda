@@ -21,9 +21,9 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::census::{AttributeCensus, EntityTypeAttributeCensus, EntityTypeCensus};
-use andromeda_postgresql_seaquery::aggregate::count_all;
+use andromeda_postgresql_seaquery::{aggregate::count_all, literal::int_literal, statement::Statement};
 use derive_more::{Add, AddAssign};
-use sea_query::{CommonTableExpression, DynIden, Expr, ExprTrait, Func, Iden, IntoIden, PostgresQueryBuilder, Query, WithClause, WithQuery};
+use sea_query::{CommonTableExpression, DynIden, Expr, ExprTrait, Func, Iden, IntoIden, Query, WithClause, WithQuery};
 use sqlx::{PgPool, Row};
 
 /// The deleted rows a fold sums, `moved`.
@@ -93,7 +93,7 @@ impl Ledger {
         for key in &self.keys {
             crowded.column(key.clone()).group_by_col(key.clone()); // clone: the select and its grouping each own the key.
         }
-        crowded.from(table_of(target, self.table.clone())).and_having(count_all().gt(1)); // clone: the relation is named once per statement.
+        crowded.from(table_of(target, self.table.clone())).and_having(count_all().gt(int_literal(1))); // clone: the relation is named once per statement.
         let mut moved = Query::delete();
         moved
             .from_table(table_of(target, self.table.clone())) // clone: as above.
@@ -104,7 +104,7 @@ impl Ledger {
         for key in &self.keys {
             summed.column((Moved, key.clone())).group_by_col((Moved, key.clone())); // clone: as above.
         }
-        summed.expr(total()).from(Moved).and_having(total().ne(0));
+        summed.expr(total()).from(Moved).and_having(total().ne(int_literal(0)));
         let mut insert = Query::insert();
         insert
             .into_table(table_of(target, self.table.clone())) // clone: as above.
@@ -138,8 +138,7 @@ pub async fn fold_census(pool: &PgPool, target: &ContextTarget) -> Result<Census
     let mut tx = pool.begin().await?;
     let mut outcome = CensusFold::default();
     for ledger in Ledger::all() {
-        let sql = ledger.fold(target)?.to_string(PostgresQueryBuilder);
-        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str())).fetch_all(&mut *tx).await?;
+        let rows = ledger.fold(target)?.to_query().fetch_all(&mut *tx).await?;
         for row in rows {
             let sum: i64 = row.try_get(0)?;
             outcome.summed_rows += 1;
@@ -188,16 +187,16 @@ mod tests {
         let [types, type_attributes, attributes] = Ledger::all();
         let sql = type_attributes.fold(&ContextTarget::Live).expect("builds").to_string(PostgresQueryBuilder);
         assert!(
-            sql.starts_with(r#"WITH "moved" AS (DELETE FROM "entity_type_attribute_census" WHERE ("entity_type_name_key", "attribute_name_key", "attribute_kind") IN (SELECT "entity_type_name_key", "attribute_name_key", "attribute_kind" FROM "entity_type_attribute_census" GROUP BY "entity_type_name_key", "attribute_name_key", "attribute_kind" HAVING (COUNT(*)) > 1) RETURNING "entity_type_name_key", "attribute_name_key", "attribute_kind", "instance_delta")"#),
+            sql.starts_with(r#"WITH "moved" AS (DELETE FROM "entity_type_attribute_census" WHERE ("entity_type_name_key", "attribute_name_key", "attribute_kind") IN (SELECT "entity_type_name_key", "attribute_name_key", "attribute_kind" FROM "entity_type_attribute_census" GROUP BY "entity_type_name_key", "attribute_name_key", "attribute_kind" HAVING (COUNT(*)) > (1)) RETURNING "entity_type_name_key", "attribute_name_key", "attribute_kind", "instance_delta")"#),
             "{sql}"
         );
         assert!(
-            sql.ends_with(r#"FROM "moved" GROUP BY "moved"."entity_type_name_key", "moved"."attribute_name_key", "moved"."attribute_kind" HAVING SUM("moved"."instance_delta") <> 0 RETURNING "instance_delta""#),
+            sql.ends_with(r#"FROM "moved" GROUP BY "moved"."entity_type_name_key", "moved"."attribute_name_key", "moved"."attribute_kind" HAVING SUM("moved"."instance_delta") <> (0) RETURNING "instance_delta""#),
             "{sql}"
         );
         for ledger in [types, attributes] {
             let sql = ledger.fold(&ContextTarget::Live).expect("builds").to_string(PostgresQueryBuilder);
-            assert!(sql.contains("HAVING (COUNT(*)) > 1"), "{sql}");
+            assert!(sql.contains("HAVING (COUNT(*)) > (1)"), "{sql}");
         }
     }
 

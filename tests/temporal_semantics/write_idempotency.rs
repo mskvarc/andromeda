@@ -12,12 +12,18 @@ use crate::{
     create_entity,
     database,
     delete_temporal_entity,
-    stored_history::{orphaned_temporal_rows, stored_history},
+    stored_history::{StoredHistoryRow, orphaned_temporal_rows, stored_history},
     unique_id,
 };
+use andromeda_postgresql_schema::{
+    queue::WriteRecords,
+    temporal::{AttributeHistory, TemporalAttributeStreams},
+};
+use andromeda_postgresql_seaquery::{aggregate::count_all, pg_array::any, statement::Statement};
 use chrono::{DateTime, TimeDelta, Utc};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Alias, Expr, ExprTrait, InsertStatement, OnConflict, Query};
 use serde_json::json;
 use serial_test::serial;
 use sqlx::{PgPool, Row, error::DatabaseError};
@@ -26,8 +32,11 @@ use uuid::Uuid;
 
 /// Count the idempotency records among a named set of write identities.
 async fn write_records_present(pool: &PgPool, write_ids: &[Uuid]) -> i64 {
-    sqlx::query("SELECT count(*)::bigint AS records FROM write_records WHERE write_id = ANY($1)")
-        .bind(write_ids)
+    Query::select()
+        .expr_as(count_all(), Alias::new("records"))
+        .from(WriteRecords::Table)
+        .and_where(Expr::col(WriteRecords::WriteId).eq(any(Expr::val(write_ids.to_vec()))))
+        .to_query()
         .fetch_one(pool)
         .await
         .expect("idempotency record count")
@@ -37,8 +46,11 @@ async fn write_records_present(pool: &PgPool, write_ids: &[Uuid]) -> i64 {
 
 /// Read the instant one idempotency record persists.
 async fn recorded_instant(pool: &PgPool, write_id: Uuid) -> DateTime<Utc> {
-    sqlx::query("SELECT recorded_at FROM write_records WHERE write_id = $1")
-        .bind(write_id)
+    Query::select()
+        .column(WriteRecords::RecordedAt)
+        .from(WriteRecords::Table)
+        .and_where(Expr::col(WriteRecords::WriteId).eq(write_id))
+        .to_query()
         .fetch_one(pool)
         .await
         .expect("the idempotency record of a committed write")
@@ -75,16 +87,7 @@ async fn temporal_semantics_write_idempotency_replays_collide_instead_of_duplica
     );
 
     // A replay that reuses that identity and that instant collides.
-    let replayed = sqlx::query(REPLAY_HISTORY_ROW_SQL)
-        .bind(original.recorded_at)
-        .bind(original.write_id)
-        .bind(original.stream_key)
-        .bind(original.write_ordinal)
-        .bind(original.attribute_kind)
-        .bind(original.value_kind)
-        .bind(Uuid::now_v7())
-        .execute(&pool)
-        .await;
+    let replayed = replay_history_row(&original).to_query().execute(&pool).await;
     let violation = replayed.expect_err("a replayed consequence must not be stored twice");
     assert_eq!(
         violation.as_database_error().and_then(DatabaseError::code).as_deref(),
@@ -94,10 +97,8 @@ async fn temporal_semantics_write_idempotency_replays_collide_instead_of_duplica
 
     // Claiming the same write again is recognised rather than recorded twice,
     // and it does not move the persisted instant a replay has to reuse.
-    let reclaimed = sqlx::query(CLAIM_WRITE_RECORD_SQL)
-        .bind(original.write_id)
-        .bind(original.recorded_at + TimeDelta::hours(1))
-        .bind(Utc::now())
+    let reclaimed = claim_write_record(original.write_id, original.recorded_at + TimeDelta::hours(1), Utc::now())
+        .to_query()
         .fetch_optional(&pool)
         .await
         .expect("the repeated claim statement runs");
@@ -171,17 +172,48 @@ async fn temporal_semantics_write_idempotency_records_release_only_with_their_ow
     );
 }
 
-const REPLAY_HISTORY_ROW_SQL: &str = r"
-INSERT INTO attribute_history
-    (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind,
-     generated_instance_id, value_number)
-SELECT $1, $2, stream_key, $4, $5, $6, $7, 55
-FROM temporal_attribute_streams WHERE stream_key = $3
-";
+/// The insert of a history row at a recording instant and write identity that
+/// already hold one, copied from `original` onto its stream.
+fn replay_history_row(original: &StoredHistoryRow) -> InsertStatement {
+    Query::insert()
+        .into_table(AttributeHistory::Table)
+        .columns([
+            AttributeHistory::RecordedAt,
+            AttributeHistory::WriteId,
+            AttributeHistory::StreamKey,
+            AttributeHistory::WriteOrdinal,
+            AttributeHistory::AttributeKind,
+            AttributeHistory::ValueKind,
+            AttributeHistory::GeneratedInstanceId,
+            AttributeHistory::ValueNumber,
+        ])
+        .select_from(
+            Query::select()
+                .expr(Expr::val(original.recorded_at))
+                .expr(Expr::val(original.write_id))
+                .column(TemporalAttributeStreams::StreamKey)
+                .expr(Expr::val(original.write_ordinal))
+                .expr(Expr::val(original.attribute_kind))
+                .expr(Expr::val(original.value_kind))
+                .expr(Expr::val(Uuid::now_v7()))
+                .expr(Expr::val(55))
+                .from(TemporalAttributeStreams::Table)
+                .and_where(Expr::col(TemporalAttributeStreams::StreamKey).eq(original.stream_key))
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .to_owned()
+}
 
-const CLAIM_WRITE_RECORD_SQL: &str = r"
-INSERT INTO write_records (write_id, recorded_at, accepted_at)
-VALUES ($1, $2, $3)
-ON CONFLICT DO NOTHING
-RETURNING write_id
-";
+/// The claim of a write record that takes nothing when the write already has
+/// one.
+fn claim_write_record(write_id: Uuid, recorded_at: DateTime<Utc>, accepted_at: DateTime<Utc>) -> InsertStatement {
+    Query::insert()
+        .into_table(WriteRecords::Table)
+        .columns([WriteRecords::WriteId, WriteRecords::RecordedAt, WriteRecords::AcceptedAt])
+        .values([Expr::val(write_id), Expr::val(recorded_at), Expr::val(accepted_at)])
+        .expect("one value per column")
+        .on_conflict(OnConflict::new().do_nothing().to_owned())
+        .returning_col(WriteRecords::WriteId)
+        .to_owned()
+}

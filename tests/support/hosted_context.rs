@@ -12,8 +12,11 @@
 
 #![allow(dead_code, reason = "each suite uses the part of the helper its own tests need")]
 
+use andromeda_postgresql_schema::jsonld::JsonldContexts;
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_test_mocks::{callback_path::CallbackPath, jsonld_context_server::JsonLdContextServer, server_config::MockServerConfig};
 use axum::{body::Bytes, http::HeaderMap};
+use sea_query::{Expr, ExprTrait, Query};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -59,8 +62,10 @@ pub fn context_link(url: &str) -> String {
 /// a context this one hosted.
 pub async fn forget_cached(pool: &PgPool, urls: &[String]) {
     for url in urls {
-        sqlx::query("DELETE FROM jsonld_contexts WHERE url = $1")
-            .bind(url)
+        Query::delete()
+            .from_table(JsonldContexts::Table)
+            .and_where(Expr::col(JsonldContexts::Url).eq(url.as_str()))
+            .to_query()
             .execute(pool)
             .await
             .expect("the cached context row must be removable");

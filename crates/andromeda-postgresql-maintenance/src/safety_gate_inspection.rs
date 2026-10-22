@@ -7,7 +7,6 @@ use crate::{
     columnstore_partiality::HistoryChunk,
     error::MaintenanceError,
     policy::SafetyGates,
-    scalar_query::{select_bool, select_i64, select_optional_instant},
     vacuum_horizon::{self, HorizonScope},
 };
 use andromeda_postgresql_seaquery::{
@@ -15,8 +14,10 @@ use andromeda_postgresql_seaquery::{
     introspection::{current_database, current_setting},
     maintenance::{backend_pid, to_regclass},
     pg_type::PostgresType,
+    setting::Setting,
+    statement::Statement,
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use sea_query::{Alias, Asterisk, Expr, ExprTrait, Func, Query, SelectStatement};
 use sqlx::PgConnection;
 
@@ -68,11 +69,20 @@ pub(crate) async fn safety_gates(connection: &mut PgConnection, scope: GateScope
             None,
         ),
     };
-    let active = select_i64(connection, active_backend_statement()).await?;
-    let maximum = select_i64(connection, maximum_connections_statement()).await?;
-    let oldest = select_optional_instant(connection, oldest_transaction_statement()).await?;
-    let active_maintenance = select_bool(connection, active_maintenance_statement(&heap)).await?;
-    let waiting_relation_lock = select_bool(connection, waiting_lock_statement(&heap, relation.as_deref())).await?;
+    let active = active_backend_statement().to_query_scalar::<i64>().fetch_one(&mut *connection).await?;
+    let maximum = maximum_connections_statement().to_query_scalar::<i64>().fetch_one(&mut *connection).await?;
+    let oldest = oldest_transaction_statement()
+        .to_query_scalar::<Option<DateTime<Utc>>>()
+        .fetch_one(&mut *connection)
+        .await?;
+    let active_maintenance = active_maintenance_statement(&heap)
+        .to_query_scalar::<bool>()
+        .fetch_one(&mut *connection)
+        .await?;
+    let waiting_relation_lock = waiting_lock_statement(&heap, relation.as_deref())
+        .to_query_scalar::<bool>()
+        .fetch_one(&mut *connection)
+        .await?;
     let oldest_transaction_seconds = oldest.map_or(0, |started| {
         let seconds = Utc::now().signed_duration_since(started).num_seconds();
         u64::try_from(seconds).unwrap_or(0)
@@ -128,7 +138,9 @@ fn oldest_transaction_statement() -> SelectStatement {
 
 /// Configured maximum backend count.
 fn maximum_connections_statement() -> SelectStatement {
-    Query::select().expr(cast(current_setting("max_connections"), PostgresType::Bigint)).to_owned()
+    Query::select()
+        .expr(cast(current_setting(Setting::MaxConnections), PostgresType::Bigint))
+        .to_owned()
 }
 
 /// Whether PostgreSQL reports a build, vacuum or analyze on the heap in this

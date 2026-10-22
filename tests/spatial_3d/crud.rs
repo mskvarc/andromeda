@@ -21,10 +21,13 @@ use crate::fixtures::{
     p500,
     query,
 };
+use andromeda_postgresql_schema::current::{Entities, EntitySearch};
+use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType, postgis::st_zmflag, statement::Statement};
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Alias, Expr, ExprTrait, Query};
 use serde_json::json;
 use sqlx::{PgPool, Row};
 
@@ -32,8 +35,18 @@ use sqlx::{PgPool, Row};
 /// geometry, 2 for XYZ. The column holds only those two.
 async fn location_zmflag(pool: &PgPool, id: &str) -> i32 {
     // ST_Zmflag returns smallint; the cast keeps the binding type unambiguous.
-    let row = sqlx::query("SELECT ST_Zmflag(s.location)::int AS zmflag FROM entities e JOIN entity_search s ON s.entity_key = e.entity_key WHERE e.id = $1")
-        .bind(id)
+    let row = Query::select()
+        .expr_as(
+            cast(st_zmflag(Expr::col((EntitySearch::Table, EntitySearch::Location))), PostgresType::Integer),
+            Alias::new("zmflag"),
+        )
+        .from(Entities::Table)
+        .inner_join(
+            EntitySearch::Table,
+            Expr::col((EntitySearch::Table, EntitySearch::EntityKey)).equals((Entities::Table, Entities::EntityKey)),
+        )
+        .and_where(Expr::col((Entities::Table, Entities::Id)).eq(id))
+        .to_query()
         .fetch_one(pool)
         .await
         .expect("entity row must exist for storage assertion");

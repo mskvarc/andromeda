@@ -5,8 +5,8 @@
 //! surrogate key. This crate is the one place the domain branch selector
 //! ([`ContextTarget`]) meets its physical schema, so the naming convention
 //! `snap_<key>` / `snap_<key>_stg` is stated exactly once. Statement builders
-//! qualify their table references through [`BranchSchema`]; schema DDL reads the
-//! plain name through [`snapshot_schema_name`].
+//! qualify their table references through [`BranchSchema`]; schema commands name
+//! the schema through [`snapshot_schema`].
 
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
@@ -27,6 +27,13 @@ pub fn snapshot_schema_name(key: SnapshotKey, branch: SnapshotBranch) -> String 
         SnapshotBranch::Published => format!("snap_{}", key.as_i64()),
         SnapshotBranch::Staging => format!("snap_{}_stg", key.as_i64()),
     }
+}
+
+/// The PostgreSQL schema of a Snapshot branch, named as [`snapshot_schema_name`]
+/// names it.
+#[must_use]
+pub fn snapshot_schema(key: SnapshotKey, branch: SnapshotBranch) -> DynIden {
+    Alias::new(snapshot_schema_name(key, branch)).into_iden()
 }
 
 /// A POSIX regular expression matching exactly the published Snapshot branch
@@ -63,11 +70,7 @@ impl BranchSchema {
     /// Resolve the branch schema of a context target.
     #[must_use]
     pub fn of(target: &ContextTarget) -> BranchSchema {
-        BranchSchema(
-            target
-                .snapshot()
-                .map(|snapshot| Alias::new(snapshot_schema_name(snapshot.key(), snapshot.branch())).into_iden()),
-        )
+        BranchSchema(target.snapshot().map(|snapshot| snapshot_schema(snapshot.key(), snapshot.branch())))
     }
 
     /// The branch schema identifier, or `None` for the live branch.
@@ -98,17 +101,6 @@ pub fn table_of(target: &ContextTarget, table: impl IntoIden) -> TableRef {
 #[must_use]
 pub fn schema_iden(target: &ContextTarget) -> Option<DynIden> {
     BranchSchema::of(target).0
-}
-
-/// A dotted schema prefix for a hand-written SQL statement that cannot go
-/// through sea-query (a binary `COPY` materialisation, say): `""` for the live
-/// branch's default schema, `"snap_<key>."` for a Snapshot branch, so
-/// `format!("{}entities", schema_prefix(target))` names the branch's table.
-#[must_use]
-pub fn schema_prefix(target: &ContextTarget) -> String {
-    target
-        .snapshot()
-        .map_or_else(String::new, |snapshot| format!("{}.", snapshot_schema_name(snapshot.key(), snapshot.branch())))
 }
 
 #[cfg(test)]

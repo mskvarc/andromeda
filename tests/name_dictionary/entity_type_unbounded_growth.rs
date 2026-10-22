@@ -5,7 +5,9 @@
 //! attribute dictionary's, so a write that brings a new type is accepted at any
 //! dictionary size and a write of an existing type keeps resolving it.
 
-use crate::{SUITE, run_name_prefix};
+use crate::{SUITE, generated_names_insert, name_count, run_name_prefix};
+use andromeda_postgresql_schema::name_dictionary::EntityTypeNames;
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::{configuration::TestRunConfiguration, database_access::connect_test_database, serialized_environment::SerializedEnvironment};
@@ -57,13 +59,13 @@ async fn a_type_dictionary_past_ten_thousand_types_still_mints_new_types_and_ser
         .expect("create entity request failed");
     assert_eq!(established.status, StatusCode::CREATED, "create: {:?}", established.body);
 
-    sqlx::query("INSERT INTO entity_type_names (name) SELECT $1 || generated::TEXT FROM generate_series(1, $2) AS generated ON CONFLICT (name) DO NOTHING")
-        .bind(&prefix)
-        .bind(TYPES_INTERNED_FIRST)
+    generated_names_insert(EntityTypeNames::Table, EntityTypeNames::Name, &prefix, TYPES_INTERNED_FIRST)
+        .to_query()
         .execute(&pool)
         .await
         .expect("interning distinct type names must not fail");
-    let size: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entity_type_names")
+    let size: i64 = name_count(EntityTypeNames::Table, EntityTypeNames::Name, None)
+        .to_query_scalar()
         .fetch_one(&pool)
         .await
         .expect("the dictionary size must be observable");
@@ -73,8 +75,8 @@ async fn a_type_dictionary_past_ten_thousand_types_still_mints_new_types_and_ser
         .send()
         .await
         .expect("create entity request failed");
-    let novel_types: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entity_type_names WHERE name LIKE $1")
-        .bind(format!("%{novel_type}"))
+    let novel_types: i64 = name_count(EntityTypeNames::Table, EntityTypeNames::Name, Some(format!("%{novel_type}")))
+        .to_query_scalar()
         .fetch_one(&pool)
         .await
         .expect("the dictionary must be readable");

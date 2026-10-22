@@ -5,9 +5,10 @@ use andromeda_postgresql_seaquery::{
     cast::cast,
     introspection::{current_setting, extension_version},
     pg_type::PostgresType,
+    setting::Setting,
+    statement::Statement,
 };
-use sea_query::{Alias, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Alias, Query, SelectStatement};
 use sqlx::{Executor, Postgres, Row};
 use std::{num::ParseIntError, str::FromStr};
 
@@ -185,8 +186,7 @@ pub async fn verify_server_requirements<'e, E>(executor: E) -> Result<(), Schema
 where
     E: Executor<'e, Database = Postgres>,
 {
-    let (sql, values) = server_requirements_statement().build_sqlx(PostgresQueryBuilder);
-    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(executor).await?;
+    let row = server_requirements_statement().to_query().fetch_one(executor).await?;
 
     check_postgres(PostgresVersion::new(row.try_get("server_version_num")?))?;
     check_server_encoding(row.try_get::<&str, _>("server_encoding")?)?;
@@ -211,10 +211,10 @@ where
 fn server_requirements_statement() -> SelectStatement {
     Query::select()
         .expr_as(
-            cast(current_setting("server_version_num"), PostgresType::Integer),
+            cast(current_setting(Setting::ServerVersionNum), PostgresType::Integer),
             Alias::new("server_version_num"),
         )
-        .expr_as(current_setting("server_encoding"), Alias::new("server_encoding"))
+        .expr_as(current_setting(Setting::ServerEncoding), Alias::new("server_encoding"))
         .expr_as(
             extension_version(VersionedExtension::PostGis.catalog_name()),
             Alias::new(VersionedExtension::PostGis.installed_column()),

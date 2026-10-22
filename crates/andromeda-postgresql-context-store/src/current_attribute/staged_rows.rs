@@ -23,10 +23,15 @@ use andromeda_postgresql_encoding::{
 };
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use andromeda_postgresql_schema::current::CurrentAttributes;
+use andromeda_postgresql_seaquery::{
+    external_arguments::ExternalArguments,
+    pg_array::{nullable_array, text_array},
+};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
+use sea_query::{Expr, SimpleExpr};
 use serde_json::value::RawValue;
-use sqlx::{Postgres, postgres::PgArguments, query::QueryAs, types::Json};
+use sqlx::types::Json;
 use thiserror::Error;
 
 /// A row that cannot be staged.
@@ -237,48 +242,52 @@ impl<'a> StagedRows<'a> {
         self.entity_ids.is_empty()
     }
 
-    /// Bind every staged column to `query`, in the order
+    /// Every staged column as the array expression standing for it in the
+    /// statement, in the order
     /// [`instances_cte`](crate::current_attribute::staging::instances_cte)
     /// reads them.
-    pub(crate) fn bind_to<'q, O>(self, query: QueryAs<'q, Postgres, O, PgArguments>) -> QueryAs<'q, Postgres, O, PgArguments>
-    where
-        'a: 'q,
-    {
+    ///
+    /// The JSON columns and the sub-attribute trees travel as external
+    /// arguments pushed onto `external`: sea-query has no value for an array
+    /// of `jsonb` or of a composite.
+    pub(crate) fn into_arrays(self, external: &mut ExternalArguments<'_>) -> Vec<SimpleExpr> {
         let object_type_keys = literal_texts(&self.object_type_keys);
         let sub_eq_keys = literal_texts(&self.sub_eq_keys);
-        query
-            .bind(self.entity_ids)
-            .bind(self.attribute_name_keys)
-            .bind(self.dataset_ids)
-            .bind(self.ordinals)
-            .bind(self.attribute_kinds)
-            .bind(self.value_kinds)
-            .bind(self.value_numbers)
-            .bind(self.value_strings)
-            .bind(self.value_long_texts)
-            .bind(self.value_booleans)
-            .bind(self.value_date_times)
-            .bind(self.value_geometries)
-            .bind(self.value_geometry_members)
-            .bind(self.value_objects)
-            .bind(self.value_uris)
-            .bind(self.value_long_uris)
-            .bind(self.value_datatype_keys)
-            .bind(self.value_languages)
-            .bind(self.value_type_keys)
-            .bind(object_type_keys)
-            .bind(self.unit_code_ids)
-            .bind(self.observed_ats)
-            .bind(self.created_ats)
-            .bind(self.modified_ats)
-            .bind(self.expires_ats)
-            .bind(self.proof_seals)
-            .bind(self.sub_attributes)
-            .bind(sub_eq_keys)
+        vec![
+            text_array(&self.entity_ids),
+            Expr::val(self.attribute_name_keys),
+            nullable_array(self.dataset_ids),
+            Expr::val(self.ordinals),
+            Expr::val(self.attribute_kinds),
+            Expr::val(self.value_kinds),
+            nullable_array(self.value_numbers),
+            nullable_array(self.value_strings),
+            nullable_array(self.value_long_texts),
+            nullable_array(self.value_booleans),
+            nullable_array(self.value_date_times),
+            nullable_array(self.value_geometries),
+            external.push(self.value_geometry_members),
+            external.push(self.value_objects),
+            nullable_array(self.value_uris),
+            nullable_array(self.value_long_uris),
+            nullable_array(self.value_datatype_keys),
+            nullable_array(self.value_languages),
+            nullable_array(self.value_type_keys),
+            nullable_array(object_type_keys),
+            nullable_array(self.unit_code_ids),
+            nullable_array(self.observed_ats),
+            Expr::val(self.created_ats),
+            Expr::val(self.modified_ats),
+            nullable_array(self.expires_ats),
+            external.push(self.proof_seals),
+            external.push(self.sub_attributes),
+            nullable_array(sub_eq_keys),
+        ]
     }
 }
 
-/// The texts of a column of array literals, as the `text[]` bind carries them.
+/// The texts of a column of array literals, as the `text[]` value carries
+/// them.
 fn literal_texts(column: &[Option<IntegerArrayLiteral>]) -> Vec<Option<String>> {
     column.iter().map(|keys| keys.as_ref().map(|keys| keys.as_str().to_owned())).collect()
 }

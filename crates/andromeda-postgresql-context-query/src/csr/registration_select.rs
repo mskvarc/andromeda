@@ -18,7 +18,7 @@
 //! predicates callers add on registration columns stay unambiguous.
 
 use andromeda_postgresql_schema::csr::{Csr, RegistrationDeliveryState, RegistrationInformation};
-use andromeda_postgresql_seaquery::{pg_array::array_subquery, postgis::geometry_as_geojson};
+use andromeda_postgresql_seaquery::{pg_array::array_of_subquery, postgis::geometry_as_geojson};
 use sea_query::{Expr as SeaExpr, ExprTrait, Iden, JoinType, Order, Query, SelectStatement};
 
 /// The projected column holding a registration's `registration_information`
@@ -41,7 +41,7 @@ fn information_rows() -> SeaExpr {
         .order_by((Info, RegistrationInformation::ItemOrdinal), Order::Asc)
         .order_by((Info, RegistrationInformation::SelectorOrdinal), Order::Asc)
         .to_owned();
-    array_subquery(&rows)
+    array_of_subquery(rows)
 }
 
 /// A registration select with the canonical projection, `FROM` the
@@ -125,7 +125,7 @@ mod tests {
         let sql = registration_select().to_string(PostgresQueryBuilder);
         assert!(
             sql.contains(concat!(
-                r#"ARRAY(SELECT "info" FROM "registration_information" AS "info" WHERE "info"."registration_id" = "context_source_registrations"."id" "#,
+                r#"ARRAY (SELECT "info" FROM "registration_information" AS "info" WHERE "info"."registration_id" = "context_source_registrations"."id" "#,
                 r#"ORDER BY "info"."item_ordinal" ASC, "info"."selector_ordinal" ASC) AS "information_rows""#
             )),
             "{sql}"

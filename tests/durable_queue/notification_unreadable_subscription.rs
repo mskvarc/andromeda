@@ -22,6 +22,7 @@ use crate::{
         PROBE_TYPE,
         QueuedEvent,
         create_probe,
+        delivery_outcome,
         queue_delivery,
         settled_delivery,
         subscribe_to_created_probe,
@@ -29,6 +30,8 @@ use crate::{
     notification_adapter::NotificationAdapter,
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_postgresql_schema::subscriptions::{SubscriptionDeliveryState, Subscriptions};
+use andromeda_postgresql_seaquery::{scalar_subquery::scalar_subquery, statement::Statement};
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_harness::{
     configuration::TestRunConfiguration,
@@ -37,6 +40,7 @@ use andromeda_test_harness::{
 };
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Expr, ExprTrait, Func, Query, UpdateStatement};
 use serde_json::json;
 use serial_test::serial;
 use sqlx::PgPool;
@@ -81,13 +85,7 @@ async fn touch_tenant(client: &TestClient, entity_id: &str) {
 async fn first_attempt(pool: &PgPool, delivery: i64) -> (bool, bool, i32, Option<String>) {
     let give_up = Instant::now() + DRAIN_DEADLINE;
     loop {
-        let state: (bool, bool, i32, Option<String>) = sqlx::query_as(
-            "SELECT delivered_at IS NOT NULL, exhausted_at IS NOT NULL, attempt_count, last_error FROM notification_deliveries WHERE delivery_key = $1",
-        )
-        .bind(delivery)
-        .fetch_one(pool)
-        .await
-        .expect("delivery state");
+        let state = delivery_outcome(pool, delivery).await;
         if state.0 || state.1 || state.2 > 0 || Instant::now() >= give_up {
             return state;
         }
@@ -95,10 +93,30 @@ async fn first_attempt(pool: &PgPool, delivery: i64) -> (bool, bool, i32, Option
     }
 }
 
+/// The update storing `context` as the `jsonldContext` of the Subscription
+/// keyed `subscription_key`.
+fn set_stored_context(subscription_key: i64, context: Option<String>) -> UpdateStatement {
+    Query::update()
+        .table(Subscriptions::Table)
+        .value(Subscriptions::JsonldContext, context)
+        .and_where(Expr::col(Subscriptions::SubscriptionKey).eq(subscription_key))
+        .to_owned()
+}
+
 /// How many notifications the Subscription's clause 5.2.14.2 `timesSent` counts.
 async fn times_sent(pool: &PgPool, subscription_key: i64) -> i32 {
-    sqlx::query_scalar("SELECT COALESCE((SELECT times_sent FROM subscription_delivery_state WHERE subscription_key = $1), 0)")
-        .bind(subscription_key)
+    Query::select()
+        .expr(Func::coalesce([
+            scalar_subquery(
+                Query::select()
+                    .column(SubscriptionDeliveryState::TimesSent)
+                    .from(SubscriptionDeliveryState::Table)
+                    .and_where(Expr::col(SubscriptionDeliveryState::SubscriptionKey).eq(subscription_key))
+                    .to_owned(),
+            ),
+            Expr::val(0),
+        ]))
+        .to_query_scalar()
         .fetch_one(pool)
         .await
         .expect("delivery bookkeeping")
@@ -116,14 +134,16 @@ async fn durable_queue_a_delivery_whose_subscription_cannot_be_read_stays_pendin
     let subscription_key = subscribe_to_created_probe(scope.client(), &pool, &entity_id, &subscription_id, &receiver.endpoint_url()).await;
     receiver.clear_notifications().await;
 
-    let stored_context: Option<String> = sqlx::query_scalar("SELECT jsonld_context FROM subscriptions WHERE subscription_key = $1")
-        .bind(subscription_key)
+    let stored_context: Option<String> = Query::select()
+        .column(Subscriptions::JsonldContext)
+        .from(Subscriptions::Table)
+        .and_where(Expr::col(Subscriptions::SubscriptionKey).eq(subscription_key))
+        .to_query_scalar()
         .fetch_one(&pool)
         .await
         .expect("the stored context");
-    sqlx::query("UPDATE subscriptions SET jsonld_context = $2 WHERE subscription_key = $1")
-        .bind(subscription_key)
-        .bind(UNREADABLE_CONTEXT)
+    set_stored_context(subscription_key, Some(UNREADABLE_CONTEXT.to_owned()))
+        .to_query()
         .execute(&pool)
         .await
         .expect("make the subscription unreadable");
@@ -155,9 +175,8 @@ async fn durable_queue_a_delivery_whose_subscription_cannot_be_read_stays_pendin
     receiver.wait_for_no_subscription_notification(&subscription_id, ABSENT).await;
     assert_eq!(times_sent(&pool, subscription_key).await, 0, "no notification was attempted");
 
-    sqlx::query("UPDATE subscriptions SET jsonld_context = $2 WHERE subscription_key = $1")
-        .bind(subscription_key)
-        .bind(stored_context)
+    set_stored_context(subscription_key, stored_context)
+        .to_query()
         .execute(&pool)
         .await
         .expect("make the subscription readable again");

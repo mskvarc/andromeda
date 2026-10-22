@@ -14,6 +14,9 @@
 //! - [`projection`] — the read-side projection every subscription query shares.
 //! - [`failure`] — how adapter failures surface at the policy boundary.
 
+/// The fields of a subscription carrying nothing optional.
+#[cfg(test)]
+mod bare_fields_fixture;
 /// The text a subscription's `ngsildConformance` is stored as.
 mod conformance_text;
 /// The create and replace statements of a context-source subscription row.
@@ -26,6 +29,8 @@ mod entity_statements;
 mod failure;
 /// The dictionary keys a subscription's attribute lists are stored as.
 mod interned_attributes;
+/// A subscription document as the `json` column value a statement writes.
+mod json_document;
 /// PgRow-to-domain conversion for subscriptions.
 pub mod mapper;
 /// Borrowed input structs for subscription operations.

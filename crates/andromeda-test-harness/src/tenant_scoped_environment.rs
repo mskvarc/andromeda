@@ -10,6 +10,7 @@
 
 use crate::{
     configuration::{ConfigurationError, DatabaseEndpoint, TestRunConfiguration},
+    database_catalogue::{ControlDatabase, databases_like, force_drop},
     database_isolation::{DatabaseIsolationError, connect_pool},
     identifiers::{IdentifierError, TestSuiteName},
     readiness::{ReadinessError, ReadinessPolicy, wait_until_ready_once},
@@ -81,11 +82,11 @@ impl TenantScopedEnvironment {
     /// [`TenantScopedEnvironmentError::Isolation`] when the pool cannot be opened.
     pub async fn tenant_database(&self) -> Result<PgPool, TenantScopedEnvironmentError> {
         let like = format!("andromeda_tenant_{}_%", self.label);
-        let database: Option<String> = sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE $1")
-            .bind(&like)
-            .fetch_optional(&self.pool)
+        let database = databases_like(&self.pool, &like, ControlDatabase::Listed)
             .await
-            .map_err(|error| TenantScopedEnvironmentError::Catalogue(Box::new(error)))?;
+            .map_err(|error| TenantScopedEnvironmentError::Catalogue(Box::new(error)))?
+            .into_iter()
+            .next();
         let database = database.ok_or_else(|| TenantScopedEnvironmentError::NoTenantDatabase { tenant: self.label.clone() })?; // clone: the error owns the tenant it names.
         Ok(connect_pool(&self.database.with_database(&database)).await?)
     }
@@ -162,19 +163,13 @@ async fn release_tenant(endpoint: &BrokerEndpoint, label: &str) {
 /// Force-drop every database backing the labelled tenant, ignoring failures.
 async fn drop_tenant_databases(pool: &PgPool, label: &str) {
     let like = format!("andromeda_tenant_{label}_%");
-    let databases: Vec<String> = match sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE $1")
-        .bind(&like)
-        .fetch_all(pool)
-        .await
-    {
-        Ok(databases) => databases,
-        Err(_error) => return,
+    let Ok(databases) = databases_like(pool, &like, ControlDatabase::Listed).await else {
+        return;
     };
     for database in databases {
-        // The name comes from `pg_database`, so it is a real identifier; `WITH
-        // (FORCE)` evicts the tenant's background workers that hold it open.
-        let statement = format!("DROP DATABASE IF EXISTS \"{database}\" WITH (FORCE)");
-        let _ = sqlx::query(sqlx::AssertSqlSafe(statement)).execute(pool).await;
+        // The force evicts the tenant's background workers that hold the
+        // database open.
+        let _ = force_drop(pool, &database).await;
     }
 }
 
@@ -197,15 +192,9 @@ pub async fn sweep_stale_tenant_databases_once(pool: &PgPool) {
 /// Force-drop every `andromeda_tenant_%` database except the one in use, ignoring
 /// failures.
 async fn sweep_stale_tenant_databases(pool: &PgPool) {
-    let current: String = sqlx::query_scalar("SELECT current_database()").fetch_one(pool).await.unwrap_or_default();
-    let databases: Vec<String> = sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_%' AND datname <> $1")
-        .bind(&current)
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
+    let databases = databases_like(pool, "andromeda_tenant_%", ControlDatabase::Excluded).await.unwrap_or_default();
     for database in databases {
-        let statement = format!("DROP DATABASE IF EXISTS \"{database}\" WITH (FORCE)");
-        let _ = sqlx::query(sqlx::AssertSqlSafe(statement)).execute(pool).await;
+        let _ = force_drop(pool, &database).await;
     }
 }
 

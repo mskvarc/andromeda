@@ -53,6 +53,11 @@ struct JsonbBuildArray;
 #[iden = "jsonb_build_object"]
 struct JsonbBuildObject;
 
+/// The `jsonb_object_agg(key, value)` aggregate.
+#[derive(Iden, Clone, Copy)]
+#[iden = "jsonb_object_agg"]
+struct JsonbObjectAgg;
+
 /// The `jsonb_path_exists(target, jsonpath)` predicate function.
 #[derive(Iden, Clone, Copy)]
 #[iden = "jsonb_path_exists"]
@@ -152,6 +157,13 @@ pub fn jsonb_build_object<Members: IntoIterator<Item = SimpleExpr>>(members: Mem
     Func::cust(JsonbBuildObject).args(members).into()
 }
 
+/// JSONB: `jsonb_object_agg(key, value)` - the object that maps the `key` of
+/// every row of the group to its `value`.
+#[must_use]
+pub fn jsonb_object_agg(key: SimpleExpr, value: SimpleExpr) -> SimpleExpr {
+    Func::cust(JsonbObjectAgg).args([key, value]).into()
+}
+
 /// JSONB: `jsonb_array_length(array)` - the number of elements in a JSONB array.
 ///
 /// Used by type-aware aggregation (clause 4.5.19.1), where an array-valued
@@ -214,6 +226,13 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
+
+    #[test]
+    fn an_object_aggregate_pairs_a_key_expression_with_a_value_expression() {
+        let expr = jsonb_object_agg(Expr::col(Alias::new("pattern")), Expr::col(Alias::new("form")));
+        let sql = Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder);
+        assert_eq!(sql, r#"SELECT jsonb_object_agg("pattern", "form")"#);
+    }
 
     #[test]
     fn jsonb_key_exists_uses_the_containment_operator() {

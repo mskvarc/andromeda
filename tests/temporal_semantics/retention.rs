@@ -22,6 +22,8 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_cache_config::NameCacheConfig};
 use andromeda_postgresql_pool::{read_share::ReadShare, write_reserve::WriteReserve};
+use andromeda_postgresql_schema::{queue::WriteRecords, temporal::AttributeHistory};
+use andromeda_postgresql_seaquery::{aggregate::count_all, statement::Statement};
 use andromeda_postgresql_temporal_store::{
     columnstore_capability::ColumnstoreSupport,
     repo::TemporalRepository,
@@ -30,6 +32,7 @@ use andromeda_postgresql_temporal_store::{
 use chrono::{TimeDelta, Utc};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Alias, Expr, ExprTrait, Query};
 use serde_json::json;
 use serial_test::serial;
 use sqlx::{PgPool, Row};
@@ -44,8 +47,11 @@ const AGED_DAYS: i64 = 400;
 
 /// Count the idempotency records carrying one write identity.
 async fn write_records_present(pool: &PgPool, write_id: Uuid) -> i64 {
-    sqlx::query("SELECT count(*)::bigint AS records FROM write_records WHERE write_id = $1")
-        .bind(write_id)
+    Query::select()
+        .expr_as(count_all(), Alias::new("records"))
+        .from(WriteRecords::Table)
+        .and_where(Expr::col(WriteRecords::WriteId).eq(write_id))
+        .to_query()
         .fetch_one(pool)
         .await
         .expect("idempotency record count")
@@ -55,7 +61,11 @@ async fn write_records_present(pool: &PgPool, write_id: Uuid) -> i64 {
 
 /// Count every tombstone row in the tenant.
 async fn tombstone_rows(pool: &PgPool) -> i64 {
-    sqlx::query("SELECT count(*)::bigint AS rows FROM attribute_history WHERE value_kind = 0")
+    Query::select()
+        .expr_as(count_all(), Alias::new("rows"))
+        .from(AttributeHistory::Table)
+        .and_where(Expr::col(AttributeHistory::ValueKind).eq(0))
+        .to_query()
         .fetch_one(pool)
         .await
         .expect("tombstone row count")

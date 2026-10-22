@@ -293,7 +293,7 @@ fn row_to_alias(row: &PgRow) -> Result<Option<ContextSourcePseudonym>, ContextSt
 /// so it reports none of them rather than a health and two zeroes that stand
 /// for the absence of evidence. The delivery state still carries the status
 /// the registration started with; the timestamps are what say whether an
-/// attempt has happened at all, because `health_update_sql` writes them with
+/// attempt has happened at all, because the health update writes them with
 /// the status in one statement.
 ///
 /// The delivery state is `LEFT JOIN`ed, so a registration whose state row is

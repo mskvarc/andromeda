@@ -10,9 +10,14 @@ use andromeda_postgresql_context_store::{
     database_defaults::{DatabaseDefaults, StatementTimeout, reconcile_database_defaults},
     tenant_database::{DatabaseUrl, create_database_if_missing},
 };
+use andromeda_postgresql_seaquery::{
+    command::Command,
+    database_definition::{ConnectedSessions, DatabaseDefinition},
+};
 use andromeda_tenancy::database_name::TenantDatabaseName;
 use andromeda_test_harness::configuration::TestRunConfiguration;
 use futures::future::join_all;
+use sea_query::Alias;
 use sqlx::{Connection, PgConnection, postgres::PgPoolOptions};
 use std::time::Duration;
 
@@ -33,7 +38,8 @@ async fn concurrent_brokers_configuring_a_fresh_platform_database_all_succeed() 
     // Remove the setting row, so the database is as fresh as an operator-created one.
     let admin = base.with_database_name(&TenantDatabaseName::from("postgres".to_owned()));
     let mut connection = PgConnection::connect(admin.as_str()).await.expect("administrative connection");
-    sqlx::query(sqlx::AssertSqlSafe(format!("ALTER DATABASE {CONFIGURATION_DATABASE} RESET ALL")))
+    DatabaseDefinition::reset_all(Alias::new(CONFIGURATION_DATABASE))
+        .to_query()
         .execute(&mut connection)
         .await
         .expect("the setting row must be removable");
@@ -53,7 +59,8 @@ async fn concurrent_brokers_configuring_a_fresh_platform_database_all_succeed() 
     }
     pool.close().await;
 
-    sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE IF EXISTS {CONFIGURATION_DATABASE} WITH (FORCE)")))
+    DatabaseDefinition::drop(Alias::new(CONFIGURATION_DATABASE), ConnectedSessions::Terminate)
+        .to_query()
         .execute(&mut connection)
         .await
         .expect("the scratch database must be droppable");

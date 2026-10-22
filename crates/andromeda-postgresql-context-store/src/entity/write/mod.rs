@@ -22,12 +22,11 @@
 //! outside the transaction and states what it assumed in a precondition, which
 //! the update statement enforces.
 //!
-//! Each statement's parallel arrays bind through `sqlx` rather than sea-query:
-//! the geometry, expiry and expectation arrays carry NULLs (`Vec<Option<T>>`),
-//! which `sea-query-sqlx` cannot represent, so every array is bound outside
-//! sea-query in the marker order the statement builder emits. The statement
-//! structure (every relation, column, cast, function and clause) is still
-//! built by sea-query.
+//! Each statement carries its parallel arrays as bound values placed where the
+//! statement reads them: arrays that may hold NULL elements through
+//! `nullable_array`, and the arrays of `jsonb` and of the
+//! `sub_attribute_tree` composite as external arguments, which the adapter
+//! numbers after the statement's own values.
 
 #[cfg(test)]
 use std::collections::BTreeSet;

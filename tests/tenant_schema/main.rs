@@ -33,6 +33,7 @@ mod platform_configuration;
 mod procedural_logic;
 mod reconciliation;
 mod schema_contract;
+mod schema_stamp;
 mod temporal_append_intent;
 mod temporal_storage_policy;
 mod tenant_registry_constraints;

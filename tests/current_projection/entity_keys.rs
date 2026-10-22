@@ -14,10 +14,20 @@ use crate::{
     projection_rows::{entity_key, rows_for_key, temporal_entity_exists},
 };
 use andromeda_ngsi_ld_lexicon::identifier_length::IDENTIFIER_BYTE_LIMIT;
+use andromeda_postgresql_schema::current::{CurrentAttributes, Entities};
+use andromeda_postgresql_seaquery::{
+    aggregate::count_all,
+    cast::cast,
+    catalog_function::column_size,
+    literal::int_literal,
+    pg_type::PostgresType,
+    statement::Statement,
+};
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Expr, ExprTrait, Func, Query};
 use serde_json::{Map, Value, json};
 
 /// Identifier lengths the surrogate has to carry: a short URN, a long one, and
@@ -81,15 +91,25 @@ async fn narrow_entity_keys_preserve_long_identifiers_and_own_their_projection_r
             i64::try_from(attributes).expect("attribute counts are small"),
             "every attribute must be projected under its own parent key"
         );
-        let foreign_parents: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM current_attributes AS c \
-             WHERE c.entity_key = $1 AND NOT EXISTS (SELECT 1 FROM entities AS e WHERE e.entity_key = c.entity_key AND e.id = $2)",
-        )
-        .bind(key)
-        .bind(&id)
-        .fetch_one(scope.database_pool())
-        .await
-        .expect("parent check must be readable");
+        let foreign_parents: i64 = Query::select()
+            .expr(count_all())
+            .from(CurrentAttributes::Table)
+            .and_where(Expr::col((CurrentAttributes::Table, CurrentAttributes::EntityKey)).eq(key))
+            .and_where(
+                Expr::exists(
+                    Query::select()
+                        .expr(int_literal(1))
+                        .from(Entities::Table)
+                        .and_where(Expr::col((Entities::Table, Entities::EntityKey)).equals((CurrentAttributes::Table, CurrentAttributes::EntityKey)))
+                        .and_where(Expr::col((Entities::Table, Entities::Id)).eq(id.as_str()))
+                        .to_owned(),
+                )
+                .not(),
+            )
+            .to_query_scalar()
+            .fetch_one(scope.database_pool())
+            .await
+            .expect("parent check must be readable");
         assert_eq!(foreign_parents, 0, "no projection row may point at another Entity");
     }
 
@@ -142,15 +162,25 @@ async fn narrow_entity_keys_cost_fewer_bytes_than_the_identifier_they_replace() 
 
     // The multiplicity at which the surrogate wins: one parent identifier of
     // 512 bytes against a hundred child rows that would each have repeated it.
-    let (surrogate_bytes, identifier_bytes): (i64, i64) = sqlx::query_as(
-        "SELECT sum(pg_column_size(c.entity_key))::bigint, sum(pg_column_size(e.id))::bigint \
-         FROM current_attributes AS c JOIN entities AS e ON e.entity_key = c.entity_key \
-         WHERE e.id = $1",
-    )
-    .bind(&id)
-    .fetch_one(scope.database_pool())
-    .await
-    .expect("column-size measurement must be readable");
+    let (surrogate_bytes, identifier_bytes): (i64, i64) = Query::select()
+        .expr(cast(
+            Func::sum(column_size(Expr::col((CurrentAttributes::Table, CurrentAttributes::EntityKey)))).into(),
+            PostgresType::Bigint,
+        ))
+        .expr(cast(
+            Func::sum(column_size(Expr::col((Entities::Table, Entities::Id)))).into(),
+            PostgresType::Bigint,
+        ))
+        .from(CurrentAttributes::Table)
+        .inner_join(
+            Entities::Table,
+            Expr::col((Entities::Table, Entities::EntityKey)).equals((CurrentAttributes::Table, CurrentAttributes::EntityKey)),
+        )
+        .and_where(Expr::col((Entities::Table, Entities::Id)).eq(id.as_str()))
+        .to_query_as()
+        .fetch_one(scope.database_pool())
+        .await
+        .expect("column-size measurement must be readable");
     assert!(
         surrogate_bytes * 8 < identifier_bytes,
         "one hundred surrogate references ({surrogate_bytes} bytes) must be far cheaper than repeating the identifier ({identifier_bytes} bytes)"

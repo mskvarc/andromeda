@@ -11,7 +11,18 @@
 
 use crate::{
     notification_fixture::{decoded, entity_document, entity_id, entity_snapshot, readable, subscription_id},
-    queue_database::{attribute_name, deliveries_of, delivery_queue, events_of, queue_database, record_events, subscription, subscription_key},
+    queue_database::{
+        attribute_name,
+        deliveries_of,
+        deliveries_of_write,
+        delivery_queue,
+        events_of,
+        queue_database,
+        record_events,
+        row_count,
+        subscription,
+        subscription_key,
+    },
     queue_workers::{delivery_worker, holding_lease},
 };
 use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
@@ -26,8 +37,11 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
 use andromeda_notification::{delivery_store::DeliveryStore, held_events::HeldEvents};
 use andromeda_postgresql_context_store::notification_delivery::rows::NewNotificationEvent;
+use andromeda_postgresql_schema::notification::{NotificationDeliveries, NotificationEvents};
+use andromeda_postgresql_seaquery::{aggregate::count_distinct, cast::cast, catalog_function::column_size, pg_type::PostgresType, statement::Statement};
 use chrono::Utc;
 use pretty_assertions::assert_eq;
+use sea_query::{Alias, Asterisk, Expr, ExprTrait, Func, Order, Query, SelectStatement};
 use serde_json::{Value, json};
 use serial_test::serial;
 use sqlx::PgPool;
@@ -49,22 +63,41 @@ fn large_snapshot(entity: &Identifier) -> EntityState {
 
 /// Stored bytes of the one event a write left behind.
 async fn event_bytes(pool: &PgPool, record: &WriteRecord) -> i64 {
-    sqlx::query_scalar("SELECT sum(pg_column_size(e.*))::bigint FROM notification_events e WHERE e.write_id = $1")
-        .bind(record.write_id().as_uuid())
+    Query::select()
+        .expr(cast(
+            Func::sum(column_size(Expr::col((NotificationEvents::Table, Asterisk)))).into(),
+            PostgresType::Bigint,
+        ))
+        .from(NotificationEvents::Table)
+        .and_where(Expr::col((NotificationEvents::Table, NotificationEvents::WriteId)).eq(record.write_id().as_uuid()))
+        .to_query_scalar()
         .fetch_one(pool)
         .await
         .expect("event bytes")
 }
 
+/// The version of the event row a write left behind and its stored payload,
+/// both as text.
+fn event_row_version(write_id: Uuid) -> SelectStatement {
+    Query::select()
+        .expr(cast(Expr::col(Alias::new("xmin")), PostgresType::Text))
+        .expr(cast(Expr::col(NotificationEvents::EntitySnapshot), PostgresType::Text))
+        .from(NotificationEvents::Table)
+        .and_where(Expr::col(NotificationEvents::WriteId).eq(write_id))
+        .to_owned()
+}
+
 /// Stored bytes of every delivery a write's events owe.
 async fn delivery_bytes(pool: &PgPool, record: &WriteRecord) -> i64 {
-    sqlx::query_scalar(
-        "SELECT sum(pg_column_size(d.*))::bigint FROM notification_deliveries d JOIN notification_events e ON e.event_key = d.event_key WHERE e.write_id = $1",
-    )
-    .bind(record.write_id().as_uuid())
-    .fetch_one(pool)
-    .await
-    .expect("delivery bytes")
+    deliveries_of_write(record.write_id().as_uuid())
+        .expr(cast(
+            Func::sum(column_size(Expr::col((NotificationDeliveries::Table, Asterisk)))).into(),
+            PostgresType::Bigint,
+        ))
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await
+        .expect("delivery bytes")
 }
 
 /// The change that updated `temperature` and `speed`.
@@ -96,10 +129,7 @@ async fn durable_queue_a_change_no_subscription_matched_persists_nothing() {
     record_events(&pool, &record, &[]).await.expect("a write that matched no subscription");
 
     assert_eq!(events_of(&pool, &record).await, 0, "an unmatched change stores no payload");
-    let deliveries: i64 = sqlx::query_scalar("SELECT count(*) FROM notification_deliveries")
-        .fetch_one(&pool)
-        .await
-        .expect("delivery count");
+    let deliveries = row_count(&pool, NotificationDeliveries::Table).await;
     assert_eq!(deliveries, 0, "an unmatched change owes no delivery");
     pool.close().await;
 }
@@ -161,13 +191,15 @@ async fn durable_queue_one_event_owes_exactly_one_delivery_per_matching_subscrip
     .expect("the high-fan-out write");
 
     assert_eq!(events_of(&pool, &high_fan_out).await, 1, "a hundred subscribers still store one payload");
-    let owed: i64 = sqlx::query_scalar(
-        "SELECT count(DISTINCT d.subscription_key) FROM notification_deliveries d JOIN notification_events e ON e.event_key = d.event_key WHERE e.write_id = $1",
-    )
-    .bind(high_fan_out.write_id().as_uuid())
-    .fetch_one(&pool)
-    .await
-    .expect("distinct subscribers owed a delivery");
+    let owed: i64 = deliveries_of_write(high_fan_out.write_id().as_uuid())
+        .expr(count_distinct(Expr::col((
+            NotificationDeliveries::Table,
+            NotificationDeliveries::SubscriptionKey,
+        ))))
+        .to_query_scalar()
+        .fetch_one(&pool)
+        .await
+        .expect("distinct subscribers owed a delivery");
     assert_eq!(
         owed,
         i64::try_from(HIGH_FAN_OUT).expect("the fan-out size fits in i64"),
@@ -244,8 +276,12 @@ async fn durable_queue_a_batch_write_numbers_its_events_uniquely_and_absorbs_a_r
     assert_eq!(events_of(&pool, &record).await, 3, "each affected Entity produces its own event");
     assert_eq!(deliveries_of(&pool, first_key).await, 3);
     assert_eq!(deliveries_of(&pool, second_key).await, 3);
-    let ordinals: Vec<i32> = sqlx::query_scalar("SELECT event_ordinal FROM notification_events WHERE write_id = $1 ORDER BY event_ordinal")
-        .bind(record.write_id().as_uuid())
+    let ordinals: Vec<i32> = Query::select()
+        .column(NotificationEvents::EventOrdinal)
+        .from(NotificationEvents::Table)
+        .and_where(Expr::col(NotificationEvents::WriteId).eq(record.write_id().as_uuid()))
+        .order_by(NotificationEvents::EventOrdinal, Order::Asc)
+        .to_query_scalar()
         .fetch_all(&pool)
         .await
         .expect("event ordinals");
@@ -296,8 +332,8 @@ async fn durable_queue_claiming_a_delivery_leaves_its_event_untouched() {
     // `xmin` is the transaction that produced the event's current row version:
     // a claim that rewrote the event, rather than only its delivery, would
     // change it.
-    let before: (String, String) = sqlx::query_as("SELECT xmin::text, entity_snapshot::text FROM notification_events WHERE write_id = $1")
-        .bind(record.write_id().as_uuid())
+    let before: (String, String) = event_row_version(record.write_id().as_uuid())
+        .to_query_as()
         .fetch_one(&pool)
         .await
         .expect("event row version");
@@ -307,8 +343,8 @@ async fn durable_queue_claiming_a_delivery_leaves_its_event_untouched() {
     let claimed = readable(queue.claim_pending(&worker, holding_lease(), 10, &HeldEvents::default()).await.expect("claim"));
     assert_eq!(claimed.len(), 1);
 
-    let after: (String, String) = sqlx::query_as("SELECT xmin::text, entity_snapshot::text FROM notification_events WHERE write_id = $1")
-        .bind(record.write_id().as_uuid())
+    let after: (String, String) = event_row_version(record.write_id().as_uuid())
+        .to_query_as()
         .fetch_one(&pool)
         .await
         .expect("event row version after the claim");

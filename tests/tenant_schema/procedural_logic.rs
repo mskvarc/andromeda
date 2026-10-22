@@ -12,10 +12,24 @@
 //! the deletion flows show the same flows producing correct results.
 
 use crate::SUITE;
+use andromeda_postgresql_schema::{
+    current::{CurrentAttributes, Entities},
+    temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
+};
+use andromeda_postgresql_seaquery::{
+    aggregate::count_all,
+    cast::cast,
+    literal::{int_literal, text_literal},
+    pg_operator::PgBinaryOperator,
+    pg_type::PostgresType,
+    statement::Statement,
+    system_catalog::{PgClass, PgNamespace},
+};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Alias, Expr, ExprTrait, Order, Query};
 use serde_json::json;
 
 /// The triggers the schema tolerates, as `table.trigger`: the referential
@@ -57,30 +71,58 @@ async fn the_migrated_tenant_carries_only_reference_triggers_and_index_functions
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
     let pool = scope.database_pool();
 
-    let triggers: Vec<String> = sqlx::query_scalar(
-        "SELECT c.relname || '.' || t.tgname FROM pg_trigger t \
-         JOIN pg_class c ON c.oid = t.tgrelid \
-         JOIN pg_namespace n ON n.oid = c.relnamespace \
-         WHERE NOT t.tgisinternal AND n.nspname = 'public' \
-         ORDER BY 1",
-    )
-    .fetch_all(pool)
-    .await
-    .expect("the trigger catalogue must be readable");
+    let trigger = |column: &str| Expr::col((Alias::new("pg_trigger"), Alias::new(column)));
+    let triggers: Vec<String> = Query::select()
+        .expr(
+            cast(Expr::col((PgClass::Table, PgClass::Relname)), PostgresType::Text)
+                .concat_text(text_literal("."))
+                .concat_text(cast(trigger("tgname"), PostgresType::Text)),
+        )
+        .from(Alias::new("pg_trigger"))
+        .inner_join(
+            PgClass::Table,
+            Expr::col((PgClass::Table, PgClass::Oid)).equals((Alias::new("pg_trigger"), Alias::new("tgrelid"))),
+        )
+        .inner_join(
+            PgNamespace::Table,
+            Expr::col((PgNamespace::Table, PgNamespace::Oid)).equals((PgClass::Table, PgClass::Relnamespace)),
+        )
+        .and_where(trigger("tgisinternal").not())
+        .and_where(Expr::col((PgNamespace::Table, PgNamespace::Nspname)).eq("public"))
+        .order_by_expr(int_literal(1), Order::Asc)
+        .to_query_scalar()
+        .fetch_all(pool)
+        .await
+        .expect("the trigger catalogue must be readable");
     assert_eq!(triggers, TOLERATED_TRIGGERS, "the tenant schema declares only the reference triggers");
 
     // Functions an extension installed belong to that extension, not to the
     // broker, so they are excluded through their dependency record.
-    let functions: Vec<String> = sqlx::query_scalar(
-        "SELECT p.proname FROM pg_proc p \
-         JOIN pg_namespace n ON n.oid = p.pronamespace \
-         WHERE n.nspname = 'public' \
-           AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = p.oid AND d.deptype = 'e') \
-         ORDER BY p.proname",
-    )
-    .fetch_all(pool)
-    .await
-    .expect("the function catalogue must be readable");
+    let procedure = |column: &str| Expr::col((Alias::new("pg_proc"), Alias::new(column)));
+    let functions: Vec<String> = Query::select()
+        .expr(procedure("proname"))
+        .from(Alias::new("pg_proc"))
+        .inner_join(
+            PgNamespace::Table,
+            Expr::col((PgNamespace::Table, PgNamespace::Oid)).equals((Alias::new("pg_proc"), Alias::new("pronamespace"))),
+        )
+        .and_where(Expr::col((PgNamespace::Table, PgNamespace::Nspname)).eq("public"))
+        .and_where(
+            Expr::exists(
+                Query::select()
+                    .expr(int_literal(1))
+                    .from(Alias::new("pg_depend"))
+                    .and_where(Expr::col((Alias::new("pg_depend"), Alias::new("objid"))).equals((Alias::new("pg_proc"), Alias::new("oid"))))
+                    .and_where(Expr::col((Alias::new("pg_depend"), Alias::new("deptype"))).eq(text_literal("e")))
+                    .to_owned(),
+            )
+            .not(),
+        )
+        .order_by_expr(procedure("proname"), Order::Asc)
+        .to_query_scalar()
+        .fetch_all(pool)
+        .await
+        .expect("the function catalogue must be readable");
     assert_eq!(functions, TOLERATED_FUNCTIONS, "the schema declares only the tolerated functions");
 
     scope.finish().await.expect("cleanup failed");
@@ -105,20 +147,27 @@ async fn core_entity_deletion_removes_current_state_and_leaves_temporal_evolutio
     let deleted = client.delete_entity(&id).await.expect("delete entity request failed");
     assert_eq!(deleted.status, StatusCode::NO_CONTENT, "delete: {:?}", deleted.body);
 
-    let entities: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entities WHERE id = $1")
-        .bind(&id)
+    let entities: i64 = Query::select()
+        .expr(count_all())
+        .from(Entities::Table)
+        .and_where(Expr::col(Entities::Id).eq(id.as_str()))
+        .to_query_scalar()
         .fetch_one(scope.database_pool())
         .await
         .expect("the entity relation must be readable");
     assert_eq!(entities, 0, "current state is gone");
-    let instances: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM current_attributes ca \
-         JOIN entities e ON e.entity_key = ca.entity_key WHERE e.id = $1",
-    )
-    .bind(&id)
-    .fetch_one(scope.database_pool())
-    .await
-    .expect("the attribute instances must be readable");
+    let instances: i64 = Query::select()
+        .expr(count_all())
+        .from(CurrentAttributes::Table)
+        .inner_join(
+            Entities::Table,
+            Expr::col((Entities::Table, Entities::EntityKey)).equals((CurrentAttributes::Table, CurrentAttributes::EntityKey)),
+        )
+        .and_where(Expr::col((Entities::Table, Entities::Id)).eq(id.as_str()))
+        .to_query_scalar()
+        .fetch_one(scope.database_pool())
+        .await
+        .expect("the attribute instances must be readable");
     assert_eq!(instances, 0, "the attribute instances went with it");
 
     let temporal = client.get_temporal_entity(&id, "", None).await.expect("temporal retrieve request failed");
@@ -151,19 +200,29 @@ async fn temporal_evolution_deletion_removes_every_history_row_and_leaves_curren
     let deleted = client.delete_temporal_entity(&id).await.expect("delete temporal entity request failed");
     assert_eq!(deleted.status, StatusCode::NO_CONTENT, "delete: {:?}", deleted.body);
 
-    let orphan_history: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM attribute_history ah \
-         JOIN temporal_attribute_streams s ON s.stream_key = ah.stream_key \
-         JOIN temporal_entities te ON te.temporal_entity_key = s.temporal_entity_key \
-         WHERE te.id = $1",
-    )
-    .bind(&id)
-    .fetch_one(scope.database_pool())
-    .await
-    .expect("the history relation must be readable");
+    let orphan_history: i64 = Query::select()
+        .expr(count_all())
+        .from(AttributeHistory::Table)
+        .inner_join(
+            TemporalAttributeStreams::Table,
+            Expr::col((TemporalAttributeStreams::Table, TemporalAttributeStreams::StreamKey)).equals((AttributeHistory::Table, AttributeHistory::StreamKey)),
+        )
+        .inner_join(
+            TemporalEntities::Table,
+            Expr::col((TemporalEntities::Table, TemporalEntities::TemporalEntityKey))
+                .equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::TemporalEntityKey)),
+        )
+        .and_where(Expr::col((TemporalEntities::Table, TemporalEntities::Id)).eq(id.as_str()))
+        .to_query_scalar()
+        .fetch_one(scope.database_pool())
+        .await
+        .expect("the history relation must be readable");
     assert_eq!(orphan_history, 0, "no history row survives temporal deletion");
-    let temporal_entities: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM temporal_entities WHERE id = $1")
-        .bind(&id)
+    let temporal_entities: i64 = Query::select()
+        .expr(count_all())
+        .from(TemporalEntities::Table)
+        .and_where(Expr::col(TemporalEntities::Id).eq(id.as_str()))
+        .to_query_scalar()
         .fetch_one(scope.database_pool())
         .await
         .expect("the temporal entity relation must be readable");

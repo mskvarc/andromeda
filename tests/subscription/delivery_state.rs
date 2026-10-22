@@ -4,11 +4,19 @@
 //! row itself is never written by a delivery.
 
 use crate::notification_adapter::NotificationAdapter;
+use andromeda_postgresql_schema::subscriptions::{SubscriptionDeliveryState, Subscriptions};
+use andromeda_postgresql_seaquery::{
+    aggregate::count_all,
+    introspection::current_schema,
+    statement::Statement,
+    system_catalog::{InformationSchema, InformationSchemaColumns},
+};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use chrono::{DateTime, Utc};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Expr, ExprTrait, Query};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::time::Duration;
@@ -44,20 +52,32 @@ fn building(id: &str) -> Value {
 /// The state row of `subscription_id`: `(times_sent, last_notification,
 /// last_success)`, `None` when no row exists.
 async fn delivery_state(pool: &PgPool, subscription_id: &str) -> Option<(i32, Option<DateTime<Utc>>, Option<DateTime<Utc>>)> {
-    sqlx::query_as(
-        "SELECT s.times_sent, s.last_notification, s.last_success FROM subscription_delivery_state s \
-         JOIN subscriptions ON subscriptions.subscription_key = s.subscription_key WHERE subscriptions.id = $1",
-    )
-    .bind(subscription_id)
-    .fetch_optional(pool)
-    .await
-    .expect("the delivery state must be readable")
+    Query::select()
+        .columns([
+            (SubscriptionDeliveryState::Table, SubscriptionDeliveryState::TimesSent),
+            (SubscriptionDeliveryState::Table, SubscriptionDeliveryState::LastNotification),
+            (SubscriptionDeliveryState::Table, SubscriptionDeliveryState::LastSuccess),
+        ])
+        .from(SubscriptionDeliveryState::Table)
+        .inner_join(
+            Subscriptions::Table,
+            Expr::col((Subscriptions::Table, Subscriptions::SubscriptionKey))
+                .equals((SubscriptionDeliveryState::Table, SubscriptionDeliveryState::SubscriptionKey)),
+        )
+        .and_where(Expr::col((Subscriptions::Table, Subscriptions::Id)).eq(subscription_id))
+        .to_query_as()
+        .fetch_optional(pool)
+        .await
+        .expect("the delivery state must be readable")
 }
 
 /// The `(created_at, modified_at)` instants of the subscription row.
 async fn lifecycle_instants(pool: &PgPool, subscription_id: &str) -> (DateTime<Utc>, DateTime<Utc>) {
-    sqlx::query_as("SELECT created_at, modified_at FROM subscriptions WHERE id = $1")
-        .bind(subscription_id)
+    Query::select()
+        .columns([Subscriptions::CreatedAt, Subscriptions::ModifiedAt])
+        .from(Subscriptions::Table)
+        .and_where(Expr::col(Subscriptions::Id).eq(subscription_id))
+        .to_query_as()
         .fetch_one(pool)
         .await
         .expect("the subscription row must be readable")
@@ -77,13 +97,16 @@ async fn creating_a_subscription_creates_its_delivery_state_row_with_zero_counte
 
     assert_eq!(delivery_state(scope.database_pool(), &subscription_id).await, Some((0, None, None)));
 
-    let counter_columns: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'subscriptions' \
-         AND column_name IN ('times_sent', 'last_notification', 'last_success', 'last_failure')",
-    )
-    .fetch_one(scope.database_pool())
-    .await
-    .expect("the catalogue must be readable");
+    let counter_columns: i64 = Query::select()
+        .expr(count_all())
+        .from((InformationSchema, InformationSchemaColumns::Table))
+        .and_where(Expr::col(InformationSchemaColumns::TableSchema).eq(current_schema()))
+        .and_where(Expr::col(InformationSchemaColumns::TableName).eq("subscriptions"))
+        .and_where(Expr::col(InformationSchemaColumns::ColumnName).is_in(["times_sent", "last_notification", "last_success", "last_failure"]))
+        .to_query_scalar()
+        .fetch_one(scope.database_pool())
+        .await
+        .expect("the catalogue must be readable");
     assert_eq!(counter_columns, 0, "the subscription row must carry no delivery counter");
 
     scope.finish().await.expect("cleanup failed");

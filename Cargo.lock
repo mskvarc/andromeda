@@ -102,6 +102,7 @@ dependencies = [
  "andromeda-postgresql-pool",
  "andromeda-postgresql-query",
  "andromeda-postgresql-schema",
+ "andromeda-postgresql-seaquery",
  "andromeda-postgresql-temporal-query",
  "andromeda-postgresql-temporal-store",
  "andromeda-temporal",
@@ -1628,7 +1629,6 @@ dependencies = [
  "derive_more",
  "pretty_assertions",
  "sea-query",
- "sea-query-sqlx",
  "serde_json",
  "sqlx",
  "tokio",
@@ -1693,6 +1693,7 @@ dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-query",
  "andromeda-postgresql-pool",
+ "andromeda-postgresql-seaquery",
  "dashmap",
  "pretty_assertions",
  "sqlx",
@@ -1781,7 +1782,6 @@ dependencies = [
  "mediatype",
  "pretty_assertions",
  "sea-query",
- "sea-query-sqlx",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -1830,7 +1830,6 @@ dependencies = [
  "chrono",
  "pretty_assertions",
  "sea-query",
- "sea-query-sqlx",
  "sqlx",
  "strum",
  "thiserror 2.0.21",
@@ -1856,7 +1855,6 @@ dependencies = [
  "moka",
  "pretty_assertions",
  "sea-query",
- "sea-query-sqlx",
  "serde",
  "sqlx",
  "strum",
@@ -1876,7 +1874,6 @@ dependencies = [
  "derive_more",
  "pretty_assertions",
  "sea-query",
- "sea-query-sqlx",
  "serde",
  "serde_json",
  "sqlx",
@@ -1927,6 +1924,11 @@ dependencies = [
  "andromeda-architecture-checks",
  "pretty_assertions",
  "sea-query",
+ "sqlx",
+ "sqlx-core",
+ "strum",
+ "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]
@@ -1990,7 +1992,6 @@ dependencies = [
  "iri-rs",
  "pretty_assertions",
  "sea-query",
- "sea-query-sqlx",
  "serde_json",
  "sqlx",
  "strum",
@@ -2349,6 +2350,8 @@ dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-postgresql-pool",
+ "andromeda-postgresql-schema",
+ "andromeda-postgresql-seaquery",
  "andromeda-tenancy",
  "andromeda-test-client",
  "andromeda-test-fixtures",
@@ -2361,6 +2364,7 @@ dependencies = [
  "iri-rs",
  "pretty_assertions",
  "reqwest",
+ "sea-query",
  "serde_json",
  "sqlx",
  "thiserror 2.0.21",
@@ -6903,7 +6907,6 @@ dependencies = [
  "chrono",
  "itoa",
  "sea-query-derive",
- "serde_json",
  "uuid",
 ]
 
@@ -6919,16 +6922,6 @@ dependencies = [
  "quote",
  "syn 2.0.119",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "sea-query-sqlx"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4eaa419cdb9157da1361186b1959983eb2ea0dcb9a3c69dc45c449ecb2af8fef"
-dependencies = [
- "sea-query",
- "sqlx",
 ]
 
 [[package]]

@@ -9,82 +9,98 @@
 //! positions: the source sequence's, so the clone never mints again a key its
 //! source already handed out and freed, and the largest value copied, so a
 //! source whose sequence lags its own rows cannot pass that lag on. When both
-//! are absent -- an empty relation whose source never minted -- the sequence is
+//! are absent (an empty relation whose source never minted) the sequence is
 //! left as the migrations made it.
+//!
+//! The source position is read from the source column's own sequence alone,
+//! so a concurrent drop of another Snapshot's schema, whose sequences vanish
+//! mid-statement, cannot fail the clone.
 
 use crate::error::ContextStoreError;
-use sqlx::{Executor, PgConnection};
+use andromeda_postgresql_seaquery::{
+    scalar_subquery::scalar_subquery,
+    sequence::{identity_sequence, sequence_last_value, set_sequence_position},
+    statement::Statement,
+};
+use sea_query::{DynIden, Expr, ExprTrait, Func, Iden, Query, SelectStatement, TableName};
+use sqlx::PgConnection;
 
-/// Advance the target's sequence behind one identity column of `table` past
-/// everything the clone copied into it and everything its source minted.
+/// The derived table holding the position a sequence continues from.
+#[derive(Iden, Clone, Copy)]
+enum Continuation {
+    /// The derived table.
+    #[iden = "continuation"]
+    Table,
+    /// The position.
+    Position,
+}
+
+/// Advance the target's sequence behind the identity column `column` of
+/// `target` past everything the clone copied into it and everything the same
+/// column's sequence of `source` minted.
 ///
 /// # Errors
 ///
 /// Returns [`ContextStoreError`] when the sequence position cannot be read or
 /// set.
-pub(crate) async fn continue_identity(
-    conn: &mut PgConnection,
-    source_schema: &str,
-    target_schema: &str,
-    table: &str,
-    column: &str,
-) -> Result<(), ContextStoreError> {
-    let sql = continuation_sql(target_schema, table, column);
-    conn.execute(
-        sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
-            .bind(format!("{source_schema}.{table}"))
-            .bind(format!("{target_schema}.{table}"))
-            .bind(column),
-    )
-    .await?;
+pub(crate) async fn continue_identity(conn: &mut PgConnection, source: &TableName, target: &TableName, column: &DynIden) -> Result<(), ContextStoreError> {
+    continuation_statement(source, target, column).to_query().execute(conn).await?;
     Ok(())
 }
 
-/// The statement setting the target's sequence, binding the source relation
-/// as `$1`, the target relation as `$2` and the column as `$3`.
+/// `SELECT setval(<target sequence>, continuation.position) FROM (SELECT
+/// GREATEST(pg_sequence_last_value(<source sequence>), (SELECT max(column) FROM
+/// target)) AS position) AS continuation WHERE continuation.position IS NOT
+/// NULL`.
 ///
-/// `pg_sequences.last_value` may run ahead of the last value handed out when
-/// the sequence caches, which only moves the continuation further on; it is
-/// null for a sequence never called, which `GREATEST` ignores.
-fn continuation_sql(target_schema: &str, table: &str, column: &str) -> String {
-    format!(
-        "SELECT setval(pg_get_serial_sequence($2, $3)::regclass, continuation.position) \
-         FROM (SELECT GREATEST(\
-         (SELECT source.last_value FROM pg_sequences AS source \
-         WHERE format('%I.%I', source.schemaname, source.sequencename)::regclass = pg_get_serial_sequence($1, $3)::regclass), \
-         (SELECT max(\"{column}\") FROM {target_schema}.{table})\
-         ) AS position) AS continuation \
-         WHERE continuation.position IS NOT NULL"
-    )
+/// The source sequence's last value may run ahead of the last value handed out
+/// when the sequence caches, which only moves the continuation further on; it
+/// is NULL for a sequence never called, which `GREATEST` ignores.
+fn continuation_statement(source: &TableName, target: &TableName, column: &DynIden) -> SelectStatement {
+    // clone: the copied maximum is read from its own subquery, which owns the
+    // names it reads.
+    let copied_maximum = scalar_subquery(Query::select().expr(Func::max(Expr::col(column.clone()))).from(target.clone()).to_owned());
+    let position = Func::greatest([sequence_last_value(identity_sequence(source, column)), copied_maximum]);
+    Query::select()
+        .expr(set_sequence_position(
+            identity_sequence(target, column),
+            Expr::col((Continuation::Table, Continuation::Position)),
+        ))
+        .from_subquery(Query::select().expr_as(position, Continuation::Position).to_owned(), Continuation::Table)
+        .and_where(Expr::col((Continuation::Table, Continuation::Position)).is_not_null())
+        .to_owned()
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::snapshot::clone::identity_continuation::continuation_sql;
+    use crate::snapshot::clone::identity_continuation::continuation_statement;
+    use sea_query::{Alias, IntoIden, PostgresQueryBuilder, TableName};
 
     #[test]
     fn the_target_sequence_is_set_from_the_larger_of_the_source_position_and_the_copied_maximum() {
-        let sql = continuation_sql("snap_3_stg", "entities", "entity_key");
-        assert!(
-            sql.starts_with("SELECT setval(pg_get_serial_sequence($2, $3)::regclass, continuation.position)"),
-            "{sql}"
-        );
-        assert!(sql.contains("GREATEST("), "{sql}");
-        assert!(
-            sql.contains(
-                "FROM pg_sequences AS source WHERE format('%I.%I', source.schemaname, source.sequencename)::regclass = pg_get_serial_sequence($1, $3)::regclass"
-            ),
-            "the source position is read from the source relation's own sequence: {sql}"
-        );
-        assert!(
-            sql.contains("(SELECT max(\"entity_key\") FROM snap_3_stg.entities)"),
-            "the copied maximum is read from the target: {sql}"
+        let sql = continuation_statement(
+            &TableName::from((Alias::new("snap_2"), Alias::new("entities"))),
+            &TableName::from((Alias::new("snap_3_stg"), Alias::new("entities"))),
+            &Alias::new("entity_key").into_iden(),
+        )
+        .to_string(PostgresQueryBuilder);
+        pretty_assertions::assert_eq!(
+            sql,
+            r#"SELECT setval(pg_get_serial_sequence('"snap_3_stg"."entities"', 'entity_key')::regclass, "continuation"."position") FROM (SELECT GREATEST(pg_sequence_last_value(pg_get_serial_sequence('"snap_2"."entities"', 'entity_key')::regclass), (SELECT MAX("entity_key") FROM "snap_3_stg"."entities")) AS "position") AS "continuation" WHERE "continuation"."position" IS NOT NULL"#
         );
     }
 
+    /// The source position names the source column's sequence alone and no
+    /// catalogue of every sequence, so another schema's sequences are never
+    /// read.
     #[test]
-    fn a_relation_with_nothing_copied_and_nothing_minted_keeps_its_fresh_sequence() {
-        let sql = continuation_sql("snap_3_stg", "temporal_entities", "temporal_entity_key");
-        assert!(sql.ends_with("WHERE continuation.position IS NOT NULL"), "{sql}");
+    fn the_source_position_reads_no_sequence_catalogue() {
+        let sql = continuation_statement(
+            &TableName::from((Alias::new("snap_2"), Alias::new("temporal_entities"))),
+            &TableName::from((Alias::new("snap_3_stg"), Alias::new("temporal_entities"))),
+            &Alias::new("temporal_entity_key").into_iden(),
+        )
+        .to_string(PostgresQueryBuilder);
+        assert!(!sql.contains("pg_sequences"), "{sql}");
     }
 }

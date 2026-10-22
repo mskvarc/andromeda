@@ -60,7 +60,7 @@ impl DependencyKind {
 ///
 /// Every boundary derives its denylist from this list rather than restating its
 /// own, so no crate's can be quietly weaker than another's: the drivers and
-/// dialects (`sqlx`, `sea-query`, `sea-query-sqlx`, `geozero`), the transports
+/// dialects (`sqlx`, `sqlx-core`, `sea-query`, `sea-query-sqlx`, `geozero`), the transports
 /// and async runtime (`axum`, `reqwest`, `rumqttc`, `tokio`), the wire buffer
 /// (`bytes`), the configuration and CLI front ends (`figment2`, `clap`), the
 /// alternate JSON parser (`sonic-rs`), the type-erased error crate (`anyhow`,
@@ -83,6 +83,7 @@ pub const FORBIDDEN_PRODUCTION_DEPENDENCIES: &[&str] = &[
     "sea-query-sqlx",
     "sonic-rs",
     "sqlx",
+    "sqlx-core",
     "tokio",
 ];
 

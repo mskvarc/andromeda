@@ -10,8 +10,11 @@ use crate::{
     oracle::assert_status,
     topology::{self, BrokerRole},
 };
+use andromeda_postgresql_schema::subscription_forwarding::ForwardedSubscriptions;
+use andromeda_postgresql_seaquery::{aggregate::count_all, statement::Statement};
 use axum::http::Method;
 use pretty_assertions::assert_eq;
+use sea_query::{Expr, ExprTrait, Query};
 use serde_json::Value;
 use sqlx::PgPool;
 
@@ -22,10 +25,12 @@ fn scoped_sub(id: &str, entity_type: &str) -> Value {
 }
 
 /// How many forwarded-copy records name `column = value`.
-async fn forwarded_records(pool: &PgPool, column: &str, value: &str) -> i64 {
-    // `column` is one of this module's fixed column names, never caller input.
-    sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM forwarded_subscriptions WHERE {column} = $1")))
-        .bind(value)
+async fn forwarded_records(pool: &PgPool, column: ForwardedSubscriptions, value: &str) -> i64 {
+    Query::select()
+        .expr(count_all())
+        .from(ForwardedSubscriptions::Table)
+        .and_where(Expr::col(column).eq(value))
+        .to_query_scalar()
         .fetch_one(pool)
         .await
         .expect("forwarded subscription records")
@@ -48,13 +53,13 @@ async fn deleting_a_subscription_removes_its_forwarded_records_and_the_remote_co
     );
     let created = mock.next_request(FORWARD_TIMEOUT).await;
     assert_eq!(created.method, Method::POST, "the reduced copy is placed first");
-    assert_eq!(forwarded_records(broker.pool(), "local_subscription_id", &id).await, 1);
+    assert_eq!(forwarded_records(broker.pool(), ForwardedSubscriptions::LocalSubscriptionId, &id).await, 1);
 
     assert_status(&broker.client().delete_subscription(&id).await.expect("delete subscription"), 204);
     let torn_down = mock.next_request(FORWARD_TIMEOUT).await;
     assert_eq!(torn_down.method, Method::DELETE, "the source is told to delete its copy");
     assert!(torn_down.uri.path().contains("subscriptions"), "{}", torn_down.uri);
-    assert_eq!(forwarded_records(broker.pool(), "local_subscription_id", &id).await, 0);
+    assert_eq!(forwarded_records(broker.pool(), ForwardedSubscriptions::LocalSubscriptionId, &id).await, 0);
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -78,13 +83,13 @@ async fn deleting_a_registration_removes_its_forwarded_records_and_the_remote_co
     );
     let created = mock.next_request(FORWARD_TIMEOUT).await;
     assert_eq!(created.method, Method::POST, "the reduced copy is placed first");
-    assert_eq!(forwarded_records(broker.pool(), "registration_id", &registration).await, 1);
+    assert_eq!(forwarded_records(broker.pool(), ForwardedSubscriptions::RegistrationId, &registration).await, 1);
 
     assert_status(&broker.client().delete_registration(&registration).await.expect("delete registration"), 204);
     let torn_down = mock.next_request(FORWARD_TIMEOUT).await;
     assert_eq!(torn_down.method, Method::DELETE, "the source is told to delete the copy it holds");
     assert!(torn_down.uri.path().contains("subscriptions"), "{}", torn_down.uri);
-    assert_eq!(forwarded_records(broker.pool(), "registration_id", &registration).await, 0);
+    assert_eq!(forwarded_records(broker.pool(), ForwardedSubscriptions::RegistrationId, &registration).await, 0);
 
     assert_status(&broker.client().delete_subscription(&id).await.expect("delete subscription"), 204);
     mock.shutdown().await;

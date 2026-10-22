@@ -25,7 +25,7 @@
 //! days must expect the merge to be refused with a warning rather than applied.
 //!
 //! Sparse indexes. The per-batch summaries a converted chunk keeps are
-//! declared ([`HypertableName::sparse_indexes`]) rather than derived from
+//! declared ([`HypertableName::columnstore_layout`]) rather than derived from
 //! whatever indexes the table carries at conversion, so reshaping a rowstore
 //! index never silently changes which batches the archive can skip.
 //!
@@ -43,16 +43,19 @@
 //! chunks is not a change to make silently at startup.
 
 use crate::{
-    bounded_lock_wait::execute_with_bounded_lock_wait,
+    bounded_lock_wait::{CommandWrite, execute_with_bounded_lock_wait},
     error::TemporalStoreError,
-    schema_ddl::timescale_policy::{COLUMNSTORE_ORDER_BY, HypertableName, SortDirection, SparseIndex, enable_columnstore},
+    hypertable_policy::HypertableName,
     storage_policy::PolicyReconciliation,
     temporal_store_invariant::TemporalStoreInvariant,
 };
-use andromeda_postgresql_seaquery::timescale::{SparseIndexColumns, SparseIndexKindColumn, columnstore_settings_statement, columnstore_sparse_index_statement};
-use sea_query::{Iden, PostgresQueryBuilder, Values};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, PgPool, Row};
+use andromeda_postgresql_seaquery::{
+    columnstore_enablement::{EnableColumnstore, SortDirection, SparseIndexKind},
+    statement::Statement,
+    timescale::{SparseIndexColumns, SparseIndexKindColumn, columnstore_settings_statement, columnstore_sparse_index_statement},
+};
+use sea_query::{DynIden, Iden};
+use sqlx::{PgPool, Row};
 
 /// Whether the columnstore is enabled on a hypertable.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -91,10 +94,15 @@ pub struct StoredSparseIndex {
 }
 
 impl StoredSparseIndex {
-    /// Whether this is the sparse index `declared` names: the same kind over
-    /// the same columns in the same order.
-    fn is(&self, declared: &SparseIndex) -> bool {
-        AsRef::<str>::as_ref(&self.kind) == <&str>::from(declared.kind) && self.columns.iter().map(AsRef::<str>::as_ref).eq(declared.columns.iter().copied())
+    /// Whether this is the sparse index `kind` over `columns` names: the same
+    /// kind over the same columns in the same order.
+    fn is(&self, kind: SparseIndexKind, columns: &[DynIden]) -> bool {
+        AsRef::<str>::as_ref(&self.kind) == <&str>::from(kind)
+            && self
+                .columns
+                .iter()
+                .map(AsRef::<str>::as_ref)
+                .eq(columns.iter().map(ToString::to_string).collect::<Vec<_>>().iter().map(String::as_str))
     }
 }
 
@@ -159,27 +167,28 @@ fn plan_enablement(hypertable: HypertableName, stored: &StoredColumnstore) -> En
     match stored.state {
         ColumnstoreState::Disabled => EnablementPlan::Enable,
         ColumnstoreState::Enabled => {
+            let layout = hypertable.columnstore_layout();
             let segment_matches = stored.segment_by.len() == 1
                 && stored
                     .segment_by
                     .first()
-                    .is_some_and(|column| AsRef::<str>::as_ref(column) == hypertable.segment_by());
-            let order_matches = stored.order_by.len() == COLUMNSTORE_ORDER_BY.len()
+                    .is_some_and(|column| AsRef::<str>::as_ref(column) == layout.segment_by.to_string());
+            let order_matches = stored.order_by.len() == layout.order_by.len()
                 && stored
                     .order_by
                     .iter()
-                    .zip(COLUMNSTORE_ORDER_BY)
+                    .zip(&layout.order_by)
                     .all(|(order, (expected_column, expected_direction))| {
-                        AsRef::<str>::as_ref(&order.column) == expected_column && order.direction == expected_direction
+                        AsRef::<str>::as_ref(&order.column) == expected_column.to_string() && order.direction == *expected_direction
                     });
-            let declared = hypertable.sparse_indexes();
             // A set: the catalogue keeps the declaration's order, but a
             // hypertable declaring the same summaries in another order skips
             // the same batches.
-            let sparse_matches = stored.sparse_indexes.len() == declared.len()
-                && declared
+            let sparse_matches = stored.sparse_indexes.len() == layout.sparse_indexes.len()
+                && layout
+                    .sparse_indexes
                     .iter()
-                    .all(|declared| stored.sparse_indexes.iter().any(|sparse_index| sparse_index.is(declared)));
+                    .all(|(kind, columns)| stored.sparse_indexes.iter().any(|sparse_index| sparse_index.is(*kind, columns)));
             if segment_matches && order_matches && sparse_matches {
                 EnablementPlan::Unchanged
             } else {
@@ -207,7 +216,8 @@ pub(crate) async fn reconcile_columnstore_enablement(pool: &PgPool, hypertable: 
     match plan_enablement(hypertable, &stored) {
         EnablementPlan::Unchanged => Ok(PolicyReconciliation::Unchanged),
         EnablementPlan::Enable => {
-            execute_with_bounded_lock_wait(pool, &enable_columnstore(hypertable), &Values(Vec::new())).await?;
+            let enable = EnableColumnstore::new(hypertable.table(), hypertable.columnstore_layout());
+            execute_with_bounded_lock_wait(pool, &CommandWrite(enable)).await?;
             Ok(PolicyReconciliation::Adjusted)
         }
         EnablementPlan::Drift => Err(TemporalStoreError::ColumnstoreSettingsDrift {
@@ -220,8 +230,8 @@ pub(crate) async fn reconcile_columnstore_enablement(pool: &PgPool, hypertable: 
 /// Read whether the columnstore is enabled on `hypertable` and with which
 /// segment and order columns and sparse indexes.
 async fn read_stored_columnstore(pool: &PgPool, hypertable: HypertableName) -> Result<StoredColumnstore, TemporalStoreError> {
-    let (sql, values) = columnstore_settings_statement(hypertable.into()).build_sqlx(PostgresQueryBuilder);
-    let row = sqlx::query_with(AssertSqlSafe(sql), values)
+    let row = columnstore_settings_statement(hypertable.into())
+        .to_query()
         .fetch_optional(pool)
         .await?
         .ok_or(TemporalStoreInvariant::NotAHypertable(hypertable))?;
@@ -260,8 +270,7 @@ async fn read_stored_columnstore(pool: &PgPool, hypertable: HypertableName) -> R
 
 /// Read the sparse indexes declared on `hypertable`'s columnstore.
 async fn read_stored_sparse_indexes(pool: &PgPool, hypertable: HypertableName) -> Result<Vec<StoredSparseIndex>, TemporalStoreError> {
-    let (sql, values) = columnstore_sparse_index_statement(hypertable.into()).build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(pool).await?;
+    let rows = columnstore_sparse_index_statement(hypertable.into()).to_query().fetch_all(pool).await?;
     rows.iter()
         .map(|row| {
             Ok(StoredSparseIndex {
@@ -289,8 +298,9 @@ mod tests {
             StoredSparseIndex,
             plan_enablement,
         },
-        schema_ddl::timescale_policy::{HypertableName, SortDirection},
+        hypertable_policy::HypertableName,
     };
+    use andromeda_postgresql_seaquery::columnstore_enablement::SortDirection;
 
     fn order(column: &str, direction: SortDirection) -> OrderColumn {
         OrderColumn {
@@ -309,18 +319,22 @@ mod tests {
 
     /// The settings the reconciler itself would have written for `hypertable`.
     fn expected(hypertable: HypertableName) -> StoredColumnstore {
+        let layout = hypertable.columnstore_layout();
         StoredColumnstore {
             state: ColumnstoreState::Enabled,
-            segment_by: vec![HypertableColumn::from(hypertable.segment_by().to_owned())],
+            segment_by: vec![HypertableColumn::from(layout.segment_by.to_string())],
             order_by: vec![
                 order("recorded_at", SortDirection::Descending),
                 order("write_id", SortDirection::Ascending),
                 order("write_ordinal", SortDirection::Ascending),
             ],
-            sparse_indexes: hypertable
-                .sparse_indexes()
+            sparse_indexes: layout
+                .sparse_indexes
                 .iter()
-                .map(|declared| sparse_index(<&str>::from(declared.kind), declared.columns))
+                .map(|(kind, columns)| {
+                    let columns = columns.iter().map(ToString::to_string).collect::<Vec<_>>();
+                    sparse_index(<&str>::from(*kind), &columns.iter().map(String::as_str).collect::<Vec<_>>())
+                })
                 .collect(),
         }
     }

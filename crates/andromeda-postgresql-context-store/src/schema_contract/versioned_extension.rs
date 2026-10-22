@@ -6,13 +6,15 @@
 /// The contrib extensions the migrations also create ship with the server
 /// itself, so their version moves only with a server upgrade and is not
 /// tracked here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumIter, strum::IntoStaticStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, sea_query::Iden, strum::Display, strum::EnumIter, strum::IntoStaticStr)]
 pub enum VersionedExtension {
     /// `PostGIS`, named `postgis` in the extension catalogue.
     #[strum(serialize = "postgis")]
+    #[iden = "postgis"]
     PostGis,
     /// `TimescaleDB`, named `timescaledb` in the extension catalogue.
     #[strum(serialize = "timescaledb")]
+    #[iden = "timescaledb"]
     TimescaleDb,
 }
 
@@ -53,6 +55,13 @@ mod tests {
         let names: Vec<&str> = VersionedExtension::iter().map(VersionedExtension::catalog_name).collect();
         assert_eq!(names, ["postgis", "timescaledb"]);
         assert_eq!(VersionedExtension::TimescaleDb.to_string(), "timescaledb");
+    }
+
+    #[test]
+    fn each_extension_is_updated_under_its_catalogue_name() {
+        for extension in VersionedExtension::iter() {
+            assert_eq!(sea_query::Iden::unquoted(&extension), extension.catalog_name());
+        }
     }
 
     #[test]

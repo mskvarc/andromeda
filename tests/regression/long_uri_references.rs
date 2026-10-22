@@ -4,11 +4,17 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
+use andromeda_postgresql_schema::{
+    current::{CurrentAttributes, Entities},
+    name_dictionary::AttributeNames,
+};
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_test_client::{problem_details::validate_problem_details, response::TestResponse, test_client::TestClient};
 use andromeda_test_fixtures::{context::TEST_SUITE_CONTEXT, problem_detail::BAD_REQUEST_DATA};
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Expr, ExprTrait, Query};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 
@@ -86,17 +92,27 @@ async fn retrieve(client: &TestClient, id: &str) -> Value {
 /// The `(value_uri, value_long_uri)` pair `current_attributes` holds for the
 /// default instance of one attribute.
 async fn uri_placement(pool: &PgPool, entity_id: &str, local_name: &str) -> (Option<String>, Option<String>) {
-    sqlx::query_as(
-        "SELECT c.value_uri, c.value_long_uri FROM current_attributes AS c \
-         JOIN entities AS e ON e.entity_key = c.entity_key \
-         JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
-         WHERE e.id = $1 AND c.dataset_id IS NULL AND an.name LIKE '%' || $2",
-    )
-    .bind(entity_id)
-    .bind(local_name)
-    .fetch_one(pool)
-    .await
-    .expect("the default instance of the Relationship must be stored")
+    Query::select()
+        .columns([
+            (CurrentAttributes::Table, CurrentAttributes::ValueUri),
+            (CurrentAttributes::Table, CurrentAttributes::ValueLongUri),
+        ])
+        .from(CurrentAttributes::Table)
+        .inner_join(
+            Entities::Table,
+            Expr::col((Entities::Table, Entities::EntityKey)).equals((CurrentAttributes::Table, CurrentAttributes::EntityKey)),
+        )
+        .inner_join(
+            AttributeNames::Table,
+            Expr::col((AttributeNames::Table, AttributeNames::AttributeNameKey)).equals((CurrentAttributes::Table, CurrentAttributes::AttributeNameKey)),
+        )
+        .and_where(Expr::col((Entities::Table, Entities::Id)).eq(entity_id))
+        .and_where(Expr::col((CurrentAttributes::Table, CurrentAttributes::DatasetId)).is_null())
+        .and_where(Expr::col((AttributeNames::Table, AttributeNames::Name)).like(format!("%{local_name}")))
+        .to_query_as()
+        .fetch_one(pool)
+        .await
+        .expect("the default instance of the Relationship must be stored")
 }
 
 /// Assert that `response` refuses the request as `BadRequestData`.

@@ -2,13 +2,25 @@
 
 use crate::{
     notification_adapter::NotificationAdapter,
-    support::{broker_url, clean_database, client, clone_snapshot_raw, create_snapshot_raw, get_snapshot, wait_for_snapshot_terminal},
+    support::{
+        broker_url,
+        clean_database,
+        client,
+        clone_snapshot_raw,
+        create_snapshot_raw,
+        get_snapshot,
+        relation_row_count,
+        snapshot_key,
+        wait_for_snapshot_terminal,
+    },
 };
 use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
+use andromeda_postgresql_schema::{current::Entities, temporal::AttributeHistory};
 use andromeda_test_harness::database_reset::reset_owned_tenant;
 use chrono::{TimeZone, Utc};
 use futures::{StreamExt, future::join_all, stream};
 use reqwest::StatusCode;
+use sea_query::{Alias, TableName};
 use serde_json::{Value, json};
 use serial_test::serial;
 use sqlx::PgPool;
@@ -233,16 +245,9 @@ async fn snapshot_stress_capture_20000_temporal_observations_and_64_clients() {
         let pool = PgPool::connect(&env::var("ANDROMEDA_TEST_DATABASE_URL").expect("Snapshot database URL"))
             .await
             .expect("Snapshot database connection");
-        let snapshot_key: i64 = sqlx::query_scalar("SELECT snapshot_key FROM snapshots WHERE id = $1")
-            .bind(snapshot)
-            .fetch_one(&pool)
-            .await
-            .expect("captured snapshot key");
+        let snapshot_key = snapshot_key(&pool, snapshot).await;
         // Each published Snapshot branch owns its history in schema `snap_<key>`.
-        let observations: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM snap_{snapshot_key}.attribute_history")))
-            .fetch_one(&pool)
-            .await
-            .expect("captured observation count");
+        let observations = relation_row_count(&pool, TableName::from((Alias::new(format!("snap_{snapshot_key}")), AttributeHistory::Table))).await;
         pretty_assertions::assert_eq!(observations, 20_000);
         let clients = (0..64).map(|index| async move {
             let origin = if index % 2 == 0 { "local" } else { "remote" };
@@ -335,19 +340,10 @@ async fn snapshot_stress_clone_large_mixed_branch_is_complete_and_independent() 
         // directly rather than through a shared partition column.
         let mut counts: Vec<(String, i64, i64)> = Vec::new();
         for id in [source, target] {
-            let key: i64 = sqlx::query_scalar("SELECT snapshot_key FROM snapshots WHERE id = $1")
-                .bind(id)
-                .fetch_one(&pool)
-                .await
-                .expect("mixed branch snapshot key");
-            let current_count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM snap_{key}.entities")))
-                .fetch_one(&pool)
-                .await
-                .expect("mixed branch entity count");
-            let temporal_count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM snap_{key}.attribute_history")))
-                .fetch_one(&pool)
-                .await
-                .expect("mixed branch history count");
+            let key = snapshot_key(&pool, id).await;
+            let branch = format!("snap_{key}");
+            let current_count = relation_row_count(&pool, TableName::from((Alias::new(branch.as_str()), Entities::Table))).await;
+            let temporal_count = relation_row_count(&pool, TableName::from((Alias::new(branch.as_str()), AttributeHistory::Table))).await;
             counts.push((id.to_string(), current_count, temporal_count));
         }
         pretty_assertions::assert_eq!(counts.len(), 2);

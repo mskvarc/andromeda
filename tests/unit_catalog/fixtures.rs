@@ -1,6 +1,12 @@
 //! Entity bodies and persistence lookups shared by the unit-catalogue suite.
 
+use andromeda_postgresql_schema::{
+    name_dictionary::AttributeNames,
+    temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
+};
+use andromeda_postgresql_seaquery::{pg_array::cardinality, statement::Statement};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
+use sea_query::{Alias, Expr, ExprTrait, Order, Query, SelectStatement};
 use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
 
@@ -43,45 +49,58 @@ pub fn entity_with_unitless_attribute(id: &str, attribute: &Value) -> Value {
 
 /// The `unit_code_id` recorded on every history row of one entity's attribute.
 pub async fn history_unit_identities(pool: &PgPool, entity_id: &str, attribute_iri: &str) -> Vec<Option<i16>> {
-    sqlx::query(
-        "SELECT ah.unit_code_id \
-         FROM attribute_history ah \
-         JOIN temporal_attribute_streams s ON s.stream_key = ah.stream_key \
-         JOIN temporal_entities te ON te.temporal_entity_key = s.temporal_entity_key \
-         JOIN attribute_names an ON an.attribute_name_key = s.attribute_name_key \
-         WHERE te.id = $1 AND an.name = $2 \
-         ORDER BY ah.recorded_at, ah.write_ordinal",
-    )
-    .bind(entity_id)
-    .bind(attribute_iri)
-    .fetch_all(pool)
-    .await
-    .expect("history rows must be readable")
-    .into_iter()
-    .map(|row| row.try_get::<Option<i16>, _>("unit_code_id").expect("the unit_code_id column decodes"))
-    .collect()
+    attribute_history_of(entity_id, attribute_iri)
+        .column(AttributeHistory::UnitCodeId)
+        .to_query()
+        .fetch_all(pool)
+        .await
+        .expect("history rows must be readable")
+        .into_iter()
+        .map(|row| row.try_get::<Option<i16>, _>("unit_code_id").expect("the unit_code_id column decodes"))
+        .collect()
+}
+
+/// The history rows of one entity's attribute in recording order, before any
+/// column is selected.
+fn attribute_history_of(entity_id: &str, attribute_iri: &str) -> SelectStatement {
+    Query::select()
+        .from(AttributeHistory::Table)
+        .inner_join(
+            TemporalAttributeStreams::Table,
+            Expr::col((TemporalAttributeStreams::Table, TemporalAttributeStreams::StreamKey)).equals((AttributeHistory::Table, AttributeHistory::StreamKey)),
+        )
+        .inner_join(
+            TemporalEntities::Table,
+            Expr::col((TemporalEntities::Table, TemporalEntities::TemporalEntityKey))
+                .equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::TemporalEntityKey)),
+        )
+        .inner_join(
+            AttributeNames::Table,
+            Expr::col((AttributeNames::Table, AttributeNames::AttributeNameKey))
+                .equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::AttributeNameKey)),
+        )
+        .and_where(Expr::col((TemporalEntities::Table, TemporalEntities::Id)).eq(entity_id))
+        .and_where(Expr::col((AttributeNames::Table, AttributeNames::Name)).eq(attribute_iri))
+        .order_by((AttributeHistory::Table, AttributeHistory::RecordedAt), Order::Asc)
+        .order_by((AttributeHistory::Table, AttributeHistory::WriteOrdinal), Order::Asc)
+        .to_owned()
 }
 
 /// The number of sub-attribute elements of every history row of one entity's
 /// attribute, `None` for a row without any.
 pub async fn history_sub_attribute_counts(pool: &PgPool, entity_id: &str, attribute_iri: &str) -> Vec<Option<i32>> {
-    sqlx::query(
-        "SELECT cardinality(ah.sub_attributes) AS elements \
-         FROM attribute_history ah \
-         JOIN temporal_attribute_streams s ON s.stream_key = ah.stream_key \
-         JOIN temporal_entities te ON te.temporal_entity_key = s.temporal_entity_key \
-         JOIN attribute_names an ON an.attribute_name_key = s.attribute_name_key \
-         WHERE te.id = $1 AND an.name = $2 \
-         ORDER BY ah.recorded_at, ah.write_ordinal",
-    )
-    .bind(entity_id)
-    .bind(attribute_iri)
-    .fetch_all(pool)
-    .await
-    .expect("history rows must be readable")
-    .into_iter()
-    .map(|row| row.try_get::<Option<i32>, _>("elements").expect("the elements column decodes"))
-    .collect()
+    attribute_history_of(entity_id, attribute_iri)
+        .expr_as(
+            cardinality(Expr::col((AttributeHistory::Table, AttributeHistory::SubAttributes))),
+            Alias::new("elements"),
+        )
+        .to_query()
+        .fetch_all(pool)
+        .await
+        .expect("history rows must be readable")
+        .into_iter()
+        .map(|row| row.try_get::<Option<i32>, _>("elements").expect("the elements column decodes"))
+        .collect()
 }
 
 /// The expanded IRI of an attribute written under the core context's default vocabulary.

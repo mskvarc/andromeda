@@ -8,32 +8,70 @@
 //! so under read committed it sees a row a concurrent insert committed while
 //! this one waited on it.
 
+use andromeda_postgresql_schema::name_dictionary::{AttributeNames, EntityTypeNames};
+use andromeda_postgresql_seaquery::statement::Statement;
+use sea_query::{DynIden, Expr, ExprTrait, InsertStatement, IntoIden, OnConflict, Query, SelectStatement, error::Error as SeaQueryError};
 use sqlx::PgPool;
 
-/// The two statements that resolve the key of one name in one dictionary.
-struct SeedStatements {
-    /// Inserts the bound name unless the dictionary already holds it.
-    insert: &'static str,
-    /// Reads the key of the bound name.
-    select: &'static str,
+/// One name dictionary: its relation and the columns of a name and its key.
+struct Dictionary {
+    /// The dictionary relation.
+    table: DynIden,
+    /// The column holding the expanded IRI.
+    name: DynIden,
+    /// The column holding the compact integer key.
+    key: DynIden,
 }
 
-/// The statements of [`attribute_name_key`].
-const ATTRIBUTE_NAME: SeedStatements = SeedStatements {
-    insert: "INSERT INTO attribute_names (name) VALUES ($1) ON CONFLICT (name) DO NOTHING",
-    select: "SELECT attribute_name_key FROM attribute_names WHERE name = $1",
-};
+impl Dictionary {
+    /// The `attribute_names` dictionary.
+    fn attribute_names() -> Dictionary {
+        Dictionary {
+            table: AttributeNames::Table.into_iden(),
+            name: AttributeNames::Name.into_iden(),
+            key: AttributeNames::AttributeNameKey.into_iden(),
+        }
+    }
 
-/// The statements of [`entity_type_name_key`].
-const ENTITY_TYPE_NAME: SeedStatements = SeedStatements {
-    insert: "INSERT INTO entity_type_names (name) VALUES ($1) ON CONFLICT (name) DO NOTHING",
-    select: "SELECT entity_type_name_key FROM entity_type_names WHERE name = $1",
-};
+    /// The `entity_type_names` dictionary.
+    fn entity_type_names() -> Dictionary {
+        Dictionary {
+            table: EntityTypeNames::Table.into_iden(),
+            name: EntityTypeNames::Name.into_iden(),
+            key: EntityTypeNames::EntityTypeNameKey.into_iden(),
+        }
+    }
+
+    /// Inserts `name` unless the dictionary already holds it.
+    fn insert(&self, name: &str) -> Result<InsertStatement, SeaQueryError> {
+        Ok(Query::insert()
+            .into_table(self.table.clone()) // clone: the statement owns the table it names
+            .columns([self.name.clone()]) // clone: the statement owns the column it names
+            .values([Expr::val(name)])?
+            .on_conflict(OnConflict::column(self.name.clone()).do_nothing().to_owned()) // clone: the conflict target owns the column it names
+            .to_owned())
+    }
+
+    /// Reads the key of `name`.
+    fn select(&self, name: &str) -> SelectStatement {
+        Query::select()
+            .column(self.key.clone()) // clone: the statement owns the column it reads
+            .from(self.table.clone()) // clone: the statement owns the table it reads
+            .and_where(Expr::col(self.name.clone()).eq(name)) // clone: the predicate owns the column it compares
+            .to_owned()
+    }
+}
 
 /// A dictionary seed statement failed.
 #[derive(Debug, thiserror::Error)]
-#[error("seeding a dictionary name failed: {0}")]
-pub struct DictionarySeedError(#[from] sqlx::Error);
+pub enum DictionarySeedError {
+    /// The database refused a statement.
+    #[error("seeding a dictionary name failed: {0}")]
+    Database(#[from] sqlx::Error),
+    /// The insert could not be assembled.
+    #[error("the dictionary seed could not be built: {0}")]
+    Statement(#[from] SeaQueryError),
+}
 
 /// The key `name` holds in `attribute_names`, minted when the dictionary does
 /// not hold it yet.
@@ -42,7 +80,7 @@ pub struct DictionarySeedError(#[from] sqlx::Error);
 ///
 /// Returns [`DictionarySeedError`] when either statement fails.
 pub async fn attribute_name_key(pool: &PgPool, name: &str) -> Result<i32, DictionarySeedError> {
-    dictionary_key(pool, &ATTRIBUTE_NAME, name).await
+    dictionary_key(pool, &Dictionary::attribute_names(), name).await
 }
 
 /// The key `name` holds in `entity_type_names`, minted when the dictionary
@@ -52,35 +90,36 @@ pub async fn attribute_name_key(pool: &PgPool, name: &str) -> Result<i32, Dictio
 ///
 /// Returns [`DictionarySeedError`] when either statement fails.
 pub async fn entity_type_name_key(pool: &PgPool, name: &str) -> Result<i32, DictionarySeedError> {
-    dictionary_key(pool, &ENTITY_TYPE_NAME, name).await
+    dictionary_key(pool, &Dictionary::entity_type_names(), name).await
 }
 
-/// Runs `statements` for `name` and returns the key read back.
-async fn dictionary_key(pool: &PgPool, statements: &SeedStatements, name: &str) -> Result<i32, DictionarySeedError> {
-    sqlx::query(statements.insert).bind(name).execute(pool).await?;
-    Ok(sqlx::query_scalar(statements.select).bind(name).fetch_one(pool).await?)
+/// Runs the seed of `dictionary` for `name` and returns the key read back.
+async fn dictionary_key(pool: &PgPool, dictionary: &Dictionary, name: &str) -> Result<i32, DictionarySeedError> {
+    dictionary.insert(name)?.to_query().execute(pool).await?;
+    Ok(dictionary.select(name).to_query_scalar().fetch_one(pool).await?)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::dictionary_seed::{ATTRIBUTE_NAME, ENTITY_TYPE_NAME};
+    use crate::dictionary_seed::Dictionary;
     use pretty_assertions::assert_eq;
+    use sea_query::PostgresQueryBuilder;
 
     #[test]
     fn seeding_a_dictionary_key_never_updates_a_dictionary_row() {
-        for (statements, table, key) in [
-            (&ATTRIBUTE_NAME, "attribute_names", "attribute_name_key"),
-            (&ENTITY_TYPE_NAME, "entity_type_names", "entity_type_name_key"),
+        for (dictionary, table, key) in [
+            (Dictionary::attribute_names(), "attribute_names", "attribute_name_key"),
+            (Dictionary::entity_type_names(), "entity_type_names", "entity_type_name_key"),
         ] {
-            assert!(statements.insert.starts_with(&format!("INSERT INTO {table} (name) ")), "{}", statements.insert);
-            assert!(statements.insert.ends_with("ON CONFLICT (name) DO NOTHING"), "{}", statements.insert);
-            assert_eq!(statements.select, format!("SELECT {key} FROM {table} WHERE name = $1"));
-            assert!(
-                [statements.insert, statements.select]
-                    .iter()
-                    .all(|statement| !statement.contains("DO UPDATE") && !statement.starts_with("UPDATE")),
-                "a dictionary seed never takes an update path"
-            );
+            let (insert, values) = dictionary
+                .insert("https://example.org/speed")
+                .expect("the insert builds")
+                .build(PostgresQueryBuilder);
+            assert_eq!(insert, format!(r#"INSERT INTO "{table}" ("name") VALUES ($1) ON CONFLICT ("name") DO NOTHING"#));
+            assert_eq!(values.0.len(), 1);
+            let (select, _) = dictionary.select("https://example.org/speed").build(PostgresQueryBuilder);
+            assert_eq!(select, format!(r#"SELECT "{key}" FROM "{table}" WHERE "name" = $1"#));
+            assert!(!insert.contains("DO UPDATE"), "a dictionary seed never takes an update path");
         }
     }
 }

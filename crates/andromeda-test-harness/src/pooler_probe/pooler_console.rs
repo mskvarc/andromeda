@@ -2,10 +2,14 @@
 //!
 //! `PgBouncer`'s admin pseudo-database answers `SHOW` and control statements
 //! (`PAUSE`, `RESUME`, `RECONNECT`, `KILL`) only over the simple query
-//! protocol, so every call here opens a fresh connection and runs the statement
-//! through [`sqlx::raw_sql`], which never prepares. Connections are short-lived
+//! protocol, so every call here opens a fresh connection and runs the command
+//! as a [`PoolerCommand`], which never prepares. Connections are short-lived
 //! by design: the admin console is not a pooled workload.
 
+use andromeda_postgresql_seaquery::{
+    command::Command,
+    pooler_console::{PoolerCommand, PoolerDatabase, UnacceptedPoolerDatabase},
+};
 use sqlx::{Column, Connection, PgConnection, Row, TypeInfo, postgres::PgRow};
 use std::num::ParseIntError;
 
@@ -22,6 +26,9 @@ pub enum PoolerConsoleError {
     /// missing or does not decode as the type it declares.
     #[error("the pooler admin console read failed: {0}")]
     Console(#[from] sqlx::Error),
+    /// A database name the console would read as more than one word.
+    #[error(transparent)]
+    UnacceptedDatabase(#[from] UnacceptedPoolerDatabase),
     /// A count column is declared with a type that holds no integer.
     #[error("the pooler console column {column} is declared {declared}, which holds no integer")]
     NotAnIntegerColumn {
@@ -91,18 +98,10 @@ impl PoolerConsole {
         PgConnection::connect(&self.admin_url).await
     }
 
-    /// Run one admin control statement that returns no rows.
-    ///
-    /// # Errors
-    ///
-    /// Returns the [`sqlx::Error`] from connecting or executing.
-    pub async fn command(&self, statement: &str) -> Result<(), sqlx::Error> {
-        // The admin statements are fixed control verbs and a database name from
-        // the test's own tenant set, never user input; AssertSqlSafe is the
-        // dynamic-string path `raw_sql` requires for a non-static query.
-        let statement = sqlx::AssertSqlSafe(statement.to_owned());
+    /// Run one admin control command that returns no rows.
+    async fn command(&self, command: &PoolerCommand) -> Result<(), sqlx::Error> {
         let mut connection = self.connect().await?;
-        let outcome = sqlx::raw_sql(statement).execute(&mut connection).await.map(|_| ());
+        let outcome = command.to_query().execute(&mut connection).await.map(|_| ());
         let _ = connection.close().await;
         outcome
     }
@@ -113,7 +112,7 @@ impl PoolerConsole {
     ///
     /// Returns the [`sqlx::Error`] the console reported.
     pub async fn pause(&self) -> Result<(), sqlx::Error> {
-        self.command("PAUSE").await
+        self.command(&PoolerCommand::Pause).await
     }
 
     /// Resume every paused pool.
@@ -122,7 +121,7 @@ impl PoolerConsole {
     ///
     /// Returns the [`sqlx::Error`] the console reported.
     pub async fn resume(&self) -> Result<(), sqlx::Error> {
-        self.command("RESUME").await
+        self.command(&PoolerCommand::Resume).await
     }
 
     /// Reconnect every server connection at the next opportunity.
@@ -131,25 +130,27 @@ impl PoolerConsole {
     ///
     /// Returns the [`sqlx::Error`] the console reported.
     pub async fn reconnect(&self) -> Result<(), sqlx::Error> {
-        self.command("RECONNECT").await
+        self.command(&PoolerCommand::Reconnect).await
     }
 
     /// Immediately drop every client and server connection for one database.
     ///
     /// # Errors
     ///
-    /// Returns the [`sqlx::Error`] the console reported.
-    pub async fn kill(&self, database: &str) -> Result<(), sqlx::Error> {
-        self.command(&format!("KILL {database}")).await
+    /// Returns [`PoolerConsoleError`] when `database` is not a name the console
+    /// reads as one word, or the console reported an error.
+    pub async fn kill(&self, database: &str) -> Result<(), PoolerConsoleError> {
+        Ok(self.command(&PoolerCommand::Kill(PoolerDatabase::new(database)?)).await?)
     }
 
     /// Resume one paused or killed database.
     ///
     /// # Errors
     ///
-    /// Returns the [`sqlx::Error`] the console reported.
-    pub async fn resume_database(&self, database: &str) -> Result<(), sqlx::Error> {
-        self.command(&format!("RESUME {database}")).await
+    /// Returns [`PoolerConsoleError`] when `database` is not a name the console
+    /// reads as one word, or the console reported an error.
+    pub async fn resume_database(&self, database: &str) -> Result<(), PoolerConsoleError> {
+        Ok(self.command(&PoolerCommand::ResumeDatabase(PoolerDatabase::new(database)?)).await?)
     }
 
     /// Read `SHOW POOLS`, one [`PoolRow`] per (database, user) pool.
@@ -160,7 +161,7 @@ impl PoolerConsole {
     /// a column of a row is missing or unreadable.
     pub async fn show_pools(&self) -> Result<Vec<PoolRow>, PoolerConsoleError> {
         let mut connection = self.connect().await?;
-        let rows = sqlx::raw_sql("SHOW POOLS").fetch_all(&mut connection).await;
+        let rows = PoolerCommand::ShowPools.to_query().fetch_all(&mut connection).await;
         let _ = connection.close().await;
         rows?.iter().map(pool_row).collect()
     }
@@ -173,7 +174,7 @@ impl PoolerConsole {
     /// a column of a row is missing or unreadable.
     pub async fn show_clients(&self) -> Result<Vec<ClientRow>, PoolerConsoleError> {
         let mut connection = self.connect().await?;
-        let rows = sqlx::raw_sql("SHOW CLIENTS").fetch_all(&mut connection).await;
+        let rows = PoolerCommand::ShowClients.to_query().fetch_all(&mut connection).await;
         let _ = connection.close().await;
         Ok(rows?.iter().map(client_row).collect::<Result<_, sqlx::Error>>()?)
     }

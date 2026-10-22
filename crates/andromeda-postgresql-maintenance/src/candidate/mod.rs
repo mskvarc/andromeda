@@ -61,22 +61,24 @@ mod tests {
         },
     };
     use andromeda_context_space::snapshot_key::SnapshotKey;
+    use andromeda_postgresql_seaquery::maintenance::{analyze, reindex_index_concurrently, vacuum_non_truncating};
     use pretty_assertions::assert_eq;
+    use sea_query::Alias;
 
     #[test]
     fn a_snapshot_branch_action_runs_in_the_branch_schema() {
         let branch = Branch::Snapshot(SnapshotKey::try_from(42).expect("positive snapshot key"));
         assert_eq!(
-            IndexTarget::IdxCaValueNumber.reindex_statement(branch).as_sql(),
-            "REINDEX INDEX CONCURRENTLY \"snap_42\".\"idx_ca_value_number\""
+            IndexTarget::IdxCaValueNumber.reindex_statement(branch),
+            reindex_index_concurrently(Alias::new("snap_42"), Alias::new("idx_ca_value_number"))
         );
         assert_eq!(
-            HeapTarget::CurrentAttributes.vacuum_statement(branch).as_sql(),
-            "VACUUM (TRUNCATE FALSE, PARALLEL 0) \"snap_42\".\"current_attributes\""
+            HeapTarget::CurrentAttributes.vacuum_statement(branch),
+            vacuum_non_truncating(Alias::new("snap_42"), Alias::new("current_attributes"))
         );
         assert_eq!(
-            HeapTarget::EntitySearch.analyze_statement(branch).as_sql(),
-            "ANALYZE \"snap_42\".\"entity_search\""
+            HeapTarget::EntitySearch.analyze_statement(branch),
+            analyze(Alias::new("snap_42"), Alias::new("entity_search"))
         );
     }
 

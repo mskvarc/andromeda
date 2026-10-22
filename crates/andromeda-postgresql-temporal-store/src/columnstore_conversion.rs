@@ -37,31 +37,27 @@ use crate::{
     bounded_lock_wait::lock_timeout_statement,
     columnstore_capability::ColumnstoreSupport,
     error::TemporalStoreError,
+    hypertable_policy::HypertableName,
     repo::TemporalRepository,
-    schema_ddl::timescale_policy::{HypertableName, convert_to_columnstore},
 };
 use andromeda_postgresql_pool::{schema_change_lock::is_lock_not_available, transaction_rollback::is_transaction_rolled_back};
 use andromeda_postgresql_seaquery::{
     advisory_lock::try_advisory_xact_lock,
-    setting::{SettingScope, lift_statement_timeout, set_config},
+    columnstore_conversion::{ChunkReference, ConvertToColumnstore},
+    command::Command,
+    setting::lift_statement_timeout,
+    statement::Statement,
     timescale::chunk_states_statement,
 };
 use chrono::{DateTime, TimeDelta, Utc};
 use derive_more::Display;
-use sea_query::{Expr, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, PgConnection, Row};
+use sea_query::{Expr, Query, SelectStatement};
+use sqlx::{PgConnection, Row};
 use std::num::NonZeroU32;
 use thiserror::Error;
 
 /// The hypertable the sweep converts.
 const CONVERTED_HYPERTABLE: HypertableName = HypertableName::AttributeHistory;
-
-/// The `TimescaleDB` setting choosing how a conversion empties the rowstore.
-const TRUNCATE_BEHAVIOUR_SETTING: &str = "timescaledb.compress_truncate_behaviour";
-
-/// The behaviour that deletes the rowstore rows instead of truncating.
-const DELETE_ROWS: &str = "truncate_disabled";
 
 /// One chunk relation, as the schema-qualified, quoted name `TimescaleDB`'s
 /// chunk catalogue reports.
@@ -196,8 +192,7 @@ impl TemporalRepository {
 
 /// Take the chunk's lock, confirm it is still in the rowstore, and convert it.
 async fn convert_under_lock(connection: &mut PgConnection, chunk: &ChunkRelation) -> Result<ChunkConversion, sqlx::Error> {
-    let (sql, values) = chunk_lock_statement(chunk).build_sqlx(PostgresQueryBuilder);
-    let locked: bool = sqlx::query_scalar_with(AssertSqlSafe(sql), values).fetch_one(&mut *connection).await?;
+    let locked = chunk_lock_statement(chunk).to_query_scalar::<bool>().fetch_one(&mut *connection).await?;
     if !locked {
         return Ok(ChunkConversion::PassedOver);
     }
@@ -209,17 +204,18 @@ async fn convert_under_lock(connection: &mut PgConnection, chunk: &ChunkRelation
         return Ok(ChunkConversion::PassedOver);
     }
     for statement in conversion_settings() {
-        let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(AssertSqlSafe(sql), values).execute(&mut *connection).await?;
+        statement.to_query().execute(&mut *connection).await?;
     }
-    sqlx::query(AssertSqlSafe(convert_to_columnstore(&chunk.0))).execute(&mut *connection).await?;
+    ConvertToColumnstore::new(ChunkReference::Name(chunk.0.clone())) // clone: the command owns the name it quotes
+        .to_query()
+        .execute(&mut *connection)
+        .await?;
     Ok(ChunkConversion::Converted)
 }
 
 /// Read every chunk of the converted hypertable.
 async fn read_chunk_states(connection: &mut PgConnection) -> Result<Vec<ChunkState>, sqlx::Error> {
-    let (sql, values) = chunk_states_statement(CONVERTED_HYPERTABLE.into()).build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(connection).await?;
+    let rows = chunk_states_statement(CONVERTED_HYPERTABLE.into()).to_query().fetch_all(connection).await?;
     rows.iter()
         .map(|row| {
             let compressed: bool = row.try_get("is_compressed")?;
@@ -249,15 +245,10 @@ fn chunk_lock_statement(chunk: &ChunkRelation) -> SelectStatement {
         .to_owned()
 }
 
-/// The transaction-scoped settings one conversion runs under, in order.
-fn conversion_settings() -> [SelectStatement; 3] {
-    [
-        Query::select().expr(lift_statement_timeout()).to_owned(),
-        lock_timeout_statement(),
-        Query::select()
-            .expr(set_config(TRUNCATE_BEHAVIOUR_SETTING, DELETE_ROWS, SettingScope::Transaction))
-            .to_owned(),
-    ]
+/// The transaction-scoped settings one conversion runs under, in order. The
+/// conversion command sets the truncate behaviour itself.
+fn conversion_settings() -> [SelectStatement; 2] {
+    [Query::select().expr(lift_statement_timeout()).to_owned(), lock_timeout_statement()]
 }
 
 /// Whether a conversion failed in a way the next sweep can overcome: a
@@ -361,10 +352,8 @@ mod tests {
         assert_ne!(values, chunk_lock_statement(&other).build(PostgresQueryBuilder).1);
     }
 
-    /// The deleted-rows behaviour keeps a waiting `UPDATE` or `DELETE` from
-    /// deadlocking the conversion's final truncate.
     #[test]
-    fn a_conversion_runs_unbounded_with_a_bounded_lock_wait_and_deletes_the_rowstore_rows() {
+    fn a_conversion_runs_unbounded_with_a_bounded_lock_wait() {
         let rendered: Vec<String> = conversion_settings()
             .iter()
             .map(|statement| statement.to_string(PostgresQueryBuilder))
@@ -374,7 +363,6 @@ mod tests {
             vec![
                 "SELECT set_config('statement_timeout', '0', TRUE)",
                 "SELECT set_config('lock_timeout', '2000ms', TRUE)",
-                "SELECT set_config('timescaledb.compress_truncate_behaviour', 'truncate_disabled', TRUE)",
             ]
         );
     }

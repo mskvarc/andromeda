@@ -20,10 +20,9 @@ use crate::{
     schema_epoch::{EPOCH_CHECK_INTERVAL, UNKNOWN_EPOCH, now_millis, read_schema_epoch},
 };
 use andromeda_postgresql_query::dictionary::{interned_name::InternedName, resolved_names::ResolvedNames};
+use andromeda_postgresql_seaquery::statement::Statement;
 use moka::sync::Cache;
-use sea_query::PostgresQueryBuilder;
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, Executor, PgConnection, Postgres, postgres::PgPool};
+use sqlx::{Executor, PgConnection, Postgres, postgres::PgPool};
 use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
@@ -102,8 +101,7 @@ impl<N: DictionaryRelation> NameCache<N> {
     /// Returns [`NameLookupError::Statement`] when the read fails and one of
     /// the `Stored*` variants when a stored row is unreadable.
     pub async fn preload(&self) -> Result<(), NameLookupError> {
-        let (sql, values) = preload_query::<N>(self.preload_rows).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
+        let rows = preload_query::<N>(self.preload_rows).to_query().fetch_all(&self.pool).await?;
         self.absorb(&decode::<N>(&rows)?, CachePublication::Publish);
         Ok(())
     }
@@ -211,8 +209,7 @@ impl<N: DictionaryRelation> NameLookup<N> for NameCache<N> {
         let wanted = distinct_text(&missing);
         // The pool rather than a caller's connection: publication to the cache
         // is only sound from a committed snapshot, which is what this read sees.
-        let (sql, values) = name_select_query::<N>(&wanted).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
+        let rows = name_select_query::<N>(&wanted).to_query().fetch_all(&self.pool).await?;
         let found = decode::<N>(&rows)?;
         self.absorb(&found, CachePublication::Publish);
         resolved.extend(found);
@@ -246,8 +243,7 @@ impl<N: DictionaryRelation> NameLookup<N> for NameCache<N> {
         // The caller's connection rather than the pool: a name an earlier phase
         // of this same transaction minted is uncommitted, and a read that could
         // not see it would count it as new a second time.
-        let (held_sql, held_values) = held_select_query::<N>(&wanted).build_sqlx(PostgresQueryBuilder);
-        let held_rows = sqlx::query_with(AssertSqlSafe(held_sql), held_values).fetch_all(&mut *connection).await?;
+        let held_rows = held_select_query::<N>(&wanted).to_query().fetch_all(&mut *connection).await?;
         let held = decode::<N>(&held_rows)?;
         let unheld = names_not_yet_held(&wanted, &held);
         // What the dictionary already held may still be rolled back by the
@@ -265,12 +261,12 @@ impl<N: DictionaryRelation> NameLookup<N> for NameCache<N> {
             return Ok(resolved.into_iter().collect());
         }
 
-        let (insert_sql, insert_values) = name_insert_query::<N>(&unheld)
+        name_insert_query::<N>(&unheld)
             .map_err(NameLookupError::StatementBuild)?
-            .build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(AssertSqlSafe(insert_sql), insert_values).execute(&mut *connection).await?;
-        let (minted_sql, minted_values) = name_select_query::<N>(&unheld).build_sqlx(PostgresQueryBuilder);
-        let minted = decode::<N>(&sqlx::query_with(AssertSqlSafe(minted_sql), minted_values).fetch_all(&mut *connection).await?)?;
+            .to_query()
+            .execute(&mut *connection)
+            .await?;
+        let minted = decode::<N>(&name_select_query::<N>(&unheld).to_query().fetch_all(&mut *connection).await?)?;
         self.absorb(&minted, CachePublication::Withhold);
         resolved.extend(minted);
         Ok(resolved.into_iter().collect())
@@ -298,8 +294,7 @@ impl<N: DictionaryRelation> NameLookup<N> for NameCache<N> {
         }
         missing.sort_unstable();
         missing.dedup();
-        let (sql, values) = key_select_query::<N>(&missing).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
+        let rows = key_select_query::<N>(&missing).to_query().fetch_all(&self.pool).await?;
         let found = decode::<N>(&rows)?;
         self.absorb(&found, CachePublication::Publish);
         named.extend(found.into_iter().map(|(name, key)| (key, name)));
@@ -343,7 +338,6 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
     use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::interned_name::InternedName, entity_type_name_key::EntityTypeNameKey};
     use sea_query::PostgresQueryBuilder;
-    use sea_query_sqlx::SqlxBinder;
     use sqlx::postgres::{PgConnectOptions, PgPool};
 
     /// A cache over a pool that can never connect.
@@ -454,10 +448,10 @@ mod tests {
 
                 #[test]
                 fn a_batch_of_keys_is_read_back_through_a_single_array_bind() {
-                    let (sql, values) = key_select_query::<$name>(&[3, 9]).build_sqlx(PostgresQueryBuilder);
+                    let (sql, values) = key_select_query::<$name>(&[3, 9]).build(PostgresQueryBuilder);
                     assert!(sql.contains(concat!("FROM \"", $table, "\" WHERE")), "{sql}");
                     assert!(sql.contains("= ANY($1)"), "{sql}");
-                    assert_eq!(values.0.0.len(), 1, "the whole batch is one bound array: {sql}");
+                    assert_eq!(values.0.len(), 1, "the whole batch is one bound array: {sql}");
                 }
 
                 /// The rule the transaction-aware write path depends on: a name minted
@@ -513,14 +507,14 @@ mod tests {
                 /// failing.
                 #[test]
                 fn minting_leaves_a_name_another_writer_already_minted_alone() {
-                    let (sql, values) = name_insert_query::<$name>(&[$first]).expect("arity").build_sqlx(PostgresQueryBuilder);
+                    let (sql, values) = name_insert_query::<$name>(&[$first]).expect("arity").build(PostgresQueryBuilder);
                     assert!(sql.contains(concat!("INSERT INTO \"", $table, "\" (\"name\")")), "{sql}");
                     assert!(
                         sql.contains("SELECT \"t\" FROM UNNEST($1::text[]) AS \"t\""),
                         "the scalar table-function result is selected through its table alias: {sql}"
                     );
                     assert!(sql.contains("ON CONFLICT (\"name\") DO NOTHING"), "{sql}");
-                    assert_eq!(values.0.0.len(), 1, "{sql}");
+                    assert_eq!(values.0.len(), 1, "{sql}");
                 }
 
                 /// A preload reads the oldest names first and stops at what the
@@ -537,9 +531,9 @@ mod tests {
                 /// keeps a large batch inside the protocol's parameter space.
                 #[test]
                 fn a_batch_of_names_is_read_back_through_a_single_array_bind() {
-                    let (sql, values) = name_select_query::<$name>(&[$first, $second]).build_sqlx(PostgresQueryBuilder);
+                    let (sql, values) = name_select_query::<$name>(&[$first, $second]).build(PostgresQueryBuilder);
                     assert!(sql.contains(concat!("FROM \"", $table, "\" WHERE \"name\" = ANY(")), "{sql}");
-                    assert_eq!(values.0.0.len(), 1, "the whole batch is one bound array: {sql}");
+                    assert_eq!(values.0.len(), 1, "the whole batch is one bound array: {sql}");
                 }
 
                 /// The minting read carries the one fact that decides whether its
@@ -547,13 +541,13 @@ mod tests {
                 /// written anything yet. Nothing else about the read changes.
                 #[test]
                 fn the_minting_read_reports_whether_the_transaction_still_reads_a_committed_snapshot() {
-                    let (sql, values) = held_select_query::<$name>(&[$first]).build_sqlx(PostgresQueryBuilder);
+                    let (sql, values) = held_select_query::<$name>(&[$first]).build(PostgresQueryBuilder);
                     assert!(
                         sql.contains(concat!("pg_current_xact_id_if_assigned() IS NULL AS \"", "snapshot_is_committed", "\"")),
                         "{sql}"
                     );
                     assert!(sql.contains(concat!("FROM \"", $table, "\" WHERE \"name\" = ANY(")), "{sql}");
-                    assert_eq!(values.0.0.len(), 1, "the flag is computed server-side, not bound: {sql}");
+                    assert_eq!(values.0.len(), 1, "the flag is computed server-side, not bound: {sql}");
                     assert_eq!(SNAPSHOT_IS_COMMITTED_COLUMN, "snapshot_is_committed");
                 }
 

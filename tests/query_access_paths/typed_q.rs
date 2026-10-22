@@ -5,11 +5,17 @@
 //! Every predicate is compared against the residual oracle (the value the
 //! fixture actually holds), and every shape has to give the same answer.
 
+use andromeda_postgresql_schema::{
+    current::{CurrentAttributes, Entities},
+    name_dictionary::AttributeNames,
+};
+use andromeda_postgresql_seaquery::{aggregate::count_all, statement::Statement};
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::{context::TEST_SUITE_CONTEXT, high_entropy_text::high_entropy_text};
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Expr, ExprTrait, Query, SelectStatement};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 
@@ -93,17 +99,33 @@ async fn posted_query_selects_fixture(client: &TestClient, id: &str, label: &str
 
 /// Read the migration-owned kind codes of one attribute of one Entity.
 async fn kinds_of(pool: &PgPool, id: &str, local_name: &str) -> (i16, i16) {
-    sqlx::query_as(
-        "SELECT c.attribute_kind, c.value_kind FROM current_attributes AS c \
-         JOIN entities AS e ON e.entity_key = c.entity_key \
-         JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
-         WHERE e.id = $1 AND an.name LIKE '%' || $2",
-    )
-    .bind(id)
-    .bind(local_name)
-    .fetch_one(pool)
-    .await
-    .expect("the attribute must be projected")
+    projected_attribute(id, local_name)
+        .columns([
+            (CurrentAttributes::Table, CurrentAttributes::AttributeKind),
+            (CurrentAttributes::Table, CurrentAttributes::ValueKind),
+        ])
+        .to_query_as()
+        .fetch_one(pool)
+        .await
+        .expect("the attribute must be projected")
+}
+
+/// The projection rows of the Entity `id` whose attribute IRI ends in
+/// `local_name`, before any column is selected.
+fn projected_attribute(id: &str, local_name: &str) -> SelectStatement {
+    Query::select()
+        .from(CurrentAttributes::Table)
+        .inner_join(
+            Entities::Table,
+            Expr::col((Entities::Table, Entities::EntityKey)).equals((CurrentAttributes::Table, CurrentAttributes::EntityKey)),
+        )
+        .inner_join(
+            AttributeNames::Table,
+            Expr::col((AttributeNames::Table, AttributeNames::AttributeNameKey)).equals((CurrentAttributes::Table, CurrentAttributes::AttributeNameKey)),
+        )
+        .and_where(Expr::col((Entities::Table, Entities::Id)).eq(id))
+        .and_where(Expr::col((AttributeNames::Table, AttributeNames::Name)).like(format!("%{local_name}")))
+        .to_owned()
 }
 
 #[tokio::test]
@@ -264,14 +286,19 @@ async fn typed_q_fixtures_are_projected_under_their_declared_kinds() {
         assert_eq!(kinds_of(pool, &id, attribute).await, expected, "kinds of {attribute}");
     }
 
-    let tombstones: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM current_attributes AS c \
-         JOIN entities AS e ON e.entity_key = c.entity_key WHERE e.id = $1 AND c.value_kind = 0",
-    )
-    .bind(&id)
-    .fetch_one(pool)
-    .await
-    .expect("tombstone count must be readable");
+    let tombstones: i64 = Query::select()
+        .expr(count_all())
+        .from(CurrentAttributes::Table)
+        .inner_join(
+            Entities::Table,
+            Expr::col((Entities::Table, Entities::EntityKey)).equals((CurrentAttributes::Table, CurrentAttributes::EntityKey)),
+        )
+        .and_where(Expr::col((Entities::Table, Entities::Id)).eq(id.as_str()))
+        .and_where(Expr::col((CurrentAttributes::Table, CurrentAttributes::ValueKind)).eq(0))
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await
+        .expect("tombstone count must be readable");
     assert_eq!(tombstones, 0, "the reserved tombstone kind never appears in current state");
 
     scope.finish().await.expect("cleanup failed");
@@ -287,16 +314,12 @@ async fn typed_q_list_relationship_projects_the_related_entity_identifiers() {
 
     // A ListRelationship targets Entities, so its projected object must carry
     // the target identifiers, not an empty list (clauses 4.5.4 and 4.5.24).
-    let projected: Value = sqlx::query_scalar(
-        "SELECT c.value_object FROM current_attributes AS c \
-         JOIN entities AS e ON e.entity_key = c.entity_key \
-         JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
-         WHERE e.id = $1 AND an.name LIKE '%members'",
-    )
-    .bind(&id)
-    .fetch_one(scope.database_pool())
-    .await
-    .expect("the ListRelationship must be projected");
+    let projected: Value = projected_attribute(&id, "members")
+        .column((CurrentAttributes::Table, CurrentAttributes::ValueObject))
+        .to_query_scalar()
+        .fetch_one(scope.database_pool())
+        .await
+        .expect("the ListRelationship must be projected");
     assert!(
         projected.to_string().contains(RELATED),
         "the projected object list must name its targets: {projected}"

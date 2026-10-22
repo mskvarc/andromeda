@@ -19,11 +19,11 @@ use crate::{
 };
 use andromeda_postgresql_seaquery::{
     columnstore_chunk::{OldestRangeEnd, OverdueChunks, overdue_rowstore_chunks_statement},
+    statement::Statement,
     timescale_job::user_jobs_statement,
 };
 use chrono::{DateTime, Utc};
-use sea_query::{Expr, Iden, PostgresQueryBuilder};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Expr, Iden};
 use sqlx::{PgConnection, Row, postgres::PgRow};
 
 /// The rowstore chunks of one history hypertable past the overdue cutoff.
@@ -93,8 +93,10 @@ pub(crate) async fn report_timescale_state(
 /// Read the rowstore chunks of `table` whose range ended at or before
 /// `cutoff`.
 async fn overdue_conversion(connection: &mut PgConnection, table: HistoryTable, cutoff: DateTime<Utc>) -> Result<OverdueConversion, MaintenanceError> {
-    let (sql, values) = overdue_rowstore_chunks_statement(table.relation_name(), Expr::val(cutoff)).build_sqlx(PostgresQueryBuilder);
-    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(connection).await?;
+    let row = overdue_rowstore_chunks_statement(table.relation_name(), Expr::val(cutoff))
+        .to_query()
+        .fetch_one(connection)
+        .await?;
     Ok(OverdueConversion {
         table,
         chunks: non_negative(row.try_get(OverdueChunks.unquoted())?, CatalogCounter::OverdueChunks)?,
@@ -104,8 +106,7 @@ async fn overdue_conversion(connection: &mut PgConnection, table: HistoryTable, 
 
 /// Read every job of the database `TimescaleDB` did not create.
 async fn user_jobs(connection: &mut PgConnection) -> Result<Vec<UnexpectedJob>, MaintenanceError> {
-    let (sql, values) = user_jobs_statement().build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
+    let rows = user_jobs_statement().to_query().fetch_all(connection).await?;
     rows.iter().map(unexpected_job_of).collect()
 }
 

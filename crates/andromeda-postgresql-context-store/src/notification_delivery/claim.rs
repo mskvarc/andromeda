@@ -30,10 +30,9 @@ use andromeda_context_space::{context_target::ContextTarget, snapshot_target::Sn
 use andromeda_notification::{delivery_entry::DeliveryEntry, delivery_lease::LeaseTerm, held_events::HeldEvents};
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::{notification::NotificationDeliveries, snapshot::Snapshots, subscriptions::Subscriptions};
-use andromeda_postgresql_seaquery::{interval::make_interval_secs, queue::claimable_at};
+use andromeda_postgresql_seaquery::{interval::make_interval_secs, queue::claimable_at, statement::Statement};
 use andromeda_telemetry::statement::{StatementName, observe_statement};
-use sea_query::{Expr, ExprTrait, Iden, LockBehavior, LockType, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr, UpdateStatement};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Expr, ExprTrait, Iden, LockBehavior, LockType, Order, Query, SelectStatement, SimpleExpr, UpdateStatement};
 use sqlx::{Postgres, Transaction, postgres::PgPool};
 
 /// The statement name the delivery claim is observed under.
@@ -103,8 +102,9 @@ async fn claim_branch(
         return Ok(Vec::new());
     }
 
-    let (sql, values) = claim_statement(target, worker_id, batch_size, f64::from(lease.seconds())).build_sqlx(PostgresQueryBuilder);
-    let claim = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut *tx);
+    let claim = claim_statement(target, worker_id, batch_size, f64::from(lease.seconds()))
+        .to_query_as()
+        .fetch_all(&mut *tx);
     let deliveries: Vec<RawClaimedDeliveryRow> = observe_statement(DELIVERY_CLAIM, claim).await?;
     if deliveries.is_empty() {
         tx.commit().await?;
@@ -136,10 +136,7 @@ enum SnapshotRecord {
 /// the record, and with nothing else: status transitions update non-key
 /// columns and proceed alongside a claim.
 async fn hold_snapshot_record(tx: &mut Transaction<'_, Postgres>, snapshot: &SnapshotTarget) -> Result<SnapshotRecord, ContextStoreError> {
-    let (sql, values) = snapshot_record_lock_statement(snapshot).build_sqlx(PostgresQueryBuilder);
-    let held: Option<i64> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-        .fetch_optional(&mut **tx)
-        .await?;
+    let held: Option<i64> = snapshot_record_lock_statement(snapshot).to_query_scalar().fetch_optional(&mut **tx).await?;
     Ok(if held.is_some() { SnapshotRecord::Held } else { SnapshotRecord::Reaped })
 }
 

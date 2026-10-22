@@ -6,61 +6,134 @@
 //! every write sets.
 
 use crate::seeded_corpus::{PlannerPaths, SEED_PREFIX, SEEDED_ENTITIES, explain, explain_rolled_back, owner_object, seed, seed_essays};
-use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
+use andromeda_postgresql_schema::current::{CurrentAttributes, Entities, EntitySearch, EntityTypeMembers};
+use andromeda_postgresql_seaquery::{
+    aggregate::count_all,
+    cast::cast,
+    catalog_function::expression_definition,
+    clock::now,
+    jsonb::{jsonb_build_array, jsonb_build_object},
+    literal::{int_literal, true_literal},
+    ltree::ltree_matches,
+    operator::{array_contains, array_contains_key, regex_match},
+    pg_array::{any, array_literal},
+    pg_operator::PgBinaryOperator,
+    pg_type::PostgresType,
+    postgis::{bounding_boxes_overlap, st_dwithin, st_intersects, st_make_envelope, st_point_wgs84},
+    statement::Statement,
+    system_catalog::PgClass,
+};
 use andromeda_test_harness::serialized_environment::SerializedEnvironment;
 use chrono::Utc;
 use pretty_assertions::assert_eq;
+use sea_query::{Alias, Expr, ExprTrait, Iden, JoinType, Order, Query, SelectStatement, UnionType};
 use sqlx::PgPool;
 
-/// One planned query shape: what it selects, the SQL that selects it, and the
-/// index the schema exists to give it.
+/// Alias of the sort key a page is cut on.
+const SORT_KEY: &str = "sort_0";
+
+/// Entity keys a Query Entities page holds.
+const PAGE_SIZE: u64 = 100;
+
+/// One planned query shape: what it selects, the statement that selects it, and
+/// the index the schema exists to give it.
 struct PlannedShape {
     /// Name reported when the plan misses its index.
     shape: &'static str,
     /// Statement handed to `EXPLAIN`.
-    statement: String,
+    statement: SelectStatement,
     /// Index the plan must use.
     index: &'static str,
 }
 
-#[tokio::test]
-async fn entity_access_paths_reach_their_intended_index_for_every_query_shape() {
-    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
-    let pool = scope.database_pool();
-    let corpus = seed(pool, SEED_PREFIX).await;
-    let reading = corpus.reading();
-    let entrance = corpus.entrance();
-    let alarm = corpus.alarm();
-    let city = corpus.city();
-    let prefix = corpus.prefix();
-    let cutoff = instant_text(Utc::now());
+/// Column `name` of the relation aliased `relation`.
+fn column(relation: &'static str, name: impl Iden + 'static) -> Expr {
+    Expr::col((Alias::new(relation), name))
+}
 
-    let shapes = [
+/// The WGS 84 point every geo shape probes with.
+fn probe_point() -> Expr {
+    st_point_wgs84(Expr::val(13.005), Expr::val(52.005))
+}
+
+/// Whether the row aliased `relation` has not expired: no expiry, or one in the
+/// future.
+fn unexpired(relation: &'static str, expiry: impl Iden + Copy + 'static) -> Expr {
+    column(relation, expiry).is_null().or(column(relation, expiry).gt(now()))
+}
+
+/// The identity row `e` joined to its search row `s`.
+fn entities_with_search() -> SelectStatement {
+    Query::select()
+        .from_as(Entities::Table, Alias::new("e"))
+        .join_as(
+            JoinType::InnerJoin,
+            EntitySearch::Table,
+            Alias::new("s"),
+            column("s", EntitySearch::EntityKey).equals((Alias::new("e"), Entities::EntityKey)),
+        )
+        .to_owned()
+}
+
+/// An `EXISTS` probe over the attribute rows `c` of the entity `e`, narrowed by
+/// `condition`.
+fn attribute_probe(condition: Expr) -> Expr {
+    Expr::exists(
+        Query::select()
+            .expr(int_literal(1))
+            .from_as(CurrentAttributes::Table, Alias::new("c"))
+            .and_where(column("c", CurrentAttributes::EntityKey).equals((Alias::new("e"), Entities::EntityKey)))
+            .and_where(condition)
+            .to_owned(),
+    )
+}
+
+/// The shapes that read the identity row `e` or its search row `s`.
+fn entity_table_shapes(prefix: &str, alarm: i32) -> Vec<PlannedShape> {
+    vec![
         PlannedShape {
             shape: "anchored id pattern",
-            statement: format!("SELECT e.id FROM entities AS e WHERE e.id LIKE '{prefix}:seed:0001%'"),
+            statement: Query::select()
+                .expr(column("e", Entities::Id))
+                .from_as(Entities::Table, Alias::new("e"))
+                .and_where(column("e", Entities::Id).like(format!("{prefix}:seed:0001%")))
+                .to_owned(),
             index: "uq_entities_id",
         },
         PlannedShape {
             shape: "unanchored id pattern",
-            statement: format!("SELECT e.id FROM entities AS e WHERE e.id ~ '{prefix}:seed:01234'"),
+            statement: Query::select()
+                .expr(column("e", Entities::Id))
+                .from_as(Entities::Table, Alias::new("e"))
+                .and_where(regex_match(column("e", Entities::Id), Expr::val(format!("{prefix}:seed:01234"))))
+                .to_owned(),
             index: "idx_entities_id_trgm",
         },
         PlannedShape {
             shape: "scope path",
-            statement: "SELECT s.entity_key FROM entity_search AS s WHERE s.scope_paths ~ 'seed.5'::lquery".to_owned(),
+            statement: Query::select()
+                .expr(column("s", EntitySearch::EntityKey))
+                .from_as(EntitySearch::Table, Alias::new("s"))
+                .and_where(ltree_matches(column("s", EntitySearch::ScopePaths), Expr::val("seed.5")))
+                .to_owned(),
             index: "idx_entity_search_scope_paths",
         },
         PlannedShape {
             shape: "default-location geo",
-            statement: "SELECT s.entity_key FROM entity_search AS s \
-                        WHERE ST_Intersects(s.location, ST_SetSRID(ST_MakePoint(13.005, 52.005), 4326))"
+            statement: Query::select()
+                .expr(column("s", EntitySearch::EntityKey))
+                .from_as(EntitySearch::Table, Alias::new("s"))
+                .and_where(st_intersects(column("s", EntitySearch::Location), probe_point()))
                 .to_owned(),
             index: "idx_entity_search_location",
         },
         PlannedShape {
             shape: "rare attrs term",
-            statement: format!("SELECT s.entity_key FROM entity_search AS s WHERE s.attribute_name_keys @> ARRAY[{alarm}]"),
+            statement: Query::select()
+                .expr(column("s", EntitySearch::EntityKey))
+                .from_as(EntitySearch::Table, Alias::new("s"))
+                .and_where(array_contains_key(column("s", EntitySearch::AttributeNameKeys), alarm))
+                .to_owned(),
             index: "idx_entity_search_attribute_name_keys",
         },
         // The page shape the entity list issues: ordered by identifier, limited,
@@ -70,65 +143,108 @@ async fn entity_access_paths_reach_their_intended_index_for_every_query_shape() 
         PlannedShape {
             shape: "rare attrs page",
             statement: head_page(
-                &format!("FROM entities AS e JOIN entity_search AS s USING (entity_key) WHERE s.attribute_name_keys @> ARRAY[{alarm}]"),
+                entities_with_search()
+                    .and_where(array_contains_key(column("s", EntitySearch::AttributeNameKeys), alarm))
+                    .to_owned(),
                 0,
             ),
             index: "idx_entity_search_attribute_name_keys",
         },
         PlannedShape {
             shape: "attribute-expiry sweep",
-            statement: format!(
-                "SELECT e.entity_key, e.id, e.modified_at FROM entities AS e \
-                 WHERE e.min_attribute_expires_at IS NOT NULL AND e.min_attribute_expires_at <= '{cutoff}'::timestamptz \
-                 ORDER BY e.min_attribute_expires_at, e.id LIMIT 100"
-            ),
+            statement: Query::select()
+                .columns([Entities::EntityKey, Entities::Id, Entities::ModifiedAt].map(|name| (Alias::new("e"), name)))
+                .from_as(Entities::Table, Alias::new("e"))
+                .and_where(column("e", Entities::MinAttributeExpiresAt).is_not_null())
+                .and_where(column("e", Entities::MinAttributeExpiresAt).lte(Utc::now()))
+                .order_by((Alias::new("e"), Entities::MinAttributeExpiresAt), Order::Asc)
+                .order_by((Alias::new("e"), Entities::Id), Order::Asc)
+                .limit(PAGE_SIZE)
+                .to_owned(),
             index: "idx_entities_min_attribute_expires_at",
         },
+    ]
+}
+
+/// The shapes that read the attribute table `c`, alone or through an `EXISTS`
+/// probe from the identity row.
+fn attribute_table_shapes(prefix: &str, reading: i32, entrance: i32, city: i32) -> Vec<PlannedShape> {
+    vec![
         PlannedShape {
             shape: "arbitrary GeoProperty geo",
-            statement: format!(
-                "SELECT c.entity_key FROM current_attributes AS c \
-                 WHERE c.attribute_name_key = {entrance} \
-                   AND ST_Intersects(c.value_geometry, ST_SetSRID(ST_MakePoint(13.005, 52.005), 4326))"
-            ),
+            statement: Query::select()
+                .expr(column("c", CurrentAttributes::EntityKey))
+                .from_as(CurrentAttributes::Table, Alias::new("c"))
+                .and_where(column("c", CurrentAttributes::AttributeNameKey).eq(entrance))
+                .and_where(st_intersects(column("c", CurrentAttributes::ValueGeometry), probe_point()))
+                .to_owned(),
             index: "idx_ca_value_geometry",
         },
         PlannedShape {
             shape: "attribute existence",
-            statement: format!(
-                "SELECT e.id FROM entities AS e \
-                 WHERE e.id LIKE '{prefix}:seed:00001%' \
-                   AND EXISTS (SELECT 1 FROM current_attributes AS c \
-                               WHERE c.entity_key = e.entity_key AND c.attribute_name_key = {reading})"
-            ),
+            statement: Query::select()
+                .expr(column("e", Entities::Id))
+                .from_as(Entities::Table, Alias::new("e"))
+                .and_where(column("e", Entities::Id).like(format!("{prefix}:seed:00001%")))
+                .and_where(attribute_probe(column("c", CurrentAttributes::AttributeNameKey).eq(reading)))
+                .to_owned(),
             index: "uq_current_attributes_grain",
         },
         PlannedShape {
             shape: "numeric q",
-            statement: format!(
-                "SELECT e.id FROM entities AS e \
-                 WHERE EXISTS (SELECT 1 FROM current_attributes AS c \
-                               WHERE c.entity_key = e.entity_key AND c.attribute_name_key = {reading} \
-                                 AND c.value_number = 42::numeric)"
-            ),
+            statement: Query::select()
+                .expr(column("e", Entities::Id))
+                .from_as(Entities::Table, Alias::new("e"))
+                .and_where(attribute_probe(
+                    column("c", CurrentAttributes::AttributeNameKey)
+                        .eq(reading)
+                        .and(column("c", CurrentAttributes::ValueNumber).eq(cast(Expr::val(42), PostgresType::Numeric))),
+                ))
+                .to_owned(),
             index: "idx_ca_value_number",
         },
         PlannedShape {
             shape: "unanchored string pattern q",
-            statement: format!(
-                "SELECT c.entity_key FROM current_attributes AS c \
-                 WHERE c.attribute_name_key = {city} AND c.value_string ~ 'ty-12'"
-            ),
+            statement: Query::select()
+                .expr(column("c", CurrentAttributes::EntityKey))
+                .from_as(CurrentAttributes::Table, Alias::new("c"))
+                .and_where(column("c", CurrentAttributes::AttributeNameKey).eq(city))
+                .and_where(regex_match(column("c", CurrentAttributes::ValueString), Expr::val("ty-12")))
+                .to_owned(),
             index: "idx_ca_value_string_trgm",
         },
-    ];
+    ]
+}
+
+#[tokio::test]
+async fn entity_access_paths_reach_their_intended_index_for_every_query_shape() {
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
+    let pool = scope.database_pool();
+    let corpus = seed(pool, SEED_PREFIX).await;
+    let mut shapes = entity_table_shapes(corpus.prefix(), corpus.alarm());
+    shapes.extend(attribute_table_shapes(corpus.prefix(), corpus.reading(), corpus.entrance(), corpus.city()));
 
     for shape in shapes {
-        let plan = explain(pool, &shape.statement).await;
+        let plan = explain(pool, shape.statement).await;
         assert!(plan.contains(shape.index), "the {} shape must use {}: {plan}", shape.shape, shape.index);
     }
 
     scope.finish().await.expect("cleanup failed");
+}
+
+/// Count of the seeded Entities satisfying `filter` over the identity row `e`
+/// and its search row `s`.
+fn seeded_count(prefix: &str, filter: Expr) -> SelectStatement {
+    entities_with_search()
+        .expr(count_all())
+        .and_where(filter)
+        .and_where(column("e", Entities::Id).like(format!("{prefix}:seed:%")))
+        .to_owned()
+}
+
+/// Run a count statement.
+async fn count(pool: &PgPool, statement: SelectStatement) -> i64 {
+    statement.to_query_scalar::<i64>().fetch_one(pool).await.expect("the count must be readable")
 }
 
 #[tokio::test]
@@ -136,6 +252,7 @@ async fn entity_access_path_for_a_type_filter_uses_the_types_gin_index() {
     let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
     let corpus = seed(pool, SEED_PREFIX).await;
+    let type_keys = || column("s", EntitySearch::EntityTypeNameKeys);
 
     // The type filter is the one shape whose compiled form decides whether
     // `idx_entity_search_entity_type_name_keys` has a consumer at all: GIN `array_ops` serves
@@ -143,11 +260,12 @@ async fn entity_access_path_for_a_type_filter_uses_the_types_gin_index() {
     // containment shape the type-selection rendering of clause 4.17 compiles
     // to, with the resolved dictionary key inlined as an array literal so the
     // planner estimates it from the column's element statistics.
-    let compiled = format!(
-        "SELECT s.entity_key FROM entity_search AS s WHERE s.entity_type_name_keys @> ARRAY[{}]",
-        corpus.rare_type()
-    );
-    let plan = explain(pool, &compiled).await;
+    let compiled = Query::select()
+        .expr(column("s", EntitySearch::EntityKey))
+        .from_as(EntitySearch::Table, Alias::new("s"))
+        .and_where(array_contains_key(type_keys(), corpus.rare_type()))
+        .to_owned();
+    let plan = explain(pool, compiled).await;
     assert!(
         plan.contains("idx_entity_search_entity_type_name_keys"),
         "a type filter must reach the entity_type_name_keys GIN index: {plan}"
@@ -156,31 +274,24 @@ async fn entity_access_path_for_a_type_filter_uses_the_types_gin_index() {
     // The same predicate must select the same Entities however it is planned,
     // so the residual oracle counts with the equality spelling the index cannot
     // answer and the two must agree.
-    let selective: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM entities e JOIN entity_search s ON s.entity_key = e.entity_key WHERE $1 = ANY(s.entity_type_name_keys) AND e.id LIKE $2::text || ':seed:%'",
+    let selective = count(pool, seeded_count(corpus.prefix(), Expr::val(corpus.rare_type()).eq(any(type_keys())))).await;
+    let contained = count(
+        pool,
+        seeded_count(
+            corpus.prefix(),
+            array_contains(type_keys(), Expr::val(corpus.rare_type()), PostgresType::Integer),
+        ),
     )
-    .bind(corpus.rare_type())
-    .bind(corpus.prefix())
-    .fetch_one(pool)
-    .await
-    .expect("type count must be readable");
-    let contained: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM entities e JOIN entity_search s ON s.entity_key = e.entity_key WHERE s.entity_type_name_keys @> ARRAY(SELECT $1::integer) AND e.id LIKE $2::text || ':seed:%'",
-    )
-        .bind(corpus.rare_type())
-        .bind(corpus.prefix())
-        .fetch_one(pool)
-        .await
-        .expect("type count must be readable");
+    .await;
     assert_eq!(selective, contained, "containment and equality must select the same Entities");
-    let common: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM entities e JOIN entity_search s ON s.entity_key = e.entity_key WHERE s.entity_type_name_keys @> ARRAY(SELECT $1::integer) AND e.id LIKE $2::text || ':seed:%'",
+    let common = count(
+        pool,
+        seeded_count(
+            corpus.prefix(),
+            array_contains(type_keys(), Expr::val(corpus.common_type()), PostgresType::Integer),
+        ),
     )
-        .bind(corpus.common_type())
-        .bind(corpus.prefix())
-        .fetch_one(pool)
-        .await
-        .expect("type count must be readable");
+    .await;
     assert_eq!(selective + common, SEEDED_ENTITIES);
 
     scope.finish().await.expect("cleanup failed");
@@ -198,26 +309,69 @@ async fn a_type_page_walks_the_membership_key_in_identifier_order() {
     let corpus = seed(pool, SEED_PREFIX).await;
 
     for type_key in [corpus.rare_type(), corpus.common_type()] {
-        let walk = format!("FROM (SELECT entity_key, id FROM entity_type_members WHERE entity_type_name_key = {type_key}) AS e");
-        let plan = explain(pool, &head_page(&walk, 10)).await;
+        let members_of_type = Query::select()
+            .columns([EntityTypeMembers::EntityKey, EntityTypeMembers::Id])
+            .from(EntityTypeMembers::Table)
+            .and_where(Expr::col(EntityTypeMembers::EntityTypeNameKey).eq(type_key))
+            .to_owned();
+        let walk = Query::select().from_subquery(members_of_type, Alias::new("e")).to_owned();
+        let plan = explain(pool, head_page(walk, 10)).await;
         assert!(plan.contains("pk_entity_type_members"), "the page walks the membership key: {plan}");
         assert!(!plan.contains("uq_entities_id"), "the page reads no other type's identifiers: {plan}");
         assert!(!plan.contains("Sort "), "the walk yields identifier order, so nothing is sorted: {plan}");
 
-        let members: i64 = sqlx::query_scalar("SELECT count(*) FROM entity_type_members WHERE entity_type_name_key = $1")
-            .bind(type_key)
-            .fetch_one(pool)
-            .await
-            .expect("membership count must be readable");
-        let searched: i64 = sqlx::query_scalar("SELECT count(*) FROM entity_search WHERE entity_type_name_keys @> ARRAY[$1::integer]")
-            .bind(type_key)
-            .fetch_one(pool)
-            .await
-            .expect("search count must be readable");
+        let members = count(
+            pool,
+            Query::select()
+                .expr(count_all())
+                .from(EntityTypeMembers::Table)
+                .and_where(Expr::col(EntityTypeMembers::EntityTypeNameKey).eq(type_key))
+                .to_owned(),
+        )
+        .await;
+        let searched = count(
+            pool,
+            Query::select()
+                .expr(count_all())
+                .from(EntitySearch::Table)
+                .and_where(Expr::col(EntitySearch::EntityTypeNameKeys).array_contains(array_literal([cast(Expr::val(type_key), PostgresType::Integer)])))
+                .to_owned(),
+        )
+        .await;
         assert_eq!(members, searched, "the memberships and the search rows select the same Entities");
     }
 
     scope.finish().await.expect("cleanup failed");
+}
+
+/// The instance rows of the attribute `instances` that carry a `datasetId` and
+/// a geometry, keyed by entity.
+fn geometry_instances(instances: i32) -> SelectStatement {
+    Query::select()
+        .expr(column("c", CurrentAttributes::EntityKey))
+        .from_as(CurrentAttributes::Table, Alias::new("c"))
+        .and_where(column("c", CurrentAttributes::AttributeNameKey).eq(instances))
+        .and_where(column("c", CurrentAttributes::DatasetId).is_not_null())
+        .and_where(column("c", CurrentAttributes::ValueGeometry).is_not_null())
+        .to_owned()
+}
+
+/// The entities whose hoisted default location is selected by `condition`.
+fn hoisted_locations(condition: Expr) -> SelectStatement {
+    Query::select()
+        .expr(column("geo_default", EntitySearch::EntityKey))
+        .from_as(EntitySearch::Table, Alias::new("geo_default"))
+        .and_where(condition)
+        .to_owned()
+}
+
+/// Every entity of `arms` as a semi-join over the identity row joined to its
+/// search row.
+fn semi_joined(arms: SelectStatement) -> SelectStatement {
+    entities_with_search()
+        .expr(column("e", Entities::Id))
+        .and_where(column("e", Entities::EntityKey).in_subquery(arms))
+        .to_owned()
 }
 
 /// Clause 5.7.2.4 lets any `location` instance match, so a `location`
@@ -234,36 +388,50 @@ async fn every_arm_of_a_location_geo_query_reaches_its_gist_index() {
     let corpus = seed(pool, SEED_PREFIX).await;
     let instances = corpus.entrance();
 
-    let within = format!(
-        "SELECT e.id FROM entities AS e JOIN entity_search AS s ON s.entity_key = e.entity_key \
-         WHERE e.entity_key IN ( \
-               SELECT geo_default.entity_key FROM entity_search AS geo_default \
-                WHERE (geo_default.location_expires_at IS NULL OR geo_default.location_expires_at > NOW()) \
-                  AND ST_Intersects(geo_default.location, ST_SetSRID(ST_MakePoint(13.005, 52.005), 4326)) \
-               UNION ALL \
-               SELECT c.entity_key FROM current_attributes AS c \
-                WHERE c.attribute_name_key = {instances} AND c.dataset_id IS NOT NULL AND c.value_geometry IS NOT NULL \
-                  AND (c.expires_at IS NULL OR c.expires_at > NOW()) \
-                  AND ST_Intersects(c.value_geometry, ST_SetSRID(ST_MakePoint(13.005, 52.005), 4326)))"
+    let mut hoisted_within = hoisted_locations(
+        unexpired("geo_default", EntitySearch::LocationExpiresAt).and(st_intersects(column("geo_default", EntitySearch::Location), probe_point())),
     );
-    let plan = explain(pool, &within).await;
+    let within = semi_joined(
+        hoisted_within
+            .union(
+                UnionType::All,
+                geometry_instances(instances)
+                    .and_where(unexpired("c", CurrentAttributes::ExpiresAt))
+                    .and_where(st_intersects(column("c", CurrentAttributes::ValueGeometry), probe_point()))
+                    .to_owned(),
+            )
+            .to_owned(),
+    );
+    let plan = explain(pool, within).await;
     assert!(plan.contains("idx_entity_search_location"), "the hoisted arm must use its GiST index: {plan}");
     assert!(plan.contains("idx_ca_value_geometry"), "the instance arm must use its GiST index: {plan}");
 
     // `near` reads the hoisted `geography` twin, and prefilters the cast
     // instance geometry with a box the geometry GiST answers.
-    let near = format!(
-        "SELECT e.id FROM entities AS e JOIN entity_search AS s ON s.entity_key = e.entity_key \
-         WHERE e.entity_key IN ( \
-               SELECT geo_default.entity_key FROM entity_search AS geo_default \
-                WHERE ST_DWithin(geo_default.location_geography, ST_SetSRID(ST_MakePoint(13.005, 52.005), 4326)::geography, 50.0) \
-               UNION ALL \
-               SELECT c.entity_key FROM current_attributes AS c \
-                WHERE c.attribute_name_key = {instances} AND c.dataset_id IS NOT NULL AND c.value_geometry IS NOT NULL \
-                  AND c.value_geometry && ST_MakeEnvelope(13.004, 52.004, 13.006, 52.006, 4326) \
-                  AND ST_DWithin(c.value_geometry::geography, ST_SetSRID(ST_MakePoint(13.005, 52.005), 4326)::geography, 50.0))"
+    let mut hoisted_near = hoisted_locations(st_dwithin(
+        column("geo_default", EntitySearch::LocationGeography),
+        cast(probe_point(), PostgresType::Geography),
+        50.0,
+    ));
+    let near = semi_joined(
+        hoisted_near
+            .union(
+                UnionType::All,
+                geometry_instances(instances)
+                    .and_where(bounding_boxes_overlap(
+                        column("c", CurrentAttributes::ValueGeometry),
+                        st_make_envelope([13.004, 52.004], [13.006, 52.006]),
+                    ))
+                    .and_where(st_dwithin(
+                        cast(column("c", CurrentAttributes::ValueGeometry), PostgresType::Geography),
+                        cast(probe_point(), PostgresType::Geography),
+                        50.0,
+                    ))
+                    .to_owned(),
+            )
+            .to_owned(),
     );
-    let plan = explain(pool, &near).await;
+    let plan = explain(pool, near).await;
     assert!(
         plan.contains("idx_entity_search_location_geography"),
         "the hoisted arm must use its geography GiST index: {plan}"
@@ -278,12 +446,14 @@ async fn every_arm_of_a_location_geo_query_reaches_its_gist_index() {
 
 /// The value test of a compiled clause 4.9 string equality: every column the
 /// target value can occupy, the structured column by containment.
-fn string_equality(operand: &str) -> String {
-    format!(
-        "(c.value_string = '{operand}' OR c.value_uri = '{operand}' \
-          OR c.value_object @> jsonb_build_array('{operand}'::text) \
-          OR c.value_object @> jsonb_build_array(jsonb_build_object('@value', '{operand}'::text)))"
-    )
+fn string_equality(operand: &str) -> Expr {
+    let text = || cast(Expr::val(operand), PostgresType::Text);
+    let structured = column("c", CurrentAttributes::ValueObject);
+    column("c", CurrentAttributes::ValueString)
+        .eq(operand)
+        .or(column("c", CurrentAttributes::ValueUri).eq(operand))
+        .or(structured.array_contains(jsonb_build_array(text())))
+        .or(column("c", CurrentAttributes::ValueObject).array_contains(jsonb_build_array(jsonb_build_object([Expr::val("@value"), text()]))))
 }
 
 /// The head statement a Query Entities page issues over `source` (its `FROM`
@@ -291,26 +461,53 @@ fn string_equality(operand: &str) -> String {
 /// cut in identifier order past `offset` rows, and each kept row's head is
 /// looked up by key outside the window; its attribute rows are read by key
 /// afterwards.
-fn head_page(source: &str, offset: u32) -> String {
-    format!(
-        "SELECT stored.entity_key, stored.id, stored.created_at, stored.modified_at, stored.expires_at \
-         FROM (SELECT e.entity_key, e.id AS sort_0 {source} ORDER BY sort_0 ASC LIMIT 100 OFFSET {offset}) AS page \
-         JOIN LATERAL (SELECT pe.entity_key, pe.id, pe.created_at, pe.modified_at, pe.expires_at FROM entities AS pe \
-                       WHERE pe.entity_key = page.entity_key LIMIT 1) AS stored ON TRUE \
-         ORDER BY page.sort_0 ASC"
-    )
+fn head_page(mut source: SelectStatement, offset: u64) -> SelectStatement {
+    let page = source
+        .expr(column("e", Entities::EntityKey))
+        .expr_as(column("e", Entities::Id), Alias::new(SORT_KEY))
+        .order_by(Alias::new(SORT_KEY), Order::Asc)
+        .limit(PAGE_SIZE)
+        .offset(offset)
+        .to_owned();
+    let lookup = Query::select()
+        .columns(
+            [
+                Entities::EntityKey,
+                Entities::Id,
+                Entities::CreatedAt,
+                Entities::ModifiedAt,
+                Entities::ExpiresAt,
+            ]
+            .map(|name| (Alias::new("pe"), name)),
+        )
+        .from_as(Entities::Table, Alias::new("pe"))
+        .and_where(column("pe", Entities::EntityKey).equals((Alias::new("page"), Entities::EntityKey)))
+        .limit(1)
+        .to_owned();
+    Query::select()
+        .columns(
+            [
+                Entities::EntityKey,
+                Entities::Id,
+                Entities::CreatedAt,
+                Entities::ModifiedAt,
+                Entities::ExpiresAt,
+            ]
+            .map(|name| (Alias::new("stored"), name)),
+        )
+        .from_subquery(page, Alias::new("page"))
+        .join_lateral(JoinType::InnerJoin, lookup, Alias::new("stored"), true_literal())
+        .order_by((Alias::new("page"), Alias::new(SORT_KEY)), Order::Asc)
+        .to_owned()
 }
 
 /// The page shape a Query Entities `q` issues: ordered by identifier, limited,
 /// with the probe the compiler emits.
-fn q_page(probe: &str) -> String {
+fn q_page(probe: Expr) -> SelectStatement {
     head_page(
-        &format!(
-            "FROM entities AS e JOIN entity_search AS s ON s.entity_key = e.entity_key \
-             WHERE EXISTS (SELECT 1 FROM current_attributes AS c \
-                           WHERE (c.expires_at IS NULL OR c.expires_at > NOW()) AND {probe} \
-                             AND c.entity_key = e.entity_key)"
-        ),
+        entities_with_search()
+            .and_where(attribute_probe(unexpired("c", CurrentAttributes::ExpiresAt).and(probe)))
+            .to_owned(),
         0,
     )
 }
@@ -326,20 +523,29 @@ async fn an_offset_page_reads_the_heads_of_its_kept_rows_only() {
     let pool = scope.database_pool();
     seed(pool, SEED_PREFIX).await;
 
-    let plan = explain(pool, &head_page("FROM entities AS e", 5_000)).await;
+    let all_entities = || Query::select().from_as(Entities::Table, Alias::new("e")).to_owned();
+    let plan = explain(pool, head_page(all_entities(), 5_000)).await;
     let lookup = plan
         .lines()
         .find(|line| line.contains("pk_entities"))
         .unwrap_or_else(|| panic!("the head is looked up by key: {plan}"));
     assert!(lookup.contains("loops=100)"), "one lookup per kept row, not per skipped row: {plan}");
 
-    let ids: Vec<String> = sqlx::query_scalar(
-        "SELECT page.id FROM (SELECT e.id, e.id AS sort_0 FROM entities AS e ORDER BY sort_0 ASC LIMIT 100 OFFSET 5000) AS page \
-         ORDER BY page.sort_0 ASC",
-    )
-    .fetch_all(pool)
-    .await
-    .expect("the page must be readable");
+    let window = all_entities()
+        .expr(column("e", Entities::Id))
+        .expr_as(column("e", Entities::Id), Alias::new(SORT_KEY))
+        .order_by(Alias::new(SORT_KEY), Order::Asc)
+        .limit(PAGE_SIZE)
+        .offset(5_000)
+        .to_owned();
+    let ids: Vec<String> = Query::select()
+        .column((Alias::new("page"), Entities::Id))
+        .from_subquery(window, Alias::new("page"))
+        .order_by((Alias::new("page"), Alias::new(SORT_KEY)), Order::Asc)
+        .to_query_scalar()
+        .fetch_all(pool)
+        .await
+        .expect("the page must be readable");
     let mut sorted = ids.clone(); // clone: compared against the order the statement returned
     sorted.sort();
     assert_eq!(ids, sorted);
@@ -363,19 +569,10 @@ async fn a_q_equality_and_a_q_disjunction_are_driven_from_every_value_index() {
 
     let first = owner_object(7);
     let second = owner_object(11);
-    let shapes = [
-        ("equality", format!("c.attribute_name_key = {owner} AND {}", string_equality(&first))),
-        (
-            "disjunction",
-            format!(
-                "((c.attribute_name_key = {owner} AND {}) OR (c.attribute_name_key = {owner} AND {}))",
-                string_equality(&first),
-                string_equality(&second)
-            ),
-        ),
-    ];
+    let owned_by = |object: &str| column("c", CurrentAttributes::AttributeNameKey).eq(owner).and(string_equality(object));
+    let shapes = [("equality", owned_by(&first)), ("disjunction", owned_by(&first).or(owned_by(&second)))];
     for (shape, probe) in shapes {
-        let plan = explain(pool, &q_page(&probe)).await;
+        let plan = explain(pool, q_page(probe)).await;
         for fragment in ["BitmapOr", "idx_ca_value_uri", "idx_ca_value_string ", "idx_ca_value_object"] {
             assert!(plan.contains(fragment), "the {shape} probe must use {fragment}: {plan}");
         }
@@ -411,6 +608,17 @@ async fn typed_value_indexes_exclude_rows_whose_value_column_is_null() {
     scope.finish().await.expect("cleanup failed");
 }
 
+/// The attribute rows of `attribute` whose string or overflow-string column
+/// satisfies `condition`.
+fn string_columns_of(attribute: i32, condition: Expr) -> SelectStatement {
+    Query::select()
+        .expr(column("c", CurrentAttributes::EntityKey))
+        .from_as(CurrentAttributes::Table, Alias::new("c"))
+        .and_where(column("c", CurrentAttributes::AttributeNameKey).eq(attribute))
+        .and_where(condition)
+        .to_owned()
+}
+
 /// A String past the 2048-octet bound is held in `value_long_text`, which no
 /// B-tree can key, so the overflow column has its own pair of indexes: the
 /// attribute-aware trigram GIN serves the clause 4.9 patterns, and the partial
@@ -436,7 +644,11 @@ async fn long_string_access_paths_use_the_overflow_indexes() {
 
     let pattern = explain(
         pool,
-        &format!("SELECT c.entity_key FROM current_attributes AS c WHERE c.value_long_text ~ '{probe}'"),
+        Query::select()
+            .expr(column("c", CurrentAttributes::EntityKey))
+            .from_as(CurrentAttributes::Table, Alias::new("c"))
+            .and_where(regex_match(column("c", CurrentAttributes::ValueLongText), Expr::val(probe)))
+            .to_owned(),
     )
     .await;
     assert!(
@@ -446,10 +658,10 @@ async fn long_string_access_paths_use_the_overflow_indexes() {
 
     let disjunction = explain(
         pool,
-        &format!(
-            "SELECT c.entity_key FROM current_attributes AS c \
-             WHERE c.attribute_name_key = {attribute} \
-               AND (c.value_string ~ '{probe}' OR c.value_long_text ~ '{probe}')"
+        string_columns_of(
+            attribute,
+            regex_match(column("c", CurrentAttributes::ValueString), Expr::val(probe))
+                .or(regex_match(column("c", CurrentAttributes::ValueLongText), Expr::val(probe))),
         ),
     )
     .await;
@@ -463,10 +675,11 @@ async fn long_string_access_paths_use_the_overflow_indexes() {
     let ordering = explain_rolled_back(
         pool,
         PlannerPaths::WithoutSequentialScans,
-        &format!(
-            "SELECT c.entity_key FROM current_attributes AS c \
-             WHERE c.attribute_name_key = {attribute} \
-               AND (c.value_string > 'a' OR c.value_long_text > 'a')"
+        string_columns_of(
+            attribute,
+            column("c", CurrentAttributes::ValueString)
+                .gt("a")
+                .or(column("c", CurrentAttributes::ValueLongText).gt("a")),
         ),
     )
     .await;
@@ -488,17 +701,14 @@ async fn attrs_terms_select_by_the_recorded_attribute_keys() {
     let pool = scope.database_pool();
     let corpus = seed(pool, SEED_PREFIX).await;
 
-    let count = |attribute: i32| {
-        sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM entities e JOIN entity_search s ON s.entity_key = e.entity_key \
-             WHERE s.attribute_name_keys @> ARRAY(SELECT $1::integer) AND e.id LIKE $2::text || ':seed:%'",
+    let carrying = |attribute: i32| {
+        seeded_count(
+            corpus.prefix(),
+            array_contains(column("s", EntitySearch::AttributeNameKeys), Expr::val(attribute), PostgresType::Integer),
         )
-        .bind(attribute)
-        .bind(corpus.prefix())
-        .fetch_one(pool)
     };
-    assert_eq!(count(corpus.city()).await.expect("attrs count must be readable"), SEEDED_ENTITIES);
-    assert_eq!(count(corpus.alarm()).await.expect("attrs count must be readable"), SEEDED_ENTITIES / 1000);
+    assert_eq!(count(pool, carrying(corpus.city())).await, SEEDED_ENTITIES);
+    assert_eq!(count(pool, carrying(corpus.alarm())).await, SEEDED_ENTITIES / 1000);
 
     scope.finish().await.expect("cleanup failed");
 }
@@ -511,11 +721,15 @@ async fn no_index_covers_the_version_token() {
     let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
 
-    let indexed_definitions: Vec<String> =
-        sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND tablename IN ('entities', 'entity_search')")
-            .fetch_all(pool)
-            .await
-            .expect("the index catalogue must be readable");
+    let indexed_definitions: Vec<String> = Query::select()
+        .column(Alias::new("indexdef"))
+        .from(Alias::new("pg_indexes"))
+        .and_where(Expr::col(Alias::new("schemaname")).eq("public"))
+        .and_where(Expr::col(Alias::new("tablename")).is_in(["entities", "entity_search"]))
+        .to_query_scalar()
+        .fetch_all(pool)
+        .await
+        .expect("the index catalogue must be readable");
     for definition in &indexed_definitions {
         assert!(!definition.contains("modified_at"), "{definition}");
     }
@@ -525,12 +739,21 @@ async fn no_index_covers_the_version_token() {
 
 /// Read the partial-index predicate of one index by name.
 async fn index_predicate(pool: &PgPool, index: &str) -> Option<String> {
-    sqlx::query_scalar(
-        "SELECT pg_get_expr(i.indpred, i.indrelid) FROM pg_index AS i \
-         JOIN pg_class AS c ON c.oid = i.indexrelid WHERE c.relname = $1",
-    )
-    .bind(index)
-    .fetch_one(pool)
-    .await
-    .expect("the index must exist")
+    Query::select()
+        .expr(expression_definition(
+            Expr::col((Alias::new("i"), Alias::new("indpred"))),
+            Expr::col((Alias::new("i"), Alias::new("indrelid"))),
+        ))
+        .from_as(Alias::new("pg_index"), Alias::new("i"))
+        .join_as(
+            JoinType::InnerJoin,
+            PgClass::Table,
+            Alias::new("c"),
+            Expr::col((Alias::new("c"), PgClass::Oid)).equals((Alias::new("i"), Alias::new("indexrelid"))),
+        )
+        .and_where(Expr::col((Alias::new("c"), PgClass::Relname)).eq(index))
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await
+        .expect("the index must exist")
 }

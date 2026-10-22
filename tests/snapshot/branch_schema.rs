@@ -19,21 +19,39 @@ use crate::support::{
     delete_snapshot_raw,
     published_branch_schema,
     query_snapshot_entities,
+    relation_row_count,
     wait_for_snapshot_terminal,
 };
 use andromeda_postgresql_context_store::{
     migration_set::branch::{BRANCH_LEDGER, BranchMigrationSet, branch_migrations, current_branch_version},
     snapshot::branch_upgrade::{BranchUpgradeReport, SnapshotBranchState, snapshot_branch_state, upgrade_snapshot_branches},
 };
+use andromeda_postgresql_schema::{
+    current::Entities,
+    name_dictionary::AttributeNames,
+    snapshot::{SnapshotPreparation, Snapshots},
+};
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    catalog_function::constraint_definition,
+    command::Command,
+    literal::{int_literal, text_literal},
+    pg_array::all,
+    pg_operator::PgBinaryOperator,
+    pg_type::PostgresType,
+    relation_lock::{LockMode, RelationLock},
+    scalar_subquery::scalar_subquery,
+    schema_migration::schema_migration,
+    statement::Statement,
+    system_catalog::{InformationSchema, InformationSchemaColumns, PgClass, PgNamespace},
+};
 use regex::Regex;
 use reqwest::StatusCode;
+use sea_query::{Alias, ColumnDef, Expr, ExprTrait, Order, Query, SelectStatement, Table, TableName};
 use serde_json::{Value, json};
 use serial_test::serial;
-use sqlx::{
-    PgPool,
-    migrate::{Migration, MigrationType},
-};
-use std::{borrow::Cow, env, time::Duration};
+use sqlx::{PgPool, migrate::Migration};
+use std::{env, time::Duration};
 use tokio::time::timeout;
 
 /// The foreign keys from live branch relations into the tenant-global
@@ -66,33 +84,53 @@ async fn prepared_snapshot(pool: &PgPool, id: &str) -> String {
 /// removed so two schemas holding the same relation compare equal. The live
 /// dictionary references are left out: they are the one intended difference.
 async fn relation_shape(pool: &PgPool, schema: &str, table: &str) -> Vec<String> {
-    let columns: Vec<(String, String, String, Option<String>, String, String)> = sqlx::query_as(
-        "SELECT column_name::text, udt_name::text, is_nullable::text, column_default::text, is_identity::text, is_generated::text \
-         FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position",
-    )
-    .bind(schema)
-    .bind(table)
-    .fetch_all(pool)
-    .await
-    .expect("column catalogue");
-    let indexes: Vec<(String, String)> =
-        sqlx::query_as("SELECT indexname::text, indexdef FROM pg_indexes WHERE schemaname = $1 AND tablename = $2 ORDER BY indexname")
-            .bind(schema)
-            .bind(table)
-            .fetch_all(pool)
-            .await
-            .expect("index catalogue");
-    let constraints: Vec<(String, String)> = sqlx::query_as(
-        "SELECT c.conname::text, pg_get_constraintdef(c.oid) FROM pg_constraint AS c \
-         JOIN pg_class AS r ON r.oid = c.conrelid JOIN pg_namespace AS n ON n.oid = r.relnamespace \
-         WHERE n.nspname = $1 AND r.relname = $2 AND c.conname <> ALL($3) ORDER BY c.conname",
-    )
-    .bind(schema)
-    .bind(table)
-    .bind(LIVE_ONLY_DICTIONARY_REFERENCES)
-    .fetch_all(pool)
-    .await
-    .expect("constraint catalogue");
+    let columns: Vec<(String, String, String, Option<String>, String, String)> = Query::select()
+        .exprs(
+            ["column_name", "udt_name", "is_nullable", "column_default", "is_identity", "is_generated"]
+                .map(|column| cast(Expr::col(Alias::new(column)), PostgresType::Text)),
+        )
+        .from((InformationSchema, InformationSchemaColumns::Table))
+        .and_where(Expr::col(InformationSchemaColumns::TableSchema).eq(schema))
+        .and_where(Expr::col(InformationSchemaColumns::TableName).eq(table))
+        .order_by(InformationSchemaColumns::OrdinalPosition, Order::Asc)
+        .to_query_as()
+        .fetch_all(pool)
+        .await
+        .expect("column catalogue");
+    let index_name = || cast(Expr::col(Alias::new("indexname")), PostgresType::Text);
+    let indexes: Vec<(String, String)> = Query::select()
+        .expr(index_name())
+        .column(Alias::new("indexdef"))
+        .from(Alias::new("pg_indexes"))
+        .and_where(Expr::col(Alias::new("schemaname")).eq(schema))
+        .and_where(Expr::col(Alias::new("tablename")).eq(table))
+        .order_by_expr(index_name(), Order::Asc)
+        .to_query_as()
+        .fetch_all(pool)
+        .await
+        .expect("index catalogue");
+    let constraints: Vec<(String, String)> = Query::select()
+        .expr(cast(Expr::col((Alias::new("pg_constraint"), Alias::new("conname"))), PostgresType::Text))
+        .expr(constraint_definition(Expr::col((Alias::new("pg_constraint"), Alias::new("oid")))))
+        .from(Alias::new("pg_constraint"))
+        .inner_join(
+            PgClass::Table,
+            Expr::col((PgClass::Table, PgClass::Oid)).equals((Alias::new("pg_constraint"), Alias::new("conrelid"))),
+        )
+        .inner_join(
+            PgNamespace::Table,
+            Expr::col((PgNamespace::Table, PgNamespace::Oid)).equals((PgClass::Table, PgClass::Relnamespace)),
+        )
+        .and_where(Expr::col((PgNamespace::Table, PgNamespace::Nspname)).eq(schema))
+        .and_where(Expr::col((PgClass::Table, PgClass::Relname)).eq(table))
+        .and_where(
+            Expr::col((Alias::new("pg_constraint"), Alias::new("conname"))).ne(all(Expr::val(LIVE_ONLY_DICTIONARY_REFERENCES.map(str::to_owned).to_vec()))),
+        )
+        .order_by((Alias::new("pg_constraint"), Alias::new("conname")), Order::Asc)
+        .to_query_as()
+        .fetch_all(pool)
+        .await
+        .expect("constraint catalogue");
     let unqualified = |text: String| text.replace(&format!("{schema}."), "").replace("public.", "");
     columns
         .into_iter()
@@ -110,9 +148,14 @@ async fn snapshot_branch_schema_matches_the_live_branch_name_for_name() {
     let pool = snapshot_database().await;
     let schema = prepared_snapshot(&pool, "urn:ngsi-ld:Snapshot:branch-shape").await;
 
-    let tables: Vec<String> = sqlx::query_scalar("SELECT tablename::text FROM pg_tables WHERE schemaname = $1 AND tablename <> $2 ORDER BY tablename")
-        .bind(&schema)
-        .bind(BRANCH_LEDGER)
+    let table_name = || cast(Expr::col(Alias::new("tablename")), PostgresType::Text);
+    let tables: Vec<String> = Query::select()
+        .expr(table_name())
+        .from(Alias::new("pg_tables"))
+        .and_where(Expr::col(Alias::new("schemaname")).eq(schema.as_str()))
+        .and_where(Expr::col(Alias::new("tablename")).ne(BRANCH_LEDGER))
+        .order_by_expr(table_name(), Order::Asc)
+        .to_query_scalar()
         .fetch_all(&pool)
         .await
         .expect("branch relations");
@@ -131,10 +174,7 @@ async fn snapshot_branch_schema_matches_the_live_branch_name_for_name() {
         );
     }
 
-    let recorded: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {schema}.{BRANCH_LEDGER}")))
-        .fetch_one(&pool)
-        .await
-        .expect("branch ledger");
+    let recorded = relation_row_count(&pool, TableName::from((Alias::new(schema.as_str()), Alias::new(BRANCH_LEDGER)))).await;
     pretty_assertions::assert_eq!(recorded, i64::try_from(branch_migrations().len()).expect("count fits"));
     pretty_assertions::assert_eq!(
         delete_snapshot_raw(&client(), "urn:ngsi-ld:Snapshot:branch-shape").await.0,
@@ -145,15 +185,31 @@ async fn snapshot_branch_schema_matches_the_live_branch_name_for_name() {
 /// The `relation.constraint -> referenced relation` of every foreign key a
 /// relation in `schema` declares, the referenced relation schema-qualified.
 async fn foreign_keys(pool: &PgPool, schema: &str) -> Vec<String> {
-    sqlx::query_scalar(
-        "SELECT r.relname::text || '.' || c.conname::text || ' -> ' || c.confrelid::regclass::text FROM pg_constraint AS c \
-         JOIN pg_class AS r ON r.oid = c.conrelid JOIN pg_namespace AS n ON n.oid = r.relnamespace \
-         WHERE n.nspname = $1 AND c.contype = 'f' ORDER BY 1",
-    )
-    .bind(schema)
-    .fetch_all(pool)
-    .await
-    .expect("foreign key catalogue")
+    let constraint = |column: &str| Expr::col((Alias::new("pg_constraint"), Alias::new(column)));
+    Query::select()
+        .expr(
+            cast(Expr::col((PgClass::Table, PgClass::Relname)), PostgresType::Text)
+                .concat_text(text_literal("."))
+                .concat_text(cast(constraint("conname"), PostgresType::Text))
+                .concat_text(text_literal(" -> "))
+                .concat_text(cast(cast(constraint("confrelid"), PostgresType::Regclass), PostgresType::Text)),
+        )
+        .from(Alias::new("pg_constraint"))
+        .inner_join(
+            PgClass::Table,
+            Expr::col((PgClass::Table, PgClass::Oid)).equals((Alias::new("pg_constraint"), Alias::new("conrelid"))),
+        )
+        .inner_join(
+            PgNamespace::Table,
+            Expr::col((PgNamespace::Table, PgNamespace::Oid)).equals((PgClass::Table, PgClass::Relnamespace)),
+        )
+        .and_where(Expr::col((PgNamespace::Table, PgNamespace::Nspname)).eq(schema))
+        .and_where(constraint("contype").eq(text_literal("f")))
+        .order_by_expr(int_literal(1), Order::Asc)
+        .to_query_scalar()
+        .fetch_all(pool)
+        .await
+        .expect("foreign key catalogue")
 }
 
 /// Clause 5.16.1.4 prepares a Snapshot in the background of the live context,
@@ -205,7 +261,8 @@ async fn snapshot_lifecycle_completes_while_the_dictionaries_are_row_exclusive_l
     let pool = snapshot_database().await;
     let id = "urn:ngsi-ld:Snapshot:dictionaries-held";
     let mut holder = pool.begin().await.expect("lock holder transaction");
-    sqlx::query("LOCK TABLE attribute_names IN ROW EXCLUSIVE MODE")
+    RelationLock::waiting(vec![TableName::from(AttributeNames::Table)], LockMode::RowExclusive)
+        .to_query()
         .execute(&mut *holder)
         .await
         .expect("hold the dictionary");
@@ -239,6 +296,18 @@ async fn snapshot_lifecycle_completes_while_the_dictionaries_are_row_exclusive_l
     holder.rollback().await.expect("release the dictionary");
 }
 
+/// The preparation row of the Snapshot `snapshot_id`, before any column is selected.
+fn preparation_of_snapshot(snapshot_id: &str) -> SelectStatement {
+    Query::select()
+        .from(SnapshotPreparation::Table)
+        .inner_join(
+            Snapshots::Table,
+            Expr::col((Snapshots::Table, Snapshots::SnapshotKey)).equals((SnapshotPreparation::Table, SnapshotPreparation::SnapshotKey)),
+        )
+        .and_where(Expr::col((Snapshots::Table, Snapshots::Id)).eq(snapshot_id))
+        .to_owned()
+}
+
 /// The relations `migration` creates, in the order it creates them.
 fn created_relations(migration: &Migration) -> Vec<String> {
     Regex::new(r"(?i)\bCREATE\s+(?:UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)")
@@ -251,13 +320,11 @@ fn created_relations(migration: &Migration) -> Vec<String> {
 
 /// A branch migration a later release appends: one new column on a branch relation.
 fn appended_migration(version: i64) -> Migration {
-    Migration::new(
-        version,
-        Cow::Borrowed("appended branch column"),
-        MigrationType::Simple,
-        sqlx::SqlStr::from_static("ALTER TABLE entities ADD COLUMN appended_branch_probe INTEGER;"),
-        false,
-    )
+    let alter = Table::alter()
+        .table(Entities::Table)
+        .add_column(ColumnDef::new(Alias::new("appended_branch_probe")).integer())
+        .to_owned();
+    schema_migration(version, "appended branch column", &alter)
 }
 
 #[tokio::test]
@@ -277,24 +344,40 @@ async fn snapshot_branch_upgrade_applies_an_appended_branch_migration_to_every_s
     pretty_assertions::assert_eq!(report, BranchUpgradeReport { upgraded: 2, quarantined: 0 });
 
     for schema in [&first, &second] {
-        let column: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = $1 AND table_name = 'entities' AND column_name = 'appended_branch_probe')",
-        )
-        .bind(schema)
-        .fetch_one(&pool)
-        .await
-        .expect("column catalogue");
+        let column: bool = Query::select()
+            .expr(Expr::exists(
+                Query::select()
+                    .expr(int_literal(1))
+                    .from((InformationSchema, InformationSchemaColumns::Table))
+                    .and_where(Expr::col(InformationSchemaColumns::TableSchema).eq(schema.as_str()))
+                    .and_where(Expr::col(InformationSchemaColumns::TableName).eq("entities"))
+                    .and_where(Expr::col(InformationSchemaColumns::ColumnName).eq("appended_branch_probe"))
+                    .to_owned(),
+            ))
+            .to_query_scalar()
+            .fetch_one(&pool)
+            .await
+            .expect("column catalogue");
         assert!(column, "{schema} carries the appended column");
-        let ledgered: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT EXISTS (SELECT 1 FROM {schema}.{BRANCH_LEDGER} WHERE version = $1)"
-        )))
-        .bind(appended)
-        .fetch_one(&pool)
-        .await
-        .expect("branch ledger");
+        let ledgered: bool = Query::select()
+            .expr(Expr::exists(
+                Query::select()
+                    .expr(int_literal(1))
+                    .from(TableName::from((Alias::new(schema.as_str()), Alias::new(BRANCH_LEDGER))))
+                    .and_where(Expr::col(Alias::new("version")).eq(appended))
+                    .to_owned(),
+            ))
+            .to_query_scalar()
+            .fetch_one(&pool)
+            .await
+            .expect("branch ledger");
         assert!(ledgered, "{schema} records the appended migration in its own ledger");
     }
-    let versions: Vec<i32> = sqlx::query_scalar("SELECT branch_schema_version FROM snapshot_preparation ORDER BY snapshot_key")
+    let versions: Vec<i32> = Query::select()
+        .column(SnapshotPreparation::BranchSchemaVersion)
+        .from(SnapshotPreparation::Table)
+        .order_by(SnapshotPreparation::SnapshotKey, Order::Asc)
+        .to_query_scalar()
         .fetch_all(&pool)
         .await
         .expect("branch versions");
@@ -325,14 +408,26 @@ async fn snapshot_branch_upgrade_failure_quarantines_only_that_snapshot_until_a_
         last.version
     );
     let current = current_branch_version().expect("branch version").get();
-    sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {broken}.{BRANCH_LEDGER} WHERE version = $1")))
-        .bind(last.version)
+    Query::delete()
+        .from_table(TableName::from((Alias::new(broken.as_str()), Alias::new(BRANCH_LEDGER))))
+        .and_where(Expr::col(Alias::new("version")).eq(last.version))
+        .to_query()
         .execute(&pool)
         .await
         .expect("forget the last branch migration");
-    sqlx::query("UPDATE snapshot_preparation SET branch_schema_version = $2 WHERE snapshot_key = (SELECT snapshot_key FROM snapshots WHERE id = $1)")
-        .bind(broken_id)
-        .bind(current - 1)
+    Query::update()
+        .table(SnapshotPreparation::Table)
+        .value(SnapshotPreparation::BranchSchemaVersion, current - 1)
+        .and_where(
+            Expr::col(SnapshotPreparation::SnapshotKey).eq(scalar_subquery(
+                Query::select()
+                    .column(Snapshots::SnapshotKey)
+                    .from(Snapshots::Table)
+                    .and_where(Expr::col(Snapshots::Id).eq(broken_id))
+                    .to_owned(),
+            )),
+        )
+        .to_query()
         .execute(&pool)
         .await
         .expect("record the older branch version");
@@ -340,13 +435,12 @@ async fn snapshot_branch_upgrade_failure_quarantines_only_that_snapshot_until_a_
 
     let report = upgrade_snapshot_branches(&pool, &BranchMigrationSet::embedded()).await.expect("upgrade run");
     pretty_assertions::assert_eq!(report, BranchUpgradeReport { upgraded: 0, quarantined: 1 });
-    let recorded: Option<String> = sqlx::query_scalar(
-        "SELECT p.branch_upgrade_error FROM snapshot_preparation AS p JOIN snapshots AS s ON s.snapshot_key = p.snapshot_key WHERE s.id = $1",
-    )
-    .bind(broken_id)
-    .fetch_one(&pool)
-    .await
-    .expect("upgrade error");
+    let recorded: Option<String> = preparation_of_snapshot(broken_id)
+        .column((SnapshotPreparation::Table, SnapshotPreparation::BranchUpgradeError))
+        .to_query_scalar()
+        .fetch_one(&pool)
+        .await
+        .expect("upgrade error");
     assert!(recorded.is_some_and(|error| !error.is_empty()), "the failed upgrade records why");
 
     let (status, _, problem) = query_snapshot_entities(&client(), broken_id, "type=Vehicle").await;
@@ -360,25 +454,21 @@ async fn snapshot_branch_upgrade_failure_quarantines_only_that_snapshot_until_a_
     // Once the cause is removed, a re-run upgrades the Snapshot and lifts the
     // quarantine: the conflicting relations are the ones the last branch
     // migration creates.
-    let conflicting = created_relations(last)
-        .iter()
-        .map(|relation| format!("{broken}.{relation}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE {conflicting} CASCADE")))
-        .execute(&pool)
-        .await
-        .expect("remove the conflicting relations");
+    let mut conflicting = Table::drop();
+    for relation in created_relations(last) {
+        conflicting.table(TableName::from((Alias::new(broken.as_str()), Alias::new(relation))));
+    }
+    conflicting.cascade().to_query().execute(&pool).await.expect("remove the conflicting relations");
     let report = upgrade_snapshot_branches(&pool, &BranchMigrationSet::embedded()).await.expect("upgrade rerun");
     pretty_assertions::assert_eq!(report, BranchUpgradeReport { upgraded: 1, quarantined: 0 });
     pretty_assertions::assert_eq!(snapshot_branch_state(&pool).await.expect("probe"), SnapshotBranchState::Current);
-    let (version, error): (i32, Option<String>) = sqlx::query_as(
-        "SELECT p.branch_schema_version, p.branch_upgrade_error FROM snapshot_preparation AS p JOIN snapshots AS s ON s.snapshot_key = p.snapshot_key WHERE s.id = $1",
-    )
-    .bind(broken_id)
-    .fetch_one(&pool)
-    .await
-    .expect("upgrade outcome");
+    let (version, error): (i32, Option<String>) = preparation_of_snapshot(broken_id)
+        .column((SnapshotPreparation::Table, SnapshotPreparation::BranchSchemaVersion))
+        .column((SnapshotPreparation::Table, SnapshotPreparation::BranchUpgradeError))
+        .to_query_as()
+        .fetch_one(&pool)
+        .await
+        .expect("upgrade outcome");
     pretty_assertions::assert_eq!((version, error), (current, None));
     pretty_assertions::assert_eq!(query_snapshot_entities(&client(), broken_id, "type=Vehicle").await.0, StatusCode::OK);
 

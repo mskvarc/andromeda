@@ -22,12 +22,40 @@
 
 use crate::SUITE;
 use andromeda_postgresql_codes::{subscription_kind::SubscriptionKindCode, subscription_status::SubscriptionStatusCode};
+use andromeda_postgresql_schema::{
+    current::{CurrentAttributes, Entities, EntitySearch, EntityTypeMembers},
+    name_dictionary::{AttributeNames, EntityTypeNames},
+    queue::PendingSideEffects,
+    subscriptions::{SubscriptionDeliveryState, Subscriptions},
+};
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    catalog_function::{random_uuid, transaction_tuples_hot_updated, transaction_tuples_updated},
+    clock::now,
+    interval::{make_interval_secs, microseconds},
+    introspection::current_setting,
+    literal::text_literal,
+    maintenance::relation_size,
+    pg_array::array_literal,
+    pg_operator::PgBinaryOperator,
+    pg_type::PostgresType,
+    setting::Setting,
+    statement::Statement,
+    system_catalog::PgClass,
+};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::{environment::TestEnvironment, serialized_environment::SerializedEnvironment};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Alias, CaseStatement, CommonTableExpression, Expr, ExprTrait, IntoIden, JoinType, OnConflict, Query, SimpleExpr, UpdateStatement, WithClause};
 use serde_json::json;
 use sqlx::{PgPool, Row};
+
+/// The common table expression holding the dictionary entry of the churn type.
+const TYPE_NAME: &str = "type_name";
+
+/// The common table expression holding the churn entity's identity row.
+const INSERTED: &str = "ins";
 
 /// One relation the redesign tunes, and the storage parameters it declares.
 struct TunedRelation {
@@ -95,17 +123,31 @@ const ATTRIBUTE_CHURN_PREFIX: &str = "urn:ngsi-ld:test:tenant-schema:attribute-c
 
 /// The pages `relation` occupies right now.
 async fn relation_pages(pool: &PgPool, relation: &str) -> i64 {
-    sqlx::query_scalar("SELECT (pg_relation_size($1::regclass) / current_setting('block_size')::bigint)")
-        .bind(relation)
+    Query::select()
+        .expr(pages_of(relation_oid(relation)))
+        .to_query_scalar()
         .fetch_one(pool)
         .await
         .expect("the relation must report its size")
 }
 
+/// `pg_relation_size(relation) / block_size`: the pages the relation occupies.
+fn pages_of(relation: impl Into<SimpleExpr>) -> SimpleExpr {
+    Expr::expr(relation_size(relation.into())).div(cast(current_setting(Setting::BlockSize), PostgresType::Bigint))
+}
+
+/// The relation named `relation`, as its catalogue row's `oid`.
+fn relation_oid(relation: &str) -> SimpleExpr {
+    cast(Expr::val(relation), PostgresType::Regclass)
+}
+
 /// The storage parameters one relation declares, as `name=value` strings.
 async fn storage_parameters(pool: &PgPool, relation: &str) -> Vec<String> {
-    sqlx::query_scalar::<_, Option<Vec<String>>>("SELECT reloptions FROM pg_class WHERE oid = $1::regclass")
-        .bind(relation)
+    Query::select()
+        .column(Alias::new("reloptions"))
+        .from(PgClass::Table)
+        .and_where(Expr::col(PgClass::Oid).eq(relation_oid(relation)))
+        .to_query_scalar::<Option<Vec<String>>>()
         .fetch_one(pool)
         .await
         .expect("the relation must exist and report its storage parameters")
@@ -130,38 +172,42 @@ struct ChurnOutcome {
 /// them straight after a run measures the flush rather than the run; the
 /// transaction-local counters are exact the moment the run finishes, which is
 /// what makes this a measurement instead of a race.
-async fn churn(pool: &PgPool, relation: &str, statement: &str, entity_key: i64) -> ChurnOutcome {
+async fn churn(pool: &PgPool, relation: &str, statement: impl Fn(i64) -> UpdateStatement) -> ChurnOutcome {
     let mut transaction = pool.begin().await.expect("the churn transaction must open");
-    let before: (i64, i64) = sqlx::query_as(
-        "SELECT pg_stat_get_xact_tuples_updated(c.oid), pg_stat_get_xact_tuples_hot_updated(c.oid) FROM pg_class AS c WHERE c.oid = $1::regclass",
-    )
-    .bind(relation)
-    .fetch_one(&mut *transaction)
-    .await
-    .expect("the transaction-local tuple counters must be readable before churn");
+    let before: (i64, i64) = Query::select()
+        .expr(transaction_tuples_updated(Expr::col((PgClass::Table, PgClass::Oid))))
+        .expr(transaction_tuples_hot_updated(Expr::col((PgClass::Table, PgClass::Oid))))
+        .from(PgClass::Table)
+        .and_where(Expr::col((PgClass::Table, PgClass::Oid)).eq(relation_oid(relation)))
+        .to_query_as()
+        .fetch_one(&mut *transaction)
+        .await
+        .expect("the transaction-local tuple counters must be readable before churn");
     for round in 1..=CHURN_UPDATES {
-        sqlx::query(sqlx::AssertSqlSafe(statement))
-            .bind(entity_key)
-            .bind(round)
+        statement(round)
+            .to_query()
             .execute(&mut *transaction)
             .await
             .expect("the churn update must apply");
     }
-    let outcome = sqlx::query(
-        "SELECT pg_stat_get_xact_tuples_updated(c.oid) AS updated, \
-                pg_stat_get_xact_tuples_hot_updated(c.oid) AS heap_only, \
-                (pg_relation_size(c.oid) / current_setting('block_size')::bigint) AS pages \
-         FROM pg_class AS c WHERE c.oid = $1::regclass",
-    )
-    .bind(relation)
-    .fetch_one(&mut *transaction)
-    .await
-    .map(|row| ChurnOutcome {
-        updated: row.try_get::<i64, _>("updated").expect("the updated column decodes") - before.0,
-        heap_only: row.try_get::<i64, _>("heap_only").expect("the heap_only column decodes") - before.1,
-        pages: row.try_get::<i64, _>("pages").expect("the pages column decodes"),
-    })
-    .expect("the transaction-local tuple counters must be readable");
+    let outcome = Query::select()
+        .expr_as(transaction_tuples_updated(Expr::col((PgClass::Table, PgClass::Oid))), Alias::new("updated"))
+        .expr_as(
+            transaction_tuples_hot_updated(Expr::col((PgClass::Table, PgClass::Oid))),
+            Alias::new("heap_only"),
+        )
+        .expr_as(pages_of(Expr::col((PgClass::Table, PgClass::Oid))), Alias::new("pages"))
+        .from(PgClass::Table)
+        .and_where(Expr::col((PgClass::Table, PgClass::Oid)).eq(relation_oid(relation)))
+        .to_query()
+        .fetch_one(&mut *transaction)
+        .await
+        .map(|row| ChurnOutcome {
+            updated: row.try_get::<i64, _>("updated").expect("the updated column decodes") - before.0,
+            heap_only: row.try_get::<i64, _>("heap_only").expect("the heap_only column decodes") - before.1,
+            pages: row.try_get::<i64, _>("pages").expect("the pages column decodes"),
+        })
+        .expect("the transaction-local tuple counters must be readable");
     transaction.commit().await.expect("the churn transaction must commit");
     outcome
 }
@@ -219,36 +265,60 @@ async fn sustained_attribute_row_churn_stays_heap_only_and_leaves_bounded_dead_t
     let pool = scope.database_pool();
     let prefix = ATTRIBUTE_CHURN_PREFIX;
 
-    let attribute_name_key: i32 = sqlx::query_scalar(
-        "INSERT INTO attribute_names (name) VALUES ('https://example.test/tenant-schema/churn') \
-         ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING attribute_name_key",
-    )
-    .fetch_one(pool)
-    .await
-    .expect("attribute dictionary insert must succeed");
+    let attribute_name_key: i32 = Query::insert()
+        .into_table(AttributeNames::Table)
+        .columns([AttributeNames::Name])
+        .values([Expr::val("https://example.test/tenant-schema/churn")])
+        .expect("one value per column")
+        .on_conflict(OnConflict::column(AttributeNames::Name).update_column(AttributeNames::Name).to_owned())
+        .returning_col(AttributeNames::AttributeNameKey)
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await
+        .expect("attribute dictionary insert must succeed");
 
     let entity_key = churn_entity(pool, prefix).await;
 
-    sqlx::query(
-        "INSERT INTO current_attributes (entity_key, attribute_name_key, ordinal, attribute_kind, value_kind, value_number, created_at, modified_at) \
-         VALUES ($1, $2, 0, 1, 1, 0::numeric, now(), now())",
-    )
-    .bind(entity_key)
-    .bind(attribute_name_key)
-    .execute(pool)
-    .await
-    .expect("the churn attribute row must be writable");
+    Query::insert()
+        .into_table(CurrentAttributes::Table)
+        .columns([
+            CurrentAttributes::EntityKey,
+            CurrentAttributes::AttributeNameKey,
+            CurrentAttributes::Ordinal,
+            CurrentAttributes::AttributeKind,
+            CurrentAttributes::ValueKind,
+            CurrentAttributes::ValueNumber,
+            CurrentAttributes::CreatedAt,
+            CurrentAttributes::ModifiedAt,
+        ])
+        .values([
+            Expr::val(entity_key),
+            Expr::val(attribute_name_key),
+            Expr::val(0_i32),
+            Expr::val(1_i16),
+            Expr::val(1_i16),
+            cast(Expr::val(0), PostgresType::Numeric),
+            now(),
+            now(),
+        ])
+        .expect("one value per column")
+        .to_query()
+        .execute(pool)
+        .await
+        .expect("the churn attribute row must be writable");
 
-    // `$2` is bound but never changes the row's value: it only keeps the two
-    // runs on one churn driver. `unit_code_id` is set to NULL, which it already
-    // is, so the row version differs from its predecessor in nothing an index
-    // carries.
-    let restatement = churn(
-        pool,
-        "current_attributes",
-        "UPDATE current_attributes SET unit_code_id = NULL WHERE entity_key = $1 AND $2 > 0",
-        entity_key,
-    )
+    // The round is bound but never changes the row's value: it only keeps the
+    // two runs on one churn driver. `unit_code_id` is set to NULL, which it
+    // already is, so the row version differs from its predecessor in nothing
+    // an index carries.
+    let restatement = churn(pool, "current_attributes", |round| {
+        Query::update()
+            .table(CurrentAttributes::Table)
+            .value(CurrentAttributes::UnitCodeId, Option::<i16>::None)
+            .and_where(Expr::col(CurrentAttributes::EntityKey).eq(entity_key))
+            .and_where(Expr::val(round).gt(0))
+            .to_owned()
+    })
     .await;
 
     assert_eq!(restatement.updated, CHURN_UPDATES, "every value-preserving update must be counted");
@@ -263,12 +333,13 @@ async fn sustained_attribute_row_churn_stays_heap_only_and_leaves_bounded_dead_t
         restatement.updated
     );
 
-    let revaluation = churn(
-        pool,
-        "current_attributes",
-        "UPDATE current_attributes SET value_number = $2::numeric WHERE entity_key = $1",
-        entity_key,
-    )
+    let revaluation = churn(pool, "current_attributes", |round| {
+        Query::update()
+            .table(CurrentAttributes::Table)
+            .value(CurrentAttributes::ValueNumber, cast(Expr::val(round), PostgresType::Numeric))
+            .and_where(Expr::col(CurrentAttributes::EntityKey).eq(entity_key))
+            .to_owned()
+    })
     .await;
 
     assert_eq!(revaluation.updated, CHURN_UPDATES, "every value-changing update must be counted");
@@ -291,8 +362,10 @@ async fn sustained_attribute_row_churn_stays_heap_only_and_leaves_bounded_dead_t
         restatement.pages
     );
 
-    sqlx::query("DELETE FROM current_attributes WHERE entity_key = $1")
-        .bind(entity_key)
+    Query::delete()
+        .from_table(CurrentAttributes::Table)
+        .and_where(Expr::col(CurrentAttributes::EntityKey).eq(entity_key))
+        .to_query()
         .execute(pool)
         .await
         .expect("the churn attribute row must be removable");
@@ -303,21 +376,68 @@ async fn sustained_attribute_row_churn_stays_heap_only_and_leaves_bounded_dead_t
 /// Insert one bare entity, with its search row and its type membership, under
 /// `prefix` and return its surrogate key.
 async fn churn_entity(pool: &PgPool, prefix: &str) -> i64 {
-    sqlx::query_scalar(
-        "WITH type_name AS ( \
-             INSERT INTO entity_type_names (name) VALUES ('https://example.test/tenant-schema/Churn') \
-             ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING entity_type_name_key), \
-         ins AS (INSERT INTO entities (id) VALUES ($1::text || ':churn') RETURNING entity_key, id), \
-         mbr AS (INSERT INTO entity_type_members (entity_key, entity_type_name_key, id) \
-                 SELECT ins.entity_key, type_name.entity_type_name_key, ins.id FROM ins, type_name) \
-         INSERT INTO entity_search (entity_key, entity_type_name_keys, attribute_name_keys, attribute_instance_name_keys, attribute_instance_kinds) \
-         SELECT ins.entity_key, ARRAY[type_name.entity_type_name_key], ARRAY[]::integer[], ARRAY[]::integer[], ARRAY[]::smallint[] FROM ins, type_name \
-         RETURNING entity_key",
-    )
-    .bind(prefix)
-    .fetch_one(pool)
-    .await
-    .expect("the churn entity must be writable")
+    let type_name = Query::insert()
+        .into_table(EntityTypeNames::Table)
+        .columns([EntityTypeNames::Name])
+        .values([Expr::val("https://example.test/tenant-schema/Churn")])
+        .expect("one value per column")
+        .on_conflict(OnConflict::column(EntityTypeNames::Name).update_column(EntityTypeNames::Name).to_owned())
+        .returning_col(EntityTypeNames::EntityTypeNameKey)
+        .to_owned();
+    let inserted = Query::insert()
+        .into_table(Entities::Table)
+        .columns([Entities::Id])
+        .values([cast(Expr::val(prefix), PostgresType::Text).concat_text(text_literal(":churn"))])
+        .expect("one value per column")
+        .returning(Query::returning().columns([Entities::EntityKey, Entities::Id]))
+        .to_owned();
+    let membership = Query::insert()
+        .into_table(EntityTypeMembers::Table)
+        .columns([EntityTypeMembers::EntityKey, EntityTypeMembers::EntityTypeNameKey, EntityTypeMembers::Id])
+        .select_from(
+            Query::select()
+                .column((Alias::new(INSERTED), Entities::EntityKey))
+                .column((Alias::new(TYPE_NAME), EntityTypeNames::EntityTypeNameKey))
+                .column((Alias::new(INSERTED), Entities::Id))
+                .from(Alias::new(INSERTED))
+                .from(Alias::new(TYPE_NAME))
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .to_owned();
+    let search = Query::insert()
+        .into_table(EntitySearch::Table)
+        .columns([
+            EntitySearch::EntityKey,
+            EntitySearch::EntityTypeNameKeys,
+            EntitySearch::AttributeNameKeys,
+            EntitySearch::AttributeInstanceNameKeys,
+            EntitySearch::AttributeInstanceKinds,
+        ])
+        .select_from(
+            Query::select()
+                .column((Alias::new(INSERTED), Entities::EntityKey))
+                .expr(array_literal([Expr::col((Alias::new(TYPE_NAME), EntityTypeNames::EntityTypeNameKey))]))
+                .expr(Expr::val(Vec::<i32>::new()))
+                .expr(Expr::val(Vec::<i32>::new()))
+                .expr(Expr::val(Vec::<i16>::new()))
+                .from(Alias::new(INSERTED))
+                .from(Alias::new(TYPE_NAME))
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .returning_col(EntitySearch::EntityKey)
+        .to_owned();
+    WithClause::new()
+        .cte(CommonTableExpression::new().table_name(Alias::new(TYPE_NAME)).query(type_name).to_owned())
+        .cte(CommonTableExpression::new().table_name(Alias::new(INSERTED)).query(inserted).to_owned())
+        .cte(CommonTableExpression::new().table_name(Alias::new("mbr")).query(membership).to_owned())
+        .to_owned()
+        .query(search)
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await
+        .expect("the churn entity must be writable")
 }
 
 /// A sustained `modified_at` stamp over the identity row.
@@ -334,12 +454,16 @@ async fn sustained_identity_stamping_stays_heap_only() {
     let entity_key = churn_entity(pool, scope.id_prefix()).await;
     let pages_before = relation_pages(pool, "entities").await;
 
-    let rewrite = churn(
-        pool,
-        "entities",
-        "UPDATE entities SET modified_at = now() + $2::bigint * interval '1 microsecond' WHERE entity_key = $1",
-        entity_key,
-    )
+    let rewrite = churn(pool, "entities", |round| {
+        Query::update()
+            .table(Entities::Table)
+            .value(
+                Entities::ModifiedAt,
+                Expr::expr(now()).add(microseconds(cast(Expr::val(round), PostgresType::Bigint))),
+            )
+            .and_where(Expr::col(Entities::EntityKey).eq(entity_key))
+            .to_owned()
+    })
     .await;
 
     assert_eq!(rewrite.updated, CHURN_UPDATES, "every stamp must be counted");
@@ -370,13 +494,20 @@ async fn sustained_identity_stamping_stays_heap_only() {
 /// entity. Reading it before and after a write is a precise, race-free test of
 /// whether that write touched the row, unlike the table-wide cumulative
 /// `n_tup_upd`, which lags behind the write and counts every entity at once.
-async fn row_writer(pool: &PgPool, relation: &str, entity_id: &str) -> i64 {
-    // `relation` is one of this module's own relation-name constants, never
-    // caller input, so interpolating it is safe; `AssertSqlSafe` is used the
-    // same way by the churn statements above.
-    let statement = format!("SELECT r.xmin::text::bigint FROM {relation} AS r JOIN entities AS e ON e.entity_key = r.entity_key WHERE e.id = $1");
-    sqlx::query_scalar(sqlx::AssertSqlSafe(statement))
-        .bind(entity_id)
+async fn row_writer(pool: &PgPool, relation: impl IntoIden + Copy, entity_id: &str) -> i64 {
+    // Aliased, since `relation` may be `entities` itself.
+    let (row, identity) = (|| Alias::new("r"), || Alias::new("e"));
+    Query::select()
+        .expr(cast(cast(Expr::col((row(), Alias::new("xmin"))), PostgresType::Text), PostgresType::Bigint))
+        .from_as(relation, row())
+        .join_as(
+            JoinType::InnerJoin,
+            Entities::Table,
+            identity(),
+            Expr::col((identity(), Entities::EntityKey)).equals((row(), Entities::EntityKey)),
+        )
+        .and_where(Expr::col((identity(), Entities::Id)).eq(entity_id))
+        .to_query_scalar()
         .fetch_one(pool)
         .await
         .expect("the entity's row must report the transaction that wrote it")
@@ -405,8 +536,8 @@ async fn a_value_only_write_leaves_the_search_row_untouched_while_a_type_change_
         .expect("create request failed");
     assert_eq!(created.status, StatusCode::CREATED);
 
-    let identity_writer = row_writer(pool, "entities", &id).await;
-    let search_writer = row_writer(pool, "entity_search", &id).await;
+    let identity_writer = row_writer(pool, Entities::Table, &id).await;
+    let search_writer = row_writer(pool, EntitySearch::Table, &id).await;
 
     let value_only = client
         .update_entity_attrs(&id, &json!({"temperature": {"type": "Property", "value": 2}, "@context": [CORE_CONTEXT]}))
@@ -414,12 +545,12 @@ async fn a_value_only_write_leaves_the_search_row_untouched_while_a_type_change_
         .expect("attribute update request failed");
     assert_eq!(value_only.status, StatusCode::NO_CONTENT);
     assert_ne!(
-        row_writer(pool, "entities", &id).await,
+        row_writer(pool, Entities::Table, &id).await,
         identity_writer,
         "the value write must stamp the identity row"
     );
     assert_eq!(
-        row_writer(pool, "entity_search", &id).await,
+        row_writer(pool, EntitySearch::Table, &id).await,
         search_writer,
         "a value-only write must leave the search row where it was"
     );
@@ -440,7 +571,7 @@ async fn a_value_only_write_leaves_the_search_row_untouched_while_a_type_change_
         .expect("replace request failed");
     assert_eq!(retyped.status, StatusCode::NO_CONTENT);
     assert_ne!(
-        row_writer(pool, "entity_search", &id).await,
+        row_writer(pool, EntitySearch::Table, &id).await,
         search_writer,
         "a type change must rewrite the search row"
     );
@@ -459,8 +590,12 @@ async fn a_value_only_write_leaves_the_search_row_untouched_while_a_type_change_
 async fn the_delivery_claim_index_is_the_claimable_expression_so_vacuum_cadence_is_its_defence() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
 
-    let claim_index: String = sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = $1")
-        .bind("idx_notification_deliveries_claim")
+    let claim_index: String = Query::select()
+        .column(Alias::new("indexdef"))
+        .from(Alias::new("pg_indexes"))
+        .and_where(Expr::col(Alias::new("schemaname")).eq("public"))
+        .and_where(Expr::col(Alias::new("indexname")).eq("idx_notification_deliveries_claim"))
+        .to_query_scalar()
         .fetch_one(scope.database_pool())
         .await
         .expect("the claim index must exist");
@@ -497,22 +632,52 @@ async fn sustained_side_effect_claims_stay_heap_only() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
     let pool = scope.database_pool();
 
-    sqlx::query(
-        "INSERT INTO pending_side_effects (id, write_id, recorded_at, base_ordinal, events) \
-         VALUES (gen_random_uuid(), gen_random_uuid(), NOW(), 0, \
-         ARRAY[ROW(1, 'urn:ngsi-ld:Vehicle:churn', '{}'::integer[], '{}'::smallint[], '{}'::integer[], '{}'::text[], NOW(), 1, NULL, NULL, NULL, NULL, NULL)::pending_change_event])",
-    )
-    .execute(pool)
-    .await
-    .expect("the churn job must be seeded");
+    let owed_change = Expr::tuple([
+        Expr::val(1),
+        Expr::val("urn:ngsi-ld:Vehicle:churn"),
+        Expr::val(Vec::<i32>::new()),
+        Expr::val(Vec::<i16>::new()),
+        Expr::val(Vec::<i32>::new()),
+        Expr::val(Vec::<String>::new()),
+        now(),
+        Expr::val(1),
+        Expr::null(),
+        Expr::null(),
+        Expr::null(),
+        Expr::null(),
+        Expr::null(),
+    ]);
+    Query::insert()
+        .into_table(PendingSideEffects::Table)
+        .columns([
+            PendingSideEffects::Id,
+            PendingSideEffects::WriteId,
+            PendingSideEffects::RecordedAt,
+            PendingSideEffects::BaseOrdinal,
+            PendingSideEffects::Events,
+        ])
+        .values([
+            random_uuid(),
+            random_uuid(),
+            now(),
+            Expr::val(0),
+            array_literal([cast(owed_change, PostgresType::PendingChangeEvent)]),
+        ])
+        .expect("one value per column")
+        .to_query()
+        .execute(pool)
+        .await
+        .expect("the churn job must be seeded");
 
-    let claims = churn(
-        pool,
-        "pending_side_effects",
-        "UPDATE pending_side_effects SET claimed_at = NOW(), lease_until = NOW() + make_interval(secs => $2), claimed_by = gen_random_uuid() \
-         WHERE base_ordinal = $1::integer",
-        0,
-    )
+    let claims = churn(pool, "pending_side_effects", |round| {
+        Query::update()
+            .table(PendingSideEffects::Table)
+            .value(PendingSideEffects::ClaimedAt, now())
+            .value(PendingSideEffects::LeaseUntil, Expr::expr(now()).add(make_interval_secs(Expr::val(round))))
+            .value(PendingSideEffects::ClaimedBy, random_uuid())
+            .and_where(Expr::col(PendingSideEffects::BaseOrdinal).eq(cast(Expr::val(0), PostgresType::Integer)))
+            .to_owned()
+    })
     .await;
 
     assert_eq!(claims.updated, CHURN_UPDATES, "every claim must be counted");
@@ -523,7 +688,9 @@ async fn sustained_side_effect_claims_stay_heap_only() {
         claims.updated
     );
 
-    sqlx::query("DELETE FROM pending_side_effects")
+    Query::delete()
+        .from_table(PendingSideEffects::Table)
+        .to_query()
         .execute(pool)
         .await
         .expect("the churn job must be removable");
@@ -541,29 +708,46 @@ async fn sustained_delivery_state_churn_stays_heap_only() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
     let pool = scope.database_pool();
 
-    let subscription_key: i64 =
-        sqlx::query_scalar("INSERT INTO subscriptions (id, kind, status, notification) VALUES ($1, $2, $3, '{}'::json) RETURNING subscription_key")
-            .bind(scope.id("urn:ngsi-ld:Subscription:delivery-state-churn"))
-            .bind(SubscriptionKindCode::Entity.code())
-            .bind(SubscriptionStatusCode::Active.code())
-            .fetch_one(pool)
-            .await
-            .expect("the churn subscription must be seeded");
-    sqlx::query("INSERT INTO subscription_delivery_state (subscription_key) VALUES ($1)")
-        .bind(subscription_key)
+    let subscription_key: i64 = Query::insert()
+        .into_table(Subscriptions::Table)
+        .columns([Subscriptions::Id, Subscriptions::Kind, Subscriptions::Status, Subscriptions::Notification])
+        .values([
+            Expr::val(scope.id("urn:ngsi-ld:Subscription:delivery-state-churn")),
+            Expr::val(SubscriptionKindCode::Entity.code()),
+            Expr::val(SubscriptionStatusCode::Active.code()),
+            cast(Expr::val("{}"), PostgresType::Json),
+        ])
+        .expect("one value per column")
+        .returning_col(Subscriptions::SubscriptionKey)
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await
+        .expect("the churn subscription must be seeded");
+    Query::insert()
+        .into_table(SubscriptionDeliveryState::Table)
+        .columns([SubscriptionDeliveryState::SubscriptionKey])
+        .values([Expr::val(subscription_key)])
+        .expect("one value per column")
+        .to_query()
         .execute(pool)
         .await
         .expect("the churn state row must be seeded");
 
-    let claims = churn(
-        pool,
-        "subscription_delivery_state",
-        "UPDATE subscription_delivery_state SET times_sent = times_sent + 1, last_notification = NOW(), \
-         last_success = CASE WHEN $2 % 2 = 0 THEN NOW() ELSE last_success END, \
-         last_failure = CASE WHEN $2 % 2 = 1 THEN NOW() ELSE last_failure END \
-         WHERE subscription_key = $1",
-        subscription_key,
-    )
+    let claims = churn(pool, "subscription_delivery_state", |round| {
+        let on_parity = |parity: i64, column: SubscriptionDeliveryState| {
+            CaseStatement::new()
+                .case(Expr::val(round).modulo(2).eq(parity), now())
+                .finally(Expr::col(column))
+        };
+        Query::update()
+            .table(SubscriptionDeliveryState::Table)
+            .value(SubscriptionDeliveryState::TimesSent, Expr::col(SubscriptionDeliveryState::TimesSent).add(1))
+            .value(SubscriptionDeliveryState::LastNotification, now())
+            .value(SubscriptionDeliveryState::LastSuccess, on_parity(0, SubscriptionDeliveryState::LastSuccess))
+            .value(SubscriptionDeliveryState::LastFailure, on_parity(1, SubscriptionDeliveryState::LastFailure))
+            .and_where(Expr::col(SubscriptionDeliveryState::SubscriptionKey).eq(subscription_key))
+            .to_owned()
+    })
     .await;
 
     assert_eq!(claims.updated, CHURN_UPDATES, "every claim must be counted");

@@ -8,8 +8,8 @@
 use crate::{branch::Branch, error::MaintenanceError, state::RegisteredTenant};
 use andromeda_context_space::snapshot_key::SnapshotKey;
 use andromeda_postgresql_schema::maintenance::PostgresqlMaintenanceTargets;
-use sea_query::{DeleteStatement, Expr, ExprTrait, PostgresQueryBuilder, Query, SimpleExpr};
-use sea_query_sqlx::SqlxBinder;
+use andromeda_postgresql_seaquery::statement::Statement;
+use sea_query::{DeleteStatement, Expr, ExprTrait, Query, SimpleExpr};
 use sqlx::PgConnection;
 use tracing::info;
 
@@ -34,8 +34,8 @@ pub(crate) async fn prune_vanished_branches(
     tenant: &RegisteredTenant,
     published: &[SnapshotKey],
 ) -> Result<(), MaintenanceError> {
-    let (sql, values) = vanished_branch_rows_delete(tenant, published).build_sqlx(PostgresQueryBuilder);
-    let deleted = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let deleted = vanished_branch_rows_delete(tenant, published)
+        .to_query()
         .execute(connection)
         .await?
         .rows_affected();

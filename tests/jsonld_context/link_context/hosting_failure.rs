@@ -20,16 +20,28 @@ use crate::{
     unique_ids::unique_id,
     user_contexts::{DEVICE_IRI, UserContexts, term_definitions},
 };
+use andromeda_postgresql_schema::jsonld::JsonldContexts;
+use andromeda_postgresql_seaquery::{
+    check_constraint::{AddCheckConstraint, ExistingRows},
+    command::Command,
+};
 use reqwest::StatusCode;
+use sea_query::{Alias, Expr, ExprTrait, TableName};
 use serde_json::{Value, json};
 
 /// Make the tenant's store refuse every new `ImplicitlyCreated` row.
 async fn refuse_implicit_contexts(tenant: &PrivateTenant) {
     let database = tenant.database().await;
-    sqlx::query("ALTER TABLE jsonld_contexts ADD CONSTRAINT jsonld_context_suite_refuses_implicit CHECK (kind <> 3) NOT VALID")
-        .execute(&database)
-        .await
-        .expect("the constraint is added");
+    AddCheckConstraint::new(
+        TableName::from(JsonldContexts::Table),
+        Alias::new("jsonld_context_suite_refuses_implicit"),
+        Expr::col(JsonldContexts::Kind).ne(3),
+        ExistingRows::Unchecked,
+    )
+    .to_query()
+    .execute(&database)
+    .await
+    .expect("the constraint is added");
     database.close().await;
 }
 

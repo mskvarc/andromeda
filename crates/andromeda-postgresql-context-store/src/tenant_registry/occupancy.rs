@@ -15,9 +15,9 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_pool::sql_state::SqlState;
 use andromeda_postgresql_schema::{csr::Csr, current::Entities, subscriptions::Subscriptions, temporal::TemporalEntities};
+use andromeda_postgresql_seaquery::{literal::int_literal, statement::Statement};
 use andromeda_tenancy::database_name::TenantDatabaseName;
-use sea_query::{Expr, ExprTrait, PostgresQueryBuilder, Query, SelectStatement, TableRef};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Expr, ExprTrait, Query, SelectStatement, TableRef};
 use sqlx::{Connection, PgConnection};
 
 /// What a tenant's database holds.
@@ -42,10 +42,7 @@ pub(super) async fn occupancy(direct_url: &DatabaseUrl, database: &TenantDatabas
         Err(error) if is_absent(&error) => return Ok(Occupancy::Empty),
         Err(error) => return Err(error.into()),
     };
-    let (sql, values) = occupancy_query().build_sqlx(PostgresQueryBuilder);
-    let read = sqlx::query_scalar_with::<_, bool, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
-        .fetch_one(&mut conn)
-        .await;
+    let read = occupancy_query().to_query_scalar::<bool>().fetch_one(&mut conn).await;
     conn.close().await?;
     match read {
         Ok(true) => Ok(Occupancy::HoldsInformation),
@@ -76,7 +73,7 @@ fn occupancy_query() -> SelectStatement {
 
 /// `EXISTS (SELECT 1 FROM table LIMIT 1)`.
 fn holds_a_row(table: TableRef) -> Expr {
-    Expr::exists(Query::select().expr(Expr::val(1)).from(table).limit(1).to_owned())
+    Expr::exists(Query::select().expr(int_literal(1)).from(table).limit(1).to_owned())
 }
 
 #[cfg(test)]

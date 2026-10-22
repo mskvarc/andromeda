@@ -10,11 +10,10 @@ use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, snapshot::SnapshotStatus};
 use andromeda_postgresql_schema::snapshot::{SnapshotNotificationOutbox, Snapshots};
-use andromeda_postgresql_seaquery::{cast::cast, clock::now, pg_type::PostgresType, queue::claimable_at};
+use andromeda_postgresql_seaquery::{cast::cast, clock::now, pg_type::PostgresType, queue::claimable_at, statement::Statement};
 use andromeda_snapshot::error::SnapshotError;
 use chrono::{DateTime, Utc};
-use sea_query::{Alias, CaseStatement, Expr, ExprTrait, InsertStatement, JoinType, Keyword, LockBehavior, LockType, Order, PostgresQueryBuilder, Query};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Alias, CaseStatement, Expr, ExprTrait, InsertStatement, JoinType, Keyword, LockBehavior, LockType, Order, Query};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use sqlx::{PgPool, Postgres, Row, Transaction, postgres::PgRow};
@@ -99,8 +98,8 @@ impl SnapshotStatusOutbox {
             .and_where(Expr::col(SnapshotNotificationOutbox::Id).in_subquery(candidates))
             .returning_col(SnapshotNotificationOutbox::Id)
             .to_owned();
-        let (sql, values) = claim.build_sqlx(PostgresQueryBuilder);
-        let claimed_ids: Vec<Uuid> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let claimed_ids: Vec<Uuid> = claim
+            .to_query_scalar()
             .fetch_all(&mut *transaction)
             .await
             .map_err(|error| persistence_error::<SnapshotError>(error))?;
@@ -128,8 +127,8 @@ impl SnapshotStatusOutbox {
             .and_where(Expr::col((SnapshotNotificationOutbox::Table, SnapshotNotificationOutbox::Id)).is_in(claimed_ids))
             .order_by((SnapshotNotificationOutbox::Table, SnapshotNotificationOutbox::Id), Order::Asc)
             .to_owned();
-        let (sql, values) = projection.build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let rows = projection
+            .to_query()
             .fetch_all(&mut *transaction)
             .await
             .map_err(|error| persistence_error::<SnapshotError>(error))?;
@@ -155,7 +154,12 @@ impl SnapshotStatusOutbox {
             .and_where(Expr::col(SnapshotNotificationOutbox::DeliveredAt).is_null())
             .and_where(Expr::col(SnapshotNotificationOutbox::ExhaustedAt).is_null())
             .to_owned();
-        Ok(execute(&self.pool, statement).await? == 1)
+        let result = statement
+            .to_query()
+            .execute(&self.pool)
+            .await
+            .map_err(|error| persistence_error::<SnapshotError>(error))?;
+        Ok(result.rows_affected() == 1)
     }
 
     /// Record a failed attempt, scheduling retry or dead-lettering it.
@@ -198,7 +202,12 @@ impl SnapshotStatusOutbox {
             .and_where(Expr::col(SnapshotNotificationOutbox::DeliveredAt).is_null())
             .and_where(Expr::col(SnapshotNotificationOutbox::ExhaustedAt).is_null())
             .to_owned();
-        Ok(execute(&self.pool, statement).await? == 1)
+        let result = statement
+            .to_query()
+            .execute(&self.pool)
+            .await
+            .map_err(|error| persistence_error::<SnapshotError>(error))?;
+        Ok(result.rows_affected() == 1)
     }
 
     /// Remove old delivered and dead-lettered rows.
@@ -215,7 +224,12 @@ impl SnapshotStatusOutbox {
                     .or(Expr::col(SnapshotNotificationOutbox::ExhaustedAt).lte(exhausted_before)),
             )
             .to_owned();
-        execute(&self.pool, statement).await
+        let result = statement
+            .to_query()
+            .execute(&self.pool)
+            .await
+            .map_err(|error| persistence_error::<SnapshotError>(error))?;
+        Ok(result.rows_affected())
     }
 }
 
@@ -225,8 +239,8 @@ pub(crate) async fn enqueue_terminal_notification(transaction: &mut Transaction<
     statement
         .column((Snapshots::Table, Snapshots::SnapshotKey))
         .and_where(Expr::col((Snapshots::Table, Snapshots::Id)).eq(snapshot_id.as_str()));
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let row = statement
+        .to_query()
         .fetch_one(&mut **transaction)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
@@ -241,8 +255,8 @@ pub(crate) async fn enqueue_terminal_notification(transaction: &mut Transaction<
     let payload = serde_json::to_string(&snapshot.build_notification())
         .map_err(|error| persistence_error::<SnapshotError>(ContextStoreError::from(UnencodableSnapshotError::Notification(error))))?;
     let insert = outbox_insert(snapshot_key, endpoint, snapshot.receiver_info.as_deref(), payload)?;
-    let (sql, values) = insert.build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    insert
+        .to_query()
         .execute(&mut **transaction)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
@@ -271,16 +285,6 @@ fn outbox_insert(snapshot_key: i64, endpoint: &Url, receiver_info: Option<&[KeyV
         ])
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
     Ok(insert)
-}
-
-/// Execute one generated outbox mutation and return its affected-row count.
-async fn execute(pool: &PgPool, statement: impl SqlxBinder) -> Result<u64, SnapshotError> {
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-        .execute(pool)
-        .await
-        .map_err(|error| persistence_error::<SnapshotError>(error))?;
-    Ok(result.rows_affected())
 }
 
 /// The member of a written notification its delivery is identified by.

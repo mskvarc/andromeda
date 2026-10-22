@@ -6,9 +6,22 @@
 //! The catalog states the physical order, and a naive declaration order costs
 //! measurable padding for the same data.
 
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    catalog_function::{column_size, generate_series},
+    clock::now,
+    command::Command,
+    literal::{text_literal, true_literal},
+    pg_operator::PgBinaryOperator,
+    pg_type::PostgresType,
+    statement::Statement,
+    system_catalog::PgClass,
+    temporary_table::{ColumnConstraint, TemporaryColumn, TemporaryTable},
+};
 use andromeda_test_harness::serialized_environment::SerializedEnvironment;
 use pretty_assertions::assert_eq;
-use sqlx::{Executor, FromRow, PgPool};
+use sea_query::{Alias, Asterisk, Expr, ExprTrait, Func, InsertStatement, Order, Query, SimpleExpr};
+use sqlx::{FromRow, PgConnection, PgPool};
 
 /// One column of a relation as the catalog describes it physically.
 #[derive(Debug, FromRow)]
@@ -44,15 +57,54 @@ impl PhysicalColumn {
 
 /// Read the physical column order of one relation.
 async fn physical_columns(pool: &PgPool, relation: &str) -> Vec<PhysicalColumn> {
-    sqlx::query_as(
-        "SELECT a.attname, a.attlen, a.attalign::text, a.attnotnull FROM pg_attribute AS a \
-         JOIN pg_class AS c ON c.oid = a.attrelid \
-         WHERE c.relname = $1 AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum",
-    )
-    .bind(relation)
-    .fetch_all(pool)
-    .await
-    .expect("the relation must exist")
+    let attribute = |name: &str| Expr::col((Alias::new("pg_attribute"), Alias::new(name)));
+    Query::select()
+        .columns([Alias::new("attname"), Alias::new("attlen")].map(|column| (Alias::new("pg_attribute"), column)))
+        .expr(cast(attribute("attalign"), PostgresType::Text))
+        .column((Alias::new("pg_attribute"), Alias::new("attnotnull")))
+        .from(Alias::new("pg_attribute"))
+        .inner_join(
+            PgClass::Table,
+            Expr::col((PgClass::Table, PgClass::Oid)).equals((Alias::new("pg_attribute"), Alias::new("attrelid"))),
+        )
+        .and_where(Expr::col((PgClass::Table, PgClass::Relname)).eq(relation))
+        .and_where(attribute("attnum").gt(0))
+        .and_where(attribute("attisdropped").not())
+        .order_by((Alias::new("pg_attribute"), Alias::new("attnum")), Order::Asc)
+        .to_query_as()
+        .fetch_all(pool)
+        .await
+        .expect("the relation must exist")
+}
+
+/// The width of every row of the fixture relation `table`.
+async fn total_row_width(transaction: &mut PgConnection, table: &str) -> i64 {
+    Query::select()
+        .expr(cast(
+            Func::sum(column_size(Expr::col((Alias::new("t"), Asterisk)))).into(),
+            PostgresType::Bigint,
+        ))
+        .from_as(Alias::new(table), Alias::new("t"))
+        .to_query_scalar()
+        .fetch_one(transaction)
+        .await
+        .expect("row width must be readable")
+}
+
+/// The insert of 20000 rows into the fixture relation `table`, `values` the
+/// cells of one row in the relation's column order over `g`.
+fn fixture_rows(table: &str, columns: &[&str], values: Vec<SimpleExpr>) -> InsertStatement {
+    Query::insert()
+        .into_table(Alias::new(table))
+        .columns(columns.iter().map(|column| Alias::new(*column)))
+        .select_from(
+            Query::select()
+                .exprs(values)
+                .from_function(generate_series(Expr::val(1), Expr::val(20_000)), Alias::new("g"))
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .to_owned()
 }
 
 #[tokio::test]
@@ -98,28 +150,96 @@ async fn alignment_order_is_no_wider_than_a_naive_declaration_order() {
 
     // The same five values twice: once in the projection's alignment order,
     // once in the order a schema author would naturally type them.
-    for statement in [
-        "CREATE TEMPORARY TABLE layout_aligned (\
-             entity_key BIGINT NOT NULL, modified_at TIMESTAMPTZ NOT NULL, attribute_name_key INTEGER NOT NULL, \
-             attribute_kind SMALLINT NOT NULL, value_kind SMALLINT NOT NULL, value_boolean BOOLEAN, value_string TEXT) ON COMMIT DROP",
-        "CREATE TEMPORARY TABLE layout_naive (\
-             attribute_kind SMALLINT NOT NULL, entity_key BIGINT NOT NULL, value_boolean BOOLEAN, \
-             attribute_name_key INTEGER NOT NULL, modified_at TIMESTAMPTZ NOT NULL, value_string TEXT, \
-             value_kind SMALLINT NOT NULL) ON COMMIT DROP",
-        "INSERT INTO layout_aligned SELECT g, now(), g % 1000, 1, 2, true, 'value-' || g::text FROM generate_series(1, 20000) AS g",
-        "INSERT INTO layout_naive SELECT 1, g, true, g % 1000, now(), 'value-' || g::text, 2 FROM generate_series(1, 20000) AS g",
-    ] {
-        transaction.execute(statement).await.expect("fixture statement must succeed");
-    }
+    let column = |name: &str, ty: PostgresType, constraint: ColumnConstraint| TemporaryColumn::new(Alias::new(name), ty, constraint);
+    let series = || Expr::col(Alias::new("g"));
+    let value_text = || text_literal("value-").concat_text(cast(series(), PostgresType::Text));
+    let aligned_columns = [
+        "entity_key",
+        "modified_at",
+        "attribute_name_key",
+        "attribute_kind",
+        "value_kind",
+        "value_boolean",
+        "value_string",
+    ];
+    let naive_columns = [
+        "attribute_kind",
+        "entity_key",
+        "value_boolean",
+        "attribute_name_key",
+        "modified_at",
+        "value_string",
+        "value_kind",
+    ];
+    TemporaryTable::new(
+        Alias::new("layout_aligned"),
+        vec![
+            column("entity_key", PostgresType::Bigint, ColumnConstraint::NotNull),
+            column("modified_at", PostgresType::Timestamptz, ColumnConstraint::NotNull),
+            column("attribute_name_key", PostgresType::Integer, ColumnConstraint::NotNull),
+            column("attribute_kind", PostgresType::Smallint, ColumnConstraint::NotNull),
+            column("value_kind", PostgresType::Smallint, ColumnConstraint::NotNull),
+            column("value_boolean", PostgresType::Boolean, ColumnConstraint::Nullable),
+            column("value_string", PostgresType::Text, ColumnConstraint::Nullable),
+        ],
+    )
+    .to_query()
+    .execute(&mut *transaction)
+    .await
+    .expect("fixture statement must succeed");
+    TemporaryTable::new(
+        Alias::new("layout_naive"),
+        vec![
+            column("attribute_kind", PostgresType::Smallint, ColumnConstraint::NotNull),
+            column("entity_key", PostgresType::Bigint, ColumnConstraint::NotNull),
+            column("value_boolean", PostgresType::Boolean, ColumnConstraint::Nullable),
+            column("attribute_name_key", PostgresType::Integer, ColumnConstraint::NotNull),
+            column("modified_at", PostgresType::Timestamptz, ColumnConstraint::NotNull),
+            column("value_string", PostgresType::Text, ColumnConstraint::Nullable),
+            column("value_kind", PostgresType::Smallint, ColumnConstraint::NotNull),
+        ],
+    )
+    .to_query()
+    .execute(&mut *transaction)
+    .await
+    .expect("fixture statement must succeed");
+    fixture_rows(
+        "layout_aligned",
+        &aligned_columns,
+        vec![
+            series(),
+            now(),
+            Expr::expr(series().modulo(1000)),
+            cast(Expr::val(1), PostgresType::Smallint),
+            cast(Expr::val(2), PostgresType::Smallint),
+            true_literal(),
+            value_text(),
+        ],
+    )
+    .to_query()
+    .execute(&mut *transaction)
+    .await
+    .expect("fixture statement must succeed");
+    fixture_rows(
+        "layout_naive",
+        &naive_columns,
+        vec![
+            cast(Expr::val(1), PostgresType::Smallint),
+            series(),
+            true_literal(),
+            Expr::expr(series().modulo(1000)),
+            now(),
+            value_text(),
+            cast(Expr::val(2), PostgresType::Smallint),
+        ],
+    )
+    .to_query()
+    .execute(&mut *transaction)
+    .await
+    .expect("fixture statement must succeed");
 
-    let aligned: i64 = sqlx::query_scalar("SELECT sum(pg_column_size(t.*))::bigint FROM layout_aligned AS t")
-        .fetch_one(&mut *transaction)
-        .await
-        .expect("aligned width must be readable");
-    let naive: i64 = sqlx::query_scalar("SELECT sum(pg_column_size(t.*))::bigint FROM layout_naive AS t")
-        .fetch_one(&mut *transaction)
-        .await
-        .expect("naive width must be readable");
+    let aligned = total_row_width(&mut transaction, "layout_aligned").await;
+    let naive = total_row_width(&mut transaction, "layout_naive").await;
     assert!(
         aligned <= naive,
         "alignment order must not be wider than declaration order: aligned={aligned}, naive={naive}"

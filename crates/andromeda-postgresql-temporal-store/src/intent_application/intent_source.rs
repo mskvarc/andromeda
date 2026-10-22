@@ -17,13 +17,14 @@ use andromeda_postgresql_codes::temporal_intent_reach::TemporalIntentReach;
 use andromeda_postgresql_schema::{queue::TemporalAppendIntents, temporal_intent::TemporalEntry};
 use andromeda_postgresql_seaquery::{
     cast::cast,
+    external_arguments::ExternalArguments,
     pg_array::any,
     pg_type::PostgresType,
-    placeholder::external_placeholder,
-    unnest::{Ordinality, apply_record_ordinality, unnest_of},
+    statement::Statement,
+    unnest::{Ordinality, unnest_of},
 };
-use sea_query::{Asterisk, Expr, ExprTrait, Iden, IntoIden, PostgresQueryBuilder, Query, QueryStatementWriter, SelectStatement, SimpleExpr};
-use sqlx::{AssertSqlSafe, PgConnection, Postgres, postgres::PgArguments, query::Query as SqlxQuery};
+use sea_query::{Asterisk, Expr, ExprTrait, Iden, IntoIden, Query, SelectStatement, SimpleExpr};
+use sqlx::PgConnection;
 
 /// The source relation's alias, `i`.
 #[derive(Iden, Clone, Copy)]
@@ -48,7 +49,7 @@ pub(crate) struct S;
 /// The alias of one bound intent inside the bound source, `input`.
 #[derive(Iden, Clone, Copy)]
 #[iden = "input"]
-struct Input;
+pub(crate) struct Input;
 
 /// The intents one application records, as its statements read them.
 #[derive(Debug)]
@@ -83,15 +84,15 @@ pub(crate) enum EntryReads {
     Everything,
 }
 
-/// The needs the claimed rows `$1` names meet, one code a row, read from
+/// The needs the claimed rows `keys` names meet, one code a row, read from
 /// their `entry_needs` and never their entries.
-pub(crate) fn reach_statement() -> SelectStatement {
+pub(crate) fn reach_statement(keys: &[i64]) -> SelectStatement {
     let mut statement = Query::select();
     statement
         .distinct()
         .expr(unnest_of(Expr::col(TemporalAppendIntents::EntryNeeds)))
         .from(TemporalAppendIntents::Table)
-        .and_where(Expr::col(TemporalAppendIntents::IntentKey).eq(any(cast(external_placeholder(1), PostgresType::BigintArray))));
+        .and_where(Expr::col(TemporalAppendIntents::IntentKey).eq(any(cast(Expr::val(keys.to_vec()), PostgresType::BigintArray))));
     statement
 }
 
@@ -105,10 +106,7 @@ impl<'a> IntentSource<'a> {
     /// and [`TemporalStoreError::StoredCatalog`] when a stored code names no
     /// need.
     pub async fn claimed(connection: &mut PgConnection, keys: &'a [i64]) -> Result<IntentSource<'a>, TemporalStoreError> {
-        let codes: Vec<i16> = sqlx::query_scalar(AssertSqlSafe(reach_statement().to_string(PostgresQueryBuilder)))
-            .bind(keys)
-            .fetch_all(connection)
-            .await?;
+        let codes: Vec<i16> = reach_statement(keys).to_query_scalar().fetch_all(connection).await?;
         let reach = codes
             .into_iter()
             .map(TemporalIntentReach::try_from)
@@ -117,19 +115,83 @@ impl<'a> IntentSource<'a> {
         Ok(IntentSource::Queued { keys, reach })
     }
 
-    /// The source relation under `i`: the claimed rows `$1` names, or the
-    /// intents `$1` binds beside the write identity `$2` and its instant `$3`,
-    /// each keyed by its position.
+    /// Whether some intent of the source meets `need`.
+    pub(crate) fn may_meet(&self, need: TemporalIntentReach) -> bool {
+        match self {
+            IntentSource::Queued { reach, .. } => reach.contains(&need),
+            IntentSource::Bound { intents, .. } => intents.iter().any(|intent| intent.reaches(need)),
+        }
+    }
+}
+
+/// An [`IntentSource`] staged for the statements of one step: a bound
+/// source's intents carry no more of their entries than the step reads, and
+/// travel as the external argument the statement's source relation names.
+pub(crate) struct StagedSource<'a> {
+    /// The relation the statements read the intents from.
+    relation: StagedRelation<'a>,
+    /// The keys of the Temporal Evolutions the application created so far.
+    created: &'a [i64],
+    /// The external arguments the statements of the step carry.
+    external: ExternalArguments<'a>,
+}
+
+/// Where the staged statements read their intents from.
+enum StagedRelation<'a> {
+    /// The claimed rows of the queue named by their keys.
+    Queued {
+        /// The claimed intents' keys.
+        keys: &'a [i64],
+    },
+    /// The commit's intents, bound as one array beside its write identity.
+    Bound {
+        /// The write identity and instant every intent shares.
+        record: &'a WriteRecord,
+        /// The expression standing for the bound intents.
+        intents: SimpleExpr,
+    },
+}
+
+impl<'a> StagedSource<'a> {
+    /// `source` staged for a step reading `reads` of the entries, with
+    /// `created` the keys of the evolutions the application created so far.
+    pub(crate) fn new(source: &'a IntentSource<'a>, reads: EntryReads, created: &'a [i64]) -> StagedSource<'a> {
+        let mut external = ExternalArguments::default();
+        let relation = match source {
+            IntentSource::Queued { keys, .. } => StagedRelation::Queued { keys },
+            IntentSource::Bound { record, intents } => StagedRelation::Bound {
+                record,
+                intents: match reads {
+                    EntryReads::Nothing => external.push(intents.iter().map(TemporalIntentRecord::head).collect::<Vec<_>>()),
+                    EntryReads::Identities => external.push(intents.iter().map(TemporalIntentRecord::identities).collect::<Vec<_>>()),
+                    EntryReads::Everything => external.push(*intents),
+                },
+            },
+        };
+        StagedSource { relation, created, external }
+    }
+
+    /// The external arguments the staged statements carry, to bind with them.
+    pub(crate) fn into_external(self) -> ExternalArguments<'a> {
+        self.external
+    }
+
+    /// The source relation under `i`: the claimed rows named by their keys,
+    /// or the bound intents beside the write identity and its instant, each
+    /// keyed by its position.
     fn relation(&self) -> SelectStatement {
         let mut relation = Query::select();
-        match self {
-            IntentSource::Queued { .. } => relation
+        match &self.relation {
+            StagedRelation::Queued { keys } => relation
                 .column(Asterisk)
                 .from(TemporalAppendIntents::Table)
-                .and_where(Expr::col(TemporalAppendIntents::IntentKey).eq(any(cast(external_placeholder(1), PostgresType::BigintArray)))),
-            IntentSource::Bound { .. } => relation
-                .expr_as(cast(external_placeholder(2), PostgresType::Uuid), TemporalAppendIntents::WriteId)
-                .expr_as(cast(external_placeholder(3), PostgresType::Timestamptz), TemporalAppendIntents::RecordedAt)
+                .and_where(Expr::col(TemporalAppendIntents::IntentKey).eq(any(cast(Expr::val(keys.to_vec()), PostgresType::BigintArray)))),
+            StagedRelation::Bound { record, intents } => relation
+                .expr_as(cast(Expr::val(record.write_id().as_uuid()), PostgresType::Uuid), TemporalAppendIntents::WriteId)
+                .expr_as(
+                    cast(Expr::val(record.recorded_at()), PostgresType::Timestamptz),
+                    TemporalAppendIntents::RecordedAt,
+                )
                 .exprs(
                     [
                         TemporalAppendIntents::EntityId,
@@ -140,64 +202,32 @@ impl<'a> IntentSource<'a> {
                     .map(|column| Expr::col((Input, column))),
                 )
                 .expr_as(Expr::col((Input, Ordinality)), TemporalAppendIntents::IntentKey)
-                .from_function(unnest_of(cast(external_placeholder(1), PostgresType::TemporalIntentArray)), Input),
+                .from_function(unnest_of(cast(intents.clone(), PostgresType::TemporalIntentArray)), Input), // clone: the relation owns the expression it places
         };
         relation
     }
 
-    /// How many values [`IntentSource::bind`] binds: the claimed keys, or the
-    /// intents, the write identity and its instant.
-    const fn bound_values(&self) -> usize {
-        match self {
-            IntentSource::Queued { .. } => 1,
-            IntentSource::Bound { .. } => 3,
-        }
-    }
-
-    /// The keys of the Temporal Evolutions the application created, as the
-    /// array marker after the source's own values.
+    /// The keys of the Temporal Evolutions the application created, as a
+    /// `bigint[]` value.
     pub(crate) fn created_evolutions(&self) -> SimpleExpr {
-        cast(external_placeholder(self.bound_values() + 1), PostgresType::BigintArray)
-    }
-
-    /// Whether some intent of the source meets `need`.
-    pub(crate) fn may_meet(&self, need: TemporalIntentReach) -> bool {
-        match self {
-            IntentSource::Queued { reach, .. } => reach.contains(&need),
-            IntentSource::Bound { intents, .. } => intents.iter().any(|intent| intent.reaches(need)),
-        }
-    }
-
-    /// `query` with the source's values bound in marker order, a bound
-    /// source's intents carrying no more of their entries than `reads`.
-    pub(crate) fn bind<'q>(&'q self, query: SqlxQuery<'q, Postgres, PgArguments>, reads: EntryReads) -> SqlxQuery<'q, Postgres, PgArguments> {
-        match self {
-            IntentSource::Queued { keys, .. } => query.bind(*keys),
-            IntentSource::Bound { record, intents } => match reads {
-                EntryReads::Nothing => query.bind(intents.iter().map(TemporalIntentRecord::head).collect::<Vec<_>>()),
-                EntryReads::Identities => query.bind(intents.iter().map(TemporalIntentRecord::identities).collect::<Vec<_>>()),
-                EntryReads::Everything => query.bind(*intents),
-            }
-            .bind(record.write_id().as_uuid())
-            .bind(record.recorded_at()),
-        }
+        cast(Expr::val(self.created.to_vec()), PostgresType::BigintArray)
     }
 }
 
 /// Read the intents of `source` in `select`, under `i`.
-pub(crate) fn source_intents(select: &mut SelectStatement, source: &IntentSource<'_>) {
+pub(crate) fn source_intents(select: &mut SelectStatement, source: &StagedSource<'_>) {
     source_intents_as(select, source, I);
 }
 
 /// Read the intents of `source` in `select` under `alias`, beside the ones
 /// under `i`, for a statement that compares one intent with the others.
-pub(crate) fn source_intents_as(select: &mut SelectStatement, source: &IntentSource<'_>, alias: impl IntoIden) {
+pub(crate) fn source_intents_as(select: &mut SelectStatement, source: &StagedSource<'_>, alias: impl IntoIden) {
     select.from_subquery(source.relation(), alias);
 }
 
 /// Read every entry of the intents of `source` in `select`: the intents
 /// under `i`, each entry under `e`.
-pub(crate) fn source_entries(select: &mut SelectStatement, source: &IntentSource<'_>) {
+pub(crate) fn source_entries(select: &mut SelectStatement, source: &StagedSource<'_>) {
     source_intents(select, source);
     select.from_function(unnest_of(Expr::col((I, TemporalAppendIntents::Entries))), E);
 }
@@ -221,12 +251,4 @@ pub(crate) fn write_ordinal() -> SimpleExpr {
 /// Whether the entry under `e` is one of `kinds`.
 pub(crate) fn entry_kind_in(kinds: &[i16]) -> SimpleExpr {
     entry(TemporalEntry::EntryKind).is_in(kinds.iter().copied())
-}
-
-/// The rendered statement, its entries and bound intents unnested with their
-/// positions. Every value but the source's is a constant of the statement, so
-/// the text is the same for every application over one kind of source.
-pub(crate) fn rendered(statement: &impl QueryStatementWriter) -> String {
-    let sql = apply_record_ordinality(&statement.to_string(PostgresQueryBuilder), &E);
-    apply_record_ordinality(&sql, &Input)
 }

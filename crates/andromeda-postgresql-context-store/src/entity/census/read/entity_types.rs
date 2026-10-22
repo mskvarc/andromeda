@@ -22,9 +22,8 @@ use andromeda_postgresql_schema::{
     census::{EntityTypeAttributeCensus, EntityTypeCensus},
     name_dictionary::{AttributeNames, EntityTypeNames},
 };
-use andromeda_postgresql_seaquery::{aggregate::array_agg_distinct_filter, pg_array::text_array};
-use sea_query::{Cond, Expr, ExprTrait, Func, JoinType, Order, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use andromeda_postgresql_seaquery::{aggregate::array_agg_distinct_filter, pg_array::text_array, statement::Statement};
+use sea_query::{Cond, Expr, ExprTrait, Func, JoinType, Order, Query, SelectStatement};
 use std::{collections::BTreeMap, slice::from_ref};
 
 /// Clause 5.7.5: the names of every type some Entity carries, in name order.
@@ -135,10 +134,7 @@ impl EntityRepository {
     /// Returns [`ContextStoreError`] when the read fails or a dictionary name
     /// is no longer a valid entity type name.
     pub async fn census_types(&self, target: &ContextTarget) -> Result<Vec<EntityTypeName>, ContextStoreError> {
-        let (sql, values) = types_statement(target).build_sqlx(PostgresQueryBuilder);
-        let names: Vec<String> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-            .fetch_all(&mut **self.reads.acquire().await?)
-            .await?;
+        let names: Vec<String> = types_statement(target).to_query_scalar().fetch_all(&mut **self.reads.acquire().await?).await?;
         names.iter().map(String::as_str).map(stored_type_name).collect()
     }
 
@@ -150,8 +146,8 @@ impl EntityRepository {
     /// Returns [`ContextStoreError`] when the read fails or a dictionary name
     /// no longer parses.
     pub async fn census_entity_type_attributes(&self, target: &ContextTarget) -> Result<Vec<EntityTypeAttributes>, ContextStoreError> {
-        let (sql, values) = entity_type_attributes_statement(target).build_sqlx(PostgresQueryBuilder);
-        let rows: Vec<(String, Vec<String>)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let rows: Vec<(String, Vec<String>)> = entity_type_attributes_statement(target)
+            .to_query_as()
             .fetch_all(&mut **self.reads.acquire().await?)
             .await?;
         rows.into_iter()
@@ -179,8 +175,8 @@ impl EntityRepository {
         let Some(type_key) = self.entity_type_names.lookup(from_ref(entity_type)).await?.get(entity_type) else {
             return Ok(None);
         };
-        let (sql, values) = entity_type_summary_statement(target, type_key).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let rows = entity_type_summary_statement(target, type_key)
+            .to_query_as()
             .fetch_all(&mut **self.reads.acquire().await?)
             .await?;
         type_summary_of(rows)

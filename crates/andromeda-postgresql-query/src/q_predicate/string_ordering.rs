@@ -47,6 +47,7 @@ mod tests {
         predicate::CmpOp,
         scalar::{Scalar, parse_date, parse_time},
     };
+    use andromeda_postgresql_seaquery::collation::PostgresCollation;
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
 
     fn render(scalar: &Scalar, op: CmpOp) -> String {
@@ -62,7 +63,7 @@ mod tests {
     fn a_string_ordering_compares_under_the_icu_root_collation() {
         for op in [CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq] {
             let collation = string_ordering_collation(&Scalar::Str("a".to_owned()), op).expect("a String ordering collates");
-            assert_eq!(collation.as_str(), "und-x-icu", "{op:?}");
+            assert_eq!(collation, PostgresCollation::new("und-x-icu"), "{op:?}");
             assert!(render(&Scalar::Str("a".to_owned()), op).contains(r#"("s") COLLATE "und-x-icu""#), "{op:?}");
         }
     }

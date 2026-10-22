@@ -21,8 +21,11 @@ use crate::{
     replay_interruption::{enqueue_observation, pass_with_failed_replay},
 };
 use andromeda_entity::{side_effect_drain::EntitySideEffectDrainConfig, side_effect_queue::SideEffectQueue};
+use andromeda_postgresql_schema::queue::PendingSideEffects;
+use andromeda_postgresql_seaquery::{catalog_function::num_nonnulls, statement::Statement};
 use chrono::{DateTime, TimeDelta, Utc};
 use pretty_assertions::assert_eq;
+use sea_query::{Expr, ExprTrait, Query};
 use serial_test::serial;
 use std::time::Duration;
 
@@ -55,14 +58,22 @@ async fn durable_queue_a_replay_that_fails_after_outliving_its_lease_releases_it
     );
     let (outcome, failed_at) = pass_with_failed_replay(&pool, &drain, LEASE_OVERRUN).await;
     assert_eq!(outcome.completed, 0, "the failed replay settled nothing");
-    let (claim_columns, attempts, failure_recorded, next_attempt_at, exhausted): (i32, i32, bool, DateTime<Utc>, bool) = sqlx::query_as(
-        "SELECT num_nonnulls(claimed_at, claimed_by, lease_until), attempt_count, last_error IS NOT NULL, next_attempt_at, exhausted_at IS NOT NULL \
-         FROM pending_side_effects WHERE write_id = $1",
-    )
-    .bind(write_id.as_uuid())
-    .fetch_one(&pool)
-    .await
-    .expect("the released job");
+    let (claim_columns, attempts, failure_recorded, next_attempt_at, exhausted): (i32, i32, bool, DateTime<Utc>, bool) = Query::select()
+        .expr(num_nonnulls([
+            Expr::col(PendingSideEffects::ClaimedAt),
+            Expr::col(PendingSideEffects::ClaimedBy),
+            Expr::col(PendingSideEffects::LeaseUntil),
+        ]))
+        .column(PendingSideEffects::AttemptCount)
+        .expr(Expr::col(PendingSideEffects::LastError).is_not_null())
+        .column(PendingSideEffects::NextAttemptAt)
+        .expr(Expr::col(PendingSideEffects::ExhaustedAt).is_not_null())
+        .from(PendingSideEffects::Table)
+        .and_where(Expr::col(PendingSideEffects::WriteId).eq(write_id.as_uuid()))
+        .to_query_as()
+        .fetch_one(&pool)
+        .await
+        .expect("the released job");
     let backoff = TimeDelta::from_std(BASE_BACKOFF).expect("the backoff fits");
     assert!(failure_recorded, "the release records why the replay failed");
     assert!(

@@ -31,7 +31,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use andromeda_postgresql_pool::{pool_options::configure_pool_options, saturation::is_pool_saturated, sql_state::SqlState};
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
-use andromeda_postgresql_seaquery::clock::now;
+use andromeda_postgresql_seaquery::{clock::now, statement::Statement};
 use andromeda_subscription::interval_schedule::{interval_duration, next_interval_due};
 use andromeda_tenancy::{
     database_name::TenantDatabaseName,
@@ -39,8 +39,7 @@ use andromeda_tenancy::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sea_query::{Expr, ExprTrait, PostgresQueryBuilder, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Expr, ExprTrait, SelectStatement};
 use std::time::{Duration, SystemTime};
 
 /// The queue and expiry sources of the earliest obligation, as one statement.
@@ -169,10 +168,7 @@ pub async fn earliest_obligation(pool: &sqlx::PgPool) -> Result<Option<SystemTim
         other => other?,
     };
 
-    let (interval_sql, interval_values) = interval_probe_select().build_sqlx(PostgresQueryBuilder);
-    let anchors: Vec<(DateTime<Utc>, f64, Option<DateTime<Utc>>)> = sqlx::query_as_with(sqlx::AssertSqlSafe(interval_sql.as_str()), interval_values)
-        .fetch_all(pool)
-        .await?;
+    let anchors: Vec<(DateTime<Utc>, f64, Option<DateTime<Utc>>)> = interval_probe_select().to_query_as().fetch_all(pool).await?;
 
     Ok([queue_due, earliest_interval_due(anchors)].into_iter().flatten().min().map(SystemTime::from))
 }
@@ -181,8 +177,7 @@ pub async fn earliest_obligation(pool: &sqlx::PgPool) -> Result<Option<SystemTim
 /// delivery queue of every branch the delivery drain sweeps.
 async fn earliest_queue_due(pool: &sqlx::PgPool) -> Result<Option<DateTime<Utc>>, ContextStoreError> {
     let branches = drainable_targets(pool).await?;
-    let (sql, values) = least_due_select(current_branch_version()?, &branches).build_sqlx(PostgresQueryBuilder);
-    Ok(sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(pool).await?)
+    Ok(least_due_select(current_branch_version()?, &branches).to_query_scalar().fetch_one(pool).await?)
 }
 
 /// The earliest instant any periodic subscription owes a notification.

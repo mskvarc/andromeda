@@ -22,8 +22,18 @@ use crate::{
     seeded_corpus::{PlannerPaths, SEED_PREFIX, explain, explain_rolled_back},
     seeded_history::seed,
 };
+use andromeda_postgresql_schema::temporal::{AttributeHistory, TemporalAttributeStreams};
+use andromeda_postgresql_seaquery::{
+    aggregate::count_all,
+    cast::cast,
+    interval::{epoch_seconds, make_interval_secs},
+    pg_type::PostgresType,
+    statement::Statement,
+};
 use andromeda_test_harness::serialized_environment::SerializedEnvironment;
+use chrono::{DateTime, Utc};
 use pretty_assertions::assert_eq;
+use sea_query::{Alias, Expr, ExprTrait, Iden, Order, Query, SelectStatement};
 use sqlx::PgPool;
 
 /// One semantic time axis, and the column that answers for it.
@@ -31,46 +41,84 @@ struct Axis {
     /// The `timeproperty` value, for the failure message.
     timeproperty: &'static str,
     /// The `attribute_history` column holding it.
-    column: &'static str,
+    column: AttributeHistory,
 }
 
 /// The four axes clause 5.2.21 admits.
 const AXES: &[Axis] = &[
     Axis {
         timeproperty: "observedAt",
-        column: "observed_at",
+        column: AttributeHistory::ObservedAt,
     },
     Axis {
         timeproperty: "createdAt",
-        column: "created_at",
+        column: AttributeHistory::CreatedAt,
     },
     Axis {
         timeproperty: "modifiedAt",
-        column: "modified_at",
+        column: AttributeHistory::ModifiedAt,
     },
     Axis {
         timeproperty: "deletedAt",
-        column: "deleted_at",
+        column: AttributeHistory::DeletedAt,
     },
 ];
 
 /// The instant every seeded axis is offset from.
-const ORIGIN: &str = "TIMESTAMPTZ '2026-01-01 00:00:00Z'";
+fn origin() -> DateTime<Utc> {
+    "2026-01-01T00:00:00Z".parse().expect("the origin is a valid instant")
+}
+
+/// The instant `seconds` after the origin.
+fn after_origin(seconds: f64) -> Expr {
+    Expr::val(origin()).add(make_interval_secs(Expr::val(seconds)))
+}
+
+/// Seconds in an hour.
+const HOUR: f64 = 3_600.0;
+
+/// Seconds in a day.
+const DAY: f64 = 86_400.0;
 
 /// The observations one axis window selects across one stream, named by the
 /// hour each observation sits at on the seeded grid.
-async fn narrow_selection(pool: &PgPool, stream: i64, axis: &Axis, from: &str, to: &str) -> Vec<i32> {
-    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        "SELECT (EXTRACT(EPOCH FROM (ah.observed_at - {ORIGIN})) / 3600)::int AS hour \
-         FROM attribute_history AS ah \
-         WHERE ah.stream_key = $1 AND ah.{} >= {from} AND ah.{} < {to} \
-         ORDER BY hour",
-        axis.column, axis.column
-    )))
-    .bind(stream)
-    .fetch_all(pool)
-    .await
-    .expect("the time-property window must run")
+async fn narrow_selection(pool: &PgPool, stream: i64, axis: &Axis, from: Expr, to: Expr) -> Vec<i32> {
+    let column = || Expr::col((AttributeHistory::Table, axis.column));
+    Query::select()
+        .expr_as(
+            cast(
+                Expr::expr(epoch_seconds(
+                    Expr::expr(Expr::col((AttributeHistory::Table, AttributeHistory::ObservedAt))).sub(Expr::val(origin())),
+                ))
+                .div(3_600),
+                PostgresType::Integer,
+            ),
+            Alias::new("hour"),
+        )
+        .from(AttributeHistory::Table)
+        .and_where(Expr::col((AttributeHistory::Table, AttributeHistory::StreamKey)).eq(stream))
+        .and_where(column().gte(from))
+        .and_where(column().lt(to))
+        .order_by(Alias::new("hour"), Order::Asc)
+        .to_query_scalar()
+        .fetch_all(pool)
+        .await
+        .expect("the time-property window must run")
+}
+
+/// The count of the history rows of every stream of the entity `entity_key`
+/// that populate `column`.
+fn populated_rows(entity_key: i64, column: AttributeHistory) -> SelectStatement {
+    Query::select()
+        .expr(count_all())
+        .from(AttributeHistory::Table)
+        .inner_join(
+            TemporalAttributeStreams::Table,
+            Expr::col((TemporalAttributeStreams::Table, TemporalAttributeStreams::StreamKey)).equals((AttributeHistory::Table, AttributeHistory::StreamKey)),
+        )
+        .and_where(Expr::col((TemporalAttributeStreams::Table, TemporalAttributeStreams::TemporalEntityKey)).eq(entity_key))
+        .and_where(Expr::col((AttributeHistory::Table, column)).is_not_null())
+        .to_owned()
 }
 
 /// Clause 4.11: each axis answers from its own column, so one window selects a
@@ -84,11 +132,12 @@ async fn every_axis_window_is_answered_from_its_own_column_over_a_narrow_selecti
     let pool = scope.database_pool();
     let corpus = seed(pool, SEED_PREFIX).await;
 
-    let from = format!("{ORIGIN} + INTERVAL '1 hour'");
-    let to = format!("{ORIGIN} + INTERVAL '11 hours'");
     let mut selections = Vec::with_capacity(AXES.len());
     for axis in AXES {
-        selections.push((axis.timeproperty, narrow_selection(pool, corpus.narrow_stream(), axis, &from, &to).await));
+        selections.push((
+            axis.timeproperty,
+            narrow_selection(pool, corpus.narrow_stream(), axis, after_origin(HOUR), after_origin(11.0 * HOUR)).await,
+        ));
     }
 
     // Observation `g` sits at hour `g`, so the observed window selects hours 1
@@ -116,27 +165,17 @@ async fn every_axis_window_stays_exact_over_a_broad_selection() {
     let corpus = seed(pool, SEED_PREFIX).await;
 
     for axis in AXES {
-        let selected: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT COUNT(*) FROM attribute_history AS ah \
-             JOIN temporal_attribute_streams AS s ON s.stream_key = ah.stream_key \
-             WHERE s.temporal_entity_key = $1 AND ah.{} IS NOT NULL",
-            axis.column
-        )))
-        .bind(corpus.entity_key())
-        .fetch_one(pool)
-        .await
-        .unwrap_or_else(|error| panic!("the broad {} selection must run: {error}", axis.timeproperty));
+        let selected: i64 = populated_rows(corpus.entity_key(), axis.column)
+            .to_query_scalar()
+            .fetch_one(pool)
+            .await
+            .unwrap_or_else(|error| panic!("the broad {} selection must run: {error}", axis.timeproperty));
 
-        let column_rows: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT COUNT(*) FROM attribute_history AS ah \
-             JOIN temporal_attribute_streams AS s ON s.stream_key = ah.stream_key \
-             WHERE s.temporal_entity_key = $1 AND ah.{} IS NOT NULL",
-            axis.column
-        )))
-        .bind(corpus.entity_key())
-        .fetch_one(pool)
-        .await
-        .unwrap_or_else(|error| panic!("the broad {} population must run: {error}", axis.timeproperty));
+        let column_rows: i64 = populated_rows(corpus.entity_key(), axis.column)
+            .to_query_scalar()
+            .fetch_one(pool)
+            .await
+            .unwrap_or_else(|error| panic!("the broad {} population must run: {error}", axis.timeproperty));
 
         assert_eq!(
             selected, column_rows,
@@ -158,14 +197,14 @@ async fn a_narrow_observed_window_reaches_the_stream_led_observed_index() {
     let pool = scope.database_pool();
     let corpus = seed(pool, SEED_PREFIX).await;
 
-    let statement = format!(
-        "SELECT ah.value_number FROM attribute_history AS ah \
-         WHERE ah.stream_key = {} \
-           AND ah.observed_at >= {ORIGIN} + INTERVAL '1 hour' \
-           AND ah.observed_at < {ORIGIN} + INTERVAL '11 hours'",
-        corpus.narrow_stream()
-    );
-    let plan = explain(pool, &statement).await;
+    let statement = Query::select()
+        .column(AttributeHistory::ValueNumber)
+        .from(AttributeHistory::Table)
+        .and_where(Expr::col(AttributeHistory::StreamKey).eq(corpus.narrow_stream()))
+        .and_where(Expr::col(AttributeHistory::ObservedAt).gte(after_origin(HOUR)))
+        .and_where(Expr::col(AttributeHistory::ObservedAt).lt(after_origin(11.0 * HOUR)))
+        .to_owned();
+    let plan = explain(pool, statement).await;
     assert!(
         plan.contains("idx_attribute_history_stream_observed_at"),
         "a narrow observed window must use the observed index: {plan}"
@@ -186,15 +225,21 @@ async fn every_semantic_axis_carries_exactly_one_brin_summary_and_no_btree() {
     let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
 
-    let definitions: Vec<String> = sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'attribute_history'")
+    let definitions: Vec<String> = Query::select()
+        .column(Alias::new("indexdef"))
+        .from(Alias::new("pg_indexes"))
+        .and_where(Expr::col(Alias::new("schemaname")).eq("public"))
+        .and_where(Expr::col(Alias::new("tablename")).eq("attribute_history"))
+        .to_query_scalar()
         .fetch_all(pool)
         .await
         .expect("the index catalogue must be readable");
 
     for axis in AXES {
+        let column = axis.column.to_string();
         let summaries: Vec<&String> = definitions
             .iter()
-            .filter(|definition| definition.contains(&format!("USING brin ({} ", axis.column)))
+            .filter(|definition| definition.contains(&format!("USING brin ({column} ")))
             .collect();
         assert_eq!(
             summaries.len(),
@@ -210,7 +255,7 @@ async fn every_semantic_axis_carries_exactly_one_brin_summary_and_no_btree() {
         );
         let led_btrees: Vec<&String> = definitions
             .iter()
-            .filter(|definition| definition.contains(&format!("USING btree ({}", axis.column)))
+            .filter(|definition| definition.contains(&format!("USING btree ({column}")))
             .collect();
         assert!(
             led_btrees.is_empty(),
@@ -238,12 +283,13 @@ async fn a_broad_modified_window_can_be_answered_from_the_modified_at_summary() 
 
     // The window names no stream on purpose: a stream-led join would hand the
     // planner the stream B-tree and the summary would never be consulted.
-    let statement = format!(
-        "SELECT COUNT(*) FROM attribute_history AS ah \
-         WHERE ah.modified_at >= {ORIGIN} + INTERVAL '1 day' \
-           AND ah.modified_at < {ORIGIN} + INTERVAL '1 day 6 hours'"
-    );
-    let plan = explain_rolled_back(pool, PlannerPaths::WithoutSequentialScans, &statement).await;
+    let statement = Query::select()
+        .expr(count_all())
+        .from(AttributeHistory::Table)
+        .and_where(Expr::col(AttributeHistory::ModifiedAt).gte(after_origin(DAY)))
+        .and_where(Expr::col(AttributeHistory::ModifiedAt).lt(after_origin(DAY + 6.0 * HOUR)))
+        .to_owned();
+    let plan = explain_rolled_back(pool, PlannerPaths::WithoutSequentialScans, statement).await;
     assert!(
         plan.contains("idx_attribute_history_modified_at_brin"),
         "a broad modified window must be answerable from the modified_at summary: {plan}"

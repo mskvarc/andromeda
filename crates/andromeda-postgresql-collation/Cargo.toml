@@ -10,6 +10,7 @@ workspace = true
 [dependencies]
 andromeda-ngsi-ld-query.workspace = true
 andromeda-postgresql-pool.workspace = true
+andromeda-postgresql-seaquery.workspace = true
 dashmap = { version = "6.2.1", features = ["inline"] }
 sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres"] }
 thiserror = "2.0.21"

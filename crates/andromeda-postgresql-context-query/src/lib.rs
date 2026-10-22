@@ -5,7 +5,7 @@
 //! it are queried. This crate assembles those two `SELECT` statements from the
 //! fragments `andromeda-postgresql-query` renders, and does nothing else: it
 //! opens no connection, holds no pool, and returns `sea_query` statement trees
-//! for the store to bind through `sea-query-sqlx` and execute.
+//! for the store to run through the SQL adapter.
 
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]

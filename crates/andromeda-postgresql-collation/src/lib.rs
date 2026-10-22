@@ -30,13 +30,13 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod provisioned_collations;
-pub mod schema_ddl;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-ngsi-ld-query",
         "andromeda-postgresql-pool",
+        "andromeda-postgresql-seaquery",
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-postgresql-pool",

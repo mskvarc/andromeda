@@ -6,6 +6,12 @@
 //! column list behind.
 
 use crate::error::ContextStoreError;
+use andromeda_postgresql_seaquery::{
+    relation_copy::CopiedIdentity,
+    statement::Statement,
+    system_catalog::{InformationSchema, InformationSchemaColumns},
+};
+use sea_query::{Alias, DynIden, Expr, ExprTrait, IntoIden, Order, Query, SelectStatement};
 use sqlx::{PgConnection, Row};
 use strum::EnumString;
 
@@ -24,10 +30,17 @@ pub(crate) enum IdentityGeneration {
 
 /// One insertable column of a branch relation.
 pub(crate) struct PlannedColumn {
-    /// The column name, unquoted.
+    /// The column name, as the catalogue spells it.
     pub(crate) name: String,
     /// How the database generates its value, when it is an identity column.
     pub(crate) identity: Option<IdentityGeneration>,
+}
+
+impl PlannedColumn {
+    /// The column as an identifier.
+    fn iden(&self) -> DynIden {
+        Alias::new(self.name.as_str()).into_iden()
+    }
 }
 
 /// The insertable columns of one branch relation, in ordinal order.
@@ -42,50 +55,55 @@ impl ColumnPlan {
         self.columns.is_empty()
     }
 
-    /// Whether a verbatim copy must override the system value, because an
-    /// identity column refuses an explicit value otherwise.
-    pub(crate) fn overrides_system_value(&self) -> bool {
-        self.columns.iter().any(|column| column.identity == Some(IdentityGeneration::Always))
+    /// How a verbatim copy treats the identity values it supplies: an
+    /// identity column generated `ALWAYS` refuses an explicit value unless the
+    /// insert overrides the system value.
+    pub(crate) fn copied_identity(&self) -> CopiedIdentity {
+        if self.columns.iter().any(|column| column.identity == Some(IdentityGeneration::Always)) {
+            CopiedIdentity::OverridingSystemValue
+        } else {
+            CopiedIdentity::Supplied
+        }
     }
 
-    /// The columns, quoted and comma-separated, for an `INSERT` and its `SELECT`.
-    pub(crate) fn quoted_columns(&self) -> String {
-        self.columns.iter().map(|column| format!("\"{}\"", column.name)).collect::<Vec<_>>().join(", ")
+    /// The columns, in ordinal order, for an `INSERT` and its `SELECT`.
+    pub(crate) fn columns(&self) -> Vec<DynIden> {
+        self.columns.iter().map(PlannedColumn::iden).collect()
     }
 
-    /// The names of the identity columns, whichever way they are generated.
-    pub(crate) fn identity_columns(&self) -> impl Iterator<Item = &str> {
-        self.columns
-            .iter()
-            .filter(|column| column.identity.is_some())
-            .map(|column| column.name.as_str())
+    /// The identity columns, whichever way they are generated.
+    pub(crate) fn identity_columns(&self) -> impl Iterator<Item = DynIden> {
+        self.columns.iter().filter(|column| column.identity.is_some()).map(PlannedColumn::iden)
     }
 }
 
-/// Read one relation's insertable columns in `schema` from the catalogue,
+/// The catalogue read of one relation's insertable columns in `schema`,
 /// excluding stored generated columns (which the database recomputes on
-/// insert).
+/// insert), in ordinal order.
+fn column_plan_statement(schema: &DynIden, table: &DynIden) -> SelectStatement {
+    Query::select()
+        .columns([InformationSchemaColumns::ColumnName, InformationSchemaColumns::IdentityGeneration])
+        .from((InformationSchema, InformationSchemaColumns::Table))
+        .and_where(Expr::col(InformationSchemaColumns::TableSchema).eq(schema.to_string()))
+        .and_where(Expr::col(InformationSchemaColumns::TableName).eq(table.to_string()))
+        .and_where(Expr::col(InformationSchemaColumns::IsGenerated).eq("NEVER"))
+        .order_by(InformationSchemaColumns::OrdinalPosition, Order::Asc)
+        .to_owned()
+}
+
+/// Read one relation's insertable columns in `schema` from the catalogue.
 ///
 /// # Errors
 ///
 /// Returns [`ContextStoreError`] when the catalogue read fails or reports an
 /// identity generation PostgreSQL does not define.
-pub(crate) async fn column_plan(conn: &mut PgConnection, schema: &str, table: &str) -> Result<ColumnPlan, ContextStoreError> {
-    let rows = sqlx::query(
-        "SELECT column_name, identity_generation \
-         FROM information_schema.columns \
-         WHERE table_schema = $1 AND table_name = $2 AND is_generated = 'NEVER' \
-         ORDER BY ordinal_position",
-    )
-    .bind(schema)
-    .bind(table)
-    .fetch_all(&mut *conn)
-    .await?;
+pub(crate) async fn column_plan(conn: &mut PgConnection, schema: &DynIden, table: &DynIden) -> Result<ColumnPlan, ContextStoreError> {
+    let rows = column_plan_statement(schema, table).to_query().fetch_all(&mut *conn).await?;
     let columns = rows
         .iter()
         .map(|row| {
-            let name: String = row.try_get("column_name")?;
-            let generation: Option<String> = row.try_get("identity_generation")?;
+            let name: String = row.try_get(0)?;
+            let generation: Option<String> = row.try_get(1)?;
             Ok(PlannedColumn {
                 name,
                 identity: identity_generation(generation.as_deref())?,
@@ -128,8 +146,10 @@ pub(crate) mod fixture {
 
 #[cfg(test)]
 mod tests {
-    use crate::snapshot::clone::column_plan::{IdentityGeneration, fixture::entity_key_plan, identity_generation};
+    use crate::snapshot::clone::column_plan::{IdentityGeneration, column_plan_statement, fixture::entity_key_plan, identity_generation};
+    use andromeda_postgresql_seaquery::relation_copy::CopiedIdentity;
     use pretty_assertions::assert_eq;
+    use sea_query::{Alias, IntoIden, PostgresQueryBuilder};
 
     #[test]
     fn the_catalogue_spellings_read_as_the_two_identity_generations() {
@@ -145,21 +165,33 @@ mod tests {
 
     #[test]
     fn only_an_always_identity_needs_the_system_value_overridden() {
-        assert!(entity_key_plan(Some(IdentityGeneration::Always)).overrides_system_value());
-        assert!(!entity_key_plan(Some(IdentityGeneration::ByDefault)).overrides_system_value());
-        assert!(!entity_key_plan(None).overrides_system_value());
+        assert_eq!(
+            entity_key_plan(Some(IdentityGeneration::Always)).copied_identity(),
+            CopiedIdentity::OverridingSystemValue
+        );
+        assert_eq!(entity_key_plan(Some(IdentityGeneration::ByDefault)).copied_identity(), CopiedIdentity::Supplied);
+        assert_eq!(entity_key_plan(None).copied_identity(), CopiedIdentity::Supplied);
     }
 
     #[test]
     fn every_identity_column_is_continued_whichever_way_it_is_generated() {
         for identity in [IdentityGeneration::Always, IdentityGeneration::ByDefault] {
-            assert_eq!(entity_key_plan(Some(identity)).identity_columns().collect::<Vec<_>>(), vec!["entity_key"]);
+            let names = entity_key_plan(Some(identity))
+                .identity_columns()
+                .map(|column| column.to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(names, vec!["entity_key"]);
         }
         assert_eq!(entity_key_plan(None).identity_columns().count(), 0);
     }
 
     #[test]
-    fn the_columns_are_quoted_in_ordinal_order() {
-        assert_eq!(entity_key_plan(None).quoted_columns(), "\"entity_key\", \"id\"");
+    fn the_catalogue_read_lists_the_insertable_columns_of_one_relation_in_ordinal_order() {
+        let (sql, values) = column_plan_statement(&Alias::new("snap_3_stg").into_iden(), &Alias::new("entities").into_iden()).build(PostgresQueryBuilder);
+        assert_eq!(
+            sql,
+            r#"SELECT "column_name", "identity_generation" FROM "information_schema"."columns" WHERE "table_schema" = $1 AND "table_name" = $2 AND "is_generated" = $3 ORDER BY "ordinal_position" ASC"#
+        );
+        assert_eq!(values.0.len(), 3);
     }
 }

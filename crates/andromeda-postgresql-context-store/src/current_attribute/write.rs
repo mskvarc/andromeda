@@ -24,7 +24,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{CurrentAttributes, Entities};
-use andromeda_postgresql_seaquery::{conflict_image::Excluded, pg_array::any, pg_operator::PgBinaryOperator};
+use andromeda_postgresql_seaquery::{conflict_image::Excluded, literal::int_literal, pg_array::any, pg_operator::PgBinaryOperator};
 use sea_query::{Cond, DeleteStatement, DynIden, Expr, ExprTrait, InsertStatement, IntoIden, JoinType, OnConflict, Query, SimpleExpr, UpdateStatement};
 
 /// The columns a stored row takes from the row an update writes in its place:
@@ -137,7 +137,7 @@ pub(crate) fn dropped_rows(target: &ContextTarget, anchor: impl IntoIden) -> Del
         .and_where(removed())
         .take();
     let staged = Query::select()
-        .expr(Expr::val(1))
+        .expr(int_literal(1))
         .from(anchor.clone()) // clone: as above
         .from(Grains)
         .cond_where(Cond::all().add(removed()).add(staged_grain_of_the_row(anchor)))
@@ -163,7 +163,7 @@ pub(crate) fn dropped_rows(target: &ContextTarget, anchor: impl IntoIden) -> Del
 pub(crate) fn vanished_rows(target: &ContextTarget, anchor: impl IntoIden, overwritten: SimpleExpr) -> DeleteStatement {
     let anchor = anchor.into_iden();
     let staged = Query::select()
-        .expr(Expr::val(1))
+        .expr(int_literal(1))
         .from(Instances)
         .join(
             JoinType::Join,
@@ -209,11 +209,15 @@ fn staged_grain_of_the_row(anchor: DynIden) -> Cond {
 mod tests {
     use crate::current_attribute::write::{dropped_rows, inserted_rows, moved_rows, vanished_rows, written_rows};
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_postgresql_seaquery::placeholder::external_placeholder;
-    use sea_query::{Alias, PostgresQueryBuilder};
+    use sea_query::{Alias, Expr, PostgresQueryBuilder, SimpleExpr};
 
     fn anchor() -> Alias {
         Alias::new("ins")
+    }
+
+    /// The overwritten Entities as the one bound text array the update binds.
+    fn overwritten() -> SimpleExpr {
+        Expr::val(vec!["urn:ngsi-ld:Building:1".to_owned()])
     }
 
     #[test]
@@ -314,9 +318,10 @@ mod tests {
     /// its whole grain, for the overwritten Entities alone.
     #[test]
     fn a_grain_an_overwrite_does_not_restate_is_found_by_its_whole_grain() {
-        let sql = vanished_rows(&ContextTarget::Live, anchor(), external_placeholder(9)).to_string(PostgresQueryBuilder);
+        let (sql, values) = vanished_rows(&ContextTarget::Live, anchor(), overwritten()).build(PostgresQueryBuilder);
+        pretty_assertions::assert_eq!(values.0.len(), 1, "{sql}");
         assert!(
-            sql.starts_with(r#"DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "entity_key" FROM "ins" WHERE "id" = ANY($9)) AND (NOT EXISTS("#),
+            sql.starts_with(r#"DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "entity_key" FROM "ins" WHERE "id" = ANY($1)) AND (NOT EXISTS("#),
             "{sql}"
         );
         assert!(
@@ -337,7 +342,7 @@ mod tests {
         assert!(moved.contains(r#"UPDATE "snap_5_stg"."current_attributes""#), "{moved}");
         for delete in [
             dropped_rows(&target, anchor()).to_string(PostgresQueryBuilder),
-            vanished_rows(&target, anchor(), external_placeholder(1)).to_string(PostgresQueryBuilder),
+            vanished_rows(&target, anchor(), overwritten()).to_string(PostgresQueryBuilder),
         ] {
             assert!(delete.contains(r#"DELETE FROM "snap_5_stg"."current_attributes""#), "{delete}");
         }

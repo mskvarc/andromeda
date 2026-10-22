@@ -8,6 +8,7 @@
 use crate::store_fault::{persistence_error, undecodable};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, tenant::TenantName};
 use andromeda_postgresql_schema::{subscription_forwarding::ForwardedSubscriptionRoutes, tenancy::Tenants};
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_subscription_forwarding::{error::SubscriptionForwardingError, mapping::ForwardedSubscriptionRouter};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use futures::future::BoxFuture;
@@ -17,14 +18,12 @@ use sea_query::{
     InsertStatement,
     JoinType,
     OnConflict,
-    PostgresQueryBuilder,
     Query,
     QueryStatementBuilder,
     SelectStatement,
     SimpleExpr,
     error::Error as SeaQueryError,
 };
-use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Row};
 
 /// `tenants` rows that are `tenant`: the named row, or the one unnamed default.
@@ -104,10 +103,9 @@ impl ForwardedSubscriptionRouter for PostgresForwardedSubscriptionRouter {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let (sql, values) = register_statement(minted, tenant)
+            register_statement(minted, tenant)
                 .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?
-                .build_sqlx(PostgresQueryBuilder);
-            sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                .to_query()
                 .execute(&self.pool)
                 .await
                 .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
@@ -125,8 +123,8 @@ impl ForwardedSubscriptionRouter for PostgresForwardedSubscriptionRouter {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let (sql, values) = tenant_of_statement(minted).build_sqlx(PostgresQueryBuilder);
-            let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            let row = tenant_of_statement(minted)
+                .to_query()
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
@@ -150,11 +148,11 @@ impl ForwardedSubscriptionRouter for PostgresForwardedSubscriptionRouter {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let (sql, values) = Query::delete()
+            Query::delete()
                 .from_table(ForwardedSubscriptionRoutes::Table)
                 .and_where(Expr::col(ForwardedSubscriptionRoutes::MintedSubscriptionId).eq(minted.as_str()))
-                .build_sqlx(PostgresQueryBuilder);
-            sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                .to_owned()
+                .to_query()
                 .execute(&self.pool)
                 .await
                 .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;

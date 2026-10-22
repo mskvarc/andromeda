@@ -15,8 +15,20 @@
 //! can never be sent is retired with its reason instead of being leased again
 //! at every lease expiry.
 
-use crate::notification_adapter::NotificationAdapter;
+use crate::{
+    notification_adapter::NotificationAdapter,
+    queue_database::{delivery_of, due_delivery_insert, stored_subscription_key},
+};
 use andromeda_postgresql_context_store::entity_state_record::state_record::EntityStateRecord;
+use andromeda_postgresql_schema::notification::{NotificationDeliveries, NotificationEvents};
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    clock::now,
+    external_arguments::{ExternalArguments, ExternallyBound},
+    pg_array::nullable_array,
+    pg_type::PostgresType,
+    statement::Statement,
+};
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::{
@@ -25,6 +37,7 @@ use andromeda_test_harness::{
 };
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Expr, ExprTrait, Query};
 use serde_json::json;
 use serial_test::serial;
 use sqlx::PgPool;
@@ -80,11 +93,7 @@ pub async fn subscribe_to_created_probe(client: &TestClient, pool: &PgPool, enti
     let created = client.create_subscription(&subscription).await.expect("create the subscription");
     assert_eq!(created.status, StatusCode::CREATED, "subscription create: {:?}", created.body);
 
-    sqlx::query_scalar("SELECT subscription_key FROM subscriptions WHERE id = $1")
-        .bind(subscription_id)
-        .fetch_one(pool)
-        .await
-        .expect("stored surrogate key")
+    stored_subscription_key(pool, subscription_id).await
 }
 
 /// Queue one due delivery of one event for `subscription_key`, as a durable
@@ -96,23 +105,47 @@ pub async fn queue_delivery(pool: &PgPool, subscription_key: i64, event: QueuedE
         expires_at: None,
         instances: Vec::new(),
     };
-    let event_key: i64 = sqlx::query_scalar(
-        "INSERT INTO notification_events (created_at, event_ordinal, lifecycle, write_id, entity_id, change_kinds, change_attribute_name_keys, change_dataset_ids, entity_snapshot) \
-         VALUES (NOW(), 0, $1, $2, $3, $4, $5, $6, $7) RETURNING event_key",
+    let mut external = ExternalArguments::default();
+    let snapshot = external.push(snapshot);
+    let event_key: i64 = ExternallyBound::new(
+        Query::insert()
+            .into_table(NotificationEvents::Table)
+            .columns([
+                NotificationEvents::CreatedAt,
+                NotificationEvents::EventOrdinal,
+                NotificationEvents::Lifecycle,
+                NotificationEvents::WriteId,
+                NotificationEvents::EntityId,
+                NotificationEvents::ChangeKinds,
+                NotificationEvents::ChangeAttributeNameKeys,
+                NotificationEvents::ChangeDatasetIds,
+                NotificationEvents::EntitySnapshot,
+            ])
+            .values([
+                now(),
+                Expr::val(0_i32),
+                Expr::val(event.lifecycle),
+                Expr::val(Uuid::new_v4()),
+                Expr::val(event.entity_id),
+                Expr::val(event.change.iter().map(|instance| instance.kind).collect::<Vec<i16>>()),
+                Expr::val(event.change.iter().map(|instance| instance.attribute_name_key).collect::<Vec<i32>>()),
+                cast(
+                    nullable_array(event.change.iter().map(|instance| instance.dataset_id.map(str::to_owned))),
+                    PostgresType::TextArray,
+                ),
+                snapshot,
+            ])
+            .expect("one value per column")
+            .returning_col(NotificationEvents::EventKey)
+            .to_owned(),
+        external,
     )
-    .bind(event.lifecycle)
-    .bind(Uuid::new_v4())
-    .bind(event.entity_id)
-    .bind(event.change.iter().map(|instance| instance.kind).collect::<Vec<i16>>())
-    .bind(event.change.iter().map(|instance| instance.attribute_name_key).collect::<Vec<i32>>())
-    .bind(event.change.iter().map(|instance| instance.dataset_id).collect::<Vec<Option<&str>>>())
-    .bind(snapshot)
+    .into_query_scalar()
     .fetch_one(pool)
     .await
     .expect("queue the notification event");
-    sqlx::query_scalar("INSERT INTO notification_deliveries (event_key, subscription_key, next_attempt_at) VALUES ($1, $2, NOW()) RETURNING delivery_key")
-        .bind(event_key)
-        .bind(subscription_key)
+    due_delivery_insert(event_key, subscription_key)
+        .to_query_scalar()
         .fetch_one(pool)
         .await
         .expect("queue the notification delivery")
@@ -152,18 +185,26 @@ async fn touch_tenant(scope: &TestEnvironment, subscription_id: &str) {
     assert_eq!(retrieved.status, StatusCode::OK);
 }
 
+/// What the delivery's row records: whether it was delivered and exhausted,
+/// its attempts, and its recorded failure.
+pub async fn delivery_outcome(pool: &PgPool, delivery: i64) -> (bool, bool, i32, Option<String>) {
+    delivery_of(delivery)
+        .expr(Expr::col(NotificationDeliveries::DeliveredAt).is_not_null())
+        .expr(Expr::col(NotificationDeliveries::ExhaustedAt).is_not_null())
+        .column(NotificationDeliveries::AttemptCount)
+        .column(NotificationDeliveries::LastError)
+        .to_query_as()
+        .fetch_one(pool)
+        .await
+        .expect("delivery state")
+}
+
 /// Wait until the delivery's row records an outcome, returning when it was
 /// delivered and exhausted, its attempts, and its recorded failure.
 pub async fn settled_delivery(pool: &PgPool, delivery: i64, deadline: Duration) -> (bool, bool, i32, Option<String>) {
     let give_up = Instant::now() + deadline;
     loop {
-        let state: (bool, bool, i32, Option<String>) = sqlx::query_as(
-            "SELECT delivered_at IS NOT NULL, exhausted_at IS NOT NULL, attempt_count, last_error FROM notification_deliveries WHERE delivery_key = $1",
-        )
-        .bind(delivery)
-        .fetch_one(pool)
-        .await
-        .expect("delivery state");
+        let state = delivery_outcome(pool, delivery).await;
         if state.0 || state.1 || Instant::now() >= give_up {
             return state;
         }

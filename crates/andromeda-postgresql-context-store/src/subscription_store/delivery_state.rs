@@ -20,26 +20,13 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::subscriptions::{SubscriptionDeliveryState, Subscriptions};
-use andromeda_postgresql_seaquery::{clock::now, interval::next_grid_point, placeholder::external_placeholder};
+use andromeda_postgresql_seaquery::{clock::now, interval::next_grid_point};
 use andromeda_subscription::{
     error::SubscriptionError,
     notification_slot::{NotificationOutcome, NotificationSlotGate, NotificationStamp, OutcomeRecord},
 };
 use chrono::{DateTime, Utc};
-use sea_query::{
-    Alias,
-    Cond,
-    Expr,
-    ExprTrait,
-    Func,
-    JoinType,
-    PostgresQueryBuilder,
-    Query,
-    QueryStatementBuilder,
-    SelectStatement,
-    SimpleExpr,
-    UpdateStatement,
-};
+use sea_query::{Alias, Cond, Expr, ExprTrait, Func, InsertStatement, JoinType, Query, QueryStatementBuilder, SelectStatement, SimpleExpr, UpdateStatement};
 
 /// The state column `outcome` stamps.
 const fn outcome_column(outcome: NotificationOutcome) -> SubscriptionDeliveryState {
@@ -70,16 +57,16 @@ enum OwnerStatus {
     Any,
 }
 
-/// The insert of the state row that completes a freshly created subscription;
-/// binds the surrogate key as `$1` into the subscription's branch schema.
-pub fn state_insert_sql(target: &ContextTarget) -> Result<String, SubscriptionError> {
+/// The insert of the state row that completes a freshly created subscription,
+/// under the surrogate key it minted, into the subscription's branch schema.
+pub fn state_insert(target: &ContextTarget, subscription_key: i64) -> Result<InsertStatement, SubscriptionError> {
     let mut insert = Query::insert();
     insert
         .into_table(table_of(target, SubscriptionDeliveryState::Table))
         .columns([SubscriptionDeliveryState::SubscriptionKey])
-        .values([external_placeholder(1)])
+        .values([Expr::val(subscription_key)])
         .map_err(|error| persistence_error::<SubscriptionError>(error))?;
-    Ok(insert.to_string(PostgresQueryBuilder))
+    Ok(insert)
 }
 
 /// The scalar subquery resolving the state row's key from the subscription's
@@ -299,7 +286,7 @@ mod tests {
             outcome_statement,
             record_interval_tick_statement,
             slot_claim_statement,
-            state_insert_sql,
+            state_insert,
         },
         stored_kind::StoredKind,
     };
@@ -342,10 +329,9 @@ mod tests {
 
     #[test]
     fn the_state_row_is_inserted_under_the_returned_surrogate_key() {
-        assert_eq!(
-            state_insert_sql(&ContextTarget::Live).expect("builds"),
-            r#"INSERT INTO "subscription_delivery_state" ("subscription_key") VALUES ($1)"#
-        );
+        let (sql, values) = state_insert(&ContextTarget::Live, 7).expect("builds").build(PostgresQueryBuilder);
+        assert_eq!(sql, r#"INSERT INTO "subscription_delivery_state" ("subscription_key") VALUES ($1)"#);
+        assert_eq!(values.0.len(), 1);
     }
 
     #[test]

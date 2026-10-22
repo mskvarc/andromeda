@@ -1,18 +1,18 @@
 //! PostgreSQL array constructs sea-query has no native form for.
 
 use crate::literal::{false_literal, true_literal};
-use sea_query::{Expr, ExprTrait, Func, Iden, PostgresQueryBuilder, QueryStatementBuilder, SelectStatement, SimpleExpr, Value};
+use sea_query::{Expr, ExprTrait, Func, Iden, Nullable, QueryStatementBuilder, SelectStatement, SimpleExpr, Value, ValueType};
 
-/// `ARRAY(subquery)` where the subquery carries bound values, collecting a
-/// single-column result set into one Postgres array.
+/// `ARRAY(subquery)`: a single-column result set collected into one Postgres
+/// array, which sea-query has no form for.
 ///
-/// Unlike [`array_subquery`], the subquery is embedded as a sub-statement rather
-/// than rendered to text, so any request value inside it — a name to resolve
-/// through a dictionary, a type to overlap — binds and numbers with the enclosing
-/// statement rather than being inlined.
+/// Distinct from `ARRAY[…]`: the operand is a `SELECT`, not an element list.
+/// The subquery is embedded as a sub-statement, so any value inside it (a name
+/// to resolve through a dictionary, a type to overlap) binds and numbers with
+/// the enclosing statement.
 #[must_use]
 pub fn array_of_subquery(subquery: SelectStatement) -> SimpleExpr {
-    Expr::cust_with_exprs("ARRAY($1)", [SimpleExpr::SubQuery(None, Box::new(subquery.into_sub_query_statement()))])
+    Expr::cust_with_exprs("ARRAY $1", [SimpleExpr::SubQuery(None, Box::new(subquery.into_sub_query_statement()))])
 }
 
 /// The `ANY` array quantifier.
@@ -46,6 +46,39 @@ pub fn array_position(array: SimpleExpr, element: SimpleExpr) -> SimpleExpr {
 #[derive(Iden, Clone, Copy)]
 #[iden = "cardinality"]
 struct Cardinality;
+
+/// `(array)[position]` - the element of `array` at the 1-based `position`,
+/// NULL past either end.
+#[must_use]
+pub fn array_element(array: SimpleExpr, position: u32) -> SimpleExpr {
+    Expr::cust_with_exprs(format!("($1)[{position}]"), [array])
+}
+
+/// `ARRAY[element, ...]` - an array built from expressions, such as the
+/// columns of the row a statement selects.
+#[must_use]
+pub fn array_literal(elements: impl IntoIterator<Item = SimpleExpr>) -> SimpleExpr {
+    // sea-query reads a bracketed span of a custom fragment as one quoted
+    // token and substitutes nothing inside it, so the brackets and separators
+    // are operands of their own and the template is placeholders alone.
+    let mut parts = vec![Expr::cust("ARRAY[")];
+    for (position, element) in elements.into_iter().enumerate() {
+        if position > 0 {
+            parts.push(Expr::cust(","));
+        }
+        parts.push(element);
+    }
+    parts.push(Expr::cust("]"));
+    let template = (1..=parts.len()).map(|position| format!("${position}")).collect::<Vec<_>>().join(" ");
+    Expr::cust_with_exprs(template, parts)
+}
+
+/// `cardinality(array)` - the number of elements of `array`, NULL for a NULL
+/// array.
+#[must_use]
+pub fn cardinality(array: SimpleExpr) -> SimpleExpr {
+    Func::cust(Cardinality).args([array]).into()
+}
 
 /// `cardinality(array) > 0` - whether `array` holds any element.
 ///
@@ -126,20 +159,6 @@ pub fn array_cat(left: SimpleExpr, right: SimpleExpr) -> SimpleExpr {
     Func::cust(ArrayCat).args([left, right]).into()
 }
 
-/// `ARRAY(subquery)` - the array-valued subquery constructor, which collects a
-/// single-column result set into one Postgres array.
-///
-/// Distinct from `ARRAY[…]`: the operand is a `SELECT`, not an element list.
-/// sea-query has no form for it, so the subquery is rendered and wrapped here.
-/// The subquery's text is embedded rather than parameterised, so every operand
-/// in it must be a column or function call — a value-free subquery, which is the
-/// case for `ARRAY(SELECT jsonb_array_elements_text(col))`: no request value
-/// crosses this boundary, only columns of the enclosing statement.
-#[must_use]
-pub fn array_subquery(subquery: &SelectStatement) -> SimpleExpr {
-    Expr::cust(format!("ARRAY({})", subquery.to_string(PostgresQueryBuilder)))
-}
-
 /// `ANY(array)` - the right operand of `column = ANY(array)`.
 ///
 /// Membership is tested against one bound array rather than expanding to a
@@ -208,33 +227,18 @@ pub fn text_array(values: &[&str]) -> SimpleExpr {
 #[iden = "array_cat"]
 struct ArrayCat;
 
-/// A `text[]` whose elements may be SQL `NULL`, in the order given.
+/// One bound array whose elements may be SQL `NULL`, in the order given.
 ///
-/// One bound array value cannot carry a `NULL` element (see
-/// [`crate::placeholder`]), and the `ARRAY[…]` constructor cannot take
-/// sea-query markers, whose template tokenizer reads `[…]` as a quoted
-/// identifier. The array is therefore concatenated from one-element arrays:
-/// each present element binds as its own parameter and each absent one is a
-/// `NULL`, which binds nothing. The concatenation is a balanced tree, so its
-/// nesting grows with the logarithm of the element count. Every present
-/// element is a parameter, so this suits the elements of one row, never a
-/// batch.
+/// The whole array is one parameter however long it is, an absent element a
+/// NULL element of it, so a column of a parallel-array set-write, where a row
+/// has no value, binds like any other array.
 #[must_use]
-pub fn nullable_text_array(values: &[Option<&str>]) -> SimpleExpr {
-    match values {
-        [] => Expr::cust("'{}'::text[]"),
-        [value] => array_append(
-            Expr::cust("'{}'::text[]"),
-            match value {
-                Some(value) => Expr::val(*value),
-                None => Expr::cust("NULL"),
-            },
-        ),
-        [..] => {
-            let (head, tail) = values.split_at(values.len() / 2);
-            Func::cust(ArrayCat).args([nullable_text_array(head), nullable_text_array(tail)]).into()
-        }
-    }
+pub fn nullable_array<T>(elements: impl IntoIterator<Item = Option<T>>) -> SimpleExpr
+where
+    T: Into<Value> + Nullable + ValueType,
+{
+    let elements = elements.into_iter().map(|element| element.map_or_else(T::null, Into::into)).collect();
+    Expr::val(Value::Array(T::array_type(), Some(Box::new(elements))))
 }
 
 #[cfg(test)]
@@ -243,18 +247,21 @@ mod tests {
         all,
         any,
         array_append,
+        array_element,
+        array_literal,
+        array_of_subquery,
         array_position,
         array_positions,
-        array_subquery,
+        cardinality,
         elements_or_null,
         has_elements,
         is_any_of,
         is_none_of,
-        nullable_text_array,
+        nullable_array,
         width_bucket,
     };
     use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query, SimpleExpr, Value};
+    use sea_query::{Alias, ArrayType, Expr, ExprTrait, PostgresQueryBuilder, Query, SimpleExpr, Value};
 
     fn render_expr(expr: SimpleExpr) -> String {
         Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
@@ -297,6 +304,24 @@ mod tests {
     }
 
     #[test]
+    fn an_element_is_read_at_its_one_based_position() {
+        let sql = render_expr(array_element(Expr::col(Alias::new("events")), 1));
+        assert_eq!(sql, "SELECT (\"events\")[1]");
+    }
+
+    #[test]
+    fn an_array_literal_lists_its_element_expressions() {
+        let sql = render_expr(array_literal([Expr::col(Alias::new("a")), Expr::col(Alias::new("b"))]));
+        assert_eq!(sql, "SELECT ARRAY[ \"a\" , \"b\" ]");
+    }
+
+    #[test]
+    fn the_cardinality_of_an_array_is_its_element_count() {
+        let sql = render_expr(cardinality(Expr::col(Alias::new("sub_attributes"))));
+        assert_eq!(sql, "SELECT cardinality(\"sub_attributes\")");
+    }
+
+    #[test]
     fn an_element_test_compares_the_array_cardinality() {
         let sql = render_expr(has_elements(Expr::col(Alias::new("scope_paths"))));
         assert_eq!(sql, "SELECT cardinality(\"scope_paths\") > 0");
@@ -336,10 +361,14 @@ mod tests {
     }
 
     #[test]
-    fn an_array_subquery_wraps_a_select_in_the_array_constructor() {
-        let subquery = Query::select().expr(Expr::col(Alias::new("value"))).to_owned();
-        let sql = render_expr(array_subquery(&subquery));
-        assert!(sql.contains(r#"ARRAY(SELECT "value")"#), "{sql}");
+    fn an_array_subquery_wraps_a_select_in_the_array_constructor_and_binds_its_values() {
+        let subquery = Query::select()
+            .expr(Expr::col(Alias::new("value")))
+            .and_where(Expr::col(Alias::new("key")).eq(3))
+            .to_owned();
+        let (sql, values) = Query::select().expr(array_of_subquery(subquery)).to_owned().build(PostgresQueryBuilder);
+        assert_eq!(sql, r#"SELECT ARRAY (SELECT "value" WHERE "key" = $1)"#);
+        assert_eq!(values.0.len(), 1);
     }
 
     #[test]
@@ -367,39 +396,22 @@ mod tests {
     }
 
     #[test]
-    fn a_nullable_text_array_binds_present_elements_and_spells_absent_ones() {
-        let values = [Some("urn:a"), None, Some("urn:b")];
-        let (sql, bound) = Query::select().expr(nullable_text_array(&values)).to_owned().build(PostgresQueryBuilder);
+    fn a_nullable_array_is_one_bound_value_holding_its_absent_elements() {
+        let (sql, bound) = Query::select()
+            .expr(nullable_array([Some("urn:a".to_owned()), None, Some("urn:b".to_owned())]))
+            .to_owned()
+            .build(PostgresQueryBuilder);
+        assert_eq!(sql, "SELECT $1");
         assert_eq!(
-            sql,
-            "SELECT array_cat(array_append('{}'::text[], $1), array_cat(array_append('{}'::text[], NULL), array_append('{}'::text[], $2)))"
+            bound.0,
+            vec![Value::Array(
+                ArrayType::String,
+                Some(Box::new(vec![
+                    Value::String(Some("urn:a".to_owned())),
+                    Value::String(None),
+                    Value::String(Some("urn:b".to_owned()))
+                ]))
+            )]
         );
-        assert_eq!(bound.0.len(), 2);
-    }
-
-    #[test]
-    fn an_empty_nullable_text_array_is_typed() {
-        assert_eq!(render_expr(nullable_text_array(&[])), "SELECT '{}'::text[]");
-    }
-
-    /// The concatenation is balanced: 64 elements nest seven calls deep, not
-    /// sixty-four.
-    #[test]
-    fn a_nullable_text_array_nests_logarithmically() {
-        let values: Vec<Option<&str>> = (0..64).map(|index| if index % 2 == 0 { Some("urn:x") } else { None }).collect();
-        let (sql, bound) = Query::select().expr(nullable_text_array(&values)).to_owned().build(PostgresQueryBuilder);
-        let depth = sql
-            .chars()
-            .scan(0_i32, |open, character| {
-                *open += match character {
-                    '(' => 1,
-                    ')' => -1,
-                    _ => 0,
-                };
-                Some(*open)
-            })
-            .max();
-        assert_eq!(depth, Some(7), "{sql}");
-        assert_eq!(bound.0.len(), 32);
     }
 }

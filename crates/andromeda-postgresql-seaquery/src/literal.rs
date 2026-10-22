@@ -12,9 +12,16 @@ use sea_query::{Expr, SimpleExpr};
 ///
 /// Doubling `'` is the whole of it: PostgreSQL's standard-conforming string
 /// literals recognise no backslash escapes, so no other character is special.
-#[must_use]
-pub fn escape_single_quoted(value: &str) -> String {
+fn escape_single_quoted(value: &str) -> String {
     value.replace('\'', "''")
+}
+
+/// `value` as a single-quoted SQL string literal, escaped.
+///
+/// The one spelling of a literal in statement text, shared by inline
+/// expressions and utility commands alike.
+pub(crate) fn quoted_text(value: &str) -> String {
+    format!("'{}'", escape_single_quoted(value))
 }
 
 /// A single-quoted SQL text literal, rendered inline rather than bound.
@@ -26,7 +33,7 @@ pub fn escape_single_quoted(value: &str) -> String {
 /// for caller-supplied data, which always binds.
 #[must_use]
 pub fn text_literal(value: &str) -> SimpleExpr {
-    Expr::cust(format!("'{}'", escape_single_quoted(value)))
+    Expr::cust(quoted_text(value))
 }
 
 /// The constant `FALSE`, rendered inline.

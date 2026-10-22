@@ -14,6 +14,11 @@
 pub mod context_source_adapter;
 mod store_outage;
 
+use andromeda_postgresql_seaquery::{
+    catalog_function::{pg_sleep, terminate_backend},
+    statement::Statement,
+    system_catalog::{PgDatabase, PgStatActivity},
+};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::pooler_probe::{
     endpoints,
@@ -24,6 +29,7 @@ use andromeda_test_harness::pooler_probe::{
     tenant_load::UniformPicker,
 };
 use reqwest::Client;
+use sea_query::{Alias, Expr, ExprTrait, Query, SelectStatement};
 use sqlx::PgPool;
 use std::{future::Future, slice, time::Duration};
 use tokio::time::{Instant, sleep};
@@ -43,6 +49,24 @@ async fn control_pool() -> PgPool {
     PgPool::connect(&endpoints::database_url())
         .await
         .expect("connect to PostgreSQL control database")
+}
+
+/// The one tenant database the reset tier holds once a tenant is provisioned.
+async fn tenant_database(pool: &PgPool) -> String {
+    Query::select()
+        .column(PgDatabase::Datname)
+        .from(PgDatabase::Table)
+        .and_where(Expr::col(PgDatabase::Datname).like("andromeda_tenant_%"))
+        .limit(1)
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await
+        .expect("the tenant database exists")
+}
+
+/// A query that holds its pooler connection for twenty seconds.
+fn twenty_second_sleep() -> SelectStatement {
+    Query::select().expr(pg_sleep(Expr::val(20))).to_owned()
 }
 
 /// Reset the tier before and after a test.
@@ -176,11 +200,14 @@ async fn terminated_server_backends_are_replaced() {
         let pool = pool.clone();
         async move {
             sleep(Duration::from_secs(3)).await;
-            let _ = sqlx::query(
-                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE backend_type = 'client backend' AND datname LIKE 'andromeda_tenant_%'",
-            )
-            .execute(&pool)
-            .await;
+            let _ = Query::select()
+                .expr(terminate_backend(Expr::col(Alias::new("pid"))))
+                .from(PgStatActivity::Table)
+                .and_where(Expr::col(PgStatActivity::BackendType).eq("client backend"))
+                .and_where(Expr::col(PgStatActivity::Datname).like("andromeda_tenant_%"))
+                .to_query()
+                .execute(&pool)
+                .await;
         }
     };
     let report = load_with(&client, &broker, &tenants, 10, terminator).await;
@@ -222,10 +249,7 @@ async fn pool_saturation_is_a_503_with_retry_after_never_a_500() {
     tenant_load::provision_tenants(&client, &broker, slice::from_ref(&target), CORE_CONTEXT, 1)
         .await
         .expect("every tenant is provisioned");
-    let target_db: String = sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_%' LIMIT 1")
-        .fetch_one(&pool)
-        .await
-        .expect("target tenant database exists");
+    let target_db = tenant_database(&pool).await;
     let bystander = tenant_load::tenant_names("pgbsatby", 1).remove(0);
     tenant_load::provision_tenants(&client, &broker, slice::from_ref(&bystander), CORE_CONTEXT, 1)
         .await
@@ -238,7 +262,7 @@ async fn pool_saturation_is_a_503_with_retry_after_never_a_500() {
     let mut sleeps = Vec::new();
     for _ in 0..3 {
         let hog = hog.clone();
-        sleeps.push(tokio::spawn(async move { sqlx::query("SELECT pg_sleep(20)").execute(&hog).await }));
+        sleeps.push(tokio::spawn(async move { twenty_second_sleep().to_query().execute(&hog).await }));
     }
     sleep(Duration::from_secs(1)).await;
 
@@ -321,10 +345,7 @@ async fn a_saturated_name_dictionary_lookup_is_a_503_never_a_500() {
     tenant_load::provision_tenants(&client, &broker, slice::from_ref(&target), CORE_CONTEXT, 1)
         .await
         .expect("every tenant is provisioned");
-    let target_db: String = sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_%' LIMIT 1")
-        .fetch_one(&pool)
-        .await
-        .expect("target tenant database exists");
+    let target_db = tenant_database(&pool).await;
 
     // Occupy the target database's whole pooler pool (default_pool_size +
     // reserve = 3) for longer than the pooler's fifteen-second
@@ -334,7 +355,7 @@ async fn a_saturated_name_dictionary_lookup_is_a_503_never_a_500() {
     let mut sleeps = Vec::new();
     for _ in 0..3 {
         let hog = hog.clone();
-        sleeps.push(tokio::spawn(async move { sqlx::query("SELECT pg_sleep(20)").execute(&hog).await }));
+        sleeps.push(tokio::spawn(async move { twenty_second_sleep().to_query().execute(&hog).await }));
     }
     sleep(Duration::from_secs(1)).await;
 
@@ -397,10 +418,7 @@ async fn a_killed_database_pool_recovers() {
     tenant_load::provision_tenants(&client, &broker, slice::from_ref(&tenant), CORE_CONTEXT, 1)
         .await
         .expect("every tenant is provisioned");
-    let target_db: String = sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_%' LIMIT 1")
-        .fetch_one(&pool)
-        .await
-        .expect("tenant database exists");
+    let target_db = tenant_database(&pool).await;
 
     let console = PoolerConsole::new(endpoints::pgbouncer_admin_url());
     let _ = console.kill(&target_db).await;

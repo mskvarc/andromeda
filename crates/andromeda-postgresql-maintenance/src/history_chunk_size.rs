@@ -14,9 +14,11 @@ use crate::{
     catalog_counter::{CatalogCounter, non_negative},
     error::MaintenanceError,
 };
-use andromeda_postgresql_seaquery::timescale::{LargestRowstoreBytes, rowstore_chunk_size_statement};
-use sea_query::{Iden, PostgresQueryBuilder};
-use sea_query_sqlx::SqlxBinder;
+use andromeda_postgresql_seaquery::{
+    statement::Statement,
+    timescale::{LargestRowstoreBytes, rowstore_chunk_size_statement},
+};
+use sea_query::Iden;
 use sqlx::{PgConnection, Row};
 use std::str::FromStr;
 
@@ -40,8 +42,10 @@ pub struct RowstoreChunkSize {
 /// Returns [`MaintenanceError`] when the catalogue query fails, a row names a
 /// hypertable outside [`HistoryTable`], or a size is negative.
 pub async fn rowstore_chunk_sizes(connection: &mut PgConnection) -> Result<Vec<RowstoreChunkSize>, MaintenanceError> {
-    let (sql, values) = rowstore_chunk_size_statement(&HistoryTable::ALL.map(HistoryTable::relation_name)).build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
+    let rows = rowstore_chunk_size_statement(&HistoryTable::ALL.map(HistoryTable::relation_name))
+        .to_query()
+        .fetch_all(connection)
+        .await?;
     let measured = rows
         .into_iter()
         .map(|row| {

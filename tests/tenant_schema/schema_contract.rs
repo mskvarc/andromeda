@@ -11,6 +11,7 @@
 //! restored before the assertion runs: a test that failed while the tenant was
 //! left drifted would refuse the broker its next start.
 
+use crate::schema_stamp::{clear_stamp, read_stamp_row, restamp, stamp_statement, write_stamp};
 use andromeda_postgresql_context_store::{
     migration_set::tenant::tenant_migrator,
     schema_contract::{
@@ -19,8 +20,18 @@ use andromeda_postgresql_context_store::{
         schema_metadata::{ensure_schema_contract, verify_schema_contract},
     },
 };
+use andromeda_postgresql_schema::tenancy::{SchemaMetadata, Tenants};
+use andromeda_postgresql_seaquery::{
+    aggregate::count_all,
+    cast::cast,
+    introspection::{current_setting, extension_version},
+    pg_type::PostgresType,
+    setting::Setting,
+    statement::Statement,
+};
 use andromeda_test_harness::{configuration::TestRunConfiguration, database_access::connect_test_database, serialized_environment::SerializedEnvironment};
 use pretty_assertions::assert_eq;
+use sea_query::{Alias, Expr, ExprTrait, Query, UpdateStatement};
 use sqlx::{
     PgPool,
     Row,
@@ -68,43 +79,40 @@ fn previous_version() -> i64 {
     versions[index]
 }
 
-/// The raw `schema_metadata` row a pool currently carries, if any.
-async fn read_stamp_row(pool: &PgPool) -> Option<(i32, String)> {
-    sqlx::query("SELECT schema_version, migrations_sha256 FROM schema_metadata WHERE singleton")
-        .fetch_optional(pool)
-        .await
-        .expect("the stamp must be readable")
-        .map(|row| {
-            (
-                row.try_get::<i32, _>("schema_version").expect("the schema_version column decodes"),
-                row.try_get::<String, _>("migrations_sha256").expect("the migrations_sha256 column decodes"),
-            )
-        })
+/// The drift that puts the stamped version one behind, the digest as it was.
+fn version_one_behind() -> UpdateStatement {
+    Query::update()
+        .table(SchemaMetadata::Table)
+        .value(SchemaMetadata::SchemaVersion, Expr::col(SchemaMetadata::SchemaVersion).sub(1))
+        .and_where(Expr::col(SchemaMetadata::Singleton))
+        .to_owned()
+}
+
+/// The drift that stamps a digest no migration set has.
+fn foreign_digest() -> UpdateStatement {
+    Query::update()
+        .table(SchemaMetadata::Table)
+        .value(SchemaMetadata::MigrationsSha256, "a".repeat(64))
+        .and_where(Expr::col(SchemaMetadata::Singleton))
+        .to_owned()
 }
 
 /// Rewrite the stamp to a drifted state, verify, and put the stamp back.
 ///
 /// The result is returned rather than asserted on inside, so the restore
 /// happens whatever the verification said.
-async fn under_drift(pool: &PgPool, drift: &str) -> Result<(), SchemaContractError> {
+async fn under_drift(pool: &PgPool, drift: &impl Statement) -> Result<(), SchemaContractError> {
     let stamped = read_stamp_row(pool).await;
 
-    sqlx::query(sqlx::AssertSqlSafe(drift))
-        .execute(pool)
-        .await
-        .expect("the drift statement must apply");
+    drift.to_query().execute(pool).await.expect("the drift statement must apply");
     let mut connection = pool.acquire().await.expect("a connection to verify the contract over");
     let verified = verify_schema_contract(&mut connection, &embedded_contract()).await;
     drop(connection);
 
-    sqlx::query("DELETE FROM schema_metadata")
-        .execute(pool)
-        .await
-        .expect("the stamp must be removable");
+    clear_stamp().to_query().execute(pool).await.expect("the stamp must be removable");
     if let Some((version, digest)) = stamped {
-        sqlx::query("INSERT INTO schema_metadata (applied_at, schema_version, singleton, migrations_sha256) VALUES (NOW(), $1, TRUE, $2)")
-            .bind(version)
-            .bind(digest)
+        write_stamp(version, digest)
+            .to_query()
             .execute(pool)
             .await
             .expect("the original stamp must be restorable");
@@ -120,24 +128,17 @@ async fn under_drift(pool: &PgPool, drift: &str) -> Result<(), SchemaContractErr
 /// this induces instead of refusing it. The row `ensure_schema_contract` leaves behind is captured
 /// before the restore, so the caller can assert the drifted value survived the
 /// call untouched rather than only that an error came back.
-async fn under_drift_through_ensure(pool: &PgPool, drift: &str) -> (Result<(), SchemaContractError>, Option<(i32, String)>) {
+async fn under_drift_through_ensure(pool: &PgPool, drift: &impl Statement) -> (Result<(), SchemaContractError>, Option<(i32, String)>) {
     let stamped = read_stamp_row(pool).await;
 
-    sqlx::query(sqlx::AssertSqlSafe(drift))
-        .execute(pool)
-        .await
-        .expect("the drift statement must apply");
+    drift.to_query().execute(pool).await.expect("the drift statement must apply");
     let outcome = ensure_schema_contract(pool, &embedded_contract()).await;
     let row_after_ensure = read_stamp_row(pool).await;
 
-    sqlx::query("DELETE FROM schema_metadata")
-        .execute(pool)
-        .await
-        .expect("the stamp must be removable");
+    clear_stamp().to_query().execute(pool).await.expect("the stamp must be removable");
     if let Some((version, digest)) = stamped {
-        sqlx::query("INSERT INTO schema_metadata (applied_at, schema_version, singleton, migrations_sha256) VALUES (NOW(), $1, TRUE, $2)")
-            .bind(version)
-            .bind(digest)
+        write_stamp(version, digest)
+            .to_query()
             .execute(pool)
             .await
             .expect("the original stamp must be restorable");
@@ -150,10 +151,7 @@ async fn a_tenant_stamped_by_this_binary_is_accepted_and_reports_the_version_it_
     let pool = connect_test_database().await.expect("test database connection");
     let contract = embedded_contract();
 
-    let row = sqlx::query("SELECT schema_version, migrations_sha256 FROM schema_metadata WHERE singleton")
-        .fetch_one(&pool)
-        .await
-        .expect("a migrated tenant carries a stamp");
+    let row = stamp_statement().to_query().fetch_one(&pool).await.expect("a migrated tenant carries a stamp");
     assert_eq!(
         row.try_get::<i32, _>("schema_version").expect("the schema_version column decodes"),
         contract.version().get(),
@@ -172,7 +170,10 @@ async fn a_tenant_stamped_by_this_binary_is_accepted_and_reports_the_version_it_
     // The platform catalogue names every tenant; the default one is the
     // database this suite runs against, and its applied version is the stamp
     // above.
-    let registered: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tenants")
+    let registered: i64 = Query::select()
+        .expr(count_all())
+        .from(Tenants::Table)
+        .to_query_scalar()
         .fetch_one(&pool)
         .await
         .expect("the platform tenant catalogue must be readable");
@@ -197,7 +198,7 @@ async fn ensure_schema_contract_refuses_a_tenant_stamped_behind_with_a_digest_th
     // binary would have stamped at that version -- no genuine migration
     // history produces this pairing, so it must read as drift rather than as
     // a completed upgrade.
-    let (refusal, row_after_ensure) = under_drift_through_ensure(&pool, "UPDATE schema_metadata SET schema_version = schema_version - 1 WHERE singleton").await;
+    let (refusal, row_after_ensure) = under_drift_through_ensure(&pool, &version_one_behind()).await;
 
     match refusal {
         Err(SchemaContractError::MigrationsDigestMismatch { expected, found }) => {
@@ -244,9 +245,8 @@ async fn ensure_schema_contract_advances_a_stamp_that_is_behind_but_matches_the_
     );
 
     let stamped_before = read_stamp_row(&pool).await;
-    sqlx::query("UPDATE schema_metadata SET schema_version = $1, migrations_sha256 = $2 WHERE singleton")
-        .bind(previous.version().get())
-        .bind(previous.digest().to_string())
+    restamp(previous.version().get(), previous.digest().to_string())
+        .to_query()
         .execute(&pool)
         .await
         .expect("the drift statement must apply");
@@ -254,14 +254,10 @@ async fn ensure_schema_contract_advances_a_stamp_that_is_behind_but_matches_the_
     let outcome = ensure_schema_contract(&pool, &contract).await;
     let row_after_ensure = read_stamp_row(&pool).await;
 
-    sqlx::query("DELETE FROM schema_metadata")
-        .execute(&pool)
-        .await
-        .expect("the stamp must be removable");
+    clear_stamp().to_query().execute(&pool).await.expect("the stamp must be removable");
     if let Some((version, digest)) = stamped_before {
-        sqlx::query("INSERT INTO schema_metadata (applied_at, schema_version, singleton, migrations_sha256) VALUES (NOW(), $1, TRUE, $2)")
-            .bind(version)
-            .bind(digest)
+        write_stamp(version, digest)
+            .to_query()
             .execute(&pool)
             .await
             .expect("the original stamp must be restorable");
@@ -288,7 +284,7 @@ async fn ensure_schema_contract_refuses_a_tenant_stamped_with_another_migration_
     // A digest of the right shape that no migration set produces: the column's
     // check constraint accepts it, so the refusal comes from the contract check
     // rather than from the database.
-    let (refusal, row_after_ensure) = under_drift_through_ensure(&pool, "UPDATE schema_metadata SET migrations_sha256 = repeat('a', 64) WHERE singleton").await;
+    let (refusal, row_after_ensure) = under_drift_through_ensure(&pool, &foreign_digest()).await;
 
     match refusal {
         Err(SchemaContractError::MigrationsDigestMismatch { expected, found }) => {
@@ -324,7 +320,7 @@ async fn ensure_schema_contract_stamps_a_tenant_that_has_never_carried_a_stamp()
     let pool = connect_test_database().await.expect("test database connection");
     let contract = embedded_contract();
 
-    let (outcome, row_after_ensure) = under_drift_through_ensure(&pool, "DELETE FROM schema_metadata").await;
+    let (outcome, row_after_ensure) = under_drift_through_ensure(&pool, &clear_stamp()).await;
 
     outcome.expect("a tenant that was never stamped must be stamped and accepted, not refused");
     let (row_version, row_digest) = row_after_ensure.expect("ensure_schema_contract must have written a stamp");
@@ -343,7 +339,7 @@ async fn a_migrated_but_unstamped_tenant_is_refused_naming_what_it_should_carry(
     let environment = SerializedEnvironment::acquire(&configuration).await.expect("exclusive ownership of the stamp");
     let pool = connect_test_database().await.expect("test database connection");
 
-    let refusal = under_drift(&pool, "DELETE FROM schema_metadata").await;
+    let refusal = under_drift(&pool, &clear_stamp()).await;
 
     match refusal {
         Err(SchemaContractError::Unstamped {
@@ -368,14 +364,14 @@ async fn a_migrated_but_unstamped_tenant_is_refused_naming_what_it_should_carry(
 async fn the_server_and_extensions_meet_the_floors_the_schema_depends_on() {
     let pool = connect_test_database().await.expect("test database connection");
 
-    let row = sqlx::query(
-        "SELECT current_setting('server_version_num')::INTEGER AS server, \
-            (SELECT extversion FROM pg_extension WHERE extname = 'postgis') AS postgis, \
-            (SELECT extversion FROM pg_extension WHERE extname = 'timescaledb') AS timescaledb",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("the server and extension versions must be readable");
+    let row = Query::select()
+        .expr_as(cast(current_setting(Setting::ServerVersionNum), PostgresType::Integer), Alias::new("server"))
+        .expr_as(extension_version("postgis"), Alias::new("postgis"))
+        .expr_as(extension_version("timescaledb"), Alias::new("timescaledb"))
+        .to_query()
+        .fetch_one(&pool)
+        .await
+        .expect("the server and extension versions must be readable");
 
     let server: i32 = row.try_get("server").expect("the server column decodes");
     assert!(server >= 150_000, "NULLS NOT DISTINCT needs PostgreSQL 15, server reports {server}");

@@ -20,10 +20,19 @@ use crate::SUITE;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_cache_config::NameCacheConfig};
 use andromeda_postgresql_pool::{read_share::ReadShare, write_reserve::WriteReserve};
+use andromeda_postgresql_seaquery::{
+    aggregate::count_all,
+    cast::cast,
+    columnstore_enablement::DisableColumnstore,
+    command::Command,
+    interval::epoch_seconds,
+    pg_type::PostgresType,
+    statement::Statement,
+};
 use andromeda_postgresql_temporal_store::{
     columnstore_capability::ColumnstoreSupport,
+    hypertable_policy::HypertableName,
     repo::TemporalRepository,
-    schema_ddl::timescale_policy::HypertableName,
     storage_policy::PolicyReconciliation,
 };
 use andromeda_temporal::storage_policy::TemporalStoragePolicy;
@@ -31,6 +40,7 @@ use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Alias, Expr, ExprTrait, Query, TableName};
 use serde_json::json;
 use serial_test::serial;
 use sqlx::PgPool;
@@ -48,20 +58,33 @@ fn assert_days(actual: f64, expected: f64, context: &str) {
 
 /// The chunk interval of `hypertable`, in whole days.
 async fn chunk_interval_days(pool: &PgPool, hypertable: &str) -> f64 {
-    sqlx::query_scalar(
-        "SELECT (EXTRACT(EPOCH FROM time_interval) / 86400)::float8 FROM timescaledb_information.dimensions \
-         WHERE hypertable_name = $1 AND dimension_number = 1",
-    )
-    .bind(hypertable)
-    .fetch_one(pool)
-    .await
-    .expect("the dimension view must be readable")
+    Query::select()
+        .expr(cast(
+            Expr::expr(epoch_seconds(Expr::col(Alias::new("time_interval")))).div(86_400),
+            PostgresType::Float8,
+        ))
+        .from(information_view("dimensions"))
+        .and_where(Expr::col(Alias::new("hypertable_name")).eq(hypertable))
+        .and_where(Expr::col(Alias::new("dimension_number")).eq(1))
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await
+        .expect("the dimension view must be readable")
+}
+
+/// A view of the `timescaledb_information` schema.
+fn information_view(view: &str) -> (Alias, Alias) {
+    (Alias::new("timescaledb_information"), Alias::new(view))
 }
 
 /// How many `TimescaleDB` columnstore jobs act on `hypertable`.
 async fn columnstore_jobs(pool: &PgPool, hypertable: &str) -> i64 {
-    sqlx::query_scalar("SELECT count(*) FROM timescaledb_information.jobs WHERE hypertable_name = $1 AND proc_name = 'policy_compression'")
-        .bind(hypertable)
+    Query::select()
+        .expr(count_all())
+        .from(information_view("jobs"))
+        .and_where(Expr::col(Alias::new("hypertable_name")).eq(hypertable))
+        .and_where(Expr::col(Alias::new("proc_name")).eq("policy_compression"))
+        .to_query_scalar()
         .fetch_one(pool)
         .await
         .expect("the jobs view must be readable")
@@ -108,8 +131,11 @@ const fn policy(chunk_interval_days: u32, columnstore_after_days: u32) -> Tempor
 
 /// Whether the columnstore is enabled on `hypertable`.
 async fn columnstore_enabled(pool: &PgPool, hypertable: &str) -> bool {
-    sqlx::query_scalar("SELECT compression_enabled FROM timescaledb_information.hypertables WHERE hypertable_name = $1")
-        .bind(hypertable)
+    Query::select()
+        .column(Alias::new("compression_enabled"))
+        .from(information_view("hypertables"))
+        .and_where(Expr::col(Alias::new("hypertable_name")).eq(hypertable))
+        .to_query_scalar()
         .fetch_one(pool)
         .await
         .expect("the hypertables view must list the hypertable")
@@ -147,12 +173,14 @@ async fn tenant_schema_the_columnstore_is_enabled_by_the_reconciler_on_a_fresh_t
         );
         assert_eq!(columnstore_jobs(pool, hypertable).await, 0, "{hypertable} depends on no conversion job");
 
-        let (stored_segmentby, stored_orderby): (String, String) =
-            sqlx::query_as("SELECT segmentby, orderby FROM timescaledb_information.hypertable_columnstore_settings WHERE hypertable = $1::regclass")
-                .bind(hypertable)
-                .fetch_one(pool)
-                .await
-                .expect("the columnstore settings view must list the hypertable");
+        let (stored_segmentby, stored_orderby): (String, String) = Query::select()
+            .columns([Alias::new("segmentby"), Alias::new("orderby")])
+            .from(information_view("hypertable_columnstore_settings"))
+            .and_where(Expr::col(Alias::new("hypertable")).eq(cast(Expr::val(*hypertable), PostgresType::Regclass)))
+            .to_query_as()
+            .fetch_one(pool)
+            .await
+            .expect("the columnstore settings view must list the hypertable");
         assert_eq!(stored_segmentby, *segmentby, "{hypertable} segments by its grain");
         // The settings view renders the order-by list without spaces.
         assert_eq!(
@@ -227,12 +255,11 @@ async fn tenant_schema_a_hypertable_without_the_columnstore_is_enabled_on_the_ne
     let pool = &tenant_pool;
 
     for (hypertable, _) in HYPERTABLES {
-        sqlx::query(sqlx::AssertSqlSafe(format!(
-            "ALTER TABLE {hypertable} SET (timescaledb.enable_columnstore = false)"
-        )))
-        .execute(pool)
-        .await
-        .expect("the columnstore is disabled");
+        DisableColumnstore::new(TableName::from(Alias::new(*hypertable)))
+            .to_query()
+            .execute(pool)
+            .await
+            .expect("the columnstore is disabled");
         assert!(
             !columnstore_enabled(pool, hypertable).await,
             "{hypertable} is a plain hypertable before the open"

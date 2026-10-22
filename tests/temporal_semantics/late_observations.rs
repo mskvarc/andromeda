@@ -8,10 +8,13 @@
 
 use crate::{attribute_iri, client, create_temporal_entity, database, get_temporal_entity, rendered_instances, stored_history::stored_attribute_history};
 use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
+use andromeda_postgresql_schema::temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities};
+use andromeda_postgresql_seaquery::{aggregate::count_distinct, statement::Statement};
 use andromeda_test_harness::environment::TestEnvironment;
 use chrono::{DateTime, TimeDelta, Utc};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Alias, Expr, ExprTrait, Query};
 use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
 
@@ -28,8 +31,23 @@ fn observation_instant(instant: DateTime<Utc>) -> String {
 /// Every chunk of a hypertable is its own relation, so the number of distinct
 /// `tableoid` values is the number of chunks the rows landed in.
 async fn occupied_chunks(pool: &PgPool, entity_id: &str) -> i64 {
-    sqlx::query(OCCUPIED_CHUNKS_SQL)
-        .bind(entity_id)
+    Query::select()
+        .expr_as(
+            count_distinct(Expr::col((AttributeHistory::Table, Alias::new("tableoid")))),
+            Alias::new("chunks"),
+        )
+        .from(AttributeHistory::Table)
+        .inner_join(
+            TemporalAttributeStreams::Table,
+            Expr::col((TemporalAttributeStreams::Table, TemporalAttributeStreams::StreamKey)).equals((AttributeHistory::Table, AttributeHistory::StreamKey)),
+        )
+        .inner_join(
+            TemporalEntities::Table,
+            Expr::col((TemporalEntities::Table, TemporalEntities::TemporalEntityKey))
+                .equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::TemporalEntityKey)),
+        )
+        .and_where(Expr::col((TemporalEntities::Table, TemporalEntities::Id)).eq(entity_id))
+        .to_query()
         .fetch_one(pool)
         .await
         .expect("occupied chunk count")
@@ -39,7 +57,17 @@ async fn occupied_chunks(pool: &PgPool, entity_id: &str) -> i64 {
 
 /// The configured range interval of the attribute-history hypertable, in microseconds.
 async fn attribute_history_chunk_interval(pool: &PgPool) -> i64 {
-    sqlx::query(CHUNK_INTERVAL_SQL)
+    let dimension = |column: &str| (Alias::new("_timescaledb_catalog"), Alias::new("dimension"), Alias::new(column));
+    let hypertable = |column: &str| (Alias::new("_timescaledb_catalog"), Alias::new("hypertable"), Alias::new(column));
+    Query::select()
+        .expr_as(Expr::col(dimension("interval_length")), Alias::new("interval_us"))
+        .from((Alias::new("_timescaledb_catalog"), Alias::new("dimension")))
+        .inner_join(
+            (Alias::new("_timescaledb_catalog"), Alias::new("hypertable")),
+            Expr::col(hypertable("id")).equals(dimension("hypertable_id")),
+        )
+        .and_where(Expr::col(hypertable("table_name")).eq("attribute_history"))
+        .to_query()
         .fetch_one(pool)
         .await
         .expect("attribute history chunk interval")
@@ -119,18 +147,3 @@ async fn temporal_semantics_late_observations_stay_in_the_ingestion_chunk_and_re
     }
     scope.finish().await.expect("cleanup failed");
 }
-
-const OCCUPIED_CHUNKS_SQL: &str = r"
-SELECT count(DISTINCT ah.tableoid)::bigint AS chunks
-FROM attribute_history ah
-JOIN temporal_attribute_streams s ON s.stream_key = ah.stream_key
-JOIN temporal_entities te ON te.temporal_entity_key = s.temporal_entity_key
-WHERE te.id = $1
-";
-
-const CHUNK_INTERVAL_SQL: &str = r"
-SELECT d.interval_length AS interval_us
-FROM _timescaledb_catalog.dimension d
-JOIN _timescaledb_catalog.hypertable h ON h.id = d.hypertable_id
-WHERE h.table_name = 'attribute_history'
-";

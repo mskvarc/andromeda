@@ -20,9 +20,24 @@
 //! transaction, which lets the broker's second attempt through.
 
 use crate::SUITE;
+use andromeda_postgresql_schema::name_dictionary::{AttributeNames, EntityTypeNames};
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    command::Command,
+    introspection::current_database,
+    literal::{int_literal, text_literal},
+    maintenance::backend_pid,
+    pg_type::PostgresType,
+    relation_lock::{LockMode, RelationLock},
+    scalar_subquery::scalar_subquery,
+    setting::{Setting, SettingAssignment, SettingScope},
+    statement::Statement,
+    system_catalog::PgDatabase,
+};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::{database_access::connect_test_database, serialized_environment::SerializedEnvironment};
 use reqwest::StatusCode;
+use sea_query::{Alias, Expr, ExprTrait, JoinType, Query, TableName};
 use serde_json::json;
 use sqlx::{PgPool, Postgres, Transaction};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -32,26 +47,50 @@ use tokio::time::{sleep, timeout};
 /// `entity_type_names` while waiting for a lock on `attribute_names` -- the
 /// commit halfway through minting its names.
 async fn commit_waits_between_the_dictionaries(pool: &PgPool, holder_pid: i32) -> bool {
-    sqlx::query_scalar(
-        "SELECT EXISTS ( \
-             SELECT 1 FROM pg_locks AS waiting \
-             JOIN pg_locks AS held ON held.pid = waiting.pid \
-             WHERE waiting.database = (SELECT oid FROM pg_database WHERE datname = current_database()) \
-               AND waiting.relation = 'attribute_names'::regclass AND NOT waiting.granted \
-               AND held.relation = 'entity_type_names'::regclass AND held.granted \
-               AND held.mode = 'RowExclusiveLock' AND waiting.pid <> $1)",
-    )
-    .bind(holder_pid)
-    .fetch_one(pool)
-    .await
-    .expect("the lock catalogue must be readable")
+    let waiting = |column: &str| Expr::col((Alias::new("waiting"), Alias::new(column)));
+    let held = |column: &str| Expr::col((Alias::new("held"), Alias::new(column)));
+    let relation = |name: &str| cast(text_literal(name), PostgresType::Regclass);
+    Query::select()
+        .expr(Expr::exists(
+            Query::select()
+                .expr(int_literal(1))
+                .from_as(Alias::new("pg_locks"), Alias::new("waiting"))
+                .join_as(
+                    JoinType::InnerJoin,
+                    Alias::new("pg_locks"),
+                    Alias::new("held"),
+                    held("pid").equals((Alias::new("waiting"), Alias::new("pid"))),
+                )
+                .and_where(
+                    waiting("database").eq(scalar_subquery(
+                        Query::select()
+                            .column(Alias::new("oid"))
+                            .from(PgDatabase::Table)
+                            .and_where(Expr::col(PgDatabase::Datname).eq(current_database()))
+                            .to_owned(),
+                    )),
+                )
+                .and_where(waiting("relation").eq(relation("attribute_names")))
+                .and_where(waiting("granted").not())
+                .and_where(held("relation").eq(relation("entity_type_names")))
+                .and_where(held("granted"))
+                .and_where(held("mode").eq("RowExclusiveLock"))
+                .and_where(waiting("pid").ne(holder_pid))
+                .to_owned(),
+        ))
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await
+        .expect("the lock catalogue must be readable")
 }
 
 /// Wait for the broker's commit to block between the two dictionaries, then
 /// close the deadlock cycle and, once the broker's backend has been rolled
 /// back, end the holder's transaction.
 async fn close_the_cycle_then_release(pool: &PgPool, mut holder: Transaction<'_, Postgres>) {
-    let holder_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+    let holder_pid: i32 = Query::select()
+        .expr(backend_pid())
+        .to_query_scalar()
         .fetch_one(&mut *holder)
         .await
         .expect("holder backend pid");
@@ -64,7 +103,8 @@ async fn close_the_cycle_then_release(pool: &PgPool, mut holder: Transaction<'_,
     .expect("the create's commit must block on attribute_names while holding entity_type_names");
     // Granted only once the broker's backend has been chosen as the victim and
     // rolled back, releasing its ROW EXCLUSIVE lock.
-    sqlx::query("LOCK TABLE entity_type_names IN ACCESS EXCLUSIVE MODE")
+    RelationLock::waiting(vec![TableName::from(EntityTypeNames::Table)], LockMode::AccessExclusive)
+        .to_query()
         .execute(&mut *holder)
         .await
         .expect("the holder's lock is granted once the broker's commit is the victim");
@@ -88,11 +128,13 @@ async fn commit_contention_a_create_chosen_as_deadlock_victim_is_committed_on_a_
     // the holder takes its own pool so the remaining one stays free to poll.
     let holding = connect_test_database().await.expect("holder connection");
     let mut holder = holding.begin().await.expect("holder transaction");
-    sqlx::query("SET LOCAL deadlock_timeout = '60s'")
+    SettingAssignment::new(Setting::DeadlockTimeout, "60s", SettingScope::Transaction)
+        .to_query()
         .execute(&mut *holder)
         .await
         .expect("the holder never detects the cycle itself");
-    sqlx::query("LOCK TABLE attribute_names IN ACCESS EXCLUSIVE MODE")
+    RelationLock::waiting(vec![TableName::from(AttributeNames::Table)], LockMode::AccessExclusive)
+        .to_query()
         .execute(&mut *holder)
         .await
         .expect("hold attribute_names");

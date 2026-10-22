@@ -4,11 +4,18 @@ use crate::intent_store::PostgresTemporalIntentStore;
 use andromeda_context_commit::write_record::WriteRecord;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_schema::{queue::TemporalAppendIntents, temporal_intent::TemporalIntent};
-use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType, placeholder::external_placeholder, unnest::unnest_of};
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    external_arguments::{ExternalArguments, ExternallyBound},
+    pg_type::PostgresType,
+    unnest::unnest_of,
+};
 use andromeda_postgresql_temporal_store::{error::TemporalStoreError, temporal_entry_record::TemporalIntentRecord};
 use andromeda_temporal::error::TemporalError;
-use sea_query::{Expr, Iden, InsertStatement, OnConflict, PostgresQueryBuilder, Query, error::Error as SeaQueryError};
+use chrono::{DateTime, Utc};
+use sea_query::{Expr, Iden, InsertStatement, OnConflict, Query, error::Error as SeaQueryError};
 use sqlx::{Postgres, Transaction};
+use uuid::Uuid;
 
 /// The alias of one unnested intent, `input`.
 #[derive(Iden, Clone, Copy)]
@@ -16,8 +23,9 @@ use sqlx::{Postgres, Transaction};
 struct Input;
 
 /// Insert every intent of one commit in one statement: the write identity
-/// `$1` and its instant `$2` as scalars, the intents as one
-/// `$3::temporal_intent[]`, each intent's entries travelling inside it.
+/// and its instant as scalars, the intents as one external
+/// `temporal_intent[]` argument pushed onto `external`, each intent's entries
+/// travelling inside it.
 ///
 /// One commit may land more than one entity, and every intent it produces
 /// shares the commit's single write identity, so that alone does not identify
@@ -27,16 +35,22 @@ struct Input;
 /// `uq_temporal_append_intents_write_identity`. `ON CONFLICT ... DO NOTHING`
 /// is what makes a commit replayed under its original identity enqueue no
 /// second copy of any entity's intent at a given base ordinal.
-pub(super) fn enqueue_statement() -> Result<InsertStatement, SeaQueryError> {
+pub(super) fn enqueue_statement(
+    external: &mut ExternalArguments<'_>,
+    write_id: Uuid,
+    recorded_at: DateTime<Utc>,
+    intents: Vec<TemporalIntentRecord>,
+) -> Result<InsertStatement, SeaQueryError> {
+    let intents = external.push(intents);
     let source = Query::select()
-        .expr(external_placeholder(1))
-        .expr(external_placeholder(2))
+        .expr(Expr::val(write_id))
+        .expr(Expr::val(recorded_at))
         .expr(Expr::col((Input, TemporalIntent::EntityId)))
         .expr(Expr::col((Input, TemporalIntent::EntityTypeNameKeys)))
         .expr(Expr::col((Input, TemporalIntent::BaseOrdinal)))
         .expr(Expr::col((Input, TemporalIntent::Entries)))
         .expr(Expr::col((Input, TemporalIntent::EntryNeeds)))
-        .from_function(unnest_of(cast(external_placeholder(3), PostgresType::TemporalIntentArray)), Input)
+        .from_function(unnest_of(cast(intents, PostgresType::TemporalIntentArray)), Input)
         .to_owned();
     let mut statement = Query::insert();
     statement
@@ -75,13 +89,11 @@ impl PostgresTemporalIntentStore {
         if intents.is_empty() {
             return Ok(());
         }
-        let sql = enqueue_statement()
-            .map_err(|error| TemporalError::from(PersistenceFailure::StatementUnbuildable.record(&error)))?
-            .to_string(PostgresQueryBuilder);
-        sqlx::query(sqlx::AssertSqlSafe(sql))
-            .bind(record.write_id().as_uuid())
-            .bind(record.recorded_at())
-            .bind(intents)
+        let mut external = ExternalArguments::default();
+        let statement = enqueue_statement(&mut external, record.write_id().as_uuid(), record.recorded_at(), intents)
+            .map_err(|error| TemporalError::from(PersistenceFailure::StatementUnbuildable.record(&error)))?;
+        ExternallyBound::new(statement, external)
+            .into_query()
             .execute(&mut **tx)
             .await
             // Classified like every other temporal-store statement, so a
@@ -94,17 +106,25 @@ impl PostgresTemporalIntentStore {
 #[cfg(test)]
 mod tests {
     use crate::intent_store::enqueue::enqueue_statement;
+    use andromeda_postgresql_seaquery::external_arguments::ExternalArguments;
+    use chrono::Utc;
     use sea_query::PostgresQueryBuilder;
+    use uuid::Uuid;
 
     fn enqueue_sql() -> String {
-        enqueue_statement().expect("arity").to_string(PostgresQueryBuilder)
+        let mut external = ExternalArguments::default();
+        let (sql, values) = enqueue_statement(&mut external, Uuid::nil(), Utc::now(), Vec::new())
+            .expect("arity")
+            .build(PostgresQueryBuilder);
+        assert_eq!(values.0.len(), 2, "the write identity and its instant are the statement's own values: {sql}");
+        sql
     }
 
     #[test]
     fn every_intent_of_a_commit_is_one_row_of_one_statement() {
         let sql = enqueue_sql();
         assert!(sql.starts_with(r#"INSERT INTO "temporal_append_intents""#), "{sql}");
-        assert!(sql.contains(r#"FROM UNNEST($3::temporal_intent[]) AS "input""#), "{sql}");
+        assert!(sql.contains(r#"::temporal_intent[]) AS "input""#), "{sql}");
         assert_eq!(sql.matches("UNNEST").count(), 1, "{sql}");
     }
 

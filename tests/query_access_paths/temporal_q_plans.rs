@@ -33,13 +33,17 @@ use andromeda_postgresql_query::{
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     history_source::HistoryBranch,
 };
+use andromeda_postgresql_seaquery::{
+    explain::{Explain, ExplainOption},
+    statement::Statement,
+};
 use andromeda_postgresql_temporal_query::stage1::{Stage1Query, build_stage1_entity_ids};
 use andromeda_test_harness::serialized_environment::SerializedEnvironment;
 use chrono::{DateTime, TimeDelta, Utc};
 use pretty_assertions::assert_eq;
 use regex::Regex;
-use sea_query::PostgresQueryBuilder;
-use sqlx::{PgPool, Row};
+use sea_query::SelectStatement;
+use sqlx::PgPool;
 
 /// Observations per stream of the shorter corpus.
 const SHORT_HISTORY: i64 = 200;
@@ -81,9 +85,9 @@ fn stage1(corpus: &WindowedHistory) -> Stage1Query {
     build_stage1_entity_ids(&HistoryBranch::live(), &compiled, &PageWindow::offset(1000, 0), CountPolicy::Emit, &names).expect("a renderable stage-1 query")
 }
 
-/// The stage-1 page statement, with its values inline.
-fn page_statement(corpus: &WindowedHistory) -> String {
-    stage1(corpus).select.to_string(PostgresQueryBuilder)
+/// The stage-1 page statement.
+fn page_statement(corpus: &WindowedHistory) -> SelectStatement {
+    stage1(corpus).select
 }
 
 /// Clause 4.11 with Annex C clause C.5.5: no observation inside the window
@@ -91,7 +95,8 @@ fn page_statement(corpus: &WindowedHistory) -> String {
 /// stream held when the window opened -- except the one whose value was
 /// deleted before it opened, which holds nothing then (clause 4.5.7).
 async fn assert_selects_every_entity_but_the_tombstoned(pool: &PgPool, corpus: &WindowedHistory) {
-    let selected: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(page_statement(corpus)))
+    let selected: Vec<String> = page_statement(corpus)
+        .to_query_scalar()
         .fetch_all(pool)
         .await
         .expect("the stage-1 page must run");
@@ -103,15 +108,14 @@ async fn assert_selects_every_entity_but_the_tombstoned(pool: &PgPool, corpus: &
 /// The generic plan of a statement whose values are left as placeholders:
 /// the plan a prepared statement settles on once PostgreSQL stops planning it
 /// for each execution's values.
-async fn explain_generic(pool: &PgPool, statement: &str) -> String {
-    let rows = sqlx::raw_sql(sqlx::AssertSqlSafe(format!("EXPLAIN (GENERIC_PLAN) {statement}")))
+async fn explain_generic(pool: &PgPool, statement: SelectStatement) -> String {
+    let lines: Vec<String> = Explain::new(statement)
+        .with(ExplainOption::GenericPlan)
+        .to_query_scalar()
         .fetch_all(pool)
         .await
         .expect("the generic plan must be readable");
-    rows.iter()
-        .map(|row| row.try_get::<String, _>(0).expect("a plan line"))
-        .collect::<Vec<_>>()
-        .join("\n")
+    lines.join("\n")
 }
 
 /// One node of a text `EXPLAIN`: its own line and the detail lines under it.
@@ -194,7 +198,7 @@ async fn temporal_plans_the_window_probe_is_a_bounded_range() {
     let corpus = seed_window_and_prior(pool, SEED_PREFIX, SHORT_HISTORY).await;
     assert_selects_every_entity_but_the_tombstoned(pool, &corpus).await;
 
-    let plan = explain(pool, &page_statement(&corpus)).await;
+    let plan = explain(pool, page_statement(&corpus)).await;
     let nodes = plan_nodes(&plan);
     let bounded = nodes.iter().any(|node| {
         node.line.contains(" on ")
@@ -224,7 +228,7 @@ async fn temporal_plans_the_prior_instance_is_found_by_one_descending_probe_per_
     let pool = scope.database_pool();
     let corpus = seed_window_and_prior(pool, SEED_PREFIX, SHORT_HISTORY).await;
 
-    let plan = explain(pool, &page_statement(&corpus)).await;
+    let plan = explain(pool, page_statement(&corpus)).await;
     assert!(
         limited_scan(&plan, "idx_attribute_history_stream_observed_at", "qp"),
         "the prior instance must be one limited probe on the observed index: {plan}"
@@ -241,7 +245,7 @@ async fn temporal_plans_the_prior_deletion_is_found_on_the_deletion_index() {
     let pool = scope.database_pool();
     let corpus = seed_window_and_prior(pool, SEED_PREFIX, SHORT_HISTORY).await;
 
-    let plan = explain(pool, &page_statement(&corpus)).await;
+    let plan = explain(pool, page_statement(&corpus)).await;
     assert!(
         limited_scan(&plan, "idx_attribute_history_stream_deletion", "qd"),
         "the prior deletion must be one limited probe on the deletion index: {plan}"
@@ -262,8 +266,7 @@ async fn temporal_plans_the_generic_plan_keeps_each_placement_probe_on_its_index
     let pool = scope.database_pool();
     let corpus = seed_window_and_prior(pool, SEED_PREFIX, SHORT_HISTORY).await;
 
-    let (statement, _) = stage1(&corpus).select.build(PostgresQueryBuilder);
-    let plan = explain_generic(pool, &statement).await;
+    let plan = explain_generic(pool, stage1(&corpus).select).await;
     assert!(
         limited_scan(&plan, "idx_attribute_history_stream_observed_at", "qp"),
         "the prior instance must stay one limited probe on the observed index: {plan}"
@@ -287,13 +290,13 @@ async fn temporal_plans_the_q_probe_stays_bounded_as_the_history_grows() {
 
     let short = seed_window_and_prior(pool, SEED_PREFIX, SHORT_HISTORY).await;
     assert_selects_every_entity_but_the_tombstoned(pool, &short).await;
-    let short_buffers = buffers_touched(&explain(pool, &page_statement(&short)).await);
+    let short_buffers = buffers_touched(&explain(pool, page_statement(&short)).await);
 
     remove_windowed_history(pool, SEED_PREFIX).await;
 
     let long = seed_window_and_prior(pool, SEED_PREFIX, LONG_HISTORY).await;
     assert_selects_every_entity_but_the_tombstoned(pool, &long).await;
-    let long_plan = explain(pool, &page_statement(&long)).await;
+    let long_plan = explain(pool, page_statement(&long)).await;
     let long_buffers = buffers_touched(&long_plan);
 
     assert!(

@@ -8,10 +8,10 @@
 
 use crate::name_lookup::NameLookupError;
 use andromeda_postgresql_schema::tenancy::SchemaMetadata;
+use andromeda_postgresql_seaquery::statement::Statement;
 use chrono::{DateTime, Utc};
-use sea_query::{Expr, ExprTrait, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, Executor, Postgres, postgres::PgPool};
+use sea_query::{Expr, ExprTrait, Query, SelectStatement};
+use sqlx::{Executor, Postgres, postgres::PgPool};
 use std::{
     sync::LazyLock,
     time::{Duration, Instant},
@@ -60,8 +60,7 @@ fn schema_epoch_query() -> SelectStatement {
 /// probe on the connection its transaction already holds, never reaching into
 /// the pool for a second connection mid-commit.
 pub(crate) async fn read_schema_epoch<'e, E: Executor<'e, Database = Postgres>>(executor: E) -> Result<Option<i64>, NameLookupError> {
-    let (sql, values) = schema_epoch_query().build_sqlx(PostgresQueryBuilder);
-    let stamped: Option<DateTime<Utc>> = sqlx::query_scalar_with(AssertSqlSafe(sql), values).fetch_optional(executor).await?;
+    let stamped: Option<DateTime<Utc>> = schema_epoch_query().to_query_scalar().fetch_optional(executor).await?;
     Ok(stamped.map(|applied_at| applied_at.timestamp_micros()))
 }
 

@@ -34,6 +34,7 @@ use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
 use andromeda_postgresql_pool::saturation::is_pool_saturated;
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_tenancy::{
     config::TenancyConfig,
     database::TenantDatabase,
@@ -49,8 +50,6 @@ use andromeda_tenancy::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sea_query::PostgresQueryBuilder;
-use sea_query_sqlx::SqlxBinder;
 use sqlx::{
     PgPool,
     Row,
@@ -143,8 +142,7 @@ impl PostgresTenantRegistry {
     /// any other.
     async fn register_default_tenant(&self) -> Result<(), ContextStoreError> {
         let statement = default_tenant_upsert(self.default_database.as_str(), stored_status(TenantStatus::Active))?;
-        let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&self.main_pool).await?;
+        statement.to_query().execute(&self.main_pool).await?;
         Ok(())
     }
 }
@@ -233,8 +231,8 @@ impl TenantDatabase for PostgresTenantRegistry {
     }
 
     async fn registered_tenants(&self) -> Result<Vec<TenantName>, TenancyError> {
-        let (sql, values) = registered_tenants_query().build_sqlx(PostgresQueryBuilder);
-        let names: Vec<String> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let names: Vec<String> = registered_tenants_query()
+            .to_query_scalar()
             .fetch_all(&self.main_pool)
             .await
             .map_err(|error| registry_unavailable(&error))?;
@@ -242,8 +240,8 @@ impl TenantDatabase for PostgresTenantRegistry {
     }
 
     async fn registered_tenant(&self, name: &TenantName) -> Result<Option<RegisteredTenant>, TenancyError> {
-        let (sql, values) = registered_tenant_query(name.as_str()).build_sqlx(PostgresQueryBuilder);
-        let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let row = registered_tenant_query(name.as_str())
+            .to_query()
             .fetch_optional(&self.main_pool)
             .await
             .map_err(|error| registry_read_failure(&error, name))?;
@@ -251,14 +249,14 @@ impl TenantDatabase for PostgresTenantRegistry {
     }
 
     async fn list_tenant_records(&self, start: &TenantPageStart, limit: u32) -> Result<(Vec<TenantRecord>, i64), TenancyError> {
-        let (count_sql, count_values) = tenant_count_query().build_sqlx(PostgresQueryBuilder);
-        let total: i64 = sqlx::query_scalar_with(sqlx::AssertSqlSafe(count_sql.as_str()), count_values)
+        let total: i64 = tenant_count_query()
+            .to_query_scalar()
             .fetch_one(&self.main_pool)
             .await
             .map_err(|error| registry_unavailable(&error))?;
 
-        let (sql, values) = tenant_records_page_query(start, limit).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let rows = tenant_records_page_query(start, limit)
+            .to_query()
             .fetch_all(&self.main_pool)
             .await
             .map_err(|error| registry_unavailable(&error))?;
@@ -294,8 +292,8 @@ impl TenantDatabase for PostgresTenantRegistry {
     }
 
     async fn provisional_tenants(&self) -> Result<Vec<TenantName>, TenancyError> {
-        let (sql, values) = provisional_tenants_query().build_sqlx(PostgresQueryBuilder);
-        let names: Vec<String> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let names: Vec<String> = provisional_tenants_query()
+            .to_query_scalar()
             .fetch_all(&self.main_pool)
             .await
             .map_err(|error| registry_unavailable(&error))?;
@@ -310,8 +308,8 @@ impl TenantDatabase for PostgresTenantRegistry {
 #[async_trait]
 impl TenantLifecycle for PostgresTenantRegistry {
     async fn set_status(&self, name: &TenantName, status: TenantStatus) -> Result<(), TenancyError> {
-        let (sql, values) = set_status_update(name.as_str(), stored_status(status)).build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        set_status_update(name.as_str(), stored_status(status))
+            .to_query()
             .execute(&self.main_pool)
             .await
             .map_err(|error| registry_read_failure(&error, name))?;
@@ -333,11 +331,10 @@ impl PostgresTenantRegistry {
     /// second request preparing the same database is harmless.
     async fn provision_inner(&self, name: &TenantName) -> Result<TenantDatabaseName, ContextStoreError> {
         let mut tx = self.main_pool.begin().await?;
-        let (lock_sql, lock_values) = advisory_lock_query(name.as_str()).build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(sqlx::AssertSqlSafe(lock_sql.as_str()), lock_values).execute(&mut *tx).await?;
+        advisory_lock_query(name.as_str()).to_query().execute(&mut *tx).await?;
 
-        let (lookup_sql, lookup_values) = named_tenant_standing_query(name.as_str()).build_sqlx(PostgresQueryBuilder);
-        let existing = sqlx::query_as_with::<_, (String, i16), _>(sqlx::AssertSqlSafe(lookup_sql.as_str()), lookup_values)
+        let existing = named_tenant_standing_query(name.as_str())
+            .to_query_as::<(String, i16)>()
             .fetch_optional(&mut *tx)
             .await?;
         let database_name = if let Some((database_name, status)) = existing {
@@ -347,16 +344,14 @@ impl PostgresTenantRegistry {
                     return Ok(TenantDatabaseName::from(database_name));
                 }
                 StoredStanding::Provisional => {
-                    let (sql, values) = provisional_touch(name.as_str()).build_sqlx(PostgresQueryBuilder);
-                    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut *tx).await?;
+                    provisional_touch(name.as_str()).to_query().execute(&mut *tx).await?;
                     TenantDatabaseName::from(database_name)
                 }
             }
         } else {
             let database_name = generate_database_name(&self.tenancy.tenant_db_prefix, name);
             let statement = tenant_insert(name.as_str(), database_name.as_str(), TenantStatusCode::Provisional)?;
-            let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-            sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut *tx).await?;
+            statement.to_query().execute(&mut *tx).await?;
             database_name
         };
         tx.commit().await?;

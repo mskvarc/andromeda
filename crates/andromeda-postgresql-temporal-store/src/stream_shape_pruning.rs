@@ -22,11 +22,10 @@
 use crate::{error::TemporalStoreError, history_removal::stream_key_array, repo::TemporalRepository, statement_timeout_allowance::allow_unbounded_statements};
 use andromeda_postgresql_query::tombstone::carries_a_value;
 use andromeda_postgresql_schema::temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities, TemporalStreamShapes};
-use andromeda_postgresql_seaquery::{branch::qualified, pg_array::any};
+use andromeda_postgresql_seaquery::{branch::qualified, pg_array::any, statement::Statement};
 use andromeda_postgresql_temporal_query::{alias::Ah, recorded_shape::recorded_shape};
-use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, LockBehavior, LockType, Order, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, PgConnection};
+use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, LockBehavior, LockType, Order, Query, SelectStatement};
+use sqlx::PgConnection;
 
 /// How many Temporal Evolutions one retention prune transaction locks: enough
 /// to amortise the round trips, few enough that a write waiting on one of them
@@ -47,8 +46,7 @@ pub(crate) async fn lock_stream_evolutions(connection: &mut PgConnection, schema
     if stream_keys.is_empty() {
         return Ok(());
     }
-    let (sql, values) = evolution_lock_statement(schema, stream_keys).build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(AssertSqlSafe(sql), values).execute(connection).await?;
+    evolution_lock_statement(schema, stream_keys).to_query().execute(connection).await?;
     Ok(())
 }
 
@@ -64,8 +62,7 @@ pub(crate) async fn prune_stream_shapes(connection: &mut PgConnection, schema: O
         return Ok(0);
     }
     lock_stream_evolutions(&mut *connection, schema, stream_keys).await?;
-    let (sql, values) = prune_statement(schema, stream_keys).build_sqlx(PostgresQueryBuilder);
-    Ok(sqlx::query_with(AssertSqlSafe(sql), values).execute(connection).await?.rows_affected())
+    Ok(prune_statement(schema, stream_keys).to_query().execute(connection).await?.rows_affected())
 }
 
 impl TemporalRepository {
@@ -88,24 +85,14 @@ impl TemporalRepository {
         loop {
             let mut transaction = self.pool.begin().await?;
             allow_unbounded_statements(&mut transaction).await?;
-            let (lock_sql, lock_values) = retention_batch_lock_statement(after).build_sqlx(PostgresQueryBuilder);
-            let evolutions: Vec<i64> = sqlx::query_scalar_with(AssertSqlSafe(lock_sql), lock_values)
-                .fetch_all(&mut *transaction)
-                .await?;
+            let evolutions: Vec<i64> = retention_batch_lock_statement(after).to_query_scalar().fetch_all(&mut *transaction).await?;
             let Some(last) = evolutions.last().copied() else {
                 transaction.commit().await?;
                 return Ok(pruned);
             };
-            let (streams_sql, streams_values) = evolution_streams_statement(&evolutions).build_sqlx(PostgresQueryBuilder);
-            let streams: Vec<i64> = sqlx::query_scalar_with(AssertSqlSafe(streams_sql), streams_values)
-                .fetch_all(&mut *transaction)
-                .await?;
+            let streams: Vec<i64> = evolution_streams_statement(&evolutions).to_query_scalar().fetch_all(&mut *transaction).await?;
             if !streams.is_empty() {
-                let (prune_sql, prune_values) = prune_statement(None, &streams).build_sqlx(PostgresQueryBuilder);
-                pruned += sqlx::query_with(AssertSqlSafe(prune_sql), prune_values)
-                    .execute(&mut *transaction)
-                    .await?
-                    .rows_affected();
+                pruned += prune_statement(None, &streams).to_query().execute(&mut *transaction).await?.rows_affected();
             }
             transaction.commit().await?;
             after = last;

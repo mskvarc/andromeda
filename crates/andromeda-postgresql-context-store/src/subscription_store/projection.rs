@@ -15,10 +15,9 @@ use andromeda_ngsi_ld_query::{page_window::PageWindow, read_order::ReadOrder};
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_query::{dictionary::names_in_key_order::attribute_names_of, page_window::apply_identifier_window};
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
-use andromeda_postgresql_seaquery::aggregate::count_all;
+use andromeda_postgresql_seaquery::{aggregate::count_all, statement::Statement};
 use andromeda_subscription::error::SubscriptionError;
-use sea_query::{CaseStatement, Expr, ExprTrait, Keyword, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{CaseStatement, Expr, ExprTrait, Keyword, Query, SelectStatement, SimpleExpr};
 
 /// The attribute IRIs behind one of a subscription's interned attribute lists,
 /// in the order the subscriber wrote them; an absent list stays absent rather
@@ -95,8 +94,8 @@ pub(super) async fn count_of_kind(pool: &sqlx::PgPool, target: &ContextTarget, k
         .from(table_of(target, Subscriptions::Table))
         .and_where(of_kind(kind))
         .to_owned();
-    let (sql, values) = count.build_sqlx(PostgresQueryBuilder);
-    let row: (i64,) = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let row: (i64,) = count
+        .to_query_as()
         .fetch_one(pool)
         .await
         .map_err(|error| persistence_error::<SubscriptionError>(error))?;
@@ -231,7 +230,7 @@ mod tests {
         for column in ["watched_attributes", "expand_values", "json_keys"] {
             assert!(
                 sql.contains(&format!(
-                    r#"(CASE WHEN ("subscriptions"."{column}" IS NULL) THEN NULL ELSE ARRAY(SELECT "attribute_names"."name" FROM "attribute_names" WHERE "attribute_names"."attribute_name_key" = ANY("subscriptions"."{column}") ORDER BY array_position("subscriptions"."{column}", "attribute_names"."attribute_name_key") ASC) END) AS "{column}""#
+                    r#"(CASE WHEN ("subscriptions"."{column}" IS NULL) THEN NULL ELSE ARRAY (SELECT "attribute_names"."name" FROM "attribute_names" WHERE "attribute_names"."attribute_name_key" = ANY("subscriptions"."{column}") ORDER BY array_position("subscriptions"."{column}", "attribute_names"."attribute_name_key") ASC) END) AS "{column}""#
                 )),
                 "{column}: {sql}"
             );

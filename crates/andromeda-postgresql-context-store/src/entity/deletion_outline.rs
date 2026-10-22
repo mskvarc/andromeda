@@ -30,10 +30,9 @@ use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,
     subscriptions::Subscriptions,
 };
-use andromeda_postgresql_seaquery::{pg_array::has_elements, pg_operator::PgBinaryOperator};
+use andromeda_postgresql_seaquery::{pg_array::has_elements, pg_operator::PgBinaryOperator, statement::Statement};
 use chrono::{DateTime, Utc};
-use sea_query::{Expr, ExprTrait, Iden, JoinType, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Expr, ExprTrait, Iden, JoinType, Query, SelectStatement, SimpleExpr};
 use sqlx::Row;
 use strum::IntoEnumIterator;
 
@@ -153,8 +152,7 @@ impl EntityRepository {
     /// Returns [`ContextStoreError`] when a read fails or a stored name, family
     /// or `datasetId` does not read back as its domain value.
     pub async fn deletion_outline(&self, target: &ContextTarget, id: &Identifier) -> Result<Option<DeletionOutline>, ContextStoreError> {
-        let (sql, values) = outline_types_statement(target, id.as_str()).build_sqlx(PostgresQueryBuilder);
-        let type_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
+        let type_rows = outline_types_statement(target, id.as_str()).to_query().fetch_all(&self.pool).await?;
         let Some(first) = type_rows.first() else {
             return Ok(None);
         };
@@ -169,8 +167,7 @@ impl EntityRepository {
             .map(|row| stored_type_name(row.try_get::<&str, _>(0)?))
             .collect::<Result<Vec<_>, ContextStoreError>>()?;
 
-        let (sql, values) = outline_instances_statement(target, id.as_str()).build_sqlx(PostgresQueryBuilder);
-        let instance_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
+        let instance_rows = outline_instances_statement(target, id.as_str()).to_query().fetch_all(&self.pool).await?;
         let instances = instance_rows
             .iter()
             .map(|row| {
@@ -195,8 +192,7 @@ impl EntityRepository {
     ///
     /// Returns [`ContextStoreError`] when the probe fails.
     pub async fn deletion_watchers(&self, target: &ContextTarget) -> Result<DeletionWatchers, ContextStoreError> {
-        let (sql, values) = deletion_watchers_statement(target).build_sqlx(PostgresQueryBuilder);
-        let watched: bool = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(&self.pool).await?;
+        let watched: bool = deletion_watchers_statement(target).to_query_scalar().fetch_one(&self.pool).await?;
         Ok(if watched { DeletionWatchers::Possible } else { DeletionWatchers::None })
     }
 }

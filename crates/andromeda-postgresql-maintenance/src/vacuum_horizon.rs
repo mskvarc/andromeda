@@ -20,10 +20,10 @@ use andromeda_postgresql_seaquery::{
     introspection::current_database,
     maintenance::{backend_pid, transaction_age},
     pg_type::PostgresType,
+    statement::Statement,
 };
 use chrono::{DateTime, Utc};
-use sea_query::{Alias, Expr, ExprTrait, Iden, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr, UnionType};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Alias, Expr, ExprTrait, Iden, Query, SelectStatement, SimpleExpr, UnionType};
 use sqlx::{PgConnection, Row, postgres::PgRow};
 use std::str::FromStr;
 use strum::{EnumString, IntoStaticStr};
@@ -145,8 +145,7 @@ pub(crate) fn horizon_held_by(holders: &[HorizonHolder]) -> Option<HorizonHolder
 
 /// Read every holder of the vacuum horizon within `scope`.
 pub(crate) async fn horizon_holders(connection: &mut PgConnection, scope: HorizonScope) -> Result<Vec<HorizonHolder>, MaintenanceError> {
-    let (sql, values) = horizon_holders_statement(scope).build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
+    let rows = horizon_holders_statement(scope).to_query().fetch_all(connection).await?;
     let now = Utc::now();
     rows.iter().map(|row| holder_of(row, now)).collect()
 }

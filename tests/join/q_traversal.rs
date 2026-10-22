@@ -8,11 +8,14 @@
 //! result count against a page smaller than the matching set.
 
 use crate::{create, get_one, ids_from_array, query};
+use andromeda_postgresql_schema::current::{CurrentAttributes, Entities};
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_test_client::{entity::results_count, entity_attribute::DatasetSelection};
 use andromeda_test_fixtures::{context::TEST_SUITE_CONTEXT, problem_detail::BAD_REQUEST_DATA};
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
+use sea_query::{Expr, ExprTrait, Query};
 use serde_json::{Value, json};
 use urlencoding::encode;
 
@@ -345,14 +348,21 @@ async fn q_linked_hop_does_not_match_through_a_deleted_relationship() {
     // and this read needs no barrier. The entity carried exactly one attribute,
     // so the deletion must leave it with no row at all: an absent row is what a
     // deleted instance is, and nothing the probe has to filter out.
-    let stored: Vec<(Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT c.value_string, c.value_uri FROM current_attributes c \
-         JOIN entities e ON e.entity_key = c.entity_key WHERE e.id = $1",
-    )
-    .bind(&id_car_tombstoned)
-    .fetch_all(scope.database_pool())
-    .await
-    .expect("current_attributes probe failed");
+    let stored: Vec<(Option<String>, Option<String>)> = Query::select()
+        .columns([
+            (CurrentAttributes::Table, CurrentAttributes::ValueString),
+            (CurrentAttributes::Table, CurrentAttributes::ValueUri),
+        ])
+        .from(CurrentAttributes::Table)
+        .inner_join(
+            Entities::Table,
+            Expr::col((Entities::Table, Entities::EntityKey)).equals((CurrentAttributes::Table, CurrentAttributes::EntityKey)),
+        )
+        .and_where(Expr::col((Entities::Table, Entities::Id)).eq(id_car_tombstoned.as_str()))
+        .to_query_as()
+        .fetch_all(scope.database_pool())
+        .await
+        .expect("current_attributes probe failed");
     assert!(stored.is_empty(), "the deleted Relationship must leave no row behind: {stored:?}");
     scope.finish().await.expect("cleanup failed");
 }

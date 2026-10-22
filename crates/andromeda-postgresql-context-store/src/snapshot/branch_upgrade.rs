@@ -21,9 +21,8 @@ use andromeda_context_commit::failure_summary::{FAILURE_SUMMARY_LIMIT, bounded_f
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
 use andromeda_postgresql_branch::snapshot_schema_name;
 use andromeda_postgresql_schema::snapshot::SnapshotPreparation;
-use andromeda_postgresql_seaquery::{introspection::schema_exists, setting::SettingScope};
-use sea_query::{Expr, ExprTrait, Keyword, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr, UpdateStatement};
-use sea_query_sqlx::SqlxBinder;
+use andromeda_postgresql_seaquery::{introspection::schema_exists, setting::SettingScope, statement::Statement};
+use sea_query::{Expr, ExprTrait, Keyword, Query, SelectStatement, SimpleExpr, UpdateStatement};
 use sqlx::{Connection, PgConnection, PgPool};
 
 /// Whether any Snapshot's branch schemas are behind the binary.
@@ -55,8 +54,12 @@ pub struct BranchUpgradeReport {
 /// the probe fails.
 pub async fn snapshot_branch_state(pool: &PgPool) -> Result<SnapshotBranchState, ContextStoreError> {
     let current = current_branch_version()?;
-    let (sql, values) = Query::select().expr(Expr::exists(behind_statement(current))).build_sqlx(PostgresQueryBuilder);
-    let behind: bool = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(pool).await?;
+    let behind: bool = Query::select()
+        .expr(Expr::exists(behind_statement(current)))
+        .to_owned()
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await?;
     Ok(if behind { SnapshotBranchState::Behind } else { SnapshotBranchState::Current })
 }
 
@@ -78,10 +81,7 @@ pub async fn snapshot_branch_state(pool: &PgPool) -> Result<SnapshotBranchState,
 /// of the run: it quarantines its Snapshot and the run moves on.
 pub async fn upgrade_snapshot_branches(pool: &PgPool, set: &BranchMigrationSet) -> Result<BranchUpgradeReport, ContextStoreError> {
     let current = set.version()?;
-    let (sql, values) = behind_statement(current).build_sqlx(PostgresQueryBuilder);
-    let behind = sqlx::query_scalar_with::<_, i64, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
-        .fetch_all(pool)
-        .await?;
+    let behind = behind_statement(current).to_query_scalar::<i64>().fetch_all(pool).await?;
     if behind.is_empty() {
         return Ok(BranchUpgradeReport::default());
     }
@@ -91,12 +91,12 @@ pub async fn upgrade_snapshot_branches(pool: &PgPool, set: &BranchMigrationSet) 
         let key = SnapshotKey::try_from(raw).map_err(StoredSnapshotError::Key)?;
         match upgrade_snapshot(&mut connection, set, key).await {
             Ok(()) => {
-                record(pool, upgraded_statement(key, current)).await?;
+                upgraded_statement(key, current).to_query().execute(pool).await?;
                 report.upgraded += 1;
             }
             Err(error) => {
                 tracing::warn!(snapshot_key = key.as_i64(), %error, event = "snapshot_branch_quarantined", "a Snapshot branch upgrade failed; the Snapshot is quarantined");
-                record(pool, quarantined_statement(key, &error.to_string())).await?;
+                quarantined_statement(key, &error.to_string()).to_query().execute(pool).await?;
                 report.quarantined += 1;
             }
         }
@@ -110,8 +110,10 @@ pub async fn upgrade_snapshot_branches(pool: &PgPool, set: &BranchMigrationSet) 
 async fn upgrade_snapshot(connection: &mut PgConnection, set: &BranchMigrationSet, key: SnapshotKey) -> Result<(), ContextStoreError> {
     for branch in [SnapshotBranch::Published, SnapshotBranch::Staging] {
         let schema = snapshot_schema_name(key, branch);
-        let (sql, values) = Query::select().expr(schema_exists(&schema)).build_sqlx(PostgresQueryBuilder);
-        let present: bool = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let present: bool = Query::select()
+            .expr(schema_exists(&schema))
+            .to_owned()
+            .to_query_scalar()
             .fetch_one(&mut *connection)
             .await?;
         if present {
@@ -155,13 +157,6 @@ fn quarantined_statement(key: SnapshotKey, error: &str) -> UpdateStatement {
         )
         .and_where(Expr::col(SnapshotPreparation::SnapshotKey).eq(key.as_i64()))
         .to_owned()
-}
-
-/// Execute one outcome update.
-async fn record(pool: &PgPool, statement: UpdateStatement) -> Result<(), ContextStoreError> {
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool).await?;
-    Ok(())
 }
 
 #[cfg(test)]

@@ -11,9 +11,9 @@ use andromeda_health::{
     postgresql_details::PostgreSqlDetails,
     status::HealthStatus,
 };
+use andromeda_postgresql_seaquery::{literal::int_literal, statement::Statement};
 use async_trait::async_trait;
-use sea_query::{Expr, PostgresQueryBuilder, Query};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::Query;
 use sqlx::PgPool;
 use std::time::Instant;
 
@@ -44,8 +44,7 @@ impl HealthIndicator for DatabaseHealthIndicator {
         let start = Instant::now();
         // A trivial round trip that proves the pool can reach the database; the
         // selected constant is never read, only the success of the query.
-        let (sql, values) = Query::select().expr(Expr::val(1)).build_sqlx(PostgresQueryBuilder);
-        let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&self.pool).await;
+        let result = Query::select().expr(int_literal(1)).to_query().execute(&self.pool).await;
         // A latency past `u64::MAX` milliseconds is not representable and not
         // reachable; reporting the cap keeps the detail a number either way.
         let elapsed_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);

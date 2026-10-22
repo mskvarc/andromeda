@@ -11,8 +11,16 @@
 //! for a column that inherits `default_toast_compression`.
 
 use crate::SUITE;
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    introspection::current_schema,
+    pg_type::PostgresType,
+    statement::Statement,
+    system_catalog::{PgClass, PgNamespace},
+};
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
+use sea_query::{Alias, Expr, ExprTrait, Query};
 use sqlx::PgPool;
 
 /// Every `(relation, column)` the schema declares with lz4 TOAST compression.
@@ -64,17 +72,27 @@ const LZ4_COLUMNS: &[(&str, &str)] = &[
 /// Read the compression method one column declares: `l` for lz4, `p` for
 /// pglz, and the empty string when the column inherits the server default.
 async fn column_compression(pool: &PgPool, relation: &str, column: &str) -> String {
-    sqlx::query_scalar(
-        "SELECT a.attcompression::text FROM pg_attribute AS a \
-         JOIN pg_class AS c ON c.oid = a.attrelid \
-         JOIN pg_namespace AS n ON n.oid = c.relnamespace \
-         WHERE n.nspname = current_schema() AND c.relname = $1 AND a.attname = $2 AND a.attnum > 0 AND NOT a.attisdropped",
-    )
-    .bind(relation)
-    .bind(column)
-    .fetch_one(pool)
-    .await
-    .expect("the inspected column must exist")
+    let attribute = |name: &str| Expr::col((Alias::new("pg_attribute"), Alias::new(name)));
+    Query::select()
+        .expr(cast(attribute("attcompression"), PostgresType::Text))
+        .from(Alias::new("pg_attribute"))
+        .inner_join(
+            PgClass::Table,
+            Expr::col((PgClass::Table, PgClass::Oid)).equals((Alias::new("pg_attribute"), Alias::new("attrelid"))),
+        )
+        .inner_join(
+            PgNamespace::Table,
+            Expr::col((PgNamespace::Table, PgNamespace::Oid)).equals((PgClass::Table, PgClass::Relnamespace)),
+        )
+        .and_where(Expr::col((PgNamespace::Table, PgNamespace::Nspname)).eq(current_schema()))
+        .and_where(Expr::col((PgClass::Table, PgClass::Relname)).eq(relation))
+        .and_where(attribute("attname").eq(column))
+        .and_where(attribute("attnum").gt(0))
+        .and_where(attribute("attisdropped").not())
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await
+        .expect("the inspected column must exist")
 }
 
 #[tokio::test]

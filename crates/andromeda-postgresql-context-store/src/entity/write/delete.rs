@@ -2,14 +2,13 @@
 //! expectation still holds and hands back the system attributes it held.
 
 use crate::{
-    branch_statement::BranchStatement,
     entity::{
         census::delta::{CensusChange, CensusStatements},
         mapper::stored_uri,
         repo::EntityRepository,
         write::{
             search_image::SearchImage,
-            staging::{Doomed, Srch, Staged, StagedColumn, delete_staging_columns, expectation, staged, staging_source},
+            staging::{Doomed, Srch, Staged, StagedColumn, delete_staging_columns, expectation, staged, staging_source, with_staged_alias},
         },
     },
     error::ContextStoreError,
@@ -20,10 +19,14 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{E, Entities, EntitySearch};
-use andromeda_postgresql_seaquery::unnest::apply_column_alias;
+use andromeda_postgresql_seaquery::{
+    pg_array::{nullable_array, text_array},
+    statement::Statement,
+    unnest::UnnestAliased,
+};
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use chrono::{DateTime, Utc};
-use sea_query::{CommonTableExpression, Expr, ExprTrait, Iden, IntoIden, JoinType, LockType, PostgresQueryBuilder, Query, WithClause};
+use sea_query::{CommonTableExpression, Expr, ExprTrait, Iden, IntoIden, JoinType, LockType, Query, WithClause, WithQuery};
 use sqlx::{Postgres, Row, Transaction};
 
 /// The statement name the entity set-delete is observed under.
@@ -34,10 +37,8 @@ const ENTITY_DELETE: StatementName = StatementName("entity-delete");
 #[iden = "gone"]
 struct Gone;
 
-/// The batch delete's text, built once for the live branch.
-static ENTITY_DELETE_STATEMENT: BranchStatement = BranchStatement::new(entity_delete_sql);
-
-/// Build the batch delete.
+/// Build the batch delete of `ids`, each held to its entry of
+/// `expected_modified_at`.
 ///
 /// ```sql
 /// WITH doomed AS (SELECT e.entity_key, e.id, e.created_at, e.modified_at, e.expires_at
@@ -76,8 +77,14 @@ static ENTITY_DELETE_STATEMENT: BranchStatement = BranchStatement::new(entity_de
 ///
 /// Returns [`ContextStoreError::StatementBuild`] if a census ledger insert ever stops
 /// matching its column list, which the fixed shapes make unreachable.
-pub(super) fn entity_delete_sql(target: &ContextTarget) -> Result<String, ContextStoreError> {
+pub(super) fn entity_delete_statement(
+    target: &ContextTarget,
+    ids: &[Identifier],
+    expected_modified_at: &[Option<DateTime<Utc>>],
+) -> Result<UnnestAliased<WithQuery>, ContextStoreError> {
     let columns = delete_staging_columns();
+    let ids = ids.iter().map(Identifier::as_str).collect::<Vec<_>>();
+    let arrays = vec![text_array(&ids), nullable_array(expected_modified_at.iter().copied())];
 
     let mut doomed = Query::select();
     doomed
@@ -86,7 +93,7 @@ pub(super) fn entity_delete_sql(target: &ContextTarget) -> Result<String, Contex
         .expr(Expr::col((E, Entities::CreatedAt)))
         .expr(Expr::col((E, Entities::ModifiedAt)))
         .expr(Expr::col((E, Entities::ExpiresAt)))
-        .from_function(staging_source(&columns), Staged)
+        .from_function(staging_source(&columns, arrays), Staged)
         .join_as(
             JoinType::Join,
             table_of(target, Entities::Table),
@@ -142,8 +149,7 @@ pub(super) fn entity_delete_sql(target: &ContextTarget) -> Result<String, Contex
             .take(),
     );
 
-    let sql = statement.to_string(PostgresQueryBuilder);
-    Ok(apply_column_alias(sql, &Staged, &columns))
+    Ok(with_staged_alias(UnnestAliased::new(statement), &columns))
 }
 
 impl EntityRepository {
@@ -183,12 +189,7 @@ impl EntityRepository {
             .into());
         }
 
-        let ids = ids.iter().map(Identifier::as_str).collect::<Vec<_>>();
-        let sql = ENTITY_DELETE_STATEMENT.text(target)?;
-        let rows = sqlx::query(sqlx::AssertSqlSafe(&*sql))
-            .bind(ids)
-            .bind(expected_modified_at)
-            .fetch_all(&mut **tx);
+        let rows = entity_delete_statement(target, ids, expected_modified_at)?.to_query().fetch_all(&mut **tx);
         let rows = observe_statement(ENTITY_DELETE, rows).await?;
 
         rows.into_iter()
@@ -206,14 +207,18 @@ impl EntityRepository {
 
 #[cfg(test)]
 mod tests {
-    use crate::entity::write::{delete::entity_delete_sql, placeholders};
+    use crate::{entity::write::delete::entity_delete_statement, statement_text::text_of};
     use andromeda_context_space::context_target::ContextTarget;
-    use std::collections::BTreeSet;
+
+    /// The rendered delete, unwrapped for assertion.
+    fn entity_delete_sql(target: &ContextTarget) -> String {
+        text_of(&entity_delete_statement(target, &[], &[]).expect("the fixed delete builds"))
+    }
 
     #[test]
     fn the_delete_locks_its_candidates_and_honours_the_expectation() {
-        let sql = entity_delete_sql(&ContextTarget::Live).expect("the fixed delete builds");
-        pretty_assertions::assert_eq!(placeholders(&sql), (1..=2).collect::<BTreeSet<u32>>());
+        let sql = entity_delete_sql(&ContextTarget::Live);
+        assert!(sql.contains("UNNEST($1::text[], $2::timestamptz[])"), "{sql}");
         assert!(
             sql.starts_with(r#"WITH "doomed" AS (SELECT "e"."entity_key", "e"."id", "e"."created_at", "e"."modified_at", "e"."expires_at" FROM UNNEST("#),
             "{sql}"
@@ -229,7 +234,7 @@ mod tests {
 
     #[test]
     fn the_delete_removes_identity_rows_by_key_and_returns_what_the_notification_needs() {
-        let sql = entity_delete_sql(&ContextTarget::Live).expect("the fixed delete builds");
+        let sql = entity_delete_sql(&ContextTarget::Live);
         assert!(
             sql.contains(r#""gone" AS (DELETE FROM "entities" WHERE "entity_key" IN (SELECT "entity_key" FROM "doomed"))"#),
             "{sql}"
@@ -245,7 +250,7 @@ mod tests {
     /// instances through the statement-level trigger on `entities`.
     #[test]
     fn an_entity_delete_is_one_statement() {
-        let sql = entity_delete_sql(&ContextTarget::Live).expect("the fixed delete builds");
+        let sql = entity_delete_sql(&ContextTarget::Live);
         pretty_assertions::assert_eq!(sql.matches(r#"DELETE FROM "entities""#).count(), 1, "{sql}");
         for relation in [
             "current_attributes",
@@ -262,7 +267,7 @@ mod tests {
     /// own `RETURNING`.
     #[test]
     fn the_delete_counts_the_removed_search_rows_out_of_the_census() {
-        let sql = entity_delete_sql(&ContextTarget::Live).expect("the fixed delete builds");
+        let sql = entity_delete_sql(&ContextTarget::Live);
         assert!(
             sql.contains(r#""srch" ("entity_key", "old_types", "old_instance_names", "old_instance_kinds") AS (DELETE FROM "entity_search" WHERE "entity_key" IN (SELECT "entity_key" FROM "doomed") RETURNING "entity_key", "entity_type_name_keys", "attribute_instance_name_keys", "attribute_instance_kinds")"#),
             "{sql}"

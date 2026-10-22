@@ -12,6 +12,7 @@
 use crate::store_fault::{persistence_failure, undecodable};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_postgresql_schema::tenancy::{TenantWakeSchedule as WakeScheduleTable, Tenants};
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_tenancy::wake_schedule::{TenantWakeSchedule, WakeScheduleError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -24,7 +25,6 @@ use sea_query::{
     NullOrdering,
     OnConflict,
     Order,
-    PostgresQueryBuilder,
     Query,
     QueryStatementBuilder,
     SelectStatement,
@@ -32,7 +32,6 @@ use sea_query::{
     UpdateStatement,
     error::Error as SeaQueryError,
 };
-use sea_query_sqlx::SqlxBinder;
 use sqlx::PgPool;
 use std::time::SystemTime;
 
@@ -56,8 +55,8 @@ impl PostgresTenantWakeSchedule {
         if keys.is_empty() {
             return Ok(Vec::new());
         }
-        let (sql, values) = names_for_keys_query(keys).build_sqlx(PostgresQueryBuilder);
-        let names: Vec<String> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let names: Vec<String> = names_for_keys_query(keys)
+            .to_query_scalar()
             .fetch_all(&self.main_pool)
             .await
             .map_err(|error| store_error(&error))?;
@@ -69,17 +68,13 @@ impl PostgresTenantWakeSchedule {
 impl TenantWakeSchedule for PostgresTenantWakeSchedule {
     async fn record(&self, tenant: &TenantName, probed_at: SystemTime, wake_at: Option<SystemTime>) -> Result<(), WakeScheduleError> {
         let statement = upsert_statement(tenant, probed_at, wake_at).map_err(|error| arity_error(&error))?;
-        let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-            .execute(&self.main_pool)
-            .await
-            .map_err(|error| store_error(&error))?;
+        statement.to_query().execute(&self.main_pool).await.map_err(|error| store_error(&error))?;
         Ok(())
     }
 
     async fn claim_due(&self, now: SystemTime, lease_until: SystemTime, limit: usize) -> Result<Vec<TenantName>, WakeScheduleError> {
-        let (sql, values) = claim_statement(now, lease_until, limit).build_sqlx(PostgresQueryBuilder);
-        let keys: Vec<i64> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let keys: Vec<i64> = claim_statement(now, lease_until, limit)
+            .to_query_scalar()
             .fetch_all(&self.main_pool)
             .await
             .map_err(|error| store_error(&error))?;
@@ -94,8 +89,8 @@ impl TenantWakeSchedule for PostgresTenantWakeSchedule {
     }
 
     async fn next_unprobed(&self, limit: usize) -> Result<Vec<TenantName>, WakeScheduleError> {
-        let (sql, values) = next_unprobed_query(limit).build_sqlx(PostgresQueryBuilder);
-        let names: Vec<String> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let names: Vec<String> = next_unprobed_query(limit)
+            .to_query_scalar()
             .fetch_all(&self.main_pool)
             .await
             .map_err(|error| store_error(&error))?;

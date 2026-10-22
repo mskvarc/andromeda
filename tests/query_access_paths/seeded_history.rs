@@ -7,7 +7,23 @@
 //! minutes per test, so the rows are written directly and cleared again by the
 //! exclusive serialized reset that runs before each test in this suite.
 
+use andromeda_postgresql_schema::temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities};
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    catalog_function::{generate_series, lpad, random_uuid},
+    clock::now,
+    command::Command,
+    interval::make_interval_secs,
+    literal::text_literal,
+    maintenance::{MaintenanceSchema, analyze, vacuum_analyze},
+    pg_array::array_literal,
+    pg_operator::PgBinaryOperator,
+    pg_type::PostgresType,
+    statement::Statement,
+};
 use andromeda_test_harness::dictionary_seed::{attribute_name_key, entity_type_name_key};
+use chrono::{DateTime, Utc};
+use sea_query::{Alias, CaseStatement, CommonTableExpression, Expr, ExprTrait, IntoIden, Query, SimpleExpr, WithClause};
 use sqlx::PgPool;
 
 /// Streams written per seeded history corpus.
@@ -18,6 +34,26 @@ pub const OBSERVATIONS_PER_STREAM: i64 = 100;
 
 /// Expanded IRI of the seeded history attribute.
 pub const HISTORY_ATTRIBUTE: &str = "https://example.test/query-access-paths/history-reading";
+
+/// Seconds in a day.
+const DAY_SECONDS: f64 = 86_400.0;
+
+/// The instant the seeded observations count their hours from.
+fn history_origin() -> DateTime<Utc> {
+    "2026-01-01T00:00:00Z".parse().expect("the origin is a valid instant")
+}
+
+/// The instant the windowed corpus records every row at, an hour of seconds
+/// wide.
+fn windowed_recording() -> DateTime<Utc> {
+    "2026-01-04T12:00:00Z".parse().expect("the recording instant is valid")
+}
+
+/// `(count || unit)::interval` for the column `count`, `unit` spelled with its
+/// leading space.
+fn counted_interval(count: Expr, unit: &str) -> SimpleExpr {
+    cast(count.concat_text(text_literal(unit)), PostgresType::Interval)
+}
 
 /// The seeded history corpus, and the identities a plan assertion binds.
 pub struct SeededHistory {
@@ -39,6 +75,21 @@ impl SeededHistory {
     }
 }
 
+/// Refresh the planner statistics of the three temporal relations.
+async fn analyze_temporal(pool: &PgPool) {
+    for relation in [
+        AttributeHistory::Table.into_iden(),
+        TemporalAttributeStreams::Table.into_iden(),
+        TemporalEntities::Table.into_iden(),
+    ] {
+        analyze(MaintenanceSchema::Public, relation)
+            .to_query()
+            .execute(pool)
+            .await
+            .expect("analyze must succeed");
+    }
+}
+
 /// Write the corpus and analyze the relations the plans read.
 ///
 /// Every observation carries four distinct instants: `observedAt` on a one-hour
@@ -54,64 +105,137 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededHistory {
         .await
         .expect("type dictionary seed must succeed");
 
-    let entity_key: i64 = sqlx::query_scalar(
-        "INSERT INTO temporal_entities (created_at, modified_at, id, entity_type_name_keys) \
-         VALUES (now(), now(), $1::text || ':history', ARRAY[$2::integer]) \
-         RETURNING temporal_entity_key",
-    )
-    .bind(prefix)
-    .bind(historic_type_key)
-    .fetch_one(pool)
-    .await
-    .expect("temporal catalogue insert must succeed");
+    let entity_key = insert_history_entity(pool, prefix, historic_type_key).await;
+    let streams = insert_streams(pool, entity_key, history_attribute_key).await;
+    insert_observations(pool, entity_key).await;
 
-    let streams: Vec<i64> = sqlx::query_scalar(
-        "INSERT INTO temporal_attribute_streams (temporal_entity_key, id, attribute_name_key, dataset_id) \
-         SELECT e.temporal_entity_key, e.id, $2, 'urn:ngsi-ld:Dataset:' || lpad(g::text, 4, '0') \
-         FROM temporal_entities AS e, generate_series(1, $3::bigint) AS g \
-         WHERE e.temporal_entity_key = $1 \
-         RETURNING stream_key",
-    )
-    .bind(entity_key)
-    .bind(history_attribute_key)
-    .bind(SEEDED_STREAMS)
-    .fetch_all(pool)
-    .await
-    .expect("stream corpus must be writable");
-
-    sqlx::query(
-        "INSERT INTO attribute_history \
-         (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind, \
-          observed_at, created_at, modified_at, deleted_at, generated_instance_id, value_number) \
-         SELECT now() - (g || ' hours')::interval, \
-                gen_random_uuid(), s.stream_key, 0, 1, \
-                CASE WHEN g = 1 THEN 0 ELSE 1 END, \
-                TIMESTAMPTZ '2026-01-01 00:00:00Z' + (g || ' hours')::interval, \
-                TIMESTAMPTZ '2026-01-01 00:00:00Z' + (g || ' hours')::interval - INTERVAL '1 day', \
-                TIMESTAMPTZ '2026-01-01 00:00:00Z' + (g || ' hours')::interval + INTERVAL '1 day', \
-                CASE WHEN g = 1 THEN TIMESTAMPTZ '2026-01-01 00:00:00Z' + (g || ' hours')::interval + INTERVAL '2 days' END, \
-                gen_random_uuid(), \
-                CASE WHEN g = 1 THEN NULL ELSE g::numeric END \
-         FROM temporal_attribute_streams AS s \
-         CROSS JOIN generate_series(1, $2::bigint) AS g \
-         WHERE s.temporal_entity_key = $1",
-    )
-    .bind(entity_key)
-    .bind(OBSERVATIONS_PER_STREAM)
-    .execute(pool)
-    .await
-    .expect("history corpus must be writable");
-
-    sqlx::query("ANALYZE attribute_history").execute(pool).await.expect("analyze must succeed");
-    sqlx::query("ANALYZE temporal_attribute_streams")
-        .execute(pool)
-        .await
-        .expect("analyze must succeed");
+    for relation in [AttributeHistory::Table.into_iden(), TemporalAttributeStreams::Table.into_iden()] {
+        analyze(MaintenanceSchema::Public, relation)
+            .to_query()
+            .execute(pool)
+            .await
+            .expect("analyze must succeed");
+    }
 
     SeededHistory {
         narrow_stream: *streams.first().expect("the corpus writes at least one stream"),
         entity_key,
     }
+}
+
+/// Insert the one temporal Entity of the corpus and return its key.
+async fn insert_history_entity(pool: &PgPool, prefix: &str, historic_type_key: i32) -> i64 {
+    Query::insert()
+        .into_table(TemporalEntities::Table)
+        .columns([
+            TemporalEntities::CreatedAt,
+            TemporalEntities::ModifiedAt,
+            TemporalEntities::Id,
+            TemporalEntities::EntityTypeNameKeys,
+        ])
+        .values([
+            now(),
+            now(),
+            cast(Expr::val(prefix), PostgresType::Text).concat_text(text_literal(":history")),
+            array_literal([cast(Expr::val(historic_type_key), PostgresType::Integer)]),
+        ])
+        .expect("one value per column")
+        .returning_col(TemporalEntities::TemporalEntityKey)
+        .to_query_scalar()
+        .fetch_one(pool)
+        .await
+        .expect("temporal catalogue insert must succeed")
+}
+
+/// Insert the streams of the history attribute for the Entity and return their
+/// keys.
+async fn insert_streams(pool: &PgPool, entity_key: i64, history_attribute_key: i32) -> Vec<i64> {
+    let series = || Expr::col(Alias::new("g"));
+    Query::insert()
+        .into_table(TemporalAttributeStreams::Table)
+        .columns([
+            TemporalAttributeStreams::TemporalEntityKey,
+            TemporalAttributeStreams::Id,
+            TemporalAttributeStreams::AttributeNameKey,
+            TemporalAttributeStreams::DatasetId,
+        ])
+        .select_from(
+            Query::select()
+                .column((Alias::new("e"), TemporalEntities::TemporalEntityKey))
+                .column((Alias::new("e"), TemporalEntities::Id))
+                .expr(Expr::val(history_attribute_key))
+                .expr(text_literal("urn:ngsi-ld:Dataset:").concat_text(lpad(cast(series(), PostgresType::Text), Expr::val(4), text_literal("0"))))
+                .from_as(TemporalEntities::Table, Alias::new("e"))
+                .from_function(
+                    generate_series(Expr::val(1), cast(Expr::val(SEEDED_STREAMS), PostgresType::Bigint)),
+                    Alias::new("g"),
+                )
+                .and_where(Expr::col((Alias::new("e"), TemporalEntities::TemporalEntityKey)).eq(entity_key))
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .returning_col(TemporalAttributeStreams::StreamKey)
+        .to_query_scalar()
+        .fetch_all(pool)
+        .await
+        .expect("stream corpus must be writable")
+}
+
+/// Insert the observations of every stream of the Entity.
+async fn insert_observations(pool: &PgPool, entity_key: i64) {
+    let series = || Expr::col(Alias::new("g"));
+    let observed = || Expr::val(history_origin()).add(counted_interval(series(), " hours"));
+    let first_observation = || series().eq(1);
+    Query::insert()
+        .into_table(AttributeHistory::Table)
+        .columns([
+            AttributeHistory::RecordedAt,
+            AttributeHistory::WriteId,
+            AttributeHistory::StreamKey,
+            AttributeHistory::WriteOrdinal,
+            AttributeHistory::AttributeKind,
+            AttributeHistory::ValueKind,
+            AttributeHistory::ObservedAt,
+            AttributeHistory::CreatedAt,
+            AttributeHistory::ModifiedAt,
+            AttributeHistory::DeletedAt,
+            AttributeHistory::GeneratedInstanceId,
+            AttributeHistory::ValueNumber,
+        ])
+        .select_from(
+            Query::select()
+                .expr(Expr::expr(now()).sub(counted_interval(series(), " hours")))
+                .expr(random_uuid())
+                .column((Alias::new("s"), TemporalAttributeStreams::StreamKey))
+                .expr(Expr::val(0))
+                .expr(Expr::val(1))
+                .expr(CaseStatement::new().case(first_observation(), Expr::val(0)).finally(Expr::val(1)))
+                .expr(observed())
+                .expr(Expr::expr(observed()).sub(make_interval_secs(Expr::val(DAY_SECONDS))))
+                .expr(Expr::expr(observed()).add(make_interval_secs(Expr::val(DAY_SECONDS))))
+                .expr(CaseStatement::new().case(
+                    first_observation(),
+                    Expr::expr(observed()).add(make_interval_secs(Expr::val(2.0 * DAY_SECONDS))),
+                ))
+                .expr(random_uuid())
+                .expr(
+                    CaseStatement::new()
+                        .case(first_observation(), Expr::null())
+                        .finally(cast(series(), PostgresType::Numeric)),
+                )
+                .from_as(TemporalAttributeStreams::Table, Alias::new("s"))
+                .from_function(
+                    generate_series(Expr::val(1), cast(Expr::val(OBSERVATIONS_PER_STREAM), PostgresType::Bigint)),
+                    Alias::new("g"),
+                )
+                .and_where(Expr::col((Alias::new("s"), TemporalAttributeStreams::TemporalEntityKey)).eq(entity_key))
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .to_query()
+        .execute(pool)
+        .await
+        .expect("history corpus must be writable");
 }
 
 /// Temporal Entities written per windowed corpus, each with one stream of the
@@ -194,61 +318,14 @@ pub async fn seed_window_and_prior(pool: &PgPool, prefix: &str, observations: i6
         .await
         .expect("type dictionary seed must succeed");
 
-    sqlx::query(
-        "WITH meters AS ( \
-             INSERT INTO temporal_entities (created_at, modified_at, id, entity_type_name_keys) \
-             SELECT now(), now(), $1::text || ':meter:' || lpad(g::text, 4, '0'), ARRAY[$2::integer] \
-             FROM generate_series(1, $3::bigint) AS g \
-             RETURNING temporal_entity_key, id) \
-         INSERT INTO temporal_attribute_streams (temporal_entity_key, id, attribute_name_key) \
-         SELECT temporal_entity_key, id, $4 FROM meters",
-    )
-    .bind(prefix)
-    .bind(type_key)
-    .bind(WINDOWED_ENTITIES)
-    .bind(attribute)
-    .execute(pool)
-    .await
-    .expect("the windowed catalogue must be writable");
-
-    sqlx::query(
-        "INSERT INTO attribute_history \
-         (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind, observed_at, generated_instance_id, value_number) \
-         SELECT TIMESTAMPTZ '2026-01-04 12:00:00Z' + (g || ' seconds')::interval, \
-                gen_random_uuid(), s.stream_key, 0, 1, 1, \
-                TIMESTAMPTZ '2026-01-01 00:00:00Z' + (g || ' hours')::interval, \
-                gen_random_uuid(), g::numeric \
-         FROM temporal_attribute_streams AS s \
-         CROSS JOIN generate_series(1, $2::bigint) AS g \
-         WHERE s.attribute_name_key = $1",
-    )
-    .bind(attribute)
-    .bind(observations)
-    .execute(pool)
-    .await
-    .expect("the windowed history must be writable");
+    insert_meter_catalogue(pool, prefix, type_key, attribute).await;
+    insert_windowed_observations(pool, attribute, observations).await;
 
     let tombstoned = format!("{prefix}:meter:0001");
-    sqlx::query(
-        "INSERT INTO attribute_history \
-         (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind, deleted_at, generated_instance_id) \
-         SELECT TIMESTAMPTZ '2026-01-04 12:00:00Z', gen_random_uuid(), s.stream_key, 0, 1, 0, \
-                TIMESTAMPTZ '2026-01-01 00:00:00Z' + ($3::bigint || ' minutes')::interval, \
-                gen_random_uuid() \
-         FROM temporal_attribute_streams AS s \
-         JOIN temporal_entities AS e ON e.temporal_entity_key = s.temporal_entity_key \
-         WHERE e.id = $1 AND s.attribute_name_key = $2",
-    )
-    .bind(&tombstoned)
-    .bind(attribute)
-    .bind((observations - WINDOW_TAIL_HOURS) * 60 + TOMBSTONE_MINUTES)
-    .execute(pool)
-    .await
-    .expect("the tombstone must be writable");
+    let tombstone_minutes = (observations - WINDOW_TAIL_HOURS) * 60 + TOMBSTONE_MINUTES;
+    insert_tombstone(pool, &tombstoned, tombstone_minutes, attribute).await;
 
-    for statement in ["ANALYZE attribute_history", "ANALYZE temporal_attribute_streams", "ANALYZE temporal_entities"] {
-        sqlx::query(statement).execute(pool).await.expect("analyze must succeed");
-    }
+    analyze_temporal(pool).await;
 
     WindowedHistory {
         attribute,
@@ -257,28 +334,195 @@ pub async fn seed_window_and_prior(pool: &PgPool, prefix: &str, observations: i6
     }
 }
 
+/// Insert the meters and one stream of `attribute` for each.
+async fn insert_meter_catalogue(pool: &PgPool, prefix: &str, type_key: i32, attribute: i32) {
+    let series = || Expr::col(Alias::new("g"));
+    let meters = Query::insert()
+        .into_table(TemporalEntities::Table)
+        .columns([
+            TemporalEntities::CreatedAt,
+            TemporalEntities::ModifiedAt,
+            TemporalEntities::Id,
+            TemporalEntities::EntityTypeNameKeys,
+        ])
+        .select_from(
+            Query::select()
+                .expr(now())
+                .expr(now())
+                .expr(
+                    cast(Expr::val(prefix), PostgresType::Text)
+                        .concat_text(text_literal(":meter:"))
+                        .concat_text(lpad(cast(series(), PostgresType::Text), Expr::val(4), text_literal("0"))),
+                )
+                .expr(array_literal([cast(Expr::val(type_key), PostgresType::Integer)]))
+                .from_function(
+                    generate_series(Expr::val(1), cast(Expr::val(WINDOWED_ENTITIES), PostgresType::Bigint)),
+                    Alias::new("g"),
+                )
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .returning(Query::returning().columns([TemporalEntities::TemporalEntityKey, TemporalEntities::Id]))
+        .to_owned();
+    let streams = Query::insert()
+        .into_table(TemporalAttributeStreams::Table)
+        .columns([
+            TemporalAttributeStreams::TemporalEntityKey,
+            TemporalAttributeStreams::Id,
+            TemporalAttributeStreams::AttributeNameKey,
+        ])
+        .select_from(
+            Query::select()
+                .columns([TemporalEntities::TemporalEntityKey, TemporalEntities::Id])
+                .expr(Expr::val(attribute))
+                .from(Alias::new("meters"))
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .to_owned();
+    WithClause::new()
+        .cte(CommonTableExpression::new().table_name(Alias::new("meters")).query(meters).to_owned())
+        .to_owned()
+        .query(streams)
+        .to_query()
+        .execute(pool)
+        .await
+        .expect("the windowed catalogue must be writable");
+}
+
+/// Insert `observations` numeric observations into every stream of `attribute`.
+async fn insert_windowed_observations(pool: &PgPool, attribute: i32, observations: i64) {
+    let series = || Expr::col(Alias::new("g"));
+    Query::insert()
+        .into_table(AttributeHistory::Table)
+        .columns([
+            AttributeHistory::RecordedAt,
+            AttributeHistory::WriteId,
+            AttributeHistory::StreamKey,
+            AttributeHistory::WriteOrdinal,
+            AttributeHistory::AttributeKind,
+            AttributeHistory::ValueKind,
+            AttributeHistory::ObservedAt,
+            AttributeHistory::GeneratedInstanceId,
+            AttributeHistory::ValueNumber,
+        ])
+        .select_from(
+            Query::select()
+                .expr(Expr::val(windowed_recording()).add(counted_interval(series(), " seconds")))
+                .expr(random_uuid())
+                .column((Alias::new("s"), TemporalAttributeStreams::StreamKey))
+                .expr(Expr::val(0))
+                .expr(Expr::val(1))
+                .expr(Expr::val(1))
+                .expr(Expr::val(history_origin()).add(counted_interval(series(), " hours")))
+                .expr(random_uuid())
+                .expr(cast(series(), PostgresType::Numeric))
+                .from_as(TemporalAttributeStreams::Table, Alias::new("s"))
+                .from_function(
+                    generate_series(Expr::val(1), cast(Expr::val(observations), PostgresType::Bigint)),
+                    Alias::new("g"),
+                )
+                .and_where(Expr::col((Alias::new("s"), TemporalAttributeStreams::AttributeNameKey)).eq(attribute))
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .to_query()
+        .execute(pool)
+        .await
+        .expect("the windowed history must be writable");
+}
+
+/// Insert the deletion with no `observedAt` that the first meter's stream holds
+/// after the observation in effect at the window start.
+async fn insert_tombstone(pool: &PgPool, tombstoned: &str, tombstone_minutes: i64, attribute: i32) {
+    Query::insert()
+        .into_table(AttributeHistory::Table)
+        .columns([
+            AttributeHistory::RecordedAt,
+            AttributeHistory::WriteId,
+            AttributeHistory::StreamKey,
+            AttributeHistory::WriteOrdinal,
+            AttributeHistory::AttributeKind,
+            AttributeHistory::ValueKind,
+            AttributeHistory::DeletedAt,
+            AttributeHistory::GeneratedInstanceId,
+        ])
+        .select_from(
+            Query::select()
+                .expr(Expr::val(windowed_recording()))
+                .expr(random_uuid())
+                .column((Alias::new("s"), TemporalAttributeStreams::StreamKey))
+                .expr(Expr::val(0))
+                .expr(Expr::val(1))
+                .expr(Expr::val(0))
+                .expr(Expr::val(history_origin()).add(counted_interval(cast(Expr::val(tombstone_minutes), PostgresType::Bigint), " minutes")))
+                .expr(random_uuid())
+                .from_as(TemporalAttributeStreams::Table, Alias::new("s"))
+                .inner_join(
+                    TemporalEntities::Table,
+                    Expr::col((TemporalEntities::Table, TemporalEntities::TemporalEntityKey))
+                        .equals((Alias::new("s"), TemporalAttributeStreams::TemporalEntityKey)),
+                )
+                .and_where(Expr::col((TemporalEntities::Table, TemporalEntities::Id)).eq(tombstoned))
+                .and_where(Expr::col((Alias::new("s"), TemporalAttributeStreams::AttributeNameKey)).eq(attribute))
+                .to_owned(),
+        )
+        .expect("the projection matches the column list")
+        .to_query()
+        .execute(pool)
+        .await
+        .expect("the tombstone must be writable");
+}
+
 /// Remove a windowed corpus written under `prefix` and vacuum what it leaves
 /// behind, so a corpus seeded next is read without the first one's dead rows.
 pub async fn remove_windowed_history(pool: &PgPool, prefix: &str) {
     let meters = format!("{prefix}:meter:%");
-    for statement in [
-        "DELETE FROM attribute_history AS ah USING temporal_attribute_streams AS s, temporal_entities AS e \
-         WHERE ah.stream_key = s.stream_key AND s.temporal_entity_key = e.temporal_entity_key AND e.id LIKE $1",
-        "DELETE FROM temporal_attribute_streams AS s USING temporal_entities AS e \
-         WHERE s.temporal_entity_key = e.temporal_entity_key AND e.id LIKE $1",
-        "DELETE FROM temporal_entities WHERE id LIKE $1",
+    let meter_keys = || {
+        Query::select()
+            .column(TemporalEntities::TemporalEntityKey)
+            .from(TemporalEntities::Table)
+            .and_where(Expr::col(TemporalEntities::Id).like(meters.as_str()))
+            .to_owned()
+    };
+    Query::delete()
+        .from_table(AttributeHistory::Table)
+        .and_where(
+            Expr::col(AttributeHistory::StreamKey).in_subquery(
+                Query::select()
+                    .column(TemporalAttributeStreams::StreamKey)
+                    .from(TemporalAttributeStreams::Table)
+                    .and_where(Expr::col(TemporalAttributeStreams::TemporalEntityKey).in_subquery(meter_keys()))
+                    .to_owned(),
+            ),
+        )
+        .to_query()
+        .execute(pool)
+        .await
+        .expect("the windowed corpus must be removable");
+    Query::delete()
+        .from_table(TemporalAttributeStreams::Table)
+        .and_where(Expr::col(TemporalAttributeStreams::TemporalEntityKey).in_subquery(meter_keys()))
+        .to_query()
+        .execute(pool)
+        .await
+        .expect("the windowed corpus must be removable");
+    Query::delete()
+        .from_table(TemporalEntities::Table)
+        .and_where(Expr::col(TemporalEntities::Id).like(meters.as_str()))
+        .to_query()
+        .execute(pool)
+        .await
+        .expect("the windowed corpus must be removable");
+    for relation in [
+        AttributeHistory::Table.into_iden(),
+        TemporalAttributeStreams::Table.into_iden(),
+        TemporalEntities::Table.into_iden(),
     ] {
-        sqlx::query(statement)
-            .bind(&meters)
+        vacuum_analyze(MaintenanceSchema::Public, relation)
+            .to_query()
             .execute(pool)
             .await
-            .expect("the windowed corpus must be removable");
-    }
-    for statement in [
-        "VACUUM ANALYZE attribute_history",
-        "VACUUM ANALYZE temporal_attribute_streams",
-        "VACUUM ANALYZE temporal_entities",
-    ] {
-        sqlx::query(statement).execute(pool).await.expect("vacuum must succeed");
+            .expect("vacuum must succeed");
     }
 }

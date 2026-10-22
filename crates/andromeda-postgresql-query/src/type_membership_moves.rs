@@ -8,7 +8,7 @@
 //! arrays it had and has; these builders unnest them into membership rows.
 
 use crate::type_membership::Memberships;
-use andromeda_postgresql_seaquery::{pg_array::any, unnest::unnest_of};
+use andromeda_postgresql_seaquery::{literal::true_literal, pg_array::any, unnest::unnest_of};
 use sea_query::{DeleteStatement, Expr, ExprTrait, Iden, InsertStatement, JoinType, Query, SelectStatement, SimpleExpr, error::Error as SeaQueryError};
 
 /// The lateral that unnests one type-key array, one row per key.
@@ -85,7 +85,7 @@ fn unnest_keys(rows: &mut SelectStatement, keys: SimpleExpr, memberships: Member
             .expr_as(SimpleExpr::from(unnest_of(keys)), memberships.relation.type_key())
             .take(),
         Carried,
-        SimpleExpr::from(Expr::val(true)),
+        true_literal(),
     );
 }
 

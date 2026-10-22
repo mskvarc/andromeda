@@ -19,9 +19,9 @@ use andromeda_postgresql_seaquery::{
     cast::cast,
     maintenance::{multixact_age, transaction_age},
     pg_type::PostgresType,
+    statement::Statement,
 };
-use sea_query::{Alias, Expr, ExprTrait, Iden, Order, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Alias, Expr, ExprTrait, Iden, Order, Query, SelectStatement};
 use sqlx::{PgConnection, Row, postgres::PgRow};
 use tracing::{error, warn};
 
@@ -70,8 +70,7 @@ pub(crate) async fn report_freeze_pressure(connection: &mut PgConnection, tenant
 
 /// Read the relations with the oldest `relfrozenxid`.
 async fn oldest_relations(connection: &mut PgConnection) -> Result<Vec<OldestRelation>, MaintenanceError> {
-    let (sql, values) = oldest_relations_statement().build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
+    let rows = oldest_relations_statement().to_query().fetch_all(connection).await?;
     rows.iter().map(oldest_relation_of).collect()
 }
 

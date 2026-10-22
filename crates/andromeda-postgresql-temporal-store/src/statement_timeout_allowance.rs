@@ -5,10 +5,9 @@
 //! much history as has aged out, however long that takes, and no request
 //! waits on them, so each of their transactions lifts the timeout for itself.
 
-use andromeda_postgresql_seaquery::setting::lift_statement_timeout;
-use sea_query::{PostgresQueryBuilder, Query};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, PgConnection};
+use andromeda_postgresql_seaquery::{setting::lift_statement_timeout, statement::Statement};
+use sea_query::Query;
+use sqlx::PgConnection;
 
 /// Lift the statement timeout until the current transaction ends.
 ///
@@ -16,7 +15,6 @@ use sqlx::{AssertSqlSafe, PgConnection};
 ///
 /// Returns the driver error when the statement fails.
 pub(crate) async fn allow_unbounded_statements(connection: &mut PgConnection) -> Result<(), sqlx::Error> {
-    let (sql, values) = Query::select().expr(lift_statement_timeout()).build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(AssertSqlSafe(sql), values).execute(connection).await?;
+    Query::select().expr(lift_statement_timeout()).to_query().execute(connection).await?;
     Ok(())
 }

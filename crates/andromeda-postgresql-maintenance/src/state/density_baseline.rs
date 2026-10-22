@@ -18,8 +18,8 @@ use crate::{
 };
 use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;
 use andromeda_postgresql_schema::maintenance::PostgresqlMaintenanceTargets;
-use sea_query::{Expr, ExprTrait, Iden, InsertStatement, OnConflict, PostgresQueryBuilder, Query};
-use sea_query_sqlx::SqlxBinder;
+use andromeda_postgresql_seaquery::statement::Statement;
+use sea_query::{Expr, ExprTrait, Iden, InsertStatement, OnConflict, Query};
 use sqlx::{PgConnection, Row};
 use std::num::NonZeroU64;
 
@@ -48,8 +48,7 @@ pub(crate) async fn density_baselines(
         .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).is_in(codes))
         .and_where(Expr::col(PostgresqlMaintenanceTargets::BaselineDensity).is_not_null())
         .to_owned();
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
+    let rows = statement.to_query().fetch_all(connection).await?;
     rows.iter()
         .map(|row| {
             let code = MaintenanceTargetCode::try_from(row.try_get::<i16, _>(PostgresqlMaintenanceTargets::Target.to_string().as_str())?)?;
@@ -78,8 +77,10 @@ pub(crate) async fn record_density_baseline(
     target: IndexTarget,
     baseline: Option<Density>,
 ) -> Result<(), MaintenanceError> {
-    let (sql, values) = density_baseline_upsert(tenant, branch, target, baseline)?.build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(connection).await?;
+    density_baseline_upsert(tenant, branch, target, baseline)?
+        .to_query()
+        .execute(connection)
+        .await?;
     Ok(())
 }
 

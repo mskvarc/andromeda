@@ -1,30 +1,24 @@
-//! Clause 5.6.15 addresses one instance of one temporal attribute by its `instanceId`, so each operation here runs a statement per identifier column.
+//! Clause 5.6.15 addresses one instance of one temporal attribute by its `instanceId`, so each operation here addresses the identifier column the identity is stored in.
 
 use crate::{
     attribute_history_value::AttributeHistoryValue,
     error::TemporalStoreError,
     history_members::{HistoryMembers, mention},
     instance_statements::{
-        InstanceColumn,
-        attribute_stream_keys_sql,
-        delete_instance_sql,
-        grow_stream_extent_sql,
-        record_instance_shape_sql,
-        release_verbatim_instance_claim_sql,
-        select_instance_sql,
-        update_instance_sql,
+        InstanceReplacement,
+        attribute_stream_keys_statement,
+        delete_instance_statement,
+        grow_stream_extent_statement,
+        record_instance_shape_statement,
+        release_verbatim_instance_claim_statement,
+        select_instance_statement,
+        update_instance_statement,
     },
     repo::TemporalRepository,
     stream_shape_pruning::{lock_stream_evolutions, prune_stream_shapes},
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    attribute_type::AttributeType,
-    identifier::Identifier,
-    instance_identity::InstanceIdentity,
-    uri::Uri,
-};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, instance_identity::InstanceIdentity};
 use andromeda_ngsi_ld_model::temporal::observation_metadata::ObservationMetadata;
 use andromeda_postgresql_attribute_instance::{
     name_keys::MentionedNames,
@@ -36,9 +30,13 @@ use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_codes::{attribute_kind_code::stored_attribute_kind, stored_unit_code::stored_unit_code};
 use andromeda_postgresql_encoding::{ewkb::EwkbError, ewkb_binding::geometry_bytes};
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
+use andromeda_postgresql_seaquery::{
+    external_arguments::{ExternalArguments, ExternallyBound},
+    statement::Statement,
+};
 use andromeda_temporal::{observed_instance::ObservedInstance, temporal_not_found_reason::TemporalNotFoundReason};
 use chrono::{DateTime, Utc};
-use sqlx::{AssertSqlSafe, PgConnection, postgres::PgRow, types::Json};
+use sqlx::{PgConnection, postgres::PgRow};
 
 impl TemporalRepository {
     /// Replace one attribute instance with the observation `replacement`
@@ -78,13 +76,11 @@ impl TemporalRepository {
         let schema = schema_iden(target);
         let stream_keys = attribute_stream_keys(&mut tx, target, entity_id, attribute).await?;
         lock_stream_evolutions(&mut tx, schema.as_ref(), &stream_keys).await?;
-        let generated_sql = delete_instance_sql(InstanceColumn::Generated, target);
-        let verbatim_sql = delete_instance_sql(InstanceColumn::Verbatim, target);
-        let statement = match instance {
-            InstanceIdentity::Generated(uuid) => sqlx::query(AssertSqlSafe(generated_sql)).bind(uuid),
-            InstanceIdentity::Verbatim(identifier) => sqlx::query(AssertSqlSafe(verbatim_sql)).bind(identifier.as_str()),
-        };
-        let deleted = statement.bind(&stream_keys).execute(&mut *tx).await?.rows_affected();
+        let deleted = delete_instance_statement(instance, target, &stream_keys)
+            .to_query()
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
         if deleted == 0 {
             return Err(TemporalStoreError::NotFound(instance_not_found(instance)));
         }
@@ -93,11 +89,8 @@ impl TemporalRepository {
         // release. Releasing it here is what lets a client reuse the
         // `instanceId` of an instance it has just deleted.
         if let InstanceIdentity::Verbatim(identifier) = instance {
-            let release_sql = release_verbatim_instance_claim_sql(target);
-            sqlx::query(AssertSqlSafe(release_sql))
-                .bind(identifier.as_str())
-                .bind(entity_id.as_str())
-                .bind(attribute.get())
+            release_verbatim_instance_claim_statement(target, identifier, entity_id, attribute)
+                .to_query()
                 .execute(&mut *tx)
                 .await?;
         }
@@ -145,52 +138,34 @@ impl TemporalRepository {
         let schema = schema_iden(target);
         let stream_keys = attribute_stream_keys(&mut tx, target, entity_id, attribute).await?;
         lock_stream_evolutions(&mut tx, schema.as_ref(), &stream_keys).await?;
-        let generated_sql = update_instance_sql(InstanceColumn::Generated, target);
-        let verbatim_sql = update_instance_sql(InstanceColumn::Verbatim, target);
-        let statement = match instance {
-            InstanceIdentity::Generated(uuid) => sqlx::query_scalar(AssertSqlSafe(generated_sql)).bind(uuid),
-            InstanceIdentity::Verbatim(identifier) => sqlx::query_scalar(AssertSqlSafe(verbatim_sql)).bind(identifier.as_str()),
-        };
         let geometry = geometry_bytes(state.value.geometry())?;
-        let modified: Vec<i64> = statement
-            .bind(&stream_keys)
-            .bind(state.value.kind().code())
-            .bind(state.value.number())
-            .bind(state.value.string())
-            .bind(state.value.boolean())
-            .bind(geometry.as_deref())
-            .bind(state.value.object().map(Json))
-            .bind(state.value.date_time())
-            .bind(state.value.uri().map(Uri::as_str))
-            .bind(state.observed_at)
-            .bind(value_type_key.map(EntityTypeNameKey::get))
-            .bind(unit_code.map(stored_unit_code))
-            .bind(stored_attribute_kind(state.attribute_type).code())
-            .bind(state.value.geometry_members().map(Json))
-            .bind((!object_type_keys.is_empty()).then_some(object_type_keys))
-            .bind(proof_seals.map(StoredJson::into_json))
-            .bind(expires_at)
-            .bind((!elements.is_empty()).then_some(elements))
-            .fetch_all(&mut *tx)
-            .await?;
+        let mut external = ExternalArguments::default();
+        let sub_attributes = external.push((!elements.is_empty()).then_some(elements));
+        let replacement = InstanceReplacement {
+            value: &state.value,
+            geometry: geometry.as_deref(),
+            observed_at: state.observed_at,
+            value_type_key: value_type_key.map(EntityTypeNameKey::get),
+            unit_code: unit_code.map(stored_unit_code),
+            attribute_kind: stored_attribute_kind(state.attribute_type).code(),
+            object_type_keys,
+            proof_seals: proof_seals.as_ref().map(StoredJson::get),
+            expires_at,
+        };
+        let update = update_instance_statement(instance, target, &stream_keys, replacement, sub_attributes);
+        let modified: Vec<i64> = ExternallyBound::new(update, external).into_query_scalar().fetch_all(&mut *tx).await?;
         if modified.is_empty() {
             return Err(TemporalStoreError::NotFound(instance_not_found(instance)));
         }
         if let Some(geometry) = geometry.as_deref() {
-            sqlx::query(AssertSqlSafe(grow_stream_extent_sql(target)))
-                .bind(&modified)
-                .bind(geometry)
-                .execute(&mut *tx)
-                .await?;
+            grow_stream_extent_statement(target, &modified, geometry).to_query().execute(&mut *tx).await?;
         }
         prune_stream_shapes(&mut tx, schema.as_ref(), &modified).await?;
-        let generated_shape_sql = record_instance_shape_sql(InstanceColumn::Generated, target).map_err(TemporalStoreError::StatementBuild)?;
-        let verbatim_shape_sql = record_instance_shape_sql(InstanceColumn::Verbatim, target).map_err(TemporalStoreError::StatementBuild)?;
-        let shape = match instance {
-            InstanceIdentity::Generated(uuid) => sqlx::query(AssertSqlSafe(generated_shape_sql)).bind(uuid),
-            InstanceIdentity::Verbatim(identifier) => sqlx::query(AssertSqlSafe(verbatim_shape_sql)).bind(identifier.as_str()),
-        };
-        shape.bind(&modified).execute(&mut *tx).await?;
+        record_instance_shape_statement(instance, target, &modified)
+            .map_err(TemporalStoreError::StatementBuild)?
+            .to_query()
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         Ok(())
     }
@@ -206,13 +181,10 @@ impl TemporalRepository {
         let Some(attribute) = self.attribute_key(attribute_name).await? else {
             return Ok(None);
         };
-        let generated_sql = select_instance_sql(InstanceColumn::Generated, target);
-        let verbatim_sql = select_instance_sql(InstanceColumn::Verbatim, target);
-        let statement = match instance {
-            InstanceIdentity::Generated(uuid) => sqlx::query(AssertSqlSafe(generated_sql)).bind(uuid),
-            InstanceIdentity::Verbatim(identifier) => sqlx::query(AssertSqlSafe(verbatim_sql)).bind(identifier.as_str()),
-        };
-        Ok(statement.bind(entity_id.as_str()).bind(attribute.get()).fetch_optional(&self.pool).await?)
+        Ok(select_instance_statement(instance, target, entity_id, attribute)
+            .to_query()
+            .fetch_optional(&self.pool)
+            .await?)
     }
 }
 
@@ -224,9 +196,8 @@ async fn attribute_stream_keys(
     entity_id: &Identifier,
     attribute: AttributeNameKey,
 ) -> Result<Vec<i64>, TemporalStoreError> {
-    Ok(sqlx::query_scalar(AssertSqlSafe(attribute_stream_keys_sql(target)))
-        .bind(entity_id.as_str())
-        .bind(attribute.get())
+    Ok(attribute_stream_keys_statement(target, entity_id, attribute)
+        .to_query_scalar()
         .fetch_all(connection)
         .await?)
 }

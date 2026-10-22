@@ -17,14 +17,13 @@ use crate::{
         RegisteredTenant,
         TenantKey,
         branch_rows::{branch_rows, stored_snapshot_key},
-        execute_update,
     },
 };
 use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;
 use andromeda_postgresql_schema::maintenance::PostgresqlMaintenanceTargets;
+use andromeda_postgresql_seaquery::statement::Statement;
 use chrono::{DateTime, Utc};
-use sea_query::{Expr, ExprTrait, Iden, InsertStatement, OnConflict, PostgresQueryBuilder, Query, UpdateStatement, error::Error as SeaQueryError};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Expr, ExprTrait, Iden, InsertStatement, OnConflict, Query, UpdateStatement, error::Error as SeaQueryError};
 use sqlx::{PgConnection, Row, postgres::PgRow};
 
 /// The columns identifying one target row: its tenant, its branch and its
@@ -61,8 +60,7 @@ pub(crate) async fn load_target_state(connection: &mut PgConnection, tenant: &Re
         .and_where(branch_rows(target.branch()))
         .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(target.target()).code()))
         .to_owned();
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(connection).await?;
+    let row = statement.to_query().fetch_optional(connection).await?;
     row.map_or(Ok(TargetState::default()), |row| {
         let first_breach_at: Option<DateTime<Utc>> = row.try_get(PostgresqlMaintenanceTargets::FirstBreachAt.to_string().as_str())?;
         let breach_samples = stored_count(&row, PostgresqlMaintenanceTargets::BreachSamples, CatalogCounter::BreachSamples)?;
@@ -117,8 +115,7 @@ pub(crate) async fn index_probe_states(
             Expr::col(PostgresqlMaintenanceTargets::Target).is_in(IndexTarget::PROBEABLE.map(|target| stored_target(MaintenanceTarget::Index(target)).code())),
         )
         .to_owned();
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
+    let rows = statement.to_query().fetch_all(connection).await?;
     rows.into_iter()
         .map(|row| {
             let code = MaintenanceTargetCode::try_from(row.try_get::<i16, _>(PostgresqlMaintenanceTargets::Target.to_string().as_str())?)?;
@@ -174,7 +171,7 @@ pub(crate) async fn record_decision(
     if matches!(decision, PolicyDecision::Act | PolicyDecision::Queued) {
         statement.value(PostgresqlMaintenanceTargets::IsActionPending, true);
     }
-    execute_update(connection, statement.clone()).await?;
+    statement.to_query().execute(&mut *connection).await?;
     let paired_gin = match target.target() {
         MaintenanceTarget::Index(index) => index.paired_gin(),
         MaintenanceTarget::Heap(_) | MaintenanceTarget::Statistics(_) | MaintenanceTarget::Columnstore(_) => None,
@@ -192,7 +189,7 @@ pub(crate) async fn record_decision(
             .and_where(branch_rows(gin.branch()))
             .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(gin.target()).code()))
             .to_owned();
-        execute_update(connection, paired).await?;
+        paired.to_query().execute(&mut *connection).await?;
     }
     Ok(())
 }
@@ -208,8 +205,11 @@ pub(crate) async fn record_action_completion(
     cooldown_until: DateTime<Utc>,
     comparison: ActionComparison,
 ) -> Result<(), MaintenanceError> {
-    let statement = action_completion_update(tenant.key, target, verdict, cooldown_until, comparison)?;
-    execute_update(connection, statement).await
+    action_completion_update(tenant.key, target, verdict, cooldown_until, comparison)?
+        .to_query()
+        .execute(connection)
+        .await?;
+    Ok(())
 }
 
 /// Build the completed-action update, recording the readings of the kind the
@@ -277,13 +277,13 @@ pub(crate) async fn record_action_failure(
         .and_where(branch_rows(target.branch()))
         .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(target.target()).code()))
         .to_owned();
-    execute_update(connection, statement).await
+    statement.to_query().execute(connection).await?;
+    Ok(())
 }
 
 /// Insert a target-state row if this is its first sample.
 async fn ensure_target_state(connection: &mut PgConnection, tenant: &RegisteredTenant, target: BranchTarget) -> Result<(), MaintenanceError> {
-    let (sql, values) = target_state_insert(tenant.key, target)?.build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(connection).await?;
+    target_state_insert(tenant.key, target)?.to_query().execute(connection).await?;
     Ok(())
 }
 

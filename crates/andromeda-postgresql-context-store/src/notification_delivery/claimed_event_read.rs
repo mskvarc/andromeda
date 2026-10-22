@@ -25,11 +25,11 @@ use andromeda_postgresql_seaquery::{
     aggregate::array_agg_ordered,
     pg_array::{any, text_array},
     pg_type::PostgresType,
-    unnest::{UnnestColumn, apply_with_ordinality, unnest_call},
+    statement::Statement,
+    unnest::{UnnestAliased, UnnestColumn, unnest_call},
 };
 use indexmap::IndexSet;
-use sea_query::{Alias, Expr, ExprTrait, Func, Iden, JoinType, PostgresQueryBuilder, Query, QueryStatementBuilder, SelectStatement, SimpleExpr};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Alias, Expr, ExprTrait, Func, Iden, JoinType, Query, QueryStatementBuilder, SelectStatement, SimpleExpr};
 use sqlx::{Postgres, Transaction};
 use std::sync::Arc;
 
@@ -71,10 +71,7 @@ impl ClaimedEventRead {
         let rows = if unread.is_empty() {
             Vec::new()
         } else {
-            let (sql, values) = claimed_events_statement(target, &unread).build_sqlx(PostgresQueryBuilder);
-            let (unnest_alias, unnest_columns, ordinality) = ordinality_alias();
-            let sql = apply_with_ordinality(sql, &unnest_alias, &unnest_columns, &ordinality);
-            sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut **tx).await?
+            claimed_events_statement(target, &unread).to_query_as().fetch_all(&mut **tx).await?
         };
         Ok(ClaimedEventRead { reused, rows })
     }
@@ -130,7 +127,7 @@ fn split_held(event_keys: Vec<i64>, held: &HeldEvents, target: &ContextTarget) -
 }
 
 /// The `UNNEST … WITH ORDINALITY AS k(name_key, position)` names that
-/// [`apply_with_ordinality`] rewrites the projection's set-returning source to.
+/// [`claimed_events_statement`] names the projection's set-returning source by.
 ///
 /// The one row's `name_key` is the dictionary key `UNNEST` yields and `position`
 /// is the ordinality that preserves the order the event recorded its attributes
@@ -151,8 +148,10 @@ fn ordinality_alias() -> (Alias, [UnnestColumn; 1], Alias) {
 /// when the event touched none. The aggregate keeps one name per key, repeats
 /// included, so it stays position for position with the event's transitions
 /// and `datasetId`s.
-fn claimed_events_statement(target: &ContextTarget, event_keys: &[i64]) -> SelectStatement {
+fn claimed_events_statement(target: &ContextTarget, event_keys: &[i64]) -> UnnestAliased<SelectStatement> {
     let (unnest_alias, unnest_columns, position) = ordinality_alias();
+    // clone: the aliased source names the same alias and position the projection reads.
+    let (aliased, aliased_position) = (unnest_alias.clone(), position.clone());
 
     let ordered_names = Query::select()
         .expr(array_agg_ordered(
@@ -175,7 +174,7 @@ fn claimed_events_statement(target: &ContextTarget, event_keys: &[i64]) -> Selec
 
     let change_attributes = Func::coalesce([SimpleExpr::SubQuery(None, Box::new(ordered_names.into_sub_query_statement())), text_array(&[])]);
 
-    Query::select()
+    let select = Query::select()
         .column((ClaimedEventRow, NotificationEvents::EventKey))
         .column((ClaimedEventRow, NotificationEvents::WriteId))
         .column((ClaimedEventRow, NotificationEvents::EventOrdinal))
@@ -192,7 +191,8 @@ fn claimed_events_statement(target: &ContextTarget, event_keys: &[i64]) -> Selec
         .column((ClaimedEventRow, NotificationEvents::CreatedAt))
         .from(table_of(target, NotificationEvents::Table).alias(ClaimedEventRow))
         .and_where(Expr::col((ClaimedEventRow, NotificationEvents::EventKey)).eq(any(bigint_array(event_keys))))
-        .to_owned()
+        .to_owned();
+    UnnestAliased::new(select).with_ordinality(aliased, &unnest_columns, aliased_position)
 }
 
 /// The alias of an event a claimed delivery answers, `e`.
@@ -212,7 +212,10 @@ fn bigint_array(ids: &[i64]) -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use crate::notification_delivery::claimed_event_read::{claimed_events_statement, distinct_event_keys, ordinality_alias, split_held};
+    use crate::{
+        notification_delivery::claimed_event_read::{claimed_events_statement, distinct_event_keys, split_held},
+        statement_text::text_of,
+    };
     use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
@@ -220,16 +223,12 @@ mod tests {
         held_events::HeldEvents,
         notification_event::{NotificationEvent, NotificationEventKey},
     };
-    use andromeda_postgresql_seaquery::unnest::apply_with_ordinality;
     use chrono::Utc;
-    use sea_query::PostgresQueryBuilder;
     use std::sync::Arc;
     use uuid::Uuid;
 
     fn events_sql(target: &ContextTarget) -> String {
-        let sql = claimed_events_statement(target, &[7, 3]).to_string(PostgresQueryBuilder);
-        let (alias, columns, ordinality) = ordinality_alias();
-        apply_with_ordinality(sql, &alias, &columns, &ordinality)
+        text_of(&claimed_events_statement(target, &[7, 3]))
     }
 
     fn snapshot() -> ContextTarget {

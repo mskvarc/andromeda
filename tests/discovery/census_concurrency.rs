@@ -18,9 +18,12 @@ use crate::{
     client,
     provision_tenant,
 };
+use andromeda_postgresql_schema::current::{EntitySearch, EntityTypeMembers};
+use andromeda_postgresql_seaquery::{aggregate::count_all, statement::Statement, unnest::unnest_of};
 use andromeda_test_harness::{discovery_census::census_drift, tenant_scoped_environment::TenantScopedEnvironment};
 use futures::future::join_all;
 use reqwest::{Client, Method, StatusCode};
+use sea_query::{Alias, Expr, Query, UnionType};
 use serde_json::{Map, Value, json};
 use std::env::var;
 
@@ -159,17 +162,30 @@ async fn discovery_census_stays_exact_under_writers_in_two_brokers() {
     let pool = env.tenant_database().await.expect("the tenant database");
     let drift = census_drift(&pool, "public").await.expect("the census comparison");
     assert!(drift.is_empty(), "the census drifted under concurrent writers: {drift:?}");
-    let stray_memberships: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM ( \
-             (SELECT m.entity_key, m.entity_type_name_key FROM entity_type_members m \
-              EXCEPT SELECT s.entity_key, t FROM entity_search s CROSS JOIN LATERAL unnest(s.entity_type_name_keys) t) \
-             UNION ALL \
-             (SELECT s.entity_key, t FROM entity_search s CROSS JOIN LATERAL unnest(s.entity_type_name_keys) t \
-              EXCEPT SELECT m.entity_key, m.entity_type_name_key FROM entity_type_members m)) AS differing",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("the membership comparison");
+    let memberships = || {
+        Query::select()
+            .columns([EntityTypeMembers::EntityKey, EntityTypeMembers::EntityTypeNameKey])
+            .from(EntityTypeMembers::Table)
+            .to_owned()
+    };
+    let searched = || {
+        Query::select()
+            .column(EntitySearch::EntityKey)
+            .expr(unnest_of(Expr::col(EntitySearch::EntityTypeNameKeys)))
+            .from(EntitySearch::Table)
+            .to_owned()
+    };
+    let differing = memberships()
+        .union(UnionType::Except, searched())
+        .union(UnionType::All, searched().union(UnionType::Except, memberships()).to_owned())
+        .to_owned();
+    let stray_memberships: i64 = Query::select()
+        .expr(count_all())
+        .from_subquery(differing, Alias::new("differing"))
+        .to_query_scalar()
+        .fetch_one(&pool)
+        .await
+        .expect("the membership comparison");
     pretty_assertions::assert_eq!(stray_memberships, 0, "every type membership matches the types its search row holds");
     pool.close().await;
     pretty_assertions::assert_eq!(discovered(&c, &tenant).await, expected(&c, &tenant).await);

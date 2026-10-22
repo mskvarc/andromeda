@@ -24,11 +24,10 @@ use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,
     temporal::{TemporalAttributeStreams, TemporalEntities},
 };
-use andromeda_postgresql_seaquery::{branch::qualified, pg_array::is_any_of};
+use andromeda_postgresql_seaquery::{branch::qualified, pg_array::is_any_of, statement::Statement};
 use andromeda_postgresql_temporal_query::alias::{An, S, Te};
-use sea_query::{Alias, DynIden, Expr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, Row};
+use sea_query::{Alias, DynIden, Expr, ExprTrait, JoinType, Query, SelectStatement, SimpleExpr};
+use sqlx::Row;
 use std::collections::HashMap;
 
 impl TemporalRepository {
@@ -38,8 +37,10 @@ impl TemporalRepository {
     ///
     /// Returns [`TemporalStoreError::Database`] when the statement fails.
     pub(crate) async fn temporal_entity_exists(&self, branch: &HistoryBranch, entity_id: &Identifier) -> Result<bool, TemporalStoreError> {
-        let (sql, values) = temporal_entity_exists_query(branch, entity_id.as_str()).build_sqlx(PostgresQueryBuilder);
-        let exists = sqlx::query_scalar_with(AssertSqlSafe(sql), values).fetch_one(&self.pool).await?;
+        let exists = temporal_entity_exists_query(branch, entity_id.as_str())
+            .to_query_scalar()
+            .fetch_one(&self.pool)
+            .await?;
         Ok(exists)
     }
 
@@ -64,8 +65,7 @@ impl TemporalRepository {
             return Ok(HashMap::new());
         }
         let identifiers: Vec<&str> = entity_ids.iter().map(Identifier::as_str).collect();
-        let (sql, values) = temporal_entity_types_query(branch, &identifiers).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
+        let rows = temporal_entity_types_query(branch, &identifiers).to_query().fetch_all(&self.pool).await?;
         let mut types_by_entity = HashMap::with_capacity(rows.len());
         for row in rows {
             let raw_id: String = row.try_get("id")?;
@@ -95,8 +95,10 @@ impl TemporalRepository {
         let Some(attribute) = self.attribute_key(attribute_name).await? else {
             return Ok(false);
         };
-        let (sql, values) = attribute_stream_exists_query(schema_iden(target).as_ref(), entity_id.as_str(), attribute).build_sqlx(PostgresQueryBuilder);
-        let exists = sqlx::query_scalar_with(AssertSqlSafe(sql), values).fetch_one(&self.pool).await?;
+        let exists = attribute_stream_exists_query(schema_iden(target).as_ref(), entity_id.as_str(), attribute)
+            .to_query_scalar()
+            .fetch_one(&self.pool)
+            .await?;
         Ok(exists)
     }
 
@@ -117,8 +119,10 @@ impl TemporalRepository {
         let Some(attribute) = self.attribute_key(attribute_name).await? else {
             return Ok(Vec::new());
         };
-        let (sql, values) = attribute_dataset_ids_query(schema_iden(target).as_ref(), entity_id.as_str(), attribute).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
+        let rows = attribute_dataset_ids_query(schema_iden(target).as_ref(), entity_id.as_str(), attribute)
+            .to_query()
+            .fetch_all(&self.pool)
+            .await?;
         rows.iter()
             .map(|row| {
                 Ok(row
@@ -137,8 +141,10 @@ impl TemporalRepository {
     /// [`TemporalStoreError::StoredCatalog`] when a stored name is not an
     /// attribute IRI.
     pub(crate) async fn temporal_attribute_names(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<Vec<AttributeName>, TemporalStoreError> {
-        let (sql, values) = temporal_attribute_names_query(schema_iden(target).as_ref(), entity_id.as_str()).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
+        let rows = temporal_attribute_names_query(schema_iden(target).as_ref(), entity_id.as_str())
+            .to_query()
+            .fetch_all(&self.pool)
+            .await?;
         rows.into_iter()
             .map(|row| {
                 let raw: String = row.try_get("attribute_name")?;

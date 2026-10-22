@@ -1,4 +1,5 @@
-//! The `UNNEST(array, …) WITH ORDINALITY` set-write table source.
+//! The `UNNEST(array, …)` set-write table source, with the column-list alias
+//! and `WITH ORDINALITY` sea-query cannot spell.
 //!
 //! A set-based write turns one parallel array per column into a table and
 //! inserts every row of it in a single statement, in batch order. sea-query's
@@ -6,21 +7,22 @@
 //! and no column-list alias, and [`sea_query::SelectStatement::from_function`]
 //! force-quotes the alias, so this source cannot be a native table reference.
 //!
-//! The split this module makes keeps every bound value inside sea-query anyway:
-//! [`unnest_call`] builds the `UNNEST(…)` function call with each array cast to
-//! its element type, which `from_function` binds and numbers exactly like any
-//! other statement value. Only the `WITH ORDINALITY AS d(col, …)` suffix — which
-//! carries no bound value, just identifiers — is applied to the rendered SQL by
-//! [`apply_with_ordinality`], here in the one crate sanctioned to spell dialect
-//! SQL. The set-write therefore binds through `build_sqlx` like every other
-//! converted statement, with no hand-numbered parameters.
+//! Every bound value stays inside sea-query anyway: [`unnest_call`] builds the
+//! `UNNEST(…)` function call with each array cast to its element type, which
+//! `from_function` binds and numbers like any other statement value. Only the
+//! alias it renders, `AS "alias"`, becomes `AS alias(col, …)` or `WITH
+//! ORDINALITY AS alias(col, …, ordinality)`: [`UnnestAliased`] carries the
+//! statement and its aliases, and spells them when the statement is rendered.
+//! The suffix holds identifiers only, so no bound value moves and the
+//! statement's parameter numbering is untouched.
 
 use crate::{
     cast::cast,
-    column_reference::{qualified, quoted},
+    identifier::{quoted_column, quoted_iden, quoted_name},
     pg_type::PostgresType,
+    statement::{Statement, rendering::Rendered},
 };
-use sea_query::{Alias, Condition, DynIden, Expr, Func, FunctionCall, Iden, IntoIden, SimpleExpr};
+use sea_query::{Alias, Condition, DynIden, Expr, Func, FunctionCall, Iden, IntoIden, SimpleExpr, Values};
 
 /// The `UNNEST` set-returning function.
 #[derive(Iden, Clone, Copy)]
@@ -73,57 +75,119 @@ pub fn unnest_call<'column>(arrays: impl IntoIterator<Item = (&'column UnnestCol
     Func::cust(UnnestFunction).args(arguments)
 }
 
-/// Rewrite the `AS "alias"` that `from_function` emits for the `UNNEST` source
-/// into `WITH ORDINALITY AS alias(col, …, ordinality)`.
-///
-/// The alias must be one sea-query rendered nowhere else in the statement — a
-/// set-write reads its columns as `alias.column`, never as `AS "alias"`, so the
-/// single `AS "alias"` the table source produces is the only match. The suffix
-/// holds identifiers only, so no bound value moves and the statement's parameter
-/// numbering is untouched.
-pub fn apply_with_ordinality(mut sql: String, alias: &dyn Iden, columns: &[UnnestColumn], ordinality: &dyn Iden) -> String {
-    let emitted = format!("AS {}", quoted(alias));
-    let mut names: Vec<String> = columns.iter().map(|column| column.name.to_string()).collect();
-    names.push(Iden::to_string(ordinality));
-    let names = names;
-    let replacement = format!("WITH ORDINALITY AS {}({})", Iden::to_string(alias), names.join(", "));
-    if let Some(position) = sql.find(&emitted) {
-        sql.replace_range(position..position + emitted.len(), &replacement);
-    }
-    sql
+/// How one `UNNEST` table source is aliased.
+#[derive(Clone)]
+enum SourceAlias {
+    /// `AS alias(col, …)`: each `UNNEST` argument a named row column.
+    Columns {
+        /// The source's alias.
+        alias: DynIden,
+        /// The row columns, in argument order.
+        columns: Vec<DynIden>,
+    },
+    /// `WITH ORDINALITY AS alias(col, …, ordinality)`: the row columns and
+    /// the 1-based row position.
+    ColumnsWithOrdinality {
+        /// The source's alias.
+        alias: DynIden,
+        /// The row columns, in argument order.
+        columns: Vec<DynIden>,
+        /// The column the row position is read under.
+        ordinality: DynIden,
+    },
+    /// `WITH ORDINALITY AS "alias"` on every unnest of an array of
+    /// composites under `alias`: the rows keep the composite's field names,
+    /// and the position is [`Ordinality`]. A statement may unnest under one
+    /// alias in several of its queries, each a scope of its own.
+    RecordsWithOrdinality {
+        /// The source's alias.
+        alias: DynIden,
+    },
 }
 
-/// Rewrite the `AS "alias"` that `from_function` emits for the `UNNEST` source
-/// into `AS alias(col, …)` — a column-list alias with no ordinality.
-///
-/// This is the plain parallel-array set-write: each `UNNEST` argument becomes a
-/// named row column, and no row position is projected. Like
-/// [`apply_with_ordinality`], the suffix holds identifiers only, so no bound
-/// value moves and the statement's parameter numbering is untouched. The alias
-/// must be one sea-query renders nowhere else, so its single `AS "alias"` is the
-/// only match.
-pub fn apply_column_alias(mut sql: String, alias: &dyn Iden, columns: &[UnnestColumn]) -> String {
-    let emitted = format!("AS {}", quoted(alias));
-    let names: Vec<String> = columns.iter().map(|column| column.name.to_string()).collect();
-    let replacement = format!("AS {}({})", Iden::to_string(alias), names.join(", "));
-    if let Some(position) = sql.find(&emitted) {
-        sql.replace_range(position..position + emitted.len(), &replacement);
+impl SourceAlias {
+    /// `sql` with the `AS "alias"` its `UNNEST` source renders spelled as
+    /// this alias.
+    ///
+    /// The alias is one the statement renders nowhere else as `AS "alias"`:
+    /// a set-write reads its columns as `alias.column`.
+    fn apply(&self, sql: &str) -> String {
+        let emitted = |alias: &DynIden| format!("AS {}", quoted_iden(alias));
+        let names = |columns: &[DynIden]| columns.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+        match self {
+            SourceAlias::Columns { alias, columns } => sql.replacen(&emitted(alias), &format!("AS {alias}({})", names(columns)), 1),
+            SourceAlias::ColumnsWithOrdinality { alias, columns, ordinality } => {
+                sql.replacen(&emitted(alias), &format!("WITH ORDINALITY AS {alias}({}, {ordinality})", names(columns)), 1)
+            }
+            SourceAlias::RecordsWithOrdinality { alias } => sql.replace(&emitted(alias), &format!("WITH ORDINALITY {}", emitted(alias))),
+        }
     }
-    sql
 }
 
-/// Rewrite every `AS "alias"` that `from_function` emits for an `UNNEST` of
-/// an array of composites into `WITH ORDINALITY AS "alias"`.
-///
-/// No column list: the rows keep the composite's own field names, and the
-/// position `WITH ORDINALITY` adds is the column [`Ordinality`] names. A
-/// statement may unnest under one alias in several of its queries, each a
-/// scope of its own, so every occurrence is rewritten. The alias must be one
-/// sea-query renders nowhere else as `AS "alias"`.
-pub fn apply_record_ordinality(sql: &str, alias: &dyn Iden) -> String {
-    let emitted = format!("AS {}", quoted(alias));
-    sql.replace(&emitted, &format!("WITH ORDINALITY {emitted}"))
+/// A statement whose `UNNEST` table sources are aliased as sea-query cannot
+/// spell.
+pub struct UnnestAliased<S> {
+    /// The statement, each `UNNEST` source under its quoted alias.
+    statement: S,
+    /// The aliases spelled when it is rendered.
+    aliases: Vec<SourceAlias>,
 }
+
+impl<S> UnnestAliased<S> {
+    /// `statement`, its `UNNEST` sources not yet aliased.
+    pub const fn new(statement: S) -> UnnestAliased<S> {
+        UnnestAliased {
+            statement,
+            aliases: Vec::new(),
+        }
+    }
+
+    /// The source under `alias` named `alias(col, …)`.
+    #[must_use]
+    pub fn with_columns(mut self, alias: impl IntoIden, columns: &[UnnestColumn]) -> UnnestAliased<S> {
+        self.aliases.push(SourceAlias::Columns {
+            alias: alias.into_iden(),
+            columns: column_names(columns),
+        });
+        self
+    }
+
+    /// The source under `alias` named `WITH ORDINALITY AS alias(col, …,
+    /// ordinality)`.
+    #[must_use]
+    pub fn with_ordinality(mut self, alias: impl IntoIden, columns: &[UnnestColumn], ordinality: impl IntoIden) -> UnnestAliased<S> {
+        self.aliases.push(SourceAlias::ColumnsWithOrdinality {
+            alias: alias.into_iden(),
+            columns: column_names(columns),
+            ordinality: ordinality.into_iden(),
+        });
+        self
+    }
+
+    /// Every unnest of an array of composites under `alias` gains its
+    /// position, [`Ordinality`].
+    #[must_use]
+    pub fn with_record_ordinality(mut self, alias: impl IntoIden) -> UnnestAliased<S> {
+        self.aliases.push(SourceAlias::RecordsWithOrdinality { alias: alias.into_iden() });
+        self
+    }
+}
+
+/// The names of `columns`.
+fn column_names(columns: &[UnnestColumn]) -> Vec<DynIden> {
+    // clone: each alias owns the names it spells.
+    columns.iter().map(|column| column.name.clone()).collect()
+}
+
+impl<S: Rendered> Rendered for UnnestAliased<S> {
+    fn rendered(&self) -> (String, Values) {
+        let (sql, values) = self.statement.rendered();
+        let sql = self.aliases.iter().fold(sql, |sql, alias| alias.apply(&sql));
+        (sql, values)
+    }
+}
+
+impl<S: Statement> Statement for UnnestAliased<S> {}
 
 /// The column `WITH ORDINALITY` adds to an unnested array: the 1-based
 /// position of each element.
@@ -162,7 +226,7 @@ pub fn exists_in_positional_tree(tree: SimpleExpr, levels: &[Alias], parent: &dy
 /// Elements come in array order, which is the written order of siblings.
 #[must_use]
 pub fn first_in_positional_tree(tree: SimpleExpr, levels: &[Alias], parent: &dyn Iden, filter: Condition) -> SimpleExpr {
-    let last = levels.last().map(|level| quoted(level)).unwrap_or_default();
+    let last = levels.last().map(|level| quoted_name(level)).unwrap_or_default();
     let sql = format!("(SELECT {last} FROM {} WHERE $2 LIMIT 1)", positional_tree_source(levels, parent));
     Expr::cust_with_exprs(sql, [tree, filter.into()])
 }
@@ -170,7 +234,7 @@ pub fn first_in_positional_tree(tree: SimpleExpr, levels: &[Alias], parent: &dyn
 /// One field of a composite value: `(value)."field"`.
 #[must_use]
 pub fn composite_field(value: SimpleExpr, field: &dyn Iden) -> SimpleExpr {
-    Expr::cust_with_expr(format!("($1).{}", quoted(field)), value)
+    Expr::cust_with_expr(format!("($1).{}", quoted_name(field)), value)
 }
 
 /// The `FROM` items of a path through a positional tree, the tree rendered as
@@ -186,12 +250,12 @@ fn positional_tree_source(levels: &[Alias], parent: &dyn Iden) -> String {
             sql.push_str(" WITH ORDINALITY");
         }
         sql.push_str(" AS ");
-        sql.push_str(&quoted(level));
+        sql.push_str(&quoted_name(level));
         if let Some(above) = depth.checked_sub(1).and_then(|above| levels.get(above)) {
             sql.push_str(" ON ");
-            sql.push_str(&qualified(level, parent));
+            sql.push_str(&quoted_column(level, parent));
             sql.push_str(" = ");
-            sql.push_str(&qualified(above, &Ordinality));
+            sql.push_str(&quoted_column(above, &Ordinality));
         }
     }
     sql
@@ -201,17 +265,8 @@ fn positional_tree_source(levels: &[Alias], parent: &dyn Iden) -> String {
 mod tests {
     use crate::{
         pg_type::PostgresType,
-        unnest::{
-            UnnestColumn,
-            apply_column_alias,
-            apply_record_ordinality,
-            apply_with_ordinality,
-            composite_field,
-            exists_in_positional_tree,
-            first_in_positional_tree,
-            unnest_call,
-            unnest_of,
-        },
+        statement::rendering::Rendered,
+        unnest::{UnnestAliased, UnnestColumn, composite_field, exists_in_positional_tree, first_in_positional_tree, unnest_call, unnest_of},
     };
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Condition, Expr, ExprTrait, PostgresQueryBuilder, Query, SimpleExpr, UnionType};
@@ -318,12 +373,10 @@ mod tests {
     fn with_ordinality_names_every_column_and_the_ordinality() {
         let columns = projection_columns();
         let call = unnest_call(columns.iter().map(|column| (column, SimpleExpr::from(Expr::val("v")))));
-        let source = Query::select()
-            .expr(Expr::cust("d.entity_key"))
-            .from_function(call, Alias::new("d"))
-            .to_owned()
-            .to_string(PostgresQueryBuilder);
-        let rewritten = apply_with_ordinality(source, &Alias::new("d"), &columns, &Alias::new("ordinality"));
+        let source = Query::select().expr(Expr::cust("d.entity_key")).from_function(call, Alias::new("d")).to_owned();
+        let (rewritten, _) = UnnestAliased::new(source)
+            .with_ordinality(Alias::new("d"), &columns, Alias::new("ordinality"))
+            .rendered();
         // The rewritten set-write names its column list and ordinality instead
         // of the closed TableRef's quoted alias.
         assert!(!rewritten.contains("AS \"d\""), "{rewritten}");
@@ -345,9 +398,8 @@ mod tests {
         let source = Query::select()
             .expr(Expr::cust("input.write_id"))
             .from_function(call, Alias::new("input"))
-            .to_owned()
-            .to_string(PostgresQueryBuilder);
-        let rewritten = apply_column_alias(source, &Alias::new("input"), &columns);
+            .to_owned();
+        let (rewritten, _) = UnnestAliased::new(source).with_columns(Alias::new("input"), &columns).rendered();
         assert!(!rewritten.contains("AS \"input\""), "{rewritten}");
         assert!(rewritten.contains("AS input(write_id, base_ordinal)"), "{rewritten}");
         assert!(!rewritten.contains("WITH ORDINALITY"), "{rewritten}");
@@ -360,12 +412,10 @@ mod tests {
             UnnestColumn::new(Alias::new("b"), PostgresType::TextArray),
         ];
         let call = unnest_call([(&columns[0], SimpleExpr::from(Expr::val("a"))), (&columns[1], SimpleExpr::from(Expr::val("b")))]);
-        let (sql, values) = Query::select()
-            .expr(Expr::cust("d.x"))
-            .from_function(call, Alias::new("stage"))
-            .to_owned()
-            .build(PostgresQueryBuilder);
-        let rewritten = apply_with_ordinality(sql, &Alias::new("stage"), &columns, &Alias::new("ordinality"));
+        let source = Query::select().expr(Expr::cust("d.x")).from_function(call, Alias::new("stage")).to_owned();
+        let (rewritten, values) = UnnestAliased::new(source)
+            .with_ordinality(Alias::new("stage"), &columns, Alias::new("ordinality"))
+            .rendered();
         assert!(rewritten.contains("$1::bigint[]") && rewritten.contains("$2::text[]"), "{rewritten}");
         assert_eq!(values.0.len(), 2, "{rewritten}");
     }
@@ -376,9 +426,8 @@ mod tests {
             .expr(Expr::col((Alias::new("e"), Alias::new("entry_kind"))))
             .from_as(Alias::new("intents"), Alias::new("i"))
             .from_function(unnest_of(Expr::col((Alias::new("i"), Alias::new("entries")))), Alias::new("e"))
-            .to_owned()
-            .to_string(PostgresQueryBuilder);
-        let sql = apply_record_ordinality(&sql, &Alias::new("e"));
+            .to_owned();
+        let (sql, _) = UnnestAliased::new(sql).with_record_ordinality(Alias::new("e")).rendered();
         assert!(sql.contains(r#"FROM "intents" AS "i", UNNEST("i"."entries") WITH ORDINALITY AS "e""#), "{sql}");
     }
 
@@ -390,8 +439,8 @@ mod tests {
                 .from_function(unnest_of(Expr::col(Alias::new("entries"))), Alias::new("e"))
                 .to_owned()
         };
-        let sql = unnested().union(UnionType::All, unnested()).to_owned().to_string(PostgresQueryBuilder);
-        let sql = apply_record_ordinality(&sql, &Alias::new("e"));
+        let sql = unnested().union(UnionType::All, unnested()).to_owned();
+        let (sql, _) = UnnestAliased::new(sql).with_record_ordinality(Alias::new("e")).rendered();
         assert_eq!(sql.matches(r#"UNNEST("entries") WITH ORDINALITY AS "e""#).count(), 2, "{sql}");
     }
 }

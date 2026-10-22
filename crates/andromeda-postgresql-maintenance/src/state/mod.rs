@@ -27,10 +27,12 @@ pub(crate) mod tenant_inspection;
 
 use crate::error::MaintenanceError;
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
-use andromeda_postgresql_seaquery::advisory_lock::{advisory_unlock, try_advisory_lock};
+use andromeda_postgresql_seaquery::{
+    advisory_lock::{advisory_unlock, try_advisory_lock},
+    statement::Statement,
+};
 use andromeda_tenancy::database_name::TenantDatabaseName;
-use sea_query::{Expr, PostgresQueryBuilder, Query, UpdateStatement};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Expr, Query};
 use sqlx::PgConnection;
 
 /// Stable key for the process-wide lock.
@@ -61,15 +63,13 @@ impl RegisteredTenant {
 /// Try to obtain the one fleet-wide session advisory lock without waiting.
 pub(crate) async fn try_global_lock(connection: &mut PgConnection) -> Result<bool, MaintenanceError> {
     let statement = Query::select().expr(try_advisory_lock(Expr::val(GLOBAL_LOCK_KEY))).to_owned();
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    Ok(sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(connection).await?)
+    Ok(statement.to_query_scalar::<bool>().fetch_one(connection).await?)
 }
 
 /// Release the fleet-wide session advisory lock.
 pub(crate) async fn release_global_lock(connection: &mut PgConnection) -> Result<(), MaintenanceError> {
     let statement = Query::select().expr(advisory_unlock(Expr::val(GLOBAL_LOCK_KEY))).to_owned();
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let released = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(connection).await?;
+    let released = statement.to_query_scalar::<bool>().fetch_one(connection).await?;
     if released {
         Ok(())
     } else {
@@ -77,13 +77,6 @@ pub(crate) async fn release_global_lock(connection: &mut PgConnection) -> Result
             "the PostgreSQL maintenance advisory lock was not held".to_owned(),
         )))
     }
-}
-
-/// Execute one SeaQuery-built update.
-pub(crate) async fn execute_update(connection: &mut PgConnection, statement: UpdateStatement) -> Result<(), MaintenanceError> {
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(connection).await?;
-    Ok(())
 }
 
 #[cfg(test)]

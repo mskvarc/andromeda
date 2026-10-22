@@ -1,37 +1,32 @@
-//! The `COLLATE` postfix, which sea-query has no native form for.
+//! Collations: the `COLLATE` postfix and the creation of an ICU collation,
+//! neither of which sea-query has a native form for.
 //!
 //! A collation is a SQL identifier, not a value, so it cannot be bound as a
-//! parameter and is written into the statement text. [`PostgresCollation`]
-//! carries the name already escaped for the quoted identifier it is written
-//! into, so no caller can interpolate a name that breaks out of the quotes.
+//! parameter and is written into the statement text, quoted by the builder
+//! that quotes every identifier, so no name can break out of its quotes.
 
-use sea_query::{Expr, SimpleExpr};
+use crate::{
+    command::{Command, rendering::RenderedCommand},
+    identifier::quoted_name,
+    literal::quoted_text,
+    setting::{Setting, SettingAssignment, SettingScope},
+};
+use sea_query::{Alias, Expr, SimpleExpr};
 
-/// A PostgreSQL collation, held as the body of the quoted identifier that names
-/// it.
-///
-/// A collation object is addressed by name, and PostgreSQL quotes that name;
-/// the escaping the quoted form needs is applied once here so the name a
-/// statement writes is always safe, whatever the client asked for.
+/// A PostgreSQL collation, named as its collation object is.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PostgresCollation(String);
 
 impl PostgresCollation {
     /// The collation PostgreSQL knows under `name`.
-    ///
-    /// Escaping rather than rejecting: a quoted identifier's only special
-    /// character is the double quote, which the SQL standard escapes by
-    /// doubling, so every name has a spelling and none of them can terminate
-    /// the identifier early.
     #[must_use]
     pub fn new(name: &str) -> PostgresCollation {
-        PostgresCollation(name.replace('"', "\"\""))
+        PostgresCollation(name.to_owned())
     }
 
-    /// The escaped identifier body, as it is written between the quotes.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
+    /// The collation's name as a quoted identifier.
+    fn quoted(&self) -> String {
+        quoted_name(&Alias::new(self.0.as_str()))
     }
 }
 
@@ -47,12 +42,53 @@ impl PostgresCollation {
 /// only its final operand.
 #[must_use]
 pub fn collate(expr: SimpleExpr, collation: &PostgresCollation) -> SimpleExpr {
-    Expr::cust_with_exprs(format!("($1) COLLATE \"{collation}\"", collation = collation.as_str()), [expr])
+    Expr::cust_with_exprs(format!("($1) COLLATE {}", collation.quoted()), [expr])
 }
+
+/// `SET LOCAL icu_validation_level = 'error'; CREATE COLLATION IF NOT EXISTS
+/// "<name>" (provider = icu, locale = '<locale>')`.
+///
+/// `icu_validation_level` defaults to `warning`, at which PostgreSQL creates a
+/// usable collation object for a locale ICU does not know and every ordering
+/// under it silently falls back to the root collation. At `error` the locale
+/// is refused with `invalid_parameter_value` instead. The level is `LOCAL`, so
+/// the command runs inside a transaction and the connection leaves it with
+/// the level it had.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreateIcuCollation {
+    /// The collation object created.
+    name: PostgresCollation,
+    /// The ICU locale it collates by.
+    locale: String,
+}
+
+impl CreateIcuCollation {
+    /// Create `name`, collating by the ICU `locale`.
+    pub fn new(name: PostgresCollation, locale: impl Into<String>) -> CreateIcuCollation {
+        CreateIcuCollation { name, locale: locale.into() }
+    }
+}
+
+impl RenderedCommand for CreateIcuCollation {
+    fn rendered(&self) -> String {
+        let strict = SettingAssignment::new(Setting::IcuValidationLevel, "error", SettingScope::Transaction);
+        format!(
+            "{}; CREATE COLLATION IF NOT EXISTS {} (provider = icu, locale = {})",
+            strict.rendered(),
+            self.name.quoted(),
+            quoted_text(&self.locale)
+        )
+    }
+}
+
+impl Command for CreateIcuCollation {}
 
 #[cfg(test)]
 mod tests {
-    use crate::collation::{PostgresCollation, collate};
+    use crate::{
+        collation::{CreateIcuCollation, PostgresCollation, collate},
+        command::rendering::RenderedCommand,
+    };
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr};
 
@@ -82,5 +118,13 @@ mod tests {
         let sql = render(collate(Expr::col(Alias::new("id")), &PostgresCollation::new("a\" OR TRUE --")));
         assert!(sql.contains(r#"COLLATE "a"" OR TRUE --""#), "{sql}");
         assert_eq!(sql.matches('"').count() % 2, 0, "unbalanced quoted identifier: {sql}");
+    }
+
+    #[test]
+    fn an_icu_collation_is_created_under_strict_locale_validation() {
+        assert_eq!(
+            CreateIcuCollation::new(PostgresCollation::new("de-u-co-phonebk"), "de-u-co-phonebk").rendered(),
+            r#"SET LOCAL icu_validation_level = 'error'; CREATE COLLATION IF NOT EXISTS "de-u-co-phonebk" (provider = icu, locale = 'de-u-co-phonebk')"#
+        );
     }
 }

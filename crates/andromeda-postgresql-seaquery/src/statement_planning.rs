@@ -14,6 +14,11 @@
 //! workers: they start with the executor and only then read the gate. Such a
 //! statement runs without parallel workers.
 
+use crate::{
+    setting::Setting,
+    transaction::{Isolation, TransactionStart},
+};
+
 /// How PostgreSQL may plan a statement.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StatementPlanning {
@@ -29,42 +34,43 @@ pub enum StatementPlanning {
 }
 
 impl StatementPlanning {
-    /// The statements that begin the transaction a statement planned this way
-    /// runs in, whatever the server, database or role sets; `None` when it
-    /// runs on the pool as it comes.
+    /// The transaction a statement planned this way runs in, whatever the
+    /// server, database or role sets; `None` when it runs on the pool as it
+    /// comes.
     #[must_use]
-    pub const fn begin(self) -> Option<&'static str> {
+    pub fn transaction(self) -> Option<TransactionStart> {
+        let custom_plans = || TransactionStart::at(Isolation::ReadCommitted).with_local(Setting::PlanCacheMode, "force_custom_plan");
         match self {
             StatementPlanning::Cached => None,
-            StatementPlanning::BoundValues => Some("BEGIN; SET LOCAL plan_cache_mode = force_custom_plan"),
-            StatementPlanning::GatedBranches => Some("BEGIN; SET LOCAL plan_cache_mode = force_custom_plan; SET LOCAL max_parallel_workers_per_gather = 0"),
+            StatementPlanning::BoundValues => Some(custom_plans()),
+            StatementPlanning::GatedBranches => Some(custom_plans().with_local(Setting::MaxParallelWorkersPerGather, "0")),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::statement_planning::StatementPlanning;
+    use crate::{command::rendering::RenderedCommand, statement_planning::StatementPlanning};
     use pretty_assertions::assert_eq;
 
     #[test]
     fn a_cached_statement_runs_outside_a_transaction_of_its_own() {
-        assert_eq!(StatementPlanning::Cached.begin(), None);
+        assert_eq!(StatementPlanning::Cached.transaction(), None);
     }
 
     #[test]
     fn bound_value_planning_forces_custom_plans_for_its_transaction_alone() {
         assert_eq!(
-            StatementPlanning::BoundValues.begin(),
-            Some("BEGIN; SET LOCAL plan_cache_mode = force_custom_plan")
+            StatementPlanning::BoundValues.transaction().map(|start| start.rendered()).as_deref(),
+            Some("BEGIN; SET LOCAL plan_cache_mode = 'force_custom_plan'")
         );
     }
 
     #[test]
     fn gated_branches_are_planned_with_their_values_and_run_serially() {
         assert_eq!(
-            StatementPlanning::GatedBranches.begin(),
-            Some("BEGIN; SET LOCAL plan_cache_mode = force_custom_plan; SET LOCAL max_parallel_workers_per_gather = 0")
+            StatementPlanning::GatedBranches.transaction().map(|start| start.rendered()).as_deref(),
+            Some("BEGIN; SET LOCAL plan_cache_mode = 'force_custom_plan'; SET LOCAL max_parallel_workers_per_gather = '0'")
         );
     }
 }

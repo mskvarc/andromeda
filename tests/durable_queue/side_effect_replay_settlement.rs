@@ -18,6 +18,7 @@ use crate::{
     broker_committer::committer,
     queue_database::{deliveries_of, enqueue_side_effect, events_of, live_target, queue_database, side_effect_queue, subscription, subscription_key},
     queue_workers::side_effect_worker,
+    replay_interruption::a_session_waits_for_a_lock,
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
@@ -32,7 +33,15 @@ use andromeda_context_commit::{
 use andromeda_entity::side_effect_queue::{LeasedSideEffect, SideEffectQueue};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
+use andromeda_postgresql_schema::{notification::NotificationEvents, queue::PendingSideEffects};
+use andromeda_postgresql_seaquery::{
+    aggregate::count_all,
+    command::Command,
+    relation_lock::{LockMode, RelationLock},
+    statement::Statement,
+};
 use pretty_assertions::assert_eq;
+use sea_query::{Expr, ExprTrait, Query, TableName};
 use serial_test::serial;
 use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};
@@ -75,8 +84,11 @@ const fn replay_of(leased: &LeasedSideEffect, holder: LeaseHolder) -> CommitRepl
 
 /// Who holds the job's lease now, if the job is still queued.
 async fn job_holder(pool: &PgPool, leased: &LeasedSideEffect) -> Option<uuid::Uuid> {
-    sqlx::query_scalar("SELECT claimed_by FROM pending_side_effects WHERE id = $1")
-        .bind(leased.id.as_uuid())
+    Query::select()
+        .column(PendingSideEffects::ClaimedBy)
+        .from(PendingSideEffects::Table)
+        .and_where(Expr::col(PendingSideEffects::Id).eq(leased.id.as_uuid()))
+        .to_query_scalar()
         .fetch_optional(pool)
         .await
         .expect("job state")
@@ -122,21 +134,16 @@ async fn durable_queue_a_replay_under_a_reclaimed_lease_commits_nothing_and_the_
         .expect("the current holder's replay lands");
     assert_eq!(events_of(&pool, &leased.record).await, 1, "the current holder's replay records the event once");
     assert_eq!(deliveries_of(&pool, stored_subscription).await, 1, "and queues its delivery once");
-    let remaining: i64 = sqlx::query_scalar("SELECT count(*) FROM pending_side_effects WHERE id = $1")
-        .bind(leased.id.as_uuid())
+    let remaining: i64 = Query::select()
+        .expr(count_all())
+        .from(PendingSideEffects::Table)
+        .and_where(Expr::col(PendingSideEffects::Id).eq(leased.id.as_uuid()))
+        .to_query_scalar()
         .fetch_one(&pool)
         .await
         .expect("job count");
     assert_eq!(remaining, 0, "the landed replay removed the job in its own transaction");
     pool.close().await;
-}
-
-/// Whether another session of the suite's database is waiting for a lock.
-async fn a_session_waits_for_a_lock(pool: &PgPool) -> bool {
-    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock')")
-        .fetch_one(pool)
-        .await
-        .expect("session activity")
 }
 
 /// A replay holds the job it settles for as long as it runs: once it has
@@ -160,7 +167,8 @@ async fn durable_queue_a_replay_slower_than_its_lease_keeps_its_job_and_lands_on
     let leased = leased.into_iter().next().expect("the due job is leased to the first worker");
 
     let mut holder = pool.begin().await.expect("lock holder transaction");
-    sqlx::query("LOCK TABLE notification_events IN SHARE MODE")
+    RelationLock::waiting(vec![TableName::from(NotificationEvents::Table)], LockMode::Share)
+        .to_query()
         .execute(&mut *holder)
         .await
         .expect("hold the notification events");

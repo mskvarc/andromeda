@@ -22,9 +22,8 @@ use crate::{
     inspection::IndexSize,
     policy::{DegradationSample, PolicyProfile},
 };
-use andromeda_postgresql_seaquery::{cast::cast_compound, pg_type::PostgresType};
-use sea_query::{Alias, Expr, ExprTrait, Iden, JoinType, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use andromeda_postgresql_seaquery::{cast::cast_compound, pg_type::PostgresType, statement::Statement};
+use sea_query::{Alias, Expr, ExprTrait, Iden, JoinType, Query, SelectStatement};
 use sqlx::{PgConnection, Row};
 use std::{num::NonZeroU64, str::FromStr};
 
@@ -108,8 +107,7 @@ pub(crate) fn density_readings<'pass>(sizes: &'pass [IndexSize], coverage: &'pas
 /// A table never analyzed (`reltuples` of -1), or a column `pg_stats` does
 /// not describe, gives its GIN no coverage.
 pub(crate) async fn gin_coverage(connection: &mut PgConnection, branch: Branch) -> Result<Vec<GinCoverage>, MaintenanceError> {
-    let (sql, values) = gin_coverage_statement(branch).build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
+    let rows = gin_coverage_statement(branch).to_query().fetch_all(connection).await?;
     rows.iter()
         .map(|row| {
             let column = DensityColumn::from_str(&row.try_get::<String, _>("attname")?).map_err(MaintenanceError::UnknownTarget)?;

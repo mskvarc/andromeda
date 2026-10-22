@@ -11,14 +11,12 @@
 //! lifts it for its own duration, and nothing else.
 
 use crate::error::TemporalStoreError;
-use andromeda_postgresql_seaquery::setting::{SettingScope, set_config};
-use sea_query::{PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, PgConnection};
-
-/// The `TimescaleDB` setting bounding the rows one transaction's DML may
-/// decompress; zero lifts the bound.
-const DECOMPRESSION_LIMIT_SETTING: &str = "timescaledb.max_tuples_decompressed_per_dml_transaction";
+use andromeda_postgresql_seaquery::{
+    setting::{Setting, SettingScope, set_config},
+    statement::Statement,
+};
+use sea_query::{Query, SelectStatement};
+use sqlx::PgConnection;
 
 /// Lift the decompression limit until the current transaction ends.
 ///
@@ -28,15 +26,19 @@ const DECOMPRESSION_LIMIT_SETTING: &str = "timescaledb.max_tuples_decompressed_p
 ///
 /// Returns [`TemporalStoreError::Database`] when the statement fails.
 pub(crate) async fn allow_confined_decompression(connection: &mut PgConnection) -> Result<(), TemporalStoreError> {
-    let (sql, values) = allowance_statement().build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(AssertSqlSafe(sql), values).execute(connection).await?;
+    allowance_statement().to_query().execute(connection).await?;
     Ok(())
 }
 
-/// `SELECT set_config(limit, '0', true)`.
+/// `SELECT set_config(limit, '0', true)`: zero lifts the bound on the rows one
+/// transaction's DML may decompress.
 fn allowance_statement() -> SelectStatement {
     Query::select()
-        .expr(set_config(DECOMPRESSION_LIMIT_SETTING, "0", SettingScope::Transaction))
+        .expr(set_config(
+            Setting::TimescaledbMaxTuplesDecompressedPerDmlTransaction,
+            "0",
+            SettingScope::Transaction,
+        ))
         .to_owned()
 }
 

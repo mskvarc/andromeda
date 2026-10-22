@@ -7,7 +7,7 @@
 //! one, so the list only grows, and the membership relation a temporal type
 //! selection walks only gains rows.
 
-use crate::intent_application::intent_source::{I, IntentSource, intent, source_intents, source_intents_as};
+use crate::intent_application::intent_source::{I, StagedSource, intent, source_intents, source_intents_as};
 use andromeda_postgresql_query::{
     type_list_union::{TypeListColumn, type_list_union},
     type_membership::Memberships,
@@ -94,7 +94,7 @@ struct Added;
 ///
 /// Returns [`SeaQueryError`] if a projection ever stops matching its column
 /// list, which the fixed shapes here make unreachable.
-pub(crate) fn with_evolutions(with: &mut WithClause, source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<(), SeaQueryError> {
+pub(crate) fn with_evolutions(with: &mut WithClause, source: &StagedSource<'_>, schema: Option<&DynIden>) -> Result<(), SeaQueryError> {
     with.cte(
         CommonTableExpression::new()
             .table_name(Evolved)
@@ -137,7 +137,7 @@ pub(crate) fn with_evolutions(with: &mut WithClause, source: &IntentSource<'_>, 
 /// `created_at` and its latest's as `modified_at`, which is what applying them
 /// one after the other leaves. `created_at` is never moved and `modified_at`
 /// never moves back ([`latest_modification`], clause 4.8).
-fn evolutions_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
+fn evolutions_statement(source: &StagedSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
     let mut select = Query::select();
     select
         .distinct_on([(I, TemporalAppendIntents::EntityId)])
@@ -186,7 +186,7 @@ fn evolutions_statement(source: &IntentSource<'_>, schema: Option<&DynIden>) -> 
 /// Every type the intents of `source` state, one list per Entity, under the
 /// columns of [`type_list_union`]: each type once, in the order of the first
 /// intent stating it.
-fn stated_types(source: &IntentSource<'_>) -> SelectStatement {
+fn stated_types(source: &StagedSource<'_>) -> SelectStatement {
     let mut lists = Query::select();
     lists
         .expr_as(Expr::col((StatingIntent, TemporalAppendIntents::EntityId)), TypeListColumn::Id)

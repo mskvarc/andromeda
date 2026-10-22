@@ -30,12 +30,16 @@ use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::snapshot::{ExecutionResultDetails, SnapshotStatus};
-use andromeda_postgresql_branch::snapshot_schema_name;
+use andromeda_postgresql_branch::snapshot_schema;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
-use andromeda_postgresql_seaquery::{clock::now, setting::lift_statement_timeout, transaction::repeatable_read};
+use andromeda_postgresql_seaquery::{
+    clock::now,
+    setting::lift_statement_timeout,
+    statement::Statement,
+    transaction::{Isolation, TransactionStart},
+};
 use andromeda_snapshot::{branch_condition::BranchCondition, error::SnapshotError, snapshot_invariant::SnapshotInvariant};
-use sea_query::{Expr, ExprTrait, JoinType, Keyword, LockType, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{Expr, ExprTrait, JoinType, Keyword, LockType, Query, SelectStatement, SimpleExpr};
 use sqlx::{PgPool, Postgres, Transaction};
 
 /// Publish one prepared branch -- what a capture or a clone staged on success,
@@ -95,15 +99,16 @@ pub(crate) async fn promote_context_clone(pool: &PgPool, source_id: &Identifier,
 /// renewals, touches or metadata changes. A failure after the commit leaves
 /// only staged rows, which the next restart or claim of the target discards.
 async fn copy_clone_source(pool: &PgPool, source_id: &Identifier, target_id: &Identifier, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
-    let mut transaction = pool.begin().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
-    sqlx::query(repeatable_read())
-        .execute(&mut *transaction)
+    let mut transaction = TransactionStart::at(Isolation::RepeatableRead)
+        .begin_in(pool)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
     // The copy takes as long as the source is large and no request waits on
     // it, so the database's statement timeout does not bound it.
-    let (sql, values) = Query::select().expr(lift_statement_timeout()).build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    Query::select()
+        .expr(lift_statement_timeout())
+        .to_owned()
+        .to_query()
         .execute(&mut *transaction)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
@@ -111,8 +116,8 @@ async fn copy_clone_source(pool: &PgPool, source_id: &Identifier, target_id: &Id
         .await?
         .ok_or_else(|| claim_lost(target_id))?;
     let source_key = source_snapshot_key(&mut transaction, source_id).await?;
-    let source_schema = snapshot_schema_name(source_key, SnapshotBranch::Published);
-    let target_schema = snapshot_schema_name(target_key, SnapshotBranch::Staging);
+    let source_schema = snapshot_schema(source_key, SnapshotBranch::Published);
+    let target_schema = snapshot_schema(target_key, SnapshotBranch::Staging);
     clone_branch(&mut transaction, &source_schema, &target_schema)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
@@ -160,8 +165,8 @@ fn source_key_statement(source_id: &Identifier) -> SelectStatement {
 /// relations, so a column-for-column copy into the target could not be trusted.
 async fn source_snapshot_key(transaction: &mut Transaction<'_, Postgres>, source_id: &Identifier) -> Result<SnapshotKey, SnapshotError> {
     let current = current_version()?;
-    let (sql, values) = source_key_statement(source_id).build_sqlx(PostgresQueryBuilder);
-    let (raw, version) = sqlx::query_as_with::<_, (i64, i32), _>(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let (raw, version) = source_key_statement(source_id)
+        .to_query_as::<(i64, i32)>()
         .fetch_optional(&mut **transaction)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?
@@ -205,8 +210,8 @@ async fn finalize_preparation(
         .and_where(Expr::col(SnapshotPreparation::ClaimedBy).eq(claimed_by.as_uuid()))
         .and_where(status_is_preparing())
         .to_owned();
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let result = statement
+        .to_query()
         .execute(&mut **transaction)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;

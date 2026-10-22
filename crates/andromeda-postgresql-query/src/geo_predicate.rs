@@ -405,7 +405,6 @@ mod tests {
                 | Value::Enum(_)
                 | Value::Char(_)
                 | Value::Bytes(_)
-                | Value::Json(_)
                 | Value::ChronoDate(_)
                 | Value::ChronoTime(_)
                 | Value::ChronoDateTime(_)

@@ -10,9 +10,11 @@ use crate::{
     catalog_counter::{CatalogCounter, non_negative},
     error::MaintenanceError,
 };
-use andromeda_postgresql_seaquery::maintenance::{indexes_size, total_relation_size};
-use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_sqlx::SqlxBinder;
+use andromeda_postgresql_seaquery::{
+    maintenance::{indexes_size, total_relation_size},
+    statement::Statement,
+};
+use sea_query::{Alias, Expr, ExprTrait, Query, SelectStatement};
 use sqlx::{PgConnection, Row};
 use std::str::FromStr;
 use strum::{Display, EnumString, IntoStaticStr};
@@ -79,8 +81,7 @@ pub struct TableSize {
 /// Returns [`MaintenanceError`] when the catalog query fails, a row names a
 /// relation outside the allowlist, or a size counter is negative.
 pub async fn table_sizes(connection: &mut PgConnection) -> Result<Vec<TableSize>, MaintenanceError> {
-    let (sql, values) = table_sizes_statement().build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
+    let rows = table_sizes_statement().to_query().fetch_all(connection).await?;
     rows.into_iter()
         .map(|row| {
             let name = row.try_get::<String, _>(SizeColumn::Relname.as_str())?;

@@ -21,10 +21,9 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::notification::{NotificationDeliveries, NotificationEvents};
-use andromeda_postgresql_seaquery::pg_array::any;
+use andromeda_postgresql_seaquery::{pg_array::any, statement::Statement};
 use chrono::{DateTime, Utc};
-use sea_query::{DeleteStatement, Expr, ExprTrait, PostgresQueryBuilder, Query};
-use sea_query_sqlx::SqlxBinder;
+use sea_query::{DeleteStatement, Expr, ExprTrait, Query};
 use sqlx::postgres::PgPool;
 
 /// Remove deliveries completed before `cutoff` in every branch, and any event
@@ -55,13 +54,11 @@ pub async fn purge_delivered_before(pool: &PgPool, cutoff: DateTime<Utc>) -> Res
 /// their removal orphaned.
 async fn purge_delivered_in_branch(pool: &PgPool, target: &ContextTarget, cutoff: DateTime<Utc>) -> Result<u64, ContextStoreError> {
     let mut tx = pool.begin().await?;
-    let (sql, values) = purge_delivered_statement(target, cutoff).build_sqlx(PostgresQueryBuilder);
-    let events: Vec<i64> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut *tx).await?;
+    let events: Vec<i64> = purge_delivered_statement(target, cutoff).to_query_scalar().fetch_all(&mut *tx).await?;
     let removed = events.len() as u64;
 
     if !events.is_empty() {
-        let (sql, values) = purge_orphan_events_among_statement(target, &events).build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut *tx).await?;
+        purge_orphan_events_among_statement(target, &events).to_query().execute(&mut *tx).await?;
     }
 
     tx.commit().await?;
@@ -82,8 +79,7 @@ async fn purge_delivered_in_branch(pool: &PgPool, target: &ContextTarget, cutoff
 pub async fn purge_exhausted_before(pool: &PgPool, cutoff: DateTime<Utc>) -> Result<u64, ContextStoreError> {
     let mut removed = 0;
     for target in drainable_targets(pool).await? {
-        let (sql, values) = purge_exhausted_statement(&target, cutoff).build_sqlx(PostgresQueryBuilder);
-        match sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool).await {
+        match purge_exhausted_statement(&target, cutoff).to_query().execute(pool).await {
             Ok(result) => removed += result.rows_affected(),
             Err(error) => {
                 let error = ContextStoreError::from(error);
@@ -114,8 +110,7 @@ pub async fn purge_exhausted_before(pool: &PgPool, cutoff: DateTime<Utc>) -> Res
 pub async fn purge_orphan_events_before(pool: &PgPool, cutoff: DateTime<Utc>) -> Result<u64, ContextStoreError> {
     let mut removed = 0;
     for target in drainable_targets(pool).await? {
-        let (sql, values) = purge_orphan_events_before_statement(&target, cutoff).build_sqlx(PostgresQueryBuilder);
-        match sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool).await {
+        match purge_orphan_events_before_statement(&target, cutoff).to_query().execute(pool).await {
             Ok(result) => removed += result.rows_affected(),
             Err(error) => {
                 let error = ContextStoreError::from(error);
