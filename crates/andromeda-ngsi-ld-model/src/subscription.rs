@@ -359,8 +359,8 @@ pub struct SubscriptionLifecycle {
 pub struct Subscription {
     /// Subscription identifier (clause 5.2.12: a URI, not necessarily an NGSI-LD URN).
     pub id: Identifier,
-    /// JSON-LD type (always `Subscription`).
-    #[serde(rename = "type", default)]
+    /// JSON-LD type (always `Subscription`, cardinality 1 in Table 5.2.12-1).
+    #[serde(rename = "type")]
     #[builder(default = Default::default())]
     pub type_: SubscriptionType,
     /// Human-readable subscription name.
@@ -517,6 +517,15 @@ mod tests {
         // clone: the original is compared against the round-tripped value below
         let subscription: Subscription = serde_json::from_value(original.clone()).expect("subscription parses");
         pretty_assertions::assert_eq!(serde_json::to_value(&subscription).expect("serialises"), original);
+    }
+
+    /// Table 5.2.12-1 gives `type` cardinality 1.
+    #[test]
+    fn a_subscription_without_its_type_does_not_parse() {
+        let mut untyped = fully_populated_subscription();
+        let removed = untyped.as_object_mut().and_then(|members| members.remove("type"));
+        pretty_assertions::assert_eq!(removed, Some(serde_json::json!("Subscription")));
+        assert!(serde_json::from_value::<Subscription>(untyped).is_err());
     }
 
     #[test]

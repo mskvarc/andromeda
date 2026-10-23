@@ -30,7 +30,7 @@ use andromeda_ngsi_ld_expansion::{
     received_state::{ReceivedDocument, ReceivedRefusal, ReceivedState},
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_model::{node_refusal::RefusedNode, received::ContextualEntity};
+use andromeda_ngsi_ld_model::received::{ContextualEntity, ElementRefusal};
 use thiserror::Error;
 
 /// Why one entity of an inbound notification is not re-assembled.
@@ -42,7 +42,7 @@ pub(crate) enum ReceivedEntityRefusal {
     /// The entity, read under the context it was written in, is no entity the
     /// model can hold.
     #[error(transparent)]
-    Undecodable(RefusedNode),
+    Undecodable(Box<ElementRefusal>),
     /// The entity does not expand under the context it was written in.
     #[error(transparent)]
     Expansion(#[from] ReceivedRefusal),

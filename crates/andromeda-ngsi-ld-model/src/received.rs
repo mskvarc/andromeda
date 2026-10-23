@@ -96,6 +96,8 @@ pub struct ContextualEntity {
     /// The `id` the entity names as `id` or `@id` (clause 4.4), when it names
     /// a readable one.
     pub id: Option<Identifier>,
+    /// Where the entity stands in the array it was received in, from zero.
+    index: usize,
     /// The entity as written, its own `@context` among its members.
     written: Box<RawValue>,
 }
@@ -106,12 +108,16 @@ impl ContextualEntity {
     ///
     /// # Errors
     ///
-    /// Returns the [`RefusedNode`] of an entity the model cannot hold, located
-    /// in the entity.
-    pub fn entity(&self, aliases: &CoreTermAliases) -> Result<Entity, RefusedNode> {
+    /// Returns the [`ElementRefusal`] of an entity the model cannot hold,
+    /// naming the element and the `id` it names, located in the entity.
+    pub fn entity(&self, aliases: &CoreTermAliases) -> Result<Entity, Box<ElementRefusal>> {
         match Entity::from_node(AliasedNode::new(JsonPiece::new(&self.written), aliases)) {
             Ok(entity) => Ok(entity),
-            Err(NodeReadError::Refused(refusal)) => Err(refusal),
+            Err(NodeReadError::Refused(refusal)) => Err(Box::new(ElementRefusal {
+                index: self.index,
+                id: self.id.clone(), // clone: the refusal outlives the entity it names
+                reason: ElementRefusalReason::Refused(refusal),
+            })),
             Err(NodeReadError::Unreadable(never)) => match never {},
         }
     }
@@ -216,6 +222,7 @@ fn contextual_entity(index: usize, element: JsonPiece<'_>) -> ReceivedElement<Co
     ReceivedElement::Read(ContextualEntity {
         context,
         id: named_id(element),
+        index,
         written: element.raw().to_owned(),
     })
 }

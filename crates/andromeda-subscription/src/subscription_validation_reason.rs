@@ -22,6 +22,9 @@ use thiserror::Error;
 /// Why a subscription request is invalid.
 #[derive(Debug, Error)]
 pub enum SubscriptionValidationReason {
+    /// A create body left out `type`, which Table 5.2.12-1 gives cardinality 1.
+    #[error("type is required and shall be \"Subscription\"")]
+    TypeRequired,
     /// The `notification` member was absent.
     #[error("notification is required")]
     NotificationRequired,

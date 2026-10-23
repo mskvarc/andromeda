@@ -123,6 +123,10 @@ mod tests {
         let identifier = "urn:ngsi-ld:Subscription:1".parse::<Identifier>()?;
         for (error, expected) in [
             (
+                SubscriptionError::Validation(SubscriptionValidationReason::TypeRequired),
+                NgsiLdErrorType::BadRequestData,
+            ),
+            (
                 SubscriptionError::Validation(SubscriptionValidationReason::NotificationRequired),
                 NgsiLdErrorType::BadRequestData,
             ),

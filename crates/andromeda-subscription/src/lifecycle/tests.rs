@@ -11,6 +11,7 @@ use crate::{
     store::{SubscriptionFields, SubscriptionStore},
     stored_subscription::StoredSubscription,
     subscription_context::SubscriptionContext,
+    subscription_validation_reason::SubscriptionValidationReason,
 };
 use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_context_space::context_target::ContextTarget;
@@ -449,6 +450,18 @@ async fn the_empty_fragment_writes_nothing() {
     assert_eq!(written_after_update(json!({}), &ContextSpec::none()).await, None);
 }
 
+/// Clause 5.8.2.4 checks a fragment against the data types and restrictions
+/// of Table 5.2.12-1, not its cardinalities, so a fragment without `type` is
+/// applied.
+#[tokio::test]
+async fn an_update_fragment_without_its_type_is_applied() {
+    assert!(
+        written_after_update(json!({ "subscriptionName": "renamed" }), &ContextSpec::none())
+            .await
+            .is_some()
+    );
+}
+
 /// A fragment holding only its `type` names no member to apply either.
 #[tokio::test]
 async fn a_fragment_holding_only_its_type_writes_nothing() {
@@ -550,6 +563,39 @@ async fn a_subscription_created_with_a_scoped_jsonld_context_is_refused() {
         .await
         .expect_err("clause 5.5.7 refuses it");
     assert_scoped_refusal(&error);
+}
+
+/// Table 5.2.12-1 gives `type` cardinality 1: clause 5.8.1.4 refuses a create
+/// body without it, and clause 5.11.2.4 applies the same check to a Context
+/// Source Registration Subscription. Neither store is asked to write.
+#[tokio::test]
+async fn a_subscription_created_without_its_type_is_refused_on_both_kinds() {
+    let body = || {
+        SubscriptionRequest::from_request_text(
+            json!({
+                "entities": [{ "type": "https://example.com/Vehicle" }],
+                "notification": { "endpoint": { "uri": "http://receiver.example.com/notify" } }
+            })
+            .to_string()
+            .as_bytes(),
+            CoreTermAliases::keyword_spellings(),
+        )
+        .expect("a readable subscription")
+    };
+    let (entity_service, written) = service_serving_a_scoped_context();
+    let entity = entity_service.create(&ContextTarget::Live, body(), SubscriptionContext::CoreOnly, &[]).await;
+    assert!(
+        matches!(entity, Err(SubscriptionError::Validation(SubscriptionValidationReason::TypeRequired))),
+        "{entity:?}"
+    );
+    assert_eq!(*written.lock().expect("the written context is never poisoned"), None);
+    let csource = service(&DeletionLog::default(), 0)
+        .create(&ContextTarget::Live, body(), SubscriptionContext::CoreOnly, &[])
+        .await;
+    assert!(
+        matches!(csource, Err(SubscriptionError::Validation(SubscriptionValidationReason::TypeRequired))),
+        "{csource:?}"
+    );
 }
 
 #[tokio::test]

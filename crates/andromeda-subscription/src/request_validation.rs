@@ -44,6 +44,13 @@ pub fn validate_create_request(request: &SubscriptionRequest, geo_q_admission: G
     if let Some(member) = request.null_member() {
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::NullOnCreate(member)));
     }
+    // Table 5.2.12-1 gives `type` cardinality 1, and clause 5.8.1.4 refuses a
+    // body that breaks a cardinality. Clause 5.8.2.4 checks an update fragment
+    // against the data types and restrictions alone, so a fragment may leave it
+    // out.
+    if request.type_.is_none() {
+        return Err(SubscriptionError::Validation(SubscriptionValidationReason::TypeRequired));
+    }
     let Some(notification) = &request.notification else {
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::NotificationRequired));
     };
@@ -241,6 +248,36 @@ mod tests {
             result,
             Err(SubscriptionError::Validation(SubscriptionValidationReason::NotificationRequired))
         ));
+    }
+
+    /// Table 5.2.12-1 gives `type` cardinality 1, so clause 5.8.1.4 refuses a
+    /// create body without it.
+    #[test]
+    fn a_create_without_its_type_is_refused() {
+        let mut body = json!({
+            "entities": [{"type": "Vehicle"}],
+            "notification": {"endpoint": {"uri": "https://receiver.example.com/notify"}}
+        });
+        let result = validate_create_request(&request(&body), limits());
+        assert!(
+            matches!(&result, Err(SubscriptionError::Validation(SubscriptionValidationReason::TypeRequired))),
+            "got {result:?}"
+        );
+        body["type"] = json!("Subscription");
+        let result = validate_create_request(&request(&body), limits());
+        assert!(result.is_ok(), "got {result:?}");
+    }
+
+    /// Clause 5.8.2.4 checks a fragment against the data types and restrictions
+    /// of Table 5.2.12-1, not its cardinalities.
+    #[test]
+    fn an_update_fragment_without_its_type_is_valid() {
+        let fragment = request(&json!({"notification": {"endpoint": {"uri": "https://receiver.example.com/notify"}}}));
+        assert!(fragment.type_.is_none());
+        let result = validate_common_members(&fragment, limits());
+        assert!(result.is_ok(), "got {result:?}");
+        let result = validate_notification_fragment(&fragment);
+        assert!(result.is_ok(), "got {result:?}");
     }
 
     /// Clause 5.2.1: a null outside clauses 5.5.8 and 5.5.12 is

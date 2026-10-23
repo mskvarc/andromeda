@@ -1,9 +1,9 @@
 //! The body of a request that creates or updates a Subscription or a Context
-//! Source Registration Subscription (ETSI GS CIM 009 clauses 5.8.1, 5.8.3,
-//! 5.11.2 and 5.11.4).
+//! Source Registration Subscription (ETSI GS CIM 009 clauses 5.8.1, 5.8.2,
+//! 5.11.2 and 5.11.3).
 //!
 //! Clause 5.8.1 creates a Subscription from the members of Table 5.2.12-1 and
-//! clause 5.8.3 updates one with "a fragment of the Subscription", which is the
+//! clause 5.8.2 updates one with a Subscription Fragment, which is the
 //! same set of members with each of them optional. The one type therefore
 //! stands for both bodies: what a create requires is a rule of the operation
 //! that reads it, and a member the body leaves out is the member the update
@@ -15,8 +15,8 @@
 //! cardinality `0..1` is therefore a [`Clearable`] member that tells an absent
 //! member from a cleared one: a JSON `null` clears it, and so does the URI
 //! `urn:ngsi-ld:null` (an array of one of them) for the members that take URIs
-//! (clause 4.5.0). The members of cardinality `1` -- `type` and `notification`
-//! -- and `id`, which "cannot be later modified in update operations", cannot be
+//! (clause 4.5.0). The members of cardinality `1` (`type` and `notification`)
+//! and `id`, which "cannot be later modified in update operations", cannot be
 //! deleted, so a `null` for one of them is a value outside its data type
 //! (clause 5.5.4). The members the broker generates (`status`, `createdAt`,
 //! `modifiedAt`) are not part of the body and are ignored when a client sends
@@ -54,7 +54,9 @@ pub struct SubscriptionRequest {
     /// NGSI-LD URN); the broker mints one when a create names none.
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "non_null_member::deserialize")]
     pub id: Option<Identifier>,
-    /// JSON-LD type, which can only be `Subscription`.
+    /// JSON-LD type, which can only be `Subscription`. `None` when the body
+    /// leaves it out: a create refuses that (Table 5.2.12-1 gives it
+    /// cardinality 1), an update fragment may do it.
     #[serde(
         rename = "type",
         default,
