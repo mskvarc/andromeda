@@ -32,7 +32,7 @@ use andromeda_ngsi_ld_query::{
         grammar::{TypeExpr, TypeExprRaw},
     },
 };
-use andromeda_ngsi_ld_request::query::{SharedQueryParams, csr::CsrQueryParameters};
+use andromeda_ngsi_ld_request::query::csr::CsrQueryParameters;
 use iri_rs::IriBuf;
 use std::collections::HashSet;
 
@@ -180,7 +180,6 @@ impl RegistrationService {
             .csf_expr(csf_expr)
             .geo(geo)
             .scope_q(params.scope_q.clone()) // clone: the compiled query owns the parsed scope query.
-            .dataset_id(params.dataset_ids().map(<[_]>::to_vec).unwrap_or_default()) // clone: same reason.
             .encountered_sources(encountered_sources.to_vec()) // clone: the compiled query owns the Via listing across the store await.
             .temporal(temporal)
             .build())

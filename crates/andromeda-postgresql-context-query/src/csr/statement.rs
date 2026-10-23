@@ -1,7 +1,6 @@
 //! SQL generation for Context Source Registration discovery (clause 5.10.2).
 
 use crate::csr::{
-    dataset_rule::dataset_rule,
     encountered_sources::not_encountered,
     entity_specification::row_matches,
     expiry_predicate::not_expired,
@@ -152,10 +151,6 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Condition {
         condition = condition.add(scope_condition(scope_q, &ScopeTarget::paths((Csr::Table, Csr::ScopePaths))));
     }
 
-    if !query.dataset_id.is_empty() {
-        condition = condition.add(dataset_rule(&query.dataset_id));
-    }
-
     if !query.encountered_sources.is_empty() {
         condition = condition.add(not_encountered(&query.encountered_sources));
     }
@@ -178,7 +173,6 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         csr::compiled::CompiledCsrTemporalFilter,
         cursor::PageCursor,
-        dataset::DatasetSelector,
         filter::parser,
         geo::query::GeoQuery,
         page_window::{PageStart, PageWindow},
@@ -488,7 +482,6 @@ mod tests {
         q.attrs = vec![iri("https://example.com/speed")];
         q.geo = Some(geo_query("https://uri.etsi.org/ngsi-ld/location"));
         q.scope_q = Some(ScopeQuery::parse("/Madrid/#").unwrap());
-        q.dataset_id = vec![DatasetSelector::Default];
         q.temporal = Some(
             CompiledCsrTemporalFilter::builder()
                 .interval(TimeInterval::Before(dt("2024-01-01T00:00:00Z")))
@@ -737,20 +730,6 @@ mod tests {
         assert!(built.sql.contains("\"context_source_registrations\".\"scope_paths\" ~"), "{}", built.sql);
         assert!(built.sql.contains("'Madrid.*'::lquery"), "{}", built.sql);
         assert!(!built.sql.contains("UNNEST"), "{}", built.sql);
-    }
-
-    /// Clause 5.12: a registration declaring no `datasetId` matches; one that
-    /// does must share a value with the request.
-    #[test]
-    fn build_with_dataset_ids() {
-        let mut q = empty_query();
-        q.dataset_id = vec![DatasetSelector::Default];
-        let built = build(&q);
-        assert!(
-            built.sql.contains("\"dataset_id\" IS NULL OR (\"dataset_id\" && ARRAY ['@none'])"),
-            "{}",
-            built.sql
-        );
     }
 
     /// Clause 5.12: a registration whose alias the request already passed

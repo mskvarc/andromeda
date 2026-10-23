@@ -11,7 +11,6 @@ use crate::{
         deserialization::{
             OptionalGeoQuery,
             deserialize_optional_attribute_names,
-            deserialize_optional_dataset_selectors,
             deserialize_optional_filter_expr,
             deserialize_optional_pattern,
             deserialize_optional_projection_terms,
@@ -40,7 +39,10 @@ use serde::Deserialize;
 ///
 /// All values are in their raw (compact) form before context expansion. The
 /// parameters describe entities, as an entity query's do (clause 5.10.2.1); the
-/// response is the registrations of the sources that may hold them.
+/// response is the registrations of the sources that may hold them. The table
+/// defines no `datasetId`: matching a registration's datasets (clause 5.12)
+/// belongs to the distributed operations, not to discovery, so the parameter is
+/// one the operation does not define (clause 6.3.20).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CsrQueryParameters {
@@ -74,11 +76,6 @@ pub struct CsrQueryParameters {
     /// The scope query matched against the registrations' `scope` (clause 4.19 `scopeQ`).
     #[serde(rename = "scopeQ")]
     pub scope_q: Option<ScopeQuery>,
-    /// Dataset instances the source must provide, comma-separated (`datasetId`;
-    /// clause 5.12 `datasetId` rule).
-    #[serde(rename = "datasetId")]
-    #[serde(default, deserialize_with = "deserialize_optional_dataset_selectors")]
-    pub dataset_id: Option<Vec<DatasetSelector>>,
     /// Members the response is narrowed to (clause 4.21 `pick`).
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
     pub pick: Option<Vec<RawProjectionTerm>>,
@@ -116,7 +113,7 @@ impl_shared_query_params!(CsrQueryParameters {
     attrs: attrs,
     pick: pick,
     omit: omit,
-    dataset_id: dataset_id
+    dataset_id:
 });
 
 impl CsrQueryParameters {
@@ -218,7 +215,6 @@ mod tests {
             "csf=tier==%22gold%22",
             "scopeQ=/Madrid",
             "timerel=before&timeAt=2024-01-01T00:00:00Z",
-            "datasetId=urn:ngsi-ld:dataset:1",
         ] {
             let p = params_from_query(query);
             assert!(matches!(p.validate(), Err(ParameterError::SelectorRequired(_))), "{query} must be rejected");
@@ -285,12 +281,10 @@ mod tests {
     /// Table 6.8.3.2-1: the members the entity query shares with discovery.
     #[test]
     fn the_table_6_8_3_2_1_members_are_read() {
-        let p = params_from_query(
-            "type=Vehicle&csf=tier==%22gold%22&scopeQ=/Madrid&datasetId=urn:ngsi-ld:dataset:1,@none&pick=id,speed&omit=type&lang=en&geometryProperty=location",
-        );
+        let p = params_from_query("type=Vehicle&csf=tier==%22gold%22&scopeQ=/Madrid&pick=id,speed&omit=type&lang=en&geometryProperty=location");
         assert!(p.csf.is_some());
         assert!(p.scope_q.is_some());
-        pretty_assertions::assert_eq!(p.dataset_ids().map(<[DatasetSelector]>::len), Some(2));
+        pretty_assertions::assert_eq!(p.dataset_ids(), None);
         pretty_assertions::assert_eq!(p.pick().map(<[RawProjectionTerm]>::len), Some(2));
         pretty_assertions::assert_eq!(p.omit().map(<[RawProjectionTerm]>::len), Some(1));
         assert!(p.lang.is_some());
@@ -300,6 +294,15 @@ mod tests {
     #[test]
     fn an_unknown_parameter_is_rejected() {
         assert!(serde_urlencoded::from_str::<CsrQueryParameters>("type=Vehicle&bogus=1").is_err());
+    }
+
+    /// Table 6.8.3.2-1 defines no `datasetId` (clause 6.3.20).
+    #[test]
+    fn a_dataset_id_is_unknown() {
+        let message = serde_urlencoded::from_str::<CsrQueryParameters>("type=Vehicle&datasetId=@none")
+            .expect_err("refused")
+            .to_string();
+        assert!(message.contains("unknown field"), "{message}");
     }
 
     #[test]

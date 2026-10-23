@@ -1,7 +1,6 @@
 //! The compiled form of a Context Source Registration discovery query.
 
 use crate::{
-    dataset::DatasetSelector,
     filter::expression::Expr,
     geo::query::GeoQuery,
     pattern::Pattern,
@@ -19,8 +18,8 @@ use typed_builder::TypedBuilder;
 /// The entity specification (`ids`, `entity_type`, `id_pattern`) and the
 /// attribute list are matched against the registrations' `information` as
 /// clause 5.12 describes; the context source filter, the geoquery, the scope
-/// query, the dataset identifiers and the temporal window are matched against
-/// the registrations' own members (clause 5.10.2.4).
+/// query and the temporal window are matched against the registrations' own
+/// members (clause 5.10.2.4).
 #[derive(Debug, Clone, TypedBuilder)]
 #[builder(field_defaults(default = Default::default()))]
 pub struct CompiledCsrQuery {
@@ -45,11 +44,6 @@ pub struct CompiledCsrQuery {
     pub geo: Option<GeoQuery>,
     /// Scope query matched against the registration's `scope` (clause 4.19).
     pub scope_q: Option<ScopeQuery>,
-    /// Dataset identifiers the source must provide (clause 5.12: a
-    /// registration declaring a `datasetId` list matches when the two lists
-    /// share a value; one declaring none always matches). Empty means no
-    /// constraint.
-    pub dataset_id: Vec<DatasetSelector>,
     /// The context sources the request already passed through (clause 4.3.6.4).
     /// A registration whose `contextSourceAlias` is listed never matches
     /// (clause 5.12).
