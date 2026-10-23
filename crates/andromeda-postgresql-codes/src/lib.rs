@@ -83,8 +83,6 @@ pub mod stream_key;
 pub mod subscription_kind;
 /// The persisted lifecycle state of one stored subscription.
 pub mod subscription_status;
-/// The narrow key a temporal entity is referenced by.
-pub mod temporal_entity_key;
 /// The persisted kind of one entry of a temporal append intent.
 pub mod temporal_entry_kind;
 /// The persisted needs of an intent application one queued intent meets.

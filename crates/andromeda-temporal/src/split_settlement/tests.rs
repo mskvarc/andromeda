@@ -67,7 +67,10 @@ fn row(attribute: &str, family: AttributeType, value: TemporalValue, observed: &
 }
 
 fn number(value: f64) -> TemporalValue {
-    TemporalValue::Number(JsonNumber::try_from(value).expect("a finite number"))
+    TemporalValue::Number {
+        number: JsonNumber::try_from(value).expect("a finite number"),
+        datatype: None,
+    }
 }
 
 fn speed(value: f64, observed: &str) -> TemporalHistoryRow {

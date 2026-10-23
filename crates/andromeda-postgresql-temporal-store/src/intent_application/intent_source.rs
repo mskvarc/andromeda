@@ -36,16 +36,6 @@ pub(crate) struct I;
 #[iden = "e"]
 pub(crate) struct E;
 
-/// The `temporal_entities` alias, `te`.
-#[derive(Iden, Clone, Copy)]
-#[iden = "te"]
-pub(crate) struct Te;
-
-/// The `temporal_attribute_streams` alias, `s`.
-#[derive(Iden, Clone, Copy)]
-#[iden = "s"]
-pub(crate) struct S;
-
 /// The alias of one bound intent inside the bound source, `input`.
 #[derive(Iden, Clone, Copy)]
 #[iden = "input"]
@@ -76,8 +66,6 @@ pub enum IntentSource<'a> {
 /// the server decodes every value it is sent.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum EntryReads {
-    /// No entry: the intents' identity, types and positions.
-    Nothing,
     /// What identifies each entry: its kind, grain and instance identifiers.
     Identities,
     /// Every field of every entry.
@@ -162,7 +150,6 @@ impl<'a> StagedSource<'a> {
             IntentSource::Bound { record, intents } => StagedRelation::Bound {
                 record,
                 intents: match reads {
-                    EntryReads::Nothing => external.push(intents.iter().map(TemporalIntentRecord::head).collect::<Vec<_>>()),
                     EntryReads::Identities => external.push(intents.iter().map(TemporalIntentRecord::identities).collect::<Vec<_>>()),
                     EntryReads::Everything => external.push(*intents),
                 },

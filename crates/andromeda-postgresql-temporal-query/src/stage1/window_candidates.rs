@@ -16,7 +16,10 @@
 use crate::{
     alias::{Rh, Rs},
     axis::axis_column,
-    stage1::{evolution_walk::concerned_attribute_keys, queued_candidates::queued_candidates},
+    stage1::{
+        evolution_walk::concerned_attribute_keys,
+        queued_candidates::{queued_candidates, stream_holder},
+    },
 };
 use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, window::TemporalWindow};
 use andromeda_postgresql_query::{
@@ -93,21 +96,15 @@ impl<'q> WindowRead<'q> {
     /// identifiers beside every queued Entity, whose queued entries no index
     /// holds.
     pub(super) fn candidates(&self, branch: &HistoryBranch) -> SelectStatement {
-        let column = match branch.pending() {
-            PendingEntries::Absent => TemporalAttributeStreams::TemporalEntityKey,
-            PendingEntries::Unioned => TemporalAttributeStreams::Id,
-        };
         let mut candidates = Query::select();
-        candidates
-            .column((Rs, column))
-            .from(qualified(branch.schema(), AttributeHistory::Table).alias(Rh))
-            .join_as(
-                JoinType::Join,
-                qualified(branch.schema(), TemporalAttributeStreams::Table),
-                Rs,
-                Expr::col((Rs, TemporalAttributeStreams::StreamKey)).equals((Rh, AttributeHistory::StreamKey)),
-            )
-            .cond_where(within_interval(&Expr::col((Rh, axis_column(self.window.timeproperty))), &self.window.interval));
+        candidates.from(qualified(branch.schema(), AttributeHistory::Table).alias(Rh)).join_as(
+            JoinType::Join,
+            qualified(branch.schema(), TemporalAttributeStreams::Table),
+            Rs,
+            Expr::col((Rs, TemporalAttributeStreams::StreamKey)).equals((Rh, AttributeHistory::StreamKey)),
+        );
+        stream_holder(&mut candidates, branch);
+        candidates.cond_where(within_interval(&Expr::col((Rh, axis_column(self.window.timeproperty))), &self.window.interval));
         match &self.concerned {
             ConcernedAttributes::Every => {}
             ConcernedAttributes::Keyed(keys) => {
@@ -169,7 +166,7 @@ mod tests {
         let candidates = PageBranches::of(&sql).candidates;
         assert!(
             candidates.starts_with(concat!(
-                r#"SELECT "rs"."temporal_entity_key" FROM "attribute_history" AS "rh""#,
+                r#"SELECT "rs"."entity_key" FROM "attribute_history" AS "rh""#,
                 r#" JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key""#,
                 r#" WHERE "rh"."modified_at" >= $"#
             )),
@@ -264,7 +261,7 @@ mod tests {
         assert!(!count.contains("candidates"), "{count}");
         assert!(count.starts_with(r#"SELECT COUNT("e"."id") FROM"#), "{count}");
         assert!(
-            count.contains(r#""ah"."modified_at" >= '2026-10-18 03:00:00.000000 +00:00' AND "ah"."temporal_entity_key" = "e"."temporal_entity_key""#),
+            count.contains(r#""ah"."modified_at" >= '2026-10-18 03:00:00.000000 +00:00' AND "ah"."entity_key" = "e"."entity_key""#),
             "{count}"
         );
     }
@@ -325,9 +322,7 @@ mod tests {
         let sql = recorded_stage1(&modified_after()).select.to_string(PostgresQueryBuilder);
         let branches = PageBranches::of(&sql);
         assert!(
-            branches
-                .indexed
-                .contains(r#""temporal_entity_key" IN (SELECT "temporal_entity_key" FROM "candidates")"#),
+            branches.indexed.contains(r#""entity_key" IN (SELECT "entity_key" FROM "candidates")"#),
             "{}",
             branches.indexed
         );
@@ -343,7 +338,7 @@ mod tests {
             .to_string(PostgresQueryBuilder);
         let branches = PageBranches::of(&sql);
         assert!(
-            branches.candidates.starts_with(r#"SELECT "rs"."id" FROM "attribute_history" AS "rh" JOIN"#),
+            branches.candidates.starts_with(r#"SELECT "ri"."id" FROM "attribute_history" AS "rh" JOIN"#),
             "{}",
             branches.candidates
         );
@@ -372,7 +367,7 @@ mod tests {
         .to_string(PostgresQueryBuilder);
         let candidates = PageBranches::of(&sql).candidates;
         assert!(
-            candidates.contains(r#"FROM "snap_7"."attribute_history" AS "rh" JOIN "snap_7"."temporal_attribute_streams" AS "rs""#),
+            candidates.starts_with(r#"SELECT "rs"."entity_key" FROM "snap_7"."attribute_history" AS "rh" JOIN "snap_7"."temporal_attribute_streams" AS "rs""#),
             "{candidates}"
         );
     }

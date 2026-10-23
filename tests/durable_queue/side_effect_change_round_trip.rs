@@ -33,7 +33,7 @@ use andromeda_ngsi_ld_entity::{
         attribute_instance_key::AttributeInstanceKey,
     },
 };
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_ngsi_ld_model::{
     entity_change::{EntityChange, EntityLifecycle},
     notification::ChangeOrigin,
@@ -120,7 +120,10 @@ async fn durable_queue_a_job_hands_each_write_its_whole_change_back() {
         .entity(EntityMutation::None)
         .side_effects(Some(BatchSideEffectJob { change_events: vec![event] }))
         .build();
-    committer(&pool).commit(&live_target(), vec![write]).await.expect("the write commits its job");
+    committer(&pool)
+        .commit(&live_target(), SystemInstant::new(Utc::now()), vec![write])
+        .await
+        .expect("the write commits its job");
 
     let first_event = || array_element(Expr::col(PendingSideEffects::Events), 1);
     let (events, lifecycle, stored_state): (i32, i16, bool) = Query::select()

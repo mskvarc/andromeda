@@ -9,7 +9,7 @@ use crate::{
         attribute_stream_keys_statement,
         delete_instance_statement,
         grow_stream_extent_statement,
-        record_instance_shape_statement,
+        grow_stream_shapes_statement,
         release_verbatim_instance_claim_statement,
         select_instance_statement,
         update_instance_statement,
@@ -18,8 +18,14 @@ use crate::{
     stream_shape_pruning::{lock_stream_evolutions, prune_stream_shapes},
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, instance_identity::InstanceIdentity};
-use andromeda_ngsi_ld_model::temporal::observation_metadata::ObservationMetadata;
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    entity_type_name::EntityTypeName,
+    identifier::Identifier,
+    instance_identity::InstanceIdentity,
+};
+use andromeda_ngsi_ld_model::temporal::{TemporalValue, observation_metadata::ObservationMetadata};
 use andromeda_postgresql_attribute_instance::{
     name_keys::MentionedNames,
     name_resolution::resolve_mentioned,
@@ -49,7 +55,7 @@ impl TemporalRepository {
         instance: &InstanceIdentity,
         replacement: &ObservedInstance,
     ) -> Result<(), TemporalStoreError> {
-        let state = UpdateInstanceState::of_replacement(replacement)?;
+        let state = UpdateInstanceState::of_replacement(replacement);
         self.update_instance(target, entity_id, attribute_name, instance, state).await
     }
 
@@ -117,7 +123,9 @@ impl TemporalRepository {
         if let Some(metadata) = state.metadata {
             mention(metadata, &mut mentioned);
         }
+        mentioned.types.extend(state.value.datatype().map(EntityTypeName::from));
         let keys = resolve_mentioned(&mut tx, mentioned, self.entity_type_names.as_ref(), self.attribute_names.as_ref()).await?;
+        let value = AttributeHistoryValue::of_observation(state.value, &keys)?;
         let HistoryMembers {
             value_type_key,
             object_type_keys,
@@ -138,11 +146,11 @@ impl TemporalRepository {
         let schema = schema_iden(target);
         let stream_keys = attribute_stream_keys(&mut tx, target, entity_id, attribute).await?;
         lock_stream_evolutions(&mut tx, schema.as_ref(), &stream_keys).await?;
-        let geometry = geometry_bytes(state.value.geometry())?;
+        let geometry = geometry_bytes(value.geometry())?;
         let mut external = ExternalArguments::default();
         let sub_attributes = external.push((!elements.is_empty()).then_some(elements));
         let replacement = InstanceReplacement {
-            value: &state.value,
+            value: &value,
             geometry: geometry.as_deref(),
             observed_at: state.observed_at,
             value_type_key: value_type_key.map(EntityTypeNameKey::get),
@@ -161,11 +169,7 @@ impl TemporalRepository {
             grow_stream_extent_statement(target, &modified, geometry).to_query().execute(&mut *tx).await?;
         }
         prune_stream_shapes(&mut tx, schema.as_ref(), &modified).await?;
-        record_instance_shape_statement(instance, target, &modified)
-            .map_err(TemporalStoreError::StatementBuild)?
-            .to_query()
-            .execute(&mut *tx)
-            .await?;
+        grow_stream_shapes_statement(instance, target, &modified).to_query().execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -209,14 +213,14 @@ fn instance_not_found(instance: &InstanceIdentity) -> TemporalNotFoundReason {
     }
 }
 
-/// Update values kept alive while PostgreSQL binds borrow them.
+/// What one replacement writes, borrowed from the observation it records.
 struct UpdateInstanceState<'a> {
-    /// The replacement's value, in the shape and column the row stores it in.
+    /// The replacement's value, encoded once its datatype has a key.
     ///
     /// A replacement always carries a value, so this is never a tombstone:
     /// that shape is reserved for a row recording a deletion (clauses 4.5.7
     /// and 4.5.8), which clause 5.6.15 cannot produce.
-    value: AttributeHistoryValue,
+    value: &'a TemporalValue,
     /// The replacement's metadata.
     metadata: Option<&'a ObservationMetadata>,
     /// The observation instant the modified instance declares, if any.
@@ -233,28 +237,28 @@ struct UpdateInstanceState<'a> {
 
 impl UpdateInstanceState<'_> {
     /// The update one replacement observation makes.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TemporalStoreError`] when the value does not encode.
-    fn of_replacement(replacement: &ObservedInstance) -> Result<UpdateInstanceState<'_>, TemporalStoreError> {
-        Ok(UpdateInstanceState {
-            value: AttributeHistoryValue::of_observation(&replacement.value)?,
+    const fn of_replacement(replacement: &ObservedInstance) -> UpdateInstanceState<'_> {
+        UpdateInstanceState {
+            value: &replacement.value,
             metadata: replacement.metadata.as_ref(),
             observed_at: replacement.observed_at,
             attribute_type: replacement.attribute_type,
-        })
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{history_members::HistoryMembers, instance_mutation::UpdateInstanceState};
+    use crate::{attribute_history_value::AttributeHistoryValue, history_members::HistoryMembers, instance_mutation::UpdateInstanceState};
     use andromeda_ngsi_ld_entity::document::instance_document::InstanceDocument;
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
     use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
     use andromeda_postgresql_codes::value_kind::ValueKind;
-    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames};
+    use andromeda_postgresql_query::{
+        attribute_name_key::AttributeNameKey,
+        dictionary::resolved_names::ResolvedNames,
+        entity_type_name_key::EntityTypeNameKey,
+    };
     use andromeda_temporal::observed_instance::ObservedInstance;
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
@@ -270,7 +274,19 @@ mod tests {
 
     /// The update `replacement` makes.
     fn update_of(replacement: &ObservedInstance) -> UpdateInstanceState<'_> {
-        UpdateInstanceState::of_replacement(replacement).expect("the replacement encodes")
+        UpdateInstanceState::of_replacement(replacement)
+    }
+
+    /// The row value `update` writes, the three time datatypes keyed.
+    fn encoded(update: &UpdateInstanceState<'_>) -> AttributeHistoryValue {
+        let datatypes = ["DateTime", "Date", "Time"].into_iter().zip(1..).map(|(form, key)| {
+            (
+                format!("https://uri.etsi.org/ngsi-ld/{form}").parse::<EntityTypeName>().expect("a datatype"),
+                EntityTypeNameKey::from(key),
+            )
+        });
+        AttributeHistoryValue::of_observation(update.value, &NameKeys::new(ResolvedNames::default(), ResolvedNames::from_pairs(datatypes)))
+            .expect("the value encodes")
     }
 
     /// The clause 5.6.15 replacement is read by the same decoder an append is, so an array-valued Property replaced in place keeps every element, as the structured column stores it.
@@ -280,9 +296,9 @@ mod tests {
             "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
             "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}, {"@value": 2}, {"@value": 3}]
         }));
-        let update = update_of(&replacement);
-        assert_eq!(update.value.kind(), ValueKind::Object);
-        let stored: Value = serde_json::from_str(update.value.object().expect("the structured column").get()).expect("parses");
+        let value = encoded(&update_of(&replacement));
+        assert_eq!(value.kind(), ValueKind::Object);
+        let stored: Value = serde_json::from_str(value.object().expect("the structured column").get()).expect("parses");
         assert_eq!(stored, json!([1, 2, 3]));
     }
 
@@ -310,7 +326,7 @@ mod tests {
             .collect();
         assert_eq!(keyed, vec![(0, AttributeNameKey::from(7))]);
         assert!(members.proof_seals.is_none() && members.value_type_key.is_none() && members.object_type_keys.is_empty());
-        let value: Value = serde_json::from_str(update.value.object().expect("the structured column").get()).expect("parses");
+        let value: Value = serde_json::from_str(encoded(&update).object().expect("the structured column").get()).expect("parses");
         assert_eq!(value, json!([{"@value": 1}]));
     }
 
@@ -330,7 +346,7 @@ mod tests {
             (json!({"@value": "10:00:00Z", "@type": "https://uri.etsi.org/ngsi-ld/Time"}), ValueKind::Time),
         ] {
             let replacement = replacement_of(&json!({"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [value]}));
-            assert_eq!(update_of(&replacement).value.kind(), kind, "{value}");
+            assert_eq!(encoded(&update_of(&replacement)).kind(), kind, "{value}");
         }
     }
 }

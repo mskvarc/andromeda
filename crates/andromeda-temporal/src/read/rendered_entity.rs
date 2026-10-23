@@ -328,7 +328,10 @@ mod tests {
                 attribute_name: "https://example.com/speed".parse().expect("a valid attribute name"),
                 attribute_type: AttributeType::Property,
                 dataset_id: None,
-                value: TemporalValue::Number(JsonNumber::from(value)),
+                value: TemporalValue::Number {
+                    number: JsonNumber::from(value),
+                    datatype: None,
+                },
                 observed_at: Some(instant),
                 recorded_at: instant,
                 created_at: Some(instant),

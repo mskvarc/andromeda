@@ -11,8 +11,7 @@ use crate::{
 use andromeda_context_commit::{change_event::ChangeEvent, history_record::mutation_history};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::system_instant::SystemInstant};
-use chrono::Utc;
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use std::sync::Arc;
 
 impl EntityService {
@@ -59,12 +58,12 @@ impl EntityService {
         // set is read from the fragment before the write merges it away.
         let requested = written_member_names(&fragment)?;
         let (events, not_updated): (Vec<ChangeEvent>, Vec<AttributeName>) = self
-            .commit_computed_write(target, entity, |previous| {
+            .commit_computed_write(target, entity, |previous, now| {
                 let mut updated = EntityState::clone(previous); // clone: shares every attribute the update leaves alone
                 let not_updated = member_attribute_names(updated.update_attributes(&fragment)?)?;
                 // Clause 4.8: a touched instance takes `now` for modifiedAt and keeps
                 // its createdAt across the read-modify-write.
-                updated.settle(Some(previous), SystemInstant::new(Utc::now()));
+                updated.settle(Some(previous), now);
                 let updated = Arc::new(updated);
                 let history = mutation_history(previous, &updated);
                 // The durable matches and the in-process events are planned

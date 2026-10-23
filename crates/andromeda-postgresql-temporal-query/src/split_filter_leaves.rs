@@ -33,7 +33,7 @@ use andromeda_postgresql_query::{
     scope_predicate::pattern_condition,
     window_reach::WindowReach,
 };
-use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
+use andromeda_postgresql_schema::current::{E, Entities};
 use andromeda_postgresql_seaquery::{literal::false_literal, pg_array::is_any_of};
 use sea_query::{Alias, Expr as SeaExpr, SelectStatement};
 
@@ -55,17 +55,17 @@ pub fn build_filter_leaf_truths(
     names: &QueryNames,
 ) -> Result<SelectStatement, RenderError> {
     let mut select = SelectStatement::new();
-    select.column((E, TemporalEntities::Id)).from(entity_rows(branch, E));
+    select.column((E, Entities::Id)).from(entity_rows(branch, E));
     for (position, leaf) in SplitFilter::of(&compiled.entities).leaves().enumerate() {
         select.expr_as(leaf_expression(branch, compiled, leaf, names)?, Alias::new(format!("leaf_{position}")));
     }
-    select.and_where(is_any_of(SeaExpr::col((E, TemporalEntities::Id)), entity_ids.iter().map(Identifier::to_string)));
+    select.and_where(is_any_of(SeaExpr::col((E, Entities::Id)), entity_ids.iter().map(Identifier::to_string)));
     Ok(select.take())
 }
 
 /// One leaf rendered over the temporal entity `e` names.
 fn leaf_expression(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, leaf: FilterLeaf<'_>, names: &QueryNames) -> Result<SeaExpr, RenderError> {
-    let of = HistoryOf::Entity(SeaExpr::col((E, TemporalEntities::Id)));
+    let of = HistoryOf::Entity(SeaExpr::col((E, Entities::Id)));
     match leaf {
         FilterLeaf::Term(pred) => {
             // clone: the compilation reads an expression tree, and the Query
@@ -139,6 +139,7 @@ mod tests {
                 ),
             ]),
             types: ResolvedNames::default(),
+            ..QueryNames::default()
         }
     }
 
@@ -214,6 +215,7 @@ mod tests {
                 ("https://example.com/name".parse().expect("valid attribute name"), AttributeNameKey::from(12)),
             ]),
             types: ResolvedNames::default(),
+            ..QueryNames::default()
         };
         let sql = build_filter_leaf_truths(&HistoryBranch::live(), &compiled, &ids(), &names)
             .expect("renders")

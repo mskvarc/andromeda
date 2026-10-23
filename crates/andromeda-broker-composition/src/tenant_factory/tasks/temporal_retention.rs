@@ -76,9 +76,8 @@ pub(super) fn register_temporal_retention(
                         attribute_history_chunks = sweep.attribute_history_chunks,
                         scope_events = sweep.scope_events,
                         streams = sweep.streams,
-                        stream_shapes = sweep.stream_shapes,
-                        temporal_entities = sweep.temporal_entities,
-                        released_write_records = sweep.released_write_records,
+                        narrowed_shape_masks = sweep.narrowed_shape_masks,
+                        vacated_evolutions = sweep.vacated_evolutions,
                         "temporal retention swept storage older than the configured horizon"
                     );
                     Ok(())

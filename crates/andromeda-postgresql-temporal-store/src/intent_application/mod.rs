@@ -4,16 +4,18 @@
 //! become (`temporal_entry`), so an application is a fixed sequence of
 //! statements that read the intents where they are: the claimed rows of the
 //! queue for the drain, the commit's own intents bound as one array for a
-//! commit that records natively. The statements write the write records, the
-//! Temporal Evolutions and streams, the instance replacements and claims, the
+//! commit that records natively. The statements write the Temporal Evolutions
+//! and streams, the instance replacements and claims, the
 //! history rows, the stream extents covering their geometries and the stream
 //! shapes their values carry, and the Scope rows; nothing is read back into
 //! the broker beyond the keys of the evolutions the application created, which
-//! the statements after them are sent, and the rows a replacement removes. The
+//! the statements after them are sent, the types the existing evolutions
+//! gained, whose streams the stream census counts next, and the rows a
+//! replacement removes. The
 //! drain runs the sequence in the transaction that also removes the intents, so a
 //! reader sees each entry queued or recorded, never both.
 
-/// The write records and catalogue an application establishes first.
+/// The catalogue an application establishes first.
 mod catalog_statements;
 /// Which ends of an instance an application records.
 mod deletion_judgement;
@@ -33,7 +35,7 @@ use crate::{
     duplicate_instance_claim::claim_write_failure,
     error::TemporalStoreError,
     intent_application::{
-        catalog_statements::{evolutions_and_streams_statement, untyped_observations_statement, untyped_streams_statement, write_records_statement},
+        catalog_statements::{evolutions_and_streams_statement, untyped_observations_statement, untyped_streams_statement},
         history_statements::{
             claims_statement,
             extent_growth_statement,
@@ -47,6 +49,7 @@ use crate::{
         replaced_rows::remove_replaced,
     },
     stored_catalog_error::StoredCatalogError,
+    stream_census::{GainedType, gained_types_census},
     stream_shape_pruning::prune_stream_shapes,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -55,20 +58,54 @@ use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_codes::temporal_intent_reach::TemporalIntentReach;
 use andromeda_postgresql_seaquery::{
     external_arguments::{ExternalArguments, ExternallyBound},
+    statement::Statement,
     unnest::UnnestAliased,
 };
 use andromeda_temporal::temporal_not_found_reason::TemporalNotFoundReason;
 use derive_more::From;
 use sea_query::{DeleteStatement, DynIden, InsertStatement, SelectStatement, UpdateStatement, WithQuery, error::Error as SeaQueryError};
-use sqlx::{PgConnection, Postgres, Row, postgres::PgArguments, query::Query};
+use sqlx::{
+    PgConnection,
+    Postgres,
+    Row,
+    postgres::{PgArguments, PgRow},
+    query::Query,
+};
+
+/// What the evolution step of an application wrote.
+#[derive(Debug, Default)]
+struct Evolutions {
+    /// The keys of the Temporal Evolutions it created.
+    created: Vec<i64>,
+    /// The types the Temporal Evolutions that existed gained.
+    gained: Vec<GainedType>,
+}
+
+impl Evolutions {
+    /// The evolutions the rows of the evolution statement return, each an
+    /// entity key, whether the statement created it and the types it gained.
+    fn of(rows: &[PgRow]) -> Result<Evolutions, sqlx::Error> {
+        let mut evolutions = Evolutions::default();
+        for row in rows {
+            let entity_key: i64 = row.try_get(0)?;
+            if row.try_get(1)? {
+                evolutions.created.push(entity_key);
+            }
+            let gained: Vec<i32> = row.try_get(2)?;
+            evolutions.gained.extend(gained.into_iter().map(|type_key| GainedType { entity_key, type_key }));
+        }
+        Ok(evolutions)
+    }
+}
 
 /// What the application does with one statement's outcome.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum StepRole {
     /// Run it.
     Write,
-    /// Run it and keep the keys of the Temporal Evolutions it returns as
-    /// created.
+    /// Run it, keep the keys of the Temporal Evolutions it returns as
+    /// created and count the types it returns as gained into the stream
+    /// census.
     Evolve,
     /// Run it and refuse the application when it returns a row.
     RefuseUntyped,
@@ -151,12 +188,9 @@ impl Step {
 /// of the ones the application created, which decide the ends of an instance
 /// it records.
 fn application_steps() -> Vec<Step> {
-    let (nothing, identities, everything) = (EntryReads::Nothing, EntryReads::Identities, EntryReads::Everything);
+    let (identities, everything) = (EntryReads::Identities, EntryReads::Everything);
     vec![
-        Step::of(StepRole::Write, None, nothing, |source, _| {
-            write_records_statement(source).map(StepStatement::from)
-        }),
-        Step::of(StepRole::Evolve, Some(TemporalIntentReach::TypedIntent), identities, |source, schema| {
+        Step::of(StepRole::Evolve, Some(TemporalIntentReach::TypedIntent), everything, |source, schema| {
             evolutions_and_streams_statement(source, schema).map(StepStatement::from)
         }),
         Step::of(
@@ -168,7 +202,7 @@ fn application_steps() -> Vec<Step> {
         Step::of(
             StepRole::Write,
             Some(TemporalIntentReach::UntypedAttributeEntry),
-            identities,
+            everything,
             |source, schema| untyped_streams_statement(source, schema).map(StepStatement::from),
         ),
         Step::of(StepRole::Replace, Some(TemporalIntentReach::VerbatimInstance), identities, |source, schema| {
@@ -187,7 +221,7 @@ fn application_steps() -> Vec<Step> {
             Ok(extent_growth_statement(source, schema).into())
         }),
         Step::of(StepRole::Write, Some(TemporalIntentReach::AttributeEntry), everything, |source, schema| {
-            stream_shapes_statement(source, schema).map(StepStatement::from)
+            Ok(stream_shapes_statement(source, schema).into())
         }),
         Step::of(StepRole::Write, Some(TemporalIntentReach::ScopeEntry), everything, |source, schema| {
             scope_history_statement(source, schema).map(StepStatement::from)
@@ -217,11 +251,26 @@ pub async fn apply_intents_in_tx(connection: &mut PgConnection, source: &IntentS
     let mut created = Vec::new();
     for step in application_steps() {
         if step.need.is_none_or(|need| source.may_meet(need))
-            && let Some(keys) = run(connection, source, schema.as_ref(), &created, step).await?
+            && let Some(evolutions) = run(connection, source, schema.as_ref(), &created, step).await?
         {
-            created = keys;
+            count_gained_types(connection, schema.as_ref(), &evolutions.gained).await?;
+            created = evolutions.created;
         }
     }
+    Ok(())
+}
+
+/// Count every stream of the evolutions in `gained` into the stream census of
+/// the branch `schema` names, under the type each gained.
+async fn count_gained_types(connection: &mut PgConnection, schema: Option<&DynIden>, gained: &[GainedType]) -> Result<(), TemporalStoreError> {
+    if gained.is_empty() {
+        return Ok(());
+    }
+    gained_types_census(schema, gained)
+        .map_err(TemporalStoreError::StatementBuild)?
+        .to_query()
+        .execute(connection)
+        .await?;
     Ok(())
 }
 
@@ -245,15 +294,15 @@ pub(crate) async fn record_history_in_tx(connection: &mut PgConnection, source: 
 }
 
 /// Run one step over `source` in the branch `schema` names, `created` the keys
-/// of the evolutions the application created, and return the keys an
-/// [`StepRole::Evolve`] step created.
+/// of the evolutions the application created, and return what an
+/// [`StepRole::Evolve`] step wrote.
 async fn run(
     connection: &mut PgConnection,
     source: &IntentSource<'_>,
     schema: Option<&DynIden>,
     created: &[i64],
     Step { role, reads, build, .. }: Step,
-) -> Result<Option<Vec<i64>>, TemporalStoreError> {
+) -> Result<Option<Evolutions>, TemporalStoreError> {
     let staged = StagedSource::new(source, reads, created);
     let statement = build(&staged, schema).map_err(TemporalStoreError::StatementBuild)?;
     let query = statement.into_query(staged.into_external());
@@ -263,7 +312,7 @@ async fn run(
         }
         StepRole::Evolve => {
             let rows = query.fetch_all(&mut *connection).await?;
-            return Ok(Some(rows.iter().map(|row| row.try_get(0)).collect::<Result<_, _>>()?));
+            return Ok(Some(Evolutions::of(&rows)?));
         }
         StepRole::Claim => {
             query.execute(&mut *connection).await.map_err(claim_write_failure)?;

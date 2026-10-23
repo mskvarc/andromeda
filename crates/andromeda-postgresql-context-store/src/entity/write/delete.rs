@@ -17,8 +17,16 @@ use crate::{
 use andromeda_context_commit::deleted_entity::DeletedEntity;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_schema::current::{E, Entities, EntitySearch};
+use andromeda_postgresql_branch::{schema_iden, table_of};
+use andromeda_postgresql_query::{
+    entity_sides::{holds_current_state, holds_evolution},
+    type_membership::Memberships,
+    type_membership_moves::side_departure,
+};
+use andromeda_postgresql_schema::{
+    current::{CurrentAttributes, E, Entities, EntitySearch},
+    type_membership::MembershipSide,
+};
 use andromeda_postgresql_seaquery::{
     pg_array::{nullable_array, text_array},
     statement::Statement,
@@ -26,7 +34,7 @@ use andromeda_postgresql_seaquery::{
 };
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use chrono::{DateTime, Utc};
-use sea_query::{CommonTableExpression, Expr, ExprTrait, Iden, IntoIden, JoinType, LockType, Query, WithClause, WithQuery};
+use sea_query::{CommonTableExpression, Expr, ExprTrait, Iden, IntoIden, JoinType, Keyword, LockType, Query, SimpleExpr, WithClause, WithQuery};
 use sqlx::{Postgres, Row, Transaction};
 
 /// The statement name the entity set-delete is observed under.
@@ -37,19 +45,56 @@ const ENTITY_DELETE: StatementName = StatementName("entity-delete");
 #[iden = "gone"]
 struct Gone;
 
+/// Whether a doomed Entity keeps its identity row for its Temporal Evolution,
+/// `kept`, a column of `doomed`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "kept"]
+struct Kept;
+
+/// The CTE taking the current state off the identity rows a Temporal
+/// Evolution keeps, `retired`, whose only purpose is to run.
+#[derive(Iden, Clone, Copy)]
+#[iden = "retired"]
+struct Retired;
+
+/// The CTE removing the attribute instances of the identity rows a Temporal
+/// Evolution keeps, `retired_attributes`, whose only purpose is to run.
+#[derive(Iden, Clone, Copy)]
+#[iden = "retired_attributes"]
+struct RetiredAttributes;
+
+/// The CTE clearing the current flag of the memberships a Temporal Evolution
+/// keeps, `unflagged`, whose only purpose is to run.
+#[derive(Iden, Clone, Copy)]
+#[iden = "unflagged"]
+struct Unflagged;
+
+/// The CTE deleting the memberships no Temporal Evolution keeps, `strays`,
+/// whose only purpose is to run.
+#[derive(Iden, Clone, Copy)]
+#[iden = "strays"]
+struct Strays;
+
 /// Build the batch delete of `ids`, each held to its entry of
 /// `expected_modified_at`.
 ///
 /// ```sql
-/// WITH doomed AS (SELECT e.entity_key, e.id, e.created_at, e.modified_at, e.expires_at
+/// WITH doomed AS (SELECT e.entity_key, e.id, e.created_at, e.modified_at, e.expires_at,
+///                        e.evolution_created_at IS NOT NULL AS kept
 ///                 FROM UNNEST(…) AS d(id, expected_modified_at)
 ///                 JOIN entities e ON e.id = d.id
-///                 WHERE d.expected_modified_at IS NULL OR e.modified_at = d.expected_modified_at
+///                 WHERE e.created_at IS NOT NULL
+///                   AND (d.expected_modified_at IS NULL OR e.modified_at = d.expected_modified_at)
 ///                 FOR UPDATE OF e),
 ///      srch(entity_key, old_types, old_instance_names, old_instance_kinds) AS
 ///              (DELETE FROM entity_search WHERE entity_key IN (SELECT entity_key FROM doomed)
 ///               RETURNING entity_key, entity_type_name_keys, attribute_instance_name_keys, attribute_instance_kinds),
-///      gone AS (DELETE FROM entities WHERE entity_key IN (SELECT entity_key FROM doomed)),
+///      gone AS (DELETE FROM entities WHERE entity_key IN (SELECT entity_key FROM doomed WHERE NOT kept)),
+///      retired AS (UPDATE entities SET created_at = NULL, modified_at = NULL, expires_at = NULL,
+///                  min_attribute_expires_at = NULL WHERE entity_key IN (SELECT entity_key FROM doomed WHERE kept)),
+///      retired_attributes AS (DELETE FROM current_attributes WHERE entity_key IN (… WHERE kept)),
+///      unflagged AS (UPDATE entity_type_members SET is_current_member = FALSE WHERE entity_key IN (… WHERE kept) AND is_evolution_member),
+///      strays AS (DELETE FROM entity_type_members WHERE entity_key IN (… WHERE kept) AND NOT is_evolution_member),
 ///      census_types AS (INSERT INTO entity_type_census … FROM srch …), census_type_attributes AS (…), census_attributes AS (…)
 /// SELECT id, created_at, modified_at, expires_at FROM doomed
 /// ```
@@ -64,11 +109,15 @@ struct Gone;
 /// The search row is deleted by name so that the rows it held come back: the
 /// discovery census counts every one of their types and attribute instances
 /// out, from the row the delete removed rather than from the statement's
-/// snapshot of it. Everything else goes with the identity row: the type
-/// memberships through their cascading foreign key, the attribute instances
-/// through the statement-level trigger on `entities`, which removes the
-/// instances of every deleted entity in one pass. Clause 5.6.6 leaves the
-/// temporal evolution standing, so no history relation is touched. The system
+/// snapshot of it. Clause 5.6.6 leaves the Temporal Evolution standing, so no
+/// history relation is touched, and an Entity holding one keeps its identity
+/// row with its current state taken off: its attribute instances go, and its
+/// type memberships keep the Evolution's flag alone. Everything of an Entity
+/// without one goes with the identity row: the type memberships through
+/// their cascading foreign key, the attribute instances through the
+/// statement-level trigger on `entities`, which removes the instances of
+/// every deleted entity in one pass. An Entity without a current state is not
+/// a candidate at all, so a core delete of it finds nothing. The system
 /// attributes come back because the clause 5.6.10 notification carries them
 /// and cannot read them once the rows are gone; the attributes do not, because
 /// every caller that needs them read them before the delete.
@@ -93,6 +142,7 @@ pub(super) fn entity_delete_statement(
         .expr(Expr::col((E, Entities::CreatedAt)))
         .expr(Expr::col((E, Entities::ModifiedAt)))
         .expr(Expr::col((E, Entities::ExpiresAt)))
+        .expr_as(holds_evolution(E), Kept)
         .from_function(staging_source(&columns, arrays), Staged)
         .join_as(
             JoinType::Join,
@@ -100,10 +150,14 @@ pub(super) fn entity_delete_statement(
             E,
             Expr::col((E, Entities::Id)).equals((Staged, StagedColumn::Id)),
         )
+        .and_where(holds_current_state(E))
         .cond_where(expectation(staged(StagedColumn::ExpectedModifiedAt), E))
         .lock_with_tables(LockType::Update, [E.into_iden()]);
 
     let doomed_keys = || Query::select().column(Entities::EntityKey).from(Doomed).take();
+    let doomed_keys_where = |kept: SimpleExpr| Query::select().column(Entities::EntityKey).from(Doomed).and_where(kept).take();
+    let kept_keys = || doomed_keys_where(Expr::col(Kept));
+    let unkept_keys = || doomed_keys_where(Expr::col(Kept).not());
     let search = Query::delete()
         .from_table(table_of(target, EntitySearch::Table))
         .and_where(Expr::col(EntitySearch::EntityKey).in_subquery(doomed_keys()))
@@ -116,8 +170,30 @@ pub(super) fn entity_delete_statement(
         .take();
     let gone = Query::delete()
         .from_table(table_of(target, Entities::Table))
-        .and_where(Expr::col(Entities::EntityKey).in_subquery(doomed_keys()))
+        .and_where(Expr::col(Entities::EntityKey).in_subquery(unkept_keys()))
         .take();
+    let retired = Query::update()
+        .table(table_of(target, Entities::Table))
+        .values([
+            (Entities::CreatedAt, Keyword::Null.into()),
+            (Entities::ModifiedAt, Keyword::Null.into()),
+            (Entities::ExpiresAt, Keyword::Null.into()),
+            (Entities::MinAttributeExpiresAt, Keyword::Null.into()),
+        ])
+        .and_where(Expr::col(Entities::EntityKey).in_subquery(kept_keys()))
+        .take();
+    let retired_attributes = Query::delete()
+        .from_table(table_of(target, CurrentAttributes::Table))
+        .and_where(Expr::col(CurrentAttributes::EntityKey).in_subquery(kept_keys()))
+        .take();
+    let schema = schema_iden(target);
+    let memberships = side_departure(
+        Memberships {
+            side: MembershipSide::Current,
+            schema: schema.as_ref(),
+        },
+        kept_keys(),
+    );
 
     let mut with = WithClause::new();
     with.cte(CommonTableExpression::new().table_name(Doomed).query(doomed.take()).to_owned())
@@ -133,7 +209,11 @@ pub(super) fn entity_delete_statement(
                 .query(search)
                 .to_owned(),
         )
-        .cte(CommonTableExpression::new().table_name(Gone).query(gone).to_owned());
+        .cte(CommonTableExpression::new().table_name(Gone).query(gone).to_owned())
+        .cte(CommonTableExpression::new().table_name(Retired).query(retired).to_owned())
+        .cte(CommonTableExpression::new().table_name(RetiredAttributes).query(retired_attributes).to_owned())
+        .cte(CommonTableExpression::new().table_name(Unflagged).query(memberships.cleared).to_owned())
+        .cte(CommonTableExpression::new().table_name(Strays).query(memberships.deleted).to_owned());
     for census in CensusStatements::of(target, Srch, CensusChange::Removed)?.ctes() {
         with.cte(census);
     }
@@ -158,9 +238,10 @@ impl EntityRepository {
     ///
     /// The search row is deleted beside the identity row so the discovery
     /// census can count out what it held; the membership and attribute
-    /// instance rows the entity owns go with the identity row, and the
-    /// entity's temporal evolution deliberately survives: clause 5.6.6 deletes
-    /// the Entity, and only clause 5.6.16 deletes its history.
+    /// instance rows of the current state go with it, and the entity's
+    /// temporal evolution deliberately survives, keeping the identity row:
+    /// clause 5.6.6 deletes the Entity, and only clause 5.6.16 deletes its
+    /// history.
     ///
     /// `expected_modified_at` is positionally aligned with `ids`; a `None` entry
     /// deletes unconditionally.
@@ -220,11 +301,14 @@ mod tests {
         let sql = entity_delete_sql(&ContextTarget::Live);
         assert!(sql.contains("UNNEST($1::text[], $2::timestamptz[])"), "{sql}");
         assert!(
-            sql.starts_with(r#"WITH "doomed" AS (SELECT "e"."entity_key", "e"."id", "e"."created_at", "e"."modified_at", "e"."expires_at" FROM UNNEST("#),
+            sql.starts_with(r#"WITH "doomed" AS (SELECT "e"."entity_key", "e"."id", "e"."created_at", "e"."modified_at", "e"."expires_at", "e"."evolution_created_at" IS NOT NULL AS "kept" FROM UNNEST("#),
             "{sql}"
         );
         assert!(sql.contains("AS d(id, expected_modified_at)"), "{sql}");
-        assert!(sql.contains(r#"JOIN "entities" AS "e" ON "e"."id" = "d"."id" WHERE"#), "{sql}");
+        assert!(
+            sql.contains(r#"JOIN "entities" AS "e" ON "e"."id" = "d"."id" WHERE "e"."created_at" IS NOT NULL AND"#),
+            "an Entity without a current state is no candidate: {sql}"
+        );
         assert!(
             sql.contains(r#""d"."expected_modified_at" IS NULL OR "e"."modified_at" = "d"."expected_modified_at""#),
             "{sql}"
@@ -236,7 +320,7 @@ mod tests {
     fn the_delete_removes_identity_rows_by_key_and_returns_what_the_notification_needs() {
         let sql = entity_delete_sql(&ContextTarget::Live);
         assert!(
-            sql.contains(r#""gone" AS (DELETE FROM "entities" WHERE "entity_key" IN (SELECT "entity_key" FROM "doomed"))"#),
+            sql.contains(r#""gone" AS (DELETE FROM "entities" WHERE "entity_key" IN (SELECT "entity_key" FROM "doomed" WHERE NOT "kept"))"#),
             "{sql}"
         );
         assert!(
@@ -245,20 +329,39 @@ mod tests {
         );
     }
 
-    /// Clause 5.6.6 leaves the temporal evolution standing, and the
-    /// membership and attribute instance rows go with the identity row, the
-    /// instances through the statement-level trigger on `entities`.
+    /// Clause 5.6.6 leaves the Temporal Evolution standing: an Entity holding
+    /// one keeps its identity row with the current state taken off, its
+    /// attribute instances removed and its memberships kept for the
+    /// Evolution alone. No history relation is touched.
     #[test]
-    fn an_entity_delete_is_one_statement() {
+    fn an_entity_with_a_temporal_evolution_keeps_its_identity_row() {
         let sql = entity_delete_sql(&ContextTarget::Live);
-        pretty_assertions::assert_eq!(sql.matches(r#"DELETE FROM "entities""#).count(), 1, "{sql}");
-        for relation in [
-            "current_attributes",
-            "attribute_history",
-            "temporal_entities",
-            "temporal_attribute_streams",
-            "entity_type_members",
-        ] {
+        let kept = r#"(SELECT "entity_key" FROM "doomed" WHERE "kept")"#;
+        assert!(
+            sql.contains(&format!(
+                r#""retired" AS (UPDATE "entities" SET "created_at" = NULL, "modified_at" = NULL, "expires_at" = NULL, "min_attribute_expires_at" = NULL WHERE "entity_key" IN {kept})"#
+            )),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(&format!(
+                r#""retired_attributes" AS (DELETE FROM "current_attributes" WHERE "entity_key" IN {kept})"#
+            )),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(&format!(
+                r#""unflagged" AS (UPDATE "entity_type_members" SET "is_current_member" = FALSE WHERE "entity_key" IN {kept} AND "is_evolution_member")"#
+            )),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(&format!(
+                r#""strays" AS (DELETE FROM "entity_type_members" WHERE "entity_key" IN {kept} AND (NOT "is_evolution_member"))"#
+            )),
+            "{sql}"
+        );
+        for relation in ["attribute_history", "temporal_attribute_streams", "scope_history"] {
             assert!(!sql.contains(relation), "entity deletion must not name {relation}: {sql}");
         }
     }

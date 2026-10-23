@@ -14,9 +14,8 @@ use andromeda_ngsi_ld_entity::{
     document::{EntityDocument, EntityDocumentParts},
     entity_state::EntityState,
 };
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_telemetry::entity::{self, EntityOperation};
-use chrono::Utc;
 use std::sync::Arc;
 
 impl EntityService {
@@ -45,10 +44,9 @@ impl EntityService {
                 return Err(EntityError::not_found(id));
             }
             let mut replacement = Arc::new(EntityState::try_from(identified_as(admitted.into_document(), id)?)?);
-            let now = SystemInstant::new(Utc::now());
 
             let events = self
-                .commit_computed_write(target, entity, |previous| {
+                .commit_computed_write(target, entity, |previous, now| {
                     // Clause 4.8: an attribute the replacement keeps (same datasetId)
                     // keeps its createdAt, matching the Entity-level createdAt column
                     // that a replace does not rewrite; an instance whose content

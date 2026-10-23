@@ -169,7 +169,13 @@ mod tests {
         let Some(WrittenInstance::Observation(observed)) = read(&instance) else {
             panic!("an observation");
         };
-        pretty_assertions::assert_eq!(observed.value, TemporalValue::Number("1".parse().expect("a number")));
+        pretty_assertions::assert_eq!(
+            observed.value,
+            TemporalValue::Number {
+                number: "1".parse().expect("a number"),
+                datatype: None
+            }
+        );
     }
 
     /// An instance naming neither a family nor a value records nothing.

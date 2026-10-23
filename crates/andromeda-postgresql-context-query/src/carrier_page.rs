@@ -158,6 +158,7 @@ mod tests {
                     .map(|(name, key)| (format!("https://example.com/{name}").parse().expect("valid name"), AttributeNameKey::from(key))),
             ),
             types: ResolvedNames::from_pairs([("https://example.com/Trip".parse().expect("valid type name"), EntityTypeNameKey::from(3))]),
+            ..QueryNames::default()
         }
     }
 
@@ -184,7 +185,7 @@ mod tests {
             .split_once(r#", "candidates" AS  MATERIALIZED "#)
             .unwrap_or_else(|| panic!("the carriers: {sql}"));
         assert!(
-            short.contains(r#"FROM (SELECT "entities"."entity_key", "entities"."id" AS "sort_0" FROM "entities" WHERE TRUE ORDER BY "sort_0" ASC LIMIT $"#),
+            short.contains(r#"FROM (SELECT "entities"."entity_key", "entities"."id" AS "sort_0" FROM "entities" WHERE "entities"."created_at" IS NOT NULL ORDER BY "sort_0" ASC LIMIT $"#),
             "the walk visits Entities without filtering them: {short}"
         );
         assert!(
@@ -273,14 +274,20 @@ mod tests {
         let short = sql
             .split_once(r#", "candidates" AS "#)
             .map_or_else(|| panic!("a gated page: {sql}"), |(short, _)| short);
-        assert!(short.contains(r#"FROM "entities" WHERE "entities"."id" > $"#), "{short}");
+        assert!(
+            short.contains(r#"FROM "entities" WHERE "entities"."created_at" IS NOT NULL AND "entities"."id" > $"#),
+            "{short}"
+        );
         assert!(!sql.contains("OFFSET"), "a cursor page skips nothing: {sql}");
     }
 
     #[test]
     fn a_page_deeper_than_the_short_walk_visits_no_entity_before_the_carriers() {
         let (sql, values) = page_sql(&by_attrs(&["headSign"]), &PageWindow::offset(100, 30_000));
-        assert!(sql.contains(r#"FROM "entities" WHERE TRUE ORDER BY "sort_0" ASC LIMIT $1 OFFSET $2"#), "{sql}");
+        assert!(
+            sql.contains(r#"FROM "entities" WHERE "entities"."created_at" IS NOT NULL ORDER BY "sort_0" ASC LIMIT $1 OFFSET $2"#),
+            "{sql}"
+        );
         assert_eq!(values.first(), Some(&Value::BigUnsigned(Some(0))), "{values:?}");
         assert!(!values.contains(&Value::BigUnsigned(Some(5_000))), "{values:?}");
     }

@@ -14,10 +14,9 @@ use andromeda_context_commit::history_record::mutation_history;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{engine::term_lookup::PreparedTermContext, user_context_admission::AdmittedContext};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::system_instant::SystemInstant};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{attribute::merge_member::MergeMember, entity::EntityPatch};
 use andromeda_telemetry::entity::{self, EntityOperation};
-use chrono::Utc;
 use std::sync::Arc;
 
 impl EntityService {
@@ -79,9 +78,8 @@ impl EntityService {
                 admitted.into_document()
             };
 
-            let now = SystemInstant::new(Utc::now());
             let events = self
-                .commit_computed_write(target, write_target, |previous| {
+                .commit_computed_write(target, write_target, |previous, now| {
                     let mut merged = EntityState::clone(previous); // clone: shares every attribute the merge leaves alone
                     merged.merge(&fragment, options.observed_at)?;
                     // Clause 4.8: a merged instance keeps its createdAt and, when its

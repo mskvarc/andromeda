@@ -15,25 +15,12 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow};
-use andromeda_ngsi_ld_query::{
-    count_policy::CountPolicy,
-    page_window::PageWindow,
-    split_filter::LeafTruths,
-    temporal::{
-        compiled::CompiledTemporalQuery,
-        grouping::{AggregationGrouping, group_key::GroupKey},
-    },
-};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow, split_filter::LeafTruths, temporal::compiled::CompiledTemporalQuery};
 use andromeda_postgresql_codes::{
     attribute_kind_code::{attribute_type_of, stored_attribute_kind},
     recorded_shape::RecordedShape,
 };
-use andromeda_postgresql_query::{
-    dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-    history_source::HistoryBranch,
-    projected_attribute_names::projected_attribute_names,
-    projected_type_names::projected_type_names,
-};
+use andromeda_postgresql_query::history_source::HistoryBranch;
 use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
 use andromeda_postgresql_temporal_query::{
     history::build_temporal_history_query,
@@ -59,7 +46,6 @@ use andromeda_temporal::{
     },
 };
 use async_trait::async_trait;
-use iri_rs::IriBuf;
 use sqlx::{Row, postgres::PgRow};
 use std::collections::{HashMap, HashSet};
 
@@ -136,60 +122,6 @@ const fn neutral_attribute_shape(stored: StoredAttributeShape) -> RecordedAttrib
 }
 
 impl TemporalRepository {
-    /// Resolve the attribute and type names a compiled query's selection reads
-    /// through the dictionaries the write path minted their keys in.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TemporalError`] when a dictionary lookup fails.
-    pub(crate) async fn resolve_query_names(&self, compiled: &CompiledTemporalQuery) -> Result<QueryNames, TemporalError> {
-        // Clause 5.7.4.3 confines a temporal ordering to the `id` member, which
-        // is a column of the temporal catalogue and names no attribute, so the
-        // dictionary lookup below has no ordering term to resolve. The `attrs`
-        // selection, the `pick`/`omit` projection and the attributes an
-        // `aggrGroupBy` keys by resolve with the filters, so a statement
-        // narrows the history it reads by key inside the source rather than by
-        // name above it.
-        let grouped = compiled
-            .representation
-            .grouping
-            .iter()
-            .flat_map(AggregationGrouping::terms)
-            .filter_map(|term| match &term.key {
-                GroupKey::Path(path) => Some(path.attr.as_str()),
-                GroupKey::Member(_) => None,
-            });
-        let attribute_names = projected_attribute_names(
-            compiled
-                .instances
-                .attr_filter
-                .iter()
-                .map(IriBuf::as_str)
-                .chain(compiled.entities.projected_members.names())
-                .chain(grouped),
-            compiled.entities.q_expr.as_ref(),
-            compiled.entities.geo.as_ref(),
-            &[],
-        );
-        // The projection is written inside the transaction that writes the
-        // entity, so a dictionary hit is already backed by committed projection
-        // rows and there is nothing to wait for.
-        let attributes = if attribute_names.is_empty() {
-            ResolvedNames::default()
-        } else {
-            self.attribute_names.lookup(&attribute_names).await.map_err(TemporalStoreError::from)?
-        };
-        // The catalogue carries type keys, so a type selection resolves through
-        // the same dictionary the write path minted them in.
-        let type_names = projected_type_names(&compiled.entities);
-        let types = if type_names.is_empty() {
-            ResolvedNames::default()
-        } else {
-            self.entity_type_names.lookup(&type_names).await.map_err(TemporalStoreError::from)?
-        };
-        Ok(QueryNames { attributes, types })
-    }
-
     /// Read the reified temporal scope of one entity over the compiled window.
     ///
     /// Clause 4.18 makes the Scope "a special scope Property that is
@@ -270,7 +202,7 @@ impl TemporalHistoryReader for TemporalRepository {
         window: &PageWindow,
         count: CountPolicy,
     ) -> Result<TemporalEntityIdOutcome, TemporalError> {
-        let names = self.resolve_query_names(compiled).await?;
+        let names = self.resolve_walk_names(&branch_of(scope), compiled).await?;
 
         // The statement compares identifiers under the collation the ordering
         // names, and PostgreSQL pre-imports only the `<locale>-x-icu` forms; a

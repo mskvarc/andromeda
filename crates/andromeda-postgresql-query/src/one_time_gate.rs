@@ -119,7 +119,7 @@ impl CandidateBound {
 #[cfg(test)]
 mod tests {
     use crate::one_time_gate::{Candidates, beyond, bounded, column_of, within};
-    use andromeda_postgresql_schema::temporal::TemporalEntities;
+    use andromeda_postgresql_schema::current::Entities;
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
 
@@ -144,8 +144,8 @@ mod tests {
     #[test]
     fn the_candidate_column_is_the_one_the_caller_names() {
         assert_eq!(
-            column_of(Candidates, TemporalEntities::TemporalEntityKey).to_string(PostgresQueryBuilder),
-            r#"SELECT "temporal_entity_key" FROM "candidates""#
+            column_of(Candidates, Entities::EntityKey).to_string(PostgresQueryBuilder),
+            r#"SELECT "entity_key" FROM "candidates""#
         );
     }
 }

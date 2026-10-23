@@ -117,15 +117,23 @@ fn commit_steps() -> Vec<(StepRole, String)> {
     )
 }
 
-/// The statement among `steps` that writes into `table`.
+/// The statement among `steps` that writes into `table`, a stream insert
+/// counting its streams into the census from the common table it runs in.
 fn writing_in(steps: Vec<(StepRole, String)>, table: &str) -> String {
     let prefix = format!(r#"INSERT INTO "{table}""#);
+    let counted = format!("{COUNTED_STREAMS}{prefix}");
     steps
         .into_iter()
         .map(|(_, sql)| sql)
-        .find(|sql| sql.starts_with(&prefix))
+        .find(|sql| sql.starts_with(&prefix) || sql.starts_with(&counted))
         .unwrap_or_else(|| panic!("no statement writes {table}"))
 }
+
+/// The head of a statement whose stream change the census counts.
+const COUNTED_STREAMS: &str = r#"WITH "changed_streams" AS ("#;
+
+/// The head of the stream insert of the intents stating no type.
+const UNTYPED_STREAMS: &str = r#"WITH "changed_streams" AS (INSERT INTO "temporal_attribute_streams""#;
 
 /// The statement of the drain that writes into `table`.
 fn writing(table: &str) -> String {
@@ -142,16 +150,19 @@ fn evolving() -> String {
         .expect("an evolution statement")
 }
 
-/// The query of the evolution statement, which returns the keys of the
-/// evolutions it created.
-const CREATED_KEYS: &str = r#") SELECT "evolved"."temporal_entity_key" FROM "evolved" WHERE "evolved"."created""#;
+/// The types an evolution gained, as the evolution statement reads them.
+const GAINED_TYPES: &str = r#"ARRAY (SELECT "gt" FROM UNNEST("evolved"."new_types") AS "gt" WHERE NOT "gt" = ANY("evolved"."old_types"))"#;
+
+/// The head of the query of the evolution statement, which returns the
+/// evolutions it created or gave a type.
+const EVOLVED_ROWS: &str = r#") SELECT "evolved"."entity_key", "evolved"."created", "#;
 
 /// The query `sql` names `name` in its `WITH` clause, up to the query that
 /// follows it.
 fn common_table<'s>(sql: &'s str, name: &str) -> &'s str {
     let start = sql.find(&format!(r#""{name}" "#)).unwrap_or_else(|| panic!("no {name} in {sql}"));
     let rest = &sql[start..];
-    let end = [") , ", ") INSERT ", CREATED_KEYS]
+    let end = [") , ", ") INSERT ", EVOLVED_ROWS]
         .iter()
         .filter_map(|follower| rest.find(follower))
         .min()
@@ -159,7 +170,6 @@ fn common_table<'s>(sql: &'s str, name: &str) -> &'s str {
     &rest[..end]
 }
 
-/// The position of the first statement whose text starts with `prefix`.
 /// The position of the drain's step in `role`.
 fn role_position(role: StepRole) -> usize {
     rendered_steps()
@@ -176,6 +186,7 @@ fn in_role(role: StepRole) -> String {
         .map_or_else(|| panic!("no step in {role:?}"), |(_, sql)| sql)
 }
 
+/// The position of the first statement whose text starts with `prefix`.
 fn position(prefix: &str) -> usize {
     rendered_steps()
         .iter()
@@ -310,7 +321,7 @@ fn an_assertion_is_inserted_only_when_either_head_differs() {
         );
     }
     assert!(
-        sql.contains(r#"FROM "scope_history" AS "sr" WHERE "sr"."temporal_entity_key" = "te"."temporal_entity_key""#),
+        sql.contains(r#"FROM "scope_history" AS "sr" WHERE "sr"."entity_key" = "te"."entity_key""#),
         "{sql}"
     );
     assert!(
@@ -352,7 +363,7 @@ fn an_assertion_is_judged_against_the_earlier_scope_entries_of_its_entity_in_the
 #[test]
 fn the_first_assertion_of_an_entity_in_the_batch_is_judged_against_both_heads() {
     let sql = scope_insert();
-    let union = r#"FROM "scope_history" AS "sr" WHERE "sr"."temporal_entity_key" = "te"."temporal_entity_key" UNION ALL"#;
+    let union = r#"FROM "scope_history" AS "sr" WHERE "sr"."entity_key" = "te"."entity_key" UNION ALL"#;
     assert_eq!(sql.matches(union).count(), 4, "two reads of each of two axes: {sql}");
 }
 
@@ -374,23 +385,6 @@ fn an_assertion_is_judged_without_reading_the_queue_in_any_source() {
     assert!(!snapshot.contains("temporal_append_intents"), "{snapshot}");
 }
 
-#[test]
-fn a_write_record_is_persisted_once_per_commit() {
-    let writes: Vec<String> = commit_steps()
-        .into_iter()
-        .map(|(_, sql)| sql)
-        .filter(|sql| sql.starts_with(r#"INSERT INTO "write_records""#))
-        .collect();
-    let [write] = writes.as_slice() else {
-        panic!("one write-record insert: {writes:?}");
-    };
-    assert!(
-        write.contains(r#"("write_id", "recorded_at", "accepted_at") SELECT DISTINCT "i"."write_id", "i"."recorded_at", NOW()"#),
-        "{write}"
-    );
-    assert!(write.ends_with("ON CONFLICT  DO NOTHING"), "{write}");
-}
-
 /// Clause 5.6.16 deletes a Temporal Evolution on its own, so the end of an
 /// instance a commit records can reach an Entity that has none, and is
 /// recorded nowhere: the drain's join decides it.
@@ -398,22 +392,21 @@ fn a_write_record_is_persisted_once_per_commit() {
 fn a_native_deletion_of_an_entity_without_evolution_records_nothing() {
     for table in ["attribute_history", "scope_history", "temporal_attribute_streams"] {
         let sql = writing_in(commit_steps(), table);
-        assert!(sql.contains(r#""temporal_entities" AS "te""#), "{sql}");
+        assert!(sql.contains(r#""entities" AS "te""#), "{sql}");
         assert!(sql.contains(r#""te"."id" = "i"."entity_id""#), "{sql}");
     }
 }
 
-/// A Snapshot branch records its history in its own relations; the write
-/// records and the queue belong to the tenant.
+/// A Snapshot branch records its history in its own relations; the queue
+/// belongs to the tenant.
 #[test]
 fn a_commit_to_a_snapshot_branch_records_in_its_schema() {
     let record = WriteRecord::restored(WriteId::mint(), recorded_at());
     let schema = Alias::new("snap_7").into_iden();
     let steps = steps_over(&IntentSource::Bound { record: &record, intents: &[] }, Some(&schema));
     for table in [
-        "temporal_entities",
+        "entities",
         "temporal_attribute_streams",
-        "temporal_stream_shapes",
         "attribute_history",
         "attribute_history_instance_claims",
         "scope_history",
@@ -423,7 +416,6 @@ fn a_commit_to_a_snapshot_branch_records_in_its_schema() {
             "{table}: {steps:?}"
         );
     }
-    assert!(steps.iter().any(|(_, sql)| sql.starts_with(r#"INSERT INTO "write_records""#)), "{steps:?}");
 }
 
 /// A statement no entry of a commit reaches is not run: a typed observation
@@ -431,14 +423,20 @@ fn a_commit_to_a_snapshot_branch_records_in_its_schema() {
 #[test]
 fn a_commit_runs_only_the_statements_its_entries_reach() {
     let typed = record_of(&intent(vec![observation(
-        TemporalValue::Number(JsonNumber::from(42)),
+        TemporalValue::Number {
+            number: JsonNumber::from(42),
+            datatype: None,
+        },
         InstanceIdentity::generate(),
         None,
     )]));
     assert_eq!(needs_met(&[typed]), [true, false, true, false, false, false]);
 
     let claimed = record_of(&intent(vec![observation(
-        TemporalValue::Number(JsonNumber::from(42)),
+        TemporalValue::Number {
+            number: JsonNumber::from(42),
+            datatype: None,
+        },
         InstanceIdentity::Verbatim("urn:x".parse().expect("an instance identifier")),
         None,
     )]));
@@ -463,7 +461,14 @@ fn only_an_untyped_intent_that_observes_reaches_the_pre_check() {
     assert_eq!(needs_met(&[untyped(Vec::new())])[1], true);
     let observing = untyped(vec![
         tombstone(),
-        observation(TemporalValue::Number(JsonNumber::from(1)), InstanceIdentity::generate(), None),
+        observation(
+            TemporalValue::Number {
+                number: JsonNumber::from(1),
+                datatype: None,
+            },
+            InstanceIdentity::generate(),
+            None,
+        ),
     ]);
     assert_eq!(needs_met(&[observing])[1], true);
 }
@@ -507,29 +512,31 @@ fn each_statement_reads_no_entry_field_beyond_what_it_is_bound() {
     for (_, reads, sql) in steps_with_reads(&source, None) {
         let read = entry_fields_read(&sql);
         match reads {
-            EntryReads::Nothing => assert!(read.is_empty() && !sql.contains(r#"UNNEST("i"."entries")"#), "{sql}"),
             EntryReads::Identities => assert!(read.is_subset(&identity), "{read:?} in {sql}"),
             EntryReads::Everything => assert!(!read.is_empty(), "{sql}"),
         }
     }
 }
 
-/// The light forms a bound source sends keep what the statements reading
-/// them read, and drop every value.
+/// The light form a bound source sends keeps what the statements reading it
+/// read, and drops every value.
 #[test]
-fn a_bound_head_drops_every_entry_and_an_identity_every_value() {
+fn a_bound_identity_drops_every_value() {
     let full = record_of(&intent(vec![observation(
-        TemporalValue::Number(JsonNumber::from(42)),
+        TemporalValue::Number {
+            number: JsonNumber::from(42),
+            datatype: None,
+        },
         InstanceIdentity::Verbatim("urn:x".parse().expect("an instance identifier")),
         None,
     )]));
-    let head = full.head();
+    let identities = full.identities();
     assert_eq!(
-        (&head.entity_id, &head.entity_type_name_keys, head.base_ordinal, head.entries.len()),
-        (&full.entity_id, &full.entity_type_name_keys, full.base_ordinal, 0)
+        (&identities.entity_id, &identities.entity_type_name_keys, identities.base_ordinal),
+        (&full.entity_id, &full.entity_type_name_keys, full.base_ordinal)
     );
     assert_eq!(
-        head.entry_needs,
+        identities.entry_needs,
         [
             TemporalIntentReach::TypedIntent,
             TemporalIntentReach::AttributeEntry,
@@ -537,7 +544,6 @@ fn a_bound_head_drops_every_entry_and_an_identity_every_value() {
         ]
         .map(TemporalIntentReach::code)
     );
-    let identities = full.identities();
     let ([identity], [entry]) = (identities.entries.as_slice(), full.entries.as_slice()) else {
         panic!("one entry each: {identities:?}");
     };
@@ -559,7 +565,7 @@ fn a_bound_head_drops_every_entry_and_an_identity_every_value() {
 #[test]
 fn missing_evolutions_and_streams_are_created_before_the_history() {
     let evolutions = position(r#"WITH "evolved""#);
-    let untyped_streams = position(r#"INSERT INTO "temporal_attribute_streams""#);
+    let untyped_streams = position(UNTYPED_STREAMS);
     let history = position(r#"INSERT INTO "attribute_history""#);
     let scopes = position(r#"INSERT INTO "scope_history""#);
     assert!(
@@ -567,28 +573,29 @@ fn missing_evolutions_and_streams_are_created_before_the_history() {
         "{:?}",
         rendered_steps()
     );
-    assert!(position(r#"INSERT INTO "write_records""#) < history);
     assert!(role_position(StepRole::Replace) < history, "the replaced instance goes first");
     assert!(position(r#"INSERT INTO "attribute_history_instance_claims""#) < history);
 }
 
 /// Clause 5.7.4.4 decides eligibility from every family and shape a stream
-/// holds, so the application adds the combination of each recorded instance,
-/// as the aggregation projection refines it, once the history rows exist; a
-/// tombstone carries no value and adds none, and a combination the stream
-/// holds writes nothing.
+/// holds, so the application grows each stream's mask by the combination of
+/// each recorded instance, as the aggregation projection refines it, once the
+/// history rows exist; a tombstone carries no value and adds none, and a mask
+/// already holding every combination is not rewritten.
 #[test]
 fn the_shapes_of_the_recorded_instances_are_added_to_their_streams() {
-    let shapes = writing("temporal_stream_shapes");
-    assert!(position(r#"INSERT INTO "attribute_history""#) < position(r#"INSERT INTO "temporal_stream_shapes""#));
+    let shapes = shape_growth();
+    assert!(position(r#"INSERT INTO "attribute_history""#) < position(SHAPE_GROWTH));
     assert!(
-        shapes.starts_with(r#"INSERT INTO "temporal_stream_shapes" ("stream_key", "attribute_name_key", "attribute_kind", "recorded_shape") SELECT DISTINCT "ah"."stream_key", "ah"."attribute_name_key", "ah"."attribute_kind", (CASE"#),
+        shapes.contains(r#""s"."stream_key", "e"."#) && shapes.contains(r#") AS "ah" WHERE "ah"."value_kind" <> (0) GROUP BY "ah"."stream_key") AS "grown""#),
         "{shapes}"
     );
-    assert!(shapes.contains(r#""s"."stream_key", "s"."attribute_name_key""#), "{shapes}");
-    assert!(shapes.contains(r#"WHERE "ah"."value_kind" <> (0)"#), "{shapes}");
     assert!(
-        shapes.ends_with(r#"ON CONFLICT ("stream_key", "attribute_kind", "recorded_shape") DO NOTHING"#),
+        shapes.contains(r#"bit_or((B'1'::bit(80) >> ((("ah"."attribute_kind" - 1) * (10)) + ((CASE"#),
+        "{shapes}"
+    );
+    assert!(
+        shapes.ends_with(r#"("temporal_attribute_streams"."shape_mask" | "grown"."shape_mask") <> "temporal_attribute_streams"."shape_mask""#),
         "{shapes}"
     );
 }
@@ -601,7 +608,7 @@ fn the_shapes_of_the_recorded_instances_are_added_to_their_streams() {
 fn one_row_of_an_entity_carries_every_type_its_intents_state() {
     let evolving = evolving();
     let evolutions = common_table(&evolving, "evolved");
-    assert!(evolutions.contains(r#"AS (INSERT INTO "temporal_entities""#), "{evolutions}");
+    assert!(evolutions.contains(r#"AS (INSERT INTO "entities""#), "{evolutions}");
     assert!(evolutions.contains(r#"SELECT DISTINCT ON ("i"."entity_id")"#), "{evolutions}");
     assert!(evolutions.contains(r#"ORDER BY "i"."entity_id" ASC, "i"."intent_key" DESC"#), "{evolutions}");
     assert!(evolutions.contains(r#"cardinality("i"."entity_type_name_keys") > 0"#), "{evolutions}");
@@ -629,26 +636,31 @@ fn an_existing_evolution_keeps_its_types_and_gains_the_ones_it_lacks() {
     let evolutions = common_table(&evolving, "evolved");
     assert!(
         evolutions.contains(concat!(
-            r#"DO UPDATE SET "modified_at" = GREATEST("temporal_entities"."modified_at", "excluded"."modified_at"), "entity_type_name_keys" = array_cat("temporal_entities"."entity_type_name_keys", "#,
-            r#"ARRAY (SELECT "added"."added" FROM UNNEST("excluded"."entity_type_name_keys") AS "added" "#,
-            r#"WHERE "added"."added" <> ALL("temporal_entities"."entity_type_name_keys") "#,
-            r#"ORDER BY array_position("excluded"."entity_type_name_keys", "added"."added") ASC))"#
+            r#""evolution_type_name_keys" = array_cat(COALESCE("entities"."evolution_type_name_keys", '{}'::integer[]), "#,
+            r#"ARRAY (SELECT "added"."added" FROM UNNEST("excluded"."evolution_type_name_keys") AS "added" "#,
+            r#"WHERE "added"."added" <> ALL(COALESCE("entities"."evolution_type_name_keys", '{}'::integer[])) "#,
+            r#"ORDER BY array_position("excluded"."evolution_type_name_keys", "added"."added") ASC))"#
         )),
         "{evolutions}"
     );
 }
 
 /// Clause 4.8 makes `modifiedAt` the instant of the last modification, so an
-/// application stamped before the stored evolution leaves it where it is.
+/// application stamped before the stored evolution leaves it where it is, and
+/// `createdAt` the instant the Evolution began, which an identity row holding
+/// a current state alone takes from the application.
 #[test]
 fn an_evolutions_modification_instant_never_moves_back() {
     let evolving = evolving();
     let evolutions = common_table(&evolving, "evolved");
     assert!(
-        evolutions.contains(r#""modified_at" = GREATEST("temporal_entities"."modified_at", "excluded"."modified_at")"#),
+        evolutions.contains(concat!(
+            r#"DO UPDATE SET "evolution_created_at" = COALESCE("entities"."evolution_created_at", "excluded"."evolution_created_at"), "#,
+            r#""evolution_modified_at" = GREATEST("entities"."evolution_modified_at", "excluded"."evolution_modified_at")"#
+        )),
         "{evolutions}"
     );
-    assert!(!evolutions.contains(r#""created_at" ="#), "{evolutions}");
+    assert!(!evolutions.contains(r#" "created_at" ="#), "the current state is left alone: {evolutions}");
 }
 
 /// The membership moves read the types the evolution had and has from the
@@ -659,11 +671,11 @@ fn an_evolution_returns_the_types_it_had_and_has() {
     let evolving = evolving();
     let evolutions = common_table(&evolving, "evolved");
     assert!(
-        evolutions.starts_with(r#""evolved" ("temporal_entity_key", "id", "created", "new_types", "old_types") AS"#),
+        evolutions.starts_with(r#""evolved" ("entity_key", "id", "created", "new_types", "old_types") AS"#),
         "{evolutions}"
     );
     assert!(
-        evolutions.ends_with(r#"RETURNING "new"."temporal_entity_key", "new"."id", "old"."temporal_entity_key" IS NULL, "new"."entity_type_name_keys", "old"."entity_type_name_keys""#),
+        evolutions.ends_with(r#"RETURNING "new"."entity_key", "new"."id", "old"."evolution_created_at" IS NULL, "new"."evolution_type_name_keys", "old"."evolution_type_name_keys""#),
         "{evolutions}"
     );
 }
@@ -676,7 +688,7 @@ fn an_evolution_lands_a_membership_row_for_every_type_it_gained() {
     let evolving = evolving();
     let added = common_table(&evolving, "added_members");
     assert!(
-        added.contains(r#"AS (INSERT INTO "temporal_entity_type_members" ("temporal_entity_key", "entity_type_name_key", "id") SELECT "evolved"."temporal_entity_key", "carried"."entity_type_name_key", "evolved"."id" FROM "evolved""#),
+        added.contains(r#"AS (INSERT INTO "entity_type_members" ("entity_key", "entity_type_name_key", "id", "is_current_member", "is_evolution_member") SELECT "evolved"."entity_key", "carried"."entity_type_name_key", "evolved"."id", FALSE, TRUE FROM "evolved""#),
         "{added}"
     );
     assert!(added.contains(r#"UNNEST("evolved"."new_types")"#), "{added}");
@@ -693,7 +705,7 @@ fn an_evolution_lands_a_membership_row_for_every_type_it_gained() {
 fn an_evolution_never_drops_a_membership_row() {
     let evolving = evolving();
     assert!(!evolving.contains("dropped_members"), "{evolving}");
-    assert!(!evolving.contains(r#"DELETE FROM "temporal_entity_type_members""#), "{evolving}");
+    assert!(!evolving.contains(r#"DELETE FROM "entity_type_members""#), "{evolving}");
 }
 
 /// A Snapshot records its Temporal Evolutions in its own schema, memberships
@@ -712,7 +724,7 @@ fn a_snapshot_moves_its_memberships_in_its_own_schema() {
     .map(|(_, sql)| sql)
     .find(|sql| sql.starts_with(r#"WITH "evolved""#))
     .expect("an evolution statement");
-    assert!(evolving.contains(r#"INSERT INTO "snap_4"."temporal_entity_type_members""#), "{evolving}");
+    assert!(evolving.contains(r#"INSERT INTO "snap_4"."entity_type_members""#), "{evolving}");
 }
 
 #[test]
@@ -729,7 +741,7 @@ fn entries_are_numbered_from_the_base_ordinal() {
 fn a_deletion_of_an_entity_without_evolution_records_nothing() {
     for table in ["attribute_history", "scope_history", "temporal_attribute_streams"] {
         let sql = writing(table);
-        assert!(sql.contains(r#""temporal_entities" AS "te""#), "{sql}");
+        assert!(sql.contains(r#""entities" AS "te""#), "{sql}");
         assert!(sql.contains(r#""te"."id" = "i"."entity_id""#), "{sql}");
     }
 }
@@ -750,15 +762,12 @@ fn an_observation_without_evolution_or_types_is_named_by_the_pre_check() {
         "an intent holding an entry that ends nothing observes: {sql}"
     );
     assert!(
-        sql.contains(r#"(NOT EXISTS(SELECT 1 FROM "temporal_entities" AS "te" WHERE "te"."id" = "i"."entity_id"))"#),
+        sql.contains(r#"(NOT EXISTS(SELECT 1 FROM "entities" AS "te" WHERE "te"."id" = "i"."entity_id" AND "te"."evolution_created_at" IS NOT NULL))"#),
         "{sql}"
     );
     let pre_check = position("SELECT");
     assert!(pre_check > position(r#"WITH "evolved""#), "the source's own evolutions count");
-    assert!(
-        pre_check < position(r#"INSERT INTO "temporal_attribute_streams""#),
-        "an untyped intent's streams follow its refusal"
-    );
+    assert!(pre_check < position(UNTYPED_STREAMS), "an untyped intent's streams follow its refusal");
 }
 
 /// An evolution the statement creates is invisible to every other writer
@@ -768,13 +777,16 @@ fn an_observation_without_evolution_or_types_is_named_by_the_pre_check() {
 fn the_streams_of_an_evolution_the_statement_creates_are_inserted_without_arbitration() {
     let evolving = evolving();
     assert!(
-        common_table(&evolving, "evolved").contains(r#"RETURNING "new"."temporal_entity_key", "new"."id", "old"."temporal_entity_key" IS NULL, "#),
+        common_table(&evolving, "evolved").contains(r#"RETURNING "new"."entity_key", "new"."id", "old"."evolution_created_at" IS NULL, "#),
         "{evolving}"
     );
     let created = common_table(&evolving, "created_streams");
     assert!(created.contains(r#"AS (INSERT INTO "temporal_attribute_streams""#), "{created}");
     assert!(
-        created.ends_with(r#"FROM "grains" WHERE "grains"."created" ORDER BY "grains"."first_intent" ASC, "grains"."first_ordinal" ASC"#),
+        created.ends_with(concat!(
+            r#"FROM "grains" WHERE "grains"."created" ORDER BY "grains"."first_intent" ASC, "grains"."first_ordinal" ASC "#,
+            r#"RETURNING "entity_key", "attribute_name_key""#
+        )),
         "{created}"
     );
     assert!(!created.contains("ON CONFLICT"), "{created}");
@@ -783,18 +795,49 @@ fn the_streams_of_an_evolution_the_statement_creates_are_inserted_without_arbitr
     assert!(
         existing.ends_with(concat!(
             r#"FROM "grains" WHERE NOT "grains"."created" ORDER BY "grains"."first_intent" ASC, "grains"."first_ordinal" ASC "#,
-            r#"ON CONFLICT ("temporal_entity_key", "attribute_name_key", "dataset_id") DO NOTHING"#
+            r#"ON CONFLICT ("entity_key", "attribute_name_key", "dataset_id") DO NOTHING RETURNING "entity_key", "attribute_name_key""#
         )),
         "{existing}"
     );
 }
 
-/// The statements after the evolution upsert judge the ends of an instance
-/// by the evolutions it created, so it returns their keys and nothing else.
+/// A stream the evolution statement inserts counts under every type of an
+/// evolution it created, and under the types an existing evolution held
+/// before: the types that one gained are counted afterwards over all its
+/// streams, so no stream it held before is read in the statement's snapshot.
 #[test]
-fn the_evolution_statement_returns_the_keys_of_the_evolutions_it_created() {
+fn the_streams_the_evolution_statement_inserts_count_under_the_types_held_before_the_gain() {
     let evolving = evolving();
-    assert!(evolving.ends_with(CREATED_KEYS), "{evolving}");
+    let census = common_table(&evolving, "stream_census");
+    assert!(
+        census.contains(concat!(
+            r#"FROM "created_streams" JOIN "evolved" ON "evolved"."entity_key" = "created_streams"."entity_key" "#,
+            r#"INNER JOIN LATERAL (SELECT UNNEST("evolved"."new_types")"#
+        )),
+        "{census}"
+    );
+    assert!(
+        census.contains(concat!(
+            r#"FROM "existing_streams" JOIN "evolved" ON "evolved"."entity_key" = "existing_streams"."entity_key" "#,
+            r#"INNER JOIN LATERAL (SELECT UNNEST("evolved"."old_types")"#
+        )),
+        "{census}"
+    );
+    assert!(!census.contains(r#""temporal_attribute_streams""#), "{census}");
+}
+
+/// The statements after the evolution upsert judge the ends of an instance
+/// by the evolutions it created, and the stream census counts the streams of
+/// the types an existing one gained, so it returns those evolutions alone.
+#[test]
+fn the_evolution_statement_returns_the_evolutions_it_created_or_gave_a_type() {
+    let evolving = evolving();
+    assert!(
+        evolving.ends_with(&format!(
+            r#"{EVOLVED_ROWS}{GAINED_TYPES} FROM "evolved" WHERE "evolved"."created" OR cardinality({GAINED_TYPES}) > 0"#
+        )),
+        "{evolving}"
+    );
     assert_eq!(
         rendered_steps().iter().filter(|(role, _)| *role == StepRole::Evolve).count(),
         1,
@@ -805,7 +848,7 @@ fn the_evolution_statement_returns_the_keys_of_the_evolutions_it_created() {
 /// The judgement shared by every statement reading the attribute entries of
 /// an evolution, its created keys bound after the drain's claimed keys.
 const JUDGED: &str = concat!(
-    r#"(NOT ("e"."entry_kind" = 2 AND "te"."temporal_entity_key" = ANY(ARRAY [7,9]::bigint[]) AND (NOT EXISTS(SELECT 1 FROM "#,
+    r#"(NOT ("e"."entry_kind" = 2 AND "te"."entity_key" = ANY(ARRAY [7,9]::bigint[]) AND (NOT EXISTS(SELECT 1 FROM "#,
     r#"(SELECT * FROM "temporal_append_intents" WHERE "intent_key" = ANY(ARRAY [3,5]::bigint[])) AS "ai" "#,
     r#"WHERE "ai"."entity_id" = "i"."entity_id" AND cardinality("ai"."entity_type_name_keys") > 0 "#,
     r#"AND "ai"."intent_key" <= "i"."intent_key"))))"#
@@ -822,7 +865,7 @@ fn every_statement_reading_attribute_entries_judges_the_ends_of_an_instance_by_t
     for sql in [
         writing("attribute_history"),
         writing("attribute_history_instance_claims"),
-        writing("temporal_stream_shapes"),
+        shape_growth(),
         writing("temporal_attribute_streams"),
         in_role(StepRole::Replace),
         growth(),
@@ -879,7 +922,6 @@ fn only_the_statements_after_the_evolutions_name_the_created_keys() {
         assert_eq!(
             naming,
             [
-                (StepRole::Write, false),
                 (StepRole::Evolve, false),
                 (StepRole::RefuseUntyped, false),
                 (StepRole::Write, true),
@@ -896,8 +938,7 @@ fn only_the_statements_after_the_evolutions_name_the_created_keys() {
 }
 
 /// The streams of the Entities intents state types for take the evolution's
-/// key and identifier from what its insert returned, never from a read of
-/// the evolutions,
+/// key from what its insert returned, never from a read of the evolutions,
 /// so an evolution another writer committed while the statement ran still
 /// gets its streams, and every intent of such an Entity is read.
 #[test]
@@ -905,18 +946,39 @@ fn the_streams_of_a_typed_entity_take_the_key_its_evolution_insert_returned() {
     let evolving = evolving();
     let grains = common_table(&evolving, "grains");
     assert!(
-        grains.contains(r#"SELECT "evolved"."temporal_entity_key", "evolved"."id", "e"."attribute_name_key", "e"."dataset_id", "evolved"."created""#),
+        grains.contains(concat!(
+            r#"FROM (SELECT "evolved"."entity_key" AS "entity_key", "e"."attribute_name_key" AS "attribute_name_key","#,
+            r#" "e"."dataset_id" AS "dataset_id", "evolved"."created" AS "created""#
+        )),
         "{grains}"
     );
     assert!(
-        grains.contains(r#"GROUP BY "evolved"."temporal_entity_key", "evolved"."id", "e"."attribute_name_key", "e"."dataset_id", "evolved"."created""#),
+        grains.contains(r#"GROUP BY "ah"."entity_key", "ah"."attribute_name_key", "ah"."dataset_id", "ah"."created""#),
         "one row a grain: {grains}"
     );
     assert!(
         grains.contains(r#"WHERE "evolved"."id" = "i"."entity_id" AND "e"."entry_kind" IN (1, 2)"#),
         "{grains}"
     );
-    assert!(!grains.contains("temporal_entities") && !grains.contains(r#"cardinality("i"."#), "{grains}");
+    assert!(!grains.contains("entities") && !grains.contains(r#"cardinality("i"."#), "{grains}");
+}
+
+/// A stream is inserted with the combinations and the box of the instances
+/// its entries record, so the mask and extent growth after the history finds
+/// it complete and writes the row no second time (clause 5.7.4.4).
+#[test]
+fn a_stream_is_inserted_with_the_shapes_and_extent_of_its_entries() {
+    let evolving = evolving();
+    let grains = common_table(&evolving, "grains");
+    assert!(
+        grains.contains(r#"COALESCE(bit_or((B'1'::bit(80) >> ((("ah"."attribute_kind" - 1) * (10))"#),
+        "{grains}"
+    );
+    assert!(grains.contains(r#"ST_Envelope(ST_Collect("ah"."extent_geometry"))"#), "{grains}");
+    assert!(
+        evolving.contains(r#"SELECT "grains"."entity_key", "grains"."attribute_name_key", "grains"."dataset_id", "grains"."shape_mask", "grains"."value_extent" FROM "grains""#),
+        "{evolving}"
+    );
 }
 
 /// The streams are keyed in the order the history insert reaches their
@@ -927,9 +989,10 @@ fn the_streams_of_a_typed_entity_are_keyed_in_the_order_its_entries_are_recorded
     let evolving = evolving();
     let grains = common_table(&evolving, "grains");
     assert!(
-        grains.contains(r#"MIN("i"."intent_key"), MIN("i"."base_ordinal" + ("e"."ordinality" - 1))"#),
+        grains.contains(r#""i"."intent_key" AS "first_intent", "i"."base_ordinal" + ("e"."ordinality" - 1) AS "first_ordinal""#),
         "{grains}"
     );
+    assert!(grains.contains(r#"MIN("ah"."first_intent"), MIN("ah"."first_ordinal")"#), "{grains}");
     assert_eq!(
         evolving
             .matches(r#"ORDER BY "grains"."first_intent" ASC, "grains"."first_ordinal" ASC"#)
@@ -946,11 +1009,15 @@ fn only_an_intent_stating_no_type_reaches_the_untyped_stream_insert() {
     let streams = writing("temporal_attribute_streams");
     assert!(streams.contains(r#"(NOT cardinality("i"."entity_type_name_keys") > 0)"#), "{streams}");
     assert!(
-        streams.contains(r#"("temporal_entity_key", "id", "attribute_name_key", "dataset_id") SELECT DISTINCT "te"."temporal_entity_key", "te"."id","#),
-        "every stream carries its evolution's identifier: {streams}"
+        streams.contains(r#"("entity_key", "attribute_name_key", "dataset_id", "shape_mask", "value_extent") SELECT "ah"."entity_key", "ah"."attribute_name_key", "ah"."dataset_id","#),
+        "{streams}"
     );
     assert!(
-        streams.ends_with(r#"ON CONFLICT ("temporal_entity_key", "attribute_name_key", "dataset_id") DO NOTHING"#),
+        streams.contains(r#"FROM (SELECT "te"."entity_key" AS "entity_key", "e"."attribute_name_key" AS "attribute_name_key""#),
+        "every stream carries its evolution's key: {streams}"
+    );
+    assert!(
+        streams.contains(r#"ON CONFLICT ("entity_key", "attribute_name_key", "dataset_id") DO NOTHING RETURNING "entity_key", "attribute_name_key") "#),
         "{streams}"
     );
     let untyped = |entries: Vec<TemporalAppendEntry>| {
@@ -968,7 +1035,14 @@ fn only_an_intent_stating_no_type_reaches_the_untyped_stream_insert() {
     }])]));
     let typed = intent(vec![
         tombstone(),
-        observation(TemporalValue::Number(JsonNumber::from(1)), InstanceIdentity::generate(), None),
+        observation(
+            TemporalValue::Number {
+                number: JsonNumber::from(1),
+                datatype: None,
+            },
+            InstanceIdentity::generate(),
+            None,
+        ),
     ]);
     assert!(!reaches(&[record_of(&typed)]));
 }
@@ -1024,15 +1098,23 @@ fn a_scope_row_is_recorded_under_its_write_identity_alone() {
 #[test]
 fn a_duplicate_claim_fails_the_claim_insert() {
     let claims = writing("attribute_history_instance_claims");
-    assert!(
-        claims.contains(r#"("temporal_entity_key", "attribute_name_key", "verbatim_instance_id")"#),
-        "{claims}"
-    );
+    assert!(claims.contains(r#"("entity_key", "attribute_name_key", "verbatim_instance_id")"#), "{claims}");
     assert!(!claims.contains("ON CONFLICT"), "{claims}");
 }
 
 /// The prefix of the extent growth, in the live branch.
 const GROWTH: &str = r#"UPDATE "temporal_attribute_streams" SET "value_extent" = "#;
+
+const SHAPE_GROWTH: &str = r#"UPDATE "temporal_attribute_streams" SET "shape_mask" = "#;
+
+/// The shape mask growth of the drain.
+fn shape_growth() -> String {
+    rendered_steps()
+        .into_iter()
+        .map(|(_, sql)| sql)
+        .find(|sql| sql.starts_with(SHAPE_GROWTH))
+        .expect("a shape mask growth")
+}
 
 /// The extent growth of the drain.
 fn growth() -> String {

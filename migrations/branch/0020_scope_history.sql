@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0021: Scope history
+-- 0020: Scope history
 -- ============================================================================
 -- Spec: ETSI GS CIM 009 v1.9.1 clauses 4.18, 4.19, 5.2.21
 --
@@ -48,7 +48,7 @@
 -- ============================================================================
 create table scope_history (
     recorded_at timestamptz not null,
-    temporal_entity_key bigint not null,
+    entity_key bigint not null,
     write_id uuid not null,
     write_ordinal integer not null,
     value_kind smallint not null,
@@ -66,9 +66,9 @@ with (
     autovacuum_vacuum_insert_scale_factor = 0.05
 );
 
-create index idx_scope_history_entity_recorded_at on scope_history (temporal_entity_key, recorded_at desc);
+create index idx_scope_history_entity_recorded_at on scope_history (entity_key, recorded_at desc);
 
-create index idx_scope_history_entity_observed_at on scope_history (temporal_entity_key, observed_at desc)
+create index idx_scope_history_entity_observed_at on scope_history (entity_key, observed_at desc)
 where
     observed_at is not null;
 

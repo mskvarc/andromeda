@@ -46,7 +46,6 @@ async fn identifier_columns_declare_byte_wise_collation() {
 
     for (relation, column) in [
         ("entities", "id"),
-        ("temporal_entities", "id"),
         ("subscriptions", "id"),
         ("attribute_names", "name"),
         ("current_attributes", "dataset_id"),

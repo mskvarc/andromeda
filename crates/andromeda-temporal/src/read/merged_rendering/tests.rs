@@ -103,7 +103,13 @@ async fn aggregation_over_sources_uses_the_merged_instances() {
 
     let handed = broker.merged_answers();
     assert_eq!(handed.len(), 1, "the answered instance reaches the store");
-    assert_eq!(handed[0].value, TemporalValue::Number(JsonNumber::from(5)));
+    assert_eq!(
+        handed[0].value,
+        TemporalValue::Number {
+            number: JsonNumber::from(5),
+            datatype: None
+        }
+    );
     let [TemporalHistory::Aggregates(entity)] = rendering.entities.as_slice() else {
         panic!("one aggregated entity: {rendering:?}");
     };

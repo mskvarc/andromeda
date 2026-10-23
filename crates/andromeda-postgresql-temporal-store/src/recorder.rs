@@ -30,7 +30,7 @@ impl TemporalRecorder {
 
     /// Record typed append intents inside the caller's anchor transaction.
     ///
-    /// `record` is the write identity every intent in `intents` shares. The caller states it explicitly rather than this method inferring it from `intents.first()`, and every intent is checked against it before anything is written: history rows are stamped with the record's instant, `write_records` has no foreign key from `attribute_history` or `scope_history` to catch a disagreement, and the release of a write record seeks its history rows by the persisted `recorded_at`, so a row stamped with another instant would protect nothing and survive its record.
+    /// `record` is the write identity every intent in `intents` shares. The caller states it explicitly rather than this method inferring it from `intents.first()`, and every intent is checked against it before anything is written: history rows are stamped with the record's identity, under which a retried or replayed commit lands nothing a second time, so an intent carrying another record would land its rows again under an identity the commit never minted.
     ///
     /// The intents become the records the queue would hold, bound as one array, and the statements the drain applies queued intents with record them, so a commit and a drain write identical rows. Idempotency is row-level: each row lands under its write identity with `ON CONFLICT ... DO NOTHING`, so a commit retried after the transaction was already durable lands nothing a second time.
     ///

@@ -46,7 +46,7 @@ impl TemporalRepository {
         compiled: &CompiledTemporalQuery,
         shapes: &HashMap<AttributeName, HashSet<RecordedAttributeShape>>,
     ) -> Result<HashMap<AttributeName, HashSet<RecordedAttributeShape>>, TemporalError> {
-        let names = self.resolve_query_names(compiled).await?;
+        let names = self.resolve_walk_names(branch, compiled).await?;
         let (asked, combinations): (Vec<(&AttributeName, RecordedAttributeShape)>, Vec<ShapeCombination>) = shapes
             .iter()
             .filter_map(|(attribute, shapes)| names.attributes.get_str(attribute.as_str()).map(|key| (attribute, key, shapes)))

@@ -27,6 +27,7 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
     entity_type_name::EntityTypeName,
     identifier::Identifier,
+    reference::NgsiLdReference,
     uri::Uri,
 };
 use andromeda_ngsi_ld_model::temporal::{
@@ -35,6 +36,7 @@ use andromeda_ngsi_ld_model::temporal::{
     TemporalValue,
     evolution_instance::EvolutionInstance,
     structured_value::StructuredValue,
+    text_annotation::TextAnnotation,
 };
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_attribute_instance::{
@@ -55,6 +57,7 @@ use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use andromeda_temporal::port::history_reader::TemporalHistoryObservation;
 use bigdecimal::BigDecimal;
 use cefact_units::UnitCode;
+use langtag::LangTagBuf;
 use serde_json::value::RawValue;
 use sqlx::{Row, postgres::PgRow, types::Json};
 
@@ -68,25 +71,82 @@ struct DecodedHistoryRow {
     observation: TemporalHistoryObservation,
     /// What the row stores beside its value, every name still a key.
     members: HistoryMembers,
+    /// The key of the datatype the row's literal declares.
+    datatype_key: Option<EntityTypeNameKey>,
 }
 
 impl DecodedHistoryRow {
-    /// Add every key the row's members hold to `held`.
+    /// Add every key the row's members and value hold to `held`.
     fn collect_keys(&self, held: &mut HeldKeys) {
         self.members.collect_keys(held);
+        held.types.extend(self.datatype_key);
     }
 
-    /// The observation, its metadata assembled through `names`.
+    /// The observation, its metadata and its value's datatype assembled
+    /// through `names`.
     ///
     /// # Errors
     ///
     /// Returns [`TemporalStoreError`] when a key has no name in `names` or the
     /// members do not assemble.
     fn assemble(self, names: &KeyNames) -> Result<TemporalHistoryObservation, TemporalStoreError> {
-        let DecodedHistoryRow { mut observation, members } = self;
+        let DecodedHistoryRow {
+            mut observation,
+            members,
+            datatype_key,
+        } = self;
         observation.row.metadata = members.metadata(&observation.row.attribute_name, names)?;
+        if let Some(key) = datatype_key {
+            let datatype = names.type_name(key).cloned().ok_or(StoredHistoryError::ValueDatatype(key))?; // clone: the value owns its datatype
+            observation.row.value = typed(observation.row.value, datatype)?;
+        }
         Ok(observation)
     }
+}
+
+/// `value` carrying the datatype its literal declares.
+///
+/// A typed scalar is read without its datatype, whose name the dictionary
+/// gives back once every row is read; the check constraints keep a datatype
+/// off every other value and off a language-tagged string.
+fn typed(value: TemporalValue, datatype: NgsiLdReference) -> Result<TemporalValue, StoredHistoryError> {
+    Ok(match value {
+        TemporalValue::Number { number, .. } => TemporalValue::Number {
+            number,
+            datatype: Some(datatype),
+        },
+        TemporalValue::Boolean { flag, .. } => TemporalValue::Boolean {
+            flag,
+            datatype: Some(datatype),
+        },
+        TemporalValue::DateTime { instant, .. } => TemporalValue::DateTime {
+            instant,
+            datatype: Some(datatype),
+        },
+        TemporalValue::Date { date, .. } => TemporalValue::Date {
+            date,
+            datatype: Some(datatype),
+        },
+        TemporalValue::Time { time, .. } => TemporalValue::Time {
+            time,
+            datatype: Some(datatype),
+        },
+        TemporalValue::String {
+            text,
+            annotation: TextAnnotation::Plain,
+        } => TemporalValue::String {
+            text,
+            annotation: TextAnnotation::Datatype(datatype),
+        },
+        TemporalValue::String {
+            annotation: TextAnnotation::Datatype(_) | TextAnnotation::Language(_),
+            ..
+        } => return Err(StoredHistoryError::DatatypeOnUntypedValue(ValueKind::String)),
+        TemporalValue::Geometry(_) => return Err(StoredHistoryError::DatatypeOnUntypedValue(ValueKind::Geometry)),
+        TemporalValue::Structured(_) => return Err(StoredHistoryError::DatatypeOnUntypedValue(ValueKind::Object)),
+        TemporalValue::Uri(_) => return Err(StoredHistoryError::DatatypeOnUntypedValue(ValueKind::Uri)),
+        TemporalValue::Scopes(_) | TemporalValue::Tombstone { .. } => return Err(StoredHistoryError::DatatypeOnUntypedValue(ValueKind::Tombstone)),
+    })
 }
 
 /// The observations `rows` of one read hold, the names of every key their
@@ -132,6 +192,7 @@ fn decode_history_row(row: &PgRow) -> Result<DecodedHistoryRow, TemporalStoreErr
     let attribute_name = decode_attribute_name(row)?;
     let value = decode_value(row, attribute_type, &attribute_name)?;
     let members = decode_members(row)?;
+    let datatype_key = row.try_get::<Option<i32>, _>("value_datatype_key")?.map(EntityTypeNameKey::from);
 
     let temporal_row = TemporalHistoryRow {
         attribute_name,
@@ -156,6 +217,7 @@ fn decode_history_row(row: &PgRow) -> Result<DecodedHistoryRow, TemporalStoreErr
             identity: Some(decode_write_identity(row, TABLE)?),
         },
         members,
+        datatype_key,
     })
 }
 
@@ -241,9 +303,21 @@ fn decode_value(row: &PgRow, attribute_type: AttributeType, attribute_name: &Att
         ValueKind::Tombstone => Ok(TemporalValue::Tombstone {
             deleted_at: required_column(row, TABLE, HistoryColumn::DeletedAt)?,
         }),
-        ValueKind::Number => Ok(TemporalValue::Number(decode_number(row)?)),
-        ValueKind::String => Ok(TemporalValue::String(required_column(row, TABLE, HistoryColumn::ValueString)?)),
-        ValueKind::Boolean => Ok(TemporalValue::Boolean(required_column(row, TABLE, HistoryColumn::ValueBoolean)?)),
+        ValueKind::Number => Ok(TemporalValue::Number {
+            number: decode_number(row)?,
+            datatype: None,
+        }),
+        ValueKind::String => Ok(TemporalValue::String {
+            text: required_column(row, TABLE, HistoryColumn::ValueString)?,
+            annotation: match row.try_get::<Option<String>, _>("value_language")? {
+                Some(tag) => TextAnnotation::Language(LangTagBuf::new(tag).map_err(StoredHistoryError::ValueLanguage)?),
+                None => TextAnnotation::Plain,
+            },
+        }),
+        ValueKind::Boolean => Ok(TemporalValue::Boolean {
+            flag: required_column(row, TABLE, HistoryColumn::ValueBoolean)?,
+            datatype: None,
+        }),
         ValueKind::Geometry => Ok(TemporalValue::Geometry(decode_geometry(row, attribute_name)?)),
         ValueKind::Object => {
             let stored: &RawValue = required_column(row, TABLE, HistoryColumn::ValueObject)?;
@@ -251,14 +325,23 @@ fn decode_value(row: &PgRow, attribute_type: AttributeType, attribute_name: &Att
                 .map(TemporalValue::Structured)
                 .map_err(|refusal| StoredHistoryError::ValueObject(Box::new(refusal)))?)
         }
-        ValueKind::DateTime => Ok(TemporalValue::DateTime(required_column(row, TABLE, HistoryColumn::ValueDateTime)?)),
+        ValueKind::DateTime => Ok(TemporalValue::DateTime {
+            instant: required_column(row, TABLE, HistoryColumn::ValueDateTime)?,
+            datatype: None,
+        }),
         ValueKind::Date => {
             let text: String = required_column(row, TABLE, HistoryColumn::ValueString)?;
-            Ok(text.parse().map(TemporalValue::Date).map_err(StoredHistoryError::ValueDate)?)
+            Ok(TemporalValue::Date {
+                date: text.parse().map_err(StoredHistoryError::ValueDate)?,
+                datatype: None,
+            })
         }
         ValueKind::Time => {
             let text: String = required_column(row, TABLE, HistoryColumn::ValueString)?;
-            Ok(text.parse().map(TemporalValue::Time).map_err(StoredHistoryError::ValueTime)?)
+            Ok(TemporalValue::Time {
+                time: text.parse().map_err(StoredHistoryError::ValueTime)?,
+                datatype: None,
+            })
         }
         ValueKind::Uri => {
             let raw: String = required_column(row, TABLE, HistoryColumn::ValueUri)?;
@@ -352,7 +435,7 @@ mod tests {
                     attribute_name: SPEED.parse().expect("an attribute name"),
                     attribute_type: AttributeType::Property,
                     dataset_id: None,
-                    value: TemporalValue::Boolean(true),
+                    value: TemporalValue::Boolean { flag: true, datatype: None },
                     observed_at: None,
                     recorded_at,
                     created_at: Some(recorded_at),
@@ -367,6 +450,7 @@ mod tests {
                 sub_attributes,
                 ..HistoryMembers::default()
             },
+            datatype_key: None,
         }
     }
 

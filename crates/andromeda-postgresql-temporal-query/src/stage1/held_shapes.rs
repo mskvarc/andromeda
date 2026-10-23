@@ -13,20 +13,22 @@
 //! A query looks among the Entities stage 1 selects, unpaginated, so a page
 //! never answers what another page of the same request refuses. The selection
 //! is narrowed to the candidates first: the Evolutions holding a recorded
-//! stream of one of the combinations in a requested dataset, read from the
-//! attribute index of `temporal_stream_shapes`, and, where the branch reads
-//! its queue, every Entity a queued intent names, whose entries no catalogue
-//! row holds yet. The work therefore follows the streams carrying a refusing
+//! stream of one of the combinations in a requested dataset, reached through
+//! the distinct shape masks holding it, and, where the branch reads its
+//! queue, every Entity a queued intent names, whose entries no catalogue row
+//! holds yet. The work therefore follows the streams carrying a refusing
 //! shape, not the size of the selection.
 
 use crate::{
     alias::{Ah, Rs},
     history::represented_instances,
     recorded_shape::recorded_shape,
+    shape_mask::holds_combination,
+    shape_mask_walk::{HeldMasks, held_masks},
     stage1::{
         entity_conditions::{PatternTest, build_entity_conditions_for_temporal},
         evolution_walk::{Among, evolution_rows},
-        queued_candidates::queued_candidates,
+        queued_candidates::{queued_candidates, stream_holder},
         window_match::temporal_match_subquery,
     },
 };
@@ -43,17 +45,11 @@ use andromeda_postgresql_query::{
     tombstone::carries_a_value,
 };
 use andromeda_postgresql_schema::{
-    current::E,
-    temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities, TemporalStreamShapes},
+    current::{E, Entities},
+    temporal::{AttributeHistory, TemporalAttributeStreams},
 };
 use andromeda_postgresql_seaquery::{branch::qualified, literal::int_literal};
 use sea_query::{Condition, Expr, ExprTrait, Iden, JoinType, Query, SelectStatement, UnionType, WithClause};
-
-/// Alias `ss`: a row of `temporal_stream_shapes` a candidate read names the
-/// Evolutions of.
-#[derive(Iden, Clone, Copy)]
-#[iden = "ss"]
-struct Ss;
 
 /// The name the statement projects the position of a carried combination
 /// under.
@@ -142,8 +138,8 @@ fn selected_holder(
     let narrowed = evolution_rows(branch, compiled, names, Among::Candidates);
     let conditions = build_entity_conditions_for_temporal(branch, compiled, names, narrowed.type_test, PatternTest::Tested)?;
     let evolution = HistoryOf::Evolution(EvolutionColumns {
-        id: Expr::col((E, TemporalEntities::Id)),
-        key: Expr::col((E, TemporalEntities::TemporalEntityKey)),
+        id: Expr::col((E, Entities::Id)),
+        key: Expr::col((E, Entities::EntityKey)),
     });
     let mut holder = Query::select();
     holder
@@ -182,34 +178,45 @@ fn carrying_instance(
 /// dataset `compiled` names: their surrogate keys over recorded rows alone;
 /// where the branch reads its queue, their identifiers beside every queued
 /// Entity, whose queued entries no catalogue row holds.
+///
+/// The streams are reached through the distinct masks of the combinations'
+/// attributes that hold one of them, one index range each, so a combination
+/// no stream holds costs the walk of its attribute's masks alone.
 fn candidates(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, combinations: &[ShapeCombination]) -> SelectStatement {
-    let column = match branch.pending() {
-        PendingEntries::Absent => TemporalAttributeStreams::TemporalEntityKey,
-        PendingEntries::Unioned => TemporalAttributeStreams::Id,
-    };
+    let held = |column: TemporalAttributeStreams| Expr::col((HeldMasks, column));
     let carried = combinations.iter().fold(Condition::any(), |carried, combination| {
         carried.add(
             Condition::all()
-                .add(Expr::col((Ss, TemporalStreamShapes::AttributeNameKey)).eq(combination.attribute.get()))
-                .add(Expr::col((Ss, TemporalStreamShapes::AttributeKind)).eq(combination.kind.code()))
-                .add(Expr::col((Ss, TemporalStreamShapes::RecordedShape)).eq(combination.shape.code())),
+                .add(held(TemporalAttributeStreams::AttributeNameKey).eq(combination.attribute.get()))
+                .add(holds_combination(
+                    held(TemporalAttributeStreams::ShapeMask),
+                    combination.kind,
+                    combination.shape,
+                )),
         )
     });
+    let mut attributes: Vec<i32> = combinations.iter().map(|combination| combination.attribute.get()).collect();
+    attributes.sort_unstable();
+    attributes.dedup();
+    let attributes = attributes;
     let mut candidates = Query::select();
     candidates
-        .column((Rs, column))
-        .from(qualified(branch.schema(), TemporalStreamShapes::Table).alias(Ss))
+        .from(HeldMasks)
         .join_as(
             JoinType::Join,
             qualified(branch.schema(), TemporalAttributeStreams::Table),
             Rs,
-            Expr::col((Rs, TemporalAttributeStreams::StreamKey)).equals((Ss, TemporalStreamShapes::StreamKey)),
+            Expr::col((Rs, TemporalAttributeStreams::AttributeNameKey))
+                .equals((HeldMasks, TemporalAttributeStreams::AttributeNameKey))
+                .and(Expr::col((Rs, TemporalAttributeStreams::ShapeMask)).equals((HeldMasks, TemporalAttributeStreams::ShapeMask))),
         )
         .cond_where(carried)
         .cond_where(dataset_condition(
             &Expr::col((Rs, TemporalAttributeStreams::DatasetId)),
             &DatasetFilter::from_selectors(&compiled.instances.dataset_id_filter),
-        ));
+        ))
+        .with_cte(held_masks(branch, &attributes, None));
+    stream_holder(&mut candidates, branch);
     match branch.pending() {
         PendingEntries::Absent => {}
         PendingEntries::Unioned => {
@@ -302,7 +309,7 @@ mod tests {
             sql.contains("jsonb_typeof(") && sql.contains("END) = 2"),
             "the shape is the refined one the aggregation reads: {sql}"
         );
-        assert!(!sql.contains("temporal_stream_shapes") && !sql.contains("candidates"), "{sql}");
+        assert!(!sql.contains("shape_mask") && !sql.contains("candidates"), "{sql}");
     }
 
     /// Clause 5.2.21 places an instance on the axis the request names, so the
@@ -355,16 +362,24 @@ mod tests {
             &[string_load()],
         );
         assert!(
-            sql.starts_with(concat!(
-                r#"WITH "candidates" AS  MATERIALIZED (SELECT "rs"."temporal_entity_key" FROM "temporal_stream_shapes" AS "ss""#,
-                r#" JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "ss"."stream_key""#,
-                r#" WHERE "ss"."attribute_name_key" = 7 AND "ss"."attribute_kind" = 1 AND "ss"."recorded_shape" = 2 AND TRUE)"#
+            sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED (WITH RECURSIVE "held" ("attribute_name_key", "shape_mask") AS ("#),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(concat!(
+                r#" SELECT "rs"."entity_key" FROM "held""#,
+                r#" JOIN "temporal_attribute_streams" AS "rs" ON "rs"."attribute_name_key" = "held"."attribute_name_key" AND "rs"."shape_mask" = "held"."shape_mask""#,
+                r#" WHERE "held"."attribute_name_key" = 7 AND get_bit("held"."shape_mask", 1) = 1 AND TRUE)"#
             )),
             "{sql}"
         );
-        assert!(sql.contains(r#"IN (SELECT "temporal_entity_key" FROM "candidates")"#), "{sql}");
-        assert!(sql.contains("temporal_entity_type_members"), "the type selection applies: {sql}");
-        assert!(!sql.contains("LIMIT"), "the selection is not paginated: {sql}");
+        assert!(sql.contains(r#"IN (SELECT "entity_key" FROM "candidates")"#), "{sql}");
+        assert!(sql.contains("entity_type_members"), "the type selection applies: {sql}");
+        assert_eq!(
+            sql.matches("LIMIT").count(),
+            2,
+            "only the mask walk's own steps are limited, the selection is not paginated: {sql}"
+        );
     }
 
     /// Clause 5.7.4.4 step S8: the instances of the datasets `datasetId` names
@@ -398,7 +413,7 @@ mod tests {
             &[string_load()],
         );
         assert!(
-            sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED (SELECT "rs"."id" FROM "temporal_stream_shapes""#),
+            sql.contains(r#" SELECT "ri"."id" FROM "held" JOIN "temporal_attribute_streams" AS "rs""#),
             "{sql}"
         );
         assert!(sql.contains(r#"UNION ALL (SELECT "entity_id" FROM "temporal_append_intents")"#), "{sql}");
@@ -416,7 +431,7 @@ mod tests {
             &after_2024(TimeProp::Observed),
             &[string_load()],
         );
-        assert!(sql.contains(r#"FROM "snap_1"."temporal_stream_shapes" AS "ss""#), "{sql}");
+        assert!(sql.contains(r#"FROM "snap_1"."temporal_attribute_streams" AS "ms""#), "{sql}");
         assert!(sql.contains(r#"JOIN "snap_1"."temporal_attribute_streams" AS "rs""#), "{sql}");
         assert!(!sql.contains("temporal_append"), "{sql}");
     }

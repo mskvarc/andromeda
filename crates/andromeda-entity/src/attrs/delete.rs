@@ -77,7 +77,7 @@ impl EntityService {
         };
 
         let events = self
-            .commit_computed_write(target, entity, |previous| {
+            .commit_computed_write(target, entity, |previous, _| {
                 let mut remaining = EntityState::clone(previous); // clone: shares every attribute the deletion leaves alone
                 delete_member(&mut remaining, &attribute, selection)?;
 

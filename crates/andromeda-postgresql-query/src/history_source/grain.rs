@@ -19,7 +19,7 @@ pub enum HistoryGrain {
     StreamKey,
     /// Surrogate key of the recorded Temporal Evolution, which a source of
     /// recorded rows alone names its Evolution by in place of the identifier.
-    TemporalEntityKey,
+    EntityKey,
 }
 
 #[cfg(test)]
@@ -34,9 +34,9 @@ mod tests {
             HistoryGrain::AttributeNameKey,
             HistoryGrain::DatasetId,
             HistoryGrain::StreamKey,
-            HistoryGrain::TemporalEntityKey,
+            HistoryGrain::EntityKey,
         ]
         .map(|column| column.to_string());
-        pretty_assertions::assert_eq!(names, ["entity_id", "attribute_name_key", "dataset_id", "stream_key", "temporal_entity_key"]);
+        pretty_assertions::assert_eq!(names, ["entity_id", "attribute_name_key", "dataset_id", "stream_key", "entity_key"]);
     }
 }

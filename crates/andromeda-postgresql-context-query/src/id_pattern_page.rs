@@ -31,6 +31,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_postgresql_query::{
     entity_row_refs::EntityRowRefs,
+    entity_sides::holds_current_state,
     error::RenderError,
     id_pattern_trigrams::{ID_PATTERN_CANDIDATE_BOUND, ID_PATTERN_SHORT_WALK, trigram_pattern},
     one_time_gate::CandidateBound,
@@ -43,7 +44,8 @@ use sea_query::{Condition, DynIden, Expr, Query, SelectStatement};
 pub(crate) struct PatternMatches<'q> {
     /// The selector's pattern.
     pub(crate) pattern: &'q Pattern,
-    /// `SELECT "entity_key" FROM "entities" WHERE "id" ~ <pattern>`.
+    /// `SELECT "entity_key" FROM "entities" WHERE "id" ~ <pattern> AND
+    /// "created_at" IS NOT NULL`.
     pub(crate) select: SelectStatement,
 }
 
@@ -78,7 +80,8 @@ pub(crate) fn pattern_matches<'q>(query: &'q CompiledEntityQuery, relations: &En
     matches
         .expr(rows.entity_key_column())
         .from(rows.table(Entities::Table))
-        .and_where(regex_match(rows.identity_column(Entities::Id), Expr::val(pattern.portable().as_str())));
+        .and_where(regex_match(rows.identity_column(Entities::Id), Expr::val(pattern.portable().as_str())))
+        .and_where(holds_current_state(Entities::Table));
     Some(PatternMatches {
         pattern,
         select: matches.take(),
@@ -149,6 +152,7 @@ mod tests {
                     EntityTypeNameKey::from(key),
                 )
             })),
+            ..QueryNames::default()
         }
     }
 
@@ -184,7 +188,10 @@ mod tests {
             .nth(1)
             .and_then(|rest| rest.split(" LIMIT $").next())
             .unwrap_or_else(|| panic!("the index path: {sql}"));
-        assert_eq!(candidates, r#"SELECT "entities"."entity_key" FROM "entities" WHERE "entities"."id" ~ $5"#);
+        assert_eq!(
+            candidates,
+            r#"SELECT "entities"."entity_key" FROM "entities" WHERE ("entities"."id" ~ $5) AND "entities"."created_at" IS NOT NULL"#
+        );
         assert!(
             values.0.contains(&Value::BigUnsigned(Some(5_000))),
             "the walk tests 5,000 members: {:?}",
@@ -199,7 +206,7 @@ mod tests {
         let (sql, _) = page_sql(&by_pattern(".*_1196287$"));
         let (short, _) = sql.split_once(r#", "candidates" AS "#).unwrap_or_else(|| panic!("a gated page: {sql}"));
         assert!(
-            short.contains(r#"FROM "entity_type_members" WHERE "entity_type_name_key" = (18)) AS "selected" WHERE TRUE"#),
+            short.contains(r#"FROM "entity_type_members" WHERE "entity_type_name_key" = (18) AND "is_current_member") AS "selected" WHERE TRUE"#),
             "{short}"
         );
         assert!(
@@ -282,7 +289,7 @@ mod tests {
         );
         let (sql, values) = uncounted.count.build(PostgresQueryBuilder);
         assert!(
-            sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED (SELECT "entities"."entity_key" FROM "entities" WHERE "entities"."id" ~ $1 LIMIT $2)"#),
+            sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED (SELECT "entities"."entity_key" FROM "entities" WHERE ("entities"."id" ~ $1) AND "entities"."created_at" IS NOT NULL LIMIT $2)"#),
             "{sql}"
         );
         let (_, arms) = sql.split_once(" THEN ").unwrap_or_else(|| panic!("a gated count: {sql}"));

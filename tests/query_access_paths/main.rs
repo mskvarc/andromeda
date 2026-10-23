@@ -29,4 +29,3 @@ mod semantic_time;
 mod temporal_plans;
 mod temporal_q_plans;
 mod typed_q;
-mod write_record_release;

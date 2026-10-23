@@ -54,5 +54,6 @@ uuid = { version = "1.27.0", features = ["serde", "v4"] }
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 andromeda-test-fixtures.workspace = true
+langtag = "1.1.0"
 pretty_assertions = "1.4.1"
 tokio = { version = "1.53.2", features = ["macros", "rt"] }

@@ -18,8 +18,10 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_model::temporal::structured_value_codec::StoredValueError;
 use andromeda_ngsi_ld_number::JsonNumberError;
 use andromeda_postgresql_attribute_instance::{assemble::AssemblyError, stored_members::StoredInstanceError};
-use andromeda_postgresql_codes::{registry::UnknownCompactCode, stored_unit_code::UnknownStoredUnitCode};
+use andromeda_postgresql_codes::{registry::UnknownCompactCode, stored_unit_code::UnknownStoredUnitCode, value_kind::ValueKind};
 use andromeda_postgresql_encoding::ewkb::EwkbError;
+use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
+use langtag::InvalidLangTag;
 use strum::{Display, IntoStaticStr};
 use thiserror::Error;
 
@@ -164,6 +166,15 @@ pub enum StoredHistoryError {
     /// clause 4.6.3 `Time`.
     #[error("a stored attribute_history time is not an NGSI-LD Time: {0}")]
     ValueTime(#[source] NgsiLdTimeError),
+    /// A stored `value_language` is not a language tag.
+    #[error("a stored attribute_history value_language is not a language tag: {0}")]
+    ValueLanguage(#[source] InvalidLangTag<String>),
+    /// A stored `value_datatype_key` names no type in the dictionary.
+    #[error("a stored attribute_history value_datatype_key {} names no type", .0.get())]
+    ValueDatatype(EntityTypeNameKey),
+    /// A stored datatype sits on a value no literal of which declares one.
+    #[error("a stored attribute_history datatype sits on a {} value", .0.label())]
+    DatatypeOnUntypedValue(ValueKind),
     /// A Number value is outside the broker's documented numeric range.
     #[error("a stored attribute_history value_number is not a representable number: {0}")]
     ValueNumber(#[source] JsonNumberError),

@@ -37,10 +37,7 @@ mod tests {
     use crate::{dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey, type_predicate::condition};
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
-    use andromeda_postgresql_schema::{
-        current::{E, Entities, EntitySearch},
-        temporal::TemporalEntities,
-    };
+    use andromeda_postgresql_schema::current::{E, Entities, EntitySearch};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
     use sea_query::{Condition, Expr, PostgresQueryBuilder, Query, SimpleExpr};
@@ -149,7 +146,7 @@ mod tests {
         let expr = TypeExpr::Type(iri("https://example.com/Vehicle"));
         let names = known(&[("https://example.com/Vehicle", 7)]);
         let unaliased = render(condition(&expr, &unaliased(), &names));
-        let aliased = render(condition(&expr, &Expr::col((E, TemporalEntities::EntityTypeNameKeys)), &names));
-        assert_eq!(unaliased.replace("\"entity_type_name_keys\"", "\"e\".\"entity_type_name_keys\""), aliased);
+        let aliased = render(condition(&expr, &Expr::col((E, Entities::EvolutionTypeNameKeys)), &names));
+        assert_eq!(unaliased.replace("\"entity_type_name_keys\"", "\"e\".\"evolution_type_name_keys\""), aliased);
     }
 }

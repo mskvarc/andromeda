@@ -1,87 +1,61 @@
-//! The two type-membership relations and the columns they share.
+//! Which side of an Entity a type membership belongs to.
 //!
-//! `entity_type_members` (current state) and `temporal_entity_type_members`
-//! (Temporal Evolutions) hold the same thing for two catalogues: one row per
-//! type an Entity carries, keyed by type and then identifier, beside the
-//! surrogate key of the catalogue row. They differ only in the table and in the
-//! name of that key, so the walk a type selection reads and the rows a write
-//! moves are written once, over a [`TypeMembershipRelation`].
+//! `entity_type_members` holds one row per type an Entity carries in its
+//! current state or its Temporal Evolution, keyed by type and then
+//! identifier. The two sides hold the same types unless a core write changed
+//! the current ones (clauses 5.6.11.4 and 5.6.12.4 only ever add a type to the
+//! Evolution), so one row serves both and carries one flag per side. A core
+//! statement reads and moves the current side, a temporal statement the
+//! Evolution's, over a [`MembershipSide`].
 
-use crate::{current::EntityTypeMembers, temporal::TemporalEntityTypeMembers};
-use sea_query::{DynIden, IntoIden};
+use crate::current::EntityTypeMembers;
 
-/// Which type-membership relation a statement reads or writes.
+/// The side of an Entity a type-membership statement reads or writes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TypeMembershipRelation {
-    /// `entity_type_members`, keyed by `entities.entity_key`.
+pub enum MembershipSide {
+    /// The current state, which core reads serve.
     Current,
-    /// `temporal_entity_type_members`, keyed by
-    /// `temporal_entities.temporal_entity_key`.
-    Temporal,
+    /// The Temporal Evolution, which temporal reads serve.
+    Evolution,
 }
 
-impl TypeMembershipRelation {
-    /// The relation's table.
+impl MembershipSide {
+    /// The flag a membership row of this side carries.
     #[must_use]
-    pub fn table(self) -> DynIden {
+    pub const fn flag(self) -> EntityTypeMembers {
         match self {
-            TypeMembershipRelation::Current => EntityTypeMembers::Table.into_iden(),
-            TypeMembershipRelation::Temporal => TemporalEntityTypeMembers::Table.into_iden(),
+            MembershipSide::Current => EntityTypeMembers::IsCurrentMember,
+            MembershipSide::Evolution => EntityTypeMembers::IsEvolutionMember,
         }
     }
 
-    /// The column holding the catalogue row's surrogate key.
+    /// The other side, whose flag keeps a row this side gives up.
     #[must_use]
-    pub fn key(self) -> DynIden {
+    pub const fn other(self) -> MembershipSide {
         match self {
-            TypeMembershipRelation::Current => EntityTypeMembers::EntityKey.into_iden(),
-            TypeMembershipRelation::Temporal => TemporalEntityTypeMembers::TemporalEntityKey.into_iden(),
-        }
-    }
-
-    /// The column holding the `entity_type_names` key, the first column of
-    /// the primary key.
-    #[must_use]
-    pub fn type_key(self) -> DynIden {
-        match self {
-            TypeMembershipRelation::Current => EntityTypeMembers::EntityTypeNameKey.into_iden(),
-            TypeMembershipRelation::Temporal => TemporalEntityTypeMembers::EntityTypeNameKey.into_iden(),
-        }
-    }
-
-    /// The column holding the Entity's identifier, the second column of the
-    /// primary key, compared as the catalogue's own `id` is (`COLLATE "C"`).
-    #[must_use]
-    pub fn id(self) -> DynIden {
-        match self {
-            TypeMembershipRelation::Current => EntityTypeMembers::Id.into_iden(),
-            TypeMembershipRelation::Temporal => TemporalEntityTypeMembers::Id.into_iden(),
+            MembershipSide::Current => MembershipSide::Evolution,
+            MembershipSide::Evolution => MembershipSide::Current,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::type_membership::TypeMembershipRelation;
+    use crate::type_membership::MembershipSide;
     use pretty_assertions::assert_eq;
+    use sea_query::Iden;
 
-    fn columns(relation: TypeMembershipRelation) -> [String; 4] {
-        [relation.table(), relation.key(), relation.type_key(), relation.id()].map(|iden| iden.to_string())
+    #[test]
+    fn each_side_reads_its_own_flag() {
+        assert_eq!(MembershipSide::Current.flag().to_string(), "is_current_member");
+        assert_eq!(MembershipSide::Evolution.flag().to_string(), "is_evolution_member");
     }
 
     #[test]
-    fn the_current_relation_is_keyed_by_the_entity_key() {
-        assert_eq!(
-            columns(TypeMembershipRelation::Current),
-            ["entity_type_members", "entity_key", "entity_type_name_key", "id"]
-        );
-    }
-
-    #[test]
-    fn the_temporal_relation_is_keyed_by_the_temporal_entity_key() {
-        assert_eq!(
-            columns(TypeMembershipRelation::Temporal),
-            ["temporal_entity_type_members", "temporal_entity_key", "entity_type_name_key", "id"]
-        );
+    fn each_side_is_the_other_of_its_other() {
+        for side in [MembershipSide::Current, MembershipSide::Evolution] {
+            assert_eq!(side.other().other(), side);
+            assert_ne!(side.other(), side);
+        }
     }
 }

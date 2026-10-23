@@ -4,10 +4,10 @@
 //! `scope_history` columns under their own names, so the clause 4.18 validity
 //! reading treats a recorded event and a queued one alike. Read for an
 //! Evolution by key, it carries the surrogate key
-//! ([`HistoryGrain::TemporalEntityKey`]) in place of the identifier.
+//! ([`HistoryGrain::EntityKey`]) in place of the identifier.
 
 use crate::history_source::{HistoryBranch, HistoryOf, PendingEntries, entry_values::scope_value_columns, grain::HistoryGrain, pending};
-use andromeda_postgresql_schema::temporal::{ScopeHistory, TemporalEntities};
+use andromeda_postgresql_schema::{current::Entities, temporal::ScopeHistory};
 use andromeda_postgresql_seaquery::branch::qualified;
 use sea_query::{DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, Query, SelectStatement, TableRef, UnionType};
 
@@ -31,23 +31,23 @@ pub fn scope_rows(branch: &HistoryBranch, of: &HistoryOf, alias: impl IntoIden) 
     let schema = branch.schema();
     if let Some(key) = branch.evolution_key(of) {
         let mut rows = Query::select();
-        rows.expr_as(Expr::col((RecordedEvent, ScopeHistory::TemporalEntityKey)), HistoryGrain::TemporalEntityKey);
+        rows.expr_as(Expr::col((RecordedEvent, ScopeHistory::EntityKey)), HistoryGrain::EntityKey);
         recorded_event_columns(&mut rows, schema);
         // clone: the key stays with the read, which every source of it shares.
-        rows.and_where(Expr::col((RecordedEvent, ScopeHistory::TemporalEntityKey)).eq(key.clone()));
+        rows.and_where(Expr::col((RecordedEvent, ScopeHistory::EntityKey)).eq(key.clone()));
         return TableRef::SubQuery(Box::new(rows.take()), alias.into_iden());
     }
     let pending = branch.pending();
     let mut rows = Query::select();
-    rows.expr_as(Expr::col((RecordedEvolution, TemporalEntities::Id)), HistoryGrain::EntityId);
+    rows.expr_as(Expr::col((RecordedEvolution, Entities::Id)), HistoryGrain::EntityId);
     recorded_event_columns(&mut rows, schema);
     rows.join_as(
         JoinType::Join,
-        qualified(schema, TemporalEntities::Table),
+        qualified(schema, Entities::Table),
         RecordedEvolution,
-        Expr::col((RecordedEvolution, TemporalEntities::TemporalEntityKey)).equals((RecordedEvent, ScopeHistory::TemporalEntityKey)),
+        Expr::col((RecordedEvolution, Entities::EntityKey)).equals((RecordedEvent, ScopeHistory::EntityKey)),
     );
-    of.narrow(&mut rows, Expr::col((RecordedEvolution, TemporalEntities::Id)));
+    of.narrow(&mut rows, Expr::col((RecordedEvolution, Entities::Id)));
     match pending {
         PendingEntries::Unioned => {
             rows.union(UnionType::All, pending::scope_rows(schema, of));
@@ -91,7 +91,9 @@ mod tests {
     fn a_queued_assertion_of_the_scope_in_force_is_left_out_of_the_read() {
         let sql = rendered(scope_rows(&HistoryBranch::live(), &HistoryOf::EveryEntity, Alias::new("sh")));
         assert!(
-            sql.contains(r#"FROM "scope_history" AS "pj" JOIN "temporal_entities" AS "pjv" ON "pjv"."temporal_entity_key" = "pj"."temporal_entity_key" WHERE "pjv"."id" = "pe"."entity_id""#),
+            sql.contains(
+                r#"FROM "scope_history" AS "pj" JOIN "entities" AS "pjv" ON "pjv"."entity_key" = "pj"."entity_key" WHERE "pjv"."id" = "pe"."entity_id""#
+            ),
             "{sql}"
         );
         assert!(
@@ -121,7 +123,7 @@ mod tests {
     fn evolution() -> HistoryOf {
         HistoryOf::Evolution(EvolutionColumns {
             id: Expr::col((Alias::new("e"), Alias::new("id"))),
-            key: Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))),
+            key: Expr::col((Alias::new("e"), Alias::new("entity_key"))),
         })
     }
 
@@ -138,15 +140,12 @@ mod tests {
         ] {
             let sql = rendered(scope_rows(&branch, &evolution(), Alias::new("sh")));
             assert!(
-                sql.starts_with(r#"SELECT * FROM (SELECT "rsh"."temporal_entity_key" AS "temporal_entity_key", "rsh"."recorded_at""#),
+                sql.starts_with(r#"SELECT * FROM (SELECT "rsh"."entity_key" AS "entity_key", "rsh"."recorded_at""#),
                 "{sql}"
             );
             assert!(sql.contains(events), "{sql}");
-            assert!(
-                sql.ends_with(r#"WHERE "rsh"."temporal_entity_key" = "e"."temporal_entity_key") AS "sh""#),
-                "{sql}"
-            );
-            assert!(!sql.contains("temporal_entities") && !sql.contains("entity_id"), "{sql}");
+            assert!(sql.ends_with(r#"WHERE "rsh"."entity_key" = "e"."entity_key") AS "sh""#), "{sql}");
+            assert!(!sql.contains("entities") && !sql.contains("entity_id"), "{sql}");
         }
     }
 

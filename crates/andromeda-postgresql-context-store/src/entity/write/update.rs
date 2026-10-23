@@ -35,7 +35,7 @@ use crate::{
                 update_staging_columns,
                 with_staged_alias,
             },
-            type_membership::{Mbrs, Strays, added_memberships, dropped_memberships},
+            type_membership::{Mbrs, Strays, Unflagged, added_memberships, dropped_memberships},
         },
     },
     error::ContextStoreError,
@@ -44,6 +44,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
+use andromeda_postgresql_query::entity_sides::holds_current_state;
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
     cast::cast,
@@ -186,6 +187,7 @@ pub(super) fn entity_update_statement<'entities>(
         Expr::col((New, EntitySearch::AttributeInstanceKinds)),
     ]));
 
+    let dropped = dropped_memberships(target);
     let mut with = WithClause::new();
     with.cte(projection_cte(&columns, staged_entities, ProjectedWrite::Update))
         .cte(CommonTableExpression::new().table_name(Ents).query(entity_write(target)).to_owned())
@@ -205,7 +207,8 @@ pub(super) fn entity_update_statement<'entities>(
                 .query(search)
                 .to_owned(),
         )
-        .cte(CommonTableExpression::new().table_name(Strays).query(dropped_memberships(target)).to_owned())
+        .cte(CommonTableExpression::new().table_name(Unflagged).query(dropped.cleared).to_owned())
+        .cte(CommonTableExpression::new().table_name(Strays).query(dropped.deleted).to_owned())
         .cte(CommonTableExpression::new().table_name(Mbrs).query(added_memberships(target)?).to_owned())
         .cte(instances_cte(instance_arrays))
         .cte(grains_cte(grain_arrays))
@@ -227,9 +230,11 @@ pub(super) fn entity_update_statement<'entities>(
     Ok(ExternallyBound::new(statement, external))
 }
 
-/// The update's anchor, `ents`: each identity row whose expectation still
-/// holds, stamped and given its new expiries, with the key and identifier of
-/// every row it landed in.
+/// The update's anchor, `ents`: each identity row holding a current state
+/// whose expectation still holds, stamped and given its new expiries, with
+/// the key and identifier of every row it landed in. A row whose current state
+/// a core deletion removed keeps only its Temporal Evolution, which no core
+/// update reaches.
 ///
 /// It finds each row through the unique identifier index, so its cost grows
 /// with the batch whatever row estimate the plan was made for.
@@ -243,6 +248,7 @@ fn entity_write(target: &ContextTarget) -> UpdateStatement {
         .cond_where(
             Cond::all()
                 .add(Expr::col((Entities::Table, Entities::Id)).equals((Proj, Entities::Id)))
+                .add(holds_current_state(Entities::Table))
                 .add(expectation(Expr::col((Proj, StagedColumn::ExpectedModifiedAt)), Entities::Table)),
         )
         .returning(Query::returning().exprs([Expr::col((Entities::Table, Entities::EntityKey)), Expr::col((Entities::Table, Entities::Id))]))

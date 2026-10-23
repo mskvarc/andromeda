@@ -171,16 +171,17 @@ mod tests {
     }
 
     /// Clause 5.6.6 leaves the evolution standing when the entity is deleted,
-    /// so the statement reaches the entity through the temporal catalogue and
-    /// names neither `entities` nor an attribute stream a Scope never has.
+    /// so the statement reaches the entity through the Scope row's identity
+    /// row and names neither the current state nor an attribute stream a Scope
+    /// never has.
     #[test]
     fn the_scope_read_reaches_the_entity_through_the_temporal_catalogue() {
         let sql = sql_of(&minimal_compiled());
         assert!(
-            sql.contains("JOIN \"temporal_entities\" AS \"re\" ON \"re\".\"temporal_entity_key\" = \"rsh\".\"temporal_entity_key\""),
+            sql.contains("JOIN \"entities\" AS \"re\" ON \"re\".\"entity_key\" = \"rsh\".\"entity_key\""),
             "{sql}"
         );
-        assert!(!sql.contains("\"entities\""), "{sql}");
+        assert!(!sql.contains("\"entity_search\""), "{sql}");
         assert!(!sql.contains("temporal_attribute_streams"), "{sql}");
     }
 

@@ -27,6 +27,8 @@ mod period_edge;
 pub mod projected_members;
 pub mod recorded_shape;
 pub mod scope_history;
+pub mod shape_mask;
+pub mod shape_mask_walk;
 pub mod split_filter_leaves;
 pub mod split_part_rows;
 pub mod stage1;

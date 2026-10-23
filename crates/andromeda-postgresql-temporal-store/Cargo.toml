@@ -39,6 +39,7 @@ cefact-units = "1.0.0"
 chrono = "0.4.45"
 derive_more = { version = "2.1.1", features = ["as_ref", "display", "from"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
+langtag = "1.1.0"
 sea-query = { version = "1.0.2", features = ["backend-postgres", "postgres-array", "with-bigdecimal", "with-chrono", "with-uuid"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision", "raw_value"] }
 sqlx = { version = "0.9.0", features = ["bigdecimal", "runtime-tokio", "postgres", "json", "chrono", "uuid"] }

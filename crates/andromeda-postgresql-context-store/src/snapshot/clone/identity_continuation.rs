@@ -96,9 +96,9 @@ mod tests {
     #[test]
     fn the_source_position_reads_no_sequence_catalogue() {
         let sql = continuation_statement(
-            &TableName::from((Alias::new("snap_2"), Alias::new("temporal_entities"))),
-            &TableName::from((Alias::new("snap_3_stg"), Alias::new("temporal_entities"))),
-            &Alias::new("temporal_entity_key").into_iden(),
+            &TableName::from((Alias::new("snap_2"), Alias::new("entities"))),
+            &TableName::from((Alias::new("snap_3_stg"), Alias::new("entities"))),
+            &Alias::new("entity_key").into_iden(),
         )
         .to_string(PostgresQueryBuilder);
         assert!(!sql.contains("pg_sequences"), "{sql}");

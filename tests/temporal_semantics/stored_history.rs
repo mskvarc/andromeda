@@ -9,7 +9,7 @@
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, Entities},
     name_dictionary::AttributeNames,
-    temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams, TemporalEntities},
+    temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams},
 };
 use andromeda_postgresql_seaquery::{
     aggregate::count_all,
@@ -130,8 +130,8 @@ pub async fn temporal_catalog_rows(pool: &PgPool, entity_id: &str) -> (i64, i64)
             scalar_subquery(
                 Query::select()
                     .expr(count_all())
-                    .from(TemporalEntities::Table)
-                    .and_where(Expr::col(TemporalEntities::Id).eq(entity_id))
+                    .from(Entities::Table)
+                    .and_where(Expr::col(Entities::Id).eq(entity_id))
                     .to_owned(),
             ),
             Alias::new("entities"),
@@ -142,11 +142,10 @@ pub async fn temporal_catalog_rows(pool: &PgPool, entity_id: &str) -> (i64, i64)
                     .expr(count_all())
                     .from(TemporalAttributeStreams::Table)
                     .inner_join(
-                        TemporalEntities::Table,
-                        Expr::col((TemporalEntities::Table, TemporalEntities::TemporalEntityKey))
-                            .equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::TemporalEntityKey)),
+                        Entities::Table,
+                        Expr::col((Entities::Table, Entities::EntityKey)).equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::EntityKey)),
                     )
-                    .and_where(Expr::col((TemporalEntities::Table, TemporalEntities::Id)).eq(entity_id))
+                    .and_where(Expr::col((Entities::Table, Entities::Id)).eq(entity_id))
                     .to_owned(),
             ),
             Alias::new("streams"),
@@ -226,16 +225,15 @@ fn stored_history_statement(entity_id: &str) -> SelectStatement {
             Expr::col((TemporalAttributeStreams::Table, TemporalAttributeStreams::StreamKey)).equals((AttributeHistory::Table, AttributeHistory::StreamKey)),
         )
         .inner_join(
-            TemporalEntities::Table,
-            Expr::col((TemporalEntities::Table, TemporalEntities::TemporalEntityKey))
-                .equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::TemporalEntityKey)),
+            Entities::Table,
+            Expr::col((Entities::Table, Entities::EntityKey)).equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::EntityKey)),
         )
         .inner_join(
             AttributeNames::Table,
             Expr::col((AttributeNames::Table, AttributeNames::AttributeNameKey))
                 .equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::AttributeNameKey)),
         )
-        .and_where(Expr::col((TemporalEntities::Table, TemporalEntities::Id)).eq(entity_id))
+        .and_where(Expr::col((Entities::Table, Entities::Id)).eq(entity_id))
         .order_by((AttributeHistory::Table, AttributeHistory::RecordedAt), Order::Asc)
         .order_by((AttributeHistory::Table, AttributeHistory::WriteId), Order::Asc)
         .order_by((AttributeHistory::Table, AttributeHistory::WriteOrdinal), Order::Asc)
@@ -267,11 +265,10 @@ fn orphaned_temporal_rows_statement() -> SelectStatement {
                     .expr(count_all())
                     .from(ScopeHistory::Table)
                     .left_join(
-                        TemporalEntities::Table,
-                        Expr::col((TemporalEntities::Table, TemporalEntities::TemporalEntityKey))
-                            .equals((ScopeHistory::Table, ScopeHistory::TemporalEntityKey)),
+                        Entities::Table,
+                        Expr::col((Entities::Table, Entities::EntityKey)).equals((ScopeHistory::Table, ScopeHistory::EntityKey)),
                     )
-                    .and_where(Expr::col((TemporalEntities::Table, TemporalEntities::TemporalEntityKey)).is_null())
+                    .and_where(Expr::col((Entities::Table, Entities::EntityKey)).is_null())
                     .to_owned(),
             ),
             Alias::new("orphaned_scope_history_rows"),
@@ -282,11 +279,10 @@ fn orphaned_temporal_rows_statement() -> SelectStatement {
                     .expr(count_all())
                     .from(TemporalAttributeStreams::Table)
                     .left_join(
-                        TemporalEntities::Table,
-                        Expr::col((TemporalEntities::Table, TemporalEntities::TemporalEntityKey))
-                            .equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::TemporalEntityKey)),
+                        Entities::Table,
+                        Expr::col((Entities::Table, Entities::EntityKey)).equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::EntityKey)),
                     )
-                    .and_where(Expr::col((TemporalEntities::Table, TemporalEntities::TemporalEntityKey)).is_null())
+                    .and_where(Expr::col((Entities::Table, Entities::EntityKey)).is_null())
                     .to_owned(),
             ),
             Alias::new("orphaned_streams"),

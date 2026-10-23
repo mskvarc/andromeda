@@ -20,6 +20,7 @@
 
 pub mod advisory_lock;
 pub mod aggregate;
+pub mod bit_string;
 pub mod branch;
 pub mod calendar_period;
 pub mod cast;

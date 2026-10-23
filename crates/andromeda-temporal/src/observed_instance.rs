@@ -40,7 +40,12 @@ use andromeda_ngsi_ld_lexicon::{
     },
     uri::Uri,
 };
-use andromeda_ngsi_ld_model::temporal::{TemporalValue, observation_metadata::ObservationMetadata, structured_value::StructuredValue};
+use andromeda_ngsi_ld_model::temporal::{
+    TemporalValue,
+    observation_metadata::ObservationMetadata,
+    structured_value::StructuredValue,
+    text_annotation::TextAnnotation,
+};
 use andromeda_ngsi_ld_number::JsonNumber;
 use chrono::{DateTime, Utc};
 use std::str::FromStr;
@@ -217,13 +222,16 @@ fn relationship_value(targets: NonEmpty<Uri>) -> TemporalValue {
 /// structured.
 fn vocab_value(terms: NonEmpty<NgsiLdReference>) -> TemporalValue {
     match terms.as_slice() {
-        [single] => TemporalValue::String(single.as_str().to_owned()),
+        [single] => TemporalValue::String {
+            text: single.as_str().to_owned(),
+            annotation: TextAnnotation::Plain,
+        },
         _ => TemporalValue::Structured(StructuredValue::Vocabs(terms)),
     }
 }
 
-/// A Property's value: a single scalar lands in its typed column, anything
-/// else is kept structured.
+/// A Property's value: a single literal with no `@direction` lands in its
+/// typed column, as current state holds it, anything else is kept structured.
 ///
 /// Clause 4.9 makes an array-valued Property's target value the whole array
 /// ("is included in the target value, if the latter is an array"), and JSON-LD
@@ -235,9 +243,9 @@ fn vocab_value(terms: NonEmpty<NgsiLdReference>) -> TemporalValue {
 /// a structured value too, as current state holds it.
 fn property_value(mut values: Vec<ExpandedValue<Fragment>>, value_type: Option<&NgsiLdReference>) -> Result<TemporalValue, TemporalError> {
     let scalar = match values.as_slice() {
-        [ExpandedValue::Literal(literal)] => Some(scalar_value(literal, value_type)),
+        [ExpandedValue::Literal(literal)] if literal.direction().is_none() => Some(scalar_value(literal, value_type)),
         [ExpandedValue::Json(literal)] => json_scalar_value(literal.piece()),
-        [ExpandedValue::Node(_) | ExpandedValue::List(_)] | [] | [_, _, ..] => None,
+        [ExpandedValue::Literal(_) | ExpandedValue::Node(_) | ExpandedValue::List(_)] | [] | [_, _, ..] => None,
     };
     if let Some(column) = scalar {
         return column;
@@ -248,12 +256,17 @@ fn property_value(mut values: Vec<ExpandedValue<Fragment>>, value_type: Option<&
     Ok(TemporalValue::Structured(StructuredValue::Values(values)))
 }
 
-/// The column a scalar value object beside the `valueType` `value_type` lands in.
+/// The column a scalar value object beside the `valueType` `value_type` lands
+/// in, keeping the datatype or language the value object declares.
 fn scalar_value(literal: &Literal, value_type: Option<&NgsiLdReference>) -> Result<TemporalValue, TemporalError> {
+    let datatype = literal.datatype().cloned(); // clone: the observation owns the datatype the literal declares
     match literal.value() {
-        LiteralValue::Number(number) => Ok(TemporalValue::Number(number.clone())), // clone: the observation owns its exact number
-        LiteralValue::Boolean(flag) => Ok(TemporalValue::Boolean(*flag)),
-        LiteralValue::String(text) => text_value(TimeValueDeclaration::new(literal.datatype(), value_type), text),
+        LiteralValue::Number(number) => Ok(TemporalValue::Number {
+            number: number.clone(), // clone: the observation owns its exact number
+            datatype,
+        }),
+        LiteralValue::Boolean(flag) => Ok(TemporalValue::Boolean { flag: *flag, datatype }),
+        LiteralValue::String(text) => text_value(TimeValueDeclaration::new(literal.datatype(), value_type), text, literal),
     }
 }
 
@@ -263,30 +276,53 @@ fn json_scalar_value(json: JsonPiece<'_>) -> Option<Result<TemporalValue, Tempor
     match json.kind() {
         JsonKind::Number => Some(
             JsonNumber::from_str(json.text())
-                .map(TemporalValue::Number)
+                .map(|number| TemporalValue::Number { number, datatype: None })
                 .map_err(|source| TemporalError::from(SubmissionRefusal::PropertyNumber(source))),
         ),
-        JsonKind::String => json.as_str().map(|text| Ok(TemporalValue::String(text.into_owned()))),
-        JsonKind::Boolean => json.as_bool().map(|flag| Ok(TemporalValue::Boolean(flag))),
-        JsonKind::Null => Some(Ok(TemporalValue::String("null".to_owned()))),
+        JsonKind::String => json.as_str().map(|text| Ok(plain_text(text.into_owned()))),
+        JsonKind::Boolean => json.as_bool().map(|flag| Ok(TemporalValue::Boolean { flag, datatype: None })),
+        JsonKind::Null => Some(Ok(plain_text("null".to_owned()))),
         JsonKind::Array | JsonKind::Object => None,
     }
 }
 
-/// A string Property value: the time value it is declared as (annex C.6), or
-/// the string it is, as written.
+/// A string Property value of the value object `literal`: the time value it is
+/// declared as (annex C.6), or the string it is, as written, with the
+/// datatype or language `literal` declares.
 ///
 /// A `DateTime` reaches its own `timestamptz` column, where the instant is
 /// what is compared. A `Date` and a `Time` reach the string column under their
 /// own value kinds, a `Time` in its fixed-width storage encoding, so byte-wise
-/// order over the column is the chronological order clause 4.9 asks for.
-fn text_value(declaration: TimeValueDeclaration<'_>, text: &str) -> Result<TemporalValue, TemporalError> {
+/// order over the column is the chronological order clause 4.9 asks for. A
+/// time value keeps the datatype its literal declares, none when the
+/// `valueType` declares the form.
+fn text_value(declaration: TimeValueDeclaration<'_>, text: &str, literal: &Literal) -> Result<TemporalValue, TemporalError> {
+    let datatype = || literal.datatype().cloned(); // clone: the observation owns the datatype the literal declares
     match TimeValue::declared(declaration, PrimitiveLiteral::String(text)) {
-        Some(Ok(TimeValue::DateTime(instant))) => Ok(TemporalValue::DateTime(instant.get())),
-        Some(Ok(TimeValue::Date(date))) => Ok(TemporalValue::Date(date)),
-        Some(Ok(TimeValue::Time(time))) => Ok(TemporalValue::Time(time)),
+        Some(Ok(TimeValue::DateTime(instant))) => Ok(TemporalValue::DateTime {
+            instant: instant.get(),
+            datatype: datatype(),
+        }),
+        Some(Ok(TimeValue::Date(date))) => Ok(TemporalValue::Date { date, datatype: datatype() }),
+        Some(Ok(TimeValue::Time(time))) => Ok(TemporalValue::Time { time, datatype: datatype() }),
         Some(Err(source)) => Err(SubmissionRefusal::TimeValueProperty(source).into()),
-        None => Ok(TemporalValue::String(text.to_owned())),
+        None => Ok(TemporalValue::String {
+            text: text.to_owned(),
+            annotation: match (datatype(), literal.language()) {
+                (Some(datatype), _) => TextAnnotation::Datatype(datatype),
+                // clone: the observation owns the tag the literal declares
+                (None, Some(language)) => TextAnnotation::Language(language.clone()),
+                (None, None) => TextAnnotation::Plain,
+            },
+        }),
+    }
+}
+
+/// A plain string value.
+const fn plain_text(text: String) -> TemporalValue {
+    TemporalValue::String {
+        text,
+        annotation: TextAnnotation::Plain,
     }
 }
 

@@ -13,15 +13,12 @@
 //! entry an assertion is judged against is therefore recorded or in the
 //! source.
 
-use crate::intent_application::intent_source::{I, StagedSource, Te, entry, intent, source_intents_as};
+use crate::intent_application::intent_source::{I, StagedSource, entry, intent, source_intents_as};
 use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
 use andromeda_postgresql_query::scope_assertion::{EVENT_COLUMNS, held_in_force, path_set};
-use andromeda_postgresql_schema::{
-    queue::TemporalAppendIntents,
-    temporal::{ScopeHistory, TemporalEntities},
-    temporal_intent::TemporalEntry,
-};
+use andromeda_postgresql_schema::{current::Entities, queue::TemporalAppendIntents, temporal::ScopeHistory, temporal_intent::TemporalEntry};
 use andromeda_postgresql_seaquery::{branch::qualified, unnest::unnest_of};
+use andromeda_postgresql_temporal_query::alias::Te;
 use sea_query::{Condition, DynIden, Expr, ExprTrait, Iden, Query, SelectStatement, SimpleExpr, UnionType};
 
 /// The alias of a recorded Scope event an assertion is judged against, `sr`.
@@ -66,7 +63,7 @@ fn judging_events(source: &StagedSource<'_>, schema: Option<&DynIden>) -> Select
     recorded
         .exprs(EVENT_COLUMNS.map(|column| Expr::col((RecordedEvent, column))))
         .from(qualified(schema, ScopeHistory::Table).alias(RecordedEvent))
-        .and_where(Expr::col((RecordedEvent, ScopeHistory::TemporalEntityKey)).equals((Te, TemporalEntities::TemporalEntityKey)));
+        .and_where(Expr::col((RecordedEvent, ScopeHistory::EntityKey)).equals((Te, Entities::EntityKey)));
     let mut earlier = Query::select();
     source_intents_as(&mut earlier, source, EarlierIntent);
     earlier

@@ -8,9 +8,10 @@ use andromeda_ngsi_ld_lexicon::{
     identifier::Identifier,
     time::{date::NgsiLdDate, rendering::instant_text, time_of_day::NgsiLdTime},
 };
-use andromeda_ngsi_ld_model::temporal::TemporalValue;
+use andromeda_ngsi_ld_model::temporal::{TemporalValue, text_annotation::TextAnnotation};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
+use langtag::LangTagBuf;
 use serde_json::{Value, json};
 
 const PROPERTY: &str = "https://uri.etsi.org/ngsi-ld/Property";
@@ -149,7 +150,14 @@ fn an_undeclared_string_is_recorded_as_written_whatever_it_resembles() {
         "2024-01-01T01:00:00+01:00",
         "atrium",
     ] {
-        pretty_assertions::assert_eq!(recorded(&bare_property(literal)), TemporalValue::String(literal.to_owned()), "{literal}");
+        pretty_assertions::assert_eq!(
+            recorded(&bare_property(literal)),
+            TemporalValue::String {
+                text: literal.to_owned(),
+                annotation: TextAnnotation::Plain,
+            },
+            "{literal}"
+        );
     }
 }
 
@@ -158,7 +166,10 @@ fn a_typed_time_is_recorded_as_a_time() {
     for spelling in ["12:00:00.5Z", "12:00:00,5Z"] {
         pretty_assertions::assert_eq!(
             recorded(&typed_property(expanded_classes::TIME.as_str(), spelling)),
-            TemporalValue::Time("12:00:00.5Z".parse::<NgsiLdTime>().expect("a Time")),
+            TemporalValue::Time {
+                time: "12:00:00.5Z".parse::<NgsiLdTime>().expect("a Time"),
+                datatype: Some(expanded_classes::TIME.as_str().parse().expect("a datatype")),
+            },
             "{spelling}"
         );
     }
@@ -168,7 +179,10 @@ fn a_typed_time_is_recorded_as_a_time() {
 fn a_typed_date_is_recorded_as_a_date() {
     pretty_assertions::assert_eq!(
         recorded(&typed_property(expanded_classes::DATE.as_str(), "2026-04-12")),
-        TemporalValue::Date("2026-04-12".parse::<NgsiLdDate>().expect("a Date"))
+        TemporalValue::Date {
+            date: "2026-04-12".parse::<NgsiLdDate>().expect("a Date"),
+            datatype: Some(expanded_classes::DATE.as_str().parse().expect("a datatype")),
+        }
     );
 }
 
@@ -181,10 +195,11 @@ fn a_value_type_declares_the_time_value_of_a_plain_literal() {
         expanded_properties::VALUE_TYPE.as_str(): [{"@id": expanded_classes::DATE_TIME.as_str()}],
     });
     let value = recorded(&instance);
-    let TemporalValue::DateTime(instant) = value else {
+    let TemporalValue::DateTime { instant, datatype } = value else {
         panic!("a declared DateTime is an instant, got {value:?}");
     };
     pretty_assertions::assert_eq!(instant_text(instant), "2024-01-01T00:00:00.250Z");
+    pretty_assertions::assert_eq!(datatype, None, "the valueType declares the form, the literal does not");
 }
 
 /// A declared `@type` refuses a literal that does not satisfy it (annex C.6):
@@ -211,7 +226,7 @@ fn a_declared_type_refuses_a_literal_that_does_not_satisfy_it() {
 fn a_datetime_typed_property_lands_in_the_instant_column() {
     assert!(matches!(
         recorded(&typed_property(expanded_classes::DATE_TIME.as_str(), "2026-07-25T10:00:00Z")),
-        TemporalValue::DateTime(_)
+        TemporalValue::DateTime { datatype: Some(_), .. }
     ));
 }
 
@@ -241,7 +256,10 @@ fn a_number_reaches_its_column_exactly() {
         .expect("a well-formed expanded property");
         pretty_assertions::assert_eq!(
             recorded(&instance),
-            TemporalValue::Number(expected.parse::<JsonNumber>().expect("an exact number")),
+            TemporalValue::Number {
+                number: expected.parse::<JsonNumber>().expect("an exact number"),
+                datatype: None
+            },
             "{raw}"
         );
     }
@@ -511,4 +529,47 @@ fn a_companion_member_holding_the_null_is_refused() {
         expanded_properties::UNIT_CODE.as_str(): [{"@value": "urn:ngsi-ld:null"}]
     });
     assert!(matches!(read(&instance), Err(TemporalError::Validation(_))), "{:?}", read(&instance));
+}
+
+/// Clause 4.5.2 admits a JSON-LD value object as a Property value: a
+/// language-tagged string keeps its `@language`.
+#[test]
+fn a_language_tagged_string_is_recorded_with_its_language() {
+    let value = recorded(&property(&json!([{"@value": "hola", "@language": "es"}])));
+    pretty_assertions::assert_eq!(
+        value,
+        TemporalValue::String {
+            text: "hola".to_owned(),
+            annotation: TextAnnotation::Language(LangTagBuf::new("es".to_owned()).expect("a language tag")),
+        }
+    );
+}
+
+/// A typed string and a typed number keep the datatype they declare.
+#[test]
+fn a_typed_literal_is_recorded_with_its_datatype() {
+    const INTEGER: &str = "http://www.w3.org/2001/XMLSchema#integer";
+    const DOUBLE: &str = "http://www.w3.org/2001/XMLSchema#double";
+    pretty_assertions::assert_eq!(
+        recorded(&property(&json!([{"@value": "42", "@type": INTEGER}]))),
+        TemporalValue::String {
+            text: "42".to_owned(),
+            annotation: TextAnnotation::Datatype(INTEGER.parse().expect("a datatype")),
+        }
+    );
+    pretty_assertions::assert_eq!(
+        recorded(&property(&json!([{"@value": 7, "@type": DOUBLE}]))),
+        TemporalValue::Number {
+            number: JsonNumber::from(7),
+            datatype: Some(DOUBLE.parse().expect("a datatype")),
+        }
+    );
+}
+
+/// A string with a base direction is kept whole in the structured column, as
+/// current state keeps it.
+#[test]
+fn a_string_with_a_direction_is_recorded_structured() {
+    let value = recorded(&property(&json!([{"@value": "hola", "@language": "es", "@direction": "ltr"}])));
+    assert!(matches!(value, TemporalValue::Structured(_)), "{value:?}");
 }

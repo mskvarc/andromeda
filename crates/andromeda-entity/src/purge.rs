@@ -71,7 +71,7 @@ impl EntityService {
         for entity_id in entity_ids {
             let mut purged: Option<Vec<ChangeEvent>> = None;
             let outcome = self
-                .commit_read_modify_write(target, entity_id, |previous| {
+                .commit_read_modify_write(target, entity_id, |previous, _| {
                     let Some((current, history)) = purged_state(previous, mode, &attributes) else {
                         return Ok(None);
                     };

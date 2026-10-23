@@ -14,7 +14,7 @@
 use crate::SUITE;
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, Entities},
-    temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
+    temporal::{AttributeHistory, TemporalAttributeStreams},
 };
 use andromeda_postgresql_seaquery::{
     aggregate::count_all,
@@ -208,11 +208,10 @@ async fn temporal_evolution_deletion_removes_every_history_row_and_leaves_curren
             Expr::col((TemporalAttributeStreams::Table, TemporalAttributeStreams::StreamKey)).equals((AttributeHistory::Table, AttributeHistory::StreamKey)),
         )
         .inner_join(
-            TemporalEntities::Table,
-            Expr::col((TemporalEntities::Table, TemporalEntities::TemporalEntityKey))
-                .equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::TemporalEntityKey)),
+            Entities::Table,
+            Expr::col((Entities::Table, Entities::EntityKey)).equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::EntityKey)),
         )
-        .and_where(Expr::col((TemporalEntities::Table, TemporalEntities::Id)).eq(id.as_str()))
+        .and_where(Expr::col((Entities::Table, Entities::Id)).eq(id.as_str()))
         .to_query_scalar()
         .fetch_one(scope.database_pool())
         .await
@@ -220,8 +219,9 @@ async fn temporal_evolution_deletion_removes_every_history_row_and_leaves_curren
     assert_eq!(orphan_history, 0, "no history row survives temporal deletion");
     let temporal_entities: i64 = Query::select()
         .expr(count_all())
-        .from(TemporalEntities::Table)
-        .and_where(Expr::col(TemporalEntities::Id).eq(id.as_str()))
+        .from(Entities::Table)
+        .and_where(Expr::col(Entities::Id).eq(id.as_str()))
+        .and_where(Expr::col(Entities::EvolutionCreatedAt).is_not_null())
         .to_query_scalar()
         .fetch_one(scope.database_pool())
         .await

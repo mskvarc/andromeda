@@ -30,14 +30,15 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, Entities},
-    temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
+    temporal::{AttributeHistory, TemporalAttributeStreams},
 };
 use andromeda_postgresql_seaquery::{aggregate::count_all, statement::Statement};
 use andromeda_test_harness::environment::TestEnvironment;
 use cefact_units::UnitCode;
+use chrono::Utc;
 use pretty_assertions::assert_eq;
 use sea_query::{Expr, ExprTrait, Query};
 use serde_json::{Map, json};
@@ -101,7 +102,7 @@ fn creation(id: &str, reading: Reading) -> AtomicWrite {
 
 /// Commit `writes` through the broker's own committer on the live branch.
 async fn commit(pool: &PgPool, writes: Vec<AtomicWrite>) -> Result<Vec<WriteOutcome>, CommitError> {
-    committer(pool).commit(&ContextTarget::Live, writes).await
+    committer(pool).commit(&ContextTarget::Live, SystemInstant::new(Utc::now()), writes).await
 }
 
 /// Whether `id` landed whole: its Entity row, its projection row and its
@@ -245,11 +246,10 @@ async fn current_projection_writes_landed_after_a_refusal_hold_exactly_what_they
             Expr::col((TemporalAttributeStreams::Table, TemporalAttributeStreams::StreamKey)).equals((AttributeHistory::Table, AttributeHistory::StreamKey)),
         )
         .inner_join(
-            TemporalEntities::Table,
-            Expr::col((TemporalEntities::Table, TemporalEntities::TemporalEntityKey))
-                .equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::TemporalEntityKey)),
+            Entities::Table,
+            Expr::col((Entities::Table, Entities::EntityKey)).equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::EntityKey)),
         )
-        .and_where(Expr::col((TemporalEntities::Table, TemporalEntities::Id)).eq(kept.as_str()))
+        .and_where(Expr::col((Entities::Table, Entities::Id)).eq(kept.as_str()))
         .to_query_scalar()
         .fetch_one(pool)
         .await

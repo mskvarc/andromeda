@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0026: Temporal append intents
+-- 0025: Temporal append intents
 -- ============================================================================
 -- Temporal history appends the broker accepted together with current Entity
 -- state but has not yet applied to the temporal catalog and history. A
@@ -100,11 +100,13 @@ select
     e.expires_at,
     e.generated_instance_id,
     e.value_type_key,
+    e.value_datatype_key,
     e.unit_code_id,
     e.value_boolean,
     e.verbatim_instance_id,
     e.value_number,
     e.value_string,
+    e.value_language,
     e.value_geometry,
     e.value_geometry_members,
     e.value_object,

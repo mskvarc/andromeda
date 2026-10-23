@@ -35,7 +35,7 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -88,8 +88,8 @@ impl SpatialIndexingCommitter {
     /// Forward one commit to the wrapped port.
     async fn commit_inner(&self, target: &ContextTarget, writes: Vec<AtomicWrite>, kind: CommitKind) -> Result<Vec<WriteOutcome>, CommitError> {
         match kind {
-            CommitKind::Fresh => self.inner.commit(target, writes).await,
-            CommitKind::Enqueued => self.inner.commit_enqueued(writes).await,
+            CommitKind::Fresh(accepted_at) => self.inner.commit(target, accepted_at, writes).await,
+            CommitKind::Enqueued(accepted_at) => self.inner.commit_enqueued(accepted_at, writes).await,
             CommitKind::Replayed(replay) => self.inner.commit_replayed(target, replay, writes).await,
         }
     }
@@ -97,22 +97,23 @@ impl SpatialIndexingCommitter {
 
 /// Which commit of the wrapped port one forwarded commit is.
 enum CommitKind {
-    /// [`ContextCommitter::commit`].
-    Fresh,
-    /// [`ContextCommitter::commit_enqueued`], on the live branch.
-    Enqueued,
+    /// [`ContextCommitter::commit`] of writes accepted at this instant.
+    Fresh(SystemInstant),
+    /// [`ContextCommitter::commit_enqueued`] of writes accepted at this
+    /// instant, on the live branch.
+    Enqueued(SystemInstant),
     /// [`ContextCommitter::commit_replayed`] of this replay.
     Replayed(CommitReplay),
 }
 
 impl ContextCommitter for SpatialIndexingCommitter {
-    fn commit(&self, target: &ContextTarget, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+    fn commit(&self, target: &ContextTarget, accepted_at: SystemInstant, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         let target = target.clone(); // clone: the owned future outlives the borrowed target
-        Box::pin(async move { self.forward(&target, writes, CommitKind::Fresh).await })
+        Box::pin(async move { self.forward(&target, writes, CommitKind::Fresh(accepted_at)).await })
     }
 
-    fn commit_enqueued(&self, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-        Box::pin(async move { self.forward(&ContextTarget::Live, writes, CommitKind::Enqueued).await })
+    fn commit_enqueued(&self, accepted_at: SystemInstant, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        Box::pin(async move { self.forward(&ContextTarget::Live, writes, CommitKind::Enqueued(accepted_at)).await })
     }
 
     fn commit_replayed(&self, target: &ContextTarget, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
@@ -223,7 +224,7 @@ mod tests {
         linear_ring::LinearRing,
         position::Position,
     };
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_spatial_index::{entity::index::SpatialEntityIndex, key::SpatialKey};
     use andromeda_tenancy::tenant_ref::TenantRef;
@@ -246,23 +247,28 @@ mod tests {
         Hang,
     }
 
+    /// The instant a test commit is accepted at.
+    fn accepted() -> SystemInstant {
+        SystemInstant::new(Utc::now())
+    }
+
     /// A store answering every commit by its script.
     struct ScriptedStore(Script);
 
     impl ContextCommitter for ScriptedStore {
-        fn commit(&self, _target: &ContextTarget, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        fn commit(&self, _target: &ContextTarget, _accepted_at: SystemInstant, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
             match self.0 {
                 Script::Answer(outcome) => Box::pin(async move { Ok(writes.iter().map(|_| outcome()).collect()) }),
                 Script::Hang => Box::pin(pending()),
             }
         }
 
-        fn commit_enqueued(&self, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-            self.commit(&ContextTarget::Live, writes)
+        fn commit_enqueued(&self, accepted_at: SystemInstant, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+            self.commit(&ContextTarget::Live, accepted_at, writes)
         }
 
-        fn commit_replayed(&self, target: &ContextTarget, _replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-            self.commit(target, writes)
+        fn commit_replayed(&self, target: &ContextTarget, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+            self.commit(target, SystemInstant::new(replay.record.recorded_at()), writes)
         }
     }
 
@@ -344,7 +350,7 @@ mod tests {
         let index = seeded_index();
         let committer = committer(&index, Script::Answer(|| WriteOutcome::Updated));
         committer
-            .commit(&ContextTarget::Live, vec![write(located_at(0.0))])
+            .commit(&ContextTarget::Live, accepted(), vec![write(located_at(0.0))])
             .await
             .expect("the write lands");
         assert_eq!(around(&index, 0.0), Some(HashSet::from([vehicle()])));
@@ -355,11 +361,11 @@ mod tests {
         let index = seeded_index();
         let committer = committer(&index, Script::Answer(|| WriteOutcome::Updated));
         committer
-            .commit(&ContextTarget::Live, vec![write(located_at(0.0))])
+            .commit(&ContextTarget::Live, accepted(), vec![write(located_at(0.0))])
             .await
             .expect("the write lands");
         committer
-            .commit(&ContextTarget::Live, vec![write(located_at(20.0))])
+            .commit(&ContextTarget::Live, accepted(), vec![write(located_at(20.0))])
             .await
             .expect("the move lands");
         assert_eq!(around(&index, 0.0), Some(HashSet::new()));
@@ -370,11 +376,11 @@ mod tests {
     async fn a_superseded_write_keeps_the_entity_where_the_store_still_has_it() {
         let index = seeded_index();
         committer(&index, Script::Answer(|| WriteOutcome::Updated))
-            .commit(&ContextTarget::Live, vec![write(located_at(0.0))])
+            .commit(&ContextTarget::Live, accepted(), vec![write(located_at(0.0))])
             .await
             .expect("the write lands");
         committer(&index, Script::Answer(|| WriteOutcome::Superseded))
-            .commit(&ContextTarget::Live, vec![write(located_at(20.0))])
+            .commit(&ContextTarget::Live, accepted(), vec![write(located_at(20.0))])
             .await
             .expect("the commit answers");
         assert_eq!(around(&index, 0.0), Some(HashSet::from([vehicle()])));
@@ -384,11 +390,16 @@ mod tests {
     async fn a_commit_dropped_before_its_outcome_leaves_the_entity_reachable_at_its_new_location() {
         let index = seeded_index();
         committer(&index, Script::Answer(|| WriteOutcome::Updated))
-            .commit(&ContextTarget::Live, vec![write(located_at(0.0))])
+            .commit(&ContextTarget::Live, accepted(), vec![write(located_at(0.0))])
             .await
             .expect("the write lands");
         let hanging = committer(&index, Script::Hang);
-        assert!(hanging.commit(&ContextTarget::Live, vec![write(located_at(20.0))]).now_or_never().is_none());
+        assert!(
+            hanging
+                .commit(&ContextTarget::Live, accepted(), vec![write(located_at(20.0))])
+                .now_or_never()
+                .is_none()
+        );
         assert_eq!(around(&index, 0.0), Some(HashSet::from([vehicle()])));
         assert_eq!(around(&index, 20.0), Some(HashSet::from([vehicle()])));
     }
@@ -397,16 +408,16 @@ mod tests {
     async fn a_landed_deletion_removes_the_entity_and_a_refused_one_keeps_it() {
         let index = seeded_index();
         committer(&index, Script::Answer(|| WriteOutcome::Updated))
-            .commit(&ContextTarget::Live, vec![write(located_at(0.0))])
+            .commit(&ContextTarget::Live, accepted(), vec![write(located_at(0.0))])
             .await
             .expect("the write lands");
         committer(&index, Script::Answer(|| WriteOutcome::NotFound))
-            .commit(&ContextTarget::Live, vec![write(EntityMutation::Delete)])
+            .commit(&ContextTarget::Live, accepted(), vec![write(EntityMutation::Delete)])
             .await
             .expect("the commit answers");
         assert_eq!(around(&index, 0.0), Some(HashSet::from([vehicle()])));
         committer(&index, Script::Answer(deleted))
-            .commit(&ContextTarget::Live, vec![write(EntityMutation::Delete)])
+            .commit(&ContextTarget::Live, accepted(), vec![write(EntityMutation::Delete)])
             .await
             .expect("the deletion lands");
         assert_eq!(around(&index, 0.0), Some(HashSet::new()));
@@ -420,7 +431,7 @@ mod tests {
             "urn:ngsi-ld:Snapshot:a".parse().expect("a well-formed URI"),
         ));
         committer(&index, Script::Answer(|| WriteOutcome::Updated))
-            .commit(&snapshot, vec![write(located_at(0.0))])
+            .commit(&snapshot, accepted(), vec![write(located_at(0.0))])
             .await
             .expect("the write lands");
         assert_eq!(around(&index, 0.0), Some(HashSet::new()));
@@ -430,16 +441,16 @@ mod tests {
     async fn a_failed_commit_reports_its_error() {
         struct FailingStore;
         impl ContextCommitter for FailingStore {
-            fn commit(&self, _target: &ContextTarget, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+            fn commit(&self, _target: &ContextTarget, _accepted_at: SystemInstant, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
                 Box::pin(async { Err(CommitError::Persistence(PersistenceFailure::Unavailable)) })
             }
 
-            fn commit_enqueued(&self, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-                self.commit(&ContextTarget::Live, writes)
+            fn commit_enqueued(&self, accepted_at: SystemInstant, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+                self.commit(&ContextTarget::Live, accepted_at, writes)
             }
 
-            fn commit_replayed(&self, target: &ContextTarget, _replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-                self.commit(target, writes)
+            fn commit_replayed(&self, target: &ContextTarget, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+                self.commit(target, SystemInstant::new(replay.record.recorded_at()), writes)
             }
         }
         let index = seeded_index();
@@ -448,6 +459,6 @@ mod tests {
             Arc::clone(&index), // clone: the committer and the test share the index
             LocationPlacement::new(TenantRef::UnnamedDefault).expect("the core location term is an attribute name"),
         );
-        assert!(committer.commit(&ContextTarget::Live, vec![write(located_at(0.0))]).await.is_err());
+        assert!(committer.commit(&ContextTarget::Live, accepted(), vec![write(located_at(0.0))]).await.is_err());
     }
 }

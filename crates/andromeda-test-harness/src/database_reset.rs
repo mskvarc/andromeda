@@ -12,7 +12,7 @@
 //! advance, and a revision only has to grow, never to restart.
 //!
 //! `attribute_history_instance_claims` is named explicitly rather than left to
-//! the cascade from `temporal_entities`. It carries the clause 4.5.7 uniqueness
+//! the cascade from `entities`. It carries the clause 4.5.7 uniqueness
 //! of a client-supplied `instanceId`, which `attribute_history` cannot carry
 //! itself, so a claim surviving the reset would refuse an identifier the next
 //! test case is entitled to use, and relying on a cascade to reclaim it makes
@@ -52,19 +52,11 @@ use andromeda_postgresql_schema::{
     entity_map::{EntityMapEntries, EntityMapLinks, EntityMaps},
     jsonld::JsonldContexts,
     notification::{NotificationDeliveries, NotificationEvents},
-    queue::{PendingSideEffects, TemporalAppendIntents, WriteRecords},
+    queue::{PendingSideEffects, TemporalAppendIntents},
     snapshot::{SnapshotNotificationOutbox, SnapshotPreparation, Snapshots},
     subscription_forwarding::{ForwardedSubscriptions, SubscriptionCompanions},
     subscriptions::{SubscriptionDeliveryState, SubscriptionNotifiedRegistrations, Subscriptions},
-    temporal::{
-        AttributeHistory,
-        AttributeHistoryInstanceClaims,
-        ScopeHistory,
-        TemporalAttributeStreams,
-        TemporalEntities,
-        TemporalEntityTypeMembers,
-        TemporalStreamShapes,
-    },
+    temporal::{AttributeHistory, AttributeHistoryInstanceClaims, ScopeHistory, StreamTypeCensus, TemporalAttributeStreams},
 };
 use andromeda_postgresql_seaquery::{
     command::Command,
@@ -101,7 +93,6 @@ use tokio::time::{Instant, sleep};
 /// The relations the reset empties, in the order they are truncated.
 fn reset_relations() -> Vec<DynIden> {
     vec![
-        WriteRecords::Table.into_iden(),
         TemporalAppendIntents::Table.into_iden(),
         PendingSideEffects::Table.into_iden(),
         CurrentAttributes::Table.into_iden(),
@@ -121,10 +112,8 @@ fn reset_relations() -> Vec<DynIden> {
         Subscriptions::Table.into_iden(),
         AttributeHistoryInstanceClaims::Table.into_iden(),
         AttributeHistory::Table.into_iden(),
-        TemporalStreamShapes::Table.into_iden(),
         TemporalAttributeStreams::Table.into_iden(),
-        TemporalEntityTypeMembers::Table.into_iden(),
-        TemporalEntities::Table.into_iden(),
+        StreamTypeCensus::Table.into_iden(),
         EntityTypeMembers::Table.into_iden(),
         EntityTypeCensus::Table.into_iden(),
         EntityTypeAttributeCensus::Table.into_iden(),
@@ -360,42 +349,33 @@ fn delete_in(table: impl IntoIden, column: impl IntoIden, subquery: SelectStatem
 
 /// Every prefix-scoped delete a cleanup runs, in dependency order.
 ///
-/// Temporal Evolution is reached through `temporal_entities`, not through
-/// `entities`: no foreign key makes deleting an entity cascade into its
-/// history, so an entity delete reclaims nothing temporal.
-/// `temporal_attribute_streams` cascades from `temporal_entities`, while
+/// One identity row in `entities` serves an Entity's current state and its
+/// Temporal Evolution. `temporal_attribute_streams` cascades from it, while
 /// `attribute_history` and `scope_history` carry no foreign key at all
 /// (hypertables cannot), so each is deleted through the streams and the
-/// catalogue that name it, before the rows those names live on are removed.
+/// identity rows that name it, before those rows are removed.
 ///
 /// `attribute_history_instance_claims` is absent deliberately: it is an
-/// ordinary table whose foreign key cascades from `temporal_entities`, so the
-/// catalogue delete below reclaims every claim the prefix staked. The global
-/// reset still names it, because a `TRUNCATE` list is not a cascade.
+/// ordinary table whose foreign key cascades from `entities`, so the identity
+/// delete below reclaims every claim the prefix staked. The global reset still
+/// names it, because a `TRUNCATE` list is not a cascade.
 fn prefix_deletes(like: &str) -> Vec<DeleteStatement> {
-    let queued_writes = Query::select()
-        .column(TemporalAppendIntents::WriteId)
-        .from(TemporalAppendIntents::Table)
-        .and_where(Expr::col(TemporalAppendIntents::EntityId).like(like))
-        .to_owned();
     let streams_of_prefix = Query::select()
         .column((TemporalAttributeStreams::Table, TemporalAttributeStreams::StreamKey))
         .from(TemporalAttributeStreams::Table)
         .join(
             JoinType::InnerJoin,
-            TemporalEntities::Table,
-            Expr::col((TemporalEntities::Table, TemporalEntities::TemporalEntityKey))
-                .equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::TemporalEntityKey)),
+            Entities::Table,
+            Expr::col((Entities::Table, Entities::EntityKey)).equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::EntityKey)),
         )
-        .and_where(Expr::col((TemporalEntities::Table, TemporalEntities::Id)).like(like))
+        .and_where(Expr::col((Entities::Table, Entities::Id)).like(like))
         .to_owned();
     let entities_of_prefix = Query::select()
-        .column(TemporalEntities::TemporalEntityKey)
-        .from(TemporalEntities::Table)
-        .and_where(Expr::col(TemporalEntities::Id).like(like))
+        .column(Entities::EntityKey)
+        .from(Entities::Table)
+        .and_where(Expr::col(Entities::Id).like(like))
         .to_owned();
     vec![
-        delete_in(WriteRecords::Table, WriteRecords::WriteId, queued_writes),
         delete_like(TemporalAppendIntents::Table, TemporalAppendIntents::EntityId, like),
         // `notification_events` carries the Entity id as text and has no foreign key
         // to `subscriptions` (a subscription delete cascades its deliveries but
@@ -405,10 +385,9 @@ fn prefix_deletes(like: &str) -> Vec<DeleteStatement> {
         delete_like(Subscriptions::Table, Subscriptions::Id, like),
         delete_like(Csr::Table, Csr::Id, like),
         delete_like(Snapshots::Table, Snapshots::Id, like),
-        delete_like(Entities::Table, Entities::Id, like),
         delete_in(AttributeHistory::Table, AttributeHistory::StreamKey, streams_of_prefix),
-        delete_in(ScopeHistory::Table, ScopeHistory::TemporalEntityKey, entities_of_prefix),
-        delete_like(TemporalEntities::Table, TemporalEntities::Id, like),
+        delete_in(ScopeHistory::Table, ScopeHistory::EntityKey, entities_of_prefix),
+        delete_like(Entities::Table, Entities::Id, like),
     ]
 }
 
@@ -489,10 +468,8 @@ mod tests {
             "entity_search",
             "entity_type_members",
             "jsonld_contexts",
-            "temporal_entities",
-            "temporal_entity_type_members",
             "temporal_attribute_streams",
-            "temporal_stream_shapes",
+            "stream_type_census",
             "attribute_history",
             "attribute_history_instance_claims",
             "subscriptions",
@@ -511,7 +488,6 @@ mod tests {
             "current_attributes",
             "pending_side_effects",
             "temporal_append_intents",
-            "write_records",
             "entity_maps",
             "entity_map_entries",
             "entity_map_links",
@@ -525,9 +501,9 @@ mod tests {
         );
     }
 
-    /// Temporal Evolution is detached from current entity state, so
-    /// prefix cleanup has to name every temporal relation itself; relying on a
-    /// cascade from `entities` would leak history across runs.
+    /// The history hypertables carry no foreign key, so prefix cleanup has
+    /// to name every temporal relation itself; relying on a cascade from
+    /// `entities` would leak history across runs.
     #[test]
     fn prefix_cleanup_reaches_every_relation_the_reset_truncates() {
         let deletes = prefix_deletes("p%")
@@ -543,7 +519,6 @@ mod tests {
             "entities",
             "attribute_history",
             "scope_history",
-            "temporal_entities",
         ] {
             assert!(
                 deletes.contains(&format!(r#"DELETE FROM "{relation}""#)),
@@ -552,10 +527,10 @@ mod tests {
         }
     }
 
-    /// `temporal_entities` is deleted last so the statements that locate
-    /// history rows through it still find their catalogue rows.
+    /// `entities` is deleted last so the statements that locate history rows
+    /// through it still find their identity rows.
     #[test]
-    fn prefix_cleanup_removes_the_temporal_catalogue_after_the_rows_that_name_it() {
+    fn prefix_cleanup_removes_the_identity_rows_after_the_history_that_names_them() {
         let deletes = prefix_deletes("p%")
             .iter()
             .map(|statement| statement.to_string(PostgresQueryBuilder))
@@ -566,7 +541,7 @@ mod tests {
                 .position(|statement| statement.starts_with(prefix))
                 .unwrap_or_else(|| panic!("{prefix} is deleted"))
         };
-        let catalogue = position(r#"DELETE FROM "temporal_entities""#);
+        let catalogue = position(r#"DELETE FROM "entities""#);
         for relation in [r#"DELETE FROM "attribute_history""#, r#"DELETE FROM "scope_history""#] {
             assert!(position(relation) < catalogue, "{relation} must run before the catalogue it reads");
         }

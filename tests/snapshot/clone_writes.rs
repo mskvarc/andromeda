@@ -42,11 +42,7 @@ const COLOUR: &str = "https://example.org/clone/colour";
 
 /// The identity columns of the relations a clone copies, each with the
 /// relation holding it.
-const COPIED_IDENTITIES: [(&str, &str); 3] = [
-    ("entities", "entity_key"),
-    ("temporal_entities", "temporal_entity_key"),
-    ("temporal_attribute_streams", "stream_key"),
-];
+const COPIED_IDENTITIES: [(&str, &str); 2] = [("entities", "entity_key"), ("temporal_attribute_streams", "stream_key")];
 
 /// The relations holding Snapshot-scoped subscriptions and their notification
 /// queue, which a clone leaves empty.

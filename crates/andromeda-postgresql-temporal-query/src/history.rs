@@ -151,6 +151,7 @@ pub(crate) fn project_base_columns(select: &mut SelectStatement) {
         AttributeHistory::VerbatimInstanceId,
         AttributeHistory::ValueNumber,
         AttributeHistory::ValueString,
+        AttributeHistory::ValueLanguage,
         AttributeHistory::ValueBoolean,
         AttributeHistory::ValueGeometryMembers,
         AttributeHistory::ValueObject,
@@ -158,6 +159,7 @@ pub(crate) fn project_base_columns(select: &mut SelectStatement) {
         AttributeHistory::ValueUri,
         AttributeHistory::UnitCodeId,
         AttributeHistory::ValueTypeKey,
+        AttributeHistory::ValueDatatypeKey,
         AttributeHistory::ObjectTypeKeys,
         AttributeHistory::ProofSeals,
         AttributeHistory::ExpiresAt,
@@ -271,8 +273,8 @@ mod tests {
     }
 
     /// Clause 5.6.6 leaves the evolution standing when the current entity is
-    /// deleted, so stage 2 reaches the entity grain through the temporal
-    /// catalogue and not through the current-state tables.
+    /// deleted, so stage 2 reaches the entity grain through the stream's
+    /// identity row and not through the current-state tables.
     #[test]
     fn history_reaches_the_entity_through_the_temporal_catalogue() {
         let sql = sql_of(&minimal_compiled());
@@ -281,11 +283,12 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains("JOIN \"temporal_entities\" AS \"re\" ON \"re\".\"temporal_entity_key\" = \"rs\".\"temporal_entity_key\""),
+            sql.contains("JOIN \"entities\" AS \"re\" ON \"re\".\"entity_key\" = \"rs\".\"entity_key\""),
             "{sql}"
         );
-        assert!(!sql.contains("temporal_entity_attributes"), "{sql}");
-        assert!(!sql.contains("\"entities\" AS"), "{sql}");
+        for current_state in ["\"entity_search\"", "\"current_attributes\""] {
+            assert!(!sql.contains(current_state), "{current_state}: {sql}");
+        }
     }
 
     /// The kind of a historical instance is a fact of the row, because the
@@ -393,6 +396,7 @@ mod tests {
                 AttributeNameKey::from(7),
             )]),
             types: ResolvedNames::default(),
+            ..QueryNames::default()
         };
         let sql = build_temporal_history_query(&HistoryBranch::live_recorded(), &vehicle_id(), &compiled, &names).to_string(PostgresQueryBuilder);
         assert!(

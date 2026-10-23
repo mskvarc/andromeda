@@ -15,6 +15,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, operation::expiry_removal::InstanceExpiry, reads::removed_instance::removed_attribute_instances};
 #[cfg(test)]
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::time::system_instant::SystemInstant;
 use chrono::{DateTime, Utc};
 use std::{num::NonZeroU32, sync::Arc};
 use thiserror::Error;
@@ -160,7 +161,7 @@ impl EntityService {
             return Ok(0);
         }
 
-        let outcomes = self.writes.commit(target, writes).await?;
+        let outcomes = self.writes.commit(target, SystemInstant::new(Utc::now()), writes).await?;
         let mut landed = 0;
         for ((identifier, events), outcome) in pending.into_iter().zip(&outcomes) {
             // The sweep writes back what the store already held, less the

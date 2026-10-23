@@ -1,8 +1,9 @@
-//! Removing the families and value shapes a stream no longer holds.
+//! Clearing the families and value shapes a stream no longer holds from its
+//! shape mask.
 //!
-//! The write path adds a combination of family and shape to
-//! `temporal_stream_shapes` when it records an instance of one its stream
-//! does not hold yet, and never removes one. A path that removes or modifies
+//! The write path sets the bit of a combination of family and shape in the
+//! stream's mask when it records an instance of one the mask lacks, and never
+//! clears one. A path that removes or modifies
 //! recorded instances (a clause 5.6.14 modification, a clause 5.6.15
 //! deletion, a client `instanceId` a later write replaces under clause 4.5.7,
 //! a windowed deletion, operator retention) prunes the streams it touched: a
@@ -20,12 +21,35 @@
 //! combination again.
 
 use crate::{error::TemporalStoreError, history_removal::stream_key_array, repo::TemporalRepository, statement_timeout_allowance::allow_unbounded_statements};
-use andromeda_postgresql_query::tombstone::carries_a_value;
-use andromeda_postgresql_schema::temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities, TemporalStreamShapes};
-use andromeda_postgresql_seaquery::{branch::qualified, pg_array::any, statement::Statement};
-use andromeda_postgresql_temporal_query::{alias::Ah, recorded_shape::recorded_shape};
-use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, LockBehavior, LockType, Order, Query, SelectStatement};
+use andromeda_postgresql_query::{entity_sides::holds_evolution, tombstone::carries_a_value};
+use andromeda_postgresql_schema::{
+    current::Entities,
+    temporal::{AttributeHistory, TemporalAttributeStreams},
+};
+use andromeda_postgresql_seaquery::{
+    bit_string::bit_union_of_rows,
+    branch::qualified,
+    literal::int_literal,
+    pg_array::any,
+    scalar_subquery::scalar_subquery,
+    statement::Statement,
+};
+use andromeda_postgresql_temporal_query::{
+    alias::Ah,
+    shape_mask::{held_positions, no_shapes, position_mask, recorded_combination},
+};
+use sea_query::{DynIden, Expr, ExprTrait, Func, Iden, IntoIden, LockBehavior, LockType, Order, Query, SelectStatement, TableRef, UpdateStatement};
 use sqlx::PgConnection;
+
+/// Alias `ps`: a stream whose mask is pruned.
+#[derive(Iden, Clone, Copy)]
+#[iden = "ps"]
+struct Pruned;
+
+/// Alias `kept`: the mask each pruned stream keeps.
+#[derive(Iden, Clone, Copy)]
+#[iden = "kept"]
+struct Kept;
 
 /// How many Temporal Evolutions one retention prune transaction locks: enough
 /// to amortise the round trips, few enough that a write waiting on one of them
@@ -50,9 +74,9 @@ pub(crate) async fn lock_stream_evolutions(connection: &mut PgConnection, schema
     Ok(())
 }
 
-/// Lock the Temporal Evolutions of `stream_keys`, then remove every
-/// combination of family and shape no instance of its stream carries any
-/// longer, returning how many were removed.
+/// Lock the Temporal Evolutions of `stream_keys`, then clear from their masks
+/// every combination of family and shape no instance of the stream carries
+/// any longer, returning how many masks lost one.
 ///
 /// # Errors
 ///
@@ -67,7 +91,7 @@ pub(crate) async fn prune_stream_shapes(connection: &mut PgConnection, schema: O
 
 impl TemporalRepository {
     /// Prune every stream of the live branch after retention dropped history,
-    /// returning how many combinations were removed.
+    /// returning how many masks lost a combination.
     ///
     /// Retention drops whole chunks across every stream, so every stream is
     /// pruned, a batch of Temporal Evolutions per transaction. An Evolution a
@@ -103,15 +127,15 @@ impl TemporalRepository {
 /// The Temporal Evolutions of `stream_keys`, locked for update in key order.
 fn evolution_lock_statement(schema: Option<&DynIden>, stream_keys: &[i64]) -> SelectStatement {
     let owners = Query::select()
-        .column(TemporalAttributeStreams::TemporalEntityKey)
+        .column(TemporalAttributeStreams::EntityKey)
         .from(qualified(schema, TemporalAttributeStreams::Table))
         .and_where(Expr::col(TemporalAttributeStreams::StreamKey).eq(any(stream_key_array(stream_keys))))
         .to_owned();
     Query::select()
-        .column(TemporalEntities::TemporalEntityKey)
-        .from(qualified(schema, TemporalEntities::Table))
-        .and_where(Expr::col(TemporalEntities::TemporalEntityKey).in_subquery(owners))
-        .order_by(TemporalEntities::TemporalEntityKey, Order::Asc)
+        .column(Entities::EntityKey)
+        .from(qualified(schema, Entities::Table))
+        .and_where(Expr::col(Entities::EntityKey).in_subquery(owners))
+        .order_by(Entities::EntityKey, Order::Asc)
         .lock(LockType::Update)
         .to_owned()
 }
@@ -120,10 +144,11 @@ fn evolution_lock_statement(schema: Option<&DynIden>, stream_keys: &[i64]) -> Se
 /// write holds, locked for update.
 fn retention_batch_lock_statement(after: i64) -> SelectStatement {
     Query::select()
-        .column(TemporalEntities::TemporalEntityKey)
-        .from(TemporalEntities::Table)
-        .and_where(Expr::col(TemporalEntities::TemporalEntityKey).gt(after))
-        .order_by(TemporalEntities::TemporalEntityKey, Order::Asc)
+        .column(Entities::EntityKey)
+        .from(Entities::Table)
+        .and_where(Expr::col(Entities::EntityKey).gt(after))
+        .and_where(holds_evolution(Entities::Table))
+        .order_by(Entities::EntityKey, Order::Asc)
         .limit(RETENTION_PRUNE_BATCH)
         .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
         .to_owned()
@@ -134,33 +159,45 @@ fn evolution_streams_statement(evolutions: &[i64]) -> SelectStatement {
     Query::select()
         .column(TemporalAttributeStreams::StreamKey)
         .from(TemporalAttributeStreams::Table)
-        .and_where(Expr::col(TemporalAttributeStreams::TemporalEntityKey).eq(any(Expr::val(evolutions.to_vec()))))
+        .and_where(Expr::col(TemporalAttributeStreams::EntityKey).eq(any(Expr::val(evolutions.to_vec()))))
         .to_owned()
 }
 
-/// Remove the combinations of `stream_keys` no instance of their stream
-/// carries.
+/// Clear from the masks of `stream_keys` the combinations no instance of
+/// their stream carries.
 ///
-/// The probe stops at the first instance carrying the combination, so a
-/// combination still held costs one row read. It binds the streams inside as
-/// well: correlated alone, the planner reads every history row of the relation
-/// to hash it.
-fn prune_statement(schema: Option<&DynIden>, stream_keys: &[i64]) -> DeleteStatement {
-    let shapes = |column: TemporalStreamShapes| Expr::col((TemporalStreamShapes::Table, column));
-    let held = Query::select()
-        .expr(Expr::val(1))
+/// Each combination a mask holds is probed on its own, and the probe stops at
+/// the first instance carrying it, so a combination still held costs one row
+/// read. The probe binds the streams inside as well: correlated alone, the
+/// planner reads every history row of the relation to hash it. A mask that
+/// keeps every combination is left alone.
+fn prune_statement(schema: Option<&DynIden>, stream_keys: &[i64]) -> UpdateStatement {
+    let carried = Query::select()
+        .expr(int_literal(1))
         .from(qualified(schema, AttributeHistory::Table).alias(Ah))
         .and_where(Expr::col((Ah, AttributeHistory::StreamKey)).eq(any(stream_key_array(stream_keys))))
-        .and_where(Expr::col((Ah, AttributeHistory::StreamKey)).eq(shapes(TemporalStreamShapes::StreamKey)))
-        .and_where(Expr::col((Ah, AttributeHistory::AttributeKind)).eq(shapes(TemporalStreamShapes::AttributeKind)))
+        .and_where(Expr::col((Ah, AttributeHistory::StreamKey)).equals((Pruned, TemporalAttributeStreams::StreamKey)))
         .and_where(carries_a_value(Ah))
-        .and_where(recorded_shape().eq(shapes(TemporalStreamShapes::RecordedShape)))
-        .to_owned();
-    Query::delete()
-        .from_table(qualified(schema, TemporalStreamShapes::Table))
-        .and_where(Expr::col(TemporalStreamShapes::StreamKey).eq(any(stream_key_array(stream_keys))))
-        .and_where(Expr::exists(held).not())
-        .to_owned()
+        .and_where(recorded_combination().eq(position_mask()))
+        .take();
+    let kept = held_positions(Expr::col((Pruned, TemporalAttributeStreams::ShapeMask)))
+        .expr(bit_union_of_rows(position_mask()))
+        .and_where(Expr::exists(carried))
+        .take();
+    let masks = Query::select()
+        .column((Pruned, TemporalAttributeStreams::StreamKey))
+        .expr_as(Func::coalesce([scalar_subquery(kept), no_shapes()]), TemporalAttributeStreams::ShapeMask)
+        .from(qualified(schema, TemporalAttributeStreams::Table).alias(Pruned))
+        .and_where(Expr::col((Pruned, TemporalAttributeStreams::StreamKey)).eq(any(stream_key_array(stream_keys))))
+        .take();
+    let mask = || Expr::col((TemporalAttributeStreams::Table, TemporalAttributeStreams::ShapeMask));
+    Query::update()
+        .table(qualified(schema, TemporalAttributeStreams::Table))
+        .value(TemporalAttributeStreams::ShapeMask, Expr::col((Kept, TemporalAttributeStreams::ShapeMask)))
+        .from(TableRef::SubQuery(Box::new(masks), Kept.into_iden()))
+        .and_where(Expr::col((TemporalAttributeStreams::Table, TemporalAttributeStreams::StreamKey)).equals((Kept, TemporalAttributeStreams::StreamKey)))
+        .and_where(mask().ne(Expr::col((Kept, TemporalAttributeStreams::ShapeMask))))
+        .take()
 }
 
 #[cfg(test)]
@@ -169,17 +206,29 @@ mod tests {
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, DynIden, IntoIden, PostgresQueryBuilder};
 
-    /// A combination goes only when no instance of its stream carries it: the
-    /// probe compares the family and the refined shape of every row of the
-    /// pruned streams that is not a tombstone.
+    /// A combination goes only when no instance of its stream carries it:
+    /// each held bit is probed against the family and the refined shape of
+    /// the rows of the pruned streams that are not tombstones, and a mask is
+    /// rewritten only when it loses one.
     #[test]
     fn a_combination_goes_only_when_no_instance_of_its_stream_carries_it() {
         let sql = prune_statement(None, &[4, 5]).to_string(PostgresQueryBuilder);
         assert!(
-            sql.starts_with(r#"DELETE FROM "temporal_stream_shapes" WHERE "stream_key" = ANY(ARRAY [4,5]) AND (NOT EXISTS(SELECT 1 FROM "attribute_history" AS "ah" WHERE "ah"."stream_key" = ANY(ARRAY [4,5]) AND "ah"."stream_key" = "temporal_stream_shapes"."stream_key" AND "ah"."attribute_kind" = "temporal_stream_shapes"."attribute_kind" AND "ah"."value_kind" <> (0) AND (CASE"#),
+            sql.starts_with(concat!(
+                r#"UPDATE "temporal_attribute_streams" SET "shape_mask" = "kept"."shape_mask""#,
+                r#" FROM (SELECT "ps"."stream_key", COALESCE((SELECT bit_or((B'1'::bit(80) >> ("position")))"#,
+                r#" FROM generate_series(0, 79) AS "position" WHERE get_bit("ps"."shape_mask", "position") = 1"#,
+                r#" AND EXISTS(SELECT 1 FROM "attribute_history" AS "ah" WHERE "ah"."stream_key" = ANY(ARRAY [4,5]) AND "ah"."stream_key" = "ps"."stream_key" AND "ah"."value_kind" <> (0)"#
+            )),
             "{sql}"
         );
-        assert!(sql.ends_with(r#"END) = "temporal_stream_shapes"."recorded_shape"))"#), "{sql}");
+        assert!(
+            sql.ends_with(concat!(
+                r#"B'0'::bit(80)) AS "shape_mask" FROM "temporal_attribute_streams" AS "ps" WHERE "ps"."stream_key" = ANY(ARRAY [4,5])) AS "kept""#,
+                r#" WHERE "temporal_attribute_streams"."stream_key" = "kept"."stream_key" AND "temporal_attribute_streams"."shape_mask" <> "kept"."shape_mask""#
+            )),
+            "{sql}"
+        );
     }
 
     #[test]
@@ -187,7 +236,7 @@ mod tests {
         let sql = evolution_lock_statement(None, &[4]).to_string(PostgresQueryBuilder);
         assert_eq!(
             sql,
-            r#"SELECT "temporal_entity_key" FROM "temporal_entities" WHERE "temporal_entity_key" IN (SELECT "temporal_entity_key" FROM "temporal_attribute_streams" WHERE "stream_key" = ANY(ARRAY [4])) ORDER BY "temporal_entity_key" ASC FOR UPDATE"#
+            r#"SELECT "entity_key" FROM "entities" WHERE "entity_key" IN (SELECT "entity_key" FROM "temporal_attribute_streams" WHERE "stream_key" = ANY(ARRAY [4])) ORDER BY "entity_key" ASC FOR UPDATE"#
         );
     }
 
@@ -210,12 +259,12 @@ mod tests {
         let lock = retention_batch_lock_statement(41).to_string(PostgresQueryBuilder);
         assert_eq!(
             lock,
-            r#"SELECT "temporal_entity_key" FROM "temporal_entities" WHERE "temporal_entity_key" > 41 ORDER BY "temporal_entity_key" ASC LIMIT 500 FOR UPDATE SKIP LOCKED"#
+            r#"SELECT "entity_key" FROM "entities" WHERE "entity_key" > 41 AND "entities"."evolution_created_at" IS NOT NULL ORDER BY "entity_key" ASC LIMIT 500 FOR UPDATE SKIP LOCKED"#
         );
         let streams = evolution_streams_statement(&[42, 43]).to_string(PostgresQueryBuilder);
         assert_eq!(
             streams,
-            r#"SELECT "stream_key" FROM "temporal_attribute_streams" WHERE "temporal_entity_key" = ANY(ARRAY [42,43])"#
+            r#"SELECT "stream_key" FROM "temporal_attribute_streams" WHERE "entity_key" = ANY(ARRAY [42,43])"#
         );
     }
 }

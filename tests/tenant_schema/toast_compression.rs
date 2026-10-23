@@ -32,7 +32,6 @@ const LZ4_COLUMNS: &[(&str, &str)] = &[
     ("jsonld_contexts", "document_url"),
     ("jsonld_contexts", "payload"),
     ("jsonld_contexts", "extra_info"),
-    ("temporal_entities", "id"),
     ("temporal_attribute_streams", "dataset_id"),
     ("attribute_history", "value_string"),
     ("attribute_history", "value_object"),

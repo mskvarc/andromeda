@@ -17,7 +17,10 @@
 
 use crate::{
     alias::Rs,
-    stage1::{contributed_candidates::contributed_candidates, queued_candidates::queued_candidates},
+    stage1::{
+        contributed_candidates::contributed_candidates,
+        queued_candidates::{queued_candidates, stream_holder},
+    },
 };
 use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, contributed_entities::ContributedEntities};
 use andromeda_postgresql_query::{
@@ -81,14 +84,10 @@ impl<'q> ExtentRead<'q> {
     /// its queue, their identifiers beside every queued Entity, whose queued
     /// geometries no extent holds.
     pub(super) fn candidates(&self, branch: &HistoryBranch) -> SelectStatement {
-        let column = match branch.pending() {
-            PendingEntries::Absent => TemporalAttributeStreams::TemporalEntityKey,
-            PendingEntries::Unioned => TemporalAttributeStreams::Id,
-        };
         let mut candidates = Query::select();
+        candidates.from(qualified(branch.schema(), TemporalAttributeStreams::Table).alias(Rs));
+        stream_holder(&mut candidates, branch);
         candidates
-            .column((Rs, column))
-            .from(qualified(branch.schema(), TemporalAttributeStreams::Table).alias(Rs))
             .and_where(Expr::col((Rs, TemporalAttributeStreams::AttributeNameKey)).eq(self.geoproperty.get()))
             // clone: the page and the count each read the candidates
             .and_where(self.overlap.clone());
@@ -175,7 +174,7 @@ mod tests {
         let (sql, values) = stage1.select.build(PostgresQueryBuilder);
         let candidates = PageBranches::of(&sql).candidates;
         assert!(
-            candidates.starts_with(r#"SELECT "rs"."temporal_entity_key" FROM "temporal_attribute_streams" AS "rs" WHERE "rs"."attribute_name_key" = $"#),
+            candidates.starts_with(r#"SELECT "rs"."entity_key" FROM "temporal_attribute_streams" AS "rs" WHERE "rs"."attribute_name_key" = $"#),
             "{candidates}"
         );
         assert_eq!(bound_after(candidates, &values, GEOPROPERTY_KEY), Some(Value::Int(Some(2))), "{sql}");
@@ -269,6 +268,7 @@ mod tests {
                 "https://uri.etsi.org/ngsi-ld/default-context/Sensor".parse().expect("valid type name"),
                 EntityTypeNameKey::from(1),
             )]),
+            ..QueryNames::default()
         };
         let stage1 = build_stage1_entity_ids(
             &HistoryBranch::live_recorded(),
@@ -298,9 +298,10 @@ mod tests {
             .to_string(PostgresQueryBuilder);
         let branches = PageBranches::of(&sql);
         assert!(
-            branches
-                .candidates
-                .starts_with(r#"SELECT "rs"."id" FROM "temporal_attribute_streams" AS "rs" WHERE "rs"."attribute_name_key" = 2 AND"#),
+            branches.candidates.starts_with(concat!(
+                r#"SELECT "ri"."id" FROM "temporal_attribute_streams" AS "rs" JOIN "entities" AS "ri" ON "ri"."entity_key" = "rs"."entity_key" "#,
+                r#"WHERE "rs"."attribute_name_key" = 2 AND"#
+            )),
             "{}",
             branches.candidates
         );
@@ -346,8 +347,8 @@ mod tests {
         let branches = PageBranches::of(&sql);
         assert!(
             branches.candidates.ends_with(concat!(
-                r#" UNION ALL (SELECT "temporal_entities"."temporal_entity_key" FROM "temporal_entities""#,
-                r#" WHERE "temporal_entities"."id" = ANY(ARRAY ['urn:ngsi-ld:Sensor:000009']))"#
+                r#" UNION ALL (SELECT "entities"."entity_key" FROM "entities""#,
+                r#" WHERE "entities"."id" = ANY(ARRAY ['urn:ngsi-ld:Sensor:000009']) AND "entities"."evolution_created_at" IS NOT NULL)"#
             )),
             "{}",
             branches.candidates
@@ -365,16 +366,14 @@ mod tests {
         assert_eq!(stage1.count_planning, StatementPlanning::BoundValues);
         let (sql, values) = stage1.count.expect("count requested").build(PostgresQueryBuilder);
         assert!(
-            sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED (SELECT "rs"."temporal_entity_key" FROM "temporal_attribute_streams" AS "rs""#),
+            sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED (SELECT "rs"."entity_key" FROM "temporal_attribute_streams" AS "rs""#),
             "{sql}"
         );
         assert!(values.0.contains(&Value::BigUnsigned(Some(10_001))), "{:?}", values.0);
         assert!(values.0.contains(&Value::BigUnsigned(Some(10_000))), "{:?}", values.0);
         let parts = CountParts::of(&sql);
         assert!(
-            parts
-                .indexed
-                .contains(r#""temporal_entity_key" IN (SELECT "temporal_entity_key" FROM "candidates")"#),
+            parts.indexed.contains(r#""entity_key" IN (SELECT "entity_key" FROM "candidates")"#),
             "{}",
             parts.indexed
         );

@@ -8,13 +8,13 @@
 //! subscription, held in the same table) or a context source registration
 //! (clauses 5.9.2, 5.11.2), each committed in the tenant's own database, so a
 //! tenant exists exactly when one of those tables holds a row on the live
-//! branch.
+//! branch. An Entity and a Temporal Evolution share one identity row.
 
 use crate::{error::ContextStoreError, tenant_database::DatabaseUrl};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_pool::sql_state::SqlState;
-use andromeda_postgresql_schema::{csr::Csr, current::Entities, subscriptions::Subscriptions, temporal::TemporalEntities};
+use andromeda_postgresql_schema::{csr::Csr, current::Entities, subscriptions::Subscriptions};
 use andromeda_postgresql_seaquery::{literal::int_literal, statement::Statement};
 use andromeda_tenancy::database_name::TenantDatabaseName;
 use sea_query::{Expr, ExprTrait, Query, SelectStatement, TableRef};
@@ -65,7 +65,6 @@ fn is_absent(error: &sqlx::Error) -> bool {
 fn occupancy_query() -> SelectStatement {
     let live = ContextTarget::Live;
     let held = holds_a_row(table_of(&live, Entities::Table))
-        .or(holds_a_row(table_of(&live, TemporalEntities::Table)))
         .or(holds_a_row(table_of(&live, Subscriptions::Table)))
         .or(holds_a_row(TableRef::from(Csr::Table)));
     Query::select().expr(held).to_owned()
@@ -85,10 +84,10 @@ mod tests {
     #[test]
     fn the_probe_reads_every_table_a_creating_operation_writes() {
         let sql = occupancy_query().to_string(PostgresQueryBuilder);
-        for table in ["\"entities\"", "\"temporal_entities\"", "\"subscriptions\"", "\"context_source_registrations\""] {
+        for table in ["\"entities\"", "\"subscriptions\"", "\"context_source_registrations\""] {
             assert!(sql.contains(&format!("EXISTS(SELECT 1 FROM {table} LIMIT 1)")), "{table} is probed: {sql}");
         }
-        assert_eq!(sql.matches(" OR ").count(), 3, "{sql}");
+        assert_eq!(sql.matches(" OR ").count(), 2, "{sql}");
     }
 
     #[test]

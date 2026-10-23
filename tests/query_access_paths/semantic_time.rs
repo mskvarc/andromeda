@@ -116,7 +116,7 @@ fn populated_rows(entity_key: i64, column: AttributeHistory) -> SelectStatement 
             TemporalAttributeStreams::Table,
             Expr::col((TemporalAttributeStreams::Table, TemporalAttributeStreams::StreamKey)).equals((AttributeHistory::Table, AttributeHistory::StreamKey)),
         )
-        .and_where(Expr::col((TemporalAttributeStreams::Table, TemporalAttributeStreams::TemporalEntityKey)).eq(entity_key))
+        .and_where(Expr::col((TemporalAttributeStreams::Table, TemporalAttributeStreams::EntityKey)).eq(entity_key))
         .and_where(Expr::col((AttributeHistory::Table, column)).is_not_null())
         .to_owned()
 }

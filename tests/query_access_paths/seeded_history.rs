@@ -7,7 +7,10 @@
 //! minutes per test, so the rows are written directly and cleared again by the
 //! exclusive serialized reset that runs before each test in this suite.
 
-use andromeda_postgresql_schema::temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities};
+use andromeda_postgresql_schema::{
+    current::Entities,
+    temporal::{AttributeHistory, TemporalAttributeStreams},
+};
 use andromeda_postgresql_seaquery::{
     cast::cast,
     catalog_function::{generate_series, lpad, random_uuid},
@@ -80,7 +83,7 @@ async fn analyze_temporal(pool: &PgPool) {
     for relation in [
         AttributeHistory::Table.into_iden(),
         TemporalAttributeStreams::Table.into_iden(),
-        TemporalEntities::Table.into_iden(),
+        Entities::Table.into_iden(),
     ] {
         analyze(MaintenanceSchema::Public, relation)
             .to_query()
@@ -126,12 +129,12 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededHistory {
 /// Insert the one temporal Entity of the corpus and return its key.
 async fn insert_history_entity(pool: &PgPool, prefix: &str, historic_type_key: i32) -> i64 {
     Query::insert()
-        .into_table(TemporalEntities::Table)
+        .into_table(Entities::Table)
         .columns([
-            TemporalEntities::CreatedAt,
-            TemporalEntities::ModifiedAt,
-            TemporalEntities::Id,
-            TemporalEntities::EntityTypeNameKeys,
+            Entities::EvolutionCreatedAt,
+            Entities::EvolutionModifiedAt,
+            Entities::Id,
+            Entities::EvolutionTypeNameKeys,
         ])
         .values([
             now(),
@@ -140,7 +143,7 @@ async fn insert_history_entity(pool: &PgPool, prefix: &str, historic_type_key: i
             array_literal([cast(Expr::val(historic_type_key), PostgresType::Integer)]),
         ])
         .expect("one value per column")
-        .returning_col(TemporalEntities::TemporalEntityKey)
+        .returning_col(Entities::EntityKey)
         .to_query_scalar()
         .fetch_one(pool)
         .await
@@ -154,23 +157,21 @@ async fn insert_streams(pool: &PgPool, entity_key: i64, history_attribute_key: i
     Query::insert()
         .into_table(TemporalAttributeStreams::Table)
         .columns([
-            TemporalAttributeStreams::TemporalEntityKey,
-            TemporalAttributeStreams::Id,
+            TemporalAttributeStreams::EntityKey,
             TemporalAttributeStreams::AttributeNameKey,
             TemporalAttributeStreams::DatasetId,
         ])
         .select_from(
             Query::select()
-                .column((Alias::new("e"), TemporalEntities::TemporalEntityKey))
-                .column((Alias::new("e"), TemporalEntities::Id))
+                .column((Alias::new("e"), Entities::EntityKey))
                 .expr(Expr::val(history_attribute_key))
                 .expr(text_literal("urn:ngsi-ld:Dataset:").concat_text(lpad(cast(series(), PostgresType::Text), Expr::val(4), text_literal("0"))))
-                .from_as(TemporalEntities::Table, Alias::new("e"))
+                .from_as(Entities::Table, Alias::new("e"))
                 .from_function(
                     generate_series(Expr::val(1), cast(Expr::val(SEEDED_STREAMS), PostgresType::Bigint)),
                     Alias::new("g"),
                 )
-                .and_where(Expr::col((Alias::new("e"), TemporalEntities::TemporalEntityKey)).eq(entity_key))
+                .and_where(Expr::col((Alias::new("e"), Entities::EntityKey)).eq(entity_key))
                 .to_owned(),
         )
         .expect("the projection matches the column list")
@@ -228,7 +229,7 @@ async fn insert_observations(pool: &PgPool, entity_key: i64) {
                     generate_series(Expr::val(1), cast(Expr::val(OBSERVATIONS_PER_STREAM), PostgresType::Bigint)),
                     Alias::new("g"),
                 )
-                .and_where(Expr::col((Alias::new("s"), TemporalAttributeStreams::TemporalEntityKey)).eq(entity_key))
+                .and_where(Expr::col((Alias::new("s"), TemporalAttributeStreams::EntityKey)).eq(entity_key))
                 .to_owned(),
         )
         .expect("the projection matches the column list")
@@ -338,12 +339,12 @@ pub async fn seed_window_and_prior(pool: &PgPool, prefix: &str, observations: i6
 async fn insert_meter_catalogue(pool: &PgPool, prefix: &str, type_key: i32, attribute: i32) {
     let series = || Expr::col(Alias::new("g"));
     let meters = Query::insert()
-        .into_table(TemporalEntities::Table)
+        .into_table(Entities::Table)
         .columns([
-            TemporalEntities::CreatedAt,
-            TemporalEntities::ModifiedAt,
-            TemporalEntities::Id,
-            TemporalEntities::EntityTypeNameKeys,
+            Entities::EvolutionCreatedAt,
+            Entities::EvolutionModifiedAt,
+            Entities::Id,
+            Entities::EvolutionTypeNameKeys,
         ])
         .select_from(
             Query::select()
@@ -362,18 +363,14 @@ async fn insert_meter_catalogue(pool: &PgPool, prefix: &str, type_key: i32, attr
                 .to_owned(),
         )
         .expect("the projection matches the column list")
-        .returning(Query::returning().columns([TemporalEntities::TemporalEntityKey, TemporalEntities::Id]))
+        .returning(Query::returning().columns([Entities::EntityKey, Entities::Id]))
         .to_owned();
     let streams = Query::insert()
         .into_table(TemporalAttributeStreams::Table)
-        .columns([
-            TemporalAttributeStreams::TemporalEntityKey,
-            TemporalAttributeStreams::Id,
-            TemporalAttributeStreams::AttributeNameKey,
-        ])
+        .columns([TemporalAttributeStreams::EntityKey, TemporalAttributeStreams::AttributeNameKey])
         .select_from(
             Query::select()
-                .columns([TemporalEntities::TemporalEntityKey, TemporalEntities::Id])
+                .column(Entities::EntityKey)
                 .expr(Expr::val(attribute))
                 .from(Alias::new("meters"))
                 .to_owned(),
@@ -459,11 +456,10 @@ async fn insert_tombstone(pool: &PgPool, tombstoned: &str, tombstone_minutes: i6
                 .expr(random_uuid())
                 .from_as(TemporalAttributeStreams::Table, Alias::new("s"))
                 .inner_join(
-                    TemporalEntities::Table,
-                    Expr::col((TemporalEntities::Table, TemporalEntities::TemporalEntityKey))
-                        .equals((Alias::new("s"), TemporalAttributeStreams::TemporalEntityKey)),
+                    Entities::Table,
+                    Expr::col((Entities::Table, Entities::EntityKey)).equals((Alias::new("s"), TemporalAttributeStreams::EntityKey)),
                 )
-                .and_where(Expr::col((TemporalEntities::Table, TemporalEntities::Id)).eq(tombstoned))
+                .and_where(Expr::col((Entities::Table, Entities::Id)).eq(tombstoned))
                 .and_where(Expr::col((Alias::new("s"), TemporalAttributeStreams::AttributeNameKey)).eq(attribute))
                 .to_owned(),
         )
@@ -480,9 +476,9 @@ pub async fn remove_windowed_history(pool: &PgPool, prefix: &str) {
     let meters = format!("{prefix}:meter:%");
     let meter_keys = || {
         Query::select()
-            .column(TemporalEntities::TemporalEntityKey)
-            .from(TemporalEntities::Table)
-            .and_where(Expr::col(TemporalEntities::Id).like(meters.as_str()))
+            .column(Entities::EntityKey)
+            .from(Entities::Table)
+            .and_where(Expr::col(Entities::Id).like(meters.as_str()))
             .to_owned()
     };
     Query::delete()
@@ -492,7 +488,7 @@ pub async fn remove_windowed_history(pool: &PgPool, prefix: &str) {
                 Query::select()
                     .column(TemporalAttributeStreams::StreamKey)
                     .from(TemporalAttributeStreams::Table)
-                    .and_where(Expr::col(TemporalAttributeStreams::TemporalEntityKey).in_subquery(meter_keys()))
+                    .and_where(Expr::col(TemporalAttributeStreams::EntityKey).in_subquery(meter_keys()))
                     .to_owned(),
             ),
         )
@@ -502,14 +498,14 @@ pub async fn remove_windowed_history(pool: &PgPool, prefix: &str) {
         .expect("the windowed corpus must be removable");
     Query::delete()
         .from_table(TemporalAttributeStreams::Table)
-        .and_where(Expr::col(TemporalAttributeStreams::TemporalEntityKey).in_subquery(meter_keys()))
+        .and_where(Expr::col(TemporalAttributeStreams::EntityKey).in_subquery(meter_keys()))
         .to_query()
         .execute(pool)
         .await
         .expect("the windowed corpus must be removable");
     Query::delete()
-        .from_table(TemporalEntities::Table)
-        .and_where(Expr::col(TemporalEntities::Id).like(meters.as_str()))
+        .from_table(Entities::Table)
+        .and_where(Expr::col(Entities::Id).like(meters.as_str()))
         .to_query()
         .execute(pool)
         .await
@@ -517,7 +513,7 @@ pub async fn remove_windowed_history(pool: &PgPool, prefix: &str) {
     for relation in [
         AttributeHistory::Table.into_iden(),
         TemporalAttributeStreams::Table.into_iden(),
-        TemporalEntities::Table.into_iden(),
+        Entities::Table.into_iden(),
     ] {
         vacuum_analyze(MaintenanceSchema::Public, relation)
             .to_query()

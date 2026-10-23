@@ -25,8 +25,9 @@ use andromeda_context_commit::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::error::EntityError;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_ngsi_ld_model::snapshot::ExecutionResultDetails;
+use chrono::Utc;
 use std::sync::Arc;
 use tracing::error;
 
@@ -61,7 +62,7 @@ impl SnapshotExecutor {
                 return Ok(failure_detail(ExecutionFailure::ReadResults { cause: &error }.to_string()));
             }
         };
-        let outcomes = match self.writes.commit(target, writes).await {
+        let outcomes = match self.writes.commit(target, SystemInstant::new(Utc::now()), writes).await {
             Ok(outcomes) => outcomes,
             Err(error) => {
                 error!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Failed to materialize current Snapshot results");

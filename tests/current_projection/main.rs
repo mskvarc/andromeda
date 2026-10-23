@@ -7,7 +7,7 @@
 //! reads, and the hoisted geometry a write leaving it alone does not rewrite.
 //! Each test drives the broker over HTTP (or, for refused-write isolation, the
 //! broker's own committer) and then reads
-//! `current_attributes`, `entities`, and `temporal_entities` directly, so
+//! `current_attributes` and `entities` directly, so
 //! an assertion states what the storage actually holds rather than what the
 //! rendering suggests.
 //!

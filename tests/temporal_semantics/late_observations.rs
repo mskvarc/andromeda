@@ -8,7 +8,10 @@
 
 use crate::{attribute_iri, client, create_temporal_entity, database, get_temporal_entity, rendered_instances, stored_history::stored_attribute_history};
 use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
-use andromeda_postgresql_schema::temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities};
+use andromeda_postgresql_schema::{
+    current::Entities,
+    temporal::{AttributeHistory, TemporalAttributeStreams},
+};
 use andromeda_postgresql_seaquery::{aggregate::count_distinct, statement::Statement};
 use andromeda_test_harness::environment::TestEnvironment;
 use chrono::{DateTime, TimeDelta, Utc};
@@ -42,11 +45,10 @@ async fn occupied_chunks(pool: &PgPool, entity_id: &str) -> i64 {
             Expr::col((TemporalAttributeStreams::Table, TemporalAttributeStreams::StreamKey)).equals((AttributeHistory::Table, AttributeHistory::StreamKey)),
         )
         .inner_join(
-            TemporalEntities::Table,
-            Expr::col((TemporalEntities::Table, TemporalEntities::TemporalEntityKey))
-                .equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::TemporalEntityKey)),
+            Entities::Table,
+            Expr::col((Entities::Table, Entities::EntityKey)).equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::EntityKey)),
         )
-        .and_where(Expr::col((TemporalEntities::Table, TemporalEntities::Id)).eq(entity_id))
+        .and_where(Expr::col((Entities::Table, Entities::Id)).eq(entity_id))
         .to_query()
         .fetch_one(pool)
         .await

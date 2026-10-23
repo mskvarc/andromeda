@@ -1,26 +1,26 @@
 //! What a temporal catalogue row that no longer reads back as its domain value
 //! looks like.
 //!
-//! The catalogue — `temporal_entities`, `temporal_attribute_streams` and the
-//! name dictionaries it references — only ever holds identifiers, names and
+//! The catalogue (the identity rows of `entities`, `temporal_attribute_streams`
+//! and the name dictionaries it references) only ever holds identifiers, names and
 //! keys the broker validated, so each variant is a column holding something the
 //! broker never wrote. A column that cannot be read at all is a `sqlx` decode
 //! failure and is reported as one, naming the column itself.
 
 use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, reference::NgsiLdReferenceError};
-use andromeda_postgresql_codes::{registry::UnknownCompactCode, stream_key::StreamKeyOutOfRange, temporal_entity_key::TemporalEntityKeyOutOfRange};
+use andromeda_postgresql_codes::{entity_key::EntityKeyOutOfRange, registry::UnknownCompactCode, stream_key::StreamKeyOutOfRange};
 use thiserror::Error;
 
 /// A stored temporal catalogue value that does not parse back into its domain
 /// type.
 #[derive(Debug, Error)]
 pub enum StoredCatalogError {
-    /// A `temporal_entities.id` is not a URI.
-    #[error("a stored temporal_entities.id is not a URI: {0}")]
+    /// An `entities.id` is not a URI.
+    #[error("a stored entities.id is not a URI: {0}")]
     EntityId(#[source] IdentifierParseError),
-    /// A `temporal_entities.temporal_entity_key` is not a surrogate key.
-    #[error("a stored temporal_entity_key is not a surrogate key: {0}")]
-    EntityKey(#[source] TemporalEntityKeyOutOfRange),
+    /// An `entity_key` is not a surrogate key.
+    #[error("a stored entity_key is not a surrogate key: {0}")]
+    EntityKey(#[source] EntityKeyOutOfRange),
     /// An entity type name the catalogue resolves is not an NGSI-LD name.
     #[error("a stored entity type name is not an NGSI-LD name: {0}")]
     EntityTypeName(#[source] NgsiLdReferenceError),

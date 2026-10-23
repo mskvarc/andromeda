@@ -153,6 +153,10 @@ mod spatial_write_visibility;
 pub mod storage_profile;
 /// The clause 5.5.4 screening a write payload passes before anything else.
 pub mod write_admission;
+/// Tests that each write settles its system times at the instant its commit
+/// records the history at.
+#[cfg(test)]
+mod write_instant_recording;
 /// The write operations an admitted payload is bound to, as types.
 pub mod write_kind;
 /// The entity a write targets: its identifier and, where specified, its type.

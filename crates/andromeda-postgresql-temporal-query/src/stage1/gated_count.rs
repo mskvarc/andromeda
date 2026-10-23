@@ -29,7 +29,7 @@ use andromeda_postgresql_query::{
     history_source::{BesideComparison, HistoryBranch, entity_rows::entity_rows},
     one_time_gate::{Candidates, beyond, bounded, materialized, within},
 };
-use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
+use andromeda_postgresql_schema::current::{E, Entities};
 use sea_query::{Asterisk, Expr, ExprTrait, Iden, IntoIden, JoinType, Query, SelectStatement, SimpleExpr, TableRef, UnionType, WithClause};
 
 /// Alias `k`: the key of one Evolution the count looks up.
@@ -69,7 +69,7 @@ pub(super) fn gated_count(
 }
 
 /// `SELECT e.<key> FROM <evolutions>`.
-fn keys_of(evolutions: TableRef, key: TemporalEntities) -> SelectStatement {
+fn keys_of(evolutions: TableRef, key: Entities) -> SelectStatement {
     let mut keys = Query::select();
     keys.column((E, key)).from(evolutions);
     keys
@@ -77,7 +77,7 @@ fn keys_of(evolutions: TableRef, key: TemporalEntities) -> SelectStatement {
 
 /// The Evolutions of `branch` whose `key` `keys` yields, under `e`, each
 /// looked up in the catalogue on its own behind `OFFSET 0`.
-fn looked_up(branch: &HistoryBranch, keys: SelectStatement, key: TemporalEntities) -> TableRef {
+fn looked_up(branch: &HistoryBranch, keys: SelectStatement, key: Entities) -> TableRef {
     let mut lookup = Query::select();
     lookup
         .column(Asterisk)

@@ -198,7 +198,10 @@ impl StubBroker {
             attribute_name: "https://example.com/reading".parse::<AttributeName>().expect("valid attribute IRI"),
             attribute_type: AttributeType::Property,
             dataset_id: None,
-            value: TemporalValue::Number(JsonNumber::try_from(1.0).expect("a finite number")),
+            value: TemporalValue::Number {
+                number: JsonNumber::try_from(1.0).expect("a finite number"),
+                datatype: None,
+            },
             observed_at: Some(instant),
             recorded_at: instant,
             created_at: Some(instant),

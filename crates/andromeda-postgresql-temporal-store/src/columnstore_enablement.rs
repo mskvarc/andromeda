@@ -361,7 +361,7 @@ mod tests {
     #[test]
     fn a_hypertable_enabled_under_other_segment_columns_is_drift() {
         let mut other = expected(HypertableName::AttributeHistory);
-        other.segment_by = vec![HypertableColumn::from("temporal_entity_key".to_owned())];
+        other.segment_by = vec![HypertableColumn::from("entity_key".to_owned())];
         assert_eq!(plan_enablement(HypertableName::AttributeHistory, &other), EnablementPlan::Drift);
     }
 
@@ -421,11 +421,11 @@ mod tests {
     #[test]
     fn drifted_settings_render_every_segment_order_and_sparse_index_entry() {
         let mut drifted = expected(HypertableName::AttributeHistory);
-        drifted.segment_by = vec![HypertableColumn::from("temporal_entity_key".to_owned())];
+        drifted.segment_by = vec![HypertableColumn::from("entity_key".to_owned())];
         drifted.sparse_indexes = vec![sparse_index("minmax", &["observed_at"]), sparse_index("bloom", &["recorded_at", "write_id"])];
         assert_eq!(
             drifted.to_string(),
-            "segmented by [temporal_entity_key], ordered by [recorded_at DESC, write_id, write_ordinal] and summarised by [minmax(observed_at), bloom(recorded_at, write_id)]"
+            "segmented by [entity_key], ordered by [recorded_at DESC, write_id, write_ordinal] and summarised by [minmax(observed_at), bloom(recorded_at, write_id)]"
         );
     }
 }

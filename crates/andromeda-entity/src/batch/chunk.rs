@@ -261,8 +261,14 @@ impl EntityService {
     /// worker replays, which is what makes `Prefer: respond-async`
     /// crash-consistent rather than merely faster. The durable subscription
     /// matches commit with the entity row either way, never deferred to the
-    /// worker.
-    pub(super) async fn commit_chunk(&self, placement: SideEffectPlacement<'_>, entries: Vec<GuardedWrite>) -> Result<ChunkOutcome, EntityError> {
+    /// worker. `accepted_at` is the instant the chunk's writes settled their
+    /// system times at, which the commit records their history at.
+    pub(super) async fn commit_chunk(
+        &self,
+        placement: SideEffectPlacement<'_>,
+        accepted_at: SystemInstant,
+        entries: Vec<GuardedWrite>,
+    ) -> Result<ChunkOutcome, EntityError> {
         let target = placement.target();
         if entries.is_empty() {
             return Ok(ChunkOutcome::default());
@@ -298,8 +304,8 @@ impl EntityService {
         }
 
         let outcomes = match placement {
-            SideEffectPlacement::Inline(target) => self.writes.commit(target, writes).await?,
-            SideEffectPlacement::DeferredOnLive => self.writes.commit_enqueued(writes).await?,
+            SideEffectPlacement::Inline(target) => self.writes.commit(target, accepted_at, writes).await?,
+            SideEffectPlacement::DeferredOnLive => self.writes.commit_enqueued(accepted_at, writes).await?,
         };
         if outcomes.len() != settled.len() {
             return Err(EntityInvariant::OutcomeCountMismatch {

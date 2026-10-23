@@ -98,6 +98,7 @@ mod tests {
         spatial_acceleration::SpatialAcceleration,
         spatial_config::SpatialConfig,
     };
+    use andromeda_ngsi_ld_lexicon::time::system_instant::SystemInstant;
     use andromeda_tenancy::tenant_ref::TenantRef;
     use futures::future::BoxFuture;
     use std::sync::Arc;
@@ -137,11 +138,11 @@ mod tests {
     struct UnusedCommitter;
 
     impl ContextCommitter for UnusedCommitter {
-        fn commit(&self, _target: &ContextTarget, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        fn commit(&self, _target: &ContextTarget, _accepted_at: SystemInstant, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
             Box::pin(async { Ok(Vec::new()) })
         }
 
-        fn commit_enqueued(&self, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        fn commit_enqueued(&self, _accepted_at: SystemInstant, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
             Box::pin(async { Ok(Vec::new()) })
         }
 

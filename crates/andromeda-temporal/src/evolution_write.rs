@@ -65,8 +65,9 @@ impl TemporalService {
                 .get_snapshot(target, entity_id)
                 .await
                 .map_err(TemporalError::from_entity_failure)?;
-            let EvolutionWrite { write, events } = evolution_write(&self.notifier, target, entity_id, evolution, current.as_ref())?;
-            let outcome = single(self.writes.commit(target, vec![write]).await?)?;
+            let now = SystemInstant::new(Utc::now());
+            let EvolutionWrite { write, events } = evolution_write(&self.notifier, target, entity_id, evolution, current.as_ref(), now)?;
+            let outcome = single(self.writes.commit(target, now, vec![write]).await?)?;
             match after_attempt(&outcome) {
                 AfterAttempt::Settled => {
                     // The events describe the attempt the store accepted, never
@@ -94,17 +95,18 @@ impl TemporalService {
 /// instances it replaced, added or removed, and a fold that leaves current
 /// state as it was (a backfill, the end of an instance it does not hold, a
 /// restatement) changes nothing a subscriber can see and leaves the Entity
-/// row as it was, the version it read standing as the precondition.
+/// row as it was, the version it read standing as the precondition. The fold
+/// settles at `now`, the instant the commit records the evolution at.
 fn evolution_write(
     notifier: &ChangeNotifier,
     target: &ContextTarget,
     entity_id: &Identifier,
     evolution: &WrittenEvolution,
     current: Option<&EntitySnapshot>,
+    now: SystemInstant,
 ) -> Result<EvolutionWrite, TemporalError> {
-    let now = Utc::now();
     let previous = current.map(|snapshot| &snapshot.state);
-    let fold = fold_into_current_state(previous.map(|state| &**state), evolution.document(), now)?;
+    let fold = fold_into_current_state(previous.map(|state| &**state), evolution.document(), now.get())?;
     let builder = AtomicWrite::builder()
         .entity_id(Arc::new(entity_id.clone())) // clone: the write owns a shared validated identifier.
         .history(evolution.history());
@@ -119,7 +121,7 @@ fn evolution_write(
         (current, Some(mut state)) => {
             // Clause 4.8: a standing instance takes the write instant as its
             // modifiedAt and keeps the createdAt it had; a new one takes both.
-            state.settle(previous.map(|state| &**state), SystemInstant::new(now));
+            state.settle(previous.map(|state| &**state), now);
             let state = Arc::new(state);
             // clone: Arc ref-count bump; the state is also the notification's
             let record = match previous {
@@ -175,10 +177,10 @@ mod tests {
         literal::LiteralValue,
         reads::attribute_change::AttributeChangeKind,
     };
-    use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
+    use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier, time::system_instant::SystemInstant};
     use andromeda_ngsi_ld_model::entity_change::EntityLifecycle;
     use andromeda_ngsi_ld_number::JsonNumber;
-    use chrono::Utc;
+    use chrono::{TimeZone, Utc};
     use serde_json::{Value, json};
     use std::sync::Arc;
 
@@ -220,6 +222,11 @@ mod tests {
     /// Fold `evolution` into `current` through a notifier that records nothing
     /// durably, as a live-delivery broker does.
     fn written(evolution: &Value, current: Option<&EntitySnapshot>) -> EvolutionWrite {
+        written_at(evolution, current, SystemInstant::new(Utc::now()))
+    }
+
+    /// [`written`], settled at `now`.
+    fn written_at(evolution: &Value, current: Option<&EntitySnapshot>, now: SystemInstant) -> EvolutionWrite {
         let document = EntityDocument::from_slice(&serde_json::to_vec(evolution).expect("JSON")).expect("a written evolution decodes");
         evolution_write(
             &ChangeNotifier::new(None, SubscriptionMatching::Absent),
@@ -227,6 +234,7 @@ mod tests {
             &entity_id(),
             &WrittenEvolution::new(Arc::new(document), None),
             current,
+            now,
         )
         .expect("the evolution folds")
     }
@@ -280,6 +288,25 @@ mod tests {
         pretty_assertions::assert_eq!(owed(&write), (EntityLifecycle::Modified, vec![(SPEED, AttributeChangeKind::Updated)]));
         let previous = write.events[0].previous_attributes.as_deref().expect("the replaced state is carried");
         pretty_assertions::assert_eq!(speed(previous), Some(JsonNumber::from(1)));
+    }
+
+    /// Clause 4.8: the instance the fold makes current takes the instant the
+    /// commit records the evolution at as its `modifiedAt`.
+    #[test]
+    fn the_fold_settles_at_the_instant_the_commit_records_the_evolution_at() {
+        let current = standing();
+        let now = SystemInstant::new(Utc.with_ymd_and_hms(2026, 10, 23, 8, 0, 0).single().expect("a valid instant"));
+        let evolution = vehicle(&json!({SPEED: [instance(5, "2024-06-01T00:00:00Z")]}));
+
+        let write = written_at(&evolution, Some(&current), now);
+
+        let state = &write.write.entity.record().expect("the fold stores current state").state;
+        let (_, instance) = state
+            .attributes()
+            .get(SPEED)
+            .and_then(|attribute| attribute.default_instance())
+            .expect("a speed instance");
+        pretty_assertions::assert_eq!(instance.modified_at(), Some(now));
     }
 
     /// An attribute current state did not hold is created beside the standing

@@ -36,7 +36,7 @@ impl Recorded {
 
 /// The `attribute_history` value columns, each beside the entry field it is
 /// recorded from and how, in the table's column order.
-const ATTRIBUTE_FIELDS: [(AttributeHistory, TemporalEntry, Recorded); 23] = [
+const ATTRIBUTE_FIELDS: [(AttributeHistory, TemporalEntry, Recorded); 25] = [
     (AttributeHistory::AttributeKind, TemporalEntry::AttributeKind, Recorded::AsHeld),
     (AttributeHistory::ValueKind, TemporalEntry::ValueKind, Recorded::AsHeld),
     (AttributeHistory::ObservedAt, TemporalEntry::ObservedAt, Recorded::AsHeld),
@@ -47,11 +47,13 @@ const ATTRIBUTE_FIELDS: [(AttributeHistory, TemporalEntry, Recorded); 23] = [
     (AttributeHistory::ExpiresAt, TemporalEntry::ExpiresAt, Recorded::AsHeld),
     (AttributeHistory::GeneratedInstanceId, TemporalEntry::GeneratedInstanceId, Recorded::AsHeld),
     (AttributeHistory::ValueTypeKey, TemporalEntry::ValueTypeKey, Recorded::AsHeld),
+    (AttributeHistory::ValueDatatypeKey, TemporalEntry::ValueDatatypeKey, Recorded::AsHeld),
     (AttributeHistory::UnitCodeId, TemporalEntry::UnitCodeId, Recorded::AsHeld),
     (AttributeHistory::ValueBoolean, TemporalEntry::ValueBoolean, Recorded::AsHeld),
     (AttributeHistory::VerbatimInstanceId, TemporalEntry::VerbatimInstanceId, Recorded::AsHeld),
     (AttributeHistory::ValueNumber, TemporalEntry::ValueNumber, Recorded::AsHeld),
     (AttributeHistory::ValueString, TemporalEntry::ValueString, Recorded::AsHeld),
+    (AttributeHistory::ValueLanguage, TemporalEntry::ValueLanguage, Recorded::AsHeld),
     (AttributeHistory::ValueGeometry, TemporalEntry::ValueGeometry, Recorded::AsHeld),
     (
         AttributeHistory::ValueGeometryValid,
@@ -81,7 +83,7 @@ const SCOPE_FIELDS: [(ScopeHistory, TemporalEntry, Recorded); 7] = [
 /// The `attribute_history` value columns, in the table's column order, beside
 /// the identity (`recorded_at`, `write_id`, `write_ordinal`) and the stream.
 #[must_use]
-pub fn attribute_value_columns() -> [AttributeHistory; 23] {
+pub fn attribute_value_columns() -> [AttributeHistory; 25] {
     ATTRIBUTE_FIELDS.map(|(column, ..)| column)
 }
 
@@ -98,7 +100,7 @@ pub fn scope_value_columns() -> [ScopeHistory; 7] {
 /// The geometry is recorded as written, and `value_geometry_valid` derives
 /// its repaired form from the same field: the one value the entry does not
 /// hold as it is recorded.
-pub fn attribute_entry_values(field: impl Fn(TemporalEntry) -> SimpleExpr) -> [(AttributeHistory, SimpleExpr); 23] {
+pub fn attribute_entry_values(field: impl Fn(TemporalEntry) -> SimpleExpr) -> [(AttributeHistory, SimpleExpr); 25] {
     ATTRIBUTE_FIELDS.map(|(column, entry, recorded)| (column, recorded.of(field(entry))))
 }
 
@@ -144,7 +146,7 @@ mod tests {
             "{values:?}"
         );
         assert!(values.contains(&r#"sub_attributes <- SELECT "e"."sub_attributes""#.to_owned()), "{values:?}");
-        pretty_assertions::assert_eq!(values.len(), 23);
+        pretty_assertions::assert_eq!(values.len(), 25);
     }
 
     #[test]

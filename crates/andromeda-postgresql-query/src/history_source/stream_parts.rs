@@ -203,7 +203,7 @@ mod tests {
 
     /// The `attribute_history` migration, which declares the partial stream
     /// indexes of the two system-time axes.
-    const MIGRATION: &str = include_str!("../../../../migrations/branch/0020_attribute_history.sql");
+    const MIGRATION: &str = include_str!("../../../../migrations/branch/0019_attribute_history.sql");
 
     /// Every read of the stream under `st` on `axis` in `branch`, rendered.
     fn reads(branch: &HistoryBranch, axis: TimeProp) -> Vec<String> {
@@ -317,12 +317,12 @@ mod tests {
     fn a_stream_read_by_key_names_its_evolution_by_key() {
         let of = HistoryOf::Evolution(EvolutionColumns {
             id: Expr::col((Alias::new("e"), Alias::new("id"))),
-            key: Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))),
+            key: Expr::col((Alias::new("e"), Alias::new("entity_key"))),
         });
         let recorded = HistoryBranch::recorded_in(snapshot());
         let (keyed, _) = whole_stream_parts(&recorded, &HistoryStream::read_for(&recorded, &of, Alias::new("st"))).into_reads();
         let keyed = keyed.to_string(PostgresQueryBuilder);
-        assert!(keyed.contains(r#""st"."temporal_entity_key" AS "temporal_entity_key""#), "{keyed}");
+        assert!(keyed.contains(r#""st"."entity_key" AS "entity_key""#), "{keyed}");
         assert!(!keyed.contains("entity_id"), "{keyed}");
         let live = HistoryBranch::live();
         let (by_id, _) = whole_stream_parts(&live, &HistoryStream::read_for(&live, &of, Alias::new("st"))).into_reads();

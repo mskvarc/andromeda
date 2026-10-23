@@ -70,13 +70,13 @@ impl PreparedEntityColumns {
 
     /// The scope label paths as the `jsonb[]` parameter the entity statements
     /// bind.
-    pub(crate) fn scope_paths_bind(&self) -> Vec<Json<&[String]>> {
+    pub(crate) fn scope_paths_bind(&self) -> Vec<Option<Json<&[String]>>> {
         self.scopes.iter().map(StagedScopes::label_paths).collect()
     }
 
     /// The written Scopes as the `jsonb[]` parameter the entity statements
     /// bind.
-    pub(crate) fn verbatim_scope_paths_bind(&self) -> Vec<Json<&[String]>> {
+    pub(crate) fn verbatim_scope_paths_bind(&self) -> Vec<Option<Json<&[String]>>> {
         self.scopes.iter().map(StagedScopes::written).collect()
     }
 

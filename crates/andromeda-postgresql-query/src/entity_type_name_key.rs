@@ -6,7 +6,7 @@ use derive_more::From;
 /// table.
 ///
 /// `entity_search.entity_type_name_keys` and
-/// `temporal_entities.entity_type_name_keys` carry an `INTEGER[]` of these keys
+/// `entities.evolution_type_name_keys` carry an `INTEGER[]` of these keys
 /// instead of the type IRIs themselves, so a type selection
 /// (clause 4.17) is a containment test over four-byte elements and the GIN
 /// index that serves it stays a fraction of the size an IRI array's would be.

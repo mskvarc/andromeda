@@ -12,7 +12,9 @@ use sqlx::types::Json;
 ///
 /// Each list is bound as the JSON array of its texts, which the entity
 /// statements expand into the `scope_paths` `ltree[]` and the
-/// `verbatim_scope_paths` `text[]` columns.
+/// `verbatim_scope_paths` `text[]` columns. An entity without a Scope binds
+/// SQL NULL for both: no `scopeQ` matches it (clause 4.19), so it costs the
+/// Scope index nothing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StagedScopes {
     /// The label paths, in `ltree` dot notation.
@@ -35,16 +37,18 @@ impl StagedScopes {
         StagedScopes { label_paths, written }
     }
 
-    /// The label paths as the `jsonb` a statement binds.
+    /// The label paths as the `jsonb` a statement binds, `None` for an
+    /// entity without a Scope.
     #[must_use]
-    pub fn label_paths(&self) -> Json<&[String]> {
-        Json(&self.label_paths)
+    pub fn label_paths(&self) -> Option<Json<&[String]>> {
+        (!self.label_paths.is_empty()).then_some(Json(&self.label_paths))
     }
 
-    /// The written Scopes as the `jsonb` a statement binds.
+    /// The written Scopes as the `jsonb` a statement binds, `None` for an
+    /// entity without a Scope.
     #[must_use]
-    pub fn written(&self) -> Json<&[String]> {
-        Json(&self.written)
+    pub fn written(&self) -> Option<Json<&[String]>> {
+        (!self.written.is_empty()).then_some(Json(&self.written))
     }
 }
 
@@ -60,16 +64,22 @@ mod tests {
     #[test]
     fn each_scope_is_staged_as_its_label_path_and_as_written() {
         let staged = StagedScopes::of(&scopes(&["/root/a", "Madrid"]));
-        pretty_assertions::assert_eq!(serde_json::to_string(&staged.label_paths().0).expect("serialises"), r#"["root.a","Madrid"]"#);
-        pretty_assertions::assert_eq!(serde_json::to_string(&staged.written().0).expect("serialises"), r#"["/root/a","Madrid"]"#);
+        pretty_assertions::assert_eq!(
+            serde_json::to_string(&staged.label_paths().expect("a scoped entity binds its paths").0).expect("serialises"),
+            r#"["root.a","Madrid"]"#
+        );
+        pretty_assertions::assert_eq!(
+            serde_json::to_string(&staged.written().expect("a scoped entity binds its scopes").0).expect("serialises"),
+            r#"["/root/a","Madrid"]"#
+        );
     }
 
-    /// The search row keeps no NULL list beside a non-NULL one, so an entity
-    /// without a Scope stages two empty arrays.
+    /// The search row keeps no NULL list beside a non-NULL one and no empty
+    /// list, so an entity without a Scope stages two NULLs.
     #[test]
-    fn no_scope_is_staged_as_two_empty_arrays() {
+    fn no_scope_is_staged_as_two_nulls() {
         let staged = StagedScopes::of(&[]);
-        pretty_assertions::assert_eq!(serde_json::to_string(&staged.label_paths().0).expect("serialises"), "[]");
-        pretty_assertions::assert_eq!(serde_json::to_string(&staged.written().0).expect("serialises"), "[]");
+        assert!(staged.label_paths().is_none());
+        assert!(staged.written().is_none());
     }
 }

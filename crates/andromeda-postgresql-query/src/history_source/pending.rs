@@ -32,6 +32,7 @@
 //! is `None` unless the statement's unqualified names resolve elsewhere.
 
 use crate::{
+    entity_sides::holds_evolution,
     history_source::{
         HistoryOf,
         HistoryStream,
@@ -45,8 +46,9 @@ use crate::{
 };
 use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
 use andromeda_postgresql_schema::{
+    current::Entities,
     queue::{TemporalAppendEntries, TemporalAppendIntents},
-    temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams, TemporalEntities},
+    temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams},
     temporal_intent::TemporalEntry,
 };
 use andromeda_postgresql_seaquery::{
@@ -139,8 +141,9 @@ fn applied(schema: Option<&DynIden>) -> Condition {
     let mut recorded = Query::select();
     recorded
         .expr(int_literal(1))
-        .from(qualified(schema, TemporalEntities::Table).alias(RecordedEvolution))
-        .and_where(Expr::col((RecordedEvolution, TemporalEntities::Id)).equals((PendingEntry, TemporalAppendEntries::EntityId)));
+        .from(qualified(schema, Entities::Table).alias(RecordedEvolution))
+        .and_where(Expr::col((RecordedEvolution, Entities::Id)).equals((PendingEntry, TemporalAppendEntries::EntityId)))
+        .and_where(holds_evolution(RecordedEvolution));
     let mut typed = Query::select();
     typed
         .expr(int_literal(1))
@@ -237,11 +240,11 @@ pub(crate) fn stream_rows(schema: Option<&DynIden>, of: &HistoryOf) -> SelectSta
         .from(qualified(schema, TemporalAttributeStreams::Table).alias(RecordedStream))
         .join_as(
             JoinType::Join,
-            qualified(schema, TemporalEntities::Table),
+            qualified(schema, Entities::Table),
             RecordedEvolution,
-            Expr::col((RecordedEvolution, TemporalEntities::TemporalEntityKey)).equals((RecordedStream, TemporalAttributeStreams::TemporalEntityKey)),
+            Expr::col((RecordedEvolution, Entities::EntityKey)).equals((RecordedStream, TemporalAttributeStreams::EntityKey)),
         )
-        .and_where(Expr::col((RecordedEvolution, TemporalEntities::Id)).equals((PendingEntry, TemporalAppendEntries::EntityId)))
+        .and_where(Expr::col((RecordedEvolution, Entities::Id)).equals((PendingEntry, TemporalAppendEntries::EntityId)))
         .and_where(Expr::col((RecordedStream, TemporalAttributeStreams::AttributeNameKey)).equals((PendingEntry, TemporalEntry::AttributeNameKey)))
         .and_where(SimpleExpr::from(Expr::col((RecordedStream, TemporalAttributeStreams::DatasetId))).not_distinct_from(entry(TemporalEntry::DatasetId)));
     let mut select = Query::select();
@@ -303,11 +306,11 @@ fn judging_events(schema: Option<&DynIden>) -> SelectStatement {
         .from(qualified(schema, ScopeHistory::Table).alias(JudgingEvent))
         .join_as(
             JoinType::Join,
-            qualified(schema, TemporalEntities::Table),
+            qualified(schema, Entities::Table),
             JudgingEvolution,
-            Expr::col((JudgingEvolution, TemporalEntities::TemporalEntityKey)).equals((JudgingEvent, ScopeHistory::TemporalEntityKey)),
+            Expr::col((JudgingEvolution, Entities::EntityKey)).equals((JudgingEvent, ScopeHistory::EntityKey)),
         )
-        .and_where(Expr::col((JudgingEvolution, TemporalEntities::Id)).equals((PendingEntry, TemporalAppendEntries::EntityId)));
+        .and_where(Expr::col((JudgingEvolution, Entities::Id)).equals((PendingEntry, TemporalAppendEntries::EntityId)));
     let mut earlier = Query::select();
     earlier
         .expr_as(Expr::col((EarlierEntry, TemporalAppendEntries::RecordedAt)), ScopeHistory::RecordedAt)
@@ -339,14 +342,15 @@ fn queued_assertion() -> SimpleExpr {
 pub(crate) fn typed_entity_rows(schema: Option<&DynIden>) -> SelectStatement {
     let mut recorded = Query::select();
     recorded
-        .expr_as(Expr::col((RecordedEvolution, TemporalEntities::Id)), TypeListColumn::Id)
+        .expr_as(Expr::col((RecordedEvolution, Entities::Id)), TypeListColumn::Id)
         .expr_as(
-            Expr::col((RecordedEvolution, TemporalEntities::EntityTypeNameKeys)),
+            Expr::col((RecordedEvolution, Entities::EvolutionTypeNameKeys)),
             TypeListColumn::EntityTypeNameKeys,
         )
         .expr_as(int_literal(0), TypeListColumn::ListRank)
-        .from(qualified(schema, TemporalEntities::Table).alias(RecordedEvolution))
-        .and_where(types_queued_for(Expr::col((RecordedEvolution, TemporalEntities::Id))));
+        .from(qualified(schema, Entities::Table).alias(RecordedEvolution))
+        .and_where(holds_evolution(RecordedEvolution))
+        .and_where(types_queued_for(Expr::col((RecordedEvolution, Entities::Id))));
     let mut queued = Query::select();
     queued
         .expr_as(Expr::col((TypedIntent, TemporalAppendIntents::EntityId)), TypeListColumn::Id)
@@ -367,7 +371,7 @@ mod tests {
     use sea_query::PostgresQueryBuilder;
 
     /// The view the entries are read from.
-    const MIGRATION: &str = include_str!("../../../../migrations/tenant/0026_temporal_append_intents.sql");
+    const MIGRATION: &str = include_str!("../../../../migrations/tenant/0025_temporal_append_intents.sql");
 
     fn rendered() -> String {
         attribute_rows(None, &HistoryOf::EveryEntity).to_string(PostgresQueryBuilder)
@@ -381,7 +385,7 @@ mod tests {
     fn a_pending_tombstone_of_an_entity_without_evolution_is_not_visible() {
         let sql = rendered();
         assert!(
-            sql.contains(r#"EXISTS(SELECT 1 FROM "temporal_entities" AS "pv" WHERE "pv"."id" = "pe"."entity_id") OR EXISTS(SELECT 1 FROM "temporal_append_intents" AS "pt""#),
+            sql.contains(r#"EXISTS(SELECT 1 FROM "entities" AS "pv" WHERE "pv"."id" = "pe"."entity_id" AND "pv"."evolution_created_at" IS NOT NULL) OR EXISTS(SELECT 1 FROM "temporal_append_intents" AS "pt""#),
             "{sql}"
         );
         assert!(sql.contains(r#"("pe"."entry_kind" <> (2) OR "pt"."intent_key" <= "pe"."intent_key")"#), "{sql}");
@@ -394,10 +398,33 @@ mod tests {
     fn an_untyped_observation_of_an_entity_without_evolution_is_not_visible() {
         let sql = rendered();
         assert!(
-            sql.contains(r#"WHERE "pe"."entry_kind" IN (1, 2) AND (EXISTS(SELECT 1 FROM "temporal_entities" AS "pv""#),
+            sql.contains(r#"WHERE "pe"."entry_kind" IN (1, 2) AND (EXISTS(SELECT 1 FROM "entities" AS "pv""#),
             "{sql}"
         );
         assert!(sql.contains(r#"cardinality("pt"."entity_type_name_keys") > 0"#), "{sql}");
+    }
+
+    /// Every column a pending read takes from `temporal_append_entries` is one
+    /// the view declares, so a field the temporal entry gains reaches a read
+    /// of the queue as it reaches history.
+    #[test]
+    fn every_column_a_pending_read_takes_is_one_the_view_declares() {
+        let sql = rendered();
+        let (_, view) = MIGRATION.split_once("create view temporal_append_entries as").expect("the view");
+        let (projection, _) = view.split_once("\nfrom\n").expect("its projection");
+        let declared: Vec<&str> = projection
+            .lines()
+            .filter_map(|line| line.trim().trim_end_matches(',').rsplit(['.', ' ']).next())
+            .collect();
+        let read: Vec<&str> = sql
+            .split(r#""pe"."#)
+            .skip(1)
+            .filter_map(|rest| rest.strip_prefix('"')?.split('"').next())
+            .collect();
+        assert!(read.contains(&"value_datatype_key") && read.contains(&"value_language"), "{sql}");
+        for column in read {
+            assert!(declared.contains(&column), "{column} is not a column of temporal_append_entries: {projection}");
+        }
     }
 
     /// A queued entry carries the identity its history row will: the write's

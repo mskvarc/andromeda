@@ -35,7 +35,8 @@ impl EntityService {
             // Clause 4.8: a created entity's attribute instances carry the write
             // instant as both createdAt and modifiedAt.
             let mut created = EntityState::try_from(admitted.into_document())?;
-            created.settle(None, SystemInstant::new(Utc::now()));
+            let now = SystemInstant::new(Utc::now());
+            created.settle(None, now);
             let created = Arc::new(created);
             let plan = self
                 .notifier
@@ -52,7 +53,7 @@ impl EntityService {
             // A conflicting insert is 409, per NGSI-LD 6.4.3.1. It reaches here as a
             // precondition failure rather than a duplicate-key error, which is what
             // lets the same statement serve a partially-succeeding batch.
-            if single(self.writes.commit(target, vec![write]).await?)?.is_already_exists() {
+            if single(self.writes.commit(target, now, vec![write]).await?)?.is_already_exists() {
                 return Err(EntityError::already_exists(id));
             }
 

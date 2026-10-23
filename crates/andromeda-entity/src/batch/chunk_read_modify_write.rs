@@ -131,9 +131,9 @@ impl EntityService {
     }
 
     /// One attempt over the `pending` entities, whose identifiers are `ids`:
-    /// read them, build and commit their writes, fold whatever settled into
-    /// `settled`, and hand back the entries whose write the store refused
-    /// because the entity moved on.
+    /// read them, build and commit their writes at the batch instant `now`,
+    /// fold whatever settled into `settled`, and hand back the entries whose
+    /// write the store refused because the entity moved on.
     async fn rewrite_attempt<R: ChunkRewrite>(
         &self,
         placement: SideEffectPlacement<'_>,
@@ -174,7 +174,7 @@ impl EntityService {
             }
         }
 
-        let outcome = self.commit_chunk(placement, writes).await?;
+        let outcome = self.commit_chunk(placement, now, writes).await?;
         let ChunkOutcome {
             success,
             created,

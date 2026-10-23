@@ -136,7 +136,10 @@ mod tests {
         };
         let rows = vec![
             speed(
-                TemporalValue::Number(JsonNumber::try_from(60.0).expect("a finite number")),
+                TemporalValue::Number {
+                    number: JsonNumber::try_from(60.0).expect("a finite number"),
+                    datatype: None,
+                },
                 Some("2020-08-01T10:30:00Z"),
                 "urn:ngsi-ld:Instance:1",
             ),

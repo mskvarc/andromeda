@@ -2,10 +2,11 @@
 //!
 //! Every question the temporal mutation policy asks before it acts — does this
 //! entity have a Temporal Evolution, does it record this attribute, which
-//! datasets does that attribute have — is answered from `temporal_entities` and
-//! `temporal_attribute_streams` alone. Current state is never consulted: clause
-//! 5.6.6 leaves the Temporal Evolution standing when the entity is deleted, so
-//! an answer taken from `entities` would report history that exists as absent.
+//! datasets does that attribute have — is answered from the Evolution columns
+//! of the identity rows and `temporal_attribute_streams` alone. Current state
+//! is never consulted: clause 5.6.6 leaves the Temporal Evolution standing when
+//! the entity is deleted, so an answer taken from the current state would
+//! report history that exists as absent.
 //!
 //! The questions a read asks (existence, types) read the history sources, so
 //! on the live branch they count the entries still queued; a mutation drains
@@ -20,10 +21,7 @@ use andromeda_postgresql_query::{
     dictionary::names_in_key_order::type_names_of,
     history_source::{HistoryBranch, entity_rows::entity_rows},
 };
-use andromeda_postgresql_schema::{
-    name_dictionary::AttributeNames,
-    temporal::{TemporalAttributeStreams, TemporalEntities},
-};
+use andromeda_postgresql_schema::{current::Entities, name_dictionary::AttributeNames, temporal::TemporalAttributeStreams};
 use andromeda_postgresql_seaquery::{branch::qualified, pg_array::is_any_of, statement::Statement};
 use andromeda_postgresql_temporal_query::alias::{An, S, Te};
 use sea_query::{Alias, DynIden, Expr, ExprTrait, JoinType, Query, SelectStatement, SimpleExpr};
@@ -154,18 +152,18 @@ impl TemporalRepository {
     }
 }
 
-/// Join a stream to its temporal entity.
+/// Join a stream to its Entity's identity row.
 ///
-/// Every catalogue read reaches the entity URI through this join rather than
-/// through `entities`, so a current-state deletion (clause 5.6.6) leaves the
-/// catalogue answering. An attribute is addressed by the dictionary key its
+/// Every catalogue read reaches the entity URI through this join; a
+/// current-state deletion (clause 5.6.6) keeps the identity row while the
+/// stream's Temporal Evolution exists, so the catalogue keeps answering. An attribute is addressed by the dictionary key its
 /// name resolved to ([`of_attribute`]).
 pub(crate) fn stream_catalog_join(statement: &mut SelectStatement, schema: Option<&DynIden>) {
     statement.from(qualified(schema, TemporalAttributeStreams::Table).alias(S)).join_as(
         JoinType::Join,
-        qualified(schema, TemporalEntities::Table),
+        qualified(schema, Entities::Table),
         Te,
-        Expr::col((Te, TemporalEntities::TemporalEntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)),
+        Expr::col((Te, Entities::EntityKey)).equals((S, TemporalAttributeStreams::EntityKey)),
     );
 }
 
@@ -181,7 +179,7 @@ fn temporal_entity_exists_query(branch: &HistoryBranch, entity_id: &str) -> Sele
     inner
         .expr(Expr::val(1))
         .from(entity_rows(branch, Te))
-        .and_where(Expr::col((Te, TemporalEntities::Id)).eq(entity_id));
+        .and_where(Expr::col((Te, Entities::Id)).eq(entity_id));
     let mut statement = Query::select();
     statement.expr(Expr::exists(inner));
     statement
@@ -191,10 +189,10 @@ fn temporal_entity_exists_query(branch: &HistoryBranch, entity_id: &str) -> Sele
 /// through the type dictionary in stored order under the `types` column.
 fn temporal_entity_types_query(branch: &HistoryBranch, ids: &[&str]) -> SelectStatement {
     Query::select()
-        .column((Te, TemporalEntities::Id))
-        .expr_as(type_names_of(Expr::col((Te, TemporalEntities::EntityTypeNameKeys))), Alias::new("types"))
+        .column((Te, Entities::Id))
+        .expr_as(type_names_of(Expr::col((Te, Entities::EvolutionTypeNameKeys))), Alias::new("types"))
         .from(entity_rows(branch, Te))
-        .and_where(is_any_of(Expr::col((Te, TemporalEntities::Id)), ids.iter().map(|id| (*id).to_owned())))
+        .and_where(is_any_of(Expr::col((Te, Entities::Id)), ids.iter().map(|id| (*id).to_owned())))
         .to_owned()
 }
 
@@ -203,9 +201,7 @@ fn attribute_stream_exists_query(schema: Option<&DynIden>, entity_id: &str, attr
     let mut inner = Query::select();
     inner.expr(Expr::val(1));
     stream_catalog_join(&mut inner, schema);
-    inner
-        .and_where(Expr::col((Te, TemporalEntities::Id)).eq(entity_id))
-        .and_where(of_attribute(attribute));
+    inner.and_where(Expr::col((Te, Entities::Id)).eq(entity_id)).and_where(of_attribute(attribute));
     let mut statement = Query::select();
     statement.expr(Expr::exists(inner));
     statement
@@ -217,7 +213,7 @@ fn attribute_dataset_ids_query(schema: Option<&DynIden>, entity_id: &str, attrib
     statement.column((S, TemporalAttributeStreams::DatasetId));
     stream_catalog_join(&mut statement, schema);
     statement
-        .and_where(Expr::col((Te, TemporalEntities::Id)).eq(entity_id))
+        .and_where(Expr::col((Te, Entities::Id)).eq(entity_id))
         .and_where(of_attribute(attribute));
     statement
 }
@@ -236,7 +232,7 @@ fn temporal_attribute_names_query(schema: Option<&DynIden>, entity_id: &str) -> 
             An,
             Expr::col((An, AttributeNames::AttributeNameKey)).equals((S, TemporalAttributeStreams::AttributeNameKey)),
         )
-        .and_where(Expr::col((Te, TemporalEntities::Id)).eq(entity_id));
+        .and_where(Expr::col((Te, Entities::Id)).eq(entity_id));
     statement
 }
 
@@ -252,6 +248,9 @@ mod tests {
     use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, history_source::HistoryBranch};
     use sea_query::PostgresQueryBuilder;
 
+    /// Clause 5.6.6 keeps the Temporal Evolution when the current state is
+    /// deleted, so a catalogue question reads the identity row and the streams
+    /// and never a relation of the current state.
     #[test]
     fn no_catalogue_question_is_answered_from_current_state() {
         for statement in [
@@ -260,8 +259,9 @@ mod tests {
             attribute_dataset_ids_query(None, "urn:x", AttributeNameKey::from(7)).to_string(PostgresQueryBuilder),
             temporal_attribute_names_query(None, "urn:x").to_string(PostgresQueryBuilder),
         ] {
-            assert!(!statement.contains("\"entities\""), "{statement}");
-            assert!(!statement.contains("temporal_entity_attributes"), "{statement}");
+            for current_state in ["\"entity_search\"", "\"current_attributes\"", "is_current_member"] {
+                assert!(!statement.contains(current_state), "{current_state}: {statement}");
+            }
         }
     }
 

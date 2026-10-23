@@ -160,16 +160,10 @@ impl TemporalRepository {
             let name_key = keys
                 .attribute(name)
                 .ok_or_else(|| TemporalStoreInvariant::AttributeNameUnresolved(name.clone()))?; // clone: the invariant owns the name it failed on
-            stage_stream(
-                staged_key(first_position.saturating_add(position)),
-                entity_key,
-                entity_id,
-                name_key.get(),
-                dataset_id,
-            )?
-            .to_query()
-            .execute(&mut *tx)
-            .await?;
+            stage_stream(staged_key(first_position.saturating_add(position)), entity_key, name_key.get(), dataset_id)?
+                .to_query()
+                .execute(&mut *tx)
+                .await?;
         }
         let entries = answered
             .iter()
@@ -206,16 +200,10 @@ impl TemporalRepository {
                 .map(|raw| raw.parse::<Identifier>())
                 .transpose()
                 .map_err(StoredCatalogError::StreamDatasetId)?;
-            stage_stream(
-                staged_key(position.saturating_add(1)),
-                entity_key,
-                entity_id,
-                attribute_name_key,
-                dataset_id.as_ref(),
-            )?
-            .to_query()
-            .execute(&mut *tx)
-            .await?;
+            stage_stream(staged_key(position.saturating_add(1)), entity_key, attribute_name_key, dataset_id.as_ref())?
+                .to_query()
+                .execute(&mut *tx)
+                .await?;
         }
         Ok(())
     }

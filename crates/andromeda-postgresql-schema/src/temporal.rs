@@ -1,48 +1,11 @@
 //! The relations only a temporal statement reads.
 //!
-//! The temporal catalogue, the history hypertable and the attribute-name
-//! dictionary. `temporal_entities` is distinct from `entities`, and never
-//! joined to it: Core Entity deletion (clause 5.6.6) removes the current-state
-//! row while the temporal evolution survives until a Temporal Evolution
-//! deletion (clause 5.6.16) removes it, so a temporal query that reached the
-//! entity URI or the entity types through `entities` would stop answering for
-//! an entity whose history it is supposed to keep serving.
+//! The stream catalogue, the history hypertables and the instance claims. The
+//! Entity a Temporal Evolution belongs to is its `entities` row, which a core
+//! deletion (clause 5.6.6) keeps while the Evolution exists and a Temporal
+//! Evolution deletion (clause 5.6.16) gives up.
 
 use sea_query::Iden;
-
-/// The `temporal_entities` table - the entity grain temporal state hangs off.
-#[derive(Iden, Clone, Copy)]
-pub enum TemporalEntities {
-    /// Table name: `temporal_entities`
-    Table,
-    /// Surrogate key the stream catalogue and scope history reference
-    TemporalEntityKey,
-    /// Entity URI, carried independently of `entities`
-    Id,
-    /// Array of `entity_type_names` keys, one per type the entity carries
-    EntityTypeNameKeys,
-    /// Instant the Temporal Evolution began (clause 4.8 `createdAt`), never moved
-    CreatedAt,
-    /// Instant the Temporal Evolution was last extended (clause 4.8 `modifiedAt`)
-    ModifiedAt,
-}
-
-/// The `temporal_entity_type_members` table - one row per type one Temporal
-/// Evolution is recorded under, keyed by type and then identifier.
-///
-/// A temporal type selection walks one key range of it in identifier order, so
-/// a page of a type reads no Evolution of another type.
-#[derive(Iden, Clone, Copy)]
-pub enum TemporalEntityTypeMembers {
-    /// Table name: `temporal_entity_type_members`
-    Table,
-    /// Foreign key to `temporal_entities`, cascading on the Evolution's deletion
-    TemporalEntityKey,
-    /// The `entity_type_names` key of the type recorded
-    EntityTypeNameKey,
-    /// The Entity's identifier, copied from `temporal_entities` so the walk is ordered by it
-    Id,
-}
 
 /// The `temporal_attribute_streams` table - the stable grain a history row belongs to.
 #[derive(Iden, Clone, Copy)]
@@ -51,11 +14,8 @@ pub enum TemporalAttributeStreams {
     Table,
     /// Generated surrogate key, referenced by `attribute_history.stream_key`
     StreamKey,
-    /// Foreign key to `temporal_entities`
-    TemporalEntityKey,
-    /// The Entity's identifier, copied from `temporal_entities` so the
-    /// streams of one attribute are walked in identifier order
-    Id,
+    /// Foreign key to `entities`
+    EntityKey,
     /// Foreign key to `attribute_names`
     AttributeNameKey,
     /// Optional dataset identifier (clause 4.5.5)
@@ -64,24 +24,26 @@ pub enum TemporalAttributeStreams {
     /// until it records one; it only grows, so it holds every geometry the
     /// stream holds now
     ValueExtent,
+    /// Every combination of attribute family and refined value shape the
+    /// stream's instances carry, one bit each, which clause 5.7.4.4 decides
+    /// aggregation eligibility from
+    ShapeMask,
 }
 
-/// The `temporal_stream_shapes` table - every combination of attribute family
-/// and refined value shape the instances of one stream hold, which clause
-/// 5.7.4.4 decides aggregation eligibility from.
+/// The `stream_type_census` table - a signed-delta ledger of how many streams
+/// of each attribute the Temporal Evolutions of each type hold, which names
+/// the types a temporal selection by attribute walks.
 #[derive(Iden, Clone, Copy)]
-pub enum TemporalStreamShapes {
-    /// Table name: `temporal_stream_shapes`
+pub enum StreamTypeCensus {
+    /// Table name: `stream_type_census`
     Table,
-    /// Foreign key to `temporal_attribute_streams`
-    StreamKey,
-    /// The stream's `attribute_names` key, copied from the stream so the shapes
-    /// of one attribute are read without the stream rows
+    /// The `entity_type_names` key of a type the streams' Evolutions are
+    /// recorded under
+    EntityTypeNameKey,
+    /// The `attribute_names` key of the streams' attribute
     AttributeNameKey,
-    /// The family code the instances were written as (clause 5.2.4)
-    AttributeKind,
-    /// The refined value shape code the instances' values were recorded in
-    RecordedShape,
+    /// The signed change in the number of streams
+    StreamDelta,
 }
 
 /// The `attribute_history` hypertable - stores historical attribute instances.
@@ -117,6 +79,8 @@ pub enum AttributeHistory {
     ValueNumber,
     /// String value, when `value_kind` selects it
     ValueString,
+    /// The `@language` of a language-tagged string
+    ValueLanguage,
     /// Boolean value, when `value_kind` selects it
     ValueBoolean,
     /// Geometry value as written, when `value_kind` selects it
@@ -136,6 +100,8 @@ pub enum AttributeHistory {
     UnitCodeId,
     /// `entity_type_names` key of the instance's `valueType` (clause 4.5.2)
     ValueTypeKey,
+    /// `entity_type_names` key of the `@type` a typed scalar value declares
+    ValueDatatypeKey,
     /// `entity_type_names` keys of the instance's `objectType` list (clause 4.5.3), in written order
     ObjectTypeKeys,
     /// The instance's `entityIdSealed` and `entityTypeSealed` members (clause 4.5.2.2)
@@ -154,8 +120,8 @@ pub enum AttributeHistoryInstanceClaims {
     Table,
     /// The verbatim `instanceId` the claim reserves
     VerbatimInstanceId,
-    /// Foreign key to `temporal_entities`
-    TemporalEntityKey,
+    /// Foreign key to `entities`
+    EntityKey,
     /// Foreign key to `attribute_names`
     AttributeNameKey,
 }
@@ -167,8 +133,8 @@ pub enum ScopeHistory {
     Table,
     /// Operational instant the row was written, the hypertable partition column
     RecordedAt,
-    /// Foreign key to `temporal_entities`
-    TemporalEntityKey,
+    /// The `entities` key of the Entity whose Scope the row records
+    EntityKey,
     /// Write identity of the mutation that produced the row (clause 5.6.7)
     WriteId,
     /// Ordinal of the row within its write, part of the replay-collision key
@@ -191,46 +157,27 @@ pub enum ScopeHistory {
 
 #[cfg(test)]
 mod tests {
-    use crate::temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities, TemporalEntityTypeMembers, TemporalStreamShapes};
+    use crate::temporal::{AttributeHistory, ScopeHistory, StreamTypeCensus, TemporalAttributeStreams};
     use sea_query::Iden;
-
-    #[test]
-    fn temporal_entity_names() {
-        pretty_assertions::assert_eq!(TemporalEntities::Table.to_string(), "temporal_entities");
-        pretty_assertions::assert_eq!(TemporalEntities::TemporalEntityKey.to_string(), "temporal_entity_key");
-        pretty_assertions::assert_eq!(TemporalEntities::Id.to_string(), "id");
-        pretty_assertions::assert_eq!(TemporalEntities::EntityTypeNameKeys.to_string(), "entity_type_name_keys");
-    }
-
-    #[test]
-    fn temporal_entity_type_member_names() {
-        pretty_assertions::assert_eq!(TemporalEntityTypeMembers::Table.to_string(), "temporal_entity_type_members");
-        pretty_assertions::assert_eq!(TemporalEntityTypeMembers::TemporalEntityKey.to_string(), "temporal_entity_key");
-        pretty_assertions::assert_eq!(TemporalEntityTypeMembers::EntityTypeNameKey.to_string(), "entity_type_name_key");
-        pretty_assertions::assert_eq!(TemporalEntityTypeMembers::Id.to_string(), "id");
-    }
 
     #[test]
     fn temporal_attribute_stream_names() {
         pretty_assertions::assert_eq!(TemporalAttributeStreams::Table.to_string(), "temporal_attribute_streams");
-        pretty_assertions::assert_eq!(TemporalAttributeStreams::TemporalEntityKey.to_string(), "temporal_entity_key");
-        pretty_assertions::assert_eq!(TemporalAttributeStreams::AttributeNameKey.to_string(), "attribute_name_key");
-        pretty_assertions::assert_eq!(TemporalAttributeStreams::DatasetId.to_string(), "dataset_id");
-    }
-
-    #[test]
-    fn temporal_stream_shape_names() {
+        pretty_assertions::assert_eq!(TemporalAttributeStreams::EntityKey.to_string(), "entity_key");
+        pretty_assertions::assert_eq!(ScopeHistory::EntityKey.to_string(), "entity_key");
         pretty_assertions::assert_eq!(
             [
-                TemporalStreamShapes::Table,
-                TemporalStreamShapes::StreamKey,
-                TemporalStreamShapes::AttributeNameKey,
-                TemporalStreamShapes::AttributeKind,
-                TemporalStreamShapes::RecordedShape,
+                StreamTypeCensus::Table,
+                StreamTypeCensus::EntityTypeNameKey,
+                StreamTypeCensus::AttributeNameKey,
+                StreamTypeCensus::StreamDelta,
             ]
             .map(|column| column.to_string()),
-            ["temporal_stream_shapes", "stream_key", "attribute_name_key", "attribute_kind", "recorded_shape"]
+            ["stream_type_census", "entity_type_name_key", "attribute_name_key", "stream_delta"]
         );
+        pretty_assertions::assert_eq!(TemporalAttributeStreams::AttributeNameKey.to_string(), "attribute_name_key");
+        pretty_assertions::assert_eq!(TemporalAttributeStreams::DatasetId.to_string(), "dataset_id");
+        pretty_assertions::assert_eq!(TemporalAttributeStreams::ShapeMask.to_string(), "shape_mask");
     }
 
     #[test]
@@ -245,6 +192,8 @@ mod tests {
                 AttributeHistory::ExpiresAt,
                 AttributeHistory::SubAttributes,
                 AttributeHistory::ValueGeometryValid,
+                AttributeHistory::ValueDatatypeKey,
+                AttributeHistory::ValueLanguage,
             ]
             .map(|column| column.to_string()),
             [
@@ -253,7 +202,9 @@ mod tests {
                 "proof_seals",
                 "expires_at",
                 "sub_attributes",
-                "value_geometry_valid"
+                "value_geometry_valid",
+                "value_datatype_key",
+                "value_language"
             ]
         );
     }

@@ -243,6 +243,7 @@ mod tests {
         let names = QueryNames {
             attributes: ResolvedNames::from_pairs([(attribute.parse().expect("valid name"), AttributeNameKey::from(12))]),
             types: ResolvedNames::default(),
+            ..QueryNames::default()
         };
         let built = build_query(&ContextTarget::Live, &query, &PageWindow::offset(100, 0), CountPolicy::Emit, &names).expect("valid entity query");
         let EntityTotal::OnPageRows { uncounted } = built.total else {

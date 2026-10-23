@@ -198,11 +198,21 @@ fn geometry(column: StagedColumn) -> SimpleExpr {
         .into()
 }
 
-/// The `ltree[]` projection of a staged JSONB array column:
-/// `ARRAY (SELECT jsonb_array_elements_text(d.<col>)::element_type)`.
+/// The array projection of a staged JSONB array column:
+/// `CASE WHEN d.<col> IS NOT NULL THEN ARRAY (SELECT
+/// jsonb_array_elements_text(d.<col>)::element_type) ELSE NULL END`.
+///
+/// An entity without a Scope stages NULL, and the subquery over it would
+/// yield an empty array rather than the NULL the search row stores.
 fn array_of(column: StagedColumn, element_type: PostgresType) -> SimpleExpr {
     let element: SimpleExpr = jsonb_array_elements_text(staged(column)).into();
-    array_of_subquery(Query::select().expr(cast(element, element_type)).to_owned())
+    CaseStatement::new()
+        .case(
+            Expr::col((Staged, column)).is_not_null(),
+            array_of_subquery(Query::select().expr(cast(element, element_type)).to_owned()),
+        )
+        .finally(Keyword::Null)
+        .into()
 }
 
 /// The eleven projected staging columns every insert and update stages, in

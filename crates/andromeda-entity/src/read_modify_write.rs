@@ -22,7 +22,8 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
+use chrono::Utc;
 use std::{slice::from_ref, sync::Arc};
 
 /// What one attempt of a computed write asked the store to do.
@@ -49,8 +50,11 @@ impl EntityService {
     /// writer superseded.
     ///
     /// `build` turns the entity's current state into the write that
-    /// supersedes it, or `None` when the state needs no write at all. It runs
-    /// once per attempt, so it must not consume anything it needs again.
+    /// supersedes it, or `None` when the state needs no write at all, settling
+    /// its system times at the instant it is handed, which the commit records
+    /// the write's history at. It runs once per attempt, each attempt at an
+    /// instant read after the state it computes from, so it must not consume
+    /// anything it needs again.
     ///
     /// Returns `None` when the entity does not exist or when `build` declined to
     /// produce a write.
@@ -68,7 +72,7 @@ impl EntityService {
     /// [`EntityError::Contention`] once the attempt budget is spent.
     pub(crate) async fn commit_read_modify_write<B>(&self, target: &ContextTarget, id: &Identifier, mut build: B) -> Result<Option<WriteOutcome>, EntityError>
     where
-        B: FnMut(&Arc<EntityState>) -> Result<Option<AtomicWrite>, EntityError>,
+        B: FnMut(&Arc<EntityState>, SystemInstant) -> Result<Option<AtomicWrite>, EntityError>,
     {
         let _id_guard = self.acquire_id_locks(target, from_ref(id)).await;
 
@@ -78,12 +82,13 @@ impl EntityService {
             let Some(snapshot) = self.reader.get_snapshot(target, id).await? else {
                 return Ok(None);
             };
-            let Some(mut write) = build(&snapshot.state)? else {
+            let now = SystemInstant::new(Utc::now());
+            let Some(mut write) = build(&snapshot.state, now)? else {
                 return Ok(None);
             };
             write.precondition = Precondition::UnchangedSince(snapshot.modified_at);
 
-            let outcome = single(self.writes.commit(target, vec![write]).await?)?;
+            let outcome = single(self.writes.commit(target, now, vec![write]).await?)?;
             match after_attempt(&outcome) {
                 AfterAttempt::Settled => return Ok(Some(outcome)),
                 AfterAttempt::Vanished => return Ok(None),
@@ -124,16 +129,16 @@ impl EntityService {
     /// the type selector of `entity`, and otherwise propagates whatever `build` or the coordinator returns.
     pub(crate) async fn commit_computed_write<B, T>(&self, target: &ContextTarget, entity: WriteTarget<'_>, mut build: B) -> Result<T, EntityError>
     where
-        B: FnMut(&Arc<EntityState>) -> Result<(Option<AtomicWrite>, T), EntityError>,
+        B: FnMut(&Arc<EntityState>, SystemInstant) -> Result<(Option<AtomicWrite>, T), EntityError>,
     {
         let id = entity.id;
         let mut produced: Option<(T, ComputedWrite)> = None;
         let landed = self
-            .commit_read_modify_write(target, id, |previous| {
+            .commit_read_modify_write(target, id, |previous, now| {
                 // Clauses 5.6.2.4 to 5.6.19.4: an entity outside the request's
                 // type selector is not the target, whatever the attempt read.
                 entity.admits(previous)?;
-                let (write, value) = build(previous)?;
+                let (write, value) = build(previous, now)?;
                 produced = Some((value, ComputedWrite::of(write.as_ref())));
                 Ok(write)
             })

@@ -30,7 +30,7 @@ use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,
     subscriptions::Subscriptions,
 };
-use andromeda_postgresql_seaquery::{pg_array::has_elements, pg_operator::PgBinaryOperator, statement::Statement};
+use andromeda_postgresql_seaquery::{pg_operator::PgBinaryOperator, statement::Statement};
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, ExprTrait, Iden, JoinType, Query, SelectStatement, SimpleExpr};
 use sqlx::Row;
@@ -54,7 +54,7 @@ struct Watched;
 /// One row per type the entity carries, each naming whether it held a Scope
 /// and the clause 4.8 `modifiedAt` a deletion compares against: the
 /// [`entity_types_statement`] with the columns
-/// `(cardinality(s.scope_paths) > 0) AS scoped` and `e.modified_at` beside the
+/// `(s.scope_paths IS NOT NULL) AS scoped` and `e.modified_at` beside the
 /// name.
 ///
 /// The version is read by the first statement of the outline and the instances
@@ -64,12 +64,7 @@ struct Watched;
 fn outline_types_statement(target: &ContextTarget, id: &str) -> SelectStatement {
     let mut statement = entity_types_statement(target, id);
     statement
-        .expr_as(
-            Expr::col((Search, EntitySearch::ScopePaths))
-                .is_not_null()
-                .and(has_elements(Expr::col((Search, EntitySearch::ScopePaths)))),
-            Scoped,
-        )
+        .expr_as(Expr::col((Search, EntitySearch::ScopePaths)).is_not_null(), Scoped)
         .column((E, Entities::ModifiedAt));
     statement
 }

@@ -192,7 +192,11 @@ impl EntityRepository {
         } else {
             self.entity_type_names.lookup(&type_names).await?
         };
-        Ok(QueryNames { attributes, types })
+        Ok(QueryNames {
+            attributes,
+            types,
+            ..QueryNames::default()
+        })
     }
 }
 

@@ -202,7 +202,10 @@ fn observed(attribute: &str, offsets: impl IntoIterator<Item = i64>, extent: Str
             attribute_name: format!("https://example.com/{attribute}").parse().expect("a valid attribute name"),
             attribute_type: AttributeType::Property,
             dataset_id: None,
-            value: TemporalValue::Number(JsonNumber::from(offset)),
+            value: TemporalValue::Number {
+                number: JsonNumber::from(offset),
+                datatype: None,
+            },
             observed_at: Some(minute(offset)),
             recorded_at: minute(offset),
             created_at: Some(minute(offset)),

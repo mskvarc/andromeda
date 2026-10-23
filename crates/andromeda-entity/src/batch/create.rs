@@ -74,7 +74,7 @@ impl EntityService {
             }
         }
 
-        let outcome = self.commit_chunk(placement, writes).await?.settled();
+        let outcome = self.commit_chunk(placement, now, writes).await?.settled();
         errors.extend(outcome.errors);
 
         Ok(BatchResult {

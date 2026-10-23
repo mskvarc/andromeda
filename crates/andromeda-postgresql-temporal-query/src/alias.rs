@@ -23,7 +23,8 @@ pub struct Ah;
 #[iden = "an"]
 pub struct An;
 
-/// Alias `te` for the `temporal_entities` table.
+/// Alias `te` for an identity row of `entities`, read for the Temporal
+/// Evolution it holds.
 #[derive(Iden, Clone, Copy)]
 #[iden = "te"]
 pub struct Te;

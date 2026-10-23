@@ -34,7 +34,13 @@ use andromeda_entity::{
     port::{reader::EntityReader, retrieved_entity::RetrievedEntity},
 };
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier, instance_identity::InstanceIdentity};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    entity_type_name::EntityTypeName,
+    identifier::Identifier,
+    instance_identity::InstanceIdentity,
+    time::system_instant::SystemInstant,
+};
 use andromeda_ngsi_ld_model::{
     notification::SysAttrsSnapshot,
     temporal::{TemporalAggregationRow, TemporalHistoryRow},
@@ -331,11 +337,11 @@ impl TemporalMutator for StubBroker {
 }
 
 impl ContextCommitter for StubBroker {
-    fn commit(&self, _target: &ContextTarget, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+    fn commit(&self, _target: &ContextTarget, _accepted_at: SystemInstant, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         Box::pin(async { panic!("commit is not exercised by the traversal harness") })
     }
 
-    fn commit_enqueued(&self, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+    fn commit_enqueued(&self, _accepted_at: SystemInstant, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         Box::pin(async { panic!("commit_enqueued is not exercised by the traversal harness") })
     }
 

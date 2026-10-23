@@ -21,7 +21,7 @@ use andromeda_postgresql_query::{
     },
     time_interval_predicate::within_interval,
 };
-use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
+use andromeda_postgresql_schema::current::{E, Entities};
 use andromeda_postgresql_seaquery::{literal::int_literal, pg_array::is_any_of};
 use sea_query::{Condition, DynIden, Expr as SeaExpr, IntoIden, SelectStatement};
 
@@ -44,8 +44,8 @@ pub(super) fn temporal_match_subquery(
 ) -> SelectStatement {
     let read = branch.entity_history(
         EvolutionColumns {
-            id: SeaExpr::col((E, TemporalEntities::Id)),
-            key: SeaExpr::col((E, TemporalEntities::TemporalEntityKey)),
+            id: SeaExpr::col((E, Entities::Id)),
+            key: SeaExpr::col((E, Entities::EntityKey)),
         },
         compared,
     );
@@ -194,7 +194,7 @@ mod tests {
         assert!(page.contains(r#") AS "ah" WHERE "ah"."observed_at" < "#), "{page}");
         assert!(page.contains(r#""ah"."entity_id" = "e"."id""#), "{page}");
         let count = stage1.count.expect("count requested").to_string(PostgresQueryBuilder);
-        assert!(count.contains(r#""ah"."temporal_entity_key" = "e"."temporal_entity_key""#), "{count}");
+        assert!(count.contains(r#""ah"."entity_key" = "e"."entity_key""#), "{count}");
         assert!(!count.contains(r#""ah"."entity_id" = "e"."id""#), "{count}");
     }
 
@@ -230,7 +230,10 @@ mod tests {
             stage1.count.expect("count requested").to_string(PostgresQueryBuilder),
         ] {
             assert!(!sql.contains("temporal_append"), "{sql}");
-            assert!(sql.contains(r#"FROM "snap_7"."temporal_entities" AS "e""#), "{sql}");
+            assert!(
+                sql.contains(r#"FROM (SELECT * FROM "snap_7"."entities" WHERE "entities"."evolution_created_at" IS NOT NULL) AS "e""#),
+                "{sql}"
+            );
         }
     }
 
@@ -262,9 +265,7 @@ mod tests {
             );
             assert!(!page.contains(r#""re"."id" = "e"."id""#), "{page}");
             assert!(
-                count.contains(
-                    r#") AS "ah" WHERE "ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00' AND "ah"."temporal_entity_key" = "e"."temporal_entity_key")"#
-                ),
+                count.contains(r#") AS "ah" WHERE "ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00' AND "ah"."entity_key" = "e"."entity_key")"#),
                 "{count}"
             );
             assert!(!count.contains(r#"AS "re""#), "{count}");
@@ -275,10 +276,7 @@ mod tests {
     fn a_stream_match_over_an_empty_queue_compares_the_page_by_identifier_and_the_count_by_key() {
         let [page, count] = page_and_count(&HistoryBranch::live_recorded(), None);
         assert!(page.contains(r#") AS "s" WHERE TRUE AND "s"."entity_id" = "e"."id")"#), "{page}");
-        assert!(
-            count.contains(r#") AS "s" WHERE TRUE AND "s"."temporal_entity_key" = "e"."temporal_entity_key")"#),
-            "{count}"
-        );
+        assert!(count.contains(r#") AS "s" WHERE TRUE AND "s"."entity_key" = "e"."entity_key")"#), "{count}");
         assert!(!count.contains(r#"AS "re""#), "{count}");
     }
 

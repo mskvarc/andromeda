@@ -263,7 +263,7 @@ mod tests {
     fn supersession_names_the_evolution_by_what_the_event_source_projects() {
         let of = HistoryOf::Evolution(EvolutionColumns {
             id: Expr::col((Alias::new("e"), Alias::new("id"))),
-            key: Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))),
+            key: Expr::col((Alias::new("e"), Alias::new("entity_key"))),
         });
         let after = TimeInterval::After(instant("2018-08-01T12:00:00Z"));
         let recorded = render(overlaps_window(
@@ -273,8 +273,8 @@ mod tests {
             &HistoryBranch::live_recorded(),
             &of,
         ));
-        assert!(recorded.contains(r#""rsh"."temporal_entity_key" = "sh"."temporal_entity_key""#), "{recorded}");
-        assert!(!recorded.contains("temporal_entities") && !recorded.contains("entity_id"), "{recorded}");
+        assert!(recorded.contains(r#""rsh"."entity_key" = "sh"."entity_key""#), "{recorded}");
+        assert!(!recorded.contains("entities") && !recorded.contains("entity_id"), "{recorded}");
         let queued = render(overlaps_window(
             ScopeHistory::ObservedAt,
             after,

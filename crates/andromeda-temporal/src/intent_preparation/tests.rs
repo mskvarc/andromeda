@@ -368,7 +368,16 @@ fn every_written_instance_is_its_own_observation() {
     let rows = rows(&entries);
     pretty_assertions::assert_eq!(
         rows.iter().map(|row| row.value.clone()).collect::<Vec<_>>(), // clone: compared after the borrow
-        vec![TemporalValue::Number(JsonNumber::from(55)), TemporalValue::Number(JsonNumber::from(61))]
+        vec![
+            TemporalValue::Number {
+                number: JsonNumber::from(55),
+                datatype: None
+            },
+            TemporalValue::Number {
+                number: JsonNumber::from(61),
+                datatype: None
+            }
+        ]
     );
     assert!(
         rows.iter()

@@ -53,15 +53,16 @@ fn every_queue_and_current_state_table_keeps_its_tail_and_vacuums_by_the_rows_th
     }
 }
 
-/// Every write of an Entity updates its Evolution row, so the narrow row gets
-/// the high-volume profile and room for heap-only updates.
+/// Every core write of an Entity stamps its current state's `modifiedAt` and
+/// every recording write its Evolution's, both on the one identity row, so the
+/// row gets the high-volume profile and room for two heap-only updates.
 #[test]
-fn the_temporal_catalogue_declares_the_high_volume_profile() {
+fn the_identity_rows_declare_the_high_volume_profile() {
     let schema = DeclaredSchema::of_every_migration();
     let declared: Vec<(&str, &str)> = schema
         .storage_parameters
         .iter()
-        .filter(|parameter| parameter.table == "temporal_entities")
+        .filter(|parameter| parameter.table == "entities")
         .map(|parameter| (parameter.name.as_str(), parameter.value.as_str()))
         .collect();
     assert_eq!(

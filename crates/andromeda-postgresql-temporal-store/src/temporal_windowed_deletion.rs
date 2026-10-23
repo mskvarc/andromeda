@@ -16,11 +16,10 @@
 //!
 //! Like [`crate::temporal_entity_deletion`], the hypertable carries no foreign
 //! key back to the catalogue, so the sequence is stated here inside one
-//! transaction: lock the entities, resolve the streams, read the write
-//! identities of the rows in the window, delete them, optionally remove the
-//! now-empty streams (only for an unbounded `deleteAll`, the clause 5.6.13
-//! equivalent), prune the shapes no instance left in a stream carries, and
-//! release the idempotency records the removed writes held.
+//! transaction: lock the entities, resolve the streams, delete the instances
+//! in the window, optionally remove the now-empty streams (only for an
+//! unbounded `deleteAll`, the clause 5.6.13 equivalent), and prune the shapes
+//! no instance left in a stream carries.
 //! A window that cuts through a compressed batch has that batch decompressed,
 //! in proportion to what the request removes, so the transaction lifts the
 //! decompression limit for itself.
@@ -31,8 +30,8 @@ use crate::{
     history_removal::stream_key_array,
     repo::TemporalRepository,
     stored_catalog_error::StoredCatalogError,
+    stream_census::counted_stream_removal,
     stream_shape_pruning::prune_stream_shapes,
-    write_record_release::release_named,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
@@ -42,7 +41,10 @@ use andromeda_ngsi_ld_query::temporal::{
 };
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dataset_predicate::dataset_condition, dictionary::resolved_names::ResolvedNames};
-use andromeda_postgresql_schema::temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities};
+use andromeda_postgresql_schema::{
+    current::Entities,
+    temporal::{AttributeHistory, TemporalAttributeStreams},
+};
 use andromeda_postgresql_seaquery::{
     aggregate::count_all,
     branch::qualified,
@@ -56,7 +58,6 @@ use andromeda_postgresql_temporal_query::{
 use iri_rs::IriBuf;
 use sea_query::{Condition, DeleteStatement, DynIden, Expr, ExprTrait, Iden, LockType, Query, SelectStatement};
 use sqlx::{PgConnection, Row};
-use uuid::Uuid;
 
 /// The count of history instances the window and scope select.
 #[derive(Iden, Clone, Copy)]
@@ -127,10 +128,6 @@ impl TemporalRepository {
             return Ok(0);
         }
         allow_confined_decompression(&mut tx).await?;
-        let write_ids: Vec<Uuid> = windowed_writes_statement(schema.as_ref(), &stream_keys, &scope.window)
-            .to_query_scalar()
-            .fetch_all(&mut *tx)
-            .await?;
         let removed = windowed_delete_statement(schema.as_ref(), &stream_keys, &scope.window)
             .to_query()
             .execute(&mut *tx)
@@ -141,25 +138,25 @@ impl TemporalRepository {
         // bounded window removes a slice and the stream still holds instants
         // outside it, so its catalogue row stays (clause 5.6.13 equivalent).
         if scope.empties_streams() {
-            empty_stream_cleanup_statement(schema.as_ref(), &stream_keys)
+            counted_stream_removal(schema.as_ref(), empty_stream_cleanup_statement(schema.as_ref(), &stream_keys))
+                .map_err(TemporalStoreError::StatementBuild)?
                 .to_query()
                 .execute(&mut *tx)
                 .await?;
         }
         prune_stream_shapes(&mut tx, schema.as_ref(), &stream_keys).await?;
-
-        release_named(&mut tx, &write_ids).await?;
         tx.commit().await?;
         Ok(removed)
     }
 }
 
-/// Lock the addressed temporal entities before any history is removed.
+/// Lock the identity rows of the addressed Entities before any history is
+/// removed.
 fn lock_entities_statement(schema: Option<&DynIden>, entity_ids: &[Identifier]) -> SelectStatement {
     Query::select()
-        .column(TemporalEntities::TemporalEntityKey)
-        .from(qualified(schema, TemporalEntities::Table))
-        .and_where(is_any_of(Expr::col(TemporalEntities::Id), entity_ids.iter().map(Identifier::to_string)))
+        .column(Entities::EntityKey)
+        .from(qualified(schema, Entities::Table))
+        .and_where(is_any_of(Expr::col(Entities::Id), entity_ids.iter().map(Identifier::to_string)))
         .lock(LockType::Update)
         .to_owned()
 }
@@ -202,16 +199,16 @@ fn matching_streams_query(
     attributes: &ResolvedNames<AttributeName>,
 ) -> SelectStatement {
     let owning_entities = Query::select()
-        .column((Te, TemporalEntities::TemporalEntityKey))
-        .from(qualified(schema, TemporalEntities::Table).alias(Te))
-        .and_where(is_any_of(Expr::col((Te, TemporalEntities::Id)), entity_ids.iter().map(Identifier::to_string)))
+        .column((Te, Entities::EntityKey))
+        .from(qualified(schema, Entities::Table).alias(Te))
+        .and_where(is_any_of(Expr::col((Te, Entities::Id)), entity_ids.iter().map(Identifier::to_string)))
         .to_owned();
 
     let mut streams = Query::select();
     streams
         .column((S, TemporalAttributeStreams::StreamKey))
         .from(qualified(schema, TemporalAttributeStreams::Table).alias(S))
-        .and_where(Expr::col((S, TemporalAttributeStreams::TemporalEntityKey)).in_subquery(owning_entities));
+        .and_where(Expr::col((S, TemporalAttributeStreams::EntityKey)).in_subquery(owning_entities));
 
     let attribute = Expr::col((S, TemporalAttributeStreams::AttributeNameKey));
     let keys = |iris: &[IriBuf]| attributes.keys_of(iris.iter().map(IriBuf::as_str)).into_iter().map(AttributeNameKey::get);
@@ -261,17 +258,6 @@ fn windowed_count_statement(schema: Option<&DynIden>, stream_keys: &[i64], windo
         .to_owned()
 }
 
-/// The distinct write identities of the history instances the streams and
-/// window select, read before they are removed.
-fn windowed_writes_statement(schema: Option<&DynIden>, stream_keys: &[i64], window: &TemporalWindow) -> SelectStatement {
-    Query::select()
-        .distinct()
-        .column(AttributeHistory::WriteId)
-        .from(qualified(schema, AttributeHistory::Table))
-        .cond_where(windowed_rows(stream_keys, window))
-        .to_owned()
-}
-
 /// Delete the history instances the streams and window select.
 fn windowed_delete_statement(schema: Option<&DynIden>, stream_keys: &[i64], window: &TemporalWindow) -> DeleteStatement {
     Query::delete()
@@ -303,13 +289,7 @@ fn empty_stream_cleanup_statement(schema: Option<&DynIden>, stream_keys: &[i64])
 
 #[cfg(test)]
 mod tests {
-    use crate::temporal_windowed_deletion::{
-        empty_stream_cleanup_statement,
-        matching_streams_query,
-        windowed_count_statement,
-        windowed_delete_statement,
-        windowed_writes_statement,
-    };
+    use crate::temporal_windowed_deletion::{empty_stream_cleanup_statement, matching_streams_query, windowed_count_statement, windowed_delete_statement};
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         dataset::DatasetFilter,
@@ -469,7 +449,7 @@ mod tests {
     }
 
     #[test]
-    fn the_count_and_the_write_identities_read_exactly_the_rows_the_delete_removes() {
+    fn the_count_reads_exactly_the_instances_the_delete_removes() {
         let window = scope(
             AttributeDeleteScope::All,
             DatasetFilter::Unfiltered,
@@ -479,11 +459,9 @@ mod tests {
         .window;
         let predicate = r#"WHERE "stream_key" = ANY(ARRAY [3]) AND "observed_at" < '2024-01-01 00:00:00.000000 +00:00'"#;
         let count = windowed_count_statement(None, &[3], &window).to_string(PostgresQueryBuilder);
-        let writes = windowed_writes_statement(None, &[3], &window).to_string(PostgresQueryBuilder);
         let delete = windowed_delete_statement(None, &[3], &window).to_string(PostgresQueryBuilder);
-        assert!(count.starts_with(r#"SELECT COUNT(*) AS "matched""#) && count.ends_with(predicate), "{count}");
-        assert!(writes.starts_with(r#"SELECT DISTINCT "write_id""#) && writes.ends_with(predicate), "{writes}");
-        assert!(delete.ends_with(predicate), "{delete}");
+        assert_eq!(count, format!(r#"SELECT COUNT(*) AS "matched" FROM "attribute_history" {predicate}"#));
+        assert_eq!(delete, format!(r#"DELETE FROM "attribute_history" {predicate}"#));
     }
 
     #[test]
@@ -491,7 +469,10 @@ mod tests {
         let sql = empty_stream_cleanup_statement(None, &[4]).to_string(PostgresQueryBuilder);
         assert_eq!(
             sql,
-            r#"DELETE FROM "temporal_attribute_streams" WHERE "stream_key" = ANY(ARRAY [4]) AND (NOT EXISTS(SELECT 1 FROM "attribute_history" AS "ah" WHERE "ah"."stream_key" = ANY(ARRAY [4]) AND "ah"."stream_key" = "temporal_attribute_streams"."stream_key"))"#
+            concat!(
+                r#"DELETE FROM "temporal_attribute_streams" WHERE "stream_key" = ANY(ARRAY [4]) AND (NOT EXISTS(SELECT 1 FROM "attribute_history" AS "ah""#,
+                r#" WHERE "ah"."stream_key" = ANY(ARRAY [4]) AND "ah"."stream_key" = "temporal_attribute_streams"."stream_key"))"#
+            )
         );
     }
 }

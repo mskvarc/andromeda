@@ -20,7 +20,10 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_schema::census::{AttributeCensus, EntityTypeAttributeCensus, EntityTypeCensus};
+use andromeda_postgresql_schema::{
+    census::{AttributeCensus, EntityTypeAttributeCensus, EntityTypeCensus},
+    temporal::StreamTypeCensus,
+};
 use andromeda_postgresql_seaquery::{aggregate::count_all, literal::int_literal, statement::Statement};
 use derive_more::{Add, AddAssign};
 use sea_query::{CommonTableExpression, DynIden, Expr, ExprTrait, Func, Iden, IntoIden, Query, WithClause, WithQuery};
@@ -43,8 +46,9 @@ struct Ledger {
 }
 
 impl Ledger {
-    /// The three census ledgers.
-    fn all() -> [Ledger; 3] {
+    /// The four census ledgers: the three of discovery and the stream type
+    /// census a temporal selection by attribute alone reads.
+    fn all() -> [Ledger; 4] {
         [
             Ledger {
                 table: EntityTypeCensus::Table.into_iden(),
@@ -64,6 +68,11 @@ impl Ledger {
                 table: AttributeCensus::Table.into_iden(),
                 keys: vec![AttributeCensus::AttributeNameKey.into_iden()],
                 delta: AttributeCensus::InstanceDelta.into_iden(),
+            },
+            Ledger {
+                table: StreamTypeCensus::Table.into_iden(),
+                keys: vec![StreamTypeCensus::EntityTypeNameKey.into_iden(), StreamTypeCensus::AttributeNameKey.into_iden()],
+                delta: StreamTypeCensus::StreamDelta.into_iden(),
             },
         ]
     }
@@ -184,7 +193,7 @@ mod tests {
 
     #[test]
     fn a_fold_sums_only_the_keys_with_more_than_one_row() {
-        let [types, type_attributes, attributes] = Ledger::all();
+        let [types, type_attributes, attributes, streams] = Ledger::all();
         let sql = type_attributes.fold(&ContextTarget::Live).expect("builds").to_string(PostgresQueryBuilder);
         assert!(
             sql.starts_with(r#"WITH "moved" AS (DELETE FROM "entity_type_attribute_census" WHERE ("entity_type_name_key", "attribute_name_key", "attribute_kind") IN (SELECT "entity_type_name_key", "attribute_name_key", "attribute_kind" FROM "entity_type_attribute_census" GROUP BY "entity_type_name_key", "attribute_name_key", "attribute_kind" HAVING (COUNT(*)) > (1)) RETURNING "entity_type_name_key", "attribute_name_key", "attribute_kind", "instance_delta")"#),
@@ -194,7 +203,7 @@ mod tests {
             sql.ends_with(r#"FROM "moved" GROUP BY "moved"."entity_type_name_key", "moved"."attribute_name_key", "moved"."attribute_kind" HAVING SUM("moved"."instance_delta") <> (0) RETURNING "instance_delta""#),
             "{sql}"
         );
-        for ledger in [types, attributes] {
+        for ledger in [types, attributes, streams] {
             let sql = ledger.fold(&ContextTarget::Live).expect("builds").to_string(PostgresQueryBuilder);
             assert!(sql.contains("HAVING (COUNT(*)) > (1)"), "{sql}");
         }

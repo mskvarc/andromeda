@@ -25,7 +25,7 @@ use andromeda_postgresql_query::{
 };
 use andromeda_postgresql_schema::{
     current::{Entities, EntitySearch},
-    type_membership::TypeMembershipRelation,
+    type_membership::MembershipSide,
 };
 use andromeda_postgresql_seaquery::{operator::regex_match, pg_array::is_any_of};
 use sea_query::{Condition, Expr};
@@ -92,7 +92,7 @@ fn selector_condition(rows: &EntityRowRefs, selector: &EntitySelector, types: &R
             }
             TypeTest::MembershipProbe => {
                 let memberships = Memberships {
-                    relation: TypeMembershipRelation::Current,
+                    side: MembershipSide::Current,
                     schema: rows.schema(),
                 };
                 condition = condition.add(membership(type_expr, types, &rows.identity_column(Entities::Id), memberships));

@@ -44,10 +44,6 @@ struct HeadEvent;
 /// The axes an assertion is judged on.
 const JUDGED_AXES: [ScopeHistory; 2] = [ScopeHistory::RecordedAt, ScopeHistory::ObservedAt];
 
-/// The collation paths are compared and ordered under: byte identity, the one
-/// clause 4.18 spelling comparison every Scope uses.
-const BYTE_ORDER: &str = "C";
-
 /// The columns a relation of scope events projects for a judgement, in order:
 /// the event's write instant, its `observedAt`, and its path, NULL for a
 /// removal.
@@ -61,7 +57,9 @@ pub const EVENT_COLUMNS: [ScopeHistory; 3] = [ScopeHistory::RecordedAt, ScopeHis
 /// `COLLATE "C"`, a queued one carries the default collation.
 #[must_use]
 pub fn path_set(mut paths: SelectStatement, path: SimpleExpr) -> SimpleExpr {
-    let byte_order = PostgresCollation::new(BYTE_ORDER);
+    // Paths compare by byte identity, the one clause 4.18 spelling comparison
+    // every Scope uses.
+    let byte_order = PostgresCollation::byte_order();
     // clone: the path is both selected and ordered by.
     paths.expr(path.clone()).order_by_expr(collate(path, &byte_order), Order::Asc);
     collate(array_of_subquery(paths), &byte_order)
@@ -111,7 +109,7 @@ mod tests {
         Query::select()
             .columns(EVENT_COLUMNS)
             .from(ScopeHistory::Table)
-            .and_where(Expr::col(ScopeHistory::TemporalEntityKey).eq(Expr::col((Alias::new("te"), Alias::new("temporal_entity_key")))))
+            .and_where(Expr::col(ScopeHistory::EntityKey).eq(Expr::col((Alias::new("te"), Alias::new("entity_key")))))
             .to_owned()
     }
 

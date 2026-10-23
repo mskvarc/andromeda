@@ -25,11 +25,12 @@ use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_postgresql_query::{
     dictionary::resolved_names::ResolvedNames,
     entity_row_refs::EntityRowRefs,
+    entity_sides::holds_current_state,
     type_membership::{Memberships, drives, members_of_any},
 };
 use andromeda_postgresql_schema::{
     current::{Entities, EntitySearch},
-    type_membership::TypeMembershipRelation,
+    type_membership::MembershipSide,
 };
 use andromeda_postgresql_seaquery::branch::qualified;
 use sea_query::{DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, SelectStatement, SimpleExpr, TableRef};
@@ -121,7 +122,9 @@ impl EntityRelations {
     pub fn apply_from(self, select: &mut SelectStatement, schema: Option<&DynIden>) {
         let driving_key: SimpleExpr = match self.source {
             RowSource::Entities => {
-                select.from(qualified(schema, Entities::Table));
+                // An identity row whose current state a core deletion removed
+                // keeps only its Temporal Evolution, which no core read sees.
+                select.from(qualified(schema, Entities::Table)).and_where(holds_current_state(Entities::Table));
                 Expr::col((Entities::Table, Entities::EntityKey))
             }
             RowSource::TypeMembers { walk, entities } => {
@@ -170,7 +173,7 @@ fn source(selection: &EntitySelection, types: &ResolvedNames<EntityTypeName>, sc
                 selection.selectors.iter().filter_map(|selector| selector.type_expr.as_ref()),
                 types,
                 Memberships {
-                    relation: TypeMembershipRelation::Current,
+                    side: MembershipSide::Current,
                     schema,
                 },
             )
@@ -307,7 +310,7 @@ mod tests {
     fn an_identifier_query_with_no_filter_joins_nothing() {
         assert_eq!(relations(&empty_query()), joined(Demand::NotJoined));
         let sql = from_clause(relations(&empty_query()));
-        assert_eq!(sql, r#"SELECT "entities"."id" FROM "entities""#);
+        assert_eq!(sql, r#"SELECT "entities"."id" FROM "entities" WHERE "entities"."created_at" IS NOT NULL"#);
     }
 
     /// A `q` filter reads the rows of its attributes through probes on the
@@ -316,7 +319,10 @@ mod tests {
     fn a_q_filter_joins_nothing() {
         let mut filtered = empty_query();
         filtered.selection.q_expr = Some(parser::parse("\"https://example.com/speed\">1").expect("valid q"));
-        assert_eq!(from_clause(relations(&filtered)), r#"SELECT "entities"."id" FROM "entities""#);
+        assert_eq!(
+            from_clause(relations(&filtered)),
+            r#"SELECT "entities"."id" FROM "entities" WHERE "entities"."created_at" IS NOT NULL"#
+        );
     }
 
     #[test]
@@ -361,7 +367,7 @@ mod tests {
         ));
         assert_eq!(
             from_clause(relations),
-            r#"SELECT "selected"."id" FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (4)) AS "selected""#
+            r#"SELECT "selected"."id" FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (4) AND "is_current_member") AS "selected""#
         );
     }
 

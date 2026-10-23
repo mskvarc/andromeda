@@ -51,6 +51,9 @@ pub(crate) mod declared_schema;
 /// The append-only rule of the dictionaries.
 #[cfg(test)]
 mod dictionary_append_only_tests;
+/// The Scope columns of the search row and their index.
+#[cfg(test)]
+mod entity_search_scope_tests;
 /// The naming and storage conventions, checked against the declared schema.
 #[cfg(test)]
 mod naming_tests;

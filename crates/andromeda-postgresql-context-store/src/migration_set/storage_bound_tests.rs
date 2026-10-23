@@ -28,7 +28,7 @@ const PROJECTED_URI_COLUMNS: [&str; 2] = ["value_uri", "value_long_uri"];
 const PROJECTED_URI_CONSTRAINTS: [&str; 2] = ["chk_current_attributes_value_uri_length", "chk_current_attributes_value_long_uri_length"];
 
 /// Every constraint that holds an identifier column to [`IDENTIFIER_BYTE_LIMIT`].
-const IDENTIFIER_LENGTH_CONSTRAINTS: [&str; 32] = [
+const IDENTIFIER_LENGTH_CONSTRAINTS: [&str; 31] = [
     "chk_forwarded_subscription_routes_minted_id_length",
     "chk_attribute_names_name_length",
     "chk_entity_type_names_name_length",
@@ -47,7 +47,6 @@ const IDENTIFIER_LENGTH_CONSTRAINTS: [&str; 32] = [
     "chk_entity_map_links_registration_id_length",
     "chk_entity_map_links_linked_map_id_length",
     "chk_entities_id_length",
-    "chk_temporal_entities_id_length",
     "chk_temporal_attribute_streams_dataset_id_length",
     "chk_attribute_history_verbatim_instance_id_length",
     "chk_attribute_history_instance_claims_id_length",

@@ -1,11 +1,17 @@
 //! Backend-neutral temporal observations and aggregation values.
 
-use crate::temporal::{evolution_instance::EvolutionInstance, observation_metadata::ObservationMetadata, structured_value::StructuredValue};
+use crate::temporal::{
+    evolution_instance::EvolutionInstance,
+    observation_metadata::ObservationMetadata,
+    structured_value::StructuredValue,
+    text_annotation::TextAnnotation,
+};
 use andromeda_ngsi_ld_entity::geometry_value::GeometryValue;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     identifier::Identifier,
+    reference::NgsiLdReference,
     scope::path::ScopePath,
     time::{date::NgsiLdDate, time_of_day::NgsiLdTime},
     time_prop::TimeProp,
@@ -45,6 +51,8 @@ pub mod temporal_document;
 pub mod temporal_entity;
 /// The history of one entity as the operations gather it.
 pub mod temporal_history;
+/// What a string value carries beside its text.
+pub mod text_annotation;
 /// The Temporal Evolution a client writes.
 pub mod written_temporal_entity;
 
@@ -52,14 +60,34 @@ pub mod written_temporal_entity;
 ///
 /// Decoding a structured value needs the attribute family the row records, so
 /// a value is decoded as part of its [`TemporalHistoryRow`] rather than alone.
+///
+/// A scalar keeps the JSON-LD 1.1 value object it was written as: a typed
+/// value its `@type`, a language-tagged string its `@language` (clause 4.5.2
+/// admits either as a Property value), so the Temporal Evolution renders the
+/// instance as current state does.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TemporalValue {
     /// An exact numeric attribute value.
-    Number(JsonNumber),
+    Number {
+        /// The number.
+        number: JsonNumber,
+        /// The datatype a typed number declares.
+        datatype: Option<NgsiLdReference>,
+    },
     /// A string attribute value.
-    String(String),
+    String {
+        /// The text.
+        text: String,
+        /// The datatype or language the string carries.
+        annotation: TextAnnotation,
+    },
     /// A boolean attribute value.
-    Boolean(bool),
+    Boolean {
+        /// The boolean.
+        flag: bool,
+        /// The datatype a typed boolean declares.
+        datatype: Option<NgsiLdReference>,
+    },
     /// A `GeoJSON` geometry, held decoded with its `bbox` and foreign members.
     Geometry(GeometryValue),
     /// A structured attribute value: what no typed column can hold.
@@ -69,11 +97,29 @@ pub enum TemporalValue {
     /// naming several, a language map, a JSON literal, a list.
     Structured(StructuredValue),
     /// A value declared as a clause 4.6.3 `DateTime`.
-    DateTime(DateTime<Utc>),
+    DateTime {
+        /// The instant.
+        instant: DateTime<Utc>,
+        /// The `DateTime` datatype when the literal declares it; `None` when
+        /// the attribute's `valueType` does.
+        datatype: Option<NgsiLdReference>,
+    },
     /// A value declared as a clause 4.6.3 `Date`.
-    Date(NgsiLdDate),
+    Date {
+        /// The date.
+        date: NgsiLdDate,
+        /// The `Date` datatype when the literal declares it; `None` when the
+        /// attribute's `valueType` does.
+        datatype: Option<NgsiLdReference>,
+    },
     /// A value declared as a clause 4.6.3 `Time`.
-    Time(NgsiLdTime),
+    Time {
+        /// The time of day.
+        time: NgsiLdTime,
+        /// The `Time` datatype when the literal declares it; `None` when the
+        /// attribute's `valueType` does.
+        datatype: Option<NgsiLdReference>,
+    },
     /// A URI attribute value.
     Uri(Uri),
     /// The Scopes one reified scope instance names (clause 4.18).
@@ -101,19 +147,70 @@ pub enum TemporalValue {
 }
 
 impl TemporalValue {
+    /// The datatype IRI the value's literal declares, which only a typed
+    /// scalar has.
+    #[must_use]
+    pub const fn datatype(&self) -> Option<&NgsiLdReference> {
+        match self {
+            TemporalValue::Number { datatype, .. }
+            | TemporalValue::Boolean { datatype, .. }
+            | TemporalValue::DateTime { datatype, .. }
+            | TemporalValue::Date { datatype, .. }
+            | TemporalValue::Time { datatype, .. } => datatype.as_ref(),
+            TemporalValue::String {
+                annotation: TextAnnotation::Datatype(datatype),
+                ..
+            } => Some(datatype),
+            TemporalValue::String { .. }
+            | TemporalValue::Geometry(_)
+            | TemporalValue::Structured(_)
+            | TemporalValue::Uri(_)
+            | TemporalValue::Scopes(_)
+            | TemporalValue::Tombstone { .. } => None,
+        }
+    }
+
+    /// The same value without the datatype or language its literal declares.
+    #[must_use]
+    pub fn unannotated(&self) -> TemporalValue {
+        match self {
+            TemporalValue::Number { number, .. } => TemporalValue::Number {
+                number: number.clone(), // clone: the unannotated value owns its number
+                datatype: None,
+            },
+            TemporalValue::String { text, .. } => TemporalValue::String {
+                text: text.clone(), // clone: the unannotated value owns its text
+                annotation: TextAnnotation::Plain,
+            },
+            TemporalValue::Boolean { flag, .. } => TemporalValue::Boolean { flag: *flag, datatype: None },
+            TemporalValue::DateTime { instant, .. } => TemporalValue::DateTime {
+                instant: *instant,
+                datatype: None,
+            },
+            TemporalValue::Date { date, .. } => TemporalValue::Date { date: *date, datatype: None },
+            TemporalValue::Time { time, .. } => TemporalValue::Time { time: *time, datatype: None },
+            // clone: the unannotated value owns what carries no annotation
+            other @ (TemporalValue::Geometry(_)
+            | TemporalValue::Structured(_)
+            | TemporalValue::Uri(_)
+            | TemporalValue::Scopes(_)
+            | TemporalValue::Tombstone { .. }) => other.clone(),
+        }
+    }
+
     /// The deletion instant this observation carries, which only a tombstone has.
     #[must_use]
     pub const fn deleted_at(&self) -> Option<DateTime<Utc>> {
         match self {
             TemporalValue::Tombstone { deleted_at } => Some(*deleted_at),
-            TemporalValue::Number(_)
-            | TemporalValue::String(_)
-            | TemporalValue::Boolean(_)
+            TemporalValue::Number { .. }
+            | TemporalValue::String { .. }
+            | TemporalValue::Boolean { .. }
             | TemporalValue::Geometry(_)
             | TemporalValue::Structured(_)
-            | TemporalValue::DateTime(_)
-            | TemporalValue::Date(_)
-            | TemporalValue::Time(_)
+            | TemporalValue::DateTime { .. }
+            | TemporalValue::Date { .. }
+            | TemporalValue::Time { .. }
             | TemporalValue::Uri(_)
             | TemporalValue::Scopes(_) => None,
         }

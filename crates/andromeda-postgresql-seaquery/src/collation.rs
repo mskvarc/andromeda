@@ -24,6 +24,13 @@ impl PostgresCollation {
         PostgresCollation(name.to_owned())
     }
 
+    /// The byte-wise collation, `"C"`, which every stored identifier and text
+    /// column is declared under: strings compare and order by their bytes.
+    #[must_use]
+    pub fn byte_order() -> PostgresCollation {
+        PostgresCollation::new("C")
+    }
+
     /// The collation's name as a quoted identifier.
     fn quoted(&self) -> String {
         quoted_name(&Alias::new(self.0.as_str()))

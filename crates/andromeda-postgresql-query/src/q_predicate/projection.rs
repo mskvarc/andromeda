@@ -284,6 +284,7 @@ mod tests {
                 ("https://example.com/Building".parse().expect("valid type name"), EntityTypeNameKey::from(31)),
                 ("https://example.com/Store".parse().expect("valid type name"), EntityTypeNameKey::from(32)),
             ]),
+            ..QueryNames::default()
         }
     }
 
@@ -1175,6 +1176,7 @@ mod tests {
                 r#"AND "ca_ln1"."attribute_name_key" = $1 "#,
                 r#"AND "ca_ln1"."attribute_kind" IN (2, 8) "#,
                 r#"AND ("ca_ln1"."expires_at" IS NULL OR "ca_ln1"."expires_at" > NOW()) "#,
+                r#"AND "le1"."created_at" IS NOT NULL "#,
                 r#"AND (("ls1"."entity_type_name_keys" @> (ARRAY[31])) OR ("ls1"."entity_type_name_keys" @> (ARRAY[32]))) "#,
                 r#"AND EXISTS(SELECT 1 FROM "current_attributes" AS "ca" "#,
                 r#"WHERE "ca"."attribute_name_key" = $2 AND ("ca"."expires_at" IS NULL OR "ca"."expires_at" > NOW()) "#,

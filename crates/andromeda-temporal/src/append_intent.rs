@@ -289,7 +289,13 @@ mod tests {
         let TemporalAppendEntry::Observation { row } = &intent.entries[0] else {
             return;
         };
-        pretty_assertions::assert_eq!(row.value, TemporalValue::Number(JsonNumber::from(42)));
+        pretty_assertions::assert_eq!(
+            row.value,
+            TemporalValue::Number {
+                number: JsonNumber::from(42),
+                datatype: None
+            }
+        );
         pretty_assertions::assert_eq!(intent.record.recorded_at(), recorded_at);
         pretty_assertions::assert_eq!(row.recorded_at, recorded_at);
         assert!(matches!(row.instance, EvolutionInstance::Attribute(InstanceIdentity::Generated(_))));

@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0020: Attribute history
+-- 0019: Attribute history
 -- ============================================================================
 -- Spec: ETSI GS CIM 009 v1.9.1 clauses 4.5.0, 4.5.7, 4.5.8, 4.9, 4.11,
 --   5.2.21, 5.6.14, 5.6.15, 5.7.4
@@ -26,6 +26,12 @@
 -- and 6.1) beside its positions in `value_geometry_members`, as the expanded
 -- members of its `GeoJSON` node, so a history row renders the geometry it
 -- recorded (clause 4.6.4); the column holds nothing for any other value.
+--
+-- A scalar keeps the JSON-LD value object it was written as, as current state
+-- keeps it: `value_datatype_key` is the `entity_type_names` key of the `@type`
+-- a typed number, string, boolean or time value declares, `value_language` the
+-- `@language` of a language-tagged string, so the Temporal Evolution renders
+-- the instance current state renders.
 --
 -- A tombstone carries `deleted_at` and no typed value; its NGSI-LD null is
 -- synthesised at render time, never stored. `attribute_kind` is kept so the
@@ -79,11 +85,13 @@ create table attribute_history (
     generated_instance_id uuid,
     -- `entity_type_names` key of the instance's clause 4.5.2 `valueType`.
     value_type_key integer,
+    value_datatype_key integer,
     unit_code_id smallint,
     value_boolean boolean,
     verbatim_instance_id text compression lz4 collate "C",
     value_number numeric compression lz4,
     value_string text compression lz4 collate "C",
+    value_language text compression lz4 collate "C",
     value_geometry geometry compression lz4,
     -- The `ST_MakeValid` form of an invalid `value_geometry`, NULL when the
     -- written one is valid, held beside the written form as on
@@ -111,6 +119,8 @@ create table attribute_history (
     -- shape disagrees with where it sits cannot be stored and is never
     -- repaired by guessing. It also bounds `value_kind` to its codes.
     constraint chk_attribute_history_value_kind_column check (value_kind = 0 or (value_kind = 1 and value_number is not null) or (value_kind = 2 and value_string is not null) or (value_kind = 3 and value_boolean is not null) or (value_kind = 4 and value_geometry is not null) or (value_kind = 5 and value_object is not null) or (value_kind = 6 and value_date_time is not null) or (value_kind = 7 and value_uri is not null) or (value_kind = 8 and value_string is not null) or (value_kind = 9 and value_string is not null)),
+    constraint chk_attribute_history_value_datatype_with_scalar check (value_datatype_key is null or value_kind in (1, 2, 3, 6, 8, 9)),
+    constraint chk_attribute_history_value_language_with_string check (value_language is null or (value_kind = 2 and value_datatype_key is null)),
     constraint chk_attribute_history_value_geometry_valid check (value_geometry_valid is null or (value_geometry is not null and st_isvalid(value_geometry_valid) and not st_isvalid(value_geometry))),
     constraint chk_attribute_history_value_geometry_srid check (value_geometry is null or st_srid(value_geometry) = 4326),
     constraint chk_attribute_history_value_geometry_zm check (value_geometry is null or st_zmflag(value_geometry) in (0, 2)),
@@ -218,11 +228,11 @@ create index idx_attribute_history_deleted_at_brin on attribute_history using br
 -- precedes a replacing write or by instance deletion (clause 5.6.15). A
 -- broker-minted identifier is unique by construction and never claims a row.
 create table attribute_history_instance_claims (
-    temporal_entity_key bigint not null,
+    entity_key bigint not null,
     attribute_name_key integer not null,
     verbatim_instance_id text compression lz4 collate "C" not null,
-    constraint pk_attribute_history_instance_claims primary key (temporal_entity_key, attribute_name_key, verbatim_instance_id),
-    constraint fk_attribute_history_instance_claims_temporal_entity foreign key (temporal_entity_key) references temporal_entities (temporal_entity_key) on delete cascade,
+    constraint pk_attribute_history_instance_claims primary key (entity_key, attribute_name_key, verbatim_instance_id),
+    constraint fk_attribute_history_instance_claims_entity foreign key (entity_key) references entities (entity_key) on delete cascade,
     constraint chk_attribute_history_instance_claims_id_length check (octet_length(verbatim_instance_id) <= 1024)
 );
 

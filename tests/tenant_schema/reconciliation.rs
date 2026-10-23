@@ -12,9 +12,8 @@ use andromeda_postgresql_schema::{
     csr::{Csr, RegistrationInformation},
     current::{CurrentAttributes, Entities, EntitySearch, EntityTypeMembers},
     name_dictionary::{AttributeNames, EntityTypeNames},
-    queue::WriteRecords,
     subscriptions::{SubscriptionDeliveryState, Subscriptions},
-    temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams, TemporalEntities},
+    temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams},
 };
 use andromeda_postgresql_seaquery::{
     aggregate::count_all,
@@ -214,22 +213,15 @@ const INVARIANTS: &[Invariant] = &[
         count: || {
             orphans(
                 TemporalAttributeStreams::Table,
-                TemporalAttributeStreams::TemporalEntityKey,
-                TemporalEntities::Table,
-                TemporalEntities::TemporalEntityKey,
+                TemporalAttributeStreams::EntityKey,
+                Entities::Table,
+                Entities::EntityKey,
             )
         },
     },
     Invariant {
         description: "scope history rows whose temporal entity no longer exists",
-        count: || {
-            orphans(
-                ScopeHistory::Table,
-                ScopeHistory::TemporalEntityKey,
-                TemporalEntities::Table,
-                TemporalEntities::TemporalEntityKey,
-            )
-        },
+        count: || orphans(ScopeHistory::Table, ScopeHistory::EntityKey, Entities::Table, Entities::EntityKey),
     },
     Invariant {
         description: "attribute rows whose entity no longer exists",
@@ -315,10 +307,6 @@ const INVARIANTS: &[Invariant] = &[
         count: || orphans(Csr::Table, Csr::Id, RegistrationInformation::Table, RegistrationInformation::RegistrationId),
     },
     Invariant {
-        description: "history rows naming a write record that does not exist",
-        count: || orphans(AttributeHistory::Table, AttributeHistory::WriteId, WriteRecords::Table, WriteRecords::WriteId),
-    },
-    Invariant {
         description: "subscriptions without a delivery-state row, or state rows without a subscription",
         count: delivery_state_drift,
     },
@@ -346,6 +334,9 @@ const REPLACED_RELATIONS: &[&str] = &[
     "notification_outbox",
     "snapshot_entities",
     "snapshot_temporal_entities",
+    "temporal_entities",
+    "temporal_entity_type_members",
+    "temporal_stream_shapes",
 ];
 
 /// Every relation an invariant reads, which has to hold rows for the count to
@@ -357,12 +348,10 @@ const REPLACED_RELATIONS: &[&str] = &[
 const POPULATED_RELATIONS: &[&str] = &[
     "entities",
     "entity_search",
-    "temporal_entities",
     "temporal_attribute_streams",
     "attribute_history",
     "current_attributes",
     "attribute_names",
-    "write_records",
     "registration_information",
     "subscriptions",
     "subscription_delivery_state",
@@ -617,7 +606,7 @@ async fn every_entity_identifier_names_at_most_one_current_and_one_temporal_row(
         .expect("the entity relation must be readable");
     assert_eq!(duplicated_current, 0, "an identifier names at most one current Entity");
 
-    let duplicated_temporal: i64 = duplicated_identifiers(TemporalEntities::Table, TemporalEntities::Id)
+    let duplicated_temporal: i64 = duplicated_identifiers(Entities::Table, Entities::Id)
         .to_query_scalar()
         .fetch_one(scope.database_pool())
         .await

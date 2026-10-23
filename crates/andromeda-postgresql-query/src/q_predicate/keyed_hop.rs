@@ -90,6 +90,7 @@ mod tests {
                 [("Trip", 10), ("Bus", 12)]
                     .map(|(name, key)| (format!("https://example.com/{name}").parse().expect("valid name"), EntityTypeNameKey::from(key))),
             ),
+            ..QueryNames::default()
         }
     }
 

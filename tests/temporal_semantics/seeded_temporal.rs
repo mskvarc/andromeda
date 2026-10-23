@@ -8,9 +8,9 @@
 //! ordinary paths.
 
 use andromeda_postgresql_schema::{
+    current::Entities,
     name_dictionary::{AttributeNames, EntityTypeNames},
-    queue::WriteRecords,
-    temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
+    temporal::{AttributeHistory, TemporalAttributeStreams},
 };
 use andromeda_postgresql_seaquery::{clock::now, pg_array::array_literal, statement::Statement};
 use chrono::{DateTime, Utc};
@@ -52,12 +52,12 @@ pub async fn seed_temporal_entity(pool: &PgPool, entity_id: &str, entity_type: &
         .returning_col(EntityTypeNames::EntityTypeNameKey)
         .to_owned();
     let entity = Query::insert()
-        .into_table(TemporalEntities::Table)
+        .into_table(Entities::Table)
         .columns([
-            TemporalEntities::CreatedAt,
-            TemporalEntities::ModifiedAt,
-            TemporalEntities::Id,
-            TemporalEntities::EntityTypeNameKeys,
+            Entities::EvolutionCreatedAt,
+            Entities::EvolutionModifiedAt,
+            Entities::Id,
+            Entities::EvolutionTypeNameKeys,
         ])
         .select_from(
             Query::select()
@@ -69,7 +69,7 @@ pub async fn seed_temporal_entity(pool: &PgPool, entity_id: &str, entity_type: &
                 .to_owned(),
         )
         .expect("the projection matches the column list")
-        .returning_col(TemporalEntities::TemporalEntityKey)
+        .returning_col(Entities::EntityKey)
         .to_owned();
     WithClause::new()
         .cte(CommonTableExpression::new().table_name(Alias::new(TYPE_NAME)).query(type_name).to_owned())
@@ -100,18 +100,13 @@ pub async fn attribute_name_key(pool: &PgPool, attribute_name: &str) -> i32 {
 pub async fn seed_stream(pool: &PgPool, temporal_entity_key: i64, attribute_name_key: i32) -> i64 {
     Query::insert()
         .into_table(TemporalAttributeStreams::Table)
-        .columns([
-            TemporalAttributeStreams::TemporalEntityKey,
-            TemporalAttributeStreams::Id,
-            TemporalAttributeStreams::AttributeNameKey,
-        ])
+        .columns([TemporalAttributeStreams::EntityKey, TemporalAttributeStreams::AttributeNameKey])
         .select_from(
             Query::select()
-                .column(TemporalEntities::TemporalEntityKey)
-                .column(TemporalEntities::Id)
+                .column(Entities::EntityKey)
                 .expr(Expr::val(attribute_name_key))
-                .from(TemporalEntities::Table)
-                .and_where(Expr::col(TemporalEntities::TemporalEntityKey).eq(temporal_entity_key))
+                .from(Entities::Table)
+                .and_where(Expr::col(Entities::EntityKey).eq(temporal_entity_key))
                 .to_owned(),
         )
         .expect("the projection matches the column list")
@@ -122,17 +117,8 @@ pub async fn seed_stream(pool: &PgPool, temporal_entity_key: i64, attribute_name
         .expect("seeded attribute stream")
 }
 
-/// Insert one history row and the idempotency record that protects it.
+/// Insert one history row.
 pub async fn seed_history_row(pool: &PgPool, row: &SeededHistoryRow) {
-    Query::insert()
-        .into_table(WriteRecords::Table)
-        .columns([WriteRecords::WriteId, WriteRecords::RecordedAt, WriteRecords::AcceptedAt])
-        .values([Expr::val(row.write_id), Expr::val(row.recorded_at), Expr::val(row.recorded_at)])
-        .expect("one value per column")
-        .to_query()
-        .execute(pool)
-        .await
-        .expect("seeded idempotency record");
     Query::insert()
         .into_table(AttributeHistory::Table)
         .columns([

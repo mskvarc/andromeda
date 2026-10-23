@@ -32,6 +32,7 @@ use crate::{
     attribute_name_key::AttributeNameKey,
     dictionary::resolved_names::ResolvedNames,
     entity_row_refs::EntityRowRefs,
+    entity_sides::holds_current_state,
     history_source::HistoryOf,
     instance_expiry::instance_stands,
     q_predicate::{
@@ -44,7 +45,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, Entities, EntitySearch},
-    temporal::{AttributeHistory, TemporalEntities},
+    temporal::AttributeHistory,
 };
 use andromeda_postgresql_seaquery::{
     branch::qualified,
@@ -106,8 +107,8 @@ impl LinkedHop {
     /// window they are the history instances valid within it, so a temporal `q`
     /// follows the targets the Relationship named inside the window (clause
     /// 5.7.4.4), and the window's two probes each become one `EXISTS`. The join
-    /// lands on the Entity's `id`, the unique external key of `entities` and of
-    /// the temporal catalogue alike.
+    /// lands on the Entity's `id`, the unique external key of `entities`, and
+    /// keeps the linked Entity's side the outer read serves.
     ///
     /// A deleted Relationship needs no exclusion: `current_attributes` holds no
     /// tombstone row, and the history probe excludes deletions itself.
@@ -203,6 +204,16 @@ impl LinkedHop {
         inner: Condition,
     ) -> SelectStatement {
         let linked = || Alias::new(self.linked_entity.as_str());
+        // One identity row serves both APIs, so a hop over current state keeps
+        // the linked entity only where it holds a current state; a hop over a
+        // window lands on the Evolutions the history source reads, which hold
+        // one already.
+        match guarded {
+            GuardedRow::Search(_) => {
+                probe.and_where(holds_current_state(linked()));
+            }
+            GuardedRow::Catalogue => {}
+        }
         // A multi-type guard is a disjunction; adding it as one condition keeps it
         // parenthesised so a second alternative cannot escape the correlation and
         // the attribute-name test to match any entity in the tenant that carries it.
@@ -220,7 +231,7 @@ impl LinkedHop {
                     );
                     SeaExpr::col((search(), EntitySearch::EntityTypeNameKeys))
                 }
-                GuardedRow::Catalogue => SeaExpr::col((linked(), TemporalEntities::EntityTypeNameKeys)),
+                GuardedRow::Catalogue => SeaExpr::col((linked(), Entities::EvolutionTypeNameKeys)),
             };
             probe.and_where(type_guard(guard_types, types, &entity_type_name_keys));
         }
@@ -264,7 +275,7 @@ impl LinkedHop {
     /// The Temporal Evolution this hop lands on over a window, which the inner
     /// predicate reads the history of.
     pub(crate) fn linked_evolution(&self) -> HistoryOf {
-        HistoryOf::Entity(SeaExpr::col((Alias::new(self.linked_entity.as_str()), TemporalEntities::Id)))
+        HistoryOf::Entity(SeaExpr::col((Alias::new(self.linked_entity.as_str()), Entities::Id)))
     }
 
     /// The Relationship's instances valid within the window joined to the
@@ -322,9 +333,11 @@ impl LinkedHop {
 /// Where a hop's type guard reads the linked entity's types.
 #[derive(Debug, Clone, Copy)]
 enum GuardedRow<'s> {
-    /// The linked entity's `entity_search` row, in the branch schema given.
+    /// The linked entity's `entity_search` row, in the branch schema given:
+    /// a hop over current state, which lands on an Entity holding one.
     Search(Option<&'s DynIden>),
-    /// The linked entity's Temporal Evolution the hop already lands on.
+    /// The linked entity's Temporal Evolution the hop already lands on: a hop
+    /// over a temporal window, which lands on an Entity holding one.
     Catalogue,
 }
 
@@ -429,8 +442,11 @@ mod tests {
             Condition::all(),
         );
         let sql = Query::select().expr(Expr::val(1)).cond_where(probe).to_owned().to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#""temporal_entities" AS "le1""#), "{sql}");
-        assert!(sql.contains(r#""le1"."entity_type_name_keys""#), "{sql}");
+        assert!(
+            sql.contains(r#"(SELECT * FROM "entities" WHERE "entities"."evolution_created_at" IS NOT NULL) AS "le1""#),
+            "{sql}"
+        );
+        assert!(sql.contains(r#""le1"."evolution_type_name_keys""#), "{sql}");
         assert!(!sql.contains("entity_search"), "{sql}");
     }
 

@@ -1,9 +1,10 @@
 //! PostgreSQL/TimescaleDB-backed temporal store for the NGSI-LD Temporal API.
 //!
 //! This crate owns the persistence layer for Temporal Evolution: the
-//! `temporal_entities` and `temporal_attribute_streams` catalogue, the
-//! `attribute_history` hypertable, the `scope_history` table, and the
-//! `write_records` idempotency relation. It provides the [`TemporalRepository`] concrete adapter
+//! Evolution columns of the `entities` identity rows, the
+//! `temporal_attribute_streams` catalogue and its stream type census, the
+//! `attribute_history` hypertable and the `scope_history` table. It provides
+//! the [`TemporalRepository`] concrete adapter
 //! and the [`TemporalRecorder`] a commit records its history with, while
 //! implementing the ports owned by `andromeda-temporal`.
 //!
@@ -37,12 +38,12 @@ pub mod duplicate_instance_claim;
 mod entity_attribute_history;
 /// Error types for the temporal store crate.
 pub mod error;
+/// Giving up the Temporal Evolution of identity rows.
+pub(crate) mod evolution_vacancy;
 /// Reading which disqualifying shapes the instances a request aggregates carry.
 pub(crate) mod held_shape_read;
 /// Deciding which relations of a branch a temporal read takes history from.
 mod history_branch;
-/// Where the history hypertables' chunks lie, for the write-record release.
-pub(crate) mod history_chunk_span;
 /// What a history row stores beside its value, keyed as current state keys it.
 pub mod history_members;
 /// Removing the history of whole streams or of one entity's Scope.
@@ -66,6 +67,10 @@ pub mod intent_application;
 pub(crate) mod merged_aggregation;
 /// `andromeda-temporal` mutation-port implementation on [`TemporalRepository`](repo::TemporalRepository).
 pub mod mutator;
+/// Removing the families and value shapes a stream no longer holds.
+/// Resolving the names and the attribute holders a temporal statement renders
+/// against.
+pub(crate) mod query_names_resolution;
 /// `andromeda-temporal` history-reader implementation on [`TemporalRepository`](repo::TemporalRepository).
 pub mod reader;
 /// Writing attribute history whenever entities are created or modified.
@@ -95,7 +100,8 @@ pub mod stored_catalog_error;
 pub mod stored_history_error;
 /// Splitting one stored instance identity across its two history columns.
 pub mod stored_instance_columns;
-/// Removing the families and value shapes a stream no longer holds.
+pub(crate) mod stream_census;
+pub(crate) mod stream_shape_growth;
 pub(crate) mod stream_shape_pruning;
 /// Reading the families and value shapes each attribute has been recorded with.
 pub(crate) mod stream_shape_read;
@@ -114,8 +120,6 @@ pub mod temporal_windowed_deletion;
 /// Reading the instances inside a split query's window of the Relationships
 /// its hops start from.
 pub(crate) mod window_relationship_read;
-/// When one write's idempotency record may be released.
-pub(crate) mod write_record_release;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

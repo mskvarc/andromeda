@@ -9,8 +9,11 @@
 
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::temporal::contributed_entities::ContributedEntities;
-use andromeda_postgresql_query::history_source::{HistoryBranch, PendingEntries};
-use andromeda_postgresql_schema::temporal::TemporalEntities;
+use andromeda_postgresql_query::{
+    entity_sides::holds_evolution,
+    history_source::{HistoryBranch, PendingEntries},
+};
+use andromeda_postgresql_schema::current::Entities;
 use andromeda_postgresql_seaquery::{branch::qualified, pg_array::is_any_of};
 use sea_query::{Expr, Query, SelectStatement};
 
@@ -22,17 +25,18 @@ pub(super) fn contributed_candidates(branch: &HistoryBranch, contributed: &Contr
         return None;
     }
     let column = match branch.pending() {
-        PendingEntries::Absent => TemporalEntities::TemporalEntityKey,
-        PendingEntries::Unioned => TemporalEntities::Id,
+        PendingEntries::Absent => Entities::EntityKey,
+        PendingEntries::Unioned => Entities::Id,
     };
     Some(
         Query::select()
-            .column((TemporalEntities::Table, column))
-            .from(qualified(branch.schema(), TemporalEntities::Table))
+            .column((Entities::Table, column))
+            .from(qualified(branch.schema(), Entities::Table))
             .and_where(is_any_of(
-                Expr::col((TemporalEntities::Table, TemporalEntities::Id)),
+                Expr::col((Entities::Table, Entities::Id)),
                 contributed.as_slice().iter().map(Identifier::to_string),
             ))
+            .and_where(holds_evolution(Entities::Table))
             .take(),
     )
 }
@@ -63,8 +67,9 @@ mod tests {
         assert_eq!(
             sql,
             concat!(
-                r#"SELECT "temporal_entities"."temporal_entity_key" FROM "temporal_entities""#,
-                r#" WHERE "temporal_entities"."id" = ANY(ARRAY ['urn:ngsi-ld:Sensor:000009','urn:ngsi-ld:Sensor:000011'])"#
+                r#"SELECT "entities"."entity_key" FROM "entities""#,
+                r#" WHERE "entities"."id" = ANY(ARRAY ['urn:ngsi-ld:Sensor:000009','urn:ngsi-ld:Sensor:000011'])"#,
+                r#" AND "entities"."evolution_created_at" IS NOT NULL"#
             )
         );
     }
@@ -74,7 +79,7 @@ mod tests {
         let sql = contributed_candidates(&HistoryBranch::live(), &two())
             .expect("contributed Entities")
             .to_string(PostgresQueryBuilder);
-        assert!(sql.starts_with(r#"SELECT "temporal_entities"."id" FROM "temporal_entities" WHERE"#), "{sql}");
+        assert!(sql.starts_with(r#"SELECT "entities"."id" FROM "entities" WHERE"#), "{sql}");
     }
 
     #[test]
@@ -82,6 +87,6 @@ mod tests {
         let sql = contributed_candidates(&HistoryBranch::recorded_in(Alias::new("snap_7").into_iden()), &two())
             .expect("contributed Entities")
             .to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#"FROM "snap_7"."temporal_entities" WHERE"#), "{sql}");
+        assert!(sql.contains(r#"FROM "snap_7"."entities" WHERE"#), "{sql}");
     }
 }

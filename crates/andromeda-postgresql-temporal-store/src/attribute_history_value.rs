@@ -1,69 +1,52 @@
 //! The value one attribute-history row carries, and the column it occupies.
 
-use crate::error::TemporalStoreError;
+use crate::{error::TemporalStoreError, temporal_store_invariant::TemporalStoreInvariant};
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
-use andromeda_ngsi_ld_lexicon::{
-    time::{date::NgsiLdDate, time_of_day::NgsiLdTime},
-    uri::Uri,
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, reference::NgsiLdReference, uri::Uri};
+use andromeda_ngsi_ld_model::temporal::{TemporalValue, text_annotation::TextAnnotation};
+use andromeda_postgresql_attribute_instance::{
+    name_keys::NameKeys,
+    stored_json::StoredJson,
+    stored_value::{LiteralAnnotation, StoredValue},
 };
-use andromeda_ngsi_ld_model::temporal::TemporalValue;
-use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_codes::value_kind::ValueKind;
+use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
+use langtag::LangTagBuf;
 use serde_json::value::{RawValue, to_raw_value};
 use std::borrow::Cow;
 
-/// What one attribute-history row records.
+/// What one attribute-history row records: the end of an instance, or an
+/// instance's value in the stored form current state holds it in.
 ///
 /// The history table constrains a row so that its `value_kind` and the
 /// typed column actually holding the value agree, and this enumeration is the
 /// Rust half of that constraint: a row cannot be built that declares one shape
 /// and populates another, so no reader has to guess which column to believe.
+/// A recorded value is a [`StoredValue`], so an instance has one stored form,
+/// with its datatype and language, whether it sits in a current row or a
+/// history row.
 ///
 /// [`Tombstone`](AttributeHistoryValue::Tombstone) carries the deletion instant
 /// and no value at all. The null representation `urn:ngsi-ld:null` is
 /// synthesised at render time from the attribute family (clauses 4.5.7 and
 /// 4.5.8) and is never written into a typed column, because a stored sentinel
 /// is indistinguishable from a client that genuinely sent that string.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum AttributeHistoryValue {
     /// Ends the attribute instance at `deleted_at`.
     Tombstone {
         /// Instant the deletion took effect.
         deleted_at: DateTime<Utc>,
     },
-    /// Arbitrary-precision number.
-    Number(JsonNumber),
-    /// A string declared as no time value.
-    String(String),
-    /// Boolean.
-    Boolean(bool),
-    /// A geometry, its positions stored in the broker's single geodetic
-    /// reference system and its `bbox` and foreign members (IETF RFC 7946
-    /// sections 5 and 6.1) as the JSON their own column stores them as.
-    Geometry {
-        /// Positions.
-        form: GeometryForm,
-        /// Stored JSON of the `bbox` and foreign members, when present.
-        members: Option<Box<RawValue>>,
-    },
-    /// Structured value, as the JSON the structured column stores.
-    Object(Box<RawValue>),
-    /// A value declared as a clause 4.6.3 `DateTime`, already truncated to the
-    /// broker's microsecond resolution.
-    DateTime(DateTime<Utc>),
-    /// A value declared as a clause 4.6.3 `Date`, stored in the string column.
-    Date(NgsiLdDate),
-    /// A value declared as a clause 4.6.3 `Time`, stored in the string column
-    /// in its fixed-width storage encoding.
-    Time(NgsiLdTime),
-    /// A URI, which is the shape a relationship object is stored in.
-    Uri(Uri),
+    /// An instance's value.
+    Recorded(StoredValue),
 }
 
 impl AttributeHistoryValue {
-    /// The shape one neutral observation value is stored in.
+    /// The shape one neutral observation value is stored in, every datatype
+    /// it declares as its key in `keys`.
     ///
     /// # Errors
     ///
@@ -71,25 +54,55 @@ impl AttributeHistoryValue {
     /// Scope, which clause 4.5.4 gives no attribute stream: it is carried by a
     /// scope entry and stored in `scope_history`, so one that reached the
     /// attribute conversion would have to invent the stream the clause denies
-    /// it; and [`TemporalStoreError::StoredJson`] when a structured value does
-    /// not write as JSON.
-    pub fn of_observation(value: &TemporalValue) -> Result<AttributeHistoryValue, TemporalStoreError> {
-        Ok(match value {
-            TemporalValue::Number(number) => AttributeHistoryValue::Number(number.clone()), // clone: the persisted row owns its exact decimal.
-            TemporalValue::String(text) => AttributeHistoryValue::String(text.clone()),     // clone: the persisted row owns the string.
-            TemporalValue::Boolean(flag) => AttributeHistoryValue::Boolean(*flag),
-            TemporalValue::Geometry(geometry) => AttributeHistoryValue::Geometry {
-                form: geometry.form().clone(), // clone: the persisted row owns its positions.
-                members: geometry.members().map(to_raw_value).transpose().map_err(TemporalStoreError::StoredJson)?,
+    /// it; [`TemporalStoreError::StoredJson`] when a structured value does not
+    /// write as JSON; and an invariant failure when a datatype is missing
+    /// from `keys`, which resolved every name the observation mentions.
+    pub fn of_observation(value: &TemporalValue, keys: &NameKeys) -> Result<AttributeHistoryValue, TemporalStoreError> {
+        let key = |datatype: &Option<NgsiLdReference>| datatype.as_ref().map(|datatype| datatype_key(datatype, keys)).transpose();
+        Ok(AttributeHistoryValue::Recorded(match value {
+            TemporalValue::Number { number, datatype } => StoredValue::Number {
+                number: number.clone(), // clone: the persisted row owns its exact decimal.
+                datatype: key(datatype)?,
             },
-            TemporalValue::Structured(structured) => AttributeHistoryValue::Object(structured.to_stored_json().map_err(TemporalStoreError::StoredJson)?),
-            TemporalValue::DateTime(instant) => AttributeHistoryValue::DateTime(*instant),
-            TemporalValue::Date(date) => AttributeHistoryValue::Date(*date),
-            TemporalValue::Time(time) => AttributeHistoryValue::Time(*time),
-            TemporalValue::Uri(uri) => AttributeHistoryValue::Uri(uri.clone()), // clone: the persisted row owns the URI.
-            TemporalValue::Tombstone { deleted_at } => AttributeHistoryValue::Tombstone { deleted_at: *deleted_at },
+            TemporalValue::String { text, annotation } => StoredValue::String {
+                text: text.clone(), // clone: the persisted row owns the string.
+                annotation: match annotation {
+                    TextAnnotation::Plain => LiteralAnnotation::Plain,
+                    TextAnnotation::Datatype(datatype) => LiteralAnnotation::Datatype(datatype_key(datatype, keys)?),
+                    // clone: the persisted row owns the tag.
+                    TextAnnotation::Language(language) => LiteralAnnotation::Language(language.clone()),
+                },
+            },
+            TemporalValue::Boolean { flag, datatype } => StoredValue::Boolean {
+                flag: *flag,
+                datatype: key(datatype)?,
+            },
+            TemporalValue::Geometry(geometry) => StoredValue::Geometry {
+                form: geometry.form().clone(), // clone: the persisted row owns its positions.
+                members: geometry
+                    .members()
+                    .map(to_raw_value)
+                    .transpose()
+                    .map_err(TemporalStoreError::StoredJson)?
+                    .map(StoredJson::new),
+            },
+            TemporalValue::Structured(structured) => StoredValue::Object(StoredJson::new(structured.to_stored_json().map_err(TemporalStoreError::StoredJson)?)),
+            TemporalValue::DateTime { instant, datatype } => StoredValue::DateTime {
+                instant: *instant,
+                datatype: key(datatype)?,
+            },
+            TemporalValue::Date { date, datatype } => StoredValue::Date {
+                date: *date,
+                datatype: key(datatype)?,
+            },
+            TemporalValue::Time { time, datatype } => StoredValue::Time {
+                time: *time,
+                datatype: key(datatype)?,
+            },
+            TemporalValue::Uri(uri) => StoredValue::Uri(uri.clone()), // clone: the persisted row owns the URI.
+            TemporalValue::Tombstone { deleted_at } => return Ok(AttributeHistoryValue::Tombstone { deleted_at: *deleted_at }),
             TemporalValue::Scopes(_) => return Err(TemporalStoreError::ScopeHasNoAttributeRow),
-        })
+        }))
     }
 
     /// Code the row records for this value's shape.
@@ -97,15 +110,7 @@ impl AttributeHistoryValue {
     pub const fn kind(&self) -> ValueKind {
         match self {
             AttributeHistoryValue::Tombstone { .. } => ValueKind::Tombstone,
-            AttributeHistoryValue::Number(_) => ValueKind::Number,
-            AttributeHistoryValue::String(_) => ValueKind::String,
-            AttributeHistoryValue::Boolean(_) => ValueKind::Boolean,
-            AttributeHistoryValue::Geometry { .. } => ValueKind::Geometry,
-            AttributeHistoryValue::Object(_) => ValueKind::Object,
-            AttributeHistoryValue::DateTime(_) => ValueKind::DateTime,
-            AttributeHistoryValue::Date(_) => ValueKind::Date,
-            AttributeHistoryValue::Time(_) => ValueKind::Time,
-            AttributeHistoryValue::Uri(_) => ValueKind::Uri,
+            AttributeHistoryValue::Recorded(value) => value.kind(),
         }
     }
 
@@ -114,16 +119,28 @@ impl AttributeHistoryValue {
     pub const fn deleted_at(&self) -> Option<DateTime<Utc>> {
         match self {
             AttributeHistoryValue::Tombstone { deleted_at } => Some(*deleted_at),
-            AttributeHistoryValue::Number(_)
-            | AttributeHistoryValue::String(_)
-            | AttributeHistoryValue::Boolean(_)
-            | AttributeHistoryValue::Geometry { .. }
-            | AttributeHistoryValue::Object(_)
-            | AttributeHistoryValue::DateTime(_)
-            | AttributeHistoryValue::Date(_)
-            | AttributeHistoryValue::Time(_)
-            | AttributeHistoryValue::Uri(_) => None,
+            AttributeHistoryValue::Recorded(_) => None,
         }
+    }
+
+    /// The recorded value, `None` for a tombstone.
+    const fn recorded(&self) -> Option<&StoredValue> {
+        match self {
+            AttributeHistoryValue::Tombstone { .. } => None,
+            AttributeHistoryValue::Recorded(value) => Some(value),
+        }
+    }
+
+    /// `value_datatype_key` content: the datatype the literal declares.
+    #[must_use]
+    pub fn datatype_key(&self) -> Option<i32> {
+        self.recorded().and_then(StoredValue::datatype_key).map(EntityTypeNameKey::get)
+    }
+
+    /// `value_language` content: the tag of a language-tagged string.
+    #[must_use]
+    pub fn language(&self) -> Option<&LangTagBuf> {
+        self.recorded().and_then(StoredValue::language)
     }
 
     /// `NUMERIC` literal for the numeric column.
@@ -131,39 +148,36 @@ impl AttributeHistoryValue {
     /// The column is arbitrary-precision, so the value is handed over as its
     /// decimal text rather than as a double: a JSON integer beyond the range the
     /// double format names individually reaches storage unchanged instead of
-    /// being refused or rounded at the boundary. Every [`JsonNumber`] renders a
-    /// finite literal without an exponent, which is exactly what `NUMERIC`
-    /// parses.
+    /// being refused or rounded at the boundary. Every number renders a finite
+    /// literal without an exponent, which is exactly what `NUMERIC` parses.
     #[must_use]
     pub fn numeric_literal(&self) -> Option<String> {
-        match self {
-            AttributeHistoryValue::Number(number) => Some(number.to_string()),
-            AttributeHistoryValue::Tombstone { .. }
-            | AttributeHistoryValue::String(_)
-            | AttributeHistoryValue::Boolean(_)
-            | AttributeHistoryValue::Geometry { .. }
-            | AttributeHistoryValue::Object(_)
-            | AttributeHistoryValue::DateTime(_)
-            | AttributeHistoryValue::Date(_)
-            | AttributeHistoryValue::Time(_)
-            | AttributeHistoryValue::Uri(_) => None,
+        match self.recorded()? {
+            StoredValue::Number { number, .. } => Some(number.to_string()),
+            StoredValue::String { .. }
+            | StoredValue::Boolean { .. }
+            | StoredValue::DateTime { .. }
+            | StoredValue::Date { .. }
+            | StoredValue::Time { .. }
+            | StoredValue::Geometry { .. }
+            | StoredValue::Object(_)
+            | StoredValue::Uri(_) => None,
         }
     }
 
     /// Exact numeric value for a `NUMERIC` bind.
     #[must_use]
-    pub const fn number(&self) -> Option<&BigDecimal> {
-        match self {
-            AttributeHistoryValue::Number(number) => Some(number.decimal()),
-            AttributeHistoryValue::Tombstone { .. }
-            | AttributeHistoryValue::String(_)
-            | AttributeHistoryValue::Boolean(_)
-            | AttributeHistoryValue::Geometry { .. }
-            | AttributeHistoryValue::Object(_)
-            | AttributeHistoryValue::DateTime(_)
-            | AttributeHistoryValue::Date(_)
-            | AttributeHistoryValue::Time(_)
-            | AttributeHistoryValue::Uri(_) => None,
+    pub fn number(&self) -> Option<&BigDecimal> {
+        match self.recorded()? {
+            StoredValue::Number { number, .. } => Some(number.decimal()),
+            StoredValue::String { .. }
+            | StoredValue::Boolean { .. }
+            | StoredValue::DateTime { .. }
+            | StoredValue::Date { .. }
+            | StoredValue::Time { .. }
+            | StoredValue::Geometry { .. }
+            | StoredValue::Object(_)
+            | StoredValue::Uri(_) => None,
         }
     }
 
@@ -171,130 +185,152 @@ impl AttributeHistoryValue {
     /// spelling, a `Time` in its fixed-width storage encoding.
     #[must_use]
     pub fn string(&self) -> Option<Cow<'_, str>> {
-        match self {
-            AttributeHistoryValue::String(text) => Some(Cow::Borrowed(text)),
-            AttributeHistoryValue::Date(date) => Some(Cow::Owned(date.to_string())),
-            AttributeHistoryValue::Time(time) => Some(Cow::Owned(time.to_string())),
-            AttributeHistoryValue::Tombstone { .. }
-            | AttributeHistoryValue::Number(_)
-            | AttributeHistoryValue::Boolean(_)
-            | AttributeHistoryValue::Geometry { .. }
-            | AttributeHistoryValue::Object(_)
-            | AttributeHistoryValue::DateTime(_)
-            | AttributeHistoryValue::Uri(_) => None,
+        match self.recorded()? {
+            StoredValue::String { text, .. } => Some(Cow::Borrowed(text)),
+            StoredValue::Date { date, .. } => Some(Cow::Owned(date.to_string())),
+            StoredValue::Time { time, .. } => Some(Cow::Owned(time.to_string())),
+            StoredValue::Number { .. }
+            | StoredValue::Boolean { .. }
+            | StoredValue::DateTime { .. }
+            | StoredValue::Geometry { .. }
+            | StoredValue::Object(_)
+            | StoredValue::Uri(_) => None,
         }
     }
 
     /// Boolean column content.
     #[must_use]
-    pub const fn boolean(&self) -> Option<bool> {
-        match self {
-            AttributeHistoryValue::Boolean(flag) => Some(*flag),
-            AttributeHistoryValue::Tombstone { .. }
-            | AttributeHistoryValue::Number(_)
-            | AttributeHistoryValue::String(_)
-            | AttributeHistoryValue::Geometry { .. }
-            | AttributeHistoryValue::Object(_)
-            | AttributeHistoryValue::DateTime(_)
-            | AttributeHistoryValue::Date(_)
-            | AttributeHistoryValue::Time(_)
-            | AttributeHistoryValue::Uri(_) => None,
+    pub fn boolean(&self) -> Option<bool> {
+        match self.recorded()? {
+            StoredValue::Boolean { flag, .. } => Some(*flag),
+            StoredValue::Number { .. }
+            | StoredValue::String { .. }
+            | StoredValue::DateTime { .. }
+            | StoredValue::Date { .. }
+            | StoredValue::Time { .. }
+            | StoredValue::Geometry { .. }
+            | StoredValue::Object(_)
+            | StoredValue::Uri(_) => None,
         }
     }
 
     /// Geometry column content.
     #[must_use]
-    pub const fn geometry(&self) -> Option<&GeometryForm> {
-        match self {
-            AttributeHistoryValue::Geometry { form, .. } => Some(form),
-            AttributeHistoryValue::Tombstone { .. }
-            | AttributeHistoryValue::Number(_)
-            | AttributeHistoryValue::String(_)
-            | AttributeHistoryValue::Boolean(_)
-            | AttributeHistoryValue::Object(_)
-            | AttributeHistoryValue::DateTime(_)
-            | AttributeHistoryValue::Date(_)
-            | AttributeHistoryValue::Time(_)
-            | AttributeHistoryValue::Uri(_) => None,
+    pub fn geometry(&self) -> Option<&GeometryForm> {
+        match self.recorded()? {
+            StoredValue::Geometry { form, .. } => Some(form),
+            StoredValue::Number { .. }
+            | StoredValue::String { .. }
+            | StoredValue::Boolean { .. }
+            | StoredValue::DateTime { .. }
+            | StoredValue::Date { .. }
+            | StoredValue::Time { .. }
+            | StoredValue::Object(_)
+            | StoredValue::Uri(_) => None,
         }
     }
 
     /// Geometry-members column content.
     #[must_use]
     pub fn geometry_members(&self) -> Option<&RawValue> {
-        match self {
-            AttributeHistoryValue::Geometry { members, .. } => members.as_deref(),
-            AttributeHistoryValue::Tombstone { .. }
-            | AttributeHistoryValue::Number(_)
-            | AttributeHistoryValue::String(_)
-            | AttributeHistoryValue::Boolean(_)
-            | AttributeHistoryValue::Object(_)
-            | AttributeHistoryValue::DateTime(_)
-            | AttributeHistoryValue::Date(_)
-            | AttributeHistoryValue::Time(_)
-            | AttributeHistoryValue::Uri(_) => None,
+        match self.recorded()? {
+            StoredValue::Geometry { members, .. } => members.as_ref().map(StoredJson::as_raw),
+            StoredValue::Number { .. }
+            | StoredValue::String { .. }
+            | StoredValue::Boolean { .. }
+            | StoredValue::DateTime { .. }
+            | StoredValue::Date { .. }
+            | StoredValue::Time { .. }
+            | StoredValue::Object(_)
+            | StoredValue::Uri(_) => None,
         }
     }
 
     /// Structured column content.
     #[must_use]
     pub fn object(&self) -> Option<&RawValue> {
-        match self {
-            AttributeHistoryValue::Object(object) => Some(object),
-            AttributeHistoryValue::Tombstone { .. }
-            | AttributeHistoryValue::Number(_)
-            | AttributeHistoryValue::String(_)
-            | AttributeHistoryValue::Boolean(_)
-            | AttributeHistoryValue::Geometry { .. }
-            | AttributeHistoryValue::DateTime(_)
-            | AttributeHistoryValue::Date(_)
-            | AttributeHistoryValue::Time(_)
-            | AttributeHistoryValue::Uri(_) => None,
+        match self.recorded()? {
+            StoredValue::Object(object) => Some(object.as_raw()),
+            StoredValue::Number { .. }
+            | StoredValue::String { .. }
+            | StoredValue::Boolean { .. }
+            | StoredValue::DateTime { .. }
+            | StoredValue::Date { .. }
+            | StoredValue::Time { .. }
+            | StoredValue::Geometry { .. }
+            | StoredValue::Uri(_) => None,
         }
     }
 
     /// Timestamp column content.
     #[must_use]
-    pub const fn date_time(&self) -> Option<DateTime<Utc>> {
-        match self {
-            AttributeHistoryValue::DateTime(instant) => Some(*instant),
-            AttributeHistoryValue::Tombstone { .. }
-            | AttributeHistoryValue::Number(_)
-            | AttributeHistoryValue::String(_)
-            | AttributeHistoryValue::Boolean(_)
-            | AttributeHistoryValue::Geometry { .. }
-            | AttributeHistoryValue::Object(_)
-            | AttributeHistoryValue::Date(_)
-            | AttributeHistoryValue::Time(_)
-            | AttributeHistoryValue::Uri(_) => None,
+    pub fn date_time(&self) -> Option<DateTime<Utc>> {
+        match self.recorded()? {
+            StoredValue::DateTime { instant, .. } => Some(*instant),
+            StoredValue::Number { .. }
+            | StoredValue::String { .. }
+            | StoredValue::Boolean { .. }
+            | StoredValue::Date { .. }
+            | StoredValue::Time { .. }
+            | StoredValue::Geometry { .. }
+            | StoredValue::Object(_)
+            | StoredValue::Uri(_) => None,
         }
     }
 
     /// URI column content.
     #[must_use]
-    pub const fn uri(&self) -> Option<&Uri> {
-        match self {
-            AttributeHistoryValue::Uri(uri) => Some(uri),
-            AttributeHistoryValue::Tombstone { .. }
-            | AttributeHistoryValue::Number(_)
-            | AttributeHistoryValue::String(_)
-            | AttributeHistoryValue::Boolean(_)
-            | AttributeHistoryValue::Geometry { .. }
-            | AttributeHistoryValue::Object(_)
-            | AttributeHistoryValue::DateTime(_)
-            | AttributeHistoryValue::Date(_)
-            | AttributeHistoryValue::Time(_) => None,
+    pub fn uri(&self) -> Option<&Uri> {
+        match self.recorded()? {
+            StoredValue::Uri(uri) => Some(uri),
+            StoredValue::Number { .. }
+            | StoredValue::String { .. }
+            | StoredValue::Boolean { .. }
+            | StoredValue::DateTime { .. }
+            | StoredValue::Date { .. }
+            | StoredValue::Time { .. }
+            | StoredValue::Geometry { .. }
+            | StoredValue::Object(_) => None,
         }
     }
+}
+
+/// The `entity_type_names` key `keys` holds for `datatype`.
+fn datatype_key(datatype: &NgsiLdReference, keys: &NameKeys) -> Result<EntityTypeNameKey, TemporalStoreError> {
+    keys.type_name(datatype)
+        .ok_or_else(|| TemporalStoreInvariant::EntityTypeUnresolved(EntityTypeName::from(datatype)).into())
 }
 
 #[cfg(test)]
 mod tests {
     use crate::attribute_history_value::AttributeHistoryValue;
+    use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, reference::NgsiLdReference};
+    use andromeda_ngsi_ld_model::temporal::{TemporalValue, text_annotation::TextAnnotation};
     use andromeda_ngsi_ld_number::JsonNumber;
+    use andromeda_postgresql_attribute_instance::{
+        name_keys::NameKeys,
+        stored_json::StoredJson,
+        stored_value::{LiteralAnnotation, StoredValue},
+    };
     use andromeda_postgresql_codes::value_kind::ValueKind;
+    use andromeda_postgresql_query::{dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey};
     use chrono::{TimeZone, Utc};
+    use langtag::LangTagBuf;
     use serde_json::value::RawValue;
+
+    const INTEGER: &str = "http://www.w3.org/2001/XMLSchema#integer";
+
+    /// Keys holding `xsd:integer` at 12.
+    fn keys() -> NameKeys {
+        NameKeys::new(
+            ResolvedNames::default(),
+            ResolvedNames::from_pairs([(INTEGER.parse::<EntityTypeName>().expect("a type name"), EntityTypeNameKey::from(12))]),
+        )
+    }
+
+    fn recorded(value: StoredValue) -> AttributeHistoryValue {
+        AttributeHistoryValue::Recorded(value)
+    }
 
     #[test]
     fn a_tombstone_declares_the_reserved_kind_and_populates_no_typed_column() {
@@ -309,36 +345,52 @@ mod tests {
         assert!(value.object().is_none());
         assert!(value.date_time().is_none());
         assert!(value.uri().is_none());
+        assert!(value.datatype_key().is_none());
+        assert!(value.language().is_none());
     }
 
     #[test]
     fn an_integer_beyond_the_exact_double_range_reaches_the_numeric_column_unchanged() {
         // One above 2^53, which the double format cannot name individually.
-        let value = AttributeHistoryValue::Number(JsonNumber::from(9_007_199_254_740_993_i64));
+        let value = recorded(StoredValue::Number {
+            number: JsonNumber::from(9_007_199_254_740_993_i64),
+            datatype: None,
+        });
         pretty_assertions::assert_eq!(value.numeric_literal().as_deref(), Some("9007199254740993"));
     }
 
     #[test]
     fn a_fractional_number_renders_a_literal_numeric_parses() {
-        let value = AttributeHistoryValue::Number(JsonNumber::try_from(-2.5e-4).expect("a finite number"));
+        let value = recorded(StoredValue::Number {
+            number: JsonNumber::try_from(-2.5e-4).expect("a finite number"),
+            datatype: None,
+        });
         pretty_assertions::assert_eq!(value.numeric_literal().as_deref(), Some("-0.00025"));
     }
 
     #[test]
     fn a_non_tombstone_row_records_no_deletion_instant() {
-        assert!(AttributeHistoryValue::Boolean(true).deleted_at().is_none());
+        assert!(recorded(StoredValue::Boolean { flag: true, datatype: None }).deleted_at().is_none());
     }
 
     #[test]
     fn every_value_shape_reports_exactly_one_populated_column() {
         let instant = Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant");
         let values = [
-            AttributeHistoryValue::Number(JsonNumber::from(1)),
-            AttributeHistoryValue::String("text".to_owned()),
-            AttributeHistoryValue::Boolean(false),
-            AttributeHistoryValue::Object(RawValue::from_string(r#"{"a": 1}"#.to_owned()).expect("a JSON object")),
-            AttributeHistoryValue::DateTime(instant),
-            AttributeHistoryValue::Uri("urn:ngsi-ld:Entity:target".parse().expect("a valid URI")),
+            recorded(StoredValue::Number {
+                number: JsonNumber::from(1),
+                datatype: None,
+            }),
+            recorded(StoredValue::String {
+                text: "text".to_owned(),
+                annotation: LiteralAnnotation::Plain,
+            }),
+            recorded(StoredValue::Boolean { flag: false, datatype: None }),
+            recorded(StoredValue::Object(StoredJson::new(
+                RawValue::from_string(r#"{"a": 1}"#.to_owned()).expect("a JSON object"),
+            ))),
+            recorded(StoredValue::DateTime { instant, datatype: None }),
+            recorded(StoredValue::Uri("urn:ngsi-ld:Entity:target".parse().expect("a valid URI"))),
         ];
         for value in &values {
             let populated = usize::from(value.numeric_literal().is_some())
@@ -350,5 +402,42 @@ mod tests {
                 + usize::from(value.uri().is_some());
             pretty_assertions::assert_eq!(populated, 1, "{value:?} populates {populated} columns");
         }
+    }
+
+    /// A typed literal keeps its datatype as its dictionary key, and a
+    /// language-tagged string its tag, in the columns current state holds them
+    /// in.
+    #[test]
+    fn a_literal_keeps_its_datatype_key_and_its_language() {
+        let typed = AttributeHistoryValue::of_observation(
+            &TemporalValue::String {
+                text: "42".to_owned(),
+                annotation: TextAnnotation::Datatype(INTEGER.parse::<NgsiLdReference>().expect("a datatype")),
+            },
+            &keys(),
+        )
+        .expect("the value encodes");
+        pretty_assertions::assert_eq!((typed.datatype_key(), typed.language()), (Some(12), None));
+        let tag = LangTagBuf::new("es".to_owned()).expect("a language tag");
+        let tagged = AttributeHistoryValue::of_observation(
+            &TemporalValue::String {
+                text: "hola".to_owned(),
+                annotation: TextAnnotation::Language(tag.clone()),
+            },
+            &keys(),
+        )
+        .expect("the value encodes");
+        pretty_assertions::assert_eq!((tagged.datatype_key(), tagged.language()), (None, Some(&tag)));
+    }
+
+    /// Every datatype was resolved before the value is encoded, so one that
+    /// was not is an invariant failure rather than a silently plain value.
+    #[test]
+    fn an_unresolved_datatype_is_refused() {
+        let value = TemporalValue::Number {
+            number: JsonNumber::from(7),
+            datatype: Some("http://www.w3.org/2001/XMLSchema#double".parse().expect("a datatype")),
+        };
+        assert!(AttributeHistoryValue::of_observation(&value, &keys()).is_err());
     }
 }

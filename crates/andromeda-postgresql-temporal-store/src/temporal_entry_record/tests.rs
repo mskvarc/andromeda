@@ -123,7 +123,10 @@ pub(crate) fn observation(value: TemporalValue, instance: InstanceIdentity, meta
 fn an_observation_entry_holds_the_history_columns_it_will_be_written_as() {
     let generated = Uuid::from_u128(7);
     let entry = only_entry(&intent(vec![observation(
-        TemporalValue::Number(JsonNumber::from(42)),
+        TemporalValue::Number {
+            number: JsonNumber::from(42),
+            datatype: None,
+        },
         InstanceIdentity::Generated(generated),
         Some(unit_and_accuracy()),
     )]));
@@ -146,7 +149,10 @@ fn an_observation_entry_holds_the_history_columns_it_will_be_written_as() {
 #[test]
 fn a_client_instance_id_is_held_verbatim() {
     let entry = only_entry(&intent(vec![observation(
-        TemporalValue::Number(JsonNumber::from(1)),
+        TemporalValue::Number {
+            number: JsonNumber::from(1),
+            datatype: None,
+        },
         InstanceIdentity::from_identifier("urn:x".parse().expect("a URI")),
         None,
     )]));
@@ -262,7 +268,11 @@ fn a_deletion_intent_carries_no_types() {
     assert_eq!(record.entity_type_name_keys, Vec::<i32>::new());
     assert_eq!(record.base_ordinal, 4);
 
-    let observing = intent(vec![observation(TemporalValue::Boolean(true), InstanceIdentity::generate(), None)]);
+    let observing = intent(vec![observation(
+        TemporalValue::Boolean { flag: true, datatype: None },
+        InstanceIdentity::generate(),
+        None,
+    )]);
     let record = TemporalIntentRecord::of(&observing, &keys(&observing)).expect("the intent is storable");
     assert_eq!(record.entity_type_name_keys, vec![1]);
 }

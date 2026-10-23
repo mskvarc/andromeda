@@ -37,7 +37,7 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::reads::attribute_change::deleted_instances;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_ngsi_ld_model::{
     entity_change::{EntityChange, EntityLifecycle},
     notification::ChangeOrigin,
@@ -140,7 +140,8 @@ impl EntityService {
             .history(deletion_tombstones(instances, scope))
             .precondition(Precondition::UnchangedSince(modified_at))
             .build();
-        let next = after_attempt(&single(self.writes.commit(target, vec![write]).await?)?);
+        let now = SystemInstant::new(Utc::now());
+        let next = after_attempt(&single(self.writes.commit(target, now, vec![write]).await?)?);
         if next != AfterAttempt::Settled {
             return Ok(next);
         }
@@ -150,7 +151,7 @@ impl EntityService {
                 .entity_id(id.clone()) // clone: the published event owns its identifier
                 .entity_types(types)
                 .change(change)
-                .occurred_at(Utc::now())
+                .occurred_at(now.get())
                 .origin(ChangeOrigin::Local)
                 .build(),
         );
@@ -216,7 +217,8 @@ impl EntityService {
             .precondition(Precondition::UnchangedSince(modified_at))
             .build();
 
-        let next = after_attempt(&single(self.writes.commit(target, vec![write]).await?)?);
+        let now = SystemInstant::new(Utc::now());
+        let next = after_attempt(&single(self.writes.commit(target, now, vec![write]).await?)?);
         if next != AfterAttempt::Settled {
             return Ok(next);
         }
@@ -227,7 +229,7 @@ impl EntityService {
                 .entity_id(id.clone()) // clone: the published event owns its identifier
                 .entity_types(entity_types)
                 .change(change)
-                .occurred_at(Utc::now())
+                .occurred_at(now.get())
                 .origin(ChangeOrigin::Local)
                 .entity_snapshot(Some(Arc::clone(&removed)))
                 .previous_attributes(Some(removed))

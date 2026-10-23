@@ -2,6 +2,7 @@
 
 use crate::{atomic_write::AtomicWrite, commit_replay::CommitReplay, error::CommitError, write_outcome::WriteOutcome};
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_lexicon::time::system_instant::SystemInstant;
 use std::{collections::HashSet, future::Future, pin::Pin, sync::Arc};
 
 /// Owned future returned by an object-safe atomic commit implementation.
@@ -14,8 +15,12 @@ pub trait ContextCommitter: Send + Sync + 'static {
     /// The writes are independent: NGSI-LD clauses 5.6.7 through 5.6.10 permit
     /// partial batch success. Every durable consequence of one landed write is
     /// nevertheless committed in the same atomic unit as its entity mutation,
-    /// under a freshly minted write identity and an ordinal counter that starts
-    /// at zero.
+    /// under a freshly minted write identity recorded at `accepted_at` and an
+    /// ordinal counter that starts at zero.
+    ///
+    /// `accepted_at` is the instant the operation settled the writes' clause
+    /// 4.8 system times at, so the history the commit records carries the
+    /// same `createdAt`, `modifiedAt` and `deletedAt` as current state.
     ///
     /// A write whose own content the store refuses is reported as
     /// [`WriteOutcome::Refused`] at its position, and every other write lands
@@ -23,7 +28,7 @@ pub trait ContextCommitter: Send + Sync + 'static {
     /// fails the whole call with
     /// [`CommitError::Submission`](crate::error::CommitError::Submission), and
     /// nothing lands.
-    fn commit(&self, target: &ContextTarget, writes: Vec<AtomicWrite>) -> CommitFuture<'_>;
+    fn commit(&self, target: &ContextTarget, accepted_at: SystemInstant, writes: Vec<AtomicWrite>) -> CommitFuture<'_>;
 
     /// Commit writes on the live branch for a client that asked to be answered
     /// before their consequences are produced (RFC 7240 section 4.1,
@@ -32,7 +37,7 @@ pub trait ContextCommitter: Send + Sync + 'static {
     /// The writes' temporal history is committed as queued intents, so the
     /// drain, not the commit, writes it to the history tables; a read of the
     /// Temporal API answers it at once all the same. Each write's side-effect job is queued beside it.
-    fn commit_enqueued(&self, writes: Vec<AtomicWrite>) -> CommitFuture<'_>;
+    fn commit_enqueued(&self, accepted_at: SystemInstant, writes: Vec<AtomicWrite>) -> CommitFuture<'_>;
 
     /// Commit writes as the replay of a previously enqueued, partially durable
     /// commit.

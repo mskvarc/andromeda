@@ -7,7 +7,7 @@
 //! scanning the whole catalogue.
 
 use crate::seeded_corpus::{SEED_PREFIX, explain};
-use andromeda_postgresql_schema::temporal::TemporalEntities;
+use andromeda_postgresql_schema::current::Entities;
 use andromeda_postgresql_seaquery::{
     cast::cast,
     catalog_function::{generate_series, lpad},
@@ -40,12 +40,12 @@ async fn seed_temporal_entities(pool: &PgPool, prefix: &str) {
     let type_key = entity_type_name_key(pool, TEMPORAL_TYPE).await.expect("type dictionary seed must succeed");
     let series = || Expr::col(Alias::new("g"));
     Query::insert()
-        .into_table(TemporalEntities::Table)
+        .into_table(Entities::Table)
         .columns([
-            TemporalEntities::CreatedAt,
-            TemporalEntities::ModifiedAt,
-            TemporalEntities::Id,
-            TemporalEntities::EntityTypeNameKeys,
+            Entities::EvolutionCreatedAt,
+            Entities::EvolutionModifiedAt,
+            Entities::Id,
+            Entities::EvolutionTypeNameKeys,
         ])
         .select_from(
             Query::select()
@@ -76,7 +76,7 @@ async fn seed_temporal_entities(pool: &PgPool, prefix: &str) {
         .await
         .expect("temporal catalogue corpus must be writable");
 
-    analyze(MaintenanceSchema::Public, TemporalEntities::Table)
+    analyze(MaintenanceSchema::Public, Entities::Table)
         .to_query()
         .execute(pool)
         .await
@@ -94,9 +94,9 @@ async fn temporal_plans_an_unanchored_id_pattern_uses_the_trigram_index() {
     let plan = explain(
         pool,
         Query::select()
-            .columns([TemporalEntities::TemporalEntityKey, TemporalEntities::Id])
-            .from_as(TemporalEntities::Table, Alias::new("e"))
-            .and_where(regex_match(Expr::col((Alias::new("e"), TemporalEntities::Id)), Expr::val(".*sensor.*")))
+            .columns([Entities::EntityKey, Entities::Id])
+            .from_as(Entities::Table, Alias::new("e"))
+            .and_where(regex_match(Expr::col((Alias::new("e"), Entities::Id)), Expr::val(".*sensor.*")))
             .to_owned(),
     )
     .await;

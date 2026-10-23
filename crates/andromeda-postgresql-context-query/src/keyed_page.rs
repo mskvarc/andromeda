@@ -131,6 +131,7 @@ mod tests {
                     .map(|(name, key)| (format!("https://example.com/{name}").parse().expect("valid name"), AttributeNameKey::from(key))),
             ),
             types: ResolvedNames::default(),
+            ..QueryNames::default()
         }
     }
 

@@ -223,10 +223,10 @@ mod tests {
     fn a_stream_read_by_key_names_its_evolution_by_key() {
         let of = HistoryOf::Evolution(EvolutionColumns {
             id: Expr::col((Alias::new("e"), Alias::new("id"))),
-            key: Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))),
+            key: Expr::col((Alias::new("e"), Alias::new("entity_key"))),
         });
         let sql = render_of(&HistoryBranch::live_recorded(), &of, AttributeHistory::ObservedAt, &HistoryAliases::top_level());
-        assert!(sql.contains(r#""qs"."temporal_entity_key" AS "temporal_entity_key""#), "{sql}");
+        assert!(sql.contains(r#""qs"."entity_key" AS "entity_key""#), "{sql}");
         assert!(!sql.contains("entity_id"), "{sql}");
     }
 

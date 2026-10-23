@@ -11,8 +11,7 @@ use crate::{
 use andromeda_context_commit::history_record::mutation_history;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, operation::selection::OverwritePolicy};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::system_instant::SystemInstant};
-use chrono::Utc;
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use std::sync::Arc;
 
 impl EntityService {
@@ -57,12 +56,12 @@ impl EntityService {
         // already held as if this request had appended it.
         let requested = written_member_names(&fragment)?;
         let (not_appended, events) = self
-            .commit_computed_write(target, entity, |previous| {
+            .commit_computed_write(target, entity, |previous, now| {
                 let mut appended = EntityState::clone(previous); // clone: shares every attribute the append leaves alone
                 let not_appended = member_attribute_names(appended.append_attributes(&fragment, overwrite)?)?;
                 // Clause 4.8: a touched instance takes `now` for modifiedAt and keeps
                 // its createdAt across the read-modify-write.
-                appended.settle(Some(previous), SystemInstant::new(Utc::now()));
+                appended.settle(Some(previous), now);
                 let appended = Arc::new(appended);
                 let history = mutation_history(previous, &appended);
                 let (write, events) = self.write_if_modified(target, id, previous, appended, history)?;

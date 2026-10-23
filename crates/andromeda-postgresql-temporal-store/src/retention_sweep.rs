@@ -7,12 +7,11 @@
 //! afterwards finds nothing is answering about storage the operator chose not
 //! to keep. Retention is therefore off unless an operator turns it on.
 //!
-//! The sweep has five parts, in order: attribute history chunks older than the
+//! The sweep has four parts, in order: attribute history chunks older than the
 //! horizon are dropped, the stream shapes no retained instance carries are
 //! pruned, the Scope events no instance retained after the horizon is read
-//! under are deleted, the catalogue rows whose history left with them are
-//! garbage-collected, and the idempotency records that are fully behind the
-//! horizon and protect nothing are released. Each statement runs in a
+//! under are deleted, and the streams and Temporal Evolutions whose history
+//! left with them are garbage-collected. Each statement runs in a
 //! transaction of its own with no statement timeout: it removes however much
 //! has aged out, and no request waits on it.
 //!
@@ -30,15 +29,20 @@
 
 use crate::{
     error::TemporalStoreError,
+    evolution_vacancy::evolution_vacancy_statement,
     repo::TemporalRepository,
     statement_timeout_allowance::allow_unbounded_statements,
-    write_record_release::release_behind_horizon,
+    stream_census::counted_stream_removal,
 };
-use andromeda_postgresql_schema::temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams, TemporalEntities};
-use andromeda_postgresql_seaquery::{statement::Statement, timescale::drop_chunks};
+use andromeda_postgresql_query::entity_sides::holds_evolution;
+use andromeda_postgresql_schema::{
+    current::Entities,
+    temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams},
+};
+use andromeda_postgresql_seaquery::{pg_array::any, statement::Statement, timescale::drop_chunks};
 use andromeda_postgresql_temporal_query::alias::{Ah, S};
 use chrono::{DateTime, TimeDelta, Utc};
-use sea_query::{Condition, DeleteStatement, Expr, ExprTrait, Iden, Query};
+use sea_query::{Condition, DeleteStatement, Expr, ExprTrait, Iden, LockType, Query, SelectStatement};
 use thiserror::Error;
 
 /// The `scope_history` alias inside a garbage-collection subquery.
@@ -124,15 +128,14 @@ pub struct TemporalRetentionSweep {
     /// Scope events deleted: superseded at or before the cutoff, or of an
     /// Entity whose attribute history has left storage.
     pub scope_events: u64,
-    /// Streams garbage-collected because no history row names them.
+    /// Streams garbage-collected because no recorded instance names them.
     pub streams: u64,
-    /// Combinations of family and value shape pruned from streams that keep
-    /// no instance carrying them, which clause 5.7.4.4 no longer judges.
-    pub stream_shapes: u64,
-    /// Temporal entities garbage-collected because nothing hangs off them.
-    pub temporal_entities: u64,
-    /// Idempotency records released behind the horizon.
-    pub released_write_records: u64,
+    /// Streams whose shape mask lost a combination of family and value shape
+    /// no instance of theirs carries any longer, which clause 5.7.4.4 no
+    /// longer judges.
+    pub narrowed_shape_masks: u64,
+    /// Temporal Evolutions given up because nothing hangs off them any longer.
+    pub vacated_evolutions: u64,
 }
 
 impl TemporalRepository {
@@ -150,25 +153,23 @@ impl TemporalRepository {
         };
         let cutoff = horizon.cutoff(now).map_err(TemporalStoreError::RetentionHorizon)?;
         let attribute_history_chunks = self.drop_chunks("attribute_history", cutoff).await?;
-        let streams = self.delete(&collect_empty_streams()).await?;
+        let streams = self.remove_streams(collect_empty_streams()).await?;
         // A sweep that dropped no chunk removed no instance, so every
         // combination a stream holds is still carried by one.
-        let stream_shapes = if attribute_history_chunks == 0 {
+        let narrowed_shape_masks = if attribute_history_chunks == 0 {
             0
         } else {
             self.prune_retained_stream_shapes().await?
         };
         let scope_events = self.delete(&superseded_scope_events(cutoff)).await? + self.delete(&streamless_scope_events(cutoff)).await?;
-        let temporal_entities = self.delete(&collect_empty_temporal_entities()).await?;
-        let released_write_records = release_behind_horizon(&self.pool, cutoff).await?;
+        let vacated_evolutions = self.vacate_empty_evolutions().await?;
         Ok(TemporalRetentionOutcome::Swept(TemporalRetentionSweep {
             cutoff,
             attribute_history_chunks,
             scope_events,
             streams,
-            stream_shapes,
-            temporal_entities,
-            released_write_records,
+            narrowed_shape_masks,
+            vacated_evolutions,
         }))
     }
 
@@ -180,6 +181,48 @@ impl TemporalRepository {
         let removed = statement.to_query().execute(&mut *transaction).await?.rows_affected();
         transaction.commit().await?;
         Ok(removed)
+    }
+
+    /// Give up every Temporal Evolution no stream and no Scope event hangs off
+    /// any longer, in a transaction of its own, reporting how many.
+    ///
+    /// The candidates are locked first, in a statement of their own, and
+    /// read again by the vacancy statement, whose snapshot starts after the
+    /// locks are granted: a write that gave one of them a stream while the
+    /// candidates were read holds that identity row's lock until it commits,
+    /// so its stream is visible to the second read and keeps the Evolution.
+    async fn vacate_empty_evolutions(&self) -> Result<u64, TemporalStoreError> {
+        let mut transaction = self.pool.begin().await?;
+        allow_unbounded_statements(&mut transaction).await?;
+        let mut candidates = empty_evolutions();
+        candidates.lock(LockType::Update);
+        let keys: Vec<i64> = candidates.to_query_scalar().fetch_all(&mut *transaction).await?;
+        if keys.is_empty() {
+            transaction.commit().await?;
+            return Ok(0);
+        }
+        let mut still_empty = empty_evolutions();
+        still_empty.and_where(Expr::col(Entities::EntityKey).eq(any(Expr::val(keys))));
+        let vacated: i64 = evolution_vacancy_statement(None, still_empty)
+            .to_query_scalar()
+            .fetch_one(&mut *transaction)
+            .await?;
+        transaction.commit().await?;
+        Ok(vacated.unsigned_abs())
+    }
+
+    /// Run one sweep's stream removal, counted out of the stream census, in a
+    /// transaction of its own, reporting how many streams it removed.
+    async fn remove_streams(&self, removal: DeleteStatement) -> Result<u64, TemporalStoreError> {
+        let mut transaction = self.pool.begin().await?;
+        allow_unbounded_statements(&mut transaction).await?;
+        let removed: i64 = counted_stream_removal(None, removal)
+            .map_err(TemporalStoreError::StatementBuild)?
+            .to_query_scalar()
+            .fetch_one(&mut *transaction)
+            .await?;
+        transaction.commit().await?;
+        Ok(removed.unsigned_abs())
     }
 
     /// Drop one hypertable's chunks that lie entirely before the cutoff.
@@ -232,7 +275,7 @@ fn superseded_scope_events(cutoff: DateTime<Utc>) -> DeleteStatement {
         let later = Query::select()
             .expr(Expr::val(1))
             .from_as(ScopeHistory::Table, Sn)
-            .and_where(Expr::col((Sn, ScopeHistory::TemporalEntityKey)).equals((ScopeHistory::Table, ScopeHistory::TemporalEntityKey)))
+            .and_where(Expr::col((Sn, ScopeHistory::EntityKey)).equals((ScopeHistory::Table, ScopeHistory::EntityKey)))
             .and_where(Expr::col((Sn, axis)).gt(Expr::col((ScopeHistory::Table, axis))))
             .and_where(Expr::col((Sn, axis)).lte(cutoff))
             .to_owned();
@@ -252,12 +295,12 @@ fn streamless_scope_events(cutoff: DateTime<Utc>) -> DeleteStatement {
     let stream = Query::select()
         .expr(Expr::val(1))
         .from_as(TemporalAttributeStreams::Table, S)
-        .and_where(Expr::col((S, TemporalAttributeStreams::TemporalEntityKey)).equals((ScopeHistory::Table, ScopeHistory::TemporalEntityKey)))
+        .and_where(Expr::col((S, TemporalAttributeStreams::EntityKey)).equals((ScopeHistory::Table, ScopeHistory::EntityKey)))
         .to_owned();
     let recent = Query::select()
         .expr(Expr::val(1))
         .from_as(ScopeHistory::Table, Sn)
-        .and_where(Expr::col((Sn, ScopeHistory::TemporalEntityKey)).equals((ScopeHistory::Table, ScopeHistory::TemporalEntityKey)))
+        .and_where(Expr::col((Sn, ScopeHistory::EntityKey)).equals((ScopeHistory::Table, ScopeHistory::EntityKey)))
         .and_where(Expr::col((Sn, ScopeHistory::RecordedAt)).gte(cutoff))
         .to_owned();
     Query::delete()
@@ -267,21 +310,23 @@ fn streamless_scope_events(cutoff: DateTime<Utc>) -> DeleteStatement {
         .to_owned()
 }
 
-/// Garbage-collect temporal-entity rows nothing hangs off: no stream and no
-/// scope-history row references them.
-fn collect_empty_temporal_entities() -> DeleteStatement {
+/// The keys of the identity rows holding a Temporal Evolution that nothing
+/// hangs off: no stream and no Scope event names them.
+fn empty_evolutions() -> SelectStatement {
     let no_stream = Query::select()
         .expr(Expr::val(1))
         .from_as(TemporalAttributeStreams::Table, S)
-        .and_where(Expr::col((S, TemporalAttributeStreams::TemporalEntityKey)).equals((TemporalEntities::Table, TemporalEntities::TemporalEntityKey)))
+        .and_where(Expr::col((S, TemporalAttributeStreams::EntityKey)).equals((Entities::Table, Entities::EntityKey)))
         .to_owned();
     let no_scope = Query::select()
         .expr(Expr::val(1))
         .from_as(ScopeHistory::Table, Sh)
-        .and_where(Expr::col((Sh, ScopeHistory::TemporalEntityKey)).equals((TemporalEntities::Table, TemporalEntities::TemporalEntityKey)))
+        .and_where(Expr::col((Sh, ScopeHistory::EntityKey)).equals((Entities::Table, Entities::EntityKey)))
         .to_owned();
-    Query::delete()
-        .from_table(TemporalEntities::Table)
+    Query::select()
+        .column(Entities::EntityKey)
+        .from(Entities::Table)
+        .and_where(holds_evolution(Entities::Table))
         .and_where(Expr::exists(no_stream).not())
         .and_where(Expr::exists(no_scope).not())
         .to_owned()
@@ -294,7 +339,7 @@ mod tests {
         TemporalRetentionHorizon,
         TemporalRetentionHorizonInvalid,
         collect_empty_streams,
-        collect_empty_temporal_entities,
+        empty_evolutions,
         streamless_scope_events,
         superseded_scope_events,
     };
@@ -357,7 +402,7 @@ mod tests {
         for axis in ["recorded_at", "observed_at"] {
             assert!(
                 sql.contains(&format!(
-                    r#"EXISTS(SELECT 1 FROM "scope_history" AS "sn" WHERE "sn"."temporal_entity_key" = "scope_history"."temporal_entity_key" AND "sn"."{axis}" > "scope_history"."{axis}" AND "sn"."{axis}" <= '2026-08-11 12:00:00.000000 +00:00')"#
+                    r#"EXISTS(SELECT 1 FROM "scope_history" AS "sn" WHERE "sn"."entity_key" = "scope_history"."entity_key" AND "sn"."{axis}" > "scope_history"."{axis}" AND "sn"."{axis}" <= '2026-08-11 12:00:00.000000 +00:00')"#
                 )),
                 "{axis}: {sql}"
             );
@@ -374,13 +419,11 @@ mod tests {
         let cutoff = now().expect("a fixed instant");
         let sql = streamless_scope_events(cutoff).to_string(PostgresQueryBuilder);
         assert!(
-            sql.contains(
-                r#"NOT EXISTS(SELECT 1 FROM "temporal_attribute_streams" AS "s" WHERE "s"."temporal_entity_key" = "scope_history"."temporal_entity_key")"#
-            ),
+            sql.contains(r#"NOT EXISTS(SELECT 1 FROM "temporal_attribute_streams" AS "s" WHERE "s"."entity_key" = "scope_history"."entity_key")"#),
             "{sql}"
         );
         assert!(
-            sql.contains(r#"NOT EXISTS(SELECT 1 FROM "scope_history" AS "sn" WHERE "sn"."temporal_entity_key" = "scope_history"."temporal_entity_key" AND "sn"."recorded_at" >= '2026-08-11 12:00:00.000000 +00:00')"#),
+            sql.contains(r#"NOT EXISTS(SELECT 1 FROM "scope_history" AS "sn" WHERE "sn"."entity_key" = "scope_history"."entity_key" AND "sn"."recorded_at" >= '2026-08-11 12:00:00.000000 +00:00')"#),
             "{sql}"
         );
     }
@@ -392,15 +435,13 @@ mod tests {
             streams.contains(r#"NOT EXISTS(SELECT 1 FROM "attribute_history" AS "ah" WHERE "ah"."stream_key" = "temporal_attribute_streams"."stream_key")"#),
             "{streams}"
         );
-        let entities = collect_empty_temporal_entities().to_string(PostgresQueryBuilder);
+        let entities = empty_evolutions().to_string(PostgresQueryBuilder);
         assert!(
-            entities.contains(r#""s"."temporal_entity_key" = "temporal_entities"."temporal_entity_key""#),
-            "{entities}"
+            entities.starts_with(r#"SELECT "entity_key" FROM "entities" WHERE "entities"."evolution_created_at" IS NOT NULL"#),
+            "only an identity row holding a Temporal Evolution is a candidate: {entities}"
         );
-        assert!(
-            entities.contains(r#""sh"."temporal_entity_key" = "temporal_entities"."temporal_entity_key""#),
-            "{entities}"
-        );
+        assert!(entities.contains(r#""s"."entity_key" = "entities"."entity_key""#), "{entities}");
+        assert!(entities.contains(r#""sh"."entity_key" = "entities"."entity_key""#), "{entities}");
         assert_eq!(entities.matches("NOT EXISTS").count(), 2, "{entities}");
     }
 
@@ -409,7 +450,7 @@ mod tests {
         let cutoff = now().expect("a fixed instant");
         for sql in [
             collect_empty_streams().to_string(PostgresQueryBuilder),
-            collect_empty_temporal_entities().to_string(PostgresQueryBuilder),
+            empty_evolutions().to_string(PostgresQueryBuilder),
             superseded_scope_events(cutoff).to_string(PostgresQueryBuilder),
             streamless_scope_events(cutoff).to_string(PostgresQueryBuilder),
         ] {

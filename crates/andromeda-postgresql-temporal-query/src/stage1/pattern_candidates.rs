@@ -5,12 +5,16 @@
 //! on the identifier alone, and the index rechecks each match against the
 //! pattern, so the candidates are exactly the Evolutions the pattern keeps and
 //! the narrowed walk does not test it again. The filter is written on the
-//! bare `id` column, the expression `idx_temporal_entities_id_trgm` holds.
+//! bare `id` column, the expression `idx_entities_id_trgm` holds, and keeps
+//! the identity rows holding a Temporal Evolution.
 
 use crate::stage1::queued_candidates::queued_candidates;
 use andromeda_ngsi_ld_query::pattern::Pattern;
-use andromeda_postgresql_query::history_source::{HistoryBranch, PendingEntries};
-use andromeda_postgresql_schema::{queue::TemporalAppendIntents, temporal::TemporalEntities};
+use andromeda_postgresql_query::{
+    entity_sides::holds_evolution,
+    history_source::{HistoryBranch, PendingEntries},
+};
+use andromeda_postgresql_schema::{current::Entities, queue::TemporalAppendIntents};
 use andromeda_postgresql_seaquery::{branch::qualified, operator::regex_match};
 use sea_query::{Expr, Query, SelectStatement, UnionType};
 
@@ -20,14 +24,15 @@ use sea_query::{Expr, Query, SelectStatement, UnionType};
 pub(super) fn pattern_candidates(branch: &HistoryBranch, pattern: &Pattern) -> SelectStatement {
     let matched = || Expr::val(pattern.portable().as_str());
     let column = match branch.pending() {
-        PendingEntries::Absent => TemporalEntities::TemporalEntityKey,
-        PendingEntries::Unioned => TemporalEntities::Id,
+        PendingEntries::Absent => Entities::EntityKey,
+        PendingEntries::Unioned => Entities::Id,
     };
     let mut recorded = Query::select();
     recorded
-        .column((TemporalEntities::Table, column))
-        .from(qualified(branch.schema(), TemporalEntities::Table))
-        .and_where(regex_match(Expr::col((TemporalEntities::Table, TemporalEntities::Id)), matched()));
+        .column((Entities::Table, column))
+        .from(qualified(branch.schema(), Entities::Table))
+        .and_where(regex_match(Expr::col((Entities::Table, Entities::Id)), matched()))
+        .and_where(holds_evolution(Entities::Table));
     match branch.pending() {
         PendingEntries::Absent => {}
         PendingEntries::Unioned => {
@@ -70,9 +75,7 @@ mod tests {
         assert_eq!(stage1.planning, StatementPlanning::GatedBranches);
         let (sql, values) = stage1.select.build(PostgresQueryBuilder);
         assert!(
-            sql.contains(
-                r#""candidates" AS  MATERIALIZED (SELECT "temporal_entities"."temporal_entity_key" FROM "temporal_entities" WHERE "temporal_entities"."id" ~ $"#
-            ),
+            sql.contains(r#""candidates" AS  MATERIALIZED (SELECT "entities"."entity_key" FROM "entities" WHERE ("entities"."id" ~ $"#),
             "{sql}"
         );
         for bound in [5_000, 1_001, 1_000] {
@@ -86,7 +89,7 @@ mod tests {
         let candidates = PageBranches::of(&sql).candidates;
         assert_eq!(
             candidates,
-            r#"SELECT "temporal_entities"."temporal_entity_key" FROM "temporal_entities" WHERE "temporal_entities"."id" ~ '.*:0123.*'"#
+            r#"SELECT "entities"."entity_key" FROM "entities" WHERE ("entities"."id" ~ '.*:0123.*') AND "entities"."evolution_created_at" IS NOT NULL"#
         );
         assert!(!candidates.contains("lower(") && !candidates.contains("::"), "{candidates}");
     }
@@ -99,7 +102,7 @@ mod tests {
         for raw in ["^urn:ngsi-ld:Sensor:0123.*", "^urn:ngsi-ld:Sensor:012345$"] {
             let sql = recorded_stage1(&id_pattern(None, raw)).select.to_string(PostgresQueryBuilder);
             let branches = PageBranches::of(&sql);
-            assert!(!branches.candidates.contains(r#""temporal_entities"."id" ~"#), "{raw}: {sql}");
+            assert!(!branches.candidates.contains(r#""entities"."id" ~"#), "{raw}: {sql}");
             assert!(branches.indexed.contains(r#""e"."id" ~ '^urn:ngsi-ld:Sensor:012"#), "{raw}: {sql}");
         }
     }
@@ -110,7 +113,7 @@ mod tests {
         let indexed = PageBranches::of(&sql).indexed;
         assert!(
             indexed.contains(concat!(
-                r#"FROM "temporal_entity_type_members" WHERE "entity_type_name_key" = (1) AND "temporal_entity_key" IN (SELECT "temporal_entity_key" FROM "candidates")"#,
+                r#"FROM "entity_type_members" WHERE "entity_type_name_key" = (1) AND "is_evolution_member" AND "entity_key" IN (SELECT "entity_key" FROM "candidates")"#,
                 r#" ORDER BY "id" ASC OFFSET 0) AS "e""#
             )),
             "{indexed}"
@@ -125,8 +128,8 @@ mod tests {
         let indexed = PageBranches::of(&sql).indexed;
         assert!(
             indexed.contains(concat!(
-                r#"FROM "temporal_attribute_streams" WHERE "attribute_name_key" = (1) AND "temporal_entity_key" IN (SELECT "temporal_entity_key" FROM "candidates")"#,
-                r#" ORDER BY "id" ASC) AS "hr""#
+                r#"WHERE "hs"."attribute_name_key" = (1) AND "hs"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#,
+                r#" ORDER BY "hi"."id" ASC) AS "hr""#
             )),
             "{indexed}"
         );
@@ -149,7 +152,7 @@ mod tests {
         });
         let sql = recorded_stage1(&paired).select.to_string(PostgresQueryBuilder);
         let branches = PageBranches::of(&sql);
-        assert!(!branches.candidates.contains(r#""temporal_entities"."id" ~"#), "{sql}");
+        assert!(!branches.candidates.contains(r#""entities"."id" ~"#), "{sql}");
         assert!(branches.indexed.contains(r#""e"."id" ~ '.*:9.*'"#), "{sql}");
         let stage1 = recorded_stage1(&ordered);
         let sql = stage1.select.to_string(PostgresQueryBuilder);
@@ -164,9 +167,9 @@ mod tests {
             .to_string(PostgresQueryBuilder);
         let branches = PageBranches::of(&sql);
         assert!(
-            branches
-                .candidates
-                .starts_with(r#"SELECT "temporal_entities"."id" FROM "temporal_entities" WHERE "temporal_entities"."id" ~ '.*:0123.*' UNION ALL "#),
+            branches.candidates.starts_with(
+                r#"SELECT "entities"."id" FROM "entities" WHERE ("entities"."id" ~ '.*:0123.*') AND "entities"."evolution_created_at" IS NOT NULL UNION ALL "#
+            ),
             "{}",
             branches.candidates
         );
@@ -193,10 +196,7 @@ mod tests {
         )
         .select
         .to_string(PostgresQueryBuilder);
-        assert!(
-            PageBranches::of(&sql).candidates.contains(r#"FROM "snap_7"."temporal_entities" WHERE"#),
-            "{sql}"
-        );
+        assert!(PageBranches::of(&sql).candidates.contains(r#"FROM "snap_7"."entities" WHERE"#), "{sql}");
     }
 
     #[test]
@@ -210,9 +210,7 @@ mod tests {
         assert!(values.0.contains(&Value::BigUnsigned(Some(10_000))), "{:?}", values.0);
         let parts = CountParts::of(&sql);
         assert!(
-            parts
-                .indexed
-                .contains(r#""e"."temporal_entity_key" IN (SELECT "temporal_entity_key" FROM "candidates")"#),
+            parts.indexed.contains(r#""e"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#),
             "{}",
             parts.indexed
         );

@@ -354,8 +354,8 @@ mod tests {
         let indexed: Vec<_> = writes.iter().enumerate().collect();
         let columns = columns_for(&indexed, &resolved()).expect("valid columns");
         let scopes = &columns.entities.scopes[0];
-        pretty_assertions::assert_eq!(scopes.label_paths().0, ["a.b".to_owned(), "c".to_owned()].as_slice());
-        pretty_assertions::assert_eq!(scopes.written().0, ["/a/b".to_owned(), "c".to_owned()].as_slice());
+        pretty_assertions::assert_eq!(scopes.label_paths().map(|paths| paths.0), Some(["a.b".to_owned(), "c".to_owned()].as_slice()));
+        pretty_assertions::assert_eq!(scopes.written().map(|written| written.0), Some(["/a/b".to_owned(), "c".to_owned()].as_slice()));
     }
 
     /// Each attribute instance of each state is one staged row, and a state

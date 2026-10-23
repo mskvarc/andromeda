@@ -23,7 +23,10 @@ use andromeda_postgresql_query::{
     attribute_name_key::AttributeNameKey,
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     entity_type_name_key::EntityTypeNameKey,
-    history_source::HistoryBranch,
+    history_source::{
+        HistoryBranch,
+        attribute_holders::{AttributeHolders, HolderType},
+    },
 };
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
@@ -53,6 +56,7 @@ pub(super) fn vehicle_is_known() -> QueryNames {
             "https://uri.etsi.org/ngsi-ld/default-context/Vehicle".parse().expect("valid type name"),
             EntityTypeNameKey::from(3),
         )]),
+        ..QueryNames::default()
     }
 }
 
@@ -119,7 +123,8 @@ pub(super) fn vehicle_selector() -> EntitySelector {
 }
 
 /// The attribute names the `attrs`, `q` and window tests resolve: `speed` at
-/// key 7, `address` at 9.
+/// key 7, held by 12 streams of type 3, and `address` at 9, held by 50 000
+/// streams of type 3.
 pub(super) fn speed_and_address() -> QueryNames {
     QueryNames {
         attributes: ResolvedNames::from_pairs([
@@ -127,11 +132,26 @@ pub(super) fn speed_and_address() -> QueryNames {
             ("https://example.com/address".parse().expect("valid attribute name"), AttributeNameKey::from(9)),
         ]),
         types: ResolvedNames::default(),
+        holders: holders_of(3, &[(7, 12), (9, 50_000)]),
     }
 }
 
+/// The census holders of the attributes `streams` names, each held by its
+/// number of streams of the type keyed `type_key`.
+fn holders_of(type_key: i32, streams: &[(i32, u64)]) -> AttributeHolders {
+    AttributeHolders::new(streams.iter().map(|&(attribute, streams)| {
+        (
+            AttributeNameKey::from(attribute),
+            HolderType {
+                type_key: EntityTypeNameKey::from(type_key),
+                streams,
+            },
+        )
+    }))
+}
+
 /// The names the step tests resolve: the type `Sensor` at key 1,
-/// `temperature` at 1 and `location` at 2.
+/// `temperature` at 1 and `location` at 2, each held by 12 streams of `Sensor`.
 pub(super) fn sensor_names() -> QueryNames {
     QueryNames {
         attributes: ResolvedNames::from_pairs([
@@ -150,6 +170,7 @@ pub(super) fn sensor_names() -> QueryNames {
             "https://uri.etsi.org/ngsi-ld/default-context/Sensor".parse().expect("valid type name"),
             EntityTypeNameKey::from(1),
         )]),
+        holders: holders_of(1, &[(1, 12), (2, 12)]),
     }
 }
 

@@ -8,14 +8,14 @@ use crate::{
     error::TemporalStoreError,
     history_removal::{remove_stream_history, stream_key_array},
     repo::TemporalRepository,
+    stream_census::counted_stream_removal,
     temporal_catalog_read::{of_attribute, stream_catalog_join},
-    write_record_release::release_named,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
-use andromeda_postgresql_schema::temporal::{TemporalAttributeStreams, TemporalEntities};
+use andromeda_postgresql_schema::{current::Entities, temporal::TemporalAttributeStreams};
 use andromeda_postgresql_seaquery::{branch::qualified, pg_array::any, statement::Statement};
 use andromeda_postgresql_temporal_query::alias::{S, Te};
 use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, LockType, Query, SelectStatement};
@@ -35,15 +35,13 @@ impl TemporalRepository {
     /// Clause 5.6.17 deletes the Temporal Evolution of one attribute, so the
     /// history goes with the stream rather than being tombstoned; nothing in the
     /// database sequences that, so the order is stated here inside one
-    /// transaction, and the idempotency records the removed rows were the last
-    /// protected effect of are released with them.
+    /// transaction.
     ///
     /// Returns how many streams the deletion removed.
     ///
     /// # Errors
     ///
-    /// Returns [`TemporalStoreError::Database`] when a statement fails, including
-    /// when a removed row's write identity does not carry the expected type.
+    /// Returns [`TemporalStoreError::Database`] when a statement fails.
     pub(crate) async fn delete_attribute_streams(
         &self,
         target: &ContextTarget,
@@ -68,13 +66,13 @@ impl TemporalRepository {
             return Ok(0);
         }
         let schema = schema_iden(target);
-        let removed = remove_stream_history(&mut tx, schema.as_ref(), &stream_keys).await?;
-        let streams = delete_streams_query(schema.as_ref(), &stream_keys)
-            .to_query()
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        release_named(&mut tx, &removed.writes).await?;
+        remove_stream_history(&mut tx, schema.as_ref(), &stream_keys).await?;
+        let streams: i64 = counted_stream_removal(schema.as_ref(), delete_streams_query(schema.as_ref(), &stream_keys))
+            .map_err(TemporalStoreError::StatementBuild)?
+            .to_query_scalar()
+            .fetch_one(&mut *tx)
+            .await?;
+        let streams = streams.unsigned_abs();
         tx.commit().await?;
         Ok(streams)
     }
@@ -100,7 +98,7 @@ fn select_attribute_streams_query(schema: Option<&DynIden>, entity_id: &str, att
     statement.column((S, TemporalAttributeStreams::StreamKey));
     stream_catalog_join(&mut statement, schema);
     statement
-        .and_where(Expr::col((Te, TemporalEntities::Id)).eq(entity_id))
+        .and_where(Expr::col((Te, Entities::Id)).eq(entity_id))
         .and_where(of_attribute(attribute));
     match dataset {
         DatasetSelector::AllStreams => {}
@@ -130,10 +128,19 @@ mod tests {
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, DynIden, IntoIden, PostgresQueryBuilder};
 
+    /// Clause 5.6.6 keeps the streams when the current state is deleted, so
+    /// they are found through the stream's identity row, whatever its current
+    /// state holds.
     #[test]
     fn a_stream_selection_is_not_answered_from_current_state() {
         let sql = select_attribute_streams_query(None, "urn:x", AttributeNameKey::from(7), DatasetSelector::AllStreams).to_string(PostgresQueryBuilder);
-        assert!(!sql.contains("\"entities\""), "{sql}");
+        assert!(
+            sql.contains(r#"FROM "temporal_attribute_streams" AS "s" JOIN "entities" AS "te" ON "te"."entity_key" = "s"."entity_key""#),
+            "{sql}"
+        );
+        for current_state in ["\"entity_search\"", "\"current_attributes\"", "\"created_at\""] {
+            assert!(!sql.contains(current_state), "{current_state}: {sql}");
+        }
     }
     #[test]
     fn the_default_instance_is_addressed_by_absence_rather_than_by_a_value() {

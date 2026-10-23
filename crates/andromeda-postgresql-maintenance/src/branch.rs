@@ -206,9 +206,9 @@ mod tests {
         assert_eq!(Branch::Snapshot(key(7)).qualified("entities"), "snap_7.entities");
         let watched = Branch::Snapshot(key(7)).watched_heaps().map(WatchedHeap::relation_name).collect::<Vec<_>>();
         assert!(watched.contains(&"attribute_census"), "{watched:?}");
-        assert!(!watched.contains(&"write_records"), "{watched:?}");
+        assert!(!watched.contains(&"snapshot_preparation"), "{watched:?}");
         assert!(!watched.contains(&"pending_side_effects"), "{watched:?}");
-        assert!(Branch::Live.watched_heaps().any(|heap| heap.relation_name() == "write_records"));
+        assert!(Branch::Live.watched_heaps().any(|heap| heap.relation_name() == "snapshot_preparation"));
         assert_eq!(Branch::Live.qualified("entities"), "public.entities");
     }
 

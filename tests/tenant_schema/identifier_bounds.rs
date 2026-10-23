@@ -18,7 +18,6 @@ use andromeda_postgresql_schema::{
     jsonld::JsonldContexts,
     name_dictionary::{AttributeNames, EntityTypeNames},
     snapshot::Snapshots,
-    temporal::TemporalEntities,
 };
 use andromeda_postgresql_seaquery::{
     aggregate::count_all,
@@ -77,21 +76,6 @@ const BOUNDED_COLUMNS: &[BoundedColumn] = &[
         column: "entities.id",
         constraint: "chk_entities_id_length",
         insert: |value| insert_identifier(Entities::Table, Entities::Id, value),
-    },
-    BoundedColumn {
-        column: "temporal_entities.id",
-        constraint: "chk_temporal_entities_id_length",
-        insert: |value| {
-            insert_row(
-                TemporalEntities::Table,
-                [
-                    (TemporalEntities::CreatedAt.into_iden(), now()),
-                    (TemporalEntities::ModifiedAt.into_iden(), now()),
-                    (TemporalEntities::Id.into_iden(), Expr::val(value)),
-                    (TemporalEntities::EntityTypeNameKeys.into_iden(), Expr::val(vec![1_i32])),
-                ],
-            )
-        },
     },
     BoundedColumn {
         column: "attribute_names.name",

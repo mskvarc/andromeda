@@ -19,9 +19,11 @@ pub enum Entities {
     Table,
     /// Surrogate primary key every owned child relation references
     EntityKey,
-    /// Entity URN identifier, the external identity of the row
+    /// Entity URN identifier, the external identity of the row, shared by
+    /// the current state and the Temporal Evolution
     Id,
-    /// Instant the entity was created (clause 4.8 `createdAt`).
+    /// Instant the current state was created (clause 4.8 `createdAt`), NULL
+    /// while the Entity has no current state.
     CreatedAt,
     /// Instant the entity expires, when it has one (clause 4.22 `expiresAt`).
     ExpiresAt,
@@ -30,8 +32,19 @@ pub enum Entities {
     MinAttributeExpiresAt,
     /// Instant the entity was last modified (clause 4.8 `modifiedAt`), the
     /// compare-and-set token an optimistic overwrite states; not indexed, so
-    /// its per-write update stays a heap-only-tuple update
+    /// its per-write update stays a heap-only-tuple update. NULL while the
+    /// Entity has no current state.
     ModifiedAt,
+    /// Instant the Temporal Evolution began (clause 4.8 `createdAt`), never
+    /// moved; NULL while the Entity has no Temporal Evolution
+    EvolutionCreatedAt,
+    /// Instant the Temporal Evolution was last extended (clause 4.8
+    /// `modifiedAt`); NULL while the Entity has no Temporal Evolution
+    EvolutionModifiedAt,
+    /// The `entity_type_names` keys the Temporal Evolution is recorded under,
+    /// which only grow (clauses 5.6.11.4 and 5.6.12.4); NULL while the Entity
+    /// has no Temporal Evolution
+    EvolutionTypeNameKeys,
 }
 
 /// The `entity_search` table - the indexed query axes of one current Entity.
@@ -71,11 +84,13 @@ pub enum EntitySearch {
     LocationGeography,
 }
 
-/// The `entity_type_members` table - one row per type one current Entity
-/// carries (clause 4.17), keyed by type and then identifier.
+/// The `entity_type_members` table - one row per type one Entity carries in
+/// its current state or its Temporal Evolution (clause 4.17), keyed by type
+/// and then identifier.
 ///
-/// A type selection walks one key range of it in identifier order, so a page
-/// of a type reads the rows it skips and keeps and no Entity of another type.
+/// A type selection walks one key range of it in identifier order, keeping
+/// the rows of the side it reads, so a page of a type reads the rows it skips
+/// and keeps and no Entity of another type.
 #[derive(Iden, Clone, Copy)]
 pub enum EntityTypeMembers {
     /// Table name: `entity_type_members`
@@ -84,6 +99,10 @@ pub enum EntityTypeMembers {
     EntityKey,
     /// The `entity_type_names` key of the type carried
     EntityTypeNameKey,
+    /// Whether the current state carries the type
+    IsCurrentMember,
+    /// Whether the Temporal Evolution is recorded under the type
+    IsEvolutionMember,
     /// The Entity's identifier, copied from `entities` so the walk is ordered by it
     Id,
 }
@@ -274,6 +293,9 @@ mod tests {
         assert_eq!(Entities::CreatedAt.to_string(), "created_at");
         assert_eq!(Entities::ExpiresAt.to_string(), "expires_at");
         assert_eq!(Entities::MinAttributeExpiresAt.to_string(), "min_attribute_expires_at");
+        assert_eq!(Entities::EvolutionCreatedAt.to_string(), "evolution_created_at");
+        assert_eq!(Entities::EvolutionModifiedAt.to_string(), "evolution_modified_at");
+        assert_eq!(Entities::EvolutionTypeNameKeys.to_string(), "evolution_type_name_keys");
     }
 
     #[test]
@@ -297,6 +319,8 @@ mod tests {
         assert_eq!(EntityTypeMembers::EntityKey.to_string(), "entity_key");
         assert_eq!(EntityTypeMembers::EntityTypeNameKey.to_string(), "entity_type_name_key");
         assert_eq!(EntityTypeMembers::Id.to_string(), "id");
+        assert_eq!(EntityTypeMembers::IsCurrentMember.to_string(), "is_current_member");
+        assert_eq!(EntityTypeMembers::IsEvolutionMember.to_string(), "is_evolution_member");
     }
 
     #[test]

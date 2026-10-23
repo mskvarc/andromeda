@@ -82,6 +82,7 @@ fn stage1(corpus: &WindowedHistory) -> Stage1Query {
             AttributeNameKey::from(corpus.attribute()),
         )]),
         types: ResolvedNames::default(),
+        ..QueryNames::default()
     };
     build_stage1_entity_ids(&HistoryBranch::live(), &compiled, &PageWindow::offset(1000, 0), CountPolicy::Emit, &names).expect("a renderable stage-1 query")
 }

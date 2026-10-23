@@ -15,7 +15,7 @@ use andromeda_postgresql_query::{
     history_source::HistoryBranch,
     type_predicate::condition as type_condition,
 };
-use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
+use andromeda_postgresql_schema::current::{E, Entities};
 use andromeda_postgresql_seaquery::{literal::false_literal, operator::regex_match, pg_array::is_any_of};
 use sea_query::{Condition, Expr as SeaExpr};
 
@@ -97,16 +97,16 @@ fn temporal_selector_condition(selector: &EntitySelector, types: &ResolvedNames<
     let mut condition = Condition::all();
     match (selector.identifier_axis(), pattern_test) {
         (IdentifierAxis::Ids(ids), PatternTest::Tested | PatternTest::Answered) => {
-            condition = condition.add(is_any_of(SeaExpr::col((E, TemporalEntities::Id)), ids.iter().map(Identifier::to_string)));
+            condition = condition.add(is_any_of(SeaExpr::col((E, Entities::Id)), ids.iter().map(Identifier::to_string)));
         }
         (IdentifierAxis::Pattern(pattern), PatternTest::Tested) => {
-            condition = condition.add(regex_match(SeaExpr::col((E, TemporalEntities::Id)), SeaExpr::val(pattern.portable().as_str())));
+            condition = condition.add(regex_match(SeaExpr::col((E, Entities::Id)), SeaExpr::val(pattern.portable().as_str())));
         }
         (IdentifierAxis::Pattern(_), PatternTest::Answered) | (IdentifierAxis::Any, PatternTest::Tested | PatternTest::Answered) => {}
     }
     match (&selector.type_expr, type_test) {
         (Some(type_expr), TypeTest::TypeKeys) => {
-            condition = condition.add(type_condition(type_expr, &SeaExpr::col((E, TemporalEntities::EntityTypeNameKeys)), types));
+            condition = condition.add(type_condition(type_expr, &SeaExpr::col((E, Entities::EvolutionTypeNameKeys)), types));
         }
         (Some(_), TypeTest::Walked) | (None, TypeTest::TypeKeys | TypeTest::Walked) => {}
     }
@@ -167,6 +167,7 @@ mod tests {
         QueryNames {
             attributes: ResolvedNames::from_pairs([(geoproperty.parse().expect("valid attribute name"), AttributeNameKey::from(9))]),
             types: ResolvedNames::default(),
+            ..QueryNames::default()
         }
     }
 
@@ -179,10 +180,10 @@ mod tests {
         assert!(sql.contains("lquery"), "SQL should contain lquery cast: {sql}");
     }
 
-    /// Scope history hangs off the temporal entity, so the probe correlates on
-    /// the surrogate key the relation carries.
+    /// Over the queue the Scope probe compares the identifier a queued Scope
+    /// entry carries, joined to recorded rows through their identity row.
     #[test]
-    fn scope_history_correlates_on_the_temporal_entity_key() {
+    fn scope_history_over_the_queue_correlates_on_the_identifier() {
         let mut compiled = minimal_compiled();
         compiled.entities.scope_q = Some(ScopeQuery::parse("/Madrid").expect("valid scope query"));
         let (sql, _) = built(&compiled, &QueryNames::default());
@@ -320,8 +321,12 @@ mod tests {
         ] {
             assert!(sql.contains(fragment), "{fragment} missing: {sql}");
         }
-        assert!(!sql.contains("current_attributes"), "a temporal q never reads current state: {sql}");
-        assert!(!sql.contains(r#""entities""#), "{sql}");
+        assert_eq!(
+            sql.matches(r#""current_attributes""#).count(),
+            sql.matches(r#""current_attributes" AS "ca""#).count(),
+            "a temporal q reads a current row only as the latest instance it holds: {sql}"
+        );
+        assert!(!sql.contains(r#""entity_search""#), "{sql}");
     }
 
     /// Clause 5.5.9: the count totals the same entities the page selects, so
@@ -385,6 +390,7 @@ mod tests {
                 }),
             ),
             types: ResolvedNames::default(),
+            ..QueryNames::default()
         }
     }
 
@@ -544,9 +550,10 @@ mod tests {
         assert!(values.0.contains(&Value::Int(Some(9))), "{values:?}");
         assert!(!sql.contains("attribute_names"), "{sql}");
         assert!(sql.contains(r#""qh"."value_geometry""#), "{sql}");
-        assert!(
-            !sql.contains("current_attributes"),
-            "a temporal geo query reads history, not current state: {sql}"
+        assert_eq!(
+            sql.matches(r#""current_attributes""#).count(),
+            sql.matches(r#""current_attributes" AS "ca""#).count(),
+            "a temporal geo query reads a current row only as the latest instance it holds: {sql}"
         );
     }
 
@@ -566,6 +573,7 @@ mod tests {
                 AttributeNameKey::from(9_i32),
             )]),
             types: ResolvedNames::default(),
+            ..QueryNames::default()
         };
         let (sql, _) = built(&compiled, &names);
         assert!(!sql.contains("brien"), "{sql}");

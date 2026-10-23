@@ -10,7 +10,7 @@ use andromeda_ngsi_ld_entity::{
     },
     expanded_value::ExpandedValue,
     geo_value::GeoValue,
-    literal::{Literal, LiteralValue},
+    literal::{Literal, LiteralError, LiteralValue},
     non_empty::{EmptyCollection, NonEmpty},
 };
 use andromeda_ngsi_ld_lexicon::{
@@ -21,10 +21,16 @@ use andromeda_ngsi_ld_lexicon::{
         date_time::{NgsiLdDateTime, NgsiLdDateTimeError},
         rendering::instant_text,
         system_instant::SystemInstant,
-        value::{TimeValue, TimeValueForm},
+        value::TimeValue,
     },
 };
-use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance, observation_metadata::ObservationMetadata};
+use andromeda_ngsi_ld_model::temporal::{
+    TemporalHistoryRow,
+    TemporalValue,
+    evolution_instance::EvolutionInstance,
+    observation_metadata::ObservationMetadata,
+    text_annotation::TextAnnotation,
+};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use chrono::{DateTime, Utc};
 use thiserror::Error;
@@ -41,9 +47,9 @@ pub enum HistoryRowRenderError {
     /// A stored `VocabProperty` term is not a name.
     #[error("a stored vocabulary term is not a name: {0}")]
     VocabTerm(#[source] NgsiLdReferenceError),
-    /// A time value datatype IRI did not read as a name.
-    #[error("a time value datatype is not a name: {0}")]
-    TimeDatatype(#[source] NgsiLdReferenceError),
+    /// A stored language-tagged string does not read as a value object.
+    #[error("a stored language-tagged string is not a value object: {0}")]
+    LanguageLiteral(#[source] LiteralError),
     /// A rendered `instanceId` is not an identifier.
     #[error("a rendered instance identifier is not an identifier: {0}")]
     InstanceId(#[source] IdentifierParseError),
@@ -85,7 +91,7 @@ pub fn neutral_row_to_instance(row: TemporalHistoryRow, sys_attrs: SysAttrsInclu
     let (instance_id, dataset_id) = identity_members(&instance, dataset_id)?;
     let deleted_at = value.deleted_at();
     let metadata = metadata.map_or_else(empty_parts, ObservationMetadata::into_parts);
-    let value = rendered_value(value, attribute_type, metadata.value_type.as_ref().and_then(Slot::as_set))?;
+    let value = rendered_value(value, attribute_type)?;
     // A deletion carries no observation of its own: its value member, its
     // deletion instant, the `observedAt` a written deletion declared and its
     // identity are the whole rendering.
@@ -144,29 +150,34 @@ fn empty_parts() -> InstanceDocumentParts {
 /// 4.5.21.2 and 4.5.22.2 in its own list member, never the `value` those clauses
 /// prohibit.
 ///
-/// A declared time value renders typed, `{"type": form, "@value": text}` once
-/// compacted, unless the `valueType` `value_type` already declares its form,
-/// when it renders as the plain text beside that `valueType`, as current state
-/// holds it.
-fn rendered_value(value: TemporalValue, attribute_type: AttributeType, value_type: Option<&NgsiLdReference>) -> Result<ValueSlot, HistoryRowRenderError> {
+/// A scalar renders as the value object it was written as: typed when it
+/// declared a datatype, a declared time value among them, and tagged when it
+/// declared a language, as current state holds it.
+fn rendered_value(value: TemporalValue, attribute_type: AttributeType) -> Result<ValueSlot, HistoryRowRenderError> {
     Ok(ValueSlot::Set(match value {
-        TemporalValue::Number(number) => literal(LiteralValue::Number(number)),
-        TemporalValue::String(text) => match attribute_type {
-            AttributeType::VocabProperty => WrittenValue::Vocab(NonEmpty::one(text.parse::<NgsiLdReference>().map_err(HistoryRowRenderError::VocabTerm)?)),
-            AttributeType::Property
-            | AttributeType::GeoProperty
-            | AttributeType::Relationship
-            | AttributeType::LanguageProperty
-            | AttributeType::JsonProperty
-            | AttributeType::ListProperty
-            | AttributeType::ListRelationship => literal(LiteralValue::String(text.into())),
+        TemporalValue::Number { number, datatype } => literal(LiteralValue::Number(number), datatype),
+        TemporalValue::String { text, annotation } => match (attribute_type, annotation) {
+            (AttributeType::VocabProperty, TextAnnotation::Plain) => {
+                WrittenValue::Vocab(NonEmpty::one(text.parse::<NgsiLdReference>().map_err(HistoryRowRenderError::VocabTerm)?))
+            }
+            (
+                AttributeType::Property
+                | AttributeType::GeoProperty
+                | AttributeType::Relationship
+                | AttributeType::LanguageProperty
+                | AttributeType::VocabProperty
+                | AttributeType::JsonProperty
+                | AttributeType::ListProperty
+                | AttributeType::ListRelationship,
+                annotation,
+            ) => text_literal(text, annotation)?,
         },
-        TemporalValue::Boolean(flag) => literal(LiteralValue::Boolean(flag)),
+        TemporalValue::Boolean { flag, datatype } => literal(LiteralValue::Boolean(flag), datatype),
         TemporalValue::Geometry(geometry) => WrittenValue::Geometry(GeoValue::Geometry(geometry)),
         TemporalValue::Structured(structured) => structured.into_written(),
-        TemporalValue::DateTime(instant) => time_literal(TimeValueForm::DateTime, rendered_instant(instant), value_type)?,
-        TemporalValue::Date(date) => time_literal(TimeValueForm::Date, TimeValue::Date(date).to_string(), value_type)?,
-        TemporalValue::Time(time) => time_literal(TimeValueForm::Time, TimeValue::Time(time).to_string(), value_type)?,
+        TemporalValue::DateTime { instant, datatype } => literal(LiteralValue::String(rendered_instant(instant).into()), datatype),
+        TemporalValue::Date { date, datatype } => literal(LiteralValue::String(TimeValue::Date(date).to_string().into()), datatype),
+        TemporalValue::Time { time, datatype } => literal(LiteralValue::String(TimeValue::Time(time).to_string().into()), datatype),
         TemporalValue::Uri(uri) => WrittenValue::Object(NonEmpty::one(uri)),
         // Clause 4.18: "The value of scope is represented as a JSON array in
         // case there is more than one Scope". Several Scopes are several value
@@ -187,22 +198,26 @@ fn rendered_value(value: TemporalValue, attribute_type: AttributeType, value_typ
     }))
 }
 
-/// A value member holding one plain value object.
-fn literal(value: LiteralValue) -> WrittenValue {
-    WrittenValue::Value(vec![ExpandedValue::Literal(Literal::plain(value))])
+/// A value member holding one value object of `value`, typed `datatype` when
+/// it declares one.
+fn literal(value: LiteralValue, datatype: Option<NgsiLdReference>) -> WrittenValue {
+    WrittenValue::Value(vec![ExpandedValue::Literal(match datatype {
+        Some(datatype) => Literal::typed(value, datatype),
+        None => Literal::plain(value),
+    })])
 }
 
-/// The value member holding a time value of `form` spelled `text`, typed
-/// unless `value_type` declares the form.
-fn time_literal(form: TimeValueForm, text: String, value_type: Option<&NgsiLdReference>) -> Result<WrittenValue, HistoryRowRenderError> {
-    let literal = match value_type {
-        Some(value_type) if TimeValueForm::named_by(value_type.as_str()) == Some(form) => Literal::plain(LiteralValue::String(text.into())),
-        Some(_) | None => Literal::typed(
-            LiteralValue::String(text.into()),
-            form.iri().as_str().parse().map_err(HistoryRowRenderError::TimeDatatype)?,
-        ),
-    };
-    Ok(WrittenValue::Value(vec![ExpandedValue::Literal(literal)]))
+/// A value member holding the string `text` with the datatype or language it
+/// was written with.
+fn text_literal(text: String, annotation: TextAnnotation) -> Result<WrittenValue, HistoryRowRenderError> {
+    let value = LiteralValue::String(text.into());
+    Ok(match annotation {
+        TextAnnotation::Plain => literal(value, None),
+        TextAnnotation::Datatype(datatype) => literal(value, Some(datatype)),
+        TextAnnotation::Language(language) => WrittenValue::Value(vec![ExpandedValue::Literal(
+            Literal::try_new(value, None, Some(language), None).map_err(HistoryRowRenderError::LanguageLiteral)?,
+        )]),
+    })
 }
 
 /// An instant rendered in exactly the sub-second precision it carries.

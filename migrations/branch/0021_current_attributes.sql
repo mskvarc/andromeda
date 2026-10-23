@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0022: Current attributes
+-- 0021: Current attributes
 -- ============================================================================
 -- Spec: ETSI GS CIM 009 v1.9.1 clauses 4.5.2, 4.5.3, 4.5.5, 4.6.3, 4.8, 4.9,
 --   4.10, 4.22, 4.23, 5.6.6
@@ -300,4 +300,3 @@ $$;
 create trigger trg_entities_current_attributes_cascade
     after delete on entities referencing old table as old_rows for each statement
     execute function cascade_entity_current_attributes ();
-

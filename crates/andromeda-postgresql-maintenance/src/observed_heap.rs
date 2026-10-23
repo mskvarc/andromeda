@@ -22,14 +22,14 @@ pub(crate) enum ObservedHeap {
     EntityTypeAttributeCensus,
     /// Per-type counters every write touches.
     EntityTypeCensus,
-    /// The entities of each type, rewritten as entities change type.
+    /// Per-type, per-attribute stream counters every stream change and type
+    /// gain of a Temporal Evolution touches.
+    StreamTypeCensus,
+    /// The entities of each type, on either side, rewritten as entities change
+    /// type or lose a side.
     EntityTypeMembers,
-    /// The temporal entities of each type.
-    TemporalEntityTypeMembers,
     /// One row per temporal attribute stream, garbage-collected by retention.
     TemporalAttributeStreams,
-    /// One row per temporal entity, garbage-collected by retention.
-    TemporalEntities,
     /// Verbatim `instanceId` claims, claimed and released with their rows.
     AttributeHistoryInstanceClaims,
     /// Scope changes, whose superseded rows retention deletes.
@@ -40,26 +40,22 @@ pub(crate) enum ObservedHeap {
     RegistrationInformation,
     /// The preparation state of each Snapshot, tuned with `fillfactor = 50`.
     SnapshotPreparation,
-    /// One row per write, deleted once it is released.
-    WriteRecords,
 }
 
 impl ObservedHeap {
     /// Every observed heap.
-    pub(crate) const ALL: [ObservedHeap; 13] = [
+    pub(crate) const ALL: [ObservedHeap; 11] = [
         ObservedHeap::AttributeCensus,
         ObservedHeap::EntityTypeAttributeCensus,
         ObservedHeap::EntityTypeCensus,
+        ObservedHeap::StreamTypeCensus,
         ObservedHeap::EntityTypeMembers,
-        ObservedHeap::TemporalEntityTypeMembers,
         ObservedHeap::TemporalAttributeStreams,
-        ObservedHeap::TemporalEntities,
         ObservedHeap::AttributeHistoryInstanceClaims,
         ObservedHeap::ScopeHistory,
         ObservedHeap::RegistrationDeliveryState,
         ObservedHeap::RegistrationInformation,
         ObservedHeap::SnapshotPreparation,
-        ObservedHeap::WriteRecords,
     ];
 
     /// The exact table identifier created by the migrations.
@@ -73,16 +69,12 @@ impl ObservedHeap {
             ObservedHeap::AttributeCensus
             | ObservedHeap::EntityTypeAttributeCensus
             | ObservedHeap::EntityTypeCensus
+            | ObservedHeap::StreamTypeCensus
             | ObservedHeap::EntityTypeMembers
-            | ObservedHeap::TemporalEntityTypeMembers
             | ObservedHeap::TemporalAttributeStreams
-            | ObservedHeap::TemporalEntities
             | ObservedHeap::AttributeHistoryInstanceClaims
             | ObservedHeap::ScopeHistory => RelationPresence::EveryBranch,
-            ObservedHeap::RegistrationDeliveryState
-            | ObservedHeap::RegistrationInformation
-            | ObservedHeap::SnapshotPreparation
-            | ObservedHeap::WriteRecords => RelationPresence::LiveOnly,
+            ObservedHeap::RegistrationDeliveryState | ObservedHeap::RegistrationInformation | ObservedHeap::SnapshotPreparation => RelationPresence::LiveOnly,
         }
     }
 }
@@ -167,16 +159,14 @@ mod tests {
                 "attribute_census",
                 "entity_type_attribute_census",
                 "entity_type_census",
+                "stream_type_census",
                 "entity_type_members",
-                "temporal_entity_type_members",
                 "temporal_attribute_streams",
-                "temporal_entities",
                 "attribute_history_instance_claims",
                 "scope_history",
                 "registration_delivery_state",
                 "registration_information",
                 "snapshot_preparation",
-                "write_records",
             ]
         );
     }
@@ -187,7 +177,6 @@ mod tests {
             ObservedHeap::RegistrationDeliveryState,
             ObservedHeap::RegistrationInformation,
             ObservedHeap::SnapshotPreparation,
-            ObservedHeap::WriteRecords,
         ] {
             assert_eq!(heap.presence(), RelationPresence::LiveOnly, "{heap:?}");
         }

@@ -5,7 +5,7 @@
 //! `current_attributes` all reference; `entity_type_names`
 //! does the same for expanded entity type IRIs, which
 //! `entity_search.entity_type_name_keys` and
-//! `temporal_entities.entity_type_name_keys` carry as integer arrays. One
+//! `entities.evolution_type_name_keys` carry as integer arrays. One
 //! dictionary serves every relation that names an attribute or a type, so a
 //! rename of the physical column moves with this iden.
 

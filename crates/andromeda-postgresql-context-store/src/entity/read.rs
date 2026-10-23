@@ -27,6 +27,7 @@ use andromeda_ngsi_ld_query::projection::returned_attributes::ReturnedAttributes
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_context_query::entity_head::select_head;
 use andromeda_postgresql_pool::read_share::PoolLane;
+use andromeda_postgresql_query::entity_sides::holds_current_state;
 use andromeda_postgresql_schema::current::{CurrentAttributes, E, Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
     pg_array::{any, text_array},
@@ -227,12 +228,14 @@ fn entities_query(target: &ContextTarget, ids: SimpleExpr, selection: &RowSelect
 }
 
 /// The identifier and system attributes of the Entities whose identifier
-/// equals `ids`, read from the identity row alone.
+/// equals `ids`, read from the identity row alone, of those holding a current
+/// state.
 fn sys_attrs_query(target: &ContextTarget, ids: SimpleExpr) -> SelectStatement {
     Query::select()
         .columns([Entities::Id, Entities::CreatedAt, Entities::ModifiedAt, Entities::ExpiresAt].map(|column| (E, column)))
         .from_as(table_of(target, Entities::Table), E)
         .and_where(Expr::col((E, Entities::Id)).eq(ids))
+        .and_where(holds_current_state(E))
         .take()
 }
 
@@ -337,7 +340,7 @@ mod tests {
     fn system_attributes_read_the_three_lifecycle_instants_from_the_identity_row() {
         assert_eq!(
             sys_attrs_query(&ContextTarget::Live, Expr::val("urn:x")).to_string(PostgresQueryBuilder),
-            r#"SELECT "e"."id", "e"."created_at", "e"."modified_at", "e"."expires_at" FROM "entities" AS "e" WHERE "e"."id" = 'urn:x'"#
+            r#"SELECT "e"."id", "e"."created_at", "e"."modified_at", "e"."expires_at" FROM "entities" AS "e" WHERE "e"."id" = 'urn:x' AND "e"."created_at" IS NOT NULL"#
         );
     }
 }

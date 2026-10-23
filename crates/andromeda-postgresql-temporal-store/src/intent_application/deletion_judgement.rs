@@ -16,13 +16,14 @@
 //! answers with (clause 5.7.4) is the same before the drain and after it,
 //! however the drain groups the intents.
 
-use crate::intent_application::intent_source::{I, StagedSource, Te, entry, intent, source_intents_as};
+use crate::intent_application::intent_source::{I, StagedSource, entry, intent, source_intents_as};
 use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
-use andromeda_postgresql_schema::{queue::TemporalAppendIntents, temporal::TemporalEntities, temporal_intent::TemporalEntry};
+use andromeda_postgresql_schema::{current::Entities, queue::TemporalAppendIntents, temporal_intent::TemporalEntry};
 use andromeda_postgresql_seaquery::{
     literal::int_literal,
     pg_array::{any, has_elements},
 };
+use andromeda_postgresql_temporal_query::alias::Te;
 use sea_query::{Expr, ExprTrait, Iden, Query, SimpleExpr};
 
 /// The alias of an intent of the source stating types for the Entity of the
@@ -52,7 +53,7 @@ pub(crate) fn ended_before_evolution(source: &StagedSource<'_>, created: SimpleE
 /// Whether the Temporal Evolution under `te` is one the evolution upsert of
 /// the application created, its key among the ones the upsert returned.
 pub(crate) fn created_by_application(source: &StagedSource<'_>) -> SimpleExpr {
-    Expr::col((Te, TemporalEntities::TemporalEntityKey)).eq(any(source.created_evolutions()))
+    Expr::col((Te, Entities::EntityKey)).eq(any(source.created_evolutions()))
 }
 
 #[cfg(test)]
@@ -69,7 +70,7 @@ mod tests {
     use sea_query::{Asterisk, PostgresQueryBuilder, Query};
 
     fn rendered(source: &IntentSource<'_>, created: &[i64]) -> String {
-        let staged = StagedSource::new(source, EntryReads::Nothing, created);
+        let staged = StagedSource::new(source, EntryReads::Identities, created);
         Query::select()
             .column(Asterisk)
             .and_where(ended_before_evolution(&staged, created_by_application(&staged)))
@@ -91,7 +92,7 @@ mod tests {
         );
         assert!(
             sql.contains(concat!(
-                r#""e"."entry_kind" = 2 AND "te"."temporal_entity_key" = ANY(ARRAY [7]::bigint[]) AND (NOT EXISTS(SELECT 1 FROM "#,
+                r#""e"."entry_kind" = 2 AND "te"."entity_key" = ANY(ARRAY [7]::bigint[]) AND (NOT EXISTS(SELECT 1 FROM "#,
                 r#"(SELECT * FROM "temporal_append_intents" WHERE "intent_key" = ANY(ARRAY [3,5]::bigint[])) AS "ai" "#,
                 r#"WHERE "ai"."entity_id" = "i"."entity_id" AND cardinality("ai"."entity_type_name_keys") > 0 "#,
                 r#"AND "ai"."intent_key" <= "i"."intent_key"))"#
@@ -106,6 +107,6 @@ mod tests {
     fn the_created_keys_are_named_the_same_for_a_bound_source() {
         let record = WriteRecord::restored(WriteId::mint(), recorded_at());
         let sql = rendered(&IntentSource::Bound { record: &record, intents: &[] }, &[7, 9]);
-        assert!(sql.contains(r#""te"."temporal_entity_key" = ANY(ARRAY [7,9]::bigint[])"#), "{sql}");
+        assert!(sql.contains(r#""te"."entity_key" = ANY(ARRAY [7,9]::bigint[])"#), "{sql}");
     }
 }

@@ -29,7 +29,7 @@
 mod candidate_step;
 mod contributed_candidates;
 mod entity_conditions;
-mod evolution_walk;
+pub mod evolution_walk;
 mod extent_candidates;
 mod gated_count;
 mod gated_walk;
@@ -66,7 +66,7 @@ use andromeda_postgresql_query::{
     history_source::{BesideComparison, HistoryBranch},
     page_window::apply_identifier_window,
 };
-use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
+use andromeda_postgresql_schema::current::{E, Entities};
 use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
 use sea_query::{Condition, Expr as SeaExpr, Func, SelectStatement, TableRef};
 
@@ -139,7 +139,7 @@ pub fn build_stage1_entity_ids(
     // Clause 5.7.4.5: "If Entity ordering is specified (see clause 4.23), then
     // the JSON-LD array returned shall be ordered according to the member names
     // specified." Only `id` can be named (clause 5.7.4.3), and the collation is
-    // written out rather than left to the column: `temporal_entities.id` is
+    // written out rather than left to the column: `entities.id` is
     // declared `COLLATE "C"`, so an unstated comparison is byte-wise and the
     // collation Table 6.18.3.2-1 says the payload "shall be ordered according
     // to" would have no effect at all.
@@ -154,7 +154,7 @@ pub fn build_stage1_entity_ids(
     match (&window.start, compiled.ordering.as_ref()) {
         (PageStart::Offset(_), Some(ordering)) => {
             entity_identifier_key(
-                SeaExpr::col((E, TemporalEntities::Id)),
+                SeaExpr::col((E, Entities::Id)),
                 ordering.direction,
                 &ordering_collation(ordering.collation.as_ref()),
             )
@@ -162,7 +162,7 @@ pub fn build_stage1_entity_ids(
         }
         (PageStart::Offset(_), None) | (PageStart::Cursor(_), _) => {}
     }
-    let read_order = apply_identifier_window(&mut select, SeaExpr::col((E, TemporalEntities::Id)), window);
+    let read_order = apply_identifier_window(&mut select, SeaExpr::col((E, Entities::Id)), window);
 
     let count_statement = match count {
         CountPolicy::Emit => Some(walked_count(branch, compiled, names)?),
@@ -201,7 +201,7 @@ fn walked_count(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names:
 fn selected_ids(evolutions: TableRef, conditions: Condition, window_match: SelectStatement) -> SelectStatement {
     let mut select = SelectStatement::new();
     select
-        .expr_as(SeaExpr::col((E, TemporalEntities::Id)), EntityIdColumn)
+        .expr_as(SeaExpr::col((E, Entities::Id)), EntityIdColumn)
         .from(evolutions)
         .cond_where(conditions)
         .cond_where(SeaExpr::exists(window_match));
@@ -213,7 +213,7 @@ fn selected_ids(evolutions: TableRef, conditions: Condition, window_match: Selec
 fn counted_ids(evolutions: TableRef, conditions: Condition, window_match: SelectStatement) -> SelectStatement {
     let mut count = SelectStatement::new();
     count
-        .expr(Func::count(SeaExpr::col((E, TemporalEntities::Id))))
+        .expr(Func::count(SeaExpr::col((E, Entities::Id))))
         .from(evolutions)
         .cond_where(conditions)
         .cond_where(SeaExpr::exists(window_match));

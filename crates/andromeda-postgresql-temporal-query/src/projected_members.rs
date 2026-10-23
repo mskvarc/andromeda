@@ -24,7 +24,7 @@ use andromeda_postgresql_query::{
     scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis},
     window_reach::WindowReach,
 };
-use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
+use andromeda_postgresql_schema::current::{E, Entities};
 use andromeda_postgresql_seaquery::{
     literal::int_literal,
     pg_array::{is_any_of, is_none_of},
@@ -86,7 +86,7 @@ fn represented_scope(branch: &HistoryBranch, compiled: &CompiledTemporalQuery) -
 
 /// The history of the entity of the stage 1 `e` relation.
 fn of_selected_entity() -> HistoryOf {
-    HistoryOf::Entity(Expr::col((E, TemporalEntities::Id)))
+    HistoryOf::Entity(Expr::col((E, Entities::Id)))
 }
 
 #[cfg(test)]
@@ -146,6 +146,7 @@ mod tests {
         QueryNames {
             attributes: ResolvedNames::from_pairs([("https://example.com/speed".parse().expect("valid attribute name"), AttributeNameKey::from(7))]),
             types: ResolvedNames::default(),
+            ..QueryNames::default()
         }
     }
 

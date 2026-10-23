@@ -1,25 +1,26 @@
-//! The narrow key a current-state entity is referenced by.
+//! The narrow key an entity's identity row is referenced by.
 
 use derive_more::Display;
 use thiserror::Error;
 
-/// The surrogate key of one current-state entity.
+/// The surrogate key of one entity's identity row, shared by its current
+/// state and its Temporal Evolution.
 ///
-/// Every relation owned by an entity repeats this column on each of its rows,
-/// so the current-state grain is carried by a generated eight-byte identity
-/// rather than by the entity's own identifier text. The key is assigned once by
-/// the database and never reassigned: a reused number would attach one entity's
-/// projected attribute values to another.
+/// Every relation owned by an entity, current or temporal, repeats this column
+/// on each of its rows, so the grain is carried by a generated eight-byte
+/// identity rather than by the entity's own identifier text. The key is
+/// assigned once by the database and never reassigned: a reused number would
+/// attach one entity's attribute values or recorded history to another.
 ///
-/// The identifier a client supplies stays the entity's external identity —
-/// clause 5.6.x addresses an entity by its URI, and this key is never rendered
-/// or accepted over the API. It exists only below the storage boundary, where
+/// The identifier a client supplies stays the entity's external identity:
+/// the API addresses an entity by its URI, and this key is never rendered or
+/// accepted over the API. It exists only below the storage boundary, where
 /// owned child relations join it and cascade from it.
 ///
-/// It is deliberately unrelated to the temporal catalogue's own entity key.
-/// Core Entity deletion (clause 5.6.6) removes the current-state row while the
-/// temporal evolution survives until Temporal Evolution deletion (clause
-/// 5.6.16), so the two grains carry independent identities and are never joined.
+/// Core Entity deletion (clause 5.6.6) gives up the current state and keeps
+/// the row while the Temporal Evolution stands, until Temporal Evolution
+/// deletion (clause 5.6.16) gives that up too, so the key outlives whichever
+/// side goes first.
 #[derive(Clone, Copy, Debug, Display, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[display("{_0}")]
 pub struct EntityKey(i64);

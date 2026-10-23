@@ -185,7 +185,7 @@ mod tests {
     fn stale_statistics_of_an_observed_heap_report_statistics_stale_and_a_targets_report_nothing() {
         let now = Utc::now();
         let observed = HeapStatistics {
-            heap: WatchedHeap::Observed(ObservedHeap::WriteRecords),
+            heap: WatchedHeap::Observed(ObservedHeap::SnapshotPreparation),
             ..heap(41_000, 20_500, None)
         };
         assert_eq!(observed.observation(now), Some(Finding::warning(ObservationDecision::StatisticsStale)));

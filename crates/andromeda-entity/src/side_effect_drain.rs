@@ -387,7 +387,12 @@ mod tests {
             attribute_instance_key::AttributeInstanceKey,
         },
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
+    use andromeda_ngsi_ld_lexicon::{
+        attribute_name::AttributeName,
+        entity_type_name::EntityTypeName,
+        identifier::Identifier,
+        time::system_instant::SystemInstant,
+    };
     use andromeda_ngsi_ld_model::{
         entity_change::{EntityChange, EntityLifecycle},
         notification::ChangeOrigin,
@@ -463,11 +468,11 @@ mod tests {
     }
 
     impl ContextCommitter for FixedCommitter {
-        fn commit(&self, _target: &ContextTarget, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        fn commit(&self, _target: &ContextTarget, _accepted_at: SystemInstant, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
             Box::pin(async move { panic!("the side-effect drain must replay, never mint a fresh commit") })
         }
 
-        fn commit_enqueued(&self, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        fn commit_enqueued(&self, _accepted_at: SystemInstant, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
             Box::pin(async move { panic!("the side-effect drain must replay, never enqueue") })
         }
 

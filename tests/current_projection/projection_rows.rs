@@ -3,7 +3,6 @@
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, Entities},
     name_dictionary::AttributeNames,
-    temporal::TemporalEntities,
 };
 use andromeda_postgresql_seaquery::{
     aggregate::count_all,
@@ -141,8 +140,8 @@ pub async fn rows_for_key(pool: &PgPool, key: i64) -> i64 {
 pub async fn temporal_entity_exists(pool: &PgPool, entity_id: &str) -> bool {
     let count: i64 = Query::select()
         .expr(count_all())
-        .from(TemporalEntities::Table)
-        .and_where(Expr::col(TemporalEntities::Id).eq(entity_id))
+        .from(Entities::Table)
+        .and_where(Expr::col(Entities::Id).eq(entity_id))
         .to_query_scalar()
         .fetch_one(pool)
         .await

@@ -160,8 +160,8 @@ mod tests {
     #[test]
     fn the_copy_is_temporary_and_names_its_source_qualified() {
         pretty_assertions::assert_eq!(
-            TemporaryCopy::new(Alias::new("temporal_entities"), (Alias::new("public"), Alias::new("temporal_entities"))).rendered(),
-            r#"CREATE TEMPORARY TABLE "temporal_entities" (LIKE "public"."temporal_entities" INCLUDING DEFAULTS INCLUDING INDEXES) ON COMMIT DROP"#
+            TemporaryCopy::new(Alias::new("entities"), (Alias::new("public"), Alias::new("entities"))).rendered(),
+            r#"CREATE TEMPORARY TABLE "entities" (LIKE "public"."entities" INCLUDING DEFAULTS INCLUDING INDEXES) ON COMMIT DROP"#
         );
         pretty_assertions::assert_eq!(TemporarySchema.to_string(), "pg_temp");
     }

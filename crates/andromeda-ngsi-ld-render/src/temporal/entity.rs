@@ -266,7 +266,10 @@ mod tests {
             attribute_name: attr_name(attr),
             attribute_type: AttributeType::Property,
             dataset_id: None,
-            value: TemporalValue::Number(JsonNumber::from(1)),
+            value: TemporalValue::Number {
+                number: JsonNumber::from(1),
+                datatype: None,
+            },
             observed_at: Some(instant()),
             recorded_at: instant(),
             created_at: Some(instant()),

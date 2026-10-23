@@ -23,15 +23,7 @@ use andromeda_postgresql_schema::{
     current::{CurrentAttributes, Entities, EntitySearch, EntityTypeMembers},
     notification::{NotificationDeliveries, NotificationEvents},
     subscriptions::{SubscriptionDeliveryState, Subscriptions},
-    temporal::{
-        AttributeHistory,
-        AttributeHistoryInstanceClaims,
-        ScopeHistory,
-        TemporalAttributeStreams,
-        TemporalEntities,
-        TemporalEntityTypeMembers,
-        TemporalStreamShapes,
-    },
+    temporal::{AttributeHistory, AttributeHistoryInstanceClaims, ScopeHistory, StreamTypeCensus, TemporalAttributeStreams},
 };
 use andromeda_postgresql_seaquery::{
     command::Command,
@@ -50,10 +42,9 @@ use sqlx::PgConnection;
 /// (parents before children), which the relations a clone copies keep. The
 /// branch migrations create them; this list only orders the truncation and
 /// the copies.
-pub(crate) fn branch_tables() -> [DynIden; 18] {
+pub(crate) fn branch_tables() -> [DynIden; 16] {
     [
         Entities::Table.into_iden(),
-        TemporalEntities::Table.into_iden(),
         Subscriptions::Table.into_iden(),
         NotificationEvents::Table.into_iden(),
         EntitySearch::Table.into_iden(),
@@ -62,9 +53,8 @@ pub(crate) fn branch_tables() -> [DynIden; 18] {
         AttributeCensus::Table.into_iden(),
         EntityTypeMembers::Table.into_iden(),
         CurrentAttributes::Table.into_iden(),
-        TemporalEntityTypeMembers::Table.into_iden(),
         TemporalAttributeStreams::Table.into_iden(),
-        TemporalStreamShapes::Table.into_iden(),
+        StreamTypeCensus::Table.into_iden(),
         AttributeHistory::Table.into_iden(),
         ScopeHistory::Table.into_iden(),
         AttributeHistoryInstanceClaims::Table.into_iden(),

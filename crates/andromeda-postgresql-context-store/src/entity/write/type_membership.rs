@@ -1,12 +1,12 @@
-//! The `entity_type_members` rows each set-write keeps in step with the types
-//! the search row carries.
+//! The current side of the `entity_type_members` rows each set-write keeps in
+//! step with the types the search row carries.
 //!
 //! A type selection pages by walking the membership key in identifier order
 //! (clauses 4.17 and 5.5.9), so every write that sets an Entity's types states
 //! them there too, in the same statement as the search row: a create lands one
 //! row per type, and an update moves only the types that changed, which a
-//! value-only write never does. A delete needs nothing here; the rows cascade
-//! from `entities`.
+//! value-only write never does. A row the Temporal Evolution holds stays when
+//! the current state drops its type, with the current flag cleared.
 //!
 //! An update reads the types an Entity had and has from the images its search
 //! row write returned ([`SearchImage`]), never from `entity_search` itself: the
@@ -27,13 +27,13 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_query::{
     type_membership::Memberships,
-    type_membership_moves::{Member, carried_among, membership_delete, membership_insert},
+    type_membership_moves::{Member, MembershipRemoval, carried_among, membership_insert, membership_removal},
 };
 use andromeda_postgresql_schema::{
     current::{Entities, EntitySearch},
-    type_membership::TypeMembershipRelation,
+    type_membership::MembershipSide,
 };
-use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, Iden, InsertStatement, Query};
+use sea_query::{DynIden, Expr, ExprTrait, Iden, InsertStatement, Query};
 
 /// The membership CTE of a create or an update, `mbrs`, whose only purpose is
 /// to run.
@@ -41,16 +41,24 @@ use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, Iden, InsertStatement
 #[iden = "mbrs"]
 pub(super) struct Mbrs;
 
-/// The CTE of an update that drops the types an Entity no longer carries,
-/// `strays`, whose only purpose is to run.
+/// The CTE of an update that deletes the memberships of the types an Entity
+/// no longer carries and its Temporal Evolution does not hold, `strays`,
+/// whose only purpose is to run.
 #[derive(Iden, Clone, Copy)]
 #[iden = "strays"]
 pub(super) struct Strays;
 
-/// The current-state membership relation in the branch `schema` names.
+/// The CTE of an update that clears the current flag of the types an Entity
+/// no longer carries and its Temporal Evolution holds, `unflagged`, whose only
+/// purpose is to run.
+#[derive(Iden, Clone, Copy)]
+#[iden = "unflagged"]
+pub(super) struct Unflagged;
+
+/// The current side of the membership relation in the branch `schema` names.
 const fn current(schema: Option<&DynIden>) -> Memberships<'_> {
     Memberships {
-        relation: TypeMembershipRelation::Current,
+        side: MembershipSide::Current,
         schema,
     }
 }
@@ -90,7 +98,7 @@ pub(super) fn added_memberships(target: &ContextTarget) -> Result<InsertStatemen
         key: Expr::col((Srch, EntitySearch::EntityKey)),
         id: Expr::col((Srch, Entities::Id)),
     };
-    let added = carried_among(Expr::col((Srch, SearchImage::OldTypes)), memberships).not();
+    let added = carried_among(Expr::col((Srch, SearchImage::OldTypes))).not();
     Ok(membership_insert(
         memberships,
         Query::select().from(Srch).take(),
@@ -100,11 +108,12 @@ pub(super) fn added_memberships(target: &ContextTarget) -> Result<InsertStatemen
     )?)
 }
 
-/// The membership rows an update removes: the types the replaced search row
-/// held that the rewritten one does not, found by the membership key.
-pub(super) fn dropped_memberships(target: &ContextTarget) -> DeleteStatement {
+/// The membership rows an update takes off the current side: the types the
+/// replaced search row held that the rewritten one does not, found by the
+/// membership key.
+pub(super) fn dropped_memberships(target: &ContextTarget) -> MembershipRemoval {
     let schema = schema_iden(target);
-    membership_delete(
+    membership_removal(
         current(schema.as_ref()),
         Query::select().from(Srch).take(),
         Expr::col((Srch, SearchImage::OldTypes)),
@@ -120,6 +129,8 @@ mod tests {
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
+    /// A re-created Entity whose Temporal Evolution kept its types finds
+    /// their rows and sets the current flag on them.
     #[test]
     fn a_create_lands_one_membership_row_per_projected_type() {
         let sql = created_memberships(&ContextTarget::Live)
@@ -128,10 +139,11 @@ mod tests {
         assert_eq!(
             sql,
             concat!(
-                r#"INSERT INTO "entity_type_members" ("entity_key", "entity_type_name_key", "id") "#,
-                r#"SELECT "ins"."entity_key", "carried"."entity_type_name_key", "ins"."id" FROM "ins" "#,
+                r#"INSERT INTO "entity_type_members" ("entity_key", "entity_type_name_key", "id", "is_current_member", "is_evolution_member") "#,
+                r#"SELECT "ins"."entity_key", "carried"."entity_type_name_key", "ins"."id", TRUE, FALSE FROM "ins" "#,
                 r#"JOIN "proj" ON "proj"."id" = "ins"."id" "#,
-                r#"INNER JOIN LATERAL (SELECT UNNEST("proj"."entity_type_name_keys") AS "entity_type_name_key") AS "carried" ON TRUE"#
+                r#"INNER JOIN LATERAL (SELECT UNNEST("proj"."entity_type_name_keys") AS "entity_type_name_key") AS "carried" ON TRUE "#,
+                r#"ON CONFLICT ("entity_type_name_key", "id") DO UPDATE SET "is_current_member" = TRUE"#
             )
         );
     }
@@ -144,26 +156,40 @@ mod tests {
             .expect("the membership insert builds")
             .to_string(PostgresQueryBuilder);
         assert!(
-            sql.contains(r#"SELECT "srch"."entity_key", "carried"."entity_type_name_key", "srch"."id" FROM "srch""#),
+            sql.contains(r#"SELECT "srch"."entity_key", "carried"."entity_type_name_key", "srch"."id", TRUE, FALSE FROM "srch""#),
             "{sql}"
         );
         assert!(sql.contains(r#"UNNEST("srch"."new_types")"#), "{sql}");
         assert!(sql.contains(r#"NOT "carried"."entity_type_name_key" = ANY("srch"."old_types")"#), "{sql}");
     }
 
-    /// An update drops, by the membership key, only the types the replaced
-    /// search row held and the rewritten one no longer does.
+    /// An update takes off the current side, by the membership key, only the
+    /// types the replaced search row held and the rewritten one no longer
+    /// does: a row the Temporal Evolution holds keeps it with the flag
+    /// cleared, any other goes.
     #[test]
     fn an_update_drops_only_the_types_the_rewritten_row_no_longer_holds() {
-        let sql = dropped_memberships(&ContextTarget::Live).to_string(PostgresQueryBuilder);
+        let removal = dropped_memberships(&ContextTarget::Live);
+        let cleared = removal.cleared.to_string(PostgresQueryBuilder);
+        let deleted = removal.deleted.to_string(PostgresQueryBuilder);
         assert!(
-            sql.starts_with(
+            cleared.starts_with(
+                r#"UPDATE "entity_type_members" SET "is_current_member" = FALSE WHERE ("entity_type_name_key", "id") IN (SELECT "carried"."entity_type_name_key", "srch"."id" FROM "srch""#
+            ),
+            "{cleared}"
+        );
+        assert!(cleared.ends_with(r#" AND "is_evolution_member""#), "{cleared}");
+        assert!(
+            deleted.starts_with(
                 r#"DELETE FROM "entity_type_members" WHERE ("entity_type_name_key", "id") IN (SELECT "carried"."entity_type_name_key", "srch"."id" FROM "srch""#
             ),
-            "{sql}"
+            "{deleted}"
         );
-        assert!(sql.contains(r#"UNNEST("srch"."old_types")"#), "{sql}");
-        assert!(sql.contains(r#"NOT "carried"."entity_type_name_key" = ANY("srch"."new_types")"#), "{sql}");
+        assert!(deleted.ends_with(r#" AND (NOT "is_evolution_member")"#), "{deleted}");
+        for sql in [cleared, deleted] {
+            assert!(sql.contains(r#"UNNEST("srch"."old_types")"#), "{sql}");
+            assert!(sql.contains(r#"NOT "carried"."entity_type_name_key" = ANY("srch"."new_types")"#), "{sql}");
+        }
     }
 
     /// The moves never read `entity_search`: the statement's snapshot of it can
@@ -171,8 +197,12 @@ mod tests {
     #[test]
     fn the_membership_moves_never_read_the_search_relation() {
         let added = added_memberships(&ContextTarget::Live).expect("builds").to_string(PostgresQueryBuilder);
-        let dropped = dropped_memberships(&ContextTarget::Live).to_string(PostgresQueryBuilder);
-        for sql in [added, dropped] {
+        let dropped = dropped_memberships(&ContextTarget::Live);
+        for sql in [
+            added,
+            dropped.cleared.to_string(PostgresQueryBuilder),
+            dropped.deleted.to_string(PostgresQueryBuilder),
+        ] {
             assert!(!sql.contains("entity_search"), "{sql}");
         }
     }
@@ -184,8 +214,21 @@ mod tests {
         let key = SnapshotKey::try_from(5).expect("positive key");
         let target = ContextTarget::Snapshot(SnapshotTarget::staging(key, "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri")));
         let added = added_memberships(&target).expect("builds").to_string(PostgresQueryBuilder);
-        let dropped = dropped_memberships(&target).to_string(PostgresQueryBuilder);
+        let dropped = dropped_memberships(&target);
         assert!(added.contains(r#"INSERT INTO "snap_5_stg"."entity_type_members""#), "{added}");
-        assert!(dropped.contains(r#"DELETE FROM "snap_5_stg"."entity_type_members""#), "{dropped}");
+        assert!(
+            dropped
+                .cleared
+                .to_string(PostgresQueryBuilder)
+                .contains(r#"UPDATE "snap_5_stg"."entity_type_members""#),
+            "{dropped:?}"
+        );
+        assert!(
+            dropped
+                .deleted
+                .to_string(PostgresQueryBuilder)
+                .contains(r#"DELETE FROM "snap_5_stg"."entity_type_members""#),
+            "{dropped:?}"
+        );
     }
 }

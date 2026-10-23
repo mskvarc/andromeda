@@ -12,6 +12,7 @@
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
 use andromeda_postgresql_query::{
+    entity_sides::holds_evolution,
     history_source::{
         HistoryBranch,
         HistoryOf,
@@ -22,8 +23,9 @@ use andromeda_postgresql_query::{
     time_interval_predicate::within_interval,
 };
 use andromeda_postgresql_schema::{
+    current::Entities,
     name_dictionary::AttributeNames,
-    temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
+    temporal::{AttributeHistory, StreamTypeCensus, TemporalAttributeStreams},
 };
 use andromeda_postgresql_seaquery::{
     branch::qualified,
@@ -76,22 +78,22 @@ struct StagedStream;
 #[iden = "g"]
 struct QueuedGrain;
 
-/// The temporal catalogue's columns, in table order.
-const ENTITY_COLUMNS: [TemporalEntities; 5] = [
-    TemporalEntities::TemporalEntityKey,
-    TemporalEntities::CreatedAt,
-    TemporalEntities::ModifiedAt,
-    TemporalEntities::Id,
-    TemporalEntities::EntityTypeNameKeys,
+/// The identity row's columns a staged Temporal Evolution carries, in table
+/// order.
+const ENTITY_COLUMNS: [Entities; 5] = [
+    Entities::EntityKey,
+    Entities::EvolutionCreatedAt,
+    Entities::EvolutionModifiedAt,
+    Entities::Id,
+    Entities::EvolutionTypeNameKeys,
 ];
 
 /// The stream catalogue's columns an aggregation reads, in table order; a
 /// staged stream leaves its extent empty, since no candidate read reaches the
 /// staging.
-const STREAM_COLUMNS: [TemporalAttributeStreams; 5] = [
+const STREAM_COLUMNS: [TemporalAttributeStreams; 4] = [
     TemporalAttributeStreams::StreamKey,
-    TemporalAttributeStreams::TemporalEntityKey,
-    TemporalAttributeStreams::Id,
+    TemporalAttributeStreams::EntityKey,
     TemporalAttributeStreams::AttributeNameKey,
     TemporalAttributeStreams::DatasetId,
 ];
@@ -128,18 +130,21 @@ fn temporary(table: impl IntoIden) -> TableRef {
     qualified(Some(&temporary_schema()), table)
 }
 
-/// The three temporary copies of the shape of the branch's temporal
-/// catalogue, stream catalogue and history.
-pub(crate) fn staging_tables(branch: &DynIden) -> [TemporaryCopy; 3] {
+/// The temporary copies of the shape of the branch's identity rows, stream
+/// catalogue, stream census and history: the relations the application of the
+/// staged history writes.
+pub(crate) fn staging_tables(branch: &DynIden) -> [TemporaryCopy; 4] {
     // clone: a table name owns the schema iden it qualifies with, a cheap shared handle
     [
-        TemporaryCopy::new(TemporalEntities::Table, (branch.clone(), TemporalEntities::Table.into_iden())),
+        TemporaryCopy::new(Entities::Table, (branch.clone(), Entities::Table.into_iden())),
         TemporaryCopy::new(TemporalAttributeStreams::Table, (branch.clone(), TemporalAttributeStreams::Table.into_iden())),
+        TemporaryCopy::new(StreamTypeCensus::Table, (branch.clone(), StreamTypeCensus::Table.into_iden())),
         TemporaryCopy::new(AttributeHistory::Table, (branch.clone(), AttributeHistory::Table.into_iden())),
     ]
 }
 
-/// Copy the entity's catalogue row from the branch.
+/// Copy the entity's identity row from the branch, when it holds a Temporal
+/// Evolution.
 ///
 /// # Errors
 ///
@@ -148,13 +153,11 @@ pub(crate) fn copy_entity(branch: &DynIden, entity_id: &Identifier) -> Result<In
     let mut select = Query::select();
     select
         .columns(ENTITY_COLUMNS)
-        .from(qualified(Some(branch), TemporalEntities::Table))
-        .and_where(Expr::col(TemporalEntities::Id).eq(entity_id.as_str()));
+        .from(qualified(Some(branch), Entities::Table))
+        .and_where(Expr::col(Entities::Id).eq(entity_id.as_str()))
+        .and_where(holds_evolution(Entities::Table));
     let mut insert = Query::insert();
-    insert
-        .into_table(temporary(TemporalEntities::Table))
-        .columns(ENTITY_COLUMNS)
-        .select_from(select)?;
+    insert.into_table(temporary(Entities::Table)).columns(ENTITY_COLUMNS).select_from(select)?;
     Ok(insert.take())
 }
 
@@ -165,14 +168,12 @@ pub(crate) fn copy_entity(branch: &DynIden, entity_id: &Identifier) -> Result<In
 /// Returns [`SeaQueryError`] when the statement cannot be assembled.
 pub(crate) fn copy_streams(branch: &DynIden) -> Result<InsertStatement, SeaQueryError> {
     let mut staged_entities = Query::select();
-    staged_entities
-        .column(TemporalEntities::TemporalEntityKey)
-        .from(temporary(TemporalEntities::Table));
+    staged_entities.column(Entities::EntityKey).from(temporary(Entities::Table));
     let mut select = Query::select();
     select
         .columns(STREAM_COLUMNS)
         .from(qualified(Some(branch), TemporalAttributeStreams::Table))
-        .and_where(Expr::col(TemporalAttributeStreams::TemporalEntityKey).in_subquery(staged_entities));
+        .and_where(Expr::col(TemporalAttributeStreams::EntityKey).in_subquery(staged_entities));
     let mut insert = Query::insert();
     insert
         .into_table(temporary(TemporalAttributeStreams::Table))
@@ -255,10 +256,7 @@ pub(crate) fn copy_history(snapshot: Option<&DynIden>, entity_id: &Identifier, c
 
 /// The staged catalogue key of the entity, when the branch holds it.
 pub(crate) fn staged_entity_key() -> SelectStatement {
-    Query::select()
-        .column(TemporalEntities::TemporalEntityKey)
-        .from(temporary(TemporalEntities::Table))
-        .to_owned()
+    Query::select().column(Entities::EntityKey).from(temporary(Entities::Table)).to_owned()
 }
 
 /// Stage a catalogue row for an entity the branch holds none of.
@@ -268,7 +266,7 @@ pub(crate) fn staged_entity_key() -> SelectStatement {
 /// Returns [`SeaQueryError`] when the statement cannot be assembled.
 pub(crate) fn stage_entity(key: i64, entity_id: &Identifier, type_keys: Vec<i32>, now: DateTime<Utc>) -> Result<InsertStatement, SeaQueryError> {
     let mut insert = Query::insert();
-    insert.into_table(temporary(TemporalEntities::Table)).columns(ENTITY_COLUMNS).values([
+    insert.into_table(temporary(Entities::Table)).columns(ENTITY_COLUMNS).values([
         key.into(),
         now.into(),
         now.into(),
@@ -293,8 +291,8 @@ pub(crate) fn staged_streams() -> SelectStatement {
         .to_owned()
 }
 
-/// Stage one stream of the Entity `entity_id` for a grain the branch holds
-/// none of.
+/// Stage one stream of the Entity keyed `entity_key` for a grain the branch
+/// holds none of.
 ///
 /// # Errors
 ///
@@ -302,7 +300,6 @@ pub(crate) fn staged_streams() -> SelectStatement {
 pub(crate) fn stage_stream(
     stream_key: i64,
     entity_key: i64,
-    entity_id: &Identifier,
     attribute_name_key: i32,
     dataset_id: Option<&Identifier>,
 ) -> Result<InsertStatement, SeaQueryError> {
@@ -310,7 +307,6 @@ pub(crate) fn stage_stream(
     insert.into_table(temporary(TemporalAttributeStreams::Table)).columns(STREAM_COLUMNS).values([
         stream_key.into(),
         entity_key.into(),
-        entity_id.as_str().into(),
         attribute_name_key.into(),
         dataset_id.map(|dataset| dataset.as_str().to_owned()).into(),
     ])?;
@@ -358,7 +354,7 @@ mod tests {
         let live = branch_schema(None);
         pretty_assertions::assert_eq!(
             staging_tables(&live)[0],
-            TemporaryCopy::new(Alias::new("temporal_entities"), (Alias::new("public"), Alias::new("temporal_entities")))
+            TemporaryCopy::new(Alias::new("entities"), (Alias::new("public"), Alias::new("entities")))
         );
         let copy = copy_history(None, &vehicle(), CopiedHistory::Whole)
             .expect("the copy builds")
@@ -369,7 +365,7 @@ mod tests {
 
         let snapshot = branch_schema(Some(Alias::new("snap_7").into_iden()));
         pretty_assertions::assert_eq!(
-            staging_tables(&snapshot)[2],
+            staging_tables(&snapshot)[3],
             TemporaryCopy::new(Alias::new("attribute_history"), (Alias::new("snap_7"), Alias::new("attribute_history")))
         );
     }
@@ -408,7 +404,7 @@ mod tests {
             .to_string(PostgresQueryBuilder);
         assert!(copy.contains(r#"FROM "temporal_append_entries" AS "pe""#), "{copy}");
         assert!(copy.contains(r#""pe"."entity_id" = 'urn:ngsi-ld:Vehicle:1'"#), "{copy}");
-        assert!(copy.contains(r#"FROM "public"."temporal_entities" AS "pv""#), "{copy}");
+        assert!(copy.contains(r#"FROM "public"."entities" AS "pv""#), "{copy}");
         let snapshot = Alias::new("snap_7").into_iden();
         let copy = copy_history(Some(&snapshot), &vehicle(), CopiedHistory::Whole)
             .expect("the copy builds")

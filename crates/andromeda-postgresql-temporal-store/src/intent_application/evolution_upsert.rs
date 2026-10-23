@@ -13,11 +13,14 @@ use andromeda_postgresql_query::{
     type_membership::Memberships,
     type_membership_moves::{Member, carried_among, membership_insert},
 };
-use andromeda_postgresql_schema::{queue::TemporalAppendIntents, temporal::TemporalEntities, type_membership::TypeMembershipRelation};
+use andromeda_postgresql_schema::{current::Entities, queue::TemporalAppendIntents, type_membership::MembershipSide};
 use andromeda_postgresql_seaquery::{
     branch::qualified,
+    cast::cast,
     conflict_image::Excluded,
+    literal::text_literal,
     pg_array::{all, array_cat, array_of_subquery, array_position, has_elements},
+    pg_type::PostgresType,
     returning_image::{New, Old},
     unnest::unnest_of,
 };
@@ -55,13 +58,13 @@ pub(crate) struct Created;
 /// `new_types`, a column of `evolved`.
 #[derive(Iden, Clone, Copy)]
 #[iden = "new_types"]
-struct NewTypes;
+pub(crate) struct NewTypes;
 
 /// The types the evolution was recorded under before the statement, null for
 /// one it created, `old_types`, a column of `evolved`.
 #[derive(Iden, Clone, Copy)]
 #[iden = "old_types"]
-struct OldTypes;
+pub(crate) struct OldTypes;
 
 /// The insert of the memberships of the types an evolution gained,
 /// `added_members`, whose only purpose is to run.
@@ -99,8 +102,8 @@ pub(crate) fn with_evolutions(with: &mut WithClause, source: &StagedSource<'_>, 
         CommonTableExpression::new()
             .table_name(Evolved)
             .columns([
-                TemporalEntities::TemporalEntityKey.into_iden(),
-                TemporalEntities::Id.into_iden(),
+                Entities::EntityKey.into_iden(),
+                Entities::Id.into_iden(),
                 Created.into_iden(),
                 NewTypes.into_iden(),
                 OldTypes.into_iden(),
@@ -157,28 +160,29 @@ fn evolutions_statement(source: &StagedSource<'_>, schema: Option<&DynIden>) -> 
         .order_by((I, TemporalAppendIntents::IntentKey), Order::Desc);
     let mut statement = Query::insert();
     statement
-        .into_table(qualified(schema, TemporalEntities::Table))
+        .into_table(qualified(schema, Entities::Table))
         .columns([
-            TemporalEntities::Id,
-            TemporalEntities::CreatedAt,
-            TemporalEntities::ModifiedAt,
-            TemporalEntities::EntityTypeNameKeys,
+            Entities::Id,
+            Entities::EvolutionCreatedAt,
+            Entities::EvolutionModifiedAt,
+            Entities::EvolutionTypeNameKeys,
         ])
         .select_from(select)?
         .on_conflict(
-            OnConflict::column(TemporalEntities::Id)
+            OnConflict::column(Entities::Id)
                 .values([
-                    (TemporalEntities::ModifiedAt, latest_modification()),
-                    (TemporalEntities::EntityTypeNameKeys, merged_types()),
+                    (Entities::EvolutionCreatedAt, first_creation()),
+                    (Entities::EvolutionModifiedAt, latest_modification()),
+                    (Entities::EvolutionTypeNameKeys, merged_types()),
                 ])
                 .to_owned(),
         )
         .returning(Query::returning().exprs([
-            Expr::col((New, TemporalEntities::TemporalEntityKey)),
-            Expr::col((New, TemporalEntities::Id)),
-            Expr::col((Old, TemporalEntities::TemporalEntityKey)).is_null(),
-            Expr::col((New, TemporalEntities::EntityTypeNameKeys)),
-            Expr::col((Old, TemporalEntities::EntityTypeNameKeys)),
+            Expr::col((New, Entities::EntityKey)),
+            Expr::col((New, Entities::Id)),
+            Expr::col((Old, Entities::EvolutionCreatedAt)).is_null(),
+            Expr::col((New, Entities::EvolutionTypeNameKeys)),
+            Expr::col((Old, Entities::EvolutionTypeNameKeys)),
         ]));
     Ok(statement)
 }
@@ -199,7 +203,20 @@ fn stated_types(source: &StagedSource<'_>) -> SelectStatement {
     type_list_union(lists)
 }
 
-/// The later of the stored evolution's `modified_at` and the proposed row's.
+/// The stored evolution's `createdAt`, or the proposed row's for an identity
+/// row that held no Temporal Evolution yet: an Entity whose current state
+/// was written before any history was recorded, or whose Evolution a clause
+/// 5.6.16 deletion removed.
+fn first_creation() -> SimpleExpr {
+    Func::coalesce([
+        Expr::col((Entities::Table, Entities::EvolutionCreatedAt)),
+        Expr::col((Excluded, Entities::EvolutionCreatedAt)),
+    ])
+    .into()
+}
+
+/// The later of the stored evolution's `modified_at` and the proposed row's,
+/// the proposed one alone where the identity row held no evolution.
 ///
 /// Clause 4.8 makes `modifiedAt` the instant the Entity was last modified.
 /// Writers whose history is not applied in entity order (a Temporal API write
@@ -207,17 +224,24 @@ fn stated_types(source: &StagedSource<'_>) -> SelectStatement {
 /// that later instant stays the last modification.
 fn latest_modification() -> SimpleExpr {
     Func::greatest([
-        Expr::col((TemporalEntities::Table, TemporalEntities::ModifiedAt)),
-        Expr::col((Excluded, TemporalEntities::ModifiedAt)),
+        Expr::col((Entities::Table, Entities::EvolutionModifiedAt)),
+        Expr::col((Excluded, Entities::EvolutionModifiedAt)),
     ])
     .into()
 }
 
 /// The types of the stored evolution, then those of the proposed row it
-/// lacks, in the proposed row's order: the list a conflict action leaves.
+/// lacks, in the proposed row's order: the list a conflict action leaves. An
+/// identity row holding no evolution holds no type yet.
 fn merged_types() -> SimpleExpr {
-    let stored = || Expr::col((TemporalEntities::Table, TemporalEntities::EntityTypeNameKeys));
-    let proposed = || Expr::col((Excluded, TemporalEntities::EntityTypeNameKeys));
+    let stored = || -> SimpleExpr {
+        Func::coalesce([
+            Expr::col((Entities::Table, Entities::EvolutionTypeNameKeys)),
+            cast(text_literal("{}"), PostgresType::IntegerArray),
+        ])
+        .into()
+    };
+    let proposed = || Expr::col((Excluded, Entities::EvolutionTypeNameKeys));
     let mut lacking = Query::select();
     lacking
         .column((Added, Added))
@@ -232,20 +256,20 @@ fn merged_types() -> SimpleExpr {
 /// the statement created.
 ///
 /// It reads the types the evolution had and has from the images its upsert
-/// returned, never from `temporal_entities` itself: the row the upsert
+/// returned, never from `entities` itself: the row the upsert
 /// replaced is the one it found after waiting on any concurrent writer, while
 /// the relation read in the same `WITH` is the statement's snapshot. The
 /// upsert only adds types, so no membership row ever leaves.
 fn gained_memberships(schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
     let memberships = Memberships {
-        relation: TypeMembershipRelation::Temporal,
+        side: MembershipSide::Evolution,
         schema,
     };
     let member = Member {
-        key: Expr::col((Evolved, TemporalEntities::TemporalEntityKey)),
-        id: Expr::col((Evolved, TemporalEntities::Id)),
+        key: Expr::col((Evolved, Entities::EntityKey)),
+        id: Expr::col((Evolved, Entities::Id)),
     };
-    let gained = Expr::col((Evolved, Created)).or(carried_among(Expr::col((Evolved, OldTypes)), memberships).not());
+    let gained = Expr::col((Evolved, Created)).or(carried_among(Expr::col((Evolved, OldTypes))).not());
     membership_insert(
         memberships,
         Query::select().from(Evolved).take(),

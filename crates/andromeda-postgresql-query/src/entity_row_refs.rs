@@ -107,7 +107,14 @@ impl EntityRowRefs {
     pub fn identity_column(&self, column: Entities) -> SimpleExpr {
         let relation = match column {
             Entities::EntityKey | Entities::Id => &self.keys,
-            Entities::Table | Entities::CreatedAt | Entities::ExpiresAt | Entities::MinAttributeExpiresAt | Entities::ModifiedAt => &self.identity,
+            Entities::Table
+            | Entities::CreatedAt
+            | Entities::ExpiresAt
+            | Entities::MinAttributeExpiresAt
+            | Entities::ModifiedAt
+            | Entities::EvolutionCreatedAt
+            | Entities::EvolutionModifiedAt
+            | Entities::EvolutionTypeNameKeys => &self.identity,
         };
         Expr::col((relation.clone(), column.into_iden()))
     }

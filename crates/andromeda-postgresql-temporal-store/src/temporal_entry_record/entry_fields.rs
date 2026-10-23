@@ -29,6 +29,7 @@ use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::value::RawValue;
 use sqlx::types::Json;
+use std::borrow::Cow;
 
 /// The fields that name the stream an entry extends, or none for a Scope.
 pub(super) struct Grain {
@@ -95,6 +96,10 @@ pub(super) struct ValueColumns {
     value_number: Option<BigDecimal>,
     /// `value_string`.
     value_string: Option<String>,
+    /// `value_language`.
+    value_language: Option<String>,
+    /// `value_datatype_key`.
+    value_datatype_key: Option<i32>,
     /// `value_geometry`.
     value_geometry: Option<EwkbGeometry>,
     /// `value_geometry_members`.
@@ -107,28 +112,22 @@ pub(super) struct ValueColumns {
 
 impl ValueColumns {
     /// The fields an attribute value is stored in.
-    pub(super) fn of_attribute(value: AttributeHistoryValue) -> Result<ValueColumns, TemporalStoreError> {
-        let mut columns = ValueColumns {
+    pub(super) fn of_attribute(value: &AttributeHistoryValue) -> Result<ValueColumns, TemporalStoreError> {
+        Ok(ValueColumns {
             value_kind: ValueKind::code(value.kind()),
-            ..ValueColumns::default()
-        };
-        match value {
-            AttributeHistoryValue::Tombstone { deleted_at } => columns.deleted_at = Some(deleted_at),
-            // clone: the field owns the decimal it binds, and the number gives up none.
-            AttributeHistoryValue::Number(number) => columns.value_number = Some(number.decimal().clone()),
-            AttributeHistoryValue::String(text) => columns.value_string = Some(text),
-            AttributeHistoryValue::Boolean(flag) => columns.value_boolean = Some(flag),
-            AttributeHistoryValue::Geometry { form, members } => {
-                columns.value_geometry = Some(EwkbGeometry::of(&form)?);
-                columns.value_geometry_members = members.map(Json);
-            }
-            AttributeHistoryValue::Object(object) => columns.value_object = Some(Json(object)),
-            AttributeHistoryValue::DateTime(instant) => columns.value_date_time = Some(instant),
-            AttributeHistoryValue::Date(date) => columns.value_string = Some(date.to_string()),
-            AttributeHistoryValue::Time(time) => columns.value_string = Some(time.to_string()),
-            AttributeHistoryValue::Uri(uri) => columns.value_uri = Some(String::from(uri)),
-        }
-        Ok(columns)
+            deleted_at: value.deleted_at(),
+            value_date_time: value.date_time(),
+            value_boolean: value.boolean(),
+            // clone: the field owns the decimal it binds, and the value gives up none.
+            value_number: value.number().cloned(),
+            value_string: value.string().map(Cow::into_owned),
+            value_language: value.language().map(|language| language.as_str().to_owned()),
+            value_datatype_key: value.datatype_key(),
+            value_geometry: value.geometry().map(EwkbGeometry::of).transpose()?,
+            value_geometry_members: value.geometry_members().map(|members| Json(members.to_owned())),
+            value_object: value.object().map(|object| Json(object.to_owned())),
+            value_uri: value.uri().map(|uri| String::from(uri.as_str())),
+        })
     }
 
     /// The fields a Scope entry's value is stored in: its `scope_history`
@@ -213,6 +212,8 @@ pub(super) fn record(grain: Grain, value: ValueColumns, members: MemberColumns, 
         value_boolean,
         value_number,
         value_string,
+        value_language,
+        value_datatype_key,
         value_geometry,
         value_geometry_members,
         value_object,
@@ -240,11 +241,13 @@ pub(super) fn record(grain: Grain, value: ValueColumns, members: MemberColumns, 
         expires_at,
         generated_instance_id: None,
         value_type_key,
+        value_datatype_key,
         unit_code_id,
         value_boolean,
         verbatim_instance_id: None,
         value_number,
         value_string,
+        value_language,
         value_geometry,
         value_geometry_members,
         value_object,

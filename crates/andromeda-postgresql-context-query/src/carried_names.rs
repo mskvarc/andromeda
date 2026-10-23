@@ -14,7 +14,6 @@ use andromeda_postgresql_schema::current::EntitySearch;
 use andromeda_postgresql_seaquery::{
     literal::false_literal,
     operator::{array_contained_by_keys, array_contains_key},
-    pg_array::has_elements,
 };
 use sea_query::{Condition, ExprTrait};
 
@@ -63,7 +62,7 @@ pub(crate) fn projected_member_condition(projected: &ProjectedMembers, names: &Q
         }
     };
     Some(match scope {
-        ScopeRetention::Kept => Condition::any().add(attribute).add(has_elements(rows.search_column(EntitySearch::ScopePaths))),
+        ScopeRetention::Kept => Condition::any().add(attribute).add(rows.search_column(EntitySearch::ScopePaths).is_not_null()),
         ScopeRetention::Removed => attribute,
     })
 }

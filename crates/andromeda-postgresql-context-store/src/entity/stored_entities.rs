@@ -64,9 +64,11 @@ impl StoredHead {
     /// Returns [`ContextStoreError`] when a column does not decode, or when the
     /// key, the identifier or a Scope does not read back.
     pub fn of(row: &PgRow) -> Result<StoredHead, ContextStoreError> {
-        let written: Vec<String> = row.try_get(EntityHead::VerbatimScopePaths.unquoted())?;
+        // An entity without a Scope stores NULL rather than an empty list.
+        let written: Option<Vec<String>> = row.try_get(EntityHead::VerbatimScopePaths.unquoted())?;
         let paths = written
             .into_iter()
+            .flatten()
             .map(ScopePath::try_from)
             .collect::<Result<Vec<_>, _>>()
             .map_err(StoredEntityError::Scope)?;

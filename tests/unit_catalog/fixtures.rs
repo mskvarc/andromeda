@@ -1,8 +1,9 @@
 //! Entity bodies and persistence lookups shared by the unit-catalogue suite.
 
 use andromeda_postgresql_schema::{
+    current::Entities,
     name_dictionary::AttributeNames,
-    temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
+    temporal::{AttributeHistory, TemporalAttributeStreams},
 };
 use andromeda_postgresql_seaquery::{pg_array::cardinality, statement::Statement};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
@@ -70,16 +71,15 @@ fn attribute_history_of(entity_id: &str, attribute_iri: &str) -> SelectStatement
             Expr::col((TemporalAttributeStreams::Table, TemporalAttributeStreams::StreamKey)).equals((AttributeHistory::Table, AttributeHistory::StreamKey)),
         )
         .inner_join(
-            TemporalEntities::Table,
-            Expr::col((TemporalEntities::Table, TemporalEntities::TemporalEntityKey))
-                .equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::TemporalEntityKey)),
+            Entities::Table,
+            Expr::col((Entities::Table, Entities::EntityKey)).equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::EntityKey)),
         )
         .inner_join(
             AttributeNames::Table,
             Expr::col((AttributeNames::Table, AttributeNames::AttributeNameKey))
                 .equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::AttributeNameKey)),
         )
-        .and_where(Expr::col((TemporalEntities::Table, TemporalEntities::Id)).eq(entity_id))
+        .and_where(Expr::col((Entities::Table, Entities::Id)).eq(entity_id))
         .and_where(Expr::col((AttributeNames::Table, AttributeNames::Name)).eq(attribute_iri))
         .order_by((AttributeHistory::Table, AttributeHistory::RecordedAt), Order::Asc)
         .order_by((AttributeHistory::Table, AttributeHistory::WriteOrdinal), Order::Asc)

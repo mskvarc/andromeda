@@ -32,6 +32,7 @@ pub mod dataset_predicate;
 pub mod dictionary;
 pub mod entity_ordering;
 pub mod entity_row_refs;
+pub mod entity_sides;
 pub mod entity_type_name_key;
 pub mod error;
 pub mod geo_predicate;

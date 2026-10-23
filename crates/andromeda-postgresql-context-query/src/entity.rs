@@ -368,6 +368,7 @@ mod tests {
                     EntityTypeNameKey::from(key),
                 )
             })),
+            ..QueryNames::default()
         }
     }
 
@@ -376,6 +377,7 @@ mod tests {
         QueryNames {
             attributes,
             types: ResolvedNames::default(),
+            ..QueryNames::default()
         }
     }
 
@@ -426,7 +428,7 @@ mod tests {
             concat!(
                 r#"SELECT "stored"."entity_key", "stored"."id", "stored"."entity_created_at", "stored"."entity_modified_at", "stored"."entity_expires_at", "#,
                 r#""stored"."entity_type_name_keys", "stored"."verbatim_scope_paths" "#,
-                r#"FROM (SELECT "entities"."entity_key", "entities"."id" AS "sort_0" FROM "entities" WHERE TRUE "#,
+                r#"FROM (SELECT "entities"."entity_key", "entities"."id" AS "sort_0" FROM "entities" WHERE "entities"."created_at" IS NOT NULL "#,
                 r#"ORDER BY "sort_0" ASC LIMIT $1 OFFSET $2) AS "page" "#,
                 r#"INNER JOIN LATERAL (SELECT "e"."entity_key" AS "entity_key", "e"."id" AS "id", "e"."created_at" AS "entity_created_at", "#,
                 r#""e"."modified_at" AS "entity_modified_at", "e"."expires_at" AS "entity_expires_at", "#,
@@ -447,7 +449,9 @@ mod tests {
         q.selection.q_expr = Some(parser::parse("\"https://example.com/temperature\">1").expect("valid q"));
         let built = build(&q, &temperature_is_known());
         assert!(
-            built.sql.contains(r#"FROM "entities" WHERE EXISTS(SELECT 1 FROM "current_attributes" AS "ca""#),
+            built
+                .sql
+                .contains(r#"FROM "entities" WHERE "entities"."created_at" IS NOT NULL AND EXISTS(SELECT 1 FROM "current_attributes" AS "ca""#),
             "{}",
             built.sql
         );
@@ -495,6 +499,7 @@ mod tests {
         let names = QueryNames {
             attributes: ResolvedNames::from_pairs([("https://example.com/speed".parse().expect("valid attribute name"), AttributeNameKey::from(11))]),
             types: ResolvedNames::default(),
+            ..QueryNames::default()
         };
         let built = build(&q, &names);
         assert!(built.sql.contains(r#"JOIN "entity_search" ON"#), "{}", built.sql);
@@ -579,7 +584,11 @@ mod tests {
             "{}",
             built.sql
         );
-        assert!(!built.sql.contains("cardinality"), "the omitted scope keeps no entity: {}", built.sql);
+        assert!(
+            !built.sql.contains(r#""scope_paths" IS NOT NULL"#),
+            "the omitted scope keeps no entity: {}",
+            built.sql
+        );
     }
 
     /// A projection that keeps `scope` keeps an entity through its scope paths.
@@ -587,7 +596,7 @@ mod tests {
     fn a_pick_of_scope_selects_the_scoped_entities() {
         let q = projected(&Projection::builder().pick(vec![ProjectionTerm::Scope]).build());
         let built = build_counted(&q, &speed_and_scope_are_known());
-        assert!(built.sql.contains(r#"cardinality("entity_search"."scope_paths") > "#), "{}", built.sql);
+        assert!(built.sql.contains(r#""entity_search"."scope_paths" IS NOT NULL"#), "{}", built.sql);
     }
 
     /// Every entity has an `id`, so a projection keeping it selects them all.
@@ -703,7 +712,7 @@ mod tests {
         assert!(
             built.sql.contains(concat!(
                 r#"FROM (SELECT "selected"."entity_key", "selected"."id" AS "sort_0" "#,
-                r#"FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1)) AS "selected" "#,
+                r#"FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1) AND "is_current_member") AS "selected" "#,
                 r#"WHERE TRUE ORDER BY "sort_0" ASC LIMIT"#
             )),
             "{}",
@@ -749,7 +758,7 @@ mod tests {
         let count = build_counted(&q, &known_types()).count_sql.expect("count requested");
         assert_eq!(
             count,
-            r#"SELECT COUNT(*) FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1)) AS "selected" WHERE TRUE"#
+            r#"SELECT COUNT(*) FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1) AND "is_current_member") AS "selected" WHERE TRUE"#
         );
     }
 
@@ -787,21 +796,23 @@ mod tests {
         let built = build(&q, &known_types());
         assert!(built.sql.contains(r#"SELECT DISTINCT ON ("typed"."id")"#), "the ranges merge: {}", built.sql);
         assert!(
-            built.sql.contains(r#"WHERE "entity_type_name_key" = (2)) AS "candidate""#),
+            built
+                .sql
+                .contains(r#"WHERE "entity_type_name_key" = (2) AND "is_current_member") AS "candidate""#),
             "the conjunction walks Home: {}",
             built.sql
         );
         assert!(
             built
                 .sql
-                .contains(r#""type_member"."entity_type_name_key" = (1) AND "type_member"."id" = "candidate"."id""#),
+                .contains(r#""type_member"."entity_type_name_key" = (1) AND "type_member"."id" = "candidate"."id" AND "type_member"."is_current_member""#),
             "and narrows it to the Entities that are also a Vehicle: {}",
             built.sql
         );
         assert!(
             built
                 .sql
-                .contains(r#"UNION ALL (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (3))"#),
+                .contains(r#"UNION ALL (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (3) AND "is_current_member")"#),
             "the Motorhome range merges in: {}",
             built.sql
         );
@@ -1137,9 +1148,9 @@ mod tests {
     }
 
     /// Clause 4.23.2 ranks "Attribute does not exist" last, and an unscoped
-    /// entity stores an empty scope path array.
+    /// entity stores no scope path array.
     #[test]
-    fn ordering_by_scope_reads_an_empty_scope_as_absent_and_ranks_it_last() {
+    fn ordering_by_scope_ranks_an_unscoped_entity_last() {
         for (direction, spelled) in [(OrderDirection::Asc, "ASC"), (OrderDirection::Desc, "DESC")] {
             let mut q = empty_query();
             q.ordering.terms = vec![CompiledOrderTerm {
@@ -1148,11 +1159,7 @@ mod tests {
                 collation: None,
             }];
             let built = build(&q, &known_types());
-            assert!(
-                built.sql.contains(r#"nullif("entity_search"."scope_paths", '{}') AS "sort_0""#),
-                "{}",
-                built.sql
-            );
+            assert!(built.sql.contains(r#""entity_search"."scope_paths" AS "sort_0""#), "{}", built.sql);
             assert!(built.sql.contains(&format!(r#"ORDER BY "sort_0" {spelled} NULLS LAST"#)), "{}", built.sql);
         }
     }

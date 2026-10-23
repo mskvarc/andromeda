@@ -28,10 +28,6 @@ use andromeda_postgresql_seaquery::{
 };
 use sea_query::{Condition, Expr as SeaExpr, SimpleExpr};
 
-/// The collation the stored String columns are declared under, so a string read
-/// out of a map orders exactly as one read from `value_string` does.
-const BYTE_ORDER: &str = "C";
-
 /// Whether a string can compare with an operand at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StringComparability {
@@ -112,7 +108,9 @@ fn string_comparison(text: SimpleExpr, op: CmpOp, scalar: &Scalar) -> SimpleExpr
         Scalar::Str(value) | Scalar::Uri(value) => value,
         Scalar::Number(_) | Scalar::Bool(_) | Scalar::Date(_) | Scalar::Time(_) | Scalar::DateTime(_) => return false_literal(),
     };
-    let collation = string_ordering_collation(scalar, op).unwrap_or_else(|| PostgresCollation::new(BYTE_ORDER));
+    // The collation the stored String columns are declared under, so a string
+    // read out of a map orders exactly as one read from `value_string` does.
+    let collation = string_ordering_collation(scalar, op).unwrap_or_else(PostgresCollation::byte_order);
     compare(collate(text, &collation), op, SeaExpr::val(value.as_str()))
 }
 

@@ -39,11 +39,12 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
+    clock::now,
     external_arguments::{ExternalArguments, ExternallyBound},
     unnest::UnnestAliased,
 };
 use andromeda_telemetry::statement::{StatementName, observe_statement};
-use sea_query::{CommonTableExpression, Expr, IntoIden, OnConflict, Query, WithClause, WithQuery};
+use sea_query::{CommonTableExpression, Expr, ExprTrait, IntoIden, OnConflict, Query, WithClause, WithQuery};
 use sqlx::{Postgres, Transaction};
 
 /// The statement name the entity set-insert is observed under.
@@ -54,15 +55,17 @@ const ENTITY_INSERT: StatementName = StatementName("entity-insert");
 ///
 /// ```sql
 /// WITH proj AS (SELECT … FROM UNNEST($1::text[], …, $11::timestamptz[]) AS d(…)),
-///      ins AS (INSERT INTO entities (id, expires_at, min_attribute_expires_at)
-///              SELECT … FROM proj ON CONFLICT (id) DO NOTHING RETURNING entity_key, id),
+///      ins AS (INSERT INTO entities (id, created_at, modified_at, expires_at, min_attribute_expires_at)
+///              SELECT … FROM proj ON CONFLICT (id) DO UPDATE SET created_at = excluded.created_at, …
+///              WHERE entities.created_at IS NULL RETURNING entity_key, id),
 ///      srch(entity_key, new_types, new_instance_names, new_instance_kinds) AS
 ///              (INSERT INTO entity_search (…)
 ///               SELECT ins.entity_key, … FROM ins JOIN proj ON proj.id = ins.id
 ///               RETURNING entity_key, entity_type_name_keys, attribute_instance_name_keys, attribute_instance_kinds),
-///      mbrs AS (INSERT INTO entity_type_members (entity_key, entity_type_name_key, id)
-///               SELECT ins.entity_key, carried.entity_type_name_key, ins.id FROM ins JOIN proj ON proj.id = ins.id
-///               INNER JOIN LATERAL (SELECT UNNEST(proj.entity_type_name_keys) …) AS carried ON TRUE),
+///      mbrs AS (INSERT INTO entity_type_members (entity_key, entity_type_name_key, id, is_current_member, is_evolution_member)
+///               SELECT ins.entity_key, carried.entity_type_name_key, ins.id, TRUE, FALSE FROM ins JOIN proj ON proj.id = ins.id
+///               INNER JOIN LATERAL (SELECT UNNEST(proj.entity_type_name_keys) …) AS carried ON TRUE
+///               ON CONFLICT (entity_type_name_key, id) DO UPDATE SET is_current_member = TRUE),
 ///      instances AS (SELECT r.id, r.attribute_name_key, … FROM UNNEST($12::text[], …) AS r(…)),
 ///      attrs AS (INSERT INTO current_attributes (entity_key, …)
 ///                SELECT ins.entity_key, instances.… FROM ins JOIN instances ON instances.id = ins.id),
@@ -73,15 +76,21 @@ const ENTITY_INSERT: StatementName = StatementName("entity-insert");
 /// ```
 ///
 /// The conflict clause on `entities` is how a duplicate create is detected:
-/// the identifier simply does not come back, and the caller answers 409 off
-/// that (NGSI-LD 6.4.3.1). Suppressing the conflict rather than raising a
-/// duplicate-key error is what lets one statement serve a batch that is
-/// permitted to succeed partially (clause 5.6.7) and the idempotent
-/// placeholder the Temporal API needs, without three different statements. The
-/// child inserts read the keys the identity insert returned, so an entity that
-/// already existed lands in no relation at all -- and, because the census reads
-/// only the search rows the statement returned, is counted by no census ledger
-/// either.
+/// an Entity with a current state is left alone, its identifier does not come
+/// back, and the caller answers 409 off that (NGSI-LD 6.4.3.1). Suppressing the
+/// conflict rather than raising a duplicate-key error is what lets one
+/// statement serve a batch that is permitted to succeed partially (clause
+/// 5.6.7). The child inserts read the keys the identity insert returned, so an
+/// entity that already existed lands in no relation at all -- and, because the
+/// census reads only the search rows the statement returned, is counted by no
+/// census ledger either.
+///
+/// An identity row without a current state is the Temporal Evolution of an
+/// Entity a core deletion removed (clause 5.6.6) or the Temporal API created.
+/// Clause 5.6.1 creates the Entity anew under the same identifier, so the
+/// conflict action gives that row its current state and returns it: its
+/// Temporal Evolution continues under the same key, and its type memberships
+/// gain the current flag.
 ///
 /// Every attribute instance is one row, whatever the nesting of its
 /// sub-attributes, so one insert lands every instance of every entity, paired
@@ -102,19 +111,27 @@ pub(super) fn entity_insert_statement<'entities>(
     let instance_arrays = rows.into_arrays(&mut external);
 
     let mut identity = Query::insert();
+    let current_state = [Entities::CreatedAt, Entities::ModifiedAt, Entities::ExpiresAt, Entities::MinAttributeExpiresAt];
     identity
         .into_table(table_of(target, Entities::Table))
-        .columns([Entities::Id, Entities::ExpiresAt, Entities::MinAttributeExpiresAt])
+        .columns([Entities::Id].into_iter().chain(current_state))
         .select_from(
             Query::select()
                 .expr(projected(Entities::Id))
+                .expr(now())
+                .expr(now())
                 .expr(projected(Entities::ExpiresAt))
                 .expr(projected(Entities::MinAttributeExpiresAt))
                 .from(Proj)
                 .take(),
         )?;
     identity
-        .on_conflict(OnConflict::column(Entities::Id).do_nothing().to_owned())
+        .on_conflict(
+            OnConflict::column(Entities::Id)
+                .update_columns(current_state)
+                .action_and_where(Expr::col((Entities::Table, Entities::CreatedAt)).is_null())
+                .to_owned(),
+        )
         .returning(Query::returning().columns([Entities::EntityKey, Entities::Id]));
 
     let mut search = Query::insert();
@@ -287,7 +304,7 @@ mod tests {
         let sql = insert();
         assert!(sql.starts_with(r#"WITH "proj" AS ("#), "{sql}");
         assert!(
-            sql.contains(r#""ins" AS (INSERT INTO "entities" ("id", "expires_at", "min_attribute_expires_at")"#),
+            sql.contains(r#""ins" AS (INSERT INTO "entities" ("id", "created_at", "modified_at", "expires_at", "min_attribute_expires_at")"#),
             "{sql}"
         );
         assert!(sql.contains(r#""srch" ("entity_key", "new_types", "new_instance_names", "new_instance_kinds") AS (INSERT INTO "entity_search" ("entity_key", "location_expires_at", "entity_type_name_keys", "attribute_name_keys", "attribute_instance_name_keys", "attribute_instance_kinds", "scope_paths", "verbatim_scope_paths", "location")"#), "{sql}");
@@ -316,7 +333,8 @@ mod tests {
 
     /// The integer arrays are cast from their array literals, which the array
     /// type's input function reads at once; the scopes expand from their JSON
-    /// arrays, once as label paths and once as written.
+    /// arrays, once as label paths and once as written, and stay NULL for an
+    /// entity without a Scope.
     #[test]
     fn the_insert_casts_the_key_literals_and_expands_the_scope_arrays() {
         let sql = insert();
@@ -329,11 +347,11 @@ mod tests {
             assert!(sql.contains(&format!(r#""d"."{literal}"::{element}[] AS "{column}""#)), "{column}: {sql}");
         }
         assert!(
-            sql.contains(r#"ARRAY (SELECT jsonb_array_elements_text("d"."scope_paths_json")::ltree) AS "scope_paths""#),
+            sql.contains(r#"(CASE WHEN ("d"."scope_paths_json" IS NOT NULL) THEN ARRAY (SELECT jsonb_array_elements_text("d"."scope_paths_json")::ltree) ELSE NULL END) AS "scope_paths""#),
             "{sql}"
         );
         assert!(
-            sql.contains(r#"ARRAY (SELECT jsonb_array_elements_text("d"."verbatim_scope_paths_json")::text) AS "verbatim_scope_paths""#),
+            sql.contains(r#"(CASE WHEN ("d"."verbatim_scope_paths_json" IS NOT NULL) THEN ARRAY (SELECT jsonb_array_elements_text("d"."verbatim_scope_paths_json")::text) ELSE NULL END) AS "verbatim_scope_paths""#),
             "{sql}"
         );
         assert!(sql.contains(r#""r"."object_type_keys"::integer[] AS "object_type_keys""#), "{sql}");
@@ -348,14 +366,23 @@ mod tests {
         assert!(!sql.contains("ST_SetSRID"), "{sql}");
     }
 
-    /// The entity's own `createdAt` and `modifiedAt` default to the
-    /// transaction's instant; only the instance rows carry stamped times.
+    /// The entity's own `createdAt` and `modifiedAt` are the transaction's
+    /// instant. An identity row holding a current state is left alone, and
+    /// one holding the Temporal Evolution alone (clause 5.6.6 deleted its
+    /// current state) is given one and returned, so clause 5.6.1 creates the
+    /// Entity anew under the same key.
     #[test]
-    fn the_insert_keeps_its_conflict_clause_and_writes_no_entity_version_token() {
+    fn the_insert_keeps_its_conflict_clause_and_revives_an_evolution_alone() {
         let sql = insert();
-        assert!(sql.contains(r#"ON CONFLICT ("id") DO NOTHING RETURNING "entity_key", "id""#), "{sql}");
-        let identity = sql.split(r#""srch""#).next().unwrap_or_default();
-        assert!(!identity.contains("modified_at"), "the token defaults in the database: {identity}");
+        assert!(
+            sql.contains(concat!(
+                r#"SELECT "proj"."id", NOW(), NOW(), "proj"."expires_at", "proj"."min_attribute_expires_at" FROM "proj" "#,
+                r#"ON CONFLICT ("id") DO UPDATE SET "created_at" = "excluded"."created_at", "modified_at" = "excluded"."modified_at", "#,
+                r#""expires_at" = "excluded"."expires_at", "min_attribute_expires_at" = "excluded"."min_attribute_expires_at" "#,
+                r#"WHERE "entities"."created_at" IS NULL RETURNING "entity_key", "id""#
+            )),
+            "{sql}"
+        );
         assert!(!sql.contains("location_geography"), "the geography is generated: {sql}");
     }
 
@@ -375,7 +402,9 @@ mod tests {
     fn a_create_lands_its_type_memberships_in_the_same_statement() {
         let sql = insert();
         assert!(
-            sql.contains(r#""mbrs" AS (INSERT INTO "entity_type_members" ("entity_key", "entity_type_name_key", "id")"#),
+            sql.contains(
+                r#""mbrs" AS (INSERT INTO "entity_type_members" ("entity_key", "entity_type_name_key", "id", "is_current_member", "is_evolution_member")"#
+            ),
             "{sql}"
         );
     }

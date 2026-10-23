@@ -1,25 +1,10 @@
-//! The relations that record write identity and deferred work.
+//! The relations that hold deferred work.
 //!
-//! `write_records` is one write's idempotency bookkeeping row, persisted once
-//! per write so a replay reuses the original `recorded_at` instant that the
-//! hypertable rows deduplicate on. `pending_side_effects` is the durable queue
+//! `pending_side_effects` is the durable queue
 //! of deferred batch jobs a committing write enqueues, drained at-least-once by
 //! workers that lease rows under a time-bounded claim.
 
 use sea_query::Iden;
-
-/// The `write_records` table - one idempotency record per write.
-#[derive(Iden, Clone, Copy)]
-pub enum WriteRecords {
-    /// Table name: `write_records`
-    Table,
-    /// Write identity (primary key)
-    WriteId,
-    /// Instant the write's effects are stamped with, reused on replay
-    RecordedAt,
-    /// Instant the broker accepted the write, moved on each replay
-    AcceptedAt,
-}
 
 /// The `pending_side_effects` table - the durable deferred-job queue.
 #[derive(Iden, Clone, Copy)]
@@ -114,7 +99,7 @@ pub enum TemporalAppendEntries {
 
 #[cfg(test)]
 mod tests {
-    use crate::queue::{PendingSideEffects, TemporalAppendEntries, TemporalAppendIntents, WriteRecords};
+    use crate::queue::{PendingSideEffects, TemporalAppendEntries, TemporalAppendIntents};
     use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
@@ -145,14 +130,6 @@ mod tests {
         assert_eq!(TemporalAppendEntries::RecordedAt.to_string(), "recorded_at");
         assert_eq!(TemporalAppendEntries::WriteId.to_string(), "write_id");
         assert_eq!(TemporalAppendEntries::WriteOrdinal.to_string(), "write_ordinal");
-    }
-
-    #[test]
-    fn write_records_table_and_columns() {
-        assert_eq!(WriteRecords::Table.to_string(), "write_records");
-        assert_eq!(WriteRecords::WriteId.to_string(), "write_id");
-        assert_eq!(WriteRecords::RecordedAt.to_string(), "recorded_at");
-        assert_eq!(WriteRecords::AcceptedAt.to_string(), "accepted_at");
     }
 
     #[test]

@@ -22,7 +22,7 @@ use andromeda_postgresql_query::{
     history_source::{HistoryBranch, PendingEntries},
     scope_predicate::{ScopeTarget, pattern_condition},
 };
-use andromeda_postgresql_schema::temporal::{ScopeHistory, TemporalEntities};
+use andromeda_postgresql_schema::{current::Entities, temporal::ScopeHistory};
 use andromeda_postgresql_seaquery::branch::qualified;
 use sea_query::{Condition, Expr, ExprTrait, JoinType, Query, SelectStatement, UnionType};
 
@@ -65,13 +65,13 @@ fn recorded_scope_matches(branch: &HistoryBranch, scope_q: &ScopeQuery) -> Selec
     matches.from(qualified(branch.schema(), ScopeHistory::Table));
     match branch.pending() {
         PendingEntries::Absent => {
-            matches.column((ScopeHistory::Table, ScopeHistory::TemporalEntityKey));
+            matches.column((ScopeHistory::Table, ScopeHistory::EntityKey));
         }
         PendingEntries::Unioned => {
-            matches.column((TemporalEntities::Table, TemporalEntities::Id)).join(
+            matches.column((Entities::Table, Entities::Id)).join(
                 JoinType::Join,
-                qualified(branch.schema(), TemporalEntities::Table),
-                Expr::col((TemporalEntities::Table, TemporalEntities::TemporalEntityKey)).equals((ScopeHistory::Table, ScopeHistory::TemporalEntityKey)),
+                qualified(branch.schema(), Entities::Table),
+                Expr::col((Entities::Table, Entities::EntityKey)).equals((ScopeHistory::Table, ScopeHistory::EntityKey)),
             );
         }
     }
@@ -133,7 +133,7 @@ mod tests {
         let candidates = PageBranches::of(&sql).candidates;
         assert!(
             candidates.starts_with(concat!(
-                r#"SELECT "scope_history"."temporal_entity_key" FROM "scope_history" WHERE "scope_history"."value_kind" = 1 AND "#,
+                r#"SELECT "scope_history"."entity_key" FROM "scope_history" WHERE "scope_history"."value_kind" = 1 AND "#,
                 r#"("scope_history"."scope_path" ~ ("#
             )),
             "{candidates}"
@@ -237,8 +237,8 @@ mod tests {
         let branches = PageBranches::of(&sql);
         assert!(
             branches.candidates.starts_with(concat!(
-                r#"SELECT "temporal_entities"."id" FROM "scope_history""#,
-                r#" JOIN "temporal_entities" ON "temporal_entities"."temporal_entity_key" = "scope_history"."temporal_entity_key""#,
+                r#"SELECT "entities"."id" FROM "scope_history""#,
+                r#" JOIN "entities" ON "entities"."entity_key" = "scope_history"."entity_key""#,
                 r#" WHERE "scope_history"."value_kind" = 1 AND "#
             )),
             "{}",
@@ -281,8 +281,8 @@ mod tests {
         let branches = PageBranches::of(&recorded);
         assert!(
             branches.candidates.ends_with(concat!(
-                r#" UNION ALL (SELECT "temporal_entities"."temporal_entity_key" FROM "temporal_entities""#,
-                r#" WHERE "temporal_entities"."id" = ANY(ARRAY ['urn:ngsi-ld:Sensor:000009']))"#
+                r#" UNION ALL (SELECT "entities"."entity_key" FROM "entities""#,
+                r#" WHERE "entities"."id" = ANY(ARRAY ['urn:ngsi-ld:Sensor:000009']) AND "entities"."evolution_created_at" IS NOT NULL)"#
             )),
             "{}",
             branches.candidates
@@ -297,8 +297,8 @@ mod tests {
             .to_string(PostgresQueryBuilder);
         assert!(
             PageBranches::of(&queued).candidates.contains(concat!(
-                r#" UNION ALL (SELECT "temporal_entities"."id" FROM "temporal_entities""#,
-                r#" WHERE "temporal_entities"."id" = ANY(ARRAY ['urn:ngsi-ld:Sensor:000009']))"#
+                r#" UNION ALL (SELECT "entities"."id" FROM "entities""#,
+                r#" WHERE "entities"."id" = ANY(ARRAY ['urn:ngsi-ld:Sensor:000009']) AND "entities"."evolution_created_at" IS NOT NULL)"#
             )),
             "{queued}"
         );
@@ -310,16 +310,14 @@ mod tests {
         assert_eq!(stage1.count_planning, StatementPlanning::BoundValues);
         let (sql, values) = stage1.count.expect("count requested").build(PostgresQueryBuilder);
         assert!(
-            sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED (SELECT "scope_history"."temporal_entity_key" FROM"#),
+            sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED (SELECT "scope_history"."entity_key" FROM"#),
             "{sql}"
         );
         assert!(values.0.contains(&Value::BigUnsigned(Some(10_001))), "{:?}", values.0);
         assert!(values.0.contains(&Value::BigUnsigned(Some(10_000))), "{:?}", values.0);
         let parts = CountParts::of(&sql);
         assert!(
-            parts
-                .indexed
-                .contains(r#""temporal_entity_key" IN (SELECT "temporal_entity_key" FROM "candidates")"#),
+            parts.indexed.contains(r#""entity_key" IN (SELECT "entity_key" FROM "candidates")"#),
             "{}",
             parts.indexed
         );

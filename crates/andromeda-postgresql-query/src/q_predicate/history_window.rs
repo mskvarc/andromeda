@@ -609,7 +609,7 @@ mod tests {
             .branch(HistoryBranch::live_recorded())
             .of(HistoryOf::Evolution(EvolutionColumns {
                 id: Expr::col((Alias::new("e"), Alias::new("id"))),
-                key: Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))),
+                key: Expr::col((Alias::new("e"), Alias::new("entity_key"))),
             }))
             .axis(AttributeHistory::ObservedAt)
             .interval(after_2019())
@@ -618,12 +618,12 @@ mod tests {
         let sql = render(window.exists(AttributeNameKey::from(7), above_100(), &HistoryAliases::top_level()));
         for alias in ["qh", "qs"] {
             assert!(
-                sql.contains(&format!(r#""rs"."temporal_entity_key" = "e"."temporal_entity_key") AS "{alias}""#)),
+                sql.contains(&format!(r#""rs"."entity_key" = "e"."entity_key") AS "{alias}""#)),
                 "{alias}: {sql}"
             );
         }
-        assert!(sql.contains(r#""qs"."temporal_entity_key" AS "temporal_entity_key""#), "{sql}");
-        assert!(!sql.contains("temporal_entities") && !sql.contains("entity_id"), "{sql}");
+        assert!(sql.contains(r#""qs"."entity_key" AS "entity_key""#), "{sql}");
+        assert!(!sql.contains("entities") && !sql.contains("entity_id"), "{sql}");
     }
 
     /// A Snapshot reads its own branch: every history relation of both probes,

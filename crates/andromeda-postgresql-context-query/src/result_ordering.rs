@@ -31,10 +31,7 @@ use andromeda_postgresql_query::{
     sort_key::{KeyOrder, NullPlacement, SortKey},
 };
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
-use andromeda_postgresql_seaquery::{
-    collation::{PostgresCollation, collate},
-    pg_array::elements_or_null,
-};
+use andromeda_postgresql_seaquery::collation::{PostgresCollation, collate};
 use sea_query::{Expr as SeaExpr, JoinType, SelectStatement, SimpleExpr};
 
 /// The sort keys of the result order, in the order they decide; the
@@ -75,12 +72,9 @@ pub fn sort_keys(
                 keys.push(SortKey::new(collate(names, &collation), nulls_last(direction)));
             }
             // The scope path column is an `ltree[]`, which no client collation
-            // applies to. An unscoped entity stores an empty array, which is the
-            // clause 4.23.2 "Attribute does not exist" and so ranks last.
-            OrderTarget::Scope => keys.push(SortKey::new(
-                elements_or_null(rows.search_column(EntitySearch::ScopePaths)),
-                nulls_last(direction),
-            )),
+            // applies to. An unscoped entity stores NULL, which is the clause
+            // 4.23.2 "Attribute does not exist" and so ranks last.
+            OrderTarget::Scope => keys.push(SortKey::new(rows.search_column(EntitySearch::ScopePaths), nulls_last(direction))),
             // Clause 4.8 `createdAt` and `modifiedAt` are `timestamptz` columns
             // of the identity row that are never null, so they need no `NULLS
             // LAST` and no collation; two entities written in one transaction

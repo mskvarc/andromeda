@@ -406,6 +406,7 @@ mod tests {
                 (NAME.parse().expect("valid attribute name"), AttributeNameKey::from(3)),
             ]),
             types: ResolvedNames::default(),
+            ..QueryNames::default()
         }
     }
 

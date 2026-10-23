@@ -32,7 +32,7 @@ use andromeda_postgresql_query::{
     time_interval_predicate::within_interval,
     window_reach::WindowReach,
 };
-use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
+use andromeda_postgresql_schema::current::{E, Entities};
 use andromeda_postgresql_seaquery::pg_array::is_any_of;
 use sea_query::{Alias, Asterisk, Expr as SeaExpr, ExprTrait, Iden, JoinType, Order, Query, SelectStatement, SimpleExpr};
 
@@ -51,17 +51,17 @@ pub fn build_in_effect_attribute_instances(
     entity_ids: &[Identifier],
     attributes: &[AttributeNameKey],
 ) -> Option<SelectStatement> {
-    let of = HistoryOf::Entity(SeaExpr::col((E, TemporalEntities::Id)));
+    let of = HistoryOf::Entity(SeaExpr::col((E, Entities::Id)));
     let rows = windowed_instances(branch, compiled, &of, WindowReach::InsideAndInEffect).in_effect_rows(attributes)?;
     let mut select = Query::select();
     project_base_columns(&mut select);
     project_whole_streams(&mut select);
     select
-        .expr_as(SeaExpr::col((E, TemporalEntities::Id)), Alias::new(PART_ENTITY_ID))
+        .expr_as(SeaExpr::col((E, Entities::Id)), Alias::new(PART_ENTITY_ID))
         .from(entity_rows(branch, E))
         .join_lateral(JoinType::Join, rows, Ah, SimpleExpr::from(true));
     join_attribute_names(&mut select);
-    select.and_where(of_entities(entity_ids)).order_by((E, TemporalEntities::Id), Order::Asc);
+    select.and_where(of_entities(entity_ids)).order_by((E, Entities::Id), Order::Asc);
     Some(select.take())
 }
 
@@ -77,7 +77,7 @@ pub fn build_in_effect_attribute_instances(
 pub fn build_in_effect_scope(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, entity_ids: &[Identifier]) -> Option<SelectStatement> {
     let start = compiled.window.in_effect_start()?;
     let axis = scope_history_axis(compiled.window.timeproperty);
-    let of = HistoryOf::Entity(SeaExpr::col((E, TemporalEntities::Id)));
+    let of = HistoryOf::Entity(SeaExpr::col((E, Entities::Id)));
     let mut events = Query::select();
     events
         .column((ScopeEvent, Asterisk))
@@ -88,11 +88,11 @@ pub fn build_in_effect_scope(branch: &HistoryBranch, compiled: &CompiledTemporal
     let mut select = Query::select();
     project_scope_event(&mut select, axis);
     select
-        .expr_as(SeaExpr::col((E, TemporalEntities::Id)), Alias::new(PART_ENTITY_ID))
+        .expr_as(SeaExpr::col((E, Entities::Id)), Alias::new(PART_ENTITY_ID))
         .from(entity_rows(branch, E))
         .join_lateral(JoinType::Join, events.take(), ScopeEvent, SimpleExpr::from(true))
         .and_where(of_entities(entity_ids))
-        .order_by((E, TemporalEntities::Id), Order::Asc);
+        .order_by((E, Entities::Id), Order::Asc);
     order_scope_events(&mut select, axis);
     Some(select.take())
 }
@@ -111,7 +111,7 @@ pub fn build_window_relationship_instances(
     entity_ids: &[Identifier],
     relationships: &[AttributeNameKey],
 ) -> SelectStatement {
-    let of = HistoryOf::Entity(SeaExpr::col((E, TemporalEntities::Id)));
+    let of = HistoryOf::Entity(SeaExpr::col((E, Entities::Id)));
     let axis = SeaExpr::col((WindowRow, axis_column(compiled.window.timeproperty)));
     let inside = within_interval(&axis, &compiled.window.interval);
     let mut rows = Query::select();
@@ -127,11 +127,11 @@ pub fn build_window_relationship_instances(
     project_base_columns(&mut select);
     project_whole_streams(&mut select);
     select
-        .expr_as(SeaExpr::col((E, TemporalEntities::Id)), Alias::new(PART_ENTITY_ID))
+        .expr_as(SeaExpr::col((E, Entities::Id)), Alias::new(PART_ENTITY_ID))
         .from(entity_rows(branch, E))
         .join_lateral(JoinType::Join, rows.take(), Ah, SimpleExpr::from(true));
     join_attribute_names(&mut select);
-    select.and_where(of_entities(entity_ids)).order_by((E, TemporalEntities::Id), Order::Asc);
+    select.and_where(of_entities(entity_ids)).order_by((E, Entities::Id), Order::Asc);
     select.take()
 }
 
@@ -143,7 +143,7 @@ struct WindowRow;
 
 /// The temporal entity `e` names is one of `entity_ids`.
 fn of_entities(entity_ids: &[Identifier]) -> SimpleExpr {
-    is_any_of(SeaExpr::col((E, TemporalEntities::Id)), entity_ids.iter().map(Identifier::to_string))
+    is_any_of(SeaExpr::col((E, Entities::Id)), entity_ids.iter().map(Identifier::to_string))
 }
 
 #[cfg(test)]

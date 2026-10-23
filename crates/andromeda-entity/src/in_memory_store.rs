@@ -25,7 +25,7 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::projection::returned_attributes::ReturnedAttributes;
 use async_trait::async_trait;
@@ -189,7 +189,7 @@ impl InMemoryStore {
 }
 
 impl ContextCommitter for InMemoryStore {
-    fn commit(&self, _target: &ContextTarget, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+    fn commit(&self, _target: &ContextTarget, _accepted_at: SystemInstant, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         let mut rows = self.rows.lock().expect("the store lock is not poisoned");
         self.interfere_before_commit(&mut rows);
         let outcomes = writes.iter().map(|write| rows.apply(write)).collect();
@@ -198,12 +198,12 @@ impl ContextCommitter for InMemoryStore {
         Box::pin(async move { Ok(outcomes) })
     }
 
-    fn commit_enqueued(&self, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-        self.commit(&ContextTarget::Live, writes)
+    fn commit_enqueued(&self, accepted_at: SystemInstant, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        self.commit(&ContextTarget::Live, accepted_at, writes)
     }
 
-    fn commit_replayed(&self, target: &ContextTarget, _replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-        self.commit(target, writes)
+    fn commit_replayed(&self, target: &ContextTarget, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        self.commit(target, SystemInstant::new(replay.record.recorded_at()), writes)
     }
 }
 

@@ -196,6 +196,7 @@ mod tests {
         let names = QueryNames {
             attributes: names(),
             types: ResolvedNames::default(),
+            ..QueryNames::default()
         };
         let condition = compile(&parse(q).expect("parse q"), &InstanceScan::History(&window), &names);
         Query::select().cond_where(condition).to_owned().to_string(PostgresQueryBuilder)

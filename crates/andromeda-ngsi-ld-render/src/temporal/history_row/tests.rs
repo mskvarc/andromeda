@@ -4,7 +4,12 @@
 use crate::temporal::history_row::neutral_row_to_instance;
 use andromeda_ngsi_ld_entity::{document::instance_document::InstanceDocument, geometry_value::GeometryValue, non_empty::NonEmpty};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_identity::InstanceIdentity, time::rendering::instant_text};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_type::AttributeType,
+    instance_identity::InstanceIdentity,
+    reference::NgsiLdReference,
+    time::rendering::instant_text,
+};
 use andromeda_ngsi_ld_model::temporal::{
     StreamExtent,
     TemporalHistoryRow,
@@ -12,16 +17,21 @@ use andromeda_ngsi_ld_model::temporal::{
     evolution_instance::EvolutionInstance,
     observation_metadata::ObservationMetadata,
     structured_value::StructuredValue,
+    text_annotation::TextAnnotation,
 };
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::{expanded::properties as expanded_properties, ngsi_ld_null::NULL_URI};
 use chrono::{DateTime, TimeZone, Utc};
+use langtag::LangTagBuf;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 /// The `DateTime` `@type` every rendered instant carries.
 const DATE_TIME: &str = "https://uri.etsi.org/ngsi-ld/DateTime";
+
+/// The clause 4.6.3 `Time` datatype IRI.
+const TIME: &str = "https://uri.etsi.org/ngsi-ld/Time";
 
 fn instant(epoch_seconds: i64) -> DateTime<Utc> {
     Utc.timestamp_opt(epoch_seconds, 0).single().expect("valid instant")
@@ -62,7 +72,10 @@ fn row_of(family: AttributeType, value: TemporalValue) -> TemporalHistoryRow {
 }
 
 fn one() -> TemporalValue {
-    TemporalValue::Number(JsonNumber::from(1))
+    TemporalValue::Number {
+        number: JsonNumber::from(1),
+        datatype: None,
+    }
 }
 
 /// The expanded instance `row` renders as.
@@ -268,7 +281,7 @@ fn a_number_renders_in_the_shape_it_was_stored_in() {
     for raw in ["1.0", "9007199254740993", "-0.00025"] {
         let number = raw.parse::<JsonNumber>().expect("an exact number");
         let expected: Value = serde_json::from_str(&format!(r#"[{{"@value": {number}}}]"#)).expect("the expected node parses");
-        let rendered = rendered(row(TemporalValue::Number(number)), SysAttrsInclusion::Strip);
+        let rendered = rendered(row(TemporalValue::Number { number, datatype: None }), SysAttrsInclusion::Strip);
         pretty_assertions::assert_eq!(member(&rendered, AttributeType::Property.value_key_str()), Some(&expected), "{raw}");
     }
 }
@@ -393,7 +406,10 @@ fn observed_at_keeps_exactly_the_sub_second_precision_it_carries() {
 #[test]
 fn a_datetime_value_keeps_its_sub_second_precision() {
     let rendered = rendered(
-        row(TemporalValue::DateTime(instant_with_fraction(1_700_000_000, 456_000_000))),
+        row(TemporalValue::DateTime {
+            instant: instant_with_fraction(1_700_000_000, 456_000_000),
+            datatype: Some(datatype(DATE_TIME)),
+        }),
         SysAttrsInclusion::Strip,
     );
     pretty_assertions::assert_eq!(
@@ -451,8 +467,25 @@ fn row_with_value_type(value: TemporalValue, value_type: &str) -> TemporalHistor
     row
 }
 
+/// The datatype IRI `iri`.
+fn datatype(iri: &str) -> NgsiLdReference {
+    iri.parse().expect("a datatype IRI")
+}
+
+/// The `Time` value `text`, typed by its literal.
 fn time_of_day(text: &str) -> TemporalValue {
-    TemporalValue::Time(text.parse().expect("a time of day"))
+    TemporalValue::Time {
+        time: text.parse().expect("a time of day"),
+        datatype: Some(datatype(TIME)),
+    }
+}
+
+/// The `Time` value `text`, declared by its attribute's `valueType`.
+fn time_of_day_declared_by_value_type(text: &str) -> TemporalValue {
+    TemporalValue::Time {
+        time: text.parse().expect("a time of day"),
+        datatype: None,
+    }
 }
 
 /// Annex C.6 with clause 4.6.3: a typed `Time` renders typed, in the one
@@ -469,19 +502,25 @@ fn a_time_renders_typed_in_its_served_spelling() {
 /// A typed `Date` renders typed, as Retrieve Entity serves it.
 #[test]
 fn a_date_renders_typed() {
-    let rendered = rendered(row(TemporalValue::Date("2024-06-15".parse().expect("a date"))), SysAttrsInclusion::Strip);
+    let rendered = rendered(
+        row(TemporalValue::Date {
+            date: "2024-06-15".parse().expect("a date"),
+            datatype: Some(datatype("https://uri.etsi.org/ngsi-ld/Date")),
+        }),
+        SysAttrsInclusion::Strip,
+    );
     pretty_assertions::assert_eq!(
         member(&rendered, AttributeType::Property.value_key_str()),
         Some(&json!([{"@value": "2024-06-15", "@type": "https://uri.etsi.org/ngsi-ld/Date"}]))
     );
 }
 
-/// Annex C.6: a `valueType` naming the form already declares the datatype, so
-/// the value renders plain beside it, as current state holds it.
+/// Annex C.6: a `valueType` naming the form declares the datatype, so a value
+/// written plain renders plain beside it, as current state holds it.
 #[test]
-fn a_time_under_a_value_type_naming_its_form_renders_plain() {
+fn a_time_declared_by_its_value_type_renders_plain() {
     let rendered = rendered(
-        row_with_value_type(time_of_day("12:00:00.5Z"), "https://uri.etsi.org/ngsi-ld/Time"),
+        row_with_value_type(time_of_day_declared_by_value_type("12:00:00.5Z"), TIME),
         SysAttrsInclusion::Strip,
     );
     pretty_assertions::assert_eq!(
@@ -509,11 +548,63 @@ fn a_time_under_a_value_type_naming_another_datatype_renders_typed() {
 #[test]
 fn an_untyped_string_in_a_time_value_form_renders_as_recorded() {
     for text in ["2024-01-01T00:00:00.250000Z", "12:00:00.5Z", "2024-06-15"] {
-        let rendered = rendered(row(TemporalValue::String(text.to_owned())), SysAttrsInclusion::Strip);
+        let rendered = rendered(
+            row(TemporalValue::String {
+                text: text.to_owned(),
+                annotation: TextAnnotation::Plain,
+            }),
+            SysAttrsInclusion::Strip,
+        );
         pretty_assertions::assert_eq!(
             member(&rendered, AttributeType::Property.value_key_str()),
             Some(&json!([{"@value": text}])),
             "{text}"
         );
     }
+}
+
+/// Clause 4.5.2 admits a JSON-LD value object as a Property value: a
+/// language-tagged string keeps its `@language` in its Temporal Evolution.
+#[test]
+fn a_language_tagged_string_renders_with_its_language() {
+    let rendered = rendered(
+        row(TemporalValue::String {
+            text: "hola".to_owned(),
+            annotation: TextAnnotation::Language(LangTagBuf::new("es".to_owned()).expect("a language tag")),
+        }),
+        SysAttrsInclusion::Strip,
+    );
+    pretty_assertions::assert_eq!(
+        member(&rendered, AttributeType::Property.value_key_str()),
+        Some(&json!([{"@value": "hola", "@language": "es"}]))
+    );
+}
+
+/// A typed string and a typed number keep their `@type`.
+#[test]
+fn a_typed_literal_renders_with_its_datatype() {
+    const INTEGER: &str = "http://www.w3.org/2001/XMLSchema#integer";
+    const DOUBLE: &str = "http://www.w3.org/2001/XMLSchema#double";
+    let text = rendered(
+        row(TemporalValue::String {
+            text: "42".to_owned(),
+            annotation: TextAnnotation::Datatype(datatype(INTEGER)),
+        }),
+        SysAttrsInclusion::Strip,
+    );
+    pretty_assertions::assert_eq!(
+        member(&text, AttributeType::Property.value_key_str()),
+        Some(&json!([{"@value": "42", "@type": INTEGER}]))
+    );
+    let number = rendered(
+        row(TemporalValue::Number {
+            number: JsonNumber::from(7),
+            datatype: Some(datatype(DOUBLE)),
+        }),
+        SysAttrsInclusion::Strip,
+    );
+    pretty_assertions::assert_eq!(
+        member(&number, AttributeType::Property.value_key_str()),
+        Some(&json!([{"@value": 7, "@type": DOUBLE}]))
+    );
 }

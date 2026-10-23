@@ -39,6 +39,8 @@ pub enum TemporalEntry {
     GeneratedInstanceId,
     /// `entity_type_names` key of the clause 4.5.2 `valueType`
     ValueTypeKey,
+    /// `entity_type_names` key of the `@type` a typed scalar value declares
+    ValueDatatypeKey,
     /// `cefact-units` identity of the instance's `unitCode` (clause 4.5.2)
     UnitCodeId,
     /// Boolean value, when `value_kind` selects it
@@ -49,6 +51,8 @@ pub enum TemporalEntry {
     ValueNumber,
     /// String value, when `value_kind` selects it
     ValueString,
+    /// The `@language` of a language-tagged string
+    ValueLanguage,
     /// Geometry value, when `value_kind` selects it
     ValueGeometry,
     /// The `GeoJSON` members a geometry carries beside its coordinates

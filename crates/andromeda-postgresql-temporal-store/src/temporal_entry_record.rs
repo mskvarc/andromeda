@@ -19,7 +19,8 @@ use crate::{
     },
     temporal_store_invariant::TemporalStoreInvariant,
 };
-use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, evolution_instance::EvolutionInstance};
+use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
+use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance};
 use andromeda_postgresql_attribute_instance::{
     name_keys::{MentionedNames, NameKeys},
     sub_attribute::{EwkbGeometry, SubAttributeRecord},
@@ -71,6 +72,8 @@ pub struct TemporalEntryRecord {
     pub generated_instance_id: Option<Uuid>,
     /// `value_type_key`.
     pub value_type_key: Option<i32>,
+    /// `value_datatype_key`, the key of the `@type` a typed scalar declares.
+    pub value_datatype_key: Option<i32>,
     /// `unit_code_id`.
     pub unit_code_id: Option<i16>,
     /// `value_boolean`.
@@ -81,6 +84,8 @@ pub struct TemporalEntryRecord {
     pub value_number: Option<BigDecimal>,
     /// `value_string`.
     pub value_string: Option<String>,
+    /// `value_language`, the `@language` of a language-tagged string.
+    pub value_language: Option<String>,
     /// `value_geometry`.
     pub value_geometry: Option<EwkbGeometry>,
     /// `value_geometry_members`.
@@ -130,6 +135,7 @@ pub fn mention_intent(intent: &TemporalAppendIntent, mentioned: &mut MentionedNa
         match entry {
             TemporalAppendEntry::Observation { row } => {
                 mentioned.attributes.push(row.attribute_name.clone()); // clone: the dictionary request owns the names it resolves
+                mentioned.types.extend(row.value.datatype().map(EntityTypeName::from));
                 if let Some(metadata) = &row.metadata {
                     mention(metadata, mentioned);
                 }
@@ -202,25 +208,16 @@ impl TemporalIntentRecord {
         self.entry_needs.contains(&need.code())
     }
 
-    /// The intent as a statement that reads none of its entries binds it:
-    /// every entry left out, so the server decodes no value.
-    pub(crate) fn head(&self) -> TemporalIntentRecord {
-        TemporalIntentRecord {
-            // clone: the bound head owns its identifier, types and needs, one of each per intent.
-            entity_id: self.entity_id.clone(),
-            entity_type_name_keys: self.entity_type_name_keys.clone(),
-            base_ordinal: self.base_ordinal,
-            entries: Vec::new(),
-            entry_needs: self.entry_needs.clone(),
-        }
-    }
-
     /// The intent as a statement that reads only what identifies each entry
     /// binds it: its kind, its grain and its instance identifiers.
     pub(crate) fn identities(&self) -> TemporalIntentRecord {
         TemporalIntentRecord {
+            // clone: the bound identities own their identifier, types and needs, one of each per intent.
+            entity_id: self.entity_id.clone(),
+            entity_type_name_keys: self.entity_type_name_keys.clone(),
+            base_ordinal: self.base_ordinal,
             entries: self.entries.iter().map(TemporalEntryRecord::identity).collect(),
-            ..self.head()
+            entry_needs: self.entry_needs.clone(),
         }
     }
 }
@@ -236,7 +233,7 @@ fn entry_record(entry: &TemporalAppendEntry, recorded_at: DateTime<Utc>, keys: &
                 .map(|metadata| HistoryMembers::keyed(metadata, keys))
                 .transpose()?
                 .unwrap_or_default();
-            observation_record(row, members, keys)
+            observation_record(row, &row.value, members, keys)
         }
         TemporalAppendEntry::Tombstone {
             attribute_name,
@@ -253,7 +250,7 @@ fn entry_record(entry: &TemporalAppendEntry, recorded_at: DateTime<Utc>, keys: &
                 stored_attribute_kind(*attribute_type),
                 keys,
             )?,
-            ValueColumns::of_attribute(AttributeHistoryValue::Tombstone { deleted_at: recorded_at })?,
+            ValueColumns::of_attribute(&AttributeHistoryValue::Tombstone { deleted_at: recorded_at })?,
             MemberColumns::of(HistoryMembers::default())?,
             SemanticTimeAxes::default(),
             instance,
@@ -312,11 +309,13 @@ impl TemporalEntryRecord {
             expires_at: None,
             generated_instance_id: self.generated_instance_id,
             value_type_key: None,
+            value_datatype_key: None,
             unit_code_id: None,
             value_boolean: None,
             verbatim_instance_id: self.verbatim_instance_id.clone(),
             value_number: None,
             value_string: None,
+            value_language: None,
             value_geometry: None,
             value_geometry_members: None,
             value_object: None,
@@ -331,20 +330,20 @@ impl TemporalEntryRecord {
 
     /// The entry an observation a Context Source answered is staged as for
     /// an aggregation, which reads the value and its unit alone (clause
-    /// 4.5.19): the rest of its metadata names what this tenant may never
-    /// have keyed.
+    /// 4.5.19): the rest of its metadata, and the datatype or language of its
+    /// value, names what this tenant may never have keyed.
     ///
     /// # Errors
     ///
     /// Returns [`TemporalStoreError`] when the attribute name has no key in
     /// `keys`, or the value cannot be stored.
     pub(crate) fn answered(row: &TemporalHistoryRow, keys: &NameKeys) -> Result<TemporalEntryRecord, TemporalStoreError> {
-        observation_record(row, HistoryMembers::unit_alone(row.metadata.as_ref()), keys)
+        observation_record(row, &row.value.unannotated(), HistoryMembers::unit_alone(row.metadata.as_ref()), keys)
     }
 }
 
-/// The entry `row` is recorded as, beside the `members` its metadata stores
-/// as.
+/// The entry `row` is recorded as, holding `value`, beside the `members` its
+/// metadata stores as.
 ///
 /// # Errors
 ///
@@ -352,7 +351,12 @@ impl TemporalEntryRecord {
 /// `keys` or the value cannot be stored, and
 /// [`TemporalStoreError::ScopeHasNoAttributeRow`] for an instance of the Scope,
 /// which is recorded as a Scope entry and never as an attribute observation.
-fn observation_record(row: &TemporalHistoryRow, members: HistoryMembers, keys: &NameKeys) -> Result<TemporalEntryRecord, TemporalStoreError> {
+fn observation_record(
+    row: &TemporalHistoryRow,
+    value: &TemporalValue,
+    members: HistoryMembers,
+    keys: &NameKeys,
+) -> Result<TemporalEntryRecord, TemporalStoreError> {
     let instance = match &row.instance {
         EvolutionInstance::Attribute(instance) => instance,
         EvolutionInstance::Scope => return Err(TemporalStoreError::ScopeHasNoAttributeRow),
@@ -365,7 +369,7 @@ fn observation_record(row: &TemporalHistoryRow, members: HistoryMembers, keys: &
             stored_attribute_kind(row.attribute_type),
             keys,
         )?,
-        ValueColumns::of_attribute(AttributeHistoryValue::of_observation(&row.value)?)?,
+        ValueColumns::of_attribute(&AttributeHistoryValue::of_observation(value, keys)?)?,
         MemberColumns::of(members)?,
         // Each axis is kept exactly as the observation carried it: one that
         // declared none matches no window on that Temporal Property (clauses

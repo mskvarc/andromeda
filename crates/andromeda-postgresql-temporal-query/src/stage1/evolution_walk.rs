@@ -11,12 +11,13 @@ use andromeda_postgresql_query::{
     history_source::{
         HistoryBranch,
         PendingEntries,
-        entity_rows::{WalkedKeys, attribute_holder_rows, attribute_holder_rows_by_key, entity_rows, type_member_rows},
+        entity_rows::{WalkedKeys, entity_rows, type_member_rows},
+        holder_rows::{attribute_holder_rows, attribute_holder_rows_by_key},
     },
     one_time_gate::{Candidates, column_of},
     type_membership::drives,
 };
-use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
+use andromeda_postgresql_schema::current::{E, Entities};
 use iri_rs::IriBuf;
 use sea_query::{Asterisk, Expr, ExprTrait, IntoIden, Order, Query, TableRef};
 
@@ -95,7 +96,7 @@ impl Evolutions {
 /// every walk keeps the Evolutions whose identifier the candidates name.
 pub(super) fn evolution_rows(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames, among: Among) -> Evolutions {
     let walked = match (among, branch.pending()) {
-        (Among::Candidates, PendingEntries::Absent) => WalkedKeys::Among(Box::new(column_of(Candidates, TemporalEntities::TemporalEntityKey))),
+        (Among::Candidates, PendingEntries::Absent) => WalkedKeys::Among(Box::new(column_of(Candidates, Entities::EntityKey))),
         (Among::Every, PendingEntries::Absent | PendingEntries::Unioned) | (Among::Candidates, PendingEntries::Unioned) => WalkedKeys::Every,
     };
     let (evolutions, source) = walk(branch, compiled, names, &walked);
@@ -103,11 +104,11 @@ pub(super) fn evolution_rows(branch: &HistoryBranch, compiled: &CompiledTemporal
         (Among::Every, PendingEntries::Absent | PendingEntries::Unioned, WalkSource::Ranges | WalkSource::Catalogue)
         | (Among::Candidates, PendingEntries::Absent, WalkSource::Ranges) => evolutions,
         (Among::Candidates, PendingEntries::Absent, WalkSource::Catalogue) => {
-            Evolutions::read_alike(narrowed(evolutions.paged, TemporalEntities::TemporalEntityKey), evolutions.type_test)
+            Evolutions::read_alike(narrowed(evolutions.paged, Entities::EntityKey), evolutions.type_test)
         }
         (Among::Candidates, PendingEntries::Unioned, WalkSource::Ranges | WalkSource::Catalogue) => Evolutions {
-            paged: narrowed(evolutions.paged, TemporalEntities::Id),
-            counted: narrowed(evolutions.counted, TemporalEntities::Id),
+            paged: narrowed(evolutions.paged, Entities::Id),
+            counted: narrowed(evolutions.counted, Entities::Id),
             type_test: evolutions.type_test,
         },
     }
@@ -116,10 +117,10 @@ pub(super) fn evolution_rows(branch: &HistoryBranch, compiled: &CompiledTemporal
 /// The column the Evolutions a walk yields and the candidates name each other
 /// by: the surrogate key over recorded rows alone, the identifier where the
 /// branch reads its queue, the one column an Evolution only queued carries.
-pub(super) const fn walked_key(branch: &HistoryBranch) -> TemporalEntities {
+pub(super) const fn walked_key(branch: &HistoryBranch) -> Entities {
     match branch.pending() {
-        PendingEntries::Absent => TemporalEntities::TemporalEntityKey,
-        PendingEntries::Unioned => TemporalEntities::Id,
+        PendingEntries::Absent => Entities::EntityKey,
+        PendingEntries::Unioned => Entities::Id,
     }
 }
 
@@ -137,13 +138,13 @@ enum WalkSource {
 /// name, in identifier order behind `OFFSET 0`, so PostgreSQL neither merges
 /// it into the statement reading it nor tests the candidates before it orders
 /// them.
-fn narrowed(walk: TableRef, column: TemporalEntities) -> TableRef {
+fn narrowed(walk: TableRef, column: Entities) -> TableRef {
     let mut narrowed = Query::select();
     narrowed
         .column(Asterisk)
         .from(walk)
         .and_where(Expr::col((E, column)).in_subquery(column_of(Candidates, column)))
-        .order_by(TemporalEntities::Id, Order::Asc)
+        .order_by(Entities::Id, Order::Asc)
         .offset(0);
     TableRef::SubQuery(Box::new(narrowed.take()), E.into_iden())
 }
@@ -172,11 +173,9 @@ fn walk(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryN
     if let Some(walk) = exprs.and_then(|exprs| type_member_rows(branch, E, &exprs, &names.types, walked)) {
         return (Evolutions::read_alike(walk, TypeTest::Walked), WalkSource::Ranges);
     }
-    let holder_walkable =
-        !compiled.instances.attr_filter.is_empty() && selectors.iter().all(|selector| selector.ids.is_empty() && selector.type_expr.is_none());
-    if holder_walkable {
+    if walks_attribute_holders(compiled) {
         let keys = concerned_attribute_keys(compiled, &names.attributes);
-        let paged = attribute_holder_rows(branch, E, &keys, walked);
+        let paged = attribute_holder_rows(branch, E, &keys, &names.holders, walked);
         let evolutions = match (branch.pending(), walked, compiled.window.interval.is_bounded()) {
             (PendingEntries::Unioned, _, _) => Evolutions {
                 paged,
@@ -197,10 +196,29 @@ fn walk(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryN
     catalogue()
 }
 
+/// Whether stage 1 reads the Evolutions of `compiled` by walking the holders
+/// of the attributes it concerns: a selection by attribute alone (clause
+/// 5.7.4.4 S1), naming no identifier and no type. Its holders are paged
+/// through the types the stream census names, which the statement's names
+/// carry ([`QueryNames::holders`]).
+#[must_use]
+pub fn walks_attribute_holders(compiled: &CompiledTemporalQuery) -> bool {
+    let selection = &compiled.entities;
+    match selection.considered {
+        ConsideredEntities::Selected => {}
+        ConsideredEntities::NoEntity => return false,
+    }
+    !compiled.instances.attr_filter.is_empty()
+        && selection
+            .selectors
+            .iter()
+            .all(|selector| selector.ids.is_empty() && selector.type_expr.is_none())
+}
+
 /// The dictionary keys of the attributes the request concerns (clause
 /// 5.7.4.4 step S1); an attribute the dictionary never keyed has no history
 /// and no key.
-pub(super) fn concerned_attribute_keys(compiled: &CompiledTemporalQuery, attributes: &ResolvedNames<AttributeName>) -> Vec<AttributeNameKey> {
+pub fn concerned_attribute_keys(compiled: &CompiledTemporalQuery, attributes: &ResolvedNames<AttributeName>) -> Vec<AttributeNameKey> {
     attributes.keys_of(compiled.instances.attr_filter.iter().map(IriBuf::as_str))
 }
 
@@ -249,12 +267,12 @@ mod tests {
         assert!(sql.starts_with(r#"SELECT "e"."id" AS "entity_id" FROM"#), "{sql}");
         assert!(
             sql.contains(
-                r#"FROM (SELECT "temporal_entity_key", "id" FROM "temporal_entity_type_members" WHERE "entity_type_name_key" = (3) ORDER BY "id" ASC) AS "rw""#
+                r#"FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (3) AND "is_evolution_member" ORDER BY "id" ASC) AS "rw""#
             ),
             "{sql}"
         );
-        assert!(!sql.contains(r#""e"."entity_type_name_keys""#), "{sql}");
-        assert!(!sql.contains(r#"FROM "temporal_entities" AS "re" UNION ALL"#), "{sql}");
+        assert!(!sql.contains(r#""e"."evolution_type_name_keys""#), "{sql}");
+        assert!(!sql.contains(r#"FROM "entities" AS "re" UNION ALL"#), "{sql}");
         assert!(sql.contains(r#") AS "s" WHERE"#), "{sql}");
         assert!(sql.contains(r#"ORDER BY "e"."id" ASC"#), "{sql}");
     }
@@ -278,7 +296,7 @@ mod tests {
         let compiled = typed(vec![EntitySelector::builder().type_expr(Some(TypeExpr::Or(vec![vehicle(), bus]))).build()]);
         let (sql, _) = built(&compiled, &names);
         assert!(
-            sql.contains(r#"FROM (SELECT DISTINCT ON ("typed"."id") "typed"."temporal_entity_key", "typed"."id" FROM ("#),
+            sql.contains(r#"FROM (SELECT DISTINCT ON ("typed"."id") "typed"."entity_key", "typed"."id" FROM ("#),
             "{sql}"
         );
         assert!(sql.contains(r#"ORDER BY "typed"."id" ASC, "id" ASC) AS "rw""#), "{sql}");
@@ -303,7 +321,9 @@ mod tests {
         .select
         .to_string(PostgresQueryBuilder);
         assert!(
-            sql.contains(r#"FROM (SELECT "temporal_entity_key", "id" FROM "snap_7"."temporal_entity_type_members" WHERE "entity_type_name_key" = (3)) AS "e""#),
+            sql.contains(
+                r#"FROM (SELECT "entity_key", "id" FROM "snap_7"."entity_type_members" WHERE "entity_type_name_key" = (3) AND "is_evolution_member") AS "e""#
+            ),
             "{sql}"
         );
     }
@@ -315,7 +335,7 @@ mod tests {
         let count = built_count(&compiled, &vehicle_is_known());
         assert!(count.starts_with(r#"SELECT COUNT("e"."id") FROM"#), "{count}");
         assert!(
-            count.contains(r#""temporal_entity_type_members" WHERE "entity_type_name_key" = (3)"#),
+            count.contains(r#""entity_type_members" WHERE "entity_type_name_key" = (3) AND "is_evolution_member""#),
             "{count}"
         );
     }
@@ -330,9 +350,9 @@ mod tests {
                 .build(),
         ]);
         let (sql, _) = built(&compiled, &vehicle_is_known());
-        assert!(sql.contains(r#""temporal_entity_type_members""#), "{sql}");
+        assert!(sql.contains(r#""entity_type_members""#), "{sql}");
         assert!(sql.contains(r#""e"."id" ~ "#), "{sql}");
-        assert!(!sql.contains(r#""e"."entity_type_name_keys""#), "{sql}");
+        assert!(!sql.contains(r#""e"."evolution_type_name_keys""#), "{sql}");
     }
 
     /// A selector naming identifiers is answered by the identifier index, so
@@ -346,8 +366,8 @@ mod tests {
                 .build(),
         ]);
         let (sql, _) = built(&compiled, &vehicle_is_known());
-        assert!(!sql.contains("temporal_entity_type_members"), "{sql}");
-        assert!(sql.contains(r#""e"."entity_type_name_keys" @> (ARRAY[3])"#), "{sql}");
+        assert!(!sql.contains("entity_type_members"), "{sql}");
+        assert!(sql.contains(r#""e"."evolution_type_name_keys" @> (ARRAY[3])"#), "{sql}");
     }
 
     /// The walk yields the union of the selectors' types, so it cannot pair a
@@ -363,8 +383,8 @@ mod tests {
             vehicle_selector(),
         ]);
         let (sql, _) = built(&compiled, &vehicle_is_known());
-        assert!(!sql.contains("temporal_entity_type_members"), "{sql}");
-        assert!(sql.contains(r#""e"."entity_type_name_keys" @> (ARRAY[3])"#), "{sql}");
+        assert!(!sql.contains("entity_type_members"), "{sql}");
+        assert!(sql.contains(r#""e"."evolution_type_name_keys" @> (ARRAY[3])"#), "{sql}");
     }
 
     /// A selector with no type has no range, so neither has the selection.
@@ -375,7 +395,7 @@ mod tests {
             EntitySelector::builder().id_pattern(Some(Pattern::parse(".*").expect("valid pattern"))).build(),
         ]);
         let (sql, _) = built(&compiled, &vehicle_is_known());
-        assert!(!sql.contains("temporal_entity_type_members"), "{sql}");
+        assert!(!sql.contains("entity_type_members"), "{sql}");
     }
 
     /// A query concerning `speed` alone over the window from 2024.
@@ -388,40 +408,56 @@ mod tests {
 
     /// Clause 5.7.4.4 step S1 keeps only the Evolutions with an instance of a
     /// concerned attribute, which hold a stream of it, so a selection by
-    /// `attrs` alone walks that attribute's streams in the clause 5.5.9 `id`
-    /// order and reads no other Evolution.
+    /// `attrs` alone reads the holders of that attribute's streams in the
+    /// clause 5.5.9 `id` order and reads no other Evolution; `speed` has few
+    /// holders, which are read whole and sorted.
     #[test]
     fn a_temporal_attrs_only_selection_reads_the_attribute_streams() {
         let (sql, _) = built(&speed_only(), &speed_and_address());
         let walk = PageBranches::of(&sql).walk;
         assert!(
             walk.starts_with(concat!(
-                r#"AS "indexed") UNION ALL (SELECT * FROM (SELECT "e"."id" AS "entity_id" FROM (SELECT DISTINCT ON ("held"."id") "held"."id", "held"."temporal_entity_key" FROM "#,
-                r#"(SELECT "hr"."id", "hr"."temporal_entity_key" FROM (SELECT "id", "temporal_entity_key" FROM "temporal_attribute_streams" WHERE "attribute_name_key" = (7) ORDER BY "id" ASC) AS "hr""#
+                r#"AS "indexed") UNION ALL (SELECT * FROM (SELECT "e"."id" AS "entity_id" FROM (SELECT DISTINCT ON ("held"."id") "held"."id", "held"."entity_key" FROM "#,
+                r#"(SELECT "hr"."id", "hr"."entity_key" FROM (SELECT "hi"."id", "hs"."entity_key" FROM "temporal_attribute_streams" AS "hs" "#,
+                r#"JOIN "entities" AS "hi" ON "hi"."entity_key" = "hs"."entity_key" WHERE "hs"."attribute_name_key" = (7) ORDER BY "hi"."id" ASC) AS "hr""#
             )),
             "{walk}"
         );
-        assert!(!sql.contains(r#"FROM "temporal_entities" AS "re" UNION ALL"#), "{sql}");
+        assert!(!sql.contains(r#"FROM "entities" AS "re" UNION ALL"#), "{sql}");
         assert!(walk.contains(r#") AS "ah" WHERE "ah"."attribute_name_key" = ANY($"#), "{walk}");
         assert!(walk.contains(r#"ORDER BY "e"."id" ASC LIMIT $"#), "{walk}");
     }
 
-    /// The count totals the Evolutions the page walks; reading the queue, it
-    /// probes them in the order of their surrogate keys.
+    /// An attribute the census counts many streams of is walked through the
+    /// Evolution memberships of the types holding it, which yield their
+    /// members in the clause 5.5.9 `id` order, rather than read whole.
     #[test]
-    fn a_counted_attrs_only_selection_counts_the_attribute_walk() {
+    fn a_temporal_attrs_only_selection_of_a_dense_attribute_walks_the_members_of_its_holding_types() {
+        let mut compiled = speed_only();
+        compiled.instances.attr_filter = vec![iri("https://example.com/address")];
+        let (sql, _) = built(&compiled, &speed_and_address());
+        let walk = PageBranches::of(&sql).walk;
+        assert!(
+            walk.contains(r#"FROM "entity_type_members" AS "hw" WHERE "hw"."entity_type_name_key" = (3) AND "hw"."is_evolution_member""#),
+            "{walk}"
+        );
+        assert!(!walk.contains(r#"JOIN "entities" AS "hi""#), "{walk}");
+    }
+
+    /// The count totals the Evolutions the page walks, probing them in the
+    /// order of their surrogate keys, each holder once; a queued holder, with
+    /// no key yet, comes last.
+    #[test]
+    fn a_counted_attrs_only_selection_counts_the_holders_in_key_order() {
         let count = built_count(&speed_only(), &speed_and_address());
         assert!(
-            count.starts_with(
-                r#"SELECT COUNT("e"."id") FROM (SELECT "hm"."id" FROM (SELECT DISTINCT ON ("held"."id") "held"."id", "held"."temporal_entity_key""#
-            ),
+            count.starts_with(concat!(
+                r#"SELECT COUNT("e"."id") FROM (SELECT "hm"."id" FROM (SELECT DISTINCT ON ("hs"."entity_key") "hi"."id", "hs"."entity_key" "#,
+                r#"FROM "temporal_attribute_streams" AS "hs" JOIN "entities" AS "hi" ON "hi"."entity_key" = "hs"."entity_key" "#,
+                r#"WHERE "hs"."attribute_name_key" = ANY($1) ORDER BY "hs"."entity_key" ASC) AS "hm" UNION ALL (SELECT "hq"."id", NULL::bigint AS "entity_key" FROM "#
+            )),
             "{count}"
         );
-        assert!(
-            count.contains(r#"(SELECT "id", "temporal_entity_key" FROM "temporal_attribute_streams" WHERE "attribute_name_key" = (7) ORDER BY "id" ASC)"#),
-            "{count}"
-        );
-        assert!(count.contains(r#"ORDER BY "hm"."temporal_entity_key" ASC) AS "e""#), "{count}");
     }
 
     /// The count of `compiled` over `branch`, rendered with its values inlined.
@@ -443,12 +479,15 @@ mod tests {
         for branch in [HistoryBranch::live_recorded(), HistoryBranch::recorded_in(Alias::new("snap_7").into_iden())] {
             let count = recorded_count(&branch, &speed_only());
             assert!(count.starts_with(r#"SELECT COUNT("e"."id") FROM "#), "{count}");
-            assert!(count.contains(r#""temporal_entities" AS "e" WHERE"#), "{count}");
+            assert!(
+                count.contains(r#""entities" WHERE "entities"."evolution_created_at" IS NOT NULL) AS "e" WHERE"#),
+                "{count}"
+            );
             assert!(!count.contains(r#"AS "held""#), "{count}");
             assert!(
                 count.contains(concat!(
                     r#") AS "ah" WHERE "ah"."attribute_name_key" = ANY(ARRAY [7]) AND "ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00'"#,
-                    r#" AND "ah"."temporal_entity_key" = "e"."temporal_entity_key")"#
+                    r#" AND "ah"."entity_key" = "e"."entity_key")"#
                 )),
                 "{count}"
             );
@@ -462,7 +501,10 @@ mod tests {
         let mut compiled = speed_only();
         compiled.instances.attr_filter = vec![iri("https://example.com/unknown")];
         let count = recorded_count(&HistoryBranch::live_recorded(), &compiled);
-        assert!(count.contains(r#""temporal_entities" AS "e" WHERE"#), "{count}");
+        assert!(
+            count.contains(r#""entities" WHERE "entities"."evolution_created_at" IS NOT NULL) AS "e" WHERE"#),
+            "{count}"
+        );
         assert!(count.contains(r#") AS "ah" WHERE (FALSE"#), "{count}");
     }
 
@@ -474,14 +516,14 @@ mod tests {
         compiled.window.interval = TimeInterval::Unbounded;
         let count = recorded_count(&HistoryBranch::live_recorded(), &compiled);
         assert!(
-            count.starts_with(r#"SELECT COUNT("e"."id") FROM (SELECT DISTINCT ON ("held"."id") "held"."id", "held"."temporal_entity_key" FROM"#),
+            count.starts_with(r#"SELECT COUNT("e"."id") FROM (SELECT DISTINCT ON ("held"."id") "held"."id", "held"."entity_key" FROM"#),
             "{count}"
         );
-        assert!(!count.contains(r#""temporal_entities" AS "e""#), "{count}");
+        assert!(!count.contains(r#""entities" AS "e""#), "{count}");
     }
 
     /// A pattern names no identifier the index could answer, so the walk
-    /// still reads the attribute's streams and the pattern filters what it
+    /// still reads the attribute's holders and the pattern filters what it
     /// yields.
     #[test]
     fn an_attrs_selection_with_an_id_pattern_walks_the_streams_and_keeps_the_pattern() {
@@ -493,7 +535,7 @@ mod tests {
         ];
         let (sql, _) = built(&compiled, &speed_and_address());
         assert!(
-            sql.contains(r#""temporal_attribute_streams" WHERE "attribute_name_key" = (7) ORDER BY "id" ASC"#),
+            sql.contains(r#"WHERE "hs"."attribute_name_key" = (7) ORDER BY "hi"."id" ASC) AS "hr""#),
             "{sql}"
         );
         assert!(sql.contains(r#""e"."id" ~ "#), "{sql}");
@@ -508,31 +550,38 @@ mod tests {
         let mut typed = speed_only();
         typed.entities.selectors = vec![vehicle_selector()];
         let (sql, _) = built(&typed, &names);
-        assert!(sql.contains(r#""temporal_entity_type_members""#), "{sql}");
+        assert!(sql.contains(r#""entity_type_members""#), "{sql}");
         assert!(!sql.contains(r#"AS "held""#), "{sql}");
 
         let mut identified = speed_only();
         identified.entities.selectors = vec![EntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:1"])).build()];
         let (sql, _) = built(&identified, &names);
-        assert!(sql.contains(r#"FROM "temporal_entities" AS "re" UNION ALL"#), "{sql}");
+        assert!(
+            sql.contains(r#"FROM "entities" AS "re" WHERE "re"."evolution_created_at" IS NOT NULL UNION ALL"#),
+            "{sql}"
+        );
         assert!(!sql.contains(r#"AS "held""#), "{sql}");
     }
 
     /// Clause 5.6.6 leaves the temporal evolution standing when the current
-    /// entity is deleted, so the driving relation is the temporal catalogue and
-    /// an unfiltered query names `entities` nowhere.
+    /// entity is deleted, so the driving relation is the identity rows holding
+    /// an Evolution, and an unfiltered query reads no current-state relation.
     #[test]
-    fn the_statement_drives_from_the_temporal_catalogue_and_never_joins_entities() {
+    fn the_statement_drives_from_the_evolutions_and_never_reads_current_state() {
         let compiled = minimal_compiled();
         let (sql, _) = built(&compiled, &QueryNames::default());
         assert!(
-            sql.contains("(SELECT \"re\".\"id\", \"re\".\"entity_type_name_keys\", FALSE AS \"queued\" FROM \"temporal_entities\" AS \"re\""),
+            sql.contains(concat!(
+                r#"(SELECT "re"."id", "re"."evolution_type_name_keys", FALSE AS "queued" FROM "entities" AS "re" "#,
+                r#"WHERE "re"."evolution_created_at" IS NOT NULL"#
+            )),
             "{sql}"
         );
         assert!(sql.contains(") AS \"e\""), "{sql}");
         assert!(sql.contains("\"temporal_attribute_streams\""), "{sql}");
-        assert!(!sql.contains("\"entities\""), "{sql}");
-        assert!(!sql.contains("temporal_entity_attributes"), "{sql}");
+        for current_state in ["\"entity_search\"", "\"current_attributes\"", "\"created_at\" IS NOT NULL"] {
+            assert!(!sql.contains(current_state), "{current_state}: {sql}");
+        }
     }
 
     /// Every Evolution source a count over an empty queue is compared to
@@ -547,13 +596,17 @@ mod tests {
         let mut catalogued = minimal_compiled();
         catalogued.window.interval = TimeInterval::After(instant("2024-01-01T00:00:00Z"));
         for (compiled, names, evolutions) in [
+            (typed, vehicle_is_known(), r#"(SELECT "entity_key", "id" FROM "entity_type_members""#),
             (
-                typed,
-                vehicle_is_known(),
-                r#"(SELECT "temporal_entity_key", "id" FROM "temporal_entity_type_members""#,
+                attributed,
+                speed_and_address(),
+                r#"FROM (SELECT * FROM "entities" WHERE "entities"."evolution_created_at" IS NOT NULL) AS "e""#,
             ),
-            (attributed, speed_and_address(), r#"FROM "temporal_entities" AS "e""#),
-            (catalogued, QueryNames::default(), r#"FROM "temporal_entities" AS "e""#),
+            (
+                catalogued,
+                QueryNames::default(),
+                r#"FROM (SELECT * FROM "entities" WHERE "entities"."evolution_created_at" IS NOT NULL) AS "e""#,
+            ),
         ] {
             let count = build_stage1_entity_ids(
                 &HistoryBranch::live_recorded(),
@@ -567,7 +620,7 @@ mod tests {
             .expect("count requested")
             .to_string(PostgresQueryBuilder);
             assert!(count.contains(evolutions), "{count}");
-            assert!(count.contains(r#""ah"."temporal_entity_key" = "e"."temporal_entity_key""#), "{count}");
+            assert!(count.contains(r#""ah"."entity_key" = "e"."entity_key""#), "{count}");
         }
     }
 }

@@ -28,7 +28,7 @@ use andromeda_postgresql_query::{
     scope_predicate::{ScopeTarget, condition as scope_condition},
     window_reach::WindowReach,
 };
-use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
+use andromeda_postgresql_schema::current::{E, Entities};
 use andromeda_postgresql_seaquery::pg_array::is_any_of;
 use sea_query::{Condition, Expr as SeaExpr};
 
@@ -74,8 +74,8 @@ pub(crate) fn value_filter_condition(branch: &HistoryBranch, compiled: &Compiled
 /// surrogate key.
 fn stage1_evolution() -> HistoryOf {
     HistoryOf::Evolution(EvolutionColumns {
-        id: SeaExpr::col((E, TemporalEntities::Id)),
-        key: SeaExpr::col((E, TemporalEntities::TemporalEntityKey)),
+        id: SeaExpr::col((E, Entities::Id)),
+        key: SeaExpr::col((E, Entities::EntityKey)),
     })
 }
 
@@ -85,7 +85,7 @@ fn exempting_contributed(filters: Condition, contributed: &ContributedEntities) 
         return filters;
     }
     Condition::any().add(filters).add(is_any_of(
-        SeaExpr::col((E, TemporalEntities::Id)),
+        SeaExpr::col((E, Entities::Id)),
         contributed.as_slice().iter().map(Identifier::to_string),
     ))
 }
@@ -188,9 +188,9 @@ mod tests {
 
     /// A probe's source compared beside nothing: narrowed inside to the
     /// Evolution's surrogate key.
-    const BY_KEY: &str = r#""rs"."temporal_entity_key" = "e"."temporal_entity_key""#;
+    const BY_KEY: &str = r#""rs"."entity_key" = "e"."entity_key""#;
     /// The Scope source narrowed inside to the Evolution's surrogate key.
-    const SCOPE_BY_KEY: &str = r#""rsh"."temporal_entity_key" = "e"."temporal_entity_key""#;
+    const SCOPE_BY_KEY: &str = r#""rsh"."entity_key" = "e"."entity_key""#;
     /// A recorded source narrowed inside to the Evolution's identifier.
     const BY_IDENTIFIER: &str = r#""re"."id" = "e"."id""#;
     /// The geo probe's comparison of the `GeoProperty`'s dictionary key.
@@ -216,6 +216,7 @@ mod tests {
                 (LOCATION.parse().expect("valid attribute name"), AttributeNameKey::from(2)),
             ]),
             types: ResolvedNames::from_pairs([(SENSOR.parse().expect("valid type name"), EntityTypeNameKey::from(1))]),
+            ..QueryNames::default()
         }
     }
 
@@ -395,7 +396,7 @@ mod tests {
     fn a_recorded_branch_correlates_the_q_probe_by_evolution_key() {
         let sql = filters(&HistoryBranch::live_recorded(), &rare_q(compiled(before_2030())));
         assert!(sql.contains(&format!(r#"{BY_KEY}) AS "qh""#)), "{sql}");
-        assert!(!sql.contains(BY_IDENTIFIER) && !sql.contains("temporal_entities"), "{sql}");
+        assert!(!sql.contains(BY_IDENTIFIER) && !sql.contains("entities"), "{sql}");
     }
 
     /// Clause 4.11 with Annex C clause C.5.5: an `after` window also reads the
@@ -408,15 +409,15 @@ mod tests {
             assert!(sql.contains(&format!(r#"{BY_KEY}) AS "{alias}""#)), "{alias}: {sql}");
         }
         assert!(sql.contains(r#""rh"."stream_key" = "qs"."stream_key") AS "qi""#), "{sql}");
-        assert!(sql.contains(r#""qs"."temporal_entity_key" AS "temporal_entity_key""#), "{sql}");
-        assert!(!sql.contains(BY_IDENTIFIER) && !sql.contains("temporal_entities"), "{sql}");
+        assert!(sql.contains(r#""qs"."entity_key" AS "entity_key""#), "{sql}");
+        assert!(!sql.contains(BY_IDENTIFIER) && !sql.contains("entities"), "{sql}");
     }
 
     #[test]
     fn a_recorded_branch_correlates_the_geo_probe_by_evolution_key() {
         let sql = filters(&HistoryBranch::live_recorded(), &near(compiled(before_2030())));
         assert!(sql.contains(&format!(r#"{BY_KEY}) AS "qh""#)), "{sql}");
-        assert!(!sql.contains(BY_IDENTIFIER) && !sql.contains("temporal_entities"), "{sql}");
+        assert!(!sql.contains(BY_IDENTIFIER) && !sql.contains("entities"), "{sql}");
     }
 
     /// Clause 5.7.4.4 steps S2 and S3 read the same instances: for one window,
@@ -440,13 +441,10 @@ mod tests {
     fn a_recorded_branch_correlates_the_scope_probe_by_evolution_key() {
         let sql = filters(&HistoryBranch::live_recorded(), &moved(compiled(before_2030())));
         assert!(sql.contains(&format!(r#"{SCOPE_BY_KEY}) AS "sh""#)), "{sql}");
-        assert!(!sql.contains("temporal_entities") && !sql.contains("entity_id"), "{sql}");
+        assert!(!sql.contains("entities") && !sql.contains("entity_id"), "{sql}");
         let after = filters(&HistoryBranch::live_recorded(), &moved(compiled(after_2019())));
-        assert!(
-            after.contains(r#""rsh"."temporal_entity_key" = "sh"."temporal_entity_key") AS "sh_next""#),
-            "{after}"
-        );
-        assert!(!after.contains("temporal_entities") && !after.contains("entity_id"), "{after}");
+        assert!(after.contains(r#""rsh"."entity_key" = "sh"."entity_key") AS "sh_next""#), "{after}");
+        assert!(!after.contains("entities") && !after.contains("entity_id"), "{after}");
     }
 
     #[test]
@@ -454,13 +452,12 @@ mod tests {
         let sql = filters(&snapshot(), &moved(near(rare_q(compiled(before_2030())))));
         for (relation, correlation) in [
             (r#""snap_7"."attribute_history" AS "rh""#, format!(r#"{BY_KEY}) AS "qh""#)),
-            (r#""snap_7"."attribute_history" AS "rh""#, format!(r#"{BY_KEY}) AS "qh""#)),
             (r#""snap_7"."scope_history" AS "rsh""#, format!(r#"{SCOPE_BY_KEY}) AS "sh""#)),
         ] {
             assert!(sql.contains(relation), "{relation}: {sql}");
             assert!(sql.contains(&correlation), "{correlation}: {sql}");
         }
-        assert!(!sql.contains(BY_IDENTIFIER) && !sql.contains("temporal_entities"), "{sql}");
+        assert!(!sql.contains(BY_IDENTIFIER) && !sql.contains("entities"), "{sql}");
     }
 
     /// A queued entry carries no surrogate key, so a branch reading its queue
@@ -475,7 +472,7 @@ mod tests {
         );
         assert!(sql.contains(r#""pe"."entity_id" = "e"."id""#), "{sql}");
         assert!(sql.contains(r#""re"."id" = "sh"."entity_id""#), "{sql}");
-        assert!(!sql.contains(r#""temporal_entity_key" = "e"."temporal_entity_key""#), "{sql}");
+        assert!(!sql.contains(r#""entity_key" = "e"."entity_key""#), "{sql}");
     }
 
     /// A split query reads its leaves for a list of identifiers, so every
@@ -492,6 +489,6 @@ mod tests {
         .expect("renders")
         .to_string(PostgresQueryBuilder);
         assert_eq!(sql.matches(BY_IDENTIFIER).count(), 3, "the q, geo and Scope leaves: {sql}");
-        assert!(!sql.contains(r#""temporal_entity_key" = "e"."temporal_entity_key""#), "{sql}");
+        assert!(!sql.contains(r#""entity_key" = "e"."entity_key""#), "{sql}");
     }
 }

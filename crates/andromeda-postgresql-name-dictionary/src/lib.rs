@@ -4,8 +4,9 @@
 //! history hypertable, the `current_attributes` rows, the
 //! registration information rows and the notification event queue) stores
 //! the attribute's `INTEGER` dictionary key rather than its IRI, and every
-//! relation that records an entity's types (`entities`, `temporal_entities`)
-//! stores an `INTEGER[]` of type keys. This crate owns those dictionaries: the
+//! relation that records an entity's types (`entity_search` for the current
+//! state, `entities` for the Temporal Evolution) stores an `INTEGER[]` of type
+//! keys. This crate owns those dictionaries: the
 //! table access, the bounded per-tenant cache in front of each, that cache's
 //! configuration, and the port the stores hold them by.
 //!

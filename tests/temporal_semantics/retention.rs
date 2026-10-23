@@ -3,9 +3,8 @@
 //! Retention is a storage decision an operator takes about their own tenant and
 //! is not an NGSI-LD operation: a dropped chunk records no tombstone and raises
 //! no notification, unlike Temporal Evolution deletion (clause 5.6.16). The
-//! sweep drops aged chunks, garbage-collects the catalogue rows whose history
-//! left with them, and releases the idempotency records that are fully behind
-//! the horizon and protect nothing.
+//! sweep drops aged chunks and garbage-collects the catalogue rows whose
+//! history left with them.
 
 use crate::{
     attribute_iri,
@@ -22,7 +21,7 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_cache_config::NameCacheConfig};
 use andromeda_postgresql_pool::{read_share::ReadShare, write_reserve::WriteReserve};
-use andromeda_postgresql_schema::{queue::WriteRecords, temporal::AttributeHistory};
+use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{aggregate::count_all, statement::Statement};
 use andromeda_postgresql_temporal_store::{
     columnstore_capability::ColumnstoreSupport,
@@ -45,20 +44,6 @@ const RETENTION_DAYS: i64 = 90;
 /// How far behind the horizon the aged fixture is placed.
 const AGED_DAYS: i64 = 400;
 
-/// Count the idempotency records carrying one write identity.
-async fn write_records_present(pool: &PgPool, write_id: Uuid) -> i64 {
-    Query::select()
-        .expr_as(count_all(), Alias::new("records"))
-        .from(WriteRecords::Table)
-        .and_where(Expr::col(WriteRecords::WriteId).eq(write_id))
-        .to_query()
-        .fetch_one(pool)
-        .await
-        .expect("idempotency record count")
-        .try_get("records")
-        .expect("the records column decodes")
-}
-
 /// Count every tombstone row in the tenant.
 async fn tombstone_rows(pool: &PgPool) -> i64 {
     Query::select()
@@ -73,9 +58,8 @@ async fn tombstone_rows(pool: &PgPool) -> i64 {
         .expect("the rows column decodes")
 }
 
-/// A configured horizon ages storage out, collects what it emptied, and
-/// releases the idempotency records behind it, while leaving current storage
-/// and its records alone.
+/// A configured horizon ages storage out and collects what it emptied, while
+/// leaving recent storage alone.
 #[tokio::test]
 #[serial]
 async fn temporal_semantics_operator_retention_ages_storage_out_without_deletion_semantics() {
@@ -96,14 +80,8 @@ async fn temporal_semantics_operator_retention_ages_storage_out_without_deletion
     )
     .await;
     assert_eq!(created, StatusCode::CREATED);
-    let retained_write = stored_history(&pool, &retained_id)
-        .await
-        .first()
-        .map(|row| row.write_id)
-        .expect("the retained write recorded a row");
 
     // Storage the horizon ages out: a write recorded well behind it.
-    let aged_write = Uuid::now_v7();
     let entity_key = seed_temporal_entity(&pool, &aged_id, "Sensor").await;
     let name_key = attribute_name_key(&pool, &attribute_iri("reading")).await;
     let aged_stream = seed_stream(&pool, entity_key, name_key).await;
@@ -112,7 +90,7 @@ async fn temporal_semantics_operator_retention_ages_storage_out_without_deletion
         &SeededHistoryRow {
             stream_key: aged_stream,
             recorded_at: Utc::now() - TimeDelta::days(AGED_DAYS),
-            write_id: aged_write,
+            write_id: Uuid::now_v7(),
             generated_instance_id: Uuid::now_v7(),
             observed_at: "2020-01-01T00:00:00Z".parse().expect("a valid fixture instant"),
             value_number: 1,
@@ -142,13 +120,11 @@ async fn temporal_semantics_operator_retention_ages_storage_out_without_deletion
 
     assert!(sweep.attribute_history_chunks >= 1, "at least the aged chunk was dropped");
     assert!(sweep.streams >= 1, "the stream left without history was collected");
-    assert!(sweep.temporal_entities >= 1, "the temporal Entity left without streams was collected");
-    assert!(sweep.released_write_records >= 1, "the record behind the horizon was released");
+    assert!(sweep.vacated_evolutions >= 1, "the temporal Entity left without streams was collected");
 
     // The aged tenant state is gone, catalogue included.
     assert!(stored_history(&pool, &aged_id).await.is_empty(), "aged history left storage");
     assert_eq!(temporal_catalog_rows(&pool, &aged_id).await, (0, 0), "its catalogue rows were collected");
-    assert_eq!(write_records_present(&pool, aged_write).await, 0, "its idempotency record was released");
 
     // Retention is not deletion: nothing was recorded about what left.
     assert_eq!(
@@ -157,14 +133,8 @@ async fn temporal_semantics_operator_retention_ages_storage_out_without_deletion
         "a dropped chunk records no specification deletion"
     );
 
-    // Current storage and its idempotency record are untouched.
     assert_eq!(stored_history(&pool, &retained_id).await.len(), 1, "recent history is kept");
     assert_eq!(temporal_catalog_rows(&pool, &retained_id).await, (1, 1), "its catalogue rows are kept");
-    assert_eq!(
-        write_records_present(&pool, retained_write).await,
-        1,
-        "a record that still protects an effect is not released"
-    );
     let (status, body) = get_temporal_entity(&http, &retained_id, "").await;
     assert_eq!(status, StatusCode::OK);
     assert!(!rendered_instances(&body, "reading").is_empty(), "retained history is still queryable");

@@ -1,9 +1,10 @@
-//! Clause 4.17 type selection read from a type-membership relation.
+//! Clause 4.17 type selection read from the type-membership relation.
 //!
-//! A membership relation holds one row per type an Entity carries, keyed by
+//! `entity_type_members` holds one row per type an Entity carries, keyed by
 //! type and then identifier, so the Entities of one type are one key range in
-//! identifier order: `entity_type_members` for current state,
-//! `temporal_entity_type_members` for Temporal Evolutions. A type expression
+//! identifier order; a walk keeps the rows of the side it reads, the current
+//! state for a core read and the Temporal Evolution for a temporal one, so
+//! the index carries both flags and the walk never visits the heap. A type expression
 //! therefore renders to a stream of `(key, id)` a statement can page in the
 //! clause 5.5.9 `id` order by walking the key, reading only the Entities it
 //! skips and keeps: one range for a type, the merge of the ranges without
@@ -17,7 +18,7 @@
 use crate::{dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey};
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
-use andromeda_postgresql_schema::type_membership::TypeMembershipRelation;
+use andromeda_postgresql_schema::{current::EntityTypeMembers, type_membership::MembershipSide};
 use andromeda_postgresql_seaquery::{
     branch::qualified,
     literal::{false_literal, int_literal},
@@ -39,19 +40,19 @@ struct Candidate;
 #[iden = "type_member"]
 struct TypeMember;
 
-/// The membership relation a walk or a probe reads, in its branch.
+/// The memberships of one side a walk or a probe reads, in its branch.
 #[derive(Clone, Copy, Debug)]
 pub struct Memberships<'a> {
-    /// Which relation.
-    pub relation: TypeMembershipRelation,
-    /// The branch schema it is named in, `None` for the live branch.
+    /// Which side.
+    pub side: MembershipSide,
+    /// The branch schema the relation is named in, `None` for the live branch.
     pub schema: Option<&'a DynIden>,
 }
 
 impl Memberships<'_> {
     /// The relation, qualified by its branch schema.
     pub(crate) fn table(self) -> TableRef {
-        qualified(self.schema, self.relation.table())
+        qualified(self.schema, EntityTypeMembers::Table)
     }
 }
 
@@ -85,7 +86,6 @@ pub fn members_of_any<'a>(
 /// The Entities `expr` selects, as `(key, id)` with no repeat, or `None` when
 /// it has no range to walk.
 fn members_of(expr: &TypeExpr, types: &ResolvedNames<EntityTypeName>, memberships: Memberships<'_>) -> Option<SelectStatement> {
-    let relation = memberships.relation;
     match expr {
         TypeExpr::Wildcard => None,
         TypeExpr::Type(iri) => Some(range(types.get_str(iri.as_str()).map(EntityTypeNameKey::get), memberships)),
@@ -95,7 +95,7 @@ fn members_of(expr: &TypeExpr, types: &ResolvedNames<EntityTypeName>, membership
                 .iter()
                 .enumerate()
                 .find_map(|(position, child)| members_of(child, types, memberships).map(|stream| (position, stream)))?;
-            let id = Expr::col((Candidate, relation.id()));
+            let id = Expr::col((Candidate, EntityTypeMembers::Id));
             let narrowing = children
                 .iter()
                 .enumerate()
@@ -105,8 +105,8 @@ fn members_of(expr: &TypeExpr, types: &ResolvedNames<EntityTypeName>, membership
                 });
             Some(
                 Query::select()
-                    .column((Candidate, relation.key()))
-                    .column((Candidate, relation.id()))
+                    .column((Candidate, EntityTypeMembers::EntityKey))
+                    .column((Candidate, EntityTypeMembers::Id))
                     .from_subquery(stream, Candidate)
                     .cond_where(narrowing)
                     .take(),
@@ -120,7 +120,6 @@ fn members_of(expr: &TypeExpr, types: &ResolvedNames<EntityTypeName>, membership
 /// for a statement that walks some other range.
 #[must_use]
 pub fn membership(expr: &TypeExpr, types: &ResolvedNames<EntityTypeName>, id: &SimpleExpr, memberships: Memberships<'_>) -> Condition {
-    let relation = memberships.relation;
     match expr {
         TypeExpr::Wildcard => Condition::all(),
         TypeExpr::Type(iri) => Condition::all().add(match types.get_str(iri.as_str()) {
@@ -128,8 +127,9 @@ pub fn membership(expr: &TypeExpr, types: &ResolvedNames<EntityTypeName>, id: &S
                 Query::select()
                     .expr(int_literal(1))
                     .from_as(memberships.table(), TypeMember)
-                    .and_where(Expr::col((TypeMember, relation.type_key())).eq(int_literal(i64::from(key.get()))))
-                    .and_where(Expr::col((TypeMember, relation.id())).eq(id.clone())) // clone: every leaf probes the same Entity
+                    .and_where(Expr::col((TypeMember, EntityTypeMembers::EntityTypeNameKey)).eq(int_literal(i64::from(key.get()))))
+                    .and_where(Expr::col((TypeMember, EntityTypeMembers::Id)).eq(id.clone())) // clone: every leaf probes the same Entity
+                    .and_where(Expr::col((TypeMember, memberships.side.flag())))
                     .take(),
             ),
             None => false_literal(),
@@ -143,17 +143,22 @@ pub fn membership(expr: &TypeExpr, types: &ResolvedNames<EntityTypeName>, id: &S
     }
 }
 
-/// The key range of one type, or no row for a type the dictionary never
-/// recorded: no Entity can carry a type that was never interned.
+/// The key range of one type on the side `memberships` reads, or no row for
+/// a type the dictionary never recorded: no Entity can carry a type that was
+/// never interned.
 ///
 /// The key is inlined, as the type-array predicate inlines it, so the planner
 /// estimates the range from the statistics of that one type.
 fn range(key: Option<i32>, memberships: Memberships<'_>) -> SelectStatement {
-    let relation = memberships.relation;
     let mut range = Query::select();
-    range.column(relation.key()).column(relation.id()).from(memberships.table());
+    range
+        .column(EntityTypeMembers::EntityKey)
+        .column(EntityTypeMembers::Id)
+        .from(memberships.table());
     match key {
-        Some(key) => range.and_where(Expr::col(relation.type_key()).eq(int_literal(i64::from(key)))),
+        Some(key) => range
+            .and_where(Expr::col(EntityTypeMembers::EntityTypeNameKey).eq(int_literal(i64::from(key))))
+            .and_where(Expr::col(memberships.side.flag())),
         None => range.and_where(false_literal()),
     };
     range.take()
@@ -166,7 +171,6 @@ fn range(key: Option<i32>, memberships: Memberships<'_>) -> SelectStatement {
 /// `DISTINCT ON` over the ordered union is what lets PostgreSQL merge the
 /// ranges as they stream rather than collecting and sorting them.
 fn merged(streams: Vec<SelectStatement>, memberships: Memberships<'_>) -> SelectStatement {
-    let relation = memberships.relation;
     let mut streams = streams.into_iter();
     let Some(first) = streams.next() else {
         return range(None, memberships);
@@ -180,11 +184,11 @@ fn merged(streams: Vec<SelectStatement>, memberships: Memberships<'_>) -> Select
         union
     });
     Query::select()
-        .distinct_on([(Typed, relation.id())])
-        .column((Typed, relation.key()))
-        .column((Typed, relation.id()))
+        .distinct_on([(Typed, EntityTypeMembers::Id)])
+        .column((Typed, EntityTypeMembers::EntityKey))
+        .column((Typed, EntityTypeMembers::Id))
         .from_subquery(union, Typed)
-        .order_by((Typed, relation.id()), Order::Asc)
+        .order_by((Typed, EntityTypeMembers::Id), Order::Asc)
         .take()
 }
 
@@ -197,13 +201,13 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
-    use andromeda_postgresql_schema::type_membership::TypeMembershipRelation;
+    use andromeda_postgresql_schema::type_membership::MembershipSide;
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Condition, Expr, IntoIden, PostgresQueryBuilder, Query};
 
     const CURRENT: Memberships<'static> = Memberships {
-        relation: TypeMembershipRelation::Current,
+        side: MembershipSide::Current,
         schema: None,
     };
 
@@ -231,7 +235,7 @@ mod tests {
     fn one_type_is_one_key_range() {
         assert_eq!(
             stream(&[ty("A")]),
-            r#"SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1)"#
+            r#"SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1) AND "is_current_member""#
         );
     }
 
@@ -250,8 +254,11 @@ mod tests {
             sql.starts_with(r#"SELECT DISTINCT ON ("typed"."id") "typed"."entity_key", "typed"."id" FROM ("#),
             "{sql}"
         );
-        assert!(sql.contains(r#""entity_type_name_key" = (1) UNION ALL (SELECT"#), "{sql}");
-        assert!(sql.contains(r#""entity_type_name_key" = (2))"#), "{sql}");
+        assert!(
+            sql.contains(r#""entity_type_name_key" = (1) AND "is_current_member" UNION ALL (SELECT"#),
+            "{sql}"
+        );
+        assert!(sql.contains(r#""entity_type_name_key" = (2) AND "is_current_member")"#), "{sql}");
         assert!(sql.ends_with(r#") AS "typed" ORDER BY "typed"."id" ASC"#), "{sql}");
     }
 
@@ -270,9 +277,9 @@ mod tests {
             sql,
             concat!(
                 r#"SELECT "candidate"."entity_key", "candidate"."id" FROM "#,
-                r#"(SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1)) AS "candidate" "#,
+                r#"(SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1) AND "is_current_member") AS "candidate" "#,
                 r#"WHERE EXISTS(SELECT 1 FROM "entity_type_members" AS "type_member" "#,
-                r#"WHERE "type_member"."entity_type_name_key" = (2) AND "type_member"."id" = "candidate"."id")"#
+                r#"WHERE "type_member"."entity_type_name_key" = (2) AND "type_member"."id" = "candidate"."id" AND "type_member"."is_current_member")"#
             )
         );
     }
@@ -289,7 +296,7 @@ mod tests {
             stream(&[TypeExpr::And(vec![TypeExpr::Wildcard, ty("A")])]),
             concat!(
                 r#"SELECT "candidate"."entity_key", "candidate"."id" FROM "#,
-                r#"(SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1)) AS "candidate" WHERE TRUE"#
+                r#"(SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1) AND "is_current_member") AS "candidate" WHERE TRUE"#
             )
         );
     }
@@ -313,7 +320,7 @@ mod tests {
     fn a_branch_walks_its_own_memberships() {
         let schema = Alias::new("snap_5").into_iden();
         let memberships = Memberships {
-            relation: TypeMembershipRelation::Current,
+            side: MembershipSide::Current,
             schema: Some(&schema),
         };
         let sql = members_of_any([&TypeExpr::And(vec![ty("A"), ty("B")])], &known(), memberships)
@@ -322,12 +329,12 @@ mod tests {
         assert_eq!(sql.matches(r#""snap_5"."entity_type_members""#).count(), 2, "{sql}");
     }
 
-    /// A Temporal Evolution's types are walked in their own relation, keyed by
-    /// the temporal catalogue's surrogate key.
+    /// A Temporal Evolution's types are walked in the same relation, keeping
+    /// the rows of the Evolution's side.
     #[test]
-    fn a_temporal_selection_walks_the_temporal_memberships() {
+    fn a_temporal_selection_walks_the_evolution_memberships() {
         let temporal = Memberships {
-            relation: TypeMembershipRelation::Temporal,
+            side: MembershipSide::Evolution,
             schema: None,
         };
         let sql = members_of_any([&TypeExpr::And(vec![ty("A"), ty("B")])], &known(), temporal)
@@ -336,10 +343,10 @@ mod tests {
         assert_eq!(
             sql,
             concat!(
-                r#"SELECT "candidate"."temporal_entity_key", "candidate"."id" FROM "#,
-                r#"(SELECT "temporal_entity_key", "id" FROM "temporal_entity_type_members" WHERE "entity_type_name_key" = (1)) AS "candidate" "#,
-                r#"WHERE EXISTS(SELECT 1 FROM "temporal_entity_type_members" AS "type_member" "#,
-                r#"WHERE "type_member"."entity_type_name_key" = (2) AND "type_member"."id" = "candidate"."id")"#
+                r#"SELECT "candidate"."entity_key", "candidate"."id" FROM "#,
+                r#"(SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1) AND "is_evolution_member") AS "candidate" "#,
+                r#"WHERE EXISTS(SELECT 1 FROM "entity_type_members" AS "type_member" "#,
+                r#"WHERE "type_member"."entity_type_name_key" = (2) AND "type_member"."id" = "candidate"."id" AND "type_member"."is_evolution_member")"#
             )
         );
     }

@@ -45,7 +45,7 @@ use andromeda_postgresql_query::{
     one_time_gate::{Candidates, ShortWalkMatches, bounded, count_of, materialized, within, wrapped},
     page_window::apply_identifier_window,
 };
-use andromeda_postgresql_schema::{current::E, temporal::TemporalEntities};
+use andromeda_postgresql_schema::current::{E, Entities};
 use sea_query::{Asterisk, Condition, Expr, ExprTrait, IntoIden, Query, SelectStatement, SimpleExpr, TableRef, UnionType, WithClause};
 
 /// The page of stage 1 that `step` cuts, and the order its identifiers come
@@ -85,9 +85,9 @@ pub(super) fn gated_walk(
     let gates = Gates::of(step, ShortWalkLength { visited, need });
 
     let mut indexed = selected_ids(narrowed.paged, gates.indexed.into_iter().fold(residual, Condition::add), window_match());
-    let read_order = apply_identifier_window(&mut indexed, Expr::col((E, TemporalEntities::Id)), window);
+    let read_order = apply_identifier_window(&mut indexed, Expr::col((E, Entities::Id)), window);
     let mut walk = selected_ids(walked.paged, gates.walk.into_iter().fold(whole, Condition::add), window_match());
-    apply_identifier_window(&mut walk, Expr::col((E, TemporalEntities::Id)), window);
+    apply_identifier_window(&mut walk, Expr::col((E, Entities::Id)), window);
 
     let mut answered = Query::select();
     answered
@@ -195,9 +195,9 @@ fn short_walk(evolutions: TableRef, conditions: Condition, window_match: SelectS
     };
     let mut walk = Query::select();
     walk.column(Asterisk).from(evolutions);
-    let read_order = apply_identifier_window(&mut walk, Expr::col((E, TemporalEntities::Id)), &PageWindow { limit: length.visited, start });
+    let read_order = apply_identifier_window(&mut walk, Expr::col((E, Entities::Id)), &PageWindow { limit: length.visited, start });
     let mut matches = selected_ids(TableRef::SubQuery(Box::new(walk.take()), E.into_iden()), conditions, window_match);
-    matches.order_by((E, TemporalEntities::Id), sql_order(read_order.into())).limit(length.need);
+    matches.order_by((E, Entities::Id), sql_order(read_order.into())).limit(length.need);
     matches
 }
 
@@ -222,10 +222,7 @@ mod tests {
     fn the_candidate_branch_keeps_the_window_match_and_drops_the_pattern() {
         let sql = catalogue_page();
         let indexed = PageBranches::of(&sql).indexed;
-        assert!(
-            indexed.contains(r#""e"."temporal_entity_key" IN (SELECT "temporal_entity_key" FROM "candidates")"#),
-            "{indexed}"
-        );
+        assert!(indexed.contains(r#""e"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#), "{indexed}");
         assert!(indexed.contains("EXISTS(SELECT 1 FROM"), "{indexed}");
         assert!(!indexed.contains(r#""e"."id" ~"#), "{indexed}");
     }
@@ -236,7 +233,7 @@ mod tests {
         let indexed = PageBranches::of(&sql).indexed;
         assert!(
             indexed.contains(concat!(
-                r#"FROM (SELECT * FROM "temporal_entities" AS "e" WHERE "e"."temporal_entity_key" IN (SELECT "temporal_entity_key" FROM "candidates")"#,
+                r#"FROM (SELECT * FROM (SELECT * FROM "entities" WHERE "entities"."evolution_created_at" IS NOT NULL) AS "e" WHERE "e"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#,
                 r#" ORDER BY "id" ASC OFFSET 0) AS "e" WHERE"#
             )),
             "{indexed}"
@@ -256,7 +253,7 @@ mod tests {
         let sql = catalogue_page();
         let short = PageBranches::of(&sql).short;
         assert!(
-            short.contains(r#"FROM (SELECT * FROM "temporal_entities" AS "e" ORDER BY "e"."id" ASC LIMIT 5000 OFFSET 0) AS "e" WHERE"#),
+            short.contains(r#"FROM (SELECT * FROM (SELECT * FROM "entities" WHERE "entities"."evolution_created_at" IS NOT NULL) AS "e" ORDER BY "e"."id" ASC LIMIT 5000 OFFSET 0) AS "e" WHERE"#),
             "{short}"
         );
         assert!(short.contains(r#""e"."id" ~ '.*:0123.*'"#), "{short}");

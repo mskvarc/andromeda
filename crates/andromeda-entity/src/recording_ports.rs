@@ -23,7 +23,7 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::projection::returned_attributes::ReturnedAttributes;
 use async_trait::async_trait;
@@ -39,37 +39,51 @@ use std::{
     time::Duration,
 };
 
-/// What a [`RecordingCommitter`] saw: every write it was handed, and how
-/// many commits arrived as respond-async ones.
+/// What a [`RecordingCommitter`] saw: every write it was handed, the instant
+/// each commit was accepted at, and how many commits arrived as respond-async
+/// ones.
 pub(crate) struct RecordedCommits {
     /// Every write, in the order the commits handed them over.
     pub(crate) writes: Arc<Mutex<Vec<AtomicWrite>>>,
+    /// The instant each commit was handed, in commit order.
+    pub(crate) accepted: Arc<Mutex<Vec<SystemInstant>>>,
     /// How many commits arrived through [`ContextCommitter::commit_enqueued`].
     pub(crate) enqueued: Arc<AtomicUsize>,
 }
 
 /// A committer that lands every write as an update and keeps the writes it saw.
 pub(crate) struct RecordingCommitter {
+    /// Every write it was handed.
     recorded: Arc<Mutex<Vec<AtomicWrite>>>,
+    /// The instant each commit was handed.
+    accepted: Arc<Mutex<Vec<SystemInstant>>>,
+    /// How many commits arrived as respond-async ones.
     enqueued: Arc<AtomicUsize>,
 }
 
 impl RecordingCommitter {
     pub(crate) fn new() -> (RecordingCommitter, RecordedCommits) {
         let recorded: Arc<Mutex<Vec<AtomicWrite>>> = Arc::new(Mutex::new(Vec::new()));
+        let accepted: Arc<Mutex<Vec<SystemInstant>>> = Arc::new(Mutex::new(Vec::new()));
         let enqueued = Arc::new(AtomicUsize::new(0));
         (
             RecordingCommitter {
                 recorded: Arc::clone(&recorded), // clone: the committer and the test both hold the recording.
+                accepted: Arc::clone(&accepted), // clone: the committer and the test both hold the instants.
                 enqueued: Arc::clone(&enqueued), // clone: the committer and the test both hold the count.
             },
-            RecordedCommits { writes: recorded, enqueued },
+            RecordedCommits {
+                writes: recorded,
+                accepted,
+                enqueued,
+            },
         )
     }
 }
 
 impl ContextCommitter for RecordingCommitter {
-    fn commit(&self, _target: &ContextTarget, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+    fn commit(&self, _target: &ContextTarget, accepted_at: SystemInstant, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        self.accepted.lock().expect("recording mutex is not poisoned").push(accepted_at);
         // The outcome mirrors each write's mutation so a batch of inserts settles
         // as created, a deletion as deleted and everything else as updated,
         // which is what the batch coordinator reads back to build its
@@ -92,9 +106,9 @@ impl ContextCommitter for RecordingCommitter {
         Box::pin(async move { Ok(outcomes) })
     }
 
-    fn commit_enqueued(&self, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+    fn commit_enqueued(&self, accepted_at: SystemInstant, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         self.enqueued.fetch_add(1, Ordering::Relaxed);
-        self.commit(&ContextTarget::Live, writes)
+        self.commit(&ContextTarget::Live, accepted_at, writes)
     }
 
     fn commit_replayed(&self, _target: &ContextTarget, _replay: CommitReplay, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {

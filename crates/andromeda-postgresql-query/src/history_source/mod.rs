@@ -1,7 +1,8 @@
 //! The relations a temporal read takes a Temporal Evolution from.
 //!
-//! A branch records history in `temporal_entities`, `temporal_attribute_streams`,
-//! `attribute_history` and `scope_history`, joined by surrogate keys. The live
+//! A branch records history in the identity rows of `entities` holding a
+//! Temporal Evolution, `temporal_attribute_streams`, `attribute_history` and
+//! `scope_history`, joined by surrogate keys. The live
 //! branch also queues history it has accepted and not applied yet
 //! (`temporal_append_intents`), and a read answers the same before and after
 //! the drain applies it only when it reads both. A queued entry has no
@@ -34,12 +35,14 @@
 //! join PostgreSQL pulls up, so the Entity is compared beside it
 //! ([`HistoryBranch::entity_history`]) and the planner chooses between the
 //! semi-join and the per-Entity probe by its estimates. Compared by the
-//! identifier, the source joins `temporal_entities` to turn each stream's key
+//! identifier, the source joins the identity rows to turn each stream's key
 //! into it, and its matches merge with a page's walk in identifier order, so
 //! the page stops at its last Evolution. A statement reading every match, such
 //! as a count, compares the surrogate key every recorded stream carries
 //! instead and joins no catalogue row ([`BesideComparison`]).
 
+/// The types whose Temporal Evolutions hold streams of an attribute.
+pub mod attribute_holders;
 /// The rows of attribute history and the streams they extend.
 pub mod attribute_rows;
 /// The Temporal Evolutions and the types they are recorded under.
@@ -48,6 +51,8 @@ pub mod entity_rows;
 pub mod entry_values;
 /// The grain columns every source projects.
 pub mod grain;
+/// The holders of the attributes a temporal selection by attribute alone names.
+pub mod holder_rows;
 /// The queued entries that replace a recorded instance.
 pub mod instance_replacement;
 /// The queued entries the application would write, as source rows.
@@ -171,7 +176,7 @@ impl HistoryBranch {
 /// What a source of recorded rows alone is compared beside by.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BesideComparison {
-    /// The Entity identifier, joined from `temporal_entities`: the matches
+    /// The Entity identifier, joined from the identity rows: the matches
     /// carry the order a page walks its Evolutions in.
     Identifier,
     /// The Evolution's surrogate key, which every recorded stream carries,
@@ -199,7 +204,7 @@ pub enum EntityHistory {
     /// expression.
     BesideById(SimpleExpr),
     /// The source holds every recorded row, each naming its Evolution by
-    /// [`HistoryGrain::TemporalEntityKey`], which is compared beside it to
+    /// [`HistoryGrain::EntityKey`], which is compared beside it to
     /// the expression.
     BesideByKey(SimpleExpr),
 }
@@ -214,7 +219,7 @@ impl EntityHistory {
             // clone: the alias and the identifier stay with the read, which every source of it shares.
             EntityHistory::BesideById(id) => Some(Expr::col((alias.clone(), HistoryGrain::EntityId)).eq(id.clone())),
             // clone: the alias and the key stay with the read, which every source of it shares.
-            EntityHistory::BesideByKey(key) => Some(Expr::col((alias.clone(), HistoryGrain::TemporalEntityKey)).eq(key.clone())),
+            EntityHistory::BesideByKey(key) => Some(Expr::col((alias.clone(), HistoryGrain::EntityKey)).eq(key.clone())),
         }
     }
 }
@@ -257,7 +262,7 @@ impl HistoryOf {
             HistoryOf::EveryEntity | HistoryOf::Entity(_) => HistoryOf::Entity(id),
             HistoryOf::Evolution(_) => HistoryOf::Evolution(EvolutionColumns {
                 id,
-                key: Expr::col((alias, HistoryGrain::TemporalEntityKey)),
+                key: Expr::col((alias, HistoryGrain::EntityKey)),
             }),
         }
     }
@@ -294,7 +299,7 @@ impl HistoryStream {
         HistoryStream {
             row: row.into_iden(),
             evolution: match branch.evolution_key(of) {
-                Some(_) => HistoryGrain::TemporalEntityKey,
+                Some(_) => HistoryGrain::EntityKey,
                 None => HistoryGrain::EntityId,
             },
         }
@@ -320,7 +325,7 @@ mod tests {
     fn evolution() -> EvolutionColumns {
         EvolutionColumns {
             id: Expr::col((Alias::new("e"), Alias::new("id"))),
-            key: Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))),
+            key: Expr::col((Alias::new("e"), Alias::new("entity_key"))),
         }
     }
 
@@ -345,7 +350,7 @@ mod tests {
         for branch in [HistoryBranch::live_recorded(), HistoryBranch::recorded_in(Alias::new("snap_1").into_iden())] {
             for (compared, comparison) in [
                 (BesideComparison::Identifier, r#"SELECT "ah"."entity_id" = "e"."id""#),
-                (BesideComparison::Key, r#"SELECT "ah"."temporal_entity_key" = "e"."temporal_entity_key""#),
+                (BesideComparison::Key, r#"SELECT "ah"."entity_key" = "e"."entity_key""#),
             ] {
                 let read = branch.entity_history(evolution(), compared);
                 pretty_assertions::assert_eq!(read.compared_beside(&Alias::new("ah").into_iden()).map(rendered).as_deref(), Some(comparison));

@@ -1,4 +1,4 @@
-//! The history rows, stream extents and shapes, Scope rows and instance claims
+//! The history rows, stream extents and shape masks, Scope rows and instance claims
 //! an application records from the entries of its source.
 //!
 //! Each statement joins the entries to their Entity's Temporal Evolution, so an
@@ -9,19 +9,23 @@
 //! of its Entity stating types records nothing, as applying the intents one
 //! after the other leaves it.
 
-use crate::intent_application::{
-    deletion_judgement::{created_by_application, ended_before_evolution},
-    intent_source::{E, I, S, StagedSource, Te, entry, entry_kind_in, intent, source_entries, write_ordinal},
-    scope_judgement::recorded_scope_entry,
+use crate::{
+    intent_application::{
+        deletion_judgement::{created_by_application, ended_before_evolution},
+        intent_source::{E, I, StagedSource, entry, entry_kind_in, intent, source_entries, write_ordinal},
+        scope_judgement::recorded_scope_entry,
+    },
+    stream_shape_growth::shape_growth_statement,
 };
 use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
 use andromeda_postgresql_query::{
+    entity_sides::holds_evolution,
     history_source::entry_values::{attribute_entry_values, recorded_geometry, scope_entry_values},
-    tombstone::carries_a_value,
 };
 use andromeda_postgresql_schema::{
+    current::Entities,
     queue::TemporalAppendIntents,
-    temporal::{AttributeHistory, AttributeHistoryInstanceClaims, ScopeHistory, TemporalAttributeStreams, TemporalEntities, TemporalStreamShapes},
+    temporal::{AttributeHistory, AttributeHistoryInstanceClaims, ScopeHistory, TemporalAttributeStreams},
     temporal_intent::TemporalEntry,
 };
 use andromeda_postgresql_seaquery::{
@@ -29,7 +33,7 @@ use andromeda_postgresql_seaquery::{
     pg_operator::PgBinaryOperator,
     postgis::{bounding_box_contains, st_collect, st_collect_rows, st_envelope},
 };
-use andromeda_postgresql_temporal_query::{alias::Ah, recorded_shape::recorded_shape};
+use andromeda_postgresql_temporal_query::alias::{Ah, S, Te};
 use sea_query::{
     Condition,
     DeleteStatement,
@@ -69,13 +73,16 @@ fn attribute_entries() -> SimpleExpr {
 }
 
 /// The entries of `kinds` of Entities with a Temporal Evolution, the
-/// evolution under `te`.
+/// evolution under `te`. An identity row holding a current state alone has
+/// none: its Entity records no history until an intent stating types brings
+/// the Evolution into being.
 fn entries_with_evolution(source: &StagedSource<'_>, schema: Option<&DynIden>, kinds: SimpleExpr) -> SelectStatement {
     let mut select = Query::select();
     source_entries(&mut select, source);
     select
-        .from_as(qualified(schema, TemporalEntities::Table), Te)
-        .and_where(Expr::col((Te, TemporalEntities::Id)).equals((I, TemporalAppendIntents::EntityId)))
+        .from_as(qualified(schema, Entities::Table), Te)
+        .and_where(Expr::col((Te, Entities::Id)).equals((I, TemporalAppendIntents::EntityId)))
+        .and_where(holds_evolution(Te))
         .and_where(kinds);
     select
 }
@@ -93,7 +100,7 @@ fn entries_with_stream(source: &StagedSource<'_>, schema: Option<&DynIden>) -> S
     let mut select = recorded_attribute_entries(source, schema);
     select
         .from_as(qualified(schema, TemporalAttributeStreams::Table), S)
-        .and_where(Expr::col((S, TemporalAttributeStreams::TemporalEntityKey)).equals((Te, TemporalEntities::TemporalEntityKey)))
+        .and_where(Expr::col((S, TemporalAttributeStreams::EntityKey)).equals((Te, Entities::EntityKey)))
         .and_where(Expr::col((S, TemporalAttributeStreams::AttributeNameKey)).equals((E, TemporalEntry::AttributeNameKey)))
         .and_where(SimpleExpr::from(Expr::col((S, TemporalAttributeStreams::DatasetId))).not_distinct_from(entry(TemporalEntry::DatasetId)));
     select
@@ -120,7 +127,7 @@ pub(crate) fn replaced_instances_statement(source: &StagedSource<'_>, schema: Op
         .column((AttributeHistory::Table, AttributeHistory::WriteOrdinal))
         .from_as(qualified(schema, TemporalAttributeStreams::Table), S2)
         .from(qualified(schema, AttributeHistory::Table))
-        .and_where(Expr::col((S2, TemporalAttributeStreams::TemporalEntityKey)).equals((Te, TemporalEntities::TemporalEntityKey)))
+        .and_where(Expr::col((S2, TemporalAttributeStreams::EntityKey)).equals((Te, Entities::EntityKey)))
         .and_where(Expr::col((S2, TemporalAttributeStreams::AttributeNameKey)).equals((E, TemporalEntry::AttributeNameKey)))
         .and_where(Expr::col((AttributeHistory::Table, AttributeHistory::StreamKey)).equals((S2, TemporalAttributeStreams::StreamKey)))
         .and_where(Expr::col((AttributeHistory::Table, AttributeHistory::VerbatimInstanceId)).equals((E, TemporalEntry::VerbatimInstanceId)));
@@ -134,10 +141,7 @@ pub(crate) fn released_claims_statement(source: &StagedSource<'_>, schema: Optio
     let mut released = verbatim_entries(source, schema);
     released
         .expr(Expr::val(1))
-        .and_where(
-            Expr::col((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::TemporalEntityKey))
-                .equals((Te, TemporalEntities::TemporalEntityKey)),
-        )
+        .and_where(Expr::col((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::EntityKey)).equals((Te, Entities::EntityKey)))
         .and_where(
             Expr::col((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::AttributeNameKey)).equals((E, TemporalEntry::AttributeNameKey)),
         )
@@ -158,14 +162,14 @@ pub(crate) fn released_claims_statement(source: &StagedSource<'_>, schema: Optio
 pub(crate) fn claims_statement(source: &StagedSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
     let mut select = verbatim_entries(source, schema);
     select
-        .column((Te, TemporalEntities::TemporalEntityKey))
+        .column((Te, Entities::EntityKey))
         .expr(entry(TemporalEntry::AttributeNameKey))
         .expr(entry(TemporalEntry::VerbatimInstanceId));
     let mut statement = Query::insert();
     statement
         .into_table(qualified(schema, AttributeHistoryInstanceClaims::Table))
         .columns([
-            AttributeHistoryInstanceClaims::TemporalEntityKey,
+            AttributeHistoryInstanceClaims::EntityKey,
             AttributeHistoryInstanceClaims::AttributeNameKey,
             AttributeHistoryInstanceClaims::VerbatimInstanceId,
         ])
@@ -239,52 +243,20 @@ pub(crate) fn extent_growth_statement(source: &StagedSource<'_>, schema: Option<
         .to_owned()
 }
 
-/// Add to the shapes of every stream an attribute entry of the source records
-/// an instance on the combination of family and value shape that instance
-/// carries.
+/// Grow the shape mask of every stream an attribute entry of the source
+/// records an instance on by the combination of family and value shape that
+/// instance carries.
 ///
-/// The shape is projected from the values the history insert writes, through
-/// the projection an aggregation reads, so the catalogue names exactly the
-/// shapes the stream's rows carry. A combination the stream already holds
-/// conflicts and writes nothing, which is the steady state of a stream. A
-/// tombstone carries no value and adds no shape.
-pub(crate) fn stream_shapes_statement(source: &StagedSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
+/// The combination is projected from the values the history insert writes,
+/// so the mask names exactly the shapes the stream's rows carry.
+pub(crate) fn stream_shapes_statement(source: &StagedSource<'_>, schema: Option<&DynIden>) -> UpdateStatement {
     let mut entries = entries_with_stream(source, schema);
-    entries
-        .column((S, TemporalAttributeStreams::StreamKey))
-        .column((S, TemporalAttributeStreams::AttributeNameKey));
+    entries.column((S, TemporalAttributeStreams::StreamKey));
     for (column, value) in attribute_entry_values(entry) {
         entries.expr_as(value, column);
     }
-    let mut select = Query::select();
-    select
-        .distinct()
-        .column((Ah, TemporalAttributeStreams::StreamKey))
-        .column((Ah, TemporalAttributeStreams::AttributeNameKey))
-        .column((Ah, AttributeHistory::AttributeKind))
-        .expr(recorded_shape())
-        .from_subquery(entries, Ah)
-        .and_where(carries_a_value(Ah));
-    let mut statement = Query::insert();
-    statement
-        .into_table(qualified(schema, TemporalStreamShapes::Table))
-        .columns([
-            TemporalStreamShapes::StreamKey,
-            TemporalStreamShapes::AttributeNameKey,
-            TemporalStreamShapes::AttributeKind,
-            TemporalStreamShapes::RecordedShape,
-        ])
-        .select_from(select)?
-        .on_conflict(
-            OnConflict::columns([
-                TemporalStreamShapes::StreamKey,
-                TemporalStreamShapes::AttributeKind,
-                TemporalStreamShapes::RecordedShape,
-            ])
-            .do_nothing()
-            .to_owned(),
-        );
-    Ok(statement)
+    let rows = Query::select().from_subquery(entries, Ah).take();
+    shape_growth_statement(qualified(schema, TemporalAttributeStreams::Table), rows)
 }
 
 /// The Scope entries of Entities with a Temporal Evolution, events and
@@ -311,7 +283,7 @@ pub(crate) fn scope_history_statement(source: &StagedSource<'_>, schema: Option<
     select
         .cond_where(recorded_scope_entry(source, schema))
         .expr(intent(TemporalAppendIntents::RecordedAt))
-        .column((Te, TemporalEntities::TemporalEntityKey))
+        .column((Te, Entities::EntityKey))
         .expr(intent(TemporalAppendIntents::WriteId))
         .expr(write_ordinal())
         .exprs(values);
@@ -321,7 +293,7 @@ pub(crate) fn scope_history_statement(source: &StagedSource<'_>, schema: Option<
         .columns(
             [
                 ScopeHistory::RecordedAt,
-                ScopeHistory::TemporalEntityKey,
+                ScopeHistory::EntityKey,
                 ScopeHistory::WriteId,
                 ScopeHistory::WriteOrdinal,
             ]

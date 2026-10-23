@@ -34,12 +34,11 @@ use andromeda_context_commit::{
     write_record::WriteRecord,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
 use andromeda_postgresql_context_store::entity::repo::EntityRepository;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_temporal::core_write_history::CoreWriteHistory;
-use chrono::Utc;
 use sqlx::{PgPool, Postgres, Transaction};
 use std::{
     collections::{HashMap, HashSet},
@@ -320,14 +319,20 @@ impl PostgresAtomicCommitter {
         Ok(outcomes)
     }
 
-    /// Commit `writes` under a freshly minted write identity, answered as
-    /// `response`.
+    /// Commit `writes` under a write identity freshly minted at `accepted_at`,
+    /// answered as `response`.
     ///
     /// Every refused write is set aside and the rest run again, one attempt per
     /// refusal, so a successful commit costs one transaction and each refused
     /// entity costs its chunk one more.
-    async fn commit_fresh(&self, target: &ContextTarget, writes: Vec<AtomicWrite>, response: CommitResponse) -> Result<Vec<WriteOutcome>, CommitError> {
-        let record = WriteRecord::mint(Utc::now());
+    async fn commit_fresh(
+        &self,
+        target: &ContextTarget,
+        accepted_at: SystemInstant,
+        writes: Vec<AtomicWrite>,
+        response: CommitResponse,
+    ) -> Result<Vec<WriteOutcome>, CommitError> {
+        let record = WriteRecord::mint(accepted_at.get());
         let mut submission = IsolatedSubmission::new(writes);
         loop {
             match rerun_while_contended(|| self.commit_under(target, record, WriteOrdinal::at(0), submission.writes(), None, response)).await {
@@ -340,13 +345,13 @@ impl PostgresAtomicCommitter {
 }
 
 impl ContextCommitter for PostgresAtomicCommitter {
-    fn commit(&self, target: &ContextTarget, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+    fn commit(&self, target: &ContextTarget, accepted_at: SystemInstant, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         let target = target.clone();
-        Box::pin(async move { self.commit_fresh(&target, writes, CommitResponse::Synchronous).await })
+        Box::pin(async move { self.commit_fresh(&target, accepted_at, writes, CommitResponse::Synchronous).await })
     }
 
-    fn commit_enqueued(&self, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-        Box::pin(async move { self.commit_fresh(&ContextTarget::Live, writes, CommitResponse::RespondAsync).await })
+    fn commit_enqueued(&self, accepted_at: SystemInstant, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        Box::pin(async move { self.commit_fresh(&ContextTarget::Live, accepted_at, writes, CommitResponse::RespondAsync).await })
     }
 
     fn commit_replayed(&self, target: &ContextTarget, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {

@@ -14,17 +14,14 @@
 //! summary, and a subquery would have it decompress every batch whose bloom
 //! summary admits the identifier, across every stream of the chunk.
 
-use crate::attribute_history_value::AttributeHistoryValue;
+use crate::{attribute_history_value::AttributeHistoryValue, stream_shape_growth::shape_growth_statement};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, instance_identity::InstanceIdentity};
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, tombstone::carries_a_value};
-use andromeda_postgresql_schema::temporal::{
-    AttributeHistory,
-    AttributeHistoryInstanceClaims,
-    TemporalAttributeStreams,
-    TemporalEntities,
-    TemporalStreamShapes,
+use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+use andromeda_postgresql_schema::{
+    current::Entities,
+    temporal::{AttributeHistory, AttributeHistoryInstanceClaims, TemporalAttributeStreams},
 };
 use andromeda_postgresql_seaquery::{
     cast::cast,
@@ -34,25 +31,9 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
     postgis::{bounding_box_contains, repaired_when_invalid, st_collect, st_envelope, st_geom_from_ewkb},
 };
-use andromeda_postgresql_temporal_query::{
-    alias::{Ah, S, Te},
-    recorded_shape::recorded_shape,
-};
+use andromeda_postgresql_temporal_query::alias::{Ah, S, Te};
 use chrono::{DateTime, Utc};
-use sea_query::{
-    Condition,
-    DeleteStatement,
-    Expr,
-    ExprTrait,
-    InsertStatement,
-    JoinType,
-    OnConflict,
-    Query,
-    SelectStatement,
-    SimpleExpr,
-    UpdateStatement,
-    error::Error as SeaQueryError,
-};
+use sea_query::{Condition, DeleteStatement, Expr, ExprTrait, JoinType, Query, SelectStatement, SimpleExpr, UpdateStatement};
 use serde_json::value::RawValue;
 use std::borrow::Cow;
 
@@ -84,11 +65,11 @@ fn attribute_streams_query(target: &ContextTarget, entity_id: &Identifier, attri
         .from(table_of(target, TemporalAttributeStreams::Table).alias(S))
         .join_as(
             JoinType::InnerJoin,
-            table_of(target, TemporalEntities::Table),
+            table_of(target, Entities::Table),
             Te,
-            Expr::col((Te, TemporalEntities::TemporalEntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)),
+            Expr::col((Te, Entities::EntityKey)).equals((S, TemporalAttributeStreams::EntityKey)),
         )
-        .and_where(Expr::col((Te, TemporalEntities::Id)).eq(entity_id.as_str()))
+        .and_where(Expr::col((Te, Entities::Id)).eq(entity_id.as_str()))
         .and_where(Expr::col((S, TemporalAttributeStreams::AttributeNameKey)).eq(attribute.get()))
         .to_owned()
 }
@@ -126,12 +107,9 @@ pub(crate) fn release_verbatim_instance_claim_statement(
 ) -> DeleteStatement {
     let entity_scope = Query::select()
         .expr(int_literal(1))
-        .from(table_of(target, TemporalEntities::Table).alias(Te))
-        .and_where(
-            Expr::col((Te, TemporalEntities::TemporalEntityKey))
-                .equals((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::TemporalEntityKey)),
-        )
-        .and_where(Expr::col((Te, TemporalEntities::Id)).eq(entity_id.as_str()))
+        .from(table_of(target, Entities::Table).alias(Te))
+        .and_where(Expr::col((Te, Entities::EntityKey)).equals((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::EntityKey)))
+        .and_where(Expr::col((Te, Entities::Id)).eq(entity_id.as_str()))
         .to_owned();
     Query::delete()
         .from_table(table_of(target, AttributeHistoryInstanceClaims::Table))
@@ -207,6 +185,11 @@ pub(crate) fn update_instance_statement(
             (AttributeHistory::ValueKind, Expr::val(value.kind().code())),
             (AttributeHistory::ValueNumber, Expr::val(value.number().cloned())), // clone: the statement owns the value it binds
             (AttributeHistory::ValueString, Expr::val(value.string().map(Cow::into_owned))),
+            (
+                AttributeHistory::ValueLanguage,
+                Expr::val(value.language().map(|language| language.as_str().to_owned())),
+            ),
+            (AttributeHistory::ValueDatatypeKey, Expr::val(value.datatype_key())),
             (AttributeHistory::ValueBoolean, Expr::val(value.boolean())),
             (AttributeHistory::ValueObject, jsonb_text(value.object().map(RawValue::get))),
             (AttributeHistory::ValueDateTime, Expr::val(value.date_time())),
@@ -249,51 +232,16 @@ pub(crate) fn grow_stream_extent_statement(target: &ContextTarget, stream_keys: 
         .to_owned()
 }
 
-/// Add the combination of family and value shape the modified instance
-/// carries to the shapes of its stream, among the streams `modified` the
-/// modification returned; a combination the stream holds is left alone.
-///
-/// # Errors
-///
-/// Returns [`SeaQueryError`] if the projection ever stops matching the column
-/// list, which the fixed shape here makes unreachable.
-pub(crate) fn record_instance_shape_statement(instance: &InstanceIdentity, target: &ContextTarget, modified: &[i64]) -> Result<InsertStatement, SeaQueryError> {
-    let modified = Query::select()
-        .distinct()
-        .column((Ah, AttributeHistory::StreamKey))
-        .column((S, TemporalAttributeStreams::AttributeNameKey))
-        .column((Ah, AttributeHistory::AttributeKind))
-        .expr(recorded_shape())
+/// Grow the shape mask of the modified instance's stream, among the streams
+/// `modified` the modification returned, by the combination of family and
+/// value shape the stored row carries.
+pub(crate) fn grow_stream_shapes_statement(instance: &InstanceIdentity, target: &ContextTarget, modified: &[i64]) -> UpdateStatement {
+    let rows = Query::select()
         .from(table_of(target, AttributeHistory::Table).alias(Ah))
-        .join_as(
-            JoinType::InnerJoin,
-            table_of(target, TemporalAttributeStreams::Table),
-            S,
-            Expr::col((S, TemporalAttributeStreams::StreamKey)).equals((Ah, AttributeHistory::StreamKey)),
-        )
         .and_where(Expr::col((Ah, identity_column(instance))).eq(identity_value(instance)))
         .and_where(Expr::col((Ah, AttributeHistory::StreamKey)).eq(any(Expr::val(modified.to_vec()))))
-        .and_where(carries_a_value(Ah))
-        .to_owned();
-    let mut statement = Query::insert();
-    statement
-        .into_table(table_of(target, TemporalStreamShapes::Table))
-        .columns([
-            TemporalStreamShapes::StreamKey,
-            TemporalStreamShapes::AttributeNameKey,
-            TemporalStreamShapes::AttributeKind,
-            TemporalStreamShapes::RecordedShape,
-        ])
-        .on_conflict(
-            OnConflict::columns([
-                TemporalStreamShapes::StreamKey,
-                TemporalStreamShapes::AttributeKind,
-                TemporalStreamShapes::RecordedShape,
-            ])
-            .do_nothing()
-            .to_owned(),
-        );
-    Ok(statement.select_from(modified)?.to_owned())
+        .take();
+    shape_growth_statement(table_of(target, TemporalAttributeStreams::Table), rows)
 }
 
 /// The single-instance select used for policy validation.
@@ -331,7 +279,7 @@ mod tests {
             attribute_stream_keys_statement,
             delete_instance_statement,
             grow_stream_extent_statement,
-            record_instance_shape_statement,
+            grow_stream_shapes_statement,
             release_verbatim_instance_claim_statement,
             select_instance_statement,
             update_instance_statement,
@@ -339,7 +287,7 @@ mod tests {
     };
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, instance_identity::InstanceIdentity};
-    use andromeda_ngsi_ld_model::temporal::TemporalValue;
+    use andromeda_postgresql_attribute_instance::stored_value::StoredValue;
     use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
     use pretty_assertions::assert_eq;
     use sea_query::{Expr, PostgresQueryBuilder};
@@ -365,7 +313,7 @@ mod tests {
     /// The update of `instance` over the streams 4 and 5, replacing it with a
     /// boolean beside `geometry`.
     fn replacement_update(instance: &InstanceIdentity, geometry: Option<&[u8]>) -> (String, usize) {
-        let value = AttributeHistoryValue::of_observation(&TemporalValue::Boolean(true)).expect("the value encodes");
+        let value = AttributeHistoryValue::Recorded(StoredValue::Boolean { flag: true, datatype: None });
         let replacement = InstanceReplacement {
             value: &value,
             geometry,
@@ -404,16 +352,13 @@ mod tests {
     #[test]
     fn a_modified_instance_adds_its_combination_to_its_stream() {
         for instance in identities() {
-            let (statement, _) = record_instance_shape_statement(&instance, &ContextTarget::Live, &[4])
-                .expect("the fixed statement builds")
-                .build(PostgresQueryBuilder);
+            let (statement, _) = grow_stream_shapes_statement(&instance, &ContextTarget::Live, &[4]).build(PostgresQueryBuilder);
             assert!(
-                statement.starts_with(r#"INSERT INTO "temporal_stream_shapes" ("stream_key", "attribute_name_key", "attribute_kind", "recorded_shape") SELECT DISTINCT "ah"."stream_key", "s"."attribute_name_key", "ah"."attribute_kind", (CASE"#),
+                statement.starts_with(r#"UPDATE "temporal_attribute_streams" SET "shape_mask" = "temporal_attribute_streams"."shape_mask" | "grown"."shape_mask" FROM (SELECT "ah"."stream_key", bit_or("#),
                 "{statement}"
             );
-            assert!(statement.contains(r#""ah"."stream_key" = ANY($3) AND "ah"."value_kind" <> (0)"#), "{statement}");
             assert!(
-                statement.ends_with(r#"ON CONFLICT ("stream_key", "attribute_kind", "recorded_shape") DO NOTHING"#),
+                statement.contains(r#"FROM "attribute_history" AS "ah" WHERE "ah"."#) && statement.contains(r#" AND "ah"."stream_key" = ANY($"#),
                 "{statement}"
             );
         }
@@ -429,10 +374,7 @@ mod tests {
                 select_instance_statement(&instance, &target, &entity(), AttributeNameKey::from(7))
                     .build(PostgresQueryBuilder)
                     .0,
-                record_instance_shape_statement(&instance, &target, &[4])
-                    .expect("the fixed statement builds")
-                    .build(PostgresQueryBuilder)
-                    .0,
+                grow_stream_shapes_statement(&instance, &target, &[4]).build(PostgresQueryBuilder).0,
             ];
             for statement in statements {
                 match instance {

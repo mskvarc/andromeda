@@ -313,6 +313,7 @@ mod tests {
                     .map(|(name, key)| (format!("https://example.com/{name}").parse().expect("valid name"), AttributeNameKey::from(key))),
             ),
             types: ResolvedNames::from_pairs([("https://example.com/Vehicle".parse().expect("valid type name"), EntityTypeNameKey::from(1))]),
+            ..QueryNames::default()
         }
     }
 
@@ -376,7 +377,7 @@ mod tests {
         assert!(
             numbers.contains(concat!(
                 r#""ca"."value_number" AS "sort_1", NULL::timestamptz AS "sort_2", (NULL::text) COLLATE "und-x-icu" AS "sort_3", "selected"."id" AS "sort_4" "#,
-                r#"FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1)) AS "selected" "#,
+                r#"FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1) AND "is_current_member") AS "selected" "#,
                 r#"INNER JOIN "current_attributes" AS "ca" ON "ca"."entity_key" = "selected"."entity_key""#
             )),
             "{numbers}"
