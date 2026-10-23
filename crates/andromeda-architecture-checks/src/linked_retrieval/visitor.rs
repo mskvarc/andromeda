@@ -59,12 +59,13 @@ const INLINE_MEMBERS: [&str; 2] = ["ENTITY", "ENTITY_LIST"];
 const MEMBER_WRITES: [&str; 4] = ["insert", "entry", "serialize_entry", "serialize_field"];
 
 /// The `ParameterError` variants only `From<AdmissionError>` may build.
-const ADMISSION_VARIANTS: [&str; 5] = [
+const ADMISSION_VARIANTS: [&str; 6] = [
     "ProjectionLinkedTermsWithoutJoin",
     "ProjectionDepthExceedsJoinLevel",
     "FilterTraversalWithoutJoin",
     "FilterDepthExceedsJoinLevel",
     "LinkedRetrievalUnavailable",
+    "JoinLevelWithoutJoin",
 ];
 
 /// The engine's adapter traits.

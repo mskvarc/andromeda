@@ -403,6 +403,44 @@ mod tests {
         assert!(p.validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended).is_ok());
     }
 
+    /// Tables 6.18.3.2-1 and 6.19.3.1-1: `aggrMethods` and `aggrPeriodDuration`
+    /// are "only applicable if aggregatedValues is present in the format or
+    /// options parameter", and clause 6.3.20 refuses either without it.
+    #[test]
+    fn the_aggregation_parameters_without_aggregated_values_are_refused() {
+        const WINDOW: &str = "type=Vehicle&timerel=after&timeAt=2024-01-01T00:00:00Z";
+        for aggregation in [
+            "aggrMethods=sum",
+            "aggrPeriodDuration=PT1H",
+            "format=temporalValues&aggrMethods=sum&aggrPeriodDuration=PT1H",
+            "options=sysAttrs&aggrMethods=sum",
+        ] {
+            let p = params_from_query(&format!("{WINDOW}&{aggregation}"));
+            for operation in [TemporalQueryOperation::Retrieve, TemporalQueryOperation::Query] {
+                let err = p.validate(operation, TemporalJoin::Spec).expect_err(aggregation);
+                assert!(matches!(err, ParameterError::AggregationWithoutAggregatedValues), "{aggregation}: {err:?}");
+            }
+        }
+    }
+
+    /// Either spelling of `aggregatedValues` admits both aggregation
+    /// parameters.
+    #[test]
+    fn the_aggregation_parameters_beside_aggregated_values_are_admitted() {
+        const WINDOW: &str = "type=Vehicle&timerel=after&timeAt=2024-01-01T00:00:00Z";
+        for aggregation in [
+            "options=aggregatedValues&aggrMethods=sum",
+            "format=aggregatedValues&aggrMethods=sum&aggrPeriodDuration=PT1H",
+            "options=aggregatedValues,sysAttrs&aggrMethods=sum,avg&aggrPeriodDuration=P1D",
+        ] {
+            let p = params_from_query(&format!("{WINDOW}&{aggregation}"));
+            for operation in [TemporalQueryOperation::Retrieve, TemporalQueryOperation::Query] {
+                let result = p.validate(operation, TemporalJoin::Spec);
+                assert!(result.is_ok(), "{aggregation}: {result:?}");
+            }
+        }
+    }
+
     /// A valid grouped request passes.
     #[test]
     fn a_grouped_query_with_methods_and_a_group_key_is_admitted() {
@@ -652,6 +690,20 @@ mod tests {
                 .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
                 .is_ok()
         );
+    }
+
+    /// Table 6.5.3.1-1: `joinLevel` is "only applicable if join parameter is
+    /// 'flat' or 'inline'", with the extension or without it.
+    #[test]
+    fn a_join_level_without_a_retrieving_join_is_refused() {
+        for linked_retrieval in [TemporalJoin::Spec, TemporalJoin::Extended] {
+            for raw in ["type=Vehicle&joinLevel=2", "type=Vehicle&join=%40none&joinLevel=2"] {
+                let err = params_from_query(raw)
+                    .validate(TemporalQueryOperation::Retrieve, linked_retrieval)
+                    .expect_err(raw);
+                assert!(matches!(err, ParameterError::JoinLevelWithoutJoin), "{linked_retrieval:?} {raw}: {err:?}");
+            }
+        }
     }
 
     /// An inline join over the normalized representation is exactly what

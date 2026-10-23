@@ -168,7 +168,7 @@ fn purge_refuses_any_hop() {
 fn spec_temporal_retrieve_refuses_a_nesting_whatever_the_join() {
     let operation = LinkedOperation::RetrieveTemporal(TemporalJoin::Spec);
     for join in [None, Some(JoinMode::None), Some(JoinMode::Flat), Some(JoinMode::Inline)] {
-        let refused = Case::pick("a{b}", join, Some(3)).admit(operation);
+        let refused = Case::pick("a{b}", join, None).admit(operation);
         let expected_member = match join {
             Some(JoinMode::Flat | JoinMode::Inline) => LinkedMember::Join,
             Some(JoinMode::None) | None => LinkedMember::Reaching(PROJECTION),
@@ -252,6 +252,70 @@ fn subscriptions_admit_every_reference() {
     assert_eq!(Case::pick("a{b}", None, None).admit(operation), Ok(()));
     assert_eq!(Case::pick("a{b{c}}", Some(JoinMode::Flat), Some(1)).admit(operation), Ok(()));
     assert_eq!(Case::filter("isParkedIn{category}", None, None).admit(operation), Ok(()));
+}
+
+/// A request carrying only the join parameters.
+const fn join_only(join: Option<JoinMode>, join_level: Option<u32>) -> Case {
+    Case {
+        pick: None,
+        q: None,
+        join,
+        join_level,
+    }
+}
+
+/// Every operation but a Subscription, with and without the extension.
+const JOIN_LEVEL_BOUND_OPERATIONS: [LinkedOperation; 10] = [
+    LinkedOperation::RetrieveEntity,
+    LinkedOperation::QueryEntities,
+    LinkedOperation::EntityMapQuery,
+    LinkedOperation::PurgeEntities,
+    LinkedOperation::RetrieveTemporal(TemporalJoin::Spec),
+    LinkedOperation::RetrieveTemporal(TemporalJoin::Extended),
+    LinkedOperation::QueryTemporal(TemporalJoin::Spec),
+    LinkedOperation::QueryTemporal(TemporalJoin::Extended),
+    LinkedOperation::EntityMapTemporalQuery(TemporalJoin::Spec),
+    LinkedOperation::EntityMapTemporalQuery(TemporalJoin::Extended),
+];
+
+/// Table 6.5.3.1-1: `joinLevel` is "only applicable if join parameter is
+/// 'flat' or 'inline'", and `@none` asks for no traversal (clause 4.5.23).
+#[test]
+fn a_join_level_without_a_retrieving_join_is_refused_outside_subscriptions() {
+    for operation in JOIN_LEVEL_BOUND_OPERATIONS {
+        for join in [None, Some(JoinMode::None)] {
+            assert_eq!(
+                join_only(join, Some(2)).admit(operation),
+                Err(AdmissionError::JoinLevelWithoutJoin),
+                "{operation:?} join {join:?}"
+            );
+        }
+    }
+}
+
+/// The Core operations and their extended temporal counterparts take a
+/// `joinLevel` beside a retrieving join.
+#[test]
+fn a_join_level_beside_a_retrieving_join_is_admitted() {
+    for operation in [
+        LinkedOperation::RetrieveEntity,
+        LinkedOperation::QueryEntities,
+        LinkedOperation::EntityMapQuery,
+        LinkedOperation::QueryTemporal(TemporalJoin::Extended),
+    ] {
+        for join in [JoinMode::Flat, JoinMode::Inline] {
+            assert_eq!(join_only(Some(join), Some(2)).admit(operation), Ok(()), "{operation:?} join {join:?}");
+        }
+    }
+}
+
+/// Clause 5.8.1.4 checks no applicability, so a Subscription keeps a
+/// `joinLevel` whatever its join.
+#[test]
+fn a_subscription_keeps_a_join_level_without_a_retrieving_join() {
+    for join in [None, Some(JoinMode::None)] {
+        assert_eq!(join_only(join, Some(2)).admit(LinkedOperation::Subscription), Ok(()), "join {join:?}");
+    }
 }
 
 /// The refusal reads as one sentence naming the operation and the member.

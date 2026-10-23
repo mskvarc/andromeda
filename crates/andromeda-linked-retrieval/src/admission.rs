@@ -22,7 +22,12 @@
 //! `@none` is the parameter's own default -- clause 4.5.23 says "By default, it
 //! will be '@none'" -- so writing it means no more than leaving the parameter
 //! out, and `joinLevel` is "only applicable if join parameter is 'flat', or
-//! 'inline'". A request with `@none` therefore declares no traversal at all.
+//! 'inline'" (Table 6.5.3.1-1). A request with `@none` therefore declares no
+//! traversal at all, and a `joinLevel` beside it is a parameter incompatible
+//! with the request, refused at every operation but a Subscription (clause
+//! 6.3.20). Clause 5.8.1.4 checks a Subscription against the data types,
+//! cardinalities and restrictions of clause 5.2.12, and the applicability of
+//! `joinLevel` is none of them.
 
 use crate::join::traversal_depth;
 use andromeda_ngsi_ld_query::{filter::expression::Expr, projection::grammar::RawProjectionTerm};
@@ -174,6 +179,9 @@ pub enum AdmissionError {
         /// How many hops the requested traversal walks.
         join_level: NonZeroU32,
     },
+    /// `joinLevel` was sent while `join` asked for no traversal to bound.
+    #[error("joinLevel is only applicable if the join parameter is 'flat' or 'inline'")]
+    JoinLevelWithoutJoin,
 }
 
 /// Admit one Linked Entity reference of a request for `operation`.
@@ -245,12 +253,16 @@ pub struct LinkedRequest<'r> {
 }
 
 /// Admit every Linked Entity reference of `request` for `operation`: the
-/// retrieving `join`, then the projection, then the filter.
+/// `joinLevel`, then the retrieving `join`, then the projection, then the
+/// filter.
 ///
 /// # Errors
 ///
-/// Returns the first [`AdmissionError`] [`admit`] raises.
+/// Returns [`AdmissionError::JoinLevelWithoutJoin`] when a `joinLevel` meets
+/// no retrieving `join` at any operation but a Subscription, otherwise the
+/// first [`AdmissionError`] [`admit`] raises.
 pub fn admit_request(operation: LinkedOperation, request: &LinkedRequest<'_>) -> Result<(), AdmissionError> {
+    admit_join_level(operation, request.join, request.join_level)?;
     [
         LinkedReference::of_join(request.join),
         LinkedReference::of_projection(request.pick, request.omit),
@@ -259,6 +271,30 @@ pub fn admit_request(operation: LinkedOperation, request: &LinkedRequest<'_>) ->
     .into_iter()
     .flatten()
     .try_for_each(|reference| admit(operation, reference, request.join, request.join_level))
+}
+
+/// Admit a `joinLevel` for `operation`: it bounds a traversal only a `join` of
+/// `flat` or `inline` asks for, and a Subscription keeps it whatever its join.
+///
+/// # Errors
+///
+/// Returns [`AdmissionError::JoinLevelWithoutJoin`] when `join_level` is set,
+/// `join` asks for no traversal and the operation is no Subscription.
+const fn admit_join_level(operation: LinkedOperation, join: Option<JoinMode>, join_level: Option<NonZeroU32>) -> Result<(), AdmissionError> {
+    match (operation, join, join_level) {
+        (LinkedOperation::Subscription, _, _) | (_, Some(JoinMode::Flat | JoinMode::Inline), _) | (_, _, None) => Ok(()),
+        (
+            LinkedOperation::RetrieveEntity
+            | LinkedOperation::QueryEntities
+            | LinkedOperation::EntityMapQuery
+            | LinkedOperation::PurgeEntities
+            | LinkedOperation::RetrieveTemporal(_)
+            | LinkedOperation::QueryTemporal(_)
+            | LinkedOperation::EntityMapTemporalQuery(_),
+            Some(JoinMode::None) | None,
+            Some(_),
+        ) => Err(AdmissionError::JoinLevelWithoutJoin),
+    }
 }
 
 /// The Core rule: a reaching member needs a retrieving join that walks at

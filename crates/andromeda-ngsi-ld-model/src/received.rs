@@ -319,8 +319,8 @@ mod tests {
         assert!(entity.attrs.is_empty(), "@context is no attribute");
     }
 
-    /// A member the model cannot hold refuses the entity, naming
-    /// the member, instead of being carried unread.
+    /// A member the model cannot hold refuses the entity, naming the element,
+    /// its `id` and the member, instead of being carried unread.
     #[test]
     fn an_unreadable_member_refuses_the_entity() {
         let read = entities(&read(r#"[{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property"}}]"#));
@@ -328,6 +328,7 @@ mod tests {
             panic!("the entity is refused: {read:?}");
         };
         assert!(refusal.contains("speed"), "{refusal}");
+        assert!(refusal.contains("element 0 (urn:ngsi-ld:Vehicle:1)"), "the refusal names the entity: {refusal}");
     }
 
     /// Clause 4.3.6.8 has a broker reject invalid data and clause 6.3.17

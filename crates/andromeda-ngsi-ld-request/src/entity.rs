@@ -448,6 +448,21 @@ mod tests {
         assert!(deep_enough.validate().is_ok());
     }
 
+    /// Table 6.5.3.1-1: `joinLevel` is "only applicable if join parameter is
+    /// 'flat' or 'inline'", and clause 6.3.20 refuses it beside any other join.
+    #[test]
+    fn get_validate_refuses_a_join_level_without_a_retrieving_join() {
+        for query in ["joinLevel=2", "join=%40none&joinLevel=2"] {
+            let params: GetEntityParams = serde_urlencoded::from_str(query).expect("valid parameters");
+            let error = params.validate().expect_err(query);
+            assert!(matches!(error, ParameterError::JoinLevelWithoutJoin), "{query}: {error:?}");
+        }
+        for query in ["join=flat&joinLevel=2", "join=inline&joinLevel=2"] {
+            let params: GetEntityParams = serde_urlencoded::from_str(query).expect("valid parameters");
+            assert!(params.validate().is_ok(), "{query}");
+        }
+    }
+
     #[test]
     fn validate_accepts_defined_values() {
         let params: GetEntityParams = serde_urlencoded::from_str("format=concise&options=sysAttrs").expect("valid options");

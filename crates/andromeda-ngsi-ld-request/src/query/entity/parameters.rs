@@ -417,6 +417,23 @@ mod tests {
         assert!(deep_enough.validate(EntityQueryOperation::Query).is_ok());
     }
 
+    /// Table 6.4.3.2-1 makes `joinLevel` "only applicable if join parameter is
+    /// present", and clause 4.5.23 makes `@none` the join's default, so either
+    /// absence is refused (clause 6.3.20), at the query and the Entity Map
+    /// creation alike.
+    #[test]
+    fn validate_refuses_a_join_level_without_a_retrieving_join() {
+        for operation in [EntityQueryOperation::Query, EntityQueryOperation::EntityMap] {
+            for query in ["type=Building&joinLevel=2", "type=Building&join=%40none&joinLevel=2"] {
+                let err = params_from_query(query).validate(operation).expect_err(query);
+                assert!(matches!(err, ParameterError::JoinLevelWithoutJoin), "{query}: {err:?}");
+            }
+            for query in ["type=Building&join=flat&joinLevel=2", "type=Building&join=inline&joinLevel=2"] {
+                assert!(params_from_query(query).validate(operation).is_ok(), "{query}");
+            }
+        }
+    }
+
     /// Clause 5.7.2.4: a `q` hop walks into a Linked Entity, and a query where
     /// "use of Linked Entity retrieval is not specified" asked for no such
     /// walk. Clause 4.5.23 makes `@none` the parameter's default, so stating it

@@ -161,6 +161,16 @@ pub enum ParameterError {
     /// (clause 4.5.19).
     #[error("aggrMethods is required when format is 'aggregatedValues'")]
     AggrMethodsRequired,
+    /// `aggrMethods` or `aggrPeriodDuration` was sent while neither `format`
+    /// nor `options` selected `aggregatedValues`, the only representation
+    /// Tables 6.18.3.2-1 and 6.19.3.1-1 apply them to (clause 6.3.20).
+    #[error("aggrMethods and aggrPeriodDuration are only applicable if aggregatedValues is present in the format or options parameter")]
+    AggregationWithoutAggregatedValues,
+    /// `joinLevel` was sent while `join` asked for no Linked Entity retrieval:
+    /// it is "only applicable if join parameter is 'flat' or 'inline'"
+    /// (Table 6.5.3.1-1, clause 6.3.20).
+    #[error("joinLevel is only applicable if the join parameter is 'flat' or 'inline'")]
+    JoinLevelWithoutJoin,
     /// `aggrGroupBy` was sent without `format=groupedValues` (grouping
     /// extension).
     ///
@@ -245,6 +255,7 @@ impl From<AdmissionError> for ParameterError {
                 depth: depth.get(),
                 join_level: join_level.get(),
             },
+            AdmissionError::JoinLevelWithoutJoin => ParameterError::JoinLevelWithoutJoin,
         }
     }
 }
@@ -315,5 +326,11 @@ mod tests {
             "got {error:?}"
         );
         assert!(error.to_string().starts_with("too deep query"));
+    }
+
+    #[test]
+    fn a_join_level_without_a_join_keeps_its_own_error() {
+        let error = ParameterError::from(AdmissionError::JoinLevelWithoutJoin);
+        assert!(matches!(error, ParameterError::JoinLevelWithoutJoin), "got {error:?}");
     }
 }

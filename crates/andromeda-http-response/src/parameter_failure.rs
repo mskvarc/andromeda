@@ -25,6 +25,8 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         | ParameterError::AggrGroupByInvalid(_)
         | ParameterError::AggrGroupByOnAggregatedAttribute(_)
         | ParameterError::LastNWithGrouping
+        | ParameterError::AggregationWithoutAggregatedValues
+        | ParameterError::JoinLevelWithoutJoin
         | ParameterError::CursorUnavailable
         | ParameterError::PaginationUndefined
         | ParameterError::WildcardTypeWithLocalFalse => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
@@ -80,6 +82,16 @@ mod tests {
             classify_parameter_error(&ParameterError::PaginationUndefined).error_type(),
             NgsiLdErrorType::InvalidRequest
         );
+    }
+
+    /// Clause 6.3.20: a `joinLevel` with no join to bound, and an aggregation
+    /// parameter with no aggregated representation, are parameters
+    /// incompatible with the request.
+    #[test]
+    fn a_dependent_parameter_without_its_dependency_is_invalid_request() {
+        for error in [ParameterError::JoinLevelWithoutJoin, ParameterError::AggregationWithoutAggregatedValues] {
+            assert_eq!(classify_parameter_error(&error).error_type(), NgsiLdErrorType::InvalidRequest, "{error:?}");
+        }
     }
 
     /// Clause 5.5.6: a `limit` above the cap is `TooManyResults`, and the

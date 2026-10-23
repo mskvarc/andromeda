@@ -106,7 +106,8 @@ mod tests {
 
     /// Clause 5.14.5.4: no Linked Entity retrieval on the temporal creation,
     /// whether asked for through `join`, a projection or a filter; `@none`
-    /// and a lone `joinLevel` ask for none.
+    /// asks for none. A lone `joinLevel` bounds no join (Table 6.5.3.1-1), so
+    /// clause 6.3.20 refuses it.
     #[test]
     fn linked_entity_retrieval_is_refused_on_temporal_entity_map_creation() {
         const WINDOW: &str = "timerel=before&timeAt=2022-01-01T00:00:00Z";
@@ -117,11 +118,11 @@ mod tests {
         )
         .expect_err("refused");
         pretty_assertions::assert_eq!(refused.problem().status_code(), StatusCode::BAD_REQUEST);
-        for refused in ["join=flat", "q=linkedTo%7Bspeed%7D%3E5", "pick=linkedTo%7Bspeed%7D"] {
+        for refused in ["join=flat", "q=linkedTo%7Bspeed%7D%3E5", "pick=linkedTo%7Bspeed%7D", "joinLevel=1"] {
             let query = temporal_query(&format!("type=Vehicle&{refused}&{WINDOW}"));
             assert!(validate_temporal_entity_map_query(&query, TemporalJoin::Spec, &uri()).is_err(), "{refused}");
         }
-        for admitted in ["join=%40none", "joinLevel=1", "q=speed%3E5&pick=speed"] {
+        for admitted in ["join=%40none", "q=speed%3E5&pick=speed"] {
             let query = temporal_query(&format!("type=Vehicle&{admitted}&{WINDOW}"));
             assert!(validate_temporal_entity_map_query(&query, TemporalJoin::Spec, &uri()).is_ok(), "{admitted}");
         }

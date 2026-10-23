@@ -159,8 +159,10 @@ impl TemporalQueryParameters {
     /// [`ParameterError::SelectorRequired`] when a query endpoint omits the
     /// temporal window or every entity selector,
     /// [`ParameterError::Query`] when the `timerel`, `timeAt` and `endTimeAt`
-    /// group names no interval, and [`ParameterError::AggrMethodsRequired`] when
-    /// `format=aggregatedValues` carries no aggregation methods.
+    /// group names no interval, [`ParameterError::AggrMethodsRequired`] when
+    /// `format=aggregatedValues` carries no aggregation methods, and
+    /// [`ParameterError::AggregationWithoutAggregatedValues`] when the
+    /// aggregation parameters meet any other format.
     pub fn validate(&self, operation: TemporalQueryOperation, linked_retrieval: TemporalJoin) -> Result<(), ParameterError> {
         // Clause 6.3.20: a `format` or `options` value Table 6.3.12-1 does not
         // define is refused here rather than during deserialisation, where the
@@ -215,12 +217,34 @@ impl TemporalQueryParameters {
         // The `timerel`/`timeAt`/`endTimeAt` combination rule is owned by the
         // interval, so the request seam builds it rather than re-deriving it.
         self.window().map_err(ParameterError::Query)?;
-        // Both the standard aggregated format and the grouped extension format
-        // apply the clause 4.5.19 methods, so both require them.
-        if self.parse_format()?.is_aggregated() && self.aggr_methods.is_none() {
-            return Err(ParameterError::AggrMethodsRequired);
-        }
+        self.validate_aggregation()?;
         self.validate_grouping()
+    }
+
+    /// Validate the clause 4.5.19 aggregation parameters against the format.
+    ///
+    /// Tables 6.18.3.2-1 and 6.19.3.1-1 make `aggrMethods` mandatory and
+    /// `aggrPeriodDuration` applicable "only if aggregatedValues is present in
+    /// the format or options parameter". Both the standard aggregated format
+    /// and the grouped extension format apply the methods, so both require
+    /// them, and any other format has no use for either.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParameterError::AggrMethodsRequired`] when an aggregated
+    /// format carries no methods, and
+    /// [`ParameterError::AggregationWithoutAggregatedValues`] when
+    /// `aggrMethods` or `aggrPeriodDuration` meets any other format.
+    fn validate_aggregation(&self) -> Result<(), ParameterError> {
+        match (
+            self.parse_format()?.is_aggregated(),
+            self.aggr_methods.is_some(),
+            self.aggr_period_duration.is_some(),
+        ) {
+            (true, false, _) => Err(ParameterError::AggrMethodsRequired),
+            (false, true, _) | (false, _, true) => Err(ParameterError::AggregationWithoutAggregatedValues),
+            (true, true, _) | (false, false, false) => Ok(()),
+        }
     }
 
     /// Validate the `aggrGroupBy` grouping extension parameter.

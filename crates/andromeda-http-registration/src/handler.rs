@@ -39,6 +39,7 @@ use andromeda_ngsi_ld_request::{
         page_request::{CollectionOrder, PageRequest},
     },
     query::{QUERY_PAGE_SIZE, csr::CsrQueryParameters},
+    registration_retrieval::RegistrationRetrieveParams,
 };
 use andromeda_registration::{query::DiscoveredRegistrations, registration_body::RegistrationBody};
 use axum::{
@@ -73,7 +74,7 @@ pub(crate) async fn get(
     accept: AcceptFormatNoGeo,
     ContextUrl(context): ContextUrl,
     TypedPath(registration_id): TypedPath<Identifier>,
-    ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
+    ValidatedQuery(params): ValidatedQuery<RegistrationRetrieveParams>,
 ) -> Result<Response, ProblemResponse> {
     let registration = state.registrations.get(&registration_id, &context).await.with_registration_instance(&uri)?;
     let rendered = RegistrationRenderer::new(&registration)
