@@ -17,7 +17,7 @@ use andromeda_ngsi_ld_model::{
     notification_request::NotificationRequest,
     registration::ContextSourceRegistration,
     registration_matching::{entity_specification::EntitySpecification, match_specification::RegistrationMatchSpecification},
-    subscription::{EntitySelector, Subscription, SubscriptionType},
+    subscription::{Subscription, SubscriptionType, entity_selector::EntitySelector},
     subscription_request::SubscriptionRequest,
 };
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
@@ -131,7 +131,7 @@ impl ReducedSubscription {
                 dataset_id: Clearable::from_option(subscription.filters.dataset_id.clone()),                   // clone: the copy owns its selectors
                 notification: Some(notification),
                 throttling: Clearable::from_option(subscription.delivery.throttling),
-                expires_at: Clearable::from_option(subscription.lifecycle.expires_at),
+                expires_at: Clearable::from_option(subscription.lifecycle.standing.expires_at),
                 ..SubscriptionRequest::default()
             },
         }
@@ -397,7 +397,7 @@ mod tests {
     #[test]
     fn a_locally_deleted_member_is_forwarded_as_a_null() {
         let mut local = subscription();
-        local.lifecycle.expires_at = None;
+        local.lifecycle.standing.expires_at = None;
         local.description = None;
         let fragment = fragment_after(&local, &json!({"expiresAt": null, "description": null, "throttling": 5}), FilterCarriage::Keep);
         pretty_assertions::assert_eq!(fragment["expiresAt"], json!(null));

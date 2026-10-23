@@ -151,7 +151,7 @@ impl SubscriptionStore for DeletingStore {
         Err(unused("expire_due"))
     }
 
-    async fn find_due_interval_subscriptions(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Subscription>, SubscriptionError> {
+    async fn find_due_interval_subscriptions(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<StoredSubscription>, SubscriptionError> {
         Err(unused("find_due_interval_subscriptions"))
     }
 
@@ -355,7 +355,7 @@ impl SubscriptionStore for UpdatingStore {
         Err(unused("expire_due"))
     }
 
-    async fn find_due_interval_subscriptions(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Subscription>, SubscriptionError> {
+    async fn find_due_interval_subscriptions(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<StoredSubscription>, SubscriptionError> {
         Err(unused("find_due_interval_subscriptions"))
     }
 
@@ -693,7 +693,7 @@ impl SubscriptionStore for ListingStore {
         Err(unused("expire_due"))
     }
 
-    async fn find_due_interval_subscriptions(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Subscription>, SubscriptionError> {
+    async fn find_due_interval_subscriptions(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<StoredSubscription>, SubscriptionError> {
         Err(unused("find_due_interval_subscriptions"))
     }
 

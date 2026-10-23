@@ -19,7 +19,7 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     notification::NotificationTrigger,
-    subscription::{EntitySelector, SubscriptionStatus},
+    subscription::{entity_selector::EntitySelector, standing::SubscriptionStanding},
 };
 use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
@@ -41,8 +41,8 @@ use url::Url;
 pub struct CompiledCsrSubscription {
     /// Subscription identifier.
     pub id: Identifier,
-    /// Current lifecycle status.
-    pub status: SubscriptionStatus,
+    /// The status and `expiresAt` deciding whether it is notified.
+    pub standing: SubscriptionStanding,
     /// Notification endpoint URL.
     pub endpoint_uri: Url,
     /// Preferred notification response media type.
@@ -80,8 +80,6 @@ pub struct CompiledCsrSubscription {
     pub time_interval_secs: Option<f64>,
     /// JSON-LD context supplied with notifications.
     pub jsonld_context: Option<IriBuf>,
-    /// Subscription expiration timestamp.
-    pub expires_at: Option<DateTime<Utc>>,
     /// Parsed context-source filter, evaluated against the registration's
     /// Context Source Properties (clause 4.9).
     pub compiled_csf: Option<Expr>,
@@ -115,8 +113,8 @@ pub struct CompiledSubscription {
     /// identifier so a match enqueues its delivery against the narrow key while
     /// the notification it produces still names the subscription by its URI.
     pub key: SubscriptionKey,
-    /// Current lifecycle status.
-    pub status: SubscriptionStatus,
+    /// The status and `expiresAt` deciding whether it is notified.
+    pub standing: SubscriptionStanding,
     /// Notification endpoint URL.
     pub endpoint_uri: Url,
     /// Preferred notification response media type.
@@ -157,8 +155,6 @@ pub struct CompiledSubscription {
     pub notification_show_changes: bool,
     /// JSON-LD context supplied with notifications.
     pub jsonld_context: Option<IriBuf>,
-    /// Subscription expiration timestamp.
-    pub expires_at: Option<DateTime<Utc>>,
     /// When the subscription was created (clause 5.2.12 `createdAt`).
     ///
     /// A subscription is notified of changes that happen after it exists, so an

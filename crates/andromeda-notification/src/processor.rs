@@ -345,7 +345,7 @@ mod tests {
     use andromeda_ngsi_ld_model::{
         entity_change::{EntityChange, EntityLifecycle},
         notification::ChangeOrigin,
-        subscription::{EntitySelector, SubscriptionStatus},
+        subscription::{SubscriptionStatus, entity_selector::EntitySelector, standing::SubscriptionStanding},
     };
     use andromeda_ngsi_ld_query::{
         filter::parser,
@@ -392,7 +392,10 @@ mod tests {
         CompiledSubscription {
             id: format!("urn:ngsi-ld:Subscription:{id}").parse().expect("a valid subscription URI"),
             key: SubscriptionKey::try_from(1).expect("a valid subscription key"),
-            status: SubscriptionStatus::Active,
+            standing: SubscriptionStanding {
+                status: SubscriptionStatus::Active,
+                expires_at: None,
+            },
             endpoint_uri: Url::parse("http://example.com/notify").expect("a valid endpoint URI"),
             endpoint_accept: None,
             endpoint_receiver_info: None,
@@ -414,7 +417,6 @@ mod tests {
             notification_sys_attrs: SysAttrsInclusion::Strip,
             notification_show_changes: false,
             jsonld_context: None,
-            expires_at: None,
             created_at: DateTime::<Utc>::MIN_UTC,
             compiled_q: None,
             compiled_geo_q: SubscriptionGeoFilter::Unrestricted,
@@ -607,7 +609,7 @@ mod tests {
             vec!["attributeUpdated"],
             None,
         );
-        sub.expires_at = Some(Utc::now() - chrono::Duration::hours(1));
+        sub.standing.expires_at = Some(Utc::now() - chrono::Duration::hours(1));
         let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], AttributeChangeKind::Updated, vec!["speed"]);
         assert!(!matches_subscription(&sub, &event));
     }
@@ -631,7 +633,7 @@ mod tests {
             vec!["attributeUpdated"],
             None,
         );
-        sub.status = SubscriptionStatus::Paused;
+        sub.standing.status = SubscriptionStatus::Paused;
         let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], AttributeChangeKind::Updated, vec!["speed"]);
         assert!(!matches_subscription(&sub, &event));
     }

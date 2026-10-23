@@ -8,7 +8,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     notification::{CsrChange, CsrTriggerReason},
     registration::ContextSourceRegistration,
-    subscription::SubscriptionStatus,
+    subscription::{SubscriptionStatus, standing::SubscriptionStanding},
 };
 use andromeda_subscription::{change::UpsertKind, compiled::CompiledCsrSubscription, geo_filter::SubscriptionGeoFilter};
 use futures::future::BoxFuture;
@@ -97,7 +97,7 @@ fn uri(raw: &str) -> Identifier {
 fn subscription_with(status: SubscriptionStatus, time_interval_secs: Option<f64>) -> Arc<CompiledCsrSubscription> {
     Arc::new(CompiledCsrSubscription {
         id: uri(SUBSCRIPTION),
-        status,
+        standing: SubscriptionStanding { status, expires_at: None },
         endpoint_uri: Url::parse("http://example.com/notify").expect("valid URL"),
         endpoint_accept: None,
         endpoint_receiver_info: None,
@@ -112,7 +112,6 @@ fn subscription_with(status: SubscriptionStatus, time_interval_secs: Option<f64>
         throttling_secs: None,
         time_interval_secs,
         jsonld_context: None,
-        expires_at: None,
         compiled_csf: None,
     })
 }

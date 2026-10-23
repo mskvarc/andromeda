@@ -6,10 +6,9 @@
 
 use crate::compiled::CompiledSubscription;
 use andromeda_context_commit::change_event::ChangeEvent;
-use andromeda_ngsi_ld_model::{notification::ChangeOrigin, subscription::SubscriptionStatus};
+use andromeda_ngsi_ld_model::notification::ChangeOrigin;
 use andromeda_ngsi_ld_query::{
     filter::eval::evaluate,
-    identifier_axis::IdentifierAxis,
     queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
 };
 use chrono::Utc;
@@ -17,19 +16,12 @@ use tracing::debug;
 
 /// Determine whether a compiled subscription matches a change event.
 ///
-/// Checks status, expiration, the change's triggers and watched attributes,
-/// entity selectors,
-/// and localOnly filtering (ETSI GS CIM 009 v1.9.1, clause 5.5.13).
+/// Checks the subscription's standing, the change's triggers and watched
+/// attributes, entity selectors, and localOnly filtering (ETSI GS CIM 009
+/// v1.9.1, clause 5.5.13).
 pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> bool {
-    if sub.status != SubscriptionStatus::Active {
-        debug!("Subscription {} skipped: status={} (expected active)", sub.id, sub.status);
-        return false;
-    }
-
-    if let Some(expires_at) = sub.expires_at
-        && expires_at <= Utc::now()
-    {
-        debug!("Subscription {} skipped: expired at {}", sub.id, expires_at);
+    if !sub.standing.notifies_at(Utc::now()) {
+        debug!("Subscription {} skipped: not notified as it stands ({:?})", sub.id, sub.standing);
         return false;
     }
 
@@ -72,32 +64,12 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
         return false;
     }
 
-    if !sub.selectors.is_empty() {
-        let any_selector_matches = sub.selectors.iter().any(|sel| {
-            if !sel.type_.matches(&event.entity_types) {
-                debug!(
-                    "Subscription {} selector type mismatch: selector={} event_types={:?}",
-                    sub.id, sel.type_, event.entity_types
-                );
-                return false;
-            }
-
-            let axis = IdentifierAxis::of(sel.id.as_slice(), sel.id_pattern.as_ref());
-            if !axis.admits(&event.entity_id) {
-                debug!(
-                    "Subscription {} selector identifier mismatch: axis={:?} event_id={}",
-                    sub.id, axis, event.entity_id
-                );
-                return false;
-            }
-
-            true
-        });
-
-        if !any_selector_matches {
-            debug!("Subscription {} skipped: no selector matched event {}", sub.id, event.entity_id);
-            return false;
-        }
+    if !sub.selectors.is_empty() && !sub.selectors.iter().any(|selector| selector.selects(&event.entity_types, &event.entity_id)) {
+        debug!(
+            "Subscription {} skipped: no selector selects event {} typed {:?}",
+            sub.id, event.entity_id, event.entity_types
+        );
+        return false;
     }
 
     debug!(
@@ -174,7 +146,7 @@ mod tests {
     use andromeda_ngsi_ld_model::{
         entity_change::{EntityChange, EntityLifecycle},
         notification::{ChangeOrigin, NotificationTrigger},
-        subscription::SubscriptionStatus,
+        subscription::{SubscriptionStatus, standing::SubscriptionStanding},
     };
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_query::{
@@ -213,7 +185,10 @@ mod tests {
         CompiledSubscription {
             id: parse_fixture("urn:ngsi-ld:Subscription:test", "subscription URI"),
             key: SubscriptionKey::try_from(1).expect("invalid subscription key fixture:"),
-            status: SubscriptionStatus::Active,
+            standing: SubscriptionStanding {
+                status: SubscriptionStatus::Active,
+                expires_at: None,
+            },
             endpoint_uri: Url::parse("http://example.com/notify").expect("invalid endpoint fixture:"),
             endpoint_accept: None,
             endpoint_receiver_info: None,
@@ -230,7 +205,6 @@ mod tests {
             notification_sys_attrs: SysAttrsInclusion::Strip,
             notification_show_changes: false,
             jsonld_context: None,
-            expires_at: None,
             created_at: DateTime::<Utc>::MIN_UTC,
             compiled_q: None,
             compiled_geo_q: SubscriptionGeoFilter::Unrestricted,
@@ -442,7 +416,7 @@ mod tests {
     #[test]
     fn subscription_skips_when_paused() {
         let mut sub = make_sub();
-        sub.status = SubscriptionStatus::Paused;
+        sub.standing.status = SubscriptionStatus::Paused;
         let event = make_event();
         assert!(!matches_subscription(&sub, &event));
     }

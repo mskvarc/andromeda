@@ -22,6 +22,9 @@ use sea_query::{Cond, Expr, ExprTrait, SelectStatement, SimpleExpr};
 
 /// A subscription still in force at `at`: it has no `expiresAt`, or one after
 /// `at`.
+///
+/// The store's pushdown of `SubscriptionStanding::unexpired_at`, with the
+/// same boundary: the expiration instant itself is past.
 pub(crate) fn unexpired_at(at: SimpleExpr) -> Cond {
     Cond::any()
         .add(Expr::col((Subscriptions::Table, Subscriptions::ExpiresAt)).is_null())

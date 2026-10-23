@@ -7,7 +7,7 @@ use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
     notification_request::NotificationRequest,
     query::temporal_query::TemporalQuery,
-    subscription::{EntitySelector, NotificationParams, Subscription},
+    subscription::{NotificationParams, Subscription, entity_selector::EntitySelector},
     subscription_request::SubscriptionRequest,
 };
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, geo::input::GeoQueryInput, scope::query::ScopeQuery};
@@ -228,7 +228,7 @@ impl SubscriptionWriteValues {
             },
             is_active: is_active.applied_over(lifecycle.is_active).unwrap_or(true),
             notification: notification_params(requested_notification)?.or(Some(notification)),
-            expires_at: expires_at.applied_over(lifecycle.expires_at),
+            expires_at: expires_at.applied_over(lifecycle.standing.expires_at),
             throttling: throttling.applied_over(delivery.throttling),
             temporal_q: temporal_q.applied_over(filters.temporal_q),
             expand_values: expand_values.applied_over(filters.expand_values),

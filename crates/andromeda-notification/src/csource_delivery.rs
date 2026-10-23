@@ -242,7 +242,10 @@ mod tests {
     use crate::csource_delivery::notified_registration;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
-    use andromeda_ngsi_ld_model::{registration::ContextSourceRegistration, subscription::SubscriptionStatus};
+    use andromeda_ngsi_ld_model::{
+        registration::ContextSourceRegistration,
+        subscription::{SubscriptionStatus, standing::SubscriptionStanding},
+    };
     use andromeda_subscription::{compiled::CompiledCsrSubscription, geo_filter::SubscriptionGeoFilter};
     use serde_json::json;
     use url::Url;
@@ -250,7 +253,10 @@ mod tests {
     fn subscription(raw_type: &str) -> CompiledCsrSubscription {
         CompiledCsrSubscription {
             id: "urn:ngsi-ld:Subscription:csource".parse().expect("valid URI"),
-            status: SubscriptionStatus::Active,
+            standing: SubscriptionStanding {
+                status: SubscriptionStatus::Active,
+                expires_at: None,
+            },
             endpoint_uri: Url::parse("http://example.com/notify").expect("valid URL"),
             endpoint_accept: None,
             endpoint_receiver_info: None,
@@ -265,7 +271,6 @@ mod tests {
             throttling_secs: None,
             time_interval_secs: None,
             jsonld_context: None,
-            expires_at: None,
             compiled_csf: None,
         }
     }

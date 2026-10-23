@@ -1,6 +1,16 @@
 //! NGSI-LD subscription types (ETSI GS CIM 009 clause 5.2.12).
 
-use crate::{attribute_name_csv, delivery_seconds, key_value_pair::KeyValuePair, notification::NotificationTrigger, query::temporal_query::TemporalQuery};
+pub mod entity_selector;
+pub mod standing;
+
+use crate::{
+    attribute_name_csv,
+    delivery_seconds,
+    key_value_pair::KeyValuePair,
+    notification::NotificationTrigger,
+    query::temporal_query::TemporalQuery,
+    subscription::{entity_selector::EntitySelector, standing::SubscriptionStanding},
+};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     constant_string,
@@ -14,10 +24,8 @@ use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     filter::expression::Expr,
     geo::input::GeoQueryInput,
-    pattern::Pattern,
     projection::grammar::ProjectionList,
     scope::query::ScopeQuery,
-    type_selection::grammar::TypeExprRaw,
 };
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
 use chrono::{DateTime, Utc};
@@ -54,27 +62,6 @@ pub enum NotificationStatus {
     Ok,
     /// The last notification delivery failed.
     Failed,
-}
-
-/// Entity selector for subscriptions (ETSI GS CIM 009 clause 5.2.33).
-///
-/// Selects entities by type and optionally by id or id pattern.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EntitySelector {
-    /// Exact entity id to match.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<Identifier>,
-    /// Regular expression the entity id must match (clause 5.2.33).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id_pattern: Option<Pattern>,
-    /// Type selection expression the entity's types must satisfy (required).
-    ///
-    /// A clause 4.17 expression rather than a single name: a selector may
-    /// alternate, as in `(Building|Tower)`. Matching is by whole type name:
-    /// `Building` does not match an entity typed `MyBuilding`.
-    #[serde(rename = "type")]
-    pub type_: TypeExprRaw,
 }
 
 /// Notification delivery endpoint configuration (ETSI GS CIM 009 clause 5.2.15).
@@ -331,12 +318,10 @@ pub struct SubscriptionLifecycle {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default = Default::default())]
     pub is_active: Option<bool>,
-    /// Current lifecycle status of the subscription.
-    pub status: SubscriptionStatus,
-    /// Expiration timestamp after which the subscription becomes inactive.
-    #[serde(skip_serializing_if = "Option::is_none", with = "instant_serde::optional", default)]
-    #[builder(default = Default::default())]
-    pub expires_at: Option<DateTime<Utc>>,
+    /// The status the subscription was last given and the instant it
+    /// expires at.
+    #[serde(flatten)]
+    pub standing: SubscriptionStanding,
     /// Timestamp when the subscription was created.
     #[serde(with = "instant_serde::required")]
     pub created_at: DateTime<Utc>,
@@ -395,18 +380,6 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
     use std::str::FromStr;
-
-    /// Table 5.2.33-1: an `EntitySelector` `type` is a clause 4.17 selection
-    /// string; the array form belongs to `EntityInfo` (Table 5.2.8-1) alone.
-    #[test]
-    fn an_entity_selector_type_is_a_selection_string() {
-        let single: EntitySelector = serde_json::from_value(serde_json::json!({"type": "Vehicle"})).expect("string form parses");
-        assert!(matches!(single.type_, TypeExprRaw::Type(_)));
-        let alternation: EntitySelector = serde_json::from_value(serde_json::json!({"type": "Vehicle|Car"})).expect("alternation parses");
-        assert!(matches!(&alternation.type_, TypeExprRaw::Or(alternatives) if alternatives.len() == 2));
-        assert!(serde_json::from_value::<EntitySelector>(serde_json::json!({"type": ["Vehicle", "Car"]})).is_err());
-        assert!(serde_json::from_value::<EntitySelector>(serde_json::json!({"type": 5})).is_err());
-    }
 
     /// Clause 4.5.23: `joinLevel` is a positive integer. Zero names no
     /// traversal, so a subscription carrying it is rejected rather than
@@ -554,7 +527,10 @@ mod tests {
             .notification(serde_json::from_value(serde_json::json!({"endpoint": {"uri": "https://receiver.example.com/notify"}})).expect("endpoint"))
             .lifecycle(
                 SubscriptionLifecycle::builder()
-                    .status(SubscriptionStatus::Active)
+                    .standing(SubscriptionStanding {
+                        status: SubscriptionStatus::Active,
+                        expires_at: None,
+                    })
                     .created_at(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).single().expect("valid instant"))
                     .modified_at(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).single().expect("valid instant"))
                     .build(),

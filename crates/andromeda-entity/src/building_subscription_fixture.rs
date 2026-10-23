@@ -170,7 +170,7 @@ impl SubscriptionStore for FixtureSubscriptionStore {
         Err(unused_store_call("expire_due"))
     }
 
-    async fn find_due_interval_subscriptions(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Subscription>, SubscriptionError> {
+    async fn find_due_interval_subscriptions(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<StoredSubscription>, SubscriptionError> {
         Err(unused_store_call("find_due_interval_subscriptions"))
     }
 

@@ -43,14 +43,17 @@ impl CsourceNotificationCadence {
 #[cfg(test)]
 mod tests {
     use crate::{compiled::CompiledCsrSubscription, csource_notification_cadence::CsourceNotificationCadence, geo_filter::SubscriptionGeoFilter};
-    use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
+    use andromeda_ngsi_ld_model::subscription::{SubscriptionStatus, standing::SubscriptionStanding};
     use pretty_assertions::assert_eq;
     use url::Url;
 
     fn subscription(time_interval_secs: Option<f64>) -> CompiledCsrSubscription {
         CompiledCsrSubscription {
             id: "urn:ngsi-ld:Subscription:cadence".parse().expect("valid URI"),
-            status: SubscriptionStatus::Active,
+            standing: SubscriptionStanding {
+                status: SubscriptionStatus::Active,
+                expires_at: None,
+            },
             endpoint_uri: Url::parse("http://example.com/notify").expect("valid URL"),
             endpoint_accept: None,
             endpoint_receiver_info: None,
@@ -65,7 +68,6 @@ mod tests {
             throttling_secs: None,
             time_interval_secs,
             jsonld_context: None,
-            expires_at: None,
             compiled_csf: None,
         }
     }

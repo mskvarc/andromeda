@@ -29,7 +29,6 @@ use andromeda_ngsi_ld_model::{
     csource_change_revision::CsourceChangeRevision,
     notification::{CsrChangeEvent, CsrTriggerReason},
     registration::ContextSourceRegistration,
-    subscription::SubscriptionStatus,
 };
 use andromeda_registration::store::RegistrationStore;
 use andromeda_subscription::{
@@ -37,11 +36,11 @@ use andromeda_subscription::{
     compilation::compile_csource_subscription,
     compiled::CompiledCsrSubscription,
     csource_cache::CsourceSubscriptionCache,
-    csource_matching::csource_subscription_is_live,
     csource_notification_cadence::CsourceNotificationCadence,
     store::SubscriptionStore,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
+use chrono::Utc;
 use futures::{StreamExt, stream};
 use std::sync::Arc;
 use tracing::{debug, error};
@@ -135,7 +134,7 @@ impl CsourceNotificationProcessor {
             CsourceSubscriptionChange::Upserted { target, id, kind } => {
                 let owed = self.claim_owed_write(&id).await;
                 match self.sub_repo.get(&target, &id).await {
-                    Ok(Some(stored)) if stored.subscription.lifecycle.status == SubscriptionStatus::Active => {
+                    Ok(Some(stored)) if stored.subscription.lifecycle.standing.notifies_at(Utc::now()) => {
                         let compiled = Arc::new(compile_csource_subscription(&stored.subscription));
                         self.cache.insert(id, Arc::clone(&compiled));
                         if let Some(revision) = owed
@@ -189,7 +188,7 @@ impl CsourceNotificationProcessor {
     /// notification".
     async fn send_matching_csrs_for_subscription(&self, compiled_sub: &CompiledCsrSubscription, kind: UpsertKind) {
         let sub_id = &compiled_sub.id;
-        if !csource_subscription_is_live(compiled_sub) {
+        if !compiled_sub.standing.notifies_at(Utc::now()) {
             return;
         }
 

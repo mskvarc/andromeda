@@ -12,7 +12,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
     query::temporal_query::TemporalQuery,
-    subscription::{EntitySelector, NotificationParams, SubscriptionStatus},
+    subscription::{NotificationParams, SubscriptionStatus, entity_selector::EntitySelector},
 };
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, geo::input::GeoQueryInput, scope::query::ScopeQuery};
 use chrono::{DateTime, Utc};

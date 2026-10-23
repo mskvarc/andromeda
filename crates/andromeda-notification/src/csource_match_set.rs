@@ -23,10 +23,9 @@ const MATCH_SET_PAGE_SIZE: u32 = 500;
 /// registration created or removed while the sweep runs can neither shift a
 /// later page nor make one registration appear twice.
 ///
-/// The lifecycle of the subscription is not consulted: whether an expired or
-/// paused subscription is notified at all is the caller's question
-/// ([`csource_subscription_is_live`](andromeda_subscription::csource_matching::csource_subscription_is_live)),
-/// and answering it here would hide it from the sender that has to report the
+/// The standing of the subscription is not consulted: whether an expired or
+/// paused subscription is notified at all is the caller's question, and
+/// answering it here would hide it from the sender that has to report the
 /// outcome.
 ///
 /// # Errors

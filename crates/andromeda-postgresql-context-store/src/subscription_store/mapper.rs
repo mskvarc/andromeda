@@ -28,6 +28,7 @@ use andromeda_ngsi_ld_model::{
         SubscriptionLifecycle,
         SubscriptionSelection,
         SubscriptionStatus,
+        standing::SubscriptionStanding,
     },
 };
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, scope::query::ScopeQuery};
@@ -333,8 +334,10 @@ fn row_to_subscription(row: SubscriptionRow) -> Subscription {
                 // `isActive` is not stored: on read it is always
                 // `status == active`, so it is derived rather than kept.
                 .is_active(Some(row.status == SubscriptionStatus::Active))
-                .status(row.status)
-                .expires_at(row.expires_at)
+                .standing(SubscriptionStanding {
+                    status: row.status,
+                    expires_at: row.expires_at,
+                })
                 .created_at(row.created_at)
                 .modified_at(row.modified_at)
                 .build(),

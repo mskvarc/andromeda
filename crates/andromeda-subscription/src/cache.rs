@@ -18,12 +18,12 @@ use crate::{
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use andromeda_spatial_index::{
     key::SpatialKey,
     subscription::{entry::SubEntry, index::SpatialSubscriptionIndex},
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
+use chrono::Utc;
 use iri_rs::IriBuf;
 use parking_lot::RwLock;
 use std::{collections::HashMap, sync::Arc};
@@ -100,7 +100,8 @@ impl SubscriptionCache {
     }
 
     /// Re-read one subscription from the store and index it as it now stands:
-    /// compiled while it is active, dropped once it is not or no longer exists.
+    /// compiled while it is notified, dropped once it is not or no longer
+    /// exists.
     ///
     /// # Errors
     ///
@@ -111,7 +112,7 @@ impl SubscriptionCache {
     /// caller can tell a subscription that is gone from one it could not see.
     pub async fn refresh(&self, target: &ContextTarget, id: &Identifier, repo: &(impl SubscriptionStore + ?Sized)) -> Result<(), SubscriptionError> {
         match repo.get(target, id).await? {
-            Some(stored) if stored.subscription.lifecycle.status == SubscriptionStatus::Active => self.insert(target, compile_subscription(&stored)),
+            Some(stored) if stored.subscription.lifecycle.standing.notifies_at(Utc::now()) => self.insert(target, compile_subscription(&stored)),
             Some(_) | None => self.remove(target, id),
         }
         Ok(())
@@ -238,7 +239,7 @@ mod tests {
     use andromeda_context_commit::subscription_key::SubscriptionKey;
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_model::subscription::{EntitySelector, Subscription, SubscriptionStatus};
+    use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus, entity_selector::EntitySelector, standing::SubscriptionStanding};
     use andromeda_ngsi_ld_query::{page_window::PageWindow, projection::compiled::Projection};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -315,7 +316,7 @@ mod tests {
             Err(unused("expire_due"))
         }
 
-        async fn find_due_interval_subscriptions(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Subscription>, SubscriptionError> {
+        async fn find_due_interval_subscriptions(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<StoredSubscription>, SubscriptionError> {
             Err(unused("find_due_interval_subscriptions"))
         }
 
@@ -356,7 +357,10 @@ mod tests {
         CompiledSubscription {
             id: format!("urn:ngsi-ld:Subscription:{id}").parse().expect("invalid fixture subscription URI:"),
             key: SubscriptionKey::try_from(key).expect("invalid fixture subscription key:"),
-            status: SubscriptionStatus::Active,
+            standing: SubscriptionStanding {
+                status: SubscriptionStatus::Active,
+                expires_at: None,
+            },
             endpoint_uri: Url::parse("http://example.com/notify").expect("invalid fixture endpoint URI:"),
             endpoint_accept: None,
             endpoint_receiver_info: None,
@@ -380,7 +384,6 @@ mod tests {
             notification_sys_attrs: SysAttrsInclusion::Strip,
             notification_show_changes: false,
             jsonld_context: None,
-            expires_at: None,
             created_at: DateTime::<Utc>::MIN_UTC,
             compiled_q: None,
             compiled_geo_q: SubscriptionGeoFilter::Unrestricted,

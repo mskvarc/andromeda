@@ -17,7 +17,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLd
 use andromeda_ngsi_ld_model::{
     clearable::Clearable,
     notification_request::NotificationRequest,
-    subscription::EntitySelector,
+    subscription::entity_selector::EntitySelector,
     subscription_request::SubscriptionRequest,
 };
 use andromeda_ngsi_ld_query::{

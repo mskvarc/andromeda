@@ -56,7 +56,7 @@ impl CsourceSubscriptionCache {
 mod tests {
     use crate::{compiled::CompiledCsrSubscription, csource_cache::CsourceSubscriptionCache, geo_filter::SubscriptionGeoFilter};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
+    use andromeda_ngsi_ld_model::subscription::{SubscriptionStatus, standing::SubscriptionStanding};
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
     use url::Url;
@@ -64,7 +64,10 @@ mod tests {
     fn subscription(id: &Identifier) -> Arc<CompiledCsrSubscription> {
         Arc::new(CompiledCsrSubscription {
             id: id.clone(), // clone: the compiled subscription owns its identifier
-            status: SubscriptionStatus::Active,
+            standing: SubscriptionStanding {
+                status: SubscriptionStatus::Active,
+                expires_at: None,
+            },
             endpoint_uri: Url::parse("http://example.com/notify").expect("valid URL"),
             endpoint_accept: None,
             endpoint_receiver_info: None,
@@ -79,7 +82,6 @@ mod tests {
             throttling_secs: None,
             time_interval_secs: None,
             jsonld_context: None,
-            expires_at: None,
             compiled_csf: None,
         })
     }

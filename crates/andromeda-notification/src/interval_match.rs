@@ -2,21 +2,20 @@
 //! 5.8.6).
 //!
 //! A periodic notification reads entities a page at a time and decides in memory
-//! which ones the subscription's `q`, `geoQ` and `scopeQ` accept, because a
-//! boolean selector cannot be pushed into a `WHERE`. This is the filter the
-//! interval sweep applies.
+//! which ones the subscription's `q`, `geoQ`, `scopeQ` and `csf` accept, through
+//! the same entity filters a change-driven notification applies, because a
+//! boolean selector cannot be pushed into a `WHERE`.
 
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{error::EntityError, query::EntityQueryService};
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, queried::linked_states::LinkedStates};
-use andromeda_ngsi_ld_model::subscription::Subscription;
-use andromeda_ngsi_ld_query::filter::eval::evaluate;
-use andromeda_subscription::geo_filter::SubscriptionGeoFilter;
+use andromeda_ngsi_ld_query::filter::expression::Expr;
+use andromeda_subscription::{compiled::CompiledSubscription, matching::matches_entity_filters};
 use chrono::{DateTime, Utc};
 
 /// The entities of a page the subscription's filters accept as they stand at
-/// `at`, the entities a `rel{…}` hop of its `q` crosses into read from the
-/// store (clause 4.9).
+/// `at`, the entities a `rel{…}` hop of its `q` or `csf` crosses into read
+/// from the store (clause 4.9).
 ///
 /// # Errors
 ///
@@ -24,68 +23,47 @@ use chrono::{DateTime, Utc};
 pub(crate) async fn matching_entities(
     entity_query: &EntityQueryService,
     target: &ContextTarget,
-    sub: &Subscription,
+    sub: &CompiledSubscription,
     entities: Vec<EntityState>,
     at: DateTime<Utc>,
 ) -> Result<Vec<EntityState>, EntityError> {
-    let linked = match sub.filters.q.as_ref().filter(|q| q.contains_linked_hop()) {
-        Some(q) => {
-            let roots: Vec<&EntityState> = entities.iter().collect();
-            entity_query.linked_filter_states(target, &roots, &[q], at).await?
-        }
-        None => LinkedStates::new(),
+    let entities = standing_at(entities, at);
+    let hops: Vec<&Expr> = sub.hopping_filters().collect();
+    let linked = if hops.is_empty() {
+        LinkedStates::new()
+    } else {
+        let roots: Vec<&EntityState> = entities.iter().collect();
+        entity_query.linked_filter_states(target, &roots, &hops, at).await?
     };
-    Ok(apply_subscription_filters(sub, entities, at, &linked))
+    Ok(admitted(sub, entities, &linked))
 }
 
-/// Apply q, geoQ, and scopeQ filters from a subscription to a list of entity
-/// states, as they stand at `at`, a hop of `q` crossing into `linked`.
+/// The entities as they stand at `at`.
 ///
 /// Clause 4.22: an attribute instance past its `expiresAt` is invalid, so it
-/// is removed before any filter reads the entity, and the entities returned --
-/// the ones the notification carries -- no longer hold it either.
-fn apply_subscription_filters(sub: &Subscription, mut entities: Vec<EntityState>, at: DateTime<Utc>, linked: &LinkedStates) -> Vec<EntityState> {
+/// is removed before any filter reads the entity, and the entities returned,
+/// the ones the notification carries, no longer hold it either.
+fn standing_at(mut entities: Vec<EntityState>, at: DateTime<Utc>) -> Vec<EntityState> {
     for entity in &mut entities {
         entity.remove_expired_instances(at);
     }
-    let compiled_q = sub.filters.q.as_ref();
-
-    let compiled_geo = SubscriptionGeoFilter::from_stored(sub.filters.geo_q.as_ref(), sub.id.as_ref());
-    let compiled_scope = sub.filters.scope_q.as_ref();
-
-    let geo_restricts = !matches!(compiled_geo, SubscriptionGeoFilter::Unrestricted);
-    let has_filters = compiled_q.is_some() || geo_restricts || compiled_scope.is_some();
-    if !has_filters {
-        return entities;
-    }
-
     entities
-        .into_iter()
-        .filter(|entity| {
-            if let Some(expr) = compiled_q
-                && !evaluate(expr, entity, linked)
-            {
-                return false;
-            }
-            if !compiled_geo.admits(|geo_q| geo_q.matches_entity(entity)) {
-                return false;
-            }
-            if let Some(scope_q) = compiled_scope
-                && !scope_q.matches_entity(entity)
-            {
-                return false;
-            }
-            true
-        })
-        .collect()
+}
+
+/// The entities the subscription's entity filters admit, a hop crossing into
+/// `linked`.
+fn admitted(sub: &CompiledSubscription, entities: Vec<EntityState>, linked: &LinkedStates) -> Vec<EntityState> {
+    entities.into_iter().filter(|entity| matches_entity_filters(sub, entity, linked)).collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::interval_match::apply_subscription_filters;
+    use crate::interval_match::{admitted, standing_at};
+    use andromeda_context_commit::subscription_key::SubscriptionKey;
     use andromeda_ngsi_ld_entity::{entity_state::EntityState, queried::linked_states::LinkedStates};
     use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_ngsi_ld_model::subscription::Subscription;
+    use andromeda_subscription::{compilation::compile_subscription, stored_subscription::StoredSubscription};
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
@@ -107,6 +85,16 @@ mod tests {
             "modifiedAt": "2024-01-01T00:00:00Z"
         }))
         .expect("valid subscription")
+    }
+
+    /// The entities `subscription` notifies of, as they stand at `at`, a hop
+    /// crossing into `linked`.
+    fn filtered(subscription: Subscription, entities: Vec<EntityState>, at: DateTime<Utc>, linked: &LinkedStates) -> Vec<EntityState> {
+        let compiled = compile_subscription(&StoredSubscription {
+            key: SubscriptionKey::try_from(1).expect("a valid key"),
+            subscription,
+        });
+        admitted(&compiled, standing_at(entities, at), linked)
     }
 
     fn instant(raw: &str) -> DateTime<Utc> {
@@ -131,8 +119,8 @@ mod tests {
     /// `q` cannot match through it while the sweep has yet to delete it.
     #[test]
     fn a_periodic_q_does_not_match_through_an_expired_instance() {
-        let matched = apply_subscription_filters(
-            &speeding(),
+        let matched = filtered(
+            speeding(),
             vec![vehicle("2030-01-01T00:00:00Z")],
             instant("2030-01-01T00:00:00Z"),
             &LinkedStates::new(),
@@ -142,8 +130,8 @@ mod tests {
 
     #[test]
     fn a_periodic_q_matches_through_a_standing_instance() {
-        let matched = apply_subscription_filters(
-            &speeding(),
+        let matched = filtered(
+            speeding(),
             vec![vehicle("2030-01-01T00:00:00Z")],
             instant("2029-01-01T00:00:00Z"),
             &LinkedStates::new(),
@@ -163,8 +151,8 @@ mod tests {
         // ones that are no JSON make a stored `geoQ` that no longer compiles.
         subscription["geoQ"] = json!({"georel": "near;maxDistance==2000", "geometry": "Point", "coordinates": "[1, "});
         let subscription: Subscription = serde_json::from_value(subscription).expect("valid subscription");
-        let matched = apply_subscription_filters(
-            &subscription,
+        let matched = filtered(
+            subscription,
             vec![vehicle("2030-01-01T00:00:00Z")],
             instant("2029-01-01T00:00:00Z"),
             &LinkedStates::new(),
@@ -213,12 +201,42 @@ mod tests {
                 EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored entity decodes"),
             ));
         }
-        let matched = apply_subscription_filters(
-            &subscription,
+        let matched = filtered(
+            subscription,
             vec![parked("urn:v1", "urn:p1"), parked("urn:v2", "urn:p2")],
             instant("2029-01-01T00:00:00Z"),
             &linked,
         );
         assert_eq!(matched, vec![parked("urn:v1", "urn:p1")]);
+    }
+
+    /// Clause 4.9: on an entity subscription `csf` is a second Query Language
+    /// expression over the notified entity, so a periodic notification applies
+    /// it as a change-driven one does.
+    #[test]
+    fn a_periodic_subscription_applies_its_csf() {
+        let with_csf = |csf: &str| {
+            let mut subscription = serde_json::to_value(speeding()).expect("the subscription serialises");
+            subscription["q"] = Value::Null;
+            subscription["csf"] = json!(csf);
+            serde_json::from_value::<Subscription>(subscription).expect("valid subscription")
+        };
+        let at = instant("2029-01-01T00:00:00Z");
+
+        let refused = filtered(
+            with_csf(&format!("\"{SPEED}\">30")),
+            vec![vehicle("2030-01-01T00:00:00Z")],
+            at,
+            &LinkedStates::new(),
+        );
+        let kept = filtered(
+            with_csf(&format!("\"{SPEED}\">10")),
+            vec![vehicle("2030-01-01T00:00:00Z")],
+            at,
+            &LinkedStates::new(),
+        );
+
+        assert_eq!(refused, Vec::<EntityState>::new());
+        assert_eq!(kept, vec![vehicle("2030-01-01T00:00:00Z")]);
     }
 }

@@ -13,13 +13,12 @@ use andromeda_ngsi_ld_model::{
         selection::{RegistrationFilters, TemporalPartition},
     },
     registration_matching::{entity_specification::EntitySpecification, match_specification::RegistrationMatchSpecification},
-    subscription::SubscriptionStatus,
 };
 use chrono::Utc;
 use tracing::warn;
 
 /// Whether registration changes notify `sub` at all: the subscription is
-/// live and change-driven.
+/// notified as it now stands, and is change-driven.
 ///
 /// Clause 5.11.2.4 ties a `timeInterval` subscription's notifications to its
 /// schedule alone, "independent of any changes to the set of Context Source
@@ -28,17 +27,7 @@ use tracing::warn;
 /// [`csource_subscription_selects_registration`].
 #[must_use]
 pub fn csource_subscription_follows_registration_changes(sub: &CompiledCsrSubscription) -> bool {
-    csource_subscription_is_live(sub) && sub.time_interval_secs.is_none()
-}
-
-/// Whether `sub` may be notified at all: it is active and has not reached its
-/// `expiresAt` (Table 5.2.12-2, clause 5.11.7).
-///
-/// The cadence is a separate question -- this is the lifecycle one both
-/// cadences ask first.
-#[must_use]
-pub fn csource_subscription_is_live(sub: &CompiledCsrSubscription) -> bool {
-    sub.status == SubscriptionStatus::Active && sub.expires_at.is_none_or(|expires_at| expires_at > Utc::now())
+    sub.standing.notifies_at(Utc::now()) && sub.time_interval_secs.is_none()
 }
 
 /// Whether `registration` is one of the registrations `sub` asks about,
@@ -96,7 +85,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_model::{
         registration::ContextSourceRegistration,
-        subscription::{EntitySelector, SubscriptionStatus},
+        subscription::{SubscriptionStatus, entity_selector::EntitySelector, standing::SubscriptionStanding},
     };
     use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrTemporalFilter, filter::parser, scope::query::ScopeQuery, temporal::window::TimeInterval};
     use chrono::{DateTime, Utc};
@@ -115,7 +104,10 @@ mod tests {
     fn subscription() -> CompiledCsrSubscription {
         CompiledCsrSubscription {
             id: "urn:ngsi-ld:Subscription:csource".parse().expect("a valid test fixture"),
-            status: SubscriptionStatus::Active,
+            standing: SubscriptionStanding {
+                status: SubscriptionStatus::Active,
+                expires_at: None,
+            },
             endpoint_uri: Url::parse("http://example.com/notify").expect("a valid test fixture"),
             endpoint_accept: None,
             endpoint_receiver_info: None,
@@ -130,7 +122,6 @@ mod tests {
             throttling_secs: None,
             time_interval_secs: None,
             jsonld_context: None,
-            expires_at: None,
             compiled_csf: None,
         }
     }
@@ -172,7 +163,7 @@ mod tests {
         let registration = registration(&json!({}));
         assert!(notified_of_change(&subscription(), &registration));
         let mut paused = subscription();
-        paused.status = SubscriptionStatus::Paused;
+        paused.standing.status = SubscriptionStatus::Paused;
         assert!(!notified_of_change(&paused, &registration));
         let mut periodic = subscription();
         periodic.time_interval_secs = Some(10.0);

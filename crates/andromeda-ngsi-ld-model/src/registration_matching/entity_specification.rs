@@ -4,7 +4,7 @@
 use crate::{
     entity_info::{EntityInfo, EntityTypeSelection},
     registration::info::RegistrationInfo,
-    subscription::EntitySelector,
+    subscription::entity_selector::EntitySelector,
 };
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, pattern::Pattern, type_selection::grammar::TypeExprRaw};
@@ -128,7 +128,7 @@ mod tests {
         entity_info::EntityInfo,
         registration::info::RegistrationInfo,
         registration_matching::entity_specification::{EntitySpecification, TypeConstraint},
-        subscription::EntitySelector,
+        subscription::entity_selector::EntitySelector,
     };
     use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
     use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};

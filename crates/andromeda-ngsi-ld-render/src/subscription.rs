@@ -162,8 +162,8 @@ impl LifecycleView {
     fn of(lifecycle: &SubscriptionLifecycle, sys_attrs: SysAttrsInclusion) -> LifecycleView {
         LifecycleView {
             is_active: lifecycle.is_active.filter(|active| !active),
-            status: lifecycle.status,
-            expires_at: lifecycle.expires_at,
+            status: lifecycle.standing.status,
+            expires_at: lifecycle.standing.expires_at,
             created_at: timestamp(lifecycle.created_at, sys_attrs),
             modified_at: timestamp(lifecycle.modified_at, sys_attrs),
         }

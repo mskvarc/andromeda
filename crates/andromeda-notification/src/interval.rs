@@ -19,6 +19,7 @@ use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_model::subscription::Subscription;
 use andromeda_ngsi_ld_render::{geometry_selection::GeometrySelection, notification_data::DataShape};
 use andromeda_subscription::{
+    compilation::compile_subscription,
     notification_slot::{NotificationCadence, NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
     store::SubscriptionStore,
 };
@@ -102,8 +103,10 @@ impl IntervalNotificationOperation {
 
         let this = &self;
         let _results: Vec<()> = stream::iter(due_subs)
-            .map(|sub| async move {
-                let entities = match this.candidates().matching(&sub).await {
+            .map(|stored| async move {
+                let compiled = compile_subscription(&stored);
+                let sub = &stored.subscription;
+                let entities = match this.candidates().matching(&compiled).await {
                     Ok(e) => e,
                     Err(e) => {
                         error!("IntervalWorker failed to fetch entities for {}: {}", sub.id, e);
@@ -118,7 +121,7 @@ impl IntervalNotificationOperation {
                     }
                 };
 
-                let entities = match matching_entities(&this.entity_query, &this.target, &sub, entities, Utc::now()).await {
+                let entities = match matching_entities(&this.entity_query, &this.target, &compiled, entities, Utc::now()).await {
                     Ok(entities) => entities,
                     Err(e) => {
                         error!("IntervalWorker failed to read the entities the filter of {} links to: {}", sub.id, e);
@@ -130,11 +133,11 @@ impl IntervalNotificationOperation {
                     // Clause 5.8.6: no matching entities means no notification.
                     // The tick is still recorded so the interval is not re-read
                     // every pass until it next comes due.
-                    this.record_tick(&sub, cutoff).await;
+                    this.record_tick(sub, cutoff).await;
                     return;
                 }
 
-                this.notify(&sub, entities, cutoff).await;
+                this.notify(sub, entities, cutoff).await;
             })
             .buffer_unordered(INTERVAL_NOTIFICATION_CONCURRENCY)
             .collect()

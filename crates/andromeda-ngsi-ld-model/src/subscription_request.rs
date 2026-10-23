@@ -34,7 +34,7 @@ use crate::{
     notification_request::NotificationRequest,
     query::temporal_query::TemporalQuery,
     request_body::RequestBody,
-    subscription::{EntitySelector, SubscriptionType},
+    subscription::{SubscriptionType, entity_selector::EntitySelector},
     subscription_member::SubscriptionMember,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, spec_version::SpecVersion};

@@ -13,7 +13,7 @@ use crate::{
     notification_validation::{validate_endpoint_present, validate_notification},
     subscription_validation_reason::SubscriptionValidationReason,
 };
-use andromeda_ngsi_ld_model::subscription_request::SubscriptionRequest;
+use andromeda_ngsi_ld_model::{subscription::standing::SubscriptionStanding, subscription_request::SubscriptionRequest};
 use andromeda_ngsi_ld_query::{
     filter::{expression::Expr, predicate::Predicate},
     geo::admission::GeoQueryAdmission,
@@ -106,7 +106,9 @@ fn validate_subscribed_scope(request: &SubscriptionRequest) -> Result<(), Subscr
 /// `expiresAt` that is not after the present instant.
 pub fn validate_expires_at_not_in_past(request: &SubscriptionRequest) -> Result<(), SubscriptionError> {
     match request.expires_at.as_set() {
-        Some(expires_at) if *expires_at <= Utc::now() => Err(SubscriptionError::Validation(SubscriptionValidationReason::ExpiresAtInPast)),
+        Some(expires_at) if !SubscriptionStanding::unexpired_at(Some(*expires_at), Utc::now()) => {
+            Err(SubscriptionError::Validation(SubscriptionValidationReason::ExpiresAtInPast))
+        }
         Some(_) | None => Ok(()),
     }
 }

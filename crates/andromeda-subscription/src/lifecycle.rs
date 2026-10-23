@@ -240,7 +240,7 @@ where
             if request.is_empty() {
                 return Ok(());
             }
-            let existing_status = existing.lifecycle.status;
+            let existing_status = existing.lifecycle.standing.status;
             let status = compute_updated_status(existing_status, &requested_status_change(&request));
             let merged = SubscriptionWriteValues::merged(request, existing, self.variant.dataset_id_policy())?;
             validate_merged_subscription(&merged)?;

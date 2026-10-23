@@ -262,19 +262,13 @@ macro_rules! impl_subscription_store {
                 &self,
                 target: &ContextTarget,
                 cutoff: chrono::DateTime<chrono::Utc>,
-            ) -> Result<Vec<Subscription>, SubscriptionError> {
+            ) -> Result<Vec<StoredSubscription>, SubscriptionError> {
                 let pg_rows = due_interval_select($kind, target, cutoff)
                     .to_query()
                     .fetch_all(&self.pool)
                     .await
                     .map_err(|error| persistence_error::<SubscriptionError>(error))?;
-                // An interval notification is sent straight to the endpoint and
-                // never enqueues a delivery, so it needs no surrogate key.
-                Ok(rows_to_stored_subscriptions(&pg_rows, $hdi)
-                    .map_err(|error| persistence_error::<SubscriptionError>(error))?
-                    .into_iter()
-                    .map(|stored| stored.subscription)
-                    .collect())
+                rows_to_stored_subscriptions(&pg_rows, $hdi).map_err(|error| persistence_error::<SubscriptionError>(error))
             }
 
             async fn next_interval_due(

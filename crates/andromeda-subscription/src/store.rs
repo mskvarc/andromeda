@@ -14,7 +14,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
     query::temporal_query::TemporalQuery,
-    subscription::{EntitySelector, NotificationParams, Subscription, SubscriptionStatus},
+    subscription::{NotificationParams, Subscription, SubscriptionStatus, entity_selector::EntitySelector},
 };
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
@@ -212,7 +212,7 @@ pub trait SubscriptionStore: Send + Sync + 'static {
         &'life0 self,
         target: &'life1 ContextTarget,
         cutoff: DateTime<Utc>,
-    ) -> BoxFuture<'async_trait, Result<Vec<Subscription>, SubscriptionError>>
+    ) -> BoxFuture<'async_trait, Result<Vec<StoredSubscription>, SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,

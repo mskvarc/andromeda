@@ -103,7 +103,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_ngsi_ld_model::{
         notification::NotificationTrigger,
-        subscription::{EntitySelector, SubscriptionStatus},
+        subscription::{SubscriptionStatus, entity_selector::EntitySelector, standing::SubscriptionStanding},
     };
     use andromeda_ngsi_ld_query::{geo::input::GeoQueryInput, projection::compiled::Projection};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -151,7 +151,10 @@ mod tests {
         CompiledSubscription {
             id: format!("urn:ngsi-ld:Subscription:{key}").parse().expect("valid URI"),
             key: SubscriptionKey::try_from(key).expect("a valid key"),
-            status: SubscriptionStatus::Active,
+            standing: SubscriptionStanding {
+                status: SubscriptionStatus::Active,
+                expires_at: None,
+            },
             endpoint_uri: Url::parse("http://example.com/notify").expect("valid URL"),
             endpoint_accept: None,
             endpoint_receiver_info: None,
@@ -168,7 +171,6 @@ mod tests {
             notification_sys_attrs: SysAttrsInclusion::Strip,
             notification_show_changes: false,
             jsonld_context: None,
-            expires_at: None,
             created_at: DateTime::<Utc>::MIN_UTC,
             compiled_q: None,
             compiled_geo_q,

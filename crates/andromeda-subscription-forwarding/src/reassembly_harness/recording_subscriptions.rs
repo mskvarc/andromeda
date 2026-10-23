@@ -106,7 +106,7 @@ impl SubscriptionStore for RecordingSubscriptions {
         Err(SubscriptionError::StoreUnavailable)
     }
 
-    async fn find_due_interval_subscriptions(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Subscription>, SubscriptionError> {
+    async fn find_due_interval_subscriptions(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<StoredSubscription>, SubscriptionError> {
         Err(SubscriptionError::StoreUnavailable)
     }
 

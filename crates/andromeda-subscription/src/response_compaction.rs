@@ -9,7 +9,7 @@
 
 use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_model::subscription::{EntitySelector, NotificationParams, Subscription, SubscriptionFilters, SubscriptionStatus};
+use andromeda_ngsi_ld_model::subscription::{NotificationParams, Subscription, SubscriptionFilters, entity_selector::EntitySelector};
 use andromeda_ngsi_ld_query::{
     filter::compaction::{compact_csf_expr, compact_q_expr, revert_expand_values},
     projection::{
@@ -20,17 +20,15 @@ use andromeda_ngsi_ld_query::{
 use chrono::Utc;
 use std::collections::HashSet;
 
-/// Report the clause 5.2.12 `status` as `expired` once `expiresAt` has passed.
+/// Report the clause 5.2.12 `status` the subscription stands at now.
 ///
-/// Clause 5.8.1.4 has the status change "automatically" when the expiration
-/// date is due. The sweeper that persists the transition runs on a cadence,
-/// so a read that lands between the due instant and the sweep reports the
-/// status the subscription already has rather than the one the row still
-/// carries. `isActive` is the client's own member and is left as written.
+/// The sweeper persisting the clause 5.8.1.4 expiry runs on a cadence, so a
+/// read between the due instant and the sweep reports the status already
+/// reached rather than the one the row still carries. `isActive` is the
+/// client's own member and is left as written.
 fn report_expired_status(subscription: &mut Subscription) {
-    if subscription.lifecycle.expires_at.is_some_and(|expires_at| expires_at <= Utc::now()) {
-        subscription.lifecycle.status = SubscriptionStatus::Expired;
-    }
+    let standing = &mut subscription.lifecycle.standing;
+    standing.status = standing.reported_status(Utc::now());
 }
 
 /// One stored attribute name in the reader's terms; a compacted name that is
@@ -188,7 +186,7 @@ mod tests {
         let due = instant_text(Utc::now() - Duration::seconds(1));
         let subscription = compact_for_response(stored(&json!({"expiresAt": due, "isActive": true})), &core_names().await).await;
 
-        pretty_assertions::assert_eq!(subscription.lifecycle.status, SubscriptionStatus::Expired);
+        pretty_assertions::assert_eq!(subscription.lifecycle.standing.status, SubscriptionStatus::Expired);
         pretty_assertions::assert_eq!(subscription.lifecycle.is_active, Some(true));
     }
 
@@ -196,10 +194,10 @@ mod tests {
     async fn a_future_or_absent_expiration_leaves_the_status_alone() {
         let future = instant_text(Utc::now() + Duration::hours(1));
         let subscription = compact_for_response(stored(&json!({"expiresAt": future})), &core_names().await).await;
-        pretty_assertions::assert_eq!(subscription.lifecycle.status, SubscriptionStatus::Active);
+        pretty_assertions::assert_eq!(subscription.lifecycle.standing.status, SubscriptionStatus::Active);
 
         let perpetual = compact_for_response(stored(&json!({"status": "paused"})), &core_names().await).await;
-        pretty_assertions::assert_eq!(perpetual.lifecycle.status, SubscriptionStatus::Paused);
+        pretty_assertions::assert_eq!(perpetual.lifecycle.standing.status, SubscriptionStatus::Paused);
     }
 
     /// Table 5.2.12-1 defaults `localOnly` to false, so only `true` is served.

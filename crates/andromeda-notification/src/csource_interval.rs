@@ -67,8 +67,8 @@ impl CsourceIntervalNotificationOperation {
         let due_subs = self.sub_repo.find_due_interval_subscriptions(&self.target, cutoff).await?;
         let due_count = due_subs.len();
 
-        for sub in due_subs {
-            let compiled = compile_csource_subscription(&sub);
+        for stored in due_subs {
+            let compiled = compile_csource_subscription(&stored.subscription);
             let matching = match matching_registrations(self.csr_repo.as_ref(), &compiled).await {
                 Ok(matching) => matching,
                 Err(error) => {

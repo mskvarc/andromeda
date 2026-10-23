@@ -9,7 +9,7 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::{
     notification::effective_notification_triggers,
     query::temporal_query::TemporalQuery,
-    subscription::{EntitySelector, NotificationParams, Subscription},
+    subscription::{NotificationParams, Subscription, entity_selector::EntitySelector},
 };
 use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
@@ -38,7 +38,7 @@ pub fn compile_subscription(stored: &StoredSubscription) -> CompiledSubscription
     CompiledSubscription {
         id: sub.id.clone(), // clone: compiled state outlives the persisted value.
         key: stored.key,
-        status: sub.lifecycle.status,
+        standing: sub.lifecycle.standing,
         endpoint_uri: sub.notification.endpoint.uri.url().clone(), // clone: compiled state owns the URL every delivery is built from.
         endpoint_accept: sub.notification.endpoint.accept.clone(), // clone: compiled state owns endpoint configuration.
         endpoint_receiver_info: sub.notification.endpoint.receiver_info.clone(), // clone: compiled state owns endpoint configuration.
@@ -60,7 +60,6 @@ pub fn compile_subscription(stored: &StoredSubscription) -> CompiledSubscription
         },
         notification_show_changes: sub.notification.show_changes.unwrap_or(false),
         jsonld_context: sub.delivery.jsonld_context.clone(), // clone: compiled state owns the context URL.
-        expires_at: sub.lifecycle.expires_at,
         created_at: sub.lifecycle.created_at,
         compiled_q: sub.filters.q.clone(), // clone: compiled state owns its filter AST.
         compiled_geo_q: SubscriptionGeoFilter::from_stored(sub.filters.geo_q.as_ref(), sub.id.as_ref()),
@@ -82,7 +81,7 @@ pub fn compile_csource_subscription(sub: &Subscription) -> CompiledCsrSubscripti
     let selectors: Vec<EntitySelector> = sub.selection.entities.clone().unwrap_or_default();
     CompiledCsrSubscription {
         id: sub.id.clone(), // clone: compiled state outlives the persisted value.
-        status: sub.lifecycle.status,
+        standing: sub.lifecycle.standing,
         endpoint_uri: sub.notification.endpoint.uri.url().clone(), // clone: compiled state owns the URL every delivery is built from.
         endpoint_accept: sub.notification.endpoint.accept.clone(), // clone: compiled state owns endpoint configuration.
         endpoint_receiver_info: sub.notification.endpoint.receiver_info.clone(), // clone: compiled state owns endpoint configuration.
@@ -101,8 +100,7 @@ pub fn compile_csource_subscription(sub: &Subscription) -> CompiledCsrSubscripti
         throttling_secs: sub.delivery.throttling,
         time_interval_secs: sub.delivery.time_interval,
         jsonld_context: sub.delivery.jsonld_context.clone(), // clone: compiled state owns the context URL.
-        expires_at: sub.lifecycle.expires_at,
-        compiled_csf: sub.filters.csf.clone(), // clone: compiled state owns its filter AST.
+        compiled_csf: sub.filters.csf.clone(),               // clone: compiled state owns its filter AST.
     }
 }
 

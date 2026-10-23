@@ -125,7 +125,7 @@ mod tests {
             Err(SubscriptionError::StoreSaturated)
         }
 
-        async fn find_due_interval_subscriptions(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Subscription>, SubscriptionError> {
+        async fn find_due_interval_subscriptions(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<StoredSubscription>, SubscriptionError> {
             Err(SubscriptionError::StoreSaturated)
         }
 
