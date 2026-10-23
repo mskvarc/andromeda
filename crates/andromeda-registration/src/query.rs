@@ -12,7 +12,10 @@ use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     registration::ContextSourceRegistration,
-    registration_matching::{EntitySpecification, RegistrationMatchSpecification},
+    registration_matching::{
+        entity_specification::{EntitySpecification, TypeConstraint},
+        match_specification::RegistrationMatchSpecification,
+    },
 };
 use andromeda_ngsi_ld_query::{
     csr::compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
@@ -209,7 +212,7 @@ fn registration_matching_the_query(
     type_selector: Option<&TypeExprRaw>,
 ) -> Result<Option<ContextSourceRegistration>, RegistrationError> {
     let entity = EntitySpecification {
-        type_selector,
+        types: type_selector.map_or(TypeConstraint::Any, TypeConstraint::Selector),
         ids: &compiled.ids,
         id_pattern: compiled.id_pattern.as_ref(),
     };

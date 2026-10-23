@@ -5,14 +5,15 @@ use crate::{
     attribute_coverage::{covered_attributes, narrowed_document},
     provision::is_proxied,
     provision_batch::BatchEntity,
-    registration_information::csr_has_matching_information,
 };
 use andromeda_jsonld::batch_contexts::BatchContext;
 use andromeda_ngsi_ld_entity::document::EntityDocument;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
-use iri_rs::IriBuf;
-use std::borrow::Cow;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_ngsi_ld_model::{
+    registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
+    registration_matching::{entity_specification::EntitySpecification, match_specification::RegistrationMatchSpecification},
+};
+use std::{borrow::Cow, slice};
 
 /// One entity of the array narrowed for one registration.
 pub(super) struct NarrowedEntity<'a> {
@@ -28,15 +29,10 @@ pub(super) struct NarrowedEntity<'a> {
     pub(super) context: &'a BatchContext,
 }
 
-/// The types of an admitted document, as the IRIs registrations are matched
-/// on (clause 5.12 matches on any of them).
-fn entity_types(entity: &BatchEntity<'_>) -> Vec<IriBuf> {
-    entity
-        .document
-        .into_iter()
-        .flat_map(EntityDocument::types)
-        .filter_map(|name| IriBuf::new(name.to_string()).ok())
-        .collect()
+/// The expanded types of an admitted document, which registrations are
+/// matched on (clause 5.12 matches on any of them); none for a deletion.
+fn entity_types<'a>(entity: &BatchEntity<'a>) -> &'a [EntityTypeName] {
+    entity.document.map_or(&[], EntityDocument::types)
 }
 
 /// Narrow the client's array to what `csr` receives (the `IN` of clauses
@@ -54,7 +50,13 @@ pub(super) fn narrow_input<'a>(
     let mut narrowed = Vec::new();
     for entity in entities {
         let types = entity_types(entity);
-        if !csr_has_matching_information(csr, &types, Some(entity.id), None) {
+        let specification = EntitySpecification::of_entity(types, entity.id);
+        let covers = RegistrationMatchSpecification {
+            entities: slice::from_ref(&specification),
+            attributes: &[],
+        }
+        .covers(csr);
+        if !covers {
             continue;
         }
         let Some(document) = entity.document else {
@@ -66,7 +68,7 @@ pub(super) fn narrow_input<'a>(
             });
             continue;
         };
-        let Some(mut body) = narrowed_document(document, csr, &types, Some(entity.id)) else {
+        let Some(mut body) = narrowed_document(document, csr, types, entity.id) else {
             continue;
         };
         for other in candidates.iter().filter(|other| other.id != csr.id) {
@@ -78,7 +80,7 @@ pub(super) fn narrow_input<'a>(
             if !owns {
                 continue;
             }
-            let taken = covered_attributes(&body, other, &types, Some(entity.id));
+            let taken = covered_attributes(&body, other, types, entity.id);
             if !taken.is_empty() {
                 body.to_mut().attributes_mut().retain(|name, _| !taken.contains(name));
             }

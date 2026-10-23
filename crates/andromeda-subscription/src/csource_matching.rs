@@ -9,7 +9,7 @@ use crate::compiled::CompiledCsrSubscription;
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_model::{
     registration::{ContextSourceRegistration, context_source_properties::ContextSourceProperties, info::RegistrationInfo},
-    registration_matching::{EntitySpecification, RegistrationMatchSpecification},
+    registration_matching::{entity_specification::EntitySpecification, match_specification::RegistrationMatchSpecification},
     subscription::SubscriptionStatus,
 };
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrTemporalFilter, filter::eval::evaluate, queried_entity::linked_entities::NoLinkedEntities};
@@ -49,7 +49,7 @@ pub fn csource_subscription_selects_registration(sub: &CompiledCsrSubscription, 
         entities: &entities,
         attributes: &sub.matching_attrs,
     };
-    registration.coverage.information.iter().any(|info| specification.matches_information(info))
+    specification.covers(registration)
         && temporal_partition_admits(sub.temporal_q.as_ref(), registration)
         && sub.geo_q.admits(|geo_q| registration.coverage.admits_geo_query(geo_q))
         && scope_query_admits(sub, registration)

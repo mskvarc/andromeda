@@ -15,19 +15,22 @@ use crate::{
     operation::ForwardingOperation,
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
     provision::{is_proxied, proxied_mode},
-    registration_information::information_matches_entity,
     request::{EntityMapInUse, TriggeringRequest},
     term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
+use andromeda_ngsi_ld_model::{
+    registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
+    registration_matching::{entity_specification::EntitySpecification, match_specification::RegistrationMatchSpecification},
+};
 use andromeda_ngsi_ld_query::{
     csr::expanded_entity_specification::ExpandedEntitySpecification,
     pattern::Pattern,
     type_selection::grammar::{TypeExpr, TypeExprRaw},
 };
+use std::slice;
 use tracing::debug;
 use url::form_urlencoded;
 
@@ -96,10 +99,12 @@ fn reported_ids(csr: &ContextSourceRegistration, local_ids: &[Identifier]) -> Ve
     let covered = local_ids
         .iter()
         .filter(|id| {
-            csr.coverage
-                .information
-                .iter()
-                .any(|information| information_matches_entity(information, &[], Some(id)))
+            let entity = EntitySpecification::of_entity(&[], id);
+            RegistrationMatchSpecification {
+                entities: slice::from_ref(&entity),
+                attributes: &[],
+            }
+            .covers(csr)
         })
         .cloned() // clone: the report owns the identifiers it names
         .collect::<Vec<_>>();

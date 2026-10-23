@@ -20,7 +20,7 @@ use crate::{
     forwarded_names::ForwardedNames,
     forwarded_parameter::ForwardedParameter,
     forwarded_query::{
-        block_footprint::{AttrCoverage, BlockSelection, block_attrs, block_covers_id, covered_type},
+        block_footprint::{AttrCoverage, BlockSelection, block_attrs, covered_type},
         client_query::ClientQuery,
     },
     request::{SourcePage, TemporalAnswer},
@@ -28,7 +28,10 @@ use crate::{
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, info::RegistrationInfo};
+use andromeda_ngsi_ld_model::{
+    registration::{ContextSourceRegistration, info::RegistrationInfo},
+    registration_matching::entity_specification::EntitySpecification,
+};
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::representation_parameter::WrittenValue;
@@ -138,7 +141,7 @@ impl ForwardedQuery {
             ClientQuery::EntityRetrieve { id, params } => {
                 // The entity is named by the caller; the block contributes only
                 // its attribute constraint, and only when it covers the entity.
-                if !block_covers_id(block, id) {
+                if !EntitySpecification::of_entity(&[], id).matches_entity_axis(block) {
                     return Ok(None);
                 }
                 // Clause 5.7.1.4: where the client specified a type, the target

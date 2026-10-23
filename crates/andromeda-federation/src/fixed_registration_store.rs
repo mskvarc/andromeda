@@ -3,7 +3,12 @@
 use crate::{FederationService, config::FederationConfig, local_entity_type::LocalEntityTypeResolver};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    context_source_pseudonym::ContextSourcePseudonym,
+    entity_type_name::EntityTypeName,
+    identifier::Identifier,
+};
 use andromeda_ngsi_ld_model::{csource_change_revision::CsourceChangeRevision, registration::ContextSourceRegistration};
 use andromeda_ngsi_ld_query::{
     csr::{compiled::CompiledCsrQuery, expanded_entity_specification::ExpandedEntitySpecification},
@@ -24,7 +29,6 @@ use andromeda_registration::{
 };
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
-use iri_rs::IriBuf;
 use std::sync::Arc;
 
 /// A forwarding service choosing among `registrations`, holding no entity of
@@ -43,7 +47,7 @@ pub(crate) fn offline_service(registrations: Vec<ContextSourceRegistration>) -> 
 /// A forwarding service choosing among `registrations`, holding the one entity
 /// of `local_types` whatever its identifier, and resolving only embedded
 /// contexts, never the network.
-pub(crate) fn service_holding_entity_of(registrations: Vec<ContextSourceRegistration>, local_types: Vec<IriBuf>) -> FederationService {
+pub(crate) fn service_holding_entity_of(registrations: Vec<ContextSourceRegistration>, local_types: Vec<EntityTypeName>) -> FederationService {
     FederationService::new(
         Arc::new(FixedRegistrationStore::new(registrations)),
         Arc::new(LocalEntityOf(local_types)),
@@ -168,7 +172,7 @@ impl RegistrationStore for FixedRegistrationStore {
     fn find_overlapping<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         _entity_id: Option<&'life1 Identifier>,
-        _attributes: &'life2 [IriBuf],
+        _attributes: &'life2 [AttributeName],
     ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
     where
         'life0: 'async_trait,
@@ -220,16 +224,24 @@ impl RegistrationStore for FixedRegistrationStore {
 pub(crate) struct NoLocalEntities;
 
 impl LocalEntityTypeResolver for NoLocalEntities {
-    fn local_entity_types<'resolver>(&'resolver self, _target: &'resolver ContextTarget, _id: &'resolver Identifier) -> BoxFuture<'resolver, Vec<IriBuf>> {
+    fn local_entity_types<'resolver>(
+        &'resolver self,
+        _target: &'resolver ContextTarget,
+        _id: &'resolver Identifier,
+    ) -> BoxFuture<'resolver, Vec<EntityTypeName>> {
         Box::pin(async { Vec::new() })
     }
 }
 
 /// A resolver for which every entity is held locally with the same types.
-pub(crate) struct LocalEntityOf(Vec<IriBuf>);
+pub(crate) struct LocalEntityOf(Vec<EntityTypeName>);
 
 impl LocalEntityTypeResolver for LocalEntityOf {
-    fn local_entity_types<'resolver>(&'resolver self, _target: &'resolver ContextTarget, _id: &'resolver Identifier) -> BoxFuture<'resolver, Vec<IriBuf>> {
+    fn local_entity_types<'resolver>(
+        &'resolver self,
+        _target: &'resolver ContextTarget,
+        _id: &'resolver Identifier,
+    ) -> BoxFuture<'resolver, Vec<EntityTypeName>> {
         let types = self.0.clone(); // clone: the answer owns the types the fixture holds
         Box::pin(async { types })
     }

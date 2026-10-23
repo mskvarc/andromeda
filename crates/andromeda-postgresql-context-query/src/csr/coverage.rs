@@ -13,8 +13,8 @@
 //! per item and per `EntityInfo` as well.
 
 use crate::csr::{entity_specification::row_matches, information_row::some_information_row, preselect::attribute_name_candidate};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::csr::expanded_entity_specification::ExpandedEntitySpecification;
-use iri_rs::IriBuf;
 use sea_query::{Condition, SimpleExpr};
 
 /// What a distributed operation asks of a registration's `information`.
@@ -23,7 +23,7 @@ pub struct Coverage<'request> {
     /// The entities the operation concerns.
     pub entities: ExpandedEntitySpecification<'request>,
     /// The expanded attribute names; empty when none are asked about.
-    pub attributes: &'request [IriBuf],
+    pub attributes: &'request [AttributeName],
 }
 
 impl Coverage<'_> {
@@ -46,6 +46,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExpr};
     use andromeda_postgresql_seaquery::literal::int_literal;
+    use iri_rs::IriBuf;
     use sea_query::{PostgresQueryBuilder, Query};
 
     fn iri(value: &str) -> IriBuf {
@@ -151,7 +152,7 @@ mod tests {
     fn every_axis_asked_is_decided_on_one_information_row() {
         let vehicle = TypeExpr::Type(iri("https://example.com/Vehicle"));
         let ids = [uri("urn:ngsi-ld:Vehicle:1")];
-        let attributes = [iri("https://example.com/speed")];
+        let attributes = ["https://example.com/speed".parse::<AttributeName>().expect("valid attribute name")];
         let sql = render(&Coverage {
             entities: ExpandedEntitySpecification {
                 entity_type: Some(&vehicle),

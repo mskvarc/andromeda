@@ -27,7 +27,6 @@ use andromeda_registration::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use iri_rs::IriBuf;
 use sqlx::postgres::PgPool;
 use std::sync::Arc;
 
@@ -115,7 +114,11 @@ impl RegistrationStore for PostgresRegistrationStore {
         registration_read::find_matching(self, entities).await
     }
 
-    async fn find_overlapping(&self, entity_id: Option<&Identifier>, attributes: &[IriBuf]) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
+    async fn find_overlapping(
+        &self,
+        entity_id: Option<&Identifier>,
+        attributes: &[AttributeName],
+    ) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
         registration_read::find_overlapping(self, entity_id, attributes).await
     }
 

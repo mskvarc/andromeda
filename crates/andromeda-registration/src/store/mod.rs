@@ -64,7 +64,7 @@ use crate::{
         written_registration::WrittenRegistration,
     },
 };
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{csource_change_revision::CsourceChangeRevision, registration::ContextSourceRegistration};
 use andromeda_ngsi_ld_query::{
     csr::{compiled::CompiledCsrQuery, expanded_entity_specification::ExpandedEntitySpecification},
@@ -72,7 +72,6 @@ use andromeda_ngsi_ld_query::{
 };
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
-use iri_rs::IriBuf;
 
 /// Storing context source registrations (clause 5.9).
 ///
@@ -202,7 +201,7 @@ pub trait RegistrationStore: Send + Sync + 'static {
     fn find_overlapping<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         entity_id: Option<&'life1 Identifier>,
-        attributes: &'life2 [IriBuf],
+        attributes: &'life2 [AttributeName],
     ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
     where
         'life0: 'async_trait,

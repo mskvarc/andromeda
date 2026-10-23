@@ -5,10 +5,14 @@
 //! - Coverage: a client's term is kept when its expanded IRI equals a block selector's stored type IRI or a declared attribute IRI, the same comparison the registration selection makes, so a selected block is narrowed consistently.
 //! - Spelling: every name the forwarded request carries is written in the registration's forwarding context -- the client's own terms reworded when that context is another one (clause 4.3.6.6), and a block's stored IRIs compacted to the term that context spells them with. A name the context abbreviates none of is forwarded as its full IRI, which a source still resolves (clause 4.5.1).
 
-use crate::{error::FederationError, forwarded_names::ForwardedNames};
+use crate::{error::FederationError, federation_invariant::FederationInvariant, forwarded_names::ForwardedNames};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::{registration::info::RegistrationInfo, registration_matching::EntitySpecification};
+use andromeda_ngsi_ld_model::{
+    registration::info::RegistrationInfo,
+    registration_matching::entity_specification::{EntitySpecification, TypeConstraint},
+};
 use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
+use std::slice;
 
 /// The entity selection one block contributes to a forwarded request: the
 /// identifiers, id pattern and type it narrows the client's selection to, or
@@ -55,7 +59,14 @@ impl BlockSelection {
             selection.ids = covered;
             selection.id_pattern = id_pattern.map(ToString::to_string);
         } else if let Some(pattern) = id_pattern {
-            if !block_admits_pattern(block, pattern) {
+            // Clause 5.12: a pattern on either side, or none registered, is
+            // taken as matching; a registered `id` must match the pattern.
+            let specification = EntitySpecification {
+                types: TypeConstraint::Any,
+                ids: &[],
+                id_pattern: Some(pattern),
+            };
+            if !specification.matches_entity_axis(block) {
                 return Ok(None);
             }
             selection.id_pattern = Some(pattern.to_string());
@@ -142,37 +153,11 @@ pub(super) async fn block_attrs(
     }
 }
 
-/// Whether the block's entity selectors cover `id`; a block that names no
-/// entity selectors covers every identifier (clause 5.2.10).
-pub(super) fn block_covers_id(block: &RegistrationInfo, id: &Identifier) -> bool {
-    match block.entities.as_deref() {
-        None => true,
-        Some(selectors) => selectors.iter().any(|selector| selector.covers_id(id)),
-    }
-}
-
-/// Whether an entity `pattern` matches may be one the block covers (clause
-/// 5.12): the block names no entity selector, or one of its selectors names no
-/// `id` (constraining the identifier not at all, or by a pattern of its own,
-/// which clause 5.12 takes as matching), or names an `id` the pattern matches.
-fn block_admits_pattern(block: &RegistrationInfo, pattern: &Pattern) -> bool {
-    let specification = EntitySpecification {
-        type_selector: None,
-        ids: &[],
-        id_pattern: Some(pattern),
-    };
-    block
-        .entities
-        .as_deref()
-        .filter(|selectors| !selectors.is_empty())
-        .is_none_or(|selectors| selectors.iter().any(|selector| specification.matches_entity_info(selector)))
-}
-
 /// The identifiers among `ids` this block covers, or `None` when it covers none.
 fn covered_ids(ids: &[Identifier], block: &RegistrationInfo) -> Option<Vec<Identifier>> {
     let covered = ids
         .iter()
-        .filter(|id| block_covers_id(block, id))
+        .filter(|id| EntitySpecification::of_entity(&[], id).matches_entity_axis(block))
         .cloned() // clone: the forwarded query owns the identifiers it writes
         .collect::<Vec<_>>();
     (!covered.is_empty()).then_some(covered)
@@ -216,9 +201,9 @@ pub(super) async fn covered_type(
     block: &RegistrationInfo,
     names: &ForwardedNames<'_>,
 ) -> Result<Option<TypeExprRaw>, FederationError> {
-    let Some(selectors) = block.entities.as_deref().filter(|selectors| !selectors.is_empty()) else {
+    if block.entities.is_none() {
         return Ok(Some(names.type_expr(entity_type).await?));
-    };
+    }
     let leaves = match entity_type {
         TypeExprRaw::Type(name) => vec![name],
         TypeExprRaw::Or(children) => {
@@ -239,7 +224,16 @@ pub(super) async fn covered_type(
     let mut covered = Vec::new();
     for name in leaves {
         let iri = names.resolver().expand_type(name.as_str()).await?;
-        if selectors.iter().any(|selector| selector.type_.admits(iri.as_str())) {
+        let leaf = iri
+            .as_str()
+            .parse::<EntityTypeName>()
+            .map_err(|error| FederationError::from(FederationInvariant::ForwardedName(error)))?;
+        let specification = EntitySpecification {
+            types: TypeConstraint::OneOf(slice::from_ref(&leaf)),
+            ids: &[],
+            id_pattern: None,
+        };
+        if specification.matches_entity_axis(block) {
             covered.push(TypeExprRaw::Type(names.entity_type(name).await?));
         }
     }
@@ -299,4 +293,29 @@ fn block_types(block: &RegistrationInfo, names: &ForwardedNames<'_>) -> Result<O
         }
     }
     Ok(alternation(spelled.into_iter().map(TypeExprRaw::Type).collect()))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::forwarded_query::block_footprint::covered_ids;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_model::registration::info::RegistrationInfo;
+    use serde_json::json;
+
+    fn uri(value: &str) -> Identifier {
+        value.parse().expect("valid URI")
+    }
+
+    /// Clause 5.2.8: the registered `id` decides, so the pattern beside it does
+    /// not widen the identifiers a forwarded request names.
+    #[test]
+    fn a_block_naming_id_and_pattern_covers_only_that_id() {
+        let block: RegistrationInfo = serde_json::from_value(json!({
+            "entities": [{"type": "https://example.org/Vehicle", "id": "urn:ngsi-ld:Vehicle:7", "idPattern": "urn:ngsi-ld:Vehicle:.*"}]
+        }))
+        .expect("information parses");
+        let seven = uri("urn:ngsi-ld:Vehicle:7");
+        pretty_assertions::assert_eq!(covered_ids(&[uri("urn:ngsi-ld:Vehicle:1"), seven.clone()], &block), Some(vec![seven]));
+        pretty_assertions::assert_eq!(covered_ids(&[uri("urn:ngsi-ld:Vehicle:1")], &block), None);
+    }
 }

@@ -1,11 +1,12 @@
 //! A registration stores the attribute names it covers expanded, and the admitted content of a write names its attributes expanded too, so deciding whether a registration covers an attribute compares two IRIs: what the name means decides, even under a `@context` that aliases a term to an unrelated IRI. A write body may carry no `@context` at all (clause 6.3.5 makes `application/json` without a context `Link` legal, resolving against the core context) while the registration's declared names were expanded under a different one that the registration does not retain. The two then cannot meet on an IRI and the registration does not cover the attribute: clause 5.12 matches expanded names only, so two different IRIs never match, whatever they share at their tail.
 
-use crate::registration_information::information_matches_entity;
 use andromeda_ngsi_ld_entity::document::EntityDocument;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-use iri_rs::IriBuf;
-use std::borrow::Cow;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_ngsi_ld_model::{
+    registration::{ContextSourceRegistration, info::RegistrationInfo},
+    registration_matching::{entity_specification::EntitySpecification, match_specification::RegistrationMatchSpecification},
+};
+use std::{borrow::Cow, slice};
 
 /// The attributes a registration covers for one entity, read off the
 /// information entries that match it (clause 5.12).
@@ -18,27 +19,31 @@ enum AttributeCoverage {
     Names(Vec<AttributeName>),
 }
 
+/// The information entries of `csr` that match the entity `(entity_types,
+/// entity_id)` on the entity axis (clause 5.12).
+fn matching_entries<'csr>(csr: &'csr ContextSourceRegistration, entity_types: &[EntityTypeName], entity_id: &Identifier) -> Vec<&'csr RegistrationInfo> {
+    let entity = EntitySpecification::of_entity(entity_types, entity_id);
+    RegistrationMatchSpecification {
+        entities: slice::from_ref(&entity),
+        attributes: &[],
+    }
+    .matching_information(&csr.coverage.information)
+    .collect()
+}
+
 /// What `csr` covers of an entity's attributes.
-fn attribute_coverage(csr: &ContextSourceRegistration, entity_types: &[IriBuf], entity_id: Option<&Identifier>) -> AttributeCoverage {
-    let information = csr
-        .coverage
-        .information
-        .iter()
-        .filter(|information| information_matches_entity(information, entity_types, entity_id))
-        .collect::<Vec<_>>();
+fn attribute_coverage(csr: &ContextSourceRegistration, entity_types: &[EntityTypeName], entity_id: &Identifier) -> AttributeCoverage {
+    let information = matching_entries(csr, entity_types, entity_id);
     if information.is_empty() {
         return AttributeCoverage::NotMatching;
     }
-    let unrestricted = information
-        .iter()
-        .any(|entry| entry.property_names.as_ref().is_none_or(Vec::is_empty) && entry.relationship_names.as_ref().is_none_or(Vec::is_empty));
-    if unrestricted {
+    if information.iter().any(|entry| entry.attribute_names().next().is_none()) {
         return AttributeCoverage::Unrestricted;
     }
     AttributeCoverage::Names(
         information
             .iter()
-            .flat_map(|entry| entry.property_names.iter().chain(&entry.relationship_names).flatten())
+            .flat_map(|entry| entry.attribute_names())
             .cloned() // clone: the coverage owns the declared names borrowed from the registration
             .collect(),
     )
@@ -59,8 +64,8 @@ fn covered_among<'a>(requested: impl Iterator<Item = &'a AttributeName>, declare
 /// or every declared attribute when the write names none.
 pub(crate) fn matching_attributes(
     csr: &ContextSourceRegistration,
-    entity_types: &[IriBuf],
-    entity_id: Option<&Identifier>,
+    entity_types: &[EntityTypeName],
+    entity_id: &Identifier,
     explicit_attribute: Option<&AttributeName>,
     requested: &[AttributeName],
 ) -> Vec<AttributeName> {
@@ -68,17 +73,9 @@ pub(crate) fn matching_attributes(
         return vec![attribute.clone()]; // clone: the result outlives the borrowed request
     }
     let mut covered = Vec::new();
-    for information in csr
-        .coverage
-        .information
-        .iter()
-        .filter(|information| information_matches_entity(information, entity_types, entity_id))
-    {
+    for information in matching_entries(csr, entity_types, entity_id) {
         let declared = information
-            .property_names
-            .iter()
-            .chain(&information.relationship_names)
-            .flatten()
+            .attribute_names()
             .cloned() // clone: the comparison owns the names borrowed from the registration
             .collect::<Vec<_>>();
         if declared.is_empty() {
@@ -100,8 +97,8 @@ pub(crate) fn matching_attributes(
 pub(crate) fn covered_attributes(
     document: &EntityDocument,
     csr: &ContextSourceRegistration,
-    entity_types: &[IriBuf],
-    entity_id: Option<&Identifier>,
+    entity_types: &[EntityTypeName],
+    entity_id: &Identifier,
 ) -> Vec<AttributeName> {
     match attribute_coverage(csr, entity_types, entity_id) {
         AttributeCoverage::NotMatching => Vec::new(),
@@ -117,8 +114,8 @@ pub(crate) fn covered_attributes(
 pub(crate) fn narrowed_document<'d>(
     document: &'d EntityDocument,
     csr: &ContextSourceRegistration,
-    entity_types: &[IriBuf],
-    entity_id: Option<&Identifier>,
+    entity_types: &[EntityTypeName],
+    entity_id: &Identifier,
 ) -> Option<Cow<'d, EntityDocument>> {
     let covered = covered_attributes(document, csr, entity_types, entity_id);
     if covered.is_empty() {
@@ -136,10 +133,9 @@ pub(crate) fn narrowed_document<'d>(
 mod tests {
     use crate::attribute_coverage::{covered_attributes, matching_attributes, narrowed_document};
     use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument};
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
     use indexmap::IndexMap;
-    use iri_rs::IriBuf;
     use serde_json::{Value, json};
     use std::borrow::Cow;
 
@@ -175,8 +171,8 @@ mod tests {
         )
     }
 
-    fn vehicle_type() -> IriBuf {
-        IriBuf::new("https://example.org/Vehicle".to_string()).expect("valid IRI")
+    fn vehicle_type() -> EntityTypeName {
+        "https://example.org/Vehicle".parse().expect("valid type name")
     }
 
     fn vehicle_id() -> Identifier {
@@ -202,7 +198,7 @@ mod tests {
             "https://example.org/brandName",
             "https://example.org/other/colour",
         ]);
-        let narrowed = narrowed_document(&written, &csr, &[vehicle_type()], Some(&vehicle_id())).expect("coverage remains");
+        let narrowed = narrowed_document(&written, &csr, &[vehicle_type()], &vehicle_id()).expect("coverage remains");
         pretty_assertions::assert_eq!(kept(&narrowed), vec!["https://example.org/brandName", "https://example.org/vocab/speed"]);
         assert!(matches!(narrowed, Cow::Owned(_)), "a narrowed document is its own copy");
     }
@@ -211,18 +207,18 @@ mod tests {
     fn a_registration_declaring_no_attribute_names_covers_every_attribute() {
         let csr = registration(&json!({"entities": [{"type": "https://example.org/Vehicle"}]}));
         let written = document(&["https://example.org/speed", "https://example.org/brandName"]);
-        let narrowed = narrowed_document(&written, &csr, &[vehicle_type()], Some(&vehicle_id())).expect("coverage remains");
+        let narrowed = narrowed_document(&written, &csr, &[vehicle_type()], &vehicle_id()).expect("coverage remains");
         assert!(matches!(narrowed, Cow::Borrowed(_)), "a document that loses nothing is not copied");
-        pretty_assertions::assert_eq!(covered_attributes(&written, &csr, &[vehicle_type()], Some(&vehicle_id())).len(), 2);
+        pretty_assertions::assert_eq!(covered_attributes(&written, &csr, &[vehicle_type()], &vehicle_id()).len(), 2);
     }
 
     #[test]
     fn a_registration_not_matching_the_entity_keeps_nothing() {
         let csr = registration(&json!({"entities": [{"type": "https://example.org/Device"}]}));
         let written = document(&["https://example.org/speed"]);
-        assert!(narrowed_document(&written, &csr, &[vehicle_type()], Some(&vehicle_id())).is_none());
+        assert!(narrowed_document(&written, &csr, &[vehicle_type()], &vehicle_id()).is_none());
         pretty_assertions::assert_eq!(
-            covered_attributes(&written, &csr, &[vehicle_type()], Some(&vehicle_id())),
+            covered_attributes(&written, &csr, &[vehicle_type()], &vehicle_id()),
             Vec::<AttributeName>::new()
         );
     }
@@ -234,7 +230,7 @@ mod tests {
             "propertyNames": ["https://example.org/colour"]
         }));
         let written = document(&["https://example.org/speed"]);
-        assert!(narrowed_document(&written, &csr, &[vehicle_type()], Some(&vehicle_id())).is_none());
+        assert!(narrowed_document(&written, &csr, &[vehicle_type()], &vehicle_id()).is_none());
     }
 
     /// Clause 5.12 compares expanded names: two different IRIs ending in the
@@ -246,9 +242,9 @@ mod tests {
             "propertyNames": ["http://b.example/ns/speed"]
         }));
         let written = document(&["http://a.example/v#speed", "https://uri.etsi.org/ngsi-ld/default-context/speed"]);
-        assert!(narrowed_document(&written, &csr, &[vehicle_type()], Some(&vehicle_id())).is_none());
+        assert!(narrowed_document(&written, &csr, &[vehicle_type()], &vehicle_id()).is_none());
         pretty_assertions::assert_eq!(
-            matching_attributes(&csr, &[vehicle_type()], Some(&vehicle_id()), None, &[name("http://a.example/v#speed")]),
+            matching_attributes(&csr, &[vehicle_type()], &vehicle_id(), None, &[name("http://a.example/v#speed")]),
             Vec::<AttributeName>::new()
         );
     }
@@ -260,7 +256,7 @@ mod tests {
             "propertyNames": ["http://b.example/ns/speed"]
         }));
         let written = document(&["http://b.example/ns/speed"]);
-        let narrowed = narrowed_document(&written, &csr, &[vehicle_type()], Some(&vehicle_id())).expect("coverage remains");
+        let narrowed = narrowed_document(&written, &csr, &[vehicle_type()], &vehicle_id()).expect("coverage remains");
         pretty_assertions::assert_eq!(kept(&narrowed), vec!["http://b.example/ns/speed"]);
     }
 
@@ -273,7 +269,7 @@ mod tests {
             "propertyNames": ["https://example.org/speed"]
         }));
         let written = document(&["https://other.example.org/rate"]);
-        assert!(narrowed_document(&written, &csr, &[vehicle_type()], Some(&vehicle_id())).is_none());
+        assert!(narrowed_document(&written, &csr, &[vehicle_type()], &vehicle_id()).is_none());
     }
 
     /// The attributes a proxied registration claims: the explicit attribute of
@@ -288,16 +284,16 @@ mod tests {
         let types = [vehicle_type()];
         let id = vehicle_id();
         let explicit = name("https://example.org/colour");
-        pretty_assertions::assert_eq!(matching_attributes(&csr, &types, Some(&id), Some(&explicit), &[]), vec![explicit.clone()]);
+        pretty_assertions::assert_eq!(matching_attributes(&csr, &types, &id, Some(&explicit), &[]), vec![explicit.clone()]);
         pretty_assertions::assert_eq!(
-            matching_attributes(&csr, &types, Some(&id), None, &[]),
+            matching_attributes(&csr, &types, &id, None, &[]),
             vec![name("https://example.org/brandName"), name("https://example.org/speed")]
         );
         pretty_assertions::assert_eq!(
             matching_attributes(
                 &csr,
                 &types,
-                Some(&id),
+                &id,
                 None,
                 &[name("https://example.org/speed"), name("https://example.org/colour")]
             ),

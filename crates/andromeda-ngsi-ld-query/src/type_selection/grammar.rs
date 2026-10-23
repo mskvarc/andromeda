@@ -63,6 +63,19 @@ impl TypeExprRaw {
             TypeExprRaw::Wildcard | TypeExprRaw::And(_) | TypeExprRaw::Or(_) => None,
         }
     }
+
+    /// The type names the expression names, in order of appearance.
+    ///
+    /// The wildcard names none. As [`TypeExpr::named_types`], this
+    /// over-approximates a conjunction.
+    #[must_use]
+    pub fn named_types(&self) -> Vec<EntityTypeName> {
+        match self {
+            TypeExprRaw::Wildcard => Vec::new(),
+            TypeExprRaw::Type(name) => vec![name.clone()], // clone: the list owns the names it holds
+            TypeExprRaw::And(children) | TypeExprRaw::Or(children) => children.iter().flat_map(TypeExprRaw::named_types).collect(),
+        }
+    }
 }
 
 impl FromStr for TypeExprRaw {
@@ -296,6 +309,14 @@ mod tests {
         ]);
         pretty_assertions::assert_eq!(expr.named_types(), vec![iri("Vehicle"), iri("Home"), iri("Asset")]);
         pretty_assertions::assert_eq!(TypeExpr::Wildcard.named_types(), Vec::<iri_rs::IriBuf>::new());
+    }
+
+    #[test]
+    fn a_raw_expression_names_its_leaf_types_in_order() {
+        let name = |raw: &str| raw.parse::<EntityTypeName>().expect("valid type name");
+        let expr = "Vehicle,(Home;Asset)".parse::<TypeExprRaw>().expect("valid");
+        pretty_assertions::assert_eq!(expr.named_types(), vec![name("Vehicle"), name("Home"), name("Asset")]);
+        pretty_assertions::assert_eq!(TypeExprRaw::Wildcard.named_types(), Vec::<EntityTypeName>::new());
     }
 
     #[test]

@@ -13,7 +13,7 @@
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{error::EntityError, port::query::EntityQueryStore};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::entity_info::EntityInfo;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
@@ -66,14 +66,14 @@ impl EntityStoreRegistrationProbe {
     /// Whether the store holds an entity one of `selectors` admits (every
     /// entity when there is none) that has at least one of `attributes`
     /// (every entity when there is none).
-    async fn presence(&self, selectors: Vec<CompiledEntitySelector>, attributes: &[IriBuf]) -> Result<EntityPresence, RegistrationError> {
+    async fn presence(&self, selectors: Vec<CompiledEntitySelector>, attributes: &[AttributeName]) -> Result<EntityPresence, RegistrationError> {
+        let attrs = attributes
+            .iter()
+            .map(|name| IriBuf::new(name.to_string()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(RegistrationInvariant::EntityProbeAttributeIri)?;
         let compiled = CompiledEntityQuery::builder()
-            .selection(
-                EntitySelection::builder()
-                    .selectors(selectors)
-                    .attrs(attributes.to_vec()) // clone: the compiled selection owns the attribute IRIs across the store await.
-                    .build(),
-            )
+            .selection(EntitySelection::builder().selectors(selectors).attrs(attrs).build())
             .build();
         // One identifier answers whether any entity is present.
         let outcome = self
@@ -128,7 +128,7 @@ impl RegisteredEntityProbe for EntityStoreRegistrationProbe {
     fn holds_any_attribute<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         entity_id: &'life1 Identifier,
-        attributes: &'life2 [IriBuf],
+        attributes: &'life2 [AttributeName],
     ) -> BoxFuture<'async_trait, Result<EntityPresence, RegistrationError>>
     where
         'life0: 'async_trait,
@@ -154,7 +154,7 @@ impl RegisteredEntityProbe for EntityStoreRegistrationProbe {
     fn any_entity_matching<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         selector: Option<&'life1 EntityInfo>,
-        attributes: &'life2 [IriBuf],
+        attributes: &'life2 [AttributeName],
     ) -> BoxFuture<'async_trait, Result<EntityPresence, RegistrationError>>
     where
         'life0: 'async_trait,
@@ -185,7 +185,7 @@ mod tests {
         storage_profile::StorageProfile,
     };
     use andromeda_jsonld::engine::processor::JsonLdEngine;
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, page_window::PageWindow};
     use andromeda_registration::entity_probe::{EntityPresence, RegisteredEntityProbe};
     use futures::future::BoxFuture;
@@ -259,6 +259,10 @@ mod tests {
         IriBuf::new(value.to_owned()).expect("a valid IRI")
     }
 
+    fn name(value: &str) -> AttributeName {
+        value.parse().expect("a valid attribute name")
+    }
+
     fn vehicle() -> Identifier {
         "urn:ngsi-ld:Vehicle:1".parse().expect("a valid identifier")
     }
@@ -286,7 +290,7 @@ mod tests {
     async fn an_attribute_the_entity_holds_is_present() {
         let store = store();
         let presence = probe(&store)
-            .holds_any_attribute(&vehicle(), &[iri(BRAND), iri(SPEED)])
+            .holds_any_attribute(&vehicle(), &[name(BRAND), name(SPEED)])
             .await
             .expect("the store answers");
         pretty_assertions::assert_eq!(presence, EntityPresence::Present);
@@ -301,14 +305,17 @@ mod tests {
 
     #[tokio::test]
     async fn an_attribute_the_entity_does_not_hold_is_absent() {
-        let presence = probe(&store()).holds_any_attribute(&vehicle(), &[iri(BRAND)]).await.expect("the store answers");
+        let presence = probe(&store())
+            .holds_any_attribute(&vehicle(), &[name(BRAND)])
+            .await
+            .expect("the store answers");
         pretty_assertions::assert_eq!(presence, EntityPresence::Absent);
     }
 
     #[tokio::test]
     async fn an_entity_the_store_does_not_hold_holds_nothing() {
         let other: Identifier = "urn:ngsi-ld:Vehicle:2".parse().expect("a valid identifier");
-        let presence = probe(&store()).holds_any_attribute(&other, &[iri(SPEED)]).await.expect("the store answers");
+        let presence = probe(&store()).holds_any_attribute(&other, &[name(SPEED)]).await.expect("the store answers");
         pretty_assertions::assert_eq!(presence, EntityPresence::Absent);
     }
 

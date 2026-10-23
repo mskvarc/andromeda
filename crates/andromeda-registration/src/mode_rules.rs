@@ -14,12 +14,13 @@ use crate::{
     registration_validation_reason::RegistrationValidationReason,
     store::RegistrationStore,
 };
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     entity_info::EntityInfo,
     registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode, info::RegistrationInfo, operation::CsrOperation},
+    registration_matching::{entity_specification::EntitySpecification, match_specification::RegistrationMatchSpecification},
 };
-use iri_rs::IriBuf;
+use std::slice;
 
 /// The operations clause 5.9.2.4 admits on an auxiliary registration.
 const AUXILIARY_OPERATIONS: [CsrOperation; 3] = [CsrOperation::RetrieveOps, CsrOperation::RetrieveEntity, CsrOperation::QueryEntity];
@@ -75,38 +76,22 @@ fn validate_exclusive_entry(entry: &RegistrationInfo) -> Result<(), Registration
     Ok(())
 }
 
-/// The attribute IRIs a block declares, on both axes.
-fn declared_attributes(entry: &RegistrationInfo) -> Vec<IriBuf> {
-    entry.attribute_names().filter_map(|name| IriBuf::new(name.as_str().to_string()).ok()).collect()
+/// The expanded attribute names a block declares, on both axes.
+fn declared_attributes(entry: &RegistrationInfo) -> Vec<AttributeName> {
+    entry.attribute_names().cloned().collect() // clone: the footprint owns the names it is checked with
 }
 
-/// Whether a block covers `entity_id`: a block without entity selectors
-/// constrains the entity axis not at all.
-fn entry_covers_id(entry: &RegistrationInfo, entity_id: &Identifier) -> bool {
-    entry
-        .entities
-        .as_deref()
-        .is_none_or(|selectors| selectors.iter().any(|selector| selector.covers_id(entity_id)))
-}
-
-/// Whether a block's attribute footprint meets `attributes`: a registration
-/// that names no attribute registers the whole entity (clause 4.3.6.3), so an
-/// empty set on either side overlaps everything on the other.
-fn entry_overlaps_attributes(entry: &RegistrationInfo, attributes: &[IriBuf]) -> bool {
-    let mut declared = entry.attribute_names().peekable();
-    if attributes.is_empty() || declared.peek().is_none() {
-        return true;
+/// Whether an existing registration overlaps the footprint `(entity_id,
+/// attributes)` (clause 5.12): a block covering the entity that declares one of
+/// the attributes, or none at all, since a registration naming no attribute
+/// registers the whole entity (clause 4.3.6.3).
+fn registration_overlaps(existing: &ContextSourceRegistration, entity_id: &Identifier, attributes: &[AttributeName]) -> bool {
+    let entity = EntitySpecification::of_entity(&[], entity_id);
+    RegistrationMatchSpecification {
+        entities: slice::from_ref(&entity),
+        attributes,
     }
-    declared.any(|name| attributes.iter().any(|attribute| attribute.as_str() == name.as_str()))
-}
-
-/// Whether an existing registration overlaps the footprint `(entity_id, attributes)`.
-fn registration_overlaps(existing: &ContextSourceRegistration, entity_id: &Identifier, attributes: &[IriBuf]) -> bool {
-    existing
-        .coverage
-        .information
-        .iter()
-        .any(|entry| entry_covers_id(entry, entity_id) && entry_overlaps_attributes(entry, attributes))
+    .covers(existing)
 }
 
 /// Reject the footprint when another proxied registration already claims it.
@@ -114,7 +99,7 @@ async fn reject_overlapping_registrations(
     repo: &dyn RegistrationStore,
     self_id: Option<&Identifier>,
     entity_id: &Identifier,
-    attributes: &[IriBuf],
+    attributes: &[AttributeName],
     colliding_modes: &[ForwardingMode],
 ) -> Result<(), RegistrationError> {
     let candidates = repo.find_overlapping(Some(entity_id), attributes).await?;
@@ -182,7 +167,11 @@ async fn check_redirect(
 }
 
 /// Reject the footprint when a local entity already matches it.
-async fn reject_matching_entity(probe: &dyn RegisteredEntityProbe, selector: Option<&EntityInfo>, attributes: &[IriBuf]) -> Result<(), RegistrationError> {
+async fn reject_matching_entity(
+    probe: &dyn RegisteredEntityProbe,
+    selector: Option<&EntityInfo>,
+    attributes: &[AttributeName],
+) -> Result<(), RegistrationError> {
     match probe.any_entity_matching(selector, attributes).await? {
         EntityPresence::Present => Err(RegistrationError::Conflict(RegistrationConflictReason::LocalEntityMatchesRedirect)),
         EntityPresence::Absent => Ok(()),
@@ -354,6 +343,34 @@ mod tests {
                 &probe,
                 ForwardingMode::Exclusive,
                 &[info(exclusive_info("urn:ngsi-ld:Car:C1", &[SPEED]))],
+                None
+            )
+            .await
+            .is_ok()
+        );
+    }
+
+    /// Clause 5.2.8: the registered `id` decides, so a wide `idPattern` beside
+    /// it does not widen the footprint the existing registration claims.
+    #[tokio::test]
+    async fn an_exclusive_footprint_over_a_registration_naming_id_and_pattern_overlaps_by_the_id_only() {
+        let id_and_pattern = registration(
+            "urn:ngsi-ld:csr:id-and-pattern",
+            "redirect",
+            &json!([{"entities": [{"type": VEHICLE, "id": V1, "idPattern": "urn:ngsi-ld:Vehicle:.*"}], "propertyNames": [SPEED]}]),
+        );
+        let store = FixedStore::new(vec![id_and_pattern]);
+        let probe = FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent);
+        assert!(matches!(
+            check_conflicts(&store, &probe, ForwardingMode::Exclusive, &[info(exclusive_info(V1, &[SPEED]))], None).await,
+            Err(RegistrationError::Conflict(_))
+        ));
+        assert!(
+            check_conflicts(
+                &store,
+                &probe,
+                ForwardingMode::Exclusive,
+                &[info(exclusive_info("urn:ngsi-ld:Vehicle:V2", &[SPEED]))],
                 None
             )
             .await

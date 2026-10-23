@@ -18,10 +18,9 @@ use crate::{
     term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use andromeda_ngsi_ld_render::version::adapted_payload::AdaptedPayload;
-use iri_rs::IriBuf;
 use std::borrow::Cow;
 use url::Url;
 
@@ -29,7 +28,7 @@ use url::Url;
 #[derive(Clone, Copy)]
 struct WriteCoverage<'a> {
     /// The entity types the registrations were matched on.
-    entity_types: &'a [IriBuf],
+    entity_types: &'a [EntityTypeName],
     /// The attribute the request path names, by its expanded name.
     expanded_attribute: Option<&'a AttributeName>,
     /// The expanded names of the attributes the content writes.
@@ -97,7 +96,7 @@ impl FederationService {
             // Clauses 5.6.1.4 and following: a proxied registration that
             // does not support the operation still owns its attributes, so
             // the write fails for them instead of landing here.
-            let attributes = matching_attributes(&csr, &entity_types, Some(request.entity_id), expanded_attribute.as_ref(), &requested);
+            let attributes = matching_attributes(&csr, &entity_types, request.entity_id, expanded_attribute.as_ref(), &requested);
             let mode = proxied_mode(&csr);
             settled.push(ForwardedWriteResult {
                 registration_id: csr.id,
@@ -141,13 +140,7 @@ impl FederationService {
         };
         let url = self.write_url(&csr, request, presence, resolver).await;
 
-        let attributes = matching_attributes(
-            &csr,
-            coverage.entity_types,
-            Some(request.entity_id),
-            coverage.expanded_attribute,
-            coverage.requested,
-        );
+        let attributes = matching_attributes(&csr, coverage.entity_types, request.entity_id, coverage.expanded_attribute, coverage.requested);
 
         let planned = match content {
             None => None,
@@ -155,12 +148,12 @@ impl FederationService {
                 document,
                 &csr,
                 coverage.entity_types,
-                Some(request.entity_id),
+                request.entity_id,
             )?))),
             // The Scope history follows the evolution to every registration
             // that receives it, as the Scope paths of an entity do.
             Some(ForwardedContent::Evolution { document, scope_history }) => Some(PlannedContent::Evolution {
-                document: Box::new(narrowed_document(document, &csr, coverage.entity_types, Some(request.entity_id))?),
+                document: Box::new(narrowed_document(document, &csr, coverage.entity_types, request.entity_id)?),
                 scope_history,
             }),
             // The attribute a request path names is written alone (clauses 5.6.4, 5.6.14 and 5.6.19).
@@ -276,10 +269,9 @@ mod tests {
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument};
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
     use indexmap::IndexMap;
-    use iri_rs::IriBuf;
     use serde_json::json;
 
     const SPEED: &str = "https://example.org/speed";
@@ -415,7 +407,7 @@ mod tests {
         let document = vehicle_document();
         let written = ForwardedContent::Entity(&document);
         let requested = written.written_attributes();
-        let entity_types = [IriBuf::new("https://example.org/Vehicle".to_owned()).expect("valid IRI")];
+        let entity_types = ["https://example.org/Vehicle".parse::<EntityTypeName>().expect("valid type name")];
         let coverage = WriteCoverage {
             entity_types: &entity_types,
             expanded_attribute: None,

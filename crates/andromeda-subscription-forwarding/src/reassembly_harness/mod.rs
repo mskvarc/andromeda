@@ -37,7 +37,7 @@ use andromeda_entity::{config::EntityConfig, query::EntityQueryService, spatial_
 use andromeda_federation::{FederationService, config::FederationConfig, local_entity_type::LocalEntityTypeResolver};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, registration::ContextSourceRegistration};
 use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
 use andromeda_subscription::{
@@ -49,7 +49,6 @@ use andromeda_subscription::{
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
 use futures::future::BoxFuture;
-use iri_rs::IriBuf;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
@@ -105,7 +104,11 @@ impl SubscriptionEndpointValidator for AcceptingEndpoints {
 struct NoLocalTypes;
 
 impl LocalEntityTypeResolver for NoLocalTypes {
-    fn local_entity_types<'resolver>(&'resolver self, _target: &'resolver ContextTarget, _id: &'resolver Identifier) -> BoxFuture<'resolver, Vec<IriBuf>> {
+    fn local_entity_types<'resolver>(
+        &'resolver self,
+        _target: &'resolver ContextTarget,
+        _id: &'resolver Identifier,
+    ) -> BoxFuture<'resolver, Vec<EntityTypeName>> {
         Box::pin(async { Vec::new() })
     }
 }

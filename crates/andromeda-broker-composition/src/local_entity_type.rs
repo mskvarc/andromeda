@@ -13,7 +13,6 @@ use andromeda_entity::port::entity_types::EntityTypeReader;
 use andromeda_federation::local_entity_type::LocalEntityTypeResolver;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use futures::future::BoxFuture;
-use iri_rs::IriBuf;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -30,10 +29,14 @@ impl EntityStoreTypeResolver {
 }
 
 impl LocalEntityTypeResolver for EntityStoreTypeResolver {
-    fn local_entity_types<'resolver>(&'resolver self, target: &'resolver ContextTarget, id: &'resolver Identifier) -> BoxFuture<'resolver, Vec<IriBuf>> {
+    fn local_entity_types<'resolver>(
+        &'resolver self,
+        target: &'resolver ContextTarget,
+        id: &'resolver Identifier,
+    ) -> BoxFuture<'resolver, Vec<EntityTypeName>> {
         Box::pin(async move {
             match self.types.entity_types(target, id).await {
-                Ok(Some(types)) => types.iter().filter_map(type_iri).collect(),
+                Ok(Some(types)) => types,
                 Ok(None) => Vec::new(),
                 Err(error) => {
                     // A read failure must not become a spurious refusal: fall back
@@ -45,10 +48,4 @@ impl LocalEntityTypeResolver for EntityStoreTypeResolver {
             }
         })
     }
-}
-
-/// The IRI an expanded stored type name is; a stored name always is one, and
-/// one that were not would match no registration.
-fn type_iri(name: &EntityTypeName) -> Option<IriBuf> {
-    IriBuf::new(name.as_str().to_owned()).ok()
 }

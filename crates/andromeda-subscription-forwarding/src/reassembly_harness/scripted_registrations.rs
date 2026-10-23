@@ -1,7 +1,7 @@
 //! The registrations a re-assembly test finds the other holders of an entity
 //! through.
 
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{csource_change_revision::CsourceChangeRevision, registration::ContextSourceRegistration};
 use andromeda_ngsi_ld_query::{
     csr::{compiled::CompiledCsrQuery, expanded_entity_specification::ExpandedEntitySpecification},
@@ -22,7 +22,6 @@ use andromeda_registration::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use iri_rs::IriBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// A registration store that answers every matching query with its fixed list,
@@ -93,7 +92,11 @@ impl RegistrationStore for ScriptedRegistrations {
         Ok(self.registrations.clone()) // clone: every query answers its own copy of the fixed list
     }
 
-    async fn find_overlapping(&self, _entity_id: Option<&Identifier>, _attributes: &[IriBuf]) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
+    async fn find_overlapping(
+        &self,
+        _entity_id: Option<&Identifier>,
+        _attributes: &[AttributeName],
+    ) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
         Ok(Vec::new())
     }
 

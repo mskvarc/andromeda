@@ -14,14 +14,19 @@ use crate::{
     federation_invariant::FederationInvariant,
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
     provision::{is_proxied, proxied_mode},
-    registration_information::{csr_has_matching_information, csr_matches_selected_entity},
     request::ForwardProvisionRequest,
     term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::term_expansion::ContextualExpander;
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_model::{
+    registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
+    registration_matching::{
+        entity_specification::{EntitySpecification, TypeConstraint},
+        match_specification::RegistrationMatchSpecification,
+    },
+};
 use andromeda_ngsi_ld_query::{
     csr::expanded_entity_specification::ExpandedEntitySpecification,
     type_selection::{
@@ -58,7 +63,7 @@ pub(crate) struct RegistrationSelection {
     /// own their attributes (clauses 5.6.1.4 and following).
     pub(crate) not_advertising: Vec<ContextSourceRegistration>,
     /// The entity types the registrations were matched on.
-    pub(crate) entity_types: Vec<IriBuf>,
+    pub(crate) entity_types: Vec<EntityTypeName>,
     /// The attribute the request path names, by its expanded name.
     pub(crate) expanded_attribute: Option<AttributeName>,
 }
@@ -109,17 +114,28 @@ impl FederationService {
         let looped = self.is_loop_detected(request.triggering.via);
 
         let resolver = TermResolver::new(&self.engine, request.context);
-        let (entity_types, type_selector): (Vec<IriBuf>, Option<TypeExprRaw>) = match request.entity_type_selector {
-            // Clause 5.12 holds the selector against each registration's types.
-            // The flat list the rest of the forwarding reads is the types the
-            // selector names.
-            Some(raw) => {
+        // Clause 5.12 holds a selector against each registration's types; the
+        // flat list the rest of the forwarding reads is the types it names. The
+        // store pre-filter is a coarse superset the match below decides: one
+        // bare selected type, or the one type a local entity carries, narrows
+        // it, and anything else takes the whole id-covering superset.
+        let (entity_types, type_selector, coarse_type): (Vec<EntityTypeName>, Option<TypeExprRaw>, Option<TypeExpr>) =
+            if let Some(raw) = request.entity_type_selector {
                 let expanded = expand_type_expression(raw, &ContextualExpander::new(&self.engine, resolver.prepared())).await?;
-                (expanded.named_types(), Some(expanded.into_raw()?))
-            }
-            // A write that carries no `type` in its request is matched against registrations by the local entity's actual types -- every one it carries, since clause 5.12 matches on any of them -- so a registration scoped to an unrelated type is not taken to cover the write and refuse it. A write to an entity this broker holds only at a source resolves to an empty set and falls back to id-only matching.
-            None => (self.local_entity_types.local_entity_types(target, request.entity_id).await, None),
-        };
+                let coarse = matches!(expanded, TypeExpr::Type(_)).then(|| expanded.clone()); // clone: the store's specification holds a selector of its own
+                let selector = expanded.into_raw()?;
+                (selector.named_types(), Some(selector), coarse)
+            } else {
+                // A write that carries no `type` in its request is matched against registrations by the local entity's actual types -- every one it carries, since clause 5.12 matches on any of them -- so a registration scoped to an unrelated type is not taken to cover the write and refuse it. A write to an entity this broker holds only at a source resolves to an empty set and falls back to id-only matching.
+                let types = self.local_entity_types.local_entity_types(target, request.entity_id).await;
+                // A stored type name is an IRI; one that were not leaves the
+                // superset unnarrowed, which the precise match still decides.
+                let coarse = match types.as_slice() {
+                    [single] => IriBuf::new(single.to_string()).ok().map(TypeExpr::Type),
+                    _ => None,
+                };
+                (types, None, coarse)
+            };
         // The path attribute is a compact term; matching compares IRIs, so
         // it is expanded once against the triggering request's context.
         let expanded_attribute = match request.attribute_name {
@@ -132,20 +148,6 @@ impl FederationService {
             .transpose()
             .map_err(|error| FederationError::from(FederationInvariant::ForwardedName(error)))?;
 
-        // The store pre-filter is a coarse superset; clause-5.12 precision is
-        // applied by csr_has_matching_information below. A single known type
-        // narrows the query, a selector only when it is one bare type; zero or
-        // several types take the whole id-covering superset and let the precise
-        // match do the filtering.
-        let coarse_type = match type_selector.as_ref() {
-            Some(selector) => selector.as_single_type().and(entity_types.first()),
-            None => match entity_types.as_slice() {
-                [single] => Some(single),
-                _ => None,
-            },
-        }
-        .cloned() // clone: the store's specification holds a selector of its own, and the types stay for the precise match
-        .map(TypeExpr::Type);
         let csrs = self
             .csr_repo
             .find_matching(ExpandedEntitySpecification {
@@ -155,6 +157,19 @@ impl FederationService {
             })
             .await?;
 
+        let entity = match type_selector.as_ref() {
+            Some(selector) => EntitySpecification {
+                types: TypeConstraint::Selector(selector),
+                ids: from_ref(request.entity_id),
+                id_pattern: None,
+            },
+            None => EntitySpecification::of_entity(&entity_types, request.entity_id),
+        };
+        let specification = RegistrationMatchSpecification {
+            entities: from_ref(&entity),
+            attributes: expanded_name.as_slice(),
+        };
+
         // Per spec 4.3.6.2: auxiliary CSRs only supplement retrieval, never receive writes.
         let mut settled = Vec::new();
         let mut receiving = Vec::new();
@@ -163,11 +178,7 @@ impl FederationService {
             if csr.access.mode == Some(ForwardingMode::Auxiliary) {
                 continue;
             }
-            let matches = match type_selector.as_ref() {
-                Some(selector) => csr_matches_selected_entity(&csr, selector, request.entity_id, expanded_name.as_slice()),
-                None => csr_has_matching_information(&csr, &entity_types, Some(request.entity_id), expanded_attribute.as_ref()),
-            };
-            if !matches {
+            if !specification.covers(&csr) {
                 continue;
             }
             if looped {

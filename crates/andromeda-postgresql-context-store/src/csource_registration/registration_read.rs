@@ -40,7 +40,6 @@ use andromeda_postgresql_seaquery::{
 };
 use andromeda_registration::{error::RegistrationError, store::page::RegistrationPage};
 use chrono::{DateTime, Utc};
-use iri_rs::IriBuf;
 use sea_query::{Expr as SeaExpr, ExprTrait, Iden, Order, Query, SelectStatement};
 use sqlx::{PgConnection, PgExecutor, Postgres, Row, Transaction, postgres::PgRow};
 use std::{collections::HashMap, hash::BuildHasher, slice::from_ref};
@@ -230,7 +229,7 @@ pub(super) async fn find_matching(
 pub(super) async fn find_overlapping(
     store: &PostgresRegistrationStore,
     entity_id: Option<&Identifier>,
-    attributes: &[IriBuf],
+    attributes: &[AttributeName],
 ) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
     let mut select = registration_select();
     select.cond_where(not_expired());

@@ -15,12 +15,14 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 use andromeda_ngsi_ld_model::{
     clearable::Clearable,
     notification_request::NotificationRequest,
-    registration::{ContextSourceRegistration, info::RegistrationInfo},
+    registration::ContextSourceRegistration,
+    registration_matching::{entity_specification::EntitySpecification, match_specification::RegistrationMatchSpecification},
     subscription::{EntitySelector, Subscription, SubscriptionType},
     subscription_request::SubscriptionRequest,
 };
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use andromeda_subscription::deleted_members::{DeletableMember, DeletedMembers};
+use std::slice;
 
 /// Whether the copy keeps the filters of the original.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,28 +42,6 @@ impl FilterCarriage {
             SplitEntities::Complete => FilterCarriage::Keep,
         }
     }
-}
-
-/// Whether a registration block's entity selectors cover a subscription selector
-/// (clause 5.12): the types agree when both constrain them, and an identifier
-/// constraint on either side admits the other.
-fn block_covers_selector(block: &RegistrationInfo, selector: &EntitySelector) -> bool {
-    let Some(entities) = block.entities.as_deref() else {
-        return true;
-    };
-    entities.iter().any(|registered| {
-        let type_matches = selector.type_.matches(registered.type_.names());
-        // Clause 5.12: an identifier constraint on one side is matched against
-        // the other side's identifier or pattern; two patterns, or no
-        // constraint on either side, are taken as matching.
-        let id_matches = match (&registered.id, &selector.id, &registered.id_pattern, &selector.id_pattern) {
-            (Some(registered_id), Some(selected_id), _, _) => registered_id == selected_id,
-            (Some(registered_id), None, _, Some(pattern)) => pattern.is_match(registered_id.as_str()),
-            (None, Some(selected_id), Some(pattern), _) => pattern.is_match(selected_id.as_str()),
-            (None, None, Some(_), Some(_) | None) | (None, _, None, _) | (Some(_), None, _, None) => true,
-        };
-        type_matches && id_matches
-    })
 }
 
 /// The attribute names a registration declares across every block, or `None`
@@ -112,7 +92,14 @@ impl ReducedSubscription {
             .as_deref()
             .unwrap_or_default()
             .iter()
-            .filter(|selector| registration.coverage.information.iter().any(|block| block_covers_selector(block, selector)))
+            .filter(|selector| {
+                let specification = EntitySpecification::from_selector(selector);
+                RegistrationMatchSpecification {
+                    entities: slice::from_ref(&specification),
+                    attributes: &[],
+                }
+                .covers(registration)
+            })
             .cloned() // clone: the copy owns the selectors it places at the source
             .collect();
         let declared = declared_attributes(registration);
@@ -286,6 +273,45 @@ mod tests {
         );
         pretty_assertions::assert_eq!(document["notification"]["format"], json!("normalized"));
         assert!(document.get("@context").is_none());
+    }
+
+    /// A subscription selecting the given entity selectors and nothing else.
+    fn subscription_selecting(entities: &serde_json::Value) -> Subscription {
+        serde_json::from_value(json!({
+            "id": "urn:ngsi-ld:Subscription:local",
+            "type": "Subscription",
+            "entities": entities,
+            "notification": {"endpoint": {"uri": "http://subscriber.example.org/notify"}},
+            "status": "active",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-01T00:00:00Z"
+        }))
+        .expect("valid subscription")
+    }
+
+    /// Clause 5.12: a selector pattern matching the registered `id` selects it.
+    #[test]
+    fn a_selector_by_pattern_is_kept_for_a_block_registering_an_id_the_pattern_matches() {
+        let registration = registration(&json!([{"entities": [{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:7"}]}]));
+        let selecting = subscription_selecting(&json!([
+            {"type": VEHICLE, "idPattern": "urn:ngsi-ld:Vehicle:.*"},
+            {"type": VEHICLE, "idPattern": "urn:ngsi-ld:Building:.*"}
+        ]));
+        let document = written(&ReducedSubscription::reduce(&selecting, &registration, &receiver(), &minted(), FilterCarriage::Keep).request);
+        pretty_assertions::assert_eq!(document["entities"], json!([{"type": VEHICLE, "idPattern": "urn:ngsi-ld:Vehicle:.*"}]));
+    }
+
+    /// Clause 5.2.8: the registered `id` decides, so a wide pattern beside it
+    /// does not make the block cover another identifier.
+    #[test]
+    fn a_selector_by_id_is_dropped_for_a_block_registering_another_id_beside_a_wide_pattern() {
+        let registration = registration(&json!([{"entities": [{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:7", "idPattern": ".*"}]}]));
+        let selecting = subscription_selecting(&json!([
+            {"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:1"},
+            {"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:7"}
+        ]));
+        let document = written(&ReducedSubscription::reduce(&selecting, &registration, &receiver(), &minted(), FilterCarriage::Keep).request);
+        pretty_assertions::assert_eq!(document["entities"], json!([{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:7"}]));
     }
 
     #[test]

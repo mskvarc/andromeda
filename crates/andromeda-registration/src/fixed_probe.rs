@@ -4,10 +4,9 @@ use crate::{
     entity_probe::{EntityPresence, RegisteredEntityProbe},
     error::RegistrationError,
 };
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::entity_info::EntityInfo;
 use futures::future::BoxFuture;
-use iri_rs::IriBuf;
 use std::sync::Mutex;
 
 /// A probe answering a fixed presence and recording what it was asked.
@@ -38,7 +37,7 @@ impl RegisteredEntityProbe for FixedProbe {
     fn holds_any_attribute<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         entity_id: &'life1 Identifier,
-        _attributes: &'life2 [IriBuf],
+        _attributes: &'life2 [AttributeName],
     ) -> BoxFuture<'async_trait, Result<EntityPresence, RegistrationError>>
     where
         'life0: 'async_trait,
@@ -52,7 +51,7 @@ impl RegisteredEntityProbe for FixedProbe {
     fn any_entity_matching<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         selector: Option<&'life1 EntityInfo>,
-        _attributes: &'life2 [IriBuf],
+        _attributes: &'life2 [AttributeName],
     ) -> BoxFuture<'async_trait, Result<EntityPresence, RegistrationError>>
     where
         'life0: 'async_trait,

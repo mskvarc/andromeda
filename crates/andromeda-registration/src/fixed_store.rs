@@ -13,7 +13,7 @@ use crate::{
         written_registration::WrittenRegistration,
     },
 };
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     csource_change_revision::CsourceChangeRevision,
     registration::{ContextSourceRegistration, info::RegistrationInfo},
@@ -24,7 +24,6 @@ use andromeda_ngsi_ld_query::{
 };
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
-use iri_rs::IriBuf;
 use serde_json::json;
 use std::sync::Mutex;
 
@@ -192,7 +191,7 @@ impl RegistrationStore for FixedStore {
     fn find_overlapping<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         _entity_id: Option<&'life1 Identifier>,
-        _attributes: &'life2 [IriBuf],
+        _attributes: &'life2 [AttributeName],
     ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
     where
         'life0: 'async_trait,

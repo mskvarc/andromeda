@@ -31,12 +31,6 @@ impl EntityTypeSelection {
         }
     }
 
-    /// Whether `name` is one of the selected types.
-    #[must_use]
-    pub fn admits(&self, name: &str) -> bool {
-        self.names().iter().any(|selected| selected.as_str() == name)
-    }
-
     /// The selection as a clause 4.17 expression: the one name, or the
     /// alternation of the several.
     pub fn as_type_expression(&self) -> TypeExprRaw {
@@ -99,21 +93,6 @@ pub struct EntityInfo {
     pub id_pattern: Option<Pattern>,
 }
 
-impl EntityInfo {
-    /// Whether the entry covers the concrete identifier `entity_id`.
-    ///
-    /// Clause 5.2.8: an `id` is decisive when present; otherwise an `idPattern`
-    /// decides; an entry constraining neither covers every identifier.
-    #[must_use]
-    pub fn covers_id(&self, entity_id: &Identifier) -> bool {
-        match (&self.id, &self.id_pattern) {
-            (Some(id), _) => id == entity_id,
-            (None, Some(pattern)) => pattern.is_match(entity_id.as_str()),
-            (None, None) => true,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,28 +120,11 @@ mod tests {
     }
 
     #[test]
-    fn a_selection_admits_any_of_its_names() {
+    fn a_selection_names_every_type_and_reads_as_their_alternation() {
         let several: EntityTypeSelection = serde_json::from_value(json!(["Vehicle", "Car"])).expect("parses");
-        assert!(several.admits("Vehicle"));
-        assert!(several.admits("Car"));
-        assert!(!several.admits("Building"));
         pretty_assertions::assert_eq!(several.names().len(), 2);
         pretty_assertions::assert_eq!(several.as_type_expression().to_string(), "Vehicle,Car");
         let single: EntityTypeSelection = serde_json::from_value(json!("Vehicle")).expect("parses");
         pretty_assertions::assert_eq!(single.as_type_expression().to_string(), "Vehicle");
-    }
-
-    /// Clause 5.2.8: `id` takes precedence over `idPattern`.
-    #[test]
-    fn an_entry_with_an_id_covers_that_id_only_even_beside_a_pattern() {
-        let entry: EntityInfo =
-            serde_json::from_value(json!({"type": "Vehicle", "id": "urn:ngsi-ld:Vehicle:1", "idPattern": "urn:ngsi-ld:Vehicle:.*"})).expect("parses");
-        assert!(entry.covers_id(&"urn:ngsi-ld:Vehicle:1".parse().expect("valid URI")));
-        assert!(!entry.covers_id(&"urn:ngsi-ld:Vehicle:2".parse().expect("valid URI")));
-        let pattern_only: EntityInfo = serde_json::from_value(json!({"type": "Vehicle", "idPattern": "urn:ngsi-ld:Vehicle:.*"})).expect("parses");
-        assert!(pattern_only.covers_id(&"urn:ngsi-ld:Vehicle:2".parse().expect("valid URI")));
-        assert!(!pattern_only.covers_id(&"urn:ngsi-ld:Building:2".parse().expect("valid URI")));
-        let unconstrained: EntityInfo = serde_json::from_value(json!({"type": "Vehicle"})).expect("parses");
-        assert!(unconstrained.covers_id(&"urn:ngsi-ld:Building:2".parse().expect("valid URI")));
     }
 }

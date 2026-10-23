@@ -12,10 +12,9 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
-use iri_rs::IriBuf;
 use serde_json::json;
 
 const ENTITY_ID: &str = "urn:ngsi-ld:Vehicle:1";
@@ -87,8 +86,8 @@ async fn a_write_selector_matches_any_of_its_alternatives() {
 /// broker holds, so a registration of an unrelated type does not cover it.
 #[tokio::test]
 async fn a_write_without_a_selector_still_matches_by_the_local_entity_types() {
-    let building: IriBuf = BUILDING.parse().expect("an IRI");
-    let vehicle: IriBuf = VEHICLE.parse().expect("an IRI");
+    let building: EntityTypeName = BUILDING.parse().expect("a type name");
+    let vehicle: EntityTypeName = VEHICLE.parse().expect("a type name");
     let held_as_building = service_holding_entity_of(vec![vehicle_registration()], vec![building]);
     assert!(!covers_the_write(&held_as_building, None).await);
     let held_as_vehicle = service_holding_entity_of(vec![vehicle_registration()], vec![vehicle]);

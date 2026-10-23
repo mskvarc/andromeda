@@ -39,6 +39,7 @@ use andromeda_postgresql_seaquery::{
 };
 use iri_rs::IriBuf;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Func, Iden, Query, SimpleExpr};
+use std::fmt;
 
 /// The type-axis sentinel: the row's item has no `entities` and admits every
 /// type. It names no type.
@@ -114,7 +115,7 @@ struct RequestedName;
 /// placeholder per name, so a large requested-attribute set cannot exhaust the
 /// parameter ceiling.
 #[must_use]
-pub fn attribute_name_candidate(attribute_names: &[IriBuf]) -> SimpleExpr {
+pub fn attribute_name_candidate<N: fmt::Display>(attribute_names: &[N]) -> SimpleExpr {
     let requested_keys = || {
         let mut dictionary = Query::select();
         dictionary
@@ -122,7 +123,7 @@ pub fn attribute_name_candidate(attribute_names: &[IriBuf]) -> SimpleExpr {
             .from_as(AttributeNames::Table, RequestedName)
             .and_where(is_any_of(
                 SeaExpr::col((RequestedName, AttributeNames::Name)),
-                attribute_names.iter().map(IriBuf::to_string),
+                attribute_names.iter().map(ToString::to_string),
             ));
         array_of_subquery(dictionary)
     };
