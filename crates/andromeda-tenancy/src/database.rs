@@ -84,7 +84,8 @@ pub trait TenantDatabase: Send + Sync + 'static {
     ///
     /// The drop is refused while any session is connected to the database, so
     /// a tenant some broker still holds a runtime for is kept. A tenant whose
-    /// database holds information is established instead.
+    /// database holds information is established instead, whenever it was last
+    /// provisioned.
     #[must_use = "tenant retirement must be awaited"]
     async fn retire_provisional(&self, name: &TenantName, idle_for: Duration) -> Result<Retirement, TenancyError>;
 }

@@ -1,10 +1,12 @@
 //! Settling a provisional tenant: establishing it once its database holds
 //! information, retiring it once it has stayed empty past its time to live.
 //!
-//! Both run under the tenant's advisory lock, the one provisioning takes, so a
-//! settlement never interleaves with a provisioning of the same tenant: a
-//! retirement cannot drop a database a concurrent provisioning is preparing,
-//! and the row a settlement reads stays as read until it commits.
+//! Both run under the tenant's advisory lock, the one provisioning takes while
+//! it registers the tenant, so the row a settlement reads stays as read until
+//! it commits. Provisioning creates and migrates the database after releasing
+//! that lock. A retirement still never drops a database a provisioning is
+//! preparing: provisioning restamps the row, which keeps the tenant inside its
+//! time to live, and the drop is refused while the migration is connected.
 
 use crate::{
     error::ContextStoreError,
@@ -65,7 +67,9 @@ impl PostgresTenantRegistry {
     }
 
     /// Retire a provisional tenant untouched for `idle_for` whose database
-    /// holds no information: drop the database, then delete the row.
+    /// holds no information: drop the database, then delete the row. A
+    /// provisional tenant whose database holds information is established
+    /// instead, however recently it was touched.
     ///
     /// The row goes only once the database is gone, so an interrupted
     /// retirement leaves a provisional row whose database is missing, which
@@ -78,16 +82,16 @@ impl PostgresTenantRegistry {
                 standing: StoredStanding::Established(_),
                 ..
             }) => Retirement::Kept,
-            Some(SettlementRow { untouched_for, .. }) if untouched_for < idle_for => Retirement::Kept,
             Some(SettlementRow {
                 standing: StoredStanding::Provisional,
                 database,
-                ..
+                untouched_for,
             }) => match occupancy(&self.direct_url, &database).await? {
                 Occupancy::HoldsInformation => {
                     establish_update(name.as_str()).to_query().execute(&mut *tx).await?;
                     Retirement::Established
                 }
+                Occupancy::Empty if untouched_for < idle_for => Retirement::Kept,
                 Occupancy::Empty => match drop_database_unless_in_use(&self.direct_url, &database).await? {
                     DatabaseDrop::InUse => Retirement::Kept,
                     DatabaseDrop::Dropped => {

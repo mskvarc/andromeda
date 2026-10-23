@@ -13,7 +13,7 @@ use crate::{
     pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
     provisional::{Establishment, Retirement},
     registered_tenant::RegisteredTenant,
-    runtime::{TenantRuntimeManager, cached_runtime::RuntimeExistence},
+    runtime::{TenantRuntimeManager, cached_runtime::RuntimeExistence, provisional_sweep::ProvisionalSettlement},
     state_factory::{RuntimeActivity, TenantRuntime, TenantStateFactory},
     status::TenantStatus,
     tenant_page_start::TenantPageStart,
@@ -2115,10 +2115,36 @@ async fn the_sweep_offers_only_provisional_tenants_this_broker_holds_no_runtime_
     );
     registry.register_provisional("abandoned");
 
-    let retired = manager.retire_abandoned_provisional().await;
-    pretty_assertions::assert_eq!(retired, 1);
+    pretty_assertions::assert_eq!(manager.settle_provisional().await, ProvisionalSettlement { established: 0, retired: 1 });
     pretty_assertions::assert_eq!(registry.offered(), vec!["abandoned".to_string()]);
     pretty_assertions::assert_eq!(registry.provisional(), vec!["cached".to_string()]);
+}
+
+/// A tenant only ever written to is never admitted by a request that requires
+/// it to exist, so the sweep is what establishes it while its runtime stays
+/// cached.
+#[tokio::test]
+async fn the_sweep_establishes_a_cached_provisional_tenant_whose_database_holds_information() {
+    let Harness { manager, registry, .. } = harness(&[], true, 64);
+    let tenant = TenantRef::Named(named("writer"));
+    drop(manager.resolve_state(&tenant, TenantCreationPolicy::CreateOnDemand).await.expect("provisions"));
+    registry.occupy("writer");
+
+    pretty_assertions::assert_eq!(manager.settle_provisional().await, ProvisionalSettlement { established: 1, retired: 0 });
+    pretty_assertions::assert_eq!(registry.offered(), Vec::<String>::new(), "a cached tenant is never offered for retirement");
+    pretty_assertions::assert_eq!(registry.provisional(), Vec::<String>::new());
+    pretty_assertions::assert_eq!(cached_existence(&manager, &tenant), Some(RuntimeExistence::Established));
+}
+
+#[tokio::test]
+async fn the_sweep_keeps_a_cached_provisional_tenant_whose_database_is_empty() {
+    let Harness { manager, registry, .. } = harness(&[], true, 64);
+    let tenant = TenantRef::Named(named("refused"));
+    drop(manager.resolve_state(&tenant, TenantCreationPolicy::CreateOnDemand).await.expect("provisions"));
+
+    pretty_assertions::assert_eq!(manager.settle_provisional().await, ProvisionalSettlement::default());
+    pretty_assertions::assert_eq!(registry.provisional(), vec!["refused".to_string()]);
+    pretty_assertions::assert_eq!(cached_existence(&manager, &tenant), Some(RuntimeExistence::Provisional));
 }
 
 #[tokio::test]
@@ -2133,7 +2159,7 @@ async fn the_sweep_retires_nothing_when_the_registry_cannot_be_read() {
         Arc::new(FakeProbe::none()),
         Arc::new(FakeSchedule::inert()),
     );
-    pretty_assertions::assert_eq!(manager.retire_abandoned_provisional().await, 0);
+    pretty_assertions::assert_eq!(manager.settle_provisional().await, ProvisionalSettlement::default());
 }
 
 /// A registry that lists no provisional tenant because it cannot be read.
@@ -2180,7 +2206,7 @@ async fn the_sweep_establishes_a_provisional_tenant_whose_database_holds_informa
     registry.register_provisional("acme");
     registry.occupy("acme");
 
-    pretty_assertions::assert_eq!(manager.retire_abandoned_provisional().await, 0);
+    pretty_assertions::assert_eq!(manager.settle_provisional().await, ProvisionalSettlement { established: 1, retired: 0 });
     assert!(registry.all().contains(&"acme".to_string()));
     pretty_assertions::assert_eq!(registry.provisional(), Vec::<String>::new());
 }
