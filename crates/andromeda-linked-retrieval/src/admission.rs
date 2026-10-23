@@ -25,11 +25,13 @@
 //! 'inline'" (Table 6.5.3.1-1). A request with `@none` therefore declares no
 //! traversal at all, and a `joinLevel` beside it is a parameter incompatible
 //! with the request, refused at every operation but a Subscription (clause
-//! 6.3.20). Clause 5.8.1.4 checks a Subscription against the data types,
+//! 6.3.20). So is a `containedBy` without a `joinLevel`, which the same tables
+//! make "Only applicable if joinLevel is present". Clause 5.8.1.4 checks a Subscription against the data types,
 //! cardinalities and restrictions of clause 5.2.12, and the applicability of
 //! `joinLevel` is none of them.
 
 use crate::join::traversal_depth;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{filter::expression::Expr, projection::grammar::RawProjectionTerm};
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use derive_more::{Display, From};
@@ -182,6 +184,9 @@ pub enum AdmissionError {
     /// `joinLevel` was sent while `join` asked for no traversal to bound.
     #[error("joinLevel is only applicable if the join parameter is 'flat' or 'inline'")]
     JoinLevelWithoutJoin,
+    /// `containedBy` was sent without the `joinLevel` it is applicable beside.
+    #[error("containedBy is only applicable if joinLevel is present")]
+    ContainedByWithoutJoinLevel,
 }
 
 /// Admit one Linked Entity reference of a request for `operation`.
@@ -250,19 +255,23 @@ pub struct LinkedRequest<'r> {
     pub join: Option<JoinMode>,
     /// The clause 4.5.23 `joinLevel`.
     pub join_level: Option<NonZeroU32>,
+    /// The clause 4.5.23 `containedBy`.
+    pub contained_by: Option<&'r [Identifier]>,
 }
 
 /// Admit every Linked Entity reference of `request` for `operation`: the
-/// `joinLevel`, then the retrieving `join`, then the projection, then the
-/// filter.
+/// `joinLevel`, then the `containedBy`, then the retrieving `join`, then the
+/// projection, then the filter.
 ///
 /// # Errors
 ///
 /// Returns [`AdmissionError::JoinLevelWithoutJoin`] when a `joinLevel` meets
-/// no retrieving `join` at any operation but a Subscription, otherwise the
-/// first [`AdmissionError`] [`admit`] raises.
+/// no retrieving `join` and [`AdmissionError::ContainedByWithoutJoinLevel`]
+/// when a `containedBy` meets no `joinLevel`, both at any operation but a
+/// Subscription, otherwise the first [`AdmissionError`] [`admit`] raises.
 pub fn admit_request(operation: LinkedOperation, request: &LinkedRequest<'_>) -> Result<(), AdmissionError> {
     admit_join_level(operation, request.join, request.join_level)?;
+    admit_contained_by(operation, request.contained_by, request.join_level)?;
     [
         LinkedReference::of_join(request.join),
         LinkedReference::of_projection(request.pick, request.omit),
@@ -294,6 +303,32 @@ const fn admit_join_level(operation: LinkedOperation, join: Option<JoinMode>, jo
             Some(JoinMode::None) | None,
             Some(_),
         ) => Err(AdmissionError::JoinLevelWithoutJoin),
+    }
+}
+
+/// Admit a `containedBy` for `operation`: Tables 6.4.3.2-1 and 6.5.3.1-1 make
+/// it "Only applicable if joinLevel is present", and a Subscription carries
+/// none.
+///
+/// # Errors
+///
+/// Returns [`AdmissionError::ContainedByWithoutJoinLevel`] when
+/// `contained_by` is set, `join_level` is not and the operation is no
+/// Subscription.
+const fn admit_contained_by(operation: LinkedOperation, contained_by: Option<&[Identifier]>, join_level: Option<NonZeroU32>) -> Result<(), AdmissionError> {
+    match (operation, contained_by, join_level) {
+        (LinkedOperation::Subscription, _, _) | (_, None, _) | (_, Some(_), Some(_)) => Ok(()),
+        (
+            LinkedOperation::RetrieveEntity
+            | LinkedOperation::QueryEntities
+            | LinkedOperation::EntityMapQuery
+            | LinkedOperation::PurgeEntities
+            | LinkedOperation::RetrieveTemporal(_)
+            | LinkedOperation::QueryTemporal(_)
+            | LinkedOperation::EntityMapTemporalQuery(_),
+            Some(_),
+            None,
+        ) => Err(AdmissionError::ContainedByWithoutJoinLevel),
     }
 }
 

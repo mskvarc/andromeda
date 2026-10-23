@@ -434,6 +434,41 @@ mod tests {
         }
     }
 
+    /// Table 6.4.3.2-1: `containedBy` is "Only applicable if joinLevel is
+    /// present", at the query and the Entity Map creation alike.
+    #[test]
+    fn validate_refuses_a_contained_by_without_a_join_level() {
+        for operation in [EntityQueryOperation::Query, EntityQueryOperation::EntityMap] {
+            let err = params_from_query("type=Building&join=flat&containedBy=urn:ngsi-ld:Person:1")
+                .validate(operation)
+                .expect_err("containedBy without joinLevel");
+            assert!(matches!(err, ParameterError::ContainedByWithoutJoinLevel), "{operation:?}: {err:?}");
+            assert!(
+                params_from_query("type=Building&join=flat&joinLevel=1&containedBy=urn:ngsi-ld:Person:1")
+                    .validate(operation)
+                    .is_ok(),
+                "{operation:?}"
+            );
+        }
+    }
+
+    /// Table 6.4.3.2-1: `entityMapLifetime` is "Only applicable if entityMap
+    /// is set to true" on a query, while the Entity Map creation always
+    /// creates the map the lifetime applies to.
+    #[test]
+    fn a_query_refuses_an_entity_map_lifetime_without_entity_map_true() {
+        for query in ["type=Building&entityMapLifetime=PT1H", "type=Building&entityMap=false&entityMapLifetime=PT1H"] {
+            let err = params_from_query(query).validate(EntityQueryOperation::Query).expect_err(query);
+            assert!(matches!(err, ParameterError::EntityMapLifetimeWithoutEntityMap), "{query}: {err:?}");
+            assert!(params_from_query(query).validate(EntityQueryOperation::EntityMap).is_ok(), "{query}");
+        }
+        assert!(
+            params_from_query("type=Building&entityMap=true&entityMapLifetime=PT1H")
+                .validate(EntityQueryOperation::Query)
+                .is_ok()
+        );
+    }
+
     /// Clause 5.7.2.4: a `q` hop walks into a Linked Entity, and a query where
     /// "use of Linked Entity retrieval is not specified" asked for no such
     /// walk. Clause 4.5.23 makes `@none` the parameter's default, so stating it

@@ -706,6 +706,39 @@ mod tests {
         }
     }
 
+    /// With the extension the temporal operations take `containedBy` as the
+    /// entity ones do: "Only applicable if joinLevel is present".
+    #[test]
+    fn a_contained_by_without_a_join_level_is_refused() {
+        let err = params_from_query("type=Vehicle&join=flat&containedBy=urn:ngsi-ld:Person:1")
+            .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+            .expect_err("containedBy without joinLevel");
+        assert!(matches!(err, ParameterError::ContainedByWithoutJoinLevel), "{err:?}");
+        assert!(
+            params_from_query("type=Vehicle&join=flat&joinLevel=1&containedBy=urn:ngsi-ld:Person:1")
+                .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+                .is_ok()
+        );
+    }
+
+    /// Table 6.18.3.2-1: `entityMapLifetime` is "Only applicable if entityMap
+    /// is set to true", while the Entity Map creation always creates its map.
+    #[test]
+    fn a_query_refuses_an_entity_map_lifetime_without_entity_map_true() {
+        const WINDOW: &str = "type=Vehicle&timerel=after&timeAt=2024-01-01T00:00:00Z";
+        for lifetime in ["entityMapLifetime=PT1H", "entityMap=false&entityMapLifetime=PT1H"] {
+            let p = params_from_query(&format!("{WINDOW}&{lifetime}"));
+            let err = p.validate(TemporalQueryOperation::Query, TemporalJoin::Spec).expect_err(lifetime);
+            assert!(matches!(err, ParameterError::EntityMapLifetimeWithoutEntityMap), "{lifetime}: {err:?}");
+            assert!(p.validate(TemporalQueryOperation::EntityMap, TemporalJoin::Spec).is_ok(), "{lifetime}");
+        }
+        assert!(
+            params_from_query(&format!("{WINDOW}&entityMap=true&entityMapLifetime=PT1H"))
+                .validate(TemporalQueryOperation::Query, TemporalJoin::Spec)
+                .is_ok()
+        );
+    }
+
     /// An inline join over the normalized representation is exactly what
     /// clause 4.5.23 describes, and is accepted.
     #[test]

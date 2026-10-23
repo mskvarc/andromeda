@@ -2,6 +2,7 @@
 
 use crate::{
     attribute_selection::{AttrsAdmission, validate_attrs},
+    entity_map_lifetime::require_entity_map_for_lifetime,
     error::ParameterError,
     language_filter::deserialize_optional_language_filter,
     language_tag::deserialize_optional_language_tag,
@@ -221,7 +222,11 @@ impl GetEntityParams {
     /// [`ParameterError::ProjectionLinkedTermsWithoutJoin`] or
     /// [`ParameterError::ProjectionDepthExceedsJoinLevel`] when a nested
     /// projection term names a Linked Entity the requested traversal does not
-    /// reach.
+    /// reach, [`ParameterError::JoinLevelWithoutJoin`] and
+    /// [`ParameterError::ContainedByWithoutJoinLevel`] when a join parameter
+    /// meets none of the parameters it applies beside, and
+    /// [`ParameterError::EntityMapLifetimeWithoutEntityMap`] when
+    /// `entityMapLifetime` meets no `entityMap=true`.
     pub fn validate(&self) -> Result<(), ParameterError> {
         // Clause 6.3.20: a `format` or `options` value Table 6.3.7-1 does not
         // define is refused here rather than during deserialisation, where the
@@ -246,9 +251,10 @@ impl GetEntityParams {
             .omit(self.omit.as_deref())
             .join(self.join)
             .join_level(self.join_level)
+            .contained_by(self.contained_by.as_deref())
             .build();
         admit_request(LinkedOperation::RetrieveEntity, &linked)?;
-        Ok(())
+        require_entity_map_for_lifetime(self.entity_map, self.entity_map_lifetime.as_ref())
     }
 }
 
@@ -461,6 +467,30 @@ mod tests {
             let params: GetEntityParams = serde_urlencoded::from_str(query).expect("valid parameters");
             assert!(params.validate().is_ok(), "{query}");
         }
+    }
+
+    /// Table 6.5.3.1-1: `containedBy` is "Only applicable if joinLevel is
+    /// present".
+    #[test]
+    fn get_validate_refuses_a_contained_by_without_a_join_level() {
+        let params: GetEntityParams = serde_urlencoded::from_str("join=flat&containedBy=urn:ngsi-ld:Person:1").expect("valid parameters");
+        let error = params.validate().expect_err("containedBy without joinLevel");
+        assert!(matches!(error, ParameterError::ContainedByWithoutJoinLevel), "{error:?}");
+        let params: GetEntityParams = serde_urlencoded::from_str("join=flat&joinLevel=1&containedBy=urn:ngsi-ld:Person:1").expect("valid parameters");
+        assert!(params.validate().is_ok());
+    }
+
+    /// Table 6.5.3.1-1: `entityMapLifetime` is "Only applicable if entityMap
+    /// is set to true".
+    #[test]
+    fn get_validate_refuses_an_entity_map_lifetime_without_entity_map_true() {
+        for query in ["entityMapLifetime=PT1H", "entityMap=false&entityMapLifetime=PT1H"] {
+            let params: GetEntityParams = serde_urlencoded::from_str(query).expect("valid parameters");
+            let error = params.validate().expect_err(query);
+            assert!(matches!(error, ParameterError::EntityMapLifetimeWithoutEntityMap), "{query}: {error:?}");
+        }
+        let params: GetEntityParams = serde_urlencoded::from_str("entityMap=true&entityMapLifetime=PT1H").expect("valid parameters");
+        assert!(params.validate().is_ok());
     }
 
     #[test]

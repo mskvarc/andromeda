@@ -2,6 +2,7 @@
 
 use crate::{
     attribute_selection::{AttrsAdmission, validate_attrs},
+    entity_map_lifetime::require_entity_map_for_lifetime,
     error::ParameterError,
     query::entity::{
         operation::EntityQueryOperation,
@@ -85,9 +86,12 @@ impl EntityQueryParameters {
     /// [`ParameterError::DropKeepExclusive`] when `drop` and `keep` are both
     /// present, [`ParameterError::Projection`] for the clause 4.21 selector
     /// conflicts, [`ParameterError::LimitZeroWithoutCount`] for `limit=0`
-    /// without the `count` option, and the Linked Entity admission errors when
-    /// a nested projection term or a `q` hop references a Linked Entity the
-    /// operation does not reach (clauses 5.6.21.4, 5.7.2.4 and 5.14.4.4).
+    /// without the `count` option, the Linked Entity admission errors when a
+    /// nested projection term or a `q` hop references a Linked Entity the
+    /// operation does not reach (clauses 5.6.21.4, 5.7.2.4 and 5.14.4.4) or a
+    /// join parameter meets none of the parameters it applies beside, and
+    /// [`ParameterError::EntityMapLifetimeWithoutEntityMap`] when a query
+    /// names a map lifetime without asking for a map.
     pub fn validate(&self, operation: EntityQueryOperation) -> Result<(), ParameterError> {
         // Clause 6.3.20: a `format` or `options` value Table 6.3.7-1 does not
         // define is refused here rather than during deserialisation, where the
@@ -128,8 +132,12 @@ impl EntityQueryParameters {
             .q(self.q.as_ref())
             .join(self.join)
             .join_level(self.join_level)
+            .contained_by(self.contained_by.as_deref())
             .build();
         admit_request(operation.linked(), &linked)?;
-        Ok(())
+        match operation {
+            EntityQueryOperation::Query | EntityQueryOperation::Purge => require_entity_map_for_lifetime(self.entity_map, self.entity_map_lifetime.as_ref()),
+            EntityQueryOperation::EntityMap => Ok(()),
+        }
     }
 }

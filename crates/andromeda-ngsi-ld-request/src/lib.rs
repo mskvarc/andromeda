@@ -26,6 +26,7 @@ pub mod deferred_split_filters;
 pub mod discovery;
 pub mod empty;
 pub mod entity;
+pub mod entity_map_lifetime;
 pub mod entity_operations;
 pub mod entity_write;
 pub mod error;

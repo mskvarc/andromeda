@@ -27,6 +27,8 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         | ParameterError::LastNWithGrouping
         | ParameterError::AggregationWithoutAggregatedValues
         | ParameterError::JoinLevelWithoutJoin
+        | ParameterError::ContainedByWithoutJoinLevel
+        | ParameterError::EntityMapLifetimeWithoutEntityMap
         | ParameterError::CursorUnavailable
         | ParameterError::PaginationUndefined
         | ParameterError::WildcardTypeWithLocalFalse => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
@@ -89,7 +91,12 @@ mod tests {
     /// incompatible with the request.
     #[test]
     fn a_dependent_parameter_without_its_dependency_is_invalid_request() {
-        for error in [ParameterError::JoinLevelWithoutJoin, ParameterError::AggregationWithoutAggregatedValues] {
+        for error in [
+            ParameterError::JoinLevelWithoutJoin,
+            ParameterError::AggregationWithoutAggregatedValues,
+            ParameterError::ContainedByWithoutJoinLevel,
+            ParameterError::EntityMapLifetimeWithoutEntityMap,
+        ] {
             assert_eq!(classify_parameter_error(&error).error_type(), NgsiLdErrorType::InvalidRequest, "{error:?}");
         }
     }

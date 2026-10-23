@@ -1,4 +1,5 @@
 use crate::admission::{AdmissionError, LinkedMember, LinkedOperation, LinkedRequest, ReachingMember, TemporalJoin, admit_request};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     filter::expression::Expr,
     projection::grammar::{ProjectionList, RawProjectionTerm},
@@ -316,6 +317,50 @@ fn a_subscription_keeps_a_join_level_without_a_retrieving_join() {
     for join in [None, Some(JoinMode::None)] {
         assert_eq!(join_only(join, Some(2)).admit(LinkedOperation::Subscription), Ok(()), "join {join:?}");
     }
+}
+
+/// The admission of a request carrying `containedBy` beside the given join
+/// parameters.
+fn admit_contained_by(operation: LinkedOperation, join: Option<JoinMode>, join_level: Option<u32>) -> Result<(), AdmissionError> {
+    let held = ["urn:ngsi-ld:Person:1".parse::<Identifier>().expect("a valid identifier")];
+    let request = LinkedRequest::builder()
+        .join(join)
+        .join_level(join_level.and_then(NonZeroU32::new))
+        .contained_by(Some(&held[..]))
+        .build();
+    admit_request(operation, &request)
+}
+
+/// Tables 6.4.3.2-1 and 6.5.3.1-1: `containedBy` is "Only applicable if
+/// joinLevel is present", even beside a retrieving join.
+#[test]
+fn a_contained_by_without_a_join_level_is_refused_outside_subscriptions() {
+    for operation in JOIN_LEVEL_BOUND_OPERATIONS {
+        for join in [None, Some(JoinMode::Flat), Some(JoinMode::Inline)] {
+            assert_eq!(
+                admit_contained_by(operation, join, None),
+                Err(AdmissionError::ContainedByWithoutJoinLevel),
+                "{operation:?} join {join:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_contained_by_beside_a_join_level_is_admitted() {
+    for operation in [
+        LinkedOperation::RetrieveEntity,
+        LinkedOperation::QueryEntities,
+        LinkedOperation::EntityMapQuery,
+        LinkedOperation::QueryTemporal(TemporalJoin::Extended),
+    ] {
+        assert_eq!(admit_contained_by(operation, Some(JoinMode::Flat), Some(1)), Ok(()), "{operation:?}");
+    }
+}
+
+#[test]
+fn a_subscription_keeps_a_contained_by_without_a_join_level() {
+    assert_eq!(admit_contained_by(LinkedOperation::Subscription, None, None), Ok(()));
 }
 
 /// The refusal reads as one sentence naming the operation and the member.

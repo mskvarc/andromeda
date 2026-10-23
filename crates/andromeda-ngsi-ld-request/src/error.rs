@@ -171,6 +171,15 @@ pub enum ParameterError {
     /// (Table 6.5.3.1-1, clause 6.3.20).
     #[error("joinLevel is only applicable if the join parameter is 'flat' or 'inline'")]
     JoinLevelWithoutJoin,
+    /// `containedBy` was sent without the `joinLevel` it is "only applicable"
+    /// beside (Tables 6.4.3.2-1 and 6.5.3.1-1, clause 6.3.20).
+    #[error("containedBy is only applicable if joinLevel is present")]
+    ContainedByWithoutJoinLevel,
+    /// `entityMapLifetime` was sent without `entityMap=true`, the map it
+    /// would set the lifetime of (Tables 6.4.3.2-1, 6.5.3.1-1 and 6.18.3.2-1,
+    /// clause 6.3.20).
+    #[error("entityMapLifetime is only applicable if entityMap is set to true")]
+    EntityMapLifetimeWithoutEntityMap,
     /// `aggrGroupBy` was sent without `format=groupedValues` (grouping
     /// extension).
     ///
@@ -256,6 +265,7 @@ impl From<AdmissionError> for ParameterError {
                 join_level: join_level.get(),
             },
             AdmissionError::JoinLevelWithoutJoin => ParameterError::JoinLevelWithoutJoin,
+            AdmissionError::ContainedByWithoutJoinLevel => ParameterError::ContainedByWithoutJoinLevel,
         }
     }
 }
@@ -332,5 +342,11 @@ mod tests {
     fn a_join_level_without_a_join_keeps_its_own_error() {
         let error = ParameterError::from(AdmissionError::JoinLevelWithoutJoin);
         assert!(matches!(error, ParameterError::JoinLevelWithoutJoin), "got {error:?}");
+    }
+
+    #[test]
+    fn a_contained_by_without_a_join_level_keeps_its_own_error() {
+        let error = ParameterError::from(AdmissionError::ContainedByWithoutJoinLevel);
+        assert!(matches!(error, ParameterError::ContainedByWithoutJoinLevel), "got {error:?}");
     }
 }

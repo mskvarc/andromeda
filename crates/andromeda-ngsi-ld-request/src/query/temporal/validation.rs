@@ -7,6 +7,7 @@
 
 use crate::{
     attribute_selection::{AttrsAdmission, validate_attrs},
+    entity_map_lifetime::require_entity_map_for_lifetime,
     error::ParameterError,
     query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation},
     query_narrowing::{AdmittedNarrowings, ExecutionScope, NarrowingInputs, require_narrowing},
@@ -160,9 +161,11 @@ impl TemporalQueryParameters {
     /// temporal window or every entity selector,
     /// [`ParameterError::Query`] when the `timerel`, `timeAt` and `endTimeAt`
     /// group names no interval, [`ParameterError::AggrMethodsRequired`] when
-    /// `format=aggregatedValues` carries no aggregation methods, and
+    /// `format=aggregatedValues` carries no aggregation methods,
     /// [`ParameterError::AggregationWithoutAggregatedValues`] when the
-    /// aggregation parameters meet any other format.
+    /// aggregation parameters meet any other format, and
+    /// [`ParameterError::EntityMapLifetimeWithoutEntityMap`] when a query or a
+    /// retrieval names a map lifetime without asking for a map.
     pub fn validate(&self, operation: TemporalQueryOperation, linked_retrieval: TemporalJoin) -> Result<(), ParameterError> {
         // Clause 6.3.20: a `format` or `options` value Table 6.3.12-1 does not
         // define is refused here rather than during deserialisation, where the
@@ -182,8 +185,15 @@ impl TemporalQueryParameters {
             .q(self.q.as_ref())
             .join(self.join)
             .join_level(self.join_level)
+            .contained_by(self.contained_by.as_deref())
             .build();
         admit_request(operation.linked(linked_retrieval), &linked)?;
+        match operation {
+            TemporalQueryOperation::Query | TemporalQueryOperation::Retrieve => {
+                require_entity_map_for_lifetime(self.entity_map, self.entity_map_lifetime.as_ref())?;
+            }
+            TemporalQueryOperation::EntityMap => {}
+        }
         // Clause 4.5.23 nests a linked entity under the attribute instance that
         // names it. The simplified representation of clause 4.5.5 and the
         // aggregated one of clause 4.5.19 both collapse instances into value
