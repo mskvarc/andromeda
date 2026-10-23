@@ -79,7 +79,7 @@ impl FederationService {
         if self.is_loop_detected(triggering.via) {
             return Ok(own_loop_outcome());
         }
-        let client = ClientQuery::Temporal(client_query);
+        let client = ClientQuery::TemporalQuery(client_query);
         let registrations = self
             .select_read_registrations(
                 context,

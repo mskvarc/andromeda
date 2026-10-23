@@ -17,7 +17,10 @@
 
 use crate::linked_forwarding::{LinkedForwarding, linked_request, resolution, traversal_parameters::traversal_continuation};
 use andromeda_extensions::{advertisement::advertises, enabled::Extension};
-use andromeda_federation::{forwarded_query::client_query::ClientQuery, source_identity::SourceConfiguration};
+use andromeda_federation::{
+    forwarded_query::client_query::{ClientQuery, TemporalTraversal},
+    source_identity::SourceConfiguration,
+};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_linked_retrieval::source::{RemoteReach, RemoteResolution};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -80,7 +83,12 @@ impl RemoteTemporalLinkedSource for LinkedForwarding {
         context: &ContextSpec,
     ) -> Result<RemoteResolution<TemporalHistory>, TemporalError> {
         let parameters = linked_temporal_retrieval_parameters(remaining_depth, visited, window);
-        let request = linked_request(id, ClientQuery::TemporalContinuation(&parameters), context);
+        let client_query = ClientQuery::TemporalRetrieve {
+            id,
+            params: &parameters,
+            traversal: TemporalTraversal::Continued,
+        };
+        let request = linked_request(id, client_query, context);
         let forwarded = self.federation.forward_temporal_retrieve(&self.live_target, request).await;
         // Every source holding part of an entity's history contributes it; an
         // instance two of them answer is one instance.

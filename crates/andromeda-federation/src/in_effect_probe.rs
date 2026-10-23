@@ -222,7 +222,7 @@ mod tests {
             .await
             .expect("the forwarding context processes");
         let queries = ForwardedQuery::for_registration(
-            ClientQuery::Temporal(&params),
+            ClientQuery::TemporalQuery(&params),
             &registration(),
             SplitEntities::Complete,
             None,

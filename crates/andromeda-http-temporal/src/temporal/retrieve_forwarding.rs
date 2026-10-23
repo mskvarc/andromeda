@@ -34,7 +34,7 @@ use andromeda_entity_map::{
 use andromeda_federation::{
     FederationService,
     entity_result::temporal_contributions_of,
-    forwarded_query::client_query::ClientQuery,
+    forwarded_query::client_query::{ClientQuery, TemporalTraversal},
     outcome::ForwardReadOutcome,
     request::{EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
 };
@@ -150,7 +150,11 @@ pub(crate) async fn distributed_retrieval(
             ForwardRetrieveRequest {
                 entity_id: id,
                 exclude_registration: None,
-                client_query: ClientQuery::Temporal(params),
+                client_query: ClientQuery::TemporalRetrieve {
+                    id,
+                    params,
+                    traversal: TemporalTraversal::WalkedHere,
+                },
                 context,
                 triggering,
                 mode_filter: CsrModeFilter::All,

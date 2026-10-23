@@ -144,7 +144,7 @@ async fn refuse_inadmissible_ordering(
             OrderedRead {
                 ordering: &params.ordering,
                 requested_scope: params.execution_scope(),
-                client_query: ClientQuery::Temporal(params),
+                client_query: ClientQuery::TemporalQuery(params),
                 geo,
                 operation: ForwardingOperation::QueryTemporalEntity,
                 entity_map,

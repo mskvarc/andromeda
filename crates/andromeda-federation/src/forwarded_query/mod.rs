@@ -21,7 +21,7 @@ use crate::{
     forwarded_parameter::ForwardedParameter,
     forwarded_query::{
         block_footprint::{AttrCoverage, BlockSelection, block_attrs, covered_type},
-        client_query::ClientQuery,
+        client_query::{ClientQuery, TemporalTraversal},
     },
     request::{SourcePage, TemporalAnswer},
     source_walk::SOURCE_PAGE_SIZE,
@@ -162,7 +162,7 @@ impl ForwardedQuery {
                 query.push_sys_attrs(params.options.as_ref().and_then(WrittenValue::if_supported).map(|options| options.sys_attrs));
                 query.push_traversal(params.join.map(|join| join.to_string()), params.join_level, params.contained_by.as_deref());
             }
-            ClientQuery::Temporal(params) | ClientQuery::TemporalContinuation(params) => {
+            ClientQuery::TemporalQuery(params) => {
                 let Some(selection) = BlockSelection::of(block, params.id.as_deref(), params.id_pattern.as_ref(), params.entity_type.as_ref(), names).await?
                 else {
                     return Ok(None);
@@ -191,15 +191,30 @@ impl ForwardedQuery {
                 query.push_dataset_ids(params.dataset_id.as_deref());
                 query.push_lang(params.lang.as_ref());
                 query.push_temporal_parameters(params, answer);
+            }
+            ClientQuery::TemporalRetrieve { id, params, traversal } => {
+                // Table 6.19.3.1-1: the entity is named by the path and one
+                // history is no collection clause 4.12 pages, so the block
+                // contributes neither a selection nor a page, only its
+                // attribute constraint, and only when it covers the entity.
+                if !EntitySpecification::of_entity(&[], id).matches_entity_axis(block) {
+                    return Ok(None);
+                }
+                if !query.push_block_attrs(block_attrs(block, params.attrs.as_deref(), names).await?) {
+                    return Ok(None);
+                }
+                query.push_dataset_ids(params.dataset_id.as_deref());
+                query.push_lang(params.lang.as_ref());
+                query.push_temporal_parameters(params, answer);
                 // Clause 4.5.23: only a continuation asks its holder to walk
-                // Linked Entities; a client's own query or retrieval has them
-                // walked here, and a holder not serving the extension refuses
-                // the parameters.
-                match client {
-                    ClientQuery::TemporalContinuation(_) => {
+                // Linked Entities; a client's own retrieval has them walked
+                // here, and a holder not serving the extension refuses the
+                // parameters.
+                match traversal {
+                    TemporalTraversal::Continued => {
                         query.push_traversal(params.join.map(|join| join.to_string()), params.join_level, params.contained_by.as_deref());
                     }
-                    ClientQuery::Temporal(_) | ClientQuery::EntityQuery(_) | ClientQuery::EntityRetrieve { .. } => {}
+                    TemporalTraversal::WalkedHere => {}
                 }
             }
         }
@@ -321,7 +336,10 @@ mod tests {
         config::SplitEntities,
         forwarded_names::ForwardedNames,
         forwarded_parameter::ForwardedParameter,
-        forwarded_query::{ForwardedQuery, client_query::ClientQuery},
+        forwarded_query::{
+            ForwardedQuery,
+            client_query::{ClientQuery, TemporalTraversal},
+        },
         forwarding_context::Rewording,
         request::{SourcePage, TemporalAnswer},
         term_resolver::TermResolver,
@@ -332,7 +350,10 @@ mod tests {
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
     use andromeda_ngsi_ld_request::{
         entity::GetEntityParams,
-        query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
+        query::{
+            entity::parameters::EntityQueryParameters,
+            temporal::{TemporalQueryParameters, retrieve_parameters::TemporalRetrieveParameters},
+        },
     };
     use serde_json::{Value, json};
 
@@ -359,6 +380,10 @@ mod tests {
 
     fn uri(raw: &str) -> Identifier {
         raw.parse().expect("valid URI")
+    }
+
+    fn temporal_retrieve<'a>(id: &'a Identifier, params: &'a TemporalQueryParameters, traversal: TemporalTraversal) -> ClientQuery<'a> {
+        ClientQuery::TemporalRetrieve { id, params, traversal }
     }
 
     fn strings(queries: &[ForwardedQuery]) -> Vec<String> {
@@ -572,10 +597,10 @@ mod tests {
     async fn a_temporal_client_pattern_skips_a_block_whose_registered_id_it_does_not_match() {
         let query = temporal_query("type=Vehicle&idPattern=urn:ngsi-ld:Vehicle:1.*&timerel=after&timeAt=2024-01-01T00:00:00Z");
         let other = registration(&json!([{"entities": [{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:7"}]}]));
-        let forwarded = narrow(ClientQuery::Temporal(&query), &other, SplitEntities::Complete).await;
+        let forwarded = narrow(ClientQuery::TemporalQuery(&query), &other, SplitEntities::Complete).await;
         pretty_assertions::assert_eq!(strings(&forwarded), Vec::<String>::new());
         let matching = registration(&json!([{"entities": [{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:12"}]}]));
-        let forwarded = narrow(ClientQuery::Temporal(&query), &matching, SplitEntities::Complete).await;
+        let forwarded = narrow(ClientQuery::TemporalQuery(&query), &matching, SplitEntities::Complete).await;
         pretty_assertions::assert_eq!(forwarded.len(), 1);
     }
 
@@ -668,7 +693,7 @@ mod tests {
         let query = temporal_query(
             "type=Vehicle&timerel=between&timeAt=2024-01-01T00:00:00Z&endTimeAt=2024-02-01T00:00:00Z&timeproperty=modifiedAt&lastN=2&q=speed%3E50&scopeQ=%2FMadrid&attrs=speed&options=aggregatedValues,sysAttrs&aggrMethods=avg,max&aggrPeriodDuration=PT1H&csf=tier%3D%3D%22gold%22",
         );
-        let split = narrow(ClientQuery::Temporal(&query), &block, SplitEntities::Split).await;
+        let split = narrow(ClientQuery::TemporalQuery(&query), &block, SplitEntities::Split).await;
         pretty_assertions::assert_eq!(split.len(), 1);
         let split = &split[0];
         let written = split.to_query_string();
@@ -683,7 +708,7 @@ mod tests {
         pretty_assertions::assert_eq!(split.value_of(ForwardedParameter::LastN), Some("2"));
         pretty_assertions::assert_eq!(split.value_of(ForwardedParameter::Csf), Some("tier==\"gold\""));
 
-        let complete = narrow(ClientQuery::Temporal(&query), &block, SplitEntities::Complete).await;
+        let complete = narrow(ClientQuery::TemporalQuery(&query), &block, SplitEntities::Complete).await;
         pretty_assertions::assert_eq!(complete.len(), 1);
         let complete = &complete[0];
         pretty_assertions::assert_eq!(complete.value_of(ForwardedParameter::Q), Some("speed>50"));
@@ -702,7 +727,7 @@ mod tests {
     async fn a_temporal_query_is_narrowed_per_block_like_an_entity_query() {
         let block = registration(&json!([{"entities": [{"id": VEHICLE_X, "type": VEHICLE}], "propertyNames": [SPEED]}]));
         let query = temporal_query("type=Vehicle&timerel=before&timeAt=2030-01-01T00:00:00Z");
-        let forwarded = narrow(ClientQuery::Temporal(&query), &block, SplitEntities::Complete).await;
+        let forwarded = narrow(ClientQuery::TemporalQuery(&query), &block, SplitEntities::Complete).await;
         pretty_assertions::assert_eq!(forwarded.len(), 1);
         pretty_assertions::assert_eq!(forwarded[0].value_of(ForwardedParameter::Id), Some(VEHICLE_X));
         pretty_assertions::assert_eq!(forwarded[0].value_of(ForwardedParameter::Type), Some("Vehicle"));
@@ -731,28 +756,128 @@ mod tests {
     }
 
     /// Clause 4.5.23 under `temporal_linked_retrieval`: a client's own
-    /// temporal query has its Linked Entities walked by this broker, so no
-    /// source is sent `join`, `joinLevel` or `containedBy`; the continuation
-    /// of a walk is, to the holder that serves it.
+    /// temporal query or retrieval has its Linked Entities walked by this
+    /// broker, so no source is sent `join`, `joinLevel` or `containedBy`; the
+    /// continuation of a walk is, to the holder that serves it, and as a
+    /// retrieval it still names no selection and no page.
     #[tokio::test]
-    async fn only_a_temporal_continuation_forwards_the_traversal() {
+    async fn only_a_temporal_retrieval_continuation_forwards_the_traversal() {
         let block = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
-        let query = temporal_query("type=Vehicle&timerel=after&timeAt=2020-01-01T00:00:00Z&join=inline&joinLevel=2&containedBy=urn:ngsi-ld:Building:1");
-        let client = strings(&narrow(ClientQuery::Temporal(&query), &block, SplitEntities::Split).await);
+        let traversal = "timerel=after&timeAt=2020-01-01T00:00:00Z&join=inline&joinLevel=2&containedBy=urn:ngsi-ld:Building:1";
+        let query = temporal_query(&format!("type=Vehicle&{traversal}"));
+        let client = strings(&narrow(ClientQuery::TemporalQuery(&query), &block, SplitEntities::Split).await);
         let [client] = client.as_slice() else {
             panic!("one block, one query: {client:?}");
         };
         for parameter in ["join=", "joinLevel=", "containedBy="] {
             assert!(!client.contains(parameter), "{parameter} travels: {client}");
         }
-        let continuation = strings(&narrow(ClientQuery::TemporalContinuation(&query), &block, SplitEntities::Complete).await);
-        let [continuation] = continuation.as_slice() else {
-            panic!("one block, one query: {continuation:?}");
-        };
-        assert!(
-            continuation.contains("join=inline") && continuation.contains("joinLevel=2") && continuation.contains("containedBy=urn%3Angsi-ld%3ABuilding%3A1"),
-            "{continuation}"
+
+        let retrieval = temporal_query(traversal);
+        let id = uri(VEHICLE_X);
+        let walked_here = strings(
+            &narrow(
+                temporal_retrieve(&id, &retrieval, TemporalTraversal::WalkedHere),
+                &block,
+                SplitEntities::Complete,
+            )
+            .await,
         );
+        pretty_assertions::assert_eq!(walked_here, vec!["timerel=after&timeAt=2020-01-01T00%3A00%3A00Z".to_string()]);
+
+        let continuation = strings(
+            &narrow(
+                temporal_retrieve(&id, &retrieval, TemporalTraversal::Continued),
+                &block,
+                SplitEntities::Complete,
+            )
+            .await,
+        );
+        pretty_assertions::assert_eq!(
+            continuation,
+            vec!["timerel=after&timeAt=2020-01-01T00%3A00%3A00Z&join=inline&joinLevel=2&containedBy=urn%3Angsi-ld%3ABuilding%3A1".to_string()]
+        );
+    }
+
+    /// Table 6.19.3.1-1: the entity is named by the path and one history is no
+    /// collection clause 4.12 pages, so a block registering a type and a
+    /// pattern adds neither to the forwarded retrieval, nor a page size.
+    #[tokio::test]
+    async fn a_temporal_retrieval_forwards_no_selection_and_no_page() {
+        let block = registration(&json!([{"entities": [{"type": VEHICLE, "idPattern": "urn:ngsi-ld:Vehicle:.*"}]}]));
+        let id = uri(VEHICLE_X);
+        let params = temporal_query("timerel=before&timeAt=2030-01-01T00:00:00Z");
+        let forwarded = narrow(temporal_retrieve(&id, &params, TemporalTraversal::WalkedHere), &block, SplitEntities::Complete).await;
+        pretty_assertions::assert_eq!(strings(&forwarded), vec!["timerel=before&timeAt=2030-01-01T00%3A00%3A00Z".to_string()]);
+    }
+
+    /// Clause 4.3.6.1: the block's attribute constraint narrows the client's
+    /// `attrs`, and the dataset, language and window members Table 6.19.3.1-1
+    /// defines travel unchanged.
+    #[tokio::test]
+    async fn a_temporal_retrieval_forwards_the_block_attribute_dataset_lang_and_window() {
+        let block = registration(&json!([{"entities": [{"id": VEHICLE_X, "type": VEHICLE}], "propertyNames": [SPEED]}]));
+        let id = uri(VEHICLE_X);
+        let params = temporal_query("attrs=speed,fuel&datasetId=urn:ngsi-ld:ds:1&lang=en&timerel=after&timeAt=2024-01-01T00:00:00Z&lastN=2");
+        let forwarded = narrow(temporal_retrieve(&id, &params, TemporalTraversal::WalkedHere), &block, SplitEntities::Complete).await;
+        pretty_assertions::assert_eq!(
+            strings(&forwarded),
+            vec!["attrs=speed&datasetId=urn%3Angsi-ld%3Ads%3A1&lang=en&timerel=after&timeAt=2024-01-01T00%3A00%3A00Z&lastN=2".to_string()]
+        );
+    }
+
+    /// A temporal retrieval whose target the block does not cover produces no
+    /// forwarded retrieval for that block.
+    #[tokio::test]
+    async fn a_temporal_retrieval_skips_a_block_that_does_not_cover_the_entity() {
+        let block = registration(&json!([{"entities": [{"id": "urn:ngsi-ld:Vehicle:Other", "type": VEHICLE}], "propertyNames": [SPEED]}]));
+        let id = uri(VEHICLE_X);
+        let params = temporal_query("timerel=before&timeAt=2030-01-01T00:00:00Z");
+        let forwarded = narrow(temporal_retrieve(&id, &params, TemporalTraversal::WalkedHere), &block, SplitEntities::Complete).await;
+        pretty_assertions::assert_eq!(strings(&forwarded), Vec::<String>::new());
+    }
+
+    /// Clause 6.3.20: the temporal query model the retrieval is read into can
+    /// hold members Table 6.19.3.1-1 does not define, and none of them is ever
+    /// written into the forwarded retrieval.
+    #[tokio::test]
+    async fn a_temporal_retrieval_never_writes_a_query_only_parameter() {
+        let block = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
+        let id = uri(VEHICLE_X);
+        let params = temporal_query(
+            "type=Vehicle&id=urn:ngsi-ld:Vehicle:X&idPattern=urn:ngsi-ld:Vehicle:.*&q=speed%3E1&scopeQ=%2FMadrid&csf=tier%3D%3D1&limit=3&timerel=after&timeAt=2024-01-01T00:00:00Z",
+        );
+        let forwarded = strings(&narrow(temporal_retrieve(&id, &params, TemporalTraversal::WalkedHere), &block, SplitEntities::Complete).await);
+        pretty_assertions::assert_eq!(forwarded, vec!["timerel=after&timeAt=2024-01-01T00%3A00%3A00Z".to_string()]);
+    }
+
+    /// The forwarded retrieval is admitted by the receiving binding, whatever
+    /// representation, projection or continuation the client asked for.
+    #[tokio::test]
+    async fn a_forwarded_temporal_retrieval_is_admitted_by_the_retrieval_binding() {
+        let block = registration(&json!([{"entities": [{"id": VEHICLE_X, "type": VEHICLE}], "propertyNames": [SPEED]}]));
+        let id = uri(VEHICLE_X);
+        for (raw, traversal) in [
+            (
+                "attrs=speed&datasetId=@none&lang=en&timerel=after&timeAt=2024-01-01T00:00:00Z&lastN=2&options=sysAttrs",
+                TemporalTraversal::WalkedHere,
+            ),
+            (
+                "timerel=between&timeAt=2024-01-01T00:00:00Z&endTimeAt=2024-02-01T00:00:00Z&timeproperty=modifiedAt&format=aggregatedValues&aggrMethods=avg,max&aggrPeriodDuration=PT1H",
+                TemporalTraversal::WalkedHere,
+            ),
+            (
+                "timerel=after&timeAt=2024-01-01T00:00:00Z&join=flat&joinLevel=2&containedBy=urn:ngsi-ld:Building:1",
+                TemporalTraversal::Continued,
+            ),
+        ] {
+            let params = temporal_query(raw);
+            let forwarded = strings(&narrow(temporal_retrieve(&id, &params, traversal), &block, SplitEntities::Complete).await);
+            let [forwarded] = forwarded.as_slice() else {
+                panic!("one block, one retrieval: {forwarded:?}");
+            };
+            serde_urlencoded::from_str::<TemporalRetrieveParameters>(forwarded).unwrap_or_else(|error| panic!("{forwarded}: {error}"));
+        }
     }
 
     /// A retrieval whose target the block does not cover produces no forwarded

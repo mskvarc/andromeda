@@ -28,15 +28,35 @@ pub enum ClientQuery<'a> {
         /// The retrieval parameters as the client wrote them.
         params: &'a GetEntityParams,
     },
-    /// A temporal query or retrieval (clauses 5.7.3 and 5.7.4) a client sent.
-    /// Its Linked Entities are walked by this broker once every holder has
-    /// answered, so no source is asked to walk them.
-    Temporal(&'a TemporalQueryParameters),
-    /// The continuation of a temporal Linked Entity retrieval this broker
-    /// walks (clause 4.5.23 under `temporal_linked_retrieval`): a retrieval
-    /// of one Linked Entity that asks its holder to walk the levels below it,
-    /// sent only to a holder advertising the extension.
-    TemporalContinuation(&'a TemporalQueryParameters),
+    /// A Query Temporal Evolution of Entities request (clause 5.7.4) a client
+    /// sent. Its Linked Entities are walked by this broker once every holder
+    /// has answered, so no source is asked to walk them.
+    TemporalQuery(&'a TemporalQueryParameters),
+    /// A Retrieve Temporal Evolution of an Entity request (clause 5.7.3),
+    /// carrying the identifier of the target entity so a per-block narrowing
+    /// can tell which registration blocks cover it (clause 4.3.6.3).
+    TemporalRetrieve {
+        /// The identifier of the entity whose history is retrieved.
+        id: &'a Identifier,
+        /// The retrieval parameters, in the temporal query model; the members
+        /// Table 6.19.3.1-1 does not define are never forwarded.
+        params: &'a TemporalQueryParameters,
+        /// Who walks the Linked Entities of the retrieved entity.
+        traversal: TemporalTraversal,
+    },
+}
+
+/// Who walks the Linked Entities a temporal retrieval reaches (clause 4.5.23
+/// under `temporal_linked_retrieval`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemporalTraversal {
+    /// This broker walks them once every holder has answered, so the holder is
+    /// asked for the entity alone.
+    WalkedHere,
+    /// The holder walks the levels below the entity: the continuation of a
+    /// walk this broker started, sent only to a holder advertising the
+    /// extension.
+    Continued,
 }
 
 impl ClientQuery<'_> {
@@ -45,8 +65,9 @@ impl ClientQuery<'_> {
     pub const fn entity_type(&self) -> Option<&TypeExprRaw> {
         match self {
             ClientQuery::EntityQuery(params) => params.entity_type.as_ref(),
-            ClientQuery::Temporal(params) | ClientQuery::TemporalContinuation(params) => params.entity_type.as_ref(),
+            ClientQuery::TemporalQuery(params) => params.entity_type.as_ref(),
             ClientQuery::EntityRetrieve { params, .. } => params.entity_type.as_ref(),
+            ClientQuery::TemporalRetrieve { .. } => None,
         }
     }
 
@@ -55,8 +76,8 @@ impl ClientQuery<'_> {
     pub fn entity_ids(&self) -> Option<&[Identifier]> {
         match self {
             ClientQuery::EntityQuery(params) => params.id.as_deref(),
-            ClientQuery::Temporal(params) | ClientQuery::TemporalContinuation(params) => params.id.as_deref(),
-            ClientQuery::EntityRetrieve { .. } => None,
+            ClientQuery::TemporalQuery(params) => params.id.as_deref(),
+            ClientQuery::EntityRetrieve { .. } | ClientQuery::TemporalRetrieve { .. } => None,
         }
     }
 
@@ -65,8 +86,8 @@ impl ClientQuery<'_> {
     pub const fn id_pattern(&self) -> Option<&Pattern> {
         match self {
             ClientQuery::EntityQuery(params) => params.id_pattern.as_ref(),
-            ClientQuery::Temporal(params) | ClientQuery::TemporalContinuation(params) => params.id_pattern.as_ref(),
-            ClientQuery::EntityRetrieve { .. } => None,
+            ClientQuery::TemporalQuery(params) => params.id_pattern.as_ref(),
+            ClientQuery::EntityRetrieve { .. } | ClientQuery::TemporalRetrieve { .. } => None,
         }
     }
 
@@ -76,7 +97,7 @@ impl ClientQuery<'_> {
     #[must_use]
     pub fn timeproperty(&self) -> TimeProp {
         match self {
-            ClientQuery::Temporal(params) | ClientQuery::TemporalContinuation(params) => params.timeproperty_or_default(),
+            ClientQuery::TemporalQuery(params) | ClientQuery::TemporalRetrieve { params, .. } => params.timeproperty_or_default(),
             ClientQuery::EntityQuery(_) | ClientQuery::EntityRetrieve { .. } => TimeProp::Observed,
         }
     }
@@ -87,8 +108,8 @@ impl ClientQuery<'_> {
     pub const fn scope_q(&self) -> Option<&ScopeQuery> {
         match self {
             ClientQuery::EntityQuery(params) => params.scope_q.as_ref(),
-            ClientQuery::Temporal(params) | ClientQuery::TemporalContinuation(params) => params.scope_q.as_ref(),
-            ClientQuery::EntityRetrieve { .. } => None,
+            ClientQuery::TemporalQuery(params) => params.scope_q.as_ref(),
+            ClientQuery::EntityRetrieve { .. } | ClientQuery::TemporalRetrieve { .. } => None,
         }
     }
 }
