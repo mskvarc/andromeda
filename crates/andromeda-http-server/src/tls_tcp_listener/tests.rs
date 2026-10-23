@@ -2,12 +2,14 @@
 
 use crate::{
     close_policy::ClosePolicy,
+    config::ListenerTransport,
     error::HttpServerError,
     execution::serve_listener,
+    field_section::HeaderSectionPolicy,
     listener_security::TCP_HANDSHAKE_POLICY,
     tls_tcp_listener::TlsTcpListener,
 };
-use andromeda_configuration_scalars::human_duration::HumanDuration;
+use andromeda_configuration_scalars::{header_section_limit::HeaderSectionLimit, human_duration::HumanDuration};
 use andromeda_server_tls::{
     config::{ClientAuthentication, MinimumProtocolVersion, TlsConfig},
     material_watch::TlsMaterialWatch,
@@ -95,6 +97,10 @@ impl RunningTlsListener {
             ClosePolicy {
                 drain_deadline: Duration::from_secs(2),
                 announced_close_delay: Duration::from_millis(500),
+            },
+            HeaderSectionPolicy {
+                limit: HeaderSectionLimit::MAXIMUM,
+                transport: ListenerTransport::Tls,
             },
         ));
         Ok(RunningTlsListener {

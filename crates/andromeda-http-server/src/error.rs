@@ -21,13 +21,6 @@ pub enum HttpServerError {
         #[source]
         source: io::Error,
     },
-    /// Connection acceptance or serving failed.
-    #[error("HTTP connection serving failed")]
-    Serve {
-        /// Axum server failure.
-        #[source]
-        source: io::Error,
-    },
     /// Accepted connections did not drain before the configured deadline.
     #[error("HTTP connections did not drain within {deadline:?}")]
     DrainDeadlineExceeded {

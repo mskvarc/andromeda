@@ -1,7 +1,7 @@
 //! Listener, graceful-drain and connection-close configuration.
 
 use crate::close_policy::ClosePolicy;
-use andromeda_configuration_scalars::human_duration::HumanDuration;
+use andromeda_configuration_scalars::{header_section_limit::HeaderSectionLimit, human_duration::HumanDuration};
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr};
 use strum::{Display, EnumString};
@@ -73,6 +73,13 @@ pub struct ServerConfig {
     /// `graceful_drain`.
     #[toml_comment(inline)]
     pub announced_close_delay: HumanDuration,
+    /// Largest request header section accepted, from `"8 KiB"` to `"32 KiB"`,
+    /// on HTTP/1.1, HTTP/2 and HTTP/3 alike: every field, the request line's
+    /// method, target and authority included, costs its name, its value and
+    /// 32 bytes. A request over it is answered 431. The HTTP/3 listener and
+    /// the management listener apply the same value.
+    #[toml_comment(inline)]
+    pub max_request_header_section: HeaderSectionLimit,
 }
 
 impl Default for ServerConfig {
@@ -83,6 +90,7 @@ impl Default for ServerConfig {
             transport: ListenerTransport::Plaintext,
             graceful_drain: HumanDuration::from_secs(30),
             announced_close_delay: HumanDuration::from_secs(1),
+            max_request_header_section: HeaderSectionLimit::MAXIMUM,
         }
     }
 }
@@ -125,7 +133,7 @@ mod tests {
         close_policy::ClosePolicy,
         config::{ListenerTransport, ServerConfig, ServerConfigError},
     };
-    use andromeda_configuration_scalars::human_duration::HumanDuration;
+    use andromeda_configuration_scalars::{header_section_limit::HeaderSectionLimit, human_duration::HumanDuration};
     use pretty_assertions::assert_eq;
     use serde::Deserialize;
     use std::{error::Error, net::IpAddr, str::FromStr, time::Duration};
@@ -138,6 +146,7 @@ mod tests {
             transport: ListenerTransport::Plaintext,
             graceful_drain: HumanDuration::from_secs(30),
             announced_close_delay: HumanDuration::from_secs(1),
+            max_request_header_section: HeaderSectionLimit::MAXIMUM,
         };
         assert_eq!(config.validate(), Err(ServerConfigError::ZeroPort));
     }
@@ -188,6 +197,18 @@ mod tests {
         }
         let holder: DelayHolder = toml::from_str("announced_close_delay = \"750ms\"")?;
         assert_eq!(holder.announced_close_delay, HumanDuration::from_millis(750));
+        Ok(())
+    }
+
+    #[test]
+    fn the_request_header_section_defaults_to_32_kib_and_parses_human_readable() -> Result<(), Box<dyn Error>> {
+        assert_eq!(ServerConfig::default().max_request_header_section.octets(), 32_768);
+        let rendered =
+            toml::to_string(&ServerConfig::default())?.replace("max_request_header_section = \"32.0 KiB\"", "max_request_header_section = \"8 KiB\"");
+        assert_eq!(
+            toml::from_str::<ServerConfig>(&rendered)?.max_request_header_section,
+            HeaderSectionLimit::MINIMUM
+        );
         Ok(())
     }
 

@@ -7,8 +7,10 @@
 mod announced_close;
 pub mod close_policy;
 pub mod config;
+mod connection_builder;
 pub mod error;
 pub mod execution;
+pub mod field_section;
 pub mod listener_security;
 mod staged_close_listener;
 mod staged_close_stream;

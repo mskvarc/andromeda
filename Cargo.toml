@@ -205,5 +205,6 @@ andromeda-test-allocator = { path = "crates/andromeda-test-allocator" }
 andromeda-test-client = { path = "crates/andromeda-test-client" }
 andromeda-test-fixtures = { path = "crates/andromeda-test-fixtures" }
 andromeda-test-harness = { path = "crates/andromeda-test-harness" }
+andromeda-test-http3 = { path = "crates/andromeda-test-http3" }
 andromeda-test-mocks = { path = "crates/andromeda-test-mocks" }
 andromeda-test-tls = { path = "crates/andromeda-test-tls" }

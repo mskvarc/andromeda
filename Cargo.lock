@@ -222,17 +222,22 @@ dependencies = [
  "andromeda-telemetry",
  "andromeda-temporal",
  "andromeda-tenancy",
+ "andromeda-test-http3",
+ "andromeda-test-tls",
  "async-trait",
+ "axum",
  "chrono",
  "derive_more",
  "etcetera",
  "figment2",
  "file-rotate",
  "futures",
+ "h3",
  "http",
  "humantime",
  "iri-rs",
  "pretty_assertions",
+ "reqwest",
  "serde",
  "serde_json",
  "serial_test",
@@ -271,6 +276,7 @@ dependencies = [
  "humantime-serde",
  "pretty_assertions",
  "serde",
+ "thiserror 2.0.21",
  "toml",
 ]
 
@@ -891,6 +897,8 @@ dependencies = [
  "andromeda-test-tls",
  "axum",
  "headers",
+ "hyper",
+ "hyper-util",
  "pretty_assertions",
  "reqwest",
  "serde",
@@ -1119,9 +1127,9 @@ dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration-scalars",
  "andromeda-server-tls",
+ "andromeda-test-http3",
  "andromeda-test-tls",
  "axum",
- "axum-h3",
  "bytes",
  "h3",
  "h3-quinn",
@@ -1130,7 +1138,6 @@ dependencies = [
  "pretty_assertions",
  "quinn",
  "rustls",
- "rustls-pki-types",
  "serde",
  "strum",
  "thiserror 2.0.21",
@@ -2379,6 +2386,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-test-http3"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-test-tls",
+ "bytes",
+ "h3",
+ "h3-quinn",
+ "http",
+ "quinn",
+ "rustls",
+ "rustls-pki-types",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "andromeda-test-mocks"
 version = "0.1.0"
 dependencies = [
@@ -2712,23 +2736,6 @@ dependencies = [
  "sync_wrapper",
  "tower-layer",
  "tower-service",
- "tracing",
-]
-
-[[package]]
-name = "axum-h3"
-version = "0.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b4c25010faba73bf807d5012fd154ff185031e1a7e98fed1ea2438bc99c0500"
-dependencies = [
- "axum",
- "futures",
- "h3",
- "h3-util",
- "hyper",
- "hyper-util",
- "tokio",
- "tower",
  "tracing",
 ]
 

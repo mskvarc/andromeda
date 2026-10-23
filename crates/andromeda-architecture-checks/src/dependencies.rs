@@ -10,6 +10,7 @@ const TEST_INFRASTRUCTURE_CRATES: &[&str] = &[
     "andromeda-test-client",
     "andromeda-test-fixtures",
     "andromeda-test-harness",
+    "andromeda-test-http3",
     "andromeda-test-mocks",
     "andromeda-test-tls",
 ];

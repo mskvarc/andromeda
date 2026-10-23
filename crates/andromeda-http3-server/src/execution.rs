@@ -1,6 +1,6 @@
 //! Serving an assembled axum router over an HTTP/3 (QUIC) endpoint.
 //!
-//! The bound endpoint is driven by [`axum_h3::H3Router`], which accepts each
+//! The bound endpoint is driven by [`crate::request_loop`], which accepts each
 //! QUIC connection, then each request on it, and dispatches the request to the
 //! same axum router the TCP listener serves. While it serves, every
 //! configuration the shared TLS identity's feed rebuilds -- a rotated
@@ -9,10 +9,10 @@
 //! Serving ends when the supplied shutdown future resolves, after which
 //! in-flight connections are given until the endpoint goes idle to finish.
 
-use crate::quic_crypto::quic_server_config;
+use crate::{quic_crypto::quic_server_config, request_loop::accept_connections};
+use andromeda_configuration_scalars::header_section_limit::HeaderSectionLimit;
 use andromeda_server_tls::server_config_feed::ServerConfigFeed;
 use axum::Router;
-use axum_h3::H3Router;
 use h3_util::quinn::H3QuinnAcceptor;
 use quinn::Endpoint;
 use std::{
@@ -30,14 +30,18 @@ pub enum Http3ServeError {
     LocalAddress(#[source] io::Error),
     /// The HTTP/3 connection accept loop terminated with an error.
     ///
-    /// `axum_h3` hands the failure back type-erased, so there is no typed cause
-    /// to chain; the erased error is logged where it surfaces instead.
+    /// The QUIC acceptor hands the failure back type-erased, so there is no
+    /// typed cause to chain; the erased error is logged where it surfaces
+    /// instead.
     #[error("HTTP/3 connection accept loop failed")]
     Serve,
 }
 
 /// Serve `router` over the bound QUIC `endpoint` until `shutdown` resolves,
 /// installing each configuration `feed` rebuilds as it arrives.
+///
+/// A request whose header section is over `limit` never reaches the router
+/// (see [`crate::request_loop`]).
 ///
 /// After the shutdown future resolves the accept loop stops taking new
 /// connections and the endpoint is awaited idle, letting connections already in
@@ -48,7 +52,13 @@ pub enum Http3ServeError {
 /// Returns [`Http3ServeError::LocalAddress`] when the endpoint's address cannot
 /// be read for logging, and [`Http3ServeError::Serve`] when the accept loop
 /// fails.
-pub async fn serve_endpoint<F>(endpoint: Endpoint, feed: ServerConfigFeed, router: Router, shutdown: F) -> Result<(), Http3ServeError>
+pub async fn serve_endpoint<F>(
+    endpoint: Endpoint,
+    feed: ServerConfigFeed,
+    router: Router,
+    limit: HeaderSectionLimit,
+    shutdown: F,
+) -> Result<(), Http3ServeError>
 where
     F: Future<Output = ()> + Send,
 {
@@ -59,7 +69,7 @@ where
     // await the endpoint idle once serving stops.
     let acceptor = H3QuinnAcceptor::new(endpoint.clone());
     let result = tokio::select! {
-        result = H3Router::from(router).serve_with_shutdown(acceptor, shutdown) => result,
+        result = accept_connections(acceptor, router, limit, shutdown) => result,
         never = install_rotations(&endpoint, feed) => match never {},
     };
     endpoint.wait_idle().await;
@@ -101,7 +111,12 @@ mod tests {
         endpoint::bind,
         execution::{Http3ServeError, serve_endpoint},
         quic_crypto::H3_ALPN,
-        test_support::{Http3Client, QuicIdentity, request},
+        test_support::QuicIdentity,
+    };
+    use andromeda_configuration_scalars::header_section_limit::HeaderSectionLimit;
+    use andromeda_test_http3::{
+        client::{Http3Client, request},
+        error::Http3ClientError,
     };
     use andromeda_test_tls::authority::TestAuthority;
     use axum::{
@@ -110,6 +125,7 @@ mod tests {
         routing::{get, post, put},
     };
     use bytes::Bytes;
+    use h3::error::StreamError;
     use http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode};
     use rustls::RootCertStore;
     use std::{
@@ -126,6 +142,9 @@ mod tests {
     };
     use tower::Layer;
     use tower_http::normalize_path::NormalizePathLayer;
+
+    /// The request header section limit every fixture listener runs under.
+    const LIMIT: HeaderSectionLimit = HeaderSectionLimit::MINIMUM;
 
     /// A router exercising the request and response shapes an HTTP/3 client cares about.
     fn test_router() -> Router {
@@ -178,7 +197,7 @@ mod tests {
             let endpoint = bind(identity.feed(), SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?;
             let address = endpoint.local_addr()?;
             let (shutdown_sender, shutdown_receiver) = oneshot::channel();
-            let handle = tokio::spawn(serve_endpoint(endpoint, identity.feed().clone(), router, async move {
+            let handle = tokio::spawn(serve_endpoint(endpoint, identity.feed().clone(), router, LIMIT, async move {
                 let _ = shutdown_receiver.await;
             }));
             Ok(RunningListener {
@@ -373,7 +392,7 @@ mod tests {
         let endpoint = bind(identity.feed(), SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?;
         let address = endpoint.local_addr()?;
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
-        let server = tokio::spawn(serve_endpoint(endpoint, identity.feed().clone(), router, async move {
+        let server = tokio::spawn(serve_endpoint(endpoint, identity.feed().clone(), router, LIMIT, async move {
             let _ = shutdown_receiver.await;
         }));
 
@@ -449,7 +468,7 @@ mod tests {
         let running = RunningListener::serve(QuicIdentity::requiring_clients_of(&clients)?, test_router())?;
         let anonymous = async {
             let mut client = running.dial().await?;
-            client.send(request(Method::GET, running.port(), "/probe")?, &[]).await
+            Ok::<_, Box<dyn Error + Send + Sync>>(client.send(request(Method::GET, running.port(), "/probe")?, &[]).await?)
         };
         assert!(anonymous.await.is_err(), "a client without a certificate is refused");
         let client_identity = clients.issue_client_identity()?;
@@ -467,5 +486,51 @@ mod tests {
             Http3ServeError::Serve.source().is_none(),
             "the upstream cause is type-erased and logged, not chained"
         );
+    }
+
+    /// A request for `/probe` whose `x-fill` field brings its header section,
+    /// as RFC 9114 section 4.2.2 measures it, to `size` octets.
+    fn request_of_section_size(port: u16, size: usize) -> Result<Request<()>, Box<dyn Error + Send + Sync>> {
+        let authority = format!("localhost:{port}");
+        let pseudo = (7 + 3 + 32) + (7 + 5 + 32) + (10 + authority.len() + 32) + (5 + "/probe".len() + 32);
+        let fill = size - pseudo - (6 + 32);
+        Ok(Request::builder()
+            .method(Method::GET)
+            .uri(format!("https://{authority}/probe"))
+            .header("x-fill", "a".repeat(fill))
+            .body(())?)
+    }
+
+    #[tokio::test]
+    async fn a_request_whose_field_section_is_exactly_the_limit_is_served() -> Result<(), Box<dyn Error + Send + Sync>> {
+        let running = RunningListener::start(test_router())?;
+        let mut client = running.dial().await?;
+        let response = client.send(request_of_section_size(running.port(), usize::from(LIMIT.octets()))?, &[]).await?;
+        assert_eq!(response.status, StatusCode::OK);
+        assert_eq!(response.text()?, "h3 works");
+        client.close().await;
+        running.stop().await
+    }
+
+    /// RFC 9114 section 7.2.4.2: a client that has read the advertised limit
+    /// refuses to send a section over it; one that has not yet read it sends
+    /// the request and the listener answers 431. Either way it never reaches
+    /// the router.
+    #[tokio::test]
+    async fn a_request_one_octet_over_the_limit_is_refused() -> Result<(), Box<dyn Error + Send + Sync>> {
+        let running = RunningListener::start(test_router())?;
+        let mut client = running.dial().await?;
+        match client
+            .send(request_of_section_size(running.port(), usize::from(LIMIT.octets()) + 1)?, &[])
+            .await
+        {
+            Ok(response) => assert_eq!(response.status, StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE),
+            Err(error) => assert!(
+                matches!(&error, Http3ClientError::Stream(StreamError::HeaderTooBig { max_size, .. }) if *max_size == u64::from(LIMIT.octets())),
+                "{error}"
+            ),
+        }
+        client.close().await;
+        running.stop().await
     }
 }

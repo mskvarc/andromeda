@@ -12,6 +12,7 @@ workspace = true
 bytesize = { version = "2.7.0", features = ["serde"] }
 humantime-serde = "1.1.1"
 serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.21"
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"

@@ -86,7 +86,9 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-test-client",
         "andromeda-test-fixtures",
         "andromeda-test-harness",
+        "andromeda-test-http3",
         "andromeda-test-mocks",
+        "andromeda-test-tls",
     ],
     allow_production_dependencies: all,
 }

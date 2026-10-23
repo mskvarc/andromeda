@@ -8,12 +8,10 @@
 //! close in stages ([`crate::staged_close_stream`]) instead of resetting a
 //! client that is still sending before it has read the response.
 
-use crate::staged_close_listener::StagedCloseListener;
 use axum::{
-    extract::{ConnectInfo, Request, connect_info::Connected},
+    extract::{ConnectInfo, Request},
     middleware::Next,
     response::Response,
-    serve::{IncomingStream, Listener},
 };
 use headers::{Connection, HeaderMapExt};
 use std::sync::{
@@ -40,16 +38,6 @@ impl AnnouncedClose {
     /// Whether a response on the connection announced the close.
     pub(crate) fn is_announced(&self) -> bool {
         self.0.load(Ordering::Relaxed)
-    }
-}
-
-impl<L> Connected<IncomingStream<'_, StagedCloseListener<L>>> for AnnouncedClose
-where
-    L: Listener,
-{
-    fn connect_info(stream: IncomingStream<'_, StagedCloseListener<L>>) -> AnnouncedClose {
-        // clone: the connection's I/O and every request it carries share one record.
-        stream.io().announcement().clone()
     }
 }
 

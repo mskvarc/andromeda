@@ -18,7 +18,8 @@ workspace = true
 andromeda-configuration-scalars.workspace = true
 andromeda-server-tls.workspace = true
 axum = "0.8.9"
-axum-h3 = "0.0.6"
+h3 = "0.0.8"
+h3-quinn = "0.0.10"
 h3-util = { version = "0.0.6", features = ["quinn"] }
 quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }
 rustls = { version = "0.23.45", default-features = false, features = ["aws_lc_rs", "std"] }
@@ -28,17 +29,15 @@ thiserror = "2.0.21"
 tokio = { version = "1.53.2", features = ["macros", "net", "rt"] }
 toml = "1.1.6"
 toml-comment = "0.3.0"
+tower = { version = "0.5.3", features = ["util"] }
 tracing = "0.1.44"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+andromeda-test-http3.workspace = true
 andromeda-test-tls.workspace = true
 bytes = "1.12.1"
-h3 = "0.0.8"
-h3-quinn = "0.0.10"
 http = "1.5.0"
 pretty_assertions = "1.4.1"
-rustls-pki-types = "1.15.1"
 tokio = { version = "1.53.2", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
-tower = { version = "0.5.3", features = ["util"] }
 tower-http = { version = "0.7.1", features = ["normalize-path"] }

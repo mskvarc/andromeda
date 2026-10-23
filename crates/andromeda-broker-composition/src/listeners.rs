@@ -131,20 +131,21 @@ pub async fn serve(
 
     if let (Some(feed), Some(router)) = (quic_feed, h3_router) {
         let endpoint = endpoint::bind(&feed, address)?;
-        let http3 = serve_endpoint(endpoint, feed, router, wait_for(&shutdown_token));
+        let http3 = serve_endpoint(endpoint, feed, router, config.server.max_request_header_section, wait_for(&shutdown_token));
         listeners.push(Box::pin(async move { http3.await.map_err(ListenerError::from) }));
     }
 
     if let (Some(management), Some(security)) = (management, management_security) {
         // The management listener is TCP-only and reuses the data plane's
-        // graceful-drain deadline and announced-close delay on its own host
-        // and port.
+        // graceful-drain deadline, announced-close delay and request header
+        // section limit on its own host and port.
         let management_config = ServerConfig {
             host: config.management.host,
             port: config.management.port,
             transport: config.management.transport,
             graceful_drain: config.server.graceful_drain,
             announced_close_delay: config.server.announced_close_delay,
+            max_request_header_section: config.server.max_request_header_section,
         };
         let management_serve = serve_management(management_config, security, management, wait_for(&shutdown_token));
         listeners.push(Box::pin(async move { management_serve.await.map_err(ListenerError::from) }));
@@ -183,3 +184,6 @@ fn wait_for(token: &CancellationToken) -> impl Future<Output = ()> + Send + 'sta
     let token = token.clone();
     async move { token.cancelled().await }
 }
+
+#[cfg(test)]
+mod tests;
