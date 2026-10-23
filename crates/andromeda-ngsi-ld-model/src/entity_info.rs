@@ -93,9 +93,19 @@ pub struct EntityInfo {
     pub id_pattern: Option<Pattern>,
 }
 
+impl EntityInfo {
+    /// Whether the entry names its entity by `id` alone, with no `idPattern`
+    /// beside it: the shape clause 4.3.6.3 asks of every entry of an
+    /// exclusive registration, which relates to specific entities.
+    #[must_use]
+    pub const fn names_one_entity(&self) -> bool {
+        self.id.is_some() && self.id_pattern.is_none()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::entity_info::{EntityInfo, EntityTypeSelection};
     use serde_json::json;
 
     #[test]
@@ -126,5 +136,14 @@ mod tests {
         pretty_assertions::assert_eq!(several.as_type_expression().to_string(), "Vehicle,Car");
         let single: EntityTypeSelection = serde_json::from_value(json!("Vehicle")).expect("parses");
         pretty_assertions::assert_eq!(single.as_type_expression().to_string(), "Vehicle");
+    }
+
+    #[test]
+    fn only_an_entry_naming_an_id_without_a_pattern_names_one_entity() {
+        let entry = |wire| serde_json::from_value::<EntityInfo>(wire).expect("a readable entry");
+        assert!(entry(json!({"type": "Vehicle", "id": "urn:ngsi-ld:Vehicle:1"})).names_one_entity());
+        assert!(!entry(json!({"type": "Vehicle", "id": "urn:ngsi-ld:Vehicle:1", "idPattern": "^urn:ngsi-ld:Vehicle:"})).names_one_entity());
+        assert!(!entry(json!({"type": "Vehicle", "idPattern": "^urn:ngsi-ld:Vehicle:"})).names_one_entity());
+        assert!(!entry(json!({"type": "Vehicle"})).names_one_entity());
     }
 }

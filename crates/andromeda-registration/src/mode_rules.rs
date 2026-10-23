@@ -67,7 +67,7 @@ fn validate_exclusive_entry(entry: &RegistrationInfo) -> Result<(), Registration
         .entities
         .as_deref()
         .ok_or_else(|| RegistrationError::Validation(RegistrationValidationReason::ExclusiveMissingEntities))?;
-    if selectors.iter().any(|selector| selector.id.is_none() || selector.id_pattern.is_some()) {
+    if !selectors.iter().all(EntityInfo::names_one_entity) {
         return Err(RegistrationError::Validation(RegistrationValidationReason::ExclusiveEntityNotById));
     }
     if entry.attribute_names().next().is_none() {

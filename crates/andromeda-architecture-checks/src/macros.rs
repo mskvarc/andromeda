@@ -141,6 +141,12 @@ macro_rules! workspace_architecture {
                 $crate::linked_retrieval::assert_linked_retrieval_has_one_owner(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
+            /// Registration and subscription matching is decided by the model engine only.
+            #[test]
+            fn registration_matching_has_one_owner() {
+                $crate::registration_matching::assert_registration_matching_has_one_owner(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
+            }
+
             /// No production source lets a string stand in for a typed error.
             #[test]
             fn errors_carry_typed_values_not_strings() {
