@@ -15,6 +15,7 @@
 
 use crate::{context_spec::ContextSpec, engine::processor::JsonLdEngine, error::JsonLdError, user_context_admission::screen_user_context};
 use andromeda_json_literal::JsonLiteral;
+use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
 use derive_more::Deref;
 use std::{sync::Arc, vec::IntoIter};
 
@@ -55,17 +56,26 @@ impl BatchContext {
         &self.spec
     }
 
-    /// Admit the user `@context` this batch context is, as clause 5.5.7
-    /// admits a request's (see
+    /// Admit the user `@context` one entity of a batch carried, as clause
+    /// 5.5.7 admits a request's (see
     /// [`admit_user_context`](crate::user_context_admission::admit_user_context)).
+    ///
+    /// A context that loads and declares nothing clause 5.5.7 refuses, but
+    /// does not process, is the failure of the entities naming it alone: the
+    /// rest of the batch is read under the contexts its entities named.
     ///
     /// # Errors
     ///
-    /// Returns the refusal of
-    /// [`admit_user_context`](crate::user_context_admission::admit_user_context).
-    pub async fn admit(&self, engine: &JsonLdEngine) -> Result<AdmittedBatchContext, JsonLdError> {
+    /// Returns the screening refusal of
+    /// [`admit_user_context`](crate::user_context_admission::admit_user_context):
+    /// a context graph that cycles or nests too deep, a context that does not
+    /// resolve, or a JSON-LD Scoped Context.
+    pub async fn admit(&self, engine: &JsonLdEngine) -> Result<EntityContextAdmission, JsonLdError> {
         screen_user_context(engine, &self.spec).await?;
-        Ok(AdmittedBatchContext(self.clone())) // clone: every entity naming the context holds the shared handle
+        Ok(match engine.expansion_context(&self.spec).await {
+            Ok(processed) => EntityContextAdmission::Admitted(self.admitted(processed.aliases())),
+            Err(unprocessable) => EntityContextAdmission::Unprocessable(unprocessable),
+        })
     }
 
     /// Admit this context as the request's own, exactly as
@@ -76,8 +86,7 @@ impl BatchContext {
     /// clause 5.5.6 raises `LdContextNotAvailable` for "a remote JSON-LD
     /// @context referenced by an incoming request" and `BadRequestData` for one
     /// that is not valid, so the request fails as a whole, before any entity is
-    /// read under it. Processing it here is what makes a context that loads but
-    /// does not process the request's refusal too.
+    /// read under it.
     ///
     /// # Errors
     ///
@@ -85,14 +94,48 @@ impl BatchContext {
     /// [`admit_user_context`](crate::user_context_admission::admit_user_context).
     pub async fn admit_for_request(&self, engine: &JsonLdEngine) -> Result<AdmittedBatchContext, JsonLdError> {
         screen_user_context(engine, &self.spec).await?;
-        engine.expansion_context(&self.spec).await?;
-        Ok(AdmittedBatchContext(self.clone())) // clone: every entity naming the context holds the shared handle
+        let processed = engine.expansion_context(&self.spec).await?;
+        Ok(self.admitted(processed.aliases()))
+    }
+
+    /// This context admitted, read through `aliases`.
+    fn admitted(&self, aliases: &Arc<CoreTermAliases>) -> AdmittedBatchContext {
+        AdmittedBatchContext {
+            context: self.clone(), // clone: every entity naming the context holds the shared handle
+            aliases: Arc::clone(aliases),
+        }
     }
 }
 
-/// A [`BatchContext`] [`BatchContext::admit`] admitted.
+/// What the admission of the context one entity of a batch carried decided,
+/// when the context passed the clause 5.5.7 screening.
+#[derive(Debug)]
+pub enum EntityContextAdmission {
+    /// The context processes: every entity naming it is read under it.
+    Admitted(AdmittedBatchContext),
+    /// The context does not process, which every entity naming it is refused
+    /// for.
+    Unprocessable(JsonLdError),
+}
+
+/// A [`BatchContext`] admitted, with the terms it defines for core terms.
 #[derive(Debug, Clone, Deref)]
-pub struct AdmittedBatchContext(BatchContext);
+pub struct AdmittedBatchContext {
+    /// The admitted context.
+    #[deref]
+    context: BatchContext,
+    /// The terms the processed context defines for core terms, which every
+    /// entity naming it is read through.
+    aliases: Arc<CoreTermAliases>,
+}
+
+impl AdmittedBatchContext {
+    /// The terms the context defines for core terms.
+    #[must_use]
+    pub fn aliases(&self) -> &CoreTermAliases {
+        &self.aliases
+    }
+}
 
 /// The distinct contexts one batch's entities name, in the order each first
 /// appears.
@@ -231,13 +274,14 @@ impl<T> IntoIterator for ContextGroups<T> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        batch_contexts::{BatchContext, BatchContexts, ContextGroups},
+        batch_contexts::{BatchContext, BatchContexts, ContextGroups, EntityContextAdmission},
         context_spec::ContextSpec,
         engine::processor::JsonLdEngine,
         test_documents::literal,
     };
     use iri_rs::IriBuf;
     use serde_json::json;
+    use std::borrow::Cow;
 
     /// Entities writing equal `@context` members share one identity, whatever
     /// the allocation; different members get different ones, in first-seen
@@ -306,16 +350,29 @@ mod tests {
     }
 
     /// Clause 5.5.6: a request context that loads but is not valid is refused
-    /// for the request, although an entity's own admission only screens it and
-    /// leaves the processing to each entity's expansion.
+    /// for the request, while an entity's own context that does not process is
+    /// the failure of the entities naming it.
     #[tokio::test]
     async fn a_request_context_that_does_not_process_is_refused_for_the_request() {
         let invalid = BatchContext::shared(ContextSpec::from_body(literal(&json!({"speed": {"@id": 5}}))));
         let engine = offline_engine();
 
-        assert!(invalid.admit(&engine).await.is_ok(), "an entity's admission only screens the context");
+        let entity = invalid.admit(&engine).await.expect("the context passes the screening");
+        assert!(matches!(entity, EntityContextAdmission::Unprocessable(_)), "{entity:?}");
         let error = invalid.admit_for_request(&engine).await.expect_err("the context does not process");
         assert!(!error.is_context_not_available(), "{error}");
+    }
+
+    /// An entity's context that processes is admitted with the terms it
+    /// defines for core terms.
+    #[tokio::test]
+    async fn an_entity_context_that_processes_carries_its_aliases() {
+        let own = BatchContexts::per_entity().context_of(Some(literal(&json!({"kind": "@type"}))));
+        let EntityContextAdmission::Admitted(admitted) = own.admit(&offline_engine()).await.expect("the context is admitted") else {
+            panic!("the context processes");
+        };
+        pretty_assertions::assert_eq!(admitted.aliases().core_name(Cow::Borrowed("kind")), "type");
+        pretty_assertions::assert_eq!(admitted.id(), own.id());
     }
 
     /// A request context that processes is admitted for every entity under its

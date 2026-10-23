@@ -32,7 +32,6 @@ mod compacted;
 mod compacted_mode;
 mod compacted_node;
 pub mod compaction_error;
-mod core_aliases;
 #[cfg(test)]
 mod differential_tests;
 mod document_compaction;

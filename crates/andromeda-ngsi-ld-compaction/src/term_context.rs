@@ -11,12 +11,11 @@
 
 use crate::{
     compacted::{Compacted, ProcessorCompacted},
-    core_aliases::core_term_aliases,
     undecidable::Undecidable,
 };
 use andromeda_json_literal::processor_json::read_processor_json;
-use andromeda_jsonld::engine::compaction_context::CompactionContext;
-use andromeda_ngsi_ld_representation::compact_node::aliased_node::CoreTermAliases;
+use andromeda_jsonld::{core_term_aliases::core_term_aliases, engine::compaction_context::CompactionContext};
+use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
 use dashmap::DashMap;
 use jsonld::{
     BlankIdBuf,

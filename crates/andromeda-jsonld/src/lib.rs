@@ -34,6 +34,10 @@
 //! [`user_context_admission`] holds it, and its types make it the one way a
 //! context a client submitted becomes one an operation may read under.
 //!
+//! Which terms of a processed context stand for core NGSI-LD terms is a
+//! property of that context alone, so [`core_term_aliases`] reads it once for
+//! the request body reader and the compacted-entity reader alike.
+//!
 //! Four ports point outward and are declared here because this crate or its
 //! callers reach through them: [`context_cache::ContextCache`], the durable
 //! cache a broker may attach; [`compound_context_host::CompoundContextHost`],
@@ -62,6 +66,7 @@ pub mod context_validation;
 pub mod context_value;
 pub mod core_context;
 pub mod core_context_precedence;
+pub mod core_term_aliases;
 pub mod document_context;
 pub mod engine;
 pub mod error;

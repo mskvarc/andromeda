@@ -74,7 +74,7 @@ use andromeda_entity::{
 use andromeda_http_extraction::entity_batch::{BatchBody, BatchItem, ParsedBatch, parse_batch_entities};
 use andromeda_http_response::{batch_projection::batch_entity_error, classified_report::ClassifiedReport, problem_response::ProblemResponse};
 use andromeda_jsonld::{
-    batch_contexts::{AdmittedBatchContext, BatchContext, BatchContextId},
+    batch_contexts::{AdmittedBatchContext, BatchContext, BatchContextId, EntityContextAdmission},
     context_spec::ContextSpec,
     engine::processor::JsonLdEngine,
     error::JsonLdError,
@@ -203,7 +203,8 @@ pub(crate) struct AdmittedBatchRequest<W: BatchWriteKind> {
 ///   fails the operation whichever entity named it.
 ///
 /// An `@context` an entity of an `application/ld+json` batch carried itself
-/// and that could not be retrieved is that entity's failure: clause 5.6.7.5
+/// and that could not be retrieved or does not process is that entity's
+/// failure: clause 5.6.7.5
 /// answers 207 with a `BatchEntityError` for every entity naming it, and the
 /// entities naming another one proceed. An `@context` one entity embedded
 /// below its own top level is that entity's `BatchEntityError`.
@@ -252,7 +253,7 @@ pub(crate) async fn admitted_batch_entities<W: BatchWriteKind>(
 /// As [`admitted_batch_entities`]: a context refused for anything but being
 /// unretrievable fails the operation.
 async fn screened_batch_entities<M: WrittenMember>(
-    mut admit_context: impl AsyncFnMut(&BatchContext) -> Result<AdmittedBatchContext, EntityError>,
+    mut admit_context: impl AsyncFnMut(&BatchContext) -> Result<EntityContextAdmission, EntityError>,
     shared: Option<AdmittedBatchContext>,
     items: Vec<BatchItem<M>>,
     refused: &mut Vec<BatchEntityError>,
@@ -272,7 +273,7 @@ async fn screened_batch_entities<M: WrittenMember>(
         };
         let admitted = match admission {
             ContextAdmission::Admitted(admitted) => admitted,
-            ContextAdmission::Unavailable(refusal) => {
+            ContextAdmission::EntitiesRefused(refusal) => {
                 refused.push(batch_entity_error(entity_id, refusal, EntityHttpClassify::classify_for_entity_http));
                 continue;
             }
@@ -310,11 +311,12 @@ async fn screened_batch_entities<M: WrittenMember>(
 
 /// What the clause 5.5.7 admission of one context a batch names decided.
 enum ContextAdmission {
-    /// The context resolved and declares nothing clause 5.5.7 refuses.
+    /// The context resolved, declares nothing clause 5.5.7 refuses, and
+    /// processes.
     Admitted(AdmittedBatchContext),
-    /// The context could not be retrieved (clause 5.5.6), which every entity
-    /// naming it is answered with.
-    Unavailable(WrittenPayloadRefusal),
+    /// The context could not be retrieved (clause 5.5.6) or does not process,
+    /// which every entity naming it is answered with.
+    EntitiesRefused(WrittenPayloadRefusal),
 }
 
 /// What the admission of one context a batch names decided, from its outcome.
@@ -322,15 +324,16 @@ enum ContextAdmission {
 /// # Errors
 ///
 /// Returns the refusal that fails the whole operation: anything but an
-/// unretrievable context, which is the entities' failure rather than the
-/// request's (clause 5.6.7.5).
-fn context_admission(outcome: Result<AdmittedBatchContext, EntityError>) -> Result<ContextAdmission, WrittenPayloadRefusal> {
+/// unretrievable or unprocessable context, which is the entities' failure
+/// rather than the request's (clause 5.6.7.5).
+fn context_admission(outcome: Result<EntityContextAdmission, EntityError>) -> Result<ContextAdmission, WrittenPayloadRefusal> {
     match outcome {
-        Ok(admitted) => Ok(ContextAdmission::Admitted(admitted)),
+        Ok(EntityContextAdmission::Admitted(admitted)) => Ok(ContextAdmission::Admitted(admitted)),
+        Ok(EntityContextAdmission::Unprocessable(error)) => Ok(ContextAdmission::EntitiesRefused(WrittenPayloadRefusal::Placement(EntityError::from(error)))),
         Err(error) => {
             let refusal = WrittenPayloadRefusal::Placement(error);
             if refusal.classify_for_entity_http().error_type() == NgsiLdErrorType::LdContextNotAvailable {
-                Ok(ContextAdmission::Unavailable(refusal))
+                Ok(ContextAdmission::EntitiesRefused(refusal))
             } else {
                 Err(refusal)
             }
@@ -348,7 +351,7 @@ mod tests {
     use andromeda_http_extraction::{batch_item_refusal::BatchItemRefusal, entity_batch::BatchItem, undecodable_body::UndecodableBody};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{
-        batch_contexts::{AdmittedBatchContext, BatchContext, BatchContexts},
+        batch_contexts::{BatchContext, BatchContexts, EntityContextAdmission},
         context_spec::ContextSpec,
         context_term::ContextTerm,
         engine::processor::JsonLdEngine,
@@ -520,7 +523,7 @@ mod tests {
 
     /// The admission the fake decides for `context`: the two failures named
     /// by URL, and otherwise the admission an offline engine gives.
-    async fn admission_of(context: &BatchContext) -> Result<AdmittedBatchContext, EntityError> {
+    async fn admission_of(context: &BatchContext) -> Result<EntityContextAdmission, EntityError> {
         let named = |url: &str| *context.spec() == ContextSpec::from_body(JsonLiteral::string(url).expect("a JSON string"));
         if named(UNRETRIEVABLE) {
             return Err(EntityError::JsonLd(JsonLdError::ContextFetchDisabled {

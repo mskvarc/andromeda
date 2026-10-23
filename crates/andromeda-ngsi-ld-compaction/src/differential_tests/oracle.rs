@@ -6,10 +6,10 @@
 //! through the terms the context defines for core terms, its expired instances
 //! dropped.
 
-use crate::core_aliases::core_term_aliases;
 use andromeda_json_literal::piece::JsonPiece;
 use andromeda_jsonld::{
     context_spec::ContextSpec,
+    core_term_aliases::core_term_aliases,
     engine::{context_compactor::ContextCompactor, expanded_text::ExpandedText, options::CompactOptions, processor::JsonLdEngine},
 };
 use andromeda_ngsi_ld_entity::entity_state::EntityState;

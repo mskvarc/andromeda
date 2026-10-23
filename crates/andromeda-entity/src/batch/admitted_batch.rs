@@ -339,7 +339,7 @@ mod tests {
     async fn term_context(service: &EntityService, contexts: &mut BatchContexts, term: &str, iri: &str) -> AdmittedBatchContext {
         contexts
             .context_of(Some(JsonLiteral::admit(&json!({ term: iri }).to_string()).expect("an admissible literal")))
-            .admit(&service.engine)
+            .admit_for_request(&service.engine)
             .await
             .expect("the context is admitted")
     }

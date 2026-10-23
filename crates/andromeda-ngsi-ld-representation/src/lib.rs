@@ -40,6 +40,11 @@
 //! the top level of an NGSI-LD document and nowhere else, and clause 4.6.4
 //! refuses a key JSON-LD expansion would drop or rewrite past recovery.
 //!
+//! [`core_term_aliases`] is the one rule for a core term written under
+//! another term: the clause 4.4 keyword spellings `@id` and `@type`, and the
+//! terms a context defines for core terms (clause 5.5.7). Every reader of a
+//! compact document applies it, a request body and a compacted entity alike.
+//!
 //! How a client *asks* for one is not here. Media-type negotiation, version
 //! conformance and language ranges arrive as HTTP headers and are spelled by
 //! the header grammars that carry them, so they live in
@@ -54,6 +59,7 @@ pub mod attribute_type_validation;
 pub mod compact_key_admission;
 pub mod compact_node;
 pub mod concise_reading;
+pub mod core_term_aliases;
 pub mod embedded_context_admission;
 pub mod family_member_admission;
 pub mod join_mode;

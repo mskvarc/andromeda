@@ -22,11 +22,13 @@ use crate::engine::processor::count_document_expansion;
 use crate::{
     context_graph::check_context_graph,
     context_spec::ContextSpec,
+    core_term_aliases::core_term_aliases,
     document_context::{ReferenceReading, resolved_context},
     engine::{context_syntax::context_syntax, processor::JsonLdEngine, processor_text::ProcessorTextError},
     error::JsonLdError,
     loader::{error::LoaderError, http::HttpContextLoader},
 };
+use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
 use iri_rs::IriBuf;
 use jsonld::{
     Context as ActiveContext,
@@ -77,6 +79,9 @@ pub struct ExpansionContext {
     /// processed on top of [`ExpansionContext::active`].
     #[debug(skip)]
     property_scoped: HashMap<Box<str>, ActiveContext<IriBuf, BlankIdBuf>>,
+    /// The terms [`ExpansionContext::active`] defines for core terms, which a
+    /// compact document written under it is read through.
+    aliases: Arc<CoreTermAliases>,
 }
 
 impl ExpansionContext {
@@ -84,6 +89,13 @@ impl ExpansionContext {
     #[must_use]
     pub const fn active(&self) -> &ActiveContext<IriBuf, BlankIdBuf> {
         &self.active
+    }
+
+    /// The terms the context defines for core terms, which a compact
+    /// document written under it is read through.
+    #[must_use]
+    pub const fn aliases(&self) -> &Arc<CoreTermAliases> {
+        &self.aliases
     }
 
     /// The active context JSON-LD 1.1 expansion switches to for an object
@@ -150,7 +162,12 @@ impl ExpansionContext {
             .map_err(processing_failure)?
             .into_processed();
         let property_scoped = property_scoped_contexts(&active, loader).await;
-        Ok(ExpansionContext { active, property_scoped })
+        let aliases = Arc::new(core_term_aliases(&active));
+        Ok(ExpansionContext {
+            active,
+            property_scoped,
+            aliases,
+        })
     }
 }
 
