@@ -8,8 +8,8 @@
 
 /// The prefix of the member names the reader reserves for its
 /// arbitrary-precision number and raw-value tokens.
-pub(crate) const SERDE_JSON_PRIVATE_MEMBER_PREFIX: &str = "$serde_json::private::";
+pub const SERDE_JSON_PRIVATE_MEMBER_PREFIX: &str = "$serde_json::private::";
 
 /// The member name the reader spells a number token with when it hands a
 /// number that is not a 64-bit integer to a visitor as a one-member map.
-pub(crate) const SERDE_JSON_PRIVATE_NUMBER_MEMBER: &str = "$serde_json::private::Number";
+pub const SERDE_JSON_PRIVATE_NUMBER_MEMBER: &str = "$serde_json::private::Number";

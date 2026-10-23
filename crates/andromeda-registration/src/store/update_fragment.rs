@@ -1,6 +1,5 @@
 //! The typed fragment one Update Context Source Registration carries (ETSI GS CIM 009 clauses 5.9.3 and 5.5.8).
 
-use crate::nullable_member::NullableMember;
 use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
@@ -13,6 +12,7 @@ use andromeda_ngsi_ld_lexicon::{
     tenant::TenantName,
 };
 use andromeda_ngsi_ld_model::{
+    clearable::Clearable,
     key_value_pair::KeyValuePair,
     registration::{forwarding_mode::ForwardingMode, info::RegistrationInfo, operation::CsrOperation},
     registration_management::RegistrationManagementInfo,
@@ -26,74 +26,75 @@ use typed_builder::TypedBuilder;
 
 /// Typed fragment for CSR updates.
 ///
-/// Every member clause 5.5.8 lets a fragment remove is a
-/// [`NullableMember`]: omitted keeps the stored value, `null` clears it and a
-/// value replaces it. The members the clause gives no removal semantics carry
-/// a plain [`Option`], where `None` simply means the fragment left them alone.
+/// Every member clause 5.5.8 lets a fragment delete is a [`Clearable`]:
+/// omitted keeps the stored value, the NGSI-LD Null deletes it and a value
+/// replaces it. The members the clause gives no deletion semantics carry a
+/// plain [`Option`], where `None` simply means the fragment left them alone.
 #[derive(Debug, Default, TypedBuilder)]
 pub struct CsrUpdateFragment {
     /// Updated registration name.
     #[builder(default = Default::default())]
-    pub registration_name: NullableMember<NonEmptyText>,
+    pub registration_name: Clearable<NonEmptyText>,
     /// Updated description.
     #[builder(default = Default::default())]
-    pub description: NullableMember<NonEmptyText>,
+    pub description: Clearable<NonEmptyText>,
     /// Updated registration information entries.
     #[builder(default = Default::default())]
     pub information: Option<Vec<RegistrationInfo>>,
     /// Updated dataset identifiers.
     #[builder(default = Default::default())]
-    pub dataset_id: NullableMember<Vec<DatasetSelector>>,
+    pub dataset_id: Clearable<Vec<DatasetSelector>>,
     /// Updated tenant identifier.
     #[builder(default = Default::default())]
-    pub tenant: NullableMember<TenantName>,
+    pub tenant: Clearable<TenantName>,
     /// Updated observation interval.
     #[builder(default = Default::default())]
-    pub observation_interval: NullableMember<TimeInterval>,
+    pub observation_interval: Clearable<TimeInterval>,
     /// Updated management interval.
     #[builder(default = Default::default())]
-    pub management_interval: NullableMember<TimeInterval>,
+    pub management_interval: Clearable<TimeInterval>,
     /// Updated `location` geometry.
     #[builder(default = Default::default())]
-    pub location: NullableMember<Geometry>,
+    pub location: Clearable<Geometry>,
     /// Updated `observationSpace` geometry.
     #[builder(default = Default::default())]
-    pub observation_space: NullableMember<Geometry>,
+    pub observation_space: Clearable<Geometry>,
     /// Updated `operationSpace` geometry.
     #[builder(default = Default::default())]
-    pub operation_space: NullableMember<Geometry>,
+    pub operation_space: Clearable<Geometry>,
     /// Updated expiration timestamp.
     #[builder(default = Default::default())]
-    pub expires_at: NullableMember<DateTime<Utc>>,
+    pub expires_at: Clearable<DateTime<Utc>>,
     /// Updated endpoint, as the producer wrote it.
     #[builder(default = Default::default())]
     pub endpoint: Option<DereferenceableUri>,
     /// Updated accepted MIME type.
     #[builder(default = Default::default())]
-    pub accept: NullableMember<MediaTypeBuf>,
+    pub accept: Clearable<MediaTypeBuf>,
     /// Updated forwarding mode.
     #[builder(default = Default::default())]
     pub mode: Option<ForwardingMode>,
     /// Updated supported operations.
     #[builder(default = Default::default())]
-    pub operations: NullableMember<Vec<CsrOperation>>,
+    pub operations: Clearable<Vec<CsrOperation>>,
     /// Updated scope values.
     #[builder(default = Default::default())]
-    pub scope: NullableMember<Vec<ScopePath>>,
+    pub scope: Clearable<Vec<ScopePath>>,
     /// Updated refresh rate duration.
     #[builder(default = Default::default())]
-    pub refresh_rate: NullableMember<Iso8601Duration>,
+    pub refresh_rate: Clearable<Iso8601Duration>,
     /// Updated management information.
     #[builder(default = Default::default())]
-    pub management: NullableMember<RegistrationManagementInfo>,
+    pub management: Clearable<RegistrationManagementInfo>,
     /// Updated context source metadata entries.
     #[builder(default = Default::default())]
-    pub context_source_info: NullableMember<Vec<KeyValuePair>>,
+    pub context_source_info: Clearable<Vec<KeyValuePair>>,
     /// Updated context source alias pseudonym.
     #[builder(default = Default::default())]
-    pub context_source_alias: NullableMember<ContextSourcePseudonym>,
-    /// The Context Source Properties the fragment sets, by the expanded name
-    /// they are stored under; each replaces the stored property of that name.
+    pub context_source_alias: Clearable<ContextSourcePseudonym>,
+    /// The Context Source Properties the fragment writes, by the expanded name
+    /// they are stored under; each replaces the stored property of that name,
+    /// or deletes it when it is the NGSI-LD Null.
     #[builder(default = Default::default())]
     pub additional_properties: IndexMap<AttributeName, JsonLiteral>,
 }

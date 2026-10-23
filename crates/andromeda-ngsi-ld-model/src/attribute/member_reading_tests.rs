@@ -10,7 +10,7 @@ use crate::{
         member_reading::MemberReading,
         value::NgsiLdValue,
     },
-    entity::Entity,
+    entity::{Entity, EntityPatch},
     node_refusal::{NodeReadError, NodeRefusal, RefusedNode},
     request_body::RequestBody,
 };
@@ -575,4 +575,54 @@ fn an_aliased_instance_reads_typed() {
         panic!("a Property: {instance:?}");
     };
     assert!(property.unit_code.is_some(), "{instance:?}");
+}
+
+/// Clause 5.2.1: no member of an attribute instance admits a JSON `null`, an
+/// optional one included, so none of them is read as absent.
+#[test]
+fn a_json_null_on_an_optional_instance_member_is_refused() {
+    for (family, value_member, value) in [
+        ("Property", "value", json!(1)),
+        ("Relationship", "object", json!("urn:ngsi-ld:Vehicle:1")),
+        ("GeoProperty", "value", json!({"type": "Point", "coordinates": [1, 2]})),
+    ] {
+        for member in [
+            "observedAt",
+            "datasetId",
+            "instanceId",
+            "unitCode",
+            "valueType",
+            "objectType",
+            "expiresAt",
+            "previousValue",
+            "previousObject",
+        ] {
+            let mut instance = json!({"type": family});
+            instance[value_member] = value.clone(); // clone: each instance carries the family's value
+            instance[member] = Value::Null;
+            assert!(read("speed", &instance).is_err(), "{family}.{member}");
+        }
+    }
+}
+
+/// Clause 5.2.1: no member of an entity admits a JSON `null`, an optional one
+/// included, whole or partial.
+#[test]
+fn a_json_null_on_an_optional_entity_member_is_refused() {
+    for member in ["scope", "expiresAt", "location", "observationSpace", "operationSpace"] {
+        let mut entity = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle"});
+        entity[member] = Value::Null;
+        assert!(
+            <Entity>::from_request_text(entity.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).is_err(),
+            "{member}"
+        );
+    }
+    for member in ["id", "type", "scope", "location"] {
+        let mut patch = json!({"speed": {"type": "Property", "value": 1}});
+        patch[member] = Value::Null;
+        assert!(
+            <EntityPatch>::from_request_text(patch.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).is_err(),
+            "{member}"
+        );
+    }
 }

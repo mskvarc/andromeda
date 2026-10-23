@@ -76,6 +76,58 @@ fn a_json_literal_member_keeps_its_aliased_keys() {
     pretty_assertions::assert_eq!(read.maybe, Some(JsonLiteral::admit(r#"["v", {"@id": 1}]"#).expect("a literal")));
 }
 
+/// `text` decoded as a `T` through [`aliases`], or the reader's refusal.
+fn attempt<T: DeserializeOwned>(text: &str) -> Result<T, serde_json::Error> {
+    let aliases = aliases();
+    let mut reader = serde_json::Deserializer::from_str(text);
+    T::deserialize(AliasedDeserializer::new(&mut reader, &aliases))
+}
+
+/// A resource whose one member reads as a unit.
+#[derive(Debug, Deserialize)]
+struct UnitMember {
+    #[serde(rename = "value")]
+    _value: (),
+}
+
+/// Clause 5.2.1: no member admits a JSON `null`, whether the type reads it as
+/// an optional value, as a unit or as any JSON value, at any depth.
+#[test]
+fn a_json_null_is_refused_at_every_depth() {
+    for text in [r#"{"value": null}"#, r#"{"outer": {"value": null}}"#, r#"{"outer": [1, null]}"#] {
+        let refusal = attempt::<BTreeMap<String, serde_json::Value>>(text).expect_err("a JSON null is no value");
+        assert!(refusal.to_string().starts_with("invalid type: null"), "{text}: {refusal}");
+    }
+    assert!(attempt::<BTreeMap<String, Option<u8>>>(r#"{"value": null}"#).is_err());
+    assert!(attempt::<UnitMember>(r#"{"value": null}"#).is_err());
+    pretty_assertions::assert_eq!(
+        attempt::<BTreeMap<String, Option<u8>>>(r#"{"value": 1}"#).ok(),
+        Some(BTreeMap::from([("value".to_owned(), Some(1))]))
+    );
+}
+
+/// A member the resource does not read is skipped whatever it holds.
+#[test]
+fn a_member_the_resource_skips_is_not_read() {
+    #[derive(Debug, Deserialize)]
+    struct Skipping {
+        #[serde(rename = "value")]
+        _value: u8,
+    }
+
+    for text in [r#"{"value": 1, "status": null}"#, r#"{"value": 1, "status": {"a": [null, "x"]}}"#] {
+        assert!(attempt::<Skipping>(text).is_ok(), "{text}");
+    }
+}
+
+/// What a body captures as JSON of its own is data, a `null` in it included.
+#[test]
+fn a_json_null_inside_a_captured_literal_is_data() {
+    let read = read::<Literal>(r#"{"v": {"a": null}, "maybe": [null]}"#);
+    pretty_assertions::assert_eq!(read.value, JsonLiteral::admit(r#"{"a": null}"#).expect("a literal"));
+    pretty_assertions::assert_eq!(read.maybe, Some(JsonLiteral::admit("[null]").expect("a literal")));
+}
+
 /// A member name a number decodes from is read as written.
 #[test]
 fn numeric_member_names_and_numbers_are_read_as_written() {

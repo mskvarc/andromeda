@@ -38,11 +38,10 @@ pub enum SubscriptionValidationReason {
     /// on without inverting the layering, so its refusal arrives classified.
     #[error(transparent)]
     EndpointRejected(EndpointRefusal),
-    /// A create body wrote a member as a null, a JSON `null` or the NGSI-LD
-    /// Null `urn:ngsi-ld:null`. Clause 5.2.1 makes a null outside the update
-    /// clauses 5.5.8 and 5.5.12 `BadRequestData`, and a create has no member to
-    /// delete.
-    #[error("{0} must not be null in a creation request, which has no member to delete")]
+    /// A create body wrote a member as the NGSI-LD Null `urn:ngsi-ld:null`.
+    /// Clause 5.2.1 makes the Null outside the update clauses 5.5.8 and 5.5.12
+    /// `BadRequestData`, and a create has no member to delete.
+    #[error("{0} must not be the NGSI-LD Null in a creation request, which has no member to delete")]
     NullOnCreate(SubscriptionMember),
     /// `expiresAt` was in the past (clauses 5.8.1.4, 5.8.2.4).
     #[error("expiresAt must be in the future")]

@@ -18,15 +18,14 @@
 use crate::{
     attribute::{
         instance::{Attribute, AttributeValue},
-        instance_member::ReadError,
+        instance_member::{ReadError, present_member},
         key_screening::{member_segment, screen_keys_in_instances},
         member_decoding::refusal,
     },
     attribute_strip::AttributeStrip,
-    compact_member::decoded_optional,
     entity::EntityPatch,
     entity_type::EntityTypeValue,
-    node_refusal::{NodeReadError, NodeRefusal, RefusedMember},
+    node_refusal::{NodeRefusal, RefusedMember},
     request_body::RequestBody,
     scope_member::ScopeMember,
     temporal::simplified_unfold::instances_of,
@@ -240,11 +239,10 @@ impl RequestBody for WrittenTemporalEntity {
     }
 }
 
-/// Read a member that may be absent or `null`.
+/// Read a member the node writes: a JSON `null` is no value of any member
+/// (clause 5.2.1).
 fn optional<'n, T: DeserializeOwned, N: CompactNode<'n>>(node: N, name: RefusedMember) -> Result<Option<T>, ReadError<'n, N>> {
-    decoded_optional(node)
-        .map_err(NodeReadError::Unreadable)?
-        .map_err(|source| NodeRefusal::Member { member: name, source }.into())
+    present_member(node, name).map(Some)
 }
 
 /// The Scope a node writes: a history of instances when it is one object or an

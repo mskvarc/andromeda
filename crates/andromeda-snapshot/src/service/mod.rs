@@ -27,10 +27,11 @@ use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{context_spec::ContextSpec, user_context_admission::AdmittedContext};
 use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, identifier::Identifier, ngsi_ld_urn::SnapshotId, time::system_instant::SystemInstant};
 use andromeda_ngsi_ld_model::{
+    clearable::Clearable,
     snapshot::{Snapshot, SnapshotStatus},
     snapshot_clone::SnapshotCloneInput,
     snapshot_input::SnapshotInput,
-    snapshot_patch::{MergePatchValue, SnapshotPatch},
+    snapshot_patch::SnapshotPatch,
 };
 use chrono::{DateTime, Utc};
 use std::{sync::Arc, time::Duration};
@@ -218,20 +219,20 @@ impl SnapshotService {
         if patch.id.as_ref().is_some_and(|patch_id| patch_id != id) {
             return Err(SnapshotValidationReason::IdImmutable.into());
         }
-        if !matches!(patch.snapshot_queries, MergePatchValue::Absent) || !matches!(patch.snapshot_temporal_queries, MergePatchValue::Absent) {
+        if !patch.snapshot_queries.is_absent() || !patch.snapshot_temporal_queries.is_absent() {
             return Err(SnapshotValidationReason::QueryDefinitionsImmutable.into());
         }
 
         let patch_priority = patch.snapshot_priority;
         let endpoint = match &patch.endpoint {
-            MergePatchValue::Absent => None,
-            MergePatchValue::Null => Some(None),
-            MergePatchValue::Value(endpoint) => Some(Some(endpoint)),
+            Clearable::Absent => None,
+            Clearable::NgsiLdNull => Some(None),
+            Clearable::Set(endpoint) => Some(Some(endpoint)),
         };
         let receiver_info = match patch.receiver_info {
-            MergePatchValue::Absent => None,
-            MergePatchValue::Null => Some(None),
-            MergePatchValue::Value(receiver_info) => Some(Some(receiver_info)),
+            Clearable::Absent => None,
+            Clearable::NgsiLdNull => Some(None),
+            Clearable::Set(receiver_info) => Some(Some(receiver_info)),
         };
 
         let effective_lifetime = patch

@@ -20,12 +20,12 @@ pub const fn requested_status_change(request: &SubscriptionRequest) -> StatusUpd
     StatusUpdateFields {
         is_active: match &request.is_active {
             Clearable::Set(is_active) => Some(*is_active),
-            Clearable::Cleared | Clearable::NgsiLdNull => Some(true),
+            Clearable::NgsiLdNull => Some(true),
             Clearable::Absent => None,
         },
         expires_at: match &request.expires_at {
             Clearable::Set(expires_at) => Some(*expires_at),
-            Clearable::Absent | Clearable::Cleared | Clearable::NgsiLdNull => None,
+            Clearable::Absent | Clearable::NgsiLdNull => None,
         },
     }
 }
@@ -165,8 +165,8 @@ mod tests {
     #[test]
     fn a_deleted_member_is_the_default_or_a_member_that_is_not_present() {
         let cleared = super::requested_status_change(&SubscriptionRequest {
-            is_active: Clearable::Cleared,
-            expires_at: Clearable::Cleared,
+            is_active: Clearable::NgsiLdNull,
+            expires_at: Clearable::NgsiLdNull,
             ..SubscriptionRequest::default()
         });
         pretty_assertions::assert_eq!(cleared.is_active, Some(true));
@@ -178,7 +178,7 @@ mod tests {
     #[test]
     fn a_deleted_is_active_reactivates_a_paused_subscription_but_not_an_expired_one() {
         let cleared = super::requested_status_change(&SubscriptionRequest {
-            is_active: Clearable::Cleared,
+            is_active: Clearable::NgsiLdNull,
             ..SubscriptionRequest::default()
         });
         pretty_assertions::assert_eq!(compute_updated_status(SubscriptionStatus::Paused, &cleared), SubscriptionStatus::Active);
@@ -190,7 +190,7 @@ mod tests {
     #[test]
     fn a_deleted_expires_at_alone_leaves_the_status() {
         let cleared = super::requested_status_change(&SubscriptionRequest {
-            expires_at: Clearable::Cleared,
+            expires_at: Clearable::NgsiLdNull,
             ..SubscriptionRequest::default()
         });
         pretty_assertions::assert_eq!(compute_updated_status(SubscriptionStatus::Active, &cleared), SubscriptionStatus::Active);

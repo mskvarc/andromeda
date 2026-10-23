@@ -14,8 +14,8 @@
 //! exactly as the family's own members are in a decoded document.
 
 use crate::{
-    attribute::{common_fields::CommonAttributeFields, instance::AttributeValue, member_reading::MemberReading},
-    compact_member::decoded_optional,
+    attribute::{common_fields::CommonAttributeFields, instance::AttributeValue, instance_node::required, member_reading::MemberReading},
+    compact_member::decoded,
     node_refusal::{NodeReadError, NodeRefusal, RefusedMember},
 };
 use andromeda_ngsi_ld_lexicon::{
@@ -28,7 +28,7 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_ngsi_ld_representation::{
     attribute_type_validation::AttributeNodeFault,
-    compact_node::{CompactNode, NodeMembers},
+    compact_node::{CompactNode, NodeMembers, NodeShape},
     family_member_admission::{MemberAdmission, prohibited_member},
     proof_seal_admission::{ProofSealMember, proof_seal_admission},
 };
@@ -281,19 +281,22 @@ fn attribute_name(attribute: &str) -> Result<AttributeName, NodeRefusal> {
 }
 
 /// Decode the `unitCode` of an instance of the attribute named `attribute`:
-/// absent and `null` are no unit, and one that is no UN/CEFACT common code
-/// refuses the instance (Table 5.2.5-1).
+/// absent is no unit, a JSON `null` is no value of any member (clause 5.2.1),
+/// and one that is no UN/CEFACT common code refuses the instance (Table
+/// 5.2.5-1).
 ///
 /// # Errors
 ///
-/// Returns [`NodeRefusal::UnitCodeUnusable`] for a member that does not decode
-/// as a common code, and the node's [`CompactNode::Unreadable`].
+/// Returns [`NodeRefusal::Null`] for a `null` member,
+/// [`NodeRefusal::UnitCodeUnusable`] for a member that does not decode as a
+/// common code, and the node's [`CompactNode::Unreadable`].
 pub(crate) fn unit_code_member<'n, N: CompactNode<'n>>(attribute: &str, member: Option<N>) -> Result<Option<UnitCode>, ReadError<'n, N>> {
     let Some(member) = member else {
         return Ok(None);
     };
-    match decoded_optional::<UnitCode, N>(member).map_err(NodeReadError::Unreadable)? {
-        Ok(unit_code) => Ok(unit_code),
+    let member = required(member, RefusedMember::UnitCode)?;
+    match decoded::<UnitCode, N>(member).map_err(NodeReadError::Unreadable)? {
+        Ok(unit_code) => Ok(Some(unit_code)),
         Err(source) => Err(refused_member::<N>(
             RefusedMember::UnitCode,
             NodeRefusal::UnitCodeUnusable {
@@ -309,19 +312,34 @@ pub(crate) fn refused_member<'n, N: CompactNode<'n>>(member: RefusedMember, refu
     ReadError::<N>::from(refusal).within_member(&member.to_string())
 }
 
-/// Decode an optional member: absent and `null` are no value.
+/// Decode a member that is present as a `T`, the refusal left for the caller
+/// to locate: a JSON `null` is no value of any member (clause 5.2.1).
 ///
 /// # Errors
 ///
-/// Returns [`NodeRefusal::Member`] when the member does not decode as a `T`,
-/// and the node's [`CompactNode::Unreadable`].
+/// Returns [`NodeRefusal::Null`] for a `null` member, [`NodeRefusal::Member`]
+/// when the member does not decode as a `T`, and the node's
+/// [`CompactNode::Unreadable`].
+pub(crate) fn present_member<'n, T: DeserializeOwned, N: CompactNode<'n>>(member: N, name: RefusedMember) -> Result<T, ReadError<'n, N>> {
+    match member.shape() {
+        NodeShape::Null => Err(NodeRefusal::Null.into()),
+        NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Array(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => {
+            decoded(member)
+                .map_err(NodeReadError::Unreadable)?
+                .map_err(|source| NodeRefusal::Member { member: name, source }.into())
+        }
+    }
+}
+
+/// Decode an optional member, located at it: absent is no value.
+///
+/// # Errors
+///
+/// As [`present_member`].
 pub(crate) fn optional_member<'n, T: DeserializeOwned, N: CompactNode<'n>>(member: Option<N>, name: RefusedMember) -> Result<Option<T>, ReadError<'n, N>> {
-    let Some(member) = member else {
-        return Ok(None);
-    };
-    decoded_optional(member)
-        .map_err(NodeReadError::Unreadable)?
-        .map_err(|source| refused_member::<N>(name, NodeRefusal::Member { member: name, source }))
+    member
+        .map(|member| present_member(member, name).map_err(|error| error.within_member(&name.to_string())))
+        .transpose()
 }
 
 /// Read an optional instant member (`observedAt`, `expiresAt`, a system

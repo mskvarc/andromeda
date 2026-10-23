@@ -8,10 +8,7 @@
 //! 5.2.14.2-1 (`timesSent`, `lastNotification`, ...) are accepted and ignored
 //! as clause 5.8.2.4 requires: the broker supplies them on every read.
 
-use crate::{
-    non_null_member,
-    subscription::{Endpoint, NotificationParams},
-};
+use crate::subscription::{Endpoint, NotificationParams};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::projection::grammar::ProjectionList;
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
@@ -36,7 +33,7 @@ pub enum NotificationRequestError {
 #[builder(field_defaults(default = Default::default()))]
 pub struct NotificationRequest {
     /// Attributes to include in notifications (empty means all).
-    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "non_null_member::deserialize")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attributes: Option<Vec<AttributeName>>,
     /// Representation format for notification payloads.
     #[serde(default, skip_serializing_if = "Option::is_none")]

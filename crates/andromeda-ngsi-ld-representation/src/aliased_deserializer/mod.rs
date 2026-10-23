@@ -1,14 +1,17 @@
-//! A request body decoded under the core terms its member names alias.
+//! A request body decoded under the core terms its member names alias, with
+//! no JSON `null` in it.
 //!
 //! [`CoreTermAliases`] is the one rule for a core term written under another
 //! term; [`AliasedNode`](crate::compact_node::aliased_node::AliasedNode)
 //! applies it to a node walked in place, and [`AliasedDeserializer`] applies
 //! it to a body decoded straight from its text into a typed resource. At every
 //! depth each member name is read as the core term it stands for, and each
-//! string of a `type` member as the class it names. A value the resource
-//! captures as JSON of its own (a `JsonLiteral`, a `serde_json` raw value) is
-//! handed over as written: what a document holds as JSON is never renamed
-//! inside.
+//! string of a `type` member as the class it names. A JSON `null` at any depth
+//! is refused: clause 5.2.1 admits no null value for a member of any data
+//! type, and an update deletes a member with the NGSI-LD Null instead (clause
+//! 4.5.0). A value the resource captures as JSON of its own (a `JsonLiteral`,
+//! a `serde_json` raw value) is handed over as written: what a document holds
+//! as JSON is never renamed inside, and may hold a `null` as data.
 
 mod aliased_access;
 mod aliased_visitor;
@@ -139,8 +142,14 @@ impl<'de, D: Deserializer<'de>> Deserializer<'de> for AliasedDeserializer<'_, '_
         deserialize_seq,
         deserialize_map,
         deserialize_identifier,
-        deserialize_ignored_any,
     );
+
+    // A member the resource does not read is skipped as written: no name in it
+    // is read, and `serde_json` reports every skipped value as a unit, which is
+    // no `null` the body holds.
+    fn deserialize_ignored_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, D::Error> {
+        self.inner.deserialize_ignored_any(visitor)
+    }
 
     fn deserialize_unit_struct<V: Visitor<'de>>(self, name: &'static str, visitor: V) -> Result<V::Value, D::Error> {
         let (inner, visitor) = self.split(visitor);

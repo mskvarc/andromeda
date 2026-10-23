@@ -10,7 +10,7 @@ use crate::{
     },
     core_term_aliases::CoreTermAliases,
 };
-use serde::de::{DeserializeSeed, Deserializer, EnumAccess, Error as DeserializeError, MapAccess, SeqAccess, Visitor};
+use serde::de::{DeserializeSeed, Deserializer, EnumAccess, Error as DeserializeError, MapAccess, SeqAccess, Unexpected, Visitor};
 use std::{borrow::Cow, fmt};
 
 /// A visitor handed what a deserializer delivers read through the aliases.
@@ -98,12 +98,15 @@ impl<'de, V: Visitor<'de>> Visitor<'de> for AliasedVisitor<'_, '_, V> {
         }
     }
 
+    // Clause 5.2.1: "None of the members described admit a null value
+    // directly", so a JSON `null` is refused wherever the body holds it; a value
+    // captured as JSON of its own never reaches this visitor.
     fn visit_none<E: DeserializeError>(self) -> Result<V::Value, E> {
-        self.visitor.visit_none()
+        Err(E::invalid_type(Unexpected::Unit, &self.visitor))
     }
 
     fn visit_unit<E: DeserializeError>(self) -> Result<V::Value, E> {
-        self.visitor.visit_unit()
+        Err(E::invalid_type(Unexpected::Unit, &self.visitor))
     }
 
     fn visit_some<D: Deserializer<'de>>(self, deserializer: D) -> Result<V::Value, D::Error> {

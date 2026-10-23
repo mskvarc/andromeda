@@ -6,7 +6,7 @@
 //! a member read from a compact node becomes exactly what the same member of a
 //! decoded document becomes.
 
-use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeShape};
+use andromeda_ngsi_ld_representation::compact_node::CompactNode;
 use serde::de::DeserializeOwned;
 use serde_json::Error as JsonError;
 
@@ -20,26 +20,9 @@ pub(crate) fn decoded<'n, T: DeserializeOwned, N: CompactNode<'n>>(node: N) -> R
     node.decoded()
 }
 
-/// Decode `node` as an optional `T`: `null` is no value.
-///
-/// # Errors
-///
-/// As [`decoded`].
-pub(crate) fn decoded_optional<'n, T: DeserializeOwned, N: CompactNode<'n>>(node: N) -> Result<Result<Option<T>, JsonError>, N::Unreadable> {
-    match node.shape() {
-        NodeShape::Null => Ok(Ok(None)),
-        NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Array(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => {
-            decoded(node).map(|decoded| decoded.map(Some))
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::{
-        attribute::object_list::RelationshipObjectList,
-        compact_member::{decoded, decoded_optional},
-    };
+    use crate::{attribute::object_list::RelationshipObjectList, compact_member::decoded};
     use andromeda_json_literal::piece::JsonPiece;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use cefact_units::UnitCode;
@@ -59,9 +42,9 @@ mod tests {
     }
 
     #[test]
-    fn null_is_no_optional_value_and_no_required_one() {
+    fn null_is_no_value() {
         let null = written(&Value::Null);
-        assert!(matches!(decoded_optional::<Identifier, _>(JsonPiece::new(&null)), Ok(Ok(None))));
+        assert!(decoded::<Identifier, _>(JsonPiece::new(&null)).expect("null is readable").is_err());
         assert!(decoded::<RelationshipObjectList, _>(JsonPiece::new(&null)).expect("null is readable").is_err());
     }
 }

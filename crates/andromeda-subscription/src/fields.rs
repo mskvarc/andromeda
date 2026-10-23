@@ -160,7 +160,7 @@ impl SubscriptionWriteValues {
 
     /// The values an update fragment describes once merged over `existing`
     /// (clause 5.5.8): a member the fragment leaves out keeps its stored value,
-    /// a member it sets replaces it, and a `null` deletes it, so a deleted
+    /// a member it sets replaces it, and the NGSI-LD Null deletes it, so a deleted
     /// `isActive` or `localOnly` takes the default Table 5.2.12-1 gives it and
     /// a deleted `expiresAt` leaves a subscription that never expires.
     ///
@@ -384,14 +384,14 @@ mod tests {
         Ok(())
     }
 
-    /// An explicit `null` is how a fragment names a member it wants gone, the
+    /// The NGSI-LD Null is how a fragment names a member it wants gone, the
     /// same way `geoQ` and `temporalQ` are removed. Without it an opt-in list
     /// could be replaced but never cleared.
     #[test]
-    fn an_explicit_null_clears_a_stored_member() -> Result<(), SubscriptionError> {
-        let merged = merged(&json!({"expandValues": null, "geoQ": null, "temporalQ": null}))?;
+    fn the_ngsi_ld_null_clears_a_stored_member() -> Result<(), SubscriptionError> {
+        let merged = merged(&json!({"expandValues": "urn:ngsi-ld:null", "geoQ": "urn:ngsi-ld:null", "temporalQ": "urn:ngsi-ld:null"}))?;
 
-        assert!(merged.expand_values.is_none(), "an explicit null removes the member");
+        assert!(merged.expand_values.is_none(), "the NGSI-LD Null removes the member");
         assert!(merged.geo_q.is_none() && merged.temporal_q.is_none());
         pretty_assertions::assert_eq!(spelled(merged.json_keys.as_deref()), vec!["status"]);
         Ok(())
@@ -416,30 +416,31 @@ mod tests {
     /// target member is deleted". `subscriptionName` and `description` have
     /// cardinality `0..1`, and the members the fragment does not name stay.
     #[test]
-    fn a_null_deletes_the_name_and_the_description() -> Result<(), SubscriptionError> {
+    fn the_ngsi_ld_null_deletes_the_name_and_the_description() -> Result<(), SubscriptionError> {
         let existing = stored_with(&json!({"subscriptionName": "speeding", "description": "vehicles over the limit"}));
 
-        let merged = merged_over(existing, &json!({"subscriptionName": null}))?;
+        let merged = merged_over(existing, &json!({"subscriptionName": "urn:ngsi-ld:null"}))?;
         assert!(merged.subscription_name.is_none());
         pretty_assertions::assert_eq!(merged.description.as_deref(), Some("vehicles over the limit"));
 
         let existing = stored_with(&json!({"subscriptionName": "speeding", "description": "vehicles over the limit"}));
-        let merged = merged_over(existing, &json!({"description": null}))?;
+        let merged = merged_over(existing, &json!({"description": "urn:ngsi-ld:null"}))?;
         assert!(merged.description.is_none());
         pretty_assertions::assert_eq!(merged.subscription_name.as_deref(), Some("speeding"));
         Ok(())
     }
 
     /// Clause 5.5.8: `timeInterval` and `throttling` (cardinality `0..1`) are
-    /// deleted by a `null`, and a fragment that leaves them out keeps them.
+    /// deleted by the NGSI-LD Null, and a fragment that leaves them out keeps
+    /// them.
     #[test]
-    fn a_null_deletes_the_time_interval_and_the_throttling() -> Result<(), SubscriptionError> {
+    fn the_ngsi_ld_null_deletes_the_time_interval_and_the_throttling() -> Result<(), SubscriptionError> {
         let periodic = || stored_with(&json!({"timeInterval": 30}));
-        assert!(merged_over(periodic(), &json!({"timeInterval": null}))?.time_interval.is_none());
+        assert!(merged_over(periodic(), &json!({"timeInterval": "urn:ngsi-ld:null"}))?.time_interval.is_none());
         pretty_assertions::assert_eq!(merged_over(periodic(), &json!({"q": "speed>2"}))?.time_interval, Some(30.0));
 
         let throttled = || stored_with(&json!({"throttling": 2.5}));
-        assert!(merged_over(throttled(), &json!({"throttling": null}))?.throttling.is_none());
+        assert!(merged_over(throttled(), &json!({"throttling": "urn:ngsi-ld:null"}))?.throttling.is_none());
         pretty_assertions::assert_eq!(merged_over(throttled(), &json!({"q": "speed>2"}))?.throttling, Some(2.5));
         Ok(())
     }
@@ -448,9 +449,9 @@ mod tests {
     /// subscription that never expires, which is what the stored write sees; a
     /// fragment that does not name it keeps the expiry.
     #[test]
-    fn a_null_deletes_the_expiry() -> Result<(), SubscriptionError> {
+    fn the_ngsi_ld_null_deletes_the_expiry() -> Result<(), SubscriptionError> {
         let expiring = || stored_with(&json!({"expiresAt": "2099-01-01T00:00:00Z"}));
-        assert!(merged_over(expiring(), &json!({"expiresAt": null}))?.expires_at.is_none());
+        assert!(merged_over(expiring(), &json!({"expiresAt": "urn:ngsi-ld:null"}))?.expires_at.is_none());
         assert!(merged_over(expiring(), &json!({"q": "speed>2"}))?.expires_at.is_some());
         Ok(())
     }
@@ -458,21 +459,21 @@ mod tests {
     /// Clause 5.5.8 with Table 5.2.12-1: a deleted `isActive` is the default
     /// `true`, and a deleted `localOnly` is `false`.
     #[test]
-    fn a_null_returns_is_active_and_local_only_to_their_defaults() -> Result<(), SubscriptionError> {
+    fn the_ngsi_ld_null_returns_is_active_and_local_only_to_their_defaults() -> Result<(), SubscriptionError> {
         let existing = || stored_with(&json!({"isActive": false, "localOnly": true}));
         let kept = merged_over(existing(), &json!({"q": "speed>2"}))?;
         assert!(!kept.is_active && kept.local_only);
 
-        let deleted = merged_over(existing(), &json!({"isActive": null, "localOnly": null}))?;
+        let deleted = merged_over(existing(), &json!({"isActive": "urn:ngsi-ld:null", "localOnly": "urn:ngsi-ld:null"}))?;
         assert!(deleted.is_active && !deleted.local_only);
         Ok(())
     }
 
     /// Clause 5.5.8: `splitEntities`, `lang`, `jsonldContext` and
-    /// `ngsildConformance` (cardinality `0..1`) are deleted by a `null`, and
-    /// the two URI members also by the URI `urn:ngsi-ld:null` of clause 4.5.0.
+    /// `ngsildConformance` (cardinality `0..1`) are deleted by the NGSI-LD Null
+    /// of clause 4.5.0, whatever their data type.
     #[test]
-    fn a_null_deletes_the_delivery_members() -> Result<(), SubscriptionError> {
+    fn the_ngsi_ld_null_deletes_the_delivery_members() -> Result<(), SubscriptionError> {
         let existing = || {
             stored_with(&json!({
                 "splitEntities": true,
@@ -485,7 +486,7 @@ mod tests {
         assert!(kept.split_entities.is_some() && kept.lang.is_some() && kept.jsonld_context.is_some() && kept.ngsild_conformance.is_some());
 
         for member in ["splitEntities", "lang", "jsonldContext", "ngsildConformance"] {
-            let deleted = merged_over(existing(), &json!({ member: null }))?;
+            let deleted = merged_over(existing(), &json!({ member: "urn:ngsi-ld:null" }))?;
             let remaining = [
                 deleted.split_entities.is_some(),
                 deleted.lang.is_some(),
@@ -496,21 +497,22 @@ mod tests {
             pretty_assertions::assert_eq!(remaining, expected, "{member}");
         }
 
-        let deleted = merged_over(existing(), &json!({"jsonldContext": "urn:ngsi-ld:null"}))?;
-        assert!(deleted.jsonld_context.is_none() && deleted.lang.is_some());
         Ok(())
     }
 
     /// Clause 5.5.8: the filters `q`, `scopeQ`, `csf` and `datasetId` (cardinality
-    /// `0..1`) are deleted by a `null`, `datasetId` also by an array of one
-    /// NGSI-LD Null (clause 4.5.0), and one the fragment leaves out stays.
+    /// `0..1`) are deleted by the NGSI-LD Null, `datasetId` also by an array of
+    /// one NGSI-LD Null (clause 4.5.0), and one the fragment leaves out stays.
     #[test]
-    fn a_null_deletes_the_filters() -> Result<(), SubscriptionError> {
+    fn the_ngsi_ld_null_deletes_the_filters() -> Result<(), SubscriptionError> {
         let existing = || stored_with(&json!({"scopeQ": "/Madrid", "csf": "tier==\"gold\"", "datasetId": ["urn:ngsi-ld:Dataset:one"]}));
         let kept = merged_over(existing(), &json!({"description": "d"}))?;
         assert!(kept.q.is_some() && kept.scope_q.is_some() && kept.csf.is_some() && kept.dataset_id.is_some());
 
-        let deleted = merged_over(existing(), &json!({"q": null, "scopeQ": null, "csf": null, "datasetId": null}))?;
+        let deleted = merged_over(
+            existing(),
+            &json!({"q": "urn:ngsi-ld:null", "scopeQ": "urn:ngsi-ld:null", "csf": "urn:ngsi-ld:null", "datasetId": "urn:ngsi-ld:null"}),
+        )?;
         assert!(deleted.q.is_none() && deleted.scope_q.is_none() && deleted.csf.is_none() && deleted.dataset_id.is_none());
 
         let deleted = merged_over(existing(), &json!({"datasetId": ["urn:ngsi-ld:null"]}))?;
@@ -519,12 +521,12 @@ mod tests {
     }
 
     /// Clause 5.5.8 with Table 5.2.12-1: `entities` and `watchedAttributes` have
-    /// cardinality `0..1`, so a `null` deletes either, but the subscription
+    /// cardinality `0..1`, so the NGSI-LD Null deletes either, but the subscription
     /// that remains needs one of them unless it is `localOnly` (clause 5.2.12),
     /// so deleting the only selector is refused once merged.
     #[test]
-    fn a_null_deletes_a_selector_only_while_another_remains() -> Result<(), SubscriptionError> {
-        let only_entities = merged_over(stored(), &json!({"entities": null}))?;
+    fn the_ngsi_ld_null_deletes_a_selector_only_while_another_remains() -> Result<(), SubscriptionError> {
+        let only_entities = merged_over(stored(), &json!({"entities": "urn:ngsi-ld:null"}))?;
         assert!(only_entities.entities.is_none());
         assert!(matches!(
             validate_merged_subscription(&only_entities),
@@ -532,38 +534,47 @@ mod tests {
         ));
 
         let both = || stored_with(&json!({"watchedAttributes": ["https://example.com/speed"]}));
-        let without_entities = merged_over(both(), &json!({"entities": null}))?;
+        let without_entities = merged_over(both(), &json!({"entities": "urn:ngsi-ld:null"}))?;
         assert!(without_entities.entities.is_none() && without_entities.watched_attributes.is_some());
         validate_merged_subscription(&without_entities)?;
 
-        let without_watched = merged_over(both(), &json!({"watchedAttributes": null}))?;
+        let without_watched = merged_over(both(), &json!({"watchedAttributes": "urn:ngsi-ld:null"}))?;
         assert!(without_watched.watched_attributes.is_none() && without_watched.entities.is_some());
         validate_merged_subscription(&without_watched)?;
 
-        let local = merged_over(stored_with(&json!({"localOnly": true})), &json!({"entities": null}))?;
+        let local = merged_over(stored_with(&json!({"localOnly": true})), &json!({"entities": "urn:ngsi-ld:null"}))?;
         validate_merged_subscription(&local)
     }
 
     /// Clause 5.5.8: `notificationTrigger` has cardinality `0..1` and a
-    /// default, so a `null` deletes it.
+    /// default, so the NGSI-LD Null deletes it.
     #[test]
-    fn a_null_deletes_the_notification_trigger() -> Result<(), SubscriptionError> {
+    fn the_ngsi_ld_null_deletes_the_notification_trigger() -> Result<(), SubscriptionError> {
         let existing = stored_with(&json!({"notificationTrigger": ["entityCreated"]}));
-        assert!(merged_over(existing, &json!({"notificationTrigger": null}))?.notification_trigger.is_none());
+        assert!(
+            merged_over(existing, &json!({"notificationTrigger": "urn:ngsi-ld:null"}))?
+                .notification_trigger
+                .is_none()
+        );
         Ok(())
     }
 
     /// Table 5.2.12-1 gives `notification` cardinality `1`, so it cannot be
-    /// deleted: a `null` for it, for the `type` or for the `id` is refused when
-    /// the body is read (clause 5.5.4), and the stored notification is never
-    /// dropped.
+    /// deleted: the NGSI-LD Null for it or for the `type` is refused when the
+    /// body is read (clause 5.5.4), and so is a JSON `null` for them or for
+    /// the `id` (clause 5.2.1), so the stored notification is never dropped.
     #[test]
     fn a_null_for_a_member_that_cannot_be_deleted_is_refused() {
-        for member in ["notification", "type", "id"] {
-            let body = json!({ member: null });
+        for body in [
+            json!({"notification": null}),
+            json!({"type": null}),
+            json!({"id": null}),
+            json!({"notification": "urn:ngsi-ld:null"}),
+            json!({"type": "urn:ngsi-ld:null"}),
+        ] {
             assert!(
                 SubscriptionRequest::from_request_text(body.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).is_err(),
-                "{member}"
+                "{body}"
             );
         }
     }
@@ -629,12 +640,12 @@ mod tests {
     /// Anything outside the `major.minor` form Table 5.2.12-1 defines is
     /// syntactically incorrect according to the API data type definition, and
     /// clause 5.5.4 makes that `BadRequestData` rather than a dropped member;
-    /// the request model refuses it when the body is read. A `null` is not
-    /// among them: clause 5.5.8 makes it the deletion of the member, which
-    /// [`a_null_deletes_the_delivery_members`] pins.
+    /// the request model refuses it when the body is read. The NGSI-LD Null is
+    /// not among them: clause 5.5.8 makes it the deletion of the member, which
+    /// [`the_ngsi_ld_null_deletes_the_delivery_members`] pins.
     #[test]
     fn a_malformed_ngsild_conformance_is_refused_when_the_body_is_read() {
-        for token in [json!("1"), json!("1.2.3"), json!("abc"), json!(""), json!("v1.4"), json!(1.4)] {
+        for token in [json!("1"), json!("1.2.3"), json!("abc"), json!(""), json!("v1.4"), json!(1.4), json!(null)] {
             let body = json!({"ngsildConformance": token});
             assert!(
                 SubscriptionRequest::from_request_text(body.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).is_err(),

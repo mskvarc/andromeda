@@ -1,77 +1,47 @@
-//! Merge-patch model for Snapshot metadata updates.
+//! The Snapshot Fragment of an Update Snapshot Status (clause 5.16.4).
+//!
+//! Clause 5.16.4.4 modifies the target Snapshot "as mandated by clause 5.5.8",
+//! so a member written as the NGSI-LD Null is deleted and a JSON `null` is no
+//! value of any member (clause 5.2.1).
 
 use crate::{
+    clearable::Clearable,
+    clearable_array,
     key_value_pair::KeyValuePair,
     snapshot::{SnapshotPriority, SnapshotType},
 };
 use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, identifier::Identifier};
-use serde::{Deserialize, Deserializer, de::IgnoredAny};
+use serde::{Deserialize, de::IgnoredAny};
 use url::Url;
-
-/// Presence-aware JSON merge-patch member.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum MergePatchValue<T> {
-    /// The member was omitted and must remain unchanged.
-    #[default]
-    Absent,
-    /// The member was present as JSON null and must be removed.
-    Null,
-    /// The member was present with a replacement value.
-    Value(T),
-}
-
-impl<'de, T> Deserialize<'de> for MergePatchValue<T>
-where
-    T: Deserialize<'de>,
-{
-    fn deserialize<D>(deserializer: D) -> Result<MergePatchValue<T>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Option::<T>::deserialize(deserializer).map(|value| match value {
-            Some(value) => MergePatchValue::Value(value),
-            None => MergePatchValue::Null,
-        })
-    }
-}
-
-/// Deserializes a required non-null value wrapped for an optional patch member.
-fn deserialize_present_non_null<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    T::deserialize(deserializer).map(Some)
-}
 
 /// Input for `PATCH /snapshots/{id}`.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SnapshotPatch {
-    /// Optional exact Snapshot discriminator; JSON null and other types are invalid.
-    #[serde(default, rename = "type", deserialize_with = "deserialize_present_non_null")]
+    /// Optional exact Snapshot discriminator.
+    #[serde(default, rename = "type")]
     pub type_: Option<SnapshotType>,
     /// Optional unchanged identifier assertion.
-    #[serde(default, deserialize_with = "deserialize_present_non_null")]
+    #[serde(default)]
     pub id: Option<Identifier>,
-    /// New positive lifetime. JSON null is invalid.
-    #[serde(default, deserialize_with = "deserialize_present_non_null")]
+    /// New positive lifetime.
+    #[serde(default)]
     pub snapshot_lifetime: Option<Iso8601Duration>,
-    /// New priority. JSON null is invalid.
-    #[serde(default, deserialize_with = "deserialize_present_non_null")]
+    /// New priority.
+    #[serde(default)]
     pub snapshot_priority: Option<SnapshotPriority>,
-    /// Replacement endpoint or JSON null removal.
+    /// Replacement endpoint, or its deletion.
     #[serde(default)]
-    pub endpoint: MergePatchValue<Url>,
-    /// Replacement receiver metadata or JSON null removal.
-    #[serde(default)]
-    pub receiver_info: MergePatchValue<Vec<KeyValuePair>>,
+    pub endpoint: Clearable<Url>,
+    /// Replacement receiver metadata, or its deletion.
+    #[serde(default, deserialize_with = "clearable_array::deserialize")]
+    pub receiver_info: Clearable<Vec<KeyValuePair>>,
     /// Query definitions are recognized so policy can reject attempts to mutate them.
     #[serde(default)]
-    pub snapshot_queries: MergePatchValue<IgnoredAny>,
+    pub snapshot_queries: Clearable<IgnoredAny>,
     /// Temporal query definitions are recognized so policy can reject attempts to mutate them.
     #[serde(default)]
-    pub snapshot_temporal_queries: MergePatchValue<IgnoredAny>,
+    pub snapshot_temporal_queries: Clearable<IgnoredAny>,
     /// Recognized output-only status, discarded on input.
     #[serde(default, rename = "snapshotStatus")]
     _snapshot_status: Option<IgnoredAny>,
@@ -97,23 +67,51 @@ pub struct SnapshotPatch {
 
 #[cfg(test)]
 mod tests {
-    use crate::snapshot_patch::{MergePatchValue, SnapshotPatch};
-    use pretty_assertions::assert_eq;
-    use serde_json::json;
+    use crate::{clearable::Clearable, request_body::RequestBody, snapshot_patch::SnapshotPatch};
+    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+    use serde_json::{Value, json};
 
-    #[test]
-    fn omission_and_null_are_distinct_for_removable_members() {
-        let omitted = serde_json::from_value::<SnapshotPatch>(json!({})).expect("empty fragment is valid");
-        let removed = serde_json::from_value::<SnapshotPatch>(json!({"endpoint": null, "receiverInfo": null})).expect("removal fragment is valid");
-        assert_eq!(omitted.endpoint, MergePatchValue::Absent);
-        assert_eq!(removed.endpoint, MergePatchValue::Null);
-        assert_eq!(removed.receiver_info, MergePatchValue::Null);
+    fn read(fragment: &Value) -> Result<SnapshotPatch, serde_json::Error> {
+        SnapshotPatch::from_request_text(fragment.to_string().as_bytes(), CoreTermAliases::keyword_spellings())
     }
 
+    /// Clause 5.5.8: an omitted member is left alone and the NGSI-LD Null
+    /// deletes one, an array member also as an array holding the Null alone.
     #[test]
-    fn null_lifetime_priority_and_type_are_rejected() {
-        for fragment in [json!({"snapshotLifetime": null}), json!({"snapshotPriority": null}), json!({"type": null})] {
-            assert!(serde_json::from_value::<SnapshotPatch>(fragment).is_err());
+    fn omission_and_the_ngsi_ld_null_are_distinct_for_removable_members() {
+        let omitted = read(&json!({})).expect("empty fragment is valid");
+        assert!(omitted.endpoint.is_absent() && omitted.receiver_info.is_absent());
+        for receiver_info in [json!("urn:ngsi-ld:null"), json!(["urn:ngsi-ld:null"])] {
+            let removed = read(&json!({"endpoint": "urn:ngsi-ld:null", "receiverInfo": receiver_info})).expect("removal fragment is valid");
+            assert!(removed.endpoint.is_ngsi_ld_null() && removed.receiver_info.is_ngsi_ld_null());
+        }
+        let set = read(&json!({"endpoint": "https://receiver.example.com/notify"})).expect("a replacement");
+        assert!(matches!(set.endpoint, Clearable::Set(_)));
+    }
+
+    /// Clause 5.2.1: a JSON `null` is no value of any member.
+    #[test]
+    fn a_json_null_is_refused_on_every_member() {
+        for member in [
+            "snapshotLifetime",
+            "snapshotPriority",
+            "type",
+            "id",
+            "endpoint",
+            "receiverInfo",
+            "snapshotQueries",
+            "createdAt",
+        ] {
+            assert!(read(&json!({ member: null })).is_err(), "{member}");
+        }
+    }
+
+    /// Members that cannot be deleted refuse the NGSI-LD Null as a value
+    /// outside their data type.
+    #[test]
+    fn the_ngsi_ld_null_on_a_member_that_cannot_be_deleted_is_refused() {
+        for member in ["snapshotLifetime", "snapshotPriority", "type"] {
+            assert!(read(&json!({ member: "urn:ngsi-ld:null" })).is_err(), "{member}");
         }
     }
 }

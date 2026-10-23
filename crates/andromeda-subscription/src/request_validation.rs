@@ -34,14 +34,14 @@ fn q_has_comparison(expr: &Expr) -> bool {
 /// # Errors
 ///
 /// Returns the [`SubscriptionError::Validation`] of the first rule the body
-/// breaks -- an NGSI-LD Null written into a URI member among them (clause
+/// breaks -- an NGSI-LD Null written into any member among them (clause
 /// 5.2.1) -- and [`SubscriptionError::GeoQTooLarge`] for a reference geometry
 /// past `geo_limits`.
 pub fn validate_create_request(request: &SubscriptionRequest, geo_q_admission: GeoQueryAdmission) -> Result<(), SubscriptionError> {
-    // Clause 5.2.1: no member admits a null value directly outside clauses
-    // 5.5.8 and 5.5.12, so a create refuses a JSON `null` and the URI Null alike
-    // (clause 5.8.1.4, bullet 1).
-    if let Some(member) = request.null_member() {
+    // Clause 5.2.1: an NGSI-LD Null is refused outside clauses 5.5.8 and 5.5.12,
+    // and a create deletes nothing (clause 5.8.1.4, bullet 1). A JSON `null` is
+    // no value of any member and never reads into the request.
+    if let Some(member) = request.ngsi_ld_null_member() {
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::NullOnCreate(member)));
     }
     // Table 5.2.12-1 gives `type` cardinality 1, and clause 5.8.1.4 refuses a
@@ -146,7 +146,7 @@ pub fn validate_common_members(request: &SubscriptionRequest, geo_q_admission: G
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::QExpressionNoComparison));
     }
 
-    // An update fragment's `null` removes the `geoQ`, which has nothing to admit.
+    // An update fragment's NGSI-LD Null removes the `geoQ`, which has nothing to admit.
     if let Some(geo_q) = request.geo_q.as_set() {
         admit_geo_q(geo_q, geo_q_admission)?;
     }
@@ -282,18 +282,22 @@ mod tests {
         assert!(result.is_ok(), "got {result:?}");
     }
 
-    /// Clause 5.2.1: a null outside clauses 5.5.8 and 5.5.12 is
+    /// Clause 5.2.1: an NGSI-LD Null outside clauses 5.5.8 and 5.5.12 is
     /// `BadRequestData`, so a create refuses `urn:ngsi-ld:null` (alone, or as
-    /// the one item of an array) in `jsonldContext`, `datasetId` and
-    /// `watchedAttributes`, and a JSON `null` in any member, naming the member.
-    /// An update still deletes with either.
+    /// the one item of an array) in any member, naming the member.
     #[test]
-    fn a_create_refuses_a_null_naming_the_member() {
+    fn a_create_refuses_the_ngsi_ld_null_naming_the_member() {
         let notification = json!({"endpoint": {"uri": "https://receiver.example.com/notify"}});
         for (member, wire) in [
             ("jsonldContext", json!("urn:ngsi-ld:null")),
             ("datasetId", json!(["urn:ngsi-ld:null"])),
             ("watchedAttributes", json!(["urn:ngsi-ld:null"])),
+            ("ngsildConformance", json!("urn:ngsi-ld:null")),
+            ("isActive", json!("urn:ngsi-ld:null")),
+            ("expiresAt", json!("urn:ngsi-ld:null")),
+            ("subscriptionName", json!("urn:ngsi-ld:null")),
+            ("throttling", json!("urn:ngsi-ld:null")),
+            ("q", json!("urn:ngsi-ld:null")),
         ] {
             let body = json!({"type": "Subscription", "entities": [{"type": "Vehicle"}], "notification": notification, member: wire});
             let result = validate_create_request(&request(&body), limits());
@@ -302,24 +306,6 @@ mod tests {
                     assert!(refusal.to_string().contains(member), "{member}: {refusal}");
                 }
                 other => panic!("{member}: expected the NGSI-LD Null to be refused, got {other:?}"),
-            }
-        }
-        for member in [
-            "jsonldContext",
-            "datasetId",
-            "ngsildConformance",
-            "isActive",
-            "expiresAt",
-            "subscriptionName",
-            "q",
-        ] {
-            let body = json!({"type": "Subscription", "entities": [{"type": "Vehicle"}], "notification": notification, member: null});
-            let result = validate_create_request(&request(&body), limits());
-            match &result {
-                Err(refusal @ SubscriptionError::Validation(SubscriptionValidationReason::NullOnCreate(_))) => {
-                    assert!(refusal.to_string().contains(member), "{member}: {refusal}");
-                }
-                other => panic!("{member}: expected the JSON null to be refused, got {other:?}"),
             }
         }
     }
@@ -396,7 +382,7 @@ mod tests {
         .expect_err("latitude 100 is no WGS 84 position");
         assert!(past_pole.to_string().contains("latitude 100 is outside [-90, 90]"), "got {past_pole}");
 
-        let removed = validate_common_members(&request(&json!({"geoQ": null})), limits());
+        let removed = validate_common_members(&request(&json!({"geoQ": "urn:ngsi-ld:null"})), limits());
         assert!(removed.is_ok(), "an update removing the geoQ has nothing to validate: {removed:?}");
     }
 
@@ -549,7 +535,7 @@ mod tests {
             json!({"temporalQ": {"timerel": "between", "timeAt": "2020-06-01T00:00:00Z", "endTimeAt": "2020-07-01T00:00:00Z"}}),
             json!({"temporalQ": {"timerel": "after", "timeAt": "2020-06-01T00:00:00Z"}}),
             json!({"temporalQ": {"timerel": "before", "timeAt": "2020-06-01T00:00:00Z"}}),
-            json!({"temporalQ": null}),
+            json!({"temporalQ": "urn:ngsi-ld:null"}),
         ] {
             let result = validate_common_members(&request(&accepted), limits());
             assert!(result.is_ok(), "{accepted}: {result:?}");

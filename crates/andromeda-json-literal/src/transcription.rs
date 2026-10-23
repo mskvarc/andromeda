@@ -7,16 +7,13 @@
 //! admitted afterwards like any other text; no tree is built.
 
 use crate::LITERAL_CAPTURE;
-use andromeda_ngsi_ld_number::{JsonNumberError, json_value::READER_NESTING_LIMIT};
+use andromeda_ngsi_ld_number::{
+    JsonNumberError,
+    json_value::{READER_NESTING_LIMIT, reader_private_members::SERDE_JSON_PRIVATE_NUMBER_MEMBER},
+};
 use serde::de::{DeserializeSeed, Deserializer, Error, MapAccess, SeqAccess, Visitor};
 use std::fmt;
 use thiserror::Error;
-
-/// The member name `serde_json` delivers a number under when the number is
-/// not a 64-bit integer and `arbitrary_precision` keeps its exact token: the
-/// number arrives as a map holding this one member, whose value is the token.
-/// `serde_json` does not export the name.
-const NUMBER_TOKEN: &str = "$serde_json::private::Number";
 
 /// A value nesting deeper than any JSON text the broker reads.
 #[derive(Debug, Error)]
@@ -175,7 +172,7 @@ impl<'de> Visitor<'de> for Transcriber<'_> {
             self.written.push_str("{}");
             return Ok(());
         };
-        if first_name == NUMBER_TOKEN {
+        if first_name == SERDE_JSON_PRIVATE_NUMBER_MEMBER {
             let token = map.next_value::<String>()?;
             self.written.push_str(&token);
             return Ok(());

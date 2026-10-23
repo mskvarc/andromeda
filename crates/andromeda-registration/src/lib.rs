@@ -27,8 +27,8 @@ mod geometry;
 mod identifier;
 pub mod information_compaction;
 mod information_expansion;
+mod member_presence;
 mod mode_rules;
-pub mod nullable_member;
 pub mod query;
 /// The Create and Update Context Source Registration request body.
 pub mod registration_body;

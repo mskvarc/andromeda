@@ -1,32 +1,32 @@
 //! Serde support for an update-fragment member that holds a timestamp the
-//! fragment may clear (Table 5.2.12-1 `expiresAt`).
+//! fragment may delete (Table 5.2.12-1 `expiresAt`).
 //!
-//! The timestamp is the RFC 3339 string clause 4.6.3 defines, written and read
-//! as [`instant_serde::optional`] does; what this adds is the third state of
-//! a [`Clearable`] member, so that a `null` removes the stored timestamp
-//! (clause 5.5.8) instead of being read as an absent member.
+//! The timestamp is the clause 4.6.3 `DateTime`, read and written as
+//! [`instant_serde`] does; what this adds is the NGSI-LD Null, which deletes
+//! the stored timestamp (clause 5.5.8).
 
 use crate::clearable::Clearable;
-use andromeda_ngsi_ld_lexicon::time::instant_serde;
+use andromeda_ngsi_ld_lexicon::time::{date_time::NgsiLdDateTime, instant_serde};
 use chrono::{DateTime, Utc};
-use serde::{Deserializer, Serializer};
+use serde::{Deserialize, Deserializer, Serializer};
 
-/// Deserialize a member that is present: `null` clears it, an RFC 3339 string
-/// sets it.
+/// Deserialize a member that is present: the NGSI-LD Null deletes it, a
+/// clause 4.6.3 `DateTime` sets it.
 ///
 /// # Errors
 ///
-/// Returns the deserializer's own error when the member is neither `null` nor
-/// a string, and a custom error when the string is not RFC 3339.
+/// Returns the deserializer's own error when the member is not a string, a
+/// JSON `null` included, and a custom error when the string is not a
+/// clause 4.6.3 `DateTime`.
 pub fn deserialize<'de, D>(deserializer: D) -> Result<Clearable<DateTime<Utc>>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    Ok(instant_serde::optional::deserialize(deserializer)?.map_or(Clearable::Cleared, Clearable::Set))
+    Clearable::<NgsiLdDateTime>::deserialize(deserializer).map(|member| member.map(NgsiLdDateTime::get))
 }
 
-/// Serialize a member as the fragment wrote it: the RFC 3339 string, or `null`
-/// for a cleared member.
+/// Serialize a member as the fragment wrote it: the timestamp, or the NGSI-LD
+/// Null for a deleted member.
 ///
 /// # Errors
 ///
@@ -35,7 +35,7 @@ pub fn serialize<S>(value: &Clearable<DateTime<Utc>>, serializer: S) -> Result<S
 where
     S: Serializer,
 {
-    instant_serde::optional::serialize(&value.as_set().copied(), serializer)
+    value.serialize_with(serializer, instant_serde::required::serialize)
 }
 
 #[cfg(test)]
@@ -57,27 +57,28 @@ mod tests {
         at: Clearable<DateTime<Utc>>,
     }
 
-    /// Clause 5.5.8: an absent member is left alone, a `null` clears it and a
-    /// string sets it, and each is written back as it was read.
+    /// Clause 5.5.8: an absent member is left alone, the NGSI-LD Null deletes
+    /// it and a timestamp sets it, and each is written back as it was read.
     #[test]
-    fn a_timestamp_is_told_absent_from_cleared_from_set() {
+    fn a_timestamp_is_told_absent_from_deleted_from_set() {
         let absent: Carrier = serde_json::from_value(json!({})).expect("absent");
         assert!(absent.at.is_absent());
-        let cleared: Carrier = serde_json::from_value(json!({"at": null})).expect("null");
-        assert!(matches!(cleared.at, Clearable::Cleared));
+        let deleted: Carrier = serde_json::from_value(json!({"at": "urn:ngsi-ld:null"})).expect("the Null");
+        assert!(deleted.at.is_ngsi_ld_null());
         let set: Carrier = serde_json::from_value(json!({"at": "2030-01-02T03:04:05Z"})).expect("a timestamp");
         pretty_assertions::assert_eq!(
             set.at,
             Clearable::Set(Utc.with_ymd_and_hms(2030, 1, 2, 3, 4, 5).single().expect("a valid instant"))
         );
         pretty_assertions::assert_eq!(serde_json::to_value(&absent).expect("writes"), json!({}));
-        pretty_assertions::assert_eq!(serde_json::to_value(&cleared).expect("writes"), json!({"at": null}));
+        pretty_assertions::assert_eq!(serde_json::to_value(&deleted).expect("writes"), json!({"at": "urn:ngsi-ld:null"}));
         pretty_assertions::assert_eq!(serde_json::to_value(&set).expect("writes"), json!({"at": "2030-01-02T03:04:05Z"}));
     }
 
     #[test]
     fn a_member_that_is_not_a_timestamp_is_refused() {
-        assert!(serde_json::from_value::<Carrier>(json!({"at": "tomorrow"})).is_err());
-        assert!(serde_json::from_value::<Carrier>(json!({"at": 5})).is_err());
+        for fragment in [json!({"at": "tomorrow"}), json!({"at": 5}), json!({"at": null})] {
+            assert!(serde_json::from_value::<Carrier>(fragment).is_err());
+        }
     }
 }

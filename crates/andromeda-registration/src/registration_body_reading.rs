@@ -3,18 +3,20 @@
 //! The members of Table 5.2.9-1 are read into the types that own their
 //! restrictions, the read-only members of Table 5.2.9-2 are read and set aside,
 //! and every other member becomes a Context Source Property held as data
-//! (clause 4.9). The reading is written by hand rather than derived because the
+//! (clause 4.9). A Context Source Property is captured as JSON of its own, so
+//! the JSON `null` the body reader refuses everywhere else is refused here. The reading is written by hand rather than derived because the
 //! catch-all a derive offers (`#[serde(flatten)]`) buffers the whole body,
 //! geometries included, before reading any of it.
 
-use crate::{csr_member::CsrMember, nullable_member::NullableMember, registration_body::RegistrationBody};
-use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use crate::{csr_member::CsrMember, registration_body::RegistrationBody};
+use andromeda_json_literal::{JsonLiteral, piece::JsonKind};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_model::{clearable::Clearable, clearable_array};
 use andromeda_ngsi_ld_vocabulary::keyword;
 use serde::{
     Deserialize,
     Deserializer,
-    de::{Error as DeserializeError, IgnoredAny, MapAccess, Visitor},
+    de::{Error as DeserializeError, IgnoredAny, MapAccess, Unexpected, Visitor},
 };
 use std::{fmt, str::FromStr};
 use thiserror::Error;
@@ -94,7 +96,7 @@ impl<'de> Visitor<'de> for RegistrationBodyVisitor {
                     if body.id.is_some() {
                         return Err(A::Error::duplicate_field("id"));
                     }
-                    body.id = members.next_value()?;
+                    body.id = Some(members.next_value::<Identifier>()?);
                 }
                 MemberName::Ignored => {
                     members.next_value::<IgnoredAny>()?;
@@ -102,6 +104,10 @@ impl<'de> Visitor<'de> for RegistrationBodyVisitor {
                 MemberName::Defined(member) => read_defined(&mut body, member, &mut members)?,
                 MemberName::Property(name) => {
                     let value = members.next_value::<JsonLiteral>()?;
+                    // Clause 5.2.1: a property admits no null value directly.
+                    if value.piece().kind() == JsonKind::Null {
+                        return Err(A::Error::invalid_type(Unexpected::Unit, &"a Context Source Property"));
+                    }
                     if body.additional_properties.contains_key(&name) {
                         return Err(A::Error::custom(DuplicateProperty(name)));
                     }
@@ -117,12 +123,12 @@ impl<'de> Visitor<'de> for RegistrationBodyVisitor {
 fn read_defined<'de, A: MapAccess<'de>>(body: &mut RegistrationBody, member: CsrMember, members: &mut A) -> Result<(), A::Error> {
     match member {
         CsrMember::Type => read(&mut body.type_, member, members),
-        CsrMember::Information => read(&mut body.information, member, members),
+        CsrMember::Information => read_array(&mut body.information, member, members),
         CsrMember::Mode => read(&mut body.mode, member, members),
-        CsrMember::Operations => read(&mut body.operations, member, members),
+        CsrMember::Operations => read_array(&mut body.operations, member, members),
         CsrMember::RegistrationName => read(&mut body.registration_name, member, members),
         CsrMember::Description => read(&mut body.description, member, members),
-        CsrMember::DatasetId => read(&mut body.dataset_id, member, members),
+        CsrMember::DatasetId => read_array(&mut body.dataset_id, member, members),
         CsrMember::Tenant => read(&mut body.tenant, member, members),
         CsrMember::ObservationInterval => read(&mut body.observation_interval, member, members),
         CsrMember::ManagementInterval => read(&mut body.management_interval, member, members),
@@ -132,27 +138,44 @@ fn read_defined<'de, A: MapAccess<'de>>(body: &mut RegistrationBody, member: Csr
         CsrMember::ExpiresAt => read(&mut body.expires_at, member, members),
         CsrMember::Endpoint => read(&mut body.endpoint, member, members),
         CsrMember::Accept => read(&mut body.accept, member, members),
-        CsrMember::Scope => read(&mut body.scope, member, members),
+        CsrMember::Scope => read_array(&mut body.scope, member, members),
         CsrMember::RefreshRate => read(&mut body.refresh_rate, member, members),
         CsrMember::Management => read(&mut body.management, member, members),
-        CsrMember::ContextSourceInfo => read(&mut body.context_source_info, member, members),
+        CsrMember::ContextSourceInfo => read_array(&mut body.context_source_info, member, members),
         CsrMember::ContextSourceAlias => read(&mut body.context_source_alias, member, members),
     }
 }
 
 /// Read the value of `member` into `slot`, which a member written twice would
 /// find taken.
-fn read<'de, T: Deserialize<'de>, A: MapAccess<'de>>(slot: &mut NullableMember<T>, member: CsrMember, members: &mut A) -> Result<(), A::Error> {
-    if !matches!(slot, NullableMember::Absent) {
+fn read<'de, T: Deserialize<'de>, A: MapAccess<'de>>(slot: &mut Clearable<T>, member: CsrMember, members: &mut A) -> Result<(), A::Error> {
+    if !slot.is_absent() {
         return Err(A::Error::duplicate_field(member.key()));
     }
     *slot = members.next_value()?;
     Ok(())
 }
 
+/// Read the value of `member`, whose data type is an array, into `slot`: an
+/// array holding the NGSI-LD Null alone deletes it as the bare Null does
+/// (clause 4.5.0).
+fn read_array<'de, E: Deserialize<'de>, A: MapAccess<'de>>(slot: &mut Clearable<Vec<E>>, member: CsrMember, members: &mut A) -> Result<(), A::Error> {
+    if !slot.is_absent() {
+        return Err(A::Error::duplicate_field(member.key()));
+    }
+    *slot = members.next_value::<ArrayMember<E>>()?.0;
+    Ok(())
+}
+
+/// An array member, read by [`clearable_array`].
+#[derive(Deserialize)]
+#[serde(transparent, bound = "E: Deserialize<'de>")]
+struct ArrayMember<E>(#[serde(deserialize_with = "clearable_array::deserialize")] Clearable<Vec<E>>);
+
 #[cfg(test)]
 mod tests {
-    use crate::{nullable_member::NullableMember, registration_body::RegistrationBody};
+    use crate::registration_body::RegistrationBody;
+    use andromeda_ngsi_ld_model::clearable::Clearable;
 
     #[test]
     fn a_member_written_twice_is_refused() {
@@ -173,7 +196,22 @@ mod tests {
         )
         .expect("a retrieved registration is a body");
         assert!(body.additional_properties.is_empty());
-        assert!(matches!(body.mode, NullableMember::Set(_)));
+        assert!(matches!(body.mode, Clearable::Set(_)));
+    }
+
+    /// Clause 5.2.1: a Context Source Property admits no JSON `null`, while a
+    /// `null` it holds as data is kept.
+    #[test]
+    fn a_context_source_property_that_is_a_json_null_is_refused() {
+        assert!(serde_json::from_str::<RegistrationBody>(r#"{"custom": null}"#).is_err());
+        let body = serde_json::from_str::<RegistrationBody>(r#"{"custom": {"a": null}}"#).expect("data holding a null");
+        pretty_assertions::assert_eq!(body.additional_properties.len(), 1);
+    }
+
+    /// An array member written twice is refused as any member is.
+    #[test]
+    fn an_array_member_written_twice_is_refused() {
+        assert!(serde_json::from_str::<RegistrationBody>(r#"{"scope": ["/a"], "scope": "urn:ngsi-ld:null"}"#).is_err());
     }
 
     #[test]

@@ -39,9 +39,9 @@ where
     }
 }
 
-/// The form of a seconds member an update fragment may clear.
+/// The form of a seconds member an update fragment may delete.
 ///
-/// Clause 5.5.8: an explicit `null` removes the stored member, which is what a
+/// Clause 5.5.8: the NGSI-LD Null removes the stored member, which is what a
 /// [`Clearable`](crate::clearable::Clearable) member says. Reading is the
 /// number [`Clearable`](crate::clearable::Clearable) reads by itself; writing
 /// is [`serialize`](super::serialize).
@@ -50,7 +50,7 @@ pub mod clearable {
     use serde::Serializer;
 
     /// Serialize a member as the fragment wrote it: the number of seconds, a
-    /// whole one as an integer, or `null` for a cleared member.
+    /// whole one as an integer, or the NGSI-LD Null for a deleted member.
     ///
     /// # Errors
     ///
@@ -59,7 +59,7 @@ pub mod clearable {
     where
         S: Serializer,
     {
-        delivery_seconds::serialize(&seconds.as_set().copied(), serializer)
+        seconds.serialize_with(serializer, |seconds, serializer| delivery_seconds::serialize(&Some(*seconds), serializer))
     }
 }
 
@@ -107,18 +107,18 @@ mod tests {
         seconds: Clearable<f64>,
     }
 
-    /// Clause 5.5.8: an absent member is left alone, a `null` clears it and a
-    /// number sets it, a whole one written back as an integer.
+    /// Clause 5.5.8: an absent member is left alone, the NGSI-LD Null deletes
+    /// it and a number sets it, a whole one written back as an integer.
     #[test]
-    fn a_fragment_member_is_told_absent_from_cleared_from_set() {
+    fn a_fragment_member_is_told_absent_from_deleted_from_set() {
         let absent: FragmentCarrier = serde_json::from_value(json!({})).expect("absent");
         assert!(absent.seconds.is_absent());
-        let cleared: FragmentCarrier = serde_json::from_value(json!({"seconds": null})).expect("null");
-        assert!(matches!(cleared.seconds, Clearable::Cleared));
+        let cleared: FragmentCarrier = serde_json::from_value(json!({"seconds": "urn:ngsi-ld:null"})).expect("the Null");
+        assert!(cleared.seconds.is_ngsi_ld_null());
         let set: FragmentCarrier = serde_json::from_value(json!({"seconds": 5})).expect("a number");
         pretty_assertions::assert_eq!(set.seconds, Clearable::Set(5.0));
         pretty_assertions::assert_eq!(serde_json::to_value(&absent).expect("writes"), json!({}));
-        pretty_assertions::assert_eq!(serde_json::to_value(&cleared).expect("writes"), json!({"seconds": null}));
+        pretty_assertions::assert_eq!(serde_json::to_value(&cleared).expect("writes"), json!({"seconds": "urn:ngsi-ld:null"}));
         pretty_assertions::assert_eq!(serde_json::to_value(&set).expect("writes"), json!({"seconds": 5}));
     }
 }

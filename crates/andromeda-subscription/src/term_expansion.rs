@@ -129,7 +129,7 @@ pub async fn expand_common_subscription_terms(
     let opt_ins = FilterOptIns::expanded(&mut request.expand_values, &mut request.json_keys, &term_expander).await?;
     request.q = match mem::take(&mut request.q) {
         Clearable::Set(q) => Clearable::Set(opt_ins.expand_q(q, &term_expander).await?),
-        unchanged @ (Clearable::Absent | Clearable::Cleared | Clearable::NgsiLdNull) => unchanged,
+        unchanged @ (Clearable::Absent | Clearable::NgsiLdNull) => unchanged,
     };
 
     // Expand the context source filter's property terms: a registration's
@@ -139,7 +139,7 @@ pub async fn expand_common_subscription_terms(
     // compound-value members stay as written (clause 4.9).
     request.csf = match mem::take(&mut request.csf) {
         Clearable::Set(csf) => Clearable::Set(expand_csf_expr(csf, &term_expander).await?),
-        unchanged @ (Clearable::Absent | Clearable::Cleared | Clearable::NgsiLdNull) => unchanged,
+        unchanged @ (Clearable::Absent | Clearable::NgsiLdNull) => unchanged,
     };
 
     if let Some(geo_q) = request.geo_q.as_set_mut()
@@ -240,13 +240,13 @@ mod tests {
         pretty_assertions::assert_eq!(written["jsonKeys"], json!("https://uri.etsi.org/ngsi-ld/default-context/payload"));
     }
 
-    /// Clause 5.8.3: an opt-in list the fragment clears stays cleared through
+    /// Clause 5.5.8: an opt-in list the fragment deletes stays deleted through
     /// the expansion.
     #[tokio::test]
     async fn a_cleared_opt_in_list_stays_cleared() {
-        let request = expanded(json!({"expandValues": null})).await.expect("expands");
+        let request = expanded(json!({"expandValues": "urn:ngsi-ld:null"})).await.expect("expands");
 
-        pretty_assertions::assert_eq!(written(&request), json!({"expandValues": null}));
+        pretty_assertions::assert_eq!(written(&request), json!({"expandValues": "urn:ngsi-ld:null"}));
     }
 
     /// Table 5.2.12-1: the identified attributes' values "should be expanded
@@ -321,7 +321,7 @@ mod tests {
     /// is still a deletion once the others are.
     #[tokio::test]
     async fn a_deleted_member_has_nothing_to_expand_and_stays_deleted() {
-        let wire = json!({"entities": null, "watchedAttributes": null, "q": null, "csf": null, "geoQ": null});
+        let wire = json!({"entities": ["urn:ngsi-ld:null"], "watchedAttributes": ["urn:ngsi-ld:null"], "q": "urn:ngsi-ld:null", "csf": "urn:ngsi-ld:null", "geoQ": "urn:ngsi-ld:null"});
         let request = expanded(wire.clone()).await.expect("expands");
 
         pretty_assertions::assert_eq!(written(&request), wire);

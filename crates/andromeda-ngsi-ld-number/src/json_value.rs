@@ -1,7 +1,7 @@
 //! Exact-number handling for JSON read with `serde_json`'s arbitrary-precision reader.
 
 pub mod json_pointer;
-mod reader_private_members;
+pub mod reader_private_members;
 pub mod text_admission;
 pub mod value_census;
 

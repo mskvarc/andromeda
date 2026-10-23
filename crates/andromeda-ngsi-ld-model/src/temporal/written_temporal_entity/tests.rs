@@ -208,3 +208,17 @@ fn stripping_attributes_reports_what_remains() {
     pretty_assertions::assert_eq!(entity.strip_attributes(&[speed]), AttributeStrip::Narrowed);
     pretty_assertions::assert_eq!(entity.attrs.len(), 1);
 }
+
+/// Clause 5.2.1: no member of a Temporal Evolution admits a JSON `null`, an
+/// optional one included.
+#[test]
+fn a_json_null_on_an_optional_member_is_refused() {
+    for member in ["id", "type", "expiresAt", "scope"] {
+        let mut body =
+            json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": [{"type": "Property", "value": 1, "observedAt": "2024-01-01T00:00:00Z"}]});
+        body[member] = Value::Null;
+        assert!(written(&body).is_err(), "{member}");
+    }
+    let observed_null = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": [{"type": "Property", "value": 1, "observedAt": null}]});
+    assert!(written(&observed_null).is_err());
+}

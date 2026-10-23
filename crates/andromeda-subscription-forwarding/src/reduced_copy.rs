@@ -175,18 +175,19 @@ impl ReducedSubscription {
                 fragment.entities = deleting(fragment.entities, DeletableMember::Entities, deleted);
                 fragment.watched_attributes = deleting(fragment.watched_attributes, DeletableMember::WatchedAttributes, deleted);
             }
-            (Clearable::Absent | Clearable::Cleared | Clearable::NgsiLdNull, Clearable::Absent | Clearable::Cleared | Clearable::NgsiLdNull) => {}
+            (Clearable::Absent | Clearable::NgsiLdNull, Clearable::Absent | Clearable::NgsiLdNull) => {}
         }
         fragment
     }
 }
 
 /// `member` as the fragment sends it: an absent member the update deleted
-/// becomes a deletion, anything else is as the reduction left it.
+/// becomes the NGSI-LD Null, which deletes it at the source (clause 5.5.8),
+/// anything else is as the reduction left it.
 fn deleting<T>(member: Clearable<T>, kind: DeletableMember, deleted: &DeletedMembers) -> Clearable<T> {
     match member {
-        Clearable::Absent if deleted.contains(kind) => Clearable::Cleared,
-        other @ (Clearable::Absent | Clearable::Cleared | Clearable::NgsiLdNull | Clearable::Set(_)) => other,
+        Clearable::Absent if deleted.contains(kind) => Clearable::NgsiLdNull,
+        other @ (Clearable::Absent | Clearable::NgsiLdNull | Clearable::Set(_)) => other,
     }
 }
 
@@ -395,13 +396,17 @@ mod tests {
     /// Clauses 5.5.8 and 5.8.1.4: a member the local update deleted is sent to
     /// the source as an NGSI-LD Null, and one the update set or left alone is not.
     #[test]
-    fn a_locally_deleted_member_is_forwarded_as_a_null() {
+    fn a_locally_deleted_member_is_forwarded_as_the_ngsi_ld_null() {
         let mut local = subscription();
         local.lifecycle.standing.expires_at = None;
         local.description = None;
-        let fragment = fragment_after(&local, &json!({"expiresAt": null, "description": null, "throttling": 5}), FilterCarriage::Keep);
-        pretty_assertions::assert_eq!(fragment["expiresAt"], json!(null));
-        pretty_assertions::assert_eq!(fragment["description"], json!(null));
+        let fragment = fragment_after(
+            &local,
+            &json!({"expiresAt": "urn:ngsi-ld:null", "description": "urn:ngsi-ld:null", "throttling": 5}),
+            FilterCarriage::Keep,
+        );
+        pretty_assertions::assert_eq!(fragment["expiresAt"], json!("urn:ngsi-ld:null"));
+        pretty_assertions::assert_eq!(fragment["description"], json!("urn:ngsi-ld:null"));
         assert!(fragment.get("subscriptionName").is_none());
         assert!(fragment.get("throttling").is_none());
         assert!(fragment.get("notification").is_some());
@@ -413,12 +418,12 @@ mod tests {
     fn a_deleted_member_the_copy_never_carries_is_not_sent() {
         let mut local = subscription();
         local.filters.q = None;
-        let update = json!({"q": null, "notification": {"attributes": [SPEED]}});
+        let update = json!({"q": "urn:ngsi-ld:null", "notification": {"attributes": [SPEED]}});
         let stripped = fragment_after(&local, &update, FilterCarriage::Strip);
         assert!(stripped.get("q").is_none());
         pretty_assertions::assert_eq!(stripped["notification"].get("attributes"), None);
-        let kept = fragment_after(&local, &json!({"q": null}), FilterCarriage::Keep);
-        pretty_assertions::assert_eq!(kept["q"], json!(null));
+        let kept = fragment_after(&local, &json!({"q": "urn:ngsi-ld:null"}), FilterCarriage::Keep);
+        pretty_assertions::assert_eq!(kept["q"], json!("urn:ngsi-ld:null"));
     }
 
     /// Clause 5.2.12: deleting `entities` is forwarded while the copy still
@@ -428,12 +433,12 @@ mod tests {
     fn a_selector_is_deleted_only_while_the_other_remains() {
         let mut local = subscription();
         local.selection.entities = None;
-        let with_watched = fragment_after(&local, &json!({"entities": null}), FilterCarriage::Keep);
-        pretty_assertions::assert_eq!(with_watched["entities"], json!(null));
+        let with_watched = fragment_after(&local, &json!({"entities": "urn:ngsi-ld:null"}), FilterCarriage::Keep);
+        pretty_assertions::assert_eq!(with_watched["entities"], json!(["urn:ngsi-ld:null"]));
         pretty_assertions::assert_eq!(with_watched["watchedAttributes"], json!([SPEED, COLOUR]));
 
         local.selection.watched_attributes = None;
-        let neither = fragment_after(&local, &json!({"entities": null}), FilterCarriage::Keep);
+        let neither = fragment_after(&local, &json!({"entities": "urn:ngsi-ld:null"}), FilterCarriage::Keep);
         assert!(neither.get("entities").is_none());
     }
 

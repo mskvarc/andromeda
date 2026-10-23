@@ -8,8 +8,8 @@
 //! aggregate of their union, so nothing here combines them.
 
 use crate::{
-    attribute::instance_member::ReadError,
-    compact_member::{decoded, decoded_optional},
+    attribute::instance_member::{ReadError, present_member},
+    compact_member::decoded,
     entity_type::EntityTypeValue,
     node_refusal::{NodeReadError, NodeRefusal, RefusedMember},
     temporal::{
@@ -138,13 +138,7 @@ fn aggregated_attribute<'n, N: CompactNode<'n>>(node: N) -> Result<AggregatedAtt
         match name.as_ref() {
             keyword::TYPE_ALIAS => family = Some(required(member, RefusedMember::Type).map_err(at)?),
             DATASET_MEMBER => {
-                dataset_id = decoded_optional(member).map_err(NodeReadError::Unreadable).map_err(at)?.map_err(|source| {
-                    at(NodeRefusal::Member {
-                        member: RefusedMember::DatasetId,
-                        source,
-                    }
-                    .into())
-                })?;
+                dataset_id = Some(present_member(member, RefusedMember::DatasetId).map_err(at)?);
             }
             method => {
                 let method = AggrMethod::from_str(method).map_err(|source| at(NodeRefusal::Aggregate(AggregateRefusal::UnknownMethod(source)).into()))?;

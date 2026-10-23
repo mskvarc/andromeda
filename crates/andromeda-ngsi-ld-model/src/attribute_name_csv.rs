@@ -10,20 +10,33 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::comma_separated_list::{ListedItem, parse_listed};
 use serde::{Deserialize, Deserializer, Serializer, de::Error as DeserializeError};
 
-/// Deserialize a comma-separated member into validated names.
+/// The names the comma-separated `text` lists.
 ///
 /// # Errors
 ///
-/// Returns the deserializer's own error when the member is neither absent
-/// nor a string, and a custom error when the list carries an empty member
-/// or a member that does not satisfy the NGSI-LD attribute-name grammar.
+/// Returns a custom error when the list carries an empty member or a member
+/// that does not satisfy the NGSI-LD attribute-name grammar.
+fn listed<E: DeserializeError>(text: &str) -> Result<Vec<AttributeName>, E> {
+    parse_listed(text, ListedItem::AttributeName).map_err(DeserializeError::custom)
+}
+
+/// The comma-separated string that lists `names`.
+fn joined(names: &[AttributeName]) -> String {
+    names.iter().map(AttributeName::as_str).collect::<Vec<_>>().join(",")
+}
+
+/// Deserialize a comma-separated member that is present into validated names;
+/// the carrier field takes `#[serde(default)]` for an absent one.
+///
+/// # Errors
+///
+/// Returns the deserializer's own error when the member is not a string, a
+/// JSON `null` included, and the refusal of [`listed`] otherwise.
 pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<AttributeName>>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    Option::<String>::deserialize(deserializer)?
-        .map(|raw| parse_listed(&raw, ListedItem::AttributeName).map_err(DeserializeError::custom))
-        .transpose()
+    listed(&String::deserialize(deserializer)?).map(Some)
 }
 
 /// Serialize validated names as the comma-separated member the spec defines.
@@ -36,38 +49,42 @@ where
     S: Serializer,
 {
     match value {
-        Some(names) => serializer.serialize_str(&names.iter().map(AttributeName::as_str).collect::<Vec<_>>().join(",")),
+        Some(names) => serializer.serialize_str(&joined(names)),
         None => serializer.serialize_none(),
     }
 }
 
-/// The form of a comma-separated member an update fragment may clear.
+/// The form of a comma-separated member an update fragment may delete.
 ///
-/// Clause 5.8.3 updates a resource with a fragment: a member the fragment does
-/// not mention stays, and an explicit `null` removes it, which is what a
+/// Clause 5.5.8 updates a resource with a fragment: a member the fragment does
+/// not mention stays, and the NGSI-LD Null deletes it, which is what a
 /// [`Clearable`](crate::clearable::Clearable) member says. The carrier field
 /// takes `#[serde(default)]` so that an absent member is
 /// [`Clearable::Absent`](crate::clearable::Clearable::Absent).
 pub mod clearable {
-    use crate::{attribute_name_csv, clearable::Clearable};
+    use crate::{
+        attribute_name_csv::{joined, listed},
+        clearable::Clearable,
+    };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use serde::{Deserializer, Serializer};
+    use serde::{Deserialize, Deserializer, Serializer};
 
-    /// Deserialize a member that is present: `null` clears it, a string names
-    /// the list.
+    /// Deserialize a member that is present: the NGSI-LD Null deletes it, any
+    /// other string names the list.
     ///
     /// # Errors
     ///
-    /// As [`attribute_name_csv::deserialize`].
+    /// As [`attribute_name_csv::deserialize`](crate::attribute_name_csv::deserialize).
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Clearable<Vec<AttributeName>>, D::Error>
     where
         D: Deserializer<'de>,
     {
-        Ok(attribute_name_csv::deserialize(deserializer)?.map_or(Clearable::Cleared, Clearable::Set))
+        let text = String::deserialize(deserializer)?;
+        Clearable::from_text(&text, listed)
     }
 
     /// Serialize a member as the fragment wrote it: the comma-separated string,
-    /// or `null` for a cleared member.
+    /// or the NGSI-LD Null for a deleted member.
     ///
     /// # Errors
     ///
@@ -76,10 +93,7 @@ pub mod clearable {
     where
         S: Serializer,
     {
-        match value {
-            Clearable::Set(names) => serializer.serialize_str(&names.iter().map(AttributeName::as_str).collect::<Vec<_>>().join(",")),
-            Clearable::Absent | Clearable::Cleared | Clearable::NgsiLdNull => serializer.serialize_none(),
-        }
+        value.serialize_with(serializer, |names, serializer| serializer.serialize_str(&joined(names)))
     }
 }
 
@@ -90,7 +104,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use serde_json::json;
 
-    /// A carrier for a member an update fragment may clear.
+    /// A carrier for a member an update fragment may delete.
     #[derive(Debug, Serialize, Deserialize)]
     struct ClearableCarrier {
         #[serde(
@@ -102,20 +116,20 @@ mod tests {
         names: Clearable<Vec<AttributeName>>,
     }
 
-    /// Clause 5.8.3: an absent member is left alone, a `null` clears it, and a
-    /// string replaces it.
+    /// Clause 5.5.8: an absent member is left alone, the NGSI-LD Null deletes
+    /// it, and a string replaces it.
     #[test]
-    fn a_clearable_member_tells_absent_from_null_from_a_list() {
+    fn a_clearable_member_tells_absent_from_the_null_from_a_list() {
         let absent: ClearableCarrier = serde_json::from_value(json!({})).expect("absent");
         assert!(absent.names.is_absent());
-        let cleared: ClearableCarrier = serde_json::from_value(json!({"names": null})).expect("null");
-        assert!(matches!(cleared.names, Clearable::Cleared));
+        let cleared: ClearableCarrier = serde_json::from_value(json!({"names": "urn:ngsi-ld:null"})).expect("the Null");
+        assert!(cleared.names.is_ngsi_ld_null());
         let named: ClearableCarrier = serde_json::from_value(json!({"names": "speed,colour"})).expect("a list");
         pretty_assertions::assert_eq!(
             named.names.as_set().map(|names| names.iter().map(AttributeName::as_str).collect::<Vec<_>>()),
             Some(vec!["speed", "colour"])
         );
-        pretty_assertions::assert_eq!(serde_json::to_value(&cleared).expect("serialises"), json!({"names": null}));
+        pretty_assertions::assert_eq!(serde_json::to_value(&cleared).expect("serialises"), json!({"names": "urn:ngsi-ld:null"}));
         pretty_assertions::assert_eq!(serde_json::to_value(&named).expect("serialises"), json!({"names": "speed,colour"}));
         pretty_assertions::assert_eq!(serde_json::to_value(&absent).expect("serialises"), json!({}));
     }
@@ -164,5 +178,7 @@ mod tests {
         assert!(serde_json::from_value::<Carrier>(json!({"names": ""})).is_err());
         assert!(serde_json::from_value::<Carrier>(json!({"names": ["speed"]})).is_err());
         assert!(serde_json::from_value::<Carrier>(json!({"names": 5})).is_err());
+        assert!(serde_json::from_value::<Carrier>(json!({"names": null})).is_err());
+        assert!(serde_json::from_value::<ClearableCarrier>(json!({"names": null})).is_err());
     }
 }

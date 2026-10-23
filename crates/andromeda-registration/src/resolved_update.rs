@@ -90,39 +90,45 @@ pub struct ResolvedCsrUpdate {
 /// are `Option<T>`/`Vec<T>` without lifetime parameters.
 #[must_use]
 pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateFragment) -> ResolvedCsrUpdate {
-    let registration_name = fragment.registration_name.resolve(existing.registration_name);
-    let description = fragment.description.resolve(existing.description);
+    let registration_name = fragment.registration_name.resolved_over(existing.registration_name);
+    let description = fragment.description.resolved_over(existing.description);
     let information = fragment.information.clone().unwrap_or(existing.coverage.information); // clone: own the borrowed update fragment when it supplied information.
-    let dataset_id = fragment.dataset_id.resolve(existing.coverage.dataset_id);
-    let tenant = fragment.tenant.resolve(existing.tenant);
-    let observation_interval = fragment.observation_interval.resolve(existing.coverage.observation_interval);
-    let management_interval = fragment.management_interval.resolve(existing.coverage.management_interval);
-    let expires_at = fragment.expires_at.resolve(existing.lifecycle.expires_at);
+    let dataset_id = fragment.dataset_id.resolved_over(existing.coverage.dataset_id);
+    let tenant = fragment.tenant.resolved_over(existing.tenant);
+    let observation_interval = fragment.observation_interval.resolved_over(existing.coverage.observation_interval);
+    let management_interval = fragment.management_interval.resolved_over(existing.coverage.management_interval);
+    let expires_at = fragment.expires_at.resolved_over(existing.lifecycle.expires_at);
     let endpoint = fragment.endpoint.clone().unwrap_or(existing.access.endpoint); // clone: own the borrowed update fragment when it supplied the URL.
-    let accept = fragment.accept.resolve(existing.access.accept);
+    let accept = fragment.accept.resolved_over(existing.access.accept);
     let mode = fragment.mode.unwrap_or_else(|| existing.access.mode.unwrap_or_default());
     // Clause 4.20: the merged registration falls back to its mode's default set
     // whenever it names no explicit subset.
     let operations = fragment
         .operations
-        .resolve(existing.access.operations)
+        .resolved_over(existing.access.operations)
         .unwrap_or_else(|| default_operations(mode).to_vec());
-    let scope = fragment.scope.resolve(existing.coverage.scope);
-    let refresh_rate = fragment.refresh_rate.resolve(existing.access.refresh_rate);
-    let management = fragment.management.resolve(existing.access.management);
-    let context_source_info = fragment.context_source_info.resolve(existing.access.context_source_info);
-    let context_source_alias = fragment.context_source_alias.resolve(existing.access.context_source_alias);
+    let scope = fragment.scope.resolved_over(existing.coverage.scope);
+    let refresh_rate = fragment.refresh_rate.resolved_over(existing.access.refresh_rate);
+    let management = fragment.management.resolved_over(existing.access.management);
+    let context_source_info = fragment.context_source_info.resolved_over(existing.access.context_source_info);
+    let context_source_alias = fragment.context_source_alias.resolved_over(existing.access.context_source_alias);
 
-    // A property the fragment names replaces the stored one in place; the others
-    // are kept, so the shallow merge keeps every stored property's position.
+    // A property the fragment names replaces the stored one in place, or is
+    // deleted when the fragment wrote it as the NGSI-LD Null (clause 5.5.8); the
+    // others are kept, so the shallow merge keeps every stored property's
+    // position.
     let mut additional_properties = existing.additional_properties;
-    additional_properties.extend(
-        fragment.additional_properties.iter().map(|(name, value)| (name.clone(), value.clone())), // clone: the fragment is borrowed and the resolved update owns what it writes
-    );
+    for (name, value) in &fragment.additional_properties {
+        if value.is_null_sentinel() {
+            additional_properties.shift_remove(name);
+        } else {
+            additional_properties.insert(name.clone(), value.clone()); // clone: the fragment is borrowed and the resolved update owns what it writes
+        }
+    }
 
-    let location = fragment.location.resolve(existing.coverage.location);
-    let observation_space = fragment.observation_space.resolve(existing.coverage.observation_space);
-    let operation_space = fragment.operation_space.resolve(existing.coverage.operation_space);
+    let location = fragment.location.resolved_over(existing.coverage.location);
+    let observation_space = fragment.observation_space.resolved_over(existing.coverage.observation_space);
+    let operation_space = fragment.operation_space.resolved_over(existing.coverage.operation_space);
 
     ResolvedCsrUpdate {
         registration_name,
@@ -151,10 +157,10 @@ pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateF
 
 #[cfg(test)]
 mod tests {
-    use crate::{nullable_member::NullableMember, resolved_update::apply_fragment, store::update_fragment::CsrUpdateFragment};
+    use crate::{resolved_update::apply_fragment, store::update_fragment::CsrUpdateFragment};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+    use andromeda_ngsi_ld_model::{clearable::Clearable, registration::ContextSourceRegistration};
     use serde_json::json;
 
     fn stored() -> ContextSourceRegistration {
@@ -197,15 +203,32 @@ mod tests {
         pretty_assertions::assert_eq!(merged, vec![("alpha", r#"{"n":10}"#), ("beta", "2"), ("gamma", "3")]);
     }
 
-    /// Clause 5.5.8: an omitted geometry keeps the stored one, `null` removes
-    /// it, and a value replaces it.
+    /// Clause 5.5.8: a Context Source Property written as the NGSI-LD Null
+    /// deletes the stored one, and the Null is never stored as a value.
+    #[test]
+    fn a_fragment_property_written_as_the_ngsi_ld_null_deletes_the_stored_one() {
+        let fragment = CsrUpdateFragment {
+            additional_properties: [property("alpha", r#""urn:ngsi-ld:null""#), property("gamma", r#""urn:ngsi-ld:null""#)]
+                .into_iter()
+                .collect(),
+            ..CsrUpdateFragment::default()
+        };
+
+        let resolved = apply_fragment(stored(), &fragment);
+
+        let merged: Vec<&str> = resolved.additional_properties.keys().map(AttributeName::as_str).collect();
+        pretty_assertions::assert_eq!(merged, vec!["beta"]);
+    }
+
+    /// Clause 5.5.8: an omitted geometry keeps the stored one, the NGSI-LD Null
+    /// deletes it, and a value replaces it.
     #[test]
     fn a_geometry_is_kept_removed_or_replaced_as_the_fragment_says() {
         let replacement = serde_json::from_value(json!({"type": "Point", "coordinates": [9.0, 9.0]})).expect("a geometry");
         let fragment = CsrUpdateFragment {
-            location: NullableMember::Absent,
-            observation_space: NullableMember::Cleared,
-            operation_space: NullableMember::Set(replacement),
+            location: Clearable::Absent,
+            observation_space: Clearable::NgsiLdNull,
+            operation_space: Clearable::Set(replacement),
             ..CsrUpdateFragment::default()
         };
 

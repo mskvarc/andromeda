@@ -10,7 +10,7 @@
 //! numbers stay in doc comments.
 
 use crate::csr_member::CsrMember;
-use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReferenceError};
 use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfoError;
 use andromeda_ngsi_ld_request::error::ParameterError;
 use iri_rs::InvalidIri;
@@ -44,12 +44,20 @@ pub enum RegistrationValidationReason {
         /// The absent member.
         member: CsrMember,
     },
-    /// A member that clause 5.5.8 does not let a body remove was carried as
-    /// `null`, or a creation body carried a member as `null`.
-    #[error("{member} must not be null")]
+    /// A member that clause 5.5.8 does not let a body delete was written as
+    /// the NGSI-LD Null, or a creation body wrote a member as the Null, which
+    /// clause 5.2.1 refuses outside an update.
+    #[error("{member} must not be the NGSI-LD Null")]
     MemberMustNotBeNull {
-        /// The member carried as `null`.
+        /// The member written as the NGSI-LD Null.
         member: CsrMember,
+    },
+    /// A creation body wrote a Context Source Property as the NGSI-LD Null,
+    /// which clause 5.2.1 refuses outside an update.
+    #[error("the Context Source Property {name} must not be the NGSI-LD Null in a creation request, which has nothing to delete")]
+    PropertyMustNotBeNull {
+        /// The property written as the NGSI-LD Null.
+        name: AttributeName,
     },
     /// A name the request's `@context` expanded a term of the body to is not a
     /// name NGSI-LD can carry.

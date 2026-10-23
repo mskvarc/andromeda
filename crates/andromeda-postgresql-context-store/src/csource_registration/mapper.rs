@@ -353,6 +353,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, time::date_time::NgsiLdDateTime};
     use andromeda_ngsi_ld_model::{
+        clearable::Clearable,
         key_value_pair::KeyValuePair,
         registration_management::{LocalScope, RegistrationManagementInfo},
         time_interval::TimeInterval,
@@ -360,7 +361,6 @@ mod tests {
     use andromeda_postgresql_schema::csr::Csr;
     use andromeda_postgresql_seaquery::external_arguments::ExternalArguments;
     use andromeda_registration::{
-        nullable_member::NullableMember,
         resolved_update::apply_fragment,
         store::{create_params::CreateCsrParams, update_fragment::CsrUpdateFragment},
     };
@@ -493,8 +493,8 @@ mod tests {
         }))
         .expect("a stored registration");
         let fragment = CsrUpdateFragment {
-            refresh_rate: NullableMember::Set(zero()),
-            management: NullableMember::Set(zero_cache_duration()),
+            refresh_rate: Clearable::Set(zero()),
+            management: Clearable::Set(zero_cache_duration()),
             ..CsrUpdateFragment::default()
         };
         let resolved = apply_fragment(existing, &fragment);

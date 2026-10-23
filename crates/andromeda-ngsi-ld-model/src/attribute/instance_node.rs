@@ -59,16 +59,20 @@ impl Attribute {
                 value: ngsi_ld_value(value?, value_member)?,
                 unit_code,
                 value_type,
-                previous_value: optional_present(members.previous, |previous| ngsi_ld_value(previous, previous_member))?,
-                entity_id_sealed: optional_present(members.entity_id_sealed, |seal| json(seal, RefusedMember::EntityIdSealed))?,
-                entity_type_sealed: optional_present(members.entity_type_sealed, |seal| json(seal, RefusedMember::EntityTypeSealed))?,
+                previous_value: optional_present(members.previous, previous_member, |previous| ngsi_ld_value(previous, previous_member))?,
+                entity_id_sealed: optional_present(members.entity_id_sealed, RefusedMember::EntityIdSealed, |seal| {
+                    json(seal, RefusedMember::EntityIdSealed)
+                })?,
+                entity_type_sealed: optional_present(members.entity_type_sealed, RefusedMember::EntityTypeSealed, |seal| {
+                    json(seal, RefusedMember::EntityTypeSealed)
+                })?,
                 common,
             }),
             AttributeType::Relationship => Attribute::Relationship(Relationship {
                 object: member(value?, value_member)?,
                 object_type: optional_member(members.object_type, RefusedMember::ObjectType)?,
                 previous_object: optional_member(members.previous, previous_member)?,
-                entity: optional_present(members.inline, |inline| inline_entities(inline, RefusedMember::Entity))?,
+                entity: optional_present(members.inline, RefusedMember::Entity, |inline| inline_entities(inline, RefusedMember::Entity))?,
                 common,
             }),
             AttributeType::VocabProperty => Attribute::VocabProperty(VocabProperty {
@@ -81,7 +85,7 @@ impl Attribute {
                 value: geo_value(value?, value_member)?,
                 unit_code,
                 value_type,
-                previous_value: optional_present(members.previous, |previous| geo_value(previous, previous_member))?,
+                previous_value: optional_present(members.previous, previous_member, |previous| geo_value(previous, previous_member))?,
                 common,
             }),
             AttributeType::LanguageProperty => Attribute::LanguageProperty(LanguageProperty {
@@ -93,20 +97,22 @@ impl Attribute {
             AttributeType::JsonProperty => Attribute::JsonProperty(JsonProperty {
                 json: json(value?, value_member)?,
                 value_type,
-                previous_json: optional_present(members.previous, |previous| json(previous, previous_member))?,
+                previous_json: optional_present(members.previous, previous_member, |previous| json(previous, previous_member))?,
                 common,
             }),
             AttributeType::ListProperty => Attribute::ListProperty(ListProperty {
                 value_list: value_list(value?, value_member)?,
                 unit_code,
                 value_type,
-                previous_value_list: optional_present(members.previous, |previous| value_list(previous, previous_member))?,
+                previous_value_list: optional_present(members.previous, previous_member, |previous| value_list(previous, previous_member))?,
                 common,
             }),
             AttributeType::ListRelationship => Attribute::ListRelationship(ListRelationship {
                 object_list: member(value?, value_member)?,
                 object_type: optional_member(members.object_type, RefusedMember::ObjectType)?,
-                entity_list: optional_present(members.inline, |inline| inline_entities(inline, RefusedMember::EntityList))?,
+                entity_list: optional_present(members.inline, RefusedMember::EntityList, |inline| {
+                    inline_entities(inline, RefusedMember::EntityList)
+                })?,
                 previous_object_list: optional_member(members.previous, previous_member)?,
                 common,
             }),
@@ -173,18 +179,14 @@ pub(crate) fn member<'n, T: DeserializeOwned, N: CompactNode<'n>>(node: N, name:
         .map_err(|source| refused_member::<N>(name, NodeRefusal::Member { member: name, source }))
 }
 
-/// Read a member that may be absent or `null` with `read`.
+/// Read a member named `name` that may be absent with `read`; a JSON `null`
+/// is no value of any member (clause 5.2.1).
 pub(crate) fn optional_present<'n, T, N: CompactNode<'n>>(
     node: Option<N>,
+    name: RefusedMember,
     read: impl FnOnce(N) -> Result<T, ReadError<'n, N>>,
 ) -> Result<Option<T>, ReadError<'n, N>> {
-    match node.map(|node| (node, node.shape())) {
-        None | Some((_, NodeShape::Null)) => Ok(None),
-        Some((
-            node,
-            NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Array(_) | NodeShape::Object(_) | NodeShape::Geometry(_),
-        )) => read(node).map(Some),
-    }
+    node.map(|node| required(node, name).and_then(read)).transpose()
 }
 
 /// The refusal of a value the member `member` holds.

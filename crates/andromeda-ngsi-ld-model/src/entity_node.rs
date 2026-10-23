@@ -9,10 +9,10 @@
 
 use crate::{
     attribute::{
-        instance_member::{ReadError, optional_instant_member},
+        instance_member::{ReadError, optional_instant_member, present_member},
         member_reading::MemberReading,
     },
-    compact_member::{decoded, decoded_optional},
+    compact_member::decoded,
     entity::{Entity, EntityPatch},
     entity_member::{EntityForm, EntityMember, SharedMembers},
     node_refusal::{NodeReadError, NodeRefusal, RefusedMember},
@@ -129,17 +129,17 @@ fn identity<'n, T: DeserializeOwned, N: CompactNode<'n>>(node: N, form: EntityFo
     }
 }
 
-/// Decode a member the entity holds as an optional `T`: `null` is no value.
+/// Decode a member the entity holds as an optional `T`, which the node
+/// writes: a JSON `null` is no value of any member (clause 5.2.1).
 fn optional<'n, T: DeserializeOwned, N: CompactNode<'n>>(node: N, name: RefusedMember) -> Result<Option<T>, ReadError<'n, N>> {
-    decoded_optional(node)
-        .map_err(NodeReadError::Unreadable)?
-        .map_err(|source| NodeRefusal::Member { member: name, source }.into())
+    present_member(node, name).map(Some)
 }
 
-/// Read one of the clause 5.2.4 geo-property members: `null` is no member.
+/// Read one of the clause 5.2.4 geo-property members, which the node writes:
+/// a JSON `null` is no value of any member (clause 5.2.1).
 fn optional_attribute<'n, M: MemberReading, N: CompactNode<'n>>(name: &str, node: N, reading: AttributeReading) -> Result<Option<M>, ReadError<'n, N>> {
     match node.shape() {
-        NodeShape::Null => Ok(None),
+        NodeShape::Null => Err(NodeRefusal::Null.into()),
         NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Array(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => {
             reading.read(name, node).map(Some)
         }
