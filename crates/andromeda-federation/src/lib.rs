@@ -107,8 +107,6 @@ pub mod read_fan_out;
 mod received_fixture;
 /// A context source's answer of Temporal Evolutions, decoded.
 mod received_temporal_answer;
-/// Registration-information matching.
-pub mod registration_information;
 /// The forwarded queries one registration receives.
 mod registration_narrowing;
 /// The context and representation one registration receives.

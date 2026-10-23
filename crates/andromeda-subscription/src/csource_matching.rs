@@ -5,15 +5,18 @@
 //! `information` as clause 5.12 describes; the `temporalQ`, `geoQ`, `scopeQ`
 //! and `csf` match the registration's own members as clause 5.11.2.4 describes.
 
-use crate::compiled::CompiledCsrSubscription;
-use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
+use crate::{compiled::CompiledCsrSubscription, geo_filter::SubscriptionGeoFilter};
 use andromeda_ngsi_ld_model::{
-    registration::{ContextSourceRegistration, context_source_properties::ContextSourceProperties, info::RegistrationInfo},
+    registration::{
+        ContextSourceRegistration,
+        info::RegistrationInfo,
+        selection::{RegistrationFilters, TemporalPartition},
+    },
     registration_matching::{entity_specification::EntitySpecification, match_specification::RegistrationMatchSpecification},
     subscription::SubscriptionStatus,
 };
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrTemporalFilter, filter::eval::evaluate, queried_entity::linked_entities::NoLinkedEntities};
 use chrono::Utc;
+use tracing::warn;
 
 /// Whether registration changes notify `sub` at all: the subscription is
 /// live and change-driven.
@@ -49,11 +52,23 @@ pub fn csource_subscription_selects_registration(sub: &CompiledCsrSubscription, 
         entities: &entities,
         attributes: &sub.matching_attrs,
     };
+    // Clause 5.8.6: a stored geoquery that no longer compiles is still a
+    // defined geoquery, so it selects no registration.
+    let geo = match &sub.geo_q {
+        SubscriptionGeoFilter::Unusable => return false,
+        SubscriptionGeoFilter::Unrestricted | SubscriptionGeoFilter::Restricts(_) => sub.geo_q.restriction(),
+    };
+    let filters = RegistrationFilters {
+        scope_q: sub.scope_q.as_ref(),
+        geo,
+        csf: sub.compiled_csf.as_ref(),
+        temporal: TemporalPartition::Applied(sub.temporal_q.as_ref()),
+    };
     specification.covers(registration)
-        && temporal_partition_admits(sub.temporal_q.as_ref(), registration)
-        && sub.geo_q.admits(|geo_q| registration.coverage.admits_geo_query(geo_q))
-        && scope_query_admits(sub, registration)
-        && context_source_filter_admits(sub, registration)
+        && filters.admits(registration).unwrap_or_else(|error| {
+            warn!(subscription = %sub.id, registration = %registration.id, %error, "the Context Source Properties of a registration could not be read for the context source filter");
+            false
+        })
 }
 
 /// The `RegistrationInfo` elements of `registration` that `sub` matches, in
@@ -69,44 +84,6 @@ pub fn matching_information<'registration>(
         attributes: &sub.matching_attrs,
     };
     specification.matching_information(&registration.coverage.information).collect()
-}
-
-/// Clause 5.11.2.4: without a `temporalQ` only registrations declaring no
-/// interval are considered; with one, the interval the `timeproperty`
-/// selects must be present and meet the window.
-fn temporal_partition_admits(temporal_q: Option<&CompiledCsrTemporalFilter>, registration: &ContextSourceRegistration) -> bool {
-    let coverage = &registration.coverage;
-    let Some(temporal_q) = temporal_q else {
-        return coverage.observation_interval.is_none() && coverage.management_interval.is_none();
-    };
-    let relevant = match temporal_q.timeproperty.unwrap_or(TimeProp::Observed) {
-        TimeProp::Observed => coverage.observation_interval.as_ref(),
-        TimeProp::Created | TimeProp::Modified | TimeProp::Deleted => coverage.management_interval.as_ref(),
-    };
-    relevant.is_some_and(|interval| interval.meets(&temporal_q.interval))
-}
-
-/// Clause 5.11.2.4: the scope query is matched against the registration's
-/// `scope`; a registration declaring none has nothing a pattern could match.
-fn scope_query_admits(sub: &CompiledCsrSubscription, registration: &ContextSourceRegistration) -> bool {
-    let Some(scope_q) = &sub.scope_q else {
-        return true;
-    };
-    registration.coverage.scope.as_deref().is_some_and(|scopes| scope_q.matches(scopes))
-}
-
-/// Clause 5.11.2.4: the context source filter is matched against the
-/// registration's Context Source Properties (clause 4.9), which carry no
-/// Relationship a hop could cross.
-fn context_source_filter_admits(sub: &CompiledCsrSubscription, registration: &ContextSourceRegistration) -> bool {
-    let Some(csf) = &sub.compiled_csf else {
-        return true;
-    };
-    evaluate(
-        csf,
-        ContextSourceProperties::of_registration(&registration.additional_properties),
-        NoLinkedEntities,
-    )
 }
 
 #[cfg(test)]
@@ -235,42 +212,25 @@ mod tests {
         pretty_assertions::assert_eq!(kept.len(), 1);
     }
 
-    /// Clause 5.11.2.4: without a `temporalQ` only latest-information
-    /// registrations are considered; with one only interval-bearing ones.
+    /// Clause 5.11.2.4: a subscription to registrations applies the temporal
+    /// partition, latest-information registrations without a `temporalQ` and
+    /// interval-bearing ones with it.
     #[test]
-    fn the_temporal_partition_table() {
+    fn a_subscription_applies_the_temporal_partition() {
         let latest = registration(&json!({}));
         let observed = registration(&json!({"observationInterval": {"startAt": "2020-01-01T00:00:00Z", "endAt": "2021-01-01T00:00:00Z"}}));
-        let managed = registration(&json!({"managementInterval": {"startAt": "2020-01-01T00:00:00Z", "endAt": "2021-01-01T00:00:00Z"}}));
         let without = subscription();
         assert!(notified_of_change(&without, &latest));
         assert!(!notified_of_change(&without, &observed));
-        assert!(!notified_of_change(&without, &managed));
 
-        let mut after_observed = subscription();
-        after_observed.temporal_q = Some(temporal_q(TimeInterval::After(at("2020-06-01T00:00:00Z")), None));
-        assert!(!notified_of_change(&after_observed, &latest));
-        assert!(notified_of_change(&after_observed, &observed));
-        assert!(!notified_of_change(&after_observed, &managed), "the relevant interval is absent");
+        let mut after = subscription();
+        after.temporal_q = Some(temporal_q(TimeInterval::After(at("2020-06-01T00:00:00Z")), None));
+        assert!(!notified_of_change(&after, &latest));
+        assert!(notified_of_change(&after, &observed));
 
         let mut after_created = subscription();
         after_created.temporal_q = Some(temporal_q(TimeInterval::After(at("2020-06-01T00:00:00Z")), Some(TimeProp::Created)));
-        assert!(notified_of_change(&after_created, &managed));
-        assert!(!notified_of_change(&after_created, &observed));
-
-        let mut outside = subscription();
-        outside.temporal_q = Some(temporal_q(TimeInterval::After(at("2022-06-01T00:00:00Z")), None));
-        assert!(!notified_of_change(&outside, &observed));
-
-        let mut overlapping = subscription();
-        overlapping.temporal_q = Some(temporal_q(
-            TimeInterval::Between {
-                from: at("2020-06-01T00:00:00Z"),
-                to: at("2020-09-01T00:00:00Z"),
-            },
-            None,
-        ));
-        assert!(notified_of_change(&overlapping, &observed));
+        assert!(!notified_of_change(&after_created, &observed), "the relevant interval is absent");
     }
 
     /// Clause 5.11.2.4: the geoquery is matched against `location` by default;
@@ -323,5 +283,18 @@ mod tests {
         assert!(notified_of_change(&sub, &gold));
         assert!(!notified_of_change(&sub, &silver));
         assert!(!notified_of_change(&sub, &registration(&json!({}))));
+    }
+
+    /// Clause 4.9 targets "a Context Source Property member of the
+    /// `CSourceRegistration`, see Table 5.2.9-1", so `mode` is one, and a
+    /// registration declaring none is `inclusive`.
+    #[test]
+    fn the_context_source_filter_reads_the_registration_mode() {
+        let mut sub = subscription();
+        sub.compiled_csf = Some(parser::parse("\"https://uri.etsi.org/ngsi-ld/mode\"==\"exclusive\"").expect("a valid test fixture"));
+        assert!(notified_of_change(&sub, &registration(&json!({"mode": "exclusive"}))));
+        assert!(!notified_of_change(&sub, &registration(&json!({"mode": "inclusive"}))));
+        sub.compiled_csf = Some(parser::parse("\"https://uri.etsi.org/ngsi-ld/mode\"==\"inclusive\"").expect("a valid test fixture"));
+        assert!(notified_of_change(&sub, &registration(&json!({}))));
     }
 }

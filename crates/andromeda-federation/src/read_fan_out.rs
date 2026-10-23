@@ -14,30 +14,29 @@ use crate::{
     operation::ForwardingOperation,
     outcome::{ForwardGetOutcome, ForwardReadOutcome, MatchedSources},
     read_binding::{ReadIntent, read_binding_for},
-    registration_information::registration_scope_admits,
     request::{CsrModeFilter, EntityMapInUse, TriggeringRequest},
     source_read::SourceRead,
 };
-use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
-use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     query::body::Query,
-    registration::{ContextSourceRegistration, context_source_properties::ContextSourceProperties, forwarding_mode::ForwardingMode},
+    registration::{
+        ContextSourceRegistration,
+        forwarding_mode::ForwardingMode,
+        selection::{RegistrationFilters, TemporalPartition},
+    },
 };
 use andromeda_ngsi_ld_query::{
     csr::expanded_entity_specification::ExpandedEntitySpecification,
-    filter::{eval::evaluate, expression::Expr},
+    filter::expression::Expr,
     geo::query::GeoQuery,
     pattern::Pattern,
-    queried_entity::linked_entities::NoLinkedEntities,
     scope::query::ScopeQuery,
     type_selection::grammar::{TypeExpr, TypeExprRaw},
 };
 use futures::{StreamExt, stream};
 use http::StatusCode;
-use indexmap::IndexMap;
-use std::cell::OnceCell;
 use tracing::warn;
 use url::Url;
 
@@ -161,8 +160,8 @@ pub(crate) struct SourceAnswer<T> {
 impl FederationService {
     /// The registrations a forwarded read contacts: those a live `EntityMap`
     /// names, or those clause 5.12 matches, narrowed to the ones advertising
-    /// the operation, whose scope and geometry admit the query, passing the
-    /// context source filter and admitted by the phase's mode filter.
+    /// the operation, admitted by the phase's mode filter and passing the
+    /// request's registration filters.
     pub(crate) async fn select_read_registrations(
         &self,
         context: &ContextSpec,
@@ -170,14 +169,10 @@ impl FederationService {
     ) -> Result<Vec<ContextSourceRegistration>, FederationError> {
         // Registrations store expanded type IRIs, so the compact selector is
         // expanded before matching.
-        //
-        // The context is prepared at most once for the whole selection, and
-        // only when the type selector or the context source filter needs it.
-        let prepared_context = OnceCell::new();
         let expanded_type = match selection.entity_type.and_then(TypeExprRaw::as_single_type) {
             Some(name) => {
-                let prepared = prepared_context.get_or_init(|| self.engine.prepare_term_context(context));
-                Some(TypeExpr::Type(self.engine.expand_type(name.as_str(), prepared).await?))
+                let prepared = self.engine.prepare_term_context(context);
+                Some(TypeExpr::Type(self.engine.expand_type(name.as_str(), &prepared).await?))
             }
             None => None,
         };
@@ -185,73 +180,25 @@ impl FederationService {
             Some(map) => self.registrations_of_map(map).await?,
             None => self.csr_repo.find_matching(selection.preselection(expanded_type.as_ref())).await?,
         };
-        let mut selected = Vec::with_capacity(registrations.len());
-        for registration in registrations {
-            if !selection.serving.admits(&registration)
-                || selection.exclude_registration.is_some_and(|excluded| excluded == &registration.id)
-                || !mode_admitted(&registration, selection.mode_filter)
-                || !registration_scope_admits(&registration, selection.scope_q)
-                || selection.geo.is_some_and(|geo| !registration.coverage.admits_geo_query(geo))
-            {
-                continue;
-            }
-            if let Some(filter) = selection.csf {
-                let prepared = prepared_context.get_or_init(|| self.engine.prepare_term_context(context));
-                if !self.passes_source_filter(&registration, filter, prepared).await {
-                    continue;
-                }
-            }
-            selected.push(registration);
-        }
-        Ok(selected)
-    }
-
-    /// Whether a registration passes the context source filter.
-    ///
-    /// Clause 4.9: the filter's target is "the name of a Context Source
-    /// Property member of the `CSourceRegistration`, see Table 5.2.9-1", so the
-    /// filter reads the whole registration: its clause 5.2.9 members such as
-    /// `mode` and the Context Source Properties it adds. The filter was
-    /// expanded against the request context, so every member name is expanded
-    /// the same way before the two are compared; the added properties are
-    /// stored under expanded names already.
-    async fn passes_source_filter(&self, registration: &ContextSourceRegistration, filter: &Expr, prepared_context: &PreparedTermContext) -> bool {
-        let written = match serde_json::to_string(registration)
-            .map_err(|source| JsonLiteralError::Syntax { source })
-            .and_then(|text| JsonLiteral::admit(&text))
-        {
-            Ok(written) => written,
-            Err(error) => {
-                warn!(registration = %registration.id, %error, "a stored registration could not be written back for the context source filter");
-                return false;
-            }
+        // A forwarded read matches by clause 5.12, which has no temporal axis.
+        let filters = RegistrationFilters {
+            scope_q: selection.scope_q,
+            geo: selection.geo,
+            csf: selection.csf,
+            temporal: TemporalPartition::NotApplied,
         };
-        let Some(members) = written.piece().members() else {
-            return false;
-        };
-        let mut properties: IndexMap<AttributeName, JsonLiteral> = IndexMap::with_capacity(members.len());
-        for (name, value) in members {
-            let expanded = match self.engine.expand_term(&name, prepared_context).await {
-                Ok(iri) => iri,
-                Err(error) => {
-                    warn!(registration = %registration.id, member = %name, %error, "a registration member name could not be expanded for the context source filter");
-                    continue;
-                }
-            };
-            match (expanded.as_str().parse::<AttributeName>(), value.to_literal()) {
-                (Ok(name), Ok(value)) => {
-                    properties.insert(name, value);
-                }
-                (Err(error), _) => {
-                    warn!(registration = %registration.id, member = %name, %error, "an expanded registration member name is no attribute name for the context source filter");
-                }
-                (_, Err(error)) => {
-                    warn!(registration = %registration.id, member = %name, %error, "a registration member could not be read as JSON for the context source filter");
-                }
-            }
-        }
-        // Context Source Properties carry no Relationship a hop could cross.
-        evaluate(filter, ContextSourceProperties::of_registration(&properties), NoLinkedEntities)
+        Ok(registrations
+            .into_iter()
+            .filter(|registration| {
+                selection.serving.admits(registration)
+                    && selection.exclude_registration.is_none_or(|excluded| excluded != &registration.id)
+                    && mode_admitted(registration, selection.mode_filter)
+                    && filters.admits(registration).unwrap_or_else(|error| {
+                        warn!(registration = %registration.id, %error, "the Context Source Properties of a stored registration could not be read for the context source filter");
+                        false
+                    })
+            })
+            .collect())
     }
 
     /// Send each target the forwarded read it resolved to -- a GET or a POST
@@ -351,14 +298,19 @@ mod tests {
     };
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::rendering::instant_text};
+    use andromeda_ngsi_ld_model::{
+        entity_map::EntityMap,
+        registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
+    };
     use andromeda_ngsi_ld_query::{
         filter::{expansion::expand_q_expr, json_key_attributes::JsonKeyAttributes, parser},
         geo::query::GeoQuery,
         pattern::Pattern,
+        scope::query::ScopeQuery,
         type_selection::grammar::TypeExpr,
     };
+    use chrono::{Duration, Utc};
     use iri_rs::IriBuf;
     use serde_json::json;
 
@@ -573,5 +525,80 @@ mod tests {
             .map(|registration| registration.id.to_string())
             .collect();
         pretty_assertions::assert_eq!(selected, vec!["urn:ngsi-ld:csr:madrid", "urn:ngsi-ld:csr:anywhere"]);
+    }
+
+    /// A query selection naming nothing beyond the operation.
+    fn unfiltered<'a>() -> ReadSelection<'a> {
+        ReadSelection {
+            entity_type: None,
+            entity_ids: None,
+            id_pattern: None,
+            exclude_registration: None,
+            csf: None,
+            scope_q: None,
+            geo: None,
+            serving: ReadServing::Operation(ForwardingOperation::QueryEntity),
+            mode_filter: CsrModeFilter::All,
+            entity_map: EntityMapInUse::None,
+        }
+    }
+
+    fn identifiers(registrations: Vec<ContextSourceRegistration>) -> Vec<String> {
+        registrations.into_iter().map(|registration| registration.id.to_string()).collect()
+    }
+
+    /// Clauses 4.19 and 5.10.2.4: the Scope query is matched against the
+    /// registration's `scope`, so a registration declaring none is not
+    /// contacted for a scoped read.
+    #[tokio::test]
+    async fn a_scope_query_does_not_select_an_unscoped_registration() {
+        let madrid = registration_with("urn:ngsi-ld:csr:madrid", json!({"scope": ["/Madrid"]}));
+        let berlin = registration_with("urn:ngsi-ld:csr:berlin", json!({"scope": ["/Berlin"]}));
+        let unscoped = registration_with("urn:ngsi-ld:csr:unscoped", json!({}));
+        let service = offline_service(vec![madrid, berlin, unscoped]);
+        let scope_q = ScopeQuery::parse("/Madrid").expect("a valid scope query");
+        let selected = service
+            .select_read_registrations(
+                &ContextSpec::none(),
+                ReadSelection {
+                    scope_q: Some(&scope_q),
+                    ..unfiltered()
+                },
+            )
+            .await
+            .expect("the selection runs");
+        pretty_assertions::assert_eq!(identifiers(selected), vec!["urn:ngsi-ld:csr:madrid"]);
+    }
+
+    /// Table 5.2.9-1: a registration whose `expiresAt` has passed is no
+    /// longer valid, so an `EntityMap` naming it does not bring it back
+    /// (clause 5.12 last paragraph).
+    #[tokio::test]
+    async fn an_expired_registration_named_by_an_entity_map_is_not_contacted() {
+        let expired = registration_with("urn:ngsi-ld:csr:expired", json!({"expiresAt": instant_text(Utc::now() - Duration::hours(1))}));
+        let live = registration_with("urn:ngsi-ld:csr:live", json!({"expiresAt": instant_text(Utc::now() + Duration::hours(1))}));
+        let service = offline_service(vec![expired, live]);
+        let mut map = EntityMap::local(
+            "urn:ngsi-ld:EntityMap:1".parse().expect("a valid identifier"),
+            Utc::now() + Duration::hours(1),
+            [],
+        );
+        for registration in ["urn:ngsi-ld:csr:expired", "urn:ngsi-ld:csr:live"] {
+            map.add_remote_entities(
+                &registration.parse().expect("a valid identifier"),
+                ["urn:ngsi-ld:Vehicle:1".parse().expect("a valid identifier")],
+            );
+        }
+        let selected = service
+            .select_read_registrations(
+                &ContextSpec::none(),
+                ReadSelection {
+                    entity_map: EntityMapInUse::Referenced(&map),
+                    ..unfiltered()
+                },
+            )
+            .await
+            .expect("the selection runs");
+        pretty_assertions::assert_eq!(identifiers(selected), vec!["urn:ngsi-ld:csr:live"]);
     }
 }

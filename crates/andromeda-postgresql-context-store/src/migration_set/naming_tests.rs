@@ -84,6 +84,7 @@ const NAVIGATED_JSONB: &[(&str, &str)] = &[
     ("attribute_instance_record", "value_geometry_members"),
     ("attribute_instance_record", "value_object"),
     ("context_source_registrations", "additional_properties"),
+    ("context_source_registrations", "context_source_properties"),
     ("current_attributes", "proof_seals"),
     ("current_attributes", "value_geometry_members"),
     ("current_attributes", "value_object"),

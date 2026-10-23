@@ -3,58 +3,41 @@
 //!
 //! A `csf` filter targets "the name of a Context Source Property member of the
 //! `CSourceRegistration`" (clause 4.9). Those members are not an expanded
-//! entity: each is held under its expanded name as the registrant wrote it --
+//! entity: each is held under its expanded name as the registration spells it,
 //! a normalized `{"type": "Property", "value": ...}` node, a bare JSON value,
-//! or an array of either, every element of which is one value of the property
-//! -- and the value is raw JSON whose keys a compound path addresses verbatim.
+//! or an array of either, every element of which is one value of the property,
+//! and the value is raw JSON whose keys a compound path addresses verbatim.
 
-use andromeda_json_literal::{
-    JsonLiteral,
-    piece::{JsonKind, JsonPiece},
-};
+use andromeda_json_literal::piece::{JsonKind, JsonPiece};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_query::queried_entity::{
     attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
     instance_metadata::InstanceMetadata,
     value_item::ValueItem,
 };
-use indexmap::IndexMap;
 use std::{borrow::Cow, iter::empty};
 
-/// The members of a registration a `csf` filter reads, keyed by expanded name.
+/// The members of a registration a `csf` filter reads: a JSON object keyed by
+/// expanded name.
 #[derive(Clone, Copy, Debug)]
-pub struct ContextSourceProperties<'a>(PropertyMembers<'a>);
-
-/// Where the members are held: the members of a registration, or the JSON
-/// object a document of them was written as.
-#[derive(Clone, Copy, Debug)]
-enum PropertyMembers<'a> {
-    /// The Context Source Properties of a registration.
-    Held(&'a IndexMap<AttributeName, JsonLiteral>),
-    /// A JSON object whose members are the properties.
-    Written(JsonPiece<'a>),
-}
+pub struct ContextSourceProperties<'a>(JsonPiece<'a>);
 
 impl<'a> ContextSourceProperties<'a> {
     /// The properties held by a JSON object; `None` for any other JSON, which
     /// holds no property a filter could name.
     #[must_use]
     pub fn of(properties: JsonPiece<'a>) -> Option<ContextSourceProperties<'a>> {
-        (properties.kind() == JsonKind::Object).then_some(ContextSourceProperties(PropertyMembers::Written(properties)))
+        (properties.kind() == JsonKind::Object).then_some(ContextSourceProperties(properties))
     }
 
-    /// The Context Source Properties a registration holds.
-    #[must_use]
-    pub const fn of_registration(properties: &'a IndexMap<AttributeName, JsonLiteral>) -> ContextSourceProperties<'a> {
-        ContextSourceProperties(PropertyMembers::Held(properties))
+    /// The properties of a JSON object its builder wrote as one.
+    pub(crate) const fn of_object(object: JsonPiece<'a>) -> ContextSourceProperties<'a> {
+        ContextSourceProperties(object)
     }
 
     /// The value of the property `name`, read in place.
     fn member(self, name: &AttributeName) -> Option<JsonPiece<'a>> {
-        match self.0 {
-            PropertyMembers::Held(properties) => properties.get(name).map(JsonLiteral::piece),
-            PropertyMembers::Written(properties) => properties.member(name.as_str()),
-        }
+        self.0.member(name.as_str())
     }
 }
 
@@ -152,12 +135,10 @@ impl<'a> QueriedInstance<'a> for PropertyValue<'a> {
 mod tests {
     use crate::registration::context_source_properties::ContextSourceProperties;
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::{
         filter::{eval::evaluate, parser::parse},
         queried_entity::linked_entities::NoLinkedEntities,
     };
-    use indexmap::IndexMap;
     use serde_json::{Value, json};
 
     /// Whether the filter holds over the properties, read through the entity
@@ -210,24 +191,6 @@ mod tests {
             "https://example.com/since": [{"@value": 2020}]
         }]});
         assert!(holds("\"https://example.com/coverage\".\"https://example.com/since\"==2020", &properties));
-    }
-
-    /// The members a registration holds are read as the object they are
-    /// written as is.
-    #[test]
-    fn the_properties_a_registration_holds_are_read_as_their_written_object_is() {
-        let held: IndexMap<AttributeName, JsonLiteral> =
-            serde_json::from_str(r#"{"https://example.com/sourceGroup": {"type": "Property", "value": "alpha"}, "https://example.com/tier": 3}"#)
-                .expect("the members of a registration");
-        let properties = ContextSourceProperties::of_registration(&held);
-        for q in ["\"https://example.com/sourceGroup\"==\"alpha\"", "\"https://example.com/tier\">2"] {
-            assert!(evaluate(&parse(q).expect("the filter parses"), properties, NoLinkedEntities), "{q}");
-        }
-        assert!(!evaluate(
-            &parse("\"https://example.com/other\"").expect("the filter parses"),
-            properties,
-            NoLinkedEntities
-        ));
     }
 
     #[test]

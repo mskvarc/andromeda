@@ -8,6 +8,7 @@
 //! downcast.
 
 use crate::{error::ContextStoreError, jsonld_context::mapper::ContextMapperError};
+use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, ngsi_ld_urn::JsonLdContextIdParseError};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_codes::registry::UnknownCompactCode;
@@ -75,6 +76,7 @@ store_fault_class! {
     UnknownCompactCode => Undecodable,
     // A domain value the store's representation cannot hold.
     EwkbError => Unencodable,
+    JsonLiteralError => Unencodable,
     // A statement the adapter could not assemble.
     RenderError => StatementUnbuildable,
     SeaQueryError => StatementUnbuildable,

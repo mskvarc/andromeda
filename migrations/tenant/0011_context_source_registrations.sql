@@ -99,9 +99,13 @@ create table context_source_registrations (
     -- when the member is absent and both empty when it is an empty list.
     context_source_info_keys text[] compression lz4,
     context_source_info_values text[] compression lz4,
-    -- Members outside Table 5.2.9-1, kept for the representation and for `q`
-    -- filtering.
+    -- Members outside Table 5.2.9-1, kept for the representation.
     additional_properties jsonb compression lz4,
+    -- What a clause 4.9 `csf` filter reads: every Table 5.2.9-1 member the
+    -- registration declares, keyed by the IRI the core context expands its
+    -- name to, then the members outside the table under their expanded names.
+    -- Written whole on every create and update.
+    context_source_properties jsonb compression lz4 not null,
     -- Table 5.2.9-1 `datasetId`: each element a URI, or `@none` for the
     -- default instance (clause 4.5.5). Unindexed: nothing preselects
     -- registrations by dataset.

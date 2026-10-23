@@ -1,4 +1,4 @@
-//! A fixed in-memory registration store and local-type resolver for the forwarding tests. Registration matching only reads candidates through [`RegistrationStore::find_matching`], which answers the whole fixed list as the superset preselect it is allowed to be; every other read answers nothing, a creation is refused as an unavailable store, and an update or deletion finds no registration.
+//! A fixed in-memory registration store and local-type resolver for the forwarding tests. Registration matching reads candidates through [`RegistrationStore::find_matching`], which answers the whole fixed list as the superset preselect it is allowed to be, and a read by identifier answers the fixed registration of that identifier as stored, expired or not; every other read answers nothing, a creation is refused as an unavailable store, and an update or deletion finds no registration.
 
 use crate::{FederationService, config::FederationConfig, local_entity_type::LocalEntityTypeResolver};
 use andromeda_context_space::context_target::ContextTarget;
@@ -117,13 +117,14 @@ impl RegistrationStore for FixedRegistrationStore {
 
     fn get<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        _id: &'life1 Identifier,
+        id: &'life1 Identifier,
     ) -> BoxFuture<'async_trait, Result<Option<ContextSourceRegistration>, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
     {
-        Box::pin(async { Ok(None) })
+        let registration = self.registrations.iter().find(|registration| &registration.id == id).cloned(); // clone: the read answers its own copy of the fixed registration
+        Box::pin(async { Ok(registration) })
     }
 
     fn query_compiled<'life0, 'life1, 'life2, 'async_trait>(

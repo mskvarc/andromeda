@@ -90,6 +90,8 @@ pub enum Csr {
     ModifiedAt,
     /// The `additionalProperties` JSONB bag of unmodelled members.
     AdditionalProperties,
+    /// The Context Source Property document a `csf` filter reads (clause 4.9).
+    ContextSourceProperties,
 }
 
 /// The `registration_delivery_state` relation: the forwarding statistics and health of
@@ -171,6 +173,7 @@ mod tests {
         assert_eq!(Csr::ObservationSpaceValid.to_string(), "observation_space_valid");
         assert_eq!(Csr::OperationSpaceValid.to_string(), "operation_space_valid");
         assert_eq!(Csr::AdditionalProperties.to_string(), "additional_properties");
+        assert_eq!(Csr::ContextSourceProperties.to_string(), "context_source_properties");
     }
 
     #[test]

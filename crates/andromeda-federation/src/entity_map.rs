@@ -218,11 +218,10 @@ impl FederationService {
     pub(crate) async fn registrations_of_map(&self, map: &EntityMap) -> Result<Vec<ContextSourceRegistration>, FederationError> {
         let mut registrations = Vec::new();
         for registration_id in map.registrations() {
-            if let Some(registration) = self.csr_repo.get(registration_id).await? {
-                let expired = registration.lifecycle.expires_at.is_some_and(|expires_at| expires_at <= Utc::now());
-                if !expired {
-                    registrations.push(registration);
-                }
+            if let Some(registration) = self.csr_repo.get(registration_id).await?
+                && registration.lifecycle.in_force_at(Utc::now())
+            {
+                registrations.push(registration);
             }
         }
         Ok(registrations)

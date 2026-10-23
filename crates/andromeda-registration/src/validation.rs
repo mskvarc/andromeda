@@ -11,7 +11,7 @@ use crate::{error::RegistrationError, mode_rules::validate_structure, registrati
 use andromeda_ngsi_ld_model::{
     context_source_info::ContextSourceInfo,
     key_value_pair::KeyValuePair,
-    registration::{forwarding_mode::ForwardingMode, info::RegistrationInfo, operation::CsrOperation},
+    registration::{forwarding_mode::ForwardingMode, info::RegistrationInfo, lifecycle::RegistrationLifecycle, operation::CsrOperation},
 };
 use chrono::{DateTime, Utc};
 
@@ -33,7 +33,7 @@ pub(super) struct RegistrationShape<'a> {
 /// Apply the clause 5.2.9 cross-member rules and the clause 4.3.6.6
 /// `contextSourceInfo` restrictions, returning the reserved keys read.
 pub(super) fn validate_shape<'a>(shape: &RegistrationShape<'a>) -> Result<ContextSourceInfo<'a>, RegistrationError> {
-    if shape.expires_at.is_some_and(|expires_at| expires_at <= Utc::now()) {
+    if !RegistrationLifecycle::expiry_in_force_at(shape.expires_at, Utc::now()) {
         return Err(RegistrationError::Validation(RegistrationValidationReason::ExpiresAtInPast));
     }
     let info = match shape.context_source_info {

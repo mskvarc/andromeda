@@ -38,6 +38,9 @@ mod attribute_history_index_tests;
 /// The comment rules every migration's text keeps.
 #[cfg(test)]
 mod comment_tests;
+/// The stored Context Source Property document of a registration.
+#[cfg(test)]
+mod context_source_properties_tests;
 /// The shape of `current_attributes`, its key functions and its
 /// statement-level references.
 #[cfg(test)]

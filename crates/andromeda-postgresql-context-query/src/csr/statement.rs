@@ -713,13 +713,17 @@ mod tests {
         assert!(built.sql.contains("\"observation_interval_end\" >="), "{}", built.sql);
     }
 
-    /// Clause 4.9: `csf` reads the registration's Context Source Properties.
+    /// Clause 4.9: `csf` reads the stored Context Source Property document,
+    /// which holds the Table 5.2.9-1 members beside the added properties, never
+    /// the added properties alone.
     #[test]
-    fn build_with_csf_existence() {
+    fn csf_reads_the_context_source_properties_column() {
         let mut q = empty_query();
-        q.csf_expr = Some(parser::parse("temperature").unwrap());
+        q.csf_expr = Some(parser::parse("\"https://uri.etsi.org/ngsi-ld/mode\"==\"exclusive\"").unwrap());
         let built = build(&q);
-        assert!(built.sql.contains("\"additional_properties\" ?"));
+        assert!(built.sql.contains("\"context_source_properties\" -> ("), "{}", built.sql);
+        let filtered = built.sql.split(" WHERE ").nth(1).expect("a WHERE clause");
+        assert!(!filtered.contains("additional_properties"), "{}", built.sql);
     }
 
     #[test]

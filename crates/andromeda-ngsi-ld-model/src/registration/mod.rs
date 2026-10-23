@@ -5,17 +5,20 @@
 //! reaches it, what has been observed about it, when the registration applies,
 //! and what identifies it. They live in a module apiece, and this one holds
 //! only the resource that flattens them together. What a `csf` filter reads of
-//! the Context Source Properties it adds is
-//! [`context_source_properties`].
+//! a registration is [`context_source_property_document`], and the filters a
+//! request places on registrations beside clause 5.12 matching are
+//! [`selection`].
 
 pub mod access;
 pub mod context_source_properties;
+pub mod context_source_property_document;
 pub mod coverage;
 pub mod forwarding_mode;
 pub mod health;
 pub mod info;
 pub mod lifecycle;
 pub mod operation;
+pub mod selection;
 pub mod status;
 
 use crate::registration::{access::ContextSourceAccess, coverage::RegistrationCoverage, health::RegistrationHealth, lifecycle::RegistrationLifecycle};

@@ -1,4 +1,6 @@
-//! `q` filtering over a registration's `additional_properties` JSONB column.
+//! `csf` filtering over a registration's `context_source_properties` JSONB
+//! column, the stored Context Source Property document every in-memory `csf`
+//! reader evaluates too (clause 4.9).
 //!
 //! Registrations carry no attribute projection, so every predicate reads the
 //! JSONB document directly.
@@ -28,13 +30,13 @@ use andromeda_postgresql_seaquery::{
 };
 use sea_query::{Alias, CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Query, QueryStatementBuilder, SimpleExpr};
 
-/// The registration's `additional_properties` JSONB document, read fresh each
-/// time it opens an extraction.
-fn additional_properties() -> SimpleExpr {
-    SeaExpr::col(Alias::new("additional_properties"))
+/// The registration's `context_source_properties` JSONB document, read fresh
+/// each time it opens an extraction.
+fn context_source_properties() -> SimpleExpr {
+    SeaExpr::col(Alias::new("context_source_properties"))
 }
 
-/// Compile a parsed `q` expression against `additional_properties`.
+/// Compile a parsed `q` expression against `context_source_properties`.
 ///
 /// The compilation is infallible, which is why it reports no error: a
 /// registration property is addressed as a JSONB key rather than resolved
@@ -51,13 +53,13 @@ pub fn csr_expr_to_condition(expr: &Expr) -> Condition {
     }
 }
 
-/// Compile one leaf predicate against `additional_properties`.
+/// Compile one leaf predicate against `context_source_properties`.
 fn csr_pred_to_condition(pred: &Predicate) -> Condition {
     let QueryPath::Local(path) = pred.path() else {
         return no_registration_matches();
     };
     match pred {
-        Predicate::Exists(_) => Condition::all().add(jsonb_key_exists(additional_properties(), SeaExpr::val(path.attr.as_str()))),
+        Predicate::Exists(_) => Condition::all().add(jsonb_key_exists(context_source_properties(), SeaExpr::val(path.attr.as_str()))),
         Predicate::Equality { membership, rhs, .. } => csr_equality_condition(path, *membership, rhs),
         Predicate::Ordering { op, rhs, .. } => csr_ordering_condition(path, *op, rhs),
         Predicate::MatchPattern { pattern, .. } => csr_pattern_condition(path, pattern.portable().as_str(), PatternPolarity::Match),
@@ -68,8 +70,8 @@ fn csr_pred_to_condition(pred: &Predicate) -> Condition {
 /// A predicate no registration can satisfy.
 ///
 /// The clause 4.9 `{}` axis descends a Relationship into the entity it names.
-/// A registration is not an Entity and its `additional_properties` hold
-/// Properties only (clause 5.2.9 `ContextSourceRegistration`), so there is no
+/// A registration is not an Entity and its Context Source Properties carry no
+/// Relationship (clause 5.2.9 `ContextSourceRegistration`), so there is no
 /// Relationship to descend and no linked entity to reach: the traversal has no
 /// target here, and a predicate with no target does not hold. Rejecting the
 /// whole filter instead would be wrong — the traversal is valid `q` syntax, and
@@ -88,7 +90,7 @@ fn present(extract: SimpleExpr) -> SimpleExpr {
     SeaExpr::expr(extract).is_not_null()
 }
 
-/// Compile a pattern predicate against `additional_properties`.
+/// Compile a pattern predicate against `context_source_properties`.
 ///
 /// Both polarities require the property to be present (clause 4.9), so both
 /// build through [`present_and`].
@@ -103,7 +105,7 @@ fn csr_pattern_condition(path: &AttrPath, pattern: &str, polarity: PatternPolari
 }
 
 /// Build an expression that extracts the value of a CSR property from
-/// `additional_properties`, unwrapping the `Property` value wrapper at each
+/// `context_source_properties`, unwrapping the `Property` value wrapper at each
 /// sub-attribute level and then stepping into any compound value members.
 ///
 /// Each sub-attribute level references the prior expression exactly once,
@@ -119,7 +121,7 @@ fn csr_pattern_condition(path: &AttrPath, pattern: &str, polarity: PatternPolari
 /// never carries. Dropping `value_path` would compare the whole compound
 /// value's JSON text instead of the addressed member.
 fn csr_value_extract(path: &AttrPath) -> SimpleExpr {
-    let mut json_path = unwrap_property(additional_properties().json_get(text_literal(path.attr.as_str())));
+    let mut json_path = unwrap_property(context_source_properties().json_get(text_literal(path.attr.as_str())));
 
     for sub in &path.sub_attrs {
         json_path = unwrap_property(json_path.json_get(text_literal(sub.as_str())));
@@ -187,7 +189,7 @@ fn csr_reading(extract: SimpleExpr, scalar: &Scalar) -> (SimpleExpr, SimpleExpr)
 }
 
 /// Build the present-guarded single-scalar comparison against
-/// `additional_properties`.
+/// `context_source_properties`.
 fn csr_scalar_comparison(extract: SimpleExpr, scalar: &Scalar, op: CmpOp) -> SimpleExpr {
     let guard = present(extract.clone()); // clone: the value side lifts the same extraction
     let (text, datatype) = csr_reading(extract, scalar);
@@ -195,7 +197,7 @@ fn csr_scalar_comparison(extract: SimpleExpr, scalar: &Scalar, op: CmpOp) -> Sim
     present_and(guard, compare(lifted.stored, op, lifted.operand))
 }
 
-/// Compile an equality predicate (`==`/`!=`) against `additional_properties`.
+/// Compile an equality predicate (`==`/`!=`) against `context_source_properties`.
 fn csr_equality_condition(path: &AttrPath, membership: SetMembership, rhs: &CompareValue) -> Condition {
     let extract = csr_value_extract(path);
 
@@ -229,7 +231,7 @@ fn csr_equality_condition(path: &AttrPath, membership: SetMembership, rhs: &Comp
     }
 }
 
-/// Compile an ordering predicate (`>`/`>=`/`<`/`<=`) against `additional_properties`.
+/// Compile an ordering predicate (`>`/`>=`/`<`/`<=`) against `context_source_properties`.
 fn csr_ordering_condition(path: &AttrPath, op: OrderingOp, rhs: &Scalar) -> Condition {
     let extract = csr_value_extract(path);
     Condition::all().add(csr_scalar_comparison(extract, rhs, op.as_cmp_op()))
@@ -267,7 +269,7 @@ mod tests {
     #[test]
     fn existence_probes_the_jsonb_key() {
         let sql = render("temperature");
-        assert!(sql.contains("\"additional_properties\" ?"), "{sql}");
+        assert!(sql.contains("\"context_source_properties\" ?"), "{sql}");
     }
 
     #[test]
