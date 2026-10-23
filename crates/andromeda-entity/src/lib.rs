@@ -7,6 +7,9 @@
 mod admission_fixture;
 /// A single-entity write document the clause 5.5.4 admission produced.
 pub mod admitted_write;
+/// What a client's request makes of every attribute member shape.
+#[cfg(test)]
+mod attribute_member_shape_tests;
 /// What the existing Entities carry of one attribute name.
 pub mod attribute_summary;
 /// Attribute-level writes (clauses 5.6.2 to 5.6.5 and 5.6.19).
@@ -301,6 +304,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-tenancy",
     ],
     allow_workspace_dev_dependencies: [
+        "andromeda-test-fixtures",
     ],
     allow_production_dependencies: [],
 }

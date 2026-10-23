@@ -416,6 +416,36 @@ mod tests {
         assert!(body.additional_properties.is_empty());
     }
 
+    /// Clauses 4.4 and 5.5.7: a registration spelling `type`, `id` and the
+    /// type of an entity selector as `@type` and `@id`, or under the terms a
+    /// context aliases them with, reads as the plain spelling.
+    #[test]
+    fn a_registration_spelled_with_keywords_or_aliases_reads_as_spelled_plainly() {
+        let mut aliases = CoreTermAliases::keyword_spellings().clone(); // clone: the fixture extends the shared table
+        aliases.alias("kind", "type");
+        aliases.alias("ident", "id");
+        let rendered = |text: &str, aliases: &CoreTermAliases| {
+            format!(
+                "{:?}",
+                RegistrationBody::from_request_text(text.as_bytes(), aliases).expect("a registration body")
+            )
+        };
+        let plain = rendered(
+            r#"{"type": "ContextSourceRegistration", "id": "urn:ngsi-ld:ContextSourceRegistration:1", "endpoint": "https://source.example.org", "information": [{"entities": [{"type": "Vehicle"}]}]}"#,
+            CoreTermAliases::keyword_spellings(),
+        );
+        let keywords = rendered(
+            r#"{"@type": "ContextSourceRegistration", "@id": "urn:ngsi-ld:ContextSourceRegistration:1", "endpoint": "https://source.example.org", "information": [{"entities": [{"@type": "Vehicle"}]}]}"#,
+            CoreTermAliases::keyword_spellings(),
+        );
+        let spelled_by_aliases = rendered(
+            r#"{"kind": "ContextSourceRegistration", "ident": "urn:ngsi-ld:ContextSourceRegistration:1", "endpoint": "https://source.example.org", "information": [{"entities": [{"kind": "Vehicle"}]}]}"#,
+            &aliases,
+        );
+        pretty_assertions::assert_eq!(keywords, plain);
+        pretty_assertions::assert_eq!(spelled_by_aliases, plain);
+    }
+
     /// Clause 5.2.9: the registration identifier is a URI no longer than an
     /// identifier may be, and the refusal names the member.
     #[test]

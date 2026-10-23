@@ -58,6 +58,7 @@ tracing = "0.1.44"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+andromeda-test-fixtures.workspace = true
 async-trait = "0.1.92"
 pretty_assertions = "1.4.1"
 serde_urlencoded = "0.7.1"

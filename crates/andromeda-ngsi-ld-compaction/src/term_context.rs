@@ -14,8 +14,12 @@ use crate::{
     undecidable::Undecidable,
 };
 use andromeda_json_literal::processor_json::read_processor_json;
-use andromeda_jsonld::{core_term_aliases::core_term_aliases, engine::compaction_context::CompactionContext};
-use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+use andromeda_jsonld::{container_terms::container_terms, core_term_aliases::core_term_aliases, engine::compaction_context::CompactionContext};
+use andromeda_ngsi_ld_representation::{
+    compact_node::{aliased_node::AliasedNode, contained_node::ContainedNode},
+    container_terms::ContainerTerms,
+    core_term_aliases::CoreTermAliases,
+};
 use dashmap::DashMap;
 use jsonld::{
     BlankIdBuf,
@@ -63,23 +67,30 @@ pub(crate) struct TermContext {
     /// The terms of the context that stand for core terms, which a compacted
     /// entity is read through.
     aliases: CoreTermAliases,
+    /// The terms of the context whose container reshapes what is compacted
+    /// under them, which a compacted entity is read without.
+    containers: ContainerTerms,
 }
 
 impl TermContext {
     /// Ask `context` with the options the processor compacts with.
     pub(crate) fn new(context: Arc<CompactionContext>) -> TermContext {
         let aliases = core_term_aliases(context.active_context());
+        let containers = container_terms(context.active_context());
         TermContext {
             context,
             options: Options::<IriBuf>::default().compaction_options(),
             attribute_keys: DashMap::new(),
             aliases,
+            containers,
         }
     }
 
-    /// The terms of the context that stand for core terms.
-    pub(crate) const fn aliases(&self) -> &CoreTermAliases {
-        &self.aliases
+    /// `node`, compacted under the context, read as the compact model reads
+    /// it: without the containers of the context's terms, each member under
+    /// the core term its name stands for.
+    pub(crate) const fn read<N>(&self, node: N) -> AliasedNode<'_, ContainedNode<'_, N>> {
+        AliasedNode::new(ContainedNode::new(node, &self.containers), &self.aliases)
     }
 
     /// The active context.

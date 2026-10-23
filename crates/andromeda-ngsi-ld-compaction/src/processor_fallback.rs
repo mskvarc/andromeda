@@ -3,8 +3,9 @@
 //! The model is written in its canonical expanded form, which is the stored
 //! document, and compacted from that document;
 //! the result is therefore exactly the one the processor gives. Its text is
-//! read by the compact model as every compact document is, through the terms
-//! the request context defines for core terms.
+//! read by the compact model as every compact document is, without the
+//! containers of the request context's terms and through the terms it defines
+//! for core terms.
 
 use crate::{compaction_error::CompactionError, patch_reading::PatchReading, term_context::TermContext};
 use andromeda_json_literal::piece::JsonPiece;
@@ -18,7 +19,7 @@ use andromeda_ngsi_ld_model::{
     temporal::{temporal_attribute::TemporalAttribute, temporal_entity::TemporalEntity},
 };
 use andromeda_ngsi_ld_representation::{
-    compact_node::{CompactNode, NodeShape, aliased_node::AliasedNode},
+    compact_node::{CompactNode, NodeShape},
     sys_attrs::SysAttrsInclusion,
 };
 use std::convert::Infallible;
@@ -37,7 +38,7 @@ pub(crate) async fn entity_through_processor(
     }
     .map_err(CompactionError::Encode)?;
     let compacted = compactor.compact(ExpandedText::Canonical(&document), CompactOptions::default()).await?;
-    let mut entity = read_entity(AliasedNode::new(JsonPiece::new(&compacted), terms.aliases()))?;
+    let mut entity = read_entity(terms.read(JsonPiece::new(&compacted)))?;
     if let Some(id) = id_override {
         // clone: the compact entity owns the identifier it is read by
         entity.id = id.clone();
@@ -85,7 +86,7 @@ pub(crate) async fn document_patch_through_processor<M: MemberReading>(
 ) -> Result<EntityPatch<M>, CompactionError> {
     let document = serde_json::to_vec(document).map_err(CompactionError::Encode)?;
     let compacted = compactor.compact(ExpandedText::Assembled(&document), CompactOptions::default()).await?;
-    read_patch(AliasedNode::new(JsonPiece::new(&compacted), terms.aliases()), reading)
+    read_patch(terms.read(JsonPiece::new(&compacted)), reading)
 }
 
 /// Compact the document of a Temporal Evolution through the processor,
@@ -97,7 +98,7 @@ pub(crate) async fn temporal_through_processor(
 ) -> Result<TemporalEntity, CompactionError> {
     let document = serde_json::to_vec(document).map_err(CompactionError::Encode)?;
     let compacted = compactor.compact(ExpandedText::Assembled(&document), CompactOptions::default()).await?;
-    let compacted = AliasedNode::new(JsonPiece::new(&compacted), terms.aliases());
+    let compacted = terms.read(JsonPiece::new(&compacted));
     let node = match compacted.shape() {
         NodeShape::Array(nodes) => nodes.into_iter().next().unwrap_or(compacted),
         NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => compacted,
@@ -117,7 +118,7 @@ pub(crate) async fn scope_history_through_processor(
 ) -> Result<Option<TemporalAttribute>, CompactionError> {
     let document = serde_json::to_vec(document).map_err(CompactionError::Encode)?;
     let compacted = compactor.compact(ExpandedText::Assembled(&document), CompactOptions::default()).await?;
-    TemporalAttribute::scope_history_of(first_node(AliasedNode::new(JsonPiece::new(&compacted), terms.aliases()))).map_err(|error| match error {
+    TemporalAttribute::scope_history_of(first_node(terms.read(JsonPiece::new(&compacted)))).map_err(|error| match error {
         NodeReadError::Refused(refused) => CompactionError::Refused(refused),
         NodeReadError::Unreadable(never) => match never {},
     })
@@ -132,7 +133,7 @@ pub(crate) async fn document_entity_through_processor(
 ) -> Result<Entity, CompactionError> {
     let document = serde_json::to_vec(document).map_err(CompactionError::Encode)?;
     let compacted = compactor.compact(ExpandedText::Assembled(&document), CompactOptions::default()).await?;
-    read_entity(AliasedNode::new(JsonPiece::new(&compacted), terms.aliases()))
+    read_entity(terms.read(JsonPiece::new(&compacted)))
 }
 
 /// `state` without the clause 4.8 times of its instances at every depth,

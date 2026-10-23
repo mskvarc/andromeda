@@ -346,6 +346,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-telemetry",
     ],
     allow_workspace_dev_dependencies: [
+        "andromeda-test-fixtures",
         "andromeda-test-mocks",
     ],
     allow_production_dependencies: ["reqwest", "tokio"],

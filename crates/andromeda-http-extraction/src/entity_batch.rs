@@ -469,6 +469,22 @@ mod tests {
         pretty_assertions::assert_eq!(errors[0].entity_id.as_str(), "urn:ngsi-ld:Vehicle:2");
     }
 
+    /// Clause 4.4: an item spelling its `id` as `@id` is reported against that
+    /// `id` when it is no entity.
+    #[tokio::test]
+    async fn a_batch_item_id_spelled_at_id_names_its_error() {
+        let batch = json_batch(r#"[{"@id":"urn:ngsi-ld:Vehicle:1","@type":"Vehicle"},{"@id":"urn:ngsi-ld:Vehicle:2","@type":5}]"#).await;
+        let (entities, errors) = parsed(&batch).await;
+        pretty_assertions::assert_eq!(
+            entities.iter().map(|entity| entity.id.to_string()).collect::<Vec<_>>(),
+            vec!["urn:ngsi-ld:Vehicle:1"]
+        );
+        pretty_assertions::assert_eq!(
+            errors.iter().map(|error| error.entity_id.to_string()).collect::<Vec<_>>(),
+            vec!["urn:ngsi-ld:Vehicle:2"]
+        );
+    }
+
     /// Clause 5.5.7: an item's own top-level `@context` is admitted, and the
     /// first one it embeds deeper is carried with that item alone, located
     /// from the item's own top level.

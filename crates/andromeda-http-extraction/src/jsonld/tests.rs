@@ -833,3 +833,135 @@ async fn a_subscription_embedding_a_context_carries_the_finding() {
         SubmittedContext::new(ContextSpec::from_request(RequestContext::Default), expected)
     );
 }
+
+/// Clauses 4.4 and 5.5.7: a body is read under the context it names, so
+/// `@id` and `@type`, and the terms an inline user `@context` defines for core
+/// terms, are read as the core terms they stand for, whatever resource the
+/// body is.
+mod aliased_bodies {
+    use crate::jsonld::{
+        JsonLd,
+        tests::{request_of, with_content_length},
+    };
+    use andromeda_http_response::problem_response::ProblemResponse;
+    use andromeda_jsonld::{engine::processor::JsonLdEngine, user_context_admission::admit_user_context};
+    use andromeda_ngsi_ld_model::{
+        entity::Entity,
+        query::body::Query,
+        request_body::RequestBody,
+        snapshot_input::SnapshotInput,
+        subscription_request::SubscriptionRequest,
+    };
+    use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+    use andromeda_ngsi_ld_request::body::entity_map::UpdateEntityMapBody;
+    use axum::extract::FromRequest;
+    use serde_json::{Value, json};
+    use std::fmt::Debug;
+
+    /// The inline user `@context` aliasing `@type`, `@id` and
+    /// `ngsi-ld:hasValue`.
+    fn aliasing() -> Value {
+        json!({"kind": "@type", "ident": "@id", "v": "https://uri.etsi.org/ngsi-ld/hasValue"})
+    }
+
+    /// `body`, an `application/ld+json` body naming its context inline,
+    /// extracted as a `T` and read once that context was admitted.
+    async fn read<T: RequestBody + Send + 'static>(body: &Value) -> Result<T, ProblemResponse> {
+        let JsonLd { body, context } = JsonLd::<T>::from_request(with_content_length(request_of("application/ld+json", body)), &())
+            .await
+            .unwrap_or_else(|rejection| panic!("the body is admitted: {rejection:?}"));
+        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("the offline engine builds");
+        let context = admit_user_context(&engine, context).await.expect("the inline context is admitted");
+        body.admitted(&context).await
+    }
+
+    /// The `T` each spelling of one body reads as, rendered for comparison:
+    /// the plain spelling, the keyword spelling and the aliased one.
+    async fn spellings<T: RequestBody + Send + Debug + 'static>(plain: &Value, keywords: &Value, aliased: &Value) -> [String; 3] {
+        let mut read_as = Vec::with_capacity(3);
+        for (body, context) in [(plain, json!({})), (keywords, json!({})), (aliased, aliasing())] {
+            let mut body = body.clone(); // clone: the fixture stays the caller's
+            body["@context"] = context;
+            let decoded = read::<T>(&body).await.unwrap_or_else(|refusal| panic!("{body} is read: {refusal:?}"));
+            read_as.push(format!("{decoded:?}"));
+        }
+        [read_as.remove(0), read_as.remove(0), read_as.remove(0)]
+    }
+
+    /// Assert that every spelling of a body reads as the plain one.
+    fn assert_alike(read_as: &[String; 3]) {
+        pretty_assertions::assert_eq!(read_as[1], read_as[0], "the keyword spelling");
+        pretty_assertions::assert_eq!(read_as[2], read_as[0], "the aliased spelling");
+    }
+
+    #[tokio::test]
+    async fn an_entity_is_read_alike_in_every_spelling() {
+        assert_alike(
+            &spellings::<Entity>(
+                &json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 5}}),
+                &json!({"@id": "urn:ngsi-ld:Vehicle:1", "@type": "Vehicle", "speed": {"@type": "Property", "value": 5}}),
+                &json!({"ident": "urn:ngsi-ld:Vehicle:1", "kind": "Vehicle", "speed": {"kind": "Property", "v": 5}}),
+            )
+            .await,
+        );
+    }
+
+    /// Clause 5.5.4: data "not syntactically correct, according to the
+    /// @context" is refused, located at the member the client wrote.
+    #[tokio::test]
+    async fn an_aliased_member_the_context_refuses_is_refused_at_its_pointer() {
+        let body = json!({"id": "urn:ngsi-ld:Vehicle:1", "kind": "Vehicle", "speed": {"kind": "Propertyy", "v": 5}, "@context": aliasing()});
+        let refusal = read::<Entity>(&body).await.expect_err("no attribute type is named Propertyy");
+        pretty_assertions::assert_eq!(refusal.problem().error_type(), NgsiLdErrorType::BadRequestData);
+        assert!(refusal.problem().detail().contains("/speed"), "{}", refusal.problem().detail());
+    }
+
+    #[tokio::test]
+    async fn a_subscription_is_read_alike_in_every_spelling() {
+        let notification = json!({"endpoint": {"uri": "http://example.org/notify"}});
+        assert_alike(
+            &spellings::<SubscriptionRequest>(
+                &json!({"type": "Subscription", "id": "urn:ngsi-ld:Subscription:1", "entities": [{"type": "Vehicle"}], "notification": notification}),
+                &json!({"@type": "Subscription", "@id": "urn:ngsi-ld:Subscription:1", "entities": [{"@type": "Vehicle"}], "notification": notification}),
+                &json!({"kind": "Subscription", "ident": "urn:ngsi-ld:Subscription:1", "entities": [{"kind": "Vehicle"}], "notification": notification}),
+            )
+            .await,
+        );
+    }
+
+    #[tokio::test]
+    async fn a_query_is_read_alike_in_every_spelling() {
+        assert_alike(
+            &spellings::<Query>(
+                &json!({"type": "Query", "entities": [{"type": "Vehicle"}]}),
+                &json!({"@type": "Query", "entities": [{"@type": "Vehicle"}]}),
+                &json!({"kind": "Query", "entities": [{"kind": "Vehicle"}]}),
+            )
+            .await,
+        );
+    }
+
+    #[tokio::test]
+    async fn a_snapshot_input_is_read_alike_in_every_spelling() {
+        assert_alike(
+            &spellings::<SnapshotInput>(
+                &json!({"type": "Snapshot", "id": "urn:ngsi-ld:Snapshot:1"}),
+                &json!({"@type": "Snapshot", "@id": "urn:ngsi-ld:Snapshot:1"}),
+                &json!({"kind": "Snapshot", "ident": "urn:ngsi-ld:Snapshot:1"}),
+            )
+            .await,
+        );
+    }
+
+    #[tokio::test]
+    async fn an_entity_map_update_is_read_alike_in_every_spelling() {
+        assert_alike(
+            &spellings::<UpdateEntityMapBody>(
+                &json!({"type": "EntityMap", "expiresAt": "2030-01-01T00:00:00Z"}),
+                &json!({"@type": "EntityMap", "expiresAt": "2030-01-01T00:00:00Z"}),
+                &json!({"kind": "EntityMap", "expiresAt": "2030-01-01T00:00:00Z"}),
+            )
+            .await,
+        );
+    }
+}

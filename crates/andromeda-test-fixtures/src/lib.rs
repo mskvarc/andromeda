@@ -2,6 +2,7 @@
 
 #![deny(missing_docs)]
 
+pub mod attribute_member_shape;
 pub mod context;
 pub mod entity_fixture;
 pub mod fixture_document;

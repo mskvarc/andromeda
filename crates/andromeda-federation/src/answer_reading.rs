@@ -470,4 +470,59 @@ mod tests {
         .await;
         assert!(answer.entities[0].state.attributes().contains("https://x.example/speed"));
     }
+
+    /// What a peer's answer to a query makes of every attribute member shape
+    /// (clause 6.3.17): an entity read typed keeps its sibling company, one
+    /// refused is dropped with one `111 Revalidation Failed` warning while its
+    /// sibling is kept.
+    mod shapes {
+        use crate::answer_reading::tests::{answered, ids};
+        use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+        use andromeda_json_literal::JsonLiteral;
+        use andromeda_jsonld::context_spec::ContextSpec;
+        use andromeda_test_fixtures::attribute_member_shape::{ShapeCase, Verdict};
+
+        /// Assert what an answer carrying the case's member beside a valid
+        /// sibling makes of the member.
+        async fn assert_verdict(case: &ShapeCase) {
+            let naming = case.context.map_or_else(ContextSpec::core_only, |terms| {
+                ContextSpec::from_body(JsonLiteral::admit(terms).expect("the case context is JSON"))
+            });
+            let body = format!(
+                r#"[{{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","attr":{}}},{{"id":"urn:ngsi-ld:Vehicle:2","type":"Vehicle"}}]"#,
+                case.member
+            );
+            let answer = answered(&body, naming).await;
+            match case.peer_query {
+                Verdict::Typed | Verdict::Ignored(_) => {
+                    pretty_assertions::assert_eq!(ids(&answer), vec!["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"], "{}", case.name);
+                    pretty_assertions::assert_eq!(answer.warnings, [] as [NgsiLdWarning; 0], "{}", case.name);
+                }
+                Verdict::Refused => {
+                    pretty_assertions::assert_eq!(ids(&answer), vec!["urn:ngsi-ld:Vehicle:2"], "{}", case.name);
+                    assert!(
+                        matches!(answer.warnings.as_slice(), [NgsiLdWarning::RevalidationFailed(_)]),
+                        "{}: {:?}",
+                        case.name,
+                        answer.warnings
+                    );
+                }
+                Verdict::NotApplicable => {}
+            }
+        }
+
+        /// One test per shape, named after it.
+        macro_rules! shape_tests {
+            ($($test:ident => $case:path),+ $(,)?) => {
+                $(
+                    #[tokio::test]
+                    async fn $test() {
+                        assert_verdict(&$case).await;
+                    }
+                )+
+            };
+        }
+
+        andromeda_test_fixtures::for_each_attribute_member_shape!(shape_tests);
+    }
 }

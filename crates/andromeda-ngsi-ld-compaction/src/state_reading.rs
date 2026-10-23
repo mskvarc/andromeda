@@ -10,7 +10,7 @@ use crate::{compacted::Compacted, compaction_error::CompactionError, term_contex
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{entity::Entity, node_refusal::NodeReadError};
-use andromeda_ngsi_ld_representation::{compact_node::aliased_node::AliasedNode, sys_attrs::SysAttrsInclusion};
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use thiserror::Error;
 
 /// Why the walk gave no compact entity.
@@ -32,7 +32,7 @@ pub(crate) fn walk_entity(
     sys_attrs: SysAttrsInclusion,
 ) -> Result<Entity, WalkError> {
     let tree = Compacted::Object(Walk::new(terms).compact_state(state, sys_attrs)?);
-    let mut entity = <Entity>::from_node(AliasedNode::new(&tree, terms.aliases())).map_err(|error| {
+    let mut entity = <Entity>::from_node(terms.read(&tree)).map_err(|error| {
         WalkError::Refused(match error {
             NodeReadError::Refused(refused) => CompactionError::Refused(refused),
             NodeReadError::Unreadable(unwritten) => CompactionError::Encode(unwritten),

@@ -36,7 +36,9 @@
 //!
 //! Which terms of a processed context stand for core NGSI-LD terms is a
 //! property of that context alone, so [`core_term_aliases`] reads it once for
-//! the request body reader and the compacted-entity reader alike.
+//! the request body reader and the compacted-entity reader alike, and
+//! [`container_terms`] reads which of its terms reshape what is compacted under
+//! them.
 //!
 //! Four ports point outward and are declared here because this crate or its
 //! callers reach through them: [`context_cache::ContextCache`], the durable
@@ -55,6 +57,7 @@
 pub mod batch_contexts;
 pub mod compound_context_host;
 pub mod config;
+pub mod container_terms;
 pub mod context_cache;
 pub mod context_graph;
 pub mod context_registry;

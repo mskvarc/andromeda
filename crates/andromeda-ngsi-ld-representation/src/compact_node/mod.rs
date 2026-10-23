@@ -13,6 +13,7 @@
 //! handles of its elements or members, in the order they were written.
 
 pub mod aliased_node;
+pub mod contained_node;
 mod piece_node;
 pub mod produced_node;
 

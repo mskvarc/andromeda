@@ -16,7 +16,11 @@ use crate::{
 };
 use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, time::rendering::instant_text};
-use andromeda_ngsi_ld_representation::{attribute_type_validation::AttributeNodeFault, core_term_aliases::CoreTermAliases};
+use andromeda_ngsi_ld_representation::{
+    attribute_type_validation::AttributeNodeFault,
+    compact_node::aliased_node::AliasedNode,
+    core_term_aliases::CoreTermAliases,
+};
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json, value::RawValue};
 use std::{convert::Infallible, thread};
@@ -517,4 +521,58 @@ fn an_entity_that_is_none_is_refused() {
     }
     let array = RawValue::from_string(json!([{"id": "urn:ngsi-ld:T:1", "type": "T"}]).to_string()).expect("the fixture is JSON");
     assert!(<Entity>::from_node(JsonPiece::new(&array)).is_err());
+}
+
+/// Clause 4.5.2.3: the empty array is the value of a concise Property, at the
+/// top level of an entity as at any other place.
+#[test]
+fn an_empty_array_member_reads_as_an_empty_property_value() {
+    assert_eq!(property_value(&single(&json!([]))), &NgsiLdValue::Json(literal("[]")));
+    let entity = <Entity>::from_request_text(br#"{"id": "urn:ngsi-ld:T:1", "type": "T", "tags": []}"#, CoreTermAliases::keyword_spellings())
+        .expect("the entity is read");
+    let Some(AttributeValue::Single(tags)) = entity.attrs.get("tags") else {
+        panic!("one instance: {:?}", entity.attrs);
+    };
+    assert_eq!(property_value(tags), &NgsiLdValue::Json(literal("[]")));
+}
+
+/// The instance `member` reads as under the name `member`, read through
+/// `aliases`.
+fn single_through(member: &Value, aliases: &CoreTermAliases) -> Attribute {
+    let text = RawValue::from_string(member.to_string()).expect("the member is JSON");
+    match <AttributeValue as MemberReading>::from_node("member", AliasedNode::new(JsonPiece::new(&text), aliases)) {
+        Ok(AttributeValue::Single(instance)) => *instance,
+        other => panic!("one instance: {other:?} from {member}"),
+    }
+}
+
+/// Clause 4.4: `@type` stands for `type`, on an instance and on its
+/// sub-attributes.
+#[test]
+fn a_keyword_spelled_instance_reads_typed() {
+    let instance = single_through(
+        &json!({"@type": "Relationship", "object": "urn:ngsi-ld:T:2", "since": {"@type": "Property", "value": 1}}),
+        CoreTermAliases::keyword_spellings(),
+    );
+    assert!(matches!(instance, Attribute::Relationship(_)), "{instance:?}");
+    let Some(AttributeValue::Single(since)) = instance.common().sub_attributes.get("since") else {
+        panic!("one sub-attribute instance: {instance:?}");
+    };
+    assert_eq!(property_value(since), &NgsiLdValue::Json(literal("1")));
+}
+
+/// Clause 5.5.7: the terms a context defines for `@type`, `ngsi-ld:hasValue`
+/// and a core class are read as those core terms.
+#[test]
+fn an_aliased_instance_reads_typed() {
+    let mut aliases = CoreTermAliases::keyword_spellings().clone(); // clone: the fixture extends the shared table
+    aliases.alias("kind", "type");
+    aliases.alias("v", "value");
+    aliases.alias("Prop", "Property");
+    let instance = single_through(&json!({"kind": "Prop", "v": 21, "unitCode": "CEL"}), &aliases);
+    assert_eq!(property_value(&instance), &NgsiLdValue::Json(literal("21")));
+    let Attribute::Property(property) = &instance else {
+        panic!("a Property: {instance:?}");
+    };
+    assert!(property.unit_code.is_some(), "{instance:?}");
 }

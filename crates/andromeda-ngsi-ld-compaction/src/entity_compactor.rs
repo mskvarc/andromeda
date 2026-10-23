@@ -35,7 +35,7 @@ use andromeda_ngsi_ld_model::{
     node_refusal::NodeReadError,
     temporal::{temporal_attribute::TemporalAttribute, temporal_document::TemporalDocument, temporal_entity::TemporalEntity},
 };
-use andromeda_ngsi_ld_representation::{compact_node::aliased_node::AliasedNode, sys_attrs::SysAttrsInclusion};
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use chrono::{DateTime, Utc};
 use std::{str::FromStr, sync::OnceLock};
@@ -119,7 +119,7 @@ impl<'a> EntityCompactor<'a> {
         let terms = self.terms().await?;
         let walked = Walk::new(terms).compact_document(document).map(Compacted::Object);
         match walked {
-            Ok(tree) => <Entity>::from_node(AliasedNode::new(&tree, terms.aliases())).map_err(|error| match error {
+            Ok(tree) => <Entity>::from_node(terms.read(&tree)).map_err(|error| match error {
                 NodeReadError::Refused(refused) => CompactionError::Refused(refused),
                 NodeReadError::Unreadable(unwritten) => CompactionError::Encode(unwritten),
             }),
@@ -161,7 +161,7 @@ impl<'a> EntityCompactor<'a> {
         let terms = self.terms().await?;
         let walked = Walk::new(terms).compact_document(document).map(Compacted::Object);
         match walked {
-            Ok(tree) => reading.read(AliasedNode::new(&tree, terms.aliases())).map_err(|error| match error {
+            Ok(tree) => reading.read(terms.read(&tree)).map_err(|error| match error {
                 NodeReadError::Refused(refused) => CompactionError::Refused(refused),
                 NodeReadError::Unreadable(unwritten) => CompactionError::Encode(unwritten),
             }),
@@ -189,7 +189,7 @@ impl<'a> EntityCompactor<'a> {
         let terms = self.terms().await?;
         let walked = Walk::new(terms).compact_document(document.entity()).map(Compacted::Object);
         let mut entity = match walked {
-            Ok(tree) => TemporalEntity::from_node(AliasedNode::new(&tree, terms.aliases())).map_err(|error| match error {
+            Ok(tree) => TemporalEntity::from_node(terms.read(&tree)).map_err(|error| match error {
                 NodeReadError::Refused(refused) => CompactionError::Refused(refused),
                 NodeReadError::Unreadable(unwritten) => CompactionError::Encode(unwritten),
             })?,
@@ -227,7 +227,7 @@ impl<'a> EntityCompactor<'a> {
         let terms = self.terms().await?;
         let walked = Walk::new(terms).compact_document(document).map(Compacted::Object);
         match walked {
-            Ok(tree) => TemporalAttribute::scope_history_of(AliasedNode::new(&tree, terms.aliases())).map_err(|error| match error {
+            Ok(tree) => TemporalAttribute::scope_history_of(terms.read(&tree)).map_err(|error| match error {
                 NodeReadError::Refused(refused) => CompactionError::Refused(refused),
                 NodeReadError::Unreadable(unwritten) => CompactionError::Encode(unwritten),
             }),

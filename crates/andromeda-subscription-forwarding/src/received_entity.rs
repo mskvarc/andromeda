@@ -168,19 +168,30 @@ mod tests {
 
     /// `entity` relayed in `format` for a subscription naming `language`.
     async fn relayed_under(entity: &Value, format: ResponseFormat, language: Option<&NotificationLanguage>) -> Value {
+        relay_outcome(entity, &ContextSpec::core_only(), format, language)
+            .await
+            .expect("the notified entity is relayed")
+    }
+
+    /// `entity`, notified under `inbound`, relayed in `format` for a
+    /// subscription naming `language` under the core context, or the refusal
+    /// of it.
+    async fn relay_outcome(entity: &Value, inbound: &ContextSpec, format: ResponseFormat, language: Option<&NotificationLanguage>) -> Result<Value, String> {
         let engine = offline_engine();
-        let context = ContextSpec::core_only();
-        let inbound = EntityExpansion::prepare(&engine, &context).await.expect("the core context processes");
+        let expansion = EntityExpansion::prepare(&engine, inbound).await.expect("the inbound context processes");
         let elements = ReceivedEntities::from_slice(entity.to_string().as_bytes()).expect("an entity");
-        let [ReceivedElement::Read(contextual)] = elements.0.as_slice() else {
-            panic!("the notified entity reads");
+        let contextual = match elements.0.as_slice() {
+            [ReceivedElement::Read(contextual)] => contextual,
+            [ReceivedElement::Refused(refusal)] => return Err(refusal.to_string()),
+            other => panic!("one element was notified: {other:?}"),
         };
-        let received = read_notified(&engine, &inbound, contextual).await.expect("the notified entity expands");
+        let received = read_notified(&engine, &expansion, contextual).await.map_err(|refusal| refusal.to_string())?;
+        let context = ContextSpec::core_only();
         let context_compactor = engine.compactor(&context);
         let respelled = EntityCompactor::new(&context_compactor)
             .document_entity(&received.document)
             .await
-            .expect("the entity compacts");
+            .map_err(|error| error.to_string())?;
         let projection = Projection::default();
         serde_json::to_value(NotificationEntity::relayed(
             &respelled,
@@ -188,7 +199,7 @@ mod tests {
             StructuralProjection::from(&projection),
             language,
         ))
-        .expect("the entity writes")
+        .map_err(|error| error.to_string())
     }
 
     /// Table 5.2.12-1 `lang` and clause 4.15: a relayed `LanguageProperty` is
@@ -300,5 +311,52 @@ mod tests {
             .find(|(name, _)| name.as_str().ends_with("owner"))
             .map(|(_, member)| member);
         pretty_assertions::assert_eq!(owner, Some(&AttributeMember::Remove));
+    }
+
+    /// What a relayed notification makes of every attribute member shape
+    /// (clause 5.8.6): a member read typed is written in every representation
+    /// a local subscription may ask for, and a refused one refuses its entity.
+    mod shapes {
+        use crate::received_entity::tests::relay_outcome;
+        use andromeda_json_literal::JsonLiteral;
+        use andromeda_jsonld::context_spec::ContextSpec;
+        use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
+        use andromeda_test_fixtures::attribute_member_shape::{ShapeCase, Verdict};
+        use serde_json::Value;
+
+        /// Assert what relaying an entity carrying the case's member makes
+        /// of it.
+        async fn assert_verdict(case: &ShapeCase) {
+            let inbound = case.context.map_or_else(ContextSpec::core_only, |terms| {
+                ContextSpec::from_body(JsonLiteral::admit(terms).expect("the case context is JSON"))
+            });
+            let entity: Value =
+                serde_json::from_str(&format!(r#"{{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","attr":{}}}"#, case.member)).expect("the case member is JSON");
+            for format in [ResponseFormat::Normalized, ResponseFormat::Concise, ResponseFormat::Simplified] {
+                let outcome = relay_outcome(&entity, &inbound, format, None).await;
+                match case.relay {
+                    Verdict::Typed | Verdict::Ignored(_) => match outcome {
+                        Ok(relayed) => assert!(relayed.get("attr").is_some(), "{} in {format:?}: {relayed}", case.name),
+                        Err(refusal) => panic!("{} in {format:?}: {refusal}", case.name),
+                    },
+                    Verdict::Refused => assert!(outcome.is_err(), "{} in {format:?}: {outcome:?}", case.name),
+                    Verdict::NotApplicable => {}
+                }
+            }
+        }
+
+        /// One test per shape, named after it.
+        macro_rules! shape_tests {
+            ($($test:ident => $case:path),+ $(,)?) => {
+                $(
+                    #[tokio::test]
+                    async fn $test() {
+                        assert_verdict(&$case).await;
+                    }
+                )+
+            };
+        }
+
+        andromeda_test_fixtures::for_each_attribute_member_shape!(shape_tests);
     }
 }

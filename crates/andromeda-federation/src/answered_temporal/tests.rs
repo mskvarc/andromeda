@@ -167,3 +167,64 @@ async fn a_payload_that_is_not_json_is_a_warning() {
         answer.warnings
     );
 }
+
+/// What a peer's answer to a temporal query makes of every attribute member
+/// shape written as the one instance of a history (clause 6.3.17): an entity
+/// read typed keeps its sibling company, one refused is dropped with one
+/// `111 Revalidation Failed` warning while its sibling is kept.
+mod shapes {
+    use crate::answered_temporal::tests::{answered, ids};
+    use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+    use andromeda_jsonld::context_spec::ContextSpec;
+    use andromeda_test_fixtures::attribute_member_shape::{ShapeCase, Verdict};
+    use serde_json::{Value, json};
+
+    /// The history the case's member is the one instance of, observed once.
+    fn history(case: &ShapeCase) -> Value {
+        let mut instance: Value = serde_json::from_str(case.member).expect("the case member is JSON");
+        if let Some(members) = instance.as_object_mut() {
+            members.insert("observedAt".to_owned(), json!("2020-01-01T00:00:00Z"));
+        }
+        json!([instance])
+    }
+
+    /// Assert what an answer carrying the case's history beside a valid
+    /// sibling makes of it.
+    async fn assert_verdict(case: &ShapeCase) {
+        let body = json!([
+            {"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "attr": history(case)},
+            {"id": "urn:ngsi-ld:Vehicle:2", "type": "Vehicle", "speed": [{"type": "Property", "value": 1, "observedAt": "2020-01-01T00:00:00Z"}]}
+        ]);
+        let answer = answered(&body.to_string(), ContextSpec::core_only(), &ContextSpec::core_only()).await;
+        match case.peer_temporal {
+            Verdict::Typed | Verdict::Ignored(_) => {
+                pretty_assertions::assert_eq!(ids(&answer), vec!["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"], "{}", case.name);
+                pretty_assertions::assert_eq!(answer.warnings, Vec::<NgsiLdWarning>::new(), "{}", case.name);
+            }
+            Verdict::Refused => {
+                pretty_assertions::assert_eq!(ids(&answer), vec!["urn:ngsi-ld:Vehicle:2"], "{}", case.name);
+                assert!(
+                    matches!(answer.warnings.as_slice(), [NgsiLdWarning::RevalidationFailed(_)]),
+                    "{}: {:?}",
+                    case.name,
+                    answer.warnings
+                );
+            }
+            Verdict::NotApplicable => {}
+        }
+    }
+
+    /// One test per shape, named after it.
+    macro_rules! shape_tests {
+        ($($test:ident => $case:path),+ $(,)?) => {
+            $(
+                #[tokio::test]
+                async fn $test() {
+                    assert_verdict(&$case).await;
+                }
+            )+
+        };
+    }
+
+    andromeda_test_fixtures::for_each_attribute_member_shape!(shape_tests);
+}

@@ -93,14 +93,17 @@ fn a_tombstone_is_written_as_the_family_null() {
         "speed": [{"type": "Property", "value": "urn:ngsi-ld:null", "deletedAt": "2025-01-01T00:00:00Z"}],
         "owner": [{"type": "Relationship", "object": "urn:ngsi-ld:null", "deletedAt": "2025-01-01T00:00:00Z"}],
         "name": [{"type": "LanguageProperty", "languageMap": {"@none": "urn:ngsi-ld:null"}, "deletedAt": "2025-01-01T00:00:00Z"}],
-        "tags": [{"type": "ListProperty", "valueList": ["urn:ngsi-ld:null"], "deletedAt": "2025-01-01T00:00:00Z"}]
+        "tags": [{"type": "ListProperty", "valueList": ["urn:ngsi-ld:null"], "deletedAt": "2025-01-01T00:00:00Z"}],
+        "location": [{"type": "GeoProperty", "value": "urn:ngsi-ld:null", "deletedAt": "2025-01-01T00:00:00Z"}]
     }));
     let result = written(&body, NORMALIZED, None, None);
     assert_eq!(result["speed"][0]["value"], json!("urn:ngsi-ld:null"));
     assert_eq!(result["owner"][0]["object"], json!("urn:ngsi-ld:null"));
     assert_eq!(result["name"][0]["languageMap"], json!({"@none": "urn:ngsi-ld:null"}));
     assert_eq!(result["tags"][0]["valueList"], json!(["urn:ngsi-ld:null"]));
-    for name in ["speed", "owner", "name", "tags"] {
+    assert_eq!(result["location"][0]["type"], json!("GeoProperty"));
+    assert_eq!(result["location"][0]["value"], json!("urn:ngsi-ld:null"));
+    for name in ["speed", "owner", "name", "tags", "location"] {
         assert_eq!(result[name][0]["deletedAt"], json!("2025-01-01T00:00:00Z"), "{name}");
     }
 }
@@ -208,11 +211,14 @@ fn an_emptied_attribute_writes_an_empty_sequence() {
 fn a_deletion_pairs_with_deleted_at() {
     let body = evolution(json!({
         "speed": [{"type": "Property", "value": "urn:ngsi-ld:null", "deletedAt": "2025-01-01T00:00:00Z"}],
-        "period": [{"type": "ListProperty", "valueList": ["urn:ngsi-ld:null"], "deletedAt": "2025-01-02T00:00:00Z"}]
+        "period": [{"type": "ListProperty", "valueList": ["urn:ngsi-ld:null"], "deletedAt": "2025-01-02T00:00:00Z"}],
+        "location": [{"type": "GeoProperty", "value": "urn:ngsi-ld:null", "deletedAt": "2025-01-03T00:00:00Z"}]
     }));
     let result = written(&body, VALUES, None, None);
     assert_eq!(result["speed"]["values"], json!([["urn:ngsi-ld:null", "2025-01-01T00:00:00Z"]]));
     assert_eq!(result["period"]["valueLists"], json!([[["urn:ngsi-ld:null"], "2025-01-02T00:00:00Z"]]));
+    assert_eq!(result["location"]["type"], json!("GeoProperty"));
+    assert_eq!(result["location"]["values"], json!([["urn:ngsi-ld:null", "2025-01-03T00:00:00Z"]]));
 }
 
 /// Clause 4.15: a `LanguageProperty` negotiated against `lang=en` is written

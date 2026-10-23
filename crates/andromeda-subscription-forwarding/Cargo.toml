@@ -44,6 +44,7 @@ url = { version = "2.5.8", features = ["serde"] }
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 andromeda-context-commit.workspace = true
+andromeda-test-fixtures.workspace = true
 andromeda-test-mocks.workspace = true
 async-trait = "0.1.92"
 bytes = "1.12.1"

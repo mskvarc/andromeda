@@ -79,6 +79,7 @@ andromeda_architecture_checks::dependency_boundary! {
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-context-commit",
+        "andromeda-test-fixtures",
         "andromeda-test-mocks",
     ],
     allow_production_dependencies: [],

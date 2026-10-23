@@ -58,6 +58,7 @@ url = { version = "2.5.8", features = ["serde"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+andromeda-test-fixtures.workspace = true
 andromeda-test-mocks.workspace = true
 bytes = "1.12.1"
 pretty_assertions = "1.4.1"

@@ -10,7 +10,7 @@ use serde::{Deserialize, de::IgnoredAny};
 use url::Url;
 
 /// Input for `POST /snapshots`.
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SnapshotInput {
     /// Required fixed resource discriminator.

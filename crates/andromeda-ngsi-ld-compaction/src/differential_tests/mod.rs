@@ -12,6 +12,7 @@ mod corpus;
 mod documents;
 mod names;
 mod oracle;
+mod store_reads;
 
 use crate::{
     compacted::Compacted,

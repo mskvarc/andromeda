@@ -130,6 +130,33 @@ async fn split_entities_merge_local_and_other_holders() {
     third.stop().await;
 }
 
+/// Clause 5.8.6: a source reports a deleted attribute as "only the name of the
+/// attribute as key and the URI "urn:ngsi-ld:null" as value", and a split part
+/// completed from this broker's copy relays the deletion although this broker
+/// still holds the attribute.
+#[tokio::test]
+async fn a_relayed_null_survives_split_reassembly() {
+    let id = identifier("urn:ngsi-ld:Vehicle:1");
+    let mut scene = ReassemblyScene::start(SceneSpec {
+        subscription_members: json!({"splitEntities": true}),
+        held: vec![held_vehicle(id.as_str(), &[("owner", json!("Ada")), ("name", json!("Roadster"))])],
+        ..SceneSpec::default()
+    });
+    let data = json!([compact_vehicle(
+        id.as_str(),
+        &[("owner", json!("urn:ngsi-ld:null")), ("speed", property(&json!(40)))]
+    )]);
+
+    scene.post(&notification(&data)).await.expect("the notification is handled");
+
+    let entities = relayed(&mut scene);
+    let [entity] = entities.as_slice() else {
+        panic!("one entity is relayed, got {entities:?}");
+    };
+    pretty_assertions::assert_eq!(entity["owner"], json!("urn:ngsi-ld:null"), "the notified deletion: {entity}");
+    pretty_assertions::assert_eq!(entity["name"]["value"], json!("Roadster"), "this broker's part: {entity}");
+}
+
 /// Clause 5.8.6: the local subscription's filters are decided on the entity as
 /// completed, so an entity whose part alone fails the `q` is relayed when the
 /// other holders' members satisfy it, and dropped when they do not.

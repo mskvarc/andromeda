@@ -45,7 +45,8 @@
 //! terms a context defines for core terms (clause 5.5.7). Every reader of a
 //! compact document applies it, a request body and a compacted entity alike:
 //! [`aliased_deserializer`] applies it to a body decoded straight from its
-//! text.
+//! text. [`container_terms`] is its companion for the shape compaction gives a
+//! member written under a term with a container of the context's own.
 //!
 //! How a client *asks* for one is not here. Media-type negotiation, version
 //! conformance and language ranges arrive as HTTP headers and are spelled by
@@ -62,6 +63,7 @@ pub mod attribute_type_validation;
 pub mod compact_key_admission;
 pub mod compact_node;
 pub mod concise_reading;
+pub mod container_terms;
 pub mod core_term_aliases;
 pub mod embedded_context_admission;
 pub mod family_member_admission;
