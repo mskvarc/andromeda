@@ -6,7 +6,8 @@ use crate::schema_contract::{
     server_encoding::ServerEncoding,
     server_requirements::{ExtensionPresence, ExtensionVersion, ExtensionVersionError, PostgresVersion},
 };
-use andromeda_postgresql_pool::saturation::is_pool_saturated;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+use andromeda_postgresql_pool::{saturation::is_pool_saturated, schema_change_classification::classify_schema_change};
 
 /// Why a tenant database is not the one this binary was built against.
 ///
@@ -119,6 +120,31 @@ impl SchemaContractError {
             | SchemaContractError::PostgresBelowMinimum { .. }
             | SchemaContractError::PostGisBelowMinimum { .. }
             | SchemaContractError::TimescaleDbBelowMinimum { .. } => false,
+        }
+    }
+
+    /// The backend-neutral class of this refusal.
+    ///
+    /// A contract read or write the database could not complete is classified
+    /// as a schema change: a lost connection or a saturated pool stays
+    /// retryable, any other driver failure is a schema mismatch. Every other
+    /// refusal is the tenant's schema or server not matching this binary.
+    #[must_use]
+    pub fn failure_class(&self) -> PersistenceFailure {
+        match self {
+            SchemaContractError::Database(error) => classify_schema_change(error),
+            SchemaContractError::NoMigrations
+            | SchemaContractError::SchemaVersionValue(_)
+            | SchemaContractError::MigrationsDigestValue(_)
+            | SchemaContractError::ExtensionVersionValue(_)
+            | SchemaContractError::Unstamped { .. }
+            | SchemaContractError::SchemaVersionMismatch { .. }
+            | SchemaContractError::MigrationsDigestMismatch { .. }
+            | SchemaContractError::ServerEncodingNotUtf8 { .. }
+            | SchemaContractError::ServerEncodingUnreadable(_)
+            | SchemaContractError::PostgresBelowMinimum { .. }
+            | SchemaContractError::PostGisBelowMinimum { .. }
+            | SchemaContractError::TimescaleDbBelowMinimum { .. } => PersistenceFailure::SchemaMismatch,
         }
     }
 }

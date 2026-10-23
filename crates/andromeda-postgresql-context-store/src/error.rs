@@ -22,6 +22,7 @@ use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
 use andromeda_postgresql_pool::{
     persistence_classification::classify,
     saturation::is_pool_saturated,
+    schema_change_classification::classify_migration,
     sql_state::SqlState,
     transaction_rollback::is_transaction_rolled_back,
 };
@@ -187,7 +188,9 @@ impl ContextStoreError {
             | ContextStoreError::OrdinalOutOfRange(_)
             | ContextStoreError::UnencodableSnapshot(_) => PersistenceFailure::Unencodable,
             ContextStoreError::Render(_) | ContextStoreError::StatementBuild(_) => PersistenceFailure::StatementUnbuildable,
-            ContextStoreError::Migration(_) | ContextStoreError::SchemaContract(_) | ContextStoreError::BranchVersion(_) => PersistenceFailure::SchemaMismatch,
+            ContextStoreError::Migration(error) => classify_migration(error),
+            ContextStoreError::SchemaContract(error) => error.failure_class(),
+            ContextStoreError::BranchVersion(_) => PersistenceFailure::SchemaMismatch,
             ContextStoreError::Saturated => PersistenceFailure::Saturated,
             ContextStoreError::ContextMapper(_)
             | ContextStoreError::StoredRegistration(_)
@@ -287,10 +290,15 @@ impl ContextStoreError {
 
 #[cfg(test)]
 mod tests {
-    use crate::{error::ContextStoreError, schema_contract::error::SchemaContractError};
+    use crate::{
+        error::ContextStoreError,
+        schema_contract::{error::SchemaContractError, migrations_digest::MigrationsDigest},
+    };
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
     use andromeda_postgresql_pool::{fake_database_error::FakeDatabaseError, persistence_classification::classify};
+    use sqlx::migrate::MigrateError;
+    use std::io::{Error as IoError, ErrorKind};
 
     #[test]
     fn a_unique_violation_becomes_the_unique_violation_variant() {
@@ -354,5 +362,37 @@ mod tests {
         assert!(!ContextStoreError::Saturated.is_transaction_rolled_back());
         let drift = ContextStoreError::SchemaContract(SchemaContractError::NoMigrations);
         assert!(!drift.is_transaction_rolled_back());
+    }
+
+    /// A connection the server reset mid-statement.
+    fn connection_reset() -> sqlx::Error {
+        sqlx::Error::Io(IoError::from(ErrorKind::ConnectionReset))
+    }
+
+    /// Each migration runs in one transaction with its ledger row, so a lost
+    /// connection rolls it back whole and the next run resumes it: the store
+    /// was unreachable, which ETSI GS CIM 009 v1.9.1 clause 5.5.6 answers 503.
+    #[test]
+    fn a_migration_interrupted_by_a_lost_connection_is_an_unreachable_store() {
+        let interrupted = ContextStoreError::Migration(MigrateError::ExecuteMigration(connection_reset(), 30));
+        pretty_assertions::assert_eq!(interrupted.failure_class(), PersistenceFailure::Unavailable);
+        let contract_read = ContextStoreError::SchemaContract(SchemaContractError::Database(connection_reset()));
+        pretty_assertions::assert_eq!(contract_read.failure_class(), PersistenceFailure::Unavailable);
+    }
+
+    #[test]
+    fn a_migration_or_contract_drift_stays_a_schema_mismatch() {
+        pretty_assertions::assert_eq!(
+            ContextStoreError::Migration(MigrateError::VersionMismatch(30)).failure_class(),
+            PersistenceFailure::SchemaMismatch
+        );
+        let digest_drift = ContextStoreError::SchemaContract(SchemaContractError::MigrationsDigestMismatch {
+            expected: MigrationsDigest::of_records([(30, "tenant", b"create".as_slice())]),
+            found: MigrationsDigest::of_records([]),
+        });
+        pretty_assertions::assert_eq!(digest_drift.failure_class(), PersistenceFailure::SchemaMismatch);
+        let undefined_relation =
+            ContextStoreError::SchemaContract(SchemaContractError::Database(FakeDatabaseError::new("undefined table", "42P01").into_sqlx()));
+        pretty_assertions::assert_eq!(undefined_relation.failure_class(), PersistenceFailure::SchemaMismatch);
     }
 }

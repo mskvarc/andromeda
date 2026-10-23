@@ -14,6 +14,7 @@ use crate::{
     provisional::{Establishment, Retirement},
     registered_tenant::RegisteredTenant,
     runtime::{TenantRuntimeManager, cached_runtime::RuntimeExistence, provisional_sweep::ProvisionalSettlement},
+    runtime_build_failure::RuntimeBuildFailure,
     state_factory::{RuntimeActivity, TenantRuntime, TenantStateFactory},
     status::TenantStatus,
     tenant_page_start::TenantPageStart,
@@ -540,6 +541,70 @@ async fn a_second_request_for_one_tenant_reuses_the_runtime_the_first_built() {
 
     assert!(Arc::ptr_eq(&first.state, &second.state));
     pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 1);
+}
+
+/// A factory whose first build meets an unreachable store, as a migration cut
+/// short by a lost connection does, and whose later builds succeed.
+struct FlakyFactory {
+    /// How many builds were entered.
+    built: AtomicUsize,
+    /// Shared shutdown counter handed to every runtime it builds.
+    shutdowns: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl TenantStateFactory for FlakyFactory {
+    type State = String;
+    type Runtime = FakeRuntime;
+
+    async fn build(&self, tenant: &TenantRef, database: &TenantDatabaseName) -> Result<(Arc<String>, FakeRuntime), TenancyError> {
+        if self.built.fetch_add(1, Ordering::Relaxed) == 0 {
+            return Err(TenancyError::RuntimeUnavailable {
+                tenant: tenant.clone(), // clone: the error owns the tenant it names
+                cause: RuntimeBuildFailure::Persistence(PersistenceFailure::Unavailable),
+            });
+        }
+        Ok((
+            Arc::new(database.as_str().to_owned()),
+            FakeRuntime {
+                shutdowns: Arc::clone(&self.shutdowns),
+            },
+        ))
+    }
+}
+
+#[tokio::test]
+async fn a_tenant_whose_build_met_an_unreachable_store_builds_again_on_the_next_request() {
+    let factory = Arc::new(FlakyFactory {
+        built: AtomicUsize::new(0),
+        shutdowns: Arc::new(AtomicUsize::new(0)),
+    });
+    let manager = TenantRuntimeManager::new(
+        config(true, 64),
+        Arc::new(FakeRegistry::new(&["acme"])),
+        Arc::clone(&factory),
+        Arc::new(FakeProbe::none()),
+        Arc::new(FakeSchedule::inert()),
+    );
+    let tenant = TenantRef::Named(named("acme"));
+
+    let refused = manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await;
+    assert!(
+        matches!(
+            refused,
+            Err(TenancyError::RuntimeUnavailable {
+                cause: RuntimeBuildFailure::Persistence(PersistenceFailure::Unavailable),
+                ..
+            })
+        ),
+        "the first build is refused as an unreachable store"
+    );
+    let leased = manager
+        .resolve_state(&tenant, TenantCreationPolicy::MustExist)
+        .await
+        .expect("the second build resolves");
+    pretty_assertions::assert_eq!(leased.state.as_str(), "db_acme");
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 2);
 }
 
 /// A factory whose every build blocks on a gate until the test opens it, so

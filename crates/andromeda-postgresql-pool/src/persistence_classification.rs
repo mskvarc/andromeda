@@ -1,7 +1,13 @@
 //! How a `sqlx` error is classified into the backend-neutral failure a port
 //! carries.
 
-use crate::{saturation::is_pool_saturated, sql_state::SqlState, store_unavailability::is_store_unavailable, transaction_rollback::is_transaction_rolled_back};
+use crate::{
+    saturation::is_pool_saturated,
+    schema_change_classification::classify_migration,
+    sql_state::SqlState,
+    store_unavailability::is_store_unavailable,
+    transaction_rollback::is_transaction_rolled_back,
+};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use sqlx::error::DatabaseError;
 
@@ -20,7 +26,8 @@ pub fn persistence_failure(error: &sqlx::Error) -> PersistenceFailure {
 ///
 /// The retryable conditions are recognised first, in this order: a saturated
 /// pool or pooler, a deadlock or serialization victim, and a store that cannot
-/// be reached. None of them is ever reported as a fault.
+/// be reached. None of them is ever reported as a fault. A migration error is
+/// classified by its cause, as a schema change.
 #[must_use]
 pub fn classify(error: &sqlx::Error) -> PersistenceFailure {
     if is_pool_saturated(error) {
@@ -53,7 +60,7 @@ pub fn classify(error: &sqlx::Error) -> PersistenceFailure {
         | sqlx::Error::AnyDriverError(_) => PersistenceFailure::Undecodable,
         sqlx::Error::Encode(_) => PersistenceFailure::Unencodable,
         sqlx::Error::InvalidArgument(_) | sqlx::Error::InvalidSavePointStatement => PersistenceFailure::StatementUnbuildable,
-        sqlx::Error::Migrate(_) => PersistenceFailure::SchemaMismatch,
+        sqlx::Error::Migrate(error) => classify_migration(error),
         // `sqlx::Error` is `#[non_exhaustive]`: a variant added upstream is a
         // failure of the statement until it is classified here.
         _unclassified => PersistenceFailure::StatementRejected,
@@ -87,6 +94,7 @@ mod tests {
     use crate::{fake_database_error::FakeDatabaseError, persistence_classification::classify};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use pretty_assertions::assert_eq;
+    use sqlx::migrate::MigrateError;
     use std::io::{Error as IoError, ErrorKind};
 
     #[test]
@@ -180,6 +188,20 @@ mod tests {
         assert_eq!(
             classify(&FakeDatabaseError::new("invalid regular expression", "2201B").into_sqlx()),
             PersistenceFailure::StatementRejected
+        );
+    }
+
+    #[test]
+    fn a_wrapped_migration_error_is_classified_by_its_cause() {
+        assert_eq!(
+            classify(&sqlx::Error::Migrate(Box::new(MigrateError::Execute(sqlx::Error::Io(IoError::from(
+                ErrorKind::ConnectionReset
+            )))))),
+            PersistenceFailure::Unavailable
+        );
+        assert_eq!(
+            classify(&sqlx::Error::Migrate(Box::new(MigrateError::VersionMismatch(1)))),
+            PersistenceFailure::SchemaMismatch
         );
     }
 

@@ -7,7 +7,7 @@ use andromeda_postgresql_context_store::error::ContextStoreError;
 use andromeda_postgresql_pool::{persistence_classification::classify, saturation::is_pool_saturated};
 use andromeda_postgresql_temporal_store::error::TemporalStoreError;
 use andromeda_tenancy::runtime_build_failure::RuntimeBuildFailure;
-use sqlx::{Error as SqlxError, migrate::MigrateError};
+use sqlx::Error as SqlxError;
 use thiserror::Error;
 
 /// Failure while constructing one tenant's complete runtime.
@@ -16,9 +16,6 @@ pub(super) enum TenantAssemblyError {
     /// A PostgreSQL operation failed during construction.
     #[error("tenant database construction failed: {0}")]
     Database(#[from] SqlxError),
-    /// A tenant schema migration failed.
-    #[error("tenant database migration failed: {0}")]
-    Migration(#[from] MigrateError),
     /// A context-store adapter failed during construction.
     #[error("tenant context storage construction failed: {0}")]
     ContextStore(#[from] ContextStoreError),
@@ -38,7 +35,6 @@ impl TenantAssemblyError {
     pub(super) fn build_failure(&self) -> RuntimeBuildFailure {
         match self {
             TenantAssemblyError::Database(error) => RuntimeBuildFailure::Persistence(classify(error)),
-            TenantAssemblyError::Migration(_) => RuntimeBuildFailure::Persistence(PersistenceFailure::SchemaMismatch),
             TenantAssemblyError::ContextStore(error) => RuntimeBuildFailure::Persistence(error.failure_class()),
             TenantAssemblyError::TemporalStoragePolicy(error) => {
                 RuntimeBuildFailure::Persistence(error.failure_class().unwrap_or(PersistenceFailure::ContractBroken))
@@ -61,7 +57,7 @@ impl TenantAssemblyError {
             TenantAssemblyError::Database(error) => is_pool_saturated(error),
             TenantAssemblyError::ContextStore(error) => error.is_pool_saturation(),
             TenantAssemblyError::TemporalStoragePolicy(error) => matches!(error, TemporalStoreError::Database(inner) if is_pool_saturated(inner)),
-            TenantAssemblyError::Migration(_) | TenantAssemblyError::JsonLd(_) | TenantAssemblyError::Invariant(_) => false,
+            TenantAssemblyError::JsonLd(_) | TenantAssemblyError::Invariant(_) => false,
         }
     }
 }

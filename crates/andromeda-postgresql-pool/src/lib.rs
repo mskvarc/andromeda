@@ -31,6 +31,8 @@ pub mod pool_options;
 pub mod read_share;
 /// Whether a driver error is the pool or the pooler at capacity.
 pub mod saturation;
+/// How a failure met while changing a schema is classified.
+pub mod schema_change_classification;
 /// Bounded waiting on the locks a schema change takes.
 pub mod schema_change_lock;
 /// The SQLSTATE codes the broker tells apart.
