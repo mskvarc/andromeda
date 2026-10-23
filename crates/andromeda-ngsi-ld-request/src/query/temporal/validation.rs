@@ -23,7 +23,6 @@ use andromeda_ngsi_ld_query::{
         ordering::TemporalEntityOrdering,
         window::{TemporalWindow, TimeInterval},
     },
-    type_selection::grammar::TypeExprRaw,
 };
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, sys_attrs::SysAttrsInclusion};
 
@@ -50,11 +49,8 @@ impl TemporalQueryParameters {
     /// Per NGSI-LD Table 6.18.3.2-1, `type=*` implies `local=true` since wildcard
     /// type queries are undefined across federated sources.
     #[must_use]
-    pub fn is_local(&self) -> bool {
-        if self.local == Some(true) {
-            return true;
-        }
-        matches!(self.entity_type, Some(TypeExprRaw::Wildcard))
+    pub const fn is_local(&self) -> bool {
+        matches!(self.execution_scope(), ExecutionScope::Local)
     }
 
     /// The temporal property the window applies to, defaulting to `observedAt`
@@ -108,12 +104,8 @@ impl TemporalQueryParameters {
 
     /// The execution scope the request asked for (clause 5.5.13).
     #[must_use]
-    pub fn execution_scope(&self) -> ExecutionScope {
-        if self.is_local() {
-            ExecutionScope::Local
-        } else {
-            ExecutionScope::Distributed
-        }
+    pub const fn execution_scope(&self) -> ExecutionScope {
+        ExecutionScope::of(self.local, self.entity_type.as_ref())
     }
 
     /// The clause 5.7.4.4 narrowing inputs this query carries.

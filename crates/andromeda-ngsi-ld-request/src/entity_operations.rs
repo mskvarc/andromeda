@@ -2,21 +2,14 @@
 
 use crate::{
     error::ParameterError,
-    language_filter::deserialize_optional_language_filter,
     options::{EntityRepresentationOptions, OverwritePolicy, UpsertMode},
     pagination::parameters::OffsetPageParameters,
-    query::{
-        deserialization::{deserialize_optional_dataset_selectors, deserialize_optional_projection_terms},
-        entity::parameters::EntityQueryParameters,
-    },
+    query::entity::parameters::EntityQueryParameters,
     representation_parameter::{WrittenValue, supported_option},
 };
-use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, projection::grammar::RawProjectionTerm};
-use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
+use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use serde::Deserialize;
-use std::num::NonZeroU32;
 
 /// Query parameters for `POST /entityOperations/upsert`.
 #[derive(Debug, Deserialize)]
@@ -24,6 +17,8 @@ use std::num::NonZeroU32;
 pub struct UpsertParams {
     /// Whether existing entities are replaced or updated.
     pub options: Option<WrittenValue<UpsertMode>>,
+    /// Whether the operation is confined to this broker (clause 6.3.18 `local`).
+    pub local: Option<bool>,
 }
 
 /// Query parameters for `PATCH /entityOperations/update`.
@@ -32,6 +27,8 @@ pub struct UpsertParams {
 pub struct UpdateParams {
     /// Whether existing attributes may be overwritten.
     pub options: Option<WrittenValue<OverwritePolicy>>,
+    /// Whether the operation is confined to this broker (clause 6.3.18 `local`).
+    pub local: Option<bool>,
 }
 
 impl UpsertParams {
@@ -60,12 +57,15 @@ impl UpdateParams {
 
 /// Query parameters for `POST /entityOperations/query`.
 ///
-/// Table 5.2.23-1 gives the `Query` data type no pagination member, no
-/// representation member and no local-scope flag, while Table 6.2-1 lists
-/// `POST /entityOperations/query` among the HTTP operations of clause 5.7.2 —
-/// one of the operations clause 4.12 lists. Clauses 6.3.10 and 6.3.13
-/// therefore require `limit`, `offset` and `count` on this binding as much as
-/// on the GET one, and they can only reach it through the URL.
+/// Table 6.23.3.1-1 defines no URL parameter: the query is the clause 5.2.23
+/// body. The URL carries only what that body has no member for and a clause
+/// 6.3 subclause grants to "POST operations corresponding to Query
+/// Entities": `format` and `options` (clauses 6.3.7 and 6.3.11), `limit`,
+/// `offset` and `count` (clauses 6.3.10 and 6.3.13, through Table 6.2-1),
+/// `geometryProperty` (clause 6.3.15) and `local` (clause 6.3.18). A member the
+/// body defines (`pick`, `omit`, `datasetId`, `join`, `joinLevel`, `lang`, ...)
+/// has its place in the body, so on the URL it is a parameter the operation
+/// does not define (clause 6.3.20).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PostQueryParams {
@@ -80,64 +80,36 @@ pub struct PostQueryParams {
     pub options: Option<WrittenValue<EntityRepresentationOptions>>,
     /// The representation the response uses (clause 4.5.1 `format`).
     pub format: Option<WrittenValue<ResponseFormat>>,
-    /// Clause-4.15 natural-language selection preferences.
-    #[serde(default, deserialize_with = "deserialize_optional_language_filter")]
-    pub lang: Option<LanguageFilter>,
-    /// How linked entities reach the response (clause 4.5.23 `join`).
-    pub join: Option<JoinMode>,
-    /// How many links deep the traversal goes (`joinLevel`).
-    #[serde(rename = "joinLevel")]
-    pub join_level: Option<NonZeroU32>,
     /// The `GeoProperty` a `GeoJSON` response uses as its geometry (clause 6.3.15 `geometryProperty`).
     #[serde(rename = "geometryProperty")]
     pub geometry_property: Option<AttributeName>,
-    /// Dataset instances to select, comma-separated (`datasetId`).
-    #[serde(rename = "datasetId")]
-    #[serde(default, deserialize_with = "deserialize_optional_dataset_selectors")]
-    pub dataset_id: Option<Vec<DatasetSelector>>,
-    /// Members the response is narrowed to (clause 4.21 `pick`).
-    #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
-    pub pick: Option<Vec<RawProjectionTerm>>,
-    /// Members the response drops (clause 4.21 `omit`).
-    #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
-    pub omit: Option<Vec<RawProjectionTerm>>,
-    /// Whether the operation is confined to this broker (clause 5.10 `local`).
+    /// Whether the operation is confined to this broker (clause 6.3.18 `local`).
     pub local: Option<bool>,
 }
 
 impl PostQueryParams {
-    /// Fold the URL parameters over the query the clause 5.2.23 body produced.
+    /// Set the URL parameters on the query the clause 5.2.23 body produced.
     ///
-    /// The same parameter may be written in the URL or in the canonical body.
-    /// The specification does not say which wins, so this is broker
-    /// convention: the URL is the more specific of the two and takes
-    /// precedence, but only where it actually carries a value -- an absent
-    /// query-string parameter leaves the body's member standing rather than
-    /// erasing it.
-    ///
-    /// The page and `count` are the exception, and nothing is overwritten by
-    /// them: Table 5.2.23-1 defines no member for either, so the body
-    /// conversion leaves both absent and the URL is the only place clauses
-    /// 6.3.10 and 6.3.13 can put them.
+    /// Table 5.2.23-1 defines a member for none of them, so the body
+    /// conversion leaves each absent and nothing of the body is overwritten.
     pub fn apply_to(self, query: &mut EntityQueryParameters) {
         query.page = self.page.into();
         query.count = self.count;
-        query.options = self.options.or(query.options.take());
-        query.local = self.local.or(query.local);
-        query.pick = self.pick.or(query.pick.take());
-        query.omit = self.omit.or(query.omit.take());
-        query.dataset_id = self.dataset_id.or(query.dataset_id.take());
-        query.format = self.format.or(query.format.take());
-        query.join = self.join.or(query.join);
-        query.join_level = self.join_level.or(query.join_level);
-        query.geometry_property = self.geometry_property.or(query.geometry_property.take());
-        query.lang = self.lang.or(query.lang.take());
+        query.options = self.options;
+        query.format = self.format;
+        query.geometry_property = self.geometry_property;
+        query.local = self.local;
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{entity_operations::PostQueryParams, pagination::parameters::PageParameters, query::entity::parameters::EntityQueryParameters};
+    use crate::{
+        entity_operations::{PostQueryParams, UpdateParams, UpsertParams},
+        pagination::parameters::PageParameters,
+        query::entity::parameters::EntityQueryParameters,
+    };
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_model::query::body::Query;
     use serde_json::json;
 
@@ -165,14 +137,46 @@ mod tests {
         pretty_assertions::assert_eq!(query.count, Some(true));
     }
 
-    /// An absent URL parameter leaves the body's member standing.
+    /// Clauses 6.3.7, 6.3.15 and 6.3.18 grant `format`, `geometryProperty` and
+    /// `local` to the POST binding, and the body has no member for them.
     #[test]
-    fn an_absent_url_parameter_leaves_the_body_member_standing() {
+    fn the_granted_url_parameters_reach_the_query() {
         let mut query = body_query();
-        query.local = Some(true);
-        let url: PostQueryParams = serde_urlencoded::from_str("").expect("valid URL parameters");
+        let url: PostQueryParams =
+            serde_urlencoded::from_str("format=keyValues&options=sysAttrs&geometryProperty=position&local=true").expect("valid URL parameters");
         url.apply_to(&mut query);
+        assert!(query.format.is_some() && query.options.is_some());
+        pretty_assertions::assert_eq!(query.geometry_property.as_ref().map(AttributeName::as_str), Some("position"));
         pretty_assertions::assert_eq!(query.local, Some(true));
-        pretty_assertions::assert_eq!(query.page, PageParameters::default());
+    }
+
+    /// Table 6.23.3.1-1 defines no URL parameter, and each of these has its
+    /// member in the Table 5.2.23-1 body (clause 6.3.20).
+    #[test]
+    fn a_body_member_on_the_url_is_unknown() {
+        for parameter in [
+            "pick=speed",
+            "omit=speed",
+            "datasetId=@none",
+            "join=flat",
+            "joinLevel=2",
+            "lang=en",
+            "q=speed>1",
+            "type=Vehicle",
+            "attrs=speed",
+            "cursor=abc",
+        ] {
+            let message = serde_urlencoded::from_str::<PostQueryParams>(parameter).expect_err(parameter).to_string();
+            assert!(message.contains("unknown field"), "{parameter}: {message}");
+        }
+    }
+
+    /// Clause 6.3.18 gives every `/entityOperations/` operation `local`.
+    #[test]
+    fn the_batch_upsert_and_update_read_local() {
+        let upsert: UpsertParams = serde_urlencoded::from_str("options=update&local=true").expect("parses");
+        pretty_assertions::assert_eq!(upsert.local, Some(true));
+        let update: UpdateParams = serde_urlencoded::from_str("options=noOverwrite&local=true").expect("parses");
+        pretty_assertions::assert_eq!(update.local, Some(true));
     }
 }

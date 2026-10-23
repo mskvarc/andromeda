@@ -4,7 +4,9 @@ use crate::{
     handler,
     state::{EntityMapRouteState, EntityMapStateResolver},
 };
-use axum::{Router, routing::get};
+use andromeda_extensions::enabled::EnabledExtensions;
+use andromeda_http_temporal::extension_gate::TemporalExtensionGate;
+use axum::{Extension, Router, routing::get};
 use std::sync::Arc;
 
 /// Current and temporal Entity Map route fragments.
@@ -13,13 +15,17 @@ pub struct EntityMapRoutes {
 }
 
 impl EntityMapRoutes {
-    /// Construct all Entity Map routes with focused state.
-    pub fn new(resolver: Arc<dyn EntityMapStateResolver>) -> EntityMapRoutes {
+    /// Construct all Entity Map routes with focused state, the temporal ones
+    /// admitting their query by the `enabled` extensions as the temporal query
+    /// routes do (clause 5.14.5.4).
+    pub fn new(resolver: Arc<dyn EntityMapStateResolver>, enabled: EnabledExtensions) -> EntityMapRoutes {
         let state = EntityMapRouteState::new(resolver);
         let current_routes = Router::new()
             .route("/", get(handler::create_from_query).post(handler::create_from_query_post))
             .route("/{entity_map_id}", get(handler::get).patch(handler::update).delete(handler::delete));
-        let temporal_routes = Router::new().route("/", get(handler::create_temporal_from_query).post(handler::create_temporal_from_query_post));
+        let temporal_routes = Router::new()
+            .route("/", get(handler::create_temporal_from_query).post(handler::create_temporal_from_query_post))
+            .layer(Extension(TemporalExtensionGate::new(enabled)));
         let router = Router::new()
             .nest("/entityMaps", current_routes)
             .nest("/temporal/entityMaps", temporal_routes)
@@ -36,6 +42,7 @@ impl EntityMapRoutes {
 #[cfg(test)]
 mod tests {
     use crate::state::{EntityMapRouteServices, EntityMapStateResolver};
+    use andromeda_extensions::enabled::EnabledExtensions;
     use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
     use axum::{
         body::Body,
@@ -60,7 +67,7 @@ mod tests {
 
     #[tokio::test]
     async fn owns_current_and_temporal_entity_map_inventory() -> Result<(), Box<dyn Error>> {
-        let routes = super::EntityMapRoutes::new(Arc::new(RejectingResolver)).into_router();
+        let routes = super::EntityMapRoutes::new(Arc::new(RejectingResolver), EnabledExtensions::none()).into_router();
         for (method, path) in [
             (Method::GET, "/entityMaps"),
             (Method::POST, "/entityMaps"),

@@ -100,12 +100,6 @@ pub enum ParameterError {
     /// pagination, and an attempt to use a different one is a `BadRequestData`.
     #[error("the page pointer belongs to a walk under another @context; follow it with the @context the walk started with")]
     PageContextChanged,
-    /// A pagination parameter reached an operation that pages nothing: Purge
-    /// Entities defines no `limit`, `offset` or `cursor` (Table 6.4.3.3-1), and
-    /// clause 6.3.20 answers a parameter the operation does not define with
-    /// `InvalidRequest`.
-    #[error("limit, offset and cursor are not defined for this operation")]
-    PaginationUndefined,
     /// A `pick`/`omit` term nested a clause 4.21 sub-projection while the
     /// request asked for no join to retrieve the entity it describes.
     #[error("pick/omit select Linked Entity members but the request asks for no join to retrieve them")]

@@ -4,9 +4,11 @@ use serde::Deserialize;
 
 /// Query parameters for endpoints that accept only `local`.
 ///
-/// Shared by entity creation, deletion, merge and update, and by the type and
-/// attribute retrieval endpoints. `local=true` confines an operation to this
-/// broker instead of forwarding it (clause 5.10).
+/// Shared by entity creation, deletion, merge and update, the batch creation,
+/// deletion and merge, and the type and attribute retrieval endpoints: clause
+/// 6.3.18 gives every operation on `/entities/`, `/types/`, `/attributes/` and
+/// `/entityOperations/` the parameter. `local=true` confines an operation to
+/// this broker instead of forwarding it (clause 5.5.13).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LocalOnlyParams {

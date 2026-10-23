@@ -5,12 +5,14 @@
 //! retrieval (`join`, `joinLevel`, `containedBy`). With an extension disabled a
 //! broker must behave exactly as one that never implemented it, which clause
 //! 6.3.12's pattern makes an `InvalidRequest` rather than a silently ignored
-//! parameter. The three temporal query bindings -- `GET /temporal/entities`,
-//! `GET /temporal/entities/{id}` and `POST /temporal/entityOperations/query` --
-//! read their parameters through the admitting extractors of
+//! parameter. The temporal query bindings -- `GET /temporal/entities`,
+//! `GET /temporal/entities/{id}`, `POST /temporal/entityOperations/query` and
+//! the temporal Entity Map creations over GET and POST -- read their parameters
+//! through the admitting extractors of
 //! `andromeda_http_extraction::admitted_temporal_query`, which run this gate as
 //! they read them, so a disabled broker rejects the request before any of the
-//! extension machinery is reached.
+//! extension machinery is reached. The Entity Map routes install the same gate,
+//! since clause 5.14.5.4 restates the temporal query they map.
 //!
 //! The `join` member of a clause 5.2.23 `Query` body is defined whatever the
 //! broker enables, so the gate leaves it alone: Linked Entity admission refuses
@@ -25,11 +27,12 @@ use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 /// The temporal routes' admission of an extended query, by which extensions
 /// are enabled.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct TemporalExtensionGate(EnabledExtensions);
+pub struct TemporalExtensionGate(EnabledExtensions);
 
 impl TemporalExtensionGate {
     /// The gate for a broker with `enabled` extensions.
-    pub(crate) const fn new(enabled: EnabledExtensions) -> TemporalExtensionGate {
+    #[must_use]
+    pub const fn new(enabled: EnabledExtensions) -> TemporalExtensionGate {
         TemporalExtensionGate(enabled)
     }
 

@@ -30,7 +30,6 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         | ParameterError::ContainedByWithoutJoinLevel
         | ParameterError::EntityMapLifetimeWithoutEntityMap
         | ParameterError::CursorUnavailable
-        | ParameterError::PaginationUndefined
         | ParameterError::WildcardTypeWithLocalFalse => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
         ParameterError::IdPatternEmpty
         | ParameterError::OrderGeometryCollection
@@ -73,15 +72,6 @@ mod tests {
     fn cursor_unavailable_is_invalid_request() {
         assert_eq!(
             classify_parameter_error(&ParameterError::CursorUnavailable).error_type(),
-            NgsiLdErrorType::InvalidRequest
-        );
-    }
-
-    /// Clause 6.3.20: Purge Entities defines no pagination parameter.
-    #[test]
-    fn pagination_undefined_is_invalid_request() {
-        assert_eq!(
-            classify_parameter_error(&ParameterError::PaginationUndefined).error_type(),
             NgsiLdErrorType::InvalidRequest
         );
     }

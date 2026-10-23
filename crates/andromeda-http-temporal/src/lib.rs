@@ -3,7 +3,7 @@
 #![deny(missing_docs)]
 
 pub mod error;
-mod extension_gate;
+pub mod extension_gate;
 mod forwarded_evolution_content;
 mod history_read;
 mod join;

@@ -11,6 +11,7 @@
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_extraction::{
     api_root::ApiRoot,
+    body_only_query::BodyOnlyQuery,
     content_length_precondition::DeclaredBodyLength,
     context::ContextUrl,
     context_target::{ContextTargetProvider, ContextTargetResolutionError, ExistingTargetedTenantState, SnapshotTargetResolver},
@@ -24,7 +25,6 @@ use andromeda_http_extraction::{
     snapshot_purge::SnapshotPurgeQ,
     snapshot_scope_guard::reject_snapshot_scope,
     temporal_delete_query::TemporalDeleteQuery,
-    temporal_query::TemporalQuery,
     tenant::TenantHeader,
     tenant_state::{ExistingTenantState, TenantStateResolver},
     typed_path::TypedPath,
@@ -127,7 +127,7 @@ async fn entity_path(_id: TypedPath<Identifier>) -> StatusCode {
     StatusCode::OK
 }
 
-async fn temporal_query(_query: TemporalQuery) -> StatusCode {
+async fn body_only_query(_query: BodyOnlyQuery) -> StatusCode {
     StatusCode::OK
 }
 
@@ -190,7 +190,7 @@ fn nested_api() -> Router {
     let api = Router::new()
         .route("/entities", get(entity_query).post(entity_body))
         .route("/entities/{id}", get(entity_path))
-        .route("/temporal/entityMaps", get(temporal_query))
+        .route("/temporal/entityMaps", post(body_only_query))
         .route("/temporal/entities", delete(temporal_delete))
         .route("/types", get(validated_query))
         .route("/snapshots", delete(snapshot_purge))
@@ -224,7 +224,12 @@ fn refused_requests() -> Result<Vec<Request<Body>>, Box<dyn Error>> {
         request(Method::GET, "/entities?type=Vehicle&limit=abc", &[], "")?,
         request(Method::POST, "/entities", &[("content-type", "application/json"), ("content-length", "1")], "{")?,
         request(Method::GET, "/entities/bare-name", &[], "")?,
-        request(Method::GET, "/temporal/entityMaps?type=Vehicle&lastN=abc", &[], "")?,
+        request(
+            Method::POST,
+            "/temporal/entityMaps?limit=3",
+            &[("content-type", "application/json"), ("content-length", "17")],
+            r#"{"type": "Query"}"#,
+        )?,
         request(Method::DELETE, "/temporal/entities?type=Vehicle&lastN=5", &[], "")?,
         request(Method::GET, "/types?unknownParameter=1", &[], "")?,
         request(Method::DELETE, "/snapshots", &[], "")?,

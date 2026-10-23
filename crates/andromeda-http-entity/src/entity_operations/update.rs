@@ -33,6 +33,7 @@ use crate::{
 };
 use andromeda_entity::write_kind::BatchUpdate;
 use andromeda_http_extraction::context_target;
+use andromeda_ngsi_ld_request::query_narrowing::ExecutionScope;
 
 pub(crate) async fn batch_update(
     context_target::ExistingTargetedTenantState {
@@ -78,6 +79,7 @@ pub(crate) async fn batch_update(
         &state,
         &target,
         ForwardedBatch {
+            scope: ExecutionScope::of_flag(params.local),
             operation: BatchProvisionOperation::Update(overwrite),
             query_string: query_string.as_deref(),
             triggering,

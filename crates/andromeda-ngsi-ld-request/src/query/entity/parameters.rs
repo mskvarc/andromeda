@@ -39,9 +39,10 @@ use std::num::NonZeroU32;
 
 /// Raw HTTP query parameters for entity queries, deserialized from the request URL.
 ///
-/// Corresponds to the query parameters defined in NGSI-LD 5.7.2 (Query Entities)
-/// and related operations. All values are in their raw (compact) form before
-/// context expansion.
+/// The parameters of Query Entities (Table 6.4.3.2-1), which the Entity Map
+/// creation shares (clause 6.34.3.1), and the selection a Purge Entities is
+/// converted into. All values are in their raw (compact) form before context
+/// expansion.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EntityQueryParameters {
@@ -142,22 +143,6 @@ pub struct EntityQueryParameters {
     /// are contacted during distributed operations. Uses the q-expression grammar.
     #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
     pub csf: Option<Expr>,
-    /// Attributes to remove from matching entities during purge (S5.6.21).
-    /// Mutually exclusive with `keep`.
-    #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
-    pub drop: Option<Vec<AttributeName>>,
-    /// Attributes to retain on matching entities during purge (S5.6.21).
-    /// All other attributes are removed. Mutually exclusive with `drop`.
-    #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
-    pub keep: Option<Vec<AttributeName>>,
-    /// Whether a `drop`/`keep` purge removes every `datasetId` instance of the
-    /// targeted attributes (the Andromeda `purge_dataset_scope` extension).
-    ///
-    /// Contradictory with `datasetId`, which names one instance: `deleteAll`
-    /// means "ignore datasetId". Inert unless the extension is enabled, in which
-    /// case it adds clause-5.6.13 `deleteAll` precision to the standard purge.
-    #[serde(rename = "deleteAll")]
-    pub delete_all: Option<bool>,
 }
 
 impl_shared_query_params!(EntityQueryParameters {
@@ -502,23 +487,6 @@ mod tests {
         assert!(deep_enough.validate(EntityQueryOperation::Query).is_ok());
     }
 
-    /// Clause 5.6.21.4: Purge Entities retrieves no Linked Entity, so a hop
-    /// and a nesting are refused whatever join the request names, while the
-    /// same request is a valid query.
-    #[test]
-    fn validate_refuses_every_linked_reference_on_a_purge() {
-        for query in [
-            "type=Car&drop=speed&join=flat&q=isParkedIn%7Bcategory%7D",
-            "type=Car&drop=speed&join=flat&pick=isParkedIn%7Bcategory%7D",
-        ] {
-            let err = params_from_query(query)
-                .validate(EntityQueryOperation::Purge)
-                .expect_err("purge retrieves nothing");
-            assert!(matches!(err, ParameterError::LinkedRetrievalUnavailable { .. }), "got {err:?} for {query}");
-            assert!(params_from_query(query).validate(EntityQueryOperation::Query).is_ok(), "{query}");
-        }
-    }
-
     /// The query reads its page beside its selection; the policy, not the
     /// parameter set, bounds it.
     #[test]
@@ -699,50 +667,14 @@ mod tests {
         );
     }
 
+    /// Table 6.4.3.2-1 defines no `drop`, `keep` or `deleteAll`: they shape a
+    /// purge (clause 5.6.21.3), so on a query they are parameters the
+    /// operation does not define (clause 6.3.20).
     #[test]
-    fn validate_rejects_drop_and_keep_together() {
-        let p = params_from_query("type=Vehicle&drop=A&keep=B");
-        let err = p.validate(EntityQueryOperation::Query).expect_err("expected mutual exclusivity error");
-        assert!(matches!(err, ParameterError::DropKeepExclusive));
-        assert!(err.to_string().contains("mutually exclusive"));
-    }
-
-    #[test]
-    fn validate_accepts_drop_alone() {
-        let p = params_from_query("type=Vehicle&drop=speed");
-        assert!(p.validate(EntityQueryOperation::Query).is_ok());
-    }
-
-    #[test]
-    fn validate_accepts_keep_alone() {
-        let p = params_from_query("type=Vehicle&keep=speed");
-        assert!(p.validate(EntityQueryOperation::Query).is_ok());
-    }
-
-    /// Clause 5.6.13: `deleteAll` and `datasetId` are contradictory, so the pair
-    /// is a `BadRequestData`. The check is independent of whether the
-    /// dataset-scope extension is enabled, which the handler gates separately.
-    #[test]
-    fn validate_rejects_dataset_id_with_delete_all() {
-        let p = params_from_query("type=Vehicle&drop=speed&datasetId=urn:ngsi-ld:Dataset:1&deleteAll=true");
-        let err = p.validate(EntityQueryOperation::Query).expect_err("datasetId and deleteAll contradict");
-        assert!(matches!(err, ParameterError::DatasetIdWithDeleteAll), "got {err:?}");
-        assert!(err.to_string().contains("mutually exclusive"));
-    }
-
-    /// `deleteAll` and `datasetId` each purge dataset-scoped instances on their
-    /// own, so each validates alone.
-    #[test]
-    fn validate_accepts_delete_all_or_dataset_id_alone() {
-        assert!(
-            params_from_query("type=Vehicle&drop=speed&deleteAll=true")
-                .validate(EntityQueryOperation::Query)
-                .is_ok()
-        );
-        assert!(
-            params_from_query("type=Vehicle&drop=speed&datasetId=urn:ngsi-ld:Dataset:1")
-                .validate(EntityQueryOperation::Query)
-                .is_ok()
-        );
+    fn the_purge_members_are_unknown_to_a_query() {
+        for query in ["type=Vehicle&drop=speed", "type=Vehicle&keep=speed", "type=Vehicle&deleteAll=true"] {
+            let message = serde_urlencoded::from_str::<EntityQueryParameters>(query).expect_err(query).to_string();
+            assert!(message.contains("unknown field"), "{query}: {message}");
+        }
     }
 }

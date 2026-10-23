@@ -114,6 +114,8 @@ pub mod request_entity_map;
 pub mod retrieve;
 /// The forwarding phases of a single-entity retrieval.
 pub mod retrieve_forwarding;
+/// The forwarding of an attribute write, withheld from a local one.
+pub mod scoped_provision;
 /// Attribute collection update handling.
 pub mod update_attributes;
 /// The clause 5.2.18 `UpdateResult` an attribute write answers with.

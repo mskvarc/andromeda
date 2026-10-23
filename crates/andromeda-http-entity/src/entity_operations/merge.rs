@@ -30,12 +30,13 @@ use crate::{
 };
 use andromeda_entity::write_kind::BatchMerge;
 use andromeda_http_extraction::context_target;
-use andromeda_ngsi_ld_request::empty::EmptyParams;
+use andromeda_ngsi_ld_request::{local::LocalOnlyParams, query_narrowing::ExecutionScope};
 
 pub(crate) async fn batch_merge(
-    // Clause 6.3.20: the operation defines no parameter, so any is an
-    // `InvalidRequest`; it is read first, before the tenant is resolved.
-    ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
+    // Clause 6.3.18 is the one URL parameter the operation defines, so any
+    // other is an `InvalidRequest`; it is read first, before the tenant is
+    // resolved.
+    ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     context_target::ExistingTargetedTenantState {
         services: state,
         target,
@@ -66,6 +67,7 @@ pub(crate) async fn batch_merge(
         &state,
         &target,
         ForwardedBatch {
+            scope: ExecutionScope::of_flag(params.local),
             operation: BatchProvisionOperation::Merge,
             query_string: None,
             triggering,

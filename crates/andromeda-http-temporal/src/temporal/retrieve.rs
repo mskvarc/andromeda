@@ -42,7 +42,7 @@ use andromeda_http_response::{
 use andromeda_jsonld::user_context_admission::SubmittedContext;
 use andromeda_ngsi_ld_query::temporal::continuation::TemporalContinuation;
 use andromeda_ngsi_ld_render::structural_projection::StructuralProjection;
-use andromeda_ngsi_ld_request::query::temporal::operation::TemporalQueryOperation;
+use andromeda_ngsi_ld_request::query::temporal::{operation::TemporalQueryOperation, retrieve_parameters::TemporalRetrieveParameters};
 use andromeda_temporal::{error::TemporalError, service::TemporalRange, temporal_invariant::TemporalInvariant};
 
 pub async fn get(
@@ -56,7 +56,7 @@ pub async fn get(
     ResponseContextRequest { context, api_root }: ResponseContextRequest,
     protocol: NgsiLdProtocolHeaders,
     TypedPath(id): TypedPath<Identifier>,
-    AdmittedTemporalQuery { mut params, .. }: AdmittedTemporalQuery<TemporalExtensionGate>,
+    AdmittedTemporalQuery { mut params, .. }: AdmittedTemporalQuery<TemporalExtensionGate, TemporalRetrieveParameters>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.temporal;
     // Clause 5.5.7: the request `@context` is admitted on the temporal history

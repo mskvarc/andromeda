@@ -1,12 +1,9 @@
 //! The `limit`, `offset` and `cursor` parameters every paged collection reads
 //! (clauses 5.5.9 and 6.3.10).
 
-use crate::{
-    error::ParameterError,
-    pagination::{
-        cursor_request::{CursorRequest, CursorRequestError},
-        page_context::{PageContext, PageContextError},
-    },
+use crate::pagination::{
+    cursor_request::{CursorRequest, CursorRequestError},
+    page_context::{PageContext, PageContextError},
 };
 use serde::{Deserialize, Deserializer, de::Error as DeserializeError};
 use strum::Display;
@@ -38,17 +35,6 @@ impl PageParameters {
     #[must_use]
     pub const fn is_absent(&self) -> bool {
         self.limit.is_none() && self.offset.is_none() && self.cursor.is_none() && self.context.is_none()
-    }
-
-    /// Refuse every pagination parameter, for an operation that acts on all
-    /// its matches and so defines none (Purge Entities, Table 6.4.3.3-1).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ParameterError::PaginationUndefined`] when the request named
-    /// `limit`, `offset` or `cursor`.
-    pub const fn require_absent(&self) -> Result<(), ParameterError> {
-        if self.is_absent() { Ok(()) } else { Err(ParameterError::PaginationUndefined) }
     }
 }
 
@@ -178,12 +164,9 @@ fn page_number(raw: Option<&str>, parameter: PageParameter) -> Result<Option<u32
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        error::ParameterError,
-        pagination::{
-            cursor_request::CursorRequest,
-            parameters::{OffsetPageParameters, PageParameters},
-        },
+    use crate::pagination::{
+        cursor_request::CursorRequest,
+        parameters::{OffsetPageParameters, PageParameters},
     };
     use andromeda_ngsi_ld_query::cursor::PageCursor;
     use pretty_assertions::assert_eq;
@@ -311,14 +294,5 @@ mod tests {
         assert!(parsed("").is_absent());
         assert!(!parsed("limit=1").is_absent());
         assert!(!parsed("cursor=").is_absent());
-    }
-
-    /// An operation that pages nothing refuses every pagination parameter.
-    #[test]
-    fn a_pagination_parameter_is_refused_where_none_is_defined() {
-        assert!(parsed("").require_absent().is_ok());
-        for query in ["limit=5", "offset=1", "cursor="] {
-            assert!(matches!(parsed(query).require_absent(), Err(ParameterError::PaginationUndefined)), "{query}");
-        }
     }
 }

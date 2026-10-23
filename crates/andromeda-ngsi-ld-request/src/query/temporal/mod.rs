@@ -66,6 +66,8 @@ pub mod deserialization;
 pub mod operation;
 /// The URL parameters the POST binding carries beside its clause 5.2.23 body.
 pub mod post_parameters;
+/// The parameters of the single-entity temporal retrieval.
+pub mod retrieve_parameters;
 /// What a temporal query has to satisfy before it runs.
 pub mod validation;
 

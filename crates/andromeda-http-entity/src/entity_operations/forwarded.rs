@@ -15,15 +15,21 @@ use andromeda_jsonld::{batch_contexts::BatchContext, user_context_admission::Adm
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
+use andromeda_ngsi_ld_request::query_narrowing::ExecutionScope;
 use axum::http::{StatusCode, Uri as HttpUri};
 
 /// What a batch operation asks the registrations matching it to do.
 ///
-/// The three members travel together because none of them describes the
-/// entities: they say which clause 5.6.7 to 5.6.10 operation the sources
-/// perform, which of the client's options every forwarded copy repeats, and
-/// which request triggered the forwarding (clause 6.3.18).
+/// The members travel together because none of them describes the entities:
+/// they say whether any source is asked at all, which clause 5.6.7 to 5.6.10
+/// operation the sources perform, which of the client's options every
+/// forwarded copy repeats, and which request triggered the forwarding (clause
+/// 6.3.18).
 pub(crate) struct ForwardedBatch<'a> {
+    /// Whether the batch is confined to this broker: with `local=true` "no
+    /// Context Source Registrations shall be considered as matching" (clause
+    /// 6.3.18), so nothing is forwarded.
+    pub(crate) scope: ExecutionScope,
     /// The operation the matching registrations perform.
     pub(crate) operation: BatchProvisionOperation,
     /// The client's options, repeated on every forwarded copy.
@@ -47,10 +53,15 @@ pub(crate) async fn forward_entities<W: BatchWriteKind>(
     instance: &HttpUri,
 ) -> Result<Vec<BatchForwardedResult>, ProblemResponse> {
     let ForwardedBatch {
+        scope,
         operation,
         query_string,
         triggering,
     } = request;
+    match scope {
+        ExecutionScope::Local => return Ok(Vec::new()),
+        ExecutionScope::Distributed => {}
+    }
     let batch = admitted
         .forwardable()
         .map(|entity| BatchEntity {
@@ -80,10 +91,15 @@ pub(crate) async fn forward_identifiers(
     services: &EntityRouteServices,
     target: &ContextTarget,
     ids: &[Identifier],
+    scope: ExecutionScope,
     context: AdmittedContext,
     triggering: TriggeringRequest<'_>,
     instance: &HttpUri,
 ) -> Result<Vec<BatchForwardedResult>, ProblemResponse> {
+    match scope {
+        ExecutionScope::Local => return Ok(Vec::new()),
+        ExecutionScope::Distributed => {}
+    }
     let context = BatchContext::shared(context.into_spec());
     let batch = ids
         .iter()

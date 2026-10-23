@@ -63,9 +63,6 @@ impl TryFrom<Query> for EntityQueryParameters {
             split_entities: query.split_entities,
             geometry_property: None,
             csf: query.csf,
-            drop: None,
-            keep: None,
-            delete_all: None,
         };
         // Table 5.2.23-1 restricts the `Query` datatype's `attrs` member to
         // "Attribute name as short hand strings or URIs", where `pick` and

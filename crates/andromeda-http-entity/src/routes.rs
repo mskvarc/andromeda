@@ -29,7 +29,7 @@ impl EntityRoutes {
     /// and Query Entities read `Accept-Language`.
     ///
     /// The extension set is attached as a request extension so the single
-    /// `DELETE /entities` gate reads it: the `EntityQuery` extractor has no
+    /// `DELETE /entities` gate reads it: the purge's parameter extractor has no
     /// config access, so the `purge_dataset_scope` gate is applied in the
     /// handler off this layer.
     pub fn new(resolver: Arc<dyn EntityStateResolver>, enabled: EnabledExtensions, accept_language: AcceptLanguageReading) -> EntityRoutes {

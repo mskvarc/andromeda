@@ -22,6 +22,7 @@ use crate::{
         ValidatedQuery,
         collect_proxied_attrs,
         local_entity_outcome,
+        scoped_provision::ScopedProvision,
         update_result::{LocalAttributeWrite, NotUpdatedReason, attribute_write_response},
     },
     forwarded_write_query::{forwarded_type_parameter, forwarded_write_query},
@@ -31,7 +32,7 @@ use andromeda_entity::{write_kind::AppendAttributes, write_target::WriteTarget};
 use andromeda_federation::{forwarded_content::ForwardedContent, request::TriggeringRequest};
 use andromeda_http_extraction::context_target;
 use andromeda_jsonld::user_context_admission::admit_user_context;
-use andromeda_ngsi_ld_request::fragment_entity_id::admit_fragment_entity_id;
+use andromeda_ngsi_ld_request::{fragment_entity_id::admit_fragment_entity_id, query_narrowing::ExecutionScope};
 use axum::http::Method;
 
 pub(crate) async fn append_attrs(
@@ -79,7 +80,7 @@ pub(crate) async fn append_attrs(
             headers: Some(&headers),
         },
     };
-    let plan = state.forwarding.plan_provision(&target, &request).await.with_entity_instance(&uri)?;
+    let plan = ScopedProvision::plan(&state.forwarding, &target, &request, ExecutionScope::of_flag(params.local), &uri).await?;
     // Clause 5.6.3.4 runs the clause 5.5.4 validation before the forwarding
     // phase, so a fragment this broker refuses reaches no context source and an
     // append left with nothing local is still validated. The registrations the
@@ -92,11 +93,9 @@ pub(crate) async fn append_attrs(
         RequestOverwritePolicy::Overwrite => OverwritePolicy::Overwrite,
     };
     let sent_to_registrations = plan.reads_payload();
-    let forwarded = state
-        .forwarding
-        .execute_provision(plan, &request, Some(ForwardedContent::Entity(admitted.document())))
-        .await
-        .with_entity_instance(&uri)?;
+    let forwarded = plan
+        .execute(&state.forwarding, &request, Some(ForwardedContent::Entity(admitted.document())), &uri)
+        .await?;
 
     if forwarded.is_empty() {
         let (all_attrs, not_appended) = service.append_attrs(&target, entity, admitted, overwrite).await.with_entity_instance(&uri)?;

@@ -26,6 +26,8 @@ pub struct UpdateAttributesParams {
     /// The clause 4.17 selector the target entity's types must satisfy.
     #[serde(rename = "type")]
     pub entity_type: Option<TypeExprRaw>,
+    /// Whether the operation is confined to this broker (clause 6.3.18 `local`).
+    pub local: Option<bool>,
 }
 
 #[cfg(test)]
@@ -45,13 +47,21 @@ mod tests {
         assert!(serde_urlencoded::from_str::<EntityWriteParams>("unknown=x").is_err());
     }
 
-    /// Table 6.6.3.2-1 defines `type` alone.
+    /// Clause 6.3.18 gives Update Attributes `local` beside its `type`.
+    #[test]
+    fn an_attribute_update_reads_the_local_flag() {
+        let params: UpdateAttributesParams = serde_urlencoded::from_str("type=Vehicle&local=true").expect("both parameters parse");
+        pretty_assertions::assert_eq!(params.local, Some(true));
+    }
+
+    /// Table 6.6.3.2-1 defines `type` and clause 6.3.18 adds `local`; nothing
+    /// else is a parameter of the operation.
     #[test]
     fn an_update_attributes_reads_a_type_selector_and_nothing_else() {
         let params: UpdateAttributesParams = serde_urlencoded::from_str("type=Vehicle%7CBuilding").expect("a valid type selector");
         pretty_assertions::assert_eq!(params.entity_type.map(|selector| selector.to_string()), Some("Vehicle,Building".to_string()));
         let bare: UpdateAttributesParams = serde_urlencoded::from_str("").expect("parses");
-        assert!(bare.entity_type.is_none());
-        assert!(serde_urlencoded::from_str::<UpdateAttributesParams>("local=true").is_err());
+        assert!(bare.entity_type.is_none() && bare.local.is_none());
+        assert!(serde_urlencoded::from_str::<UpdateAttributesParams>("options=noOverwrite").is_err());
     }
 }

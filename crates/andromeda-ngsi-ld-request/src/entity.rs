@@ -48,6 +48,8 @@ pub struct AppendParams {
     /// (Table 6.6.3.1-1 `type`).
     #[serde(rename = "type")]
     pub entity_type: Option<TypeExprRaw>,
+    /// Whether the operation is confined to this broker (clause 6.3.18 `local`).
+    pub local: Option<bool>,
 }
 
 impl AppendParams {
@@ -76,6 +78,8 @@ pub struct AttributeWriteParams {
     /// The clause 4.17 selector the target entity's types must satisfy.
     #[serde(rename = "type")]
     pub entity_type: Option<TypeExprRaw>,
+    /// Whether the operation is confined to this broker (clause 6.3.18 `local`).
+    pub local: Option<bool>,
 }
 
 /// Query parameters for `PATCH /entities/{id}` (Merge Entity, Table 6.5.3.4-1).
@@ -263,6 +267,16 @@ mod tests {
     use super::*;
     use crate::query::entity::parameters::EntityQueryParameters;
     use andromeda_ngsi_ld_query::projection::exclusivity::ProjectionConflict;
+
+    /// Clause 6.3.18 gives Append Attributes, Partial Attribute Update and
+    /// Replace Attribute `local` beside their own parameters.
+    #[test]
+    fn the_attribute_writes_read_the_local_flag() {
+        let append: AppendParams = serde_urlencoded::from_str("options=noOverwrite&type=Vehicle&local=true").expect("parses");
+        pretty_assertions::assert_eq!(append.local, Some(true));
+        let write: AttributeWriteParams = serde_urlencoded::from_str("type=Vehicle&local=true").expect("parses");
+        pretty_assertions::assert_eq!(write.local, Some(true));
+    }
 
     #[test]
     fn a_retrieve_accepts_the_entity_map_flag_and_lifetime() {

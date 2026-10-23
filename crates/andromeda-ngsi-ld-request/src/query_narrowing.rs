@@ -20,9 +20,10 @@
 //! Attribute names of which at least one shall exist in order for an Entity to
 //! be selected", which is input (b). Table 6.4.3.2-1 calls `attrs` "a synonym
 //! for a combination of the pick and q parameters", and the selecting half of
-//! that combination is the `q`, not the `pick`. Purge Entities has no `attrs`:
-//! clause 5.6.21.3 gives it `drop` and `keep`, and those are the lists of
-//! Attribute names input (b) names there.
+//! that combination is the `q`, not the `pick`. Purge Entities counts two
+//! spellings of input (b): clause 5.6.21.3 gives it `drop` and `keep`, the lists
+//! of Attribute names the purge acts on, and Table 6.4.3.3-1 names `attrs` in
+//! the rule its `type`, `q` and `geometry` rows restate.
 //!
 //! Input (a) reaches a POST binding differently: clause 5.2.23's body carries
 //! one clause 5.2.11 selector per entry of `entities`, each with its own type
@@ -110,6 +111,40 @@ pub enum ExecutionScope {
     /// `local=true`, or a clause 4.17 `type=*` selector, which Table 5.2.33-1
     /// defines as implying local scope.
     Local,
+}
+
+impl ExecutionScope {
+    /// The scope a request's `local` and clause 4.17 type selector ask for.
+    #[must_use]
+    pub const fn of(local: Option<bool>, entity_type: Option<&TypeExprRaw>) -> ExecutionScope {
+        match entity_type {
+            Some(TypeExprRaw::Wildcard) => ExecutionScope::Local,
+            Some(_) | None => ExecutionScope::of_flag(local),
+        }
+    }
+
+    /// The scope a request's `local` flag alone asks for, on an operation
+    /// that selects no entities by type (clause 6.3.18).
+    #[must_use]
+    pub const fn of_flag(local: Option<bool>) -> ExecutionScope {
+        match local {
+            Some(true) => ExecutionScope::Local,
+            Some(false) | None => ExecutionScope::Distributed,
+        }
+    }
+}
+
+/// Refuse a `type=*` selector beside `local=false`: Table 5.2.33-1 has `*`
+/// imply local scope, which "shall not be explicitly set to false".
+///
+/// # Errors
+///
+/// Returns [`ParameterError::WildcardTypeWithLocalFalse`] for that pair.
+pub const fn require_wildcard_locality(local: Option<bool>, entity_type: Option<&TypeExprRaw>) -> Result<(), ParameterError> {
+    match (local, entity_type) {
+        (Some(false), Some(TypeExprRaw::Wildcard)) => Err(ParameterError::WildcardTypeWithLocalFalse),
+        (Some(false | true) | None, _) => Ok(()),
+    }
 }
 
 /// Which of the clause's inputs one operation enumerates.

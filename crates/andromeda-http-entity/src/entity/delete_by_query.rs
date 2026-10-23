@@ -3,7 +3,6 @@
 
 use crate::entity::{
     BatchOperationResult,
-    EntityQuery,
     EntityResultExt,
     EntityTenantState,
     ForwardPurgeRequest,
@@ -27,11 +26,14 @@ use crate::entity::{
 use andromeda_entity::side_effect::SideEffectPlacement;
 use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_federation::request::TriggeringRequest;
-use andromeda_http_extraction::{context::ContextUrl, context_target};
+use andromeda_http_extraction::{context::ContextUrl, context_target, query::ValidatedQuery};
 use andromeda_http_response::classified_report::ClassifiedReport;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::{entity_selection::ConsideredEntities, page_window::PageWindow, projection::purge::DatasetPurgeScope};
-use andromeda_ngsi_ld_request::query::entity::{operation::EntityQueryOperation, parameters::EntityQueryParameters};
+use andromeda_ngsi_ld_request::query::entity::{
+    parameters::EntityQueryParameters,
+    purge::{PurgeEntitiesParameters, PurgeSelection},
+};
 use axum::{Extension, http::Uri as RequestUri};
 use std::slice;
 
@@ -41,8 +43,13 @@ use std::slice;
 /// (`purge datasetId` targets one instance, mirroring clause 5.6.5); absence of
 /// both is the standard whole-attribute Purge. When a dataset scope is asked for
 /// while the extension is off, clause 6.3.12's pattern answers `InvalidRequest`.
-fn purge_dataset_scope(query: &EntityQueryParameters, enabled: EnabledExtensions, uri: &RequestUri) -> Result<DatasetPurgeScope, ProblemResponse> {
-    let scope = if query.delete_all == Some(true) {
+fn purge_dataset_scope(
+    query: &EntityQueryParameters,
+    delete_all: Option<bool>,
+    enabled: EnabledExtensions,
+    uri: &RequestUri,
+) -> Result<DatasetPurgeScope, ProblemResponse> {
+    let scope = if delete_all == Some(true) {
         DatasetPurgeScope::All
     } else if let Some(selector) = query.dataset_id.as_deref().and_then(<[_]>::first) {
         DatasetPurgeScope::Selector(selector.clone()) // clone: the compiled scope owns its selector
@@ -83,19 +90,18 @@ pub(crate) async fn delete_by_query(
     ContextUrl(context): ContextUrl,
     protocol: NgsiLdProtocolHeaders,
     Extension(enabled): Extension<EnabledExtensions>,
-    EntityQuery(mut query): EntityQuery,
+    ValidatedQuery(mut params): ValidatedQuery<PurgeEntitiesParameters>,
 ) -> Result<Response, ProblemResponse> {
     if !target.permits_federation() {
-        query.local = Some(true);
+        params.local = Some(true);
     }
-    // Clause 5.6.21.4 gives this operation no `join`: it renders nothing and
-    // retrieves nothing, so validating it as a purge refuses a Linked Entity
-    // reference in `q` or in `pick`/`omit` outright.
-    query.validate(EntityQueryOperation::Purge).with_entity_instance(&uri)?;
-    // Table 6.4.3.3-1 defines no pagination parameter for Purge Entities: it
-    // acts on every match, and clause 6.3.20 answers a parameter the operation
-    // does not define with `InvalidRequest` rather than paging a purge.
-    query.page.require_absent().with_entity_instance(&uri)?;
+    params.validate().with_entity_instance(&uri)?;
+    let PurgeSelection {
+        mut query,
+        drop,
+        keep,
+        delete_all,
+    } = params.into_selection();
 
     let is_local = !target.permits_federation() || query.is_local();
 
@@ -110,20 +116,12 @@ pub(crate) async fn delete_by_query(
     // answering an unsupported parameter with `InvalidRequest`. When the flag is
     // off, `datasetId`/`deleteAll` are refused and the standard whole-attribute
     // Purge (clause 5.6.21) is unchanged.
-    let dataset = purge_dataset_scope(&query, enabled, &uri)?;
+    let dataset = purge_dataset_scope(&query, delete_all, enabled, &uri)?;
 
-    let purge_mode = if let Some(ref drop_attrs) = query.drop {
-        PurgeMode::Drop {
-            attributes: drop_attrs.clone(), // clone: the compiled mode owns its attribute list
-            dataset,
-        }
-    } else if let Some(ref keep_attrs) = query.keep {
-        PurgeMode::Keep {
-            attributes: keep_attrs.clone(), // clone: the compiled mode owns its attribute list
-            dataset,
-        }
-    } else {
-        PurgeMode::DeleteEntities
+    let purge_mode = match (drop, keep) {
+        (Some(attributes), _) => PurgeMode::Drop { attributes, dataset },
+        (None, Some(attributes)) => PurgeMode::Keep { attributes, dataset },
+        (None, None) => PurgeMode::DeleteEntities,
     };
 
     let compiled = state.entity_query.compile_query_public(&query, &context).await.with_entity_instance(&uri)?;

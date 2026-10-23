@@ -21,6 +21,7 @@ use crate::{
         ValidatedQuery,
         collect_proxied_attrs,
         local_entity_outcome,
+        scoped_provision::ScopedProvision,
         update_result::{LocalAttributeWrite, attribute_write_response},
     },
     forwarded_write_query::{forwarded_type_parameter, forwarded_write_query},
@@ -34,6 +35,7 @@ use andromeda_federation::{
 use andromeda_http_extraction::context_target;
 use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_model::attribute::{instance::AttributeValue, written_attribute::WrittenAttribute};
+use andromeda_ngsi_ld_request::query_narrowing::ExecutionScope;
 use axum::http::Method;
 use std::slice;
 
@@ -75,7 +77,7 @@ pub(crate) async fn replace_attr(
             headers: Some(&headers),
         },
     };
-    let plan = state.forwarding.plan_provision(&target, &request).await.with_entity_instance(&uri)?;
+    let plan = ScopedProvision::plan(&state.forwarding, &target, &request, ExecutionScope::of_flag(params.local), &uri).await?;
     // Clause 5.6.19.4 runs the clause 5.5.4 validation before the forwarding
     // phase, so a fragment this broker refuses reaches no context source and an
     // attribute a proxied registration claims is still validated. The
@@ -84,19 +86,18 @@ pub(crate) async fn replace_attr(
     let admitted = admit_written_attribute::<ReplaceAttribute>(service, &attr_id, &fragment, &context)
         .await
         .with_entity_instance(&uri)?;
-    let forwarded = state
-        .forwarding
-        .execute_provision(
-            plan,
+    let forwarded = plan
+        .execute(
+            &state.forwarding,
             &request,
             Some(ForwardedContent::Attribute {
                 name: admitted.expanded_name(),
                 instance: admitted.instance(),
                 write: AttributeWrite::Replacement,
             }),
+            &uri,
         )
-        .await
-        .with_entity_instance(&uri)?;
+        .await?;
 
     if forwarded.is_empty() {
         service.replace_attr(&target, entity, admitted).await.with_entity_instance(&uri)?;

@@ -27,12 +27,13 @@ use andromeda_http_extraction::{
     entity_id_batch::{EntityIdBatch, JsonLdEntityIds},
 };
 use andromeda_jsonld::user_context_admission::admit_user_context;
-use andromeda_ngsi_ld_request::empty::EmptyParams;
+use andromeda_ngsi_ld_request::{local::LocalOnlyParams, query_narrowing::ExecutionScope};
 
 pub(crate) async fn batch_delete(
-    // Clause 6.3.20: the operation defines no parameter, so any is an
-    // `InvalidRequest`; it is read first, before the tenant is resolved.
-    ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
+    // Clause 6.3.18 is the one URL parameter the operation defines, so any
+    // other is an `InvalidRequest`; it is read first, before the tenant is
+    // resolved.
+    ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     context_target::ExistingTargetedTenantState {
         services: state,
         target,
@@ -58,7 +59,7 @@ pub(crate) async fn batch_delete(
         via: incoming_via.as_ref(),
         headers: Some(&headers),
     };
-    let forwarded = forward_identifiers(&state, &target, &entity_ids, context, triggering, &uri).await?;
+    let forwarded = forward_identifiers(&state, &target, &entity_ids, ExecutionScope::of_flag(params.local), context, triggering, &uri).await?;
 
     // Clause 5.6.10.4: every identifier is also deleted locally; an entity a
     // proxied registration holds is no local failure when it is absent here.
