@@ -15,6 +15,7 @@ use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
     api_root::ApiRoot,
+    body_only_query::BodyOnlyQuery,
     entity_query::EntityQuery,
     jsonld::JsonLd,
     pagination_policy::RequestPagination,
@@ -34,7 +35,6 @@ use andromeda_http_response::{
 };
 use andromeda_jsonld::user_context_admission::{SubmittedContext, admit_user_context};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_query::{candidate_filters::CandidateFilters, page_window::PageWindow};
 use andromeda_ngsi_ld_render::entity_map_body::EntityMapBody;
 use andromeda_ngsi_ld_request::{
@@ -286,7 +286,7 @@ pub async fn create_from_query_post(
     api_root: ApiRoot,
     prefer: PreferHeader,
     pagination: RequestPagination,
-    JsonLd { body, context }: JsonLd<Query>,
+    BodyOnlyQuery(JsonLd { body, context }): BodyOnlyQuery,
 ) -> Result<Response, ProblemResponse> {
     // Clause 6.3.5: the query is read against the one context the body
     // extractor resolved, admitted first (clause 5.5.7).
@@ -362,7 +362,7 @@ pub async fn create_temporal_from_query_post(
     api_root: ApiRoot,
     prefer: PreferHeader,
     pagination: RequestPagination,
-    JsonLd { body, context }: JsonLd<Query>,
+    BodyOnlyQuery(JsonLd { body, context }): BodyOnlyQuery,
 ) -> Result<Response, ProblemResponse> {
     // Clause 6.3.5: the query is read against the one context the body
     // extractor resolved, admitted first (clause 5.5.7).

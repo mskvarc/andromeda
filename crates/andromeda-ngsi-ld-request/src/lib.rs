@@ -44,6 +44,7 @@ pub mod registration_retrieval;
 pub mod representation_format;
 pub mod representation_parameter;
 pub mod subscription_listing;
+pub mod sys_attrs_parameters;
 pub mod temporal_instance_fragment;
 pub mod unsupported_representation;
 

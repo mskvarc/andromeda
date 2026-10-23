@@ -24,7 +24,7 @@ use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::subscription_request::SubscriptionRequest;
 use andromeda_ngsi_ld_render::subscription::SubscriptionView;
-use andromeda_ngsi_ld_request::{empty::EmptyParams, subscription_listing::ListParams};
+use andromeda_ngsi_ld_request::{empty::EmptyParams, subscription_listing::ListParams, sys_attrs_parameters::SysAttrsParams};
 use andromeda_subscription::{subscription_context::SubscriptionContext, subscription_listing::SubscriptionListing};
 use axum::{
     extract::OriginalUri,
@@ -79,10 +79,10 @@ pub async fn get(
     accept: AcceptFormatNoGeo,
     ContextUrl(context): ContextUrl,
     TypedPath(subscription_id): TypedPath<Identifier>,
-    ValidatedQuery(params): ValidatedQuery<ListParams>,
+    ValidatedQuery(params): ValidatedQuery<SysAttrsParams>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.csource_subscriptions;
-    let options = params.list_options().with_subscription_instance(&uri)?;
+    let options = params.parse_options().with_subscription_instance(&uri)?;
 
     let subscription = service
         .get_for_response(&state.live_target, &subscription_id, &context)

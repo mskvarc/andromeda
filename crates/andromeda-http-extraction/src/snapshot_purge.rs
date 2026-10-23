@@ -3,7 +3,8 @@
 //!
 //! The NGSI-LD specification mandates that `DELETE /snapshots` carry a `q`
 //! query parameter. Missing or malformed values produce `400 BadRequestData`
-//! (clause 6.3.2).
+//! (clause 6.3.2), and any other parameter `400 InvalidRequest` (clause
+//! 6.3.20).
 
 use crate::{addressed_uri::addressed_uri, query_decode_error::QueryDecodeError};
 use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
@@ -32,7 +33,8 @@ enum SnapshotPurgeRefusal {
 impl RequestRefusal for SnapshotPurgeRefusal {
     fn error_type(&self) -> NgsiLdErrorType {
         match self {
-            SnapshotPurgeRefusal::Query(_) | SnapshotPurgeRefusal::MissingQ | SnapshotPurgeRefusal::InvalidQ(_) => NgsiLdErrorType::BadRequestData,
+            SnapshotPurgeRefusal::Query(error) => error.error_type(),
+            SnapshotPurgeRefusal::MissingQ | SnapshotPurgeRefusal::InvalidQ(_) => NgsiLdErrorType::BadRequestData,
         }
     }
 }
@@ -41,8 +43,12 @@ impl RequestRefusal for SnapshotPurgeRefusal {
 #[derive(Debug)]
 pub struct SnapshotPurgeQ(pub SnapshotPurgeFilter);
 
-#[derive(Debug, Deserialize)]
 /// Raw optional query value before the endpoint-required check.
+///
+/// Table 6.36.3.2-1 defines `q` alone, so any other parameter is the clause
+/// 6.3.20 `InvalidRequest`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawPurgeQuery {
     /// Snapshot purge expression supplied as `q`.
     q: Option<String>,
@@ -98,6 +104,21 @@ mod tests {
         let problem = rejection.problem().expect("a classified rejection");
         pretty_assertions::assert_eq!(problem.error_type(), NgsiLdErrorType::BadRequestData);
         assert!(problem.detail().starts_with("invalid snapshot purge q: "), "{}", problem.detail());
+    }
+
+    /// Table 6.36.3.2-1 defines `q` alone, so a parameter beside it is one
+    /// the operation does not define (clause 6.3.20).
+    #[tokio::test]
+    async fn a_parameter_beside_q_produces_invalid_request() {
+        let req = Request::builder()
+            .uri("/ngsi-ld/v1/snapshots?q=snapshotPriority%3D%3D5&limit=3")
+            .body(())
+            .expect("request");
+        let (mut parts, ()) = req.into_parts();
+        let rejection = SnapshotPurgeQ::from_request_parts(&mut parts, &()).await.expect_err("limit is refused");
+        let problem = rejection.problem().expect("a classified rejection");
+        pretty_assertions::assert_eq!(problem.error_type(), NgsiLdErrorType::InvalidRequest);
+        assert!(problem.detail().contains("limit"), "{}", problem.detail());
     }
 
     #[tokio::test]
