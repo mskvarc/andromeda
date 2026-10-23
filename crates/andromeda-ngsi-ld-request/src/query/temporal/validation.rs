@@ -10,7 +10,7 @@ use crate::{
     entity_map_lifetime::require_entity_map_for_lifetime,
     error::ParameterError,
     query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation},
-    query_narrowing::{AdmittedNarrowings, ExecutionScope, NarrowingInputs, require_narrowing},
+    query_narrowing::{AdmittedNarrowings, ExecutionScope, NarrowingInputs, require_narrowing, require_wildcard_locality},
     representation_parameter::{WrittenValue, resolve_representation, selected_representation},
 };
 use andromeda_linked_retrieval::admission::{LinkedRequest, TemporalJoin, admit_request};
@@ -140,8 +140,9 @@ impl TemporalQueryParameters {
     /// # Errors
     ///
     /// Returns [`ParameterError::AttrsReservedMember`] when `attrs` names an
-    /// Entity member, [`ParameterError::Projection`] for the clause 4.21
-    /// selector conflicts, the Linked Entity admission errors when a nested
+    /// Entity member, [`ParameterError::WildcardTypeWithLocalFalse`] when
+    /// `type=*` meets `local=false`, [`ParameterError::Projection`] for the
+    /// clause 4.21 selector conflicts, the Linked Entity admission errors when a nested
     /// projection term, a `q` hop or a retrieving `join` references a Linked
     /// Entity the operation does not reach (clauses 5.7.3.4, 5.7.4.4 and
     /// 5.14.5.4), [`ParameterError::InlineJoinWithoutInstances`] when
@@ -164,6 +165,9 @@ impl TemporalQueryParameters {
         // error type would have been lost.
         self.parse_format()?;
         validate_attrs(self.attrs.as_deref(), attrs_admission(operation))?;
+        // Table 6.18.3.2-1: with `type=*`, "local is implicitly set to true and
+        // shall not be explicitly set to false".
+        require_wildcard_locality(self.local, self.entity_type.as_ref())?;
         // Clause 4.21: the temporal API carries the same three selectors and
         // inherits the rule about combining them unchanged.
         check_projection_exclusivity(ProjectionSelectors {

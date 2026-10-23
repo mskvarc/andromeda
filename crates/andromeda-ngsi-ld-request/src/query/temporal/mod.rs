@@ -891,6 +891,27 @@ mod tests {
         assert!(p.is_local());
     }
 
+    /// Table 6.18.3.2-1: with `type=*`, local "shall not be explicitly set to
+    /// false", at the query and the Entity Map it creates.
+    #[test]
+    fn a_wildcard_type_refuses_local_false() {
+        const WINDOW: &str = "timerel=after&timeAt=2024-01-01T00:00:00Z";
+        for operation in [TemporalQueryOperation::Query, TemporalQueryOperation::EntityMap] {
+            let err = params_from_query(&format!("type=*&local=false&{WINDOW}"))
+                .validate(operation, TemporalJoin::Spec)
+                .expect_err("type=* contradicts local=false");
+            assert!(matches!(err, ParameterError::WildcardTypeWithLocalFalse), "{operation:?}: {err:?}");
+            for admitted in ["type=*", "type=*&local=true", "type=Vehicle&local=false"] {
+                assert!(
+                    params_from_query(&format!("{admitted}&{WINDOW}"))
+                        .validate(operation, TemporalJoin::Spec)
+                        .is_ok(),
+                    "{operation:?}: {admitted}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn is_local_false_with_specific_type() {
         let p = params_from_query("type=Vehicle");
