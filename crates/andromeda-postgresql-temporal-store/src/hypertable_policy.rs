@@ -1,9 +1,10 @@
-//! The temporal hypertables whose storage policy the broker reconciles, and
-//! the columnstore layout each is given.
+//! The temporal hypertables whose storage policy the broker reconciles, the
+//! columnstore layout each is given, the columns each registers for chunk
+//! skipping, and the density below which a chunk stays in the rowstore.
 
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::columnstore_enablement::{ColumnstoreLayout, SortDirection, SparseIndexKind};
-use sea_query::{IntoIden, TableName};
+use sea_query::{DynIden, IntoIden, TableName};
 use strum::{Display, EnumIter, IntoStaticStr};
 
 /// The hypertables of the temporal schema whose storage policy the broker
@@ -22,11 +23,28 @@ pub enum HypertableName {
     AttributeHistory,
 }
 
-/// The span converted chunks are merged into, in days.
+/// The fewest rows per segment at which a converted chunk takes fewer bytes
+/// than its rowstore heap and indexes.
 ///
-/// A whole multiple of the seven-day chunk interval, which `TimescaleDB`
-/// requires of the merge span.
-const COLUMNSTORE_MERGE_DAYS: u32 = 28;
+/// Each segment costs its batch metadata, about 700 bytes for the
+/// `attribute_history` layout, whatever it holds, and a converted row about 200
+/// bytes against about 290 in the rowstore with its indexes. Measured on
+/// `TimescaleDB` 2.31 with history rows of real Entities in one seven-day
+/// chunk: one row per stream converted to 3.3 times its rowstore size, two to
+/// 2.0 times, four to 1.33 times, six to 1.08 times, eight to 0.97 times and
+/// sixteen to 0.73 times.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SegmentBreakEven(u64);
+
+impl SegmentBreakEven {
+    /// Whether a chunk of `rows` rows over `segments` segments converts to
+    /// fewer bytes than it holds in the rowstore. An empty chunk converts to
+    /// nothing.
+    #[must_use]
+    pub const fn pays(self, rows: u64, segments: u64) -> bool {
+        rows >= segments.saturating_mul(self.0)
+    }
+}
 
 impl HypertableName {
     /// The hypertable as a relation name.
@@ -47,14 +65,13 @@ impl HypertableName {
     ///   key of the hypertable's `uq_*_write` constraint, newest first.
     /// - Sparse indexes. A `minmax` on each of the four semantic time axes
     ///   clause 5.2.21 admits as a `timeproperty`, so a time filter skips
-    ///   batches outside its window; a `bloom` on each instance identifier,
+    ///   batches outside its window, and a `bloom` on each instance identifier,
     ///   which clauses 5.6.14 and 5.6.15 address an instance by, so a
     ///   modification or deletion decompresses only the batches that may hold
-    ///   it; and a composite `bloom` on the write identity. A replayed write
-    ///   reuses its original `recorded_at`, which may lie in a converted chunk,
-    ///   and its conflict check on the write identity cannot narrow by segment,
-    ///   since the stream key is not part of that key: without the bloom it
-    ///   decompresses every batch whose `recorded_at` range covers the instant.
+    ///   it.
+    /// - No merge. A converted chunk is never folded into a converted
+    ///   neighbour: the merge locks the neighbour for the whole conversion, and
+    ///   a modification or deletion waiting on it deadlocks the conversion.
     #[must_use]
     pub fn columnstore_layout(self) -> ColumnstoreLayout {
         match self {
@@ -65,7 +82,6 @@ impl HypertableName {
                     (AttributeHistory::WriteId.into_iden(), SortDirection::Ascending),
                     (AttributeHistory::WriteOrdinal.into_iden(), SortDirection::Ascending),
                 ],
-                merge_days: COLUMNSTORE_MERGE_DAYS,
                 sparse_indexes: vec![
                     (SparseIndexKind::Minmax, vec![AttributeHistory::ObservedAt.into_iden()]),
                     (SparseIndexKind::Minmax, vec![AttributeHistory::CreatedAt.into_iden()]),
@@ -73,16 +89,36 @@ impl HypertableName {
                     (SparseIndexKind::Minmax, vec![AttributeHistory::DeletedAt.into_iden()]),
                     (SparseIndexKind::Bloom, vec![AttributeHistory::GeneratedInstanceId.into_iden()]),
                     (SparseIndexKind::Bloom, vec![AttributeHistory::VerbatimInstanceId.into_iden()]),
-                    (
-                        SparseIndexKind::Bloom,
-                        vec![
-                            AttributeHistory::RecordedAt.into_iden(),
-                            AttributeHistory::WriteId.into_iden(),
-                            AttributeHistory::WriteOrdinal.into_iden(),
-                        ],
-                    ),
                 ],
             },
+        }
+    }
+
+    /// The columns whose per-chunk range lets the planner exclude a converted
+    /// chunk.
+    ///
+    /// For `attribute_history`, the semantic time axes clause 5.2.21 admits
+    /// as a `timeproperty` that most rows carry: a temporal query bounds
+    /// exactly one of them, and history is partitioned on the write clock,
+    /// which none of them follows. `deletedAt` is not one: only a row
+    /// recording a deletion carries it, so a typical chunk has no range of it
+    /// to record, and every conversion would report the failed calculation.
+    #[must_use]
+    pub fn chunk_skipping_columns(self) -> [DynIden; 3] {
+        match self {
+            HypertableName::AttributeHistory => [
+                AttributeHistory::ObservedAt.into_iden(),
+                AttributeHistory::CreatedAt.into_iden(),
+                AttributeHistory::ModifiedAt.into_iden(),
+            ],
+        }
+    }
+
+    /// The fewest rows per segment at which converting a chunk pays.
+    #[must_use]
+    pub const fn segment_break_even(self) -> SegmentBreakEven {
+        match self {
+            HypertableName::AttributeHistory => SegmentBreakEven(8),
         }
     }
 }
@@ -110,11 +146,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["recorded_at Descending", "write_id Ascending", "write_ordinal Ascending"]
         );
-        assert_eq!(layout.merge_days, 28);
     }
 
     #[test]
-    fn attribute_history_summarises_the_four_time_axes_both_instance_identifiers_and_the_write_identity() {
+    fn attribute_history_summarises_the_four_time_axes_and_both_instance_identifiers() {
         let declared: Vec<String> = HypertableName::AttributeHistory
             .columnstore_layout()
             .sparse_indexes
@@ -130,9 +165,26 @@ mod tests {
                 "minmax(deleted_at)",
                 "bloom(generated_instance_id)",
                 "bloom(verbatim_instance_id)",
-                "bloom(recorded_at, write_id, write_ordinal)",
             ]
         );
+    }
+
+    #[test]
+    fn attribute_history_skips_chunks_on_the_three_time_axes_every_instance_carries() {
+        assert_eq!(
+            HypertableName::AttributeHistory.chunk_skipping_columns().map(|column| column.to_string()),
+            ["observed_at", "created_at", "modified_at"]
+        );
+    }
+
+    #[test]
+    fn a_chunk_pays_to_convert_from_eight_rows_a_segment() {
+        let break_even = HypertableName::AttributeHistory.segment_break_even();
+        assert!(break_even.pays(800, 100));
+        assert!(break_even.pays(801, 100));
+        assert!(!break_even.pays(799, 100));
+        assert!(!break_even.pays(9_883_184 * 3 / 2, 9_883_184));
+        assert!(break_even.pays(0, 0));
     }
 
     #[test]

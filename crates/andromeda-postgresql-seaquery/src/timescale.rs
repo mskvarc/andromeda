@@ -6,16 +6,8 @@
 //! the one crate sanctioned to write a dialect fragment, with every
 //! caller-supplied value passed as a bound expression rather than interpolated.
 
-use crate::{
-    cast::cast,
-    jsonb::{jsonb_array_elements_text, jsonb_path_query, jsonb_path_query_array},
-    literal::text_literal,
-    maintenance::total_relation_size,
-    pg_array::array_of_subquery,
-    pg_operator::PgBinaryOperator,
-    pg_type::PostgresType,
-};
-use sea_query::{Alias, CaseStatement, Expr, ExprTrait, Func, Iden, JoinType, Keyword, Order, Query, SelectStatement, SimpleExpr};
+use crate::{cast::cast, columnstore_chunk::KeptChunks, literal::text_literal, maintenance::total_relation_size, pg_type::PostgresType};
+use sea_query::{CaseStatement, Expr, ExprTrait, Func, Iden, JoinType, Keyword, Order, Query, SelectStatement, SimpleExpr};
 
 /// The `time_bucket(width, ts, origin)` bucketing function.
 #[derive(Iden, Clone, Copy)]
@@ -70,7 +62,7 @@ enum Dimensions {
 
 /// The `timescaledb_information.hypertables` view.
 #[derive(Iden, Clone, Copy)]
-enum Hypertables {
+pub(crate) enum Hypertables {
     /// View name: `hypertables`
     #[iden = "hypertables"]
     Table,
@@ -121,6 +113,21 @@ pub struct LargestRowstoreBytes;
 #[iden = "chunk"]
 pub struct ChunkRelationColumn;
 
+/// The `chunk_schema` projection of [`chunk_states_statement`].
+#[derive(Iden, Clone, Copy)]
+#[iden = "chunk_schema"]
+pub struct ChunkSchemaColumn;
+
+/// The `chunk_name` projection of [`chunk_states_statement`].
+#[derive(Iden, Clone, Copy)]
+#[iden = "chunk_name"]
+pub struct ChunkNameColumn;
+
+/// The `range_start` projection of [`chunk_states_statement`].
+#[derive(Iden, Clone, Copy)]
+#[iden = "range_start"]
+pub struct ChunkRangeStart;
+
 /// The `range_end` projection of [`chunk_states_statement`].
 #[derive(Iden, Clone, Copy)]
 #[iden = "range_end"]
@@ -136,59 +143,10 @@ pub struct ChunkIsCompressed;
 #[iden = "ch"]
 struct Ch;
 
-/// The `_timescaledb_catalog` schema.
-#[derive(Iden, Clone, Copy)]
-#[iden = "_timescaledb_catalog"]
-struct TimescaleCatalog;
-
-/// The `_timescaledb_catalog.compression_settings` table.
-///
-/// Read rather than the `hypertable_columnstore_settings` information view
-/// because it holds the segment and order columns as arrays of names with the
-/// sort direction beside them, which compare exactly; the view renders them as
-/// free text whose spacing and defaulted `NULLS` clauses vary by release.
-#[derive(Iden, Clone, Copy)]
-enum CompressionSettings {
-    /// Table name: `compression_settings`
-    #[iden = "compression_settings"]
-    Table,
-    /// The relation the settings belong to
-    Relid,
-    /// The segment-by column names
-    Segmentby,
-    /// The order-by column names
-    Orderby,
-    /// Whether each order-by column sorts descending
-    OrderbyDesc,
-    /// The sparse indexes, as a JSONB array of entries with `type`,
-    /// `column` (one name, or an array of names for a composite) and `source`
-    Index,
-}
-
-/// The `kind` projection of [`columnstore_sparse_index_statement`].
-#[derive(Iden, Clone, Copy)]
-#[iden = "kind"]
-pub struct SparseIndexKindColumn;
-
-/// The `columns` projection of [`columnstore_sparse_index_statement`].
-#[derive(Iden, Clone, Copy)]
-#[iden = "columns"]
-pub struct SparseIndexColumns;
-
-/// Alias `entry` for one configured sparse index.
-#[derive(Iden, Clone, Copy)]
-#[iden = "entry"]
-struct Entry;
-
 /// Alias `ht` for the hypertables view.
 #[derive(Iden, Clone, Copy)]
 #[iden = "ht"]
-struct Ht;
-
-/// Alias `cs` for the compression settings table.
-#[derive(Iden, Clone, Copy)]
-#[iden = "cs"]
-struct Cs;
+pub(crate) struct Ht;
 
 /// The interval one chunk of `hypertable` spans on its time dimension.
 ///
@@ -203,69 +161,6 @@ pub fn chunk_interval_statement(hypertable: &str) -> SelectStatement {
         .from((TimescaleInformation, Dimensions::Table))
         .and_where(Expr::col(Dimensions::HypertableName).eq(hypertable))
         .and_where(Expr::col(Dimensions::DimensionNumber).eq(1))
-        .to_owned()
-}
-
-/// Whether the columnstore is enabled on `hypertable`, and with which segment
-/// and order columns.
-///
-/// Projects `compression_enabled` from `timescaledb_information.hypertables`
-/// and, left-joined, the `segmentby` and `orderby` column-name arrays (as
-/// `text[]`) and the `orderby_desc` flags of the hypertable's own
-/// `_timescaledb_catalog.compression_settings` row, which is absent until the
-/// columnstore has been enabled. No row means `hypertable` is not a hypertable.
-/// The hypertable name is a fixed catalogue name bound as a value.
-#[must_use]
-pub fn columnstore_settings_statement(hypertable: &str) -> SelectStatement {
-    Query::select()
-        .expr_as(Expr::col((Ht, Hypertables::CompressionEnabled)), Alias::new("compression_enabled"))
-        .expr_as(
-            cast(Expr::col((Cs, CompressionSettings::Segmentby)), PostgresType::TextArray),
-            Alias::new("segmentby"),
-        )
-        .expr_as(
-            cast(Expr::col((Cs, CompressionSettings::Orderby)), PostgresType::TextArray),
-            Alias::new("orderby"),
-        )
-        .expr_as(Expr::col((Cs, CompressionSettings::OrderbyDesc)), Alias::new("orderby_desc"))
-        .from_as((TimescaleInformation, Hypertables::Table), Ht)
-        .join_as(
-            JoinType::LeftJoin,
-            (TimescaleCatalog, CompressionSettings::Table),
-            Cs,
-            Expr::col((Cs, CompressionSettings::Relid)).eq(cast(Expr::val(hypertable), PostgresType::Regclass)),
-        )
-        .and_where(Expr::col((Ht, Hypertables::HypertableName)).eq(hypertable))
-        .to_owned()
-}
-
-/// The sparse indexes declared on `hypertable`'s columnstore, one row each.
-///
-/// Reads the `index` array of the hypertable's own
-/// `_timescaledb_catalog.compression_settings` row and keeps the entries whose
-/// `source` is `config`: the ones `timescaledb.sparse_index` declared, not the
-/// summaries the order-by columns get regardless. Each row projects `kind`, the
-/// summary type, and `columns`, its column names in declared order as a
-/// `text[]`, one element for a single-column index. The lax `$.column[*]` path
-/// reads a single name and a composite's array alike. The hypertable name is a
-/// fixed catalogue name bound as a value.
-#[must_use]
-pub fn columnstore_sparse_index_statement(hypertable: &str) -> SelectStatement {
-    let columns = Query::select()
-        .expr(SimpleExpr::from(jsonb_array_elements_text(jsonb_path_query_array(
-            Expr::col(Entry),
-            "$.column[*]",
-        ))))
-        .to_owned();
-    Query::select()
-        .expr_as(SimpleExpr::from(Expr::col(Entry)).json_get_text(Expr::val("type")), SparseIndexKindColumn)
-        .expr_as(array_of_subquery(columns), SparseIndexColumns)
-        .from_as((TimescaleCatalog, CompressionSettings::Table), Cs)
-        .from_function(
-            jsonb_path_query(Expr::col((Cs, CompressionSettings::Index)), r#"$[*] ? (@.source == "config")"#),
-            Entry,
-        )
-        .and_where(Expr::col((Cs, CompressionSettings::Relid)).eq(cast(Expr::val(hypertable), PostgresType::Regclass)))
         .to_owned()
 }
 
@@ -289,8 +184,8 @@ pub fn chunk_span_statement(hypertables: &[&str]) -> SelectStatement {
         .to_owned()
 }
 
-/// The largest chunk of each of `hypertables` still in the rowstore, in total
-/// bytes with indexes and TOAST.
+/// The largest chunk of each of `hypertables` still in the rowstore and not
+/// listed by `kept`, in total bytes with indexes and TOAST.
 ///
 /// Projects `hypertable_name` and `largest_rowstore_bytes` from
 /// `timescaledb_information.chunks`, grouped by hypertable, over the chunks not
@@ -298,7 +193,7 @@ pub fn chunk_span_statement(hypertables: &[&str]) -> SelectStatement {
 /// no such chunk, or without the columnstore, has no row. The hypertable names
 /// are fixed catalogue names bound as values.
 #[must_use]
-pub fn rowstore_chunk_size_statement(hypertables: &[&str]) -> SelectStatement {
+pub fn rowstore_chunk_size_statement(hypertables: &[&str], kept: &KeptChunks) -> SelectStatement {
     let chunk = cast(
         Expr::cust_with_exprs(
             "format('%I.%I', $1, $2)",
@@ -319,18 +214,21 @@ pub fn rowstore_chunk_size_statement(hypertables: &[&str]) -> SelectStatement {
         .and_where(Expr::col((Ch, Chunks::HypertableName)).is_in(hypertables.iter().copied()))
         .and_where(Expr::col((Ch, Chunks::IsCompressed)).not())
         .and_where(Expr::col((Ht, Hypertables::CompressionEnabled)))
+        .and_where(kept.excludes(Expr::col((Ch, Chunks::RangeStart))))
         .group_by_col((Ch, Chunks::HypertableName))
         .to_owned()
 }
 
-/// Every chunk of `hypertable`, oldest first: its relation, where it ends on
-/// the time dimension and whether it is converted to the columnstore.
+/// Every chunk of `hypertable`, oldest first: its relation, where it starts
+/// and ends on the time dimension and whether it is converted to the
+/// columnstore.
 ///
 /// Projects `chunk`, the relation as `format('%I.%I', chunk_schema,
 /// chunk_name)` so it names the relation however its schema or name would
-/// need quoting, `range_end` and `is_compressed` from
-/// `timescaledb_information.chunks`, ordered by `range_start`. The hypertable
-/// name is a fixed catalogue name bound as a value.
+/// need quoting, `chunk_schema` and `chunk_name` themselves, `range_start`,
+/// `range_end` and `is_compressed` from `timescaledb_information.chunks`,
+/// ordered by `range_start`. The hypertable name is a fixed catalogue name
+/// bound as a value.
 #[must_use]
 pub fn chunk_states_statement(hypertable: &str) -> SelectStatement {
     Query::select()
@@ -338,6 +236,9 @@ pub fn chunk_states_statement(hypertable: &str) -> SelectStatement {
             Expr::cust_with_exprs("format('%I.%I', $1, $2)", [Expr::col(Chunks::ChunkSchema), Expr::col(Chunks::ChunkName)]),
             ChunkRelationColumn,
         )
+        .expr_as(Expr::col(Chunks::ChunkSchema), ChunkSchemaColumn)
+        .expr_as(Expr::col(Chunks::ChunkName), ChunkNameColumn)
+        .expr_as(Expr::col(Chunks::RangeStart), ChunkRangeStart)
         .expr_as(Expr::col(Chunks::RangeEnd), ChunkRangeEnd)
         .expr_as(Expr::col(Chunks::IsCompressed), ChunkIsCompressed)
         .from((TimescaleInformation, Chunks::Table))
@@ -358,18 +259,19 @@ pub fn set_chunk_time_interval(hypertable: &str, days: SimpleExpr) -> SimpleExpr
 
 #[cfg(test)]
 mod tests {
-    use crate::timescale::{
-        chunk_interval_statement,
-        chunk_span_statement,
-        chunk_states_statement,
-        columnstore_settings_statement,
-        columnstore_sparse_index_statement,
-        drop_chunks,
-        rowstore_chunk_size_statement,
-        set_chunk_time_interval,
+    use crate::{
+        columnstore_chunk::KeptChunks,
+        timescale::{
+            chunk_interval_statement,
+            chunk_span_statement,
+            chunk_states_statement,
+            drop_chunks,
+            rowstore_chunk_size_statement,
+            set_chunk_time_interval,
+        },
     };
     use pretty_assertions::assert_eq;
-    use sea_query::{Expr, PostgresQueryBuilder, Query};
+    use sea_query::{Alias, Expr, IntoIden, PostgresQueryBuilder, Query};
 
     #[test]
     fn the_chunk_interval_is_read_from_the_time_dimension_of_the_named_hypertable() {
@@ -387,43 +289,12 @@ mod tests {
         assert_eq!(
             sql,
             concat!(
-                r#"SELECT format('%I.%I', "chunk_schema", "chunk_name") AS "chunk", "range_end" AS "range_end", "is_compressed" AS "is_compressed" "#,
+                r#"SELECT format('%I.%I', "chunk_schema", "chunk_name") AS "chunk", "chunk_schema" AS "chunk_schema", "chunk_name" AS "chunk_name", "#,
+                r#""range_start" AS "range_start", "range_end" AS "range_end", "is_compressed" AS "is_compressed" "#,
                 r#"FROM "timescaledb_information"."chunks" WHERE "hypertable_name" = $1 ORDER BY "range_start" ASC"#
             )
         );
         assert_eq!(values.0.len(), 1, "{sql}");
-    }
-
-    #[test]
-    fn the_columnstore_settings_are_read_from_the_view_and_the_catalogue_arrays() {
-        let (sql, values) = columnstore_settings_statement("attribute_history").build(PostgresQueryBuilder);
-        assert_eq!(
-            sql,
-            concat!(
-                r#"SELECT "ht"."compression_enabled" AS "compression_enabled", "cs"."segmentby"::text[] AS "segmentby", "#,
-                r#""cs"."orderby"::text[] AS "orderby", "cs"."orderby_desc" AS "orderby_desc" "#,
-                r#"FROM "timescaledb_information"."hypertables" AS "ht" "#,
-                r#"LEFT JOIN "_timescaledb_catalog"."compression_settings" AS "cs" ON "cs"."relid" = ($1::regclass) "#,
-                r#"WHERE "ht"."hypertable_name" = $2"#
-            )
-        );
-        assert_eq!(values.0.len(), 2, "{sql}");
-    }
-
-    #[test]
-    fn the_declared_sparse_indexes_are_read_from_the_configured_entries_of_the_catalogue_array() {
-        let (sql, values) = columnstore_sparse_index_statement("attribute_history").build(PostgresQueryBuilder);
-        assert_eq!(
-            sql,
-            concat!(
-                r#"SELECT "entry" ->> $1 AS "kind", "#,
-                r#"ARRAY (SELECT jsonb_array_elements_text(jsonb_path_query_array("entry", '$.column[*]'))) AS "columns" "#,
-                r#"FROM "_timescaledb_catalog"."compression_settings" AS "cs", "#,
-                r#"jsonb_path_query("cs"."index", '$[*] ? (@.source == "config")') AS "entry" "#,
-                r#"WHERE "cs"."relid" = ($2::regclass)"#
-            )
-        );
-        assert_eq!(values.0.len(), 2, "{sql}");
     }
 
     #[test]
@@ -462,7 +333,11 @@ mod tests {
 
     #[test]
     fn the_largest_rowstore_chunk_is_read_per_hypertable_over_unconverted_chunks_of_columnstore_hypertables() {
-        let (sql, values) = rowstore_chunk_size_statement(&["attribute_history", "scope_history"]).build(PostgresQueryBuilder);
+        let kept = KeptChunks {
+            table: Alias::new("kept").into_iden(),
+            range_start: Alias::new("since").into_iden(),
+        };
+        let (sql, values) = rowstore_chunk_size_statement(&["attribute_history", "scope_history"], &kept).build(PostgresQueryBuilder);
         assert_eq!(
             sql,
             concat!(
@@ -470,6 +345,7 @@ mod tests {
                 r#"FROM "timescaledb_information"."chunks" AS "ch" "#,
                 r#"INNER JOIN "timescaledb_information"."hypertables" AS "ht" ON "ht"."hypertable_name" = "ch"."hypertable_name" "#,
                 r#"WHERE "ch"."hypertable_name" IN ($1, $2) AND (NOT "ch"."is_compressed") AND "ht"."compression_enabled" "#,
+                r#"AND "ch"."range_start" NOT IN (SELECT "since" FROM "kept") "#,
                 r#"GROUP BY "ch"."hypertable_name""#
             )
         );

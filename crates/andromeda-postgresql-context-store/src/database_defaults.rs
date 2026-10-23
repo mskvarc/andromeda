@@ -1,6 +1,6 @@
 //! The session defaults the broker installs on every database it serves from.
 //!
-//! Three settings are part of the broker's own semantics rather than server
+//! Four settings are part of the broker's own semantics rather than server
 //! tuning, so the broker installs them itself, with `ALTER DATABASE ... SET`,
 //! on the platform database and on every tenant database:
 //!
@@ -13,7 +13,13 @@
 //! - `client_connection_check_interval` ([`CLIENT_CONNECTION_CHECK_INTERVAL`]):
 //!   the pool closes a connection its dropped request left mid-statement, and
 //!   the server ends that statement at its next check rather than when the
-//!   statement would have finished.
+//!   statement would have finished;
+//! - `timescaledb.enable_chunk_skipping`, on: `TimescaleDB` 2.31 records a
+//!   history chunk's ranges for chunk skipping only in a session with the
+//!   setting on, and a plan that skips chunks excludes a chunk whose ranges were
+//!   never recorded, so a chunk created or converted in a session without it
+//!   would answer no time-bounded temporal query. Every session of a tenant
+//!   database, the broker's or an operator's, must carry it.
 //!
 //! A database-level default is inherited by every session opened afterwards,
 //! including one a transaction-pooling proxy opens, which a per-connection
@@ -115,7 +121,7 @@ impl DatabaseDefault {
 impl DatabaseDefaults {
     /// Every default, in the order they are written.
     #[must_use]
-    pub fn entries(&self) -> [DatabaseDefault; 3] {
+    pub fn entries(&self) -> [DatabaseDefault; 4] {
         [
             DatabaseDefault {
                 parameter: Setting::SynchronousCommit,
@@ -128,6 +134,10 @@ impl DatabaseDefaults {
             DatabaseDefault {
                 parameter: Setting::ClientConnectionCheckInterval,
                 value: milliseconds_setting(CLIENT_CONNECTION_CHECK_INTERVAL),
+            },
+            DatabaseDefault {
+                parameter: Setting::TimescaledbEnableChunkSkipping,
+                value: "on".to_owned(),
             },
         ]
     }
@@ -247,7 +257,12 @@ mod tests {
         let entries = defaults().entries();
         assert_eq!(
             entries.iter().map(DatabaseDefault::stored_form).collect::<Vec<_>>(),
-            vec!["synchronous_commit=on", "statement_timeout=35000ms", "client_connection_check_interval=1000ms"]
+            vec![
+                "synchronous_commit=on",
+                "statement_timeout=35000ms",
+                "client_connection_check_interval=1000ms",
+                "timescaledb.enable_chunk_skipping=on",
+            ]
         );
     }
 
@@ -258,6 +273,7 @@ mod tests {
             "synchronous_commit=on".to_owned(),
             "statement_timeout=30000ms".to_owned(),
             "client_connection_check_interval=1000ms".to_owned(),
+            "timescaledb.enable_chunk_skipping=on".to_owned(),
         ];
         let missing = missing_defaults(&entries, &stored);
         assert_eq!(
@@ -269,9 +285,10 @@ mod tests {
             "search_path=public".to_owned(),
             "synchronous_commit=on".to_owned(),
             "client_connection_check_interval=1000ms".to_owned(),
+            "timescaledb.enable_chunk_skipping=on".to_owned(),
         ];
         assert_eq!(missing_defaults(&entries, &stored), Vec::<&DatabaseDefault>::new());
-        assert_eq!(missing_defaults(&entries, &[]).len(), 3);
+        assert_eq!(missing_defaults(&entries, &[]).len(), 4);
     }
 
     #[test]

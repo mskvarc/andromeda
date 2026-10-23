@@ -16,7 +16,7 @@ RUN set -eux; \
 # The release's versions. The broker's TimescaleDB floor equals
 # TIMESCALEDB_VERSION, and it updates each tenant database's extensions to
 # these versions when it opens the tenant.
-ARG TIMESCALEDB_VERSION=2.30.2
+ARG TIMESCALEDB_VERSION=2.31.0
 ARG POSTGIS_VERSION=3.6.4
 RUN set -eux; \
     apt-get update; \

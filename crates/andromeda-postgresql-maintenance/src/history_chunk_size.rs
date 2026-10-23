@@ -1,13 +1,15 @@
 //! On-disk size of the history chunk each temporal hypertable converts next.
 //!
 //! TimescaleDB converts a chunk to the columnstore under an `ExclusiveLock` on
-//! it and on the converted chunk it merges into, held for the whole conversion,
-//! and every `UPDATE` or `DELETE` reaching either waits that long. The
-//! conversion takes about 20 to 25 s per GB the chunk holds, so the largest
-//! chunk still in the rowstore says how long the next conversion will block
-//! writes to month-old history, and whether `temporal.chunk_interval` suits the
-//! tenant's ingest. A hypertable without the columnstore, or with nothing left
-//! to convert, reports zero bytes.
+//! it, held for the whole conversion, and every `UPDATE` or `DELETE` of history
+//! waits that long, since `TimescaleDB` locks every chunk of the hypertable for
+//! one. On `TimescaleDB` 2.31 the conversion takes about 3 to 4 s per GB the
+//! chunk holds, so the largest chunk still due for conversion says how long the
+//! next conversion will block history changes, and whether
+//! `temporal.chunk_interval` suits the tenant's ingest. A chunk the conversion
+//! sweep keeps in the rowstore is never converted and is not counted. A
+//! hypertable without the columnstore, or with nothing left to convert,
+//! reports zero bytes.
 
 use crate::{
     candidate::history_table::HistoryTable,
@@ -42,19 +44,19 @@ pub struct RowstoreChunkSize {
 /// Returns [`MaintenanceError`] when the catalogue query fails, a row names a
 /// hypertable outside [`HistoryTable`], or a size is negative.
 pub async fn rowstore_chunk_sizes(connection: &mut PgConnection) -> Result<Vec<RowstoreChunkSize>, MaintenanceError> {
-    let rows = rowstore_chunk_size_statement(&HistoryTable::ALL.map(HistoryTable::relation_name))
-        .to_query()
-        .fetch_all(connection)
-        .await?;
-    let measured = rows
-        .into_iter()
-        .map(|row| {
+    let mut measured = Vec::new();
+    for table in HistoryTable::ALL {
+        let rows = rowstore_chunk_size_statement(&[table.relation_name()], &table.kept_chunks())
+            .to_query()
+            .fetch_all(&mut *connection)
+            .await?;
+        for row in rows {
             let name = row.try_get::<String, _>(HYPERTABLE_NAME)?;
             let table = HistoryTable::from_str(&name).map_err(MaintenanceError::UnknownTarget)?;
             let bytes = non_negative(row.try_get(LargestRowstoreBytes.unquoted())?, CatalogCounter::RowstoreChunkBytes)?;
-            Ok(RowstoreChunkSize { table, largest_bytes: bytes })
-        })
-        .collect::<Result<Vec<_>, MaintenanceError>>()?;
+            measured.push(RowstoreChunkSize { table, largest_bytes: bytes });
+        }
+    }
     Ok(every_table(&measured))
 }
 

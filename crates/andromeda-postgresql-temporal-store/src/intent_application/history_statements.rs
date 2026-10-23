@@ -181,8 +181,10 @@ pub(crate) fn claims_statement(source: &StagedSource<'_>, schema: Option<&DynIde
 /// intent's base ordinal.
 ///
 /// The values are the ones a temporal read of the live branch projects from
-/// the entry while it is still queued. The conflict target is the write
-/// identity, so an entry recorded once is never recorded twice.
+/// the entry while it is still queued. The insert carries no conflict target:
+/// every path that applies entries applies them exactly once, in the
+/// transaction that records the write or that removes its queued intents
+/// under their lease.
 pub(crate) fn history_statement(source: &StagedSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
     let (value_columns, values): (Vec<AttributeHistory>, Vec<SimpleExpr>) = attribute_entry_values(entry).into_iter().unzip();
     let mut select = entries_with_stream(source, schema);
@@ -205,12 +207,7 @@ pub(crate) fn history_statement(source: &StagedSource<'_>, schema: Option<&DynId
             .into_iter()
             .chain(value_columns),
         )
-        .select_from(select)?
-        .on_conflict(
-            OnConflict::columns([AttributeHistory::RecordedAt, AttributeHistory::WriteId, AttributeHistory::WriteOrdinal])
-                .do_nothing()
-                .to_owned(),
-        );
+        .select_from(select)?;
     Ok(statement)
 }
 

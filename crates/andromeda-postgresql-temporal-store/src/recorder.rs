@@ -30,9 +30,9 @@ impl TemporalRecorder {
 
     /// Record typed append intents inside the caller's anchor transaction.
     ///
-    /// `record` is the write identity every intent in `intents` shares. The caller states it explicitly rather than this method inferring it from `intents.first()`, and every intent is checked against it before anything is written: history rows are stamped with the record's identity, under which a retried or replayed commit lands nothing a second time, so an intent carrying another record would land its rows again under an identity the commit never minted.
+    /// `record` is the write identity every intent in `intents` shares. The caller states it explicitly rather than this method inferring it from `intents.first()`, and every intent is checked against it before anything is written: history rows are stamped with the record's identity, so an intent carrying another record would land its rows under an identity the commit never minted.
     ///
-    /// The intents become the records the queue would hold, bound as one array, and the statements the drain applies queued intents with record them, so a commit and a drain write identical rows. Idempotency is row-level: each row lands under its write identity with `ON CONFLICT ... DO NOTHING`, so a commit retried after the transaction was already durable lands nothing a second time.
+    /// The intents become the records the queue would hold, bound as one array, and the statements the drain applies queued intents with record them, so a commit and a drain write identical rows. Each row lands exactly once: a commit records its intents in its own transaction, a drain removes the intents it applies under their lease in the transaction that applies them, and a replayed side-effect job removes its job first in the transaction that replays it, so no path can apply one write's entries twice. `attribute_history` therefore carries no unique write identity to arbitrate on.
     ///
     /// History only. Current entity state is written by the same transaction, but by the crate that owns the commit rather than from here, and the temporal catalogue keeps Temporal Evolution independent of it in both directions.
     ///

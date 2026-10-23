@@ -5,7 +5,7 @@
 
 use crate::{
     cast::cast,
-    columnstore_conversion::{ChunkReference, ConvertToColumnstore},
+    columnstore_conversion::{ChunkReference, ConvertToColumnstore, RowstoreRemoval},
     command::{Command, rendering::RenderedCommand},
     identifier::{quoted_table, quoted_tables},
     pg_type::PostgresType,
@@ -25,6 +25,10 @@ pub enum MaintenanceSchema {
 pub enum MaintenanceCommand {
     /// `REINDEX INDEX CONCURRENTLY schema.index`.
     ReindexIndexConcurrently(TableName),
+    /// `REINDEX TABLE schema.relation`: every index of the relation rebuilt in
+    /// the caller's transaction, under a `SHARE` lock on the relation and an
+    /// `ACCESS EXCLUSIVE` lock on each index, all released at its end.
+    ReindexTable(TableName),
     /// `DROP INDEX CONCURRENTLY schema.index`, for recovery artifacts.
     DropIndexConcurrently(TableName),
     /// `VACUUM (TRUNCATE FALSE, PARALLEL 0) schema.relation`: an ordinary
@@ -51,11 +55,12 @@ impl RenderedCommand for MaintenanceCommand {
     fn rendered(&self) -> String {
         match self {
             MaintenanceCommand::ReindexIndexConcurrently(index) => format!("REINDEX INDEX CONCURRENTLY {}", quoted_table(index)),
+            MaintenanceCommand::ReindexTable(relation) => format!("REINDEX TABLE {}", quoted_table(relation)),
             MaintenanceCommand::DropIndexConcurrently(index) => format!("DROP INDEX CONCURRENTLY {}", quoted_table(index)),
             MaintenanceCommand::VacuumNonTruncating(relation) => format!("VACUUM (TRUNCATE FALSE, PARALLEL 0) {}", quoted_table(relation)),
             MaintenanceCommand::VacuumAnalyze(relation) => format!("VACUUM ANALYZE {}", quoted_table(relation)),
             MaintenanceCommand::Analyze(relations) => format!("ANALYZE {}", quoted_tables(relations)),
-            MaintenanceCommand::RecompressChunk(oid) => ConvertToColumnstore::new(ChunkReference::Oid(*oid)).rendered(),
+            MaintenanceCommand::RecompressChunk(oid) => ConvertToColumnstore::new(ChunkReference::Oid(*oid), RowstoreRemoval::Delete).rendered(),
         }
     }
 }
@@ -70,6 +75,11 @@ fn qualified(schema: impl IntoIden, name: impl IntoIden) -> TableName {
 /// `REINDEX INDEX CONCURRENTLY schema.index`.
 pub fn reindex_index_concurrently(schema: impl IntoIden, index: impl IntoIden) -> MaintenanceCommand {
     MaintenanceCommand::ReindexIndexConcurrently(qualified(schema, index))
+}
+
+/// `REINDEX TABLE schema.relation`.
+pub fn reindex_table(schema: impl IntoIden, relation: impl IntoIden) -> MaintenanceCommand {
+    MaintenanceCommand::ReindexTable(qualified(schema, relation))
 }
 
 /// `DROP INDEX CONCURRENTLY schema.index` for recovery artifacts.
@@ -258,6 +268,7 @@ mod tests {
             multixact_age,
             recompress_chunk,
             reindex_index_concurrently,
+            reindex_table,
             session_settings,
             storage_parameter,
             transaction_age,
@@ -329,6 +340,10 @@ mod tests {
             "VACUUM (TRUNCATE FALSE, PARALLEL 0) \"public\".\"current_attributes\""
         );
         assert_eq!(analyze(schema(), table()).rendered(), "ANALYZE \"public\".\"current_attributes\"");
+        assert_eq!(
+            reindex_table(Alias::new("_timescaledb_internal"), Alias::new("_hyper_1_2_chunk")).rendered(),
+            "REINDEX TABLE \"_timescaledb_internal\".\"_hyper_1_2_chunk\""
+        );
     }
 
     #[test]

@@ -65,8 +65,6 @@ impl TemporalRepository {
     /// recording that it ended, so the row is removed and no tombstone is
     /// written: a tombstone would keep answering temporal queries for an
     /// instance the client asked to have removed.
-    ///
-    /// Deliberate retention asymmetry: unlike whole-entity temporal deletion, this path does not read the removed row's `write_id` and does not release its write record. Other rows of that write may still exist, and a single deleted row cannot show whether the record became unreferenced. Retaining it costs one record's storage until the retention sweep, which knows the full set of referents, reaps it; releasing early would corrupt replay identity for sibling rows.
     pub(crate) async fn delete_instance(
         &self,
         target: &ContextTarget,

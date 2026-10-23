@@ -1192,15 +1192,17 @@ fn a_snapshot_application_grows_its_own_streams() {
 }
 
 #[test]
-fn the_rows_land_once_under_their_write_identity() {
-    for table in ["attribute_history", "scope_history"] {
-        let sql = writing(table);
-        assert!(sql.contains(r#"ON CONFLICT ("recorded_at", "write_id", "write_ordinal") DO NOTHING"#), "{sql}");
-    }
+fn attribute_history_is_inserted_without_a_conflict_target_and_scope_history_under_its_write_identity() {
     let history = writing("attribute_history");
+    assert!(!history.contains("ON CONFLICT"), "{history}");
+    let scope = writing("scope_history");
+    assert!(
+        scope.contains(r#"ON CONFLICT ("recorded_at", "write_id", "write_ordinal") DO NOTHING"#),
+        "{scope}"
+    );
     assert!(
         history.contains(r#"(CASE WHEN (ST_IsValid("e"."value_geometry")) THEN NULL ELSE ST_MakeValid("e"."value_geometry") END)"#),
         "{history}"
     );
-    assert!(writing("scope_history").contains(r#""e"."scope_path"::ltree"#));
+    assert!(scope.contains(r#""e"."scope_path"::ltree"#), "{scope}");
 }

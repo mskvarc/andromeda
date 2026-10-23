@@ -3,7 +3,9 @@
 //!
 //! The migrations declare a default chunk interval for `attribute_history`,
 //! and nothing about the columnstore: on an edition that has
-//! one, [`crate::columnstore_enablement`] enables it when a tenant is opened.
+//! one, [`crate::columnstore_enablement`] enables it when a tenant is opened,
+//! and [`crate::chunk_skipping_enablement`] registers the columns a converted
+//! chunk keeps a range of.
 //! The chunk interval is an operator tunable, and a tunable that needed a
 //! migration to change would not be one, so when a tenant is opened the stored
 //! value is read back from the TimescaleDB information views and moved to what
@@ -17,6 +19,7 @@
 
 use crate::{
     bounded_lock_wait::{StatementWrite, execute_with_bounded_lock_wait},
+    chunk_skipping_enablement::reconcile_chunk_skipping,
     columnstore_capability::ColumnstoreSupport,
     columnstore_enablement::reconcile_columnstore_enablement,
     error::TemporalStoreError,
@@ -49,7 +52,8 @@ pub enum PolicyReconciliation {
     Adjusted,
     /// The value has no bearing on this edition: the Apache-2.0 core holds no
     /// columnstore, so it is neither read nor written. Only the columnstore
-    /// ever reports this; the chunk interval is core surface.
+    /// and chunk skipping, whose ranges only a conversion records, ever report
+    /// this; the chunk interval is core surface.
     Unsupported,
 }
 
@@ -78,6 +82,8 @@ pub struct HypertableReconciliation {
     pub chunk_interval: PolicyReconciliation,
     /// Whether its columnstore was enabled.
     pub columnstore_enabled: PolicyReconciliation,
+    /// Whether its chunk skipping columns were registered.
+    pub chunk_skipping: PolicyReconciliation,
 }
 
 /// What reconciling every temporal hypertable did.
@@ -92,16 +98,17 @@ impl TemporalStoragePolicyOutcome {
     /// edition holds no columnstore to enable.
     #[must_use]
     pub fn is_unchanged(&self) -> bool {
-        self.hypertables
-            .iter()
-            .all(|reconciliation| reconciliation.chunk_interval.wrote_nothing() && reconciliation.columnstore_enabled.wrote_nothing())
+        self.hypertables.iter().all(|reconciliation| {
+            reconciliation.chunk_interval.wrote_nothing() && reconciliation.columnstore_enabled.wrote_nothing() && reconciliation.chunk_skipping.wrote_nothing()
+        })
     }
 }
 
 impl TemporalRepository {
     /// Move every temporal hypertable's chunk interval to what `policy` names,
     /// leaving it untouched when the policy is silent on it, and, on an
-    /// edition with a columnstore, enable the columnstore.
+    /// edition with a columnstore, enable the columnstore and register the
+    /// columns chunk skipping keeps ranges of.
     ///
     /// # Errors
     ///
@@ -118,14 +125,18 @@ impl TemporalRepository {
                 Some(days) => reconcile_chunk_interval(&self.pool, hypertable, days).await?,
                 None => PolicyReconciliation::Unchanged,
             };
-            let columnstore_enabled = match plan_columnstore_reconciliation(self.columnstore) {
-                ColumnstoreReconciliation::Unsupported => PolicyReconciliation::Unsupported,
-                ColumnstoreReconciliation::Reconcile => reconcile_columnstore_enablement(&self.pool, hypertable).await?,
+            let (columnstore_enabled, chunk_skipping) = match plan_columnstore_reconciliation(self.columnstore) {
+                ColumnstoreReconciliation::Unsupported => (PolicyReconciliation::Unsupported, PolicyReconciliation::Unsupported),
+                ColumnstoreReconciliation::Reconcile => (
+                    reconcile_columnstore_enablement(&self.pool, hypertable).await?,
+                    reconcile_chunk_skipping(&self.pool, hypertable).await?,
+                ),
             };
             hypertables.push(HypertableReconciliation {
                 hypertable,
                 chunk_interval,
                 columnstore_enabled,
+                chunk_skipping,
             });
         }
         Ok(TemporalStoragePolicyOutcome { hypertables })
@@ -236,6 +247,7 @@ mod tests {
                 hypertable: HypertableName::AttributeHistory,
                 chunk_interval: PolicyReconciliation::Unchanged,
                 columnstore_enabled: PolicyReconciliation::Unchanged,
+                chunk_skipping: PolicyReconciliation::Unchanged,
             }],
         };
         assert!(untouched.is_unchanged());
@@ -244,9 +256,19 @@ mod tests {
                 hypertable: HypertableName::AttributeHistory,
                 chunk_interval: PolicyReconciliation::Adjusted,
                 columnstore_enabled: PolicyReconciliation::Unchanged,
+                chunk_skipping: PolicyReconciliation::Unchanged,
             }],
         };
         assert!(!adjusted.is_unchanged());
+        let registered = TemporalStoragePolicyOutcome {
+            hypertables: vec![HypertableReconciliation {
+                hypertable: HypertableName::AttributeHistory,
+                chunk_interval: PolicyReconciliation::Unchanged,
+                columnstore_enabled: PolicyReconciliation::Unchanged,
+                chunk_skipping: PolicyReconciliation::Adjusted,
+            }],
+        };
+        assert!(!registered.is_unchanged());
     }
 
     #[test]
@@ -256,6 +278,7 @@ mod tests {
                 hypertable: HypertableName::AttributeHistory,
                 chunk_interval: PolicyReconciliation::Unchanged,
                 columnstore_enabled: PolicyReconciliation::Unsupported,
+                chunk_skipping: PolicyReconciliation::Unsupported,
             }],
         };
         assert!(apache.is_unchanged(), "the Apache core holds no columnstore to enable");
@@ -264,6 +287,7 @@ mod tests {
                 hypertable: HypertableName::AttributeHistory,
                 chunk_interval: PolicyReconciliation::Adjusted,
                 columnstore_enabled: PolicyReconciliation::Unsupported,
+                chunk_skipping: PolicyReconciliation::Unsupported,
             }],
         };
         assert!(!apache_with_adjusted_interval.is_unchanged(), "the Apache-safe chunk interval was still moved");
@@ -293,6 +317,7 @@ mod tests {
                 hypertable: HypertableName::AttributeHistory,
                 chunk_interval: PolicyReconciliation::Unchanged,
                 columnstore_enabled: PolicyReconciliation::Adjusted,
+                chunk_skipping: PolicyReconciliation::Unchanged,
             }],
         };
         assert!(!enabled.is_unchanged());

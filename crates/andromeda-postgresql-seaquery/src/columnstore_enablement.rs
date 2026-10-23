@@ -42,16 +42,16 @@ pub struct ColumnstoreLayout {
     pub segment_by: DynIden,
     /// The columns each segment is sorted by, in order.
     pub order_by: Vec<(DynIden, SortDirection)>,
-    /// The span converted chunks are merged into, in days.
-    pub merge_days: u32,
     /// The sparse indexes each batch keeps, each over its columns in order.
     pub sparse_indexes: Vec<(SparseIndexKind, Vec<DynIden>)>,
 }
 
 /// `ALTER TABLE <hypertable> SET (timescaledb.enable_columnstore,
 /// timescaledb.segmentby = ..., timescaledb.orderby = ...,
-/// timescaledb.compress_chunk_time_interval = ..., timescaledb.sparse_index =
-/// ...)`.
+/// timescaledb.sparse_index = ...)`.
+///
+/// No `timescaledb.compress_chunk_time_interval` is set, so a conversion never
+/// merges a chunk into a converted neighbour.
 #[derive(Clone, Debug)]
 pub struct EnableColumnstore {
     /// The hypertable configured.
@@ -92,11 +92,10 @@ impl RenderedCommand for EnableColumnstore {
             .collect::<Vec<_>>()
             .join(", ");
         format!(
-            "ALTER TABLE {} SET (timescaledb.enable_columnstore, timescaledb.segmentby = {}, timescaledb.orderby = {}, timescaledb.compress_chunk_time_interval = {}, timescaledb.sparse_index = {})",
+            "ALTER TABLE {} SET (timescaledb.enable_columnstore, timescaledb.segmentby = {}, timescaledb.orderby = {}, timescaledb.sparse_index = {})",
             quoted_table(&self.hypertable),
             quoted_text(&layout.segment_by.to_string()),
             quoted_text(&order_by),
-            quoted_text(&format!("{} days", layout.merge_days)),
             quoted_text(&sparse_index),
         )
     }
@@ -128,10 +127,40 @@ impl RenderedCommand for DisableColumnstore {
 
 impl Command for DisableColumnstore {}
 
+/// `ALTER TABLE <hypertable> SET (timescaledb.compress_chunk_time_interval =
+/// '0')`: conversions stop merging chunks into a converted neighbour.
+///
+/// `TimescaleDB` refuses to `RESET` the option and stores a zero interval as
+/// none at all. Chunks merged before stay merged.
+#[derive(Clone, Debug)]
+pub struct ClearColumnstoreMerge {
+    /// The hypertable configured.
+    hypertable: TableName,
+}
+
+impl ClearColumnstoreMerge {
+    /// Stop `hypertable`'s conversions from merging chunks.
+    #[must_use]
+    pub const fn new(hypertable: TableName) -> ClearColumnstoreMerge {
+        ClearColumnstoreMerge { hypertable }
+    }
+}
+
+impl RenderedCommand for ClearColumnstoreMerge {
+    fn rendered(&self) -> String {
+        format!(
+            "ALTER TABLE {} SET (timescaledb.compress_chunk_time_interval = '0')",
+            quoted_table(&self.hypertable)
+        )
+    }
+}
+
+impl Command for ClearColumnstoreMerge {}
+
 #[cfg(test)]
 mod tests {
     use crate::{
-        columnstore_enablement::{ColumnstoreLayout, DisableColumnstore, EnableColumnstore, SortDirection, SparseIndexKind},
+        columnstore_enablement::{ClearColumnstoreMerge, ColumnstoreLayout, DisableColumnstore, EnableColumnstore, SortDirection, SparseIndexKind},
         command::rendering::RenderedCommand,
     };
     use sea_query::{Alias, DynIden, IntoIden, TableName};
@@ -144,19 +173,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn clearing_the_merge_sets_a_zero_interval_on_the_hypertable() {
+        pretty_assertions::assert_eq!(
+            ClearColumnstoreMerge::new(TableName::from(Alias::new("attribute_history"))).rendered(),
+            r#"ALTER TABLE "attribute_history" SET (timescaledb.compress_chunk_time_interval = '0')"#
+        );
+    }
+
     fn column(name: &str) -> DynIden {
         Alias::new(name).into_iden()
     }
 
     #[test]
-    fn the_layout_renders_as_the_hypertable_options() {
+    fn the_layout_renders_as_the_hypertable_options_without_a_merge_interval() {
         let layout = ColumnstoreLayout {
             segment_by: column("stream_key"),
             order_by: vec![
                 (column("recorded_at"), SortDirection::Descending),
                 (column("write_id"), SortDirection::Ascending),
             ],
-            merge_days: 28,
             sparse_indexes: vec![
                 (SparseIndexKind::Minmax, vec![column("observed_at")]),
                 (SparseIndexKind::Bloom, vec![column("recorded_at"), column("write_id")]),
@@ -164,7 +200,7 @@ mod tests {
         };
         pretty_assertions::assert_eq!(
             EnableColumnstore::new(TableName::from(Alias::new("attribute_history")), layout).rendered(),
-            r#"ALTER TABLE "attribute_history" SET (timescaledb.enable_columnstore, timescaledb.segmentby = 'stream_key', timescaledb.orderby = 'recorded_at DESC, write_id', timescaledb.compress_chunk_time_interval = '28 days', timescaledb.sparse_index = 'minmax(observed_at), bloom(recorded_at, write_id)')"#
+            r#"ALTER TABLE "attribute_history" SET (timescaledb.enable_columnstore, timescaledb.segmentby = 'stream_key', timescaledb.orderby = 'recorded_at DESC, write_id', timescaledb.sparse_index = 'minmax(observed_at), bloom(recorded_at, write_id)')"#
         );
     }
 }

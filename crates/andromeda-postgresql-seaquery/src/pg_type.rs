@@ -75,6 +75,10 @@ pub enum PostgresType {
     /// and an integer.
     #[iden = "oid"]
     Oid,
+    /// `name`, the type the catalogue spells an identifier in, which a
+    /// function taking a column name expects.
+    #[iden = "name"]
+    Name,
     /// `xid8`, the 64-bit transaction identifier a write is stamped with.
     #[iden = "xid8"]
     Xid8,
@@ -156,6 +160,7 @@ mod tests {
         assert_eq!(PostgresType::Interval.to_string(), "interval");
         assert_eq!(PostgresType::Lquery.to_string(), "lquery");
         assert_eq!(PostgresType::Jsonb.to_string(), "jsonb");
+        assert_eq!(PostgresType::Name.to_string(), "name");
     }
 
     /// An array type carries its `[]`, so an `UNNEST` argument reads the element

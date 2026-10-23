@@ -43,7 +43,7 @@ pub const REQUIRED_POSTGIS_VERSION: ExtensionVersion = ExtensionVersion::new(3, 
 /// columnstore only behind a `pg_proc` capability probe, and on the core the
 /// hypertables run uncompressed, so no edition is refused here. The columnstore
 /// is a TSL benefit that rides along where present, not a requirement.
-pub const REQUIRED_TIMESCALEDB_VERSION: ExtensionVersion = ExtensionVersion::new(2, 30, 2);
+pub const REQUIRED_TIMESCALEDB_VERSION: ExtensionVersion = ExtensionVersion::new(2, 31, 0);
 
 /// The `server_encoding` the tenant schema requires.
 ///
@@ -352,13 +352,13 @@ mod tests {
 
     #[test]
     fn the_timescaledb_floor_is_the_release_the_image_ships() {
-        pretty_assertions::assert_eq!(REQUIRED_TIMESCALEDB_VERSION, ExtensionVersion::new(2, 30, 2));
+        pretty_assertions::assert_eq!(REQUIRED_TIMESCALEDB_VERSION, ExtensionVersion::new(2, 31, 0));
     }
 
     #[test]
-    fn a_timescaledb_below_the_floor_is_refused_naming_both_versions_down_to_an_earlier_patch() {
+    fn a_timescaledb_below_the_floor_is_refused_naming_both_versions_down_to_the_previous_release() {
         let refusals = [
-            ExtensionVersion::new(2, 30, 1),
+            ExtensionVersion::new(2, 30, 2),
             ExtensionVersion::new(2, 29, 2),
             ExtensionVersion::new(2, 18, 0),
             ExtensionVersion::new(1, 99, 99),
@@ -382,9 +382,9 @@ mod tests {
     #[test]
     fn a_timescaledb_at_the_floor_or_any_later_version_is_accepted() {
         let accepted = [
-            ExtensionVersion::new(2, 30, 2),
-            ExtensionVersion::new(2, 30, 3),
             ExtensionVersion::new(2, 31, 0),
+            ExtensionVersion::new(2, 31, 1),
+            ExtensionVersion::new(2, 32, 0),
             ExtensionVersion::new(3, 0, 0),
         ];
         for version in accepted {

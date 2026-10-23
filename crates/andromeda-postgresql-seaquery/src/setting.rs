@@ -112,6 +112,9 @@ pub enum Setting {
     /// `timescaledb.disable_load`.
     #[strum(serialize = "timescaledb.disable_load")]
     TimescaledbDisableLoad,
+    /// `timescaledb.enable_chunk_skipping`.
+    #[strum(serialize = "timescaledb.enable_chunk_skipping")]
+    TimescaledbEnableChunkSkipping,
     /// `timescaledb.license`, which a server without `TimescaleDB` does not
     /// define.
     #[strum(serialize = "timescaledb.license")]

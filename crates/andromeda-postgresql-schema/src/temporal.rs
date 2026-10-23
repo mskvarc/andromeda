@@ -1,6 +1,7 @@
 //! The relations only a temporal statement reads.
 //!
-//! The stream catalogue, the history hypertables and the instance claims. The
+//! The stream catalogue, the history hypertables, the instance claims and the
+//! history chunks kept in the rowstore. The
 //! Entity a Temporal Evolution belongs to is its `entities` row, which a core
 //! deletion (clause 5.6.6) keeps while the Evolution exists and a Temporal
 //! Evolution deletion (clause 5.6.16) gives up.
@@ -124,6 +125,23 @@ pub enum AttributeHistoryInstanceClaims {
     EntityKey,
     /// Foreign key to `attribute_names`
     AttributeNameKey,
+}
+
+/// The `rowstore_history_chunks` table - the `attribute_history` chunks the
+/// conversion sweep keeps in the rowstore, because their rows per stream fall
+/// below the break-even of the columnstore layout.
+#[derive(Iden, Clone, Copy)]
+pub enum RowstoreHistoryChunks {
+    /// Table name: `rowstore_history_chunks`
+    Table,
+    /// The chunk's start on the time dimension, which names it
+    RangeStart,
+    /// The rows the chunk held when the sweep counted them
+    RowCount,
+    /// The distinct streams those rows belonged to
+    StreamCount,
+    /// When the sweep decided to keep the chunk
+    KeptAt,
 }
 
 /// The `scope_history` table - the temporal evolution of an entity's scopes.

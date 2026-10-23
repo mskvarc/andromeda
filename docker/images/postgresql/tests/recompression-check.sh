@@ -95,18 +95,24 @@ status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "NGSILD-Tenant: $te
 	"$base/temporal/entities")"
 expect "create temporal entity" 201 "$status"
 db="$(sql postgres "SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_${tenant}%'")"
-# History is partitioned on the write clock, so a row recorded sixty days ago
-# lands in a chunk past the thirty-day horizon.
+# History is partitioned on the write clock, so rows recorded sixty days ago
+# land in a chunk past the thirty-day horizon; eight instances of the one
+# stream make it pay to convert rather than stay in the rowstore.
 sql "$db" "CREATE TEMP TABLE aged AS SELECT * FROM attribute_history LIMIT 1;
-	UPDATE aged SET recorded_at = now() - interval '60 days', write_id = gen_random_uuid(),
-		generated_instance_id = CASE WHEN generated_instance_id IS NULL THEN NULL ELSE gen_random_uuid() END;
-	INSERT INTO attribute_history SELECT * FROM aged;" > /dev/null
+	INSERT INTO attribute_history SELECT
+		now() - interval '60 days' + n * interval '1 minute', gen_random_uuid(), a.stream_key, a.write_ordinal, a.attribute_kind, a.value_kind,
+		a.observed_at, a.created_at, a.modified_at, a.deleted_at, a.value_date_time, a.expires_at,
+		CASE WHEN a.generated_instance_id IS NULL THEN NULL ELSE gen_random_uuid() END,
+		a.value_type_key, a.value_datatype_key, a.unit_code_id, a.value_boolean, a.verbatim_instance_id, a.value_number, a.value_string,
+		a.value_language, a.value_geometry, a.value_geometry_valid, a.value_geometry_members, a.value_object, a.value_uri,
+		a.object_type_keys, a.proof_seals, a.sub_attributes
+	FROM aged a CROSS JOIN generate_series(1, 8) n;" > /dev/null
 
 wait_for "the sweep converts the aged chunk" 1 60 "$db" "$aged_status"
 sql "$db" "UPDATE attribute_history SET modified_at = modified_at WHERE recorded_at <= now() - interval '30 days'" > /dev/null
 expect "an UPDATE into the converted chunk leaves it partial" 9 "$(sql "$db" "$aged_status")"
 wait_for "the controller recompresses the partial chunk" 1 900 "$db" "$aged_status"
-expect "rows readable after recompression" 2 "$(sql "$db" 'SELECT count(*) FROM attribute_history')"
+expect "rows readable after recompression" 9 "$(sql "$db" 'SELECT count(*) FROM attribute_history')"
 
 # Target 35 is attribute_history_columnstore; result 1 is succeeded.
 wait_for "the platform records the recompression as succeeded" 1 30 postgres \

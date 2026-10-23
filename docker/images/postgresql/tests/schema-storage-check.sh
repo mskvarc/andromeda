@@ -77,11 +77,15 @@ expect "create temporal entity" 201 "$status"
 db="$(sql postgres "SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_${tenant}%'")"
 
 expect "configured sparse indexes of attribute_history" \
-	"bloom(generated_instance_id) bloom(recorded_at,write_id,write_ordinal) bloom(verbatim_instance_id) minmax(created_at) minmax(deleted_at) minmax(modified_at) minmax(observed_at)" \
+	"bloom(generated_instance_id) bloom(verbatim_instance_id) minmax(created_at) minmax(deleted_at) minmax(modified_at) minmax(observed_at)" \
 	"$(sql "$db" "SELECT string_agg(summary, ' ' ORDER BY summary) FROM (SELECT format('%s(%s)', entry ->> 'type', (SELECT string_agg(name, ',') FROM jsonb_array_elements_text(jsonb_path_query_array(entry, '\$.column[*]')) AS name)) AS summary FROM _timescaledb_catalog.compression_settings, jsonb_path_query(index, '\$[*] ? (@.source == \"config\")') AS entry WHERE relid = 'attribute_history'::regclass) AS declared")"
 
 expect "history chunks" 1 "$(sql "$db" "SELECT count(*) FROM show_chunks('attribute_history')")"
-expect "chunk statistics recorded for chunk skipping" 0 "$(sql "$db" "SELECT count(*) FROM _timescaledb_catalog.chunk_column_stats")"
+expect "columns registered for chunk skipping" "created_at modified_at observed_at" \
+	"$(sql "$db" "SELECT string_agg(column_name::text, ' ' ORDER BY column_name) FROM _timescaledb_catalog.chunk_column_stats WHERE chunk_id IS NULL")"
+expect "chunk skipping on in every session" on "$(sql "$db" 'SHOW timescaledb.enable_chunk_skipping')"
+expect "conversions merging chunks" 0 "$(sql "$db" "SELECT count(*) FROM _timescaledb_catalog.dimension WHERE compress_interval_length IS NOT NULL")"
+expect "unique indexes on attribute_history" 0 "$(sql "$db" "SELECT count(*) FROM pg_index WHERE indrelid = 'attribute_history'::regclass AND indisunique")"
 
 brin_options="{pages_per_range=32,autosummarize=on}"
 for index in idx_attribute_history_observed_at_brin idx_attribute_history_created_at_brin idx_attribute_history_modified_at_brin idx_attribute_history_deleted_at_brin; do
@@ -119,7 +123,7 @@ expect "TimescaleDB jobs on attribute_history" 0 \
 
 # The default request timeout of 30 s plus the 5 s margin.
 for database_name in "$db" postgres; do
-	expect "$database_name session defaults" "statement_timeout=35000ms synchronous_commit=on" \
+	expect "$database_name session defaults" "client_connection_check_interval=1000ms statement_timeout=35000ms synchronous_commit=on timescaledb.enable_chunk_skipping=on" \
 		"$(sql postgres "SELECT string_agg(setting, ' ' ORDER BY setting) FROM pg_db_role_setting, unnest(setconfig) AS setting WHERE setrole = 0 AND setdatabase = (SELECT oid FROM pg_database WHERE datname = '$database_name')")"
 done
 expect "a tenant session runs under the installed defaults" "on 35s" "$(sql "$db" "SELECT current_setting('synchronous_commit') || ' ' || current_setting('statement_timeout')")"

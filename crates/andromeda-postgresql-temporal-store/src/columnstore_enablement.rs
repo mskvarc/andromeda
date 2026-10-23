@@ -17,12 +17,12 @@
 //! constraint, so the newest observation leads its segment and a batch's rows
 //! stay contiguous.
 //!
-//! Merge span. `compress_chunk_time_interval` merges converted chunks back into
-//! four-week spans so the compressed tail is not fragmented by the seven-day
-//! write-side interval; the span is 28 rather than 30 days because
-//! `TimescaleDB` requires it to be a whole multiple of the chunk interval. An
-//! operator who moves the chunk interval to a value that does not divide 28
-//! days must expect the merge to be refused with a warning rather than applied.
+//! No merge. `compress_chunk_time_interval` is not set, so a converted chunk is
+//! never folded into a converted neighbour. A merging conversion holds the
+//! neighbour's lock for its whole run, and an instance modification or
+//! deletion (clauses 5.6.14 and 5.6.15) waiting on it deadlocks the
+//! conversion. A hypertable already carrying a merge span keeps its layout and
+//! has the span cleared, which affects only later conversions.
 //!
 //! Sparse indexes. The per-batch summaries a converted chunk keeps are
 //! declared ([`HypertableName::columnstore_layout`]) rather than derived from
@@ -50,12 +50,28 @@ use crate::{
     temporal_store_invariant::TemporalStoreInvariant,
 };
 use andromeda_postgresql_seaquery::{
-    columnstore_enablement::{EnableColumnstore, SortDirection, SparseIndexKind},
+    columnstore_catalog::{
+        ColumnstoreMerges,
+        SparseIndexColumns,
+        SparseIndexKindColumn,
+        columnstore_merge_statement,
+        columnstore_settings_statement,
+        columnstore_sparse_index_statement,
+    },
+    columnstore_enablement::{ClearColumnstoreMerge, EnableColumnstore, SortDirection, SparseIndexKind},
     statement::Statement,
-    timescale::{SparseIndexColumns, SparseIndexKindColumn, columnstore_settings_statement, columnstore_sparse_index_statement},
 };
 use sea_query::{DynIden, Iden};
 use sqlx::{PgPool, Row};
+
+/// Whether converting a chunk merges it into a converted neighbour.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ColumnstoreMerge {
+    /// A dimension stores a `compress_interval_length`.
+    Merging,
+    /// No dimension does.
+    Unmerged,
+}
 
 /// Whether the columnstore is enabled on a hypertable.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -135,6 +151,8 @@ pub struct StoredColumnstore {
     /// The sparse indexes `timescaledb.sparse_index` declared, in catalogue
     /// order, empty while disabled or when none is declared.
     sparse_indexes: Vec<StoredSparseIndex>,
+    /// Whether conversions merge chunks.
+    merge: ColumnstoreMerge,
 }
 
 /// The suffix an order-by column's direction is written with.
@@ -157,6 +175,9 @@ enum EnablementPlan {
     Enable,
     /// The columnstore is enabled with the expected settings.
     Unchanged,
+    /// The columnstore is enabled with the expected layout but merges chunks,
+    /// which is to stop.
+    StopMerging,
     /// The columnstore is enabled with other settings, which are not rewritten.
     Drift,
 }
@@ -189,10 +210,10 @@ fn plan_enablement(hypertable: HypertableName, stored: &StoredColumnstore) -> En
                     .sparse_indexes
                     .iter()
                     .all(|(kind, columns)| stored.sparse_indexes.iter().any(|sparse_index| sparse_index.is(*kind, columns)));
-            if segment_matches && order_matches && sparse_matches {
-                EnablementPlan::Unchanged
-            } else {
-                EnablementPlan::Drift
+            match (segment_matches && order_matches && sparse_matches, stored.merge) {
+                (true, ColumnstoreMerge::Unmerged) => EnablementPlan::Unchanged,
+                (true, ColumnstoreMerge::Merging) => EnablementPlan::StopMerging,
+                (false, ColumnstoreMerge::Merging | ColumnstoreMerge::Unmerged) => EnablementPlan::Drift,
             }
         }
     }
@@ -220,6 +241,10 @@ pub(crate) async fn reconcile_columnstore_enablement(pool: &PgPool, hypertable: 
             execute_with_bounded_lock_wait(pool, &CommandWrite(enable)).await?;
             Ok(PolicyReconciliation::Adjusted)
         }
+        EnablementPlan::StopMerging => {
+            execute_with_bounded_lock_wait(pool, &CommandWrite(ClearColumnstoreMerge::new(hypertable.table()))).await?;
+            Ok(PolicyReconciliation::Adjusted)
+        }
         EnablementPlan::Drift => Err(TemporalStoreError::ColumnstoreSettingsDrift {
             hypertable,
             observed: Box::new(stored),
@@ -227,8 +252,8 @@ pub(crate) async fn reconcile_columnstore_enablement(pool: &PgPool, hypertable: 
     }
 }
 
-/// Read whether the columnstore is enabled on `hypertable` and with which
-/// segment and order columns and sparse indexes.
+/// Read whether the columnstore is enabled on `hypertable`, with which segment
+/// and order columns and sparse indexes, and whether it merges chunks.
 async fn read_stored_columnstore(pool: &PgPool, hypertable: HypertableName) -> Result<StoredColumnstore, TemporalStoreError> {
     let row = columnstore_settings_statement(hypertable.into())
         .to_query()
@@ -260,11 +285,17 @@ async fn read_stored_columnstore(pool: &PgPool, hypertable: HypertableName) -> R
         })
         .collect();
     let sparse_indexes = read_stored_sparse_indexes(pool, hypertable).await?;
+    let merges: bool = columnstore_merge_statement(hypertable.into())
+        .to_query()
+        .fetch_one(pool)
+        .await?
+        .try_get(ColumnstoreMerges.unquoted())?;
     Ok(StoredColumnstore {
         state,
         segment_by,
         order_by,
         sparse_indexes,
+        merge: if merges { ColumnstoreMerge::Merging } else { ColumnstoreMerge::Unmerged },
     })
 }
 
@@ -289,6 +320,7 @@ async fn read_stored_sparse_indexes(pool: &PgPool, hypertable: HypertableName) -
 mod tests {
     use crate::{
         columnstore_enablement::{
+            ColumnstoreMerge,
             ColumnstoreState,
             EnablementPlan,
             HypertableColumn,
@@ -300,7 +332,8 @@ mod tests {
         },
         hypertable_policy::HypertableName,
     };
-    use andromeda_postgresql_seaquery::columnstore_enablement::SortDirection;
+    use andromeda_postgresql_seaquery::columnstore_enablement::{SortDirection, SparseIndexKind};
+    use sea_query::IntoIden;
 
     fn order(column: &str, direction: SortDirection) -> OrderColumn {
         OrderColumn {
@@ -336,6 +369,7 @@ mod tests {
                     sparse_index(<&str>::from(*kind), &columns.iter().map(String::as_str).collect::<Vec<_>>())
                 })
                 .collect(),
+            merge: ColumnstoreMerge::Unmerged,
         }
     }
 
@@ -346,6 +380,7 @@ mod tests {
             segment_by: Vec::new(),
             order_by: Vec::new(),
             sparse_indexes: Vec::new(),
+            merge: ColumnstoreMerge::Unmerged,
         };
         assert_eq!(plan_enablement(HypertableName::AttributeHistory, &plain), EnablementPlan::Enable);
     }
@@ -356,6 +391,21 @@ mod tests {
             plan_enablement(HypertableName::AttributeHistory, &expected(HypertableName::AttributeHistory)),
             EnablementPlan::Unchanged
         );
+    }
+
+    #[test]
+    fn a_hypertable_carrying_the_expected_layout_with_a_merge_span_stops_merging() {
+        let mut merging = expected(HypertableName::AttributeHistory);
+        merging.merge = ColumnstoreMerge::Merging;
+        assert_eq!(plan_enablement(HypertableName::AttributeHistory, &merging), EnablementPlan::StopMerging);
+    }
+
+    #[test]
+    fn a_merging_hypertable_under_another_layout_is_drift() {
+        let mut other = expected(HypertableName::AttributeHistory);
+        other.merge = ColumnstoreMerge::Merging;
+        other.sparse_indexes.pop();
+        assert_eq!(plan_enablement(HypertableName::AttributeHistory, &other), EnablementPlan::Drift);
     }
 
     #[test]
@@ -385,13 +435,10 @@ mod tests {
     #[test]
     fn a_hypertable_missing_a_declared_sparse_index_is_drift() {
         let mut missing = expected(HypertableName::AttributeHistory);
-        missing.sparse_indexes.retain(|sparse_index| sparse_index.columns.len() == 1);
+        missing.sparse_indexes.pop();
         assert_eq!(plan_enablement(HypertableName::AttributeHistory, &missing), EnablementPlan::Drift);
     }
 
-    /// A columnstore enabled before the declaration carries no configured
-    /// sparse index at all; its summaries were derived from the table's
-    /// indexes, which is what the declaration replaces.
     #[test]
     fn a_hypertable_declaring_no_sparse_index_is_drift() {
         let mut undeclared = expected(HypertableName::AttributeHistory);
@@ -407,13 +454,19 @@ mod tests {
     }
 
     #[test]
-    fn a_sparse_index_of_another_kind_or_column_order_is_drift() {
+    fn a_sparse_index_of_another_kind_is_drift() {
         let mut other_kind = expected(HypertableName::AttributeHistory);
         other_kind.sparse_indexes[0] = sparse_index("bloom", &["observed_at"]);
         assert_eq!(plan_enablement(HypertableName::AttributeHistory, &other_kind), EnablementPlan::Drift);
-        let mut other_order = expected(HypertableName::AttributeHistory);
-        other_order.sparse_indexes[6] = sparse_index("bloom", &["write_id", "recorded_at", "write_ordinal"]);
-        assert_eq!(plan_enablement(HypertableName::AttributeHistory, &other_order), EnablementPlan::Drift);
+    }
+
+    #[test]
+    fn a_composite_sparse_index_matches_only_its_columns_in_order() {
+        let composite = sparse_index("bloom", &["recorded_at", "write_id"]);
+        let column = |name: &str| sea_query::Alias::new(name).into_iden();
+        assert!(composite.is(SparseIndexKind::Bloom, &[column("recorded_at"), column("write_id")]));
+        assert!(!composite.is(SparseIndexKind::Bloom, &[column("write_id"), column("recorded_at")]));
+        assert!(!composite.is(SparseIndexKind::Minmax, &[column("recorded_at"), column("write_id")]));
     }
 
     /// A drift names every setting the catalogue reports, so an operator can

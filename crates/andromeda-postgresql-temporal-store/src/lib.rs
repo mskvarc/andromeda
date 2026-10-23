@@ -24,6 +24,8 @@ pub mod attribute_history_value;
 pub mod attribute_stream_deletion;
 /// Running one storage-policy write without stalling the tenant behind it.
 pub(crate) mod bounded_lock_wait;
+/// Registering the columns chunk skipping keeps a per-chunk range of.
+pub(crate) mod chunk_skipping_enablement;
 /// Whether the attached `TimescaleDB` edition provides the hypercore columnstore.
 pub mod columnstore_capability;
 /// Converting aged history chunks to the columnstore, by the broker itself.
@@ -79,6 +81,10 @@ pub mod recorder;
 pub mod repo;
 /// Operator retention: ageing temporal storage out without NGSI-LD semantics.
 pub mod retention_sweep;
+/// The history chunks the conversion sweep keeps in the rowstore.
+pub(crate) mod rowstore_history_chunks;
+/// Returning the rowstore index pages of converted history chunks.
+pub mod rowstore_reclaim;
 pub(crate) mod scope_history_read;
 /// The value one scope-history row carries.
 pub mod scope_history_value;

@@ -5,13 +5,16 @@
 //! background job that a server with more databases than background workers
 //! never runs. The first sweep runs when the tenant is opened, so a tenant that
 //! was idle past a horizon converts what became due while it was not loaded.
-//! A sweep stops between chunks once its tenant is shutting down.
+//! A sweep stops between chunks once its tenant is shutting down. After the
+//! chunks it then rebuilds the rowstore indexes converted chunks left at full
+//! size.
 
 use crate::tenant_factory::{assembly_invariant::AssemblyInvariant, error::TenantAssemblyError, tasks::temporal_sweep_failure::classify_sweep_failure};
 use andromeda_postgresql_temporal_store::{
     columnstore_capability::ColumnstoreSupport,
     columnstore_conversion::{ChunkConversion, ColumnstoreHorizon, ConversionCandidates},
     repo::TemporalRepository,
+    rowstore_reclaim::RowstoreReclaim,
 };
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
@@ -33,6 +36,8 @@ use tokio_util::sync::CancellationToken;
 struct ConversionTally {
     /// Chunks converted.
     converted: usize,
+    /// Chunks kept in the rowstore because converting them would not pay.
+    kept: usize,
     /// Chunks another replica held or had converted.
     passed_over: usize,
     /// Chunks whose conversion was rolled back for the next sweep.
@@ -44,7 +49,7 @@ struct ConversionTally {
 impl ConversionTally {
     /// Whether the sweep found anything to do.
     const fn is_empty(self) -> bool {
-        self.converted == 0 && self.passed_over == 0 && self.deferred == 0 && self.unattempted == 0
+        self.converted == 0 && self.kept == 0 && self.passed_over == 0 && self.deferred == 0 && self.unattempted == 0
     }
 }
 
@@ -90,11 +95,24 @@ pub(super) fn register_columnstore_conversion(
                 tracing::info!(
                     %cutoff,
                     converted = tally.converted,
+                    kept = tally.kept,
                     passed_over = tally.passed_over,
                     deferred = tally.deferred,
                     unattempted = tally.unattempted,
                     event = "temporal_columnstore_converted",
                     "temporal history chunks past the columnstore horizon converted"
+                );
+            }
+            if execution.cancellation().is_cancelled() {
+                return Ok(());
+            }
+            let reclaim = repository.reclaim_converted_rowstores().await.map_err(classify_sweep_failure)?;
+            if reclaim != RowstoreReclaim::default() {
+                tracing::info!(
+                    rebuilt = reclaim.rebuilt,
+                    deferred = reclaim.deferred,
+                    event = "temporal_rowstore_indexes_reclaimed",
+                    "rowstore indexes of converted history chunks rebuilt"
                 );
             }
             Ok(())
@@ -122,6 +140,7 @@ where
         }
         match convert(chunk).await? {
             ChunkConversion::Converted => tally.converted += 1,
+            ChunkConversion::KeptInRowstore => tally.kept += 1,
             ChunkConversion::PassedOver => tally.passed_over += 1,
             ChunkConversion::Deferred => tally.deferred += 1,
         }
@@ -144,8 +163,13 @@ mod tests {
 
     #[tokio::test]
     async fn every_due_chunk_is_converted_in_order_and_its_outcome_counted() {
-        let due = chunks(&["a", "b", "c"]);
-        let outcomes = [ChunkConversion::Converted, ChunkConversion::PassedOver, ChunkConversion::Deferred];
+        let due = chunks(&["a", "b", "c", "d"]);
+        let outcomes = [
+            ChunkConversion::Converted,
+            ChunkConversion::KeptInRowstore,
+            ChunkConversion::PassedOver,
+            ChunkConversion::Deferred,
+        ];
         let visited = Mutex::new(Vec::new());
         let tally = convert_each(&due, &CancellationToken::new(), |chunk| {
             let mut seen = visited.lock().expect("the record is not poisoned");
@@ -158,6 +182,7 @@ mod tests {
             tally,
             Ok(ConversionTally {
                 converted: 1,
+                kept: 1,
                 passed_over: 1,
                 deferred: 1,
                 unattempted: 0,
@@ -179,6 +204,7 @@ mod tests {
             tally,
             Ok(ConversionTally {
                 converted: 1,
+                kept: 0,
                 passed_over: 0,
                 deferred: 0,
                 unattempted: 2,

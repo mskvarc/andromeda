@@ -1,5 +1,8 @@
 //! The temporal history hypertables whose chunks the columnstore converts.
 
+use andromeda_postgresql_schema::temporal::RowstoreHistoryChunks;
+use andromeda_postgresql_seaquery::columnstore_chunk::KeptChunks;
+use sea_query::IntoIden;
 use strum::{Display, EnumString, IntoStaticStr};
 
 /// A temporal history hypertable whose chunks the columnstore converts.
@@ -24,6 +27,18 @@ impl HistoryTable {
     pub const fn relation_name(self) -> &'static str {
         match self {
             HistoryTable::AttributeHistory => "attribute_history",
+        }
+    }
+
+    /// The relation listing the chunks the broker's conversion sweep keeps in
+    /// the rowstore for good, which are neither overdue nor ever converted.
+    #[must_use]
+    pub fn kept_chunks(self) -> KeptChunks {
+        match self {
+            HistoryTable::AttributeHistory => KeptChunks {
+                table: RowstoreHistoryChunks::Table.into_iden(),
+                range_start: RowstoreHistoryChunks::RangeStart.into_iden(),
+            },
         }
     }
 }

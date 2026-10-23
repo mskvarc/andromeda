@@ -108,7 +108,6 @@ create table attribute_history (
     proof_seals jsonb compression lz4,
     -- The instance's sub-attributes, NULL when it has none.
     sub_attributes sub_attribute[] compression lz4,
-    constraint uq_attribute_history_write_identity unique (recorded_at, write_id, write_ordinal),
     constraint chk_attribute_history_write_ordinal check (write_ordinal >= 0),
     constraint chk_attribute_history_attribute_kind check (attribute_kind between 1 and 8),
     constraint chk_attribute_history_unit_code_id_positive check (unit_code_id > 0),

@@ -91,9 +91,9 @@ pub(crate) async fn report_timescale_state(
 }
 
 /// Read the rowstore chunks of `table` whose range ended at or before
-/// `cutoff`.
+/// `cutoff` and that the conversion sweep has not kept in the rowstore.
 async fn overdue_conversion(connection: &mut PgConnection, table: HistoryTable, cutoff: DateTime<Utc>) -> Result<OverdueConversion, MaintenanceError> {
-    let row = overdue_rowstore_chunks_statement(table.relation_name(), Expr::val(cutoff))
+    let row = overdue_rowstore_chunks_statement(table.relation_name(), Expr::val(cutoff), &table.kept_chunks())
         .to_query()
         .fetch_one(connection)
         .await?;

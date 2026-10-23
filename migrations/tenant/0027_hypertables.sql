@@ -11,11 +11,11 @@
 -- Entity's Scope, not one per write, and retention keeps the Scope in force at
 -- its cutoff, which a dropped chunk would take with it (clause 4.18).
 --
--- The default partition-column index is not created. TimescaleDB requires
--- every unique index on a hypertable to contain the partition column, so the
--- table's one unique constraint already leads with `recorded_at` and serves
--- every `recorded_at`-led scan. The default index would duplicate it at the
--- cost of one more index write per row.
+-- The default partition-column index is not created. Every read and every
+-- change of history names its streams first and is served by the stream-led
+-- indexes; `recorded_at` alone only selects chunks, which the hypertable's
+-- own chunk ranges answer. The index would cost one more index write per row
+-- and serve nothing.
 --
 -- Chunks initially span seven days. The stream-led B-trees are per chunk, and
 -- only chunks still receiving rows keep their index pages hot, so a shorter
