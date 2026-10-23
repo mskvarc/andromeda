@@ -86,6 +86,19 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                 self.settle_schedule(tenant, now, None).await;
                 WakeOutcome::NothingDue
             }
+            Err(PendingWorkError::Unmigrated { .. }) => match existence {
+                // Its provisioning is still migrating the database, or was
+                // interrupted, which the janitor retires. A creating operation
+                // writes only once the migration completes, and the runtime it
+                // runs on records the tenant's next wake when evicted.
+                RuntimeExistence::Provisional => {
+                    self.settle_schedule(tenant, now, None).await;
+                    WakeOutcome::NothingDue
+                }
+                // Building the runtime migrates the database, and the runtime
+                // then runs whatever its obligations hold due.
+                RuntimeExistence::Established => self.load_woken(&tenant_ref, database, existence, tenant).await,
+            },
             // Transient: the probe could not read this pass. Re-arm a retry
             // rather than treating the tenant as having nothing due.
             Err(PendingWorkError::Saturated { .. } | PendingWorkError::ProbeFailed { .. }) => {

@@ -56,6 +56,18 @@ pub enum PendingWorkError {
         #[source]
         cause: PersistenceFailure,
     },
+    /// The tenant's database holds a schema older than this broker's, or none
+    /// yet: it is not migrated.
+    ///
+    /// Not a fault. A provisioning that created the database is still
+    /// migrating it, or this broker's release reads a tenant no runtime of the
+    /// release has opened yet. The probe cannot read obligations from a schema
+    /// it does not know, so the caller decides by the tenant's standing.
+    #[error("the pending-work probe for {database} found its schema not migrated")]
+    Unmigrated {
+        /// The database whose schema is not migrated.
+        database: TenantDatabaseName,
+    },
     /// The tenant's database no longer exists.
     ///
     /// The tenant was deprovisioned (or its database dropped out from under the
@@ -85,7 +97,9 @@ pub trait PendingWorkProbe: Send + Sync + 'static {
     /// # Errors
     ///
     /// Returns [`PendingWorkError::Saturated`] when the probe's connection
-    /// cannot be acquired within the deadline, and
+    /// cannot be acquired within the deadline,
+    /// [`PendingWorkError::DatabaseGone`] when the database does not exist,
+    /// [`PendingWorkError::Unmigrated`] when its schema is not migrated, and
     /// [`PendingWorkError::ProbeFailed`] when the read itself fails.
     #[must_use = "a pending-work probe must be awaited"]
     async fn earliest_pending_work(&self, database: &TenantDatabaseName) -> Result<PendingWork, PendingWorkError>;

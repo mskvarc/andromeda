@@ -26,6 +26,7 @@ use crate::{
     store_fault::persistence_failure,
     subscription_store::{delivery_state::interval_anchor_select, periodic_due::unexpired_at, status_code::status_is},
     tenant_database::DatabaseUrl,
+    tenant_migration::{TenantSchemaState, tenant_schema_state},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
@@ -103,6 +104,22 @@ impl PendingWorkProbe for PostgresPendingWorkProbe {
 }
 
 impl PostgresPendingWorkProbe {
+    /// Classify a read that named a relation the database does not hold: an
+    /// unmigrated schema when the schema contract finds the database behind
+    /// this broker's, a genuine fault otherwise.
+    ///
+    /// A database a provisioning has created and not yet migrated holds none of
+    /// the relations the probe reads, so it fails here. A schema-state read
+    /// that fails as well leaves the probe's own failure to report.
+    async fn classify_undefined_relation(pool: &sqlx::PgPool, error: &sqlx::Error, database: &TenantDatabaseName) -> PendingWorkError {
+        match tenant_schema_state(pool).await {
+            Ok(TenantSchemaState::NeedsMigration) => PendingWorkError::Unmigrated {
+                database: database.clone(), // clone: the error outlives this borrow
+            },
+            Ok(TenantSchemaState::Current) | Err(_) => Self::classify(error, database),
+        }
+    }
+
     /// Read the earliest obligation over the transient pool, classifying a
     /// failure the way the wake loop needs it.
     async fn earliest_over(&self, pool: &sqlx::PgPool, database: &TenantDatabaseName) -> Result<PendingWork, PendingWorkError> {
@@ -111,6 +128,9 @@ impl PostgresPendingWorkProbe {
             Err(ContextStoreError::Saturated) => Err(PendingWorkError::Saturated {
                 database: database.clone(), // clone: the error outlives this borrow
             }),
+            Err(ContextStoreError::Database(error)) if SqlState::of(&error) == Some(SqlState::UndefinedTable) => {
+                Err(Self::classify_undefined_relation(pool, &error, database).await)
+            }
             Err(ContextStoreError::Database(error)) => Err(Self::classify(&error, database)),
             Err(
                 error @ (ContextStoreError::SchemaContract(_)

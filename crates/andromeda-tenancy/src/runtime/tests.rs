@@ -49,6 +49,8 @@ enum FakeProbeOutcome {
     DueAsAnswered,
     /// The tenant's database is gone (SQLSTATE 3D000 at the store).
     DatabaseGone,
+    /// The tenant's database holds no schema of this broker's release yet.
+    Unmigrated,
 }
 
 /// A probe that answers every tenant with one fixed outcome.
@@ -85,6 +87,13 @@ impl FakeProbe {
             outcome: FakeProbeOutcome::DatabaseGone,
         }
     }
+
+    /// A probe whose tenant database is not migrated.
+    fn unmigrated() -> FakeProbe {
+        FakeProbe {
+            outcome: FakeProbeOutcome::Unmigrated,
+        }
+    }
 }
 
 #[async_trait]
@@ -97,6 +106,7 @@ impl PendingWorkProbe for FakeProbe {
                 Ok(PendingWork::DueAt(SystemTime::now()))
             }
             FakeProbeOutcome::DatabaseGone => Err(PendingWorkError::DatabaseGone { database: database.clone() }), // clone: the error outlives this borrow
+            FakeProbeOutcome::Unmigrated => Err(PendingWorkError::Unmigrated { database: database.clone() }),     // clone: the error outlives this borrow
         }
     }
 }
@@ -1529,6 +1539,33 @@ async fn a_database_gone_probe_clears_the_schedule_rather_than_retrying() {
         settled.iter().all(|(_, wake_at)| wake_at.is_none()),
         "a gone tenant's schedule is cleared, never re-armed with a retry instant, got {settled:?}"
     );
+}
+
+/// Provisioning commits the provisional row before it creates and migrates the
+/// database, so a wake can probe a database that holds no schema yet.
+#[tokio::test]
+async fn an_unmigrated_provisional_tenant_is_not_loaded_and_its_schedule_is_cleared() {
+    let schedule = Arc::new(FakeSchedule::inert());
+    let (manager, factory, _shutdowns) = wake_manager(&[], 64, Arc::new(FakeProbe::unmigrated()), Arc::clone(&schedule));
+    manager.database.register_provisional("acme");
+
+    pretty_assertions::assert_eq!(manager.wake(&named("acme")).await, WakeOutcome::NothingDue);
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 0, "a tenant still being provisioned is not loaded");
+    let settled = schedule.settled.lock().expect("settled lock").clone();
+    pretty_assertions::assert_eq!(settled.len(), 1);
+    assert!(
+        settled.iter().all(|(_, wake_at)| wake_at.is_none()),
+        "the schedule is cleared, never re-armed with a retry instant, got {settled:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_unmigrated_established_tenant_is_loaded_so_its_build_migrates_it() {
+    let (manager, factory, _shutdowns) = wake_manager(&["acme"], 64, Arc::new(FakeProbe::unmigrated()), Arc::new(FakeSchedule::inert()));
+
+    pretty_assertions::assert_eq!(manager.wake(&named("acme")).await, WakeOutcome::Loaded);
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 1);
+    assert!(manager.runtimes.contains_key(&TenantRef::Named(named("acme"))));
 }
 
 #[tokio::test]
