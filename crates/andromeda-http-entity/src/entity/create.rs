@@ -51,7 +51,7 @@ pub(crate) async fn create(
     // Clause 5.5.4 judges the payload "according to the @context", so the
     // context is admitted before anything is read under it (clause 5.5.7).
     let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_instance(&uri)?;
-    let entity = body.admitted(&context)?;
+    let entity = body.admitted(&context).await?;
     let service = &state.entities;
     // Clause 5.6.1.4 opens with the clause 5.5.4 validation and forwards only
     // afterwards, so the whole screening runs here: a representation this

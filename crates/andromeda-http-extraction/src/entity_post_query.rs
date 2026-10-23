@@ -34,7 +34,7 @@ where
         let (mut parts, body) = request.into_parts();
         let ValidatedQuery(url_params) = ValidatedQuery::<PostQueryParams>::from_request_parts(&mut parts, state).await?;
         let JsonLd { body, context } = JsonLd::<Query>::from_request(Request::from_parts(parts, body), state).await?;
-        let query = body.and_then(|body, uri| {
+        let query = body.and_then(move |body, uri| {
             let mut query = EntityQueryParameters::try_from(body).map_err(|error| classify_parameter_error(&error).with_instance(uri.clone()))?; // clone: the held body keeps naming the request
             url_params.apply_to(&mut query);
             Ok(query)

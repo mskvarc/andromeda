@@ -267,6 +267,7 @@ impl SubscriptionRequest {
 #[cfg(test)]
 mod tests {
     use crate::{clearable::Clearable, request_body::RequestBody, subscription_request::SubscriptionRequest};
+    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
     use serde_json::{Value, json};
 
     /// One create body naming every member Table 5.2.12-1 defines that a
@@ -309,7 +310,7 @@ mod tests {
     }
 
     fn decode(body: &Value) -> SubscriptionRequest {
-        SubscriptionRequest::from_request_text(body.to_string().as_bytes()).expect("a readable subscription body")
+        SubscriptionRequest::from_request_text(body.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a readable subscription body")
     }
 
     /// Clause 5.8.1: a POST body decoded into the request model and written
@@ -510,7 +511,10 @@ mod tests {
             json!({"id": "not a uri"}),
             json!({"timeInterval": "often"}),
         ] {
-            assert!(SubscriptionRequest::from_request_text(body.to_string().as_bytes()).is_err(), "{body}");
+            assert!(
+                SubscriptionRequest::from_request_text(body.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).is_err(),
+                "{body}"
+            );
         }
     }
 
@@ -526,8 +530,11 @@ mod tests {
     /// level, which is not a member of the Subscription.
     #[test]
     fn a_top_level_context_is_not_a_member() {
-        let request =
-            SubscriptionRequest::from_request_text(br#"{"@context": "https://example.com/ctx.jsonld", "q": "speed>1"}"#).expect("the context is skipped");
+        let request = SubscriptionRequest::from_request_text(
+            br#"{"@context": "https://example.com/ctx.jsonld", "q": "speed>1"}"#,
+            CoreTermAliases::keyword_spellings(),
+        )
+        .expect("the context is skipped");
         assert!(request.q.as_set().is_some());
     }
 }

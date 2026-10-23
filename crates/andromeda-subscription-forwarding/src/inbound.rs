@@ -210,6 +210,7 @@ fn notification_data(data: JsonPiece<'_>) -> Result<InboundData, InboundError> {
 mod tests {
     use crate::inbound::{Inbound, InboundData, InboundError};
     use andromeda_ngsi_ld_model::{notification::CsrTriggerReason, received::ReceivedElement};
+    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
 
     const ENVELOPE: &str = r#""id":"urn:ngsi-ld:Notification:1","subscriptionId":"urn:ngsi-ld:Subscription:1","notifiedAt":"2024-06-15T12:30:00Z""#;
     const VEHICLE: &str = r#"{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property","value":1.10}}"#;
@@ -242,6 +243,9 @@ mod tests {
         assert!(inbound(&text("2024-06-15T12:30:00.123456Z")).is_ok());
     }
 
+    /// An entity is held until the context it was written in is processed,
+    /// so one that is no entity is refused when it is read, its neighbours
+    /// read all the same.
     #[test]
     fn one_bad_entity_is_refused_and_the_others_kept() {
         let Ok(Inbound::Notification(notification)) = inbound(&format!(
@@ -252,10 +256,15 @@ mod tests {
         let InboundData::Entities(entities) = notification.data else {
             panic!("an entity array");
         };
-        assert!(matches!(
-            entities.0.as_slice(),
-            [ReceivedElement::Read(_), ReceivedElement::Refused(_), ReceivedElement::Read(_)]
-        ));
+        let read: Vec<bool> = entities
+            .0
+            .iter()
+            .map(|element| match element {
+                ReceivedElement::Read(contextual) => contextual.entity(CoreTermAliases::keyword_spellings()).is_ok(),
+                ReceivedElement::Refused(_) => false,
+            })
+            .collect();
+        pretty_assertions::assert_eq!(read, vec![true, false, true]);
     }
 
     /// An entity carrying its own `@context`, as an `application/ld+json`
@@ -330,7 +339,8 @@ mod tests {
         let [ReceivedElement::Read(contextual)] = entities.0.as_slice() else {
             panic!("one entity");
         };
-        let written = serde_json::to_string(&contextual.entity).expect("writes");
+        let entity = contextual.entity(CoreTermAliases::keyword_spellings()).expect("the entity reads");
+        let written = serde_json::to_string(&entity).expect("writes");
         assert!(written.contains("1.1"), "{written}");
     }
 }

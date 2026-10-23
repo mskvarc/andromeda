@@ -58,7 +58,7 @@ pub(crate) async fn create(
     let context = admit_user_context(state.registrations.engine(), context)
         .await
         .with_registration_instance(&uri)?;
-    let body = body.admitted(&context)?;
+    let body = body.admitted(&context).await?;
     let identifier = state.registrations.create(body, &context).await.with_registration_instance(&uri)?;
     Ok(with_location(
         StatusCode::CREATED.into_response(),
@@ -201,7 +201,7 @@ pub(crate) async fn update(
     let context = admit_user_context(state.registrations.engine(), context)
         .await
         .with_registration_instance(&uri)?;
-    let body = body.admitted(&context)?;
+    let body = body.admitted(&context).await?;
     state
         .registrations
         .update(&registration_id, body, &context)
@@ -250,7 +250,7 @@ mod tests {
         let JsonLd { body, .. } = JsonLd::<RegistrationBody>::from_request(request, &())
             .await
             .map_err(|rejection: ExtractorRejection| format!("{rejection:?}"))?;
-        body.admitted(&AdmittedContext::core_only()).map_err(|problem| {
+        body.admitted(&AdmittedContext::core_only()).await.map_err(|problem| {
             assert_eq!(problem.problem().error_type(), NgsiLdErrorType::BadRequestData);
             problem.problem().detail().to_owned()
         })

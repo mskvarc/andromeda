@@ -21,6 +21,26 @@ static KEYWORD_SPELLINGS: LazyLock<CoreTermAliases> = LazyLock::new(|| {
     aliases
 });
 
+/// Where a value stands in a compact document, which decides whether its
+/// strings are read through the aliases.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Standing {
+    /// Any value: only the names of its members are read through the aliases.
+    #[default]
+    Node,
+    /// The value of a `type` member: its strings name classes, read through
+    /// the aliases too.
+    Types,
+}
+
+impl Standing {
+    /// Where the value of the member whose core name is `name` stands.
+    #[must_use]
+    pub fn of_member(name: &str) -> Standing {
+        if name == keyword::TYPE_ALIAS { Standing::Types } else { Standing::Node }
+    }
+}
+
 /// The terms a context defines for core NGSI-LD terms, each mapped to the
 /// core term it stands for.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -69,9 +89,20 @@ impl CoreTermAliases {
         self.core_term(value)
     }
 
+    /// The string `text`, standing where `standing` says, read through the
+    /// aliases: a class name of a `type` member is read as the core class it
+    /// names, any other string as written.
+    #[must_use]
+    pub fn string<'n>(&self, text: Cow<'n, str>, standing: Standing) -> Cow<'n, str> {
+        match standing {
+            Standing::Types => self.core_class(text),
+            Standing::Node => text,
+        }
+    }
+
     /// The core term `written` stands for, or `written` itself.
     fn core_term<'n>(&self, written: Cow<'n, str>) -> Cow<'n, str> {
-        match self.0.get(written.as_ref()) {
+        match self.0.get(written.as_ref()).copied() {
             Some(core) => Cow::Borrowed(core),
             None => written,
         }
@@ -80,7 +111,7 @@ impl CoreTermAliases {
 
 #[cfg(test)]
 mod tests {
-    use crate::core_term_aliases::CoreTermAliases;
+    use crate::core_term_aliases::{CoreTermAliases, Standing};
     use std::borrow::Cow;
 
     #[test]
@@ -98,6 +129,16 @@ mod tests {
         aliases.alias("Prop", "Property");
         pretty_assertions::assert_eq!(aliases.core_class(Cow::Borrowed("Prop")), "Property");
         pretty_assertions::assert_eq!(aliases.core_class(Cow::Borrowed("Vehicle")), "Vehicle");
+    }
+
+    #[test]
+    fn only_a_string_of_a_type_member_is_read_as_a_class() {
+        let mut aliases = CoreTermAliases::none();
+        aliases.alias("Prop", "Property");
+        pretty_assertions::assert_eq!(Standing::of_member("type"), Standing::Types);
+        pretty_assertions::assert_eq!(Standing::of_member("value"), Standing::Node);
+        pretty_assertions::assert_eq!(aliases.string(Cow::Borrowed("Prop"), Standing::Types), "Property");
+        pretty_assertions::assert_eq!(aliases.string(Cow::Borrowed("Prop"), Standing::Node), "Prop");
     }
 
     #[test]

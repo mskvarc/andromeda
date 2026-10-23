@@ -62,7 +62,7 @@ pub async fn create_or_update(
     // Clause 5.5.4 judges the payload "according to the @context", so the
     // context is admitted before anything is read under it (clause 5.5.7).
     let context = admit_request_context(state.temporal.engine(), context, &uri).await?;
-    let payload = body.admitted(&context)?;
+    let payload = body.admitted(&context).await?;
     let service = &state.temporal;
     // Clause 5.6.11.4 opens with the clause 5.5.4 validation and forwards only
     // afterwards.

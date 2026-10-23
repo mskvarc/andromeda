@@ -9,22 +9,11 @@
 
 use crate::{
     compact_node::{CompactNode, NodeMembers, NodeShape},
-    core_term_aliases::CoreTermAliases,
+    core_term_aliases::{CoreTermAliases, Standing},
 };
 use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_ngsi_ld_geometry::written_geometry::WrittenGeometry;
-use andromeda_ngsi_ld_vocabulary::keyword;
 use serde::de::DeserializeOwned;
-
-/// What an aliased node stands for, which decides what of it is read through
-/// the aliases.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Standing {
-    /// Any node: the names of its members are read through the aliases.
-    Node,
-    /// The value of a `type` member: its strings are read through them too.
-    Types,
-}
 
 /// A compact node whose members are read under the core terms their names
 /// alias.
@@ -68,17 +57,14 @@ impl<'a: 'n, 'n, N: CompactNode<'n>> CompactNode<'n> for AliasedNode<'a, N> {
             NodeShape::Null => NodeShape::Null,
             NodeShape::Boolean(flag) => NodeShape::Boolean(flag),
             NodeShape::Number(text) => NodeShape::Number(text),
-            NodeShape::String(text) => NodeShape::String(match self.standing {
-                Standing::Types => self.aliases.core_class(text),
-                Standing::Node => text,
-            }),
+            NodeShape::String(text) => NodeShape::String(self.aliases.string(text, self.standing)),
             NodeShape::Array(items) => NodeShape::Array(items.into_iter().map(|item| self.standing(item, self.standing)).collect()),
             NodeShape::Object(members) => NodeShape::Object(NodeMembers::new(
                 members
                     .into_iter()
                     .map(|(name, node)| {
                         let name = self.aliases.core_name(name);
-                        let standing = if name == keyword::TYPE_ALIAS { Standing::Types } else { Standing::Node };
+                        let standing = Standing::of_member(&name);
                         (name, self.standing(node, standing))
                     })
                     .collect(),

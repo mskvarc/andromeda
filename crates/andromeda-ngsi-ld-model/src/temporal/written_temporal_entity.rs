@@ -39,7 +39,8 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_representation::{
     compact_key_admission::CompactKeyError,
-    compact_node::{CompactNode, NodeShape, produced_node::ProducedNode},
+    compact_node::{CompactNode, NodeShape, aliased_node::AliasedNode, produced_node::ProducedNode},
+    core_term_aliases::CoreTermAliases,
     embedded_context_admission::is_native_json_member,
 };
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
@@ -233,9 +234,9 @@ impl<'de> Deserialize<'de> for WrittenTemporalEntity {
 impl RequestBody for WrittenTemporalEntity {
     /// Decode a Temporal Evolution from the JSON text of a request body, read
     /// in place as a Context Producer wrote it.
-    fn from_request_text(text: &[u8]) -> Result<WrittenTemporalEntity, serde_json::Error> {
+    fn from_request_text(text: &[u8], aliases: &CoreTermAliases) -> Result<WrittenTemporalEntity, serde_json::Error> {
         let raw: &RawValue = serde_json::from_slice(text)?;
-        WrittenTemporalEntity::from_node(ProducedNode::recording_deletions(JsonPiece::new(raw))).map_err(refusal)
+        WrittenTemporalEntity::from_node(ProducedNode::recording_deletions(AliasedNode::new(JsonPiece::new(raw), aliases))).map_err(refusal)
     }
 }
 

@@ -130,9 +130,10 @@ pub struct AdmittedBatchContext {
 }
 
 impl AdmittedBatchContext {
-    /// The terms the context defines for core terms.
+    /// The terms the context defines for core terms, shared with the
+    /// processed context they were read from.
     #[must_use]
-    pub fn aliases(&self) -> &CoreTermAliases {
+    pub const fn aliases(&self) -> &Arc<CoreTermAliases> {
         &self.aliases
     }
 }

@@ -8,11 +8,12 @@ use crate::{
     },
 };
 use andromeda_json_literal::piece::JsonPiece;
+use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
 use serde_json::{Value, json, value::RawValue};
 
 /// The body decoded as a client's Temporal Evolution.
 fn written(body: &Value) -> Result<WrittenTemporalEntity, serde_json::Error> {
-    WrittenTemporalEntity::from_request_text(body.to_string().as_bytes())
+    WrittenTemporalEntity::from_request_text(body.to_string().as_bytes(), CoreTermAliases::keyword_spellings())
 }
 
 /// `attribute` as the entity `attribute` of a body, unfolded and written back.

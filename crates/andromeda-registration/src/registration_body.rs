@@ -272,6 +272,7 @@ mod tests {
     use crate::{nullable_member::NullableMember, registration_body::RegistrationBody, store::create_params::CreateCsrParams};
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::rendering::instant_text};
     use andromeda_ngsi_ld_model::{registration::operation::CsrOperation, request_body::RequestBody};
+    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
     use serde_json::{Value, json};
 
     fn baseline() -> Value {
@@ -290,7 +291,7 @@ mod tests {
 
     /// The body `document` is as a request carrying it as text.
     fn body_of(document: &Value) -> Result<RegistrationBody, serde_json::Error> {
-        RegistrationBody::from_request_text(document.to_string().as_bytes())
+        RegistrationBody::from_request_text(document.to_string().as_bytes(), CoreTermAliases::keyword_spellings())
     }
 
     fn create_of(document: &Value) -> Result<CreateCsrParams, String> {
@@ -397,7 +398,7 @@ mod tests {
     #[test]
     fn the_unknown_members_of_a_body_are_carried_in_the_order_written() {
         let body = RegistrationBody::from_request_text(
-            br#"{"type": "ContextSourceRegistration", "zeta": 1, "endpoint": "https://source.example.org", "alpha": {"b": [1.50]}, "information": [{"propertyNames": ["speed"]}]}"#,
+            br#"{"type": "ContextSourceRegistration", "zeta": 1, "endpoint": "https://source.example.org", "alpha": {"b": [1.50]}, "information": [{"propertyNames": ["speed"]}]}"#, CoreTermAliases::keyword_spellings(),
         )
         .expect("a body");
         let extras: Vec<(&str, &str)> = body.additional_properties.iter().map(|(name, value)| (name.as_str(), value.text())).collect();
@@ -409,7 +410,7 @@ mod tests {
     #[test]
     fn a_top_level_context_is_no_context_source_property() {
         let body = RegistrationBody::from_request_text(
-            br#"{"@context": "https://example.org/ctx", "type": "ContextSourceRegistration", "endpoint": "https://source.example.org", "information": [{"propertyNames": ["speed"]}]}"#,
+            br#"{"@context": "https://example.org/ctx", "type": "ContextSourceRegistration", "endpoint": "https://source.example.org", "information": [{"propertyNames": ["speed"]}]}"#, CoreTermAliases::keyword_spellings(),
         )
         .expect("a body");
         assert!(body.additional_properties.is_empty());

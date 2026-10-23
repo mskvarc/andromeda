@@ -111,7 +111,7 @@ where
         let ValidatedQuery(url_params) = ValidatedQuery::<TemporalPostQueryParams>::from_request_parts(&mut parts, state).await?;
         let admission = installed_admission::<A>(&parts)?;
         let JsonLd { body, context } = JsonLd::<Query>::from_request(Request::from_parts(parts, body), state).await?;
-        let params = body.and_then(|query, uri| {
+        let params = body.and_then(move |query, uri| {
             // clone: each refusal names the request, which the held body keeps naming
             let mut params = TemporalQueryParameters::try_from(query).map_err(|error| classify_parameter_error(&error).with_instance(uri.clone()))?;
             url_params.apply_to(&mut params);

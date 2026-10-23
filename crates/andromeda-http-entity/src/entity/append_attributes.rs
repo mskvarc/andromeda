@@ -48,7 +48,7 @@ pub(crate) async fn append_attrs(
     // Clause 5.5.4 judges the payload "according to the @context", so the
     // context is admitted before anything is read under it (clause 5.5.7).
     let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_instance(&uri)?;
-    let fragment = body.admitted(&context)?;
+    let fragment = body.admitted(&context).await?;
     admit_fragment_entity_id(fragment.id.as_ref(), &id).with_entity_instance(&uri)?;
     let service = &state.entities;
     // The fragment is refused before the options are, so the options are

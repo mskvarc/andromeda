@@ -8,6 +8,7 @@
 
 use andromeda_ngsi_ld_entity::{member_shape::MemberShape, scope_refusal::ScopeRefusal};
 use andromeda_ngsi_ld_model::{request_body::RequestBody, temporal::written_temporal_entity::WrittenTemporalEntity};
+use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
 use serde_json::{Value, json};
 
 /// The Temporal Evolution of `urn:ngsi-ld:Vehicle:1` whose `scope` member is
@@ -20,7 +21,7 @@ pub(crate) fn evolution_with_scope(scope: &Value) -> WrittenTemporalEntity {
         "speed": [{"type": "Property", "value": 1, "observedAt": "2025-01-01T00:00:00Z"}]
     })
     .to_string();
-    WrittenTemporalEntity::from_request_text(text.as_bytes()).expect("a written evolution")
+    WrittenTemporalEntity::from_request_text(text.as_bytes(), CoreTermAliases::keyword_spellings()).expect("a written evolution")
 }
 
 /// One reified Scope instance naming `/Madrid`, observed once, beside the

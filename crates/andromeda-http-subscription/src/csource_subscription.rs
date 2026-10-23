@@ -44,7 +44,7 @@ pub async fn create(
     JsonLd { body, context }: JsonLd<SubscriptionRequest>,
 ) -> Result<Response, ProblemResponse> {
     let context = admit_user_context(&state.engine, context).await.with_subscription_instance(&uri)?;
-    let request = body.admitted(&context)?;
+    let request = body.admitted(&context).await?;
     let service = &state.csource_subscriptions;
     // Table 6.3.18-2: the created subscription must not forward a companion copy
     // back to any context source its request already passed through.
@@ -147,7 +147,7 @@ pub async fn update(
     JsonLd { body, context }: JsonLd<SubscriptionRequest>,
 ) -> Result<Response, ProblemResponse> {
     let context = admit_user_context(&state.engine, context).await.with_subscription_instance(&uri)?;
-    let request = body.admitted(&context)?;
+    let request = body.admitted(&context).await?;
     let service = &state.csource_subscriptions;
 
     service

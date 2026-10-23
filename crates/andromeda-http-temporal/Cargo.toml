@@ -40,6 +40,7 @@ typed-builder = "0.23.2"
 andromeda-architecture-checks.workspace = true
 andromeda-context-commit.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true
+andromeda-ngsi-ld-representation.workspace = true
 andromeda-persistence-failure.workspace = true
 pretty_assertions = "1.4.1"
 serde_urlencoded = "0.7.1"

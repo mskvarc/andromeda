@@ -51,7 +51,7 @@ pub(crate) async fn batch_delete(
     let EntityIdBatch {
         ids: entity_ids,
         refused: mut id_errors,
-    } = batch.admitted(&context)?;
+    } = batch.admitted(&context).await?;
     let service = &state.entities;
 
     let triggering = TriggeringRequest {

@@ -60,15 +60,24 @@ where
     type Rejection = ExtractorRejection;
 
     async fn from_request(req: Request, state: &S) -> Result<JsonLdEntityIds, ExtractorRejection> {
-        admit_request_body(req, state, |AdmittedBody { text, context, uri }| {
-            let context = submitted_context(context, &text, &uri)?;
-            // clone: the refusal names the request, which the held body keeps naming
-            let batch = entity_id_batch(&text).map_err(|refusal| refusal.into_problem(uri.clone()));
-            Ok(JsonLdEntityIds {
-                batch: SubmittedBody::new(batch, uri),
-                context,
-            })
-        })
+        admit_request_body(
+            req,
+            state,
+            |AdmittedBody {
+                 text,
+                 context,
+                 uri,
+                 blocking_decode,
+             }| {
+                let context = submitted_context(context, &text, &uri)?;
+                // An array of strings names no term a context could alias, so the
+                // items are read as written.
+                let batch = SubmittedBody::new(text, uri, blocking_decode, |text, _aliases, uri| {
+                    entity_id_batch(text).map_err(|refusal| refusal.into_problem(uri.clone())) // clone: the refusal owns the URI it names
+                });
+                Ok(JsonLdEntityIds { batch, context })
+            },
+        )
         .await
     }
 }
@@ -221,6 +230,7 @@ mod tests {
             .await?
             .batch
             .admitted(&AdmittedContext::core_only())
+            .await
             .map_err(ExtractorRejection::Classified)
     }
 
@@ -244,7 +254,7 @@ mod tests {
         let extracted = extract(request("application/json", r#"["urn:ngsi-ld:T:1"]"#.to_owned(), &[CONTEXT_LINK]))
             .await
             .expect("a batch of ids");
-        let batch = extracted.batch.admitted(&AdmittedContext::core_only()).expect("a batch of ids");
+        let batch = extracted.batch.admitted(&AdmittedContext::core_only()).await.expect("a batch of ids");
         pretty_assertions::assert_eq!(batch.ids.iter().map(ToString::to_string).collect::<Vec<_>>(), vec!["urn:ngsi-ld:T:1"]);
         pretty_assertions::assert_eq!(
             extracted.context,

@@ -11,6 +11,7 @@ use crate::{
     addressed_uri::addressed_request_uri,
     batch_array::batch_items,
     batch_body_refusal::{BatchBodyRefusal, BatchMembers},
+    batch_item_decoding::BatchItem,
     batch_item_refusal::BatchItemRefusal,
     blocking_decode::{BlockingDecodePolicy, decode_payload},
     body_envelope::BodyEnvelope,
@@ -21,7 +22,6 @@ use crate::{
     request_json_value_limit::RequestJsonValueLimit,
     request_links::{PayloadCarrier, RequestLinks},
     request_payload::buffer_payload,
-    undecodable_body::UndecodableBody,
 };
 use andromeda_http_response::{problem_response::ProblemResponse, request_refusal::RequestRefusal};
 use andromeda_json_literal::JsonLiteral;
@@ -31,11 +31,6 @@ use andromeda_jsonld::{
     request_context::RequestContext,
 };
 use andromeda_ngsi_ld_lexicon::{identifier_length::IdentifierTooLong, uri::Uri};
-use andromeda_ngsi_ld_model::{
-    attribute::{instance::AttributeValue, member_reading::MemberReading},
-    entity::Entity,
-    request_body::RequestBody,
-};
 use andromeda_ngsi_ld_number::json_value::text_admission::{JsonTextRefusal, admit_json_text};
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchEntityError;
 use andromeda_ngsi_ld_representation::embedded_context_admission::{EmbeddedContext, find_embedded_context};
@@ -115,6 +110,13 @@ impl BatchBody {
     pub const fn headers(&self) -> &HeaderMap {
         &self.headers
     }
+
+    /// How the items are decoded beside the executor once their contexts
+    /// were admitted, when the stack published it.
+    #[must_use]
+    pub const fn blocking_decode(&self) -> Option<&BlockingDecodePolicy> {
+        self.blocking_decode.as_ref()
+    }
 }
 
 impl<S> FromRequest<S> for BatchBody
@@ -179,49 +181,21 @@ where
     }
 }
 
-/// One decoded batch entity, with the context it is read against.
-///
-/// JSON-LD applies a top-level node's `@context` to that node alone, so each
-/// item of an `application/ld+json` batch is expanded under its own
-/// (clause 5.5.7: "the @context [...] provided by each API call"); items of an
-/// `application/json` batch share the request's `Link` context. Items naming
-/// one and the same context share one [`BatchContext`], identified once here,
-/// so a batch whose items agree resolves its context once.
-#[derive(Debug)]
-pub struct BatchItem<M = AttributeValue> {
-    /// The `id` the item carried, which every refusal of it is reported
-    /// against.
-    pub entity_id: Uri,
-    /// The decoded entity, its `@context` member removed, or the refusal of
-    /// an item that is no entity: clause 5.5.4 judges the item "according to
-    /// the @context", so the refusal is reported only once the context loaded.
-    pub entity: Result<Entity<M>, BatchItemRefusal>,
-    /// The context the entity is read against.
-    pub context: BatchContext,
-    /// The first `@context` the item embedded below its own top level (clause
-    /// 5.5.7), which is the item's own refusal: several items share one
-    /// [`BatchContext`], so the finding never travels with it.
-    pub embedded: Option<EmbeddedContext>,
-}
-
-/// One batch item that passed the batch rules, with what it carried beside
-/// the entity.
-struct DecodedItem<M> {
-    /// The decoded entity, its `@context` member removed, or the refusal of
-    /// an item that is no entity.
-    entity: Result<Entity<M>, BatchItemRefusal>,
+/// What one batch item that passed the batch rules carried beside the
+/// entity it is decoded as once its context was admitted.
+struct ItemAdmission {
     /// The item's own top-level `@context`, as written.
     own_context: Option<JsonLiteral>,
     /// The first `@context` the item embedded below its own top level.
     embedded: Option<EmbeddedContext>,
 }
 
-/// A decoded batch request.
+/// A parsed batch request, its items not yet decoded.
 #[derive(Debug)]
-pub struct ParsedBatch<M = AttributeValue> {
+pub struct ParsedBatch {
     /// The items that passed the batch rules, each with its own context, in
     /// submission order.
-    pub items: Vec<BatchItem<M>>,
+    pub items: Vec<BatchItem>,
     /// The context the request as a whole is answered and forwarded under:
     /// the one every item shares, or the default context when the items of an
     /// `application/ld+json` batch name different ones.
@@ -278,8 +252,8 @@ impl<'b> BatchArrayItem<'b> {
         }
     }
 
-    /// Admit the item, whose `id` is `entity_id`, as an entity and the
-    /// `@context` member it carried.
+    /// Admit the item, whose `id` is `entity_id`, and read the `@context`
+    /// member it carried.
     ///
     /// # Errors
     ///
@@ -287,9 +261,9 @@ impl<'b> BatchArrayItem<'b> {
     /// when the item carries a number the model cannot represent, or carries
     /// an `@context` its representation forbids or lacks one it requires
     /// (clause 6.3.5). Clause 5.6.7.4 reports these per entity, leaving the
-    /// rest of the batch intact. An item that is not an entity is decoded into
-    /// its refusal, held until the context it names was admitted.
-    fn admit<M: MemberReading>(self, entity_id: &Uri, content_kind: ContentKind) -> Result<DecodedItem<M>, BatchItemRefusal> {
+    /// rest of the batch intact. Whether the item is an entity is judged once
+    /// the context it names was admitted.
+    fn admit(self, entity_id: &Uri, content_kind: ContentKind) -> Result<ItemAdmission, BatchItemRefusal> {
         IdentifierTooLong::check(entity_id.as_str())?;
         let text = self.text.get().as_bytes();
         admit_json_text(text)?;
@@ -306,9 +280,7 @@ impl<'b> BatchArrayItem<'b> {
             (ContentKind::Json, None) | (ContentKind::LdJson, Some(_)) => {}
         }
 
-        let entity = Entity::<M>::from_request_text(text).map_err(|source| BatchItemRefusal::from(UndecodableBody::of_text::<Entity<M>>(text, source)));
-        Ok(DecodedItem {
-            entity,
+        Ok(ItemAdmission {
             own_context: context,
             embedded,
         })
@@ -317,10 +289,10 @@ impl<'b> BatchArrayItem<'b> {
 
 /// Parse a batch request body with per-entity error handling.
 ///
-/// Every decoded entity comes back with the context it is read against: its
+/// Every item comes back as its text, with the context it is read against: its
 /// own `@context` member for an `application/ld+json` batch, the request's
 /// `Link` context for an `application/json` one. A body at or above the
-/// published decode threshold is decoded on the blocking pool.
+/// published decode threshold is parsed on the blocking pool.
 ///
 /// # Errors
 ///
@@ -333,7 +305,7 @@ impl<'b> BatchArrayItem<'b> {
 /// [`BatchEntityError`] list, leaving the rest of the batch intact. The clause
 /// 6.3.4 media-type and payload-length refusals are not among them:
 /// [`BatchBody`] raised those before this was reached.
-pub async fn parse_batch_entities<M: MemberReading + Send + 'static>(batch: &BatchBody, uri: &HttpUri) -> Result<ParsedBatch<M>, ProblemResponse> {
+pub async fn parse_batch_entities(batch: &BatchBody, uri: &HttpUri) -> Result<ParsedBatch, ProblemResponse> {
     let body = batch.body.clone(); // clone: a reference-count bump; the decode may run on the blocking pool
     let link_context = batch.link_context.clone(); // clone: the decode may run on the blocking pool, which borrows nothing
     let (content_kind, value_limit) = (batch.content_kind, batch.value_limit);
@@ -351,12 +323,12 @@ pub async fn parse_batch_entities<M: MemberReading + Send + 'static>(batch: &Bat
 /// # Errors
 ///
 /// Returns the [`BatchBodyRefusal`] that fails the request as a whole.
-fn decode_batch<M: MemberReading>(
+fn decode_batch(
     body: &Bytes,
     content_kind: ContentKind,
     link_context: ContextSpec,
     value_limit: Option<RequestJsonValueLimit>,
-) -> Result<ParsedBatch<M>, BatchBodyRefusal> {
+) -> Result<ParsedBatch, BatchBodyRefusal> {
     // Counted before anything is built, so a body of too many values costs
     // its bytes and nothing more.
     refuse_values_past_budget(body, value_limit)?;
@@ -374,10 +346,11 @@ fn decode_batch<M: MemberReading>(
     for (index, item) in items.into_iter().enumerate() {
         let item = BatchArrayItem::read(item)?;
         let entity_id = item.entity_id(index)?;
+        let text = body.slice_ref(item.text.get().as_bytes());
         match item.admit(&entity_id, content_kind) {
-            Ok(DecodedItem { entity, own_context, embedded }) => admitted.push(BatchItem {
+            Ok(ItemAdmission { own_context, embedded }) => admitted.push(BatchItem {
                 entity_id,
-                entity,
+                text,
                 context: contexts.context_of(own_context),
                 embedded,
             }),
@@ -396,8 +369,9 @@ fn decode_batch<M: MemberReading>(
 #[cfg(test)]
 mod tests {
     use crate::{
+        batch_item_decoding::{BatchItem, entity_of},
         blocking_decode::BlockingDecodePolicy,
-        entity_batch::{BatchBody, BatchItem, ParsedBatch, parse_batch_entities},
+        entity_batch::{BatchBody, ParsedBatch, parse_batch_entities},
         request_json_value_limit::RequestJsonValueLimit,
     };
     use andromeda_http_response::problem_response::ProblemResponse;
@@ -411,6 +385,7 @@ mod tests {
         error_type::NgsiLdErrorType,
         problem_detail::ProblemClassification,
     };
+    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
     use axum::{
         body::{Body, to_bytes},
         extract::FromRequest,
@@ -436,8 +411,8 @@ mod tests {
     async fn parsed(batch: &BatchBody) -> (Vec<Entity>, Vec<BatchEntityError>) {
         let ParsedBatch { items, mut errors, .. } = parse_batch_entities(batch, &batch_uri()).await.expect("batch parses");
         let mut entities = Vec::new();
-        for BatchItem { entity_id, entity, .. } in items {
-            match entity {
+        for BatchItem { entity_id, text, .. } in items {
+            match entity_of(&text, CoreTermAliases::keyword_spellings()) {
                 Ok(entity) => entities.push(entity),
                 Err(refusal) => errors.push(refusal.against(entity_id)),
             }
@@ -504,7 +479,7 @@ mod tests {
             r#"[{"@context":"https://example.org/a","id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property","value":1,"@context":{}}},{"@context":"https://example.org/a","id":"urn:ngsi-ld:Vehicle:2","type":"Vehicle"}]"#,
         )
         .await;
-        let ParsedBatch { items, errors, .. } = parse_batch_entities::<AttributeValue>(&batch, &batch_uri()).await.expect("batch parses");
+        let ParsedBatch { items, errors, .. } = parse_batch_entities(&batch, &batch_uri()).await.expect("batch parses");
         assert!(errors.is_empty(), "{errors:?}");
         let findings: Vec<(String, Option<String>)> = items
             .iter()
@@ -525,9 +500,7 @@ mod tests {
         // malformed batch content and fails the whole request as BadRequestData,
         // not the InvalidRequest a missing id raises.
         let batch = json_batch(r#"[{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle"},null]"#).await;
-        let error = parse_batch_entities::<AttributeValue>(&batch, &batch_uri())
-            .await
-            .expect_err("a null item fails the request");
+        let error = parse_batch_entities(&batch, &batch_uri()).await.expect_err("a null item fails the request");
         pretty_assertions::assert_eq!(error.problem().error_type(), NgsiLdErrorType::BadRequestData);
     }
 
@@ -540,7 +513,7 @@ mod tests {
     /// The whole-request refusal a batch body draws.
     async fn request_refusal(body: &str) -> ProblemResponse {
         let batch = json_batch(body).await;
-        match parse_batch_entities::<AttributeValue>(&batch, &batch_uri()).await {
+        match parse_batch_entities(&batch, &batch_uri()).await {
             Ok(parsed) => panic!(
                 "the request was to fail as a whole, parsed {} entities and {:?}",
                 parsed.items.len(),
@@ -726,7 +699,7 @@ mod tests {
             context,
             shared_context,
             errors,
-        } = parse_batch_entities::<AttributeValue>(&batch, &batch_uri()).await.expect("batch parses");
+        } = parse_batch_entities(&batch, &batch_uri()).await.expect("batch parses");
 
         assert!(errors.is_empty(), "{errors:?}");
         assert!(shared_context.is_none(), "the items of an ld+json batch each name their own context");
@@ -754,7 +727,7 @@ mod tests {
         )
         .await;
 
-        let ParsedBatch { items, context, .. } = parse_batch_entities::<AttributeValue>(&batch, &batch_uri()).await.expect("batch parses");
+        let ParsedBatch { items, context, .. } = parse_batch_entities(&batch, &batch_uri()).await.expect("batch parses");
 
         let written = JsonLiteral::admit(&json!(["https://a.example/c.jsonld", "https://b.example/c.jsonld", "https://a.example/c.jsonld"]).to_string())
             .expect("an admissible literal");
@@ -784,7 +757,7 @@ mod tests {
             context,
             shared_context,
             ..
-        } = parse_batch_entities::<AttributeValue>(&batch, &batch_uri()).await.expect("batch parses");
+        } = parse_batch_entities(&batch, &batch_uri()).await.expect("batch parses");
 
         pretty_assertions::assert_eq!(context, link);
         assert!(items.iter().all(|item| *item.context.spec() == link));
@@ -961,7 +934,7 @@ mod tests {
         request.extensions_mut().insert(RequestJsonValueLimit::new(JsonValueLimit::new(ten)));
         let batch = admitted_batch(request).await;
 
-        let refusal = match parse_batch_entities::<AttributeValue>(&batch, &batch_uri()).await {
+        let refusal = match parse_batch_entities(&batch, &batch_uri()).await {
             Ok(parsed) => panic!(
                 "the request was to fail as a whole, parsed {} entities and {:?}",
                 parsed.items.len(),
@@ -999,11 +972,11 @@ mod tests {
                     .body(Body::from(body))
                     .expect("request builds");
                 request.extensions_mut().insert(BlockingDecodePolicy::new(threshold, NonZeroUsize::MIN));
-                match parse_batch_entities::<AttributeValue>(&admitted_batch(request).await, &batch_uri()).await {
+                match parse_batch_entities(&admitted_batch(request).await, &batch_uri()).await {
                     Ok(ParsedBatch { items, errors, .. }) => Ok((
                         items
                             .iter()
-                            .map(|item| match &item.entity {
+                            .map(|item| match entity_of::<AttributeValue>(&item.text, CoreTermAliases::keyword_spellings()) {
                                 Ok(entity) => serde_json::to_value(entity).expect("an entity serializes"),
                                 Err(refusal) => serde_json::Value::String(refusal.to_string()),
                             })

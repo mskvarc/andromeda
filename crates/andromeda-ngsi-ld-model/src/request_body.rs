@@ -6,6 +6,12 @@
 //! `@context` member is not part of the resource: clause 6.3.5 has an
 //! `application/ld+json` body name its context there, and the transport reads
 //! it before the body is decoded, so the decoding skips it.
+//!
+//! The body is read "according to the @context" (clause 5.5.4): a member
+//! written `@id` or `@type` (clause 4.4), or under a term the request's
+//! context defines for a core term (clause 5.5.7), is read as that core term.
+//! The decoding takes the [`CoreTermAliases`] of the admitted context and
+//! applies them through the one reader every compact document is read with.
 
 use crate::{
     attribute::member_reading::MemberReading,
@@ -17,7 +23,11 @@ use crate::{
     snapshot_patch::SnapshotPatch,
 };
 use andromeda_json_literal::piece::JsonPiece;
-use andromeda_ngsi_ld_representation::compact_node::produced_node::ProducedNode;
+use andromeda_ngsi_ld_representation::{
+    aliased_deserializer::AliasedDeserializer,
+    compact_node::{aliased_node::AliasedNode, produced_node::ProducedNode},
+    core_term_aliases::CoreTermAliases,
+};
 use andromeda_ngsi_ld_vocabulary::keyword;
 use serde::{
     Deserialize,
@@ -38,16 +48,18 @@ use std::{convert::Infallible, fmt, marker::PhantomData};
 /// A resource an NGSI-LD request body is decoded into.
 pub trait RequestBody: DeserializeOwned {
     /// Decode the resource from the JSON text of a request body, skipping its
-    /// top-level `@context` member.
+    /// top-level `@context` member, each member read under the core term
+    /// `aliases` says it stands for.
     ///
     /// The result is the one the type's own decoding gives for the body with
-    /// that member removed, read as `serde_json`'s streaming reader reads it.
+    /// that member removed and its core terms spelled as such, read as
+    /// `serde_json`'s streaming reader reads it.
     ///
     /// # Errors
     ///
     /// Returns the reader's failure, positioned in the text.
-    fn from_request_text(text: &[u8]) -> Result<Self, serde_json::Error> {
-        read_context_free(text, DeserializedFromMembers::<Self>(PhantomData))
+    fn from_request_text(text: &[u8], aliases: &CoreTermAliases) -> Result<Self, serde_json::Error> {
+        read_context_free(text, aliases, DeserializedFromMembers::<Self>(PhantomData))
     }
 }
 
@@ -65,19 +77,21 @@ impl<M: MemberReading> RequestBody for Entity<M> {
     ///
     /// Each member is read from the slice of text it is, a `GeoProperty`'s
     /// geometry without any JSON tree, and every value the entity holds as
-    /// JSON is admitted with its numbers in their canonical spelling.
-    fn from_request_text(text: &[u8]) -> Result<Entity<M>, serde_json::Error> {
+    /// JSON is admitted with its numbers in their canonical spelling. The
+    /// members a producer may not supply are left out once their names are
+    /// read as core terms, so no alias reaches a system member.
+    fn from_request_text(text: &[u8], aliases: &CoreTermAliases) -> Result<Entity<M>, serde_json::Error> {
         let raw: &RawValue = serde_json::from_slice(text)?;
-        Entity::<M>::from_node(ProducedNode::new(JsonPiece::new(raw))).map_err(refused)
+        Entity::<M>::from_node(ProducedNode::new(AliasedNode::new(JsonPiece::new(raw), aliases))).map_err(refused)
     }
 }
 
 impl<M: MemberReading> RequestBody for EntityPatch<M> {
     /// Decode a partial Entity from the JSON text of a request body, as
     /// [`Entity`] is decoded.
-    fn from_request_text(text: &[u8]) -> Result<EntityPatch<M>, serde_json::Error> {
+    fn from_request_text(text: &[u8], aliases: &CoreTermAliases) -> Result<EntityPatch<M>, serde_json::Error> {
         let raw: &RawValue = serde_json::from_slice(text)?;
-        EntityPatch::<M>::from_node(ProducedNode::new(JsonPiece::new(raw))).map_err(refused)
+        EntityPatch::<M>::from_node(ProducedNode::new(AliasedNode::new(JsonPiece::new(raw), aliases))).map_err(refused)
     }
 }
 
@@ -89,15 +103,15 @@ fn refused(error: NodeReadError<Infallible>) -> serde_json::Error {
     }
 }
 
-/// Read the object `text` holds with `visitor`, its `@context` member
-/// skipped.
+/// Read the object `text` holds with `visitor` through `aliases`, its
+/// `@context` member skipped.
 ///
 /// # Errors
 ///
 /// Returns the reader's failure, trailing content included.
-fn read_context_free<'de, V: Visitor<'de>>(text: &'de [u8], visitor: V) -> Result<V::Value, serde_json::Error> {
+fn read_context_free<'de, V: Visitor<'de>>(text: &'de [u8], aliases: &CoreTermAliases, visitor: V) -> Result<V::Value, serde_json::Error> {
     let mut reader = JsonReader::from_slice(text);
-    let read = (&mut reader).deserialize_map(ContextFree(visitor))?;
+    let read = AliasedDeserializer::new(&mut reader, aliases).deserialize_map(ContextFree(visitor))?;
     reader.end()?;
     Ok(read)
 }

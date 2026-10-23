@@ -46,7 +46,7 @@ pub(crate) async fn update(
     // Clause 5.5.4 judges the payload "according to the @context", so the
     // context is admitted before anything is read under it (clause 5.5.7).
     let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_instance(&uri)?;
-    let patch = body.admitted(&context)?;
+    let patch = body.admitted(&context).await?;
     let service = &state.entities;
     let is_local = params.local.unwrap_or(false);
     let selector = service

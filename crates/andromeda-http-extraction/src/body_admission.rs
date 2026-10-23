@@ -5,7 +5,7 @@
 //! the number range on the text, and the clause 6.3.5 rules on the top-level
 //! `@context`. The values are counted, the numbers checked and the context read
 //! without building the body, and the body is handed on as its text, decoded
-//! straight into its domain type by the extractor that asked.
+//! straight into its domain type once its context was admitted.
 
 use crate::{
     addressed_uri::addressed_request_uri,
@@ -42,6 +42,9 @@ pub(crate) struct AdmittedBody {
     pub(crate) context: ContextSpec,
     /// The request URI, the `instance` of any later rejection.
     pub(crate) uri: Uri,
+    /// How the body is decoded beside the executor once its context was
+    /// admitted, when the stack published it.
+    pub(crate) blocking_decode: Option<BlockingDecodePolicy>,
 }
 
 /// The user `@context` a client body submitted: the context it names and the
@@ -123,7 +126,7 @@ impl ReadBody {
             link_context,
             uri,
             value_limit,
-            blocking_decode: _,
+            blocking_decode,
         } = self;
         // Counted before anything is built, so a payload of too many values
         // costs its bytes and nothing more.
@@ -163,7 +166,12 @@ impl ReadBody {
             PayloadCarrier::LinkHeader => ContextSpec::from_request(link_context.map_or(RequestContext::Default, RequestContext::Link)),
         };
 
-        Ok(AdmittedBody { text: bytes, context, uri })
+        Ok(AdmittedBody {
+            text: bytes,
+            context,
+            uri,
+            blocking_decode,
+        })
     }
 }
 

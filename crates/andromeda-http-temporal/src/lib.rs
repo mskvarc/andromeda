@@ -42,7 +42,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-temporal",
         "andromeda-tenancy",
     ],
-    allow_workspace_dev_dependencies: ["andromeda-context-commit", "andromeda-ngsi-ld-geometry", "andromeda-persistence-failure"],
+    allow_workspace_dev_dependencies: ["andromeda-context-commit", "andromeda-ngsi-ld-geometry", "andromeda-ngsi-ld-representation", "andromeda-persistence-failure"],
     allow_production_dependencies: ["axum"],
 }
 

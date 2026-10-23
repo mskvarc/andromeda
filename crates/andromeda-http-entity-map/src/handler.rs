@@ -88,7 +88,7 @@ pub async fn update(
 ) -> Result<Response, ProblemResponse> {
     // The update names no term a context could define, but clause 5.5.7
     // refuses an `@context` embedded below its top level all the same.
-    let body = body.context_free(context)?;
+    let body = body.context_free(context).await?;
     let expires_at = match body.expires_at {
         Some(expires_at) if expires_at > chrono::Utc::now() => expires_at,
         Some(_) => return Err(ExpiryUpdateRefusal::NotInTheFuture.into_problem(uri)),
@@ -291,7 +291,7 @@ pub async fn create_from_query_post(
     // Clause 6.3.5: the query is read against the one context the body
     // extractor resolved, admitted first (clause 5.5.7).
     let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_map_instance(&uri)?;
-    let body = body.admitted(&context)?;
+    let body = body.admitted(&context).await?;
     let query = EntityQueryParameters::try_from(body).with_entity_map_instance(&uri)?;
     validate_entity_map_query(&query, accept.media_type(), &uri)?;
     let window = membership_window(&pagination, &query.page, &query.ordering, &uri)?;
@@ -367,7 +367,7 @@ pub async fn create_temporal_from_query_post(
     // Clause 6.3.5: the query is read against the one context the body
     // extractor resolved, admitted first (clause 5.5.7).
     let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_map_instance(&uri)?;
-    let body = body.admitted(&context)?;
+    let body = body.admitted(&context).await?;
     let params = TemporalQueryParameters::try_from(body).with_entity_map_instance(&uri)?;
     validate_temporal_entity_map_query(&params, state.temporal.linked_retrieval(), &uri)?;
     let window = membership_window(&pagination, &params.page, &params.ordering, &uri)?;

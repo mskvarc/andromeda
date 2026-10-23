@@ -50,7 +50,7 @@ pub async fn create(
     JsonLd { body, context }: JsonLd<SnapshotInput>,
 ) -> Result<Response, ProblemResponse> {
     let context = admit_user_context(&state.engine, context).await.with_snapshot_instance(&uri)?;
-    let input = body.admitted(&context)?;
+    let input = body.admitted(&context).await?;
     let snapshot = state.snapshots.create(input, context).await.with_snapshot_instance(&uri)?;
     state.snapshots.prepare_now();
 
@@ -96,7 +96,7 @@ pub async fn update(
 ) -> Result<Response, ProblemResponse> {
     // A Snapshot patch names no term a context could define, but clause 5.5.7
     // refuses an `@context` embedded below its top level all the same.
-    let patch = body.context_free(context)?;
+    let patch = body.context_free(context).await?;
     let updated = state.snapshots.update(&snapshot_id, patch).await.with_snapshot_instance(&uri)?;
     snapshot_response(accept, &updated, &uri)
 }
@@ -165,7 +165,7 @@ pub async fn clone(
     // A clone names no term a context could define -- its queries keep the
     // context the source Snapshot was created under -- but clause 5.5.7
     // refuses an `@context` embedded below its top level all the same.
-    let input = body.context_free(context)?;
+    let input = body.context_free(context).await?;
     let cloned = state.snapshots.clone_snapshot(&snapshot_id, input).await.with_snapshot_instance(&uri)?;
     state.snapshots.prepare_now();
 

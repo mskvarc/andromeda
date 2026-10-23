@@ -7,6 +7,11 @@
 //! way. An element is refused, never carried unread: clause 4.3.6.8 has a
 //! broker "reject data that is invalid", and clause 6.3.17 reports it with a
 //! warning.
+//!
+//! A peer spells an entity under a context too, and may name a core term by a
+//! term of it (clause 5.5.7, JSON-LD 1.1 API section 6.2.2), so an entity is
+//! held as written and read into the model only once the context it was
+//! written in was processed, through the aliases of that context.
 
 use crate::{
     entity::Entity,
@@ -19,7 +24,10 @@ use andromeda_json_literal::{
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_number::json_value::text_admission::{JsonTextRefusal, admit_json_text};
-use andromeda_ngsi_ld_representation::compact_node::CompactNode;
+use andromeda_ngsi_ld_representation::{
+    compact_node::{CompactNode, aliased_node::AliasedNode},
+    core_term_aliases::CoreTermAliases,
+};
 use andromeda_ngsi_ld_vocabulary::keyword;
 use serde::de::DeserializeOwned;
 use serde_json::value::RawValue;
@@ -85,8 +93,28 @@ pub enum ReceivedDocumentError {
 pub struct ContextualEntity {
     /// The entity's own `@context`, when it named one.
     pub context: Option<JsonLiteral>,
-    /// The entity, its `@context` member not among its members.
-    pub entity: Entity,
+    /// The `id` the entity names as `id` or `@id` (clause 4.4), when it names
+    /// a readable one.
+    pub id: Option<Identifier>,
+    /// The entity as written, its own `@context` among its members.
+    written: Box<RawValue>,
+}
+
+impl ContextualEntity {
+    /// The entity, each member read as the core term `aliases` say it stands
+    /// for, its `@context` member not among its members.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`RefusedNode`] of an entity the model cannot hold, located
+    /// in the entity.
+    pub fn entity(&self, aliases: &CoreTermAliases) -> Result<Entity, RefusedNode> {
+        match Entity::from_node(AliasedNode::new(JsonPiece::new(&self.written), aliases)) {
+            Ok(entity) => Ok(entity),
+            Err(NodeReadError::Refused(refusal)) => Err(refusal),
+            Err(NodeReadError::Unreadable(never)) => match never {},
+        }
+    }
 }
 
 /// The entities a peer answered with: `[..]`, or a single object, element by
@@ -185,35 +213,51 @@ fn contextual_entity(index: usize, element: JsonPiece<'_>) -> ReceivedElement<Co
         Ok(context) => context,
         Err(error) => return refused(ElementRefusalReason::Context(error)),
     };
-    // The compact model's reading skips the `@context` member of the node it
-    // reads, so the entity is read from the element as written.
-    match Entity::from_node(element) {
-        Ok(entity) => ReceivedElement::Read(ContextualEntity { context, entity }),
-        Err(error) => refused(match error {
-            NodeReadError::Refused(refusal) => ElementRefusalReason::Refused(refusal),
-            NodeReadError::Unreadable(never) => match never {},
-        }),
-    }
+    ReceivedElement::Read(ContextualEntity {
+        context,
+        id: named_id(element),
+        written: element.raw().to_owned(),
+    })
 }
 
-/// The `id` an element names, when it names a readable one.
+/// The `id` an element names as `id` or `@id` (clause 4.4), when it names a
+/// readable one.
 pub(crate) fn named_id(element: JsonPiece<'_>) -> Option<Identifier> {
-    element.member("id").and_then(CompactNode::text).and_then(|id| id.parse().ok())
+    AliasedNode::new(element, CoreTermAliases::keyword_spellings())
+        .member(keyword::ID_ALIAS)
+        .and_then(CompactNode::text)
+        .and_then(|id| id.parse().ok())
 }
 
 #[cfg(test)]
 mod tests {
     use crate::received::{ContextualEntity, ElementRefusalReason, ReceivedDocumentError, ReceivedElement, ReceivedEntities};
+    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
 
     fn read(text: &str) -> Vec<ReceivedElement<ContextualEntity>> {
         ReceivedEntities::from_slice(text.as_bytes()).expect("a document of entities").0
+    }
+
+    /// The entities of `elements`, each read under the keyword spellings, or
+    /// the text of its refusal.
+    fn entities(elements: &[ReceivedElement<ContextualEntity>]) -> Vec<Result<String, String>> {
+        elements
+            .iter()
+            .map(|element| match element {
+                ReceivedElement::Read(contextual) => contextual
+                    .entity(CoreTermAliases::keyword_spellings())
+                    .map(|entity| entity.id.to_string())
+                    .map_err(|refusal| refusal.to_string()),
+                ReceivedElement::Refused(refusal) => Err(refusal.to_string()),
+            })
+            .collect()
     }
 
     const GOOD: &str = r#"{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property","value":50}}"#;
 
     #[test]
     fn an_array_of_entities_is_read_element_by_element() {
-        let elements = read(&format!(r#"[{GOOD},{{"id":"urn:b"}},{GOOD}]"#));
+        let elements = read(&format!(r#"[{GOOD},{{"id":"urn:b","type":"T","type":"U"}},{GOOD}]"#));
         assert!(matches!(
             elements.as_slice(),
             [ReceivedElement::Read(_), ReceivedElement::Refused(_), ReceivedElement::Read(_)]
@@ -223,6 +267,33 @@ mod tests {
         };
         pretty_assertions::assert_eq!(refusal.index, 1);
         pretty_assertions::assert_eq!(refusal.id.as_ref().map(ToString::to_string), Some("urn:b".to_owned()));
+    }
+
+    /// An element is held as written until its context was processed, so an
+    /// element that is no entity is refused only once it is read.
+    #[test]
+    fn an_element_that_is_no_entity_is_refused_when_read() {
+        let elements = read(&format!(r#"[{GOOD},{{"id":"urn:b"}}]"#));
+        let read = entities(&elements);
+        pretty_assertions::assert_eq!(read[0], Ok("urn:ngsi-ld:Vehicle:1".to_owned()));
+        assert!(read[1].is_err(), "{read:?}");
+        let [_, ReceivedElement::Read(typeless)] = elements.as_slice() else {
+            panic!("both elements are held: {elements:?}");
+        };
+        pretty_assertions::assert_eq!(typeless.id.as_ref().map(ToString::to_string), Some("urn:b".to_owned()));
+    }
+
+    /// Clause 4.4: a peer may spell `id` and `type` as `@id` and `@type`, at
+    /// the entity and on an attribute alike.
+    #[test]
+    fn a_keyword_spelled_entity_reads_typed_and_names_its_id() {
+        let elements = read(r#"[{"@id":"urn:ngsi-ld:Vehicle:9","@type":"Vehicle","speed":{"@type":"Property","value":1}}]"#);
+        let [ReceivedElement::Read(contextual)] = elements.as_slice() else {
+            panic!("one entity is held: {elements:?}");
+        };
+        pretty_assertions::assert_eq!(contextual.id.as_ref().map(ToString::to_string), Some("urn:ngsi-ld:Vehicle:9".to_owned()));
+        let entity = contextual.entity(CoreTermAliases::keyword_spellings()).expect("the entity reads");
+        assert!(entity.attrs.contains_key("speed"), "{entity:?}");
     }
 
     #[test]
@@ -237,19 +308,19 @@ mod tests {
             panic!("one entity is read: {elements:?}");
         };
         pretty_assertions::assert_eq!(contextual.context.as_ref().map(ToString::to_string), Some(r#""https://x/c.jsonld""#.to_owned()));
-        assert!(contextual.entity.attrs.is_empty(), "@context is no attribute");
+        let entity = contextual.entity(CoreTermAliases::keyword_spellings()).expect("the entity reads");
+        assert!(entity.attrs.is_empty(), "@context is no attribute");
     }
 
     /// A member the model cannot hold refuses the entity, naming
     /// the member, instead of being carried unread.
     #[test]
     fn an_unreadable_member_refuses_the_entity() {
-        let elements = read(r#"[{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property"}}]"#);
-        let [ReceivedElement::Refused(refusal)] = elements.as_slice() else {
-            panic!("the entity is refused: {elements:?}");
+        let read = entities(&read(r#"[{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property"}}]"#));
+        let [Err(refusal)] = read.as_slice() else {
+            panic!("the entity is refused: {read:?}");
         };
-        assert!(matches!(refusal.reason, ElementRefusalReason::Refused(_)));
-        assert!(refusal.to_string().contains("speed"), "{refusal}");
+        assert!(refusal.contains("speed"), "{refusal}");
     }
 
     /// Clause 4.3.6.8 has a broker reject invalid data and clause 6.3.17
@@ -285,7 +356,8 @@ mod tests {
         let [ReceivedElement::Read(contextual)] = elements.as_slice() else {
             panic!("one entity is read");
         };
-        let written = serde_json::to_string(&contextual.entity).expect("the entity writes");
+        let entity = contextual.entity(CoreTermAliases::keyword_spellings()).expect("the entity reads");
+        let written = serde_json::to_string(&entity).expect("the entity writes");
         assert!(written.contains("1.1"), "{written}");
     }
 

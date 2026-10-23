@@ -49,7 +49,7 @@ pub async fn update_attr_instance(
     // Clause 5.5.4 judges the payload "according to the @context", so the
     // context is admitted before anything is read under it (clause 5.5.7).
     let context = admit_request_context(state.temporal.engine(), context, &uri).await?;
-    let payload = body.admitted(&context)?;
+    let payload = body.admitted(&context).await?;
     let service = &state.temporal;
     let path_suffix = format!("/attrs/{attr_id}/{instance_id}");
     // Clause 4.5.7 carries an `instanceId` as a URI; which of the two stored

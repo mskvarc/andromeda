@@ -71,7 +71,11 @@ use andromeda_entity::{
     error::EntityError,
     write_kind::{AttributeWriteKind, BatchWriteKind, EntityWriteKind},
 };
-use andromeda_http_extraction::entity_batch::{BatchBody, BatchItem, ParsedBatch, parse_batch_entities};
+use andromeda_http_extraction::{
+    batch_item_decoding::{AdmittedItem, BatchItem, DecodedItem},
+    blocking_decode::{BlockingDecodePolicy, DecodeTaskFailure, decode_payload},
+    entity_batch::{BatchBody, ParsedBatch, parse_batch_entities},
+};
 use andromeda_http_response::{batch_projection::batch_entity_error, classified_report::ClassifiedReport, problem_response::ProblemResponse};
 use andromeda_jsonld::{
     batch_contexts::{AdmittedBatchContext, BatchContext, BatchContextId, EntityContextAdmission},
@@ -82,7 +86,10 @@ use andromeda_jsonld::{
 };
 use andromeda_ngsi_ld_expansion::written_member::WrittenMember;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_model::entity::{Entity, EntityPatch};
+use andromeda_ngsi_ld_model::{
+    attribute::member_reading::MemberReading,
+    entity::{Entity, EntityPatch},
+};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType};
 use andromeda_ngsi_ld_representation::compact_key_admission::CompactKeyError;
 use axum::http::Uri as HttpUri;
@@ -99,6 +106,10 @@ pub(crate) enum WrittenPayloadRefusal {
     /// envelope or a geometry where the operation does not admit it.
     #[error(transparent)]
     Placement(#[from] EntityError),
+    /// The task decoding the payload beside the executor ended without an
+    /// outcome.
+    #[error(transparent)]
+    Decode(#[from] DecodeTaskFailure),
 }
 
 impl EntityHttpClassify for WrittenPayloadRefusal {
@@ -109,6 +120,7 @@ impl EntityHttpClassify for WrittenPayloadRefusal {
             // makes a value it refuses.
             WrittenPayloadRefusal::Key(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
             WrittenPayloadRefusal::Placement(source) => source.classify_for_entity_http(),
+            WrittenPayloadRefusal::Decode(source) => source.report(),
         }
     }
 }
@@ -229,6 +241,7 @@ pub(crate) async fn admitted_batch_entities<W: BatchWriteKind>(
         async |context: &BatchContext| context.admit(engine).await.map_err(EntityError::from),
         shared,
         items,
+        batch.blocking_decode(),
         &mut refused,
     )
     .await
@@ -248,43 +261,70 @@ pub(crate) async fn admitted_batch_entities<W: BatchWriteKind>(
 /// name admitted once through `admit_context`, the `shared` one the request
 /// already admitted for every entity never again.
 ///
+/// Every item is decoded once its context was admitted, through the aliases of
+/// that context (clause 5.5.4: "according to the @context"); the items are
+/// decoded together, on the blocking pool when they are large. Each refusal is
+/// reported in the order of the items it refuses.
+///
 /// # Errors
 ///
 /// As [`admitted_batch_entities`]: a context refused for anything but being
-/// unretrievable fails the operation.
-async fn screened_batch_entities<M: WrittenMember>(
+/// unretrievable or unprocessable fails the operation, and so does a decoding
+/// task that ends without an outcome.
+async fn screened_batch_entities<M: WrittenMember + MemberReading + Send + 'static>(
     mut admit_context: impl AsyncFnMut(&BatchContext) -> Result<EntityContextAdmission, EntityError>,
     shared: Option<AdmittedBatchContext>,
-    items: Vec<BatchItem<M>>,
+    items: Vec<BatchItem>,
+    blocking_decode: Option<&BlockingDecodePolicy>,
     refused: &mut Vec<BatchEntityError>,
 ) -> Result<Vec<SubmittedEntity<M>>, WrittenPayloadRefusal> {
     let mut decided: HashMap<BatchContextId, ContextAdmission> = shared.into_iter().map(|shared| (shared.id(), ContextAdmission::Admitted(shared))).collect();
-    let mut submitted = Vec::with_capacity(items.len());
-    for BatchItem {
-        entity_id,
-        entity,
-        context,
-        embedded,
-    } in items
-    {
-        let admission = match decided.entry(context.id()) {
+    let mut readable = Vec::with_capacity(items.len());
+    for item in items {
+        let admission = match decided.entry(item.context.id()) {
             Entry::Occupied(seen) => seen.into_mut(),
-            Entry::Vacant(slot) => slot.insert(context_admission(admit_context(&context).await)?),
+            Entry::Vacant(slot) => slot.insert(context_admission(admit_context(&item.context).await)?),
         };
         let admitted = match admission {
             ContextAdmission::Admitted(admitted) => admitted,
             ContextAdmission::EntitiesRefused(refusal) => {
-                refused.push(batch_entity_error(entity_id, refusal, EntityHttpClassify::classify_for_entity_http));
+                readable.push(Err(Box::new(batch_entity_error(
+                    item.entity_id,
+                    refusal,
+                    EntityHttpClassify::classify_for_entity_http,
+                ))));
                 continue;
             }
         };
         // Clause 5.5.7: an `@context` the entity embedded below its own top
         // level is that entity's refusal, judged once its context loaded.
-        if let Some(found) = embedded {
+        if let Some(found) = item.embedded {
             let refusal = WrittenPayloadRefusal::Placement(EntityError::from(JsonLdError::from(found)));
-            refused.push(batch_entity_error(entity_id, &refusal, EntityHttpClassify::classify_for_entity_http));
+            readable.push(Err(Box::new(batch_entity_error(
+                item.entity_id,
+                &refusal,
+                EntityHttpClassify::classify_for_entity_http,
+            ))));
             continue;
         }
+        readable.push(Ok(item.admitted(admitted.clone()))); // clone: every entity naming the context holds the shared handle
+    }
+
+    let bytes = readable.iter().filter_map(|item| item.as_ref().ok()).map(AdmittedItem::len).sum();
+    let outcomes = decode_payload(blocking_decode, bytes, move || {
+        readable.into_iter().map(|item| item.map(AdmittedItem::decoded::<M>)).collect::<Vec<_>>()
+    })
+    .await?;
+
+    let mut submitted = Vec::with_capacity(outcomes.len());
+    for outcome in outcomes {
+        let DecodedItem { entity_id, context, entity } = match outcome {
+            Ok(item) => item,
+            Err(refusal) => {
+                refused.push(*refusal);
+                continue;
+            }
+        };
         // Clause 5.5.4: an item that is no entity is judged under the context
         // it named, once that context loaded.
         let entity = match entity {
@@ -295,10 +335,7 @@ async fn screened_batch_entities<M: WrittenMember>(
             }
         };
         match screen_compact_entity(&entity) {
-            Ok(()) => submitted.push(SubmittedEntity {
-                entity,
-                context: admitted.clone(), // clone: every entity naming the context holds the shared handle
-            }),
+            Ok(()) => submitted.push(SubmittedEntity { entity, context }),
             Err(refusal) => refused.push(batch_entity_error(
                 entity.id.into(),
                 &WrittenPayloadRefusal::Key(refusal),
@@ -348,7 +385,7 @@ mod tests {
         written_payload_admission::{WrittenPayloadRefusal, screened_batch_entities},
     };
     use andromeda_entity::error::EntityError;
-    use andromeda_http_extraction::{batch_item_refusal::BatchItemRefusal, entity_batch::BatchItem, undecodable_body::UndecodableBody};
+    use andromeda_http_extraction::batch_item_decoding::BatchItem;
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{
         batch_contexts::{BatchContext, BatchContexts, EntityContextAdmission},
@@ -357,9 +394,10 @@ mod tests {
         engine::processor::JsonLdEngine,
         error::JsonLdError,
     };
-    use andromeda_ngsi_ld_model::{entity::Entity, request_body::RequestBody};
+    use andromeda_ngsi_ld_model::{attribute::instance::AttributeValue, entity::Entity};
     use andromeda_ngsi_ld_problem_details::batch_operation::BatchEntityError;
     use andromeda_ngsi_ld_representation::embedded_context_admission::find_embedded_context;
+    use axum::body::Bytes;
     use iri_rs::IriBuf;
     use serde_json::{Value, json};
 
@@ -380,7 +418,7 @@ mod tests {
             .iter()
             .map(|(id, context)| BatchItem {
                 entity_id: id.parse().expect("a valid URI"),
-                entity: Ok(entity(&json!({ "id": id, "type": "Building" }))),
+                text: Bytes::from(json!({ "id": id, "type": "Building" }).to_string()),
                 context: contexts.context_of(Some(
                     JsonLiteral::admit(context).unwrap_or_else(|_| JsonLiteral::string(context).expect("a JSON string")),
                 )),
@@ -430,13 +468,14 @@ mod tests {
     #[tokio::test]
     async fn an_entity_embedding_a_context_is_refused_on_its_own() {
         let mut refused = Vec::new();
-        let rendered = screened_batch_entities(
+        let rendered = screened_batch_entities::<AttributeValue>(
             async |context: &BatchContext| admission_of(context).await,
             None,
             items_embedding(
                 &[("urn:ngsi-ld:Building:a", ADMITTED), ("urn:ngsi-ld:Building:b", ADMITTED)],
                 &["urn:ngsi-ld:Building:b"],
             ),
+            None,
             &mut refused,
         )
         .await
@@ -455,10 +494,11 @@ mod tests {
     #[tokio::test]
     async fn an_unretrievable_context_outranks_an_embedded_one() {
         let mut refused = Vec::new();
-        screened_batch_entities(
+        screened_batch_entities::<AttributeValue>(
             async |context: &BatchContext| admission_of(context).await,
             None,
             items_embedding(&[("urn:ngsi-ld:Building:a", UNRETRIEVABLE)], &["urn:ngsi-ld:Building:a"]),
+            None,
             &mut refused,
         )
         .await
@@ -476,12 +516,10 @@ mod tests {
         items(entities)
             .into_iter()
             .map(|item| BatchItem {
-                entity: if undecodable.contains(&item.entity_id.as_str()) {
-                    let text = br#"{"id": "urn:ngsi-ld:Building:x", "type": 5}"#;
-                    let source = <Entity>::from_request_text(text).expect_err("a numeric type is no entity");
-                    Err(BatchItemRefusal::from(UndecodableBody::of_text::<Entity>(text, source)))
+                text: if undecodable.contains(&item.entity_id.as_str()) {
+                    Bytes::from_static(br#"{"id": "urn:ngsi-ld:Building:x", "type": 5}"#)
                 } else {
-                    item.entity
+                    item.text
                 },
                 ..item
             })
@@ -494,7 +532,7 @@ mod tests {
     #[tokio::test]
     async fn an_undecodable_entity_is_refused_once_its_context_loaded() {
         let mut refused = Vec::new();
-        let rendered = screened_batch_entities(
+        let rendered = screened_batch_entities::<AttributeValue>(
             async |context: &BatchContext| admission_of(context).await,
             None,
             items_undecodable(
@@ -505,6 +543,7 @@ mod tests {
                 ],
                 &["urn:ngsi-ld:Building:b", "urn:ngsi-ld:Building:c"],
             ),
+            None,
             &mut refused,
         )
         .await
@@ -544,7 +583,7 @@ mod tests {
     #[tokio::test]
     async fn only_the_entities_naming_an_unretrievable_context_are_refused() {
         let mut refused = Vec::new();
-        let rendered = screened_batch_entities(
+        let rendered = screened_batch_entities::<AttributeValue>(
             async |context: &BatchContext| admission_of(context).await,
             None,
             items(&[
@@ -553,6 +592,7 @@ mod tests {
                 ("urn:ngsi-ld:Building:c", ADMITTED),
                 ("urn:ngsi-ld:Building:d", UNRETRIEVABLE),
             ]),
+            None,
             &mut refused,
         )
         .await
@@ -581,10 +621,11 @@ mod tests {
     #[tokio::test]
     async fn a_scoped_context_fails_the_operation() {
         let mut refused = Vec::new();
-        let outcome = screened_batch_entities(
+        let outcome = screened_batch_entities::<AttributeValue>(
             async |context: &BatchContext| admission_of(context).await,
             None,
             items(&[("urn:ngsi-ld:Building:a", ADMITTED), ("urn:ngsi-ld:Building:b", SCOPED)]),
+            None,
             &mut refused,
         )
         .await;
@@ -608,7 +649,7 @@ mod tests {
             .iter()
             .map(|id| BatchItem {
                 entity_id: id.parse().expect("a valid URI"),
-                entity: Ok(entity(&json!({ "id": id, "type": "Building" }))),
+                text: Bytes::from(json!({ "id": id, "type": "Building" }).to_string()),
                 context: contexts.context_of(None),
                 embedded: None,
             })
@@ -616,13 +657,14 @@ mod tests {
         let mut admissions = 0_usize;
         let mut refused = Vec::new();
 
-        let rendered = screened_batch_entities(
+        let rendered = screened_batch_entities::<AttributeValue>(
             async |context: &BatchContext| {
                 admissions += 1;
                 admission_of(context).await
             },
             Some(admitted),
             items,
+            None,
             &mut refused,
         )
         .await
@@ -638,7 +680,7 @@ mod tests {
     async fn a_shared_context_is_admitted_once() {
         let mut admissions = 0_usize;
         let mut refused = Vec::new();
-        let rendered = screened_batch_entities(
+        let rendered = screened_batch_entities::<AttributeValue>(
             async |context: &BatchContext| {
                 admissions += 1;
                 admission_of(context).await
@@ -649,6 +691,7 @@ mod tests {
                 ("urn:ngsi-ld:Building:b", ADMITTED),
                 ("urn:ngsi-ld:Building:c", ADMITTED),
             ]),
+            None,
             &mut refused,
         )
         .await

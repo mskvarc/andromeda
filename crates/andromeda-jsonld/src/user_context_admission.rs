@@ -149,9 +149,10 @@ impl AdmittedContext {
         }
     }
 
-    /// The terms the context defines for core terms.
+    /// The terms the context defines for core terms, shared with the
+    /// processed context they were read from.
     #[must_use]
-    pub fn aliases(&self) -> &CoreTermAliases {
+    pub const fn aliases(&self) -> &Arc<CoreTermAliases> {
         &self.aliases
     }
 
@@ -552,7 +553,7 @@ mod tests {
         pretty_assertions::assert_eq!(admitted.aliases().core_name(Cow::Borrowed("kind")), "type");
         pretty_assertions::assert_eq!(admitted.aliases().core_name(Cow::Borrowed("v")), "value");
         pretty_assertions::assert_eq!(admitted.aliases().core_name(Cow::Borrowed("@id")), "id");
-        pretty_assertions::assert_eq!(AdmittedContext::core_only().aliases(), CoreTermAliases::keyword_spellings());
+        pretty_assertions::assert_eq!(&**AdmittedContext::core_only().aliases(), CoreTermAliases::keyword_spellings());
     }
 
     /// Clause 5.5.4 judges data "according to the @context", so a context that

@@ -68,7 +68,7 @@ where
     T: RequestBody + Send + 'static,
 {
     let JsonLd { body, context } = JsonLd::<T>::from_request(with_content_length(request), &()).await?;
-    let value = body.admitted(&AdmittedContext::core_only()).map_err(ExtractorRejection::Classified)?;
+    let value = body.admitted(&AdmittedContext::core_only()).await.map_err(ExtractorRejection::Classified)?;
     Ok(Typed { value, context })
 }
 

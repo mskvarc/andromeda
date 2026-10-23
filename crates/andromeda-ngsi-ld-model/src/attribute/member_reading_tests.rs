@@ -16,7 +16,7 @@ use crate::{
 };
 use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, time::rendering::instant_text};
-use andromeda_ngsi_ld_representation::attribute_type_validation::AttributeNodeFault;
+use andromeda_ngsi_ld_representation::{attribute_type_validation::AttributeNodeFault, core_term_aliases::CoreTermAliases};
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json, value::RawValue};
 use std::{convert::Infallible, thread};
@@ -372,7 +372,7 @@ fn a_system_member_a_producer_writes_is_ignored() {
         "speed": {"type": "Property", "value": 1, "createdAt": true, "modifiedAt": "x"}
     })
     .to_string();
-    let entity = <Entity>::from_request_text(text.as_bytes()).expect("the system members are ignored");
+    let entity = <Entity>::from_request_text(text.as_bytes(), CoreTermAliases::keyword_spellings()).expect("the system members are ignored");
     assert!(entity.created_at.is_none());
     let speed = entity.attrs.get("speed").and_then(|speed| speed.instances().next()).expect("the attribute");
     assert!(speed.common().created_at.is_none() && speed.common().modified_at.is_none());
@@ -489,7 +489,7 @@ fn a_chain_of_sub_attributes_as_long_as_the_reader_admits_is_read_on_a_small_sta
     let length = thread::Builder::new()
         .stack_size(512 * 1024)
         .spawn(move || {
-            let entity = <Entity>::from_request_text(text.as_bytes()).expect("the entity is read");
+            let entity = <Entity>::from_request_text(text.as_bytes(), CoreTermAliases::keyword_spellings()).expect("the entity is read");
             chain_length(entity.attrs.get("p").expect("the attribute is read"))
         })
         .expect("the thread starts")

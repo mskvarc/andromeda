@@ -14,7 +14,7 @@ use andromeda_ngsi_ld_model::{
     request_body::RequestBody,
 };
 use andromeda_ngsi_ld_number::json_value::text_admission::admit_json_text;
-use andromeda_ngsi_ld_representation::compact_node::produced_node::ProducedNode;
+use andromeda_ngsi_ld_representation::{compact_node::produced_node::ProducedNode, core_term_aliases::CoreTermAliases};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json, value::RawValue};
 use std::{collections::BTreeMap, fmt::Debug};
@@ -67,7 +67,7 @@ fn through_tree<T: ReadFromNode>(text: &str) -> Result<T, String> {
 /// transport checks them.
 fn through_text<T: RequestBody>(text: &str) -> Result<T, String> {
     admit_json_text(text.as_bytes()).map_err(|error| error.to_string())?;
-    T::from_request_text(text.as_bytes()).map_err(|error| error.to_string())
+    T::from_request_text(text.as_bytes(), CoreTermAliases::keyword_spellings()).map_err(|error| error.to_string())
 }
 
 /// What an attribute member decoded into: its variant, and the same of every

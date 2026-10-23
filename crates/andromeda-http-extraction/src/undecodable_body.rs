@@ -7,12 +7,15 @@
 //! body that failed to decode is therefore decoded once more, on that failure
 //! path alone, by a deserializer that tracks the member it is in, so the
 //! refusal names it. The second decoding reads the text itself, never a JSON
-//! tree built from it.
+//! tree built from it, through the same core term aliases the first one read
+//! it through; the member is tracked beneath them, so the refusal names it as
+//! the client wrote it.
 
+use andromeda_ngsi_ld_representation::{aliased_deserializer::AliasedDeserializer, core_term_aliases::CoreTermAliases};
 use andromeda_ngsi_ld_vocabulary::keyword;
 use serde::de::DeserializeOwned;
 use serde_json::{Deserializer as JsonReader, value::RawValue};
-use serde_path_to_error::Path;
+use serde_path_to_error::{Deserializer as PathTracker, Path, Track};
 use std::collections::BTreeMap;
 use thiserror::Error;
 
@@ -38,21 +41,22 @@ pub enum UndecodableBody {
 }
 
 impl UndecodableBody {
-    /// The failure decoding the admitted body `text` as a `T` ended in with
-    /// `source`, naming the member it failed at.
+    /// The failure decoding the admitted body `text` as a `T` through
+    /// `aliases` ended in with `source`, naming the member it failed at.
     ///
     /// Called only once a decoding has failed. The retracing decode reads the
-    /// text the failed one read, without its top-level `@context` member, which
-    /// no decoding reads, so it fails at the same member.
+    /// text the failed one read, through the same aliases, without its
+    /// top-level `@context` member, which no decoding reads, so it fails at the
+    /// same member.
     #[must_use]
-    pub fn of_text<T: DeserializeOwned>(text: &[u8], source: serde_json::Error) -> UndecodableBody {
+    pub fn of_text<T: DeserializeOwned>(text: &[u8], aliases: &CoreTermAliases, source: serde_json::Error) -> UndecodableBody {
         let context_free = without_context(text);
         let mut reader = JsonReader::from_slice(context_free.as_deref().unwrap_or(text));
-        match serde_path_to_error::deserialize::<_, T>(&mut reader) {
-            Err(retraced) if retraced.path().iter().next().is_some() => UndecodableBody::Member {
-                member: retraced.path().clone(),
-                source,
-            },
+        let mut track = Track::new();
+        let retraced = T::deserialize(AliasedDeserializer::new(PathTracker::new(&mut reader, &mut track), aliases));
+        let member = track.path();
+        match retraced {
+            Err(_) if member.iter().next().is_some() => UndecodableBody::Member { member, source },
             Err(_) | Ok(_) => UndecodableBody::Document { source },
         }
     }
@@ -72,13 +76,14 @@ fn without_context(text: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use crate::undecodable_body::UndecodableBody;
+    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
     use serde::de::DeserializeOwned;
     use std::{collections::HashMap, fmt::Debug};
 
     /// Decode `text` as a `T` and classify the failure.
     fn undecodable<T: DeserializeOwned + Debug>(text: &str) -> UndecodableBody {
         let source = serde_json::from_str::<T>(text).expect_err("the fixture must not decode");
-        UndecodableBody::of_text::<T>(text.as_bytes(), source)
+        UndecodableBody::of_text::<T>(text.as_bytes(), CoreTermAliases::keyword_spellings(), source)
     }
 
     #[test]
@@ -120,9 +125,28 @@ mod tests {
 
         let text = r#"{"@context": "https://example.org/a", "id": "x"}"#;
         let source = serde_json::from_str::<u16>("\"x\"").expect_err("a string is no number");
-        let error = UndecodableBody::of_text::<Strict>(text.as_bytes(), source);
+        let error = UndecodableBody::of_text::<Strict>(text.as_bytes(), CoreTermAliases::keyword_spellings(), source);
         assert!(
             matches!(&error, UndecodableBody::Member { member, .. } if member.to_string() == "id"),
+            "{error:?}"
+        );
+    }
+
+    /// The member is named as the client wrote it, though it was read as the
+    /// core term its spelling stands for.
+    #[test]
+    fn a_failing_member_is_named_as_written() {
+        #[derive(Debug, serde::Deserialize)]
+        struct Typed {
+            #[serde(rename = "id")]
+            _id: u16,
+        }
+
+        let text = r#"{"@id": "x"}"#;
+        let source = serde_json::from_str::<u16>("\"x\"").expect_err("a string is no number");
+        let error = UndecodableBody::of_text::<Typed>(text.as_bytes(), CoreTermAliases::keyword_spellings(), source);
+        assert!(
+            matches!(&error, UndecodableBody::Member { member, .. } if member.to_string() == "@id"),
             "{error:?}"
         );
     }

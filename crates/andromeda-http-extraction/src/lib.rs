@@ -12,6 +12,7 @@ pub mod admitted_temporal_query;
 pub mod api_root;
 mod batch_array;
 pub mod batch_body_refusal;
+pub mod batch_item_decoding;
 pub mod batch_item_refusal;
 pub mod blocking_decode;
 mod body_admission;

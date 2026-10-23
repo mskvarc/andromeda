@@ -15,6 +15,7 @@ use crate::{
 };
 use andromeda_json_literal::piece::JsonPiece;
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json, value::RawValue};
 
@@ -355,17 +356,21 @@ fn a_prohibited_member_is_refused_in_an_entity_a_fragment_and_a_merge_fragment()
             "the node at {at} is refused: the attribute carries the member object, which defines the value of another attribute family and is never present on a Property"
         );
         assert_eq!(
-            <Entity>::from_request_text(text.as_bytes()).map(|_| ()).map_err(|error| error.to_string()),
+            <Entity>::from_request_text(text.as_bytes(), CoreTermAliases::keyword_spellings())
+                .map(|_| ())
+                .map_err(|error| error.to_string()),
             Err(expected.clone()),
             "{payload}"
         );
         assert_eq!(
-            <EntityPatch>::from_request_text(text.as_bytes()).map(|_| ()).map_err(|error| error.to_string()),
+            <EntityPatch>::from_request_text(text.as_bytes(), CoreTermAliases::keyword_spellings())
+                .map(|_| ())
+                .map_err(|error| error.to_string()),
             Err(expected.clone()),
             "{payload}"
         );
         assert_eq!(
-            <EntityPatch<MergeMember>>::from_request_text(text.as_bytes())
+            <EntityPatch<MergeMember>>::from_request_text(text.as_bytes(), CoreTermAliases::keyword_spellings())
                 .map(|_| ())
                 .map_err(|error| error.to_string()),
             Err(expected),

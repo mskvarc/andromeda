@@ -30,7 +30,7 @@ use andromeda_ngsi_ld_expansion::{
     received_state::{ReceivedDocument, ReceivedRefusal, ReceivedState},
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_model::received::ContextualEntity;
+use andromeda_ngsi_ld_model::{node_refusal::RefusedNode, received::ContextualEntity};
 use thiserror::Error;
 
 /// Why one entity of an inbound notification is not re-assembled.
@@ -39,6 +39,10 @@ pub(crate) enum ReceivedEntityRefusal {
     /// The entity's own `@context` does not resolve or process.
     #[error("its own @context cannot be processed: {0}")]
     OwnContext(#[source] ExpansionError),
+    /// The entity, read under the context it was written in, is no entity the
+    /// model can hold.
+    #[error(transparent)]
+    Undecodable(RefusedNode),
     /// The entity does not expand under the context it was written in.
     #[error(transparent)]
     Expansion(#[from] ReceivedRefusal),
@@ -50,25 +54,30 @@ pub(crate) enum ReceivedEntityRefusal {
 
 /// Read one entity of an inbound notification under its own `@context` when
 /// it names one (JSON-LD 1.1: a node's context applies to that node), else
-/// under the notification's, `inbound`.
+/// under the notification's, `inbound`, its members read as the core terms
+/// that context says they stand for.
 ///
 /// # Errors
 ///
 /// Returns [`ReceivedEntityRefusal`] when the entity's own context does not
-/// process or the entity does not expand.
+/// process, the entity is no entity under it, or it does not expand.
 pub(crate) async fn read_notified(
     engine: &JsonLdEngine,
     inbound: &EntityExpansion<'_>,
     contextual: &ContextualEntity,
 ) -> Result<ReceivedDocument, ReceivedEntityRefusal> {
     match &contextual.context {
-        None => Ok(inbound.notified(&contextual.entity).await?),
+        None => {
+            let entity = contextual.entity(inbound.context().aliases()).map_err(ReceivedEntityRefusal::Undecodable)?;
+            Ok(inbound.notified(&entity).await?)
+        }
         Some(own) => {
             // clone: the context specification owns the literal it names
             let expansion = EntityExpansion::prepare(engine, &ContextSpec::from_body(own.clone()))
                 .await
                 .map_err(ReceivedEntityRefusal::OwnContext)?;
-            Ok(expansion.notified(&contextual.entity).await?)
+            let entity = contextual.entity(expansion.context().aliases()).map_err(ReceivedEntityRefusal::Undecodable)?;
+            Ok(expansion.notified(&entity).await?)
         }
     }
 }

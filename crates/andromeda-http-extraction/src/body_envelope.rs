@@ -13,13 +13,14 @@
 
 use andromeda_json_literal::{JsonLiteral, piece::JsonKind};
 use andromeda_ngsi_ld_number::json_value::value_census::MemberName;
+use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
 use andromeda_ngsi_ld_vocabulary::keyword;
 use serde::{
     Deserialize,
     de::{DeserializeSeed, Deserializer, Error as DeserializeError, IgnoredAny, MapAccess, SeqAccess, Visitor},
 };
 use serde_json::Deserializer as JsonReader;
-use std::fmt;
+use std::{borrow::Cow, fmt};
 use thiserror::Error;
 
 /// Why the `@context` of an `application/ld+json` body cannot be read.
@@ -337,7 +338,10 @@ fn read_object<'de, A: MapAccess<'de>>(mut members: A) -> Result<Option<ObjectEn
             return Ok(None);
         }
         first = false;
-        match name.as_str() {
+        // Clause 4.4: an item may spell its `id` as `@id`, which no context
+        // changes; a term a context defines for `@id` is read once the context
+        // was admitted.
+        match CoreTermAliases::keyword_spellings().core_name(Cow::Borrowed(&name)).as_ref() {
             keyword::CONTEXT => envelope.context = Some(members.next_value()?),
             keyword::ID_ALIAS => envelope.id = members.next_value::<IdMember>()?.0,
             _other => {
@@ -371,6 +375,16 @@ mod tests {
         };
         pretty_assertions::assert_eq!(object.id(), Some("urn:ngsi-ld:T:1"));
         pretty_assertions::assert_eq!(read.into_body_context(), Ok(literal(&json!(["https://example.org/a"]))));
+    }
+
+    /// Clause 4.4: an item spelling its `id` as `@id` names it all the same.
+    #[test]
+    fn a_batch_item_id_spelled_at_id_is_read_as_its_id() {
+        let read = envelope(r#"{"@id":"urn:ngsi-ld:T:1","@context":"x"}"#);
+        let BodyEnvelope::Object(object) = &read else {
+            panic!("an object");
+        };
+        pretty_assertions::assert_eq!(object.id(), Some("urn:ngsi-ld:T:1"));
     }
 
     #[test]

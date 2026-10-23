@@ -51,7 +51,7 @@ pub(crate) async fn partial_update_attr(
     // Clause 5.5.4 judges the payload "according to the @context", so the
     // context is admitted before anything is read under it (clause 5.5.7).
     let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_instance(&uri)?;
-    let fragment: MergeMember = body.read_attribute(&attr_id).admitted(&context)?;
+    let fragment: MergeMember = body.admitted_attribute(&attr_id, &context).await?;
     let service = &state.entities;
     let selector = service
         .expand_write_selector(params.entity_type.as_ref(), &context)

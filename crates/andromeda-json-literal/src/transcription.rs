@@ -6,6 +6,7 @@
 //! value is written as text while it is visited, one level at a time, and is
 //! admitted afterwards like any other text; no tree is built.
 
+use crate::LITERAL_CAPTURE;
 use andromeda_ngsi_ld_number::{JsonNumberError, json_value::READER_NESTING_LIMIT};
 use serde::de::{DeserializeSeed, Deserializer, Error, MapAccess, SeqAccess, Visitor};
 use std::fmt;
@@ -22,7 +23,8 @@ const NUMBER_TOKEN: &str = "$serde_json::private::Number";
 #[error("a JSON literal nests deeper than the {READER_NESTING_LIMIT} levels a JSON text may have")]
 struct TooDeep;
 
-/// Write the value `deserializer` delivers as JSON text.
+/// Write the value `deserializer` delivers as JSON text, asked for under
+/// [`LITERAL_CAPTURE`].
 ///
 /// # Errors
 ///
@@ -31,11 +33,13 @@ struct TooDeep;
 /// nesting deeper than [`READER_NESTING_LIMIT`].
 pub(crate) fn transcribed<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     let mut written = String::new();
-    Transcriber {
-        written: &mut written,
-        depth: 0,
-    }
-    .deserialize(deserializer)?;
+    deserializer.deserialize_newtype_struct(
+        LITERAL_CAPTURE,
+        Transcriber {
+            written: &mut written,
+            depth: 0,
+        },
+    )?;
     Ok(written)
 }
 

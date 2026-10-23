@@ -43,7 +43,9 @@
 //! [`core_term_aliases`] is the one rule for a core term written under
 //! another term: the clause 4.4 keyword spellings `@id` and `@type`, and the
 //! terms a context defines for core terms (clause 5.5.7). Every reader of a
-//! compact document applies it, a request body and a compacted entity alike.
+//! compact document applies it, a request body and a compacted entity alike:
+//! [`aliased_deserializer`] applies it to a body decoded straight from its
+//! text.
 //!
 //! How a client *asks* for one is not here. Media-type negotiation, version
 //! conformance and language ranges arrive as HTTP headers and are spelled by
@@ -54,6 +56,7 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod aliased_deserializer;
 pub mod attribute_nesting;
 pub mod attribute_type_validation;
 pub mod compact_key_admission;

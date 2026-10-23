@@ -36,6 +36,7 @@ mod tests {
     use crate::body::entity_map::UpdateEntityMapBody;
     use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_ngsi_ld_model::request_body::RequestBody;
+    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
 
     #[test]
     fn output_only_members_are_accepted_without_becoming_domain_values() {
@@ -53,14 +54,19 @@ mod tests {
     /// Clause 4.6.3 admits at most six fractional-second digits.
     #[test]
     fn an_expires_at_beyond_six_fractional_digits_is_refused() {
-        assert!(UpdateEntityMapBody::from_request_text(br#"{"expiresAt": "2030-01-01T00:00:00.123456789Z"}"#).is_err());
-        assert!(UpdateEntityMapBody::from_request_text(br#"{"expiresAt": "2030-01-01T00:00:00.1234567Z"}"#).is_err());
-        assert!(UpdateEntityMapBody::from_request_text(br#"{"expiresAt": "2030-01-01T00:00:00.123456Z"}"#).is_ok());
+        assert!(UpdateEntityMapBody::from_request_text(br#"{"expiresAt": "2030-01-01T00:00:00.123456789Z"}"#, CoreTermAliases::keyword_spellings()).is_err());
+        assert!(UpdateEntityMapBody::from_request_text(br#"{"expiresAt": "2030-01-01T00:00:00.1234567Z"}"#, CoreTermAliases::keyword_spellings()).is_err());
+        assert!(UpdateEntityMapBody::from_request_text(br#"{"expiresAt": "2030-01-01T00:00:00.123456Z"}"#, CoreTermAliases::keyword_spellings()).is_ok());
     }
 
     #[test]
     fn an_absent_expires_at_reads_as_none() {
-        pretty_assertions::assert_eq!(UpdateEntityMapBody::from_request_text(b"{}").expect("an empty update").expires_at, None);
+        pretty_assertions::assert_eq!(
+            UpdateEntityMapBody::from_request_text(b"{}", CoreTermAliases::keyword_spellings())
+                .expect("an empty update")
+                .expires_at,
+            None
+        );
     }
 
     #[test]
@@ -74,6 +80,7 @@ mod tests {
     fn a_top_level_context_is_skipped_when_the_body_is_read_from_its_text() {
         let body = UpdateEntityMapBody::from_request_text(
             br#"{"@context": ["https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld"], "expiresAt": "2030-01-01T00:00:00Z"}"#,
+            CoreTermAliases::keyword_spellings(),
         )
         .expect("the context is skipped");
         pretty_assertions::assert_eq!(
@@ -84,6 +91,6 @@ mod tests {
 
     #[test]
     fn an_unknown_member_is_rejected_when_the_body_is_read_from_its_text() {
-        assert!(UpdateEntityMapBody::from_request_text(br#"{"bogus": true}"#).is_err());
+        assert!(UpdateEntityMapBody::from_request_text(br#"{"bogus": true}"#, CoreTermAliases::keyword_spellings()).is_err());
     }
 }

@@ -55,7 +55,7 @@ impl WalkedAnswer for ReceivedAnswer {
     }
 
     fn identifier(element: &ContextualEntity) -> Option<Identifier> {
-        Some(element.entity.id.clone()) // clone: the walk remembers the identifier after the entity moves into the answer
+        element.id.clone() // clone: the walk remembers the identifier after the entity moves into the answer
     }
 
     fn absorb(&mut self, page: ReceivedAnswer) {
@@ -202,15 +202,19 @@ impl FederationService {
 
     /// Read one entity under its own `@context` when it names one (JSON-LD
     /// 1.1: a node's context applies to that node), else under the context
-    /// the answer is spelled in.
-    async fn received_state(&self, expansion: &EntityExpansion<'_>, contextual: ContextualEntity) -> Result<ReceivedState, EntityReading> {
-        let ContextualEntity { context, entity } = contextual;
-        match context {
-            None => expansion.received(entity).await.map_err(EntityReading::Refused),
+    /// the answer is spelled in, its members read as the core terms that
+    /// context says they stand for.
+    async fn received_state(&self, expansion: &EntityExpansion<'_>, mut contextual: ContextualEntity) -> Result<ReceivedState, EntityReading> {
+        match contextual.context.take() {
+            None => {
+                let entity = contextual.entity(expansion.context().aliases()).map_err(EntityReading::Undecodable)?;
+                expansion.received(entity).await.map_err(EntityReading::Refused)
+            }
             Some(own) => {
                 let own = EntityExpansion::prepare(&self.engine, &ContextSpec::from_body(own))
                     .await
                     .map_err(EntityReading::OwnContext)?;
+                let entity = contextual.entity(own.context().aliases()).map_err(EntityReading::Undecodable)?;
                 own.received(entity).await.map_err(EntityReading::Refused)
             }
         }

@@ -96,14 +96,17 @@ async fn a_million_position_polygon_body_decodes_without_a_tree() {
     let started = Instant::now();
 
     let Ok(extracted) = extraction.oneshot(request).await;
+    let decoded = match extracted {
+        Ok(JsonLd { body, .. }) => body.admitted(&AdmittedContext::core_only()).await,
+        Err(rejection) => panic!("the polygon body is a valid Entity, got {rejection:?}"),
+    };
 
     let elapsed = started.elapsed();
     let peak_above_input = ALLOCATOR.peak_above(mark);
     println!("decoding a body of {length} bytes holding {POSITIONS} positions peaked at {peak_above_input} bytes above the input and took {elapsed:?}");
-    let entity = match extracted.map(|JsonLd { body, .. }| body.admitted(&AdmittedContext::core_only())) {
-        Ok(Ok(entity)) => entity,
-        Ok(Err(refusal)) => panic!("the polygon body is a valid Entity, got {refusal:?}"),
-        Err(rejection) => panic!("the polygon body is a valid Entity, got {rejection:?}"),
+    let entity = match decoded {
+        Ok(entity) => entity,
+        Err(refusal) => panic!("the polygon body is a valid Entity, got {refusal:?}"),
     };
     assert_eq!(
         location_positions(&entity),

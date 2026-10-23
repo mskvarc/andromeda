@@ -5,7 +5,9 @@
 //! array element by element, or the one object a retrieval answers with, each
 //! element from the slice of text it is, so an element the model cannot hold
 //! is reported and skipped instead of failing the page, and no JSON tree is
-//! built on the way.
+//! built on the way. A Temporal Evolution is read on receipt, since the walk
+//! over the answer's pages counts its instances, under the clause 4.4 keyword
+//! spellings every context reads.
 
 use crate::{
     node_refusal::NodeReadError,
@@ -13,6 +15,7 @@ use crate::{
     temporal::temporal_body::TemporalBody,
 };
 use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
+use andromeda_ngsi_ld_representation::{compact_node::aliased_node::AliasedNode, core_term_aliases::CoreTermAliases};
 use andromeda_ngsi_ld_vocabulary::keyword;
 
 /// A Temporal Evolution as a peer wrote it, with the `@context` it named for
@@ -66,7 +69,7 @@ fn contextual_temporal_entity(index: usize, element: JsonPiece<'_>) -> ReceivedE
         Ok(context) => context,
         Err(error) => return refused(ElementRefusalReason::Context(error)),
     };
-    match TemporalBody::from_node(element) {
+    match TemporalBody::from_node(AliasedNode::new(element, CoreTermAliases::keyword_spellings())) {
         Ok(body) => ReceivedElement::Read(ContextualTemporalEntity { context, body }),
         Err(error) => refused(match error {
             NodeReadError::Refused(refusal) => ElementRefusalReason::Refused(refusal),

@@ -200,6 +200,7 @@ mod tests {
     use andromeda_ngsi_ld_model::{request_body::RequestBody, subscription_request::SubscriptionRequest};
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
+    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
     use serde_json::{Value, json};
     use std::num::NonZeroUsize;
 
@@ -217,7 +218,7 @@ mod tests {
 
     /// The request body `wire` writes, read as the request model reads it.
     fn request(wire: &Value) -> SubscriptionRequest {
-        SubscriptionRequest::from_request_text(wire.to_string().as_bytes()).expect("a readable request")
+        SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a readable request")
     }
 
     #[test]
@@ -309,7 +310,7 @@ mod tests {
     /// not syntactically correct, refused when the body is read.
     #[test]
     fn a_malformed_q_is_refused_when_the_body_is_read() {
-        assert!(SubscriptionRequest::from_request_text(br#"{"q": "speed>"}"#).is_err());
+        assert!(SubscriptionRequest::from_request_text(br#"{"q": "speed>"}"#, CoreTermAliases::keyword_spellings()).is_err());
     }
 
     /// A `q` naming no comparison selects nothing meaningful for one notified
@@ -330,8 +331,11 @@ mod tests {
     fn a_geo_q_reference_geometry_is_validated_at_create_and_update() {
         // Clause 4.10 cannot evaluate a geometry RFC 7946 gives no reading of,
         // and the request model refuses it when the body is read.
-        let error = SubscriptionRequest::from_request_text(br#"{"geoQ": {"georel": "within", "geometry": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}}"#)
-            .expect_err("a four-ordinate position is no WGS 84 position");
+        let error = SubscriptionRequest::from_request_text(
+            br#"{"geoQ": {"georel": "within", "geometry": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}}"#,
+            CoreTermAliases::keyword_spellings(),
+        )
+        .expect_err("a four-ordinate position is no WGS 84 position");
         assert!(error.to_string().contains("4 ordinates"), "got {error}");
 
         let elevated = validate_common_members(
@@ -342,13 +346,15 @@ mod tests {
 
         // Table 5.2.13-1 gives `geometry` and `coordinates` cardinality 1, and
         // clause 5.8.1.4 refuses a create whose cardinalities are not met.
-        let georel_only = SubscriptionRequest::from_request_text(br#"{"geoQ": {"georel": "near;maxDistance==2000"}}"#)
+        let georel_only = SubscriptionRequest::from_request_text(br#"{"geoQ": {"georel": "near;maxDistance==2000"}}"#, CoreTermAliases::keyword_spellings())
             .expect_err("a geoQ naming only its georel is no GeoQuery");
         assert!(georel_only.to_string().contains("'geometry'"), "got {georel_only}");
 
-        let past_pole =
-            SubscriptionRequest::from_request_text(br#"{"geoQ": {"georel": "near;maxDistance==2000", "geometry": "Point", "coordinates": [-1, 100]}}"#)
-                .expect_err("latitude 100 is no WGS 84 position");
+        let past_pole = SubscriptionRequest::from_request_text(
+            br#"{"geoQ": {"georel": "near;maxDistance==2000", "geometry": "Point", "coordinates": [-1, 100]}}"#,
+            CoreTermAliases::keyword_spellings(),
+        )
+        .expect_err("latitude 100 is no WGS 84 position");
         assert!(past_pole.to_string().contains("latitude 100 is outside [-90, 90]"), "got {past_pole}");
 
         let removed = validate_common_members(&request(&json!({"geoQ": null})), limits());
@@ -552,7 +558,8 @@ mod tests {
             ("expected a boolean", json!({"localOnly": "yes"})),
             ("expected a boolean", json!({"splitEntities": 1})),
         ] {
-            let error = SubscriptionRequest::from_request_text(body.to_string().as_bytes()).expect_err("a mistyped member is refused");
+            let error = SubscriptionRequest::from_request_text(body.to_string().as_bytes(), CoreTermAliases::keyword_spellings())
+                .expect_err("a mistyped member is refused");
             assert!(error.to_string().contains(reading), "{body}: got {error}");
         }
     }

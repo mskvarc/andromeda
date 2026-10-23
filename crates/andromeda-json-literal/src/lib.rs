@@ -122,6 +122,13 @@ impl PartialEq for JsonLiteral {
 
 impl Eq for JsonLiteral {}
 
+/// The newtype name a [`JsonLiteral`] asks its deserializer for: a
+/// deserializer that rewrites what it reads, as a request is read through the
+/// terms its `@context` aliases, recognises the name and hands the literal over
+/// as written. Every other deserializer reads the newtype as the value it
+/// wraps.
+pub const LITERAL_CAPTURE: &str = "$andromeda_json_literal::JsonLiteral";
+
 // Hand-written on both halves: the text is written verbatim, and read back by
 // transcribing whatever the deserializer delivers and admitting the text,
 // which no derive expresses.

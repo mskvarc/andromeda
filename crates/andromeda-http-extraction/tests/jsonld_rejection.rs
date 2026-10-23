@@ -66,7 +66,7 @@ async fn structurally_invalid_json_is_bad_request_data_once_its_context_is_admit
     let Ok(JsonLd { body, .. }) = JsonLd::<RequiredIdentifier>::from_request(request, &()).await else {
         return Err("the body was refused before its context was admitted".into());
     };
-    let refusal = match body.admitted(&AdmittedContext::core_only()) {
+    let refusal = match body.admitted(&AdmittedContext::core_only()).await {
         Err(refusal) => refusal,
         Ok(value) => return Err(format!("body without id was accepted as {}", value.id).into()),
     };

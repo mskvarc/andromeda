@@ -13,7 +13,7 @@ use andromeda_ngsi_ld_model::{
     request_body::RequestBody,
 };
 use andromeda_ngsi_ld_number::json_value::json_pointer::{JsonPointer, PathSegment};
-use andromeda_ngsi_ld_representation::compact_key_admission::CompactKeyError;
+use andromeda_ngsi_ld_representation::{compact_key_admission::CompactKeyError, core_term_aliases::CoreTermAliases};
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json, value::RawValue};
 
@@ -98,7 +98,7 @@ fn screened(screening: Result<(), CompactKeyError>) -> Outcome {
 
 /// What the request text of `payload` decodes and screens as, read as an Entity.
 fn outcome(payload: &Value) -> Outcome {
-    match <Entity>::from_request_text(payload.to_string().as_bytes()) {
+    match <Entity>::from_request_text(payload.to_string().as_bytes(), CoreTermAliases::keyword_spellings()) {
         Ok(entity) => screened(screen_compact_entity(&entity)),
         Err(error) => Outcome::Refused(error.to_string()),
     }
@@ -107,7 +107,7 @@ fn outcome(payload: &Value) -> Outcome {
 /// What the request text of `payload` decodes and screens as, read as an
 /// entity Fragment.
 fn patch_outcome(payload: &Value) -> Outcome {
-    match <EntityPatch>::from_request_text(payload.to_string().as_bytes()) {
+    match <EntityPatch>::from_request_text(payload.to_string().as_bytes(), CoreTermAliases::keyword_spellings()) {
         Ok(patch) => screened(screen_compact_patch(&patch)),
         Err(error) => Outcome::Refused(error.to_string()),
     }
@@ -116,7 +116,7 @@ fn patch_outcome(payload: &Value) -> Outcome {
 /// What the request text of `payload` decodes and screens as, read as a merge
 /// fragment.
 fn merge_outcome(payload: &Value) -> Outcome {
-    match <EntityPatch<MergeMember>>::from_request_text(payload.to_string().as_bytes()) {
+    match <EntityPatch<MergeMember>>::from_request_text(payload.to_string().as_bytes(), CoreTermAliases::keyword_spellings()) {
         Ok(patch) => screened(screen_compact_patch(&patch)),
         Err(error) => Outcome::Refused(error.to_string()),
     }
