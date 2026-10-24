@@ -20,7 +20,7 @@ mod tls_tcp_listener;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: ["andromeda-configuration-scalars", "andromeda-server-tls"],
-    allow_workspace_dev_dependencies: ["andromeda-test-tls"],
+    allow_workspace_dev_dependencies: ["andromeda-server-tls"],
     allow_production_dependencies: ["axum", "tokio"],
 }
 

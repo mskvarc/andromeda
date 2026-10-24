@@ -5,8 +5,9 @@
 //! one copy of 1,000,000 positions of 32 bytes the Entity owns is about 32 MB,
 //! and it takes well under a second.
 //!
-//! The counting allocator is this test binary's global allocator, so it
-//! measures nothing but this test.
+//! The measurement counts the allocations of the calling thread alone, so the
+//! other tests of the binary do not disturb it; the extraction runs on a
+//! current-thread runtime for that reason.
 
 use andromeda_http_extraction::jsonld::JsonLd;
 use andromeda_jsonld::user_context_admission::AdmittedContext;
@@ -14,7 +15,6 @@ use andromeda_ngsi_ld_model::{
     attribute::instance::{Attribute, AttributeValue},
     entity::Entity,
 };
-use andromeda_test_allocator::counting_allocator::CountingAllocator;
 use axum::{
     body::{Body, Bytes},
     extract::{DefaultBodyLimit, FromRequest},
@@ -28,16 +28,14 @@ use std::{
     fmt::{Error as FormatError, Write},
     time::{Duration, Instant},
 };
+use tokio::runtime::Builder;
 use tower::{Layer, ServiceExt, service_fn};
-
-#[global_allocator]
-static ALLOCATOR: CountingAllocator = CountingAllocator::new();
 
 /// The positions of the test polygon's one ring, closing position included.
 const POSITIONS: usize = 1_000_000;
 
 /// The extraction may peak this far above what was allocated before it.
-const PEAK_BUDGET: usize = 100 * 1024 * 1024;
+const PEAK_BUDGET: u64 = 100 * 1024 * 1024;
 
 /// How long the extraction may take in an optimised build; an unoptimised one
 /// is allowed ten times that.
@@ -77,8 +75,9 @@ fn location_positions(entity: &Entity) -> Option<usize> {
     }
 }
 
-#[tokio::test]
-async fn a_million_position_polygon_body_decodes_without_a_tree() {
+#[test]
+fn a_million_position_polygon_body_decodes_without_a_tree() {
+    let runtime = Builder::new_current_thread().enable_all().build().expect("the runtime builds");
     let body = Bytes::from(polygon_body().expect("the body is written"));
     let length = body.len();
     let request = Request::builder()
@@ -92,19 +91,23 @@ async fn a_million_position_polygon_body_decodes_without_a_tree() {
     let extraction = DefaultBodyLimit::disable().layer(service_fn(|request: Request<Body>| async move {
         Ok::<_, Infallible>(JsonLd::<Entity>::from_request(request, &()).await)
     }));
-    let mark = ALLOCATOR.mark();
     let started = Instant::now();
+    let mut decoded = None;
 
-    let Ok(extracted) = extraction.oneshot(request).await;
-    let decoded = match extracted {
-        Ok(JsonLd { body, .. }) => body.admitted(&AdmittedContext::core_only()).await,
-        Err(rejection) => panic!("the polygon body is a valid Entity, got {rejection:?}"),
-    };
+    let measured = allocation_counter::measure(|| {
+        decoded = Some(runtime.block_on(async {
+            let Ok(extracted) = extraction.oneshot(request).await;
+            match extracted {
+                Ok(JsonLd { body, .. }) => body.admitted(&AdmittedContext::core_only()).await,
+                Err(rejection) => panic!("the polygon body is a valid Entity, got {rejection:?}"),
+            }
+        }));
+    });
 
     let elapsed = started.elapsed();
-    let peak_above_input = ALLOCATOR.peak_above(mark);
+    let peak_above_input = measured.bytes_max;
     println!("decoding a body of {length} bytes holding {POSITIONS} positions peaked at {peak_above_input} bytes above the input and took {elapsed:?}");
-    let entity = match decoded {
+    let entity = match decoded.expect("the extraction ran") {
         Ok(entity) => entity,
         Err(refusal) => panic!("the polygon body is a valid Entity, got {refusal:?}"),
     };

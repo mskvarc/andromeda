@@ -44,10 +44,9 @@ url = { version = "2.5.8", features = ["serde"] }
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 andromeda-context-commit.workspace = true
-andromeda-test-fixtures.workspace = true
-andromeda-test-mocks.workspace = true
 async-trait = "0.1.92"
 bytes = "1.12.1"
 http = "1.5.0"
 pretty_assertions = "1.4.1"
 tokio = { version = "1.53.2", features = ["macros", "rt", "sync"] }
+wiremock = "0.6.5"

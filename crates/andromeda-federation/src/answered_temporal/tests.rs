@@ -176,55 +176,74 @@ mod shapes {
     use crate::answered_temporal::tests::{answered, ids};
     use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
     use andromeda_jsonld::context_spec::ContextSpec;
-    use andromeda_test_fixtures::attribute_member_shape::{ShapeCase, Verdict};
     use serde_json::{Value, json};
 
-    /// The history the case's member is the one instance of, observed once.
-    fn history(case: &ShapeCase) -> Value {
-        let mut instance: Value = serde_json::from_str(case.member).expect("the case member is JSON");
+    /// What a route makes of a member written in one shape.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Verdict {
+        /// The entity carrying the member is read and kept.
+        Typed,
+        /// The entity carrying the member is dropped with one `111 Revalidation
+        /// Failed` warning (clause 6.3.17).
+        Refused,
+    }
+
+    /// The history `member` is the one instance of, observed once.
+    fn history(member: &str) -> Value {
+        let mut instance: Value = serde_json::from_str(member).expect("the member is JSON");
         if let Some(members) = instance.as_object_mut() {
             members.insert("observedAt".to_owned(), json!("2020-01-01T00:00:00Z"));
         }
         json!([instance])
     }
 
-    /// Assert what an answer carrying the case's history beside a valid
+    /// Assert what an answer carrying the history of `member` beside a valid
     /// sibling makes of it.
-    async fn assert_verdict(case: &ShapeCase) {
+    async fn assert_verdict(member: &str, verdict: Verdict) {
         let body = json!([
-            {"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "attr": history(case)},
+            {"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "attr": history(member)},
             {"id": "urn:ngsi-ld:Vehicle:2", "type": "Vehicle", "speed": [{"type": "Property", "value": 1, "observedAt": "2020-01-01T00:00:00Z"}]}
         ]);
         let answer = answered(&body.to_string(), ContextSpec::core_only(), &ContextSpec::core_only()).await;
-        match case.peer_temporal {
-            Verdict::Typed | Verdict::Ignored(_) => {
-                pretty_assertions::assert_eq!(ids(&answer), vec!["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"], "{}", case.name);
-                pretty_assertions::assert_eq!(answer.warnings, Vec::<NgsiLdWarning>::new(), "{}", case.name);
+        match verdict {
+            Verdict::Typed => {
+                pretty_assertions::assert_eq!(ids(&answer), vec!["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"]);
+                pretty_assertions::assert_eq!(answer.warnings, Vec::<NgsiLdWarning>::new());
             }
             Verdict::Refused => {
-                pretty_assertions::assert_eq!(ids(&answer), vec!["urn:ngsi-ld:Vehicle:2"], "{}", case.name);
+                pretty_assertions::assert_eq!(ids(&answer), vec!["urn:ngsi-ld:Vehicle:2"]);
                 assert!(
                     matches!(answer.warnings.as_slice(), [NgsiLdWarning::RevalidationFailed(_)]),
-                    "{}: {:?}",
-                    case.name,
+                    "{:?}",
                     answer.warnings
                 );
             }
-            Verdict::NotApplicable => {}
         }
     }
 
-    /// One test per shape, named after it.
+    /// One test per shape, named after it: `member` written under the Core
+    /// `@context`, with what this route makes of it.
     macro_rules! shape_tests {
-        ($($test:ident => $case:path),+ $(,)?) => {
+        ($($(#[$doc:meta])* $test:ident: $member:literal => $verdict:ident),+ $(,)?) => {
             $(
+                $(#[$doc])*
                 #[tokio::test]
                 async fn $test() {
-                    assert_verdict(&$case).await;
+                    assert_verdict($member, Verdict::$verdict).await;
                 }
             )+
         };
     }
 
-    andromeda_test_fixtures::for_each_attribute_member_shape!(shape_tests);
+    shape_tests! {
+        /// Clause 4.5.0 uses the NGSI-LD Null as the value of a deleted `GeoProperty`
+        /// in a notification and a temporal representation; clause 5.5.4 refuses it
+        /// elsewhere outside a merge.
+        a_geoproperty_whose_value_is_the_null: r#"{"type": "GeoProperty", "value": "urn:ngsi-ld:null"}"# => Typed,
+        /// Clause 4.5.2.2 requires the value member; clause 5.5.12 lets a merge keep
+        /// the value held.
+        an_instance_without_its_value: r#"{"type": "Property"}"# => Refused,
+        /// Clause 4.4: `@type` stands for `type`.
+        an_instance_spelled_with_keywords: r#"{"@type": "Property", "value": 1}"# => Typed,
+    }
 }

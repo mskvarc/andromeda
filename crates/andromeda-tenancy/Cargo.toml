@@ -14,6 +14,10 @@ ignored = ["toml"]
 [lints]
 workspace = true
 
+[features]
+# The resident tenant runtime cache route tests resolve their leases through.
+resident-tenancy = []
+
 [dependencies]
 andromeda-configuration-scalars.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true

@@ -14,8 +14,8 @@ use andromeda_server_tls::{
     config::{ClientAuthentication, MinimumProtocolVersion, TlsConfig},
     material_watch::TlsMaterialWatch,
     server_config_feed::ServerConfigFeed,
+    test_identity::{authority::TestAuthority, identity::TestIdentity, identity_files::IdentityFiles},
 };
-use andromeda_test_tls::{authority::TestAuthority, identity::TestIdentity, identity_files::IdentityFiles};
 use axum::{Router, routing::get};
 use reqwest::{Certificate, Client, ClientBuilder, Identity, Response, StatusCode, Version, tls};
 use std::{error::Error, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};

@@ -326,7 +326,7 @@ mod tests {
 
         pretty_assertions::assert_eq!(json_of(&document), json!({"@context": {"speed": "https://example.org/speed"}}));
         pretty_assertions::assert_eq!(document.document_url, origin.url("/docs/context.jsonld"));
-        pretty_assertions::assert_eq!(origin.requests("/docs/context.jsonld"), 1);
+        pretty_assertions::assert_eq!(origin.requests("/docs/context.jsonld").await, 1);
     }
 
     /// Only one hop is followed: an alternate that is itself not JSON-shaped
@@ -356,7 +356,7 @@ mod tests {
             "{refused}"
         );
         pretty_assertions::assert_eq!(refused.url, origin.url("/page"));
-        pretty_assertions::assert_eq!(origin.requests("/third"), 0);
+        pretty_assertions::assert_eq!(origin.requests("/third").await, 0);
     }
 
     #[tokio::test]

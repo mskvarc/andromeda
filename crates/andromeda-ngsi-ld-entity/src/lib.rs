@@ -45,6 +45,8 @@ pub mod list_object;
 pub mod literal;
 pub mod member_role;
 pub mod member_shape;
+#[cfg(test)]
+mod nesting_probe;
 pub mod node_id;
 pub mod non_empty;
 pub mod operation;
@@ -71,10 +73,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-vocabulary",
     ],
-    allow_workspace_dev_dependencies: [
-        "andromeda-test-allocator",
-        "andromeda-test-fixtures",
-    ],
+    allow_workspace_dev_dependencies: [],
     allow_production_dependencies: [],
 }
 

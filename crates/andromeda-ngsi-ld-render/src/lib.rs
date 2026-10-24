@@ -71,7 +71,6 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-vocabulary",
     ],
     allow_workspace_dev_dependencies: [
-        "andromeda-test-allocator",
     ],
     allow_production_dependencies: [],
 }

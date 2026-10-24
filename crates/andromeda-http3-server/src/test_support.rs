@@ -7,15 +7,17 @@
 //! [`Http3Client`] on such a listener, so the server modules are tested over
 //! the wire rather than through mocks.
 
-use crate::quic_crypto::{H3_ALPN, QUIC_HANDSHAKE_POLICY};
+use crate::{
+    http3_client::Http3Client,
+    quic_crypto::{H3_ALPN, QUIC_HANDSHAKE_POLICY},
+};
 use andromeda_configuration_scalars::human_duration::HumanDuration;
 use andromeda_server_tls::{
     config::{ClientAuthentication, TlsConfig},
     material_watch::TlsMaterialWatch,
     server_config_feed::ServerConfigFeed,
+    test_identity::{authority::TestAuthority, identity::TestIdentity, identity_files::IdentityFiles},
 };
-use andromeda_test_http3::client::Http3Client;
-use andromeda_test_tls::{authority::TestAuthority, identity::TestIdentity, identity_files::IdentityFiles};
 use rustls::RootCertStore;
 use std::{error::Error, net::SocketAddr, path::PathBuf};
 

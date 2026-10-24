@@ -97,7 +97,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-persistence-failure",
     ],
-    allow_workspace_dev_dependencies: ["andromeda-test-mocks"],
+    allow_workspace_dev_dependencies: [],
     allow_production_dependencies: ["reqwest", "tokio"],
 }
 

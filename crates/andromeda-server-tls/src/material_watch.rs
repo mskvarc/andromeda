@@ -161,9 +161,9 @@ mod tests {
         config::TlsConfig,
         material_watch::{TlsMaterialWatch, TlsWatchError},
         pem_material::TlsMaterialError,
+        test_identity::{authority::TestAuthority, identity::TestIdentity, identity_files::IdentityFiles},
     };
     use andromeda_configuration_scalars::human_duration::HumanDuration;
-    use andromeda_test_tls::{authority::TestAuthority, identity::TestIdentity, identity_files::IdentityFiles};
     use rustls_pki_types::CertificateDer;
     #[cfg(unix)]
     use std::os::unix::fs::symlink;

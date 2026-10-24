@@ -101,8 +101,8 @@ mod tests {
         handshake_probe::handshake,
         material_sources::{ClientTrust, TlsMaterialSources},
         pem_material::TlsMaterial,
+        test_identity::{authority::TestAuthority, identity_files::IdentityFiles},
     };
-    use andromeda_test_tls::{authority::TestAuthority, identity_files::IdentityFiles};
     use rustls::{
         ProtocolVersion,
         RootCertStore,

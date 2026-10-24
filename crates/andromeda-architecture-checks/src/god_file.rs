@@ -95,19 +95,15 @@ pub fn assert_no_god_files(workspace_root: &str, baseline: &[&str]) {
 
 /// Every production `.rs` file below `src/`, `crates/`, and `lib/`.
 ///
-/// Integration tests under `tests/`, `*tests.rs` files, build scripts, and the
-/// focused test-infrastructure crates are not production code, so the length
-/// rule does not measure them.
+/// Integration tests under `tests/`, `*tests.rs` files and build scripts are not
+/// production code, so the length rule does not measure them.
 fn production_source_paths(root: &Path) -> Vec<PathBuf> {
     ["src", "crates", "lib"]
         .into_iter()
         .flat_map(|directory| rust_file_paths(&root.join(directory)))
         .filter(|path| {
             let relative = path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace('\\', "/");
-            !relative.starts_with("crates/andromeda-test-")
-                && !relative.contains("/tests/")
-                && !relative.ends_with("build.rs")
-                && !relative.ends_with("tests.rs")
+            !relative.contains("/tests/") && !relative.ends_with("build.rs") && !relative.ends_with("tests.rs")
         })
         .collect()
 }

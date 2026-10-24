@@ -110,15 +110,12 @@ mod tests {
     use crate::{
         endpoint::bind,
         execution::{Http3ServeError, serve_endpoint},
+        http3_client::{Http3Client, Http3ClientError, request},
         quic_crypto::H3_ALPN,
         test_support::QuicIdentity,
     };
     use andromeda_configuration_scalars::header_section_limit::HeaderSectionLimit;
-    use andromeda_test_http3::{
-        client::{Http3Client, request},
-        error::Http3ClientError,
-    };
-    use andromeda_test_tls::authority::TestAuthority;
+    use andromeda_server_tls::test_identity::authority::TestAuthority;
     use axum::{
         Router,
         extract::Query,

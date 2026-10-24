@@ -16,9 +16,9 @@
 //!
 //! Detection is deny-by-default and runs at zero: any production site naming
 //! a tree fails the gate with its `path:line`. Integration tests, build
-//! scripts, `*tests.rs` files, the test-infrastructure crates and test-only
-//! items are not production paths and are not inspected; tests keep `json!` to
-//! build fixtures and to compare parsed bodies.
+//! scripts, `*tests.rs` files and test-only items are not production paths and
+//! are not inspected; tests keep `json!` to build fixtures and to compare parsed
+//! bodies.
 
 mod forbidden_name;
 mod module_imports;

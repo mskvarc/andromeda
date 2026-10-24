@@ -3,6 +3,7 @@ use crate::{
     config::FederationConfig,
     fixed_registration_store::{FixedRegistrationStore, NoLocalEntities},
     forwarded_query::client_query::ClientQuery,
+    mock_source::{answer_in_turn, endpoint, received},
     operation::ForwardingOperation,
     participating_read::ParticipatingRead,
     request::EntityMapInUse,
@@ -14,21 +15,11 @@ use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngin
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
-use andromeda_test_mocks::{
-    callback_path::CallbackPath,
-    callback_server::MockResponse,
-    context_source_server::ContextSourceServer,
-    server_config::MockServerConfig,
-};
-use bytes::Bytes;
-use http::{HeaderMap, HeaderValue, Method, StatusCode};
+use http::{HeaderValue, StatusCode};
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
-use std::{
-    net::{Ipv4Addr, SocketAddr},
-    sync::Arc,
-};
-use url::Host;
+use std::sync::Arc;
+use wiremock::{MockServer, ResponseTemplate};
 
 /// The identity resource of the mock source.
 const IDENTITY_PATH: &str = "/ngsi-ld/v1/info/sourceIdentity";
@@ -38,22 +29,17 @@ fn advertising_extras() -> Value {
     json!({"extensions": ["temporal-linked-retrieval"]})
 }
 
-async fn source() -> ContextSourceServer {
-    let config = MockServerConfig::new(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)), Host::Ipv4(Ipv4Addr::LOCALHOST));
-    ContextSourceServer::start(config).await.expect("the mock source starts")
-}
-
-fn path(raw: &str) -> CallbackPath {
-    CallbackPath::parse(raw).expect("an absolute path")
+async fn source() -> MockServer {
+    MockServer::start().await
 }
 
 /// A registration of `Building` entities at `source`, serving `operations`,
 /// with `extra` members merged in.
-fn registration(source: &ContextSourceServer, operations: &[&str], extra: &Value) -> ContextSourceRegistration {
+fn registration(source: &MockServer, operations: &[&str], extra: &Value) -> ContextSourceRegistration {
     let mut document = json!({
         "id": "urn:ngsi-ld:ContextSourceRegistration:identity",
         "type": "ContextSourceRegistration",
-        "endpoint": source.endpoint(&path("/")).expect("the endpoint resolves").as_str(),
+        "endpoint": endpoint(source),
         "operations": operations,
         "information": [{"entities": [{"type": "https://example.org/Building"}]}],
         "status": "ok",
@@ -78,7 +64,7 @@ fn service(registration: ContextSourceRegistration) -> FederationService {
 }
 
 /// A clause 5.2.40 identity carrying `extras`.
-fn identity(extras: Option<Value>) -> MockResponse {
+fn identity(extras: Option<Value>) -> ResponseTemplate {
     let mut body = json!({
         "id": "urn:ngsi-ld:ContextSourceIdentity:peer",
         "type": "ContextSourceIdentity",
@@ -89,13 +75,7 @@ fn identity(extras: Option<Value>) -> MockResponse {
     if let Some(extras) = extras {
         body["contextSourceExtras"] = extras;
     }
-    let mut headers = HeaderMap::new();
-    headers.insert("content-type", HeaderValue::from_static("application/json"));
-    MockResponse::builder()
-        .status(StatusCode::OK)
-        .headers(headers)
-        .body(Bytes::from(serde_json::to_vec(&body).expect("the identity serializes")))
-        .build()
+    ResponseTemplate::new(StatusCode::OK).set_body_raw(serde_json::to_vec(&body).expect("the identity serializes"), "application/json")
 }
 
 fn building() -> Identifier {
@@ -114,7 +94,7 @@ async fn configurations(service: &FederationService) -> Vec<SourceConfiguration>
 #[tokio::test]
 async fn a_source_answering_its_identity_is_described_by_its_extras() {
     let source = source().await;
-    source.enqueue(Method::GET, path(IDENTITY_PATH), identity(Some(advertising_extras()))).await;
+    answer_in_turn(&source, "GET", IDENTITY_PATH, [identity(Some(advertising_extras()))]).await;
     let service = service(registration(&source, &["retrieveTemporal"], &json!({})));
 
     assert_eq!(
@@ -130,13 +110,7 @@ async fn a_source_answering_its_identity_is_described_by_its_extras() {
 #[tokio::test]
 async fn a_source_without_an_identity_is_undescribed() {
     let source = source().await;
-    source
-        .enqueue(
-            Method::GET,
-            path(IDENTITY_PATH),
-            MockResponse::builder().status(StatusCode::NOT_IMPLEMENTED).build(),
-        )
-        .await;
+    answer_in_turn(&source, "GET", IDENTITY_PATH, [ResponseTemplate::new(StatusCode::NOT_IMPLEMENTED)]).await;
     let service = service(registration(&source, &["retrieveTemporal"], &json!({})));
 
     assert_eq!(configurations(&service).await, vec![SourceConfiguration::Undescribed]);
@@ -147,12 +121,12 @@ async fn a_source_without_an_identity_is_undescribed() {
 #[tokio::test]
 async fn an_answer_is_reused_rather_than_asked_again() {
     let source = source().await;
-    source.enqueue(Method::GET, path(IDENTITY_PATH), identity(None)).await;
+    answer_in_turn(&source, "GET", IDENTITY_PATH, [identity(None)]).await;
     let service = service(registration(&source, &["retrieveTemporal"], &json!({})));
 
     assert_eq!(configurations(&service).await, vec![SourceConfiguration::Described(None)]);
     assert_eq!(configurations(&service).await, vec![SourceConfiguration::Described(None)]);
-    assert_eq!(source.request_count(Method::GET, path(IDENTITY_PATH)), 1);
+    assert_eq!(received(&source).await.iter().filter(|request| request.url.path() == IDENTITY_PATH).count(), 1);
 }
 
 /// The identity is asked of the source itself: clause 5.15.1 defines no
@@ -162,7 +136,7 @@ async fn an_answer_is_reused_rather_than_asked_again() {
 #[tokio::test]
 async fn the_identity_is_asked_without_a_local_scope_in_the_registered_tenant() {
     let source = source().await;
-    source.enqueue(Method::GET, path(IDENTITY_PATH), identity(None)).await;
+    answer_in_turn(&source, "GET", IDENTITY_PATH, [identity(None)]).await;
     let service = service(registration(
         &source,
         &["retrieveTemporal"],
@@ -171,9 +145,9 @@ async fn the_identity_is_asked_without_a_local_scope_in_the_registered_tenant() 
 
     configurations(&service).await;
 
-    let requests = source.drain_requests().await;
+    let requests = received(&source).await;
     assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].uri.query(), None);
+    assert_eq!(requests[0].url.query(), None);
     assert_eq!(
         requests[0].headers.get("ngsild-tenant").map(HeaderValue::as_bytes),
         Some(b"district".as_slice())
@@ -188,7 +162,7 @@ async fn a_registration_not_serving_the_temporal_retrieval_is_not_asked() {
     let service = service(registration(&source, &["retrieveEntity"], &json!({})));
 
     assert_eq!(configurations(&service).await, Vec::new());
-    assert_eq!(source.total_request_count(), 0);
+    assert_eq!(received(&source).await.len(), 0);
 }
 
 /// The sources one Query Entities of Buildings reaches, as `params` asks.
@@ -215,7 +189,7 @@ fn buildings(query: &str) -> EntityQueryParameters {
 #[tokio::test]
 async fn a_query_probes_every_registration_taking_part_in_it() {
     let source = source().await;
-    source.enqueue(Method::GET, path(IDENTITY_PATH), identity(Some(advertising_extras()))).await;
+    answer_in_turn(&source, "GET", IDENTITY_PATH, [identity(Some(advertising_extras()))]).await;
     let service = service(registration(&source, &["queryEntity"], &json!({})));
 
     assert_eq!(

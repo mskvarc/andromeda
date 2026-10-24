@@ -5,16 +5,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Focused test-infrastructure crate names that may only be production dependencies of one another.
-const TEST_INFRASTRUCTURE_CRATES: &[&str] = &[
-    "andromeda-test-client",
-    "andromeda-test-fixtures",
-    "andromeda-test-harness",
-    "andromeda-test-http3",
-    "andromeda-test-mocks",
-    "andromeda-test-tls",
-];
-
 /// Which dependency table a declaration came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DependencyKind {
@@ -166,37 +156,6 @@ pub fn assert_development_only(crate_root: &str, dependency: &str) {
     }
 }
 
-/// Assert that production workspace packages do not ship focused test infrastructure.
-///
-/// Test-infrastructure crates may compose one another. Every other workspace
-/// package may name them only through a development dependency.
-///
-/// # Panics
-///
-/// Panics when a production package declares a focused test crate as a normal
-/// or build dependency, when a package directory cannot be listed, or when a
-/// discovered manifest cannot be read.
-pub fn assert_test_infrastructure_is_development_only(workspace_root: &str) {
-    let root = Path::new(workspace_root);
-    for path in workspace_manifest_paths(root) {
-        let manifest = fs::read_to_string(&path);
-        assert!(manifest.is_ok(), "{} could not be read as a manifest: {manifest:?}", path.display());
-        if let Ok(manifest) = manifest {
-            let package = package_name(&manifest);
-            if package.is_some_and(|name| TEST_INFRASTRUCTURE_CRATES.contains(&name)) {
-                continue;
-            }
-            for (kind, dependency) in declarations(&manifest) {
-                assert!(
-                    !TEST_INFRASTRUCTURE_CRATES.contains(&dependency) || kind == DependencyKind::Development,
-                    "{} declares test infrastructure {dependency} as a {kind:?} dependency",
-                    path.display()
-                );
-            }
-        }
-    }
-}
-
 /// Discover root and crate manifests without walking generated output.
 ///
 /// A package directory that cannot be listed hides every manifest below it, so
@@ -235,25 +194,6 @@ pub(crate) fn workspace_manifest_paths(root: &Path) -> Vec<PathBuf> {
     assert!(unreadable.is_empty(), "the workspace packages could not be listed:\n{}", unreadable.join("\n"));
     paths.sort();
     paths
-}
-
-/// Read the package name from the package table of a Cargo manifest.
-fn package_name(manifest: &str) -> Option<&str> {
-    let mut in_package = false;
-    for line in manifest.lines().map(str::trim) {
-        if line == "[package]" {
-            in_package = true;
-            continue;
-        }
-        if line.starts_with('[') {
-            in_package = false;
-            continue;
-        }
-        if in_package && let Some(value) = line.strip_prefix("name").and_then(|rest| rest.trim_start().strip_prefix('=')) {
-            return Some(value.trim().trim_matches('"'));
-        }
-    }
-    None
 }
 
 /// The rule itself, over declarations already read.

@@ -38,7 +38,6 @@ typed-builder = "0.23.2"
 url = { version = "2.5.8", features = ["serde"] }
 
 [dev-dependencies]
+allocation-counter = "0.8.1"
 andromeda-architecture-checks.workspace = true
-andromeda-test-allocator.workspace = true
-andromeda-test-fixtures.workspace = true
 pretty_assertions = "1.4.1"

@@ -4,8 +4,8 @@
 //! before them, not counting the body itself, where a JSON tree of the same
 //! positions would take several hundred.
 //!
-//! The counting allocator is this test binary's global allocator, so it
-//! measures nothing but this test.
+//! The measurement counts the allocations of the calling thread alone, so the
+//! other tests of the binary do not disturb it.
 
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_json_literal::JsonLiteral;
@@ -33,17 +33,13 @@ use andromeda_ngsi_ld_render::{
     response::ResponseRenderer,
 };
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
-use andromeda_test_allocator::counting_allocator::CountingAllocator;
 use std::io::{Result as IoResult, Write};
-
-#[global_allocator]
-static ALLOCATOR: CountingAllocator = CountingAllocator::new();
 
 /// The positions of the test polygon's one ring, closing position included.
 const POSITIONS: usize = 1_000_000;
 
 /// The rendering may peak this far above what was allocated before it.
-const PEAK_BUDGET: usize = 64 * 1024 * 1024;
+const PEAK_BUDGET: u64 = 64 * 1024 * 1024;
 
 /// A body that counts the bytes written into it and keeps none, so the peak
 /// measured is the rendering's own and not the body's.
@@ -95,14 +91,21 @@ fn polygon_entity(id: Identifier, entity_type: EntityTypeName, ring: LinearRing)
 
 /// The peak above the allocation before it, and the bytes written, of
 /// rendering `entity` as `media_type` under `context`.
-fn rendering_peak(entity: &Entity, media_type: ResponseMediaType, context: JsonLiteral) -> Result<(usize, usize), RenderError> {
+fn rendering_peak(entity: &Entity, media_type: ResponseMediaType, context: JsonLiteral) -> Result<(u64, usize), RenderError> {
     let mut body = CountingBody::default();
-    let mark = ALLOCATOR.mark();
-    ResponseRenderer::new(media_type, ResponseContext::Body(context))
-        .with_format(ResponseFormat::Normalized)
-        .with_entities(EntityPayload::Single(EntityBody::new(entity, None)), None)
-        .render_into(&mut body)?;
-    Ok((ALLOCATOR.peak_above(mark), body.written))
+    let mut rendered = None;
+    let measured = allocation_counter::measure(|| {
+        rendered = Some(
+            ResponseRenderer::new(media_type, ResponseContext::Body(context))
+                .with_format(ResponseFormat::Normalized)
+                .with_entities(EntityPayload::Single(EntityBody::new(entity, None)), None)
+                .render_into(&mut body),
+        );
+    });
+    if let Some(Err(refusal)) = rendered {
+        return Err(refusal);
+    }
+    Ok((measured.bytes_max, body.written))
 }
 
 #[test]

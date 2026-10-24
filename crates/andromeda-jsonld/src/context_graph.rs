@@ -279,8 +279,8 @@ mod tests {
             matches!(&refused, JsonLdError::ContextGraph(graph) if *graph == ContextGraphError::TooDeep(origin.url(&format!("/c{depth}.jsonld")))),
             "{refused}"
         );
-        pretty_assertions::assert_eq!(origin.requests(&format!("/c{depth}.jsonld")), 0);
-        pretty_assertions::assert_eq!(origin.requests(&format!("/c{MAX_CONTEXT_REFERENCE_DEPTH}.jsonld")), 1);
+        pretty_assertions::assert_eq!(origin.requests(&format!("/c{depth}.jsonld")).await, 0);
+        pretty_assertions::assert_eq!(origin.requests(&format!("/c{MAX_CONTEXT_REFERENCE_DEPTH}.jsonld")).await, 1);
     }
 
     /// Two documents naming each other are a cycle, refused as an invalid
@@ -366,8 +366,8 @@ mod tests {
             matches!(&refused, JsonLdError::ContextGraph(graph) if *graph == ContextGraphError::Cycle(origin.url("/contexts/cycle-a.jsonld"))),
             "{refused}"
         );
-        pretty_assertions::assert_eq!(origin.requests("/contexts/cycle-a.jsonld"), 1);
-        pretty_assertions::assert_eq!(origin.requests("/contexts/cycle-b.jsonld"), 1);
+        pretty_assertions::assert_eq!(origin.requests("/contexts/cycle-a.jsonld").await, 1);
+        pretty_assertions::assert_eq!(origin.requests("/contexts/cycle-b.jsonld").await, 1);
     }
 
     /// The walk loads each document through the loader's pipeline, so the
@@ -404,7 +404,7 @@ mod tests {
         }
 
         for path in ["/wrapper.jsonld", "/terms.jsonld", "/shared.jsonld"] {
-            pretty_assertions::assert_eq!(origin.requests(path), 1, "{path}");
+            pretty_assertions::assert_eq!(origin.requests(path).await, 1, "{path}");
         }
     }
 

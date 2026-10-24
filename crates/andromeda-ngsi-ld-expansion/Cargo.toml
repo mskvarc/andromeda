@@ -33,8 +33,8 @@ strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
 
 [dev-dependencies]
+allocation-counter = "0.8.1"
 andromeda-architecture-checks.workspace = true
-andromeda-test-allocator.workspace = true
 jsonld = { version = "0.24.0", features = ["serde-json"] }
 pretty_assertions = "1.4.1"
 serde = { version = "1.0.229", features = ["derive"] }

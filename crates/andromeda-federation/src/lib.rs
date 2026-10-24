@@ -81,6 +81,9 @@ pub mod instance_budget;
 pub mod language_negotiation;
 /// Resolving a locally-held entity's type for federated-write coverage.
 pub mod local_entity_type;
+/// A mock Context Source answering the forwarding tests.
+#[cfg(test)]
+mod mock_source;
 /// NGSI-LD operation capability matching.
 pub mod operation;
 /// Whether a read's answer may be ordered (clauses 4.23.1, 5.7.2.4, 5.7.4.4).
@@ -348,8 +351,6 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-telemetry",
     ],
     allow_workspace_dev_dependencies: [
-        "andromeda-test-fixtures",
-        "andromeda-test-mocks",
     ],
     allow_production_dependencies: ["reqwest", "tokio"],
 }

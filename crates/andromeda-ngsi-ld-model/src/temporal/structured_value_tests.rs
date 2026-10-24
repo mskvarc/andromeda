@@ -223,7 +223,12 @@ fn an_empty_array_valued_property_is_stored_as_the_empty_array() {
 #[test]
 fn values_and_metadata_at_the_decodable_ceiling_read_back() {
     use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingLimit;
-    use andromeda_test_fixtures::nesting_fixture::{NestingShape, list_chain, nested_instance, node_chain, object_chain};
+    // A chain of `levels` expanded nodes ending in a string value object.
+    let node_chain = |levels: usize| (0..levels).fold(json!({"@value": "leaf"}), |inner, _| json!({"https://example.org/inner": [inner]}));
+    // A chain of `levels` list objects, the innermost holding one number.
+    let list_chain = |levels: usize| (1..levels).fold(json!({"@list": [{"@value": 1}]}), |inner, _| json!({"@list": [inner]}));
+    // A chain of `levels` JSON objects ending in a string.
+    let object_chain = |levels: usize| (0..levels).fold(json!("leaf"), |inner, _| json!({"k": inner}));
 
     let ceiling = AttributeNestingLimit::DECODABLE_CEILING.get();
     pretty_assertions::assert_eq!(round_trip(AttributeType::Property, &node_chain(ceiling)), node_chain(ceiling));
@@ -234,10 +239,22 @@ fn values_and_metadata_at_the_decodable_ceiling_read_back() {
     let deeper_list = list_chain(ceiling + 1)["@list"].to_string();
     assert!(StructuredValue::from_stored(AttributeType::ListProperty, &attribute(), &deeper_list).is_err());
 
-    let mut members = nested_instance(NestingShape::SubAttributeChain, ceiling);
-    if let Some(members) = members.as_object_mut() {
-        members.retain(|name, _| name != "@type" && !name.starts_with("https://uri.etsi.org/ngsi-ld/"));
-    }
+    // The metadata of a Property carrying a chain of `ceiling` sub-attributes,
+    // each a stored Property of a scalar.
+    let sub_attribute = |inner: Option<Value>| {
+        let mut instance = json!({
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}],
+            "https://uri.etsi.org/ngsi-ld/createdAt": [{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2026-01-01T00:00:00Z"}],
+            "https://uri.etsi.org/ngsi-ld/modifiedAt": [{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2026-01-01T00:00:00Z"}],
+        });
+        if let (Some(members), Some(inner)) = (instance.as_object_mut(), inner) {
+            members.insert("https://example.org/inner".to_owned(), json!([inner]));
+        }
+        instance
+    };
+    let chain = (1..ceiling).fold(sub_attribute(None), |inner, _| sub_attribute(Some(inner)));
+    let members = json!({"https://example.org/inner": [chain]});
     let metadata = read_metadata(&members.to_string())
         .expect("the stored metadata reads")
         .expect("the sub-attributes are metadata");

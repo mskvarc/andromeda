@@ -34,10 +34,10 @@ tracing = "0.1.44"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
-andromeda-test-http3.workspace = true
-andromeda-test-tls.workspace = true
+andromeda-server-tls = { workspace = true, features = ["test-identity"] }
 bytes = "1.12.1"
 http = "1.5.0"
 pretty_assertions = "1.4.1"
+rustls-pki-types = "1.15.1"
 tokio = { version = "1.53.2", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tower-http = { version = "0.7.1", features = ["normalize-path"] }

@@ -97,14 +97,6 @@ macro_rules! workspace_architecture {
                 $crate::architecture::assert_retired_architecture_invariants(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
-            /// Focused test infrastructure retains its source and dependency boundaries.
-            #[test]
-            fn test_infrastructure_boundaries_remain_explicit() {
-                let workspace_root = concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root);
-                $crate::architecture::assert_test_infrastructure_invariants(workspace_root);
-                $crate::dependencies::assert_test_infrastructure_is_development_only(workspace_root);
-            }
-
             /// No module is named after a dumping ground.
             #[test]
             fn module_names_describe_a_concept() {

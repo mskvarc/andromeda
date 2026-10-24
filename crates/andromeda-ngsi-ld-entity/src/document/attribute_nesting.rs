@@ -106,9 +106,11 @@ fn geometry_levels(geometry: &GeoValue) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use crate::document::instance_document::InstanceDocument;
+    use crate::{
+        document::instance_document::InstanceDocument,
+        nesting_probe::{NESTED_ATTRIBUTE, NestingChain, nested_instance, node_chain},
+    };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_test_fixtures::nesting_fixture::{NESTED_ATTRIBUTE, NestingShape, nested_instance, node_chain};
     use serde_json::{Map, Value, json};
 
     const GEOJSON: &str = "https://purl.org/geojson/vocab#";
@@ -161,7 +163,7 @@ mod tests {
     #[test]
     fn a_chain_of_nodes_nests_one_level_per_node() {
         for levels in [1, 5, 59] {
-            pretty_assertions::assert_eq!(nesting(&nested_instance(NestingShape::ObjectChain, levels)), levels);
+            pretty_assertions::assert_eq!(nesting(&nested_instance(NestingChain::Nodes, levels)), levels);
         }
     }
 
@@ -180,7 +182,7 @@ mod tests {
         let flat = instance("ListProperty", "hasValueList", json!([{"@list": [{"@value": 1}, {"@value": 2}]}]));
         pretty_assertions::assert_eq!(nesting(&flat), 1);
         for levels in [2, 33, 59] {
-            pretty_assertions::assert_eq!(nesting(&nested_instance(NestingShape::ListChain, levels)), levels);
+            pretty_assertions::assert_eq!(nesting(&nested_instance(NestingChain::Lists, levels)), levels);
         }
     }
 
@@ -189,7 +191,7 @@ mod tests {
     #[test]
     fn each_container_of_a_json_literal_is_a_level() {
         for levels in [0, 2, 59] {
-            pretty_assertions::assert_eq!(nesting(&nested_instance(NestingShape::JsonChain, levels)), levels);
+            pretty_assertions::assert_eq!(nesting(&nested_instance(NestingChain::JsonObjects, levels)), levels);
         }
         let arrays = instance("JsonProperty", "hasJSON", json!([{"@type": "@json", "@value": [[1]]}]));
         pretty_assertions::assert_eq!(nesting(&arrays), 2);
@@ -251,7 +253,7 @@ mod tests {
         pretty_assertions::assert_eq!(nesting(&scalar), 1);
         pretty_assertions::assert_eq!(nesting(&structured), 2);
         for levels in [1, 32, 59] {
-            pretty_assertions::assert_eq!(nesting(&nested_instance(NestingShape::SubAttributeChain, levels)), levels);
+            pretty_assertions::assert_eq!(nesting(&nested_instance(NestingChain::SubAttributes, levels)), levels);
         }
     }
 
@@ -279,8 +281,8 @@ mod tests {
     fn the_deepest_of_the_value_and_the_sub_attributes_decides() {
         let mut written = instance("Property", "hasValue", json!([node_chain(5)]));
         if let Some(members) = written.as_object_mut() {
-            members.insert("https://example.org/a".to_owned(), json!([nested_instance(NestingShape::ObjectChain, 3)]));
-            members.insert("https://example.org/b".to_owned(), json!([nested_instance(NestingShape::ObjectChain, 7)]));
+            members.insert("https://example.org/a".to_owned(), json!([nested_instance(NestingChain::Nodes, 3)]));
+            members.insert("https://example.org/b".to_owned(), json!([nested_instance(NestingChain::Nodes, 7)]));
         }
         pretty_assertions::assert_eq!(nesting(&written), 8);
     }

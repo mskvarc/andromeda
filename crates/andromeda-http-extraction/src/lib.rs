@@ -78,7 +78,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-persistence-failure",
         "andromeda-tenancy",
     ],
-    allow_workspace_dev_dependencies: ["andromeda-test-allocator"],
+    allow_workspace_dev_dependencies: [],
     allow_production_dependencies: ["axum", "tokio"],
 }
 

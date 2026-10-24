@@ -3,16 +3,12 @@
 //! allocates is bounded by the instances the body writes, a fixed number each,
 //! and not by a tree whose size grows with every node of the text.
 //!
-//! The counting allocator is this test binary's global allocator, so it
-//! measures nothing but this test.
+//! The measurement counts the allocations of the calling thread alone, so the
+//! other tests of the binary do not disturb it.
 
 use andromeda_ngsi_ld_model::{request_body::RequestBody, temporal::written_temporal_entity::WrittenTemporalEntity};
 use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
-use andromeda_test_allocator::counting_allocator::CountingAllocator;
 use std::fmt::Write;
-
-#[global_allocator]
-static ALLOCATOR: CountingAllocator = CountingAllocator::new();
 
 /// The attributes the created Temporal Evolution writes.
 const ATTRIBUTES: usize = 3;
@@ -22,7 +18,7 @@ const INSTANCES: usize = 1_000;
 
 /// What one instance costs the decode at most: its own typed members, and no
 /// allocation for any JSON node of the text it was read from.
-const ALLOCATIONS_PER_INSTANCE: usize = 24;
+const ALLOCATIONS_PER_INSTANCE: u64 = 24;
 
 #[test]
 fn a_temporal_body_is_decoded_without_a_tree() {
@@ -49,16 +45,18 @@ fn a_temporal_body_is_decoded_without_a_tree() {
     };
     // How many allocations decoding `text` makes, and how many instances it holds.
     let decode = |text: &str| {
-        let mark = ALLOCATOR.mark();
-        let decoded = WrittenTemporalEntity::from_request_text(text.as_bytes(), CoreTermAliases::keyword_spellings()).expect("the body decodes");
-        let allocations = ALLOCATOR.allocations_since(mark);
-        (allocations, decoded.attrs.values().map(Vec::len).sum::<usize>())
+        let mut decoded = None;
+        let measured = allocation_counter::measure(|| {
+            decoded = Some(WrittenTemporalEntity::from_request_text(text.as_bytes(), CoreTermAliases::keyword_spellings()).expect("the body decodes"));
+        });
+        let instances = decoded.expect("the decode ran").attrs.values().map(Vec::len).sum::<usize>();
+        (measured.count_total, instances)
     };
 
     let (allocations, instances) = decode(&body(INSTANCES));
     assert_eq!(instances, ATTRIBUTES * INSTANCES);
     assert!(
-        allocations <= ALLOCATIONS_PER_INSTANCE * instances,
+        allocations <= ALLOCATIONS_PER_INSTANCE * u64::try_from(instances).expect("an instance count fits in u64"),
         "decoding {instances} instances made {allocations} allocations, over {ALLOCATIONS_PER_INSTANCE} per instance"
     );
 

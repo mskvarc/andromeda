@@ -26,6 +26,8 @@ pub mod material_sources;
 pub mod material_watch;
 pub mod pem_material;
 pub mod server_config_feed;
+#[cfg(any(test, feature = "test-identity"))]
+pub mod test_identity;
 
 #[cfg(test)]
 mod handshake_probe;
@@ -33,7 +35,7 @@ mod handshake_probe;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: ["andromeda-configuration-scalars"],
-    allow_workspace_dev_dependencies: ["andromeda-test-tls"],
+    allow_workspace_dev_dependencies: [],
     allow_production_dependencies: ["tokio"],
 }
 

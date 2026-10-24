@@ -359,6 +359,7 @@ mod tests {
         fixed_registration_store::{FixedRegistrationStore, NoLocalEntities},
         forwarded_query::client_query::ClientQuery,
         instance_budget::{InstanceBudget, InstanceBudgetExceeded},
+        mock_source::{answer_in_turn, endpoint, received},
         operation::ForwardingOperation,
         outcome::{ForwardReadOutcome, ForwardedEntities, ForwardedTemporalEntities},
         query_forwarding_error::QueryForwardingError,
@@ -382,22 +383,10 @@ mod tests {
         temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory},
     };
     use andromeda_ngsi_ld_request::query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters};
-    use andromeda_test_mocks::{
-        callback_path::CallbackPath,
-        callback_server::MockResponse,
-        context_source_server::ContextSourceServer,
-        server_config::MockServerConfig,
-    };
-    use bytes::Bytes;
-    use http::{HeaderMap, HeaderValue, Method, StatusCode};
+    use http::StatusCode;
     use serde_json::json;
-    use std::{
-        net::{Ipv4Addr, SocketAddr},
-        num::NonZeroU32,
-        ops::Range,
-        sync::Arc,
-    };
-    use url::Host;
+    use std::{num::NonZeroU32, ops::Range, sync::Arc};
+    use wiremock::{MockServer, ResponseTemplate};
 
     /// The query resource every GET page of these walks lands on.
     const QUERY_PATH: &str = "/ngsi-ld/v1/entities";
@@ -407,22 +396,17 @@ mod tests {
     const BATCH_PATH: &str = "/ngsi-ld/v1/entityOperations/query";
 
     /// A mock Context Source listening on an ephemeral local port.
-    async fn source() -> ContextSourceServer {
-        let config = MockServerConfig::new(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)), Host::Ipv4(Ipv4Addr::LOCALHOST));
-        ContextSourceServer::start(config).await.expect("the mock source starts")
-    }
-
-    fn path(raw: &str) -> CallbackPath {
-        CallbackPath::parse(raw).expect("an absolute path")
+    async fn source() -> MockServer {
+        MockServer::start().await
     }
 
     /// An inclusive registration of `Vehicle` pointing at `source`, advertising
     /// `operations`.
-    fn registration(source: &ContextSourceServer, operations: &[&str]) -> ContextSourceRegistration {
+    fn registration(source: &MockServer, operations: &[&str]) -> ContextSourceRegistration {
         serde_json::from_value(json!({
             "id": "urn:ngsi-ld:ContextSourceRegistration:walk",
             "type": "ContextSourceRegistration",
-            "endpoint": source.endpoint(&path("/")).expect("the endpoint resolves").as_str(),
+            "endpoint": endpoint(source),
             "mode": "inclusive",
             "operations": operations,
             "information": [{"entities": [{"type": "https://uri.etsi.org/ngsi-ld/default-context/Vehicle"}]}],
@@ -446,24 +430,19 @@ mod tests {
 
     /// One page of `count` Vehicles numbered from `first`, pointing at `next`
     /// when given.
-    fn page(first: usize, count: usize, next: Option<&str>) -> MockResponse {
+    fn page(first: usize, count: usize, next: Option<&str>) -> ResponseTemplate {
         let entities: Vec<serde_json::Value> = (first..first + count)
             .map(|number| json!({"id": format!("urn:ngsi-ld:Vehicle:{number:04}"), "type": "Vehicle"}))
             .collect();
-        let mut headers = HeaderMap::new();
-        headers.insert("content-type", HeaderValue::from_static("application/json"));
-        if let Some(next) = next {
-            headers.insert("link", HeaderValue::from_str(&format!("<{next}>; rel=\"next\"")).expect("a valid Link header"));
+        let page = ResponseTemplate::new(StatusCode::OK).set_body_raw(serde_json::to_vec(&entities).expect("the page serializes"), "application/json");
+        match next {
+            Some(next) => page.insert_header("link", format!("<{next}>; rel=\"next\"")),
+            None => page,
         }
-        MockResponse::builder()
-            .status(StatusCode::OK)
-            .headers(headers)
-            .body(Bytes::from(serde_json::to_vec(&entities).expect("the page serializes")))
-            .build()
     }
 
-    fn failure(status: StatusCode) -> MockResponse {
-        MockResponse::builder().status(status).build()
+    fn failure(status: StatusCode) -> ResponseTemplate {
+        ResponseTemplate::new(status)
     }
 
     /// Forward `type=Vehicle` through `delivery` under a budget of `maximum`.
@@ -492,7 +471,7 @@ mod tests {
 
     /// One temporal page of `count` Vehicles numbered from `first`, answered
     /// with `status`, pointing at `next` and carrying `content_range` when given.
-    fn temporal_page(first: usize, count: usize, status: StatusCode, next: Option<&str>, content_range: Option<&str>) -> MockResponse {
+    fn temporal_page(first: usize, count: usize, status: StatusCode, next: Option<&str>, content_range: Option<&str>) -> ResponseTemplate {
         let entities: Vec<serde_json::Value> = (first..first + count)
             .map(|number| {
                 json!({
@@ -502,19 +481,15 @@ mod tests {
                 })
             })
             .collect();
-        let mut headers = HeaderMap::new();
-        headers.insert("content-type", HeaderValue::from_static("application/json"));
-        if let Some(next) = next {
-            headers.insert("link", HeaderValue::from_str(&format!("<{next}>; rel=\"next\"")).expect("a valid Link header"));
+        let page = ResponseTemplate::new(status).set_body_raw(serde_json::to_vec(&entities).expect("the page serializes"), "application/json");
+        let page = match next {
+            Some(next) => page.insert_header("link", format!("<{next}>; rel=\"next\"")),
+            None => page,
+        };
+        match content_range {
+            Some(content_range) => page.insert_header("content-range", content_range),
+            None => page,
         }
-        if let Some(content_range) = content_range {
-            headers.insert("content-range", HeaderValue::from_str(content_range).expect("a valid Content-Range header"));
-        }
-        MockResponse::builder()
-            .status(status)
-            .headers(headers)
-            .body(Bytes::from(serde_json::to_vec(&entities).expect("the page serializes")))
-            .build()
     }
 
     /// Forward a temporal `type=Vehicle` query walking every source page under
@@ -575,26 +550,29 @@ mod tests {
     #[tokio::test]
     async fn the_walk_follows_every_next_pointer_past_short_pages_to_the_last_page() {
         let source = source().await;
-        source
-            .enqueue(Method::GET, path(QUERY_PATH), page(0, 2, Some("/ngsi-ld/v1/entities?type=Vehicle&offset=2")))
-            .await;
-        source
-            .enqueue(Method::GET, path(QUERY_PATH), page(2, 2, Some("/ngsi-ld/v1/entities?type=Vehicle&offset=4")))
-            .await;
-        source.enqueue(Method::GET, path(QUERY_PATH), page(4, 1, None)).await;
+        answer_in_turn(
+            &source,
+            "GET",
+            QUERY_PATH,
+            [
+                page(0, 2, Some("/ngsi-ld/v1/entities?type=Vehicle&offset=2")),
+                page(2, 2, Some("/ngsi-ld/v1/entities?type=Vehicle&offset=4")),
+                page(4, 1, None),
+            ],
+        )
+        .await;
         let service = service(registration(&source, &["queryEntity"]));
 
         let outcome = walk(&service, QueryDelivery::Query, 100).await.expect("the walk completes");
 
         pretty_assertions::assert_eq!(gathered(&outcome), numbered(0..5));
         assert!(warnings(&outcome).is_empty(), "{:?}", warnings(&outcome));
-        let requests = source.drain_requests().await;
-        let queries: Vec<Option<&str>> = requests.iter().map(|request| request.uri.query()).collect();
+        let requests = received(&source).await;
+        let queries: Vec<Option<&str>> = requests.iter().map(|request| request.url.query()).collect();
         pretty_assertions::assert_eq!(queries.len(), 3);
         assert!(queries[0].is_some_and(|query| query.contains("limit=1000")), "{queries:?}");
         pretty_assertions::assert_eq!(queries[1], Some("type=Vehicle&offset=2"));
         pretty_assertions::assert_eq!(queries[2], Some("type=Vehicle&offset=4"));
-        source.shutdown().await.expect("the mock source stops");
     }
 
     /// Clause 5.5.9.1: an answer without a `next` pointer is complete after its
@@ -602,14 +580,13 @@ mod tests {
     #[tokio::test]
     async fn an_answer_without_a_next_pointer_is_read_once() {
         let source = source().await;
-        source.enqueue(Method::GET, path(QUERY_PATH), page(0, 3, None)).await;
+        answer_in_turn(&source, "GET", QUERY_PATH, [page(0, 3, None)]).await;
         let service = service(registration(&source, &["queryEntity"]));
 
         let outcome = walk(&service, QueryDelivery::Query, 100).await.expect("the walk completes");
 
         pretty_assertions::assert_eq!(gathered(&outcome), numbered(0..3));
-        pretty_assertions::assert_eq!(source.total_request_count(), 1);
-        source.shutdown().await.expect("the mock source stops");
+        pretty_assertions::assert_eq!(received(&source).await.len(), 1);
     }
 
     /// A source pointing back at a page it already answered cannot keep the
@@ -619,20 +596,18 @@ mod tests {
     async fn a_repeated_next_pointer_ends_the_walk_with_a_warning() {
         let source = source().await;
         let looping = "/ngsi-ld/v1/entities?type=Vehicle&offset=2";
-        source.enqueue(Method::GET, path(QUERY_PATH), page(0, 2, Some(looping))).await;
-        source.enqueue(Method::GET, path(QUERY_PATH), page(2, 2, Some(looping))).await;
+        answer_in_turn(&source, "GET", QUERY_PATH, [page(0, 2, Some(looping)), page(2, 2, Some(looping))]).await;
         let service = service(registration(&source, &["queryEntity"]));
 
         let outcome = walk(&service, QueryDelivery::Query, 100).await.expect("the walk completes");
 
         pretty_assertions::assert_eq!(gathered(&outcome), numbered(0..4));
-        pretty_assertions::assert_eq!(source.total_request_count(), 2);
+        pretty_assertions::assert_eq!(received(&source).await.len(), 2);
         assert!(
             warnings(&outcome).iter().any(|warning| warning.to_string().contains("already answered")),
             "{:?}",
             warnings(&outcome)
         );
-        source.shutdown().await.expect("the mock source stops");
     }
 
     /// An empty page that still points onward makes no progress, so the walk
@@ -640,24 +615,27 @@ mod tests {
     #[tokio::test]
     async fn an_empty_page_that_still_points_onward_ends_the_walk_with_a_warning() {
         let source = source().await;
-        source
-            .enqueue(Method::GET, path(QUERY_PATH), page(0, 2, Some("/ngsi-ld/v1/entities?type=Vehicle&offset=2")))
-            .await;
-        source
-            .enqueue(Method::GET, path(QUERY_PATH), page(2, 0, Some("/ngsi-ld/v1/entities?type=Vehicle&offset=3")))
-            .await;
+        answer_in_turn(
+            &source,
+            "GET",
+            QUERY_PATH,
+            [
+                page(0, 2, Some("/ngsi-ld/v1/entities?type=Vehicle&offset=2")),
+                page(2, 0, Some("/ngsi-ld/v1/entities?type=Vehicle&offset=3")),
+            ],
+        )
+        .await;
         let service = service(registration(&source, &["queryEntity"]));
 
         let outcome = walk(&service, QueryDelivery::Query, 100).await.expect("the walk completes");
 
         pretty_assertions::assert_eq!(gathered(&outcome), numbered(0..2));
-        pretty_assertions::assert_eq!(source.total_request_count(), 2);
+        pretty_assertions::assert_eq!(received(&source).await.len(), 2);
         assert!(
             warnings(&outcome).iter().any(|warning| warning.to_string().contains("empty page")),
             "{:?}",
             warnings(&outcome)
         );
-        source.shutdown().await.expect("the mock source stops");
     }
 
     /// Clause 6.3.17: a page that fails keeps what the earlier pages gathered
@@ -665,10 +643,16 @@ mod tests {
     #[tokio::test]
     async fn a_failing_page_keeps_what_was_gathered_and_warns() {
         let source = source().await;
-        source
-            .enqueue(Method::GET, path(QUERY_PATH), page(0, 2, Some("/ngsi-ld/v1/entities?type=Vehicle&offset=2")))
-            .await;
-        source.enqueue(Method::GET, path(QUERY_PATH), failure(StatusCode::INTERNAL_SERVER_ERROR)).await;
+        answer_in_turn(
+            &source,
+            "GET",
+            QUERY_PATH,
+            [
+                page(0, 2, Some("/ngsi-ld/v1/entities?type=Vehicle&offset=2")),
+                failure(StatusCode::INTERNAL_SERVER_ERROR),
+            ],
+        )
+        .await;
         let service = service(registration(&source, &["queryEntity"]));
 
         let outcome = walk(&service, QueryDelivery::Query, 100).await.expect("the walk completes");
@@ -679,7 +663,6 @@ mod tests {
             "{:?}",
             warnings(&outcome)
         );
-        source.shutdown().await.expect("the mock source stops");
     }
 
     /// Clause 4.12: once the sources together gather more than the request's
@@ -687,10 +670,13 @@ mod tests {
     #[tokio::test]
     async fn a_walk_exceeding_the_budget_is_refused_with_too_many_results() {
         let source = source().await;
-        source
-            .enqueue(Method::GET, path(QUERY_PATH), page(0, 2, Some("/ngsi-ld/v1/entities?type=Vehicle&offset=2")))
-            .await;
-        source.enqueue(Method::GET, path(QUERY_PATH), page(2, 2, None)).await;
+        answer_in_turn(
+            &source,
+            "GET",
+            QUERY_PATH,
+            [page(0, 2, Some("/ngsi-ld/v1/entities?type=Vehicle&offset=2")), page(2, 2, None)],
+        )
+        .await;
         let service = service(registration(&source, &["queryEntity"]));
 
         let refused = walk(&service, QueryDelivery::Query, 3).await;
@@ -701,23 +687,24 @@ mod tests {
             Err(QueryForwardingError::TooManyInstances(exceeded)) => panic!("an entity query has no instance budget: {exceeded}"),
             Ok(outcome) => panic!("the walk must be refused, it gathered {:?}", gathered(&outcome)),
         }
-        source.shutdown().await.expect("the mock source stops");
     }
 
     /// A budget the answer fits into exactly is not exceeded.
     #[tokio::test]
     async fn a_walk_gathering_exactly_the_budget_completes() {
         let source = source().await;
-        source
-            .enqueue(Method::GET, path(QUERY_PATH), page(0, 2, Some("/ngsi-ld/v1/entities?type=Vehicle&offset=2")))
-            .await;
-        source.enqueue(Method::GET, path(QUERY_PATH), page(2, 2, None)).await;
+        answer_in_turn(
+            &source,
+            "GET",
+            QUERY_PATH,
+            [page(0, 2, Some("/ngsi-ld/v1/entities?type=Vehicle&offset=2")), page(2, 2, None)],
+        )
+        .await;
         let service = service(registration(&source, &["queryEntity"]));
 
         let outcome = walk(&service, QueryDelivery::Query, 4).await.expect("the walk fits its budget");
 
         pretty_assertions::assert_eq!(gathered(&outcome), numbered(0..4));
-        source.shutdown().await.expect("the mock source stops");
     }
 
     /// Clause 4.3.6.1: the broker contacts the registration it matched, so a
@@ -725,25 +712,24 @@ mod tests {
     #[tokio::test]
     async fn a_next_pointer_to_another_origin_is_not_followed() {
         let source = source().await;
-        source
-            .enqueue(
-                Method::GET,
-                path(QUERY_PATH),
-                page(0, 2, Some("http://elsewhere.invalid/ngsi-ld/v1/entities?offset=2")),
-            )
-            .await;
+        answer_in_turn(
+            &source,
+            "GET",
+            QUERY_PATH,
+            [page(0, 2, Some("http://elsewhere.invalid/ngsi-ld/v1/entities?offset=2"))],
+        )
+        .await;
         let service = service(registration(&source, &["queryEntity"]));
 
         let outcome = walk(&service, QueryDelivery::Query, 100).await.expect("the walk completes");
 
         pretty_assertions::assert_eq!(gathered(&outcome), numbered(0..2));
-        pretty_assertions::assert_eq!(source.total_request_count(), 1);
+        pretty_assertions::assert_eq!(received(&source).await.len(), 1);
         assert!(
             warnings(&outcome).iter().any(|warning| warning.to_string().contains("origin")),
             "{:?}",
             warnings(&outcome)
         );
-        source.shutdown().await.expect("the mock source stops");
     }
 
     /// A source that ignores `offset` answers its whole result again; the
@@ -752,30 +738,31 @@ mod tests {
     #[tokio::test]
     async fn an_offset_walk_over_a_source_ignoring_offset_ends_on_the_first_repeat() {
         let source = source().await;
-        source.enqueue(Method::POST, path(BATCH_PATH), page(0, 2, None)).await;
+        answer_in_turn(&source, "POST", BATCH_PATH, [page(0, 2, None)]).await;
         let service = service(registration(&source, &["queryBatch"]));
 
         let outcome = walk(&service, QueryDelivery::Batch, 100).await.expect("the walk completes");
 
         pretty_assertions::assert_eq!(gathered(&outcome), numbered(0..2));
-        pretty_assertions::assert_eq!(source.total_request_count(), 2);
-        source.shutdown().await.expect("the mock source stops");
+        pretty_assertions::assert_eq!(received(&source).await.len(), 2);
     }
 
     /// An entity a source answers on two pages is one entity of its answer.
     #[tokio::test]
     async fn an_entity_answered_on_two_pages_is_gathered_once() {
         let source = source().await;
-        source
-            .enqueue(Method::GET, path(QUERY_PATH), page(0, 3, Some("/ngsi-ld/v1/entities?type=Vehicle&offset=2")))
-            .await;
-        source.enqueue(Method::GET, path(QUERY_PATH), page(2, 3, None)).await;
+        answer_in_turn(
+            &source,
+            "GET",
+            QUERY_PATH,
+            [page(0, 3, Some("/ngsi-ld/v1/entities?type=Vehicle&offset=2")), page(2, 3, None)],
+        )
+        .await;
         let service = service(registration(&source, &["queryEntity"]));
 
         let outcome = walk(&service, QueryDelivery::Query, 100).await.expect("the walk completes");
 
         pretty_assertions::assert_eq!(gathered(&outcome), numbered(0..5));
-        source.shutdown().await.expect("the mock source stops");
     }
 
     /// Clause 5.7.4.4: "The result of each remote query is an Entity Array"
@@ -785,20 +772,23 @@ mod tests {
     async fn a_temporal_query_follows_every_next_pointer_of_the_source() {
         let source = source().await;
         let next = "/ngsi-ld/v1/temporal/entities?type=Vehicle&offset=2";
-        source
-            .enqueue(Method::GET, path(TEMPORAL_PATH), temporal_page(0, 2, StatusCode::OK, Some(next), None))
-            .await;
-        source
-            .enqueue(Method::GET, path(TEMPORAL_PATH), temporal_page(2, 1, StatusCode::OK, None, None))
-            .await;
+        answer_in_turn(
+            &source,
+            "GET",
+            TEMPORAL_PATH,
+            [
+                temporal_page(0, 2, StatusCode::OK, Some(next), None),
+                temporal_page(2, 1, StatusCode::OK, None, None),
+            ],
+        )
+        .await;
         let service = service(registration(&source, &["queryTemporal"]));
 
         let outcome = temporal_walk(&service, 100).await.expect("the walk completes");
 
         pretty_assertions::assert_eq!(temporal_gathered(&outcome), numbered(0..3));
-        pretty_assertions::assert_eq!(source.total_request_count(), 2);
+        pretty_assertions::assert_eq!(received(&source).await.len(), 2);
         assert!(outcome.results.iter().all(|answer| answer.partial_ranges.is_empty()));
-        source.shutdown().await.expect("the mock source stops");
     }
 
     /// Clause 6.3.10: every page the source cut short with a 206 says where,
@@ -809,20 +799,16 @@ mod tests {
         let next = "/ngsi-ld/v1/temporal/entities?type=Vehicle&offset=1";
         let first_range = "DateTime 2019-01-01T00:00:00Z-2020-01-01T00:00:00Z/*";
         let second_range = "DateTime 2019-01-01T00:00:00Z-2020-02-01T00:00:00Z/*";
-        source
-            .enqueue(
-                Method::GET,
-                path(TEMPORAL_PATH),
+        answer_in_turn(
+            &source,
+            "GET",
+            TEMPORAL_PATH,
+            [
                 temporal_page(0, 1, StatusCode::PARTIAL_CONTENT, Some(next), Some(first_range)),
-            )
-            .await;
-        source
-            .enqueue(
-                Method::GET,
-                path(TEMPORAL_PATH),
                 temporal_page(1, 1, StatusCode::PARTIAL_CONTENT, None, Some(second_range)),
-            )
-            .await;
+            ],
+        )
+        .await;
         let service = service(registration(&source, &["queryTemporal"]));
 
         let outcome = temporal_walk(&service, 100).await.expect("the walk completes");
@@ -834,7 +820,6 @@ mod tests {
             .collect();
         pretty_assertions::assert_eq!(ranges, vec![first_range.to_owned(), second_range.to_owned()]);
         pretty_assertions::assert_eq!(temporal_gathered(&outcome), numbered(0..2));
-        source.shutdown().await.expect("the mock source stops");
     }
 
     /// A 206 that does not say where it stopped cannot be combined with the
@@ -842,9 +827,7 @@ mod tests {
     #[tokio::test]
     async fn a_partial_temporal_page_without_a_content_range_is_reported() {
         let source = source().await;
-        source
-            .enqueue(Method::GET, path(TEMPORAL_PATH), temporal_page(0, 1, StatusCode::PARTIAL_CONTENT, None, None))
-            .await;
+        answer_in_turn(&source, "GET", TEMPORAL_PATH, [temporal_page(0, 1, StatusCode::PARTIAL_CONTENT, None, None)]).await;
         let service = service(registration(&source, &["queryTemporal"]));
 
         let outcome = temporal_walk(&service, 100).await.expect("the walk completes");
@@ -858,7 +841,6 @@ mod tests {
             warnings.iter().any(|warning| warning.contains("without a readable Content-Range")),
             "{warnings:?}"
         );
-        source.shutdown().await.expect("the mock source stops");
     }
 
     /// Clause 4.12: a temporal walk gathering more entities than the budget is
@@ -867,12 +849,16 @@ mod tests {
     async fn a_temporal_walk_exceeding_the_budget_is_refused_with_too_many_results() {
         let source = source().await;
         let next = "/ngsi-ld/v1/temporal/entities?type=Vehicle&offset=2";
-        source
-            .enqueue(Method::GET, path(TEMPORAL_PATH), temporal_page(0, 2, StatusCode::OK, Some(next), None))
-            .await;
-        source
-            .enqueue(Method::GET, path(TEMPORAL_PATH), temporal_page(2, 2, StatusCode::OK, None, None))
-            .await;
+        answer_in_turn(
+            &source,
+            "GET",
+            TEMPORAL_PATH,
+            [
+                temporal_page(0, 2, StatusCode::OK, Some(next), None),
+                temporal_page(2, 2, StatusCode::OK, None, None),
+            ],
+        )
+        .await;
         let service = service(registration(&source, &["queryTemporal"]));
 
         let refused = temporal_walk(&service, 3).await;
@@ -883,7 +869,6 @@ mod tests {
             Err(QueryForwardingError::TooManyInstances(exceeded)) => panic!("the walk must be refused for its entities: {exceeded}"),
             Ok(outcome) => panic!("the walk must be refused, it gathered {:?}", temporal_gathered(&outcome)),
         }
-        source.shutdown().await.expect("the mock source stops");
     }
 
     /// Clause 6.23 carries the query in the body, so the POST binding walks by
@@ -892,39 +877,31 @@ mod tests {
     #[tokio::test]
     async fn the_post_binding_walks_by_offset_until_an_empty_page() {
         let source = source().await;
-        source.enqueue(Method::POST, path(BATCH_PATH), page(0, 2, None)).await;
-        source.enqueue(Method::POST, path(BATCH_PATH), page(2, 1, None)).await;
-        source.enqueue(Method::POST, path(BATCH_PATH), page(3, 0, None)).await;
+        answer_in_turn(&source, "POST", BATCH_PATH, [page(0, 2, None), page(2, 1, None), page(3, 0, None)]).await;
         let service = service(registration(&source, &["queryBatch"]));
 
         let outcome = walk(&service, QueryDelivery::Batch, 100).await.expect("the walk completes");
 
         pretty_assertions::assert_eq!(gathered(&outcome), numbered(0..3));
-        let requests = source.drain_requests().await;
-        let queries: Vec<Option<&str>> = requests.iter().map(|request| request.uri.query()).collect();
+        let requests = received(&source).await;
+        let queries: Vec<Option<&str>> = requests.iter().map(|request| request.url.query()).collect();
         pretty_assertions::assert_eq!(queries, vec![Some("limit=1000"), Some("limit=1000&offset=2"), Some("limit=1000&offset=3")]);
-        source.shutdown().await.expect("the mock source stops");
     }
 
     /// One temporal page holding `urn:ngsi-ld:Vehicle:0000` with one `speed`
     /// instance per `(value, observedAt)`, each identified by its value,
     /// answered with `status` and carrying `content_range` when given.
-    fn history_page(instances: &[(i64, &str)], status: StatusCode, content_range: Option<&str>) -> MockResponse {
+    fn history_page(instances: &[(i64, &str)], status: StatusCode, content_range: Option<&str>) -> ResponseTemplate {
         let speed: Vec<serde_json::Value> = instances
             .iter()
             .map(|(value, at)| json!({"type": "Property", "value": value, "observedAt": at, "instanceId": format!("urn:ngsi-ld:instance:{value}")}))
             .collect();
         let entities = json!([{"id": "urn:ngsi-ld:Vehicle:0000", "type": "Vehicle", "speed": speed}]);
-        let mut headers = HeaderMap::new();
-        headers.insert("content-type", HeaderValue::from_static("application/json"));
-        if let Some(content_range) = content_range {
-            headers.insert("content-range", HeaderValue::from_str(content_range).expect("a valid Content-Range header"));
+        let page = ResponseTemplate::new(status).set_body_raw(serde_json::to_vec(&entities).expect("the page serializes"), "application/json");
+        match content_range {
+            Some(content_range) => page.insert_header("content-range", content_range),
+            None => page,
         }
-        MockResponse::builder()
-            .status(status)
-            .headers(headers)
-            .body(Bytes::from(serde_json::to_vec(&entities).expect("the page serializes")))
-            .build()
     }
 
     /// Forward an aggregated temporal `type=Vehicle` query reading the sources'
@@ -981,42 +958,37 @@ mod tests {
     #[tokio::test]
     async fn a_partial_answer_is_resumed_at_its_range_end() {
         let source = source().await;
-        source
-            .enqueue(
-                Method::GET,
-                path(TEMPORAL_PATH),
+        answer_in_turn(
+            &source,
+            "GET",
+            TEMPORAL_PATH,
+            [
                 history_page(
                     &[(1, "2020-01-01T00:00:00Z"), (2, "2020-01-02T00:00:00Z")],
                     StatusCode::PARTIAL_CONTENT,
                     Some("DateTime 2020-01-01T00:00:00Z-2020-01-02T00:00:00Z/4"),
                 ),
-            )
-            .await;
-        source
-            .enqueue(
-                Method::GET,
-                path(TEMPORAL_PATH),
                 history_page(
                     &[(2, "2020-01-02T00:00:00Z"), (3, "2020-01-03T00:00:00Z"), (4, "2020-01-04T00:00:00Z")],
                     StatusCode::OK,
                     None,
                 ),
-            )
-            .await;
+            ],
+        )
+        .await;
         let service = service(registration(&source, &["queryTemporal"]));
 
         let outcome = history_walk(&service, 100).await.expect("the walk completes");
 
         pretty_assertions::assert_eq!(speed_values(&outcome), vec![1, 2, 3, 4]);
         assert!(outcome.results.iter().all(|answer| answer.partial_ranges.is_empty()));
-        let requests = source.drain_requests().await;
-        let queries: Vec<&str> = requests.iter().filter_map(|request| request.uri.query()).collect();
+        let requests = received(&source).await;
+        let queries: Vec<&str> = requests.iter().filter_map(|request| request.url.query()).collect();
         pretty_assertions::assert_eq!(queries.len(), 2, "{queries:?}");
         for query in &queries {
             assert!(!query.contains("aggrMethods") && !query.contains("format"), "{query}");
         }
         assert!(queries[1].contains("timerel=after&timeAt=2020-01-02T00%3A00%3A00Z"), "{queries:?}");
-        source.shutdown().await.expect("the mock source stops");
     }
 
     /// A source cut short at the instant it was resumed at makes no progress,
@@ -1026,26 +998,25 @@ mod tests {
         let source = source().await;
         let stuck = "DateTime 2020-01-01T00:00:00Z-2020-01-02T00:00:00Z/*";
         for _ in 0..3 {
-            source
-                .enqueue(
-                    Method::GET,
-                    path(TEMPORAL_PATH),
-                    history_page(&[(2, "2020-01-02T00:00:00Z")], StatusCode::PARTIAL_CONTENT, Some(stuck)),
-                )
-                .await;
+            answer_in_turn(
+                &source,
+                "GET",
+                TEMPORAL_PATH,
+                [history_page(&[(2, "2020-01-02T00:00:00Z")], StatusCode::PARTIAL_CONTENT, Some(stuck))],
+            )
+            .await;
         }
         let service = service(registration(&source, &["queryTemporal"]));
 
         let outcome = history_walk(&service, 100).await.expect("the walk completes");
 
-        pretty_assertions::assert_eq!(source.total_request_count(), 2);
+        pretty_assertions::assert_eq!(received(&source).await.len(), 2);
         let warnings: Vec<String> = outcome
             .results
             .iter()
             .flat_map(|answer| answer.warnings.iter().map(ToString::to_string))
             .collect();
         assert!(warnings.iter().any(|warning| warning.contains("cannot be resumed past")), "{warnings:?}");
-        source.shutdown().await.expect("the mock source stops");
     }
 
     /// Clause 4.12: once the sources' history holds more instances than the
@@ -1053,17 +1024,17 @@ mod tests {
     #[tokio::test]
     async fn instances_beyond_the_budget_are_too_many_results() {
         let source = source().await;
-        source
-            .enqueue(
-                Method::GET,
-                path(TEMPORAL_PATH),
-                history_page(
-                    &[(1, "2020-01-01T00:00:00Z"), (2, "2020-01-02T00:00:00Z"), (3, "2020-01-03T00:00:00Z")],
-                    StatusCode::OK,
-                    None,
-                ),
-            )
-            .await;
+        answer_in_turn(
+            &source,
+            "GET",
+            TEMPORAL_PATH,
+            [history_page(
+                &[(1, "2020-01-01T00:00:00Z"), (2, "2020-01-02T00:00:00Z"), (3, "2020-01-03T00:00:00Z")],
+                StatusCode::OK,
+                None,
+            )],
+        )
+        .await;
         let service = service(registration(&source, &["queryTemporal"]));
 
         match history_walk(&service, 2).await {
@@ -1072,6 +1043,5 @@ mod tests {
             Err(QueryForwardingError::Federation(error)) => panic!("the walk must be refused for its instances, not fail: {error}"),
             Ok(outcome) => panic!("the walk must be refused, it gathered {:?}", speed_values(&outcome)),
         }
-        source.shutdown().await.expect("the mock source stops");
     }
 }

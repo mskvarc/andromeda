@@ -125,9 +125,7 @@ async fn split_entities_merge_local_and_other_holders() {
     pretty_assertions::assert_eq!(entity["speed"]["value"], json!(40), "the sender's part: {entity}");
     pretty_assertions::assert_eq!(entity["name"]["value"], json!("Roadster"), "this broker's part: {entity}");
     pretty_assertions::assert_eq!(entity["temp"]["value"], json!(21), "the third holder's part: {entity}");
-    pretty_assertions::assert_eq!(sender.requests(), 0, "the sender is not asked for what it just sent");
-    sender.stop().await;
-    third.stop().await;
+    pretty_assertions::assert_eq!(sender.requests().await, 0, "the sender is not asked for what it just sent");
 }
 
 /// Clause 5.8.6: a source reports a deleted attribute as "only the name of the

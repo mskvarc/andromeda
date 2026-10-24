@@ -99,12 +99,15 @@ shadow-rs = "2.0.0"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
-andromeda-test-http3.workspace = true
-andromeda-test-tls.workspace = true
+andromeda-server-tls = { workspace = true, features = ["test-identity"] }
 axum = "0.8.9"
+bytes = "1.12.1"
 h3 = "0.0.8"
+h3-quinn = "0.0.10"
 http = "1.5.0"
 pretty_assertions = "1.4.1"
+quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }
 reqwest = { version = "0.13.5", features = ["http2"] }
+rustls = { version = "0.23.45", default-features = false, features = ["aws_lc_rs", "std"] }
 serial_test = "4.0.1"
 tokio = { version = "1.53.2", features = ["full", "test-util"] }

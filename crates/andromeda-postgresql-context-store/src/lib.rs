@@ -127,7 +127,6 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-json-literal",
         "andromeda-ngsi-ld-representation",
         "andromeda-postgresql-pool",
-        "andromeda-test-fixtures",
     ],
     allow_production_dependencies: ["sea-query", "sqlx", "tokio"],
 }

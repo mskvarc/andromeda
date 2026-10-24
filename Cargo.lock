@@ -64,6 +64,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "allocation-counter"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "beb9e990c0a33699f1984d85a6abead615ccc72dd8130bf3e15dcabe2ca149c9"
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -83,66 +89,12 @@ name = "andromeda"
 version = "0.1.0"
 dependencies = [
  "andromeda-broker-composition",
- "andromeda-configuration-scalars",
- "andromeda-context-commit",
- "andromeda-context-space",
- "andromeda-entity",
- "andromeda-http-headers",
- "andromeda-ngsi-ld-entity",
- "andromeda-ngsi-ld-lexicon",
- "andromeda-ngsi-ld-model",
- "andromeda-ngsi-ld-query",
- "andromeda-ngsi-ld-representation",
- "andromeda-notification",
- "andromeda-postgresql-atomic-write",
- "andromeda-postgresql-attribute-instance",
- "andromeda-postgresql-codes",
- "andromeda-postgresql-context-store",
- "andromeda-postgresql-name-dictionary",
- "andromeda-postgresql-pool",
- "andromeda-postgresql-query",
- "andromeda-postgresql-schema",
- "andromeda-postgresql-seaquery",
- "andromeda-postgresql-temporal-query",
- "andromeda-postgresql-temporal-store",
- "andromeda-temporal",
- "andromeda-tenancy",
- "andromeda-test-client",
- "andromeda-test-fixtures",
- "andromeda-test-harness",
- "andromeda-test-mocks",
- "axum",
- "bytes",
- "cefact-units",
- "chrono",
  "clap",
  "clap-themes",
- "futures",
- "h3",
- "h3-quinn",
- "http",
- "httpdate",
- "iri-rs",
- "jsonld",
- "jsonld-syntax",
  "mimalloc",
  "pretty_assertions",
- "quinn",
- "regex",
- "reqwest",
- "rumqttc",
- "rustls",
- "rustls-pki-types",
- "sea-query",
- "serde_json",
- "serde_norway",
- "serial_test",
  "shadow-rs",
- "sqlx",
  "tokio",
- "url",
- "urlencoding",
- "uuid",
 ]
 
 [[package]]
@@ -222,10 +174,9 @@ dependencies = [
  "andromeda-telemetry",
  "andromeda-temporal",
  "andromeda-tenancy",
- "andromeda-test-http3",
- "andromeda-test-tls",
  "async-trait",
  "axum",
+ "bytes",
  "chrono",
  "derive_more",
  "etcetera",
@@ -233,11 +184,14 @@ dependencies = [
  "file-rotate",
  "futures",
  "h3",
+ "h3-quinn",
  "http",
  "humantime",
  "iri-rs",
  "pretty_assertions",
+ "quinn",
  "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "serial_test",
@@ -408,7 +362,6 @@ dependencies = [
  "andromeda-subscription",
  "andromeda-telemetry",
  "andromeda-tenancy",
- "andromeda-test-fixtures",
  "async-lock",
  "async-trait",
  "chrono",
@@ -495,8 +448,6 @@ dependencies = [
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-registration",
  "andromeda-telemetry",
- "andromeda-test-fixtures",
- "andromeda-test-mocks",
  "backon",
  "bytes",
  "chrono",
@@ -521,6 +472,7 @@ dependencies = [
  "tracing",
  "typed-builder",
  "url",
+ "wiremock",
 ]
 
 [[package]]
@@ -615,7 +567,6 @@ dependencies = [
  "andromeda-ngsi-ld-request",
  "andromeda-persistence-failure",
  "andromeda-tenancy",
- "andromeda-test-harness",
  "axum",
  "chrono",
  "derive_more",
@@ -722,6 +673,7 @@ dependencies = [
 name = "andromeda-http-extraction"
 version = "0.1.0"
 dependencies = [
+ "allocation-counter",
  "andromeda-architecture-checks",
  "andromeda-context-space",
  "andromeda-http-headers",
@@ -737,7 +689,6 @@ dependencies = [
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-persistence-failure",
  "andromeda-tenancy",
- "andromeda-test-allocator",
  "axum",
  "futures",
  "headers",
@@ -896,7 +847,6 @@ dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration-scalars",
  "andromeda-server-tls",
- "andromeda-test-tls",
  "axum",
  "headers",
  "hyper",
@@ -955,7 +905,6 @@ dependencies = [
  "andromeda-ngsi-ld-render",
  "andromeda-ngsi-ld-request",
  "andromeda-tenancy",
- "andromeda-test-harness",
  "axum",
  "chrono",
  "futures",
@@ -1129,8 +1078,6 @@ dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration-scalars",
  "andromeda-server-tls",
- "andromeda-test-http3",
- "andromeda-test-tls",
  "axum",
  "bytes",
  "h3",
@@ -1140,6 +1087,7 @@ dependencies = [
  "pretty_assertions",
  "quinn",
  "rustls",
+ "rustls-pki-types",
  "serde",
  "strum",
  "thiserror 2.0.21",
@@ -1178,7 +1126,6 @@ dependencies = [
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-persistence-failure",
- "andromeda-test-mocks",
  "async-trait",
  "backon",
  "dashmap",
@@ -1204,6 +1151,7 @@ dependencies = [
  "tracing",
  "typed-builder",
  "url",
+ "wiremock",
 ]
 
 [[package]]
@@ -1239,6 +1187,7 @@ dependencies = [
 name = "andromeda-ngsi-ld-compaction"
 version = "0.1.0"
 dependencies = [
+ "allocation-counter",
  "andromeda-architecture-checks",
  "andromeda-json-literal",
  "andromeda-jsonld",
@@ -1250,7 +1199,6 @@ dependencies = [
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-vocabulary",
- "andromeda-test-allocator",
  "chrono",
  "dashmap",
  "indexmap 2.14.2",
@@ -1269,6 +1217,7 @@ dependencies = [
 name = "andromeda-ngsi-ld-entity"
 version = "0.1.0"
 dependencies = [
+ "allocation-counter",
  "andromeda-architecture-checks",
  "andromeda-json-literal",
  "andromeda-ngsi-ld-geometry",
@@ -1277,8 +1226,6 @@ dependencies = [
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-vocabulary",
- "andromeda-test-allocator",
- "andromeda-test-fixtures",
  "cefact-units",
  "chrono",
  "compact_str",
@@ -1298,6 +1245,7 @@ dependencies = [
 name = "andromeda-ngsi-ld-expansion"
 version = "0.1.0"
 dependencies = [
+ "allocation-counter",
  "andromeda-architecture-checks",
  "andromeda-json-literal",
  "andromeda-jsonld",
@@ -1309,7 +1257,6 @@ dependencies = [
  "andromeda-ngsi-ld-number",
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-vocabulary",
- "andromeda-test-allocator",
  "cefact-units",
  "chrono",
  "compact_str",
@@ -1377,6 +1324,7 @@ dependencies = [
 name = "andromeda-ngsi-ld-model"
 version = "0.1.0"
 dependencies = [
+ "allocation-counter",
  "andromeda-architecture-checks",
  "andromeda-json-literal",
  "andromeda-native-stack",
@@ -1388,8 +1336,6 @@ dependencies = [
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-vocabulary",
- "andromeda-test-allocator",
- "andromeda-test-fixtures",
  "cefact-units",
  "chrono",
  "compact_str",
@@ -1470,6 +1416,7 @@ dependencies = [
 name = "andromeda-ngsi-ld-render"
 version = "0.1.0"
 dependencies = [
+ "allocation-counter",
  "andromeda-architecture-checks",
  "andromeda-http-headers",
  "andromeda-json-literal",
@@ -1483,7 +1430,6 @@ dependencies = [
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-vocabulary",
- "andromeda-test-allocator",
  "chrono",
  "enumset",
  "geojson",
@@ -1778,7 +1724,6 @@ dependencies = [
  "andromeda-subscription-forwarding",
  "andromeda-telemetry",
  "andromeda-tenancy",
- "andromeda-test-fixtures",
  "async-trait",
  "bigdecimal",
  "cefact-units",
@@ -2054,9 +1999,9 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration-scalars",
- "andromeda-test-tls",
  "notify-debouncer-full",
  "pretty_assertions",
+ "rcgen",
  "rustls",
  "rustls-pki-types",
  "serde",
@@ -2193,8 +2138,6 @@ dependencies = [
  "andromeda-registration",
  "andromeda-subscription",
  "andromeda-tenancy",
- "andromeda-test-fixtures",
- "andromeda-test-mocks",
  "async-trait",
  "bytes",
  "chrono",
@@ -2211,6 +2154,7 @@ dependencies = [
  "tracing",
  "typed-builder",
  "url",
+ "wiremock",
 ]
 
 [[package]]
@@ -2270,7 +2214,6 @@ dependencies = [
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-persistence-failure",
  "andromeda-telemetry",
- "andromeda-test-fixtures",
  "async-lock",
  "async-trait",
  "chrono",
@@ -2312,134 +2255,6 @@ dependencies = [
  "toml",
  "toml-comment",
  "tracing",
-]
-
-[[package]]
-name = "andromeda-test-allocator"
-version = "0.1.0"
-dependencies = [
- "andromeda-architecture-checks",
- "pretty_assertions",
-]
-
-[[package]]
-name = "andromeda-test-client"
-version = "0.1.0"
-dependencies = [
- "andromeda-architecture-checks",
- "andromeda-http-headers",
- "bytes",
- "http",
- "iri-rs",
- "mediatype",
- "pretty_assertions",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "url",
- "urlencoding",
-]
-
-[[package]]
-name = "andromeda-test-fixtures"
-version = "0.1.0"
-dependencies = [
- "andromeda-architecture-checks",
- "andromeda-ngsi-ld-lexicon",
- "chrono",
- "dashmap",
- "iri-rs",
- "pretty_assertions",
- "rand 0.10.3",
- "serde_json",
- "thiserror 2.0.21",
- "typed-builder",
- "url",
-]
-
-[[package]]
-name = "andromeda-test-harness"
-version = "0.1.0"
-dependencies = [
- "andromeda-architecture-checks",
- "andromeda-ngsi-ld-lexicon",
- "andromeda-postgresql-pool",
- "andromeda-postgresql-schema",
- "andromeda-postgresql-seaquery",
- "andromeda-tenancy",
- "andromeda-test-client",
- "andromeda-test-fixtures",
- "andromeda-test-mocks",
- "async-trait",
- "chrono",
- "dashmap",
- "futures",
- "http",
- "iri-rs",
- "pretty_assertions",
- "reqwest",
- "sea-query",
- "serde_json",
- "sqlx",
- "thiserror 2.0.21",
- "tokio",
- "url",
- "urlencoding",
- "uuid",
-]
-
-[[package]]
-name = "andromeda-test-http3"
-version = "0.1.0"
-dependencies = [
- "andromeda-architecture-checks",
- "andromeda-test-tls",
- "bytes",
- "h3",
- "h3-quinn",
- "http",
- "quinn",
- "rustls",
- "rustls-pki-types",
- "thiserror 2.0.21",
- "tokio",
-]
-
-[[package]]
-name = "andromeda-test-mocks"
-version = "0.1.0"
-dependencies = [
- "andromeda-architecture-checks",
- "andromeda-http-headers",
- "axum",
- "bytes",
- "dashmap",
- "derive_more",
- "http",
- "pretty_assertions",
- "reqwest",
- "rumqttc",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "tokio",
- "typed-builder",
- "url",
- "uuid",
-]
-
-[[package]]
-name = "andromeda-test-tls"
-version = "0.1.0"
-dependencies = [
- "andromeda-architecture-checks",
- "pretty_assertions",
- "rcgen",
- "rustls",
- "rustls-pki-types",
- "tempfile",
- "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -2590,6 +2405,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "assert-json-diff"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47e4f2b81832e72834d7518d8487a0396a28cc408186a2e8854c0f98011faf12"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3517,6 +3342,24 @@ name = "data-encoding"
 version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
+
+[[package]]
+name = "deadpool"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0be2b1d1d6ec8d846f05e137292d0b89133caf95ef33695424c09568bdd39b1b"
+dependencies = [
+ "deadpool-runtime",
+ "lazy_static",
+ "num_cpus",
+ "tokio",
+]
+
+[[package]]
+name = "deadpool-runtime"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "092966b41edc516079bdf31ec78a2e0588d1d0c08f78b91d8307215928642b2b"
 
 [[package]]
 name = "decoded-char"
@@ -4487,6 +4330,12 @@ name = "helmet-core"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a865b9c8b67316ab132710af828252e764cdf2195bbcd72a23b96127150d9de"
+
+[[package]]
+name = "hermit-abi"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e17592d60ebacc7d5e169f4663c5f84f9161cc90328abcfe8456f41e4dfcb284"
 
 [[package]]
 name = "hex"
@@ -5898,6 +5747,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "num_cpus"
+version = "1.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91df4bbde75afed763b708b7eee1e8e7651e02d97f6d5dd763e89367e957b23b"
+dependencies = [
+ "hermit-abi",
+ "libc",
+]
+
+[[package]]
 name = "object"
 version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7027,19 +6886,6 @@ dependencies = [
  "ryu-js",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "serde_norway"
-version = "0.9.42"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e408f29489b5fd500fab51ff1484fc859bb655f32c671f307dcd733b72e8168c"
-dependencies = [
- "indexmap 2.14.2",
- "itoa",
- "ryu",
- "serde",
- "unsafe-libyaml-norway",
 ]
 
 [[package]]
@@ -8265,12 +8111,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
-name = "unsafe-libyaml-norway"
-version = "0.2.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b39abd59bf32521c7f2301b52d05a6a2c975b6003521cbd0c6dc1582f0a22104"
-
-[[package]]
 name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8297,12 +8137,6 @@ checksum = "eef11d8fb2f916e16b8ee3e71226505a754c457510c443170b3f0e1d8b58507f"
 dependencies = [
  "url",
 ]
-
-[[package]]
-name = "urlencoding"
-version = "2.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
 
 [[package]]
 name = "urn-rs"
@@ -8774,6 +8608,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "wiremock"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08db1edfb05d9b3c1542e521aea074442088292f00b5f28e435c714a98f85031"
+dependencies = [
+ "assert-json-diff",
+ "base64 0.22.1",
+ "deadpool",
+ "futures",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "log",
+ "once_cell",
+ "regex",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
 ]
 
 [[package]]

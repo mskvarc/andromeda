@@ -32,6 +32,8 @@ pub mod pending_work;
 pub mod provisional;
 pub mod registered_tenant;
 pub mod residency;
+#[cfg(feature = "resident-tenancy")]
+pub mod resident_tenancy;
 pub mod runtime;
 pub mod runtime_build_failure;
 pub mod state_factory;

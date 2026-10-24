@@ -4,8 +4,9 @@
 //! 1,000,000 positions of 32 bytes is about 32 MB and a JSON tree of them would
 //! be several hundred.
 //!
-//! The counting allocator is this test binary's global allocator, so it
-//! measures nothing but this test.
+//! The measurement counts the allocations of the calling thread alone, so the
+//! other tests of the binary do not disturb it; the compaction runs on a
+//! current-thread runtime for that reason.
 
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_compaction::entity_compactor::{EntityCompactor, EntityRead};
@@ -27,17 +28,14 @@ use andromeda_ngsi_ld_geometry::{
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::attribute::instance::{Attribute, AttributeValue};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_test_allocator::counting_allocator::CountingAllocator;
 use chrono::Utc;
-
-#[global_allocator]
-static ALLOCATOR: CountingAllocator = CountingAllocator::new();
+use tokio::runtime::Builder;
 
 /// How many positions the test polygon's ring holds, closing position included.
 const POSITIONS: usize = 1_000_000;
 
 /// The compaction may peak this far above what was allocated before it.
-const PEAK_BUDGET: usize = 64 * 1024 * 1024;
+const PEAK_BUDGET: u64 = 64 * 1024 * 1024;
 
 /// The positions of the test polygon's one ring, closing position included.
 fn ring_positions() -> Result<Vec<Position>, PositionError> {
@@ -67,12 +65,13 @@ fn polygon_entity(id: Identifier, entity_type: EntityTypeName, location: Attribu
     EntityState::from_parts(id, EntityTypes::one(entity_type), None, None, attributes)
 }
 
-#[tokio::test]
-async fn a_geometry_compacts_into_the_compact_entity_without_a_tree_of_its_positions() {
+#[test]
+fn a_geometry_compacts_into_the_compact_entity_without_a_tree_of_its_positions() {
+    let runtime = Builder::new_current_thread().enable_all().build().expect("the runtime builds");
     let engine = JsonLdEngine::builder().allow_remote(false).build().expect("the engine builds");
     let context = ContextSpec::core_only();
     let compactor = engine.compactor(&context);
-    compactor.processed_context().await.expect("the core context processes");
+    runtime.block_on(compactor.processed_context()).expect("the core context processes");
     let typed = EntityCompactor::new(&compactor);
     let ring = LinearRing::try_new(ring_positions().expect("positions on the CRS84 axes")).expect("a closed ring");
     let state = polygon_entity(
@@ -86,11 +85,14 @@ async fn a_geometry_compacts_into_the_compact_entity_without_a_tree_of_its_posit
         sys_attrs: SysAttrsInclusion::Strip,
         now: Utc::now(),
     };
-    let mark = ALLOCATOR.mark();
+    let mut compacted = None;
 
-    let entity = typed.entity(&state, &read).await.expect("the entity compacts");
+    let measured = allocation_counter::measure(|| {
+        compacted = Some(runtime.block_on(typed.entity(&state, &read)).expect("the entity compacts"));
+    });
 
-    let peak_above_state = ALLOCATOR.peak_above(mark);
+    let peak_above_state = measured.bytes_max;
+    let entity = compacted.expect("the compaction ran");
     let Some(AttributeValue::Single(attribute)) = &entity.location else {
         panic!("the location is no single instance: {:?}", entity.location);
     };

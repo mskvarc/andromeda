@@ -2,21 +2,17 @@
 //! intermediate tree (clause 4.7): the decode's peak heap stays below 64 MiB
 //! above the input, where 1,000,000 positions of 32 bytes are about 32 MB.
 //!
-//! The counting allocator is this test binary's global allocator, so it
-//! measures nothing but this test.
+//! The measurement counts the allocations of the calling thread alone, so the
+//! other tests of the binary do not disturb it.
 
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, geo_value::GeoValue};
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
-use andromeda_test_allocator::counting_allocator::CountingAllocator;
-
-#[global_allocator]
-static ALLOCATOR: CountingAllocator = CountingAllocator::new();
 
 /// The positions of the test polygon's one ring, closing position included.
 const POSITIONS: usize = 1_000_000;
 
 /// The decode may peak this far above what was allocated before it.
-const PEAK_BUDGET: usize = 64 * 1024 * 1024;
+const PEAK_BUDGET: u64 = 64 * 1024 * 1024;
 
 /// The stored document of an entity whose `location` is a Polygon of one ring
 /// of [`POSITIONS`] positions.
@@ -41,12 +37,16 @@ fn polygon_document() -> String {
 #[test]
 fn a_geometry_node_decodes_into_its_positions_without_a_tree() {
     let document = polygon_document();
-    let mark = ALLOCATOR.mark();
+    let mut decoded = None;
 
-    let state = EntityState::from_slice(document.as_bytes()).expect("the polygon decodes");
+    let measured = allocation_counter::measure(|| {
+        decoded = Some(EntityState::from_slice(document.as_bytes()).expect("the polygon decodes"));
+    });
 
-    let peak_above_input = ALLOCATOR.peak_above(mark);
-    let positions = state
+    let peak_above_input = measured.bytes_max;
+    let positions = decoded
+        .as_ref()
+        .expect("the decode ran")
         .attributes()
         .get("https://uri.etsi.org/ngsi-ld/location")
         .and_then(|instances| instances.get(None))

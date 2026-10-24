@@ -1,8 +1,8 @@
 //! Permanent source guards for broker-wide structural invariants.
 
-use crate::source_scan::{item_is_test_only, rust_file_paths, workspace_sources};
+use crate::source_scan::{item_is_test_only, workspace_sources};
 use quote::ToTokens;
-use std::{collections::BTreeSet, fs, path::Path};
+use std::{collections::BTreeSet, path::Path};
 use syn::{
     Item,
     ItemImpl,
@@ -70,81 +70,6 @@ pub fn assert_retired_architecture_invariants(workspace_root: &str) {
         "retired architecture invariant violations:\n{}",
         violations.into_iter().collect::<Vec<_>>().join("\n")
     );
-}
-
-/// Assert source boundaries specific to the focused integration-test infrastructure.
-///
-/// # Panics
-///
-/// Panics when root tests contain direct global truncation, when the retired
-/// umbrella crate name returns, or when a test source cannot be read or parsed.
-pub fn assert_test_infrastructure_invariants(workspace_root: &str) {
-    let root = Path::new(workspace_root);
-    let mut violations = Vec::new();
-    scan_test_sources(root, &mut violations);
-    let retired_manifest = root.join("lib/andromeda-test-common/Cargo.toml");
-    if retired_manifest.exists() {
-        violations.push("retired lib/andromeda-test-common manifest exists".to_owned());
-    }
-    let violations = violations.into_iter().collect::<BTreeSet<_>>();
-    assert!(
-        violations.is_empty(),
-        "test infrastructure invariant violations:\n{}",
-        violations.into_iter().collect::<Vec<_>>().join("\n")
-    );
-}
-
-/// Scan root integration-test sources for retired names and direct global SQL resets.
-///
-/// A test source that cannot be read or parsed is reported as a violation of
-/// its own: the guard cannot vouch for a file it never saw.
-fn scan_test_sources(root: &Path, violations: &mut Vec<String>) {
-    for path in rust_file_paths(&root.join("tests")) {
-        let source = match fs::read_to_string(&path) {
-            Ok(source) => source,
-            Err(error) => {
-                violations.push(format!("{} could not be read: {error}", path.display()));
-                continue;
-            }
-        };
-        let relative = path.strip_prefix(root).unwrap_or(&path).display();
-        if source.contains(concat!("andromeda_test_", "common")) || source.contains(concat!("andromeda-test-", "common")) {
-            violations.push(format!("{relative} contains the retired test-common name"));
-        }
-        if source.contains("TcpListener::bind") || source.contains("axum::serve") {
-            violations.push(format!("{relative} binds a callback listener outside andromeda-test-mocks"));
-        }
-        let syntax = match syn::parse_file(&source) {
-            Ok(syntax) => syntax,
-            Err(error) => {
-                violations.push(format!("{relative} does not parse as Rust: {error}"));
-                continue;
-            }
-        };
-        let mut visitor = TestInfrastructureVisitor {
-            path: relative.to_string(),
-            violations: Vec::new(),
-        };
-        visitor.visit_file(&syntax);
-        violations.extend(visitor.violations);
-    }
-}
-
-/// SQL-string visitor for root integration-test source.
-struct TestInfrastructureVisitor {
-    /// Workspace-relative source path.
-    path: String,
-    /// Violations found in the source.
-    violations: Vec<String>,
-}
-
-impl<'ast> Visit<'ast> for TestInfrastructureVisitor {
-    fn visit_lit_str(&mut self, literal: &'ast syn::LitStr) {
-        if literal.value().trim_start().to_ascii_uppercase().starts_with("TRUNCATE ") {
-            self.violations.push(format!("{} contains direct global TRUNCATE SQL", self.path));
-        }
-        visit_lit_str(self, literal);
-    }
 }
 
 /// Find public re-exports and over-qualified inline paths in one syntax tree.

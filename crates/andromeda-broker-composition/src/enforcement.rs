@@ -82,14 +82,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-temporal",
         "andromeda-tenancy",
     ],
-    allow_workspace_dev_dependencies: [
-        "andromeda-test-client",
-        "andromeda-test-fixtures",
-        "andromeda-test-harness",
-        "andromeda-test-http3",
-        "andromeda-test-mocks",
-        "andromeda-test-tls",
-    ],
+    allow_workspace_dev_dependencies: ["andromeda-server-tls"],
     allow_production_dependencies: all,
 }
 

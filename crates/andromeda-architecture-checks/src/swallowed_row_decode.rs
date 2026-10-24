@@ -20,8 +20,8 @@
 //! Detection is deny-by-default over a baseline that starts empty: a new site
 //! fails the gate with its `path:line`, and a baseline file that no longer
 //! swallows a decode fails it too, so the list can only shrink. Integration
-//! tests, build scripts, `*tests.rs` files, the test-infrastructure crates and
-//! test-only items are not production paths and are not inspected.
+//! tests, build scripts, `*tests.rs` files and test-only items are not
+//! production paths and are not inspected.
 
 use crate::source_scan::{item_is_test_only, workspace_sources};
 use std::{collections::BTreeSet, path::Path};

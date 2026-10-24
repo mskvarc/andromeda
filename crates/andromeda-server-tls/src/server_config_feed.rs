@@ -99,9 +99,9 @@ mod tests {
         handshake_policy::{HandshakePolicy, ProtocolFloor},
         handshake_probe::handshake,
         material_watch::TlsMaterialWatch,
+        test_identity::{authority::TestAuthority, identity_files::IdentityFiles},
     };
     use andromeda_configuration_scalars::human_duration::HumanDuration;
-    use andromeda_test_tls::{authority::TestAuthority, identity_files::IdentityFiles};
     use rustls::version::TLS13;
     use std::{error::Error, sync::Arc, time::Duration};
     use tokio::time::timeout;

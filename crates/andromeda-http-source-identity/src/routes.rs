@@ -54,10 +54,10 @@ mod tests {
         context_source_alias::ContextSourceAliases,
         creation_policy::TenantCreationPolicy,
         error::TenancyError,
+        resident_tenancy::ResidentTenancy,
         runtime::lease::LeasedState,
         tenant_ref::TenantRef,
     };
-    use andromeda_test_harness::resident_tenancy::ResidentTenancy;
     use axum::{
         body::{Body, to_bytes},
         http::{Request, Response, StatusCode},

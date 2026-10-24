@@ -28,7 +28,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-request",
         "andromeda-tenancy",
     ],
-    allow_workspace_dev_dependencies: ["andromeda-context-registry", "andromeda-ngsi-ld-query", "andromeda-test-harness"],
+    allow_workspace_dev_dependencies: ["andromeda-context-registry", "andromeda-ngsi-ld-query", "andromeda-tenancy"],
     allow_production_dependencies: ["axum"],
 }
 

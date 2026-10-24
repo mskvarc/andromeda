@@ -348,8 +348,8 @@ mod tests {
             .expect("expansion succeeds");
 
         assert!(expanded[0].get("https://example.org/v2#speed").is_some(), "{expanded}");
-        pretty_assertions::assert_eq!(origin.requests("/terms.jsonld"), 0);
-        pretty_assertions::assert_eq!(origin.requests("/contexts/v2/terms.jsonld"), 1);
+        pretty_assertions::assert_eq!(origin.requests("/terms.jsonld").await, 0);
+        pretty_assertions::assert_eq!(origin.requests("/contexts/v2/terms.jsonld").await, 1);
     }
 
     #[tokio::test]

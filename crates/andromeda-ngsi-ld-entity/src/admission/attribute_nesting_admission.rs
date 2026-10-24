@@ -47,10 +47,10 @@ mod tests {
     use crate::{
         admission::attribute_nesting_admission::{admit_document_nesting, admit_instance_nesting},
         document::{EntityDocument, instance_document::InstanceDocument},
+        nesting_probe::{NESTED_ATTRIBUTE, NestingChain, nested_instance, stored_entity},
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_representation::attribute_nesting::{AttributeNestingExceeded, AttributeNestingLimit};
-    use andromeda_test_fixtures::nesting_fixture::{NESTED_ATTRIBUTE, NestingShape, nested_instance, stored_entity};
     use serde_json::json;
     use std::num::NonZeroUsize;
 
@@ -63,8 +63,8 @@ mod tests {
     }
 
     /// An entity holding a scalar `speed` and the nested attribute in `shape`.
-    fn document(shape: NestingShape, levels: usize) -> EntityDocument {
-        let mut stored = stored_entity("urn:ngsi-ld:NestingProbe:1", nested_instance(shape, levels));
+    fn document(shape: NestingChain, levels: usize) -> EntityDocument {
+        let mut stored = stored_entity("urn:ngsi-ld:NestingProbe:1", &nested_instance(shape, levels));
         if let Some(node) = stored.get_mut(0).and_then(|node| node.as_object_mut()) {
             node.insert(
                 "https://example.org/speed".to_owned(),
@@ -78,7 +78,7 @@ mod tests {
     /// the refusal naming the attribute and the limit.
     #[test]
     fn a_document_is_admitted_at_the_limit_and_refused_one_level_past_it() {
-        for shape in NestingShape::ALL {
+        for shape in NestingChain::ALL {
             assert!(admit_document_nesting(limit(32), &document(shape, 32)).is_ok(), "{shape:?}");
             pretty_assertions::assert_eq!(
                 admit_document_nesting(limit(32), &document(shape, 33)),
@@ -96,11 +96,8 @@ mod tests {
     #[test]
     fn an_attribute_fragment_is_held_to_the_same_limit() {
         let instance = |levels| {
-            InstanceDocument::from_slice(
-                &nested(),
-                &serde_json::to_vec(&nested_instance(NestingShape::ObjectChain, levels)).expect("JSON"),
-            )
-            .expect("a written instance")
+            InstanceDocument::from_slice(&nested(), &serde_json::to_vec(&nested_instance(NestingChain::Nodes, levels)).expect("JSON"))
+                .expect("a written instance")
         };
         assert!(admit_instance_nesting(limit(32), &nested(), &instance(32)).is_ok());
         assert!(admit_instance_nesting(limit(32), &nested(), &instance(33)).is_err());

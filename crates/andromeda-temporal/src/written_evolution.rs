@@ -272,10 +272,25 @@ mod tests {
     /// naming the attribute.
     #[test]
     fn an_evolution_is_admitted_at_the_nesting_limit_and_refused_one_level_past_it() {
-        use andromeda_test_fixtures::nesting_fixture::{NESTED_ATTRIBUTE, NestingShape, nested_instance, stored_entity};
+        const NESTED_ATTRIBUTE: &str = "https://example.org/nested";
 
+        // A Property of a scalar carrying a chain of `levels` sub-attributes,
+        // each a Property of a scalar, as the stored expanded document holds it.
         let evolution = |levels| {
-            let stored = stored_entity("urn:ngsi-ld:NestingProbe:1", nested_instance(NestingShape::SubAttributeChain, levels));
+            let property = |inner: Option<Value>| {
+                let mut instance = json!({
+                    "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                    "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}],
+                    "https://uri.etsi.org/ngsi-ld/createdAt": [{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2026-01-01T00:00:00Z"}],
+                    "https://uri.etsi.org/ngsi-ld/modifiedAt": [{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2026-01-01T00:00:00Z"}],
+                });
+                if let (Some(members), Some(inner)) = (instance.as_object_mut(), inner) {
+                    members.insert("https://example.org/inner".to_owned(), json!([inner]));
+                }
+                instance
+            };
+            let chain = (0..levels).fold(property(None), |inner, _| property(Some(inner)));
+            let stored = json!([{"@id": "urn:ngsi-ld:NestingProbe:1", "@type": ["https://example.org/NestingProbe"], NESTED_ATTRIBUTE: [chain]}]);
             let document = EntityDocument::from_slice(&serde_json::to_vec(&stored).expect("JSON")).expect("a written document");
             WrittenEvolution::new(Arc::new(document), None)
         };

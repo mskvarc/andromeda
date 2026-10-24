@@ -4,8 +4,8 @@
 //! the input, where the one copy of 1,000,000 positions of 32 bytes the
 //! written document owns is about 32 MB, and it takes well under a second.
 //!
-//! The counting allocator is this test binary's global allocator, so it
-//! measures nothing but this test.
+//! The measurement counts the allocations of the calling thread alone, so the
+//! other tests of the binary do not disturb it.
 
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_entity::{
@@ -29,18 +29,14 @@ use andromeda_ngsi_ld_model::{
     entity::Entity,
     entity_type::EntityTypeValue,
 };
-use andromeda_test_allocator::counting_allocator::CountingAllocator;
 use indexmap::IndexMap;
 use std::time::{Duration, Instant};
-
-#[global_allocator]
-static ALLOCATOR: CountingAllocator = CountingAllocator::new();
 
 /// The positions of the test polygon's one ring, closing position included.
 const POSITIONS: usize = 1_000_000;
 
 /// The expansion may peak this far above what was allocated before it.
-const PEAK_BUDGET: usize = 100 * 1024 * 1024;
+const PEAK_BUDGET: u64 = 100 * 1024 * 1024;
 
 /// How long the expansion may take in an optimised build; an unoptimised one
 /// is allowed ten times that.
@@ -86,15 +82,17 @@ async fn a_million_position_polygon_expands_from_its_positions_without_a_tree() 
     let context = engine.expansion_context(&ContextSpec::none()).await.expect("the core context processes");
     let entity = polygon_entity().expect("the polygon builds");
     let expander = TypedExpander::new(&context);
-    let mark = ALLOCATOR.mark();
     let started = Instant::now();
+    let mut walked = None;
 
-    let walked = expander.entity(&entity, Normalization::Entity).expect("the polygon is admissible");
+    let measured = allocation_counter::measure(|| {
+        walked = Some(expander.entity(&entity, Normalization::Entity).expect("the polygon is admissible"));
+    });
 
     let elapsed = started.elapsed();
-    let peak_above_input = ALLOCATOR.peak_above(mark);
+    let peak_above_input = measured.bytes_max;
     println!("expanding {POSITIONS} positions peaked at {peak_above_input} bytes above the input and took {elapsed:?}");
-    let TypedExpansion::Expanded(document) = walked else {
+    let Some(TypedExpansion::Expanded(document)) = walked else {
         panic!("the walk expands the polygon itself");
     };
     let location = &document.attributes()["https://uri.etsi.org/ngsi-ld/location"].instances()[0];

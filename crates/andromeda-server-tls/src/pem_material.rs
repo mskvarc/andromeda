@@ -231,8 +231,8 @@ mod tests {
     use crate::{
         material_sources::{ClientTrust, TlsMaterialSources},
         pem_material::{ClientVerification, MaterialChange, TlsMaterial, TlsMaterialError, load_certificate_chain, load_client_roots, load_private_key},
+        test_identity::{authority::TestAuthority, identity_files::IdentityFiles},
     };
-    use andromeda_test_tls::{authority::TestAuthority, identity_files::IdentityFiles};
     use std::{borrow::Cow, error::Error, fs, path::Path};
     use tempfile::TempDir;
 

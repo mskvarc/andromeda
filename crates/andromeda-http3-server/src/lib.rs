@@ -18,6 +18,8 @@
 pub mod config;
 pub mod endpoint;
 pub mod execution;
+#[cfg(test)]
+mod http3_client;
 pub mod quic_crypto;
 mod request_loop;
 
@@ -27,7 +29,7 @@ mod test_support;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: ["andromeda-configuration-scalars", "andromeda-server-tls"],
-    allow_workspace_dev_dependencies: ["andromeda-test-http3", "andromeda-test-tls"],
+    allow_workspace_dev_dependencies: ["andromeda-server-tls"],
     allow_production_dependencies: ["axum", "tokio"],
 }
 

@@ -42,7 +42,6 @@ pub(crate) fn workspace_sources(workspace_root: &Path) -> Vec<RustSource> {
     let excluded = sources.iter().flat_map(test_only_external_modules).collect::<Vec<_>>();
     sources.retain(|source| {
         !is_test_only(&source.syntax.attrs)
-            && !source.workspace_path.starts_with("crates/andromeda-test-")
             && !excluded
                 .iter()
                 .any(|excluded_path| source.absolute_path == *excluded_path || source.absolute_path.starts_with(excluded_path))
@@ -53,9 +52,8 @@ pub(crate) fn workspace_sources(workspace_root: &Path) -> Vec<RustSource> {
 /// Read and parse every Rust source of the workspace, test code included.
 ///
 /// Unlike [`workspace_sources`], nothing is filtered: integration tests,
-/// test-only modules, build scripts and the test-infrastructure crates are all
-/// returned, for a guard whose rule holds for test code as much as for
-/// production code.
+/// test-only modules and build scripts are all returned, for a guard whose rule
+/// holds for test code as much as for production code.
 ///
 /// # Panics
 ///
