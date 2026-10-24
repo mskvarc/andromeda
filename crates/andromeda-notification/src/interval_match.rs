@@ -63,6 +63,7 @@ mod tests {
     use andromeda_ngsi_ld_entity::{entity_state::EntityState, queried::linked_states::LinkedStates};
     use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_ngsi_ld_model::subscription::Subscription;
+    use andromeda_ngsi_ld_query::filter::language_matching::LanguageMatching;
     use andromeda_subscription::{compilation::compile_subscription, stored_subscription::StoredSubscription};
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
@@ -90,10 +91,13 @@ mod tests {
     /// The entities `subscription` notifies of, as they stand at `at`, a hop
     /// crossing into `linked`.
     fn filtered(subscription: Subscription, entities: Vec<EntityState>, at: DateTime<Utc>, linked: &LinkedStates) -> Vec<EntityState> {
-        let compiled = compile_subscription(&StoredSubscription {
-            key: SubscriptionKey::try_from(1).expect("a valid key"),
-            subscription,
-        });
+        let compiled = compile_subscription(
+            &StoredSubscription {
+                key: SubscriptionKey::try_from(1).expect("a valid key"),
+                subscription,
+            },
+            LanguageMatching::TagEquality,
+        );
         admitted(&compiled, standing_at(entities, at), linked)
     }
 

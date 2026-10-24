@@ -98,7 +98,7 @@ where
     L: LinkedEntities<'a>,
 {
     if let Some(ref expr) = sub.compiled_q
-        && !evaluate(expr, entity, linked)
+        && !evaluate(expr, entity, linked, sub.language_matching)
     {
         debug!("Subscription {} skipped: q filter did not match entity", sub.id);
         return false;
@@ -117,7 +117,7 @@ where
     }
 
     if let Some(ref csf_expr) = sub.compiled_csf
-        && !evaluate(csf_expr, entity, linked)
+        && !evaluate(csf_expr, entity, linked, sub.language_matching)
     {
         debug!("Subscription {} skipped: csf filter did not match entity", sub.id);
         return false;
@@ -151,6 +151,7 @@ mod tests {
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_query::{
         error::QueryError,
+        filter::language_matching::LanguageMatching,
         geo::{admission::GeoQueryAdmission, compile::compile_geo_query, input::GeoQueryInput, near_distance_band::NearDistanceBand},
         projection::compiled::Projection,
         queried_entity::linked_entities::NoLinkedEntities,
@@ -207,6 +208,7 @@ mod tests {
             jsonld_context: None,
             created_at: DateTime::<Utc>::MIN_UTC,
             compiled_q: None,
+            language_matching: LanguageMatching::TagEquality,
             compiled_geo_q: SubscriptionGeoFilter::Unrestricted,
             compiled_scope_q: None,
             dataset_id: None,

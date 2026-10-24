@@ -22,7 +22,7 @@ use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_linked_retrieval::{plan::JoinPlan, typed::TypedEntities};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::page_window::PageWindow;
+use andromeda_ngsi_ld_query::{filter::language_targeting::LanguageTargeting, page_window::PageWindow};
 use andromeda_ngsi_ld_request::{entity::GetEntityParams, query::entity::parameters::EntityQueryParameters};
 use axum::http::Uri as HttpUri;
 
@@ -46,6 +46,8 @@ pub(crate) enum LocalEntitySource<'a> {
         query: &'a EntityQueryParameters,
         /// The request's JSON-LD context.
         context: &'a ContextSpec,
+        /// What the query's target languages could be and how they selected languageMap keys.
+        targeting: LanguageTargeting,
         /// The planned clause 4.5.23 join, whose Linked Entities belong to the
         /// same unitary request.
         join: Option<&'a JoinPlan<'a, TypedEntities>>,
@@ -66,6 +68,7 @@ impl<'a> LocalEntitySource<'a> {
         target: &'a ContextTarget,
         query: &'a EntityQueryParameters,
         context: &'a ContextSpec,
+        targeting: LanguageTargeting,
         join: Option<&'a JoinPlan<'a, TypedEntities>>,
         instance: &'a HttpUri,
     ) -> LocalEntitySource<'a> {
@@ -74,6 +77,7 @@ impl<'a> LocalEntitySource<'a> {
             target,
             query,
             context,
+            targeting,
             join,
             instance,
         }
@@ -105,10 +109,11 @@ impl LocalMapEntities for LocalEntitySource<'_> {
                 target,
                 query,
                 context,
+                targeting,
                 join,
                 instance,
             } => {
-                let mut compiled = service.compile_query_public(query, context).await.with_entity_instance(instance)?;
+                let mut compiled = service.compile_query_public(query, context, targeting).await.with_entity_instance(instance)?;
                 match listing {
                     MapListing::Minted => {}
                     // Clause 4.3.6.7 rechecks the filters of the request the map

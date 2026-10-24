@@ -17,6 +17,7 @@ use andromeda_ngsi_ld_query::{
         expansion::{apply_expand_values, expand_attr_path, expand_attribute_names, expand_q_expr},
         expression::Expr,
         json_key_attributes::JsonKeyAttributes,
+        language_targeting::LanguageTargeting,
         trailing_members::TrailingMembers,
     },
     geo::{compile as geo_compile, query::GeoQuery, reference_budget::admit_reference_geometry},
@@ -34,20 +35,28 @@ use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use std::{collections::HashSet, sync::Arc};
 
 impl EntityQueryService {
-    /// Compile an entity query.
+    /// Compile an entity query, its target languages admitted and matched
+    /// under `language_targeting`.
     ///
     /// The page the query answers with is no part of the compilation: it is
     /// handed to the store beside the compiled query, so every page of one
-    /// query shares one compilation.
+    /// query shares one compilation. The level is the request's: the broker's
+    /// own unless a context source the request reaches serves a lower one.
     ///
     /// # Errors
     ///
     /// Reports [`EntityError::JsonLd`] when a term of the request cannot be
     /// expanded against `context`, [`EntityError::Query`] when the `q`, `geoQ`
-    /// or `orderBy` expression is not well formed, and
+    /// or `orderBy` expression is not well formed or names a target language
+    /// `language_targeting` does not admit, and
     /// [`EntityError::Request`] when a query parameter cannot be interpreted.
-    pub async fn compile_query_public(&self, params: &EntityQueryParameters, context: &ContextSpec) -> Result<CompiledEntityQuery, EntityError> {
-        let compiled = self.compile_query_cached(params, context).await?;
+    pub async fn compile_query_public(
+        &self,
+        params: &EntityQueryParameters,
+        context: &ContextSpec,
+        language_targeting: LanguageTargeting,
+    ) -> Result<CompiledEntityQuery, EntityError> {
+        let compiled = self.compile_query_cached(params, context, language_targeting).await?;
         Ok(Arc::unwrap_or_clone(compiled))
     }
 
@@ -55,12 +64,24 @@ impl EntityQueryService {
     ///
     /// Consults the in-memory cache keyed on the request parameters and the
     /// active JSON-LD context fingerprint; on a miss, compiles and stores.
-    pub(super) async fn compile_query_cached(&self, params: &EntityQueryParameters, context: &ContextSpec) -> Result<Arc<CompiledEntityQuery>, EntityError> {
-        let key = CompiledQueryKey::from_params(params, context);
-        self.compiled_cache.get_or_compile(key, || self.compile_query(params, context)).await
+    pub(super) async fn compile_query_cached(
+        &self,
+        params: &EntityQueryParameters,
+        context: &ContextSpec,
+        language_targeting: LanguageTargeting,
+    ) -> Result<Arc<CompiledEntityQuery>, EntityError> {
+        let key = CompiledQueryKey::from_params(params, context, language_targeting);
+        self.compiled_cache
+            .get_or_compile(key, || self.compile_query(params, context, language_targeting))
+            .await
     }
 
-    async fn compile_query(&self, params: &EntityQueryParameters, context: &ContextSpec) -> Result<CompiledEntityQuery, EntityError> {
+    async fn compile_query(
+        &self,
+        params: &EntityQueryParameters,
+        context: &ContextSpec,
+        language_targeting: LanguageTargeting,
+    ) -> Result<CompiledEntityQuery, EntityError> {
         let prepared_context = self.engine().prepare_term_context(context);
         let selectors = compile_entity_selectors(
             self.engine(),
@@ -75,6 +96,9 @@ impl EntityQueryService {
         let expander = ContextualExpander::new(self.engine(), &prepared_context);
         let attrs = expand_attrs(params.attrs.as_deref().unwrap_or_default(), &expander).await?;
         let q_expr = self.compile_q_expression(params, &prepared_context).await?;
+        if let Some(q) = &q_expr {
+            language_targeting.admit(q)?;
+        }
         let geo = self.compile_geo_query(params, &prepared_context).await?;
 
         let projection = expand_projection(
@@ -84,7 +108,7 @@ impl EntityQueryService {
         )
         .await?;
 
-        let order_by = self.compile_order_terms(params, &prepared_context).await?;
+        let order_by = self.compile_order_terms(params, &prepared_context, language_targeting).await?;
         let ordering_geometry = compile_ordering_geometry(params, self.geo_admission.limits)?;
 
         let compiled = CompiledEntityQuery::builder()
@@ -93,6 +117,7 @@ impl EntityQueryService {
                     .selectors(selectors)
                     .attrs(attrs)
                     .q_expr(q_expr)
+                    .language_matching(language_targeting.matching())
                     .geo(geo)
                     .scope_q(params.scope_q.clone())
                     // Clause 5.5.14: a request narrowed to an empty identifier
@@ -150,7 +175,15 @@ impl EntityQueryService {
     /// value is opaque JSON keeps literal member keys, and the ordering reads
     /// that spelling from the path's own pre-expansion copy rather than from a
     /// declaration `orderBy` has no parameter for.
-    async fn compile_order_terms(&self, params: &EntityQueryParameters, context: &PreparedTermContext) -> Result<Vec<CompiledOrderTerm>, EntityError> {
+    ///
+    /// Clause 4.23.3 borrows the clause 4.9 path, so a term's target language
+    /// is held to `language_targeting` as a `q` one is.
+    async fn compile_order_terms(
+        &self,
+        params: &EntityQueryParameters,
+        context: &PreparedTermContext,
+        language_targeting: LanguageTargeting,
+    ) -> Result<Vec<CompiledOrderTerm>, EntityError> {
         // Parsed and validated at the query boundary (clause 4.23).
         let collation = params.ordering.collation.clone();
         let expander = ContextualExpander::new(self.engine(), context);
@@ -169,7 +202,10 @@ impl EntityQueryService {
                 RawOrderTarget::ModifiedAt => OrderTarget::ModifiedAt,
                 // clone: expansion rewrites the path it consumes, and the cached
                 // request parameters stay immutable across compilations.
-                RawOrderTarget::Attribute(path) => OrderTarget::Attribute(expand_attr_path(path.clone(), TrailingMembers::Terms(&json_keys), &expander).await?),
+                RawOrderTarget::Attribute(path) => {
+                    language_targeting.admit_path(path)?;
+                    OrderTarget::Attribute(expand_attr_path(path.clone(), TrailingMembers::Terms(&json_keys), &expander).await?)
+                }
             };
             compiled.push(CompiledOrderTerm {
                 target,
@@ -214,7 +250,7 @@ mod tests {
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-    use andromeda_ngsi_ld_query::error::QueryError;
+    use andromeda_ngsi_ld_query::{error::QueryError, filter::language_targeting::LanguageTargeting};
     use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
     use std::num::NonZeroUsize;
 
@@ -240,7 +276,7 @@ mod tests {
     /// most `positions` positions.
     async fn compiled(query: &str, positions: usize) -> Result<(), EntityError> {
         service_resolving(limit(positions))
-            .compile_query_public(&params(query), &ContextSpec::core_only())
+            .compile_query_public(&params(query), &ContextSpec::core_only(), LanguageTargeting::Specification)
             .await
             .map(drop)
     }

@@ -46,6 +46,7 @@ use andromeda_ngsi_ld_query::{
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_temporal::{
     error::TemporalError,
+    query_reading::QueryReading,
     requested_identifiers::RequestedIdentifiers,
     service::{TemporalQueryResult, TemporalRange},
 };
@@ -193,7 +194,10 @@ impl SnapshotExecutor {
                 &self.sources.live_target,
                 capture.params,
                 window,
-                capture.context,
+                QueryReading {
+                    context: capture.context,
+                    language_targeting: self.sources.temporal.language_targeting(),
+                },
                 RequestedIdentifiers::Narrow,
                 CandidateFilters::Applied,
             )
@@ -314,7 +318,10 @@ impl SnapshotExecutor {
             narrowed,
             &window,
             CountPolicy::Omit,
-            capture.context,
+            QueryReading {
+                context: capture.context,
+                language_targeting: self.sources.temporal.language_targeting(),
+            },
             ContributedEntities::default(),
         ))
         .await?;

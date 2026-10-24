@@ -36,6 +36,12 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         | QueryError::QInvalidDate { .. }
         | QueryError::QInvalidTime { .. }
         | QueryError::QBareWord
+        // A member that is neither a name nor a tag is well-formed `q` text
+        // naming no target, as is a full tag or a range the broker's
+        // `q_target_languages` level does not admit.
+        | QueryError::TrailingMemberInvalid { .. }
+        | QueryError::LanguageTagNotAdmitted(_)
+        | QueryError::LanguageRangeNotAdmitted(_)
         | QueryError::PatternRegex(_)
         | QueryError::PatternRepeatedQuantifier
         | QueryError::PatternNonPosixConstruct { .. }
@@ -76,7 +82,11 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
 mod tests {
     use crate::query_failure::classify_query_error;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-    use andromeda_ngsi_ld_query::{error::QueryError, term_expander::TermExpansionFailure};
+    use andromeda_ngsi_ld_query::{
+        error::QueryError,
+        filter::{expression::Expr, language_targeting::LanguageTargeting, target_language::TargetLanguage},
+        term_expander::TermExpansionFailure,
+    };
 
     #[test]
     fn a_term_naming_no_iri_under_the_request_context_is_bad_request_data() {
@@ -94,5 +104,19 @@ mod tests {
     fn a_context_that_cannot_be_retrieved_is_ld_context_not_available() {
         let error = QueryError::TermExpansion(TermExpansionFailure::ContextUnavailable);
         pretty_assertions::assert_eq!(classify_query_error(&error).error_type(), NgsiLdErrorType::LdContextNotAvailable);
+    }
+
+    /// A bracket member neither a name nor an RFC 5646 tag, and a full tag or
+    /// a range the level does not admit, are request data naming no target.
+    #[test]
+    fn a_bracket_naming_no_target_language_is_bad_request_data() {
+        let neither = TargetLanguage::parse("en_GB-x").expect_err("neither a tag nor a range");
+        let tagged: Expr = "name[en-GB]==\"x\"".parse().expect("a filter");
+        let tag = LanguageTargeting::Specification.admit(&tagged).expect_err("a full tag needs the tags level");
+        let ranged: Expr = "name[de-*-DE]==\"x\"".parse().expect("a filter");
+        let range = LanguageTargeting::LanguageTags.admit(&ranged).expect_err("a range needs the ranges level");
+        for error in [neither, tag, range] {
+            pretty_assertions::assert_eq!(classify_query_error(&error).error_type(), NgsiLdErrorType::BadRequestData, "{error}");
+        }
     }
 }

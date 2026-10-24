@@ -9,7 +9,7 @@ use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
-use andromeda_ngsi_ld_query::page_window::PageWindow;
+use andromeda_ngsi_ld_query::{filter::language_matching::LanguageMatching, page_window::PageWindow};
 use andromeda_subscription::{
     cache::SubscriptionCache,
     error::SubscriptionError,
@@ -72,7 +72,7 @@ pub(crate) async fn twin_building_subscription_cache() -> Arc<SubscriptionCache>
 /// subscriptions `subscriptions` identifies, each by its identifier and key,
 /// all listening for `triggers`.
 async fn subscription_cache_of(subscriptions: Vec<(&'static str, i64)>, triggers: &'static [&'static str]) -> Arc<SubscriptionCache> {
-    let cache = Arc::new(SubscriptionCache::new(TenantRef::UnnamedDefault));
+    let cache = Arc::new(SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality));
     cache
         .reload(&ContextTarget::Live, &FixtureSubscriptionStore { subscriptions, triggers })
         .await

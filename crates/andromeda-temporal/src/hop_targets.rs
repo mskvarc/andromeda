@@ -108,7 +108,7 @@ impl TemporalService {
             aggr_period_duration: None,
             ..TemporalLinkedWindow::of_request(params)
         };
-        let compiled = self.compile_temporal_query(&window.to_parameters(), context).await?;
+        let compiled = self.compile_temporal_query(&window.to_parameters(), context, self.language_targeting()).await?;
         let scope = self.reader.read_scope(target, ScopeReach::Every).await?;
         let read = TargetRead {
             target,

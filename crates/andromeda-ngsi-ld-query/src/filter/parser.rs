@@ -471,7 +471,16 @@ mod tests {
         match expr {
             Expr::Pred(Predicate::Equality { path, .. }) => {
                 pretty_assertions::assert_eq!(path.terminal().attr.as_str(), "address");
-                pretty_assertions::assert_eq!(path.terminal().value_path.iter().map(AttributeName::as_str).collect::<Vec<_>>(), vec!["city"]);
+                pretty_assertions::assert_eq!(
+                    path.terminal()
+                        .members()
+                        .expect("a member path")
+                        .addressed
+                        .iter()
+                        .map(AttributeName::as_str)
+                        .collect::<Vec<_>>(),
+                    vec!["city"]
+                );
             }
             other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => panic!("expected Equality, got {other:?}"),
         }
@@ -485,7 +494,13 @@ mod tests {
                 pretty_assertions::assert_eq!(path.terminal().attr.as_str(), "sensor");
                 pretty_assertions::assert_eq!(path.terminal().sub_attrs.iter().map(AttributeName::as_str).collect::<Vec<_>>(), vec!["rawdata"]);
                 pretty_assertions::assert_eq!(
-                    path.terminal().value_path.iter().map(AttributeName::as_str).collect::<Vec<_>>(),
+                    path.terminal()
+                        .members()
+                        .expect("a member path")
+                        .addressed
+                        .iter()
+                        .map(AttributeName::as_str)
+                        .collect::<Vec<_>>(),
                     vec!["airquality", "particulate"]
                 );
             }
@@ -830,7 +845,16 @@ mod tests {
         match predicate_of(&expr) {
             Predicate::Ordering { path, op, .. } => {
                 let (_, _, inner) = hop_of(path);
-                pretty_assertions::assert_eq!(local_of(inner).value_path.iter().map(AttributeName::as_str).collect::<Vec<_>>(), vec!["c", "d"]);
+                pretty_assertions::assert_eq!(
+                    local_of(inner)
+                        .members()
+                        .expect("a member path")
+                        .addressed
+                        .iter()
+                        .map(AttributeName::as_str)
+                        .collect::<Vec<_>>(),
+                    vec!["c", "d"]
+                );
                 pretty_assertions::assert_eq!(*op, OrderingOp::GreaterEq);
             }
             other @ (Predicate::Exists(_) | Predicate::Equality { .. } | Predicate::MatchPattern { .. } | Predicate::NotMatchPattern { .. }) => {

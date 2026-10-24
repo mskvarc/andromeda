@@ -8,7 +8,7 @@
 //! fixtures drive the trait-based evaluators.
 
 use crate::{
-    filter::target_value::TargetValue,
+    filter::{language_matching::LanguageMatching, target_language::LanguageSelector, target_value::TargetValue},
     queried_entity::{
         attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
         instance_metadata::InstanceMetadata,
@@ -25,6 +25,7 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_vocabulary::expanded::properties::OBJECT;
+use langtag::LangTag;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::borrow::Cow;
@@ -319,13 +320,14 @@ impl<'a> QueriedInstance<'a> for &'a FixtureInstance {
         self.values.iter().map(FixtureItem::view)
     }
 
-    fn language_values(self, language: &str) -> impl Iterator<Item = ValueItem<'a, &'a FixtureNode>> {
+    fn language_values(self, wanted: LanguageSelector<'_>, matching: LanguageMatching) -> impl Iterator<Item = ValueItem<'a, &'a FixtureNode>> {
         let family = self.family;
         self.values
             .iter()
             .filter(move |item| {
                 family == AttributeType::LanguageProperty
-                    && matches!(item, FixtureItem::Literal(FixtureLiteral::Tagged { language: tag, .. }) if tag == language)
+                    && matches!(item, FixtureItem::Literal(FixtureLiteral::Tagged { language: tag, .. })
+                        if LangTag::new(tag.as_str()).is_ok_and(|tag| wanted.admits(tag, matching)))
             })
             .map(FixtureItem::view)
     }

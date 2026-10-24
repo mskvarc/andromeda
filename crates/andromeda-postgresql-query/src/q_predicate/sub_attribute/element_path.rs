@@ -155,7 +155,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::{
-        filter::{expression::Expr, parser::parse, path::QueryPath},
+        filter::{expression::Expr, language_matching::LanguageMatching, parser::parse, path::QueryPath},
         temporal::window::TimeInterval,
     };
     use andromeda_postgresql_schema::temporal::AttributeHistory;
@@ -198,7 +198,12 @@ mod tests {
             types: ResolvedNames::default(),
             ..QueryNames::default()
         };
-        let condition = compile(&parse(q).expect("parse q"), &InstanceScan::History(&window), &names);
+        let condition = compile(
+            &parse(q).expect("parse q"),
+            &InstanceScan::History(&window),
+            &names,
+            LanguageMatching::TagEquality,
+        );
         Query::select().cond_where(condition).to_owned().to_string(PostgresQueryBuilder)
     }
 

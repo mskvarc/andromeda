@@ -19,6 +19,7 @@ use andromeda_ngsi_ld_query::{
         eval::evaluate,
         expansion::{apply_expand_values, expand_attribute_names, expand_q_expr},
         json_key_attributes::JsonKeyAttributes,
+        language_matching::LanguageMatching,
     },
     geo::compile::compile_geo_query,
 };
@@ -36,7 +37,9 @@ use std::collections::HashSet;
 /// here, over the merged result. The merged entities are already in the
 /// model, so the filters, expanded under the request's context, are evaluated
 /// over the document each one is. The entities a `rel{…}` hop of `q` crosses
-/// into (clause 4.9) are read from `target` as they stand now.
+/// into (clause 4.9) are read from `target` as they stand now, and its target
+/// languages select keys by `language_matching`, the mode the request runs
+/// under.
 ///
 /// # Errors
 ///
@@ -49,6 +52,7 @@ pub(crate) async fn retain_matching(
     merged: MergedEntities,
     deferred: Option<DeferredSplitFilters>,
     context: &ContextSpec,
+    language_matching: LanguageMatching,
     instance: &HttpUri,
 ) -> Result<MergedEntities, ProblemResponse> {
     let Some(deferred) = deferred else {
@@ -112,7 +116,7 @@ pub(crate) async fn retain_matching(
     };
     let mut matching = Vec::with_capacity(documents.len());
     for (entity, document) in documents {
-        let q_ok = compiled_q.as_ref().is_none_or(|expr| evaluate(expr, &document, &linked));
+        let q_ok = compiled_q.as_ref().is_none_or(|expr| evaluate(expr, &document, &linked, language_matching));
         let geo_ok = compiled_geo.as_ref().is_none_or(|geo| geo.matches_entity(&document));
         let scope_ok = compiled_scope.as_ref().is_none_or(|scope| scope.matches_entity(&document));
 

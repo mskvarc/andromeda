@@ -7,9 +7,8 @@
 //! source's answer is, every instance carrying the system times a window on
 //! `createdAt` or `modifiedAt` places it by.
 
-use crate::{error::TemporalError, port::read_scope::ScopeReach, service::TemporalService, temporal_invariant::TemporalInvariant};
+use crate::{error::TemporalError, port::read_scope::ScopeReach, query_reading::QueryReading, service::TemporalService, temporal_invariant::TemporalInvariant};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
@@ -50,6 +49,9 @@ impl TemporalService {
     /// the Scope in force. Empty when the query carries no filter or its
     /// window has no instance in effect before it.
     ///
+    /// The request's terms and `q` target languages are read as `reading`
+    /// says.
+    ///
     /// # Errors
     ///
     /// Returns [`TemporalError`] when the query does not compile, the context
@@ -59,10 +61,10 @@ impl TemporalService {
         &self,
         target: &ContextTarget,
         params: &TemporalQueryParameters,
-        context: &ContextSpec,
+        reading: QueryReading<'_>,
         entity_ids: &[Identifier],
     ) -> Result<LocalInEffect, TemporalError> {
-        let compiled = self.compile_temporal_query(params, context).await?;
+        let compiled = self.compile_temporal_query(params, reading.context, reading.language_targeting).await?;
         if entity_ids.is_empty() || SplitFilter::of(&compiled.entities).is_empty() || compiled.window.in_effect_start().is_none() {
             return Ok(LocalInEffect::default());
         }

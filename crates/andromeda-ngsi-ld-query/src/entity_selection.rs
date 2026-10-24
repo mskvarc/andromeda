@@ -1,7 +1,7 @@
 //! Which entities a query matches.
 
 use crate::{
-    filter::expression::Expr,
+    filter::{expression::Expr, language_matching::LanguageMatching},
     geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery},
     identifier_axis::IdentifierAxis,
     pattern::Pattern,
@@ -121,6 +121,12 @@ pub struct EntitySelection {
     pub attrs: Vec<IriBuf>,
     /// Parsed `q` expression for property-level filtering (clause 4.9).
     pub q_expr: Option<Expr>,
+    /// How the target languages of `q_expr` select languageMap keys.
+    ///
+    /// The broker's `q_target_languages` level decides it, and a request
+    /// reaching a context source that does not serve that level falls back to
+    /// the clause 4.9 tag equality, which is also the default.
+    pub language_matching: LanguageMatching,
     /// Geo-spatial query filter, if specified (clause 4.10).
     pub geo: Option<GeoQuery>,
     /// What an in-memory spatial index established about `geo`'s default

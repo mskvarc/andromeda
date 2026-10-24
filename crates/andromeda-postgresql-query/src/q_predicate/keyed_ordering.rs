@@ -87,9 +87,12 @@ pub(crate) fn ordering_candidates(pred: &Predicate, rows: &EntityRowRefs, names:
         | Predicate::MatchPattern { .. }
         | Predicate::NotMatchPattern { .. } => return None,
     };
+    if !path.sub_attrs.is_empty() {
+        return None;
+    }
     match local_target(path) {
         LocalTarget::OwnValue => {}
-        LocalTarget::TrailingMember(_) | LocalTarget::NestedMember | LocalTarget::SubAttribute(_) => return None,
+        LocalTarget::TrailingMember { .. } | LocalTarget::TargetLanguage(_) | LocalTarget::NestedMember(_) => return None,
     }
     let attribute = names.attributes.get(&path.attr)?;
     let OwnValueArms { typed, language } = arms;

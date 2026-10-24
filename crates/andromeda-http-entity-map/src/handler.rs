@@ -44,7 +44,7 @@ use andromeda_ngsi_ld_request::{
     query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
     query_narrowing::ExecutionScope,
 };
-use andromeda_temporal::requested_identifiers::RequestedIdentifiers;
+use andromeda_temporal::{query_reading::QueryReading, requested_identifiers::RequestedIdentifiers};
 use axum::{
     extract::OriginalUri,
     http::StatusCode,
@@ -144,7 +144,7 @@ async fn local_entity_ids(
     let uri = rendering.uri;
     let mut compiled = state
         .entity_query
-        .compile_query_public(query, rendering.context)
+        .compile_query_public(query, rendering.context, state.entity_query.language_targeting())
         .await
         .with_entity_map_instance(uri)?;
     match filters {
@@ -216,7 +216,10 @@ async fn create_from_temporal_query(
             &state.live_target,
             params,
             window,
-            rendering.context,
+            QueryReading {
+                context: rendering.context,
+                language_targeting: state.temporal.language_targeting(),
+            },
             RequestedIdentifiers::Narrow,
             candidate_filters(state, params.split_entities, params.execution_scope()),
         )

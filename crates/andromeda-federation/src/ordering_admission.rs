@@ -32,17 +32,10 @@
 //! registry. The ordering rule protects the answer's correctness instead, and
 //! is satisfied by the fact of no distribution however that fact arose.
 
-use crate::{
-    FederationService,
-    error::FederationError,
-    forwarded_query::client_query::ClientQuery,
-    operation::ForwardingOperation,
-    read_fan_out::{ReadSelection, ReadServing},
-    request::{CsrModeFilter, EntityMapInUse},
-};
+use crate::{FederationService, error::FederationError, participating_read::ParticipatingRead};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_query::{entity_selection::ConsideredEntities, geo::query::GeoQuery, ordering::parameters::OrderingParameters};
+use andromeda_ngsi_ld_query::ordering::parameters::OrderingParameters;
 use andromeda_ngsi_ld_request::query_narrowing::ExecutionScope;
 use derive_more::IsVariant;
 
@@ -54,24 +47,6 @@ pub enum OrderingAdmission {
     /// A registered Context Source takes part in the read, and clause 4.23.1
     /// applies no sort ordering to a distributed operation.
     Refused,
-}
-
-/// One read, in the terms the clause 4.23 ordering rule is stated in.
-pub struct OrderedRead<'a> {
-    /// The ordering the client asked for; an empty `orderBy` asked for none.
-    pub ordering: &'a OrderingParameters,
-    /// The execution scope the request itself asked for (clause 5.5.13).
-    pub requested_scope: ExecutionScope,
-    /// The query, which decides which registrations could take part.
-    pub client_query: ClientQuery<'a>,
-    /// The query's geoquery, compiled, which a registration's declared
-    /// geometry has to admit for it to take part (clause 5.10.2.4).
-    pub geo: Option<&'a GeoQuery>,
-    /// The operation a registration has to advertise to take part (clause 4.20).
-    pub operation: ForwardingOperation,
-    /// The `EntityMap` the read runs under, which fixes the registrations that
-    /// may take part at all (clause 5.5.14).
-    pub entity_map: EntityMapInUse<'a>,
 }
 
 /// The admission that needs no registry lookup.
@@ -96,15 +71,12 @@ const fn admission_of_participation(participating: usize) -> OrderingAdmission {
 }
 
 impl FederationService {
-    /// Whether the ordering `read` asked for may be applied to its answer.
+    /// Whether `ordering`, the ordering `read` asked for, may be applied to
+    /// its answer.
     ///
     /// The registry is consulted only for a read that asked for an ordering
-    /// and did not already limit itself to the local scope. The consultation
-    /// deliberately omits the context source filter: clause 5.5.13 marks a
-    /// local execution by the Context Registry not being used at all, and a
-    /// read carrying a `csf` uses it. It admits every forwarding mode, since an
-    /// auxiliary source (clause 4.3.6.2) contributes to the answer exactly as a
-    /// primary one does.
+    /// and did not already limit itself to the local scope, and it is asked
+    /// which registrations take part in the read.
     ///
     /// # Errors
     ///
@@ -112,37 +84,17 @@ impl FederationService {
     /// be expanded against the request's context, and
     /// [`FederationError::Registration`] when the matching registrations
     /// cannot be read.
-    pub async fn admit_ordering(&self, target: &ContextTarget, context: &ContextSpec, read: OrderedRead<'_>) -> Result<OrderingAdmission, FederationError> {
-        if !target.permits_federation() {
-            return Ok(OrderingAdmission::Admitted);
-        }
-        if let Some(settled) = admission_without_the_registry(read.ordering, read.requested_scope) {
+    pub async fn admit_ordering(
+        &self,
+        target: &ContextTarget,
+        context: &ContextSpec,
+        ordering: &OrderingParameters,
+        read: &ParticipatingRead<'_>,
+    ) -> Result<OrderingAdmission, FederationError> {
+        if let Some(settled) = admission_without_the_registry(ordering, read.requested_scope) {
             return Ok(settled);
         }
-        // Clause 5.5.14: an `EntityMap` "fixes the Entities to be considered",
-        // so a read left considering none has no entity for a source to hold
-        // and none is contacted.
-        if matches!(ConsideredEntities::of_request(read.client_query.entity_ids()), ConsideredEntities::NoEntity) {
-            return Ok(OrderingAdmission::Admitted);
-        }
-        let participating = self
-            .select_read_registrations(
-                context,
-                ReadSelection {
-                    entity_type: read.client_query.entity_type(),
-                    entity_ids: read.client_query.entity_ids(),
-                    id_pattern: read.client_query.id_pattern(),
-                    exclude_registration: None,
-                    csf: None,
-                    scope_q: read.client_query.scope_q(),
-                    geo: read.geo,
-                    serving: ReadServing::Operation(read.operation),
-                    mode_filter: CsrModeFilter::All,
-                    entity_map: read.entity_map,
-                },
-            )
-            .await?
-            .len();
+        let participating = self.participating_registrations(target, context, read).await?.len();
         Ok(admission_of_participation(participating))
     }
 }

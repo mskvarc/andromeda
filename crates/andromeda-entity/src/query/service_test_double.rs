@@ -25,6 +25,7 @@ use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity::compiled::CompiledEntityQuery,
+    filter::language_targeting::LanguageTargeting,
     geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
     page_window::PageWindow,
     projection::returned_attributes::ReturnedAttributes,
@@ -123,13 +124,14 @@ pub(crate) fn service_resolving(reference_limits: GeometryCensusLimits) -> Entit
 /// geometries within `reference_limits`.
 fn service_with(spatial: SpatialAcceleration, reference_limits: GeometryCensusLimits) -> EntityQueryService {
     let store = Arc::new(UnusedStore);
-    EntityQueryService::new(
-        store.clone() as Arc<dyn EntityReader>, // clone: the test double supplies both focused capabilities
-        store as Arc<dyn EntityQueryStore>,
-        JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
-        spatial,
-        TenantRef::UnnamedDefault,
-        None,
-        GeoQueryAdmission::new(reference_limits, NearDistanceBand::Refused),
-    )
+    EntityQueryService::builder()
+        .reader(store.clone() as Arc<dyn EntityReader>) // clone: the test double supplies both focused capabilities
+        .query_store(store as Arc<dyn EntityQueryStore>)
+        .engine(JsonLdEngine::builder().allow_remote(false).build().expect("build engine"))
+        .spatial(spatial)
+        .tenant(TenantRef::UnnamedDefault)
+        .remote_linked(None)
+        .geo_admission(GeoQueryAdmission::new(reference_limits, NearDistanceBand::Refused))
+        .language_targeting(LanguageTargeting::Specification)
+        .build()
 }

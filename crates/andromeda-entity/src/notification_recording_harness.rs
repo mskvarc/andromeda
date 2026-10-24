@@ -41,6 +41,7 @@ use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngin
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, reads::attribute_change::AttributeChangeKind};
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_query::filter::language_matching::LanguageMatching;
 use andromeda_ngsi_ld_representation::payload_budget::EntityPayloadBudget;
 use andromeda_subscription::cache::SubscriptionCache;
 use andromeda_tenancy::tenant_ref::TenantRef;
@@ -183,7 +184,7 @@ async fn cache_holding(cached: CachedSubscription) -> Arc<SubscriptionCache> {
         CachedSubscription::Building => building_subscription_cache().await,
         CachedSubscription::BuildingTwice => twin_building_subscription_cache().await,
         CachedSubscription::BuildingOnEntityUpdated => entity_updated_building_subscription_cache().await,
-        CachedSubscription::None => Arc::new(SubscriptionCache::new(TenantRef::UnnamedDefault)),
+        CachedSubscription::None => Arc::new(SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality)),
     }
 }
 

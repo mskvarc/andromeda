@@ -77,6 +77,8 @@ pub mod in_effect_probe;
 pub mod incomplete_answer;
 /// The most attribute instances one forwarded temporal query may gather.
 pub mod instance_budget;
+/// How a read's `q` target languages are matched across the sources it reaches.
+pub mod language_negotiation;
 /// Resolving a locally-held entity's type for federated-write coverage.
 pub mod local_entity_type;
 /// NGSI-LD operation capability matching.
@@ -85,6 +87,8 @@ pub mod operation;
 pub mod ordering_admission;
 /// Typed forwarding outcomes.
 pub mod outcome;
+/// Which registrations take part in a read.
+pub mod participating_read;
 /// Single-entity provision forwarding.
 pub mod provision;
 /// Batch provision forwarding.

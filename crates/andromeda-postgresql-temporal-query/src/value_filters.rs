@@ -53,6 +53,7 @@ pub(crate) fn value_filter_condition(branch: &HistoryBranch, compiled: &Compiled
             q_expr,
             &InstanceScan::History(&windowed_instances(branch, compiled, &of, WindowReach::InsideAndInEffect)),
             names,
+            compiled.entities.language_matching,
         ));
         present = true;
     }

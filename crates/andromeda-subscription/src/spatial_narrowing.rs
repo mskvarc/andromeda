@@ -105,7 +105,7 @@ mod tests {
         notification::NotificationTrigger,
         subscription::{SubscriptionStatus, entity_selector::EntitySelector, standing::SubscriptionStanding},
     };
-    use andromeda_ngsi_ld_query::{geo::input::GeoQueryInput, projection::compiled::Projection};
+    use andromeda_ngsi_ld_query::{filter::language_matching::LanguageMatching, geo::input::GeoQueryInput, projection::compiled::Projection};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_tenancy::tenant_ref::TenantRef;
     use chrono::{DateTime, Utc};
@@ -173,6 +173,7 @@ mod tests {
             jsonld_context: None,
             created_at: DateTime::<Utc>::MIN_UTC,
             compiled_q: None,
+            language_matching: LanguageMatching::TagEquality,
             compiled_geo_q,
             compiled_scope_q: None,
             dataset_id: None,
@@ -188,7 +189,7 @@ mod tests {
 
     /// The live cache holding `subscriptions`, and each of them as it cached it.
     fn cached(subscriptions: Vec<CompiledSubscription>) -> (SubscriptionCache, Vec<Arc<CompiledSubscription>>) {
-        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let ids: Vec<_> = subscriptions.iter().map(|subscription| subscription.id.clone()).collect();
         for subscription in subscriptions {
             cache.insert(&ContextTarget::Live, subscription);

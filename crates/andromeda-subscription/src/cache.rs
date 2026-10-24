@@ -18,6 +18,7 @@ use crate::{
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_query::filter::language_matching::LanguageMatching;
 use andromeda_spatial_index::{
     key::SpatialKey,
     subscription::{entry::SubEntry, index::SpatialSubscriptionIndex},
@@ -39,22 +40,27 @@ pub struct SubscriptionCache {
     indices: RwLock<HashMap<ContextTarget, CandidateIndex>>,
     spatial: Arc<SpatialSubscriptionIndex>,
     tenant: TenantRef,
+    /// The broker's mode every cached subscription's target languages select
+    /// keys by.
+    language_matching: LanguageMatching,
 }
 
 impl SubscriptionCache {
-    /// Create an empty subscription cache scoped to the given tenant.
+    /// Create an empty subscription cache scoped to the given tenant, its
+    /// subscriptions' target languages selecting keys by `language_matching`.
     #[must_use]
-    pub fn new(tenant: TenantRef) -> SubscriptionCache {
-        SubscriptionCache::with_spatial(tenant, Arc::new(SpatialSubscriptionIndex::new()))
+    pub fn new(tenant: TenantRef, language_matching: LanguageMatching) -> SubscriptionCache {
+        SubscriptionCache::with_spatial(tenant, Arc::new(SpatialSubscriptionIndex::new()), language_matching)
     }
 
     /// Create an empty subscription cache that writes its geo index into
     /// the given shared [`SpatialSubscriptionIndex`].
-    pub fn with_spatial(tenant: TenantRef, spatial: Arc<SpatialSubscriptionIndex>) -> SubscriptionCache {
+    pub fn with_spatial(tenant: TenantRef, spatial: Arc<SpatialSubscriptionIndex>, language_matching: LanguageMatching) -> SubscriptionCache {
         SubscriptionCache {
             indices: RwLock::new(HashMap::new()),
             spatial,
             tenant,
+            language_matching,
         }
     }
 
@@ -72,7 +78,10 @@ impl SubscriptionCache {
     /// either case.
     pub async fn reload(&self, target: &ContextTarget, repo: &(impl SubscriptionStore + ?Sized)) -> Result<(), SubscriptionError> {
         let subscriptions = repo.list_active(target).await?;
-        let compiled: Vec<CompiledSubscription> = subscriptions.iter().map(compile_subscription).collect();
+        let compiled: Vec<CompiledSubscription> = subscriptions
+            .iter()
+            .map(|stored| compile_subscription(stored, self.language_matching))
+            .collect();
         let mut indices = self.indices.write();
         let index = indices.entry(target.clone()).or_default();
         index.clear();
@@ -112,7 +121,9 @@ impl SubscriptionCache {
     /// caller can tell a subscription that is gone from one it could not see.
     pub async fn refresh(&self, target: &ContextTarget, id: &Identifier, repo: &(impl SubscriptionStore + ?Sized)) -> Result<(), SubscriptionError> {
         match repo.get(target, id).await? {
-            Some(stored) if stored.subscription.lifecycle.standing.notifies_at(Utc::now()) => self.insert(target, compile_subscription(&stored)),
+            Some(stored) if stored.subscription.lifecycle.standing.notifies_at(Utc::now()) => {
+                self.insert(target, compile_subscription(&stored, self.language_matching));
+            }
             Some(_) | None => self.remove(target, id),
         }
         Ok(())
@@ -240,7 +251,7 @@ mod tests {
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus, entity_selector::EntitySelector, standing::SubscriptionStanding};
-    use andromeda_ngsi_ld_query::{page_window::PageWindow, projection::compiled::Projection};
+    use andromeda_ngsi_ld_query::{filter::language_matching::LanguageMatching, page_window::PageWindow, projection::compiled::Projection};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_tenancy::tenant_ref::TenantRef;
@@ -386,6 +397,7 @@ mod tests {
             jsonld_context: None,
             created_at: DateTime::<Utc>::MIN_UTC,
             compiled_q: None,
+            language_matching: LanguageMatching::TagEquality,
             compiled_geo_q: SubscriptionGeoFilter::Unrestricted,
             compiled_scope_q: None,
             dataset_id: None,
@@ -401,7 +413,7 @@ mod tests {
 
     #[test]
     fn len_reflects_cache_size() {
-        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let target = live_target();
         assert!(cache.is_empty(&target));
         assert_eq!(cache.len(&target), 0);
@@ -417,7 +429,7 @@ mod tests {
 
     #[test]
     fn a_cached_subscription_carries_its_store_key_beside_its_identifier() {
-        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let target = live_target();
         let subscription = make_compiled_sub("keyed", 7, "Vehicle", vec!["entityCreated"]);
         let id = subscription.id.clone(); // clone: the lookup outlives the value the map takes
@@ -431,7 +443,7 @@ mod tests {
     /// stays so a caller that retries still finds it.
     #[tokio::test]
     async fn a_refresh_the_store_cannot_answer_reports_the_failure_and_keeps_the_entry() -> Result<(), SubscriptionError> {
-        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let target = live_target();
         let subscription = make_compiled_sub("unreadable", 3, "Vehicle", vec!["entityCreated"]);
         let id = subscription.id.clone(); // clone: the lookup outlives the value the map takes
@@ -455,7 +467,7 @@ mod tests {
     /// A subscription the store no longer holds is dropped from the cache.
     #[tokio::test]
     async fn a_refresh_that_finds_the_subscription_gone_drops_it() -> Result<(), SubscriptionError> {
-        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let target = live_target();
         let subscription = make_compiled_sub("gone", 4, "Vehicle", vec!["entityCreated"]);
         let id = subscription.id.clone(); // clone: the lookup outlives the value the map takes

@@ -237,6 +237,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
         entity::compiled::CompiledEntityQuery,
+        filter::language_targeting::LanguageTargeting,
         geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
         page_window::PageWindow,
         projection::returned_attributes::ReturnedAttributes,
@@ -500,15 +501,19 @@ mod tests {
 
     fn build_service(store: StubStore, remote_linked: Option<Arc<dyn RemoteLinkedEntitySource>>) -> EntityQueryService {
         let store = Arc::new(store);
-        EntityQueryService::new(
-            store.clone() as Arc<dyn EntityReader>, // clone: the test double supplies both focused capabilities
-            store as Arc<dyn EntityQueryStore>,
-            JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
-            SpatialAcceleration::StoreVerified,
-            TenantRef::UnnamedDefault,
-            remote_linked,
-            GeoQueryAdmission::new(EntityConfig::default().geometry_census_limits(), NearDistanceBand::Refused),
-        )
+        EntityQueryService::builder()
+            .reader(store.clone() as Arc<dyn EntityReader>) // clone: the test double supplies both focused capabilities
+            .query_store(store as Arc<dyn EntityQueryStore>)
+            .engine(JsonLdEngine::builder().allow_remote(false).build().expect("build engine"))
+            .spatial(SpatialAcceleration::StoreVerified)
+            .tenant(TenantRef::UnnamedDefault)
+            .remote_linked(remote_linked)
+            .geo_admission(GeoQueryAdmission::new(
+                EntityConfig::default().geometry_census_limits(),
+                NearDistanceBand::Refused,
+            ))
+            .language_targeting(LanguageTargeting::Specification)
+            .build()
     }
 
     /// A context mapping the tests' one term to a deterministic,

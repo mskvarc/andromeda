@@ -99,7 +99,7 @@ impl TemporalService {
             return Ok(None);
         };
         let window = TemporalLinkedWindow::of_request(params);
-        let compiled = self.compile_temporal_query(&window.to_parameters(), context).await?;
+        let compiled = self.compile_temporal_query(&window.to_parameters(), context, self.language_targeting()).await?;
         let source = TemporalLinkedSource::new(self, target, &compiled, &window, context);
         let bounds = TraversalBounds::of(params.join_level, params.contained_by.as_deref());
         let graph = traverse(&source, RootEdges::of::<TemporalEvolutions>(roots), &bounds).await?;

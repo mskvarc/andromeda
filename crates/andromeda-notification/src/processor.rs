@@ -348,7 +348,7 @@ mod tests {
         subscription::{SubscriptionStatus, entity_selector::EntitySelector, standing::SubscriptionStanding},
     };
     use andromeda_ngsi_ld_query::{
-        filter::parser,
+        filter::{language_matching::LanguageMatching, parser},
         projection::compiled::Projection,
         queried_entity::linked_entities::NoLinkedEntities,
         scope::query::ScopeQuery,
@@ -419,6 +419,7 @@ mod tests {
             jsonld_context: None,
             created_at: DateTime::<Utc>::MIN_UTC,
             compiled_q: None,
+            language_matching: LanguageMatching::TagEquality,
             compiled_geo_q: SubscriptionGeoFilter::Unrestricted,
             compiled_scope_q: None,
             dataset_id: None,
@@ -745,7 +746,7 @@ mod tests {
     /// them again; a live change is filtered now.
     #[test]
     fn durable_delivery_does_not_re_evaluate_a_matched_filter() {
-        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
         sub.compiled_q = Some(parser::parse("\"https://example.com/speed\">100").expect("valid q"));
         let subscription_id = sub.id.clone(); // clone: the audience names the subscription the candidates own
@@ -812,7 +813,7 @@ mod tests {
     /// filters the commit decided.
     #[test]
     fn a_queued_delivery_decided_at_commit_still_decides_a_hopping_filter() {
-        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
         sub.compiled_q = Some(parser::parse("\"https://example.com/isParkedIn\"{\"https://example.com/category\"}==\"commercial\"").expect("valid q"));
         let subscription_id = sub.id.clone(); // clone: the audience names the subscription the candidates own

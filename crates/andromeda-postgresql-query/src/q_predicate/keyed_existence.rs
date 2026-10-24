@@ -32,9 +32,12 @@ pub(crate) fn existence_candidates(pred: &Predicate, rows: &EntityRowRefs, names
     let Predicate::Exists(QueryPath::Local(path)) = pred else {
         return None;
     };
+    if !path.sub_attrs.is_empty() {
+        return None;
+    }
     match local_target(path) {
         LocalTarget::OwnValue => {}
-        LocalTarget::TrailingMember(_) | LocalTarget::NestedMember | LocalTarget::SubAttribute(_) => return None,
+        LocalTarget::TrailingMember { .. } | LocalTarget::TargetLanguage(_) | LocalTarget::NestedMember(_) => return None,
     }
     let attribute = names.attributes.get(&path.attr)?;
     let carriers = EntityRowRefs::unaliased(rows.schema().cloned()).keyed_by(EntitySearch::Table);

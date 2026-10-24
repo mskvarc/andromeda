@@ -124,7 +124,11 @@ pub(crate) async fn delete_by_query(
         (None, None) => PurgeMode::DeleteEntities,
     };
 
-    let compiled = state.entity_query.compile_query_public(&query, &context).await.with_entity_instance(&uri)?;
+    let compiled = state
+        .entity_query
+        .compile_query_public(&query, &context, state.entity_query.language_targeting())
+        .await
+        .with_entity_instance(&uri)?;
     let entity_ids: Vec<Identifier> = state
         .entity_query
         .query_ids(&target, &compiled, &PageWindow::unbounded())

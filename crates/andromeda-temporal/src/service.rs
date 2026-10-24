@@ -16,6 +16,7 @@ use andromeda_linked_retrieval::admission::TemporalJoin;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
 use andromeda_ngsi_ld_query::{
+    filter::language_targeting::LanguageTargeting,
     geo::admission::GeoQueryAdmission,
     page_reach::PageReach,
     projection::compiled::Projection,
@@ -194,5 +195,13 @@ impl TemporalService {
     #[must_use]
     pub const fn geo_admission(&self) -> GeoQueryAdmission {
         GeoQueryAdmission::new(self.limits.payload_budget.geometry_census_limits(), self.limits.near_band)
+    }
+
+    /// What a temporal `q`'s target languages may be and how they select
+    /// languageMap keys, before a request's negotiation with the sources it
+    /// reaches.
+    #[must_use]
+    pub const fn language_targeting(&self) -> LanguageTargeting {
+        self.limits.language_targeting
     }
 }

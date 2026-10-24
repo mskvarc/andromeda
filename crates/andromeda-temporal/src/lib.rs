@@ -56,6 +56,8 @@ pub mod local_in_effect;
 pub mod observed_instance;
 pub mod outcome;
 pub mod port;
+/// How the text of one temporal request is read.
+pub mod query_reading;
 pub mod query_warning_reason;
 mod read;
 /// What one reified Scope instance of a Temporal Evolution states.

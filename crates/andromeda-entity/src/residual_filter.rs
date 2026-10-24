@@ -16,7 +16,7 @@ use andromeda_ngsi_ld_entity::{
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},
-    filter::{eval::evaluate, expression::Expr},
+    filter::{eval::evaluate, expression::Expr, language_matching::LanguageMatching},
     geo::query::GeoQuery,
     identifier_axis::IdentifierAxis,
     projection::projected_members::{ProjectedMembers, ScopeRetention},
@@ -106,6 +106,7 @@ fn matches_selected<'a, E: SelectedEntity<'a>>(residual: &ResidualFilter, entity
         selectors,
         attrs,
         q_expr,
+        language_matching,
         geo,
         default_location: _,
         scope_q,
@@ -115,7 +116,7 @@ fn matches_selected<'a, E: SelectedEntity<'a>>(residual: &ResidualFilter, entity
     considers_any_entity(*considered)
         && selectors_match(selectors, entity)
         && attributes_present(attrs, entity)
-        && value_filter_matches(q_expr.as_ref(), entity)
+        && value_filter_matches(q_expr.as_ref(), *language_matching, entity)
         && geo_matches(geo.as_ref(), entity)
         && scope_matches(scope_q.as_ref(), entity)
         && projection_leaves_a_member(projected_members, entity)
@@ -182,8 +183,8 @@ fn attributes_present<'a, E: SelectedEntity<'a>>(attrs: &[IriBuf], entity: E) ->
 ///
 /// A store compiles every `rel{…}` hop of a query's `q` itself, reading the
 /// linked entity where it lies, so a hop reaches nothing in memory here.
-fn value_filter_matches<'a, E: SelectedEntity<'a>>(q_expr: Option<&Expr>, entity: E) -> bool {
-    q_expr.is_none_or(|expr| evaluate(expr, entity, NoLinkedEntities))
+fn value_filter_matches<'a, E: SelectedEntity<'a>>(q_expr: Option<&Expr>, matching: LanguageMatching, entity: E) -> bool {
+    q_expr.is_none_or(|expr| evaluate(expr, entity, NoLinkedEntities, matching))
 }
 
 /// Clause 4.10 `georel`.

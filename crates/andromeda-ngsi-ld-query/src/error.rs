@@ -22,6 +22,7 @@ use crate::{
     filter::{
         expectation::{QExpectation, QFound},
         json_string::UnicodeEscapeFault,
+        language_range::{LanguageRange, LanguageRangeError},
         path::AttrPath,
         serialize::serialize_attr_path,
     },
@@ -40,6 +41,7 @@ use andromeda_ngsi_ld_lexicon::{
     time::{date::NgsiLdDateError, date_time::NgsiLdDateTimeError, time_of_day::NgsiLdTimeError},
 };
 use andromeda_ngsi_ld_number::JsonNumberError;
+use langtag::{InvalidLangTag, LangTagBuf};
 use regex_syntax::hir;
 
 /// Errors raised while validating, parsing, compiling or planning a query.
@@ -119,6 +121,25 @@ pub enum QueryError {
         /// The maximum the parser accepts.
         limit: usize,
     },
+    /// A one-member bracket held a name that is neither an attribute name nor
+    /// an RFC 5646 language tag, nor an RFC 4647 extended range.
+    #[error("q expression: '{}' is neither a member name nor an RFC 5646 language tag ({range})", .tag.0)]
+    TrailingMemberInvalid {
+        /// The language tag reading the bracket failed.
+        #[source]
+        tag: InvalidLangTag<String>,
+        /// Why the bracket is no extended language range either.
+        range: LanguageRangeError,
+    },
+    /// A bracket named a target language only a full RFC 5646 tag spells
+    /// while the `q_target_languages` extension stays below `language-tags`:
+    /// the clause 4.9 `AttrName` admits no `-`.
+    #[error("q expression: the target language '{0}' is a full language tag, which needs the q_target_languages extension at language-tags")]
+    LanguageTagNotAdmitted(LangTagBuf),
+    /// A bracket held an RFC 4647 extended language range while the
+    /// `q_target_languages` extension stays below `language-ranges`.
+    #[error("q expression: the language range '{0}' needs the q_target_languages extension at language-ranges")]
+    LanguageRangeNotAdmitted(LanguageRange),
     /// A bare word that is no `URI` stood as a value: clause 4.9 derives it
     /// from no production, whatever `expandValues` names.
     #[error("q expression: an unquoted word is no value; quote it")]

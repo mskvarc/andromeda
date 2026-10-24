@@ -10,6 +10,7 @@ use crate::{
     filter::{
         attribute_axis::{addresses_element, resolve_targets},
         expression::Expr,
+        language_matching::LanguageMatching,
         path::QueryPath,
         predicate::{CmpOp, Predicate, SetMembership},
         scalar::{CompareValue, Scalar},
@@ -25,10 +26,11 @@ use std::borrow::Cow;
 /// the entities its `rel{…}` hops cross into from `linked`.
 ///
 /// The expression's attribute names are expected expanded, as the entity keys
-/// its attributes by expanded name.
-pub fn evaluate<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(expr: &Expr, entity: E, linked: L) -> bool {
-    expression_holds(expr, &|path| resolve_targets(entity, path, linked), &|path| {
-        addresses_element(entity, path, linked)
+/// its attributes by expanded name. A target language selects languageMap
+/// keys by `matching`.
+pub fn evaluate<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(expr: &Expr, entity: E, linked: L, matching: LanguageMatching) -> bool {
+    expression_holds(expr, &|path| resolve_targets(entity, path, linked, matching), &|path| {
+        addresses_element(entity, path, linked, matching)
     })
 }
 
@@ -39,9 +41,9 @@ pub fn evaluate<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(expr: &Expr, en
 /// resolves to, which is what lets a filter over an entity held in several
 /// parts be decided term by term (clause 5.7.4.4 `splitEntities`): the term
 /// holds over the whole entity when it holds over any one part.
-pub fn predicate_holds_in<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(pred: &Predicate, entity: E, linked: L) -> bool {
-    predicate_holds(pred, &|path| resolve_targets(entity, path, linked), &|path| {
-        addresses_element(entity, path, linked)
+pub fn predicate_holds_in<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(pred: &Predicate, entity: E, linked: L, matching: LanguageMatching) -> bool {
+    predicate_holds(pred, &|path| resolve_targets(entity, path, linked, matching), &|path| {
+        addresses_element(entity, path, linked, matching)
     })
 }
 
@@ -240,6 +242,7 @@ mod tests {
             expansion::expand_q_expression,
             expression::Expr,
             json_key_attributes::JsonKeyAttributes,
+            language_matching::LanguageMatching,
             parser::parse,
         },
         queried_entity::{
@@ -255,14 +258,25 @@ mod tests {
     /// Whether an expanded entity satisfies an expression, read through the
     /// entity traits.
     fn holds(expr: &Expr, document: &Value) -> bool {
-        evaluate(expr, &FixtureEntity::from_expanded(document), NoLinkedEntities)
+        holds_under(expr, document, LanguageMatching::TagEquality)
+    }
+
+    /// Whether an expanded entity satisfies an expression whose target
+    /// languages select keys by `matching`.
+    fn holds_under(expr: &Expr, document: &Value, matching: LanguageMatching) -> bool {
+        evaluate(expr, &FixtureEntity::from_expanded(document), NoLinkedEntities, matching)
     }
 
     /// Whether an expanded entity satisfies an expression whose hops cross into
     /// the expanded `linked` entities.
     fn holds_linked(expr: &Expr, document: &Value, linked: &[Value]) -> bool {
         let linked: Vec<FixtureEntity> = linked.iter().map(FixtureEntity::from_expanded).collect();
-        evaluate(expr, &FixtureEntity::from_expanded(document), FixtureLinked(&linked))
+        evaluate(
+            expr,
+            &FixtureEntity::from_expanded(document),
+            FixtureLinked(&linked),
+            LanguageMatching::TagEquality,
+        )
     }
 
     fn vehicle_entity() -> Value {
@@ -318,8 +332,8 @@ mod tests {
                 panic!("{raw} is a single Query Term");
             };
             pretty_assertions::assert_eq!(
-                predicate_holds_in(pred, &fixture, NoLinkedEntities),
-                evaluate(&expr, &fixture, NoLinkedEntities),
+                predicate_holds_in(pred, &fixture, NoLinkedEntities, LanguageMatching::TagEquality),
+                evaluate(&expr, &fixture, NoLinkedEntities, LanguageMatching::TagEquality),
                 "term {raw}"
             );
         }
@@ -755,7 +769,7 @@ mod tests {
             }]
         }]);
         let fixture = FixtureEntity::from_expanded(&entity);
-        let exists = |q: &str| evaluate(&parse(q).expect("parses"), &fixture, NoLinkedEntities);
+        let exists = |q: &str| evaluate(&parse(q).expect("parses"), &fixture, NoLinkedEntities, LanguageMatching::TagEquality);
         assert!(exists("\"https://example.com/address\""), "a structured Property value defines its element");
         assert!(exists("\"https://uri.etsi.org/ngsi-ld/location\""), "a geometry defines its element");
         assert!(
@@ -1325,5 +1339,68 @@ mod tests {
             &parse("\"https://example.com/address\"[\"https://example.com/extra\".\"https://example.com/floor\"]==3").expect("parses"),
             &entity
         ));
+    }
+
+    /// A languageMap holding `en-GB`, `en`, `de-Latn-DE` and `fr`.
+    fn multilingual_entity() -> Value {
+        serde_json::json!([{
+            "@id": "urn:ngsi-ld:Building:1",
+            "https://example.com/name": [{
+                "https://uri.etsi.org/ngsi-ld/hasLanguageMap": [
+                    {"@language": "en-GB", "@value": "Lift"},
+                    {"@language": "en", "@value": "Elevator"},
+                    {"@language": "de-Latn-DE", "@value": "Aufzug"},
+                    {"@language": "fr", "@value": "Ascenseur"}
+                ]
+            }]
+        }])
+    }
+
+    /// Clause 4.9 with an RFC 5646 tag in the bracket (Annex C.5.13.2), its
+    /// key compared case-insensitively (RFC 5646 section 2.1.1).
+    #[test]
+    fn a_full_tag_in_the_bracket_compares_its_key_case_insensitively() {
+        for matching in [LanguageMatching::TagEquality, LanguageMatching::ExtendedFiltering] {
+            assert!(holds_under(
+                &parse("\"https://example.com/name\"[en-gb]==\"Lift\"").unwrap(),
+                &multilingual_entity(),
+                matching
+            ));
+            assert!(!holds_under(
+                &parse("\"https://example.com/name\"[en-gb]==\"Elevator\"").unwrap(),
+                &multilingual_entity(),
+                matching
+            ));
+        }
+    }
+
+    #[test]
+    fn a_primary_tag_reaches_its_regional_key_only_under_extended_filtering() {
+        let lift = parse("\"https://example.com/name\"[en]==\"Lift\"").unwrap();
+        assert!(!holds_under(&lift, &multilingual_entity(), LanguageMatching::TagEquality));
+        assert!(holds_under(&lift, &multilingual_entity(), LanguageMatching::ExtendedFiltering));
+        let elevator = parse("\"https://example.com/name\"[en]==\"Elevator\"").unwrap();
+        assert!(holds_under(&elevator, &multilingual_entity(), LanguageMatching::TagEquality));
+        assert!(holds_under(&elevator, &multilingual_entity(), LanguageMatching::ExtendedFiltering));
+    }
+
+    #[test]
+    fn a_wildcard_range_matches_the_value_of_a_key_it_filters() {
+        let aufzug = parse("\"https://example.com/name\"[de-*-DE]==\"Aufzug\"").unwrap();
+        assert!(holds_under(&aufzug, &multilingual_entity(), LanguageMatching::ExtendedFiltering));
+        let pattern = parse("\"https://example.com/name\"[*-GB]~=\"^Li\"").unwrap();
+        assert!(holds_under(&pattern, &multilingual_entity(), LanguageMatching::ExtendedFiltering));
+    }
+
+    /// Clause 4.9: `!=` holds where "No matching value is found as the value
+    /// of the specified language key", here over every selected key.
+    #[test]
+    fn unequal_under_filtering_holds_when_no_selected_string_matches() {
+        let entity = multilingual_entity();
+        let not_lift = parse("\"https://example.com/name\"[en]!=\"Lift\"").unwrap();
+        assert!(holds_under(&not_lift, &entity, LanguageMatching::TagEquality));
+        assert!(!holds_under(&not_lift, &entity, LanguageMatching::ExtendedFiltering));
+        let not_door = parse("\"https://example.com/name\"[en]!=\"Door\"").unwrap();
+        assert!(holds_under(&not_door, &entity, LanguageMatching::ExtendedFiltering));
     }
 }

@@ -15,6 +15,7 @@ use andromeda_json_literal::{
     admission::JsonLiteralError,
     piece::{JsonKind, JsonPiece},
 };
+use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
 
 /// The `contextSourceExtras` key the enabled extension tokens are listed under.
 ///
@@ -42,6 +43,19 @@ const CURSOR_PAGINATION_TOKEN: &str = "cursor-pagination";
 const NEAR_DISTANCE_BAND_TOKEN: &str = "near-distance-band";
 /// The advertised token for the `Accept-Language` language filter extension.
 const ACCEPT_LANGUAGE_TOKEN: &str = "accept-language";
+/// The advertised token for every RFC 5646 tag as a `q` target language.
+///
+/// A federating broker reads it off every Context Source a query reaches
+/// before it forwards a target language no clause 4.9 `AttrName` spells: a
+/// source that does not list it refuses one.
+const LANGUAGE_TAGS_TOKEN: &str = "language-tags";
+/// The advertised token for RFC 4647 extended filtering of `q` target
+/// languages.
+///
+/// A federating broker reads it off every Context Source a query reaches
+/// before it filters by range: a source that does not list it matches a target
+/// language by tag equality only.
+const LANGUAGE_RANGE_FILTERING_TOKEN: &str = "language-range-filtering";
 
 /// Merge the enabled extension tokens into the operator's `contextSourceExtras`.
 ///
@@ -109,6 +123,12 @@ fn enabled_tokens(enabled: EnabledExtensions) -> Vec<&'static str> {
     if enabled.accept_language_enabled() {
         tokens.push(token(Extension::AcceptLanguage));
     }
+    if enabled.language_tags_enabled() {
+        tokens.push(token(Extension::LanguageTags));
+    }
+    if enabled.language_range_filtering_enabled() {
+        tokens.push(token(Extension::LanguageRangeFiltering));
+    }
     tokens
 }
 
@@ -123,6 +143,8 @@ const fn token(extension: Extension) -> &'static str {
         Extension::CursorPagination => CURSOR_PAGINATION_TOKEN,
         Extension::NearDistanceBand => NEAR_DISTANCE_BAND_TOKEN,
         Extension::AcceptLanguage => ACCEPT_LANGUAGE_TOKEN,
+        Extension::LanguageTags => LANGUAGE_TAGS_TOKEN,
+        Extension::LanguageRangeFiltering => LANGUAGE_RANGE_FILTERING_TOKEN,
     }
 }
 
@@ -141,6 +163,21 @@ pub fn advertises(extras: Option<&JsonLiteral>, extension: Extension) -> bool {
         .is_some_and(|tokens| tokens.into_iter().any(|advertised| advertised.as_str().as_deref() == Some(token(extension))))
 }
 
+/// What a Context Source whose `contextSourceExtras` are `extras` lets a `q`
+/// bracket name, read off the tokens [`enabled_extension_extras`] writes.
+///
+/// A source advertising neither token serves the clause 4.9 grammar alone.
+#[must_use]
+pub fn advertised_language_targeting(extras: Option<&JsonLiteral>) -> LanguageTargeting {
+    if advertises(extras, Extension::LanguageRangeFiltering) {
+        LanguageTargeting::LanguageRanges
+    } else if advertises(extras, Extension::LanguageTags) {
+        LanguageTargeting::LanguageTags
+    } else {
+        LanguageTargeting::Specification
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -148,20 +185,24 @@ mod tests {
             ACCEPT_LANGUAGE_TOKEN,
             CURSOR_PAGINATION_TOKEN,
             EXTENSION_KEY,
+            LANGUAGE_RANGE_FILTERING_TOKEN,
+            LANGUAGE_TAGS_TOKEN,
             NEAR_DISTANCE_BAND_TOKEN,
             PURGE_DATASET_SCOPE_TOKEN,
             TEMPORAL_AGGREGATION_GROUPING_TOKEN,
             TEMPORAL_DELETE_BY_QUERY_TOKEN,
             TEMPORAL_LINKED_RETRIEVAL_TOKEN,
             TENANT_MANAGEMENT_TOKEN,
+            advertised_language_targeting,
             advertises,
             enabled_extension_extras,
         },
-        config::ExtensionsConfig,
+        config::{ExtensionsConfig, QTargetLanguages},
         enabled::{EnabledExtensions, Extension},
     };
     use andromeda_http_stack::config::feature_mode::HttpFeatureMode;
     use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
+    use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
     use std::borrow::Cow;
 
     fn literal(text: &str) -> JsonLiteral {
@@ -195,6 +236,7 @@ mod tests {
             cursor_pagination: HttpFeatureMode::Enabled,
             near_distance_band: HttpFeatureMode::Enabled,
             accept_language: HttpFeatureMode::Enabled,
+            q_target_languages: QTargetLanguages::LanguageRanges,
             temporal_delete_by_query_max_matches: 100,
             temporal_aggregation_grouping_max_groups: 100,
         }
@@ -213,6 +255,8 @@ mod tests {
             CURSOR_PAGINATION_TOKEN,
             NEAR_DISTANCE_BAND_TOKEN,
             ACCEPT_LANGUAGE_TOKEN,
+            LANGUAGE_TAGS_TOKEN,
+            LANGUAGE_RANGE_FILTERING_TOKEN,
         ] {
             assert!(rendered.iter().any(|rendered| rendered == token), "{rendered:?}");
         }
@@ -265,6 +309,33 @@ mod tests {
 
         let default_rendered = tokens(&extras(None, ExtensionsConfig::default().resolve()).expect("extras present"));
         assert!(!default_rendered.iter().any(|token| token == ACCEPT_LANGUAGE_TOKEN), "{default_rendered:?}");
+    }
+
+    /// Each level advertises the tokens of the levels below it, so a
+    /// federating broker reads back exactly the level another one serves.
+    #[test]
+    fn each_target_language_level_is_advertised_with_the_levels_below_it() {
+        for (level, expected, targeting) in [
+            (QTargetLanguages::LanguageTags, vec![LANGUAGE_TAGS_TOKEN], LanguageTargeting::LanguageTags),
+            (
+                QTargetLanguages::LanguageRanges,
+                vec![LANGUAGE_TAGS_TOKEN, LANGUAGE_RANGE_FILTERING_TOKEN],
+                LanguageTargeting::LanguageRanges,
+            ),
+        ] {
+            let config = ExtensionsConfig {
+                q_target_languages: level,
+                cursor_pagination: HttpFeatureMode::Disabled,
+                ..ExtensionsConfig::default()
+            };
+            let advertised = extras(None, config.resolve()).expect("extras present");
+            pretty_assertions::assert_eq!(tokens(&advertised), expected, "{level:?}");
+            pretty_assertions::assert_eq!(advertised_language_targeting(Some(&advertised)), targeting, "{level:?}");
+        }
+        let default_extras = extras(None, ExtensionsConfig::default().resolve());
+        pretty_assertions::assert_eq!(advertised_language_targeting(default_extras.as_ref()), LanguageTargeting::Specification);
+        assert!(!advertises(default_extras.as_ref(), Extension::LanguageTags));
+        pretty_assertions::assert_eq!(advertised_language_targeting(None), LanguageTargeting::Specification);
     }
 
     /// A default broker serves cursor pagination, and says so.

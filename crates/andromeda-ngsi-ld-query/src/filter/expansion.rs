@@ -21,6 +21,7 @@ use crate::{
         predicate::Predicate,
         scalar::{CompareValue, Scalar},
         trailing_members::TrailingMembers,
+        trailing_path::TrailingPath,
     },
     term_expander::TermExpander,
 };
@@ -220,8 +221,10 @@ pub async fn expand_attr_path(mut path: AttrPath, members: TrailingMembers<'_>, 
     // A value that is raw JSON -- under an attribute the request declared in
     // `jsonKeys` (clause 4.9 EXAMPLE 11), or any Context Source Property -- is
     // addressed by literal object keys, which no `@context` expands.
-    if members.are_terms_under(&path.attr) {
-        path.value_path = expand_attribute_names(&path.value_path, expander).await?;
+    if let Some(TrailingPath::Members(member_path)) = &mut path.trailing
+        && members.are_terms_under(&path.attr)
+    {
+        member_path.addressed = expand_attribute_names(&member_path.addressed, expander).await?;
     }
     Ok(path)
 }
@@ -555,7 +558,12 @@ mod tests {
         let path = path_of(&expanded);
         assert_eq!(path.attr.as_str(), "https://example.com/address");
         assert_eq!(
-            path.value_path.iter().map(AttributeName::as_str).collect::<Vec<_>>(),
+            path.members()
+                .expect("a member path")
+                .addressed
+                .iter()
+                .map(AttributeName::as_str)
+                .collect::<Vec<_>>(),
             vec!["https://example.com/city"]
         );
     }
@@ -576,7 +584,12 @@ mod tests {
             vec!["https://example.com/rawdata"]
         );
         assert_eq!(
-            path.value_path.iter().map(AttributeName::as_str).collect::<Vec<_>>(),
+            path.members()
+                .expect("a member path")
+                .addressed
+                .iter()
+                .map(AttributeName::as_str)
+                .collect::<Vec<_>>(),
             vec!["https://example.com/airquality", "https://example.com/particulate"]
         );
     }
@@ -605,7 +618,15 @@ mod tests {
         let expanded = expand_q_expr(expr, &declared, &PrefixExpander).await.expect("expands");
         let path = path_of(&expanded);
         assert_eq!(path.attr.as_str(), "https://example.com/parkingTickets", "the attribute itself still expands");
-        assert_eq!(path.value_path.iter().map(AttributeName::as_str).collect::<Vec<_>>(), vec!["value"]);
+        assert_eq!(
+            path.members()
+                .expect("a member path")
+                .addressed
+                .iter()
+                .map(AttributeName::as_str)
+                .collect::<Vec<_>>(),
+            vec!["value"]
+        );
     }
 
     /// The same filter without the declaration expands the member, which is
@@ -616,7 +637,13 @@ mod tests {
         let declared: JsonKeyAttributes = ["https://example.com/other".parse().expect("valid attribute name")].into_iter().collect();
         let expanded = expand_q_expr(expr, &declared, &PrefixExpander).await.expect("expands");
         assert_eq!(
-            path_of(&expanded).value_path.iter().map(AttributeName::as_str).collect::<Vec<_>>(),
+            path_of(&expanded)
+                .members()
+                .expect("a member path")
+                .addressed
+                .iter()
+                .map(AttributeName::as_str)
+                .collect::<Vec<_>>(),
             vec!["https://example.com/value"]
         );
     }
@@ -650,9 +677,22 @@ mod tests {
             path.sub_attrs.iter().map(AttributeName::as_str).collect::<Vec<_>>(),
             vec!["https://example.com/since"]
         );
-        assert_eq!(path.value_path.iter().map(AttributeName::as_str).collect::<Vec<_>>(), vec!["area", "region"]);
         assert_eq!(
-            path.value_path_compact.iter().map(AttributeName::as_str).collect::<Vec<_>>(),
+            path.members()
+                .expect("a member path")
+                .addressed
+                .iter()
+                .map(AttributeName::as_str)
+                .collect::<Vec<_>>(),
+            vec!["area", "region"]
+        );
+        assert_eq!(
+            path.members()
+                .expect("a member path")
+                .written
+                .iter()
+                .map(AttributeName::as_str)
+                .collect::<Vec<_>>(),
             vec!["area", "region"]
         );
         let reparsed = parser::parse(&serialize(&expanded)).expect("reparses");

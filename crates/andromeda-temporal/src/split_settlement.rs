@@ -26,10 +26,10 @@ use crate::{
     in_effect_entity::InEffectEntity,
     local_in_effect::{LocalInEffect, part_document},
     port::read_scope::ScopeReach,
+    query_reading::QueryReading,
     service::TemporalService,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::temporal_document::TemporalDocument;
 use andromeda_ngsi_ld_query::split_filter::{LeafTruths, SplitFilter};
@@ -58,6 +58,9 @@ impl TemporalService {
     /// read over the window, beside `local`, what this broker holds in effect
     /// when the window opens, together with every part a source answered.
     ///
+    /// The request's terms and `q` target languages are read as `reading`
+    /// says.
+    ///
     /// # Errors
     ///
     /// Returns [`TemporalError`] when the query does not compile, the context
@@ -66,11 +69,11 @@ impl TemporalService {
         &self,
         target: &ContextTarget,
         params: &TemporalQueryParameters,
-        context: &ContextSpec,
+        reading: QueryReading<'_>,
         answered: &AnsweredParts<'_>,
         local: &LocalInEffect,
     ) -> Result<SplitSettlement, TemporalError> {
-        let compiled = self.compile_temporal_query(params, context).await?;
+        let compiled = self.compile_temporal_query(params, reading.context, reading.language_targeting).await?;
         let filter = SplitFilter::of(&compiled.entities);
         let mut parts: HashMap<&Identifier, Vec<&TemporalDocument>> = HashMap::new();
         for part in answered.in_window.iter().chain(&answered.in_effect) {
@@ -107,7 +110,7 @@ impl TemporalService {
                 .chain(answered.in_effect.iter().copied())
                 .chain(local.parts())
                 .collect();
-            self.read_hop_targets(target, params, context, &hops, &reached).await?
+            self.read_hop_targets(target, params, reading.context, &hops, &reached).await?
         };
         let linked = HopTargets::of(&targets, compiled.window);
         for part in windowed {

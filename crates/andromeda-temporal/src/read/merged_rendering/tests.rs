@@ -1,4 +1,7 @@
-use crate::stub_broker::{StubBroker, live_target, service_over, uri};
+use crate::{
+    query_reading::QueryReading,
+    stub_broker::{StubBroker, live_target, service_over, uri},
+};
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
@@ -18,6 +21,7 @@ use andromeda_ngsi_ld_model::{
     },
 };
 use andromeda_ngsi_ld_number::JsonNumber;
+use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
 use andromeda_ngsi_ld_request::{query::temporal::TemporalQueryParameters, representation_parameter::WrittenValue};
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -95,7 +99,10 @@ async fn aggregation_over_sources_uses_the_merged_instances() {
         .render_merged_aggregations(
             &live_target(),
             &aggregated_query(),
-            &context(),
+            QueryReading {
+                context: &context(),
+                language_targeting: LanguageTargeting::Specification,
+            },
             vec![(uri("urn:ngsi-ld:T:A"), vec![answered(5).await])],
         )
         .await

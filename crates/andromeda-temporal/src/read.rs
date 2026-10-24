@@ -7,6 +7,7 @@ use crate::{
         history_reader::{ShapeHolders, TemporalHistoryReader},
         read_scope::{ScopeReach, TemporalReadScope},
     },
+    query_reading::QueryReading,
     read::{dataset_step::DatasetStep, entity_members::carries_members, rendered_entity::HistoryPresence},
     requested_identifiers::RequestedIdentifiers,
     service::{TemporalReadResult, TemporalService},
@@ -53,7 +54,7 @@ impl TemporalService {
         let result = async {
             params.validate(TemporalQueryOperation::Retrieve, self.linked_retrieval)?;
 
-            let compiled = self.compile_temporal_query(params, context).await?;
+            let compiled = self.compile_temporal_query(params, context, self.language_targeting()).await?;
             ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
             if shapes_decide_eligibility(&compiled) {
                 let every = self.reader.read_scope(target, ScopeReach::Every).await?;
@@ -158,6 +159,9 @@ impl TemporalService {
     /// request names. `filters` decides whether the value, geo and scope
     /// filters hold the listed entities (clause 5.14.5.4).
     ///
+    /// The request's terms and `q` target languages are read as `reading`
+    /// says.
+    ///
     /// # Errors
     ///
     /// Returns [`TemporalError::Request`] when the parameters do not satisfy
@@ -171,14 +175,15 @@ impl TemporalService {
         target: &ContextTarget,
         params: &TemporalQueryParameters,
         window: &PageWindow,
-        context: &ContextSpec,
+        reading: QueryReading<'_>,
         identifiers: RequestedIdentifiers,
         filters: CandidateFilters,
     ) -> Result<Vec<Identifier>, TemporalError> {
+        let QueryReading { context, language_targeting } = reading;
         let timer = temporal::start(TemporalOperation::QueryIds);
         let result = async {
             params.validate(TemporalQueryOperation::Query, self.linked_retrieval)?;
-            let mut compiled = self.compile_temporal_query(params, context).await?;
+            let mut compiled = self.compile_temporal_query(params, context, language_targeting).await?;
             match identifiers {
                 RequestedIdentifiers::Narrow => {}
                 RequestedIdentifiers::Ignore => compiled.entities.without_identifier_narrowing(),

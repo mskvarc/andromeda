@@ -116,7 +116,15 @@ pub(super) fn construct_services(
     let context_hosting = TenantContextHosting::new(contexts);
     let (snapshot_preparation, snapshots) = compose_snapshot_services(config, storage, writes, &entity_query, &temporal, &forwarding, snapshot_delivery_signal);
     let edge = DistributedSubscriptionEdge::resolve(&config.identity, subscription_router, &forwarding, &storage.tenant);
-    let subscriptions = compose_subscription_services(storage, signals, transports, edge, &entity_query, geo_query_admission(config));
+    let subscriptions = compose_subscription_services(
+        storage,
+        signals,
+        transports,
+        edge,
+        &entity_query,
+        geo_query_admission(config),
+        config.extensions.resolve().language_targeting(),
+    );
     let state = AndromedaState {
         live_target: storage.live_target.clone(), // clone: request state owns the immutable typed live-branch selection.
         entities,
@@ -229,6 +237,7 @@ fn compose_temporal_service(
             // A temporal write is admitted under the budget a Core write is.
             payload_budget: config.entity.payload_budget(),
             near_band: near_distance_band(config.extensions.resolve()),
+            language_targeting: config.extensions.resolve().language_targeting(),
         },
         // Clause 4.5.23.1 applied to the temporal API: an annotated Linked
         // Entity whose history this broker does not record is fetched from the
@@ -268,20 +277,23 @@ fn geo_query_admission(config: &TenantFactoryConfig) -> GeoQueryAdmission {
 
 /// Compose the entity query service every entity read is answered from.
 fn compose_entity_query_service(config: &TenantFactoryConfig, storage: &TenantStorage, forwarding: &Arc<FederationService>) -> Arc<EntityQueryService> {
-    Arc::new(EntityQueryService::new(
-        Arc::clone(&storage.entity_ports.reader),
-        Arc::clone(&storage.entity_ports.query),
-        storage.engine.clone(),  // clone: the query service owns its engine handle.
-        storage.spatial.clone(), // clone: request reads narrow through the tenant's one index.
-        storage.tenant.clone(),  // clone: the query service owns its tenant partition.
-        // Clause 4.5.23.1: an `objectType`-annotated Linked Entity this broker
-        // does not store is fetched from the context sources registered for it.
-        Some(Arc::new(LinkedForwarding::new(
-            Arc::clone(forwarding),      // clone: request handling and linked resolution share one forwarding service.
-            storage.live_target.clone(), // clone: linked resolution runs against the tenant's live branch.
-        )) as Arc<dyn RemoteLinkedEntitySource>),
-        geo_query_admission(config),
-    ))
+    Arc::new(
+        EntityQueryService::builder()
+            .reader(Arc::clone(&storage.entity_ports.reader))
+            .query_store(Arc::clone(&storage.entity_ports.query))
+            .engine(storage.engine.clone()) // clone: the query service owns its engine handle.
+            .spatial(storage.spatial.clone()) // clone: request reads narrow through the tenant's one index.
+            .tenant(storage.tenant.clone()) // clone: the query service owns its tenant partition.
+            // Clause 4.5.23.1: an `objectType`-annotated Linked Entity this broker
+            // does not store is fetched from the context sources registered for it.
+            .remote_linked(Some(Arc::new(LinkedForwarding::new(
+                Arc::clone(forwarding),      // clone: request handling and linked resolution share one forwarding service.
+                storage.live_target.clone(), // clone: linked resolution runs against the tenant's live branch.
+            )) as Arc<dyn RemoteLinkedEntitySource>))
+            .geo_admission(geo_query_admission(config))
+            .language_targeting(config.extensions.resolve().language_targeting())
+            .build(),
+    )
 }
 
 /// Compose the snapshot preparation operation and the service scheduling it.

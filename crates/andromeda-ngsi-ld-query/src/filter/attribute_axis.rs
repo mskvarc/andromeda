@@ -16,8 +16,11 @@
 use crate::{
     filter::{
         family_target::{TerminalKeyword, family_target, first_family_value},
+        language_matching::LanguageMatching,
         path::{AttrPath, QueryPath},
+        target_language::LanguageSelector,
         target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, TargetValue, json_member},
+        trailing_path::{MemberPath, TrailingPath},
     },
     queried_entity::{
         attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
@@ -35,11 +38,17 @@ use std::borrow::Cow;
 /// Clause 4.9 EXAMPLE 13: a hop "makes a sub-query on matching target objects",
 /// the entities the Relationship's objects name. The entity under evaluation
 /// names them and `linked` holds them; an object `linked` does not hold
-/// reaches nothing.
+/// reaches nothing. A target language selects languageMap keys by
+/// `matching`.
 #[must_use]
-pub fn resolve_targets<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(entity: E, path: &QueryPath, linked: L) -> Vec<ResolvedTarget<'a>> {
+pub fn resolve_targets<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(
+    entity: E,
+    path: &QueryPath,
+    linked: L,
+    matching: LanguageMatching,
+) -> Vec<ResolvedTarget<'a>> {
     match path {
-        QueryPath::Local(local) => resolve_values(entity, local),
+        QueryPath::Local(local) => resolve_values(entity, local, matching),
         QueryPath::Linked {
             relationship,
             guard_types,
@@ -47,7 +56,7 @@ pub fn resolve_targets<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(entity: 
         } => relationship_objects(entity, relationship)
             .filter_map(|object| linked.linked(object))
             .filter(|target| admitted_by_guard(*target, guard_types))
-            .flat_map(|target| resolve_targets(target, inner, linked))
+            .flat_map(|target| resolve_targets(target, inner, linked, matching))
             .collect(),
     }
 }
@@ -84,9 +93,11 @@ pub fn relationship_objects<'a, E: QueriedEntity<'a>>(entity: E, relationship: &
 /// member expression "result[s] in a defined value", here any value the member
 /// holds.
 #[must_use]
-pub fn addresses_element<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(entity: E, path: &QueryPath, linked: L) -> bool {
+pub fn addresses_element<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(entity: E, path: &QueryPath, linked: L, matching: LanguageMatching) -> bool {
     match path {
-        QueryPath::Local(local) => entity.attribute_instances(&local.attr).any(|instance| instance_holds_element(instance, local)),
+        QueryPath::Local(local) => entity
+            .attribute_instances(&local.attr)
+            .any(|instance| instance_holds_element(instance, local, matching)),
         QueryPath::Linked {
             relationship,
             guard_types,
@@ -94,31 +105,35 @@ pub fn addresses_element<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(entity
         } => relationship_objects(entity, relationship)
             .filter_map(|object| linked.linked(object))
             .filter(|target| admitted_by_guard(*target, guard_types))
-            .any(|target| addresses_element(target, inner, linked)),
+            .any(|target| addresses_element(target, inner, linked, matching)),
     }
 }
 
 /// Whether one attribute instance holds the element a path addresses.
 ///
 /// With a target language the element is the key-value pair of that language
-/// (clause 4.9), so it exists when the language holds a string.
-fn instance_holds_element<'a, I: QueriedInstance<'a>>(instance: I, path: &AttrPath) -> bool {
+/// (clause 4.9), so it exists when a selected language holds a string.
+fn instance_holds_element<'a, I: QueriedInstance<'a>>(instance: I, path: &AttrPath, matching: LanguageMatching) -> bool {
     axis_positions(instance, &path.sub_attrs)
         .into_iter()
-        .any(|position| position_holds_element(position, path))
+        .any(|position| position_holds_element(position, path, matching))
 }
 
 /// Whether the element a path addresses is held at one position the
 /// sub-attribute chain reaches.
-fn position_holds_element<'a, I: QueriedInstance<'a>>(position: AxisPosition<'a, I>, path: &AttrPath) -> bool {
-    if path.value_path.is_empty() {
-        return true;
+fn position_holds_element<'a, I: QueriedInstance<'a>>(position: AxisPosition<'a, I>, path: &AttrPath, matching: LanguageMatching) -> bool {
+    match &path.trailing {
+        None | Some(TrailingPath::AllLanguages) => true,
+        Some(TrailingPath::Language(_) | TrailingPath::Members(_)) => {
+            if let Some((language_instance, language)) = position.target_language(path) {
+                return language_instance.language_values(language, matching).next().is_some();
+            }
+            path.members().is_some_and(|members| {
+                walk_member_hops(position.first_family_value(), &members.addressed).is_some()
+                    || position.terminal().and_then(|target| json_member(&target, &members.written)).is_some()
+            })
+        }
     }
-    if let Some((language_instance, language)) = position.target_language(path) {
-        return language_instance.language_values(language).next().is_some();
-    }
-    walk_member_hops(position.first_family_value(), &path.value_path).is_some()
-        || position.terminal().and_then(|target| json_member(&target, &path.value_path_compact)).is_some()
 }
 
 /// Whether a linked entity satisfies a hop's entity-type guard.
@@ -135,7 +150,7 @@ fn admitted_by_guard<'a, E: QueriedEntity<'a>>(linked: E, guard_types: &[Attribu
 /// Resolve every target value an attribute path addresses in an entity.
 ///
 /// Navigates the attribute -> each instance -> sub-attributes -> the family's
-/// values, then the optional value path for compound values.
+/// values, then the optional trailing group.
 ///
 /// All instances are resolved, not just the first. Clause 4.9 (p. 86) defines
 /// the comparison target for a multi-instance attribute as "any Value of such
@@ -148,11 +163,11 @@ fn admitted_by_guard<'a, E: QueriedEntity<'a>>(linked: E, guard_types: &[Attribu
 /// language as "a value from any of the key-value pairs held within the
 /// languageMap", which is the one array target the unqualified path already
 /// addresses — the same reading the SQL compilation takes of the marker.
-fn resolve_values<'a, E: QueriedEntity<'a>>(entity: E, path: &AttrPath) -> Vec<ResolvedTarget<'a>> {
+fn resolve_values<'a, E: QueriedEntity<'a>>(entity: E, path: &AttrPath, matching: LanguageMatching) -> Vec<ResolvedTarget<'a>> {
     entity
         .attribute_instances(&path.attr)
         .flat_map(|instance| axis_positions(instance, &path.sub_attrs))
-        .filter_map(|position| resolve_position_value(position, path))
+        .filter_map(|position| resolve_position_value(position, path, matching))
         .collect()
 }
 
@@ -172,19 +187,29 @@ fn axis_positions<'a, I: QueriedInstance<'a>>(instance: I, sub_attrs: &[Attribut
 
 /// Resolve one position of the axis down to the target value the predicate
 /// compares.
-fn resolve_position_value<'a, I: QueriedInstance<'a>>(position: AxisPosition<'a, I>, path: &AttrPath) -> Option<ResolvedTarget<'a>> {
-    if path.value_path.is_empty() {
-        return position.terminal();
+///
+/// A target language only a tag or range spells has no compound-member
+/// reading, so it resolves nothing outside a `LanguageProperty`.
+fn resolve_position_value<'a, I: QueriedInstance<'a>>(
+    position: AxisPosition<'a, I>,
+    path: &AttrPath,
+    matching: LanguageMatching,
+) -> Option<ResolvedTarget<'a>> {
+    match &path.trailing {
+        None | Some(TrailingPath::AllLanguages) => position.terminal(),
+        Some(TrailingPath::Language(_) | TrailingPath::Members(_)) => {
+            if let Some((language_instance, language)) = position.target_language(path) {
+                return Some(language_target(language_instance, language, matching));
+            }
+            resolve_compound_member(position, path.members()?)
+        }
     }
-    if let Some((language_instance, language)) = position.target_language(path) {
-        return Some(language_target(language_instance, language));
-    }
-    resolve_compound_member(position, path)
 }
 
 /// The target value clause 4.9 defines for a `LanguageProperty` with a target
 /// language: "the Value associated to the matching key-value pair held within
-/// the languageMap ... where the key matches the target language".
+/// the languageMap ... where the key matches the target language", every key
+/// `matching` selects contributing its strings.
 ///
 /// A language holding several strings is matched "as a single element from the
 /// array of values of the key-value pair", which is the any-one reading the
@@ -195,8 +220,10 @@ fn resolve_position_value<'a, I: QueriedInstance<'a>>(position: AxisPosition<'a,
 /// `!=` match it where "No matching value is found as the value of the
 /// specified language key", and `!~=` where no value is in L(R). No positive
 /// operator matches an empty array.
-fn language_target<'a, I: QueriedInstance<'a>>(instance: I, language: &str) -> ResolvedTarget<'a> {
-    let mut strings = instance.language_values(language).filter_map(|item| TerminalKeyword::Literal.read(item));
+fn language_target<'a, I: QueriedInstance<'a>>(instance: I, language: LanguageSelector<'_>, matching: LanguageMatching) -> ResolvedTarget<'a> {
+    let mut strings = instance
+        .language_values(language, matching)
+        .filter_map(|item| TerminalKeyword::Literal.read(item));
     let value = match (strings.next(), strings.next()) {
         (Some(only), None) => only,
         (None, _) => TargetValue::Array(Vec::new()),
@@ -251,18 +278,14 @@ impl<'a, I: QueriedInstance<'a>> AxisPosition<'a, I> {
 
     /// The `LanguageProperty` instance at this position with the target
     /// language `path`'s trailing group names, or `None` when the trailing
-    /// group addresses a compound member instead.
-    ///
-    /// Clause 4.9 gives `attr[member]` two readings, and the target element
-    /// decides which applies: a `LanguageProperty`'s value is a language map,
-    /// whose one-member trailing group is the target language (EXAMPLE
-    /// `color[en]=="red"`); every other family's is a compound member. The
-    /// language is the member as the client wrote it, because a language tag
-    /// is never a term a `@context` expands.
-    fn target_language<'p>(&self, path: &'p AttrPath) -> Option<(I, &'p str)> {
-        match (self, path.value_path_compact.as_slice()) {
-            (AxisPosition::Instance(instance), [language]) if instance.family() == AttributeType::LanguageProperty => Some((*instance, language.as_str())),
-            (AxisPosition::Instance(_) | AxisPosition::Value(_) | AxisPosition::Metadata(..), _) => None,
+    /// group addresses a compound member instead (see
+    /// [`AttrPath::target_language`]).
+    fn target_language<'p>(&self, path: &'p AttrPath) -> Option<(I, LanguageSelector<'p>)> {
+        match self {
+            AxisPosition::Instance(instance) if instance.family() == AttributeType::LanguageProperty => {
+                path.target_language().map(|language| (*instance, language))
+            }
+            AxisPosition::Instance(_) | AxisPosition::Value(_) | AxisPosition::Metadata(..) => None,
         }
     }
 
@@ -304,17 +327,18 @@ impl<'a, I: QueriedInstance<'a>> AxisPosition<'a, I> {
 ///   data model puts no constraint on those keys, so they are read verbatim.
 ///
 /// The member hop is tried first, addressed by the term-expanded spelling
-/// (`path.value_path`): it is the shape term expansion produced the path for,
-/// and a raw JSON object cannot carry a member whose key is the expanded IRI
-/// without the client having written that IRI. The raw-JSON fallback then
-/// retries with the pre-expansion spelling (`path.value_path_compact`),
-/// because raw JSON is never touched by JSON-LD expansion: its keys are exactly
-/// what the client wrote, not what the request `@context` expands them to.
-fn resolve_compound_member<'a, I: QueriedInstance<'a>>(position: AxisPosition<'a, I>, path: &AttrPath) -> Option<ResolvedTarget<'a>> {
-    if let Some(target) = resolve_member_hops(position.first_family_value(), &path.value_path) {
+/// ([`MemberPath::addressed`]): it is the shape term expansion produced the
+/// path for, and a raw JSON object cannot carry a member whose key is the
+/// expanded IRI without the client having written that IRI. The raw-JSON
+/// fallback then retries with the pre-expansion spelling
+/// ([`MemberPath::written`]), because raw JSON is never touched by JSON-LD
+/// expansion: its keys are exactly what the client wrote, not what the request
+/// `@context` expands them to.
+fn resolve_compound_member<'a, I: QueriedInstance<'a>>(position: AxisPosition<'a, I>, members: &MemberPath) -> Option<ResolvedTarget<'a>> {
+    if let Some(target) = resolve_member_hops(position.first_family_value(), &members.addressed) {
         return Some(target);
     }
-    json_member(&position.terminal()?, &path.value_path_compact)
+    json_member(&position.terminal()?, &members.written)
 }
 
 /// Walk the members of a structured value down to a literal.
@@ -344,9 +368,12 @@ fn walk_member_hops<'a, N: QueriedValueNode<'a>>(start: Option<ValueItem<'a, N>>
 mod tests {
     use crate::{
         filter::{
-            attribute_axis::resolve_targets,
+            attribute_axis::{addresses_element, resolve_targets},
+            language_matching::LanguageMatching,
             path::{AttrPath, QueryPath},
             target_value::TargetOrigin,
+            trailing_path::{MemberPath, TrailingPath},
+            value_path::parse_attribute_path,
         },
         queried_entity::{
             expanded_fixture::{FixtureEntity, target_json},
@@ -363,8 +390,14 @@ mod tests {
 
     /// The target values a path resolves to, with their origins.
     fn targets_along(entity: &Value, path: &AttrPath) -> Vec<(Value, TargetOrigin)> {
+        targets_under(entity, path, LanguageMatching::TagEquality)
+    }
+
+    /// The target values a path resolves to under `matching`, with their
+    /// origins.
+    fn targets_under(entity: &Value, path: &AttrPath, matching: LanguageMatching) -> Vec<(Value, TargetOrigin)> {
         let entity = FixtureEntity::from_expanded(entity);
-        resolve_targets(&entity, &QueryPath::Local(path.clone()), NoLinkedEntities) // clone: the test owns the path it wraps
+        resolve_targets(&entity, &QueryPath::Local(path.clone()), NoLinkedEntities, matching) // clone: the test owns the path it wraps
             .into_iter()
             .map(|target| (target_json(&target.value), target.origin))
             .collect()
@@ -374,8 +407,7 @@ mod tests {
     /// spelled it.
     fn bracketed(attribute: &str, member: &str) -> AttrPath {
         let mut path = AttrPath::simple(name(attribute));
-        path.value_path = vec![name(member)];
-        path.value_path_compact = vec![name(member)];
+        path.trailing = Some(TrailingPath::Members(MemberPath::new(vec![name(member)])));
         path
     }
 
@@ -584,11 +616,88 @@ mod tests {
         let entity = json!({
             "https://example.com/myJson": [{"https://uri.etsi.org/ngsi-ld/hasJSON": [{"@value": {"a": {"b": [1, 2]}}, "@type": "@json"}]}]
         });
+        let addressed = vec![name("https://example.com/a"), name("https://example.com/b")];
         let mut path = AttrPath::simple(name("https://example.com/myJson"));
-        path.value_path = vec![name("https://example.com/a"), name("https://example.com/b")];
-        path.value_path_compact = vec![name("a"), name("b")];
+        path.trailing = Some(TrailingPath::Members(MemberPath {
+            addressed: addressed.clone(), // clone: the second path addresses the same members
+            written: vec![name("a"), name("b")],
+        }));
         pretty_assertions::assert_eq!(targets_along(&entity, &path), vec![(json!([1, 2]), TargetOrigin::AttributeValue)]);
-        path.value_path_compact = vec![name("a"), name("b"), name("c")];
+        path.trailing = Some(TrailingPath::Members(MemberPath {
+            addressed,
+            written: vec![name("a"), name("b"), name("c")],
+        }));
+        pretty_assertions::assert_eq!(targets_along(&entity, &path), Vec::new());
+    }
+
+    /// A languageMap holding `en-GB`, `en`, `de-Latn-DE` and `fr`.
+    fn multilingual() -> Value {
+        json!({
+            "https://example.com/name": [{
+                "https://uri.etsi.org/ngsi-ld/hasLanguageMap": [
+                    {"@language": "en-GB", "@value": "Lift"},
+                    {"@language": "en", "@value": "Elevator"},
+                    {"@language": "de-Latn-DE", "@value": "Aufzug"},
+                    {"@language": "fr", "@value": "Ascenseur"}
+                ]
+            }]
+        })
+    }
+
+    /// The strings `name[<language>]` reads under `matching`.
+    fn read_language(language: &str, matching: LanguageMatching) -> Vec<Value> {
+        let path = parse_attribute_path(&format!("\"https://example.com/name\"[{language}]")).expect("a target language");
+        targets_under(&multilingual(), &path, matching).into_iter().map(|(value, _)| value).collect()
+    }
+
+    /// RFC 5646 section 2.1.1: case carries no distinction, under either mode.
+    #[test]
+    fn a_full_tag_reads_its_key_case_insensitively_under_both_modes() {
+        for matching in [LanguageMatching::TagEquality, LanguageMatching::ExtendedFiltering] {
+            pretty_assertions::assert_eq!(read_language("en-gb", matching), vec![json!("Lift")], "{matching:?}");
+        }
+    }
+
+    /// Clause 4.9 matches the key to the target language; RFC 4647 section
+    /// 3.3.2 extended filtering makes `en` a range over `en-GB` too.
+    #[test]
+    fn a_primary_tag_reads_its_subtags_only_under_extended_filtering() {
+        pretty_assertions::assert_eq!(read_language("en", LanguageMatching::TagEquality), vec![json!("Elevator")]);
+        pretty_assertions::assert_eq!(read_language("en", LanguageMatching::ExtendedFiltering), vec![json!(["Lift", "Elevator"])]);
+    }
+
+    #[test]
+    fn a_wildcard_range_reads_every_key_it_matches() {
+        for matching in [LanguageMatching::TagEquality, LanguageMatching::ExtendedFiltering] {
+            pretty_assertions::assert_eq!(read_language("de-*-DE", matching), vec![json!("Aufzug")], "{matching:?}");
+            pretty_assertions::assert_eq!(read_language("*-GB", matching), vec![json!("Lift")], "{matching:?}");
+        }
+    }
+
+    /// The element of a target language exists when a selected key holds a
+    /// string.
+    #[test]
+    fn a_target_language_element_exists_by_the_mode_selecting_it() {
+        let entity = FixtureEntity::from_expanded(&json!({
+            "https://example.com/name": [{
+                "https://uri.etsi.org/ngsi-ld/hasLanguageMap": [{"@language": "en-GB", "@value": "Lift"}]
+            }]
+        }));
+        let english = QueryPath::Local(parse_attribute_path("\"https://example.com/name\"[en]").expect("a path"));
+        assert!(!addresses_element(&entity, &english, NoLinkedEntities, LanguageMatching::TagEquality));
+        assert!(addresses_element(&entity, &english, NoLinkedEntities, LanguageMatching::ExtendedFiltering));
+    }
+
+    /// A target language no member name spells reads nothing outside a
+    /// `LanguageProperty`.
+    #[test]
+    fn a_hyphenated_tag_addresses_no_compound_member() {
+        let entity = json!({
+            "https://example.com/address": [{
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"https://example.com/en-GB": [{"@value": "x"}]}]
+            }]
+        });
+        let path = parse_attribute_path("\"https://example.com/address\"[en-GB]").expect("a path");
         pretty_assertions::assert_eq!(targets_along(&entity, &path), Vec::new());
     }
 }

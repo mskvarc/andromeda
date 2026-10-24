@@ -27,10 +27,14 @@ use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
-use andromeda_ngsi_ld_query::temporal::contributed_entities::{ContributedEntities, ContributedRendering};
+use andromeda_ngsi_ld_query::{
+    filter::language_targeting::LanguageTargeting,
+    temporal::contributed_entities::{ContributedEntities, ContributedRendering},
+};
 use andromeda_temporal::{
     error::TemporalError,
     local_in_effect::LocalInEffect,
+    query_reading::QueryReading,
     service::TemporalService,
     split_settlement::{AnsweredParts, SplitSettlement},
 };
@@ -112,7 +116,7 @@ async fn render_contributions(
         }
     }
     let rendering = service
-        .render_merged_aggregations(request.target, request.params, request.context, parts)
+        .render_merged_aggregations(request.target, request.params, request.reading(), parts)
         .await
         .with_instance(instance)?;
     let warnings = rendering
@@ -132,10 +136,23 @@ struct SettledRequest<'r> {
     params: &'r TemporalQueryParameters,
     /// The request context.
     context: &'r ContextSpec,
+    /// What the query's target languages may be and how they select
+    /// languageMap keys.
+    language_targeting: LanguageTargeting,
     /// What the sources answered.
     forwarded: Option<&'r ForwardedHistory>,
     /// What every part holds in effect when the window opens.
     in_effect: Option<&'r InEffectGathering>,
+}
+
+impl SettledRequest<'_> {
+    /// How the query's text is read.
+    const fn reading(&self) -> QueryReading<'_> {
+        QueryReading {
+            context: self.context,
+            language_targeting: self.language_targeting,
+        }
+    }
 }
 
 /// Whether the query carries any of the filters clause 5.7.4.4 applies after
@@ -188,6 +205,9 @@ pub(crate) struct ContributionMerge<'r> {
     pub(crate) params: &'r TemporalQueryParameters,
     /// The request context.
     pub(crate) context: &'r ContextSpec,
+    /// What the query's target languages may be and how they select
+    /// languageMap keys.
+    pub(crate) language_targeting: LanguageTargeting,
     /// Whether an entity's attributes may be spread over several sources.
     pub(crate) filtering: SplitEntities,
     /// How the contributed entities are gathered and rendered.
@@ -217,6 +237,7 @@ pub(crate) async fn merge_with_contributions(
         target: merge.target,
         params: merge.params,
         context: merge.context,
+        language_targeting: merge.language_targeting,
         forwarded: forwarded.as_ref(),
         in_effect: in_effect.as_ref(),
     };
@@ -259,7 +280,7 @@ async fn settle_contributions(
     let nothing_local = LocalInEffect::default();
     let local = request.in_effect.map_or(&nothing_local, |gathering| &gathering.local);
     let settlement = service
-        .settle_split_filters(request.target, request.params, request.context, &answered, local)
+        .settle_split_filters(request.target, request.params, request.reading(), &answered, local)
         .await
         .with_instance(instance)?;
     Ok(Some(settlement))

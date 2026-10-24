@@ -19,6 +19,7 @@ use crate::{
         predicate::Predicate,
         scalar::{CompareValue, Scalar},
         trailing_members::TrailingMembers,
+        trailing_path::TrailingPath,
     },
     term_compactor::TermCompactor,
 };
@@ -241,16 +242,19 @@ fn compact_query_path_boxed<'a, C: TermCompactor>(
 /// Compact an attribute path — main attribute, sub-attributes and, when
 /// `members` makes them terms, compound-value member names — to terms.
 ///
-/// The member names become the path's compact spelling as well: a freshly
-/// parsed path carries what the client wrote in both `value_path` and
-/// `value_path_compact`, and a compacted path is meant to read as one.
+/// The member names become the path's written spelling as well: a freshly
+/// parsed path carries what the client wrote in both spellings of its
+/// [`MemberPath`], and a compacted path is meant to read as one. A target
+/// language is no term and stays as written.
 pub async fn compact_attr_path(mut path: AttrPath, members: TrailingMembers<'_>, compactor: &impl TermCompactor) -> AttrPath {
-    if members.are_terms_under(&path.attr) {
-        path.value_path = compact_all(&path.value_path, compactor).await;
+    if let Some(TrailingPath::Members(member_path)) = &mut path.trailing {
+        if members.are_terms_under(&path.attr) {
+            member_path.addressed = compact_all(&member_path.addressed, compactor).await;
+        }
+        member_path.written.clone_from(&member_path.addressed); // clone: the written spelling is the compacted one
     }
     path.attr = compactor.compact_term(&path.attr).await;
     path.sub_attrs = compact_all(&path.sub_attrs, compactor).await;
-    path.value_path_compact = path.value_path.clone(); // clone: the compact spelling is the compacted one
     path
 }
 

@@ -12,7 +12,7 @@ use andromeda_entity_map::recording::{LocalMapEntities, MapListing, PageFilterin
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{candidate_filters::CandidateFilters, page_window::PageWindow};
-use andromeda_temporal::requested_identifiers::RequestedIdentifiers;
+use andromeda_temporal::{query_reading::QueryReading, requested_identifiers::RequestedIdentifiers};
 use axum::http::Uri;
 
 /// Where the histories a temporal map attributes to this broker come from.
@@ -77,7 +77,10 @@ impl LocalMapEntities for LocalHistoryEntities<'_> {
                         read.target,
                         read.params,
                         &PageWindow::unbounded(),
-                        read.context,
+                        QueryReading {
+                            context: read.context,
+                            language_targeting: read.language_targeting,
+                        },
                         requested,
                         CandidateFilters::Applied,
                     )

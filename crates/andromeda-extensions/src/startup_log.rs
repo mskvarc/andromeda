@@ -26,7 +26,10 @@ pub fn log_conformance_override(config: &ExtensionsConfig) {
 
 #[cfg(test)]
 mod tests {
-    use crate::{config::ExtensionsConfig, startup_log::log_conformance_override};
+    use crate::{
+        config::{ExtensionsConfig, QTargetLanguages},
+        startup_log::log_conformance_override,
+    };
     use andromeda_http_stack::config::feature_mode::HttpFeatureMode;
 
     /// The reporter must not panic in any of the four combinations of the two
@@ -49,6 +52,7 @@ mod tests {
                 cursor_pagination: HttpFeatureMode::Disabled,
                 near_distance_band: HttpFeatureMode::Disabled,
                 accept_language: HttpFeatureMode::Disabled,
+                q_target_languages: QTargetLanguages::Specification,
                 temporal_delete_by_query_max_matches: 100,
                 temporal_aggregation_grouping_max_groups: 100,
             };

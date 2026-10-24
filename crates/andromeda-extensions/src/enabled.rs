@@ -6,9 +6,10 @@
 //! every gate is what keeps the conformance override in one place: no code path
 //! reads the raw per-feature field, so none of them can forget the override.
 
-use crate::config::ExtensionsConfig;
+use crate::config::{ExtensionsConfig, QTargetLanguages};
 use andromeda_http_stack::config::feature_mode::HttpFeatureMode;
-use enumset::{EnumSet, EnumSetType};
+use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
+use enumset::{EnumSet, EnumSetType, enum_set};
 
 /// One opt-in, non-standard extension.
 ///
@@ -34,6 +35,11 @@ pub enum Extension {
     NearDistanceBand,
     /// `Accept-Language` read as the language filter where `lang` is absent.
     AcceptLanguage,
+    /// Every RFC 5646 language tag as a `q` target language.
+    LanguageTags,
+    /// RFC 4647 extended ranges as `q` target languages, and extended
+    /// filtering of every target language.
+    LanguageRangeFiltering,
 }
 
 /// The extensions that are actually on for this process.
@@ -72,7 +78,19 @@ impl ExtensionsConfig {
                 enabled.insert(extension);
             }
         }
-        EnabledExtensions { enabled }
+        EnabledExtensions {
+            enabled: enabled | target_language_extensions(self.q_target_languages),
+        }
+    }
+}
+
+/// The extensions one `q_target_languages` level turns on: each level serves
+/// everything the one below it does.
+const fn target_language_extensions(level: QTargetLanguages) -> EnumSet<Extension> {
+    match level {
+        QTargetLanguages::Specification => EnumSet::empty(),
+        QTargetLanguages::LanguageTags => enum_set!(Extension::LanguageTags),
+        QTargetLanguages::LanguageRanges => enum_set!(Extension::LanguageTags | Extension::LanguageRangeFiltering),
     }
 }
 
@@ -143,12 +161,40 @@ impl EnabledExtensions {
     pub fn accept_language_enabled(&self) -> bool {
         self.enabled.contains(Extension::AcceptLanguage)
     }
+
+    /// Whether a `q` target language may be any RFC 5646 tag.
+    #[must_use]
+    pub fn language_tags_enabled(&self) -> bool {
+        self.enabled.contains(Extension::LanguageTags)
+    }
+
+    /// Whether the target languages of `q` are RFC 4647 extended ranges.
+    #[must_use]
+    pub fn language_range_filtering_enabled(&self) -> bool {
+        self.enabled.contains(Extension::LanguageRangeFiltering)
+    }
+
+    /// What a `q` bracket may name as a target language on this broker.
+    #[must_use]
+    pub fn language_targeting(&self) -> LanguageTargeting {
+        if self.language_range_filtering_enabled() {
+            LanguageTargeting::LanguageRanges
+        } else if self.language_tags_enabled() {
+            LanguageTargeting::LanguageTags
+        } else {
+            LanguageTargeting::Specification
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{config::ExtensionsConfig, enabled::EnabledExtensions};
+    use crate::{
+        config::{ExtensionsConfig, QTargetLanguages},
+        enabled::EnabledExtensions,
+    };
     use andromeda_http_stack::config::feature_mode::HttpFeatureMode;
+    use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
 
     fn both_on() -> ExtensionsConfig {
         ExtensionsConfig {
@@ -161,6 +207,7 @@ mod tests {
             cursor_pagination: HttpFeatureMode::Enabled,
             near_distance_band: HttpFeatureMode::Enabled,
             accept_language: HttpFeatureMode::Enabled,
+            q_target_languages: QTargetLanguages::LanguageRanges,
             temporal_delete_by_query_max_matches: 100,
             temporal_aggregation_grouping_max_groups: 100,
         }
@@ -177,6 +224,8 @@ mod tests {
         assert!(enabled.cursor_pagination_enabled());
         assert!(!enabled.near_distance_band_enabled());
         assert!(!enabled.accept_language_enabled());
+        assert!(!enabled.language_tags_enabled());
+        assert!(!enabled.language_range_filtering_enabled());
     }
 
     #[test]
@@ -190,6 +239,8 @@ mod tests {
         assert!(enabled.cursor_pagination_enabled());
         assert!(enabled.near_distance_band_enabled());
         assert!(enabled.accept_language_enabled());
+        assert!(enabled.language_tags_enabled());
+        assert!(enabled.language_range_filtering_enabled());
     }
 
     /// The conformance override wins over every feature field at once, so a
@@ -208,6 +259,8 @@ mod tests {
         assert!(!enabled.cursor_pagination_enabled());
         assert!(!enabled.near_distance_band_enabled());
         assert!(!enabled.accept_language_enabled());
+        assert!(!enabled.language_tags_enabled());
+        assert!(!enabled.language_range_filtering_enabled());
     }
 
     /// Clause 5.7.3.4 and 5.7.4.4 refuse Linked Entity retrieval on the
@@ -235,6 +288,40 @@ mod tests {
     }
 
     #[test]
+    fn each_target_language_level_serves_the_levels_below_it() {
+        for (level, targeting) in [
+            (QTargetLanguages::Specification, LanguageTargeting::Specification),
+            (QTargetLanguages::LanguageTags, LanguageTargeting::LanguageTags),
+            (QTargetLanguages::LanguageRanges, LanguageTargeting::LanguageRanges),
+        ] {
+            let config = ExtensionsConfig {
+                q_target_languages: level,
+                ..ExtensionsConfig::default()
+            };
+            pretty_assertions::assert_eq!(config.resolve().language_targeting(), targeting, "{level:?}");
+        }
+        let tags = ExtensionsConfig {
+            q_target_languages: QTargetLanguages::LanguageTags,
+            ..ExtensionsConfig::default()
+        }
+        .resolve();
+        assert!(tags.language_tags_enabled());
+        assert!(!tags.language_range_filtering_enabled());
+    }
+
+    /// Clause 4.9 admits no `-` in a bracket, so conformance mode keeps the
+    /// specification's grammar whatever level the operator chose.
+    #[test]
+    fn conformance_mode_forces_the_specification_target_languages() {
+        let config = ExtensionsConfig {
+            conformance_mode: HttpFeatureMode::Enabled,
+            q_target_languages: QTargetLanguages::LanguageRanges,
+            ..ExtensionsConfig::default()
+        };
+        pretty_assertions::assert_eq!(config.resolve().language_targeting(), LanguageTargeting::Specification);
+    }
+
+    #[test]
     fn the_empty_set_enables_nothing() {
         let enabled = EnabledExtensions::none();
         assert!(!enabled.temporal_delete_by_query_enabled());
@@ -245,6 +332,8 @@ mod tests {
         assert!(!enabled.cursor_pagination_enabled());
         assert!(!enabled.near_distance_band_enabled());
         assert!(!enabled.accept_language_enabled());
+        assert!(!enabled.language_tags_enabled());
+        assert!(!enabled.language_range_filtering_enabled());
     }
 
     #[test]
@@ -257,5 +346,7 @@ mod tests {
         assert!(enabled.tenant_management_enabled());
         assert!(enabled.near_distance_band_enabled());
         assert!(enabled.accept_language_enabled());
+        assert!(enabled.language_tags_enabled());
+        assert!(enabled.language_range_filtering_enabled());
     }
 }

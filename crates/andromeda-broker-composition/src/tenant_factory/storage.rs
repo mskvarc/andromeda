@@ -288,7 +288,8 @@ pub(super) async fn initialize_storage(
     let registration_store = registration_repository as Arc<dyn RegistrationStore>;
     let entity_map_store = Arc::new(EntityMapRepository::new(&pool)) as Arc<dyn EntityMapStore>;
     let snapshot_store = Arc::new(SnapshotRepository::new(&pool)) as Arc<dyn SnapshotStore>;
-    let subscription_cache = Arc::new(SubscriptionCache::new(tenant.clone()));
+    let stored_filter_matching = config.extensions.resolve().language_targeting().matching();
+    let subscription_cache = Arc::new(SubscriptionCache::new(tenant.clone(), stored_filter_matching));
     // clone: the cache reload reads through a repository sharing the tenant's one dictionary.
     if let Err(error) = subscription_cache
         .reload(&live_target, &SubscriptionRepository::new(&pool, Arc::clone(&attribute_names)))

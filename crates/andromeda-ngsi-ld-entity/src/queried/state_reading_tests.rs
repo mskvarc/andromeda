@@ -3,7 +3,7 @@
 use crate::{entity_state::EntityState, queried::linked_states::LinkedStates};
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, position::Position};
 use andromeda_ngsi_ld_query::{
-    filter::{eval::evaluate, parser::parse},
+    filter::{eval::evaluate, language_matching::LanguageMatching, parser::parse},
     geo::query::GeoQuery,
     queried_entity::linked_entities::NoLinkedEntities,
     scope::query::ScopeQuery,
@@ -241,7 +241,7 @@ fn the_state_reading_answers_every_query_term_as_clause_4_9_does() {
         let entity = state(&fixture());
         for (q, expected) in terms {
             let expr = parse(q).expect("the Query Term parses");
-            pretty_assertions::assert_eq!(evaluate(&expr, &entity, NoLinkedEntities), expected, "{q}");
+            pretty_assertions::assert_eq!(evaluate(&expr, &entity, NoLinkedEntities, LanguageMatching::TagEquality), expected, "{q}");
         }
     }
 }
@@ -262,7 +262,7 @@ fn a_bare_path_holds_for_a_structured_value_and_a_geometry() {
     let entity = state(&document);
     for q in ["\"https://example.com/address\"", "\"https://example.com/site\""] {
         let expr = parse(q).expect("the Query Term parses");
-        assert!(evaluate(&expr, &entity, NoLinkedEntities), "{q}");
+        assert!(evaluate(&expr, &entity, NoLinkedEntities, LanguageMatching::TagEquality), "{q}");
     }
 }
 
@@ -319,7 +319,7 @@ fn a_hop_reads_the_linked_state() {
     commercial.insert(Arc::new(parking("commercial")));
     let mut residential = LinkedStates::new();
     residential.insert(Arc::new(parking("residential")));
-    assert!(evaluate(&hop, &vehicle, &commercial));
-    assert!(!evaluate(&hop, &vehicle, &residential));
-    assert!(!evaluate(&hop, &vehicle, NoLinkedEntities));
+    assert!(evaluate(&hop, &vehicle, &commercial, LanguageMatching::TagEquality));
+    assert!(!evaluate(&hop, &vehicle, &residential, LanguageMatching::TagEquality));
+    assert!(!evaluate(&hop, &vehicle, NoLinkedEntities, LanguageMatching::TagEquality));
 }

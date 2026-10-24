@@ -14,12 +14,12 @@ use crate::{
     error::TemporalError,
     grouping_depth::grouping_depth,
     port::read_scope::ScopeReach,
+    query_reading::QueryReading,
     query_warning_reason::TemporalQueryWarningReason,
     result_bound::ResultBound,
     service::{TemporalQueryWarning, TemporalService},
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_compaction::{aggregated_entity::aggregated_entity, entity_compactor::EntityCompactor};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
@@ -49,6 +49,9 @@ impl TemporalService {
     /// so each entity is aggregated over its whole window, or the `lastN` it
     /// asks for, and the response's common bound is applied to the merge.
     ///
+    /// The request's terms and `q` target languages are read as `reading`
+    /// says.
+    ///
     /// # Errors
     ///
     /// Returns [`TemporalError`] when the query does not compile, the context
@@ -59,10 +62,11 @@ impl TemporalService {
         &self,
         target: &ContextTarget,
         params: &TemporalQueryParameters,
-        context: &ContextSpec,
+        reading: QueryReading<'_>,
         parts: Vec<(Identifier, Vec<TemporalDocument>)>,
     ) -> Result<MergedRendering, TemporalError> {
-        let mut compiled = self.compile_temporal_query(params, context).await?;
+        let QueryReading { context, language_targeting } = reading;
+        let mut compiled = self.compile_temporal_query(params, context, language_targeting).await?;
         compiled.entities.scope_q = None;
         compiled.instances.page = compiled.instances.page.unpaged();
         let compiled = compiled;

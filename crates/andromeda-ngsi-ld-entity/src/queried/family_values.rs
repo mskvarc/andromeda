@@ -17,7 +17,10 @@ use crate::{
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, uri::Uri};
-use andromeda_ngsi_ld_query::queried_entity::value_item::{LiteralValue, ValueItem};
+use andromeda_ngsi_ld_query::{
+    filter::{language_matching::LanguageMatching, target_language::LanguageSelector},
+    queried_entity::value_item::{LiteralValue, ValueItem},
+};
 use std::{borrow::Cow, slice::Iter};
 
 /// The values of one family member, in the order the instance holds them.
@@ -82,19 +85,20 @@ impl<'a> FamilyValues<'a, Fragment> {
     }
 }
 
-/// The strings a language map holds under the tag `language`, in order: the
-/// clause 4.9 target value of a `LanguageProperty` with a target language.
+/// The strings a language map holds under every tag `wanted` admits under
+/// `matching`, in order: the clause 4.9 target value of a `LanguageProperty`
+/// with a target language.
 ///
-/// The tag is compared as written, the way the store compares the `@language`
-/// of an expanded `languageMap` entry; the `@none` entry carries no tag and so
-/// is no language's string, and a deleted language holds no string.
+/// The `@none` entry carries no tag and so is no language's string, and a
+/// deleted language holds no string.
 pub fn language_strings<'a, 'l, M: QueriedMode>(
     entries: &'a [LanguageEntry<M>],
-    language: &'l str,
+    wanted: LanguageSelector<'l>,
+    matching: LanguageMatching,
 ) -> impl Iterator<Item = ValueItem<'a, &'a ValueNode<M>>> + use<'a, 'l, M> {
     entries
         .iter()
-        .filter(move |entry| entry.language().is_some_and(|tag| tag.as_str() == language))
+        .filter(move |entry| entry.language().is_some_and(|tag| wanted.admits(tag, matching)))
         .filter_map(|entry| M::entry_text(entry.text()))
         .map(|text| ValueItem::Literal(LiteralValue::Text(Cow::Borrowed(text))))
 }

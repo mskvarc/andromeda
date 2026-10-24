@@ -1,6 +1,7 @@
 use crate::{
     answered_fixture::answered,
     local_in_effect::LocalInEffect,
+    query_reading::QueryReading,
     split_settlement::AnsweredParts,
     stub_broker::{StubBroker, live_target, service, uri},
 };
@@ -22,7 +23,7 @@ use andromeda_ngsi_ld_model::temporal::{
     temporal_document::TemporalDocument,
 };
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_query::split_filter::LeafTruths;
+use andromeda_ngsi_ld_query::{filter::language_targeting::LanguageTargeting, split_filter::LeafTruths};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
@@ -107,7 +108,16 @@ async fn retained(broker: StubBroker, q: &str, in_window: &[&TemporalDocument], 
         in_effect: in_effect.to_vec(),
     };
     let settlement = service
-        .settle_split_filters(&live_target(), &split_query(q), &ContextSpec::none(), &parts, local)
+        .settle_split_filters(
+            &live_target(),
+            &split_query(q),
+            QueryReading {
+                context: &ContextSpec::none(),
+                language_targeting: LanguageTargeting::Specification,
+            },
+            &parts,
+            local,
+        )
         .await
         .expect("the settlement runs");
     settlement.retained.into_iter().collect()
@@ -116,7 +126,15 @@ async fn retained(broker: StubBroker, q: &str, in_window: &[&TemporalDocument], 
 /// What `broker` holds in effect of Vehicle 1, read as the settlement reads it.
 async fn local_in_effect(broker: StubBroker, q: &str) -> LocalInEffect {
     service(broker)
-        .read_local_in_effect(&live_target(), &split_query(q), &ContextSpec::none(), &[uri(VEHICLE)])
+        .read_local_in_effect(
+            &live_target(),
+            &split_query(q),
+            QueryReading {
+                context: &ContextSpec::none(),
+                language_targeting: LanguageTargeting::Specification,
+            },
+            &[uri(VEHICLE)],
+        )
         .await
         .expect("the local part reads")
 }
@@ -199,7 +217,16 @@ async fn a_query_without_filters_keeps_every_contributed_entity() {
         in_effect: Vec::new(),
     };
     let settlement = service
-        .settle_split_filters(&live_target(), &params, &ContextSpec::none(), &parts, &LocalInEffect::default())
+        .settle_split_filters(
+            &live_target(),
+            &params,
+            QueryReading {
+                context: &ContextSpec::none(),
+                language_targeting: LanguageTargeting::Specification,
+            },
+            &parts,
+            &LocalInEffect::default(),
+        )
         .await
         .expect("the settlement runs");
     pretty_assertions::assert_eq!(settlement.retained.into_iter().collect::<Vec<_>>(), vec![uri(VEHICLE)]);

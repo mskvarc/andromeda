@@ -9,7 +9,7 @@ use crate::{
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::error::QueryError;
+use andromeda_ngsi_ld_query::{error::QueryError, filter::language_targeting::LanguageTargeting};
 use andromeda_registration::error::RegistrationError;
 use std::time::Duration;
 use thiserror::Error;
@@ -83,6 +83,20 @@ pub enum FederationError {
     /// registration left local.
     #[error("the forwarded write payload could not be serialised or read back: {0}")]
     ForwardedBody(#[source] serde_json::Error),
+    /// A `q` naming a target language a `q_target_languages` level above the
+    /// specification's admits would reach a Context Source that does not
+    /// advertise that level. The source refuses a full tag outright, and reads
+    /// a range's wildcard by no rule at all, so no answer it gives would be the
+    /// one asked for.
+    #[error(
+        "registration {registration} does not advertise the {needs} level of the q_target_languages extension, so the query's target languages cannot be forwarded to it"
+    )]
+    TargetLanguageUnadvertised {
+        /// The registration naming the source.
+        registration: Identifier,
+        /// The least level the query's target languages need.
+        needs: LanguageTargeting,
+    },
     /// An internal federation invariant could not be satisfied.
     ///
     /// Boxed: the invariants carry the widest members, and inlining them would

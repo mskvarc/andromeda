@@ -18,7 +18,10 @@ use crate::{
     value_mode::Fragment,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, reference::NgsiLdReference};
-use andromeda_ngsi_ld_query::queried_entity::{attribute_reading::QueriedInstance, instance_metadata::InstanceMetadata, value_item::ValueItem};
+use andromeda_ngsi_ld_query::{
+    filter::{language_matching::LanguageMatching, target_language::LanguageSelector},
+    queried_entity::{attribute_reading::QueriedInstance, instance_metadata::InstanceMetadata, value_item::ValueItem},
+};
 use cefact_units::UnitCode;
 use std::borrow::Cow;
 
@@ -42,7 +45,7 @@ impl<'a> QueriedInstance<'a> for &'a InstanceDocument {
         }
     }
 
-    fn language_values(self, language: &str) -> impl Iterator<Item = ValueItem<'a, &'a ValueNode<Fragment>>> {
+    fn language_values(self, wanted: LanguageSelector<'_>, matching: LanguageMatching) -> impl Iterator<Item = ValueItem<'a, &'a ValueNode<Fragment>>> {
         let entries = match self.value() {
             ValueSlot::Set(WrittenValue::LanguageMap(entries)) => entries.entries(),
             ValueSlot::Set(
@@ -57,7 +60,7 @@ impl<'a> QueriedInstance<'a> for &'a InstanceDocument {
             | ValueSlot::Absent
             | ValueSlot::Remove(_) => &[],
         };
-        language_strings(entries, language)
+        language_strings(entries, wanted, matching)
     }
 
     fn sub_attribute_instances(self, name: &AttributeName) -> impl Iterator<Item = &'a InstanceDocument> {

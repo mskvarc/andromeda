@@ -35,7 +35,7 @@ use crate::{
         sub_attribute::keyed_equality::equality_candidates,
     },
 };
-use andromeda_ngsi_ld_query::filter::{expression::Expr, predicate::Predicate};
+use andromeda_ngsi_ld_query::filter::{expression::Expr, language_matching::LanguageMatching, predicate::Predicate};
 use sea_query::SelectStatement;
 use std::slice::from_ref;
 
@@ -74,15 +74,16 @@ pub struct KeyedCandidates<'q> {
 /// with its candidates read in the branch `rows` names.
 ///
 /// Only a conjunct can narrow the page to its candidates: an entity a
-/// disjunction keeps for another arm need not be one of them.
+/// disjunction keeps for another arm need not be one of them. A target
+/// language selects `languageMap` keys by `matching`.
 #[must_use]
-pub fn keyed_candidates<'q>(expr: &'q Expr, rows: &EntityRowRefs, names: &QueryNames) -> Option<KeyedCandidates<'q>> {
+pub fn keyed_candidates<'q>(expr: &'q Expr, rows: &EntityRowRefs, names: &QueryNames, matching: LanguageMatching) -> Option<KeyedCandidates<'q>> {
     let conjuncts = match expr {
         Expr::And(terms) => terms.as_slice(),
         Expr::Or(_) | Expr::Pred(_) => from_ref(expr),
     };
     conjuncts.iter().find_map(|term| match term {
-        Expr::Pred(pred) => candidates_of(pred, rows, names).map(|(select, read)| KeyedCandidates { term: pred, select, read }),
+        Expr::Pred(pred) => candidates_of(pred, rows, names, matching).map(|(select, read)| KeyedCandidates { term: pred, select, read }),
         Expr::And(_) | Expr::Or(_) => None,
     })
 }
@@ -93,12 +94,12 @@ pub fn keyed_candidates<'q>(expr: &'q Expr, rows: &EntityRowRefs, names: &QueryN
 /// A hop of any operator is read inward, whatever its inner term compares.
 /// `!~=` never narrows: an Entity holds when none of its strings match, which
 /// no index of matching strings can enumerate.
-fn candidates_of(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames) -> Option<(SelectStatement, CandidateRead)> {
+fn candidates_of(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames, matching: LanguageMatching) -> Option<(SelectStatement, CandidateRead)> {
     let rechecked = |select| (select, CandidateRead::Rechecked);
     let ranged = |select| (select, CandidateRead::Ranged);
     let probed = |select| (select, CandidateRead::Probed);
     if pred.path().is_linked() {
-        return hop_candidates(pred, rows, names).map(|select| (select, CandidateRead::Linked));
+        return hop_candidates(pred, rows, names, matching).map(|select| (select, CandidateRead::Linked));
     }
     match pred {
         Predicate::Equality { .. } => equality_candidates(pred, rows, names)
@@ -119,7 +120,7 @@ mod tests {
         entity_row_refs::EntityRowRefs,
         q_predicate::keyed_term::{CandidateRead, keyed_candidates},
     };
-    use andromeda_ngsi_ld_query::filter::parser::parse;
+    use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser::parse};
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
@@ -136,12 +137,13 @@ mod tests {
 
     fn candidates(q: &str) -> Option<String> {
         let expr = parse(q).expect("parse q");
-        keyed_candidates(&expr, &EntityRowRefs::unaliased(None), &names()).map(|keyed| keyed.select.to_string(PostgresQueryBuilder))
+        keyed_candidates(&expr, &EntityRowRefs::unaliased(None), &names(), LanguageMatching::TagEquality)
+            .map(|keyed| keyed.select.to_string(PostgresQueryBuilder))
     }
 
     fn read(q: &str) -> Option<CandidateRead> {
         let expr = parse(q).expect("parse q");
-        keyed_candidates(&expr, &EntityRowRefs::unaliased(None), &names()).map(|keyed| keyed.read)
+        keyed_candidates(&expr, &EntityRowRefs::unaliased(None), &names(), LanguageMatching::TagEquality).map(|keyed| keyed.read)
     }
 
     /// A trigram or key match is rechecked against the value; a range of the

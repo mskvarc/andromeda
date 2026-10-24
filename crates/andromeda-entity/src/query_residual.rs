@@ -47,10 +47,13 @@ impl ResidualFilter {
     /// predicate it has already said it cannot would either fail or, worse,
     /// silently render something weaker.
     pub fn strip_from(&self, selection: &mut EntitySelection) {
+        // How `q_expr` reads its target languages is no predicate of its own,
+        // and goes with `q_expr`.
         let EntitySelection {
             selectors,
             attrs,
             q_expr,
+            language_matching: _,
             geo,
             default_location: _,
             scope_q,
@@ -102,11 +105,13 @@ impl ResidualFilter {
     #[must_use]
     pub fn kinds(&self) -> Vec<ResidualPredicate> {
         // An index's narrowing of the default `location` instances is part of
-        // the geo-query, not a predicate of its own.
+        // the geo-query, not a predicate of its own, and how `q_expr` reads its
+        // target languages is part of `q_expr`.
         let EntitySelection {
             selectors,
             attrs,
             q_expr,
+            language_matching: _,
             geo,
             default_location: _,
             scope_q,

@@ -13,6 +13,7 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
+    filter::language_matching::LanguageMatching,
     projection::{
         compiled::Projection,
         grammar::{ProjectionList, RawProjectionTerm},
@@ -29,8 +30,10 @@ use tracing::{debug, error};
 ///
 /// Takes the stored pair rather than the resource alone: matching ends in a
 /// delivery enqueued against the surrogate key, so the key has to survive
-/// compilation alongside everything the match itself needs.
-pub fn compile_subscription(stored: &StoredSubscription) -> CompiledSubscription {
+/// compilation alongside everything the match itself needs. The filters'
+/// target languages select keys by `language_matching`, the broker's live
+/// mode.
+pub fn compile_subscription(stored: &StoredSubscription, language_matching: LanguageMatching) -> CompiledSubscription {
     let sub = &stored.subscription;
     let selectors: Vec<EntitySelector> = sub.selection.entities.clone().unwrap_or_default();
     let triggers = effective_notification_triggers(sub.selection.notification_trigger.as_deref());
@@ -62,6 +65,7 @@ pub fn compile_subscription(stored: &StoredSubscription) -> CompiledSubscription
         jsonld_context: sub.delivery.jsonld_context.clone(), // clone: compiled state owns the context URL.
         created_at: sub.lifecycle.created_at,
         compiled_q: sub.filters.q.clone(), // clone: compiled state owns its filter AST.
+        language_matching,
         compiled_geo_q: SubscriptionGeoFilter::from_stored(sub.filters.geo_q.as_ref(), sub.id.as_ref()),
         compiled_scope_q: sub.filters.scope_q.clone(), // clone: compiled state owns its scope AST.
         dataset_id: sub.filters.dataset_id.clone(),    // clone: compiled state owns dataset identifiers.

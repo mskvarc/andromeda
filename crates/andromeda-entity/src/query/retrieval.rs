@@ -23,6 +23,7 @@ use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     dataset::DatasetSelector,
     entity::compiled::CompiledEntityQuery,
+    filter::language_targeting::LanguageTargeting,
     page_window::PageWindow,
     projection::{compiled::Projection, returned_attributes::ReturnedAttributes},
     type_selection::{expansion::expand_type_expression, grammar::TypeExprRaw},
@@ -120,7 +121,9 @@ impl EntityQueryService {
     /// Select the page `window` selects of a parameterized entity query
     /// (clause 5.7.2) as the stored states it matched, each narrowed to the query's `attrs` and
     /// clause 4.21 projection and read with its entity-level clause 4.8 system
-    /// times, with the optional clause 6.3.13 count.
+    /// times, with the optional clause 6.3.13 count. The query's target
+    /// languages are admitted and select languageMap keys under
+    /// `language_targeting`.
     ///
     /// The states are what [`EntityQueryService::compact_versions`] writes:
     /// no expiry (clause 4.22), `datasetId` (clause 4.5.5) or system-time
@@ -140,10 +143,11 @@ impl EntityQueryService {
         window: &PageWindow,
         count: CountPolicy,
         context: &ContextSpec,
+        language_targeting: LanguageTargeting,
     ) -> Result<(Vec<RetrievedEntity>, Option<i64>), EntityError> {
         let timer = entity::start(EntityOperation::Query);
         let result: Result<(Vec<RetrievedEntity>, Option<i64>), EntityError> = async {
-            let compiled = self.compile_query_cached(query, context).await?;
+            let compiled = self.compile_query_cached(query, context, language_targeting).await?;
             // The spatial index narrows only the default `location` instances;
             // the store still evaluates the geo-query, so the refusal below reads
             // the selection the store is actually handed.

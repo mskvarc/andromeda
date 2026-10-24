@@ -1,4 +1,5 @@
 use crate::{
+    query_reading::QueryReading,
     requested_identifiers::RequestedIdentifiers,
     stub_broker::{StubBroker, live_target, service_over},
 };
@@ -8,7 +9,7 @@ use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_rel::TimeRel};
 use andromeda_ngsi_ld_query::{
     candidate_filters::CandidateFilters,
     entity_selection::EntitySelection,
-    filter::parser::parse,
+    filter::{language_targeting::LanguageTargeting, parser::parse},
     page_window::PageWindow,
     pattern::Pattern,
     scope::query::ScopeQuery,
@@ -43,7 +44,10 @@ async fn listed_under(filters: CandidateFilters) -> EntitySelection {
             &live_target(),
             &filtered_query(),
             &PageWindow::unbounded(),
-            &context(),
+            QueryReading {
+                context: &context(),
+                language_targeting: LanguageTargeting::Specification,
+            },
             RequestedIdentifiers::Narrow,
             filters,
         )

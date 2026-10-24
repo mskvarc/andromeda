@@ -13,16 +13,22 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity_map::reuse::EntityMapUse;
+use andromeda_extensions::advertisement::advertised_language_targeting;
 use andromeda_federation::{
     FederationService,
     forwarded_query::client_query::ClientQuery,
-    ordering_admission::{OrderedRead, OrderingAdmission},
+    language_negotiation::NegotiatedLanguageTargeting,
+    ordering_admission::OrderingAdmission,
+    participating_read::ParticipatingRead,
     request::EntityMapInUse,
 };
 use andromeda_http_extraction::prefer::PreferHeader;
 use andromeda_http_headers::{language::LanguageFilter, ngsild_entity_map::NgsiLdEntityMap, via::Via};
 use andromeda_jsonld::{term_expansion::ContextualExpander, user_context_admission::AdmittedContext};
-use andromeda_ngsi_ld_query::geo::{compile::compile_geo_query, query::GeoQuery};
+use andromeda_ngsi_ld_query::{
+    geo::{compile::compile_geo_query, query::GeoQuery},
+    ordering::parameters::OrderingParameters,
+};
 use andromeda_ngsi_ld_request::{
     error::ParameterError,
     query::entity::{
@@ -50,6 +56,10 @@ pub(crate) struct AdmittedQuery {
     /// registration to take part (clauses 4.3.6.1 and 5.10.2.4); `None` when
     /// the query has none or does not reach the Context Registry.
     pub(crate) registry_geo: Option<GeoQuery>,
+    /// What the query's target languages may be and how they select
+    /// languageMap keys, locally and at every source it reaches, and the
+    /// warning a fallback to tag equality carries.
+    pub(crate) language: NegotiatedLanguageTargeting,
 }
 
 /// Hold the query to every rule that can be decided before it runs, and
@@ -62,7 +72,9 @@ pub(crate) struct AdmittedQuery {
 /// # Errors
 ///
 /// The classified failure of the clause 5.7.2.4 validation, of resolving the Entity Map, of the Table 6.3.7-1
-/// options, of compiling the geoquery, and of the clause 5.7.2.4 ordering rule.
+/// options, of compiling the geoquery, of the clause 5.7.2.4 ordering rule, and
+/// of admitting the `q` target languages under the broker's
+/// `q_target_languages` level and the levels of the sources the query reaches.
 pub(crate) async fn admit_request(
     state: &EntityRouteServices,
     target: &ContextTarget,
@@ -80,13 +92,25 @@ pub(crate) async fn admit_request(
     let map_use = resolve_query_map_use(&state.entity_maps, target, query, referenced, instance).await?;
     let opts = query.parse_options().with_entity_instance(instance)?;
     let registry_geo = registry_geo_query(state, context, query, instance).await?;
-    let read = RegistryRead {
-        query,
-        binding,
+    let service = &state.entity_query;
+    // The broker refuses a target language its own `q_target_languages`
+    // level does not admit before any source is asked.
+    if let Some(q) = &query.q {
+        service.language_targeting().admit(q).with_entity_instance(instance)?;
+    }
+    let read = ParticipatingRead {
+        requested_scope: query.execution_scope(),
+        client_query: ClientQuery::EntityQuery(query),
         geo: registry_geo.as_ref(),
+        operation: binding.forwarding_operation(),
         entity_map: EntityMapInUse::from(&map_use),
     };
-    refuse_inadmissible_ordering(&state.forwarding, target, context, read, instance).await?;
+    refuse_inadmissible_ordering(&state.forwarding, target, context, &query.ordering, &read, instance).await?;
+    let language = state
+        .forwarding
+        .negotiate_language_targeting(target, context, &read, service.language_targeting(), advertised_language_targeting)
+        .await
+        .with_entity_instance(instance)?;
     Ok(AdmittedQuery {
         language_filter: query.lang.take().or(protocol.language_filter),
         prefer: protocol.prefer,
@@ -94,6 +118,7 @@ pub(crate) async fn admit_request(
         map_use,
         opts,
         registry_geo,
+        language,
     })
 }
 
@@ -124,19 +149,6 @@ async fn registry_geo_query(
     .with_entity_instance(instance)
 }
 
-/// What the ordering rule asks the Context Registry about one query.
-struct RegistryRead<'a> {
-    /// The query as admitted so far.
-    query: &'a EntityQueryParameters,
-    /// The binding the query arrived on, which fixes the operation a
-    /// registration has to advertise.
-    binding: QueryBinding,
-    /// The compiled geoquery a registration's geometry has to admit.
-    geo: Option<&'a GeoQuery>,
-    /// The Entity Map the query runs under.
-    entity_map: EntityMapInUse<'a>,
-}
-
 /// Refuse an ordering clause 5.7.2.4 does not admit.
 ///
 /// The bullet raises `BadRequestData` for an `orderBy` on a query "not limited
@@ -153,28 +165,12 @@ async fn refuse_inadmissible_ordering(
     forwarding: &FederationService,
     target: &ContextTarget,
     context: &ContextSpec,
-    read: RegistryRead<'_>,
+    ordering: &OrderingParameters,
+    read: &ParticipatingRead<'_>,
     instance: &HttpUri,
 ) -> Result<(), ProblemResponse> {
-    let RegistryRead {
-        query,
-        binding,
-        geo,
-        entity_map,
-    } = read;
     let admission = forwarding
-        .admit_ordering(
-            target,
-            context,
-            OrderedRead {
-                ordering: &query.ordering,
-                requested_scope: query.execution_scope(),
-                client_query: ClientQuery::EntityQuery(query),
-                geo,
-                operation: binding.forwarding_operation(),
-                entity_map,
-            },
-        )
+        .admit_ordering(target, context, ordering, read)
         .await
         .with_entity_instance(instance)?;
     match admission {

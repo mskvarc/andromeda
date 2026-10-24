@@ -16,6 +16,7 @@ use crate::{
         },
         read_scope::{ScopeReach, TemporalReadScope, UnrecordedHistory},
     },
+    query_reading::QueryReading,
     stub_broker::{live_target, service_reading, uri},
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -32,6 +33,7 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
+    filter::language_targeting::LanguageTargeting,
     page_window::PageWindow,
     split_filter::LeafTruths,
     temporal::{compiled::CompiledTemporalQuery, contributed_entities::ContributedEntities},
@@ -268,7 +270,10 @@ async fn query(reader: Arc<ShapedReader>) -> Result<(), TemporalError> {
             &average_load(),
             &PageWindow::offset(20, 0),
             CountPolicy::Omit,
-            &ContextSpec::core_only(),
+            QueryReading {
+                context: &ContextSpec::core_only(),
+                language_targeting: LanguageTargeting::Specification,
+            },
             ContributedEntities::default(),
         )
         .await

@@ -23,7 +23,14 @@
 
 use crate::{
     entity_selection::EntitySelection,
-    filter::{eval::predicate_holds_in, expression::Expr, path::QueryPath, predicate::Predicate, referenced_attributes::referenced_attributes},
+    filter::{
+        eval::predicate_holds_in,
+        expression::Expr,
+        language_matching::LanguageMatching,
+        path::QueryPath,
+        predicate::Predicate,
+        referenced_attributes::referenced_attributes,
+    },
     geo::query::GeoQuery,
     queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
     scope::{pattern::ScopePattern, query::ScopeQuery},
@@ -83,6 +90,8 @@ impl LeafTruths {
 pub struct SplitFilter<'q> {
     /// The `q` expression (clause 4.9), when the query carries one.
     q: Option<&'q Expr>,
+    /// How the target languages of `q` select languageMap keys.
+    language_matching: LanguageMatching,
     /// The geo-query (clause 4.10), when the query carries one.
     geo: Option<&'q GeoQuery>,
     /// The scope query (clause 4.19), when the query carries one.
@@ -96,6 +105,7 @@ impl<'q> SplitFilter<'q> {
     pub const fn of(selection: &'q EntitySelection) -> SplitFilter<'q> {
         SplitFilter {
             q: selection.q_expr.as_ref(),
+            language_matching: selection.language_matching,
             geo: selection.geo.as_ref(),
             scope: selection.scope_q.as_ref(),
         }
@@ -208,7 +218,7 @@ impl<'q> SplitFilter<'q> {
         LeafTruths(
             self.leaves()
                 .map(|leaf| match leaf {
-                    FilterLeaf::Term(pred) => predicate_holds_in(pred, entity, linked),
+                    FilterLeaf::Term(pred) => predicate_holds_in(pred, entity, linked, self.language_matching),
                     FilterLeaf::Geo(geo) => geo.matches_entity(entity),
                     FilterLeaf::ScopeRequirement(pattern) => entity.scopes().any(|scope| pattern.matches(scope)),
                 })
@@ -479,7 +489,10 @@ mod tests {
         for (filter_index, selection) in filters.iter().enumerate() {
             let filter = SplitFilter::of(selection);
             for (part_index, part) in parts.iter().enumerate() {
-                let whole = selection.q_expr.as_ref().is_none_or(|expr| evaluate(expr, part, NoLinkedEntities))
+                let whole = selection
+                    .q_expr
+                    .as_ref()
+                    .is_none_or(|expr| evaluate(expr, part, NoLinkedEntities, selection.language_matching))
                     && selection.geo.as_ref().is_none_or(|geo| geo.matches_entity(part))
                     && selection.scope_q.as_ref().is_none_or(|scope| scope.matches_entity(part));
                 pretty_assertions::assert_eq!(

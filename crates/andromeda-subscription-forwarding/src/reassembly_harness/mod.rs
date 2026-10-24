@@ -39,7 +39,10 @@ use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngin
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, registration::ContextSourceRegistration};
-use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
+use andromeda_ngsi_ld_query::{
+    filter::language_targeting::LanguageTargeting,
+    geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
+};
 use andromeda_subscription::{
     csource::CsrSubscriptionVariant,
     endpoint_admission::SubscriptionEndpointValidator,
@@ -191,6 +194,7 @@ impl ReassemblyScene {
             None,
             Arc::new(AcceptingEndpoints),
             GeoQueryAdmission::new(EntityConfig::default().geometry_census_limits(), NearDistanceBand::Refused),
+            LanguageTargeting::Specification,
         );
         let held = Arc::new(HeldEntities::new(held));
         let federation = FederationService::new(
@@ -201,15 +205,19 @@ impl ReassemblyScene {
             &FederationConfig::default(),
         )
         .expect("the federation service builds");
-        let entity_query = EntityQueryService::new(
-            held.clone(), // clone: the same store answers both ports
-            held,
-            offline_engine(),
-            SpatialAcceleration::StoreVerified,
-            TenantRef::UnnamedDefault,
-            None,
-            GeoQueryAdmission::new(EntityConfig::default().geometry_census_limits(), NearDistanceBand::Refused),
-        );
+        let entity_query = EntityQueryService::builder()
+            .reader(held.clone()) // clone: the same store answers both ports
+            .query_store(held)
+            .engine(offline_engine())
+            .spatial(SpatialAcceleration::StoreVerified)
+            .tenant(TenantRef::UnnamedDefault)
+            .remote_linked(None)
+            .geo_admission(GeoQueryAdmission::new(
+                EntityConfig::default().geometry_census_limits(),
+                NearDistanceBand::Refused,
+            ))
+            .language_targeting(LanguageTargeting::Specification)
+            .build();
         let service = SubscriptionForwardingService::builder()
             .live_target(ContextTarget::Live)
             .receiver(ReceiverEndpoint::from_advertised(&Url::parse("http://broker.example:1056").expect("a valid origin")).expect("a hierarchical origin"))

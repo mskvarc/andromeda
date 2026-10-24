@@ -58,18 +58,30 @@ use crate::{
     spatial_acceleration::SpatialAcceleration,
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_query::geo::admission::GeoQueryAdmission;
+use andromeda_ngsi_ld_query::{filter::language_targeting::LanguageTargeting, geo::admission::GeoQueryAdmission};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use std::sync::Arc;
+use typed_builder::TypedBuilder;
 
 /// Service for querying and retrieving NGSI-LD entities.
+///
+/// Built with [`EntityQueryService::builder`]; `remote_linked` is the source
+/// consulted for an `objectType`-annotated Linked Entity the store does not
+/// hold, `None` resolving links against the local store alone.
+#[derive(TypedBuilder)]
 pub struct EntityQueryService {
+    /// The store entities are retrieved from.
     reader: Arc<dyn EntityReader>,
+    /// The store queries are answered from.
     query_store: Arc<dyn EntityQueryStore>,
+    /// The JSON-LD engine every term is expanded and compacted with.
     engine: JsonLdEngine,
+    /// The compiled queries the service reuses, empty when it is built.
+    #[builder(default = CompiledQueryCache::new(), setter(skip))]
     compiled_cache: CompiledQueryCache,
     /// Which spatial index, if any, a geo query may be narrowed through.
     spatial: SpatialAcceleration,
+    /// The tenant whose partition every read stays inside.
     tenant: TenantRef,
     /// Where a Linked Entity the local store does not hold is fetched from
     /// (clause 4.5.23.1). Absent in a composition that resolves links purely
@@ -79,35 +91,12 @@ pub struct EntityQueryService {
     /// the reference geometry limits past which the query is too complex to
     /// resolve (clause 5.5.6), and whether a `near` distance band is served.
     geo_admission: GeoQueryAdmission,
+    /// What a query's target languages may be and how they select
+    /// languageMap keys: the broker's `q_target_languages` level.
+    language_targeting: LanguageTargeting,
 }
 
 impl EntityQueryService {
-    /// Create a new entity query service backed by the given store.
-    ///
-    /// `remote_linked` is the source consulted for an `objectType`-annotated
-    /// Linked Entity the store does not hold; `None` resolves links against the
-    /// local store alone.
-    pub fn new(
-        reader: Arc<dyn EntityReader>,
-        query_store: Arc<dyn EntityQueryStore>,
-        engine: JsonLdEngine,
-        spatial: SpatialAcceleration,
-        tenant: TenantRef,
-        remote_linked: Option<Arc<dyn RemoteLinkedEntitySource>>,
-        geo_admission: GeoQueryAdmission,
-    ) -> EntityQueryService {
-        EntityQueryService {
-            reader,
-            query_store,
-            engine,
-            compiled_cache: CompiledQueryCache::new(),
-            spatial,
-            tenant,
-            remote_linked,
-            geo_admission,
-        }
-    }
-
     /// Return a reference to the underlying JSON-LD engine.
     #[must_use]
     pub const fn engine(&self) -> &JsonLdEngine {
@@ -118,5 +107,11 @@ impl EntityQueryService {
     #[must_use]
     pub const fn geo_admission(&self) -> GeoQueryAdmission {
         self.geo_admission
+    }
+
+    /// What a query's target languages may be and how they select languageMap keys.
+    #[must_use]
+    pub const fn language_targeting(&self) -> LanguageTargeting {
+        self.language_targeting
     }
 }

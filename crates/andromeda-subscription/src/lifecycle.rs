@@ -27,7 +27,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_validation::admit_context_reference, engine::processor::JsonLdEngine, user_context_admission::AdmittedContext};
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, ngsi_ld_urn::SubscriptionId};
 use andromeda_ngsi_ld_model::{subscription::SubscriptionStatus, subscription_request::SubscriptionRequest};
-use andromeda_ngsi_ld_query::geo::admission::GeoQueryAdmission;
+use andromeda_ngsi_ld_query::{filter::language_targeting::LanguageTargeting, geo::admission::GeoQueryAdmission};
 use andromeda_telemetry::subscription_ops::{self, SubscriptionOperation};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
@@ -58,6 +58,9 @@ pub struct SubscriptionService<V: SubscriptionVariant> {
     forwarding_hook: Option<Arc<dyn SubscriptionForwardingHook>>,
     /// What a written `geoQ` is admitted under.
     geo_q_admission: GeoQueryAdmission,
+    /// The broker's `q_target_languages` level, which a written filter's
+    /// target languages are admitted under.
+    language_targeting: LanguageTargeting,
 }
 
 impl<V> SubscriptionService<V>
@@ -78,6 +81,7 @@ where
         change_sink: Option<Arc<dyn SubscriptionChangeSink<V::Change>>>,
         endpoint_validator: Arc<dyn SubscriptionEndpointValidator>,
         geo_q_admission: GeoQueryAdmission,
+        language_targeting: LanguageTargeting,
     ) -> SubscriptionService<V> {
         SubscriptionService {
             repo,
@@ -87,6 +91,7 @@ where
             endpoint_validator,
             forwarding_hook: None,
             geo_q_admission,
+            language_targeting,
         }
     }
 
@@ -150,7 +155,7 @@ where
     ) -> Result<Identifier, SubscriptionError> {
         let context = subscription_context.spec();
         let result: Result<Identifier, SubscriptionError> = async {
-            request_validation::validate_create_request(&request, self.geo_q_admission)?;
+            request_validation::validate_create_request(&request, self.geo_q_admission, self.language_targeting)?;
 
             validate_endpoint(
                 request.notification.as_ref().and_then(|notification| notification.endpoint.as_ref()),
@@ -226,7 +231,7 @@ where
                 self.endpoint_validator.as_ref(),
             )?;
 
-            request_validation::validate_common_members(&request, self.geo_q_admission)?;
+            request_validation::validate_common_members(&request, self.geo_q_admission, self.language_targeting)?;
             self.variant.validate_update_extra(&request)?;
             request_validation::validate_notification_fragment(&request)?;
 

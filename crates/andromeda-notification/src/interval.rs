@@ -104,7 +104,7 @@ impl IntervalNotificationOperation {
         let this = &self;
         let _results: Vec<()> = stream::iter(due_subs)
             .map(|stored| async move {
-                let compiled = compile_subscription(&stored);
+                let compiled = compile_subscription(&stored, this.entity_query.language_targeting().matching());
                 let sub = &stored.subscription;
                 let entities = match this.candidates().matching(&compiled).await {
                     Ok(e) => e,

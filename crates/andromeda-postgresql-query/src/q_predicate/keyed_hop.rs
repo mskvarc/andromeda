@@ -14,6 +14,7 @@ use crate::{
     q_predicate::{keyed_branches::union_of, projection::linked_condition, traversal::LinkedHop},
 };
 use andromeda_ngsi_ld_query::filter::{
+    language_matching::LanguageMatching,
     path::QueryPath,
     predicate::{Predicate, SetMembership},
 };
@@ -22,8 +23,8 @@ use sea_query::SelectStatement;
 /// `SELECT "entity_key"` over the Entities whose standing Relationship
 /// instance names a linked entity `pred` keeps, `None` unless `pred` is a
 /// single hop of a recorded Relationship whose inner term an index can
-/// enumerate.
-pub(crate) fn hop_candidates(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames) -> Option<SelectStatement> {
+/// enumerate. A target language of the inner term selects keys by `matching`.
+pub(crate) fn hop_candidates(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames, matching: LanguageMatching) -> Option<SelectStatement> {
     let QueryPath::Linked {
         relationship,
         guard_types,
@@ -38,7 +39,7 @@ pub(crate) fn hop_candidates(pred: &Predicate, rows: &EntityRowRefs, names: &Que
     let relationship_id = names.attributes.get(relationship)?;
     let hop = LinkedHop::at_depth(1);
     let inner_rows = hop.inner_rows(rows.schema().cloned());
-    let inner_condition = linked_condition(pred, inner, &inner_rows, names, 1);
+    let inner_condition = linked_condition(pred, inner, &inner_rows, names, matching, 1);
     union_of(hop.linking_branches(relationship_id, guard_types, &names.types, rows, inner_condition))
 }
 
@@ -76,7 +77,7 @@ mod tests {
         entity_type_name_key::EntityTypeNameKey,
         q_predicate::keyed_hop::hop_candidates,
     };
-    use andromeda_ngsi_ld_query::filter::{expression::Expr, parser::parse};
+    use andromeda_ngsi_ld_query::filter::{expression::Expr, language_matching::LanguageMatching, parser::parse};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, IntoIden, PostgresQueryBuilder};
 
@@ -98,7 +99,7 @@ mod tests {
         let Expr::Pred(pred) = parse(q).expect("parse q") else {
             panic!("a single predicate");
         };
-        hop_candidates(&pred, rows, &names()).map(|select| select.to_string(PostgresQueryBuilder))
+        hop_candidates(&pred, rows, &names(), LanguageMatching::TagEquality).map(|select| select.to_string(PostgresQueryBuilder))
     }
 
     fn candidates(q: &str) -> Option<String> {

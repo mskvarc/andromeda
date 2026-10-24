@@ -51,6 +51,21 @@ pub enum ExtensionsConfigError {
     ZeroTemporalAggregationMaxGroups,
 }
 
+/// The `q_target_languages` setting: what a `q` bracket may name as a target
+/// language, each level admitting everything the one before it does.
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum QTargetLanguages {
+    /// The clause 4.9 ABNF alone: `[en]`, never `[en-GB]`.
+    #[default]
+    Specification,
+    /// Every RFC 5646 language tag, matched by tag equality.
+    LanguageTags,
+    /// Every RFC 5646 tag and RFC 4647 extended range, matched by extended
+    /// filtering.
+    LanguageRanges,
+}
+
 /// Runtime configuration for the opt-in extensions.
 ///
 /// Each feature is a [`HttpFeatureMode`] rather than a bare `bool`. Every one
@@ -145,6 +160,19 @@ pub struct ExtensionsConfig {
     /// header is ignored, as RFC 9110 section 12.5.4 permits.
     #[toml_comment(inline)]
     pub accept_language: HttpFeatureMode,
+    /// What a `q` bracket may name as a target language (non-standard above
+    /// `specification`).
+    ///
+    /// The clause 4.9 ABNF admits only an `AttrName` in the bracket, so
+    /// `specification` refuses `marque[en-GB]` with `BadRequestData`.
+    /// `language-tags` admits every RFC 5646 tag, matched by case-insensitive
+    /// tag equality (Class 1). `language-ranges` also admits RFC 4647
+    /// extended ranges and matches every target language by section 3.3.2
+    /// extended filtering, so `[en]` selects `en-GB` too (Class 2). A query
+    /// carrying a target language is held to the level every Context Source
+    /// it reaches advertises.
+    #[toml_comment(inline)]
+    pub q_target_languages: QTargetLanguages,
     /// The upper bound on the temporal history instances one delete-by-query may
     /// remove before it is refused with `TooManyResults` (403).
     ///
@@ -171,6 +199,7 @@ impl Default for ExtensionsConfig {
             cursor_pagination: HttpFeatureMode::Enabled,
             near_distance_band: HttpFeatureMode::Disabled,
             accept_language: HttpFeatureMode::Disabled,
+            q_target_languages: QTargetLanguages::Specification,
             temporal_delete_by_query_max_matches: DEFAULT_TEMPORAL_DELETE_MAX_MATCHES,
             temporal_aggregation_grouping_max_groups: DEFAULT_TEMPORAL_AGGREGATION_MAX_GROUPS,
         }
@@ -217,12 +246,13 @@ impl ExtensionsConfig {
             || matches!(self.cursor_pagination, HttpFeatureMode::Enabled)
             || matches!(self.near_distance_band, HttpFeatureMode::Enabled)
             || matches!(self.accept_language, HttpFeatureMode::Enabled)
+            || !matches!(self.q_target_languages, QTargetLanguages::Specification)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::config::{ExtensionsConfig, ExtensionsConfigError};
+    use crate::config::{ExtensionsConfig, ExtensionsConfigError, QTargetLanguages};
     use andromeda_http_stack::config::feature_mode::HttpFeatureMode;
     use toml_comment::TomlComment;
 
@@ -237,6 +267,7 @@ mod tests {
         pretty_assertions::assert_eq!(config.tenant_management, HttpFeatureMode::Disabled);
         pretty_assertions::assert_eq!(config.near_distance_band, HttpFeatureMode::Disabled);
         pretty_assertions::assert_eq!(config.accept_language, HttpFeatureMode::Disabled);
+        pretty_assertions::assert_eq!(config.q_target_languages, QTargetLanguages::Specification);
     }
 
     /// Clause 5.5.9.1 permits opaque pointers outright, so cursor pagination is
@@ -281,6 +312,7 @@ mod tests {
             cursor_pagination: HttpFeatureMode::Disabled,
             near_distance_band: HttpFeatureMode::Enabled,
             accept_language: HttpFeatureMode::Enabled,
+            q_target_languages: QTargetLanguages::LanguageTags,
             temporal_delete_by_query_max_matches: 42,
             temporal_aggregation_grouping_max_groups: 7,
         };
@@ -293,6 +325,7 @@ mod tests {
         pretty_assertions::assert_eq!(parsed.cursor_pagination, HttpFeatureMode::Disabled);
         pretty_assertions::assert_eq!(parsed.near_distance_band, HttpFeatureMode::Enabled);
         pretty_assertions::assert_eq!(parsed.accept_language, HttpFeatureMode::Enabled);
+        pretty_assertions::assert_eq!(parsed.q_target_languages, QTargetLanguages::LanguageTags);
         pretty_assertions::assert_eq!(parsed.temporal_delete_by_query_max_matches, 42);
         pretty_assertions::assert_eq!(parsed.temporal_aggregation_grouping_max_groups, 7);
     }
@@ -308,6 +341,7 @@ mod tests {
         assert!(rendered.contains("cursor_pagination"), "{rendered}");
         assert!(rendered.contains("near_distance_band"), "{rendered}");
         assert!(rendered.contains("accept_language"), "{rendered}");
+        assert!(rendered.contains("q_target_languages"), "{rendered}");
     }
 
     #[test]
@@ -334,6 +368,38 @@ mod tests {
             ..ExtensionsConfig::default()
         };
         assert!(config.any_feature_requested());
+    }
+
+    /// A level above the specification's own grammar is a requested feature,
+    /// so the conformance override reports it.
+    #[test]
+    fn a_target_language_level_above_the_specification_counts_as_a_requested_feature() {
+        for level in [QTargetLanguages::LanguageTags, QTargetLanguages::LanguageRanges] {
+            let config = ExtensionsConfig {
+                cursor_pagination: HttpFeatureMode::Disabled,
+                q_target_languages: level,
+                ..ExtensionsConfig::default()
+            };
+            assert!(config.any_feature_requested(), "{level:?}");
+        }
+    }
+
+    #[test]
+    fn the_target_language_levels_are_spelled_in_kebab_case() {
+        for (level, token) in [
+            (QTargetLanguages::Specification, "specification"),
+            (QTargetLanguages::LanguageTags, "language-tags"),
+            (QTargetLanguages::LanguageRanges, "language-ranges"),
+        ] {
+            let config = ExtensionsConfig {
+                q_target_languages: level,
+                ..ExtensionsConfig::default()
+            };
+            let rendered = toml::to_string(&config).expect("config serialises to TOML");
+            assert!(rendered.contains(&format!("q_target_languages = \"{token}\"")), "{rendered}");
+            let parsed: ExtensionsConfig = toml::from_str(&rendered).expect("config parses from TOML");
+            pretty_assertions::assert_eq!(parsed.q_target_languages, level);
+        }
     }
 
     /// The default-on cursor pagination is a requested feature, so conformance

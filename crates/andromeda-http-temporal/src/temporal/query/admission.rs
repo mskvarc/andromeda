@@ -11,18 +11,25 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity_map::reuse::EntityMapUse;
+use andromeda_extensions::advertisement::advertised_language_targeting;
 use andromeda_federation::{
     FederationService,
     forwarded_query::client_query::ClientQuery,
+    language_negotiation::NegotiatedLanguageTargeting,
     operation::ForwardingOperation,
-    ordering_admission::{OrderedRead, OrderingAdmission},
+    ordering_admission::OrderingAdmission,
+    participating_read::ParticipatingRead,
     request::EntityMapInUse,
 };
 use andromeda_http_extraction::prefer::PreferHeader;
 use andromeda_http_headers::via::Via;
 use andromeda_jsonld::{term_expansion::ContextualExpander, user_context_admission::AdmittedContext};
-use andromeda_ngsi_ld_query::geo::{compile::compile_geo_query, query::GeoQuery};
+use andromeda_ngsi_ld_query::{
+    geo::{compile::compile_geo_query, query::GeoQuery},
+    ordering::parameters::OrderingParameters,
+};
 use andromeda_ngsi_ld_request::{error::ParameterError, query::temporal::operation::TemporalQueryOperation};
+use andromeda_temporal::query_reading::QueryReading;
 use axum::http::Uri;
 
 /// One temporal query, decoded and admitted: what the protocol headers
@@ -39,6 +46,20 @@ pub(super) struct AdmittedQuery {
     /// registration to take part (clauses 4.3.6.1 and 5.10.2.4); `None` when
     /// the query has none or does not reach the Context Registry.
     pub(super) registry_geo: Option<GeoQuery>,
+    /// What the query's target languages may be and how they select
+    /// languageMap keys, locally and at every source it reaches, and the
+    /// warning a fallback to tag equality carries.
+    pub(super) language: NegotiatedLanguageTargeting,
+}
+
+impl AdmittedQuery {
+    /// How the query's text is read under `context`.
+    pub(super) const fn reading<'a>(&self, context: &'a ContextSpec) -> QueryReading<'a> {
+        QueryReading {
+            context,
+            language_targeting: self.language.targeting,
+        }
+    }
 }
 
 /// Hold the query to every rule that can be decided before it runs, and
@@ -51,8 +72,9 @@ pub(super) struct AdmittedQuery {
 /// # Errors
 ///
 /// The classified failure of resolving the Entity Map, of the clause 5.7.4.4
-/// validation, of compiling the geoquery, and of the clause 5.7.4.4 ordering
-/// rule.
+/// validation, of compiling the geoquery, of the clause 5.7.4.4 ordering rule,
+/// and of admitting the `q` target languages under the broker's
+/// `q_target_languages` level and the levels of the sources the query reaches.
 pub(super) async fn admit_request(
     state: &TemporalRouteServices,
     target: &ContextTarget,
@@ -70,21 +92,31 @@ pub(super) async fn admit_request(
         .validate(TemporalQueryOperation::Query, state.temporal.linked_retrieval())
         .with_instance(instance)?;
     let registry_geo = registry_geo_query(state, context, params, instance).await?;
-    refuse_inadmissible_ordering(
-        &state.forwarding,
-        target,
-        context,
-        params,
-        registry_geo.as_ref(),
-        EntityMapInUse::from(&map_use),
-        instance,
-    )
-    .await?;
+    let service = &state.temporal;
+    // The broker refuses a target language its own `q_target_languages`
+    // level does not admit before any source is asked.
+    if let Some(q) = &params.q {
+        service.language_targeting().admit(q).with_instance(instance)?;
+    }
+    let read = ParticipatingRead {
+        requested_scope: params.execution_scope(),
+        client_query: ClientQuery::TemporalQuery(params),
+        geo: registry_geo.as_ref(),
+        operation: ForwardingOperation::QueryTemporalEntity,
+        entity_map: EntityMapInUse::from(&map_use),
+    };
+    refuse_inadmissible_ordering(&state.forwarding, target, context, &params.ordering, &read, instance).await?;
+    let language = state
+        .forwarding
+        .negotiate_language_targeting(target, context, &read, service.language_targeting(), advertised_language_targeting)
+        .await
+        .with_instance(instance)?;
     Ok(AdmittedQuery {
         prefer: protocol.prefer,
         incoming_via: protocol.incoming_via,
         map_use,
         registry_geo,
+        language,
     })
 }
 
@@ -132,26 +164,11 @@ async fn refuse_inadmissible_ordering(
     forwarding: &FederationService,
     target: &ContextTarget,
     context: &ContextSpec,
-    params: &TemporalQueryParameters,
-    geo: Option<&GeoQuery>,
-    entity_map: EntityMapInUse<'_>,
+    ordering: &OrderingParameters,
+    read: &ParticipatingRead<'_>,
     instance: &Uri,
 ) -> Result<(), ProblemResponse> {
-    let admission = forwarding
-        .admit_ordering(
-            target,
-            context,
-            OrderedRead {
-                ordering: &params.ordering,
-                requested_scope: params.execution_scope(),
-                client_query: ClientQuery::TemporalQuery(params),
-                geo,
-                operation: ForwardingOperation::QueryTemporalEntity,
-                entity_map,
-            },
-        )
-        .await
-        .with_instance(instance)?;
+    let admission = forwarding.admit_ordering(target, context, ordering, read).await.with_instance(instance)?;
     match admission {
         OrderingAdmission::Admitted => Ok(()),
         OrderingAdmission::Refused => Err(ParameterError::OrderingWithParticipatingSource).with_instance(instance),

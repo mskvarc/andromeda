@@ -136,6 +136,7 @@ fn scan_token(chars: &[char], start: usize, position: OperandPosition) -> Result
         ']' => Ok((Token::RBracket, start + 1)),
         '{' => Ok((Token::LBrace, start + 1)),
         '}' => Ok((Token::RBrace, start + 1)),
+        '*' if is_range_wildcard(chars, start) => Ok(scan_identifier(chars, start, position)),
         '*' => Ok((Token::Star, start + 1)),
         ',' => Ok((Token::Comma, start + 1)),
         '=' if is_at(chars, start + 1, '=') => Ok((Token::Eq, start + 2)),
@@ -281,6 +282,15 @@ fn is_identifier_char(current: char) -> bool {
     current.is_alphanumeric() || matches!(current, '_' | ':' | '/' | '-' | '#')
 }
 
+/// Whether `chars` holds, at `index`, the `*` subtag of an RFC 4647 extended
+/// language range (`de-*-DE`, `*-GB`, `en-*`).
+///
+/// A `*` that touches a `-` is a subtag; a lone one stays the `[*]`
+/// every-language marker.
+fn is_range_wildcard(chars: &[char], index: usize) -> bool {
+    is_at(chars, index, '*') && (is_at(chars, index + 1, '-') || index.checked_sub(1).is_some_and(|before| is_at(chars, before, '-')))
+}
+
 /// Whether `current` may appear inside a bare `URI` operand (RFC 3986 section 2).
 ///
 /// The URI characters that clause 4.9 also uses as query syntax (`;`, `|`, `(`,
@@ -344,7 +354,7 @@ impl OperandPosition {
     fn continues_identifier(self, chars: &[char], index: usize, current: char) -> bool {
         match self {
             OperandPosition::EqualityValue => is_uri_char(chars, index, current),
-            OperandPosition::Other => is_identifier_char(current),
+            OperandPosition::Other => is_identifier_char(current) || is_range_wildcard(chars, index),
         }
     }
 }
@@ -626,5 +636,16 @@ mod tests {
                 Token::QuotedStr("Berlin".to_string()),
             ]
         );
+    }
+
+    /// RFC 4647 section 2.2: a `*` subtag touching a `-` belongs to the range
+    /// it stands in, while `[*]` keeps its marker token.
+    #[test]
+    fn a_wildcard_subtag_joins_its_language_range() {
+        assert_eq!(lex("name[de-*-DE]"), vec![ident("name"), Token::LBracket, ident("de-*-DE"), Token::RBracket]);
+        assert_eq!(lex("name[*-GB]"), vec![ident("name"), Token::LBracket, ident("*-GB"), Token::RBracket]);
+        assert_eq!(lex("name[en-*]"), vec![ident("name"), Token::LBracket, ident("en-*"), Token::RBracket]);
+        assert_eq!(lex("name[*]"), vec![ident("name"), Token::LBracket, Token::Star, Token::RBracket]);
+        assert_eq!(lex("name[en-GB]"), vec![ident("name"), Token::LBracket, ident("en-GB"), Token::RBracket]);
     }
 }

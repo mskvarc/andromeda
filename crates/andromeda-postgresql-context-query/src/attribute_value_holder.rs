@@ -7,21 +7,25 @@ use crate::{
     attribute_value_datatype::{ARRAY_TYPE, NUMBER_TYPE, OBJECT_TYPE, OrderedValue},
     attribute_value_order::ELEMENT_COLUMN,
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::filter::path::AttrPath;
+use andromeda_ngsi_ld_query::filter::{
+    path::AttrPath,
+    target_language::LanguageSelector,
+    trailing_path::{MemberPath, TrailingPath},
+};
 use andromeda_ngsi_ld_vocabulary::{
     expanded::classes::{DATE, TIME},
     keyword,
 };
 use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_query::q_predicate::{
+    extended_filter_pattern::extended_filter_pattern,
     sub_attribute::{element_path::ElementPath, member_field::MemberField},
     value_object_member::{expanded_jsonpath, is_json_property, literal_jsonpath},
 };
 use andromeda_postgresql_schema::current::{CurrentAttributes, SubAttribute};
 use andromeda_postgresql_seaquery::{
     cast::{cast_compound, typed_null},
-    jsonb::{escape_jsonpath_key, jsonb_build_object, jsonb_path_query_first, jsonb_typeof},
+    jsonb::{jsonb_build_object, jsonb_path_query_first, jsonb_typeof},
     literal::{int_literal, text_literal},
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
@@ -36,10 +40,11 @@ pub(crate) fn ordered_value(path: &AttrPath, element: Option<&ElementPath>, sour
         Some(false) => Holder::Element(SeaExpr::col((source.clone(), Alias::new(ELEMENT_COLUMN)))),
         Some(true) | None => Holder::Row(source.clone()),
     };
-    match element.and_then(|element| element.field) {
-        Some(field) => holder.member(field),
-        None if path.value_path.is_empty() => holder.own_value(),
-        None => holder.member_of_value(path),
+    match (element.and_then(|element| element.field), &path.trailing) {
+        (Some(field), None | Some(TrailingPath::AllLanguages | TrailingPath::Members(_) | TrailingPath::Language(_))) => holder.member(field),
+        (None, None | Some(TrailingPath::AllLanguages)) => holder.own_value(),
+        (None, Some(TrailingPath::Members(members))) => holder.member_of_value(Some(members), path.target_language()),
+        (None, Some(TrailingPath::Language(language))) => holder.member_of_value(None, Some(language.selector())),
     }
 }
 
@@ -132,30 +137,35 @@ impl Holder {
     }
 
     /// The member of the holder's compound value a trailing path addresses
-    /// (clause 4.23.3 EXAMPLE 4, `?orderBy=address[city]`).
+    /// (clause 4.23.3 EXAMPLE 4, `?orderBy=address[city]`), or the string of a
+    /// target language.
     ///
     /// Clause 4.9 gives the spelling three readings and only the stored value
     /// says which applies, so each is looked up and the first that resolves is
     /// taken: a member of an expanded structured value, a member of a
-    /// `JsonProperty`'s literal, and, for one member, a target language of a
-    /// `languageMap`. They cannot collide: a structured value has no
-    /// `@language`, a `languageMap` no IRI-keyed members, and a literal is read
-    /// only on a `JsonProperty`.
-    fn member_of_value(&self, path: &AttrPath) -> OrderedValue {
+    /// `JsonProperty`'s literal, and a target language of a `languageMap`. They
+    /// cannot collide: a structured value has no `@language`, a `languageMap`
+    /// no IRI-keyed members, and a literal is read only on a `JsonProperty`. A
+    /// target language no member name spells (`name[en-GB]`) has the last
+    /// reading alone.
+    fn member_of_value(&self, members: Option<&MemberPath>, language: Option<LanguageSelector<'_>>) -> OrderedValue {
         let object = self.field(CurrentAttributes::ValueObject, SubAttribute::ValueObject);
         let json_property = is_json_property(self.field(CurrentAttributes::AttributeKind, SubAttribute::AttributeKind));
-        let node_path = expanded_jsonpath(&path.value_path);
-        let declared = jsonb_path_query_first(object.clone(), &format!("{node_path}.\"{}\"", keyword::TYPE)).json_path_text(text_literal("{}")); // clone: every reading walks the one value
-        let mut readings = vec![
-            jsonb_path_query_first(object.clone(), &format!("{node_path}.\"{}\"", keyword::VALUE)), // clone: as above
-            CaseStatement::new()
-                .case(
-                    json_property,
-                    jsonb_path_query_first(object.clone(), &literal_jsonpath(&path.value_path_compact)),
-                ) // clone: as above
-                .into(),
-        ];
-        if let [language] = path.value_path_compact.as_slice() {
+        let mut readings = Vec::new();
+        let declared = match members {
+            Some(members) => {
+                let node_path = expanded_jsonpath(&members.addressed);
+                readings.push(jsonb_path_query_first(object.clone(), &format!("{node_path}.\"{}\"", keyword::VALUE))); // clone: every reading walks the one value
+                readings.push(
+                    CaseStatement::new()
+                        .case(json_property, jsonb_path_query_first(object.clone(), &literal_jsonpath(&members.written))) // clone: as above
+                        .into(),
+                );
+                jsonb_path_query_first(object.clone(), &format!("{node_path}.\"{}\"", keyword::TYPE)).json_path_text(text_literal("{}")) // clone: as above
+            }
+            None => typed_null(PostgresType::Text),
+        };
+        if let Some(language) = language {
             readings.push(jsonb_path_query_first(object, &target_language_jsonpath(language)));
         }
         let member: SimpleExpr = Func::coalesce(readings).into();
@@ -170,12 +180,22 @@ impl Holder {
     }
 }
 
-/// The jsonpath selecting the value of one language of a `languageMap`.
-fn target_language_jsonpath(language: &AttributeName) -> String {
+/// The jsonpath selecting the value of the `languageMap` entries a target
+/// language selects.
+///
+/// An ordering reads a tag by tag equality, compared case-insensitively as RFC
+/// 5646 section 2.1.1 requires; an extended range has no equality reading and
+/// filters (RFC 4647 section 3.3.2). A validated tag or range holds letters,
+/// digits and `-` only, none of which a jsonpath string or a regular
+/// expression reads as syntax.
+fn target_language_jsonpath(language: LanguageSelector<'_>) -> String {
+    let pattern = match language {
+        LanguageSelector::Tag(tag) => format!("^{}$", tag.as_str()),
+        LanguageSelector::Range(_) => extended_filter_pattern(language),
+    };
     format!(
-        "$[*] ? (@.\"{}\" == \"{}\").\"{}\"",
+        "$[*] ? (@.\"{}\" like_regex \"{pattern}\" flag \"i\").\"{}\"",
         keyword::LANGUAGE,
-        escape_jsonpath_key(language.as_str()),
         keyword::VALUE
     )
 }

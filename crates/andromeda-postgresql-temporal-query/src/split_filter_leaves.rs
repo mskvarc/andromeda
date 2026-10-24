@@ -72,7 +72,7 @@ fn leaf_expression(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, lea
             // Term is borrowed from the query's own
             let term = Expr::Pred(pred.clone());
             let window = windowed_instances(branch, compiled, &of, WindowReach::Inside);
-            Ok(q_filter::compile(&term, &InstanceScan::History(&window), names).into())
+            Ok(q_filter::compile(&term, &InstanceScan::History(&window), names, compiled.entities.language_matching).into())
         }
         FilterLeaf::Geo(_) => Ok(temporal_geo_existential(branch, compiled, names, &of, WindowReach::Inside)?.map_or_else(false_literal, Into::into)),
         FilterLeaf::ScopeRequirement(pattern) => Ok(pattern_condition(pattern, &scope_history_target(branch, compiled, &of, WindowReach::Inside))),

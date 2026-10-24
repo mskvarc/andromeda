@@ -2,13 +2,18 @@ use crate::{
     FederationService,
     config::FederationConfig,
     fixed_registration_store::{FixedRegistrationStore, NoLocalEntities},
-    source_identity::SourceConfiguration,
+    forwarded_query::client_query::ClientQuery,
+    operation::ForwardingOperation,
+    participating_read::ParticipatingRead,
+    request::EntityMapInUse,
+    source_identity::{ReachedSource, SourceConfiguration},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use andromeda_test_mocks::{
     callback_path::CallbackPath,
     callback_server::MockResponse,
@@ -184,4 +189,66 @@ async fn a_registration_not_serving_the_temporal_retrieval_is_not_asked() {
 
     assert_eq!(configurations(&service).await, Vec::new());
     assert_eq!(source.total_request_count(), 0);
+}
+
+/// The sources one Query Entities of Buildings reaches, as `params` asks.
+async fn query_configurations(service: &FederationService, params: &EntityQueryParameters) -> Vec<ReachedSource> {
+    let read = ParticipatingRead {
+        requested_scope: params.execution_scope(),
+        client_query: ClientQuery::EntityQuery(params),
+        geo: None,
+        operation: ForwardingOperation::QueryEntity,
+        entity_map: EntityMapInUse::None,
+    };
+    service
+        .query_configurations(&ContextTarget::Live, &ContextSpec::none(), &read)
+        .await
+        .expect("the registrations are read")
+}
+
+fn buildings(query: &str) -> EntityQueryParameters {
+    serde_urlencoded::from_str(query).expect("a valid entity query")
+}
+
+/// A query reaches the registrations that take part in it, and each one's
+/// source is asked for its identity.
+#[tokio::test]
+async fn a_query_probes_every_registration_taking_part_in_it() {
+    let source = source().await;
+    source.enqueue(Method::GET, path(IDENTITY_PATH), identity(Some(advertising_extras()))).await;
+    let service = service(registration(&source, &["queryEntity"], &json!({})));
+
+    assert_eq!(
+        query_configurations(&service, &buildings("type=https%3A%2F%2Fexample.org%2FBuilding")).await,
+        vec![ReachedSource {
+            registration: "urn:ngsi-ld:ContextSourceRegistration:identity".parse().expect("a registration identifier"),
+            configuration: SourceConfiguration::Described(Some(JsonLiteral::admit(&advertising_extras().to_string()).expect("a JSON literal"))),
+        }]
+    );
+}
+
+/// Clause 5.5.13: a query limited to the local scope uses no registration, so
+/// no source is asked anything.
+#[tokio::test]
+async fn a_local_query_reaches_no_source() {
+    let source = source().await;
+    let service = service(registration(&source, &["queryEntity"], &json!({})));
+
+    assert_eq!(
+        query_configurations(&service, &buildings("type=https%3A%2F%2Fexample.org%2FBuilding&local=true")).await,
+        Vec::new()
+    );
+}
+
+/// Clause 4.20: a registration that does not serve the query takes no part
+/// in it.
+#[tokio::test]
+async fn a_registration_not_serving_the_query_is_not_reached() {
+    let source = source().await;
+    let service = service(registration(&source, &["retrieveTemporal"], &json!({})));
+
+    assert_eq!(
+        query_configurations(&service, &buildings("type=https%3A%2F%2Fexample.org%2FBuilding")).await,
+        Vec::new()
+    );
 }

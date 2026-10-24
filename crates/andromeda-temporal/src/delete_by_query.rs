@@ -61,7 +61,7 @@ impl TemporalService {
     ) -> Result<TemporalDeleteOutcome, TemporalError> {
         params.validate()?;
         let selection = params.selection_params();
-        let compiled = self.compile_temporal_query(&selection, context).await?;
+        let compiled = self.compile_temporal_query(&selection, context, self.language_targeting()).await?;
 
         // Stage 1 entity resolution, unpaged: the delete addresses every
         // matching entity, not one page of them. A cheap guard first — no entity

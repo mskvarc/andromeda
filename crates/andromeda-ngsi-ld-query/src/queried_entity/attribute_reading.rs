@@ -6,7 +6,10 @@
 //! evaluator passes them by value and every value it reads borrows from the
 //! entity for `'a`.
 
-use crate::queried_entity::{instance_metadata::InstanceMetadata, value_item::ValueItem};
+use crate::{
+    filter::{language_matching::LanguageMatching, target_language::LanguageSelector},
+    queried_entity::{instance_metadata::InstanceMetadata, value_item::ValueItem},
+};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use std::borrow::Cow;
 
@@ -46,14 +49,11 @@ pub trait QueriedInstance<'a>: Copy {
     /// `ListProperty` or a `ListRelationship` holds.
     fn values(self) -> impl Iterator<Item = ValueItem<'a, Self::Node>>;
 
-    /// The strings a `LanguageProperty` instance holds under the language tag
-    /// `language`, in order: the target value clause 4.9 reads when a target
-    /// language is specified. None for a language the map does not hold, and
-    /// none for every other family.
-    ///
-    /// The tag is compared as written, which is how the store compares the
-    /// `@language` of an expanded `languageMap` entry.
-    fn language_values(self, language: &str) -> impl Iterator<Item = ValueItem<'a, Self::Node>>;
+    /// The strings a `LanguageProperty` instance holds under every language
+    /// tag `wanted` admits under `matching`, in order: the target value clause
+    /// 4.9 reads when a target language is specified. None when no key is
+    /// selected, and none for every other family.
+    fn language_values(self, wanted: LanguageSelector<'_>, matching: LanguageMatching) -> impl Iterator<Item = ValueItem<'a, Self::Node>>;
 
     /// Every instance of the sub-attribute keyed by the expanded name `name`,
     /// default and `datasetId` instances alike, in the order the instance holds

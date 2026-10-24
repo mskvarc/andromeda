@@ -7,6 +7,7 @@ use crate::{
         path::{AttrPath, QueryPath},
         predicate::Predicate,
         scalar::{CompareValue, Scalar},
+        trailing_path::TrailingPath,
     },
     pattern::Pattern,
 };
@@ -169,19 +170,28 @@ fn write_attr_path(buf: &mut String, path: &AttrPath, spelling: MemberSpelling) 
         buf.push('.');
         write_ident(buf, sub.as_str());
     }
-    let members = match spelling {
-        MemberSpelling::Addressed => &path.value_path,
-        MemberSpelling::Written => &path.value_path_compact,
-    };
-    if !members.is_empty() {
-        buf.push('[');
-        for (i, vp) in members.iter().enumerate() {
-            if i > 0 {
-                buf.push('.');
+    match &path.trailing {
+        Some(TrailingPath::Members(members)) => {
+            let names = match spelling {
+                MemberSpelling::Addressed => &members.addressed,
+                MemberSpelling::Written => &members.written,
+            };
+            buf.push('[');
+            for (index, name) in names.iter().enumerate() {
+                if index > 0 {
+                    buf.push('.');
+                }
+                write_ident(buf, name.as_str());
             }
-            write_ident(buf, vp.as_str());
+            buf.push(']');
         }
-        buf.push(']');
+        Some(TrailingPath::Language(language)) => {
+            buf.push('[');
+            buf.push_str(language.selector().as_str());
+            buf.push(']');
+        }
+        Some(TrailingPath::AllLanguages) => buf.push_str("[*]"),
+        None => {}
     }
 }
 
@@ -515,5 +525,17 @@ mod tests {
         };
         assert!(matches!(operand("moment==12:00:00Z"), Scalar::Time(_)));
         assert!(matches!(operand("moment==\"12:00:00Z\""), Scalar::Str(_)));
+    }
+
+    /// A target language only a tag or range spells, and the `[*]` marker,
+    /// read back as the group they were.
+    #[test]
+    fn a_target_language_and_the_every_language_marker_round_trip() {
+        for written in ["label[en-GB]==\"x\"", "label[de-*-DE]==\"x\"", "label[*]==\"x\"", "label[zh-Hant-TW]"] {
+            let expr = parse(written).unwrap();
+            pretty_assertions::assert_eq!(serialize(&expr), written);
+            pretty_assertions::assert_eq!(parse(&serialize(&expr)).unwrap(), expr, "{written}");
+            pretty_assertions::assert_eq!(serialize_written_members(&expr), written);
+        }
     }
 }

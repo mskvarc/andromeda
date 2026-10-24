@@ -42,7 +42,7 @@ mod tests {
         cursor::PageCursor,
         entity::compiled::CompiledEntityQuery,
         entity_selection::{ConsideredEntities, EntitySelection},
-        filter::{eval::evaluate, parser},
+        filter::{eval::evaluate, language_targeting::LanguageTargeting, parser},
         geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand, query::GeoQuery},
         page_window::{PageStart, PageWindow},
         projection::returned_attributes::ReturnedAttributes,
@@ -66,7 +66,10 @@ mod tests {
     /// clauses: clause 4.10 for `georel`, clause 4.18 for `scopeQ`, clause
     /// 5.2.33 for the selectors; clause 4.9 `q` is the evaluator's own.
     fn reference_matches(selection: &EntitySelection, entity: &EntityState) -> bool {
-        let q_holds = selection.q_expr.as_ref().is_none_or(|expr| evaluate(expr, entity, NoLinkedEntities));
+        let q_holds = selection
+            .q_expr
+            .as_ref()
+            .is_none_or(|expr| evaluate(expr, entity, NoLinkedEntities, selection.language_matching));
         let geo_holds = selection.geo.as_ref().is_none_or(|geo| {
             // Clause 4.10: one instance of the target GeoProperty meeting the
             // restriction is enough.
@@ -282,15 +285,19 @@ mod tests {
 
     fn service(profile: StorageProfile) -> EntityQueryService {
         let store = Arc::new(ProfiledEntityStore::new(profile));
-        EntityQueryService::new(
-            Arc::clone(&store) as Arc<dyn EntityReader>, // clone: the test store supplies both focused capabilities.
-            store as Arc<dyn EntityQueryStore>,
-            JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
-            SpatialAcceleration::StoreVerified,
-            TenantRef::UnnamedDefault,
-            None,
-            GeoQueryAdmission::new(EntityConfig::default().geometry_census_limits(), NearDistanceBand::Refused),
-        )
+        EntityQueryService::builder()
+            .reader(Arc::clone(&store) as Arc<dyn EntityReader>) // clone: the test store supplies both focused capabilities.
+            .query_store(store as Arc<dyn EntityQueryStore>)
+            .engine(JsonLdEngine::builder().allow_remote(false).build().expect("build engine"))
+            .spatial(SpatialAcceleration::StoreVerified)
+            .tenant(TenantRef::UnnamedDefault)
+            .remote_linked(None)
+            .geo_admission(GeoQueryAdmission::new(
+                EntityConfig::default().geometry_census_limits(),
+                NearDistanceBand::Refused,
+            ))
+            .language_targeting(LanguageTargeting::Specification)
+            .build()
     }
 
     /// Every profile whose axes all narrow, so no query is refused outright.

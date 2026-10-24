@@ -120,7 +120,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
         entity::compiled::CompiledEntityQuery,
-        filter::parser::parse,
+        filter::{language_targeting::LanguageTargeting, parser::parse},
         geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
         page_window::PageWindow,
         projection::returned_attributes::ReturnedAttributes,
@@ -256,15 +256,19 @@ mod tests {
     }
 
     fn service(held: &Arc<Held>) -> EntityQueryService {
-        EntityQueryService::new(
-            Arc::clone(held) as Arc<dyn EntityReader>,
-            Arc::clone(held) as Arc<dyn EntityQueryStore>,
-            JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
-            SpatialAcceleration::StoreVerified,
-            TenantRef::UnnamedDefault,
-            None,
-            GeoQueryAdmission::new(EntityConfig::default().geometry_census_limits(), NearDistanceBand::Refused),
-        )
+        EntityQueryService::builder()
+            .reader(Arc::clone(held) as Arc<dyn EntityReader>)
+            .query_store(Arc::clone(held) as Arc<dyn EntityQueryStore>)
+            .engine(JsonLdEngine::builder().allow_remote(false).build().expect("build engine"))
+            .spatial(SpatialAcceleration::StoreVerified)
+            .tenant(TenantRef::UnnamedDefault)
+            .remote_linked(None)
+            .geo_admission(GeoQueryAdmission::new(
+                EntityConfig::default().geometry_census_limits(),
+                NearDistanceBand::Refused,
+            ))
+            .language_targeting(LanguageTargeting::Specification)
+            .build()
     }
 
     /// The store holding `a -> b -> c -> a`, the root `r -> a`, each with its

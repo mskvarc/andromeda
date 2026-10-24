@@ -2,7 +2,7 @@
 
 use crate::{
     error::QueryError,
-    filter::{parser, predicate::Predicate, serialize},
+    filter::{parser, path::AttrPath, predicate::Predicate, serialize, target_language::LanguageSelector},
 };
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
@@ -52,6 +52,33 @@ impl Expr {
             Expr::And(terms) | Expr::Or(terms) => terms.iter().map(Expr::linked_depth).max().unwrap_or(0),
             Expr::Pred(pred) => pred.path().linked_depth(),
         }
+    }
+
+    /// The local path every Query Term terminates at, in pre-order.
+    #[must_use]
+    pub fn terminal_paths(&self) -> Vec<&AttrPath> {
+        match self {
+            Expr::And(terms) | Expr::Or(terms) => terms.iter().flat_map(Expr::terminal_paths).collect(),
+            Expr::Pred(pred) => vec![pred.path().terminal()],
+        }
+    }
+
+    /// The local path every Query Term terminates at, mutably, in pre-order.
+    pub fn terminal_paths_mut(&mut self) -> Vec<&mut AttrPath> {
+        match self {
+            Expr::And(terms) | Expr::Or(terms) => terms.iter_mut().flat_map(Expr::terminal_paths_mut).collect(),
+            Expr::Pred(pred) => vec![pred.path_mut().terminal_mut()],
+        }
+    }
+
+    /// Every target language the filter's Query Terms name, in pre-order.
+    ///
+    /// A one-member group spelled like a language tag (`color[en]`) counts:
+    /// whether it reads a language or a compound member is decided by the
+    /// attribute it meets, which the filter alone cannot tell.
+    #[must_use]
+    pub fn target_languages(&self) -> Vec<LanguageSelector<'_>> {
+        self.terminal_paths().into_iter().filter_map(AttrPath::target_language).collect()
     }
 }
 

@@ -28,8 +28,9 @@ use andromeda_federation::{
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
+use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
-use andromeda_temporal::{in_effect_follow_up::follow_up_datasets, local_in_effect::LocalInEffect, service::TemporalService};
+use andromeda_temporal::{in_effect_follow_up::follow_up_datasets, local_in_effect::LocalInEffect, query_reading::QueryReading, service::TemporalService};
 use axum::http::Uri;
 use std::{collections::HashMap, slice};
 
@@ -81,18 +82,24 @@ pub(crate) struct GatheringRequest<'r> {
 
 impl<'r> GatheringRequest<'r> {
     /// The gathering of `params` against `target`, under `context`, its
-    /// context source filter expanded with `engine` and a failure naming
-    /// `instance`.
+    /// target languages read under `language_targeting`, its context
+    /// source filter expanded with `engine` and a failure naming `instance`.
     pub(crate) const fn new(
         target: &'r ContextTarget,
         params: &'r TemporalQueryParameters,
         context: &'r ContextSpec,
+        language_targeting: LanguageTargeting,
         engine: &'r JsonLdEngine,
         instance: &'r Uri,
     ) -> GatheringRequest<'r> {
         GatheringRequest {
             target,
-            query: InEffectRequest { params, context, instance },
+            query: InEffectRequest {
+                params,
+                context,
+                language_targeting,
+                instance,
+            },
             engine,
         }
     }
@@ -132,7 +139,15 @@ pub(crate) async fn gather_in_effect(
     entity_ids.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
     entity_ids.dedup();
     let local = service
-        .read_local_in_effect(target, query.params, query.context, &entity_ids)
+        .read_local_in_effect(
+            target,
+            query.params,
+            QueryReading {
+                context: query.context,
+                language_targeting: query.language_targeting,
+            },
+            &entity_ids,
+        )
         .await
         .with_instance(query.instance)?;
     let datasets = follow_up_datasets(&by_source(&probed), local.parts().chain(window_parts));

@@ -23,18 +23,17 @@ use crate::{
         local_target::{LocalTarget, local_target},
         ordering_term::ordering_value,
         pattern_term::pattern_value,
-        structured_target::{StructuredTarget, carries_target_language},
         sub_attribute::element_path::ElementPath,
         traversal::LinkedHop,
-        value_column::ValueColumn,
         value_object_member::on_some_member,
     },
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::filter::{
     expression::Expr,
+    language_matching::LanguageMatching,
     path::{AttrPath, QueryPath},
     predicate::{PatternPolarity, Predicate},
+    target_language::LanguageSelector,
 };
 use andromeda_postgresql_seaquery::literal::false_literal;
 use sea_query::Condition;
@@ -57,44 +56,46 @@ use std::ptr;
 /// The existentials of a disjunction are one probe rather than several, which
 /// says the same thing (see [`Disjunction`]) in the one shape the planner can
 /// drive from the value indexes.
+///
+/// A target language selects `languageMap` keys by `matching`.
 #[must_use]
-pub fn compile(expr: &Expr, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
-    compile_with(expr, scan, names, None)
+pub fn compile(expr: &Expr, scan: &InstanceScan<'_>, names: &QueryNames, matching: LanguageMatching) -> Condition {
+    compile_with(expr, scan, names, matching, None)
 }
 
 /// [`compile`], with `answered` (a term of `expr`'s top-level conjunction the
 /// statement answers on its own) compiled as no constraint.
 #[must_use]
-pub fn compile_except(expr: &Expr, answered: &Predicate, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
-    compile_with(expr, scan, names, Some(answered))
+pub fn compile_except(expr: &Expr, answered: &Predicate, scan: &InstanceScan<'_>, names: &QueryNames, matching: LanguageMatching) -> Condition {
+    compile_with(expr, scan, names, matching, Some(answered))
 }
 
 /// Compile `expr`, leaving out the one term `answered` names.
-fn compile_with(expr: &Expr, scan: &InstanceScan<'_>, names: &QueryNames, answered: Option<&Predicate>) -> Condition {
+fn compile_with(expr: &Expr, scan: &InstanceScan<'_>, names: &QueryNames, matching: LanguageMatching, answered: Option<&Predicate>) -> Condition {
     match expr {
         Expr::And(terms) => terms
             .iter()
-            .fold(Condition::all(), |cond, term| cond.add(compile_with(term, scan, names, answered))),
-        Expr::Or(terms) => disjunction(terms, Disjunction::default(), scan, names).into_condition(scan),
+            .fold(Condition::all(), |cond, term| cond.add(compile_with(term, scan, names, matching, answered))),
+        Expr::Or(terms) => disjunction(terms, Disjunction::default(), scan, names, matching).into_condition(scan),
         Expr::Pred(pred) if answered.is_some_and(|answered| ptr::eq(answered, pred)) => Condition::all(),
-        Expr::Pred(pred) => compile_predicate(pred, scan, names).into_condition(scan),
+        Expr::Pred(pred) => compile_predicate(pred, scan, names, matching).into_condition(scan),
     }
 }
 
 /// Gather the terms of a disjunction, and of every disjunction nested directly
 /// in it, into `gathered`.
-fn disjunction(terms: &[Expr], gathered: Disjunction, scan: &InstanceScan<'_>, names: &QueryNames) -> Disjunction {
+fn disjunction(terms: &[Expr], gathered: Disjunction, scan: &InstanceScan<'_>, names: &QueryNames, matching: LanguageMatching) -> Disjunction {
     terms.iter().fold(gathered, |gathered, term| match term {
-        Expr::Or(inner) => disjunction(inner, gathered, scan, names),
-        Expr::And(_) => gathered.with(CompiledTerm::Standalone(compile(term, scan, names))),
-        Expr::Pred(pred) => gathered.with(compile_predicate(pred, scan, names)),
+        Expr::Or(inner) => disjunction(inner, gathered, scan, names, matching),
+        Expr::And(_) => gathered.with(CompiledTerm::Standalone(compile(term, scan, names, matching))),
+        Expr::Pred(pred) => gathered.with(compile_predicate(pred, scan, names, matching)),
     })
 }
 
 /// Compile one leaf predicate, descending any linked-entity hops its axis
 /// carries before compiling the comparison against the entity it lands on.
-fn compile_predicate(pred: &Predicate, scan: &InstanceScan<'_>, names: &QueryNames) -> CompiledTerm {
-    compile_along_path(pred, pred.path(), scan, names, 0)
+fn compile_predicate(pred: &Predicate, scan: &InstanceScan<'_>, names: &QueryNames, matching: LanguageMatching) -> CompiledTerm {
+    compile_along_path(pred, pred.path(), scan, names, matching, 0)
 }
 
 /// Compile a predicate against the entity reached by the remaining axis.
@@ -108,9 +109,16 @@ fn compile_predicate(pred: &Predicate, scan: &InstanceScan<'_>, names: &QueryNam
 /// same window: the `temporal_linked_retrieval` extension renders every Linked
 /// Entity over the window of the roots, so a filter asking about a linked
 /// entity reads the history the answer shows of it.
-fn compile_along_path(pred: &Predicate, path: &QueryPath, scan: &InstanceScan<'_>, names: &QueryNames, depth: usize) -> CompiledTerm {
+fn compile_along_path(
+    pred: &Predicate,
+    path: &QueryPath,
+    scan: &InstanceScan<'_>,
+    names: &QueryNames,
+    matching: LanguageMatching,
+    depth: usize,
+) -> CompiledTerm {
     match path {
-        QueryPath::Local(local) => compile_local(pred, local, scan, names),
+        QueryPath::Local(local) => compile_local(pred, local, scan, names, matching),
         QueryPath::Linked {
             relationship,
             guard_types,
@@ -124,11 +132,11 @@ fn compile_along_path(pred: &Predicate, path: &QueryPath, scan: &InstanceScan<'_
             };
             let hop = LinkedHop::at_depth(depth + 1);
             let inner_condition = match scan {
-                InstanceScan::Current(_) => linked_condition(pred, inner, &hop.inner_rows(scan.schema().cloned()), names, depth + 1),
+                InstanceScan::Current(_) => linked_condition(pred, inner, &hop.inner_rows(scan.schema().cloned()), names, matching, depth + 1),
                 InstanceScan::History(window) => {
                     let linked = window.over(hop.linked_evolution());
                     let linked_scan = InstanceScan::History(&linked);
-                    compile_along_path(pred, inner, &linked_scan, names, depth + 1).into_condition(&linked_scan)
+                    compile_along_path(pred, inner, &linked_scan, names, matching, depth + 1).into_condition(&linked_scan)
                 }
             };
             CompiledTerm::Standalone(hop.probe(relationship_id, guard_types, &names.types, scan, inner_condition))
@@ -138,43 +146,16 @@ fn compile_along_path(pred: &Predicate, path: &QueryPath, scan: &InstanceScan<'_
 
 /// What `pred` asks, along the rest `path` of its axis, of the linked entity
 /// `rows` names, reached `depth` hops into a traversal.
-pub(crate) fn linked_condition(pred: &Predicate, path: &QueryPath, rows: &EntityRowRefs, names: &QueryNames, depth: usize) -> Condition {
+pub(crate) fn linked_condition(
+    pred: &Predicate,
+    path: &QueryPath,
+    rows: &EntityRowRefs,
+    names: &QueryNames,
+    matching: LanguageMatching,
+    depth: usize,
+) -> Condition {
     let scan = InstanceScan::Current(rows);
-    compile_along_path(pred, path, &scan, names, depth).into_condition(&scan)
-}
-
-/// Where an instance holds the value a term with no target language reads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Reading {
-    /// The instance's own value (clause 4.9 target value with no trailing
-    /// path), a `languageMap` read in every language.
-    OwnValue,
-    /// The members of a compound value the trailing path addresses.
-    Members,
-}
-
-/// The reading the trailing group of a path gives its target value.
-///
-/// One trailing member has a second reading beside the compound member, the
-/// target language of a `LanguageProperty` (see [`target_language`]), and the
-/// stored instance decides which applies. Neither can match the other's
-/// instances (a `languageMap` has no IRI-keyed members, a compound value no
-/// `@language`), so both are compiled and disjoined.
-const fn reading(target: LocalTarget<'_>) -> Reading {
-    match target {
-        LocalTarget::OwnValue | LocalTarget::SubAttribute(Some(LanguageSelection::AnyLanguage)) => Reading::OwnValue,
-        LocalTarget::TrailingMember(_) | LocalTarget::NestedMember | LocalTarget::SubAttribute(Some(LanguageSelection::TargetLanguage(_)) | None) => {
-            Reading::Members
-        }
-    }
-}
-
-/// The target language of a one-member trailing group, if `target` has one.
-const fn target_language(target: LocalTarget<'_>) -> Option<&AttributeName> {
-    match target {
-        LocalTarget::TrailingMember(member) | LocalTarget::SubAttribute(Some(LanguageSelection::TargetLanguage(member))) => Some(member),
-        LocalTarget::OwnValue | LocalTarget::NestedMember | LocalTarget::SubAttribute(Some(LanguageSelection::AnyLanguage) | None) => None,
-    }
+    compile_along_path(pred, path, &scan, names, matching, depth).into_condition(&scan)
 }
 
 /// Compile a term over the instances `scan` reads.
@@ -184,22 +165,31 @@ const fn target_language(target: LocalTarget<'_>) -> Option<&AttributeName> {
 /// history row hold both alike. A row's test joins the probe of its attribute,
 /// which a disjunction shares; an element's test is a probe of its own (see
 /// [`InstanceScan::exists_in_tree`]).
-fn compile_local(pred: &Predicate, path: &AttrPath, scan: &InstanceScan<'_>, names: &QueryNames) -> CompiledTerm {
+fn compile_local(pred: &Predicate, path: &AttrPath, scan: &InstanceScan<'_>, names: &QueryNames, matching: LanguageMatching) -> CompiledTerm {
     let Some(element) = ElementPath::resolve(path, scan.row(), &names.attributes) else {
         return unsatisfiable_term();
     };
-    let target = local_target(path);
     let holder = element.holder();
     let value = if let Some(field) = element.field {
         field.condition(&field.of_instance(holder), pred)
     } else {
-        let own = match reading(target) {
-            Reading::OwnValue => own_value(pred, holder),
-            Reading::Members => on_some_member(path, holder, |member| json_reading(pred, member)),
-        };
-        match target_language(target) {
-            Some(language) => Condition::any().add(language_reading(pred, language, holder)).add(own),
-            None => own,
+        match local_target(path) {
+            LocalTarget::OwnValue => own_value(pred, holder),
+            // One trailing member has a second reading beside the compound
+            // member, the target language of a `LanguageProperty`, and the
+            // stored instance decides which applies. Neither can match the
+            // other's instances (a `languageMap` has no IRI-keyed members, a
+            // compound value no `@language`), so both are compiled and
+            // disjoined.
+            LocalTarget::TrailingMember { members, language } => {
+                let member = on_some_member(members, holder, |member| json_reading(pred, member));
+                match language {
+                    Some(language) => Condition::any().add(language_reading(pred, language, matching, holder)).add(member),
+                    None => member,
+                }
+            }
+            LocalTarget::NestedMember(members) => on_some_member(members, holder, |member| json_reading(pred, member)),
+            LocalTarget::TargetLanguage(language) => language_reading(pred, language, matching, holder),
         }
     };
     if element.chain.is_empty() {
@@ -218,26 +208,28 @@ fn own_value(pred: &Predicate, row: InstanceRow) -> Condition {
         // 5.6.16 leaves no row and no element behind, so presence needs no
         // further guard.
         Predicate::Exists(_) => Condition::all(),
-        Predicate::Equality { membership, rhs, .. } => equality_value(StructuredTarget::AnyValue, *membership, rhs, row),
+        Predicate::Equality { membership, rhs, .. } => equality_value(*membership, rhs, row),
         Predicate::Ordering { op, rhs, .. } => ordering_value(pred, *op, rhs, row),
         Predicate::MatchPattern { pattern, .. } => pattern_value(pred, pattern, PatternPolarity::Match, row),
         Predicate::NotMatchPattern { pattern, .. } => pattern_value(pred, pattern, PatternPolarity::NotMatch, row),
     }
 }
 
-/// A term against the strings a `languageMap` holds under one target
-/// language (clause 4.9).
+/// A term against the strings a `languageMap` holds under the keys one target
+/// language selects (clause 4.9).
 ///
-/// Existence asks for the matching key-value pair, which is the target element
-/// of a language-selected path.
-fn language_reading(pred: &Predicate, language: &AttributeName, row: InstanceRow) -> Condition {
-    match pred {
-        Predicate::Exists(_) => carries_target_language(&row.value(ValueColumn::Object), language),
-        Predicate::Equality { membership, rhs, .. } => equality_value(StructuredTarget::TargetLanguage(language), *membership, rhs, row),
-        Predicate::Ordering { .. } | Predicate::MatchPattern { .. } | Predicate::NotMatchPattern { .. } => {
-            Condition::all().add(language_term(pred, &LanguageMap::of_instance(row), LanguageSelection::TargetLanguage(language)))
-        }
-    }
+/// Every operator is decided string by string over the selected entries, so
+/// the key comparison is the one `matching` names, case-insensitive under tag
+/// equality as RFC 5646 section 2.1.1 requires. Existence asks for a selected
+/// key-value pair, which is the target element of a language-selected path. A
+/// number, boolean or time operand matches no string, and clause 4.9 makes the
+/// datatype difference a non-match.
+fn language_reading(pred: &Predicate, language: LanguageSelector<'_>, matching: LanguageMatching, row: InstanceRow) -> Condition {
+    Condition::all().add(language_term(
+        pred,
+        &LanguageMap::of_instance(row),
+        LanguageSelection::TargetLanguage(language, matching),
+    ))
 }
 
 /// A term against one member of a compound value.
@@ -333,8 +325,12 @@ mod tests {
     }
 
     fn render_with(q: &str, names: &QueryNames, rows: &EntityRowRefs) -> (String, Vec<Value>) {
+        render_under(q, names, rows, LanguageMatching::TagEquality)
+    }
+
+    fn render_under(q: &str, names: &QueryNames, rows: &EntityRowRefs, matching: LanguageMatching) -> (String, Vec<Value>) {
         let expr = parser::parse(q).expect("parse q");
-        let condition = compile(&expr, &InstanceScan::Current(rows), names);
+        let condition = compile(&expr, &InstanceScan::Current(rows), names, matching);
         let (sql, values) = Query::select()
             .column(Entities::Id)
             .from(Entities::Table)
@@ -752,7 +748,7 @@ mod tests {
     fn a_target_language_compiles_a_language_map_reading_beside_the_member_reading() {
         let (sql, _) = render("\"https://example.com/color\"[en]==\"red\"");
         assert!(
-            sql.contains("jsonb_build_object('@language', $2::text, '@value', $3::text)"),
+            sql.contains(r#"LOWER("ls"."value" ->> ('@language')) = LOWER("#),
             "the languageMap reading: {sql}"
         );
         assert!(sql.contains(r#"jsonb_path_query("ca"."value_object""#), "the compound-value reading: {sql}");
@@ -811,11 +807,8 @@ mod tests {
     #[test]
     fn a_bare_existence_of_a_target_language_probes_the_language_key() {
         let (sql, _) = render("\"https://example.com/color\"[en]");
-        assert!(sql.contains("jsonb_build_object('@language', $2::text)"), "{sql}");
-        assert!(
-            !sql.contains("'@language', $2::text, '@value'"),
-            "existence says nothing about the value: {sql}"
-        );
+        assert!(sql.contains(r#"LOWER("ls"."value" ->> ('@language'))"#), "{sql}");
+        assert!(!sql.contains(r#""ls"."value" ->> ('@value')"#), "existence says nothing about the value: {sql}");
         assert!(
             sql.contains(r#"jsonb_path_query("ca"."value_object""#),
             "the compound-member reading is compiled beside it: {sql}"
@@ -1254,5 +1247,57 @@ mod tests {
         let (sql, _) = render(&format!("{}{{{}}}==\"x\"", quoted("https://example.com/never-written"), quoted(CATEGORY)));
         assert!(sql.contains("FALSE"), "{sql}");
         assert!(!sql.contains("ca_ln1"), "no probe is emitted when no row can exist: {sql}");
+    }
+
+    /// Annex C.5.13.2: a tag no member name spells has the languageMap reading
+    /// alone, its key compared case-insensitively (RFC 5646 section 2.1.1) and
+    /// never by JSONB containment, which compares bytes.
+    #[test]
+    fn a_hyphenated_tag_compiles_the_language_map_reading_alone() {
+        let (sql, binds) = render("\"https://example.com/color\"[en-GB]==\"red\"");
+        assert!(sql.contains(r#"LOWER("ls"."value" ->> ('@language')) = LOWER("#), "{sql}");
+        assert!(!sql.contains("jsonb_path_query"), "no compound-member reading: {sql}");
+        assert!(!sql.contains(" @> "), "no containment: {sql}");
+        assert!(
+            binds.iter().any(|bind| matches!(bind, Value::String(Some(text)) if text.as_str() == "en-GB")),
+            "{binds:?}"
+        );
+    }
+
+    /// A languageMap holds strings only; clause 4.9 makes a datatype difference
+    /// a non-match under `==` and an inequality under `!=`.
+    #[test]
+    fn a_number_under_a_target_language_matches_no_string() {
+        let (sql, _) = render("\"https://example.com/color\"[en-GB]==5");
+        assert!(sql.contains("FALSE"), "{sql}");
+        assert!(!sql.contains("\"ca\".\"value_number\""), "{sql}");
+        let (sql, _) = render("\"https://example.com/color\"[en-GB]!=5");
+        assert!(sql.contains("NOT EXISTS(SELECT 1 FROM jsonb_array_elements"), "{sql}");
+    }
+
+    /// RFC 4647 section 3.3.2 at the `language-ranges` level:
+    /// the key is matched against the range's pattern, bound as a parameter.
+    #[test]
+    fn extended_filtering_matches_every_target_language_by_its_pattern() {
+        for (expression, pattern) in [
+            ("\"https://example.com/color\"[en]==\"red\"", "^en(-[a-z0-9]{1,8})*$"),
+            ("\"https://example.com/color\"[de-*-DE]==\"red\"", "^de(-[a-z0-9]{2,8})*-de(-[a-z0-9]{1,8})*$"),
+        ] {
+            let (sql, binds) = render_under(expression, &names(), &EntityRowRefs::unaliased(None), LanguageMatching::ExtendedFiltering);
+            assert!(sql.contains(r#""ls"."value" ->> ('@language')) ~* ("#), "{expression}: {sql}");
+            assert!(!sql.contains("LOWER"), "{expression}: {sql}");
+            assert!(
+                binds.iter().any(|bind| matches!(bind, Value::String(Some(text)) if text.as_str() == pattern)),
+                "{expression}: {binds:?}"
+            );
+        }
+    }
+
+    /// A stored wildcard range keeps filtering under tag equality: it has no
+    /// equality reading.
+    #[test]
+    fn a_range_filters_under_tag_equality_too() {
+        let (sql, _) = render("\"https://example.com/color\"[*-GB]~=\"^L\"");
+        assert!(sql.contains(" ~* "), "{sql}");
     }
 }

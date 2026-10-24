@@ -4,7 +4,7 @@
 use crate::document::EntityDocument;
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, position::Position};
 use andromeda_ngsi_ld_query::{
-    filter::{eval::evaluate, parser::parse},
+    filter::{eval::evaluate, language_matching::LanguageMatching, parser::parse},
     geo::query::GeoQuery,
     queried_entity::linked_entities::NoLinkedEntities,
     scope::query::ScopeQuery,
@@ -83,7 +83,7 @@ fn the_document_reading_answers_every_written_instance() {
         ("\"https://example.com/label\"[de]", false),
     ] {
         let expr = parse(q).expect("the Query Term parses");
-        pretty_assertions::assert_eq!(evaluate(&expr, &written, NoLinkedEntities), expected, "{q}");
+        pretty_assertions::assert_eq!(evaluate(&expr, &written, NoLinkedEntities, LanguageMatching::TagEquality), expected, "{q}");
     }
 }
 
@@ -95,12 +95,14 @@ fn a_deleted_instance_holds_no_value() {
     assert!(!evaluate(
         &parse("\"https://example.com/humidity\"==\"urn:ngsi-ld:null\"").expect("parses"),
         &written,
-        NoLinkedEntities
+        NoLinkedEntities,
+        LanguageMatching::TagEquality
     ));
     assert!(evaluate(
         &parse("\"https://example.com/humidity\"").expect("parses"),
         &written,
-        NoLinkedEntities
+        NoLinkedEntities,
+        LanguageMatching::TagEquality
     ));
 }
 

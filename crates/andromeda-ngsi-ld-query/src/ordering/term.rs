@@ -2,7 +2,13 @@
 
 use crate::{
     error::QueryError,
-    filter::{path::AttrPath, serialize::serialize_attr_path, value_path::parse_attribute_path},
+    filter::{
+        path::AttrPath,
+        serialize::serialize_attr_path,
+        target_language::LanguageSelector,
+        trailing_path::TrailingPath,
+        value_path::parse_attribute_path,
+    },
     ordering::collation::IcuCollation,
 };
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
@@ -117,6 +123,9 @@ pub enum OrderTermError {
     /// The term carried the `[*]` language-suppression marker. Clause 4.9 gives `[*]` to a `q` predicate; clause 4.23.3 has no such marker, so an ordering that suppressed language selection would order by a value the clause never says how to choose.
     #[error("invalid orderBy member: the [*] language marker belongs to the q filter grammar, not to orderBy")]
     LanguageSuppression,
+    /// The term named an RFC 4647 language range. A range selects every key it matches, and clause 4.23.3 gives no rule for which of several selected strings the ordering reads.
+    #[error("invalid orderBy member: a language range selects several languages, and orderBy orders by one value")]
+    LanguageRange,
 }
 
 impl FromStr for OrderTerm {
@@ -135,8 +144,11 @@ impl FromStr for OrderTerm {
             },
         };
         let attr = parse_attribute_path(member).map_err(OrderTermError::Member)?;
-        if attr.match_all_languages {
+        if attr.trailing == Some(TrailingPath::AllLanguages) {
             return Err(OrderTermError::LanguageSuppression);
+        }
+        if attr.target_language().is_some_and(LanguageSelector::is_range) {
+            return Err(OrderTermError::LanguageRange);
         }
         Ok(OrderTerm { attr, direction })
     }
@@ -180,7 +192,10 @@ impl OrderDirection {
 
 #[cfg(test)]
 mod tests {
-    use crate::ordering::term::{OrderDirection, OrderTerm, OrderTermError, RawOrderTarget};
+    use crate::{
+        filter::target_language::LanguageSelector,
+        ordering::term::{OrderDirection, OrderTerm, OrderTermError, RawOrderTarget},
+    };
     use pretty_assertions::assert_eq;
 
     /// The path of a term that parses.
@@ -253,8 +268,9 @@ mod tests {
     fn a_compound_member_path_is_accepted_as_an_ordering_member() {
         let parsed = term("address[city]");
         assert_eq!(parsed.attr.attr.as_str(), "address");
-        assert_eq!(parsed.attr.value_path.len(), 1);
-        assert_eq!(parsed.attr.value_path[0].as_str(), "city");
+        let members = parsed.attr.members().expect("a member path");
+        assert_eq!(members.addressed.len(), 1);
+        assert_eq!(members.addressed[0].as_str(), "city");
     }
 
     /// A direction still binds to the whole path, not to its last segment.
@@ -264,7 +280,7 @@ mod tests {
         assert_eq!(parsed.direction, OrderDirection::Desc);
         assert_eq!(parsed.attr.attr.as_str(), "sensor");
         assert_eq!(parsed.attr.sub_attrs.len(), 1);
-        assert_eq!(parsed.attr.value_path.len(), 2);
+        assert_eq!(parsed.attr.members().map(|members| members.addressed.len()), Some(2));
     }
 
     /// Clause 4.23.3's grammar is `AttrName`-based, so the clause 4.9 linked-entity axis is not an ordering member.
@@ -281,6 +297,16 @@ mod tests {
     fn the_language_suppression_marker_is_not_an_ordering_member() {
         let error = "name[*]".parse::<OrderTerm>().expect_err("[*] orders by no defined value");
         assert!(matches!(error, OrderTermError::LanguageSuppression), "got {error:?}");
+    }
+
+    /// Clause 4.23.3 orders by one value; a range selects several languages.
+    #[test]
+    fn a_language_range_is_not_an_ordering_member_but_a_full_tag_is() {
+        let error = "name[de-*-DE]".parse::<OrderTerm>().expect_err("a range orders by no one value");
+        assert!(matches!(error, OrderTermError::LanguageRange), "got {error:?}");
+        let parsed = term("name[en-GB]");
+        assert_eq!(parsed.attr.target_language().map(LanguageSelector::as_str), Some("en-GB"));
+        assert_eq!(parsed.to_string(), "name[en-GB]");
     }
 
     /// A term is carried in the request text, so it has to spell itself back.

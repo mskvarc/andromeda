@@ -24,7 +24,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
     dataset::DatasetSelector,
-    filter::expression::Expr,
+    filter::{expression::Expr, language_matching::LanguageMatching},
     projection::compiled::Projection,
     scope::query::ScopeQuery,
 };
@@ -165,6 +165,11 @@ pub struct CompiledSubscription {
     pub created_at: DateTime<Utc>,
     /// Parsed entity filter expression.
     pub compiled_q: Option<Expr>,
+    /// How the target languages of `compiled_q` and `compiled_csf` select
+    /// languageMap keys: the matching of the broker's `q_target_languages` level
+    /// when the subscription was compiled, so a stored filter reads as the broker now
+    /// reads every filter.
+    pub language_matching: LanguageMatching,
     /// The restriction the subscription's `geoQ` places on matching (clause
     /// 4.10): none without a `geoQ`, the compiled geoquery otherwise, and no
     /// entity at all for a stored `geoQ` that no longer compiles.

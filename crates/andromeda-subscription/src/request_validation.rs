@@ -15,7 +15,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_model::{subscription::standing::SubscriptionStanding, subscription_request::SubscriptionRequest};
 use andromeda_ngsi_ld_query::{
-    filter::{expression::Expr, predicate::Predicate},
+    filter::{expression::Expr, language_targeting::LanguageTargeting, predicate::Predicate},
     geo::admission::GeoQueryAdmission,
     temporal::window::TimeInterval,
 };
@@ -29,15 +29,21 @@ fn q_has_comparison(expr: &Expr) -> bool {
 }
 
 /// Validate a subscription create body, admitting its `geoQ` under
-/// `geo_q_admission`.
+/// `geo_q_admission` and the target languages of its filters under
+/// `language_targeting`.
 ///
 /// # Errors
 ///
 /// Returns the [`SubscriptionError::Validation`] of the first rule the body
 /// breaks -- an NGSI-LD Null written into any member among them (clause
-/// 5.2.1) -- and [`SubscriptionError::GeoQTooLarge`] for a reference geometry
-/// past `geo_limits`.
-pub fn validate_create_request(request: &SubscriptionRequest, geo_q_admission: GeoQueryAdmission) -> Result<(), SubscriptionError> {
+/// 5.2.1) -- [`SubscriptionError::GeoQTooLarge`] for a reference geometry
+/// past `geo_limits`, and [`SubscriptionError::Query`] for a target language
+/// the level does not admit.
+pub fn validate_create_request(
+    request: &SubscriptionRequest,
+    geo_q_admission: GeoQueryAdmission,
+    language_targeting: LanguageTargeting,
+) -> Result<(), SubscriptionError> {
     // Clause 5.2.1: an NGSI-LD Null is refused outside clauses 5.5.8 and 5.5.12,
     // and a create deletes nothing (clause 5.8.1.4, bullet 1). A JSON `null` is
     // no value of any member and never reads into the request.
@@ -60,7 +66,7 @@ pub fn validate_create_request(request: &SubscriptionRequest, geo_q_admission: G
     // expiresAt must be in the future at creation time.
     validate_expires_at_not_in_past(request)?;
 
-    validate_common_members(request, geo_q_admission)?;
+    validate_common_members(request, geo_q_admission, language_targeting)?;
     validate_subscribed_scope(request)
 }
 
@@ -114,14 +120,20 @@ pub fn validate_expires_at_not_in_past(request: &SubscriptionRequest) -> Result<
 }
 
 /// Validate the members shared between create and update, admitting the `geoQ`
-/// under `geo_q_admission`.
+/// under `geo_q_admission` and the target languages of `q` and `csf` under
+/// `language_targeting`.
 ///
 /// # Errors
 ///
 /// Returns the [`SubscriptionError::Validation`] of the first rule the request
-/// breaks, and [`SubscriptionError::GeoQTooLarge`] for a reference geometry
-/// past `geo_limits`.
-pub fn validate_common_members(request: &SubscriptionRequest, geo_q_admission: GeoQueryAdmission) -> Result<(), SubscriptionError> {
+/// breaks, [`SubscriptionError::GeoQTooLarge`] for a reference geometry past
+/// `geo_limits`, and [`SubscriptionError::Query`] for a target language the
+/// level does not admit.
+pub fn validate_common_members(
+    request: &SubscriptionRequest,
+    geo_q_admission: GeoQueryAdmission,
+    language_targeting: LanguageTargeting,
+) -> Result<(), SubscriptionError> {
     if request.time_interval.as_set().is_some() && request.watched_attributes.as_set().is_some() {
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::TimeIntervalWithWatchedAttributes));
     }
@@ -144,6 +156,12 @@ pub fn validate_common_members(request: &SubscriptionRequest, geo_q_admission: G
         && !q_has_comparison(q)
     {
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::QExpressionNoComparison));
+    }
+
+    // A full tag or a range is admitted only at the `q_target_languages`
+    // level that serves it; below it the clause 4.9 `AttrName` spells neither.
+    for filter in [request.q.as_set(), request.csf.as_set()].into_iter().flatten() {
+        language_targeting.admit(filter)?;
     }
 
     // An update fragment's NGSI-LD Null removes the `geoQ`, which has nothing to admit.
@@ -208,7 +226,11 @@ mod tests {
     use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
     use andromeda_ngsi_ld_model::{request_body::RequestBody, subscription_request::SubscriptionRequest};
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-    use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
+    use andromeda_ngsi_ld_query::{
+        error::QueryError,
+        filter::language_targeting::LanguageTargeting,
+        geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
+    };
     use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
     use serde_json::{Value, json};
     use std::num::NonZeroUsize;
@@ -232,7 +254,7 @@ mod tests {
 
     #[test]
     fn an_empty_notification_trigger_is_refused() {
-        let result = validate_common_members(&request(&json!({"notificationTrigger": []})), limits());
+        let result = validate_common_members(&request(&json!({"notificationTrigger": []})), limits(), LanguageTargeting::Specification);
         assert!(
             matches!(
                 &result,
@@ -240,12 +262,19 @@ mod tests {
             ),
             "got {result:?}"
         );
-        assert!(validate_common_members(&request(&json!({"notificationTrigger": ["entityCreated"]})), limits()).is_ok());
+        assert!(
+            validate_common_members(
+                &request(&json!({"notificationTrigger": ["entityCreated"]})),
+                limits(),
+                LanguageTargeting::Specification
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn create_requires_notification_configuration() {
-        let result = validate_create_request(&request(&json!({"type": "Subscription"})), limits());
+        let result = validate_create_request(&request(&json!({"type": "Subscription"})), limits(), LanguageTargeting::Specification);
         assert!(matches!(
             result,
             Err(SubscriptionError::Validation(SubscriptionValidationReason::NotificationRequired))
@@ -260,13 +289,13 @@ mod tests {
             "entities": [{"type": "Vehicle"}],
             "notification": {"endpoint": {"uri": "https://receiver.example.com/notify"}}
         });
-        let result = validate_create_request(&request(&body), limits());
+        let result = validate_create_request(&request(&body), limits(), LanguageTargeting::Specification);
         assert!(
             matches!(&result, Err(SubscriptionError::Validation(SubscriptionValidationReason::TypeRequired))),
             "got {result:?}"
         );
         body["type"] = json!("Subscription");
-        let result = validate_create_request(&request(&body), limits());
+        let result = validate_create_request(&request(&body), limits(), LanguageTargeting::Specification);
         assert!(result.is_ok(), "got {result:?}");
     }
 
@@ -276,7 +305,7 @@ mod tests {
     fn an_update_fragment_without_its_type_is_valid() {
         let fragment = request(&json!({"notification": {"endpoint": {"uri": "https://receiver.example.com/notify"}}}));
         assert!(fragment.type_.is_none());
-        let result = validate_common_members(&fragment, limits());
+        let result = validate_common_members(&fragment, limits(), LanguageTargeting::Specification);
         assert!(result.is_ok(), "got {result:?}");
         let result = validate_notification_fragment(&fragment);
         assert!(result.is_ok(), "got {result:?}");
@@ -300,7 +329,7 @@ mod tests {
             ("q", json!("urn:ngsi-ld:null")),
         ] {
             let body = json!({"type": "Subscription", "entities": [{"type": "Vehicle"}], "notification": notification, member: wire});
-            let result = validate_create_request(&request(&body), limits());
+            let result = validate_create_request(&request(&body), limits(), LanguageTargeting::Specification);
             match &result {
                 Err(refusal @ SubscriptionError::Validation(SubscriptionValidationReason::NullOnCreate(_))) => {
                     assert!(refusal.to_string().contains(member), "{member}: {refusal}");
@@ -315,19 +344,31 @@ mod tests {
     /// clause restricts it, so a hop is admitted at creation and update alike.
     #[test]
     fn a_subscription_whose_filter_traverses_a_linked_entity_is_accepted() {
-        let result = validate_common_members(&request(&json!({"q": "isParkedIn{category}==\"commercial\""})), limits());
+        let result = validate_common_members(
+            &request(&json!({"q": "isParkedIn{category}==\"commercial\""})),
+            limits(),
+            LanguageTargeting::Specification,
+        );
         assert!(result.is_ok(), "got {result:?}");
     }
 
     #[test]
     fn a_traversal_nested_inside_a_boolean_filter_is_accepted_too() {
-        let result = validate_common_members(&request(&json!({"q": "speed>50;isParkedIn{category}==\"x\""})), limits());
+        let result = validate_common_members(
+            &request(&json!({"q": "speed>50;isParkedIn{category}==\"x\""})),
+            limits(),
+            LanguageTargeting::Specification,
+        );
         assert!(result.is_ok(), "got {result:?}");
     }
 
     #[test]
     fn a_filter_that_stays_within_one_entity_is_still_accepted() {
-        let result = validate_common_members(&request(&json!({"q": "speed>50;brandName==\"Mercedes\""})), limits());
+        let result = validate_common_members(
+            &request(&json!({"q": "speed>50;brandName==\"Mercedes\""})),
+            limits(),
+            LanguageTargeting::Specification,
+        );
         assert!(result.is_ok(), "got {result:?}");
     }
 
@@ -342,7 +383,7 @@ mod tests {
     /// entity.
     #[test]
     fn a_q_without_a_comparison_is_refused() {
-        let result = validate_common_members(&request(&json!({"q": "speed"})), limits());
+        let result = validate_common_members(&request(&json!({"q": "speed"})), limits(), LanguageTargeting::Specification);
         assert!(
             matches!(
                 &result,
@@ -366,6 +407,7 @@ mod tests {
         let elevated = validate_common_members(
             &request(&json!({"geoQ": {"georel": "within", "geometry": "Point", "coordinates": [1.0, 2.0, 3.0]}})),
             limits(),
+            LanguageTargeting::Specification,
         );
         assert!(elevated.is_ok(), "a three-ordinate reference geometry is valid: {elevated:?}");
 
@@ -382,7 +424,7 @@ mod tests {
         .expect_err("latitude 100 is no WGS 84 position");
         assert!(past_pole.to_string().contains("latitude 100 is outside [-90, 90]"), "got {past_pole}");
 
-        let removed = validate_common_members(&request(&json!({"geoQ": "urn:ngsi-ld:null"})), limits());
+        let removed = validate_common_members(&request(&json!({"geoQ": "urn:ngsi-ld:null"})), limits(), LanguageTargeting::Specification);
         assert!(removed.is_ok(), "an update removing the geoQ has nothing to validate: {removed:?}");
     }
 
@@ -394,7 +436,7 @@ mod tests {
             "type": "Subscription",
             "notification": {"endpoint": {"uri": "http://127.0.0.1:8085/notify"}}
         });
-        let error = validate_create_request(&request(&payload), limits()).expect_err("clause 5.2.12 requires one of the two");
+        let error = validate_create_request(&request(&payload), limits(), LanguageTargeting::Specification).expect_err("clause 5.2.12 requires one of the two");
         assert!(error.to_string().contains("watchedAttributes"), "got {error}");
     }
 
@@ -409,7 +451,7 @@ mod tests {
             json!({"type": "Subscription", "notification": notification, "localOnly": true}),
         ];
         for payload in variants {
-            let result = validate_create_request(&request(&payload), limits());
+            let result = validate_create_request(&request(&payload), limits(), LanguageTargeting::Specification);
             assert!(result.is_ok(), "{payload} should be accepted: {result:?}");
         }
     }
@@ -428,6 +470,7 @@ mod tests {
                 "watchedAttributes": ["temperature"]
             })),
             limits(),
+            LanguageTargeting::Specification,
         )
         .expect_err("clause 5.2.12 makes entities mandatory beside timeInterval");
         // `watchedAttributes` beside `timeInterval` is refused first by the
@@ -442,6 +485,7 @@ mod tests {
                 "q": "temperature>20"
             })),
             limits(),
+            LanguageTargeting::Specification,
         )
         .expect_err("clause 5.2.12 makes entities mandatory beside timeInterval");
         assert!(
@@ -457,6 +501,7 @@ mod tests {
                 "localOnly": true
             })),
             limits(),
+            LanguageTargeting::Specification,
         );
         assert!(local.is_ok(), "local scope lifts the requirement: {local:?}");
     }
@@ -471,15 +516,23 @@ mod tests {
                 "entities": [{"type": "Building"}],
                 "notification": {"format": format, "showChanges": true, "endpoint": {"uri": "http://127.0.0.1:8085/notify"}}
             });
-            let error = validate_create_request(&request(&payload), limits()).expect_err("clause 5.2.14.1 forbids the combination");
+            let error =
+                validate_create_request(&request(&payload), limits(), LanguageTargeting::Specification).expect_err("clause 5.2.14.1 forbids the combination");
             assert!(error.to_string().contains("showChanges"), "{format}: {error}");
-            assert!(validate_common_members(&request(&payload), limits()).is_err(), "{format}");
+            assert!(
+                validate_common_members(&request(&payload), limits(), LanguageTargeting::Specification).is_err(),
+                "{format}"
+            );
         }
     }
 
     #[test]
     fn time_interval_and_watched_attributes_are_mutually_exclusive() {
-        let result = validate_common_members(&request(&json!({"timeInterval": 5, "watchedAttributes": ["temperature"]})), limits());
+        let result = validate_common_members(
+            &request(&json!({"timeInterval": 5, "watchedAttributes": ["temperature"]})),
+            limits(),
+            LanguageTargeting::Specification,
+        );
         assert!(matches!(
             result,
             Err(SubscriptionError::Validation(SubscriptionValidationReason::TimeIntervalWithWatchedAttributes))
@@ -490,12 +543,12 @@ mod tests {
     /// 0".
     #[test]
     fn a_non_positive_throttling_or_time_interval_is_refused() {
-        let throttling = validate_common_members(&request(&json!({"throttling": 0})), limits());
+        let throttling = validate_common_members(&request(&json!({"throttling": 0})), limits(), LanguageTargeting::Specification);
         assert!(matches!(
             throttling,
             Err(SubscriptionError::Validation(SubscriptionValidationReason::ThrottlingNotPositive))
         ));
-        let interval = validate_common_members(&request(&json!({"timeInterval": -1})), limits());
+        let interval = validate_common_members(&request(&json!({"timeInterval": -1})), limits(), LanguageTargeting::Specification);
         assert!(matches!(
             interval,
             Err(SubscriptionError::Validation(SubscriptionValidationReason::TimeIntervalNotPositive))
@@ -512,7 +565,7 @@ mod tests {
             "notification": {"endpoint": {"uri": "http://127.0.0.1:8085/notify"}}
         });
         assert!(matches!(
-            validate_create_request(&request(&payload), limits()),
+            validate_create_request(&request(&payload), limits(), LanguageTargeting::Specification),
             Err(SubscriptionError::Validation(SubscriptionValidationReason::ExpiresAtInPast))
         ));
     }
@@ -524,6 +577,7 @@ mod tests {
         let error = validate_common_members(
             &request(&json!({"temporalQ": {"timerel": "between", "timeAt": "2020-06-01T00:00:00Z"}})),
             limits(),
+            LanguageTargeting::Specification,
         )
         .expect_err("between needs endTimeAt");
         assert!(
@@ -537,7 +591,7 @@ mod tests {
             json!({"temporalQ": {"timerel": "before", "timeAt": "2020-06-01T00:00:00Z"}}),
             json!({"temporalQ": "urn:ngsi-ld:null"}),
         ] {
-            let result = validate_common_members(&request(&accepted), limits());
+            let result = validate_common_members(&request(&accepted), limits(), LanguageTargeting::Specification);
             assert!(result.is_ok(), "{accepted}: {result:?}");
         }
     }
@@ -552,7 +606,7 @@ mod tests {
             json!({"temporalQ": {"timerel": "between", "timeAt": "2020-07-01T00:00:00Z", "endTimeAt": "2020-06-01T00:00:00Z"}}),
             json!({"temporalQ": {"timerel": "between", "timeAt": "2020-07-01T00:00:00Z", "endTimeAt": "2020-07-01T00:00:00Z"}}),
         ] {
-            let error = validate_common_members(&request(&refused), limits()).expect_err("no interval");
+            let error = validate_common_members(&request(&refused), limits(), LanguageTargeting::Specification).expect_err("no interval");
             assert!(
                 matches!(&error, SubscriptionError::Validation(SubscriptionValidationReason::TemporalQ(_))),
                 "{refused}: {error:?}"
@@ -599,5 +653,40 @@ mod tests {
             "{result:?}"
         );
         assert!(validate_notification_fragment(&request(&json!({"q": "speed>1"}))).is_ok());
+    }
+
+    /// A wildcard range has no clause 4.9 tag-equality reading, so only the
+    /// `language-ranges` level admits one, in `q` and `csf` alike.
+    #[test]
+    fn a_language_range_is_admitted_only_at_the_ranges_level() {
+        for body in [json!({"q": "name[de-*-DE]==\"Aufzug\""}), json!({"csf": "name[*-GB]==\"Lift\""})] {
+            for level in [LanguageTargeting::Specification, LanguageTargeting::LanguageTags] {
+                let refused = validate_common_members(&request(&body), limits(), level);
+                assert!(
+                    matches!(refused, Err(SubscriptionError::Query(QueryError::LanguageRangeNotAdmitted(_)))),
+                    "{body} at {level}: {refused:?}"
+                );
+            }
+            assert!(
+                validate_common_members(&request(&body), limits(), LanguageTargeting::LanguageRanges).is_ok(),
+                "{body}"
+            );
+        }
+    }
+
+    /// The clause 4.9 `AttrName` admits no `-`, so a full tag needs the
+    /// `language-tags` level.
+    #[test]
+    fn a_full_tag_is_admitted_from_the_tags_level_up() {
+        let body = json!({"q": "name[en-GB]==\"Lift\""});
+        let refused = validate_common_members(&request(&body), limits(), LanguageTargeting::Specification);
+        assert!(
+            matches!(refused, Err(SubscriptionError::Query(QueryError::LanguageTagNotAdmitted(_)))),
+            "{refused:?}"
+        );
+        for level in [LanguageTargeting::LanguageTags, LanguageTargeting::LanguageRanges] {
+            assert!(validate_common_members(&request(&body), limits(), level).is_ok(), "{level}");
+        }
+        assert!(validate_common_members(&request(&json!({"q": "name[en]==\"Lift\""})), limits(), LanguageTargeting::Specification).is_ok());
     }
 }

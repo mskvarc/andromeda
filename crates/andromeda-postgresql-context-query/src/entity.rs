@@ -248,8 +248,10 @@ pub(crate) fn build_entity_conditions(
     if let Some(q_expr) = &query.selection.q_expr {
         let scan = InstanceScan::Current(rows);
         match q {
-            QFilter::Whole => condition = condition.add(q_filter::compile(q_expr, &scan, names)),
-            QFilter::Except(answered) => condition = condition.add(q_filter::compile_except(q_expr, answered, &scan, names)),
+            QFilter::Whole => condition = condition.add(q_filter::compile(q_expr, &scan, names, query.selection.language_matching)),
+            QFilter::Except(answered) => {
+                condition = condition.add(q_filter::compile_except(q_expr, answered, &scan, names, query.selection.language_matching));
+            }
             QFilter::Omitted => {}
         }
     }

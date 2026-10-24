@@ -6,10 +6,13 @@
 //! hold. Whoever evaluates a filter in memory therefore hands the evaluator a
 //! source of those entities beside the entity itself.
 
-use crate::queried_entity::{
-    attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
-    instance_metadata::InstanceMetadata,
-    value_item::ValueItem,
+use crate::{
+    filter::{language_matching::LanguageMatching, target_language::LanguageSelector},
+    queried_entity::{
+        attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
+        instance_metadata::InstanceMetadata,
+        value_item::ValueItem,
+    },
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use std::{borrow::Cow, iter::empty};
@@ -69,7 +72,7 @@ impl<'a> QueriedInstance<'a> for NoLinkedEntity {
         empty()
     }
 
-    fn language_values(self, _language: &str) -> impl Iterator<Item = ValueItem<'a, NoLinkedEntity>> {
+    fn language_values(self, _wanted: LanguageSelector<'_>, _matching: LanguageMatching) -> impl Iterator<Item = ValueItem<'a, NoLinkedEntity>> {
         empty()
     }
 

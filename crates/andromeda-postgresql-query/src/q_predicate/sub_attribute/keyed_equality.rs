@@ -14,10 +14,8 @@ use crate::{
     q_predicate::{
         equality_term::equality_value,
         instance_row::ProbedRow,
-        language_map::LanguageSelection,
         local_target::{LocalTarget, local_target},
         projection_probe::{Ca, of_attribute, projection_column, standing},
-        structured_target::StructuredTarget,
         sub_attribute::element_path::ElementPath,
     },
     sub_attribute_key::{key::SubAttributeKey, operand_keys::operand_keys},
@@ -44,12 +42,12 @@ pub(crate) fn equality_candidates(pred: &Predicate, rows: &EntityRowRefs, names:
     else {
         return None;
     };
+    if path.sub_attrs.is_empty() {
+        return None;
+    }
     match local_target(path) {
-        LocalTarget::SubAttribute(Some(LanguageSelection::AnyLanguage)) => {}
-        LocalTarget::OwnValue
-        | LocalTarget::TrailingMember(_)
-        | LocalTarget::NestedMember
-        | LocalTarget::SubAttribute(Some(LanguageSelection::TargetLanguage(_)) | None) => return None,
+        LocalTarget::OwnValue => {}
+        LocalTarget::TrailingMember { .. } | LocalTarget::TargetLanguage(_) | LocalTarget::NestedMember(_) => return None,
     }
     let element = ElementPath::resolve(path, ProbedRow::Current, &names.attributes)?;
     if element.chain.is_empty() || element.field.is_some() {
@@ -59,7 +57,7 @@ pub(crate) fn equality_candidates(pred: &Predicate, rows: &EntityRowRefs, names:
         .into_iter()
         .map(SubAttributeKey::get)
         .collect::<Vec<_>>();
-    let value = equality_value(StructuredTarget::AnyValue, SetMembership::Within, rhs, element.holder());
+    let value = equality_value(SetMembership::Within, rhs, element.holder());
     let mut select = Query::select();
     select
         .expr(projection_column(CurrentAttributes::EntityKey))
@@ -79,7 +77,7 @@ mod tests {
         entity_row_refs::EntityRowRefs,
         q_predicate::keyed_term::keyed_candidates,
     };
-    use andromeda_ngsi_ld_query::filter::parser::parse;
+    use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser::parse};
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
@@ -96,7 +94,8 @@ mod tests {
 
     fn candidates(q: &str) -> Option<String> {
         let expr = parse(q).expect("parse q");
-        keyed_candidates(&expr, &EntityRowRefs::unaliased(None), &names()).map(|keyed| keyed.select.to_string(PostgresQueryBuilder))
+        keyed_candidates(&expr, &EntityRowRefs::unaliased(None), &names(), LanguageMatching::TagEquality)
+            .map(|keyed| keyed.select.to_string(PostgresQueryBuilder))
     }
 
     /// The inline key array a keyed equality on `temperature.source` reads.

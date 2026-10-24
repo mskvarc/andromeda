@@ -10,10 +10,13 @@
 
 use andromeda_json_literal::piece::{JsonKind, JsonPiece};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
-use andromeda_ngsi_ld_query::queried_entity::{
-    attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
-    instance_metadata::InstanceMetadata,
-    value_item::ValueItem,
+use andromeda_ngsi_ld_query::{
+    filter::{language_matching::LanguageMatching, target_language::LanguageSelector},
+    queried_entity::{
+        attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
+        instance_metadata::InstanceMetadata,
+        value_item::ValueItem,
+    },
 };
 use std::{borrow::Cow, iter::empty};
 
@@ -118,7 +121,7 @@ impl<'a> QueriedInstance<'a> for PropertyValue<'a> {
 
     /// Clause 5.2.9 Context Source Properties are Properties, never a
     /// `LanguageProperty`, so no target language selects a string of theirs.
-    fn language_values(self, _language: &str) -> impl Iterator<Item = ValueItem<'a, NoStructuredValue>> {
+    fn language_values(self, _wanted: LanguageSelector<'_>, _matching: LanguageMatching) -> impl Iterator<Item = ValueItem<'a, NoStructuredValue>> {
         empty()
     }
 
@@ -136,7 +139,7 @@ mod tests {
     use crate::registration::context_source_properties::ContextSourceProperties;
     use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_query::{
-        filter::{eval::evaluate, parser::parse},
+        filter::{eval::evaluate, language_matching::LanguageMatching, parser::parse},
         queried_entity::linked_entities::NoLinkedEntities,
     };
     use serde_json::{Value, json};
@@ -146,7 +149,7 @@ mod tests {
     fn holds(q: &str, properties: &Value) -> bool {
         let expr = parse(q).expect("the filter parses");
         let properties = JsonLiteral::admit(&properties.to_string()).expect("a JSON literal");
-        ContextSourceProperties::of(properties.piece()).is_some_and(|properties| evaluate(&expr, properties, NoLinkedEntities))
+        ContextSourceProperties::of(properties.piece()).is_some_and(|properties| evaluate(&expr, properties, NoLinkedEntities, LanguageMatching::TagEquality))
     }
 
     #[test]

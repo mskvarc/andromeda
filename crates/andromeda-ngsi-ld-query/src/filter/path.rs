@@ -1,76 +1,40 @@
 //! Attribute paths addressed by a `q` predicate (clause 4.9).
 
-use crate::error::QueryError;
+use crate::{
+    error::QueryError,
+    filter::{
+        target_language::LanguageSelector,
+        trailing_path::{MemberPath, TrailingPath},
+    },
+};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use iri_rs::IriBuf;
+use langtag::LangTag;
 
 /// An attribute path within a `q` expression, potentially including sub-attributes
-/// and compound value navigation.
+/// and a trailing `[…]` group.
 ///
 /// Example: `address[city].streetName` would have `attr = "address"`,
-/// `sub_attrs = ["city"]`, `value_path = ["streetName"]`.
+/// `sub_attrs = ["city"]`, and a trailing member path `["streetName"]`.
 ///
-/// `attr`, `sub_attrs` and `value_path` are all [`AttributeName`]s, which accept
-/// a compact short name, a prefixed name or an expanded IRI. That is exactly the
-/// range this AST spans: a freshly parsed filter carries whatever the client
-/// wrote, and an expanded one carries IRIs.
+/// `attr` and `sub_attrs` are [`AttributeName`]s, which accept a compact short
+/// name, a prefixed name or an expanded IRI. That is exactly the range this AST
+/// spans: a freshly parsed filter carries whatever the client wrote, and an
+/// expanded one carries IRIs.
 ///
-/// This type models the two *local* traversal axes: `.` sub-attributes and `[]`
-/// compound-value navigation. The third clause 4.9 axis, the `{}` linked-entity
-/// traversal, crosses an entity boundary and is modelled one level up by
+/// This type models the two *local* traversal axes: `.` sub-attributes and the
+/// `[]` group. The third clause 4.9 axis, the `{}` linked-entity traversal,
+/// crosses an entity boundary and is modelled one level up by
 /// [`QueryPath::Linked`], whose terminal segment is an `AttrPath` again.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttrPath {
     /// The top-level attribute name (compact or expanded IRI).
     pub attr: AttributeName,
     /// Sub-attribute names for navigating nested attributes.
     pub sub_attrs: Vec<AttributeName>,
-    /// Member names for navigating into compound values.
-    ///
-    /// Typed as [`AttributeName`], not as free-form JSON keys, because that is
-    /// what they address. JSON-LD expansion turns the members of a structured
-    /// Property value into IRI-keyed nodes exactly as it turns attribute names
-    /// into IRIs, so a member name arrives compact and must be expanded through
-    /// the request `@context` before it can address anything the broker stored.
-    /// A path treating them as opaque keys addressed `city` in a payload that
-    /// holds `https://uri.etsi.org/ngsi-ld/default-context/city`, and matched
-    /// nothing.
-    pub value_path: Vec<AttributeName>,
-    /// The pre-expansion spelling of each `value_path` member, same length and
-    /// order.
-    ///
-    /// A compound value reaches the evaluator in two genuinely different
-    /// shapes (see `eval::resolve_compound_member`): a structured Property
-    /// value, whose members JSON-LD expansion turns into IRI-keyed nodes, and
-    /// a `JsonProperty`'s (or an opaque Property's) raw JSON object, whose keys
-    /// are never touched by expansion because they sit inside an opaque value,
-    /// not the JSON-LD graph. Term-expanding `value_path` addresses the first
-    /// shape; this field keeps what the client actually wrote so the second
-    /// shape stays addressable too. Left equal to `value_path` until
-    /// `expand_attr_path` overwrites `value_path` alone.
-    pub value_path_compact: Vec<AttributeName>,
-    /// Whether the path carried the `[*]` language-suppression marker, which
-    /// matches a `LanguageProperty` against every language's value rather than
-    /// against the one the `lang` parameter would otherwise pick (clause 4.9).
-    pub match_all_languages: bool,
+    /// The trailing `[…]` group, `None` when the path has none.
+    pub trailing: Option<TrailingPath>,
 }
-
-// Hand-written because the field to compare is chosen, not all of them:
-// `value_path_compact` is a retry spelling carried alongside `value_path` for
-// raw-JSON member resolution, not part of what a path addresses — two paths
-// that reach the same location are equal regardless of which retry spelling
-// they carry. The sanctioned derive for a skipped field is `educe`, and a
-// proc-macro dependency in this crate is not worth one skipped field.
-impl PartialEq for AttrPath {
-    fn eq(&self, other: &AttrPath) -> bool {
-        self.attr == other.attr
-            && self.sub_attrs == other.sub_attrs
-            && self.value_path == other.value_path
-            && self.match_all_languages == other.match_all_languages
-    }
-}
-
-impl Eq for AttrPath {}
 
 impl AttrPath {
     /// Whether this path names one attribute and navigates no further.
@@ -82,19 +46,48 @@ impl AttrPath {
     /// the keyword.
     #[must_use]
     pub const fn is_simple(&self) -> bool {
-        self.sub_attrs.is_empty() && self.value_path.is_empty() && !self.match_all_languages
+        self.sub_attrs.is_empty() && self.trailing.is_none()
     }
 
     /// Build a path addressing an attribute's own value, with no sub-attribute
-    /// and no compound value navigation.
+    /// and no trailing group.
     #[must_use]
     pub const fn simple(attr: AttributeName) -> AttrPath {
         AttrPath {
             attr,
             sub_attrs: Vec::new(),
-            value_path: Vec::new(),
-            value_path_compact: Vec::new(),
-            match_all_languages: false,
+            trailing: None,
+        }
+    }
+
+    /// The compound-value members the trailing group addresses, `None` when
+    /// it holds a target language only or the path has no group.
+    #[must_use]
+    pub const fn members(&self) -> Option<&MemberPath> {
+        match &self.trailing {
+            Some(TrailingPath::Members(members)) => Some(members),
+            Some(TrailingPath::Language(_) | TrailingPath::AllLanguages) | None => None,
+        }
+    }
+
+    /// The target language the trailing group names when the attribute is a
+    /// `LanguageProperty`.
+    ///
+    /// Clause 4.9 gives `attr[member]` two readings, and the target element
+    /// decides which applies: a `LanguageProperty`'s value is a language map,
+    /// whose one-member group is the target language (`color[en]=="red"`);
+    /// every other family's is a compound member. The language is the member as
+    /// the client wrote it, because a language tag is never a term a
+    /// `@context` expands.
+    #[must_use]
+    pub fn target_language(&self) -> Option<LanguageSelector<'_>> {
+        match &self.trailing {
+            Some(TrailingPath::Language(language)) => Some(language.selector()),
+            Some(TrailingPath::Members(members)) => match members.written.as_slice() {
+                [only] => LangTag::new(only.as_str()).ok().map(LanguageSelector::Tag),
+                [] | [_, _, ..] => None,
+            },
+            Some(TrailingPath::AllLanguages) | None => None,
         }
     }
 }

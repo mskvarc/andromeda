@@ -96,7 +96,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     // from the value, geo and scope filters (clause 5.7.4.4).
     let sources = TemporalForwarding::new(&state.forwarding, &admitted, &headers, split, shape.reach());
     let forwarded = forward_temporal_history(sources, scope, service.engine(), &target, &params, &context, &uri).await?;
-    let gathering = GatheringRequest::new(&target, &params, &context, service.engine(), &uri);
+    let gathering = GatheringRequest::new(&target, &params, &context, admitted.language.targeting, service.engine(), &uri);
     let in_effect = gather_in_effect(sources, service, gathering, filtering, forwarded.as_ref()).await?;
 
     let contributed = contributed_entities(filtering, &params, forwarded.as_ref(), in_effect.as_ref(), shape.rendering());
@@ -104,7 +104,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
 
     let local_result = service
         // clone: the settlement below reads the same contributed entities the local read is exempting
-        .query(&target, &params, &local.window, local.count, &context, contributed.clone())
+        .query(&target, &params, &local.window, local.count, admitted.reading(&context), contributed.clone())
         .await
         .with_instance(&uri)?;
     log_query_warnings(&local_result.warnings);
@@ -115,6 +115,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         target: &target,
         params: &params,
         context: &context,
+        language_targeting: admitted.language.targeting,
         filtering,
         shape,
         contributed: &contributed,
@@ -124,6 +125,9 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     let timeproperty = params.timeproperty_or_default();
     let cut_short = completeness.trim(&mut merged.entities, timeproperty);
     merged.warnings.extend(cut_short);
+    // Clause 6.3.17: a query evaluated by tag equality because a reached
+    // source lacks extended filtering says so.
+    merged.warnings.extend(admitted.language.warning);
 
     let (entities, total_count, reach) = cut_merged_page(
         merged.entities,
@@ -159,6 +163,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         target: &target,
         params: &params,
         context: &context,
+        language_targeting: admitted.language.targeting,
     };
     // The histories are compacted under the request context once every holder's
     // part has been merged into them (clause 5.7.3); the join then reads the

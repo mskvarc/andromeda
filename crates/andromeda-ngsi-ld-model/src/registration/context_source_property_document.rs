@@ -214,7 +214,7 @@ mod tests {
     use crate::registration::{ContextSourceRegistration, context_source_property_document::TABLE_MEMBERS};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_query::{
-        filter::{eval::evaluate, parser::parse},
+        filter::{eval::evaluate, language_matching::LanguageMatching, parser::parse},
         queried_entity::linked_entities::NoLinkedEntities,
     };
     use serde_json::{Value, json};
@@ -269,7 +269,12 @@ mod tests {
 
     fn holds(q: &str, registration: &ContextSourceRegistration) -> bool {
         let document = registration.property_members().document().expect("the document builds");
-        evaluate(&parse(q).expect("the filter parses"), document.properties(), NoLinkedEntities)
+        evaluate(
+            &parse(q).expect("the filter parses"),
+            document.properties(),
+            NoLinkedEntities,
+            LanguageMatching::TagEquality,
+        )
     }
 
     /// Clause 4.9: every Table 5.2.9-1 member a registration declares is a

@@ -10,6 +10,7 @@ use andromeda_ngsi_ld_query::{
         expansion::{apply_expand_values, expand_attr_path, expand_attribute_names, expand_q_expr},
         expression::Expr,
         json_key_attributes::JsonKeyAttributes,
+        language_targeting::LanguageTargeting,
         trailing_members::TrailingMembers,
     },
     geo::{compile as geo_compile, query::GeoQuery},
@@ -34,7 +35,9 @@ use andromeda_ngsi_ld_request::{error::ParameterError, query::temporal::Temporal
 use std::{collections::HashSet, num::NonZeroU32};
 
 impl TemporalService {
-    /// Validate, expand, and compile temporal query parameters against one JSON-LD context.
+    /// Validate, expand, and compile temporal query parameters against one
+    /// JSON-LD context, the `q` target languages admitted and matched under
+    /// `language_targeting`.
     ///
     /// # Errors
     ///
@@ -44,7 +47,12 @@ impl TemporalService {
     /// (clause 5.7.4.4), or when the ordering names something clause 5.7.4.3
     /// does not admit, and [`TemporalError::JsonLd`] when a term cannot be
     /// expanded against `context`.
-    pub async fn compile_temporal_query(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<CompiledTemporalQuery, TemporalError> {
+    pub async fn compile_temporal_query(
+        &self,
+        params: &TemporalQueryParameters,
+        context: &ContextSpec,
+        language_targeting: LanguageTargeting,
+    ) -> Result<CompiledTemporalQuery, TemporalError> {
         let prepared_context = self.engine.prepare_term_context(context);
         let expander = ContextualExpander::new(&self.engine, &prepared_context);
         // Clause 5.2.33: a POST temporal query body's `entities[]` is a union of
@@ -71,6 +79,9 @@ impl TemporalService {
             .unwrap_or_default();
 
         let q_expr = compile_q_filter(params, &expander).await?;
+        if let Some(q) = &q_expr {
+            language_targeting.admit(q)?;
+        }
         let geo = self.compile_geo_query(params, &prepared_context).await?;
 
         let format = params.parse_format()?;
@@ -82,6 +93,7 @@ impl TemporalService {
                 EntitySelection::builder()
                     .selectors(selectors)
                     .q_expr(q_expr)
+                    .language_matching(language_targeting.matching())
                     .geo(geo)
                     // clone: the compiled selection owns its scope query independently of the reusable request parameters.
                     .scope_q(params.scope_q.clone())

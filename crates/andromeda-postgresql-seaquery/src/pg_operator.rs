@@ -14,6 +14,9 @@ const JSONB_HAS_KEY: &str = "?";
 /// `lquery` operand.
 const POSIX_MATCH: &str = "~";
 
+/// The case-insensitive POSIX regular-expression match operator `~*`.
+const POSIX_MATCH_IGNORING_CASE: &str = "~*";
+
 /// The POSIX regular-expression non-match operator `!~`.
 const POSIX_NOT_MATCH: &str = "!~";
 
@@ -62,6 +65,9 @@ pub trait PgBinaryOperator {
     /// `self ~ pattern` - whether `self` matches a POSIX regex, or an `ltree`
     /// column matches an `lquery` pattern.
     fn posix_matches(self, pattern: SimpleExpr) -> SimpleExpr;
+    /// `self ~* pattern` - whether `self` matches a POSIX regex with letter
+    /// case ignored.
+    fn posix_matches_ignoring_case(self, pattern: SimpleExpr) -> SimpleExpr;
     /// `self !~ pattern` - whether `self` does not match a POSIX regex.
     fn posix_not_matches(self, pattern: SimpleExpr) -> SimpleExpr;
     /// `self @> element` - whether the array `self` contains `element`.
@@ -103,6 +109,10 @@ impl PgBinaryOperator for SimpleExpr {
 
     fn posix_matches(self, pattern: SimpleExpr) -> SimpleExpr {
         self.binary(BinOper::Custom(POSIX_MATCH), pattern)
+    }
+
+    fn posix_matches_ignoring_case(self, pattern: SimpleExpr) -> SimpleExpr {
+        self.binary(BinOper::Custom(POSIX_MATCH_IGNORING_CASE), pattern)
     }
 
     fn posix_not_matches(self, pattern: SimpleExpr) -> SimpleExpr {
@@ -169,6 +179,7 @@ mod tests {
     fn posix_match_and_non_match_render_the_regex_operators() {
         assert!(render(SimpleExpr::from(Expr::col(Alias::new("id"))).posix_matches(Expr::val("urn:.*"))).contains(" ~ "));
         assert!(render(SimpleExpr::from(Expr::col(Alias::new("id"))).posix_not_matches(Expr::val("urn:.*"))).contains(" !~ "));
+        assert!(render(SimpleExpr::from(Expr::col(Alias::new("id"))).posix_matches_ignoring_case(Expr::val("^en"))).contains(" ~* "));
     }
 
     #[test]

@@ -8,7 +8,7 @@
 //! it is looking at.
 
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
-use andromeda_ngsi_ld_query::{pattern::Pattern, scope::query::ScopeQuery, type_selection::grammar::TypeExprRaw};
+use andromeda_ngsi_ld_query::{filter::expression::Expr, pattern::Pattern, scope::query::ScopeQuery, type_selection::grammar::TypeExprRaw};
 use andromeda_ngsi_ld_request::{
     entity::GetEntityParams,
     query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
@@ -99,6 +99,17 @@ impl ClientQuery<'_> {
         match self {
             ClientQuery::TemporalQuery(params) | ClientQuery::TemporalRetrieve { params, .. } => params.timeproperty_or_default(),
             ClientQuery::EntityQuery(_) | ClientQuery::EntityRetrieve { .. } => TimeProp::Observed,
+        }
+    }
+
+    /// The `q` filter the client wrote, as written, if the operation forwards
+    /// one: a retrieval carries none (Tables 6.5.3.1-1 and 6.19.3.1-1).
+    #[must_use]
+    pub const fn q(&self) -> Option<&Expr> {
+        match self {
+            ClientQuery::EntityQuery(params) => params.q.as_ref(),
+            ClientQuery::TemporalQuery(params) => params.q.as_ref(),
+            ClientQuery::EntityRetrieve { .. } | ClientQuery::TemporalRetrieve { .. } => None,
         }
     }
 

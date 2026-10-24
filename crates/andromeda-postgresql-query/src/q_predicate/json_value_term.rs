@@ -157,7 +157,8 @@ mod tests {
         let (QueryPath::Local(path), Predicate::Equality { rhs, .. }) = (pred.path(), &pred) else {
             panic!("a local equality");
         };
-        let condition = on_some_member(path, InstanceRow::History, |member| json_equality(member, SetMembership::Within, rhs));
+        let members = path.members().expect("a member path");
+        let condition = on_some_member(members, InstanceRow::History, |member| json_equality(member, SetMembership::Within, rhs));
         let sql = Query::select().cond_where(condition).to_owned().to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"jsonb_path_query("qh"."value_object", '$."city"[*]')"#), "{sql}");
         assert!(sql.contains(r"-> ('@value')"), "{sql}");

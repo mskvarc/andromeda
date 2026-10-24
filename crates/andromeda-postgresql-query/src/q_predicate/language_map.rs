@@ -18,8 +18,8 @@
 //! map is unnested and every comparison runs against one entry's `@value`
 //! text.
 
-use crate::q_predicate::{instance_row::InstanceRow, value_column::ValueColumn};
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use crate::q_predicate::{extended_filter_pattern::extended_filter_pattern, instance_row::InstanceRow, value_column::ValueColumn};
+use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, target_language::LanguageSelector};
 use andromeda_ngsi_ld_vocabulary::keyword;
 use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_seaquery::{
@@ -29,7 +29,7 @@ use andromeda_postgresql_seaquery::{
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
-use sea_query::{Alias, CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Func, Query, SelectStatement, SimpleExpr};
 
 /// The alias one unnested `languageMap` entry is read under.
 const ENTRY: &str = "ls";
@@ -42,9 +42,10 @@ const ENTRY_VALUE: &str = "value";
 pub enum LanguageSelection<'a> {
     /// No target language: every string of the map, the `@none` one included.
     AnyLanguage,
-    /// A target language, compared with the `@language` of each entry as the
-    /// client wrote it: a BCP 47 tag is stored verbatim, never expanded.
-    TargetLanguage(&'a AttributeName),
+    /// A target language, selecting the entries whose `@language` it admits
+    /// under the matching mode: a tag compared case-insensitively (RFC 5646
+    /// section 2.1.1), or RFC 4647 section 3.3.2 extended filtering.
+    TargetLanguage(LanguageSelector<'a>, LanguageMatching),
 }
 
 /// The expanded `languageMap` of an attribute: a JSONB array of entries, or SQL
@@ -106,13 +107,32 @@ impl LanguageMap {
         let mut scan = Query::select();
         // clone: the map is read by every probe a term builds over it
         scan.expr(int_literal(1)).from_function(jsonb_array_elements(self.0.clone()), Alias::new(ENTRY));
-        if let LanguageSelection::TargetLanguage(language) = selection {
-            scan.and_where(entry_text(keyword::LANGUAGE).eq(cast(SeaExpr::val(language.as_str()), PostgresType::Text)));
+        if let LanguageSelection::TargetLanguage(language, matching) = selection {
+            scan.and_where(selects_entry(language, matching));
         }
         if let Some(test) = test {
             scan.and_where(test);
         }
         scan
+    }
+}
+
+/// Whether the current entry's `@language` is a key `language` selects under
+/// `matching`, the same decision
+/// [`LanguageSelector::admits`] makes in memory.
+///
+/// The target language is the client's own text, so it reaches the statement
+/// as a parameter: the tag itself, or the pattern restating the range.
+fn selects_entry(language: LanguageSelector<'_>, matching: LanguageMatching) -> SimpleExpr {
+    let tag = entry_text(keyword::LANGUAGE);
+    match (language, matching) {
+        (LanguageSelector::Tag(wanted), LanguageMatching::TagEquality) => {
+            SimpleExpr::from(Func::lower(tag)).eq(Func::lower(cast(SeaExpr::val(wanted.as_str()), PostgresType::Text)))
+        }
+        (LanguageSelector::Tag(_) | LanguageSelector::Range(_), LanguageMatching::ExtendedFiltering)
+        | (LanguageSelector::Range(_), LanguageMatching::TagEquality) => {
+            tag.posix_matches_ignoring_case(cast(SeaExpr::val(extended_filter_pattern(language)), PostgresType::Text))
+        }
     }
 }
 
@@ -127,7 +147,7 @@ mod tests {
         instance_row::InstanceRow,
         language_map::{LanguageMap, LanguageSelection},
     };
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, target_language::TargetLanguage};
     use andromeda_postgresql_seaquery::literal::text_literal;
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr as SeaExpr, ExprTrait, PostgresQueryBuilder, Query, SimpleExpr, Value};
@@ -141,8 +161,8 @@ mod tests {
         LanguageMap::of_column(SeaExpr::col(Alias::new("map")))
     }
 
-    fn language(tag: &str) -> AttributeName {
-        tag.parse().expect("a valid language tag")
+    fn language(text: &str) -> TargetLanguage {
+        TargetLanguage::parse(text).expect("a valid target language")
     }
 
     fn equals_door(text: SimpleExpr) -> SimpleExpr {
@@ -161,14 +181,35 @@ mod tests {
     }
 
     /// Clause 4.9: with a target language the target value is the string of
-    /// that language's key-value pair, so the entry's tag is pinned.
+    /// that language's key-value pair, the tag compared case-insensitively
+    /// (RFC 5646 section 2.1.1).
     #[test]
-    fn a_target_language_pins_the_language_of_the_string_it_reads() {
-        let tag = language("en");
-        let (sql, binds) = render(column_map().some_string(LanguageSelection::TargetLanguage(&tag), equals_door));
-        assert!(sql.contains(r#"("ls"."value" ->> ('@language')) = ($1::text)"#), "{sql}");
+    fn tag_equality_pins_the_language_of_the_string_it_reads_ignoring_case() {
+        let tag = language("en-GB");
+        let (sql, binds) = render(column_map().some_string(LanguageSelection::TargetLanguage(tag.selector(), LanguageMatching::TagEquality), equals_door));
+        assert!(sql.contains(r#"LOWER("ls"."value" ->> ('@language')) = LOWER($1::text)"#), "{sql}");
         assert!(sql.contains(r#"("ls"."value" ->> ('@value')) = ('Door')"#), "{sql}");
-        assert!(matches!(&binds[0], Value::String(Some(text)) if text.as_str() == "en"), "{binds:?}");
+        assert!(matches!(&binds[0], Value::String(Some(text)) if text.as_str() == "en-GB"), "{binds:?}");
+    }
+
+    /// RFC 4647 section 3.3.2: under extended filtering the entry's tag is
+    /// matched against the range's pattern, bound as a parameter.
+    #[test]
+    fn extended_filtering_matches_the_tag_against_the_range_pattern() {
+        for (text, matching) in [
+            ("en", LanguageMatching::ExtendedFiltering),
+            ("de-*-DE", LanguageMatching::ExtendedFiltering),
+            ("de-*-DE", LanguageMatching::TagEquality),
+        ] {
+            let target = language(text);
+            let (sql, binds) = render(column_map().holds(LanguageSelection::TargetLanguage(target.selector(), matching)));
+            assert!(sql.contains(r#"("ls"."value" ->> ('@language')) ~* ($1::text)"#), "{text}: {sql}");
+            assert!(!sql.contains("LOWER"), "{text}: {sql}");
+            assert!(
+                matches!(&binds[0], Value::String(Some(pattern)) if pattern.starts_with('^')),
+                "{text}: {binds:?}"
+            );
+        }
     }
 
     /// With no target language every entry is a candidate, the `@none` one
@@ -185,7 +226,7 @@ mod tests {
     #[test]
     fn no_string_requires_the_map_and_denies_a_match_under_the_language() {
         let tag = language("fr");
-        let (sql, binds) = render(column_map().no_string(LanguageSelection::TargetLanguage(&tag), equals_door));
+        let (sql, binds) = render(column_map().no_string(LanguageSelection::TargetLanguage(tag.selector(), LanguageMatching::TagEquality), equals_door));
         assert_eq!(sql.matches("EXISTS").count(), 2, "{sql}");
         assert_eq!(sql.matches("@language").count(), 1, "{sql}");
         assert!(sql.contains("(NOT EXISTS("), "{sql}");

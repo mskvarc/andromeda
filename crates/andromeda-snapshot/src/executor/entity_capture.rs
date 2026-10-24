@@ -164,7 +164,14 @@ impl SnapshotExecutor {
             let (rows, _) = match self
                 .sources
                 .entity_query
-                .query_states(&self.sources.live_target, &params, &window, CountPolicy::Omit, context)
+                .query_states(
+                    &self.sources.live_target,
+                    &params,
+                    &window,
+                    CountPolicy::Omit,
+                    context,
+                    self.sources.entity_query.language_targeting(),
+                )
                 .await
             {
                 Ok(result) => result,

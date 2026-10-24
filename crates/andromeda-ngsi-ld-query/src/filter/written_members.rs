@@ -8,7 +8,7 @@
 //! [`serialize_written_members`](crate::filter::serialize::serialize_written_members)
 //! renders holds the second, and this module joins the two again.
 
-use crate::filter::{expression::Expr, path::AttrPath};
+use crate::filter::{expression::Expr, trailing_path::TrailingPath};
 
 impl Expr {
     /// This expression, each trailing member's written spelling read from
@@ -22,33 +22,18 @@ impl Expr {
     /// share.
     #[must_use]
     pub fn with_written_members(mut self, written: &Expr) -> Expr {
-        let written_paths = terminal_paths(written);
-        let mut own_paths = terminal_paths_mut(&mut self);
+        let written_paths = written.terminal_paths();
+        let mut own_paths = self.terminal_paths_mut();
         if own_paths.len() == written_paths.len() {
             for (own, written) in own_paths.iter_mut().zip(written_paths) {
-                if own.value_path.len() == written.value_path.len() {
-                    own.value_path_compact.clone_from(&written.value_path);
+                if let (Some(TrailingPath::Members(own)), Some(written)) = (&mut own.trailing, written.members())
+                    && own.addressed.len() == written.addressed.len()
+                {
+                    own.written.clone_from(&written.addressed);
                 }
             }
         }
         self
-    }
-}
-
-/// The local path every Query Term of `expr` terminates at, in pre-order.
-fn terminal_paths(expr: &Expr) -> Vec<&AttrPath> {
-    match expr {
-        Expr::And(terms) | Expr::Or(terms) => terms.iter().flat_map(terminal_paths).collect(),
-        Expr::Pred(pred) => vec![pred.path().terminal()],
-    }
-}
-
-/// The local path every Query Term of `expr` terminates at, mutably, in
-/// pre-order.
-fn terminal_paths_mut(expr: &mut Expr) -> Vec<&mut AttrPath> {
-    match expr {
-        Expr::And(terms) | Expr::Or(terms) => terms.iter_mut().flat_map(terminal_paths_mut).collect(),
-        Expr::Pred(pred) => vec![pred.path_mut().terminal_mut()],
     }
 }
 
@@ -61,6 +46,7 @@ mod tests {
             expansion::expand_q_expr,
             expression::Expr,
             json_key_attributes::JsonKeyAttributes,
+            language_matching::LanguageMatching,
             parser::parse,
             serialize::{serialize, serialize_written_members},
         },
@@ -111,9 +97,12 @@ mod tests {
             }]
         }));
         let english = persisted_round_trip("name[en]==\"Door\"").await;
-        assert!(evaluate(&english, &door, NoLinkedEntities));
+        assert!(evaluate(&english, &door, NoLinkedEntities, LanguageMatching::TagEquality));
         let addressed_only: Expr = serialize(&english).parse().expect("parses");
-        assert!(!evaluate(&addressed_only, &door, NoLinkedEntities), "the expanded text alone has lost the tag");
+        assert!(
+            !evaluate(&addressed_only, &door, NoLinkedEntities, LanguageMatching::TagEquality),
+            "the expanded text alone has lost the tag"
+        );
     }
 
     /// The compound reading still addresses the expanded member, and every term

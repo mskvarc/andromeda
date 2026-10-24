@@ -213,7 +213,7 @@ impl SubscriptionForwardingService {
             debug!(subscription = %local, "notification for a forwarded copy whose local subscription no longer exists");
             return Ok(());
         };
-        let compiled = compile_subscription(&stored);
+        let compiled = compile_subscription(&stored, self.entity_query.language_targeting().matching());
         let subscription = stored.subscription;
         // Clause 5.8.6: the copy is delivered under the local subscription's
         // `jsonldContext`. The sender spelled its part under the context of the

@@ -122,7 +122,10 @@ mod tests {
         notification::NotificationTrigger,
         subscription::{SubscriptionStatus, standing::SubscriptionStanding},
     };
-    use andromeda_ngsi_ld_query::{filter::parser::parse, projection::compiled::Projection};
+    use andromeda_ngsi_ld_query::{
+        filter::{language_matching::LanguageMatching, parser::parse},
+        projection::compiled::Projection,
+    };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_tenancy::tenant_ref::TenantRef;
     use chrono::{DateTime, Utc};
@@ -160,6 +163,7 @@ mod tests {
             jsonld_context: None,
             created_at: DateTime::<Utc>::MIN_UTC,
             compiled_q: Some(parse(q).expect("the filter parses")),
+            language_matching: LanguageMatching::TagEquality,
             compiled_geo_q: SubscriptionGeoFilter::Unrestricted,
             compiled_scope_q: None,
             dataset_id: None,
@@ -219,7 +223,7 @@ mod tests {
     /// The keys of the candidates `hops` admits for the creation of the
     /// Vehicle.
     fn admitted_keys(candidates: Vec<Arc<CompiledSubscription>>, hops: HopResolution<'_>) -> Vec<String> {
-        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let current = vehicle();
         let states = ChangedStates {
             current: Some(&current),
@@ -272,7 +276,7 @@ mod tests {
     /// first, then those only the state before a removal admits, each once.
     #[test]
     fn a_removal_lists_what_the_state_left_admits_before_what_only_the_previous_state_admits() {
-        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let current = vehicle_without_speed();
         let previous = vehicle();
         let removal = EntityChange::new(

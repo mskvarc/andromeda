@@ -16,7 +16,7 @@
 
 use crate::q_predicate::{instance_row::InstanceRow, json_value_term::JsonTarget, value_column::ValueColumn};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::filter::path::AttrPath;
+use andromeda_ngsi_ld_query::filter::trailing_path::MemberPath;
 use andromeda_ngsi_ld_vocabulary::keyword;
 use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_seaquery::{
@@ -42,14 +42,14 @@ enum MemberShape {
     JsonLiteral,
 }
 
-/// Whether some member `path` addresses in the `value_object` of `row` passes
-/// `test`.
-pub(crate) fn on_some_member(path: &AttrPath, row: InstanceRow, test: impl Fn(&JsonTarget) -> Condition) -> Condition {
+/// Whether some member `members` addresses in the `value_object` of `row`
+/// passes `test`.
+pub(crate) fn on_some_member(members: &MemberPath, row: InstanceRow, test: impl Fn(&JsonTarget) -> Condition) -> Condition {
     let object = row.value(ValueColumn::Object);
-    let expanded = members_passing(object.clone(), &expanded_jsonpath(&path.value_path), MemberShape::ValueNode, &test); // clone: both readings walk the one value
+    let expanded = members_passing(object.clone(), &expanded_jsonpath(&members.addressed), MemberShape::ValueNode, &test); // clone: both readings walk the one value
     let literal = Condition::all().add(is_json_property(row.attribute_family())).add(members_passing(
         object,
-        &literal_jsonpath(&path.value_path_compact),
+        &literal_jsonpath(&members.written),
         MemberShape::JsonLiteral,
         &test,
     ));

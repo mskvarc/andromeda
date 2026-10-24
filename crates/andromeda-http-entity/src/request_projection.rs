@@ -34,7 +34,7 @@ impl RequestProjection {
     pub(crate) async fn of(service: &EntityQueryService, params: &EntityQueryParameters, context: &ContextSpec) -> Result<RequestProjection, EntityError> {
         let compiled = match (params.pick.as_ref(), params.omit.as_ref(), params.attrs.as_ref()) {
             (None, None, None) => None,
-            (Some(_), _, _) | (_, Some(_), _) | (_, _, Some(_)) => Some(service.compile_query_public(params, context).await?),
+            (Some(_), _, _) | (_, Some(_), _) | (_, _, Some(_)) => Some(service.compile_query_public(params, context, service.language_targeting()).await?),
         };
         Ok(RequestProjection { compiled })
     }

@@ -8,7 +8,9 @@
 //! every extension — the configuration, the resolved enabled set, the
 //! advertisement, and the conformance-override startup log — so that the HTTP
 //! layers that gate the features and the composition that wires them depend on a
-//! neutral leaf rather than on each other.
+//! neutral leaf rather than on each other. The one domain crate it names is the
+//! query grammar, for the level of `q` target languages the enabled set serves
+//! and a Context Source's advertisement announces.
 
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
@@ -23,6 +25,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-http-stack",
         "andromeda-json-literal",
+        "andromeda-ngsi-ld-query",
     ],
     allow_workspace_dev_dependencies: [
     ],

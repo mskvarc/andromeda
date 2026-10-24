@@ -17,6 +17,7 @@ workspace = true
 [dependencies]
 andromeda-http-stack.workspace = true
 andromeda-json-literal.workspace = true
+andromeda-ngsi-ld-query.workspace = true
 enumset = "1.1.14"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

@@ -11,6 +11,7 @@ use andromeda_ngsi_ld_query::filter::{
     path::{AttrPath, QueryPath},
     predicate::{CmpOp, OrderingOp, PatternPolarity, Predicate, SetMembership},
     scalar::{CompareValue, Scalar},
+    trailing_path::TrailingPath,
 };
 use andromeda_ngsi_ld_vocabulary::{
     compact::classes::{DATE, DATE_TIME, TIME},
@@ -58,6 +59,12 @@ fn csr_pred_to_condition(pred: &Predicate) -> Condition {
     let QueryPath::Local(path) = pred.path() else {
         return no_registration_matches();
     };
+    // A target language only a tag or range spells reads a `LanguageProperty`,
+    // and Context Source Properties are Properties (clause 5.2.9), so it has
+    // no target here.
+    if matches!(path.trailing, Some(TrailingPath::Language(_))) {
+        return no_registration_matches();
+    }
     match pred {
         Predicate::Exists(_) => Condition::all().add(jsonb_key_exists(context_source_properties(), SeaExpr::val(path.attr.as_str()))),
         Predicate::Equality { membership, rhs, .. } => csr_equality_condition(path, *membership, rhs),
@@ -114,12 +121,12 @@ fn csr_pattern_condition(path: &AttrPath, pattern: &str, polarity: PatternPolari
 /// subquery keeps growth linear in the sub-attribute depth (which the `q`
 /// parser also bounds).
 ///
-/// `value_path` is stepped afterwards, and without `unwrap_property`: a
+/// The trailing members are stepped afterwards, and without `unwrap_property`: a
 /// compound member (`address[city]`) is an ordinary JSON object key inside the
 /// already-unwrapped value, not a `Property` node in its own right, so wrapping
 /// it in the same `CASE` would test a `type` member the member's own value
-/// never carries. Dropping `value_path` would compare the whole compound
-/// value's JSON text instead of the addressed member.
+/// never carries. Dropping them would compare the whole compound value's JSON
+/// text instead of the addressed member.
 fn csr_value_extract(path: &AttrPath) -> SimpleExpr {
     let mut json_path = unwrap_property(context_source_properties().json_get(text_literal(path.attr.as_str())));
 
@@ -127,7 +134,7 @@ fn csr_value_extract(path: &AttrPath) -> SimpleExpr {
         json_path = unwrap_property(json_path.json_get(text_literal(sub.as_str())));
     }
 
-    for member in &path.value_path {
+    for member in path.members().into_iter().flat_map(|members| &members.addressed) {
         json_path = json_path.json_get(text_literal(member.as_str()));
     }
 
@@ -242,7 +249,7 @@ mod tests {
     use super::*;
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_query::{
-        filter::{eval::evaluate, parser},
+        filter::{eval::evaluate, language_matching::LanguageMatching, parser},
         queried_entity::linked_entities::NoLinkedEntities,
     };
     use andromeda_postgresql_query::{
@@ -487,18 +494,33 @@ mod tests {
             let expr = parser::parse(&case.expression).unwrap_or_else(|error| panic!("{}: {error}", case.expression));
 
             for entity in &case.matching {
-                assert!(evaluate(&expr, entity, NoLinkedEntities), "{} must select {}", case.expression, entity.id());
+                assert!(
+                    evaluate(&expr, entity, NoLinkedEntities, LanguageMatching::TagEquality),
+                    "{} must select {}",
+                    case.expression,
+                    entity.id()
+                );
             }
             for entity in &case.non_matching {
-                assert!(!evaluate(&expr, entity, NoLinkedEntities), "{} must reject {}", case.expression, entity.id());
+                assert!(
+                    !evaluate(&expr, entity, NoLinkedEntities, LanguageMatching::TagEquality),
+                    "{} must reject {}",
+                    case.expression,
+                    entity.id()
+                );
             }
             assert!(
-                !evaluate(&expr, &absent(), NoLinkedEntities),
+                !evaluate(&expr, &absent(), NoLinkedEntities, LanguageMatching::TagEquality),
                 "{} must reject an entity without the attribute",
                 case.expression
             );
 
-            let projection_sql = render_entity_condition(compile(&expr, &InstanceScan::Current(&EntityRowRefs::unaliased(None)), &names()));
+            let projection_sql = render_entity_condition(compile(
+                &expr,
+                &InstanceScan::Current(&EntityRowRefs::unaliased(None)),
+                &names(),
+                LanguageMatching::TagEquality,
+            ));
             assert!(
                 projection_sql.contains("EXISTS("),
                 "{} must test presence structurally: {projection_sql}",

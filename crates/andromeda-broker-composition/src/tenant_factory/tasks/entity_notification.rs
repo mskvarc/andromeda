@@ -11,6 +11,7 @@ use crate::{
     config::notifications::NotificationsConfig,
     linked_forwarding::LinkedForwarding,
     tenant_factory::{
+        TenantFactoryConfig,
         assembly_invariant::AssemblyInvariant,
         background_pacer::BackgroundPacer,
         error::TenantAssemblyError,
@@ -25,10 +26,7 @@ use crate::{
 };
 use andromeda_context_commit::context_change_event::ContextChangeEvent;
 use andromeda_delivery::dispatch::TransportDispatcher;
-use andromeda_entity::{
-    config::EntityConfig,
-    query::{EntityQueryService, remote_linked::RemoteLinkedEntitySource},
-};
+use andromeda_entity::query::{EntityQueryService, remote_linked::RemoteLinkedEntitySource};
 use andromeda_federation::FederationService;
 use andromeda_jsonld::operation_hit_scope::run_in_operation_scope;
 use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
@@ -69,27 +67,31 @@ const LIVE_LANE_DEPTH: NonZeroUsize = NonZeroUsize::MIN.saturating_add(31);
 pub(super) fn compose_notification_query(
     storage: &TenantStorage,
     forwarding: &Arc<FederationService>,
-    entity_config: &EntityConfig,
+    config: &TenantFactoryConfig,
 ) -> Arc<EntityQueryService> {
-    Arc::new(EntityQueryService::new(
-        Arc::clone(&storage.entity_ports.reader),
-        Arc::clone(&storage.entity_ports.query),
-        storage.engine.clone(),  // clone: the notification query owns its engine handle.
-        storage.spatial.clone(), // clone: the notification query narrows through the tenant's one index.
-        storage.tenant.clone(),  // clone: the query service owns its tenant partition.
-        // A notification's join resolves Linked Entities exactly as a request's
-        // does, including the ones clause 4.5.23.1 places outside this broker.
-        Some(Arc::new(LinkedForwarding::new(
-            Arc::clone(forwarding),      // clone: request handling and notification joins share one forwarding service.
-            storage.live_target.clone(), // clone: linked resolution runs against the tenant's live branch.
-        )) as Arc<dyn RemoteLinkedEntitySource>),
-        // A notification query only resolves Linked Entities by identifier and
-        // compiles no geo-query: a subscription's `geoQ` is matched in memory
-        // from its stored form, admitted once when it was written, so neither a
-        // lower limit nor the band switched off since refuses a stored
-        // subscription.
-        GeoQueryAdmission::new(entity_config.geometry_census_limits(), NearDistanceBand::Admitted),
-    ))
+    Arc::new(
+        EntityQueryService::builder()
+            .reader(Arc::clone(&storage.entity_ports.reader))
+            .query_store(Arc::clone(&storage.entity_ports.query))
+            .engine(storage.engine.clone()) // clone: the notification query owns its engine handle.
+            .spatial(storage.spatial.clone()) // clone: the notification query narrows through the tenant's one index.
+            .tenant(storage.tenant.clone()) // clone: the query service owns its tenant partition.
+            // A notification's join resolves Linked Entities exactly as a request's
+            // does, including the ones clause 4.5.23.1 places outside this broker.
+            .remote_linked(Some(Arc::new(LinkedForwarding::new(
+                Arc::clone(forwarding),      // clone: request handling and notification joins share one forwarding service.
+                storage.live_target.clone(), // clone: linked resolution runs against the tenant's live branch.
+            )) as Arc<dyn RemoteLinkedEntitySource>))
+            // A notification query only resolves Linked Entities by identifier and
+            // compiles no geo-query: a subscription's `geoQ` is matched in memory
+            // from its stored form, admitted once when it was written, so neither a
+            // lower limit nor the band switched off since refuses a stored
+            // subscription.
+            .geo_admission(GeoQueryAdmission::new(config.entity.geometry_census_limits(), NearDistanceBand::Admitted))
+            // A subscription's filters read under the broker's live mode.
+            .language_targeting(config.extensions.resolve().language_targeting())
+            .build(),
+    )
 }
 
 /// Compose the notification policy operation one tenant evaluates its

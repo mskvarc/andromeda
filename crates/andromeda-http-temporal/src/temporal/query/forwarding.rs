@@ -32,7 +32,7 @@ use andromeda_http_response::{
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::{
-    filter::{expansion::expand_csf_expr, expression::Expr},
+    filter::{expansion::expand_csf_expr, expression::Expr, language_targeting::LanguageTargeting},
     geo::query::GeoQuery,
 };
 use axum::http::{HeaderMap, Uri};
@@ -322,7 +322,15 @@ pub(crate) async fn forward_in_effect_probes(
         geo,
         reach: _,
     } = sources;
-    let InEffectRequest { params, context, instance } = request;
+    // The probes forward the client's `q` as written, which each source reads
+    // as its own configuration does; the negotiated level decides this
+    // broker's reading alone.
+    let InEffectRequest {
+        params,
+        context,
+        language_targeting: _,
+        instance,
+    } = request;
     let csf_expr = expanded_csf(engine, params, context, instance).await?;
     let mut answers = Vec::new();
     for probe in probes {
@@ -357,6 +365,9 @@ pub(crate) struct InEffectRequest<'r> {
     pub(crate) params: &'r TemporalQueryParameters,
     /// The request context.
     pub(crate) context: &'r ContextSpec,
+    /// What the query's target languages may be and how they select
+    /// languageMap keys.
+    pub(crate) language_targeting: LanguageTargeting,
     /// The request URI a failure names.
     pub(crate) instance: &'r Uri,
 }

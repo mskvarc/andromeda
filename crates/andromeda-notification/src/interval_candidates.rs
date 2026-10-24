@@ -104,6 +104,7 @@ mod tests {
     use andromeda_entity::{error::EntityError, port::payload_pages::EntityPayloadPages};
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
+    use andromeda_ngsi_ld_query::filter::language_matching::LanguageMatching;
     use andromeda_subscription::{compilation::compile_subscription, stored_subscription::StoredSubscription};
     use async_trait::async_trait;
     use serde_json::json;
@@ -155,10 +156,13 @@ mod tests {
             "modifiedAt": "2024-01-01T00:00:00Z"
         }))
         .expect("valid subscription");
-        let compiled = compile_subscription(&StoredSubscription {
-            key: SubscriptionKey::try_from(1).expect("a valid key"),
-            subscription,
-        });
+        let compiled = compile_subscription(
+            &StoredSubscription {
+                key: SubscriptionKey::try_from(1).expect("a valid key"),
+                subscription,
+            },
+            LanguageMatching::TagEquality,
+        );
         let pages = StoredEntities(vec![vehicle("urn:ngsi-ld:Vehicle:1"), vehicle("urn:ngsi-ld:Vehicle:2")]);
         let candidates = IntervalCandidates {
             target: &ContextTarget::Live,

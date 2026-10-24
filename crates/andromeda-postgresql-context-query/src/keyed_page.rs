@@ -93,7 +93,7 @@ pub(crate) fn keyed_page(
     let short = ShortWalk {
         source: *source,
         walked: source.condition(QFilter::Omitted)?,
-        probe: compile(q_expr, &InstanceScan::Current(&walked), source.names),
+        probe: compile(q_expr, &InstanceScan::Current(&walked), source.names, source.query.selection.language_matching),
         length: SHORT_WALK,
     };
     let rest = IndexOrWalk {

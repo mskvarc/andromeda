@@ -23,6 +23,7 @@ use crate::{
     forwarded_payload::ForwardedPayload,
     forwarding_url::forwarding_url,
     operation::ForwardingOperation,
+    participating_read::ParticipatingRead,
     read_fan_out::{ReadSelection, ReadServing},
     request::{CsrModeFilter, EntityMapInUse, TriggeringRequest},
     transport::ForwardedRequest,
@@ -59,6 +60,15 @@ pub enum SourceConfiguration {
     Described(Option<JsonLiteral>),
     /// It could not be asked, or answered without an identity.
     Undescribed,
+}
+
+/// What one source a read reaches said about its configuration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReachedSource {
+    /// The registration naming the source.
+    pub registration: Identifier,
+    /// What the source said.
+    pub configuration: SourceConfiguration,
 }
 
 /// The one member of a Context Source identity the probe reads (Table
@@ -160,6 +170,36 @@ impl FederationService {
             configurations.push(self.source_configuration(registration).await);
         }
         Ok(configurations)
+    }
+
+    /// What every Context Source `read` reaches says about its own
+    /// configuration, one answer per participating registration.
+    ///
+    /// The registrations are those the read's participation is decided by, so
+    /// the answers describe the sources a forwarded query or retrieval reaches.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FederationError::JsonLd`] when the query's entity type cannot
+    /// be expanded, and [`FederationError::Registration`] when the matching
+    /// registrations cannot be read. A source that cannot be asked answers
+    /// [`SourceConfiguration::Undescribed`] instead.
+    pub async fn query_configurations(
+        &self,
+        target: &ContextTarget,
+        context: &ContextSpec,
+        read: &ParticipatingRead<'_>,
+    ) -> Result<Vec<ReachedSource>, FederationError> {
+        let registrations = self.participating_registrations(target, context, read).await?;
+        let mut reached = Vec::with_capacity(registrations.len());
+        for registration in registrations {
+            let configuration = self.source_configuration(&registration).await;
+            reached.push(ReachedSource {
+                registration: registration.id,
+                configuration,
+            });
+        }
+        Ok(reached)
     }
 
     /// What the source `registration` names says about its configuration,

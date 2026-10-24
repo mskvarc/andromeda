@@ -50,7 +50,7 @@ use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity_selection::ConsideredEntities};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity_selection::ConsideredEntities, filter::language_targeting::LanguageTargeting};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::{geometry_media_type::require_geojson_for_geometry_property, query::entity::parameters::EntityQueryParameters};
 use axum::http::{HeaderMap, Uri as HttpUri};
@@ -195,13 +195,17 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         let deferred = split_entities.then(|| query.defer_split_filters());
         let page = QueryPage::of(window, count, forwarded.as_ref(), binding.page_pointers(), pagination.context);
 
-        let (local_versions, local_total) = local_versions(service, &target, &query, &page, &context, &uri).await?;
+        let targeting = admitted.language.targeting;
+        let (local_versions, local_total) = local_versions(service, &target, &query, &page, &context, targeting, &uri).await?;
         let merged = merge_contributions(service, local_versions, forwarded, &query, &context, &uri).await?;
         let MergedEntities {
             entities: versions,
             warnings,
             contributions,
-        } = retain_matching(service, &target, merged, deferred, &context, &uri).await?;
+        } = retain_matching(service, &target, merged, deferred, &context, targeting.matching(), &uri).await?;
+        // Clause 6.3.17: a query evaluated by tag equality because a reached
+        // source lacks extended filtering says so.
+        let warnings = warnings.into_iter().chain(admitted.language.warning).collect::<Vec<_>>();
         let split_survivors = split_entities.then(|| split_match_set(&versions));
         let (mut versions, reach, total_count) = page.cut(versions, |version| version.state.id().as_str(), local_total);
         let carried = ResolvedJoin::carried_by(&mut versions);
@@ -234,7 +238,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         // Table 6.4.3.2-3 and Table 6.23.3.1-1: 201 when an EntityMap has been
         // (re)created.
         let status = if admitted.map_use.mints() { StatusCode::CREATED } else { StatusCode::OK };
-        let map_entities = LocalEntitySource::queried(service, &target, &query, &context, plan.as_ref(), &uri);
+        let map_entities = LocalEntitySource::queried(service, &target, &query, &context, targeting, plan.as_ref(), &uri);
         let page_matches = split_page_matches(split_survivors, plan.as_ref());
         let entity_map_uri = record_map_use(&state.entity_maps, admitted.map_use, contributions, map_entities, page_matches, &uri).await?;
 
@@ -292,11 +296,12 @@ async fn local_versions(
     query: &EntityQueryParameters,
     page: &QueryPage,
     context: &AdmittedContext,
+    targeting: LanguageTargeting,
     instance: &HttpUri,
 ) -> Result<(Vec<ReceivedState>, Option<i64>), ProblemResponse> {
     let (local_window, local_count) = page.local_read();
     let (rows, total) = service
-        .query_states(target, query, &local_window, local_count, context)
+        .query_states(target, query, &local_window, local_count, context, targeting)
         .await
         .with_entity_instance(instance)?;
     Ok((rows.into_iter().map(held_version).collect(), total))

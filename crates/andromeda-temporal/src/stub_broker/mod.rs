@@ -32,7 +32,12 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalAggregationRow, TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance};
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_query::{entity_selection::EntitySelection, geo::near_distance_band::NearDistanceBand, split_filter::LeafTruths};
+use andromeda_ngsi_ld_query::{
+    entity_selection::EntitySelection,
+    filter::language_targeting::LanguageTargeting,
+    geo::near_distance_band::NearDistanceBand,
+    split_filter::LeafTruths,
+};
 use async_trait::async_trait;
 use std::{
     collections::HashMap,
@@ -253,6 +258,7 @@ pub(crate) fn limits() -> TemporalServiceLimits {
         aggregation_grouping_max_groups: 100,
         payload_budget: EntityConfig::default().payload_budget(),
         near_band: NearDistanceBand::Refused,
+        language_targeting: LanguageTargeting::Specification,
     }
 }
 

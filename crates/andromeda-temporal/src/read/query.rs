@@ -8,6 +8,7 @@ use crate::{
         history_reader::ShapeHolders,
         read_scope::{ScopeReach, TemporalReadScope},
     },
+    query_reading::QueryReading,
     query_warning_reason::TemporalQueryWarningReason,
     read::{
         aggregated_page::{AggregationRendering, render_aggregation_page, settle_aggregation_pages},
@@ -18,7 +19,6 @@ use crate::{
     service::{TemporalQueryResult, TemporalQueryWarning, TemporalService},
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
@@ -38,6 +38,9 @@ impl TemporalService {
     /// Query the page `window` selects of the temporal entities matching the
     /// given filter and temporal parameters, counting every match when `count`
     /// asks for it (clause 6.3.13).
+    ///
+    /// The request's terms and `q` target languages are read as `reading`
+    /// says.
     ///
     /// # Errors
     ///
@@ -62,14 +65,15 @@ impl TemporalService {
         params: &TemporalQueryParameters,
         window: &PageWindow,
         count: CountPolicy,
-        context: &ContextSpec,
+        reading: QueryReading<'_>,
         contributed: ContributedEntities,
     ) -> Result<TemporalQueryResult, TemporalError> {
+        let QueryReading { context, language_targeting } = reading;
         let timer = temporal::start(TemporalOperation::Query);
         let result = async {
             params.validate(TemporalQueryOperation::Query, self.linked_retrieval)?;
 
-            let mut compiled = self.compile_temporal_query(params, context).await?;
+            let mut compiled = self.compile_temporal_query(params, context, language_targeting).await?;
             compiled.contributed = contributed;
             let compiled = compiled;
             let contributed_reading = ContributedReading::of(&compiled);

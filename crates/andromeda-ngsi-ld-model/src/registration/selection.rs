@@ -6,7 +6,7 @@ use crate::registration::ContextSourceRegistration;
 use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
-    filter::{eval::evaluate, expression::Expr},
+    filter::{eval::evaluate, expression::Expr, language_matching::LanguageMatching},
     geo::query::GeoQuery,
     queried_entity::linked_entities::NoLinkedEntities,
     scope::query::ScopeQuery,
@@ -64,8 +64,9 @@ impl RegistrationFilters<'_> {
             return Ok(true);
         };
         let document = registration.property_members().document()?;
-        // Context Source Properties carry no Relationship a hop could cross.
-        Ok(evaluate(csf, document.properties(), NoLinkedEntities))
+        // Context Source Properties carry no Relationship a hop could cross,
+        // and no LanguageProperty a target language could select keys of.
+        Ok(evaluate(csf, document.properties(), NoLinkedEntities, LanguageMatching::TagEquality))
     }
 }
 

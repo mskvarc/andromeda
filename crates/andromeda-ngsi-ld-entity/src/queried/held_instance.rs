@@ -9,7 +9,10 @@ use crate::{
     value_mode::Stored,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, reference::NgsiLdReference};
-use andromeda_ngsi_ld_query::queried_entity::{attribute_reading::QueriedInstance, instance_metadata::InstanceMetadata, value_item::ValueItem};
+use andromeda_ngsi_ld_query::{
+    filter::{language_matching::LanguageMatching, target_language::LanguageSelector},
+    queried_entity::{attribute_reading::QueriedInstance, instance_metadata::InstanceMetadata, value_item::ValueItem},
+};
 use std::borrow::Cow;
 
 /// One attribute instance of a state, with the `datasetId` it is held under.
@@ -61,7 +64,7 @@ impl<'a> QueriedInstance<'a> for HeldInstance<'a> {
         FamilyValues::of_state(self.instance.value())
     }
 
-    fn language_values(self, language: &str) -> impl Iterator<Item = ValueItem<'a, &'a ValueNode<Stored>>> {
+    fn language_values(self, wanted: LanguageSelector<'_>, matching: LanguageMatching) -> impl Iterator<Item = ValueItem<'a, &'a ValueNode<Stored>>> {
         let entries = match self.instance.value() {
             FamilyValue::LanguageProperty { entries, .. } => entries.entries(),
             FamilyValue::Property { .. }
@@ -72,7 +75,7 @@ impl<'a> QueriedInstance<'a> for HeldInstance<'a> {
             | FamilyValue::ListProperty { .. }
             | FamilyValue::ListRelationship { .. } => &[],
         };
-        language_strings(entries, language)
+        language_strings(entries, wanted, matching)
     }
 
     fn sub_attribute_instances(self, name: &AttributeName) -> impl Iterator<Item = HeldInstance<'a>> {

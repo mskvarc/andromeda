@@ -33,6 +33,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use andromeda_ngsi_ld_query::{
     cursor::PageCursor,
+    filter::language_targeting::LanguageTargeting,
     geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
     page_window::{PageStart, PageWindow},
 };
@@ -259,6 +260,7 @@ fn service(log: &DeletionLog, rows_deleted: u64) -> SubscriptionService<CsrSubsc
         None,
         Arc::new(AcceptingEndpointValidator),
         geo_q_admission(),
+        LanguageTargeting::Specification,
     )
     .with_forwarding_hook(Arc::new(hook))
 }
@@ -434,6 +436,7 @@ async fn written_after_update(fragment: Value, context: &ContextSpec) -> Option<
         None,
         Arc::new(AcceptingEndpointValidator),
         geo_q_admission(),
+        LanguageTargeting::Specification,
     );
     let request = SubscriptionRequest::from_request_text(fragment.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a readable fragment");
     let updated = service
@@ -530,6 +533,7 @@ fn service_serving_a_scoped_context() -> (SubscriptionService<EntitySubscription
         None,
         Arc::new(AcceptingEndpointValidator),
         geo_q_admission(),
+        LanguageTargeting::Specification,
     );
     (service, written)
 }
@@ -737,6 +741,7 @@ async fn listed(window: &PageWindow) -> (Vec<String>, i64, Option<(Identifier, I
         None,
         Arc::new(AcceptingEndpointValidator),
         geo_q_admission(),
+        LanguageTargeting::Specification,
     );
     let listing = service
         .list_for_response(&ContextTarget::Live, window, &ContextSpec::none())

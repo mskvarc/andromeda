@@ -430,6 +430,7 @@ dependencies = [
  "toml",
  "toml-comment",
  "tracing",
+ "typed-builder",
  "uuid",
 ]
 
@@ -459,6 +460,7 @@ dependencies = [
  "andromeda-architecture-checks",
  "andromeda-http-stack",
  "andromeda-json-literal",
+ "andromeda-ngsi-ld-query",
  "enumset",
  "pretty_assertions",
  "serde",
@@ -1909,7 +1911,9 @@ dependencies = [
  "chrono",
  "derive_more",
  "iri-rs",
+ "langtag",
  "pretty_assertions",
+ "regex",
  "sea-query",
  "serde_json",
  "thiserror 2.0.21",

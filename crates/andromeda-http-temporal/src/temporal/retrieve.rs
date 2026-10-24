@@ -122,6 +122,8 @@ pub async fn get(
         target: &target,
         params: &params,
         context: &context,
+        // A retrieval carries no `q` (Table 6.19.3.1-1).
+        language_targeting: state.temporal.language_targeting(),
     };
     // The history is compacted under the request context once every holder's
     // part has been merged into it (clause 5.7.3); the join then reads the

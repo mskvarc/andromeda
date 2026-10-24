@@ -32,7 +32,9 @@ use crate::{
     filter::{
         lexer::{Token, tokenize},
         path::AttrPath,
+        target_language::TargetLanguage,
         token_cursor::{TokenCursor, attribute_name},
+        trailing_path::{MemberPath, TrailingPath},
     },
 };
 
@@ -65,7 +67,7 @@ pub const fn check_depth(depth: usize) -> Result<(), QueryError> {
 }
 
 /// Parse a `ValuePath` whose leading name has already been read:
-/// `('.' ident)* ('[' ident ('.' ident)* ']')?`.
+/// `('.' ident)* ('[' trailing ']')?`.
 ///
 /// `depth` counts the segments already consumed by an enclosing axis, so a
 /// path reached through linked-entity hops shares one budget with them.
@@ -73,14 +75,14 @@ pub const fn check_depth(depth: usize) -> Result<(), QueryError> {
 /// # Errors
 ///
 /// Returns [`QueryError::AttributeNameInvalid`] when a segment is outside the
-/// clause 4.6.2 name grammar, [`QueryError::QExpected`] when a separator is not
-/// followed by a name or a bracket is left open, and
-/// [`QueryError::QAttributePathTooDeep`] beyond [`MAX_SUB_ATTRIBUTE_DEPTH`].
+/// clause 4.6.2 name grammar, [`QueryError::TrailingMemberInvalid`] when a
+/// one-member group is neither a name nor a language tag or range,
+/// [`QueryError::QExpected`] when a separator is not followed by a name or a
+/// bracket is left open, and [`QueryError::QAttributePathTooDeep`] beyond
+/// [`MAX_SUB_ATTRIBUTE_DEPTH`].
 pub fn parse_value_path(cursor: &mut TokenCursor<'_>, leading: &str, depth: usize) -> Result<AttrPath, QueryError> {
     let attr = attribute_name(leading)?;
     let mut sub_attrs = Vec::new();
-    let mut value_path = Vec::new();
-    let mut match_all_languages = false;
 
     while cursor.peek() == Some(&Token::Dot) {
         cursor.advance();
@@ -88,35 +90,44 @@ pub fn parse_value_path(cursor: &mut TokenCursor<'_>, leading: &str, depth: usiz
         check_depth(depth + sub_attrs.len())?;
     }
 
-    if cursor.peek() == Some(&Token::LBracket) {
+    let trailing = if cursor.peek() == Some(&Token::LBracket) {
         cursor.advance();
-        if cursor.peek() == Some(&Token::Star) {
-            // `[*]` is the language-suppression marker, not a value-path
-            // key: it matches every language of a LanguageProperty.
-            cursor.advance();
-            match_all_languages = true;
-        } else {
-            value_path.push(cursor.parse_attribute_name()?);
-            while cursor.peek() == Some(&Token::Dot) {
-                cursor.advance();
-                value_path.push(cursor.parse_attribute_name()?);
-            }
-            check_depth(depth + sub_attrs.len() + value_path.len())?;
-        }
+        let trailing = parse_trailing_path(cursor, depth + sub_attrs.len())?;
         cursor.expect(&Token::RBracket)?;
-    }
+        Some(trailing)
+    } else {
+        None
+    };
 
-    // clone: `value_path_compact` starts as the same terms as `value_path`
-    // and stays that way until expansion overwrites `value_path` alone, so
-    // each field needs its own owned copy of the freshly parsed names.
-    let value_path_compact = value_path.clone();
-    Ok(AttrPath {
-        attr,
-        sub_attrs,
-        value_path,
-        value_path_compact,
-        match_all_languages,
-    })
+    Ok(AttrPath { attr, sub_attrs, trailing })
+}
+
+/// Parse the inside of a trailing `[…]` group.
+///
+/// `[*]` is the every-language marker. Otherwise the group is the clause 4.9
+/// `DottedPath` of members, unless its one name is outside the clause 4.6.2
+/// name grammar: Annex C.5.13.2 writes a target language there
+/// (`marque[en-GB]`), which only an RFC 5646 tag or an RFC 4647 range can spell.
+/// Every reading parses; which ones a request may carry is the
+/// `q_target_languages` level's to say.
+fn parse_trailing_path(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<TrailingPath, QueryError> {
+    if cursor.peek() == Some(&Token::Star) {
+        cursor.advance();
+        return Ok(TrailingPath::AllLanguages);
+    }
+    let first = cursor.parse_ident()?;
+    let member = match attribute_name(first) {
+        Ok(member) => member,
+        Err(_) if cursor.peek() == Some(&Token::RBracket) => return TargetLanguage::parse(first).map(TrailingPath::Language),
+        Err(name_error) => return Err(name_error),
+    };
+    let mut members = vec![member];
+    while cursor.peek() == Some(&Token::Dot) {
+        cursor.advance();
+        members.push(cursor.parse_attribute_name()?);
+    }
+    check_depth(depth + members.len())?;
+    Ok(TrailingPath::Members(MemberPath::new(members)))
 }
 
 /// Parse a whole attribute path standing on its own, with no enclosing
@@ -152,7 +163,11 @@ pub fn parse_attribute_path(text: &str) -> Result<AttrPath, QueryError> {
 mod tests {
     use crate::{
         error::QueryError,
-        filter::value_path::{MAX_SUB_ATTRIBUTE_DEPTH, parse_attribute_path},
+        filter::{
+            target_language::{LanguageSelector, TargetLanguage},
+            trailing_path::TrailingPath,
+            value_path::{MAX_SUB_ATTRIBUTE_DEPTH, parse_attribute_path},
+        },
     };
     use pretty_assertions::assert_eq;
 
@@ -162,7 +177,9 @@ mod tests {
         (
             path.attr.as_str().to_owned(),
             path.sub_attrs.iter().map(|name| name.as_str().to_owned()).collect(),
-            path.value_path.iter().map(|name| name.as_str().to_owned()).collect(),
+            path.members()
+                .map(|members| members.addressed.iter().map(|name| name.as_str().to_owned()).collect())
+                .unwrap_or_default(),
         )
     }
 
@@ -266,5 +283,54 @@ mod tests {
         let members = (0..=MAX_SUB_ATTRIBUTE_DEPTH).map(|index| format!("m{index}")).collect::<Vec<_>>().join(".");
         let error = parse_attribute_path(&format!("a[{members}]")).expect_err("beyond the limit");
         assert!(matches!(error, QueryError::QAttributePathTooDeep { .. }), "got {error:?}");
+    }
+
+    /// Annex C.5.13.2: `marque[en-GB]` names a target language no `AttrName`
+    /// spells.
+    #[test]
+    fn a_hyphenated_language_tag_is_a_target_language() {
+        let path = parse_attribute_path("label[en-GB]").expect("a target language");
+        assert!(matches!(path.trailing, Some(TrailingPath::Language(TargetLanguage::Tag(_)))), "{path:?}");
+        pretty_assertions::assert_eq!(path.target_language().map(LanguageSelector::as_str), Some("en-GB"));
+    }
+
+    /// Clause 4.9 `color[en]`: a one-member path that is also a tag keeps its
+    /// member reading and offers the language reading beside it.
+    #[test]
+    fn a_name_that_is_also_a_tag_stays_a_member_path_with_a_target_language() {
+        let path = parse_attribute_path("label[en]").expect("a member path");
+        assert!(matches!(path.trailing, Some(TrailingPath::Members(_))), "{path:?}");
+        pretty_assertions::assert_eq!(path.target_language().map(LanguageSelector::as_str), Some("en"));
+    }
+
+    #[test]
+    fn a_multi_member_or_non_tag_path_names_no_target_language() {
+        for text in ["label[city_name]", "label[airquality.particulate]"] {
+            let path = parse_attribute_path(text).expect("a member path");
+            assert!(matches!(path.trailing, Some(TrailingPath::Members(_))), "{text}");
+            assert!(path.target_language().is_none(), "{text}");
+        }
+    }
+
+    #[test]
+    fn the_star_marker_selects_every_language() {
+        let path = parse_attribute_path("label[*]").expect("the marker");
+        assert_eq!(path.trailing, Some(TrailingPath::AllLanguages));
+        assert!(path.target_language().is_none());
+    }
+
+    #[test]
+    fn a_wildcard_range_is_a_target_language() {
+        let path = parse_attribute_path("label[de-*-DE]").expect("a range");
+        assert!(matches!(path.trailing, Some(TrailingPath::Language(TargetLanguage::Range(_)))), "{path:?}");
+        assert!(path.target_language().is_some_and(LanguageSelector::is_range));
+    }
+
+    #[test]
+    fn a_member_neither_name_nor_tag_is_refused() {
+        let error = parse_attribute_path("label[en_GB-x]").expect_err("neither");
+        assert!(matches!(error, QueryError::TrailingMemberInvalid { .. }), "got {error:?}");
+        let error = parse_attribute_path("label[en-GB.x]").expect_err("a tag starts no member path");
+        assert!(matches!(error, QueryError::AttributeNameInvalid(_)), "got {error:?}");
     }
 }

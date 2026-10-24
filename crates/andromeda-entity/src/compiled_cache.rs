@@ -15,7 +15,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     entity::compiled::CompiledEntityQuery,
-    filter::serialize::serialize_attr_path,
+    filter::{language_targeting::LanguageTargeting, serialize::serialize_attr_path},
     geo::{input::GeoQueryInput, reference_geometry::ReferenceGeometry},
     ordering::{
         collation::IcuCollation,
@@ -57,6 +57,9 @@ pub struct CompiledQueryKey {
     context_digest: u64,
     /// Canonical rendering of every parameter that influences compilation.
     parameters: Box<str>,
+    /// The level the compiled `q`'s target languages were admitted and are
+    /// matched under.
+    language_targeting: LanguageTargeting,
 }
 
 impl CompiledQueryKey {
@@ -65,7 +68,7 @@ impl CompiledQueryKey {
     ///
     /// The page the query answers with is not part of the key: it never takes
     /// part in compilation, so every page of one query shares one entry.
-    pub fn from_params(params: &EntityQueryParameters, context: &ContextSpec) -> CompiledQueryKey {
+    pub fn from_params(params: &EntityQueryParameters, context: &ContextSpec, language_targeting: LanguageTargeting) -> CompiledQueryKey {
         let mut parameters = String::new();
         let id_pattern = params.id_pattern.as_ref().map(ToString::to_string);
         let q = params.q.as_ref().map(ToString::to_string);
@@ -114,6 +117,7 @@ impl CompiledQueryKey {
         CompiledQueryKey {
             context_digest: context_digest(context),
             parameters: parameters.into_boxed_str(),
+            language_targeting,
         }
     }
 }
@@ -297,6 +301,7 @@ mod tests {
     use crate::compiled_cache::{CompiledQueryKey, context_digest};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::context_spec::ContextSpec;
+    use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
     use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
     use iri_rs::IriBuf;
     use pretty_assertions::{assert_eq, assert_ne};
@@ -307,12 +312,20 @@ mod tests {
     }
 
     fn key(query: &str) -> CompiledQueryKey {
-        CompiledQueryKey::from_params(&params(query), &ContextSpec::default())
+        CompiledQueryKey::from_params(&params(query), &ContextSpec::default(), LanguageTargeting::Specification)
     }
 
     #[test]
     fn identical_parameters_produce_one_key() {
         assert_eq!(key("q=speed>50"), key("q=speed>50"));
+    }
+
+    /// One `q` compiled at two `q_target_languages` levels may select
+    /// different languageMap keys, so the two are two compilations.
+    #[test]
+    fn the_target_language_level_is_part_of_the_key() {
+        let filtered = CompiledQueryKey::from_params(&params("q=name[en]==\"Lift\""), &ContextSpec::default(), LanguageTargeting::LanguageRanges);
+        assert_ne!(key("q=name[en]==\"Lift\""), filtered);
     }
 
     /// The page never takes part in compilation, so two pages of one query

@@ -30,6 +30,7 @@ use andromeda_ngsi_ld_model::{entity::Entity, notification::SysAttrsSnapshot};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity::compiled::CompiledEntityQuery,
+    filter::language_targeting::LanguageTargeting,
     geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
     page_window::PageWindow,
     projection::{compiled::Projection, returned_attributes::ReturnedAttributes, term::ProjectionTerm},
@@ -145,15 +146,19 @@ fn service() -> EntityQueryService {
             sys_attrs: sys_attrs(),
         },
     });
-    EntityQueryService::new(
-        Arc::clone(&store) as Arc<dyn EntityReader>, // clone: the double supplies both focused capabilities
-        store as Arc<dyn EntityQueryStore>,
-        JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
-        SpatialAcceleration::StoreVerified,
-        TenantRef::UnnamedDefault,
-        None,
-        GeoQueryAdmission::new(EntityConfig::default().geometry_census_limits(), NearDistanceBand::Refused),
-    )
+    EntityQueryService::builder()
+        .reader(Arc::clone(&store) as Arc<dyn EntityReader>) // clone: the double supplies both focused capabilities
+        .query_store(store as Arc<dyn EntityQueryStore>)
+        .engine(JsonLdEngine::builder().allow_remote(false).build().expect("build engine"))
+        .spatial(SpatialAcceleration::StoreVerified)
+        .tenant(TenantRef::UnnamedDefault)
+        .remote_linked(None)
+        .geo_admission(GeoQueryAdmission::new(
+            EntityConfig::default().geometry_census_limits(),
+            NearDistanceBand::Refused,
+        ))
+        .language_targeting(LanguageTargeting::Specification)
+        .build()
 }
 
 fn context() -> ContextSpec {
@@ -321,7 +326,14 @@ async fn query(parameters: &str) -> Vec<Entity> {
     let parameters: EntityQueryParameters = serde_urlencoded::from_str(parameters).expect("valid query parameters");
     let service = service();
     let (rows, _) = service
-        .query_states(&ContextTarget::Live, &parameters, &PageWindow::offset(20, 0), CountPolicy::Omit, &context())
+        .query_states(
+            &ContextTarget::Live,
+            &parameters,
+            &PageWindow::offset(20, 0),
+            CountPolicy::Omit,
+            &context(),
+            LanguageTargeting::Specification,
+        )
         .await
         .expect("queried");
     let versions: Vec<_> = rows.into_iter().map(held_version).collect();
