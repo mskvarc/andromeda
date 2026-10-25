@@ -36,8 +36,9 @@ pub const PENDING_SIDE_EFFECTS_LEASE_MARGIN: Duration = Duration::from_secs(5);
 /// eight attributes.
 const DEFAULT_MAX_ENTITY_JSON_VALUES: NonZeroUsize = NonZeroUsize::MIN.saturating_add(999_999);
 
-/// The default most positions one geometry may hold.
-const DEFAULT_MAX_GEOMETRY_POSITIONS: NonZeroUsize = NonZeroUsize::MIN.saturating_add(99_999);
+/// The default most positions one geometry may hold: room for a detailed
+/// administrative boundary in one Polygon.
+const DEFAULT_MAX_GEOMETRY_POSITIONS: NonZeroUsize = NonZeroUsize::MIN.saturating_add(999_999);
 
 /// The default deepest nesting one attribute may have: far deeper than the
 /// NGSI-LD data models nest, and well within the depth every stored value
@@ -382,16 +383,16 @@ mod tests {
     }
 
     #[test]
-    fn the_default_budgets_admit_one_hundred_thousand_values_and_positions() {
+    fn the_default_budgets_admit_one_million_values_and_positions() {
         let budget = EntityConfig::default().payload_budget();
         assert_eq!(budget.json_values.get(), 1_000_000);
-        assert_eq!(budget.geometry_positions.get(), 100_000);
+        assert_eq!(budget.geometry_positions.get(), 1_000_000);
     }
 
     #[test]
     fn the_budgets_parse_from_toml_and_a_zero_budget_does_not() {
         let rendered = toml::to_string(&EntityConfig::default()).expect("the defaults render");
-        let parsed: EntityConfig = toml::from_str(&rendered.replace("max_geometry_positions = 100000", "max_geometry_positions = 250000")).expect("parses");
+        let parsed: EntityConfig = toml::from_str(&rendered.replace("max_geometry_positions = 1000000", "max_geometry_positions = 250000")).expect("parses");
         assert_eq!(parsed.max_geometry_positions.get(), 250_000);
         assert!(toml::from_str::<EntityConfig>(&rendered.replace("max_entity_json_values = 1000000", "max_entity_json_values = 0")).is_err());
     }
