@@ -15,9 +15,17 @@ use andromeda_broker_composition::config::runtime::{
     validate_reported,
 };
 use clap::Parser;
+#[cfg(target_env = "msvc")]
 use mimalloc::MiMalloc;
 use std::process::ExitCode;
+#[cfg(not(target_env = "msvc"))]
+use tikv_jemallocator::Jemalloc;
 
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
+#[cfg(target_env = "msvc")]
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 

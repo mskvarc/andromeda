@@ -56,7 +56,7 @@ impl DependencyKind {
 /// (`bytes`), the configuration and CLI front ends (`figment2`, `clap`), the
 /// alternate JSON parser (`sonic-rs`), the type-erased error crate (`anyhow`,
 /// whose `Error` the workspace bans in favour of typed enums) and the global
-/// allocator (`mimalloc`) are all things a specification or storage-neutral
+/// allocators (`mimalloc`, `tikv-jemallocator`) are all things a specification or storage-neutral
 /// crate has no business shipping. The retry, backoff and jitter crates
 /// (`again`, `backoff`, `backon`, `exponential-backoff`, `fastrand`, `retry`,
 /// `tokio-retry`, `tokio-retry2`) are forbidden because `andromeda-retry` owns
@@ -85,6 +85,7 @@ pub const FORBIDDEN_PRODUCTION_DEPENDENCIES: &[&str] = &[
     "sonic-rs",
     "sqlx",
     "sqlx-core",
+    "tikv-jemallocator",
     "tokio",
     "tokio-retry",
     "tokio-retry2",
@@ -418,7 +419,7 @@ workspace = true
     fn the_baseline_forbids_the_runtime_transport_dialect_and_allocator_gaps() {
         // A passive crate admits no async runtime, transport, dialect binder or
         // allocator by default.
-        for gap in ["anyhow", "rumqttc", "sea-query-sqlx", "sonic-rs", "mimalloc"] {
+        for gap in ["anyhow", "rumqttc", "sea-query-sqlx", "sonic-rs", "mimalloc", "tikv-jemallocator"] {
             assert!(FORBIDDEN_PRODUCTION_DEPENDENCIES.contains(&gap), "{gap} must be forbidden by default");
         }
     }
