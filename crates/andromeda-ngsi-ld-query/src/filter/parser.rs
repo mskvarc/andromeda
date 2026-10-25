@@ -252,8 +252,9 @@ mod tests {
 
     #[test]
     fn an_attribute_path_deeper_than_the_limit_is_rejected() {
-        // A defence against a pathological path whose backend rendering grows
-        // with its depth; the limit is far above any legitimate nesting.
+        // The limit is the depth a write is admitted to, so a deeper path
+        // addresses nothing storable while its backend rendering grows with
+        // its depth.
         let too_deep = format!("a{}", ".s".repeat(MAX_SUB_ATTRIBUTE_DEPTH + 1));
         assert!(
             matches!(parse(&too_deep), Err(QueryError::QAttributePathTooDeep { .. })),

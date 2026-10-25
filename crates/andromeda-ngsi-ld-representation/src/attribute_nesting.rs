@@ -73,6 +73,12 @@ impl AttributeNestingLimit {
     /// cost the stored JSON nothing.
     pub const DECODABLE_CEILING: AttributeNestingLimit = AttributeNestingLimit::decodable_ceiling();
 
+    /// The deepest nesting an attribute is admitted to by default, which is
+    /// also the depth a `q` or `orderBy` attribute path may walk: the one
+    /// bound keeps every sub-attribute a write can store addressable by a
+    /// query.
+    pub const DEFAULT: AttributeNestingLimit = AttributeNestingLimit::new(NonZeroUsize::MIN.saturating_add(31));
+
     /// A limit of `levels` levels.
     #[must_use]
     pub const fn new(levels: NonZeroUsize) -> AttributeNestingLimit {
@@ -83,6 +89,12 @@ impl AttributeNestingLimit {
     #[must_use]
     pub const fn get(self) -> usize {
         self.0.get()
+    }
+
+    /// The number of levels the limit admits, as a non-zero count.
+    #[must_use]
+    pub const fn levels(self) -> NonZeroUsize {
+        self.0
     }
 
     /// Whether `nesting` stays within the limit.
@@ -132,6 +144,14 @@ mod tests {
     #[test]
     fn the_decodable_ceiling_is_sixty_two_levels() {
         pretty_assertions::assert_eq!(AttributeNestingLimit::DECODABLE_CEILING.get(), 62);
+    }
+
+    /// A deployment's default write depth doubles as the query path depth, so
+    /// it stays within what every stored value decodes at.
+    #[test]
+    fn the_default_limit_is_thirty_two_levels_within_the_ceiling() {
+        pretty_assertions::assert_eq!(AttributeNestingLimit::DEFAULT.get(), 32);
+        assert!(AttributeNestingLimit::DEFAULT <= AttributeNestingLimit::DECODABLE_CEILING);
     }
 
     #[test]

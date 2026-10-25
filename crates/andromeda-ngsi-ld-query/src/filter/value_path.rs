@@ -37,18 +37,19 @@ use crate::{
         trailing_path::{MemberPath, TrailingPath},
     },
 };
+use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingLimit;
 
 /// The most segments an attribute path may nest, counting sub-attributes and
 /// linked-entity hops alike.
 ///
-/// Far above any legitimate NGSI-LD nesting (an attribute's sub-attributes are
-/// rarely more than one deep, and a linked-entity traversal rarely more than two
-/// hops), this only rejects a pathological path whose backend rendering would
-/// otherwise grow with its depth — a hop compiles to a correlated subquery per
-/// level, so `a{a{a{…}}}` is as expensive as it is deep. An `orderBy` path is
-/// bounded by the same budget, for the same reason: each segment is another
-/// hop inside the jsonpath its lateral evaluates.
-pub const MAX_SUB_ATTRIBUTE_DEPTH: usize = 16;
+/// Held to the depth a written attribute is admitted to,
+/// [`AttributeNestingLimit::DEFAULT`], so every sub-attribute a write can
+/// store stays addressable by `q` and `orderBy`. The linked-entity hops that
+/// share this budget stay bounded by it: a hop compiles to a correlated
+/// subquery per level, so `a{a{a{…}}}` is as expensive as it is deep. An
+/// `orderBy` path draws on the same budget, for the same reason: each segment
+/// is another hop inside the jsonpath its lateral evaluates.
+pub const MAX_SUB_ATTRIBUTE_DEPTH: usize = AttributeNestingLimit::DEFAULT.get();
 
 /// Reject a path that nests deeper than the budget.
 ///

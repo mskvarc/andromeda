@@ -40,11 +40,6 @@ const DEFAULT_MAX_ENTITY_JSON_VALUES: NonZeroUsize = NonZeroUsize::MIN.saturatin
 /// administrative boundary in one Polygon.
 const DEFAULT_MAX_GEOMETRY_POSITIONS: NonZeroUsize = NonZeroUsize::MIN.saturating_add(999_999);
 
-/// The default deepest nesting one attribute may have: far deeper than the
-/// NGSI-LD data models nest, and well within the depth every stored value
-/// reads back at.
-const DEFAULT_MAX_ATTRIBUTE_NESTING: NonZeroUsize = NonZeroUsize::MIN.saturating_add(31);
-
 /// Invalid entity execution configuration.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum EntityConfigError {
@@ -220,7 +215,7 @@ impl Default for EntityConfig {
             pending_side_effects_cleanup_interval: HumanDuration::from_secs(300),
             max_entity_json_values: DEFAULT_MAX_ENTITY_JSON_VALUES,
             max_geometry_positions: DEFAULT_MAX_GEOMETRY_POSITIONS,
-            max_attribute_nesting: DEFAULT_MAX_ATTRIBUTE_NESTING,
+            max_attribute_nesting: AttributeNestingLimit::DEFAULT.levels(),
         }
     }
 }

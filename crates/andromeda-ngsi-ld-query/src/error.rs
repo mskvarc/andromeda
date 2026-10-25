@@ -112,8 +112,9 @@ pub enum QueryError {
     QInvalidNumber(#[source] JsonNumberError),
     /// An attribute path nested more sub-attributes than the parser admits.
     ///
-    /// A guard against a pathological path whose backend rendering grows with
-    /// its depth; the limit is far above any legitimate NGSI-LD nesting.
+    /// The limit is the depth a written attribute is admitted to, so a path
+    /// beyond it addresses nothing a write can store and only grows the
+    /// backend rendering with its depth.
     #[error("q expression: attribute path too deep ({depth} sub-attributes, limit {limit})")]
     QAttributePathTooDeep {
         /// The number of sub-attributes the path carried.
