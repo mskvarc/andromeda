@@ -26,7 +26,7 @@ const IDENTITY_PATH: &str = "/ngsi-ld/v1/info/sourceIdentity";
 
 /// The extras an Andromeda serving the temporal join advertises.
 fn advertising_extras() -> Value {
-    json!({"extensions": ["temporal-linked-retrieval"]})
+    json!({"extensions": ["temporalLinkedRetrieval"]})
 }
 
 async fn source() -> MockServer {

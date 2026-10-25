@@ -193,9 +193,9 @@ mod tests {
     #[test]
     fn remote_reach_is_subgraph_only_for_an_advertising_source() {
         let advertising = SourceConfiguration::Described(Some(
-            JsonLiteral::admit(r#"{"extensions": ["temporal-linked-retrieval"]}"#).expect("a JSON literal"),
+            JsonLiteral::admit(r#"{"extensions": ["temporalLinkedRetrieval"]}"#).expect("a JSON literal"),
         ));
-        let other = SourceConfiguration::Described(Some(JsonLiteral::admit(r#"{"extensions": ["cursor-pagination"]}"#).expect("a JSON literal")));
+        let other = SourceConfiguration::Described(Some(JsonLiteral::admit(r#"{"extensions": ["cursorPagination"]}"#).expect("a JSON literal")));
         pretty_assertions::assert_eq!(reach_of(slice::from_ref(&advertising)), RemoteReach::Subgraph);
         pretty_assertions::assert_eq!(reach_of(&[other]), RemoteReach::SingleEntity);
         pretty_assertions::assert_eq!(reach_of(&[SourceConfiguration::Described(None)]), RemoteReach::SingleEntity);

@@ -121,7 +121,7 @@ fn negotiated(
 /// A read evaluated by tag equality because a source it reaches does not
 /// advertise extended filtering.
 #[derive(Debug, Error)]
-#[error("language range filtering not applied: registration {registration} does not advertise language-range-filtering")]
+#[error("language range filtering not applied: registration {registration} does not advertise languageRangeFiltering")]
 struct RangeFilteringNotApplied<'a> {
     /// The registration naming the source.
     registration: &'a Identifier,
@@ -151,8 +151,8 @@ mod tests {
     /// The advertisement as the extension set spells it.
     fn advertised(extras: Option<&JsonLiteral>) -> LanguageTargeting {
         match extras.map(JsonLiteral::text) {
-            Some(text) if text.contains("\"language-range-filtering\"") => LanguageTargeting::LanguageRanges,
-            Some(text) if text.contains("\"language-tags\"") => LanguageTargeting::LanguageTags,
+            Some(text) if text.contains("\"languageRangeFiltering\"") => LanguageTargeting::LanguageRanges,
+            Some(text) if text.contains("\"languageTags\"") => LanguageTargeting::LanguageTags,
             Some(_) | None => LanguageTargeting::Specification,
         }
     }
@@ -172,11 +172,11 @@ mod tests {
     }
 
     fn ranges(registration: &str) -> ReachedSource {
-        advertising(registration, r#""language-tags", "language-range-filtering""#)
+        advertising(registration, r#""languageTags", "languageRangeFiltering""#)
     }
 
     fn tags(registration: &str) -> ReachedSource {
-        advertising(registration, r#""language-tags""#)
+        advertising(registration, r#""languageTags""#)
     }
 
     #[test]
@@ -229,7 +229,7 @@ mod tests {
         let outcome = negotiated(
             LanguageTargeting::LanguageTags,
             LanguageTargeting::Specification,
-            &[advertising("urn:ngsi-ld:ContextSourceRegistration:d", r#""cursor-pagination""#)],
+            &[advertising("urn:ngsi-ld:ContextSourceRegistration:d", r#""cursorPagination""#)],
             advertised,
         )
         .expect("negotiated");

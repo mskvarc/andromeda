@@ -24,38 +24,38 @@ use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
 pub const EXTENSION_KEY: &str = "extensions";
 
 /// The advertised token for the temporal delete-by-query extension.
-const TEMPORAL_DELETE_BY_QUERY_TOKEN: &str = "temporal-delete-by-query";
+const TEMPORAL_DELETE_BY_QUERY_TOKEN: &str = "temporalDeleteByQuery";
 /// The advertised token for the entity-Purge dataset-scope extension.
-const PURGE_DATASET_SCOPE_TOKEN: &str = "purge-dataset-scope";
+const PURGE_DATASET_SCOPE_TOKEN: &str = "purgeDatasetScope";
 /// The advertised token for the grouped temporal aggregation extension.
-const TEMPORAL_AGGREGATION_GROUPING_TOKEN: &str = "temporal-aggregation-grouping";
+const TEMPORAL_AGGREGATION_GROUPING_TOKEN: &str = "temporalAggregationGrouping";
 /// The advertised token for Linked Entity retrieval on the temporal operations.
 ///
 /// A federating broker reads it off a Context Source's identity before it
 /// forwards a temporal `join` there: a source that does not list it answers
 /// the standard temporal operations only.
-pub const TEMPORAL_LINKED_RETRIEVAL_TOKEN: &str = "temporal-linked-retrieval";
+pub const TEMPORAL_LINKED_RETRIEVAL_TOKEN: &str = "temporalLinkedRetrieval";
 /// The advertised token for the tenant-management extension.
-const TENANT_MANAGEMENT_TOKEN: &str = "tenant-management";
-/// The advertised token for the cursor-pagination extension.
-const CURSOR_PAGINATION_TOKEN: &str = "cursor-pagination";
+const TENANT_MANAGEMENT_TOKEN: &str = "tenantManagement";
+/// The advertised token for the cursorPagination extension.
+const CURSOR_PAGINATION_TOKEN: &str = "cursorPagination";
 /// The advertised token for the `near` distance band extension.
-const NEAR_DISTANCE_BAND_TOKEN: &str = "near-distance-band";
+const NEAR_DISTANCE_BAND_TOKEN: &str = "nearDistanceBand";
 /// The advertised token for the `Accept-Language` language filter extension.
-const ACCEPT_LANGUAGE_TOKEN: &str = "accept-language";
+const ACCEPT_LANGUAGE_TOKEN: &str = "acceptLanguage";
 /// The advertised token for every RFC 5646 tag as a `q` target language.
 ///
 /// A federating broker reads it off every Context Source a query reaches
 /// before it forwards a target language no clause 4.9 `AttrName` spells: a
 /// source that does not list it refuses one.
-const LANGUAGE_TAGS_TOKEN: &str = "language-tags";
+const LANGUAGE_TAGS_TOKEN: &str = "languageTags";
 /// The advertised token for RFC 4647 extended filtering of `q` target
 /// languages.
 ///
 /// A federating broker reads it off every Context Source a query reaches
 /// before it filters by range: a source that does not list it matches a target
 /// language by tag equality only.
-const LANGUAGE_RANGE_FILTERING_TOKEN: &str = "language-range-filtering";
+const LANGUAGE_RANGE_FILTERING_TOKEN: &str = "languageRangeFiltering";
 
 /// Merge the enabled extension tokens into the operator's `contextSourceExtras`.
 ///
@@ -392,9 +392,9 @@ mod tests {
     fn extras_in_another_spelling_advertise_nothing() {
         for extras in [
             None,
-            Some(literal(r#""temporal-linked-retrieval""#)),
-            Some(literal(r#"{"extensions": "temporal-linked-retrieval"}"#)),
-            Some(literal(r#"{"other": ["temporal-linked-retrieval"]}"#)),
+            Some(literal(r#""temporalLinkedRetrieval""#)),
+            Some(literal(r#"{"extensions": "temporalLinkedRetrieval"}"#)),
+            Some(literal(r#"{"other": ["temporalLinkedRetrieval"]}"#)),
         ] {
             assert!(!advertises(extras.as_ref(), Extension::TemporalLinkedRetrieval), "{extras:?}");
         }
