@@ -1,7 +1,7 @@
 //! Parameters for listing hosted and cached Contexts.
 
 use crate::detail_level::ContextDetailLevel;
-use andromeda_ngsi_ld_model::jsonld_context::{ContextKind, ContextMetadata};
+use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 use andromeda_ngsi_ld_query::page_window::PageWindow;
 
 /// One page of the Context listing, in local-identifier order.
@@ -13,10 +13,6 @@ pub struct ContextListQuery<'a> {
     pub detail_level: ContextDetailLevel,
     /// The page the pagination policy decided (clause 5.5.9).
     pub window: &'a PageWindow,
-    /// A Context the broker serves without storing it, listed among the
-    /// stored rows at its local identifier; `None` when the kind filter
-    /// excludes it.
-    pub embedded: Option<&'a ContextMetadata>,
 }
 
 #[cfg(test)]
@@ -31,7 +27,6 @@ mod tests {
             kind: None,
             detail_level: ContextDetailLevel::Summary,
             window: &window,
-            embedded: None,
         };
         pretty_assertions::assert_eq!(query.window.limit, 10);
     }

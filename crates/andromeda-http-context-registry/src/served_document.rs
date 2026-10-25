@@ -47,7 +47,6 @@ use sha2::{Digest, Sha256};
 pub(crate) fn served_response(served: ServedContext, if_none_match: Option<&IfNoneMatch>) -> Result<Response, ClassifiedReport> {
     match served {
         ServedContext::Metadata(metadata) => Ok(unvalidated_response(if_none_match, || (StatusCode::OK, Json(metadata)).into_response())),
-        ServedContext::Embedded(document) => Ok(unvalidated_response(if_none_match, || json_document(&document))),
         ServedContext::Stored { document, revalidation } => stored_document_response(&document, revalidation, if_none_match),
     }
 }
@@ -172,11 +171,6 @@ mod tests {
         ))
     }
 
-    /// An embedded core context.
-    fn embedded() -> ServedContext {
-        ServedContext::Embedded(literal(&json!({ "@context": {} })))
-    }
-
     /// The response a stored document is served with under `if_none_match`.
     fn served_under(document: JsonLiteral, if_none_match: Option<&IfNoneMatch>) -> Response {
         served_response(
@@ -290,36 +284,27 @@ mod tests {
         pretty_assertions::assert_eq!(served_under(spot(), Some(&condition("\"stale\""))).status(), StatusCode::OK);
     }
 
-    /// Metadata changes on every access and an embedded core context is
-    /// fixed; neither carries validators.
+    /// Metadata changes on every access, so it carries no validators.
     #[tokio::test]
-    async fn metadata_and_an_embedded_context_carry_no_cache_validators() {
-        let metadata = served_response(metadata(), None).expect("served");
-        let embedded = served_response(embedded(), None).expect("served");
+    async fn metadata_carries_no_cache_validators() {
+        let response = served_response(metadata(), None).expect("served");
 
-        for response in [&metadata, &embedded] {
-            pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
-            assert!(response.headers().get(ETAG).is_none());
-            assert!(response.headers().get(CACHE_CONTROL).is_none());
-        }
+        pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get(ETAG).is_none());
+        assert!(response.headers().get(CACHE_CONTROL).is_none());
     }
 
     /// RFC 7232 section 3.2: `*` is false whenever a current representation
-    /// exists, so metadata and an embedded context answer 304 to it; an entity
-    /// tag cannot match a representation that has none, so they answer 200 to
-    /// one.
+    /// exists, so metadata answers 304 to it; an entity tag cannot match a
+    /// representation that has none, so it answers 200 to one.
     #[tokio::test]
-    async fn a_star_revalidates_metadata_and_an_embedded_context_and_a_tag_does_not() {
+    async fn a_star_revalidates_metadata_and_a_tag_does_not() {
         let star = IfNoneMatch::any();
         let tag = condition("\"stale\"");
-        for served in [metadata(), embedded()] {
-            let response = served_response(served, Some(&star)).expect("served");
-            pretty_assertions::assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
-            let body = to_bytes(response.into_body(), usize::MAX).await.expect("a readable body");
-            assert!(body.is_empty(), "a 304 carries no body: {body:?}");
-        }
-        for served in [metadata(), embedded()] {
-            pretty_assertions::assert_eq!(served_response(served, Some(&tag)).expect("served").status(), StatusCode::OK);
-        }
+        let response = served_response(metadata(), Some(&star)).expect("served");
+        pretty_assertions::assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+        let body = to_bytes(response.into_body(), usize::MAX).await.expect("a readable body");
+        assert!(body.is_empty(), "a 304 carries no body: {body:?}");
+        pretty_assertions::assert_eq!(served_response(metadata(), Some(&tag)).expect("served").status(), StatusCode::OK);
     }
 }

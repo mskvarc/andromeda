@@ -14,8 +14,6 @@ use andromeda_ngsi_ld_model::jsonld_context::ContextMetadata;
 pub enum ServedContext {
     /// The lifecycle metadata of an entry (`details=true`, clause 5.13.4.4).
     Metadata(Box<ContextMetadata>),
-    /// An embedded NGSI-LD core context, which no operation can change.
-    Embedded(JsonLiteral),
     /// A clause 5.13.1 `"Hosted"` or `"ImplicitlyCreated"` document.
     Stored {
         /// The stored document.

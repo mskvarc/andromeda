@@ -315,6 +315,40 @@ async fn the_former_tenant_parameter_is_invalid_request_on_every_operation() {
     }
 }
 
+/// A core @context URL as the one path segment a request writes it as: the
+/// client percent-encodes it, and the extractor decodes it back.
+const CORE_URL_SEGMENT: &str = "https%3A%2F%2Furi.etsi.org%2Fngsi-ld%2Fv1%2Fngsi-ld-core-context-v1.9.jsonld";
+
+/// Clause 5.13.4.4: serving a core @context URL, content or `details=true`,
+/// answers `ResourceNotFound`: the embedded core Context is not a stored
+/// entry, so its URL is an identifier no storage holds.
+#[tokio::test]
+async fn serving_a_core_context_url_is_resource_not_found() {
+    for uri in [
+        format!("/jsonldContexts/{CORE_URL_SEGMENT}"),
+        format!("/jsonldContexts/{CORE_URL_SEGMENT}?details=true"),
+    ] {
+        let response = answer(Method::GET, &uri, &[]).await;
+        pretty_assertions::assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
+        assert!(varies_on_tenant(response.headers()), "{uri}");
+        pretty_assertions::assert_eq!(problem_type(response).await.as_deref(), Some("ResourceNotFound"), "{uri}");
+    }
+}
+
+/// Clause 5.13.5.4: deleting or reloading a core @context URL, with or
+/// without `reload=true`, answers `ResourceNotFound`.
+#[tokio::test]
+async fn deleting_or_reloading_a_core_context_url_is_resource_not_found() {
+    for uri in [
+        format!("/jsonldContexts/{CORE_URL_SEGMENT}"),
+        format!("/jsonldContexts/{CORE_URL_SEGMENT}?reload=true"),
+    ] {
+        let response = answer(Method::DELETE, &uri, &[]).await;
+        pretty_assertions::assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
+        pretty_assertions::assert_eq!(problem_type(response).await.as_deref(), Some("ResourceNotFound"), "{uri}");
+    }
+}
+
 /// Clause 5.13.3.4 lists every stored `@context`, so the listing reads the
 /// pagination parameters every paged collection reads (clause 6.3.10).
 #[tokio::test]

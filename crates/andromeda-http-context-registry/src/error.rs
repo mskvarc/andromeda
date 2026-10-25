@@ -12,7 +12,7 @@ pub fn classify_context_registry_error(error: &ContextRegistryError) -> Classifi
         // Clause 5.13.2.4 applies clause 5.5.4 "in case of invalid @context":
         // the body already parsed as JSON, so data that is no local context is
         // "not syntactically correct" JSON-LD, which is BadRequestData.
-        ContextRegistryError::NoLocalContext(_) | ContextRegistryError::ReloadRequiresCached { .. } | ContextRegistryError::CoreContextDeletion => {
+        ContextRegistryError::NoLocalContext(_) | ContextRegistryError::ReloadRequiresCached { .. } => {
             ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string())
         }
         ContextRegistryError::NotFound { .. } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, error.to_string()),
@@ -73,11 +73,11 @@ mod tests {
             ),
             (
                 ContextRegistryError::NotFound {
-                    identifier: ContextIdentifier::from(identifier),
+                    identifier: ContextIdentifier::from(identifier.clone()), // clone: the table names a second failure of the same identifier.
                 },
                 NgsiLdErrorType::ResourceNotFound,
             ),
-            (ContextRegistryError::CoreContextDeletion, NgsiLdErrorType::BadRequestData),
+            (ContextRegistryError::ReloadRequiresCached { identifier }, NgsiLdErrorType::BadRequestData),
             (
                 ContextRegistryError::Persistence(PersistenceFailure::StatementRejected),
                 NgsiLdErrorType::InternalError,

@@ -16,22 +16,23 @@ pub struct StoredContext {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
-    use crate::{error::ContextRegistryError, registry_invariant::RegistryInvariant, stored_context::StoredContext};
+    use crate::stored_context::StoredContext;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 
     #[test]
-    fn hosted_context_may_have_no_public_url() -> Result<(), ContextRegistryError> {
-        let identifier = "urn:ngsi-ld:JsonLdContext:local"
-            .parse::<Identifier>()
-            .map_err(|error| ContextRegistryError::from(RegistryInvariant::CoreContextIdentifier(error)))?;
+    fn hosted_context_may_have_no_public_url() {
+        let identifier = "urn:ngsi-ld:JsonLdContext:local".parse::<Identifier>().expect("a valid URI");
         let stored = StoredContext {
             identifier,
             kind: ContextKind::Hosted,
             source_url: None,
         };
         assert!(stored.source_url.is_none());
-        Ok(())
     }
 }

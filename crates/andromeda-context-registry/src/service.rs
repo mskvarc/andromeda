@@ -2,7 +2,6 @@
 
 use crate::{
     context_page::ContextPage,
-    core_context,
     creation_kind::ContextCreationKind,
     detail_level::ContextDetailLevel,
     error::ContextRegistryError,
@@ -25,7 +24,6 @@ use andromeda_jsonld::{compound_context_host::WrapperUse, context_subtree::conte
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 use andromeda_ngsi_ld_query::page_window::PageWindow;
-use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::IriBuf;
 use std::sync::Arc;
 
@@ -106,22 +104,15 @@ impl ContextRegistryService {
     /// The page `window` selects of the available Contexts, optionally
     /// filtered by lifecycle kind (clause 5.13.3).
     ///
-    /// The embedded core Context is an `ImplicitlyCreated` entry the broker
-    /// serves without storing it, so it is listed at its identifier among the
-    /// stored rows whenever the kind filter admits it, and a page walk reaches
-    /// it like any other entry.
+    /// Clause 5.13.3.4 lists "@contexts currently stored", so the embedded
+    /// core Context is not among them: it is not a stored entry, and every
+    /// reference to it names its ETSI URL (clause 4.4).
     ///
     /// # Errors
     ///
     /// Returns [`ContextRegistryError::Persistence`] when the store cannot read
-    /// the stored rows, [`ContextRegistryError::Invariant`] when the embedded
-    /// core Context URL does not parse as a resource identifier or carries no
-    /// representable metadata.
+    /// the stored rows.
     pub async fn list(&self, kind: Option<ContextKind>, detail_level: ContextDetailLevel, window: &PageWindow) -> Result<ContextPage, ContextRegistryError> {
-        let embedded = match kind {
-            None | Some(ContextKind::ImplicitlyCreated) => Some(core_context::metadata(&core_context_identifier()?)?),
-            Some(ContextKind::Cached | ContextKind::Hosted) => None,
-        };
         let counter = self.engine.hit_counter();
         let _flush_held_off = match (&counter, detail_level) {
             (Some(counter), ContextDetailLevel::Full) => Some(counter.read_settled().await),
@@ -133,7 +124,6 @@ impl ContextRegistryService {
                 kind: kind.as_ref(),
                 detail_level,
                 window,
-                embedded: embedded.as_ref(),
             })
             .await?;
         match (&counter, &mut page.contexts) {
@@ -155,24 +145,17 @@ impl ContextRegistryService {
     /// Returns [`ContextRegistryError::NotFound`] when no Context is stored under
     /// the identifier, or when the row disappears between its read and its access
     /// update. Returns [`ContextRegistryError::Persistence`] when the store cannot
-    /// complete the read or the access update,
-    /// and [`ContextRegistryError::Invariant`] when an embedded core Context
-    /// has no representable metadata or document.
+    /// complete the read or the access update.
     pub async fn get(&self, requested: &ContextIdentifier, detail_level: ContextDetailLevel) -> Result<ServedContext, ContextRegistryError> {
         // Clause 5.13.4.4: "It shall give back ResourceNotFound if the
         // identifier is not found." An identifier that keys no row at all is
-        // one such, and is answered before the storage is consulted.
+        // one such, and is answered before the storage is consulted. The
+        // embedded core Context keys no row: its URLs address nothing here.
         let Some(identifier) = requested.stored() else {
             return Err(ContextRegistryError::NotFound {
                 identifier: requested.clone(), // clone: the error must own the identifier after this call returns.
             });
         };
-        if core_context::is_core_context(identifier) {
-            return match detail_level {
-                ContextDetailLevel::Full => core_context::metadata(identifier).map(|metadata| ServedContext::Metadata(Box::new(metadata))),
-                ContextDetailLevel::Summary => core_context::payload().map(ServedContext::Embedded),
-            };
-        }
         // Clause 5.13.4.4: the full content is served from internal storage only
         // for a `Hosted` or `ImplicitlyCreated` `@context`; a `Cached` one is a
         // local performance copy (clause 5.13.1) and answers
@@ -220,8 +203,7 @@ impl ContextRegistryService {
     ///
     /// # Errors
     ///
-    /// Returns [`ContextRegistryError::CoreContextDeletion`] when deletion names
-    /// an embedded core Context, [`ContextRegistryError::NotFound`] when no
+    /// Returns [`ContextRegistryError::NotFound`] when no
     /// Context is stored under the identifier,
     /// [`ContextRegistryError::ReloadRequiresCached`] when reload names a Context
     /// of a kind other than `Cached`, [`ContextRegistryError::MissingSourceUrl`]
@@ -235,25 +217,13 @@ impl ContextRegistryService {
         // Clause 5.13.5.4: "If the @context identifier does not correspond to
         // any existing entry in the @context storage, then an error of type
         // ResourceNotFound shall be raised." Only a *missing* identifier is
-        // `BadRequestData`, and a path segment is never missing.
+        // `BadRequestData`, and a path segment is never missing. The embedded
+        // core Context keys no row, so its URLs reach this same refusal.
         let Some(identifier) = requested.stored() else {
             return Err(ContextRegistryError::NotFound {
                 identifier: requested.clone(), // clone: the error must own the identifier after this call returns.
             });
         };
-        if core_context::is_core_context(identifier) {
-            return match removal {
-                ContextRemoval::Delete => Err(ContextRegistryError::CoreContextDeletion),
-                // Clause 5.13.5.4: "If reload is true and the kind of the
-                // @context is not "Cached", implementations shall return a
-                // BadRequestData error." An embedded core Context is surfaced
-                // as `ImplicitlyCreated` (clause 5.13.1), so there is no
-                // original URL to re-download it from and nothing to replace.
-                ContextRemoval::Reload => Err(ContextRegistryError::ReloadRequiresCached {
-                    identifier: identifier.clone(), // clone: the error must own the identifier after this call returns.
-                }),
-            };
-        }
         match removal {
             ContextRemoval::Delete => self.delete(identifier).await,
             ContextRemoval::Reload => self.reload(identifier).await,
@@ -337,13 +307,8 @@ fn hosted_context_subtree(payload: &JsonLiteral) -> Result<JsonLiteral, ContextR
     context_subtree(payload).map_err(ContextRegistryError::NoLocalContext)
 }
 
-/// Parse the compile-time vocabulary constant into the HTTP resource identifier type.
-fn core_context_identifier() -> Result<Identifier, ContextRegistryError> {
-    NGSI_LD_CORE_CONTEXT_URL
-        .as_str()
-        .parse()
-        .map_err(|error| RegistryInvariant::CoreContextIdentifier(error).into())
-}
+#[cfg(test)]
+mod core_url_tests;
 
 #[cfg(test)]
 #[expect(
@@ -357,20 +322,17 @@ mod identity_tests;
     clippy::expect_used,
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
+mod memory_store;
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
-    use crate::{
-        error::ContextRegistryError,
-        service::{core_context_identifier, hosted_context_subtree},
-    };
+    use crate::{error::ContextRegistryError, service::hosted_context_subtree};
     use andromeda_json_literal::JsonLiteral;
     use serde_json::json;
-
-    #[test]
-    fn core_context_identifier_is_a_valid_uri() -> Result<(), ContextRegistryError> {
-        let identifier = core_context_identifier()?;
-        assert!(identifier.as_str().starts_with("https://uri.etsi.org/ngsi-ld/"));
-        Ok(())
-    }
 
     /// Clause 5.13.2.3: "all extra information located outside of the @context
     /// subtree in the referenced object shall be discarded". What survives the

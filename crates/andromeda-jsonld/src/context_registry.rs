@@ -14,6 +14,26 @@ use dashmap::DashMap;
 use iri_rs::IriBuf;
 use std::sync::Arc;
 
+/// How a registered document came to the registry.
+///
+/// Decides what the first resolution does: an `Embedded` document is compiled
+/// into the broker (the Core @context per clause 4.4, the data-integrity
+/// stub), is never listed, served or stored, and leaves no durable cache
+/// record; a `Preloaded` document is the operator's local stand-in for a
+/// download, so the first resolution records it as a clause 5.13.1 "Cached"
+/// entry, as written like every download.
+#[derive(Debug, Clone)]
+pub enum RegistrationSource {
+    /// Compiled into the broker; resolution reads it and records nothing.
+    Embedded,
+    /// Preloaded from disk as a stand-in for a download; carries the document
+    /// as written, which is what a "Cached" entry stores.
+    Preloaded {
+        /// The document exactly as the operator's file has it.
+        as_written: Arc<JsonLiteral>,
+    },
+}
+
 /// One registered document: the copy the JSON-LD processor reads, and what the
 /// document as written leaves in force last.
 #[derive(Debug, Clone)]
@@ -22,6 +42,8 @@ pub struct RegisteredContext {
     pub document: Arc<ContextDocument>,
     /// What the document as written leaves in force last (clause 4.4).
     pub tail: ContextTail,
+    /// How the document came to the registry.
+    pub source: RegistrationSource,
 }
 
 /// A thread-safe map from context URL to a parsed context document.
@@ -29,15 +51,6 @@ pub struct RegisteredContext {
 pub struct ContextRegistry {
     /// The registered documents, shared by every clone of the registry.
     contexts: Arc<DashMap<IriBuf, RegisteredContext>>,
-    /// The documents the operator preloaded from disk, as written, by URL, as
-    /// distinct from the core contexts the broker embeds. Clause 5.13.1 flags
-    /// "Cached" the copies the broker holds of documents whose authority is a
-    /// URL it resolved, and a preloaded document is a local stand-in for exactly
-    /// such a download, so the resolver records it durably as Cached -- as
-    /// written, like every download -- while an embedded document is left out.
-    /// The builder refuses to preload a core context URL, so a URL here is never
-    /// an embedded context.
-    preloaded: Arc<DashMap<IriBuf, Arc<JsonLiteral>>>,
 }
 
 impl ContextRegistry {
@@ -60,32 +73,46 @@ impl ContextRegistry {
     /// Returns [`JsonLiteralError::ProcessorText`] when the JSON-LD processor's
     /// reader refuses the admitted document.
     pub fn register(&self, url: IriBuf, written: &JsonLiteral) -> Result<(), JsonLiteralError> {
+        self.register_with_source(url, written, RegistrationSource::Embedded)
+    }
+
+    /// Register a context document the operator preloaded from disk.
+    ///
+    /// Behaves like [`Self::register`] but marks the entry
+    /// [`RegistrationSource::Preloaded`] carrying the document as written, so
+    /// the resolver records a clause 5.13.1 "Cached" copy on first resolution.
+    /// The engine builder refuses to preload a core context URL, so this never
+    /// marks an embedded context preloaded.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::register`].
+    pub fn register_preloaded(&self, url: IriBuf, written: JsonLiteral) -> Result<(), JsonLiteralError> {
+        let as_written = Arc::new(written);
+        self.register_with_source(
+            url,
+            &as_written,
+            RegistrationSource::Preloaded {
+                as_written: Arc::clone(&as_written), // clone: the source owns the document while the borrow above only parsed it.
+            },
+        )
+    }
+
+    /// The shared body of [`Self::register`] and [`Self::register_preloaded`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::register`].
+    fn register_with_source(&self, url: IriBuf, written: &JsonLiteral, source: RegistrationSource) -> Result<(), JsonLiteralError> {
         let prepared = ContextDocument::prepared(&url, written, RelativeReferences::AsWritten)?;
         self.contexts.insert(
             url,
             RegisteredContext {
                 document: Arc::new(prepared.document),
                 tail: prepared.tail,
+                source,
             },
         );
-        Ok(())
-    }
-
-    /// Register a context document the operator preloaded from disk.
-    ///
-    /// Behaves like [`Self::register`] but also keeps the document as written,
-    /// so the resolver can tell a document it holds a downloaded-equivalent copy
-    /// of (clause 5.13.1 "Cached") from one the broker embeds, and records that
-    /// copy as the document was written rather than as it is prepared for
-    /// processing. The engine builder refuses to preload a core context URL, so
-    /// this never records an embedded context as preloaded.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::register`].
-    pub fn register_preloaded(&self, url: IriBuf, written: JsonLiteral) -> Result<(), JsonLiteralError> {
-        self.register(url.clone(), &written)?; // clone: both maps key on the same URL
-        self.preloaded.insert(url, Arc::new(written));
         Ok(())
     }
 
@@ -94,12 +121,17 @@ impl ContextRegistry {
     pub fn get(&self, url: &IriBuf) -> Option<RegisteredContext> {
         self.contexts.get(url).map(|entry| entry.value().clone()) // clone: an `Arc` bump and the tail, handed out while the map keeps its entry
     }
+}
 
-    /// The document the operator preloaded from disk under `url`, as written,
-    /// or `None` for a URL the broker embeds or holds nothing under.
+impl RegisteredContext {
+    /// The document as the operator wrote it, when the operator preloaded it;
+    /// `None` for a document the broker embeds.
     #[must_use]
-    pub fn preloaded_document(&self, url: &IriBuf) -> Option<Arc<JsonLiteral>> {
-        self.preloaded.get(url).map(|entry| Arc::clone(entry.value()))
+    pub const fn preloaded_written(&self) -> Option<&Arc<JsonLiteral>> {
+        match &self.source {
+            RegistrationSource::Embedded => None,
+            RegistrationSource::Preloaded { as_written } => Some(as_written),
+        }
     }
 }
 
@@ -109,7 +141,10 @@ impl ContextRegistry {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{context_registry::ContextRegistry, context_tail::ContextTail};
+    use crate::{
+        context_registry::{ContextRegistry, RegistrationSource},
+        context_tail::ContextTail,
+    };
     use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use iri_rs::IriBuf;
@@ -164,11 +199,11 @@ mod tests {
     }
 
     /// Clause 5.13.1: a document the operator preloaded is a local copy of one
-    /// the broker would otherwise download, so the registry marks it preloaded;
-    /// a document registered as embedded is not, and the resolver leaves it out
+    /// the broker would otherwise download, so the entry says where it came
+    /// from; an embedded one says `Embedded`, and the resolver leaves it out
     /// of the Cached store on that basis.
     #[test]
-    fn only_a_preloaded_document_is_marked_preloaded() {
+    fn a_registration_names_whether_the_operator_preloaded_it() {
         let registry = ContextRegistry::new();
         let preloaded = IriBuf::new("https://forge.example.com/suite.jsonld".to_string()).expect("valid URL");
         let embedded = IriBuf::new("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld".to_string()).expect("valid URL");
@@ -180,10 +215,8 @@ mod tests {
             .register(embedded.clone(), &literal(&json!({ "@context": {} }))) // clone: looked up below
             .expect("registered");
 
-        assert!(registry.preloaded_document(&preloaded).is_some());
-        assert!(registry.preloaded_document(&embedded).is_none());
-        assert!(registry.get(&preloaded).is_some());
-        assert!(registry.get(&embedded).is_some());
+        assert!(registry.get(&preloaded).is_some_and(|registered| registered.preloaded_written().is_some()));
+        assert!(registry.get(&embedded).is_some_and(|registered| registered.preloaded_written().is_none()));
     }
 
     /// A preloaded document stands in for a download, which the durable cache
@@ -197,7 +230,9 @@ mod tests {
 
         registry.register_preloaded(url.clone(), literal(&written)).expect("registered"); // clone: looked up below
 
-        let as_written = registry.preloaded_document(&url).expect("preloaded");
+        let registered = registry.get(&url).expect("registered");
+        assert!(matches!(registered.source, RegistrationSource::Preloaded { .. }));
+        let as_written = registered.preloaded_written().expect("preloaded");
         pretty_assertions::assert_eq!(serde_json::from_str::<Value>(as_written.text()).expect("JSON"), written);
         pretty_assertions::assert_eq!(prepared(&registry, &url), json!({ "@context": ["https://forge.example.com/terms.jsonld"] }));
     }

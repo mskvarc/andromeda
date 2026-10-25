@@ -21,9 +21,6 @@ pub enum ContextRegistryError {
         /// The identifier the request wrote, whether or not it keys a row.
         identifier: ContextIdentifier,
     },
-    /// An embedded core Context cannot be deleted.
-    #[error("an embedded NGSI-LD core context cannot be deleted")]
-    CoreContextDeletion,
     /// The full content of a `Cached` Context was requested.
     ///
     /// Clause 5.13.4.4: a served `@context` comes from internal storage only

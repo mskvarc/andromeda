@@ -80,7 +80,7 @@ mod tests {
     fn both_spellings_the_clause_admits_address_a_stored_row() {
         for written in [
             "urn:ngsi-ld:JsonLdContext:2fc7f63e-9213-4821-8720-65b9a404df6f",
-            "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld",
+            "https://example.com/terms.jsonld",
         ] {
             let identifier = ContextIdentifier::from(written);
             pretty_assertions::assert_eq!(identifier.stored().map(ToString::to_string), Some(written.to_owned()));

@@ -9,8 +9,6 @@ pub mod cached_context_invalidation;
 mod canonical_document;
 /// One page of the Context listing and the identifiers bounding it.
 pub mod context_page;
-/// Embedded NGSI-LD core Context representation.
-mod core_context;
 /// The permitted origins of newly persisted hosted contexts.
 pub mod creation_kind;
 /// Projection detail requested for Context reads.
@@ -60,7 +58,6 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-query",
-        "andromeda-ngsi-ld-vocabulary",
         "andromeda-persistence-failure",
     ],
     allow_workspace_dev_dependencies: [

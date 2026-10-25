@@ -49,8 +49,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
     fn list<'a>(&'a self, query: ContextListQuery<'a>) -> ContextRegistryFuture<'a, ContextPage> {
         Box::pin(async move {
             let kind = query.kind.map(stored_kind);
-            let (statement, read_order) = listing_page_query(query.detail_level, kind, query.embedded, &query.window.with_lookahead())
-                .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
+            let (statement, read_order) = listing_page_query(query.detail_level, kind, &query.window.with_lookahead());
             match query.detail_level {
                 ContextDetailLevel::Full => {
                     let mut rows: Vec<ContextMetadataRow> = statement

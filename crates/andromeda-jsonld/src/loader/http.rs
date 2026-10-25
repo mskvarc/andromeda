@@ -300,10 +300,12 @@ impl HttpContextLoader {
                     // Clause 5.13.1: a preloaded @context is a local copy of a
                     // document whose authority is a URL, so the first resolution
                     // that reaches it records a "Cached" durable entry that
-                    // clause 5.13.3 then lists. An embedded @context (the core
-                    // contexts, the data-integrity stub) is registered by a path
-                    // that never marks it preloaded, so it stays out of the cache.
-                    if let Some(as_written) = registry.preloaded_document(&url_iri)
+                    // clause 5.13.3 then lists. An embedded registration (the
+                    // core contexts, the data-integrity stub) never carries a
+                    // written copy, so it stays out of the durable cache.
+                    // clone: an Arc bump, so the entry can move into the
+                    // persisted row while `registered` outlives this block.
+                    if let Some(as_written) = registered.preloaded_written().cloned()
                         && let Some(ref cache) = l2_cache
                     {
                         return Ok(persist_registry_context(cache.as_ref(), &url_iri, registered, &as_written, lifetimes.heuristic).await);

@@ -38,8 +38,8 @@ pub trait ContextRegistryStore: Send + Sync + 'static {
         kind: ContextCreationKind,
     ) -> ContextRegistryFuture<'a, ContextInsertion>;
 
-    /// The page `query.window` selects of the stored Contexts and the embedded
-    /// one, ordered by local identifier.
+    /// The page `query.window` selects of the stored Contexts, ordered by
+    /// local identifier.
     fn list<'a>(&'a self, query: ContextListQuery<'a>) -> ContextRegistryFuture<'a, ContextPage>;
 
     /// Fetch one stored Context using the requested projection.
