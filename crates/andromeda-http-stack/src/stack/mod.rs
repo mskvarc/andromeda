@@ -9,6 +9,7 @@ mod helmet_layer;
 mod metric_layer;
 mod request_deadline;
 mod server_timing;
+mod strict_transport_security_layer;
 
 use crate::{
     config::{HttpStackConfig, server_timing::ServerTimingConfig},
@@ -22,6 +23,7 @@ use crate::{
         metric_layer::http_metric_layer,
         request_deadline::{RequestDeadline, answer_within_deadline},
         server_timing::apply_server_timing,
+        strict_transport_security_layer::set_strict_transport_security,
     },
 };
 use andromeda_http_extraction::{blocking_decode::BlockingDecodePolicy, request_body_limit::RequestBodyLimit, request_json_value_limit::RequestJsonValueLimit};
@@ -155,7 +157,7 @@ impl HttpStack {
             .layer(Extension(self.request_json_value_limit))
             .layer(Extension(self.blocking_decode.clone())); // clone: every request shares the stack's decode permits
         if let Some(helmet) = &self.helmet {
-            router = router.layer(helmet.clone());
+            router = router.layer(helmet.clone()).layer(middleware::from_fn(set_strict_transport_security));
         }
         // Applied to the assembled response, so the `@context` link and the
         // pagination links each handler writes are laid out once, whichever

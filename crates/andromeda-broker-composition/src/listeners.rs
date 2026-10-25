@@ -186,4 +186,7 @@ fn wait_for(token: &CancellationToken) -> impl Future<Output = ()> + Send + 'sta
 }
 
 #[cfg(test)]
+mod strict_transport_security_tests;
+
+#[cfg(test)]
 mod tests;

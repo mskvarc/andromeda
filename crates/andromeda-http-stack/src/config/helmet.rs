@@ -9,9 +9,11 @@ use toml_comment::TomlComment;
 /// The broker installs a default set of security response headers
 /// (`Content-Security-Policy`, `X-Content-Type-Options`, the cross-origin
 /// isolation trio, and the rest of the `axum-helmet` defaults) on the API
-/// subtree. Enabled by default; an operator terminating these headers at a proxy
-/// can turn the layer off. Per-header policy is a single default set today; finer
-/// control is a follow-up.
+/// subtree. `Strict-Transport-Security` is part of the policy too, but a response
+/// carries it only when the request arrived over a TLS listener. Enabled by
+/// default; an operator terminating these headers at a proxy can turn the layer
+/// off. Per-header policy is a single default set today; finer control is a
+/// follow-up.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, TomlComment, PartialEq, Eq)]
 pub struct HelmetConfig {
     /// Whether the security-header layer is installed.
