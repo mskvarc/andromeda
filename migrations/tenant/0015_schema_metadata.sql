@@ -28,4 +28,3 @@ create table schema_metadata (
 revoke insert, update, delete, truncate on schema_metadata from public;
 
 grant select on schema_metadata to public;
-

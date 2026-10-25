@@ -136,4 +136,3 @@ create index idx_notification_deliveries_subscription on notification_deliveries
 -- The event cascade, and the check the reap runs for events whose last
 -- delivery it removed.
 create index idx_notification_deliveries_event on notification_deliveries (event_key);
-

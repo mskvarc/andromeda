@@ -25,4 +25,3 @@ create table context_source_change_clock (
 
 insert into context_source_change_clock (revision)
 values (0);
-

@@ -18,7 +18,11 @@
 # selecting a string literal, which pg_format lays out like any other
 # statement, and is put back verbatim afterwards.
 #
-# One fixup runs afterwards: pg_format always opens a parenthesised list on a
+# pg_format follows every statement with a blank line, the last one included,
+# and no option disables it; trailing blank lines are dropped so a migration
+# ends in exactly one newline.
+#
+# One more fixup runs afterwards: pg_format always opens a parenthesised list on a
 # line of its own, even when the list is one short line, and no option disables
 # it ("identity (\n    cache 1)"). Every such list is rejoined onto the line
 # that opens it. A list spanning several lines is left as formatted.
@@ -168,6 +172,18 @@ restore() {
     '
 }
 
+# Drop the blank lines pg_format leaves after the last statement, so the text
+# ends in exactly one newline.
+trim_trailing_blank_lines() {
+    "$AWK" '
+        { text = (NR == 1) ? $0 : text "\n" $0 }
+        END {
+            sub(/\n+$/, "", text)
+            if (text != "") print text
+        }
+    '
+}
+
 # Rejoin every single-line parenthesised list of stdin onto the line that
 # opens it. Newlines become SOH for the substitution and are mapped back after.
 rejoin() {
@@ -190,7 +206,7 @@ format_file() {
         || die "pg_format failed on $migration"
     restore "$work" < "$work/formatted" > "$work/restored" \
         || die "pg_format lost or reordered a function statement placeholder in $migration"
-    rejoin < "$work/restored" > "$canonical"
+    trim_trailing_blank_lines < "$work/restored" | rejoin > "$canonical"
 }
 
 mode=write

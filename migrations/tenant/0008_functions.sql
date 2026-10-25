@@ -33,4 +33,3 @@ begin
     using message = tg_table_name || ' is append-only: a key once minted names the same value for the life of the tenant', table = tg_table_name;
 end
 $$;
-

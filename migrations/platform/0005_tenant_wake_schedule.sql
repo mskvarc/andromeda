@@ -29,4 +29,3 @@ create table tenant_wake_schedule (
 create index idx_tenant_wake_schedule_wake_at on tenant_wake_schedule (wake_at)
 where
     wake_at is not null;
-

@@ -29,4 +29,3 @@ create table subscription_notified_registrations (
 -- The subscriptions a changed registration was notified to, read before each
 -- withdrawal.
 create index idx_subscription_notified_registrations_registration on subscription_notified_registrations (registration_id);
-

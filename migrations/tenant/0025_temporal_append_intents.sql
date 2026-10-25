@@ -120,4 +120,3 @@ from
     temporal_append_intents i
     cross join lateral unnest(i.entries)
     with ordinality as e;
-

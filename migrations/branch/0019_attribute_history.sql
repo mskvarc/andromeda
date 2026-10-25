@@ -234,4 +234,3 @@ create table attribute_history_instance_claims (
     constraint fk_attribute_history_instance_claims_entity foreign key (entity_key) references entities (entity_key) on delete cascade,
     constraint chk_attribute_history_instance_claims_id_length check (octet_length(verbatim_instance_id) <= 1024)
 );
-

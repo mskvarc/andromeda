@@ -204,4 +204,3 @@ with (
 
 -- The cascade from `entities` and a type change find an Entity's rows by key.
 create index idx_entity_type_members_entity_key on entity_type_members (entity_key);
-

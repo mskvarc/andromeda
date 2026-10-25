@@ -75,4 +75,3 @@ where
 create index idx_scope_history_live_scope_path on scope_history using gist (scope_path)
 where
     value_kind = 1;
-

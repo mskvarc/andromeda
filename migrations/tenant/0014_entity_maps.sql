@@ -61,4 +61,3 @@ create table entity_map_links (
     constraint chk_entity_map_links_registration_id_length check (octet_length(registration_id) <= 1024),
     constraint chk_entity_map_links_linked_map_id_length check (octet_length(linked_map_id) <= 1024)
 );
-

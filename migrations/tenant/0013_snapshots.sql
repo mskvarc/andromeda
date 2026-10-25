@@ -127,4 +127,3 @@ where
     delivered_at is null and exhausted_at is null;
 
 create index idx_snapshot_notification_outbox_snapshot on snapshot_notification_outbox (snapshot_key);
-

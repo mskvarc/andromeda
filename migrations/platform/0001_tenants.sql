@@ -42,4 +42,3 @@ create table tenants (
 create unique index uq_tenants_unnamed_default on tenants (is_unnamed_default)
 where
     is_unnamed_default = true;
-

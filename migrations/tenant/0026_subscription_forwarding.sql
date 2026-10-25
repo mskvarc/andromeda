@@ -46,4 +46,3 @@ create table forwarded_subscriptions (
 
 -- The registration cascade, and the per-registration read that precedes it.
 create index idx_forwarded_subscriptions_registration on forwarded_subscriptions (registration_id);
-

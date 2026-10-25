@@ -49,4 +49,3 @@ create trigger trg_entity_type_names_append_only_row
 create trigger trg_entity_type_names_append_only_truncate
     before truncate on entity_type_names for each statement
     execute function refuse_dictionary_change ();
-

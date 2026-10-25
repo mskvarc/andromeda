@@ -33,7 +33,6 @@ alter table attribute_history_instance_claims
 alter table entity_type_members
     add constraint fk_entity_type_members_entity_type_name foreign key (entity_type_name_key) references entity_type_names (entity_type_name_key);
 
-
 -- The attribute name references of `current_attributes`, those of its rows
 -- and those of every element of `sub_attributes`, which no foreign key
 -- reaches. Checked once per statement over its transition table,
@@ -68,4 +67,3 @@ create trigger trg_current_attributes_name_keys_insert
 create trigger trg_current_attributes_name_keys_update
     after update on current_attributes referencing new table as new_rows for each statement
     execute function check_current_attribute_name_keys ();
-

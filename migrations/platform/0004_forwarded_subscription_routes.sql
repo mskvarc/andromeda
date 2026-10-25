@@ -21,4 +21,3 @@ create table forwarded_subscription_routes (
 );
 
 create index idx_forwarded_subscription_routes_tenant on forwarded_subscription_routes (tenant_key);
-

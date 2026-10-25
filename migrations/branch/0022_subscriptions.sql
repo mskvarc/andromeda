@@ -167,4 +167,3 @@ with (
     autovacuum_analyze_threshold = 100,
     autovacuum_vacuum_cost_delay = 0
 );
-

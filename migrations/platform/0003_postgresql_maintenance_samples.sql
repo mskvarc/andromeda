@@ -22,4 +22,3 @@ alter table postgresql_maintenance_targets
     add constraint chk_postgresql_maintenance_targets_sample_non_negative check ((last_relation_bytes is null or last_relation_bytes >= 0) and (last_reclaimable_bytes is null or last_reclaimable_bytes >= 0)),
     add constraint chk_postgresql_maintenance_targets_percentages check ((last_degraded_percent is null or last_degraded_percent between 0 and 100) and (last_threshold_percent is null or last_threshold_percent between 0 and 100)),
     add constraint chk_postgresql_maintenance_targets_last_decision check (last_decision is null or last_decision between 1 and 14);
-

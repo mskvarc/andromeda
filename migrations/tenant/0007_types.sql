@@ -205,4 +205,3 @@ create type temporal_intent as (
     entries temporal_entry[],
     entry_needs smallint[]
 );
-

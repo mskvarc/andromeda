@@ -45,4 +45,3 @@ create table jsonld_contexts (
 
 -- The list operation (clause 5.13.3) filters by kind.
 create index idx_jsonld_contexts_kind on jsonld_contexts (kind);
-

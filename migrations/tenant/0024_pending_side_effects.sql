@@ -70,4 +70,3 @@ where
 create index idx_pse_exhausted_at on pending_side_effects (exhausted_at)
 where
     exhausted_at is not null;
-
