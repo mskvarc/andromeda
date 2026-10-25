@@ -98,7 +98,7 @@ fn position(reader: &mut TapeReader<'_>, enclosing: &[usize]) -> Result<Position
 /// Read a list of positions, each refused at its own index.
 fn positions(reader: &mut TapeReader<'_>, enclosing: &mut Vec<usize>) -> Result<Vec<Position>, GeometryError> {
     open(reader, CoordinateShape::Positions, enclosing)?;
-    let mut read = Vec::new();
+    let mut read = Vec::with_capacity(reader.members());
     while !reader.closes() {
         enclosing.push(read.len());
         let item = position(reader, enclosing);
@@ -137,7 +137,7 @@ fn each<T>(
     read: impl Fn(&mut TapeReader<'_>, &mut Vec<usize>) -> Result<T, GeometryError>,
 ) -> Result<Vec<T>, GeometryError> {
     open(reader, CoordinateShape::List, enclosing)?;
-    let mut members = Vec::new();
+    let mut members = Vec::with_capacity(reader.members());
     while !reader.closes() {
         enclosing.push(members.len());
         let member = read(reader, enclosing);

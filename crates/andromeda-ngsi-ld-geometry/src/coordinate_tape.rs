@@ -147,6 +147,31 @@ impl TapeReader<'_> {
             None => true,
         }
     }
+
+    /// How many members the innermost open array holds from here to its
+    /// close, or to the end of the tape, without consuming any.
+    ///
+    /// A reader sizes what it builds from this count, so a list of a million
+    /// positions is allocated once instead of regrown by doubling.
+    pub(crate) fn members(&self) -> usize {
+        self.steps
+            .as_slice()
+            .iter()
+            .scan(0_usize, |depth, step| match step {
+                CoordinateStep::Open => {
+                    let starts = *depth == 0;
+                    *depth += 1;
+                    Some(starts)
+                }
+                CoordinateStep::Close => depth.checked_sub(1).map(|outer| {
+                    *depth = outer;
+                    false
+                }),
+                CoordinateStep::Ordinate | CoordinateStep::Other => Some(*depth == 0),
+            })
+            .filter(|starts| *starts)
+            .count()
+    }
 }
 
 /// Records one value read from a deserializer, and everything below it, onto
@@ -322,6 +347,36 @@ mod tests {
             let tree: Value = serde_json::from_str(text).expect("valid JSON");
             pretty_assertions::assert_eq!(items(&streamed(text)), items(&of_tree(&tree)), "{text}");
         }
+    }
+
+    #[test]
+    fn members_counts_the_innermost_open_array_to_its_close_without_consuming() {
+        let tape = streamed(r#"[[[1, 2], [3, [4]], "x", 5], [6]]"#);
+        let mut reader = tape.reader();
+        assert_eq!(reader.members(), 1);
+        assert_eq!(reader.next_item(), Some(TapeItem::Open));
+        assert_eq!(reader.members(), 2);
+        assert_eq!(reader.next_item(), Some(TapeItem::Open));
+        assert_eq!(reader.members(), 4);
+        assert_eq!(reader.next_item(), Some(TapeItem::Open));
+        assert_eq!(reader.members(), 2);
+        assert_eq!(reader.next_item(), Some(TapeItem::Ordinate(1.0)));
+    }
+
+    #[test]
+    fn members_of_an_empty_or_unclosed_array_count_to_the_end_of_the_tape() {
+        let empty = streamed("[]");
+        let mut reader = empty.reader();
+        assert_eq!(reader.next_item(), Some(TapeItem::Open));
+        assert_eq!(reader.members(), 0);
+
+        let mut unclosed = CoordinateTape::default();
+        unclosed.open();
+        unclosed.number(Some(1.0));
+        unclosed.other();
+        let mut reader = unclosed.reader();
+        assert_eq!(reader.next_item(), Some(TapeItem::Open));
+        assert_eq!(reader.members(), 2);
     }
 
     #[test]
