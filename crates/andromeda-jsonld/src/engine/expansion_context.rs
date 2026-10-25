@@ -24,7 +24,7 @@ use crate::{
     context_spec::ContextSpec,
     core_term_aliases::core_term_aliases,
     document_context::{ReferenceReading, resolved_context},
-    engine::{context_syntax::context_syntax, processor::JsonLdEngine, processor_text::ProcessorTextError},
+    engine::{context_syntax::context_syntax, processing_warning::LoggedWarnings, processor::JsonLdEngine, processor_text::ProcessorTextError},
     error::JsonLdError,
     loader::{error::LoaderError, http::HttpContextLoader},
 };
@@ -157,7 +157,14 @@ impl ExpansionContext {
             }
         })?;
         let active = unprocessed
-            .process_full(no_vocabulary_mut(), &ActiveContext::new(None), loader, None, processing_options(), ())
+            .process_full(
+                no_vocabulary_mut(),
+                &ActiveContext::new(None),
+                loader,
+                None,
+                processing_options(),
+                LoggedWarnings,
+            )
             .await
             .map_err(processing_failure)?
             .into_processed();
@@ -232,7 +239,14 @@ async fn property_scoped_contexts(
         };
         let base_url = definition.base_url().cloned(); // clone: processing takes the base URL by value
         if let Ok(processed) = local
-            .process_full(no_vocabulary_mut(), active, loader, base_url, processing_options().with_override(), ())
+            .process_full(
+                no_vocabulary_mut(),
+                active,
+                loader,
+                base_url,
+                processing_options().with_override(),
+                LoggedWarnings,
+            )
             .await
         {
             scoped.insert(Box::from(term.as_str()), processed.into_processed());

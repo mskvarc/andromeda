@@ -16,4 +16,4 @@ thiserror = "2.0.21"
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
-toml = "1.1.6"
+toml = "1.1.8"

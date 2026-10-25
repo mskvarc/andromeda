@@ -11,7 +11,7 @@ use crate::{
     context_graph::check_context_graph,
     context_spec::ContextSpec,
     document_context::{ReferenceReading, resolved_context},
-    engine::context_syntax::context_syntax,
+    engine::{context_syntax::context_syntax, processing_warning::LoggedWarnings},
     error::JsonLdError,
     loader::{error::LoaderError, http::HttpContextLoader},
 };
@@ -71,7 +71,7 @@ impl CompactionContext {
                 loader,
                 None,
                 Options::<IriBuf>::default().context_processing_options(),
-                (),
+                LoggedWarnings,
             )
             .await
             .map_err(|error| CompactionContextError::Processing(Box::new(CompactError::ContextProcessing(error))))?
@@ -115,6 +115,7 @@ impl CompactionContext {
                 ProcessedRef::new(embedded, &self.processed),
                 loader,
                 Options::<IriBuf>::default().compaction_options(),
+                LoggedWarnings,
             )
             .await
             .map_err(|error| Box::new(CompactError::Compaction(error)))

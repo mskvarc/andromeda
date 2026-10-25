@@ -18,5 +18,5 @@ thiserror = "2.0.21"
 andromeda-architecture-checks.workspace = true
 metrics = "0.24.6"
 pretty_assertions = "1.4.1"
-tokio = { version = "1.53.2", features = ["macros", "rt"] }
+tokio = { version = "1.54.1", features = ["macros", "rt"] }
 tower = { version = "0.5.3", features = ["util"] }

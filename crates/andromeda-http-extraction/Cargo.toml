@@ -29,12 +29,12 @@ headers = "0.4.2"
 iri-rs = { version = "3.4.1", features = ["static"] }
 mediatype = "0.23.0"
 serde = "1.0.229"
-serde_json = { version = "1.0.151", features = ["arbitrary_precision", "raw_value"] }
+serde_json = { version = "1.0.154", features = ["arbitrary_precision", "raw_value"] }
 serde_path_to_error = "0.1.20"
 serde_urlencoded = "0.7.1"
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
-tokio = { version = "1.53.2", features = ["rt", "sync"] }
+tokio = { version = "1.54.1", features = ["rt", "sync"] }
 tracing = "0.1.44"
 url = "2.5.8"
 
@@ -42,5 +42,5 @@ url = "2.5.8"
 allocation-counter = "0.8.1"
 andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"
-tokio = { version = "1.53.2", features = ["macros", "rt", "rt-multi-thread"] }
+tokio = { version = "1.54.1", features = ["macros", "rt", "rt-multi-thread"] }
 tower = { version = "0.5.3", features = ["util"] }

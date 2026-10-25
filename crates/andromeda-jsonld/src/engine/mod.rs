@@ -26,6 +26,7 @@ pub mod options;
 )]
 pub(crate) mod preloaded_engine;
 pub(crate) mod processed_context_cache;
+pub(crate) mod processing_warning;
 pub mod processor;
 pub mod processor_text;
 pub mod term_lookup;

@@ -24,7 +24,7 @@ indexmap = "2.14.2"
 iri-rs = "3.4.1"
 langtag = "1.1.0"
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = { version = "1.0.151", features = ["arbitrary_precision", "raw_value"] }
+serde_json = { version = "1.0.154", features = ["arbitrary_precision", "raw_value"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
 typed-builder = "0.23.2"

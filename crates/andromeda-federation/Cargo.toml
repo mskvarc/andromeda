@@ -46,11 +46,11 @@ iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 mediatype = "0.23.0"
 reqwest = { version = "0.13.5", features = ["json"] }
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
+serde_json = "1.0.154"
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
-tokio = { version = "1.53.2", features = ["rt"] }
-toml = "1.1.6"
+tokio = { version = "1.54.1", features = ["rt"] }
+toml = "1.1.8"
 toml-comment = "0.3.0"
 tracing = "0.1.44"
 typed-builder = "0.23.2"
@@ -61,5 +61,5 @@ andromeda-architecture-checks.workspace = true
 bytes = "1.12.1"
 pretty_assertions = "1.4.1"
 serde_urlencoded = "0.7.1"
-tokio = { version = "1.53.2", features = ["macros", "rt"] }
+tokio = { version = "1.54.1", features = ["macros", "rt"] }
 wiremock = "0.6.5"

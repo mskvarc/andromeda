@@ -34,7 +34,7 @@ futures = "0.3.34"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 mediatype = "0.23.0"
 serde ={ version = "1.0.229", features = ["derive"] }
-serde_json = { version = "1.0.151", features = ["arbitrary_precision", "raw_value"] }
+serde_json = { version = "1.0.154", features = ["arbitrary_precision", "raw_value"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
 tracing = "0.1.44"
@@ -48,5 +48,5 @@ async-trait = "0.1.92"
 bytes = "1.12.1"
 http = "1.5.0"
 pretty_assertions = "1.4.1"
-tokio = { version = "1.53.2", features = ["macros", "rt", "sync"] }
+tokio = { version = "1.54.1", features = ["macros", "rt", "sync"] }
 wiremock = "0.6.5"

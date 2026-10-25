@@ -26,13 +26,13 @@ axum = "0.8.9"
 axum-helmet = "1.0.2"
 axum-prometheus = "0.10.1"
 axum-server-timing = "3.0.1"
-enumset = { version = "1.1.14", features = ["serde"] }
+enumset = { version = "1.1.15", features = ["serde"] }
 headers = "0.4.2"
 serde = { version = "1.0.229", features = ["derive"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
-tokio = { version = "1.53.2", features = ["time"] }
-toml = "1.1.6"
+tokio = { version = "1.54.1", features = ["time"] }
+toml = "1.1.8"
 toml-comment = "0.3.0"
 tower = "0.5.3"
 tower-http = { version = "0.7.1", features = ["compression-full", "cors", "csrf", "decompression-full", "normalize-path", "request-id", "sensitive-headers", "trace"] }
@@ -42,5 +42,5 @@ url = { version = "2.5.8", features = ["serde"] }
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"
-serde_json = "1.0.151"
-tokio = { version = "1.53.2", features = ["macros", "rt", "time"] }
+serde_json = "1.0.154"
+tokio = { version = "1.54.1", features = ["macros", "rt", "time"] }

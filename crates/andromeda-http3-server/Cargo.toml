@@ -22,12 +22,12 @@ h3 = "0.0.8"
 h3-quinn = "0.0.10"
 h3-util = { version = "0.0.6", features = ["quinn"] }
 quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }
-rustls = { version = "0.23.45", default-features = false, features = ["aws_lc_rs", "std"] }
+rustls = { version = "0.23.46", default-features = false, features = ["aws_lc_rs", "std"] }
 serde = { version = "1.0.229", features = ["derive"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
-tokio = { version = "1.53.2", features = ["macros", "net", "rt"] }
-toml = "1.1.6"
+tokio = { version = "1.54.1", features = ["macros", "net", "rt"] }
+toml = "1.1.8"
 toml-comment = "0.3.0"
 tower = { version = "0.5.3", features = ["util"] }
 tracing = "0.1.44"
@@ -39,5 +39,5 @@ bytes = "1.12.1"
 http = "1.5.0"
 pretty_assertions = "1.4.1"
 rustls-pki-types = "1.15.1"
-tokio = { version = "1.53.2", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1.54.1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tower-http = { version = "0.7.1", features = ["normalize-path"] }

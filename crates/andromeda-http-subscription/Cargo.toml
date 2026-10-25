@@ -35,9 +35,9 @@ axum = { version = "0.8.9", features = ["ws"] }
 futures = "0.3.34"
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.21"
-tokio = "1.53.2"
-tokio-util = "0.7.19"
-toml = "1.1.6"
+tokio = "1.54.1"
+tokio-util = "0.7.20"
+toml = "1.1.8"
 toml-comment = "0.3.0"
 tracing = "0.1.44"
 typed-builder = "0.23.2"
@@ -47,5 +47,5 @@ andromeda-architecture-checks.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true
 andromeda-persistence-failure.workspace = true
 pretty_assertions = "1.4.1"
-tokio = { version = "1.53.2", features = ["macros", "rt"] }
+tokio = { version = "1.54.1", features = ["macros", "rt"] }
 tower = { version = "0.5.3", features = ["util"] }

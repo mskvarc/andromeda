@@ -30,8 +30,8 @@ headers = "0.4.2"
 hex = "0.4.3"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 percent-encoding = "2.3.2"
-serde_json = { version = "1.0.151", features = ["arbitrary_precision", "raw_value"] }
-sha2 = "0.11.0"
+serde_json = { version = "1.0.154", features = ["arbitrary_precision", "raw_value"] }
+sha2 = "0.11.1"
 thiserror = "2.0.21"
 url = { version = "2.5.8", features = ["serde"] }
 
@@ -42,5 +42,5 @@ andromeda-ngsi-ld-number.workspace = true
 andromeda-tenancy = { workspace = true, features = ["resident-tenancy"] }
 chrono = "0.4.45"
 pretty_assertions = "1.4.1"
-tokio = { version = "1.53.2", features = ["macros", "rt"] }
+tokio = { version = "1.54.1", features = ["macros", "rt"] }
 tower = { version = "0.5.3", features = ["util"] }

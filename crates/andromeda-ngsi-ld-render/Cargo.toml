@@ -22,13 +22,13 @@ andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 chrono = "0.4.45"
-enumset = "1.1.14"
+enumset = "1.1.15"
 geojson = "1.0.0"
 indexmap = { version = "2.14.2", features = ["serde"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 langtag = { version = "1.1.0", features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = { version = "1.0.151", features = ["arbitrary_precision", "raw_value"] }
+serde_json = { version = "1.0.154", features = ["arbitrary_precision", "raw_value"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
 
@@ -36,4 +36,4 @@ thiserror = "2.0.21"
 allocation-counter = "0.8.1"
 andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"
-uuid = "1.27.0"
+uuid = "1.29.0"

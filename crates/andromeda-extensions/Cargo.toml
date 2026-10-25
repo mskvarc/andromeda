@@ -18,11 +18,11 @@ workspace = true
 andromeda-http-stack.workspace = true
 andromeda-json-literal.workspace = true
 andromeda-ngsi-ld-query.workspace = true
-enumset = "1.1.14"
+enumset = "1.1.15"
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
+serde_json = "1.0.154"
 thiserror = "2.0.21"
-toml = "1.1.6"
+toml = "1.1.8"
 toml-comment = "0.3.0"
 tracing = "0.1.44"
 
