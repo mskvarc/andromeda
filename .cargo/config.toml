@@ -1,5 +1,2 @@
-[alias]
-xtask = "run --package andromeda-xtask --"
-
 [build]
 rustflags = ["-Zhigher-ranked-assumptions"]

@@ -6,6 +6,3 @@ results*
 *.stderr
 **/grammar/.generated/
 
-# Python bytecode cache from robot loading the ETSI pre-run modifier (crates/andromeda-xtask/etsi).
-__pycache__/
-*.pyc

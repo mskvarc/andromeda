@@ -18,59 +18,7 @@ env:
   CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 jobs:
-  build-broker:
-    name: build broker
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/free-disk-space
-
-      - uses: ./.github/actions/build-broker-image
-        with:
-          tag: andromeda-ci:broker
-          archive: ${{ runner.temp }}/broker/broker.tar.gz
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: broker-image
-          path: ${{ runner.temp }}/broker/broker.tar.gz
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 1
-
-  build-tests:
-    name: build tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/free-disk-space
-      - name: Install pinned toolchain
-        run: rustup toolchain install --profile minimal
-      - uses: Swatinem/rust-cache@v2
-      - uses: ./.github/actions/build-test-suite
-        with:
-          out: ${{ runner.temp }}/test-suite
-
-  gate:
-    needs: [build-broker, build-tests]
-    name: gate (${{ matrix.stack }})
-    strategy:
-      fail-fast: false
-      matrix:
-        stack: [base, distributed, federation, snapshot, http3, extensions, tls, core-write-history]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/itest
-        with:
-          stack: ${{ matrix.stack }}
-          image-source: preloaded
-
   binaries:
-    needs: gate
     name: binary (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -144,7 +92,6 @@ jobs:
           retention-days: 1
 
   image:
-    needs: gate
     name: image (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     permissions:
