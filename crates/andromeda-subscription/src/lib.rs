@@ -9,6 +9,10 @@ pub mod candidate_funnel;
 /// The routing index over active subscriptions.
 pub mod candidate_index;
 #[cfg(test)]
+#[expect(
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod candidate_index_property;
 /// Subscription lifecycle change values.
 pub mod change;

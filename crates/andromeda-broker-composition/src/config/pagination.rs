@@ -33,6 +33,10 @@ pub(crate) const fn resolve_pagination(extensions: &ExtensionsConfig, pagination
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::config::{error::ConfigurationError, pagination::resolve_pagination, runtime::RuntimeConfig, validation::validate_config};
     use andromeda_http_stack::config::feature_mode::HttpFeatureMode;

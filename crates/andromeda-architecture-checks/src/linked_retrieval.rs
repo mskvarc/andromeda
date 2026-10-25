@@ -79,4 +79,8 @@ fn source_violations(path: &str, syntax: &File) -> Vec<String> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests;

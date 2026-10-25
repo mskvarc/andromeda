@@ -26,6 +26,10 @@ pub mod plan;
 pub mod representation;
 pub mod source;
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod test_graph;
 pub mod traversal;
 pub mod typed;

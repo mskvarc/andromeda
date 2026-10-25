@@ -163,6 +163,10 @@ const fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         form::{GeometryForm, PolygonRings},

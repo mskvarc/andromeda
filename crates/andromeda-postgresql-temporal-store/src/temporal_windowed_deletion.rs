@@ -288,6 +288,10 @@ fn empty_stream_cleanup_statement(schema: Option<&DynIden>, stream_keys: &[i64])
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::temporal_windowed_deletion::{empty_stream_cleanup_statement, matching_streams_query, windowed_count_statement, windowed_delete_statement};
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::date_time::NgsiLdDateTime, time_prop::TimeProp};

@@ -116,6 +116,10 @@ pub enum Unlimited {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::name_cache_config::{IdleEviction, NameCacheConfig, NameCacheConfigError, Unlimited};
     use andromeda_configuration_scalars::{human_byte_size::HumanByteSize, human_duration::HumanDuration};

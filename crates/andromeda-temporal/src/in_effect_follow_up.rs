@@ -68,6 +68,10 @@ fn collect_datasets<'a>(part: &'a TemporalDocument, held: &mut HeldDatasets<'a>)
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{answered_fixture::answered, in_effect_follow_up::follow_up_datasets};
     use andromeda_ngsi_ld_query::dataset::DatasetSelector;

@@ -210,6 +210,10 @@ impl ContextSourcePropertyDocument {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::registration::{ContextSourceRegistration, context_source_property_document::TABLE_MEMBERS};
     use andromeda_json_literal::JsonLiteral;

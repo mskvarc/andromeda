@@ -137,6 +137,11 @@ pub(crate) fn json_pattern(target: &JsonTarget, pattern: &Pattern, polarity: Pat
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::q_predicate::{instance_row::InstanceRow, json_value_term::json_equality, value_object_member::on_some_member};
     use andromeda_ngsi_ld_query::filter::{

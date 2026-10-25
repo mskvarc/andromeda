@@ -41,6 +41,10 @@ fn repeated_identity(instances: &[InstanceDocument]) -> Option<RepeatedInstance>
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         document::{instance_document::InstanceDocument, instance_identities::admit_distinct_identities},

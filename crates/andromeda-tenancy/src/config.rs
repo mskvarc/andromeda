@@ -241,6 +241,10 @@ impl TenancyConfig {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod config_tests {
     use super::{TenancyConfig, TenancyConfigError};
     use crate::db_name_prefix::DbNamePrefix;

@@ -137,6 +137,10 @@ fn process_position<P: GeomProcessor>(position: &Position, idx: usize, processor
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::ewkb_walk::GeometryWalk;
     use andromeda_ngsi_ld_geometry::{form::GeometryForm, line_string_coordinates::LineStringCoordinates, position::Position};

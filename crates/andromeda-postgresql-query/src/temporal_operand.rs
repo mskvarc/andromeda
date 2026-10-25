@@ -78,6 +78,10 @@ pub fn declared_time(text: SimpleExpr, datatype: SimpleExpr) -> SimpleExpr {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::temporal_operand::{STORED_TIME_TEMPLATE, declared_date, declared_date_time, declared_time};
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr};

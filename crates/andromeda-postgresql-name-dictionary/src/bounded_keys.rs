@@ -66,6 +66,10 @@ fn entry_weight<N: InternedName>(name: &N, _key: &N::Key) -> u32 {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         bounded_keys::{ENTRY_OVERHEAD_BYTES, bounded_keys, bounded_names, entry_weight, preload_row_limit},

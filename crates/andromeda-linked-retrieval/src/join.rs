@@ -93,6 +93,10 @@ pub const fn traversal_depth(join_level: Option<NonZeroU32>) -> NonZeroU32 {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::join::{RetrievingJoin, TraversalBounds};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;

@@ -121,6 +121,10 @@ impl<T> Lane<'_, T> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::keyed_lanes::{KeyedLanes, LaneStopped};
     use std::{num::NonZeroUsize, ptr, time::Duration};

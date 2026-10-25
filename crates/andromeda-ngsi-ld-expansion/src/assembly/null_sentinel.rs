@@ -80,6 +80,10 @@ fn is_wrapped_null(member: &ExpandedItem) -> bool {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         assembly::null_sentinel::{is_deletion, is_null},

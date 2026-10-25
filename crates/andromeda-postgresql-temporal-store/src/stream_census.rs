@@ -288,6 +288,10 @@ pub(crate) fn typed_rows(mut rows: SelectStatement, types: SimpleExpr, attribute
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::stream_census::{GainedType, counted_stream_addition, counted_stream_removal, gained_types_census};
     use andromeda_postgresql_seaquery::statement::Statement;

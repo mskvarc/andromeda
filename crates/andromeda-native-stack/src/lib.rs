@@ -27,6 +27,10 @@ andromeda_architecture_checks::dependency_boundary! {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::on_sufficient_stack;
     use std::{hint::black_box, thread};

@@ -82,6 +82,10 @@ pub mod request_context;
 pub mod term_expansion;
 /// Fixture documents for unit tests.
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 pub(crate) mod test_documents;
 pub mod user_context_admission;
 

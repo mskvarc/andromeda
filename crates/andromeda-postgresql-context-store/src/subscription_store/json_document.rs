@@ -19,6 +19,10 @@ pub(super) fn json_document<T: Serialize + ?Sized>(document: Option<&T>) -> Resu
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::subscription_store::json_document::json_document;
     use sea_query::{PostgresQueryBuilder, Query};

@@ -61,6 +61,10 @@ impl<'q> ReturnedAttributes<'q> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::projection::{compiled::Projection, returned_attributes::ReturnedAttributes, term::ProjectionTerm};
     use iri_rs::IriBuf;

@@ -104,6 +104,10 @@ pub fn schema_iden(target: &ContextTarget) -> Option<DynIden> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{BranchSchema, PUBLISHED_SNAPSHOT_SCHEMA_PATTERN, SNAPSHOT_SCHEMA_PATTERN, published_snapshot_key, snapshot_schema_name, table_of};
     use andromeda_context_space::{context_target::ContextTarget, snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};

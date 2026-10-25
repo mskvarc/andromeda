@@ -46,6 +46,10 @@ pub fn container_terms(context: &Context<IriBuf, BlankIdBuf>) -> ContainerTerms 
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{container_terms::container_terms, context_spec::ContextSpec, engine::processor::JsonLdEngine, test_documents::literal};
     use andromeda_ngsi_ld_representation::container_terms::{ContainerTerms, TermContainer};

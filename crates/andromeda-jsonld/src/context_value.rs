@@ -253,6 +253,10 @@ pub fn written_entries(entries: &[ContextEntry<'_>], shape: EntriesShape) -> Str
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::context_value::{ContextEntry, EntriesShape, NamedCore, context_entries, without_core, written_entries};
     use andromeda_json_literal::JsonLiteral;

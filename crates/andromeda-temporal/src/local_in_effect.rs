@@ -103,6 +103,10 @@ pub(crate) fn part_document(entity_id: &Identifier, rows: Vec<TemporalHistoryRow
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::local_in_effect::part_document;
     use andromeda_ngsi_ld_lexicon::{

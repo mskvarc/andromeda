@@ -149,6 +149,10 @@ pub(crate) fn temporal_body_query_string(params: &TemporalQueryParameters, filte
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::forwarded_query_string::{ForwardedFilters, forwarded_query_string, forwarded_temporal_query_string};
     use axum::http::Uri;

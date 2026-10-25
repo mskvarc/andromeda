@@ -30,6 +30,10 @@ pub fn canonical_float_text(value: f64) -> Result<String, JsonNumberError> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{JsonNumber, JsonNumberError, float_spelling::canonical_float_text};
 

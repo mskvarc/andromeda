@@ -7,6 +7,11 @@
 //! write as a plain JSON literal, kept in the spelling they wrote it in, and
 //! the annex C corpus; the cases below it cover what the corpus leaves out.
 
+#![expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 use andromeda_json_literal::piece::JsonPiece;
 use andromeda_ngsi_ld_model::{
     attribute::instance::{Attribute, AttributeValue},

@@ -48,6 +48,10 @@ async fn expand_projection_lists(lists: &mut [ProjectionList], expander: &impl T
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{error::SubscriptionError, projection_expansion::expand_notification_projection};
     use andromeda_ngsi_ld_query::{error::QueryError, projection::grammar::ProjectionList, term_expander::TermExpander};

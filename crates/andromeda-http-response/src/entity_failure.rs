@@ -53,6 +53,10 @@ pub fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{batch_projection::batch_entity_error, entity_failure::classify_entity_error};
     use andromeda_entity::{

@@ -217,6 +217,10 @@ pub(crate) fn is_scope_attribute(attr_name: &AttributeName) -> bool {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::temporal::{entity::TemporalEntityRenderer, page_cut::PageCut};
     use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember};

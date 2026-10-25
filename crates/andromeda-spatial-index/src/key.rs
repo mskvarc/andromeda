@@ -67,6 +67,10 @@ pub fn flatten_or_type_iris(expr: &TypeExpr) -> Option<Vec<IriBuf>> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::key::{SpatialKey, flatten_or_type_iris};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;

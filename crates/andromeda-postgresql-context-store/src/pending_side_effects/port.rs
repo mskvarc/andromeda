@@ -306,6 +306,10 @@ fn purge_dead_statement(cutoff: DateTime<Utc>) -> DeleteStatement {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::pending_side_effects::{
         port::{lease_batch_statement, mark_dead_statement, nack_statement, purge_dead_statement},

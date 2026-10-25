@@ -5,6 +5,10 @@
 //! The measurement counts the allocations of the calling thread alone, so the
 //! other tests of the binary do not disturb it.
 
+#![expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, geo_value::GeoValue};
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
 

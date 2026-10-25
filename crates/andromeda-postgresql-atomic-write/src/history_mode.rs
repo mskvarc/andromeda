@@ -93,6 +93,10 @@ impl TemporalHistoryCommitMode {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::history_mode::{CommitResponse, HistoryPlacement, TemporalHistoryCommitMode};
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};

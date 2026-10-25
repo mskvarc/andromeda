@@ -116,6 +116,10 @@ fn split_digits(text: &str) -> (&str, &str) {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{JsonNumber, MAX_FRACTIONAL_DIGITS, MAX_INTEGRAL_DIGITS, number_token::NumberToken};
     use std::str::FromStr;

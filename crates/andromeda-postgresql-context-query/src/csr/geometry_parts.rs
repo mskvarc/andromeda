@@ -70,6 +70,10 @@ fn registration_geometry_columns(geo: &GeoQuery) -> (Csr, Csr) {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::csr::geometry_parts::{GeometryParts, geometry_parts};
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};

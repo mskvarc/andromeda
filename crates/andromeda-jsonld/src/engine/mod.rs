@@ -20,6 +20,10 @@ pub(crate) mod member_order;
 pub mod options;
 /// Engines for unit tests that resolve exactly the documents a test preloads.
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 pub(crate) mod preloaded_engine;
 pub(crate) mod processed_context_cache;
 pub mod processor;

@@ -322,6 +322,10 @@ fn notification_headers(req: &DeliveryRequest, link_field: LinkFieldLayout) -> H
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         http::{

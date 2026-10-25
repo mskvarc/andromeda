@@ -170,6 +170,10 @@ fn is_bare_to_vec(expr: &Expr) -> bool {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::state_codec_boundary::source_sites;
     use pretty_assertions::assert_eq;

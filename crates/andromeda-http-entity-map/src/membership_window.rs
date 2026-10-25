@@ -60,6 +60,10 @@ pub(crate) fn membership_window(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::membership_window::membership_window;
     use andromeda_http_extraction::pagination_policy::RequestPagination;

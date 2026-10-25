@@ -68,6 +68,10 @@ pub fn hold_selection_to_map(map: &EntityMap, id: &mut Option<Vec<Identifier>>, 
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::query_scoping::{hold_selection_to_map, scope_query_ids};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;

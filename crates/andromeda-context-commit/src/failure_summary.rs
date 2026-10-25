@@ -37,6 +37,10 @@ pub fn bounded_failure_summary(text: &str, limit: NonZeroU32) -> Cow<'_, str> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::failure_summary::{FAILURE_SUMMARY_LIMIT, FAILURE_SUMMARY_MAX_CHARACTERS, bounded_failure_summary};
     use pretty_assertions::assert_eq;

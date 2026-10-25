@@ -227,6 +227,10 @@ fn candidates(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, combinat
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::stage1::{
         held_shapes::{ShapeCombination, ShapeHolders, build_held_shapes_query},

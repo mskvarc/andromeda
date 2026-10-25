@@ -118,6 +118,10 @@ pub(crate) async fn resolve_purge_map(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::entity::purge_entity_map::PurgeEntityMap;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;

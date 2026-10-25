@@ -139,6 +139,10 @@ fn table_parameter(name: Setting) -> SimpleExpr {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{autovacuum_trigger::autovacuum_triggers_statement, branch::Branch, candidate::heap_target::HeapTarget, observed_heap::ObservedHeap};
     use andromeda_context_space::snapshot_key::SnapshotKey;

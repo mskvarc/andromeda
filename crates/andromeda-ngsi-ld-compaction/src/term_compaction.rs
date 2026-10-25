@@ -31,6 +31,10 @@ impl TermCompactor for NameCompaction {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::name_compaction::NameCompaction;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};

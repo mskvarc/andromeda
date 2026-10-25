@@ -59,6 +59,10 @@ impl EntityTypes {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{entity_types::EntityTypes, non_empty::EmptyCollection};
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;

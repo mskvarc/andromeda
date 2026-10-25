@@ -181,6 +181,10 @@ pub(crate) fn reference_iri(reference: &str, base: Option<&IriBuf>) -> Option<Ir
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         context_graph::{ContextGraphError, MAX_CONTEXT_REFERENCE_DEPTH},

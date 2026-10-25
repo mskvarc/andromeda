@@ -236,6 +236,10 @@ fn reads_search_row(term: &CompiledOrderTerm) -> bool {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::entity_relations::{Demand, EntityRelations, RowSource};
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};

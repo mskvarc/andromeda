@@ -53,6 +53,10 @@ impl CsourceSubscriptionCache {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{compiled::CompiledCsrSubscription, csource_cache::CsourceSubscriptionCache, geo_filter::SubscriptionGeoFilter};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;

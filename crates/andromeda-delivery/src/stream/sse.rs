@@ -21,6 +21,10 @@ impl StreamPayload for SseNotificationEvent {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::stream::registry::registry_conformance_tests;
 

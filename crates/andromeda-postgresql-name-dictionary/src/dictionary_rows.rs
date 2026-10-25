@@ -65,6 +65,10 @@ pub(crate) fn held_publication(rows: &[PgRow]) -> Result<CachePublication, NameL
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{dictionary_rows::stored_name_error, name_lookup::NameLookupError};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, reference::NgsiLdReferenceError};

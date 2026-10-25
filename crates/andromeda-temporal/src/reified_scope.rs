@@ -137,6 +137,10 @@ fn scope_item(value: &ExpandedValue<Fragment>) -> ScopeItem<'_> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{reified_scope::scope_observations, scope_observation::ScopeObservation};
     use andromeda_ngsi_ld_entity::{

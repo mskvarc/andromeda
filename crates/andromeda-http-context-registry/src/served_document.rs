@@ -117,6 +117,10 @@ fn entity_tag(representation: &[u8]) -> Result<ETag, headers::Error> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::served_document::{served_response, vary_on_tenant};
     use andromeda_context_registry::served_context::ServedContext;

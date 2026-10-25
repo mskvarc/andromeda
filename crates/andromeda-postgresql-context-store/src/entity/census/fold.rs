@@ -186,6 +186,10 @@ pub async fn fold_every_census(pool: &PgPool) -> Result<CensusFold, ContextStore
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::entity::census::fold::Ledger;
     use andromeda_context_space::context_target::ContextTarget;

@@ -92,6 +92,11 @@ fn first_member_in_both<'t>(pick: &'t [ProjectionTerm], omit: &'t [ProjectionTer
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         error::QueryError,

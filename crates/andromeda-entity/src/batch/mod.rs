@@ -23,6 +23,10 @@ mod chunk;
 mod chunk_read_modify_write;
 /// Compare-and-set tests for the batch read-modify-writes.
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod compare_and_set;
 /// Preparing a batch whose entities name different contexts.
 mod context_groups;
@@ -32,11 +36,20 @@ mod create;
 mod delete;
 /// Durable-match recording tests for the batch operations.
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod durable_match_recording;
 /// How much of a batch runs where.
 pub mod execution;
 /// History-recording tests for the batch operations.
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod history_recording;
 /// Batch merge-patch.
 mod merge;
@@ -47,6 +60,10 @@ mod same_id_rounds;
 /// Tests that an entity whose fragment or replacement modifies nothing stores
 /// no write.
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod unchanged_fragments;
 /// Batch attribute update.
 mod update;

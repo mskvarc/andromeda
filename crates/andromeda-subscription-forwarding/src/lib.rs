@@ -31,9 +31,18 @@ mod notification_narrowing;
 pub mod reassembly;
 /// The distributed subscription side wired to in-memory doubles.
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod reassembly_harness;
 /// What the distributed subscription side does with an inbound notification.
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod reassembly_tests;
 /// One entity of an inbound notification in the typed model.
 mod received_entity;
@@ -48,6 +57,10 @@ mod registration_removal;
 mod relayed_join;
 /// What a relayed notification carries of its Linked Entities.
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod relayed_join_tests;
 /// The service tying the parts together.
 pub mod service;

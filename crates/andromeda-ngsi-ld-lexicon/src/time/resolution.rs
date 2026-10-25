@@ -24,6 +24,10 @@ pub fn to_microsecond<T: SubsecRound>(value: T) -> T {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::time::resolution::to_microsecond;
     use chrono::{DateTime, NaiveTime, TimeDelta, Timelike};

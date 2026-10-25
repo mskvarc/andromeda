@@ -36,6 +36,10 @@ pub(crate) fn build_csrf_layer(config: &CsrfConfig) -> Result<Option<CsrfLayer>,
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         config::{csrf::CsrfConfig, feature_mode::HttpFeatureMode},

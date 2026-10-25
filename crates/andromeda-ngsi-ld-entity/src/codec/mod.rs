@@ -13,6 +13,11 @@ mod coordinates_decode;
 mod decode_context;
 mod document_codec;
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod document_codec_tests;
 mod document_encode;
 mod element;
@@ -21,6 +26,11 @@ mod entity_encode;
 mod geojson_members_codec;
 pub(crate) mod geometry_decode;
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod geometry_decode_tests;
 mod geometry_encode;
 mod instance_decode;
@@ -32,6 +42,11 @@ mod public_encode;
 mod raw_scalar;
 mod state_codec;
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod state_codec_tests;
 #[cfg(test)]
 pub(crate) mod stored_document_fixtures;

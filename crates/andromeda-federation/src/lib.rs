@@ -45,6 +45,10 @@ pub mod federation_invariant;
 pub mod federation_operation_unsupported;
 /// A fixed in-memory registration store for the forwarding tests.
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod fixed_registration_store;
 /// The query a forwarded batch entity query sends (clause 6.23).
 mod forwarded_batch_query;
@@ -83,6 +87,10 @@ pub mod language_negotiation;
 pub mod local_entity_type;
 /// A mock Context Source answering the forwarding tests.
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod mock_source;
 /// NGSI-LD operation capability matching.
 pub mod operation;
@@ -100,6 +108,10 @@ pub mod provision_batch;
 pub mod provision_plan;
 /// How the type selector of a write narrows the registrations it is forwarded to.
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod provision_plan_selector_tests;
 /// Purge forwarding.
 pub mod provision_purge;
@@ -111,6 +123,10 @@ pub mod read_binding;
 pub mod read_fan_out;
 /// Entity versions in the model, for the merge tests.
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod received_fixture;
 /// A context source's answer of Temporal Evolutions, decoded.
 mod received_temporal_answer;
@@ -324,6 +340,10 @@ impl FederationService {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests;
 
 #[cfg(test)]

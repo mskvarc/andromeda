@@ -82,6 +82,10 @@ pub(crate) fn delete_outcome(precondition: Precondition, deleted: Option<Deleted
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::entity_group::{RowReturned, delete_outcome, group, insert_outcome, update_outcome};
     use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord, precondition::Precondition};

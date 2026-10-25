@@ -93,6 +93,10 @@ impl SpatialConfig {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::spatial_config::{SpatialConfig, SpatialConfigError, SpatialConsistency};
     use andromeda_configuration_scalars::human_duration::HumanDuration;

@@ -21,6 +21,10 @@ pub(crate) fn decoded<'n, T: DeserializeOwned, N: CompactNode<'n>>(node: N) -> R
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{attribute::object_list::RelationshipObjectList, compact_member::decoded};
     use andromeda_json_literal::piece::JsonPiece;

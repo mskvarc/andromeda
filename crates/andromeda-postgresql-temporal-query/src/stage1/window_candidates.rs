@@ -125,6 +125,11 @@ impl<'q> WindowRead<'q> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::stage1::query_fixture::{PageBranches, ids, instant, iri, recorded_stage1, sensors, stage1_on};
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;

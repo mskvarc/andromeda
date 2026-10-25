@@ -96,6 +96,10 @@ fn written_value(value: &FamilyValue) -> WrittenValue {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         codec::stored_document_fixtures::{every_family_document, list_relationship_spellings_document, stored_order_document},

@@ -1,9 +1,5 @@
 absolute-paths-allowed-crates = ["typed_builder"]
 
-allow-expect-in-tests = true
-allow-panic-in-tests = true
-allow-unwrap-in-tests = true
-
 disallowed-methods = [
     { path = "sqlx::Row::get", reason = "it panics on a missing or undecodable column; decode with `try_get` and propagate the failure" },
     { path = "sqlx::Row::get_unchecked", reason = "it panics on a missing column and skips the type check; decode with `try_get` and propagate the failure" },

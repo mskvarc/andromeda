@@ -55,6 +55,10 @@ pub(crate) fn admit_instance_unit_code(attribute: &AttributeName, instance: &Ins
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::unit_code_admission::{admit_document_unit_codes, admit_instance_unit_code};
     use andromeda_ngsi_ld_entity::document::{EntityDocument, instance_document::InstanceDocument};

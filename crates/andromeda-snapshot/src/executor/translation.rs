@@ -15,6 +15,10 @@ pub(crate) fn temporal_parameters(query: Query) -> Result<TemporalQueryParameter
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::executor::translation::{entity_parameters, temporal_parameters};
     use andromeda_ngsi_ld_model::query::body::Query;

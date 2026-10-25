@@ -102,6 +102,10 @@ fn identified_as(document: EntityDocument, target: &Identifier) -> Result<Entity
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{entity_validation_reason::EntityValidationReason, error::EntityError, mutation::replace::identified_as};
     use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState};

@@ -383,6 +383,10 @@ impl DeclaredSchema {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::migration_set::declared_schema::{DeclaredColumn, DeclaredSchema};
     use pretty_assertions::assert_eq;

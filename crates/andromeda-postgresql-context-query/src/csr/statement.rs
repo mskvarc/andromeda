@@ -161,6 +161,11 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Condition {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use super::*;
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};

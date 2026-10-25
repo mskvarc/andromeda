@@ -32,8 +32,16 @@ mod entity_body;
 pub mod entity_map_body;
 pub mod entity_response;
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod entity_response_fallback_tests;
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod entity_response_tests;
 pub mod error;
 pub mod forwarded_entity;
@@ -46,6 +54,10 @@ pub mod notification_entity;
 pub mod notification_language;
 pub mod notified_changes;
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod notified_changes_tests;
 pub mod registration;
 pub mod response;

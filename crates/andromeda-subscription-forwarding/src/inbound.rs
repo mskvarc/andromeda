@@ -207,6 +207,11 @@ fn notification_data(data: JsonPiece<'_>) -> Result<InboundData, InboundError> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::inbound::{Inbound, InboundData, InboundError};
     use andromeda_ngsi_ld_model::{notification::CsrTriggerReason, received::ReceivedElement};

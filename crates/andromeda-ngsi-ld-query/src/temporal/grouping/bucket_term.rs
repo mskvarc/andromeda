@@ -60,6 +60,10 @@ impl BucketTerm {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::temporal::grouping::bucket_term::{BucketKind, BucketTerm};
     use pretty_assertions::assert_eq;

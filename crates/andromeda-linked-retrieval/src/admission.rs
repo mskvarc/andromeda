@@ -346,4 +346,8 @@ fn within_join(member: ReachingMember, depth: NonZeroU32, join: Option<JoinMode>
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests;

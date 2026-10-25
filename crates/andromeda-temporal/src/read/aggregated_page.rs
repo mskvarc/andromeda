@@ -148,6 +148,10 @@ pub(crate) fn render_aggregation_page(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::read::{
         aggregated_page::{EntityAggregationPage, settle_aggregation_pages},

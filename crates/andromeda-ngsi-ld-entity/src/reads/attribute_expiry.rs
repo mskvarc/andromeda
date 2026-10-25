@@ -90,6 +90,10 @@ impl EntityState {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::entity_state::EntityState;
     use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;

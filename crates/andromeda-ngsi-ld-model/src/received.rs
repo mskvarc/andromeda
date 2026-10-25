@@ -237,6 +237,11 @@ pub(crate) fn named_id(element: JsonPiece<'_>) -> Option<Identifier> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::received::{ContextualEntity, ElementRefusalReason, ReceivedDocumentError, ReceivedElement, ReceivedEntities};
     use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;

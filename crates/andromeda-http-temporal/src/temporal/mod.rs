@@ -90,6 +90,10 @@ mod retrieve_forwarding;
 pub mod update_attribute_instance;
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::temporal::local_temporal_outcome;
     use andromeda_federation::{

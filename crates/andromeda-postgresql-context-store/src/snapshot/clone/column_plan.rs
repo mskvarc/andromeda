@@ -145,6 +145,10 @@ pub(crate) mod fixture {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::snapshot::clone::column_plan::{IdentityGeneration, column_plan_statement, fixture::entity_key_plan, identity_generation};
     use andromeda_postgresql_seaquery::relation_copy::CopiedIdentity;

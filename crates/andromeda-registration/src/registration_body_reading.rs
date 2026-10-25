@@ -173,6 +173,10 @@ fn read_array<'de, E: Deserialize<'de>, A: MapAccess<'de>>(slot: &mut Clearable<
 struct ArrayMember<E>(#[serde(deserialize_with = "clearable_array::deserialize")] Clearable<Vec<E>>);
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::registration_body::RegistrationBody;
     use andromeda_ngsi_ld_model::clearable::Clearable;

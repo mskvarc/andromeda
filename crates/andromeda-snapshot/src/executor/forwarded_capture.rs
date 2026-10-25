@@ -84,6 +84,10 @@ impl ForwardedCapture {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::executor::forwarded_capture::ForwardedCapture;
     use andromeda_federation::outcome::ForwardedEntities;

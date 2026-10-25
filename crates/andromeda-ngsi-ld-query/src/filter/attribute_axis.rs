@@ -365,6 +365,10 @@ fn walk_member_hops<'a, N: QueriedValueNode<'a>>(start: Option<ValueItem<'a, N>>
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         filter::{

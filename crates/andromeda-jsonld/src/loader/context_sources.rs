@@ -99,6 +99,10 @@ pub(crate) fn note_source(url: &IriBuf, document: &Arc<ContextDocument>) {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         context_cache::ContextCache,

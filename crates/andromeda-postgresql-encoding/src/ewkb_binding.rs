@@ -25,6 +25,10 @@ pub fn geometry_bytes(geometry: Option<&GeometryForm>) -> Result<Option<Vec<u8>>
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;

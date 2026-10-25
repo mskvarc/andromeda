@@ -186,6 +186,10 @@ impl TryFrom<Bytes> for Ewkb {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::ewkb::{BYTE_ORDER_LITTLE_ENDIAN, EWKB_M_FLAG, EWKB_SRID_FLAG, Ewkb, EwkbError, SRID_WGS84};
     use andromeda_ngsi_ld_geometry::{

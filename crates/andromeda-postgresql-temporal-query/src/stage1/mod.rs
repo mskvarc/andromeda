@@ -36,6 +36,11 @@ mod gated_walk;
 pub mod held_shapes;
 mod pattern_candidates;
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod query_fixture;
 mod queued_candidates;
 mod scope_candidates;
@@ -221,6 +226,12 @@ fn counted_ids(evolutions: TableRef, conditions: Condition, window_match: Select
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unwrap_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::stage1::{
         build_stage1_entity_ids,

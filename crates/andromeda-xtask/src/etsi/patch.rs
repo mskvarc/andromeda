@@ -127,6 +127,10 @@ fn git_apply(patch: &Path, direction: Direction) -> Result<bool, XtaskError> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::etsi::patch::{infra_patches, material_patches};
 

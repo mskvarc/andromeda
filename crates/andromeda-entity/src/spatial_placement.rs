@@ -84,6 +84,10 @@ impl LocationPlacement {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::spatial_placement::LocationPlacement;
     use andromeda_ngsi_ld_geometry::{form::GeometryForm, position::Position};

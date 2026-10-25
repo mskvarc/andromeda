@@ -106,6 +106,10 @@ fn cached_context_identifier() -> Result<JsonLdContextId, ContextCacheError> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::jsonld_context::context_cache::{cached_context_identifier, residual_lifetime};
     use andromeda_jsonld::{

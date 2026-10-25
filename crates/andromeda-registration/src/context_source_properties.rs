@@ -58,6 +58,10 @@ pub(super) fn compact_context_source_properties(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::context_source_properties::{compact_context_source_properties, expand_context_source_properties};
     use andromeda_json_literal::JsonLiteral;

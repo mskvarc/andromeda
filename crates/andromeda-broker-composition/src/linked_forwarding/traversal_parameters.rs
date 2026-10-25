@@ -33,6 +33,10 @@ pub(super) fn traversal_continuation(depth: NonZeroU32, visited: &[Identifier]) 
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::linked_forwarding::traversal_parameters::traversal_continuation;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;

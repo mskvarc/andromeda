@@ -281,6 +281,12 @@ fn write_quoted(buf: &mut String, s: &str) {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unwrap_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use super::*;
     use crate::filter::{parser::parse, predicate::OrderingOp};

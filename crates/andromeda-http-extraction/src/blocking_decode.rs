@@ -93,6 +93,11 @@ where
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::blocking_decode::{BlockingDecodePolicy, decode_payload};
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;

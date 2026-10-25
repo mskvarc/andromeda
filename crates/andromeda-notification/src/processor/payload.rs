@@ -333,6 +333,11 @@ async fn previous_rendering(params: &NotificationBuildParams<'_>, rendering: &Re
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::processor::payload::{
         Rendering,
@@ -431,6 +436,11 @@ pub(crate) mod join;
 pub(crate) mod notified_entity;
 /// What a notification reports of each kind of change, as the typed walk writes it.
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod notified_entity_tests;
 /// What of a notified entity state one notification carries.
 pub(crate) mod selection;

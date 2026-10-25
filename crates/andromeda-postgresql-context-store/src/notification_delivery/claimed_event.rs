@@ -284,6 +284,11 @@ fn attribute_names(names: Vec<String>) -> Result<Vec<AttributeName>, ClaimedEven
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 pub(crate) mod tests {
     use crate::{
         current_attribute::round_trip_tests::{committed, dictionary_of, ex, ngsi, property, with},

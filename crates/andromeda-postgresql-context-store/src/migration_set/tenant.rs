@@ -43,6 +43,10 @@ fn union(tenant: &[Migration], branch: &[Migration]) -> Vec<Migration> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::migration_set::{
         branch::branch_migrations,

@@ -103,6 +103,11 @@ fn announces_json(headers: &HeaderMap) -> bool {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{json_payload::JsonPayload, request_json_value_limit::RequestJsonValueLimit};
     use andromeda_http_response::extraction_rejection::ExtractorRejection;

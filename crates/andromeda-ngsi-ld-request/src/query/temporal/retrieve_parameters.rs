@@ -162,6 +162,10 @@ impl From<TemporalRetrieveParameters> for TemporalQueryParameters {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::query::temporal::{TemporalQueryParameters, retrieve_parameters::TemporalRetrieveParameters};
     use pretty_assertions::assert_eq;

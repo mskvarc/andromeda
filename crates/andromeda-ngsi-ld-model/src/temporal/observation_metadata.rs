@@ -171,6 +171,10 @@ fn set<T>(slot: Option<Slot<T>>) -> Result<Option<T>, EntityRefusal> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::temporal::observation_metadata::ObservationMetadata;
     use andromeda_ngsi_ld_entity::document::{attribute_member::AttributeMember, instance_document::InstanceDocument};

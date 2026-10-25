@@ -116,6 +116,10 @@ fn bound_is_error_trait(bound: &TypeParamBound) -> bool {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::type_erased_error::TypeErasedErrorVisitor;
     use syn::visit::Visit;

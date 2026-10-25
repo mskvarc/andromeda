@@ -249,6 +249,10 @@ fn scalar(select: SelectStatement) -> SimpleExpr {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{migration_set::branch::BranchSchemaVersion, pending_work::due_sources::least_due_select};
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};

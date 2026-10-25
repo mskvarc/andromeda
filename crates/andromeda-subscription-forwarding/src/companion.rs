@@ -389,6 +389,10 @@ fn into_subscription_error(error: SubscriptionForwardingError) -> SubscriptionEr
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{companion::companion_request, forwarder::ForwardDecision, receiver::ReceiverEndpoint, service::SubscriptionForwardingService};
     use andromeda_ngsi_ld_model::{

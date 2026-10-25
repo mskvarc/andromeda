@@ -338,6 +338,10 @@ pub(crate) fn victim_order(select: &mut SelectStatement) {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::snapshot::record::{snapshot_select, status_is_preparing, touch_statement};
     use pretty_assertions::assert_eq;

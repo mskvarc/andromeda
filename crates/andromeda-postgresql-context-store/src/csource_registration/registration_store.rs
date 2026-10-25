@@ -136,6 +136,10 @@ impl RegistrationStore for PostgresRegistrationStore {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         csource_registration::registration_store::{PK_CONTEXT_SOURCE_REGISTRATIONS, create_error},

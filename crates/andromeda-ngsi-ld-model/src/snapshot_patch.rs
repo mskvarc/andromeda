@@ -66,6 +66,10 @@ pub struct SnapshotPatch {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{clearable::Clearable, request_body::RequestBody, snapshot_patch::SnapshotPatch};
     use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;

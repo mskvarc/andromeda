@@ -322,6 +322,10 @@ fn context_error_of_processing(error: &context_processing::Error<LoaderError>) -
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         context_cache::ContextCacheError,

@@ -388,4 +388,8 @@ mod entry_fields;
 /// Which application statements an intent's entries reach.
 mod entry_needs;
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 pub(crate) mod tests;

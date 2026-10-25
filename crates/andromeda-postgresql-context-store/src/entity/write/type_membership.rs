@@ -123,6 +123,10 @@ pub(super) fn dropped_memberships(target: &ContextTarget) -> MembershipRemoval {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::entity::write::type_membership::{added_memberships, created_memberships, dropped_memberships};
     use andromeda_context_space::context_target::ContextTarget;

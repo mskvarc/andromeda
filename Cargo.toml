@@ -11,6 +11,7 @@ authors = ["Matej Škvarč <matej.skvarc@senlab.io>"]
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 absolute_paths = "deny"
+allow_attributes = "deny"
 allow_attributes_without_reason = "deny"
 arc_with_non_send_sync = "deny"
 await_holding_lock = "deny"

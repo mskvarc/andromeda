@@ -189,6 +189,10 @@ const fn admits_value_shape(kind: RecordedValueKind, method: AggrMethod) -> bool
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         aggregation_eligibility::{disqualifying_shapes, ensure_aggregation_eligible},

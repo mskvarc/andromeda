@@ -81,6 +81,10 @@ pub(crate) fn is_reaped_branch(error: &ContextStoreError) -> bool {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{migration_set::branch::BranchSchemaVersion, notification_delivery::branches::drainable_snapshots_statement};
     use sea_query::PostgresQueryBuilder;

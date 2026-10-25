@@ -161,6 +161,10 @@ fn event<'a>(base: WriteOrdinal, position: usize, group: EventGroup<'a>, keys: &
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::consequences::notification_events::{EventGroup, event, group, mentioned_names};
     use andromeda_context_commit::{

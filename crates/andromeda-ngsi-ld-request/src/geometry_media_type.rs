@@ -26,6 +26,10 @@ pub const fn require_geojson_for_geometry_property(geometry_property: Option<&At
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{error::ParameterError, geometry_media_type::require_geojson_for_geometry_property};
     use andromeda_http_headers::media_type::ResponseMediaType;

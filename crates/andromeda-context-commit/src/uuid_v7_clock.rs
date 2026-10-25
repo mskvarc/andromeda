@@ -22,6 +22,10 @@ pub(crate) fn mint() -> Uuid {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::uuid_v7_clock;
     use pretty_assertions::assert_eq;

@@ -155,6 +155,10 @@ fn is_content_encoded(headers: &HeaderMap) -> bool {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{config::content_coding::ContentCoding, stack::encoded_entity_tag::EncodedEntityTags};
     use axum::{

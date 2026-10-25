@@ -101,6 +101,10 @@ pub fn period_time_range<'a>(rows: impl IntoIterator<Item = &'a TemporalAggregat
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::temporal::{page_cut::PageCut, period_cut::period_time_range};
     use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;

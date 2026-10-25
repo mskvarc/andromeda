@@ -144,6 +144,10 @@ impl headers::Header for NgsiLdContentRange {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::ngsild_content_range::{NgsiLdContentRange, NgsiLdContentRangeError};
     use andromeda_ngsi_ld_lexicon::time::{date_time::NgsiLdDateTime, rendering::instant_text};

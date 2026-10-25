@@ -107,6 +107,10 @@ fn scalar(value: &RawValue) -> Result<Option<ArrayMember>, StoredArrayMemberErro
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         stored_array_members::{ArrayMember, stored_array_members},

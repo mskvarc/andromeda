@@ -41,6 +41,10 @@ fn selected(selectors: &[DatasetSelector], dataset_id: Option<&Identifier>) -> b
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::executor::captured_state::narrow_captured;
     use andromeda_ngsi_ld_entity::entity_state::EntityState;

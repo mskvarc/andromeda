@@ -33,6 +33,11 @@ mod compacted_mode;
 mod compacted_node;
 pub mod compaction_error;
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod differential_tests;
 mod document_compaction;
 pub mod entity_compactor;

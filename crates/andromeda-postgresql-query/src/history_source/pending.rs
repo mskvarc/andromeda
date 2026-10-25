@@ -366,6 +366,10 @@ pub(crate) fn typed_entity_rows(schema: Option<&DynIden>) -> SelectStatement {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::history_source::{HistoryOf, pending::attribute_rows};
     use sea_query::PostgresQueryBuilder;

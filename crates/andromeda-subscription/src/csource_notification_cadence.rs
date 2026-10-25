@@ -41,6 +41,10 @@ impl CsourceNotificationCadence {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{compiled::CompiledCsrSubscription, csource_notification_cadence::CsourceNotificationCadence, geo_filter::SubscriptionGeoFilter};
     use andromeda_ngsi_ld_model::subscription::{SubscriptionStatus, standing::SubscriptionStanding};

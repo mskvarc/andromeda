@@ -32,6 +32,10 @@ pub(super) fn filter_entity_by_dataset_id(entity: &mut Entity, dataset_ids: &[Da
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::query::dataset_filter::filter_entity_by_dataset_id;
     use andromeda_ngsi_ld_model::{attribute::instance::AttributeValue, entity::Entity};

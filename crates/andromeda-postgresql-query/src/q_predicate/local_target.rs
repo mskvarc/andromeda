@@ -69,6 +69,11 @@ pub fn local_target(path: &AttrPath) -> LocalTarget<'_> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::q_predicate::local_target::{LocalTarget, local_target};
     use andromeda_ngsi_ld_query::filter::{

@@ -105,6 +105,10 @@ impl TryFrom<RegistrationInfoWire> for RegistrationInfo {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::registration::info::{RegistrationInfo, RegistrationInfoError};
     use andromeda_ngsi_ld_lexicon::identifier_length::{IDENTIFIER_BYTE_LIMIT, IdentifierTooLong};

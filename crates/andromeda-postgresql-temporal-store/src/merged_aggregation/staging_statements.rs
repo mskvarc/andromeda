@@ -335,6 +335,10 @@ pub(crate) fn drop_restated_instances(staged_write: Uuid) -> DeleteStatement {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::merged_aggregation::staging_statements::{CopiedHistory, branch_schema, copy_history, queued_grains, staging_tables};
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};

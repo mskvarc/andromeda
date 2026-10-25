@@ -330,6 +330,10 @@ impl AttributeType {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use super::*;
     use std::str::FromStr;

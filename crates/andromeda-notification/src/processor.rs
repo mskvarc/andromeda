@@ -330,6 +330,10 @@ impl NotificationProcessor {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::processor::change_audience::{ChangeAudience, CommitFilters, admitted_by_entity_filters};
     use andromeda_context_commit::{change_event::ChangeEvent, subscription_key::SubscriptionKey};

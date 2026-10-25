@@ -38,11 +38,21 @@ pub mod residual_conformance;
 pub mod retrieval;
 /// Clause 5.6.3 retrieval over a store holding one entity.
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod retrieval_tests;
 /// Compiling a query's entity selectors (clause 5.2.33) against the context.
 pub mod selector_compilation;
 /// The service the read-path unit tests are built on.
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 pub(crate) mod service_test_double;
 /// The Attribute names the clause 4.5.4 simplified representation renders.
 pub mod simplified_names;

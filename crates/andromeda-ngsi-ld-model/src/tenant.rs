@@ -125,6 +125,10 @@ pub fn tenant_name_from_id(id: &Identifier) -> Option<TenantName> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::tenant::{Tenant, TenantState, TenantUsage, tenant_id, tenant_name_from_id};
     use andromeda_ngsi_ld_lexicon::{

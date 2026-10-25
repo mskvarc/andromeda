@@ -24,6 +24,11 @@ pub mod status_delivery_signal;
 pub mod store;
 /// An in-memory store double for the policy tests.
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod store_double;
 
 #[cfg(test)]

@@ -15,6 +15,11 @@ mod temporal;
 mod temporal_answer;
 /// The expanded history of an entity, for tests.
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod test_history;
 mod written_evolution_admission;
 

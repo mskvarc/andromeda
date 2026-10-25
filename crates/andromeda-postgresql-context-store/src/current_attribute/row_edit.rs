@@ -159,6 +159,10 @@ fn placed(state: &EntityState) -> Result<Vec<(InstanceGrain<'_>, &Instance, i32)
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::current_attribute::{
         round_trip_tests::{committed, dictionary, document, ex, ngsi, property, with},

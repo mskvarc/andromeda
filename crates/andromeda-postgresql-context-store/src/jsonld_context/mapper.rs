@@ -128,6 +128,10 @@ pub(crate) fn page_boundary<T>(rows: &[T], local_id: impl Fn(&T) -> &str) -> Res
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::jsonld_context::mapper::{ContextMapperError, page_boundary, row_document_source};
     use andromeda_jsonld::context_cache::StoredDocumentSource;

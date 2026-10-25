@@ -179,6 +179,10 @@ fn purge_orphan_events_before_statement(target: &ContextTarget, cutoff: DateTime
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::notification_delivery::cleanup::{
         purge_delivered_statement,

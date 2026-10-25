@@ -173,6 +173,10 @@ fn periodic_rule<'s>(sub: &'s Subscription, projection: &'s Projection, attribut
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{interval_payload::periodic_rule, processor::payload::selection::Selection};
     use andromeda_ngsi_ld_entity::entity_state::EntityState;

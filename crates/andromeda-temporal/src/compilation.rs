@@ -270,6 +270,10 @@ pub(crate) async fn compile_projection(params: &TemporalQueryParameters, expande
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{compilation::compile_instance_page, instance_limits::TemporalInstanceLimits};
     use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;

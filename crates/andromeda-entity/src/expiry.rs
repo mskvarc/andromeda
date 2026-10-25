@@ -227,6 +227,10 @@ fn purged_state(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<Purge
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 fn purge_write(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<AtomicWrite> {
     let purged = purged_state(snapshot, cutoff)?;
     Some(
@@ -242,6 +246,10 @@ fn purge_write(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<Atomic
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         entity_snapshot::EntitySnapshot,

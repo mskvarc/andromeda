@@ -63,6 +63,10 @@ pub(crate) fn gc_id_locks(map: &IdLockMap) {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use super::{IdLockMap, acquire_id_locks_in, gc_id_locks};
     use andromeda_context_space::context_target::ContextTarget;

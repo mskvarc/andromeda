@@ -9,6 +9,11 @@
 //! other tests of the binary do not disturb it; the extraction runs on a
 //! current-thread runtime for that reason.
 
+#![expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 use andromeda_http_extraction::jsonld::JsonLd;
 use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_model::{

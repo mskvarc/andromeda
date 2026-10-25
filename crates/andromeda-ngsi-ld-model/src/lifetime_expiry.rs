@@ -70,6 +70,10 @@ fn days_in_month(instant: DateTime<Utc>) -> Option<u32> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::lifetime_expiry::expiry;
     use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, time::rendering::instant_text};

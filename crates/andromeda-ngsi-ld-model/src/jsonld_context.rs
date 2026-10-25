@@ -62,6 +62,10 @@ pub struct ContextMetadata {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::jsonld_context::{ContextKind, ContextMetadata};
     use andromeda_json_literal::JsonLiteral;

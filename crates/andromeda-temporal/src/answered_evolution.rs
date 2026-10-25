@@ -92,6 +92,10 @@ impl<'a> ScopedEntity<'a> for &'a AnsweredEvolution<'a> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{answered_evolution::AnsweredEvolution, answered_fixture::answered};
     use andromeda_ngsi_ld_lexicon::{scope::path::ScopePath, time::date_time::NgsiLdDateTime, time_prop::TimeProp};

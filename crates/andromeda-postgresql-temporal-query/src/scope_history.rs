@@ -126,6 +126,10 @@ pub(crate) fn order_scope_events(select: &mut SelectStatement, axis: ScopeHistor
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::scope_history::{build_scope_history_query, scope_is_selected};
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};

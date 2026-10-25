@@ -255,6 +255,11 @@ pub(crate) fn proxied_mode(csr: &ContextSourceRegistration) -> ForwardingMode {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         FederationService,

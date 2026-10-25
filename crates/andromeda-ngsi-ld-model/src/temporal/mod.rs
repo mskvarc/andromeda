@@ -40,6 +40,11 @@ pub mod structured_value;
 /// Reading and writing the stored JSON of a structured value.
 pub mod structured_value_codec;
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod structured_value_tests;
 /// The instances of one attribute of a Temporal Evolution.
 pub mod temporal_attribute;

@@ -120,6 +120,10 @@ pub fn scope_entry_values(field: impl Fn(TemporalEntry) -> SimpleExpr) -> [(Scop
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::history_source::entry_values::{attribute_entry_values, recorded_geometry, scope_entry_values};
     use andromeda_postgresql_schema::temporal_intent::TemporalEntry;

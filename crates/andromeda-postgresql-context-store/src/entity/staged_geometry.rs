@@ -90,6 +90,10 @@ pub(crate) fn kept_column(column: &[StagedGeometry<Vec<u8>>]) -> Vec<bool> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         entity::staged_geometry::{StagedGeometry, kept_column, staged_column, written_column},

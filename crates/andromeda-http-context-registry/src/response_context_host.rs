@@ -76,6 +76,10 @@ fn hosting_failure(error: &ContextRegistryError) -> ContextHostingError {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::response_context_host::hosting_failure;
     use andromeda_context_registry::{error::ContextRegistryError, registry_invariant::RegistryInvariant};

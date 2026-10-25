@@ -84,6 +84,11 @@ fn admit_form(limit: GeometryPositionLimit, name: &str, form: &GeometryForm) -> 
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::compact_geometry_admission::admit_compact_geometries;
     use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;

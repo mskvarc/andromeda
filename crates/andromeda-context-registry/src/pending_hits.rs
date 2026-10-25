@@ -27,6 +27,10 @@ pub(crate) fn fold_pending_hits(counter: &HitCounter, metadata: &mut ContextMeta
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::pending_hits::fold_pending_hits;
     use andromeda_jsonld::hit_counter::HitCounter;

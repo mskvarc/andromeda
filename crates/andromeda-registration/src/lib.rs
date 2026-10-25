@@ -19,8 +19,16 @@ pub mod entity_probe;
 pub mod error;
 pub mod expiry;
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod fixed_probe;
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod fixed_store;
 mod forwarding_context;
 mod geometry;
@@ -46,6 +54,10 @@ pub mod removal_hook;
 pub mod resolved_update;
 mod retrieve;
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod service_fixture;
 /// The registration store port, and the parameter shapes it takes.
 pub mod store;

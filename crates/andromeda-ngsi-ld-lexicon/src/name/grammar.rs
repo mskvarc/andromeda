@@ -27,6 +27,10 @@ use static_regular_grammar::RegularGrammar;
 pub struct Name(str);
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::name::grammar::{Name, NameBuf};
 

@@ -56,6 +56,10 @@ pub enum PluralMemberRefusal {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::temporal::plural_member_refusal::PluralMemberRefusal;
     use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;

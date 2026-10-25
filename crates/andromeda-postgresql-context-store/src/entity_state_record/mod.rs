@@ -11,6 +11,10 @@
 /// One top-level instance as an `attribute_instance_record`.
 pub mod instance_record;
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod round_trip_tests;
 /// One state as an `entity_state_record`.
 pub mod state_record;

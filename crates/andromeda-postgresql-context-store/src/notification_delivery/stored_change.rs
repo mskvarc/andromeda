@@ -121,6 +121,10 @@ pub const fn decode_system_attributes(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::notification_delivery::stored_change::{StoredChangeError, decode_change, decode_system_attributes};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;

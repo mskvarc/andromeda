@@ -104,6 +104,10 @@ impl PostgresTemporalIntentStore {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::intent_store::enqueue::enqueue_statement;
     use andromeda_postgresql_seaquery::external_arguments::ExternalArguments;

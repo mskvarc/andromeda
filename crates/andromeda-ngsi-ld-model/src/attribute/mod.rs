@@ -2,6 +2,11 @@
 
 pub mod common_fields;
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod family_member_prohibition_tests;
 pub mod geo_property;
 pub mod geo_property_value;
@@ -18,6 +23,11 @@ pub mod member_decoding;
 mod member_node;
 pub mod member_reading;
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod member_reading_tests;
 pub mod merge_instance;
 pub mod merge_member;

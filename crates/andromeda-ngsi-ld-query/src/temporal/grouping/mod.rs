@@ -126,6 +126,10 @@ impl FromStr for AggregationGrouping {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::temporal::grouping::{AggregationGrouping, GroupingParseError, bucket_term::BucketTerm, entity_member::EntityMember, group_key::GroupKey};
 

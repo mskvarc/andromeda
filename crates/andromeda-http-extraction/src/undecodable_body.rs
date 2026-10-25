@@ -74,6 +74,10 @@ fn without_context(text: &[u8]) -> Option<Vec<u8>> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::undecodable_body::UndecodableBody;
     use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;

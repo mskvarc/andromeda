@@ -47,7 +47,15 @@ pub mod pending_persistence;
 pub mod remote_document;
 /// A durable cache row whose document a unit test can replace.
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 pub(crate) mod replaceable_row;
 /// A context host for loader tests, on the workspace's mock server.
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 pub(crate) mod test_origin;

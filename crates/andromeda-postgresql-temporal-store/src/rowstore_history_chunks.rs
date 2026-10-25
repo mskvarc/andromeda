@@ -68,6 +68,10 @@ fn saturating_bigint(count: u64) -> i64 {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::rowstore_history_chunks::{SegmentCensus, keep_statement, kept_chunks_statement, prune_statement};
     use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;

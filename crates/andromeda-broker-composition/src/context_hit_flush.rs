@@ -110,6 +110,10 @@ fn restore(counter: &HitCounter, pending: Vec<HitDelta>) {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::context_hit_flush::{FINAL_FLUSH_ATTEMPTS, flush_until_durable};
     use andromeda_context_registry::{

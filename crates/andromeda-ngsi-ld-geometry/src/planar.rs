@@ -101,6 +101,11 @@ fn polygon(rings: &PolygonRings) -> Polygon<f64> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         form::{GeometryForm, PolygonRings},

@@ -73,6 +73,10 @@ pub(crate) const fn resolve_side_effect_placement(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::side_effect::{AsyncPreference, SideEffectPlacement, resolve_side_effect_placement};
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};

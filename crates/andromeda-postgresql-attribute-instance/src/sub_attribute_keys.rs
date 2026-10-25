@@ -100,6 +100,10 @@ fn push_value_keys(path: PathHash, value: &StoredValue, keys: &mut Vec<SubAttrib
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         stored_json::StoredJson,

@@ -281,6 +281,10 @@ fn cursor_targets(uri: PageUri<'_>, limit: i64, cursors: &CursorPointers) -> Vec
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::pagination::{CursorPointers, PageExtent, PageLinks, PageOutcome, PageUri, append_page_links, append_pagination_links};
     use andromeda_http_headers::{link::header::Link, media_type::ResponseMediaType};

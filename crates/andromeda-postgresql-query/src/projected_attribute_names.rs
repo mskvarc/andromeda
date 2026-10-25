@@ -62,6 +62,10 @@ pub fn projected_attribute_names<'a>(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::projected_attribute_names::projected_attribute_names;
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};

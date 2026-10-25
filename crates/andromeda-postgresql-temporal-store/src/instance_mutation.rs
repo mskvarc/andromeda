@@ -246,6 +246,10 @@ impl UpdateInstanceState<'_> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{attribute_history_value::AttributeHistoryValue, history_members::HistoryMembers, instance_mutation::UpdateInstanceState};
     use andromeda_ngsi_ld_entity::document::instance_document::InstanceDocument;

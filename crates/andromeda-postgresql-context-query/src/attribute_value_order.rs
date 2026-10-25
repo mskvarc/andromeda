@@ -223,6 +223,11 @@ fn instance_read(rows: &EntityRowRefs, path: &AttrPath, attributes: &ResolvedNam
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::attribute_value_order::AttributeValue;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;

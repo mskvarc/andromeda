@@ -73,6 +73,10 @@ fn keys_of(list: Option<&[AttributeName]>, keys: &HashMap<AttributeName, Attribu
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::subscription_store::interned_attributes::keys_of;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;

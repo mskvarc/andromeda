@@ -65,6 +65,10 @@ fn forwards_range_start(interval: &TimeInterval, least_recent: &str) -> String {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::content_range::build_content_range;
     use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;

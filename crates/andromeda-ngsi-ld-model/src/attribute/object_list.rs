@@ -148,6 +148,10 @@ impl IntoIterator for RelationshipObjectList {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::attribute::object_list::{NormalizedObjectList, RelationshipObjectList};
     use andromeda_ngsi_ld_lexicon::uri::Uri;

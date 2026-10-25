@@ -73,6 +73,10 @@ async fn vetted_addrs(host: String, blocking: PrivateIpBlocking) -> ResolveResul
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::http::{
         config::PrivateIpBlocking,

@@ -76,6 +76,10 @@ pub mod response_format;
 pub mod sys_attrs;
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod written_json;
 
 #[cfg(test)]

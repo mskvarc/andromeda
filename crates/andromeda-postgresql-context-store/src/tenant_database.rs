@@ -214,6 +214,11 @@ fn database_exists_statement(database_name: &str) -> sea_query::SelectStatement 
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::tenant_database::{CREATE_DATABASE_RETRY, DatabaseUrl, database_exists_statement, is_database_already_exists, is_transient_create_failure};
     use andromeda_postgresql_pool::fake_database_error::FakeDatabaseError;

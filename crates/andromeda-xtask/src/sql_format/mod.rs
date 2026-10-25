@@ -151,6 +151,10 @@ fn rejoin_single_line_lists(single_line_list: &Regex, formatted: &str) -> String
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::sql_format::{SINGLE_LINE_LIST, rejoin_single_line_lists};
     use regex::Regex;

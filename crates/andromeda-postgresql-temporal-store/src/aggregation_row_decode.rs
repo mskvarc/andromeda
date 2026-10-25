@@ -292,6 +292,10 @@ fn decode_observed_units(row: &PgRow) -> Result<ObservedUnits, TemporalStoreErro
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         aggregation_row_decode::{ExtremumColumn, boolean_extremum, exact_aggregate, extremum_column},

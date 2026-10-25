@@ -84,6 +84,10 @@ pub(super) fn location_placement(tenant: &TenantRef) -> Result<LocationPlacement
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::tenant_factory::spatial::{indexed_commits, initialize_spatial};
     use andromeda_context_commit::{

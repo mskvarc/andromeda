@@ -74,6 +74,10 @@ impl Borrow<str> for ExpandedValueName {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::expanded_value_name::{ExpandedValueName, ExpandedValueNameError};
     use indexmap::IndexMap;

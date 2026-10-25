@@ -69,6 +69,10 @@ pub(crate) fn read_binding_for(intent: ReadIntent, csr: &ContextSourceRegistrati
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::read_binding::{ReadBinding, ReadIntent, read_binding_for};
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;

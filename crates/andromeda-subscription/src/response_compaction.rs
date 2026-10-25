@@ -131,6 +131,10 @@ pub async fn compact_for_response(mut subscription: Subscription, compactor: &Na
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::response_compaction::compact_for_response;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};

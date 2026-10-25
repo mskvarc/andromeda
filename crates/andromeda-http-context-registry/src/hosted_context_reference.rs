@@ -125,6 +125,10 @@ impl HostedContextRecognizer for TenantHostedContexts {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::hosted_context_reference::{HostedContextReference, TenantHostedContexts};
     use andromeda_jsonld::hosted_context_recognizer::{HostedContextRecognizer, HostedReference};

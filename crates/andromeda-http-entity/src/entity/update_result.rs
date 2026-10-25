@@ -169,6 +169,10 @@ fn push_updated<'a>(result: &mut UpdateResult, written: impl Iterator<Item = &'a
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::entity::update_result::{LocalAttributeWrite, NotUpdatedReason, attribute_write_response, update_result};
     use andromeda_federation::{

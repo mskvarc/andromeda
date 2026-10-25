@@ -18,6 +18,10 @@ mod fallback_plan;
 mod narrowing;
 /// The registrations and entities the batch forwarding tests share.
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod registration_fixture;
 /// The request a single-entity fallback write sends.
 mod single_write;

@@ -63,6 +63,10 @@ pub fn recorded_shape() -> SimpleExpr {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::recorded_shape::recorded_shape;
     use sea_query::{PostgresQueryBuilder, Query};

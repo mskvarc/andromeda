@@ -99,6 +99,10 @@ pub async fn build_tenant(view: &TenantView, options: TenantOptions, usage_probe
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::tenant_response::{tenant_page_start, wire_state};
     use andromeda_ngsi_ld_lexicon::tenant::TenantName;

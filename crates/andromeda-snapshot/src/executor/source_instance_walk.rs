@@ -191,4 +191,8 @@ fn record_reach(attributes: &mut Vec<(AttributeName, Reach)>, document: &Tempora
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests;

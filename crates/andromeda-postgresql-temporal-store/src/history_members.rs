@@ -163,6 +163,10 @@ fn stored_members(error: AssemblyError) -> StoredHistoryError {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::history_members::{HistoryMembers, mention};
     use andromeda_ngsi_ld_entity::document::instance_document::InstanceDocument;

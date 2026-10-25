@@ -27,6 +27,10 @@ pub fn dataset_condition(column: &SimpleExpr, filter: &DatasetFilter) -> Conditi
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::dataset_predicate::dataset_condition;
     use andromeda_ngsi_ld_query::dataset::DatasetFilter;

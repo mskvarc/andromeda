@@ -124,6 +124,11 @@ impl<'a: 'n, 'n, N: CompactNode<'n>> CompactNode<'n> for ContainedNode<'a, N> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         compact_node::{CompactNode, NodeShape, contained_node::ContainedNode},

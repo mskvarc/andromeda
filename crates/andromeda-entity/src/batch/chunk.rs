@@ -346,6 +346,10 @@ impl EntityService {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{batch::chunk::error_of, error::EntityError};
     use andromeda_context_commit::{submission_refusal::SubmissionRefusal, write_outcome::WriteOutcome};

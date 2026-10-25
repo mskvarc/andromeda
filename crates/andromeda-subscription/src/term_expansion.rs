@@ -152,6 +152,10 @@ pub async fn expand_common_subscription_terms(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{error::SubscriptionError, term_expansion::expand_common_subscription_terms};
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};

@@ -136,6 +136,10 @@ fn technical_http_trait_owner(trait_name: &str) -> Option<&'static str> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::architecture::ArchitectureVisitor;
     use pretty_assertions::assert_eq;

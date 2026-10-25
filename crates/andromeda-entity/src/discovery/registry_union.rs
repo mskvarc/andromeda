@@ -53,6 +53,10 @@ pub(super) fn union_type_summaries(local: &mut Vec<(EntityTypeName, Vec<Attribut
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use super::*;
 

@@ -206,6 +206,10 @@ fn staged_grain_of_the_row(anchor: DynIden) -> Cond {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::current_attribute::write::{dropped_rows, inserted_rows, moved_rows, vanished_rows, written_rows};
     use andromeda_context_space::context_target::ContextTarget;

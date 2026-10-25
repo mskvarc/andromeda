@@ -24,6 +24,10 @@ pub const fn require_entity_map_for_lifetime(entity_map: Option<bool>, lifetime:
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{entity_map_lifetime::require_entity_map_for_lifetime, error::ParameterError};
     use andromeda_ngsi_ld_lexicon::duration::Iso8601Duration;

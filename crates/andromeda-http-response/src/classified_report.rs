@@ -161,6 +161,10 @@ impl ClassifiedReport {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::classified_report::ClassifiedReport;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;

@@ -38,6 +38,10 @@ pub fn next_interval_due(anchor: DateTime<Utc>, interval: Duration, after: DateT
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::interval_schedule::{interval_duration, next_interval_due};
     use chrono::{DateTime, Duration, TimeZone, Utc};

@@ -45,6 +45,10 @@ pub(crate) async fn claimed_notification_context(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::claimed_notification_context::claimed_notification_context;
     use andromeda_context_space::context_target::ContextTarget;

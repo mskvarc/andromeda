@@ -61,6 +61,10 @@ impl RequestRefusal for BodyAdmissionRefusal {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{body_admission_refusal::BodyAdmissionRefusal, body_envelope::BodyContextError};
     use andromeda_http_response::request_refusal::RequestRefusal;

@@ -220,6 +220,10 @@ fn delivery_claimable_at() -> SimpleExpr {
 struct DeliverySubscription;
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::notification_delivery::claim::{claim_statement, snapshot_record_lock_statement};
     use andromeda_context_commit::lease_holder::LeaseHolder;

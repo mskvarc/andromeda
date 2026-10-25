@@ -234,6 +234,10 @@ pub(crate) async fn get(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::entity::retrieve::local_entity_for_forwarding;
     use andromeda_entity::error::EntityError;

@@ -317,6 +317,10 @@ fn map_delivery(row: &PgRow) -> Result<SnapshotStatusDelivery, SnapshotError> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::snapshot::status_outbox::outbox_insert;
     use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;

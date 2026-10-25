@@ -45,6 +45,10 @@ pub fn extended_filter_pattern(language: LanguageSelector<'_>) -> String {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::q_predicate::extended_filter_pattern::extended_filter_pattern;
     use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, target_language::TargetLanguage};

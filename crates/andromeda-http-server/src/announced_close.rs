@@ -55,6 +55,10 @@ pub(crate) async fn record_close_announcement(ConnectInfo(announcement): Connect
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::announced_close::{AnnouncedClose, record_close_announcement};
     use axum::{

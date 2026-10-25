@@ -116,6 +116,10 @@ fn refuse_foreign_records(record: &WriteRecord, intents: &[TemporalAppendIntent]
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{error::TemporalStoreError, recorder::refuse_foreign_records};
     use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};

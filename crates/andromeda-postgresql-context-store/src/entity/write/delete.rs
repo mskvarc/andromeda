@@ -287,6 +287,10 @@ impl EntityRepository {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{entity::write::delete::entity_delete_statement, statement_text::text_of};
     use andromeda_context_space::context_target::ContextTarget;

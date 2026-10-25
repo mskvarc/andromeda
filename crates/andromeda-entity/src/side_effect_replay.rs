@@ -35,6 +35,10 @@ pub(crate) fn replay_writes(owed: Vec<SubscriptionMatch>) -> Vec<AtomicWrite> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{building_subscription_fixture::subscription_key, side_effect_replay::replay_writes};
     use andromeda_context_commit::subscription_match::SubscriptionMatch;

@@ -48,6 +48,10 @@ pub(crate) fn date_text(date: NaiveDate) -> String {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::time::rendering::{date_text, fixed_width_time_of_day_text, instant_text, time_of_day_text};
     use chrono::{DateTime, NaiveDate, NaiveTime, TimeDelta, TimeZone, Utc};

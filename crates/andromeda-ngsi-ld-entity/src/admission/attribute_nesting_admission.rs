@@ -43,6 +43,10 @@ pub fn admit_instance_nesting(limit: AttributeNestingLimit, attribute: &Attribut
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         admission::attribute_nesting_admission::{admit_document_nesting, admit_instance_nesting},
