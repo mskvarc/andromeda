@@ -18,6 +18,7 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_postgresql_codes::registry::UnknownCompactCode;
+use andromeda_postgresql_encoding::ewkb::EwkbError;
 use mediatype::MediaTypeError;
 use thiserror::Error;
 
@@ -52,15 +53,15 @@ pub enum StoredRegistrationError {
     /// The `management_interval_*` columns are not a clause 5.2.11 interval.
     #[error("a stored registration managementInterval is not an interval: {0}")]
     ManagementInterval(#[source] StoredIntervalError),
-    /// The `location` column does not deserialize into a geometry.
-    #[error("a stored registration location does not deserialize: {0}")]
-    Location(#[source] serde_json::Error),
-    /// The `observation_space` column does not deserialize into a geometry.
-    #[error("a stored registration observationSpace does not deserialize: {0}")]
-    ObservationSpace(#[source] serde_json::Error),
-    /// The `operation_space` column does not deserialize into a geometry.
-    #[error("a stored registration operationSpace does not deserialize: {0}")]
-    OperationSpace(#[source] serde_json::Error),
+    /// The `location` column is not EWKB of a geometry the broker writes.
+    #[error("a stored registration location is not a geometry: {0}")]
+    Location(#[source] EwkbError),
+    /// The `observation_space` column is not EWKB of a geometry the broker writes.
+    #[error("a stored registration observationSpace is not a geometry: {0}")]
+    ObservationSpace(#[source] EwkbError),
+    /// The `operation_space` column is not EWKB of a geometry the broker writes.
+    #[error("a stored registration operationSpace is not a geometry: {0}")]
+    OperationSpace(#[source] EwkbError),
     /// The `additional_properties` column does not deserialize.
     #[error("a stored registration's Context Source Properties do not deserialize: {0}")]
     AdditionalProperties(#[source] serde_json::Error),

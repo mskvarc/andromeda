@@ -279,6 +279,20 @@ mod tests {
         pretty_assertions::assert_eq!(Geometry::try_from(&ewkb).expect("decodes"), original);
     }
 
+    /// EWKB carries each ordinate as its eight IEEE 754 bytes, so a geometry read
+    /// back from the database is written with the very spelling it was stored
+    /// with, whatever number of significant digits its doubles need.
+    #[test]
+    fn every_ordinate_round_trips_through_ewkb_bit_for_bit() {
+        let written =
+            r#"{"type":"LineString","coordinates":[[13.123456789012346,52.123456789012344,667.1234567890124],[179.99999999999997,-89.99999999999999,5e-324]]}"#;
+        let original = Geometry::from_geojson_text(written).expect("valid GeoJSON");
+        let ewkb = Ewkb::try_from(original.form()).expect("encodes");
+        let decoded = Geometry::try_from(&ewkb).expect("decodes");
+        pretty_assertions::assert_eq!(decoded, original);
+        pretty_assertions::assert_eq!(serde_json::to_string(&decoded).expect("renders"), written);
+    }
+
     #[test]
     fn every_supported_two_dimensional_geometry_round_trips_through_ewkb() {
         for original in two_dimensional_cases() {

@@ -271,9 +271,7 @@ mod tests {
             assert!(built.sql.contains(column), "missing {column}: {}", built.sql);
         }
         assert!(
-            built
-                .sql
-                .contains("ST_AsGeoJSON(\"context_source_registrations\".\"location\")::jsonb AS \"location\""),
+            built.sql.contains("ST_AsEWKB(\"context_source_registrations\".\"location\") AS \"location\""),
             "{}",
             built.sql
         );

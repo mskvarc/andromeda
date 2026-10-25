@@ -148,6 +148,72 @@ mod tests {
         pretty_assertions::assert_eq!(streamed, json!({"type": "Point", "coordinates": [1.0, 2.0]}));
     }
 
+    /// The text `geometry` is written back as after it is read from `written`.
+    fn written_back(written: &str) -> String {
+        serde_json::to_string(&Geometry::from_geojson_text(written).expect("a valid geometry")).expect("renders")
+    }
+
+    /// ETSI GS CIM 009 v1.9.1 clause 4.7.2 leaves the precision of a position to
+    /// the implementation: an ordinate is held as the double nearest to it, so
+    /// digits finer than the spacing of doubles are not kept.
+    #[test]
+    fn an_ordinate_with_more_digits_than_a_double_is_written_back_as_its_nearest_double() {
+        pretty_assertions::assert_eq!(
+            written_back(r#"{"type": "Point", "coordinates": [13.123456789012345678, 52.123456789012345678]}"#),
+            r#"{"type":"Point","coordinates":[13.123456789012346,52.123456789012344]}"#
+        );
+    }
+
+    #[test]
+    fn an_altitude_with_more_digits_than_a_double_is_written_back_as_its_nearest_double() {
+        pretty_assertions::assert_eq!(
+            written_back(r#"{"type": "Point", "coordinates": [13.5, 52.5, 667.123456789012345678]}"#),
+            r#"{"type":"Point","coordinates":[13.5,52.5,667.1234567890124]}"#
+        );
+    }
+
+    #[test]
+    fn an_ordinate_written_as_the_shortest_spelling_of_its_double_round_trips_byte_for_byte() {
+        for written in [
+            r#"{"type":"Point","coordinates":[179.8451356,-16.6429634]}"#,
+            r#"{"type":"Point","coordinates":[13.123456789012346,52.5]}"#,
+            r#"{"type":"Point","coordinates":[179.99999999999997,89.99999999999999]}"#,
+            r#"{"type":"Point","coordinates":[-179.99999999999997,-89.99999999999999,-10994.25]}"#,
+            r#"{"type":"LineString","coordinates":[[0.1,0.2],[14.55,46.05]]}"#,
+        ] {
+            pretty_assertions::assert_eq!(written_back(written), written);
+        }
+    }
+
+    /// Spellings of one double read as that double and are written back in its
+    /// shortest spelling.
+    #[test]
+    fn spellings_of_one_double_are_written_back_in_its_shortest_spelling() {
+        for (written, expected) in [
+            ("14.550000000000000001", "14.55"),
+            ("0.10000000000000001", "0.1"),
+            ("52.50", "52.5"),
+            ("1.3123456789012345678e1", "13.123456789012346"),
+        ] {
+            pretty_assertions::assert_eq!(
+                written_back(&format!(r#"{{"type": "Point", "coordinates": [{written}, 1.5]}}"#)),
+                format!(r#"{{"type":"Point","coordinates":[{expected},1.5]}}"#),
+                "{written}"
+            );
+        }
+    }
+
+    /// The CRS84 ranges of RFC 7946 section 4 are checked on the double an
+    /// ordinate is held as, so an ordinate whose nearest double is an axis end
+    /// is that axis end.
+    #[test]
+    fn an_ordinate_whose_nearest_double_is_an_axis_end_is_held_as_that_end() {
+        pretty_assertions::assert_eq!(
+            written_back(r#"{"type": "Point", "coordinates": [180.00000000000000001, -90.000000000000000001]}"#),
+            r#"{"type":"Point","coordinates":[180.0,-90.0]}"#
+        );
+    }
+
     /// Every geometry type renders as the `geojson` rendering of the same
     /// positions does, altitude and ordinate spelling included.
     #[test]

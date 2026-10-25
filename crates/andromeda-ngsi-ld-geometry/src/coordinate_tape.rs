@@ -392,4 +392,20 @@ mod tests {
     fn an_arbitrary_precision_ordinate_is_recorded_as_its_nearest_double() {
         pretty_assertions::assert_eq!(items(&streamed("14.550000000000000001")), vec![TapeItem::Ordinate(14.55)]);
     }
+
+    /// A number token the reader keeps as text, as the stored document and an
+    /// arbitrary-precision tree hold it, reads as the same double the text does.
+    #[test]
+    fn an_ordinate_finer_than_a_double_reads_as_the_same_double_from_text_and_from_a_tree() {
+        let text = "[13.123456789012345678, 0.10000000000000001]";
+        let tree: Value = serde_json::from_str(text).expect("valid JSON");
+        let expected = vec![
+            TapeItem::Open,
+            TapeItem::Ordinate(13.123_456_789_012_346),
+            TapeItem::Ordinate(0.1),
+            TapeItem::Close,
+        ];
+        pretty_assertions::assert_eq!(items(&streamed(text)), expected);
+        pretty_assertions::assert_eq!(items(&of_tree(&tree)), expected);
+    }
 }

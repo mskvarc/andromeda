@@ -3,8 +3,8 @@
 //! Named through an [`Iden`] enum rather than hand-quoted strings: a column
 //! rename moves every reference with it, and a typo becomes a compile error
 //! instead of a query that silently selects nothing. Some columns still project
-//! through a cast sea-query cannot express — `ST_AsGeoJSON(...)::JSONB` and
-//! `::text[]` — but even those name their column and their output alias through
+//! through a function or cast, such as `ST_AsEWKB(...)` and `::text[]`, but
+//! even those name their column and their output alias through
 //! this enum in the statement builder.
 
 use sea_query::Iden;

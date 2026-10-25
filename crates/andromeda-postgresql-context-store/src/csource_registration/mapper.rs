@@ -38,6 +38,7 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_postgresql_codes::{csr_mode::CsrModeCode, csr_operation::CsrOperationCode, csr_status::CsrStatusCode};
+use andromeda_postgresql_encoding::ewkb::{Ewkb, EwkbError};
 use chrono::{DateTime, Utc};
 use mediatype::MediaTypeBuf;
 use serde::de::DeserializeOwned;
@@ -53,6 +54,17 @@ fn read_json<T: DeserializeOwned>(
 ) -> Result<Option<T>, ContextStoreError> {
     let text: Option<JsonText<'_>> = row.try_get(column)?;
     Ok(text.map(|text| serde_json::from_slice(text.as_bytes()).map_err(unreadable)).transpose()?)
+}
+
+/// Read a nullable geometry column projected as EWKB, with `unreadable` naming
+/// the column when its bytes are not a geometry the broker writes. EWKB carries
+/// each ordinate as the double `PostGIS` holds, so the geometry reads back with
+/// the ordinates it was stored with (clause 4.7.2).
+fn read_geometry(row: &PgRow, column: &str, unreadable: fn(EwkbError) -> StoredRegistrationError) -> Result<Option<Geometry>, ContextStoreError> {
+    let bytes: Option<Vec<u8>> = row.try_get(column)?;
+    Ok(bytes
+        .map(|bytes| Ewkb::try_from(bytes.as_slice()).and_then(|ewkb| Geometry::try_from(&ewkb)).map_err(unreadable))
+        .transpose()?)
 }
 
 /// Convert a `context_source_registrations` row and the `information` its
@@ -122,9 +134,9 @@ fn row_to_coverage(row: &PgRow, information: Vec<RegistrationInfo>) -> Result<Re
         .map_err(StoredRegistrationError::ObservationInterval)?;
     let management_interval =
         interval_of(row.try_get("management_interval_start")?, row.try_get("management_interval_end")?).map_err(StoredRegistrationError::ManagementInterval)?;
-    let location = read_json::<Geometry>(row, "location", StoredRegistrationError::Location)?;
-    let observation_space = read_json::<Geometry>(row, "observation_space", StoredRegistrationError::ObservationSpace)?;
-    let operation_space = read_json::<Geometry>(row, "operation_space", StoredRegistrationError::OperationSpace)?;
+    let location = read_geometry(row, "location", StoredRegistrationError::Location)?;
+    let observation_space = read_geometry(row, "observation_space", StoredRegistrationError::ObservationSpace)?;
+    let operation_space = read_geometry(row, "operation_space", StoredRegistrationError::OperationSpace)?;
 
     Ok(RegistrationCoverage::builder()
         .information(information)

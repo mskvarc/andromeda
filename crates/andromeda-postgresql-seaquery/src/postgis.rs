@@ -50,9 +50,6 @@ enum PostgisFunction {
     /// `ST_IsValid(geom)`.
     #[iden = "ST_IsValid"]
     IsValid,
-    /// `ST_AsGeoJSON(geom)`.
-    #[iden = "ST_AsGeoJSON"]
-    AsGeoJson,
     /// `ST_MakeEnvelope(xmin, ymin, xmax, ymax, srid)`.
     #[iden = "ST_MakeEnvelope"]
     MakeEnvelope,
@@ -262,13 +259,6 @@ pub fn judged_geometry(repaired: SimpleExpr, written: SimpleExpr) -> SimpleExpr 
 #[must_use]
 pub fn validated_geom_from_ewkb(ewkb: SimpleExpr) -> SimpleExpr {
     st_make_valid(st_geom_from_ewkb(ewkb))
-}
-
-/// `PostGIS`: `ST_AsGeoJSON(geom)::jsonb` - render a stored geometry back as the
-/// `GeoJSON` a response body carries, decoded into JSONB rather than left as text.
-#[must_use]
-pub fn geometry_as_geojson(geometry: SimpleExpr) -> SimpleExpr {
-    cast(Func::cust(PostgisFunction::AsGeoJson).args([geometry]).into(), PostgresType::Jsonb)
 }
 
 /// `PostGIS`: `ST_AsEWKB(geom)` - serialise a stored geometry back to EWKB (SRID

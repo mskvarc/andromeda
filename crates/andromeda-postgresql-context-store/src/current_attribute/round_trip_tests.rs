@@ -658,6 +658,23 @@ fn integer_ordinates_round_trip() {
     assert!(rendered.contains(r#"[{"@value":13},{"@value":52}]"#), "{rendered}");
 }
 
+/// ETSI GS CIM 009 v1.9.1 clause 4.7.2 leaves position precision to the
+/// implementation, so an ordinate is stored as its nearest double, while a
+/// Property value keeps every digit it was written with.
+#[test]
+fn an_ordinate_is_stored_as_its_nearest_double_and_a_property_number_as_written() {
+    let digits = "13.123456789012345678";
+    let state = committed_text(&format!(
+        r#"[{{"@id": "urn:ngsi-ld:Building:1", "@type": ["{EX}Building"],
+            "{EX}location": [{{"@type": ["{NGSI}GeoProperty"], "{NGSI}hasValue": [{{"@type": ["{GEOJSON}Point"], "{GEOJSON}coordinates": [{{"@list": [{{"@value": {digits}}}, {{"@value": 52.5}}]}}]}}]}}],
+            "{EX}girth": [{{"@type": ["{NGSI}Property"], "{NGSI}hasValue": [{{"@value": {digits}}}]}}]}}]"#
+    ));
+    round_trip(&state);
+    let rendered = String::from_utf8(state.to_vec().expect("the state encodes")).expect("UTF-8");
+    assert!(rendered.contains(r#"[{"@value":13.123456789012346},{"@value":52.5}]"#), "{rendered}");
+    assert!(rendered.contains(r#"{"@value":13.123456789012345678}"#), "{rendered}");
+}
+
 #[test]
 fn dataset_instances_keep_their_order() {
     let instance = |value: i64, dataset_id: Option<&str>| match dataset_id {

@@ -3,8 +3,9 @@
 //! Point reads, listings, the expiry sweep, the overlap check and discovery
 //! (clause 5.10.2) all decode the same row, so they select it through one
 //! statement: the registration's own columns joined to its delivery state.
-//! Geometries are decoded to `GeoJSON` and the `ltree[]` scopes to their text
-//! label paths under the column names the store's mapper reads them by; the
+//! Geometries leave as EWKB, which carries each ordinate as the double it is
+//! stored as, and the `ltree[]` scopes as their text label paths, under the
+//! column names the store's mapper reads them by; the
 //! mode and operations stay the registry codes they are stored as. The
 //! registration's `registration_information` rows travel on the same row as
 //! one array of that table's row type ([`InformationRows`]), so a read
@@ -18,7 +19,7 @@
 //! predicates callers add on registration columns stay unambiguous.
 
 use andromeda_postgresql_schema::csr::{Csr, RegistrationDeliveryState, RegistrationInformation};
-use andromeda_postgresql_seaquery::{pg_array::array_of_subquery, postgis::geometry_as_geojson};
+use andromeda_postgresql_seaquery::{pg_array::array_of_subquery, postgis::st_as_ewkb};
 use sea_query::{Expr as SeaExpr, ExprTrait, Iden, JoinType, Order, Query, SelectStatement};
 
 /// The projected column holding a registration's `registration_information`
@@ -58,9 +59,9 @@ pub fn registration_select() -> SelectStatement {
         .column((Csr::Table, Csr::ObservationIntervalEnd))
         .column((Csr::Table, Csr::ManagementIntervalStart))
         .column((Csr::Table, Csr::ManagementIntervalEnd))
-        .expr_as(geometry_as_geojson(SeaExpr::col((Csr::Table, Csr::Location))), Csr::Location)
-        .expr_as(geometry_as_geojson(SeaExpr::col((Csr::Table, Csr::ObservationSpace))), Csr::ObservationSpace)
-        .expr_as(geometry_as_geojson(SeaExpr::col((Csr::Table, Csr::OperationSpace))), Csr::OperationSpace)
+        .expr_as(st_as_ewkb(SeaExpr::col((Csr::Table, Csr::Location))), Csr::Location)
+        .expr_as(st_as_ewkb(SeaExpr::col((Csr::Table, Csr::ObservationSpace))), Csr::ObservationSpace)
+        .expr_as(st_as_ewkb(SeaExpr::col((Csr::Table, Csr::OperationSpace))), Csr::OperationSpace)
         .column((Csr::Table, Csr::ExpiresAt))
         .column((Csr::Table, Csr::Endpoint))
         .column((Csr::Table, Csr::Accept))
