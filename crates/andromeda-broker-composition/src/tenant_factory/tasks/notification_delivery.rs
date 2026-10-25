@@ -23,6 +23,7 @@ use andromeda_notification::{
     error::NotificationError,
 };
 use andromeda_postgresql_context_store::notification_delivery::queue::NotificationDeliveryQueue;
+use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
     drain_task::{DrainPassOutcome, DrainTask},
@@ -105,7 +106,7 @@ fn register_delivery_drain(
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::TenantDegrading,
-        RestartPolicy::transient(u32::MAX, fallback_floor, fallback_ceiling),
+        RestartPolicy::transient(u32::MAX, fallback.schedule()),
         ShutdownPolicy::new(fallback_floor),
     );
     let task = DrainTask::new(registration, fallback, move |execution| {
@@ -165,7 +166,7 @@ fn register_delivery_cleanup(
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, cadence, cadence),
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(cadence)),
         ShutdownPolicy::new(cadence),
     );
     // The change count the last cleanup ran under, shared by every tick.

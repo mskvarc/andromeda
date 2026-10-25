@@ -30,6 +30,7 @@ andromeda-postgresql-query.workspace = true
 andromeda-postgresql-schema.workspace = true
 andromeda-postgresql-seaquery.workspace = true
 andromeda-postgresql-temporal-store.workspace = true
+andromeda-retry = { workspace = true, features = ["tokio"] }
 andromeda-telemetry.workspace = true
 andromeda-temporal.workspace = true
 async-trait = "0.1.92"

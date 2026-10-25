@@ -10,6 +10,7 @@
 
 use crate::tenant_factory::BrokerTenantFactory;
 use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
+use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
     failure::{FailureClass, TaskFailure},
@@ -94,7 +95,7 @@ fn register_waker(
     let registration = TaskRegistration::new(
         TaskName::try_from("tenant-waker")?,
         TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, WAKER_INTERVAL, WAKER_INTERVAL),
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(WAKER_INTERVAL)),
         ShutdownPolicy::new(Duration::from_secs(10)),
     );
     let schedule_pass = PeriodicSchedule::new(WAKER_INTERVAL, InitialExecution::Immediate, MissedTickPolicy::Skip)?;
@@ -128,7 +129,7 @@ fn register_reconciliation(
     let registration = TaskRegistration::new(
         TaskName::try_from("tenant-wake-reconciliation")?,
         TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, RECONCILIATION_CADENCE, RECONCILIATION_CADENCE),
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(RECONCILIATION_CADENCE)),
         ShutdownPolicy::new(Duration::from_secs(10)),
     );
     let schedule_pass =

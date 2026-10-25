@@ -45,6 +45,7 @@ andromeda-postgresql-query.workspace = true
 andromeda-postgresql-schema.workspace = true
 andromeda-postgresql-seaquery.workspace = true
 andromeda-registration.workspace = true
+andromeda-retry = { workspace = true, features = ["tokio"] }
 andromeda-snapshot.workspace = true
 andromeda-subscription.workspace = true
 andromeda-subscription-forwarding.workspace = true

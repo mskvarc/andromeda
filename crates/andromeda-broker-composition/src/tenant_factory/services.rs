@@ -6,7 +6,6 @@ use crate::{
     linked_forwarding::LinkedForwarding,
     local_entity_type::EntityStoreTypeResolver,
     registered_entity_probe::EntityStoreRegistrationProbe,
-    retry_delay::TokioRetryDelay,
     tenant_factory::{
         TenantFactoryConfig,
         assembly_invariant::AssemblyInvariant,
@@ -40,6 +39,7 @@ use andromeda_linked_retrieval::admission::TemporalJoin;
 use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
 use andromeda_postgresql_context_store::jsonld_context::repo::JsonLdContextRepository;
 use andromeda_registration::{RegistrationService, entity_probe::RegisteredEntityProbe, removal_hook::RegistrationRemovalHook};
+use andromeda_retry::tokio_retry_delay::TokioRetryDelay;
 use andromeda_snapshot::{
     executor::{SnapshotPreparation, SnapshotPreparationConfig, capture_sources::SnapshotCaptureSources},
     service::{SnapshotService, SnapshotServiceConfig},

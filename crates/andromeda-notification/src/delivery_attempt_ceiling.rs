@@ -7,7 +7,8 @@
 //! setting can be raised or lowered without a migration. The only bound
 //! validated at configuration time is that at least one attempt is allowed.
 
-use std::num::NonZeroI32;
+use andromeda_retry::retry_number::RetryNumber;
+use std::num::{NonZeroI32, NonZeroU32};
 use thiserror::Error;
 
 /// Rejected delivery-attempt ceiling.
@@ -40,6 +41,13 @@ impl DeliveryAttemptCeiling {
     #[must_use]
     pub const fn attempts(self) -> i32 {
         self.0.get()
+    }
+
+    /// The retry that follows the last attempt the ceiling allows, where a
+    /// delivery's backoff stops growing.
+    #[must_use]
+    pub const fn last_retry(self) -> RetryNumber {
+        RetryNumber::new(NonZeroU32::MIN.saturating_add(self.0.get().unsigned_abs()))
     }
 
     /// Whether an attempt made after `attempts_before` earlier attempts is the

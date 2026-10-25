@@ -2,7 +2,8 @@
 
 use crate::port::{history_reader::TemporalHistoryReader, mutation_barrier::TemporalMutationBarrier, mutator::TemporalMutator};
 use andromeda_context_commit::committer::ContextCommitter;
-use andromeda_entity::port::{reader::EntityReader, retry_delay::RetryDelay};
+use andromeda_entity::port::reader::EntityReader;
+use andromeda_retry::retry_delay::RetryDelay;
 use std::sync::Arc;
 
 /// The storage capabilities a temporal service answers requests through.

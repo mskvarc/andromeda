@@ -32,6 +32,7 @@ andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-persistence-failure.workspace = true
 andromeda-registration.workspace = true
+andromeda-retry.workspace = true
 andromeda-subscription.workspace = true
 andromeda-telemetry.workspace = true
 andromeda-tenancy.workspace = true

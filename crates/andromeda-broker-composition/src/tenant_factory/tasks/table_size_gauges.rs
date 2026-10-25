@@ -4,6 +4,7 @@
 
 use crate::tenant_factory::{assembly_invariant::AssemblyInvariant, background_pacer::BackgroundPacer, error::TenantAssemblyError};
 use andromeda_postgresql_maintenance::{error::MaintenanceError, history_chunk_size::rowstore_chunk_sizes, table_size::table_sizes};
+use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
     failure::TaskFailure,
@@ -52,7 +53,7 @@ pub(super) fn register_table_size_gauges(
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, SAMPLE_CADENCE, SAMPLE_CADENCE),
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(SAMPLE_CADENCE)),
         ShutdownPolicy::new(SAMPLE_CADENCE),
     );
     let gauges = StorageGauges::for_tenant(tenant.to_string());

@@ -116,6 +116,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-postgresql-schema",
         "andromeda-postgresql-seaquery",
         "andromeda-registration",
+        "andromeda-retry",
         "andromeda-snapshot",
         "andromeda-spatial-index",
         "andromeda-subscription",

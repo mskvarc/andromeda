@@ -3,9 +3,11 @@
 use crate::{
     delivery_attempt_ceiling::DeliveryAttemptCeilingError,
     delivery_concurrency::DeliveryConcurrencyError,
+    delivery_config::DeliveryConfigError,
     delivery_error_bound::DeliveryErrorBoundError,
     delivery_lease::LeaseTermError,
 };
+use andromeda_retry::retry_number::RetryNumberError;
 use std::num::TryFromIntError;
 use thiserror::Error;
 
@@ -34,7 +36,10 @@ pub enum NotificationInvariant {
     /// A claim width the drain computed does not fit the store's claim bound.
     #[error("the notification delivery claim width is out of range: {0}")]
     ClaimWidth(#[source] TryFromIntError),
-    /// The configured base backoff does not fit a whole number of seconds.
-    #[error("the notification delivery base backoff is out of range: {0}")]
-    BaseBackoff(#[source] TryFromIntError),
+    /// The configured retry schedule is unusable.
+    #[error("the notification delivery retry schedule is unusable: {0}")]
+    RetrySchedule(#[source] DeliveryConfigError),
+    /// A claimed delivery records a negative attempt count.
+    #[error("a claimed notification delivery records no attempt count: {0}")]
+    AttemptCount(#[source] RetryNumberError),
 }

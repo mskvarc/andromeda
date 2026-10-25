@@ -1,6 +1,7 @@
 //! Pure backoff schedule for a wake-triggered drain's idle intervals.
 
 use crate::wake_trigger::DrainFallbackPolicy;
+use andromeda_retry::cursor::BackoffCursor;
 use std::time::{Duration, SystemTime};
 
 /// How long a drain sleeps before its next pass, decided by how the last pass resolved.
@@ -14,12 +15,8 @@ use std::time::{Duration, SystemTime};
 /// supplies the current instant when a next-due time must become a duration.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DrainBackoff {
-    /// The shortest sleep the schedule ever returns.
-    floor: Duration,
-    /// The longest sleep the schedule ever returns.
-    ceiling: Duration,
-    /// The sleep the next idle pass returns before doubling.
-    next_idle: Duration,
+    /// The idle streak's position in the policy's doubling schedule.
+    idle: BackoffCursor,
 }
 
 impl DrainBackoff {
@@ -27,9 +24,7 @@ impl DrainBackoff {
     #[must_use]
     pub const fn new(policy: DrainFallbackPolicy) -> DrainBackoff {
         DrainBackoff {
-            floor: policy.floor(),
-            ceiling: policy.ceiling(),
-            next_idle: policy.floor(),
+            idle: BackoffCursor::new(policy.schedule()),
         }
     }
 
@@ -38,15 +33,13 @@ impl DrainBackoff {
     /// Returns the current idle delay, then doubles the delay held for the pass
     /// after it, clamped at the ceiling.
     pub fn record_idle(&mut self) -> Duration {
-        let sleep = self.next_idle;
-        self.next_idle = self.ceiling.min(self.next_idle.saturating_mul(2));
-        sleep
+        self.idle.advance()
     }
 
     /// Record a pass that found work, returning the floor sleep and resetting the schedule.
     pub const fn record_worked(&mut self) -> Duration {
-        self.next_idle = self.floor;
-        self.floor
+        self.idle.reset();
+        self.idle.schedule().first()
     }
 
     /// Record a pass whose next work is due at `due`, returning the clamped sleep until then.
@@ -54,14 +47,15 @@ impl DrainBackoff {
     /// Resets the geometric schedule so a later bare-idle pass starts from the
     /// floor again.
     pub fn record_idle_until(&mut self, due: SystemTime, now: SystemTime) -> Duration {
-        self.next_idle = self.floor;
+        self.idle.reset();
+        let schedule = self.idle.schedule();
         let remaining = due.duration_since(now).unwrap_or(Duration::ZERO);
-        remaining.clamp(self.floor, self.ceiling)
+        remaining.clamp(schedule.first(), schedule.ceiling_bound())
     }
 
     /// Reset the schedule to the floor in response to an external wake.
     pub const fn record_wake(&mut self) {
-        self.next_idle = self.floor;
+        self.idle.reset();
     }
 }
 

@@ -2,8 +2,8 @@
 
 use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::SnapshotIdParseError};
+use andromeda_retry::retry_number::RetryNumberError;
 use chrono::OutOfRangeError;
-use std::num::TryFromIntError;
 use thiserror::Error;
 
 /// A Snapshot policy invariant that did not hold.
@@ -55,7 +55,10 @@ pub enum SnapshotInvariant {
     /// The configured status-notification error bound is unusable.
     #[error("the configured Snapshot notification error bound is unusable")]
     NotificationErrorBound,
-    /// The configured status-notification backoff does not fit its counter.
-    #[error("the Snapshot notification backoff is out of range: {0}")]
-    NotificationBackoff(#[source] TryFromIntError),
+    /// The configured status-notification retry schedule is unusable.
+    #[error("the configured Snapshot notification retry schedule is unusable")]
+    NotificationRetrySchedule,
+    /// A claimed status notification records a negative attempt count.
+    #[error("a claimed Snapshot notification records no attempt count: {0}")]
+    NotificationAttemptCount(#[source] RetryNumberError),
 }

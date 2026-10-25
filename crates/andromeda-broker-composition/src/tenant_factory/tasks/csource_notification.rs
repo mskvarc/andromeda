@@ -29,6 +29,7 @@ use andromeda_notification::{
 };
 use andromeda_postgresql_context_store::csource_subscription::{notified_registrations::NotifiedRegistrationLedger, revision_ledger::CsourceRevisionLedger};
 use andromeda_registration::store::RegistrationStore;
+use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_subscription::{change::CsourceSubscriptionChange, store::SubscriptionStore};
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
@@ -158,7 +159,7 @@ fn register_csource_notification_processor(
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::TenantDegrading,
-        RestartPolicy::transient(u32::MAX, restart_delay, restart_delay),
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(restart_delay)),
         ShutdownPolicy::new(restart_delay),
     );
     let task = ResidentTask::new(registration, move |execution| {

@@ -2,8 +2,29 @@
 
 use crate::{columnstore_partiality::ChunkPartiality, statistics_freshness::StatisticsFreshness, vacuum_horizon::HorizonHolderKind};
 use andromeda_postgresql_context_store::maintenance_config::{MaintenanceMode, MaintenanceProfile};
+use andromeda_retry::{growth::Growth, schedule::BackoffSchedule};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use std::time::Duration;
+
+/// The longest cooldown a run of failed actions backs off to, so a rebuild
+/// that keeps failing is still retried once a day.
+pub const FAILURE_BACKOFF_CEILING: ChronoDuration = ChronoDuration::hours(24);
+
+/// Ineffective-vacuum cooldown of the conservative profile.
+const CONSERVATIVE_INEFFECTIVE_COOLDOWN: ChronoDuration = ChronoDuration::hours(1);
+
+/// Ineffective-vacuum cooldown of the responsive profile.
+const RESPONSIVE_INEFFECTIVE_COOLDOWN: ChronoDuration = ChronoDuration::minutes(15);
+
+/// The failure backoff doubling from `ineffective` to
+/// [`FAILURE_BACKOFF_CEILING`]; both are whole seconds.
+const fn failure_backoff_from(ineffective: ChronoDuration) -> BackoffSchedule {
+    BackoffSchedule::new(
+        Duration::from_secs(ineffective.num_seconds().unsigned_abs()),
+        Duration::from_secs(FAILURE_BACKOFF_CEILING.num_seconds().unsigned_abs()),
+        Growth::Doubling,
+    )
+}
 
 /// Expanded thresholds for one fixed profile.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -25,9 +46,11 @@ pub struct PolicyProfile {
     pub heap_dead_percent: u8,
     /// Successful-action cooldown.
     pub successful_cooldown: ChronoDuration,
-    /// Cooldown after an ineffective vacuum, and the base of the failure
-    /// backoff.
+    /// Cooldown after an ineffective vacuum.
     pub ineffective_cooldown: ChronoDuration,
+    /// Cooldown after a failed action: doubling from the ineffective cooldown
+    /// with each consecutive failure, up to [`FAILURE_BACKOFF_CEILING`].
+    pub failure_backoff: BackoffSchedule,
     /// Maximum permitted active backend ratio percentage.
     pub maximum_active_backend_percent: u8,
     /// Wall time one visit may spend on detailed index probes.
@@ -49,7 +72,8 @@ impl PolicyProfile {
                 index_free_percent: 50,
                 heap_dead_percent: 20,
                 successful_cooldown: ChronoDuration::hours(24),
-                ineffective_cooldown: ChronoDuration::hours(1),
+                ineffective_cooldown: CONSERVATIVE_INEFFECTIVE_COOLDOWN,
+                failure_backoff: failure_backoff_from(CONSERVATIVE_INEFFECTIVE_COOLDOWN),
                 maximum_active_backend_percent: 25,
                 probe_budget: Duration::from_secs(60),
             },
@@ -62,7 +86,8 @@ impl PolicyProfile {
                 index_free_percent: 35,
                 heap_dead_percent: 10,
                 successful_cooldown: ChronoDuration::hours(6),
-                ineffective_cooldown: ChronoDuration::minutes(15),
+                ineffective_cooldown: RESPONSIVE_INEFFECTIVE_COOLDOWN,
+                failure_backoff: failure_backoff_from(RESPONSIVE_INEFFECTIVE_COOLDOWN),
                 maximum_active_backend_percent: 50,
                 probe_budget: Duration::from_secs(30),
             },

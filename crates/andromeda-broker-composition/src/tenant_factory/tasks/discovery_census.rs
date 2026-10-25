@@ -2,6 +2,7 @@
 
 use crate::tenant_factory::{assembly_invariant::AssemblyInvariant, background_pacer::BackgroundPacer, error::TenantAssemblyError};
 use andromeda_postgresql_context_store::entity::census::fold::fold_every_census;
+use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
     failure::TaskFailure,
@@ -45,7 +46,7 @@ pub(super) fn register_discovery_census_fold(supervisor: &TaskSupervisor, pacer:
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, FOLD_CADENCE, FOLD_CADENCE),
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(FOLD_CADENCE)),
         ShutdownPolicy::new(FOLD_CADENCE),
     );
     // The write count the last fold ran under, shared by every tick.

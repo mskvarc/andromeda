@@ -36,6 +36,7 @@ use andromeda_postgresql_seaquery::{
     setting::{Setting, SettingAssignment, SettingScope},
     statement::Statement,
 };
+use andromeda_retry::tokio_retry_delay::TokioRetryDelay;
 use sea_query::{Alias, Expr, Query, SelectStatement};
 use sqlx::{
     Acquire,
@@ -158,12 +159,16 @@ async fn update_under_lock(lock_holder: &mut PgConnection, options: &PgConnectOp
 async fn apply_update(options: &PgConnectOptions, pending: PendingExtensionUpdate) -> Result<(), ContextStoreError> {
     let extension = pending.extension;
     let outcome = SCHEMA_CHANGE_LOCK_RETRY
-        .run(is_lock_not_available, || async move {
-            let mut connection = PgConnection::connect_with(options).await?;
-            let outcome = ExtensionUpdate::new(extension).to_query().execute(&mut connection).await;
-            connection.close().await?;
-            outcome
-        })
+        .run(
+            &TokioRetryDelay,
+            |error, _| is_lock_not_available(error),
+            |_| async move {
+                let mut connection = PgConnection::connect_with(options).await?;
+                let outcome = ExtensionUpdate::new(extension).to_query().execute(&mut connection).await;
+                connection.close().await?;
+                outcome
+            },
+        )
         .await;
     match outcome {
         Ok(_) => {

@@ -15,6 +15,7 @@ use andromeda_postgresql_seaquery::{
     setting::{Setting, SettingScope, set_config},
     statement::Statement,
 };
+use andromeda_retry::tokio_retry_delay::TokioRetryDelay;
 use sea_query::{Query, SelectStatement};
 use sqlx::{PgConnection, PgPool};
 
@@ -50,12 +51,16 @@ impl<C: Command + Sync> BoundedWrite for CommandWrite<C> {
 /// Returns the write's error, or the refused lock once every attempt is spent.
 pub(crate) async fn execute_with_bounded_lock_wait(pool: &PgPool, write: &impl BoundedWrite) -> Result<(), sqlx::Error> {
     SCHEMA_CHANGE_LOCK_RETRY
-        .run(is_lock_not_available, async || {
-            let mut transaction = pool.begin().await?;
-            lock_timeout_statement().to_query().execute(&mut *transaction).await?;
-            write.execute(&mut transaction).await?;
-            transaction.commit().await
-        })
+        .run(
+            &TokioRetryDelay,
+            |error, _| is_lock_not_available(error),
+            async |_| {
+                let mut transaction = pool.begin().await?;
+                lock_timeout_statement().to_query().execute(&mut *transaction).await?;
+                write.execute(&mut transaction).await?;
+                transaction.commit().await
+            },
+        )
         .await
 }
 

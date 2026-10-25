@@ -16,6 +16,7 @@ use andromeda_postgresql_temporal_store::{
     repo::TemporalRepository,
     retention_sweep::{TemporalRetention, TemporalRetentionHorizon, TemporalRetentionOutcome},
 };
+use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
     periodic_trigger::{InitialExecution, MissedTickPolicy, PeriodicSchedule},
@@ -61,7 +62,7 @@ pub(super) fn register_temporal_retention(
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, cadence, cadence),
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(cadence)),
         ShutdownPolicy::new(cadence),
     );
     let task = ScheduledTask::new(registration, schedule, move |_execution| {

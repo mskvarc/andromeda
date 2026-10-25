@@ -15,6 +15,7 @@ use crate::tenant_factory::{
 };
 use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
 use andromeda_notification::error::NotificationError;
+use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
     drain_task::{DrainPassOutcome, DrainTask},
@@ -62,7 +63,7 @@ where
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, floor, ceiling.max(floor)),
+        RestartPolicy::transient(u32::MAX, fallback.schedule()),
         ShutdownPolicy::new(floor),
     );
     let operation = Arc::new(operation);
@@ -118,7 +119,7 @@ where
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, restart_delay, restart_delay),
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(restart_delay)),
         ShutdownPolicy::new(restart_delay),
     );
     let task = ResidentTask::new(registration, move |execution| {

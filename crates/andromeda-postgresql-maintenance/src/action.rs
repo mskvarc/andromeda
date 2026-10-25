@@ -20,10 +20,11 @@ use crate::{
 };
 use andromeda_postgresql_context_store::maintenance_config::MaintenanceMode;
 use andromeda_postgresql_seaquery::{command::Command, maintenance::MaintenanceCommand};
+use andromeda_retry::retry_number::RetryNumber;
 use andromeda_telemetry::maintenance::{MaintenanceAction, MaintenanceActionOutcome, record_action};
 use chrono::Utc;
 use sqlx::PgConnection;
-use std::time::Instant;
+use std::{num::NonZeroU32, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -131,11 +132,11 @@ pub(crate) async fn execute_pending(
         }
         StatementOutcome::Failed(error) => {
             record_action(action, MaintenanceActionOutcome::Failed, started.elapsed(), None);
-            let consecutive_failures = target_state.consecutive_failures.saturating_add(1);
+            let consecutive_failures = RetryNumber::new(NonZeroU32::MIN.saturating_add(target_state.consecutive_failures));
             let cooldown_until = cooldown_after(profile, target, ActionEnding::Failed { consecutive_failures }, Utc::now());
             target_record::record_action_failure(platform, tenant, row, cooldown_until).await?;
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::ActionFailed).await?;
-            warn!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), action = ?action, error = %error, duration_seconds = started.elapsed().as_secs_f64(), consecutive_failures, cooldown_until = %cooldown_until, decision = "action-failed", "PostgreSQL maintenance action failed");
+            warn!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), action = ?action, error = %error, duration_seconds = started.elapsed().as_secs_f64(), consecutive_failures = consecutive_failures.get(), cooldown_until = %cooldown_until, decision = "action-failed", "PostgreSQL maintenance action failed");
             Ok(PassOutcome::ActionFailed)
         }
         StatementOutcome::Succeeded => {

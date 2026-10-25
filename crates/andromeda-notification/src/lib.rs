@@ -68,8 +68,8 @@ pub mod processor;
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-configuration-scalars",
-        "andromeda-context-space",
         "andromeda-context-commit",
+        "andromeda-context-space",
         "andromeda-delivery",
         "andromeda-entity",
         "andromeda-http-headers",
@@ -87,6 +87,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-persistence-failure",
         "andromeda-registration",
+        "andromeda-retry",
         "andromeda-spatial-index",
         "andromeda-subscription",
         "andromeda-telemetry",

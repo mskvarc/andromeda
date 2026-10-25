@@ -16,9 +16,9 @@ andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
+andromeda-retry.workspace = true
 andromeda-telemetry.workspace = true
 async-trait = "0.1.92"
-backon = "1.6.0"
 chrono = "0.4.45"
 dashmap = { version = "6.2.1", features = ["inline"] }
 derive_more = { version = "2.1.1", features = ["display"] }

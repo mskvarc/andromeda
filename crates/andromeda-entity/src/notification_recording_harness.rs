@@ -30,7 +30,6 @@ use crate::{
         blocking_executor::BlockingExecutor,
         deletion_outline::DeletionOutlineReader,
         reader::EntityReader,
-        retry_delay::RetryDelay,
         service_ports::EntityServicePorts,
     },
     recording_ports::{ImmediateRetry, RecordedCommits, RecordingCommitter, SnapshotReader, UnusedAttributeHistory, UnusedBlockingExecutor},
@@ -43,6 +42,7 @@ use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::filter::language_matching::LanguageMatching;
 use andromeda_ngsi_ld_representation::payload_budget::EntityPayloadBudget;
+use andromeda_retry::retry_delay::RetryDelay;
 use andromeda_subscription::cache::SubscriptionCache;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;

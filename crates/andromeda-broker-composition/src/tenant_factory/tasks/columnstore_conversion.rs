@@ -16,6 +16,7 @@ use andromeda_postgresql_temporal_store::{
     repo::TemporalRepository,
     rowstore_reclaim::RowstoreReclaim,
 };
+use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
     periodic_trigger::{InitialExecution, MissedTickPolicy, PeriodicSchedule},
@@ -75,7 +76,7 @@ pub(super) fn register_columnstore_conversion(
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, cadence, cadence),
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(cadence)),
         ShutdownPolicy::new(cadence),
     );
     let task = ScheduledTask::new(registration, schedule, move |execution| {

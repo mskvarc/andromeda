@@ -18,6 +18,7 @@
 
 use crate::{
     EntityService,
+    contended_attempt::ContendedAttempt,
     deletion_outline::{DeletionOutline, DeletionWatchers},
     entity_snapshot::EntitySnapshot,
     error::EntityError,
@@ -33,7 +34,6 @@ use andromeda_context_commit::{
     history_record::{deletion_history, deletion_tombstones},
     precondition::{AfterAttempt, Precondition, after_attempt},
     write_outcome::single,
-    write_retry::WRITE_ATTEMPTS,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::reads::attribute_change::deleted_instances;
@@ -59,17 +59,15 @@ impl EntityService {
         let id = entity.id;
         let timer = entity::start(EntityOperation::Delete);
         let result: Result<(), EntityError> = async {
-            for lost_attempts in 0..WRITE_ATTEMPTS {
-                self.wait_before_retry(lost_attempts).await;
-                match self.delete_attempt(target, entity).await? {
-                    AfterAttempt::Settled => return Ok(()),
-                    AfterAttempt::Vanished => return Err(EntityError::not_found(id)),
-                    // A write landed between the read and the deletion: read
-                    // the entity again.
-                    AfterAttempt::Reread => (),
-                }
-            }
-            Err(EntityError::contention(id, WRITE_ATTEMPTS))
+            self.retry_contended(async |_| match self.delete_attempt(target, entity).await? {
+                AfterAttempt::Settled => Ok(()),
+                AfterAttempt::Vanished => Err(ContendedAttempt::Failed(EntityError::not_found(id))),
+                // A write landed between the read and the deletion: read the
+                // entity again.
+                AfterAttempt::Reread => Err(ContendedAttempt::Lost),
+            })
+            .await
+            .map_err(|failure| failure.into_entity_error(id))
         }
         .await;
         timer.finish_result(&result);

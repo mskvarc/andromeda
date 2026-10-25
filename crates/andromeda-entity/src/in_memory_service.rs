@@ -12,13 +12,13 @@ use crate::{
         blocking_executor::BlockingExecutor,
         deletion_outline::DeletionOutlineReader,
         reader::EntityReader,
-        retry_delay::RetryDelay,
         service_ports::EntityServicePorts,
     },
     recording_ports::{ImmediateRetry, UnusedAttributeHistory, UnusedBlockingExecutor},
 };
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
+use andromeda_retry::retry_delay::RetryDelay;
 use std::sync::Arc;
 
 /// An entity service reading and outlining `store`, committing through

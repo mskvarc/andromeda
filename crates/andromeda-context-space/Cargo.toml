@@ -13,4 +13,5 @@ andromeda-ngsi-ld-lexicon.workspace = true
 thiserror = "2.0.21"
 
 [dev-dependencies]
+andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"

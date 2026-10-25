@@ -23,8 +23,8 @@ andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-persistence-failure.workspace = true
+andromeda-retry = { workspace = true, features = ["tokio"] }
 async-trait = "0.1.92"
-backon = { version = "1.6.0", features = ["tokio-sleep"] }
 dashmap = { version = "6.2.1", features = ["inline"] }
 derive_more = { version = "2.1.1", features = ["debug", "deref", "display", "from"] }
 headers = "0.4.2"

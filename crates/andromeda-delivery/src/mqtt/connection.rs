@@ -6,6 +6,7 @@ use crate::mqtt::{
     health::{ConnectionHealth, HealthCell},
     sys_topics::SysTopicData,
 };
+use andromeda_retry::cursor::BackoffCursor;
 use rumqttc::v5::AsyncClient;
 use std::sync::{Arc, Mutex as StdMutex, MutexGuard as StdMutexGuard, PoisonError as StdPoisonError};
 use tokio::{
@@ -47,8 +48,9 @@ impl MqttClientVariant {
 
 /// When the next reconnection attempt to a failed broker is allowed.
 pub struct ReconnectState {
-    /// The backoff sequence, advanced once per failed attempt.
-    pub backoff: backon::ExponentialBackoff,
+    /// The failure streak's position in the reconnect schedule, advanced once
+    /// per failed attempt.
+    pub backoff: BackoffCursor,
     /// The earliest instant another attempt may be made.
     pub next_attempt_at: Instant,
 }

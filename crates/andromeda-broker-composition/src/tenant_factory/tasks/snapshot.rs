@@ -8,6 +8,7 @@ use crate::{
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_notification::delivery_config::DeliveryConfig;
 use andromeda_postgresql_context_store::snapshot::status_outbox::SnapshotStatusOutbox;
+use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_snapshot::{
     error::SnapshotError,
     executor::{SnapshotPreparation, SnapshotPreparationOutcome},
@@ -114,7 +115,7 @@ pub(super) fn register_snapshot_expiry(
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, cadence, cadence),
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(cadence)),
         ShutdownPolicy::new(cadence),
     );
     let expiry = Arc::new(SnapshotExpiry::new(store));
@@ -145,7 +146,7 @@ fn register_snapshot_preparation(supervisor: &TaskSupervisor, recovery: Preparat
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, cadence, cadence),
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(cadence)),
         ShutdownPolicy::new(cadence),
     );
     let task = ScheduledTask::new(registration, schedule, move |_execution| {
@@ -223,7 +224,7 @@ fn register_snapshot_status_delivery(
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, floor, ceiling),
+        RestartPolicy::transient(u32::MAX, fallback.schedule()),
         ShutdownPolicy::new(floor),
     );
     let task = DrainTask::new(registration, fallback, move |execution| {
@@ -263,7 +264,7 @@ fn register_snapshot_status_cleanup(
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, cadence, cadence),
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(cadence)),
         ShutdownPolicy::new(cadence),
     );
     let task = ScheduledTask::new(registration, schedule, move |execution| {

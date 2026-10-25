@@ -89,8 +89,7 @@ pub(super) fn register_temporal_intent_drain(
         .ok_or(AssemblyInvariant::ZeroCount(CountSetting::TemporalIntentBatchSize))?;
     let stuck_after =
         NonZeroU32::new(config.intent_stuck_after_attempts).ok_or(AssemblyInvariant::ZeroCount(CountSetting::TemporalIntentStuckAfterAttempts))?;
-    let retry_policy =
-        TemporalIntentRetryPolicy::new(config.intent_retry.duration(), config.intent_retry_max.duration(), stuck_after).map_err(AssemblyInvariant::from)?;
+    let retry_policy = TemporalIntentRetryPolicy::new(config.intent_retry_schedule().map_err(AssemblyInvariant::IntentRetry)?, stuck_after);
     let drain = Arc::new(TemporalIntentDrain::new(
         queue,
         application,
@@ -107,7 +106,7 @@ pub(super) fn register_temporal_intent_drain(
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::TenantDegrading,
-        RestartPolicy::transient(u32::MAX, fallback_floor, fallback_ceiling),
+        RestartPolicy::transient(u32::MAX, fallback.schedule()),
         ShutdownPolicy::new(config.intent_lease.duration()),
     );
     let task = DrainTask::new(registration, fallback, move |execution| {

@@ -11,6 +11,7 @@
 use crate::cooldown_policy::{CooldownEpisode, CooldownPolicy};
 use andromeda_ngsi_ld_lexicon::{dereferenceable_uri::DereferenceableUri, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+use andromeda_retry::schedule::BackoffSchedule;
 use dashmap::DashMap;
 use std::{
     hash::Hash,
@@ -135,7 +136,7 @@ impl CooldownRegistry {
         }
         let episode = match self.policy.first_episode() {
             Some(episode) => episode,
-            None if own_cooldown(registration).is_some() => CooldownEpisode::Fixed(Duration::ZERO),
+            None if own_cooldown(registration).is_some() => CooldownEpisode::new(BackoffSchedule::constant(Duration::ZERO)),
             None => return,
         };
         // clone: the registry owns its keys
@@ -159,7 +160,7 @@ mod tests {
         cooldown_policy::CooldownPolicy,
     };
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-    use backon::ExponentialBuilder;
+    use andromeda_retry::{growth::Growth, schedule::BackoffSchedule};
     use serde_json::json;
     use std::{
         thread,
@@ -191,18 +192,11 @@ mod tests {
     }
 
     fn exponential(first: Duration, max: Duration) -> CooldownPolicy {
-        CooldownPolicy::Exponential {
-            sequence: ExponentialBuilder::default()
-                .with_min_delay(first)
-                .with_max_delay(max)
-                .with_factor(2.0)
-                .without_max_times(),
-            max,
-        }
+        CooldownPolicy::Windowed(BackoffSchedule::new(first, max, Growth::Doubling))
     }
 
     fn constant(window: Duration) -> CooldownRegistry {
-        CooldownRegistry::new(CooldownPolicy::Constant(window))
+        CooldownRegistry::new(CooldownPolicy::Windowed(BackoffSchedule::constant(window)))
     }
 
     fn endpoint_window(registry: &CooldownRegistry, registration: &ContextSourceRegistration) -> Duration {

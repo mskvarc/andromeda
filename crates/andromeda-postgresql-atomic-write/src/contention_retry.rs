@@ -11,39 +11,42 @@
 //! second one, so the committer absorbs it rather than reporting it.
 
 use crate::attempt_failure::AttemptFailure;
-use andromeda_context_commit::{error::CommitError, write_retry::backoff_after_lost_attempts};
-use andromeda_postgresql_pool::contention_retry::{ContentionRetry, RetryPause};
-use std::{num::NonZeroU32, time::Duration};
+use andromeda_context_commit::{error::CommitError, write_retry::WRITE_BACKOFF};
+use andromeda_retry::{retry_policy::RetryPolicy, tokio_retry_delay::TokioRetryDelay};
+use std::num::NonZeroU32;
 
-/// The jittered backoff between runs of a contended commit, so the contenders
-/// that collided do not restart in lockstep.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct CommitBackoff;
-
-impl RetryPause for CommitBackoff {
-    fn after(&self, lost_attempts: NonZeroU32) -> Duration {
-        tracing::debug!(lost_attempts, "atomic context commit rolled back by a concurrent transaction; running it again");
-        backoff_after_lost_attempts(lost_attempts.get())
-    }
-}
-
-/// The retry a contended commit runs under: five runs in all.
+/// The retry a contended commit runs under: five runs in all, separated by
+/// the jittered write backoff so the contenders that collided do not restart
+/// in lockstep.
 ///
 /// A victim clears on the next attempt unless the same cycle forms again, so a
 /// handful of attempts absorbs every conflict that is not pathological, and the
 /// bound caps what a pathological one adds to the request before the client is
 /// told to retry (503 with `Retry-After`).
-pub(crate) const CONTENDED_COMMIT_RETRY: ContentionRetry<CommitBackoff> = ContentionRetry {
+pub(crate) const CONTENDED_COMMIT_RETRY: RetryPolicy = RetryPolicy {
     attempts: NonZeroU32::MIN.saturating_add(4),
-    pause: CommitBackoff,
+    schedule: WRITE_BACKOFF,
 };
 
 /// Run `attempt` until it ends in anything but
 /// [`CommitError::TransactionContended`], at most as often as
 /// [`CONTENDED_COMMIT_RETRY`] allows.
-pub(crate) async fn rerun_while_contended<T>(attempt: impl AsyncFnMut() -> Result<T, AttemptFailure>) -> Result<T, AttemptFailure> {
+pub(crate) async fn rerun_while_contended<T>(mut attempt: impl AsyncFnMut() -> Result<T, AttemptFailure>) -> Result<T, AttemptFailure> {
     CONTENDED_COMMIT_RETRY
-        .run(|failure| matches!(failure, AttemptFailure::Failed(CommitError::TransactionContended)), attempt)
+        .run(
+            &TokioRetryDelay,
+            |failure, retry| {
+                let contended = matches!(failure, AttemptFailure::Failed(CommitError::TransactionContended));
+                if contended {
+                    tracing::debug!(
+                        lost_attempts = retry.get(),
+                        "atomic context commit rolled back by a concurrent transaction; running it again"
+                    );
+                }
+                contended
+            },
+            async |_| attempt().await,
+        )
         .await
 }
 

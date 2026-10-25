@@ -7,7 +7,7 @@
 
 use crate::error::ContextStoreError;
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
-use andromeda_postgresql_pool::{contention_retry::ContentionRetry, sql_state::SqlState, transaction_rollback::is_transaction_rolled_back};
+use andromeda_postgresql_pool::{sql_state::SqlState, transaction_rollback::is_transaction_rolled_back};
 use andromeda_postgresql_seaquery::{
     command::Command,
     database_definition::{ConnectedSessions, DatabaseDefinition},
@@ -15,6 +15,7 @@ use andromeda_postgresql_seaquery::{
     statement::Statement,
     system_catalog::PgDatabase,
 };
+use andromeda_retry::{retry_policy::RetryPolicy, schedule::BackoffSchedule, tokio_retry_delay::TokioRetryDelay};
 use andromeda_tenancy::{database_name::TenantDatabaseName, db_name_prefix::DbNamePrefix};
 use sea_query::{Alias, Expr, ExprTrait, Query};
 use sqlx::{Connection, PgConnection};
@@ -158,9 +159,9 @@ pub async fn drop_database_unless_in_use(base_url: &DatabaseUrl, database_name: 
 
 /// The retry a contended `CREATE DATABASE` runs under: six attempts a quarter
 /// of a second apart.
-const CREATE_DATABASE_RETRY: ContentionRetry<Duration> = ContentionRetry {
+const CREATE_DATABASE_RETRY: RetryPolicy = RetryPolicy {
     attempts: NonZeroU32::MIN.saturating_add(5),
-    pause: Duration::from_millis(250),
+    schedule: BackoffSchedule::constant(Duration::from_millis(250)),
 };
 
 /// Execute `CREATE DATABASE`, retrying the transient contention that arises when
@@ -177,13 +178,15 @@ const CREATE_DATABASE_RETRY: ContentionRetry<Duration> = ContentionRetry {
 /// name (42P04) finds its database already made, which is success.
 async fn create_database_with_retry(conn: &mut PgConnection, database_name: &str) -> Result<(), ContextStoreError> {
     CREATE_DATABASE_RETRY
-        .run(is_transient_create_failure, async || {
-            match DatabaseDefinition::create(Alias::new(database_name)).to_query().execute(&mut *conn).await {
+        .run(
+            &TokioRetryDelay,
+            |error, _| is_transient_create_failure(error),
+            async |_| match DatabaseDefinition::create(Alias::new(database_name)).to_query().execute(&mut *conn).await {
                 Ok(_) => Ok(()),
                 Err(error) if is_database_already_exists(&error) => Ok(()),
                 Err(error) => Err(error),
-            }
-        })
+            },
+        )
         .await?;
     Ok(())
 }
@@ -222,6 +225,7 @@ fn database_exists_statement(database_name: &str) -> sea_query::SelectStatement 
 mod tests {
     use crate::tenant_database::{CREATE_DATABASE_RETRY, DatabaseUrl, database_exists_statement, is_database_already_exists, is_transient_create_failure};
     use andromeda_postgresql_pool::fake_database_error::FakeDatabaseError;
+    use andromeda_retry::schedule::BackoffSchedule;
     use andromeda_tenancy::database_name::TenantDatabaseName;
     use sea_query::PostgresQueryBuilder;
     use std::time::Duration;
@@ -282,6 +286,6 @@ mod tests {
     #[test]
     fn a_create_runs_six_attempts_a_quarter_second_apart() {
         pretty_assertions::assert_eq!(CREATE_DATABASE_RETRY.attempts.get(), 6);
-        pretty_assertions::assert_eq!(CREATE_DATABASE_RETRY.pause, Duration::from_millis(250));
+        pretty_assertions::assert_eq!(CREATE_DATABASE_RETRY.schedule, BackoffSchedule::constant(Duration::from_millis(250)));
     }
 }

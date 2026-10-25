@@ -82,6 +82,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-postgresql-pool",
         "andromeda-postgresql-schema",
         "andromeda-postgresql-seaquery",
+        "andromeda-retry",
         "andromeda-telemetry",
         "andromeda-tenancy",
     ],

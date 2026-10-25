@@ -7,10 +7,7 @@ use crate::{
     service_limits::TemporalServiceLimits,
 };
 use andromeda_context_commit::committer::ContextCommitter;
-use andromeda_entity::{
-    change_notifier::ChangeNotifier,
-    port::{reader::EntityReader, retry_delay::RetryDelay},
-};
+use andromeda_entity::{change_notifier::ChangeNotifier, port::reader::EntityReader};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_linked_retrieval::admission::TemporalJoin;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -22,6 +19,7 @@ use andromeda_ngsi_ld_query::{
     projection::compiled::Projection,
     temporal::{continuation::TemporalContinuation, instance_page::PageDirection, window::TimeInterval},
 };
+use andromeda_retry::retry_delay::RetryDelay;
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use thiserror::Error;

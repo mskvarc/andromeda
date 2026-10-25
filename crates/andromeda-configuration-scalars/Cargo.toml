@@ -15,5 +15,6 @@ serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.21"
 
 [dev-dependencies]
+andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"
 toml = "1.1.8"

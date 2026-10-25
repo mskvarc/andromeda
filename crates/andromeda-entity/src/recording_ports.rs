@@ -10,7 +10,6 @@ use crate::{
         blocking_executor::{BlockingExecutor, BlockingTask},
         reader::EntityReader,
         retrieved_entity::RetrievedEntity,
-        retry_delay::RetryDelay,
     },
 };
 use andromeda_context_commit::{
@@ -26,6 +25,7 @@ use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::projection::returned_attributes::ReturnedAttributes;
+use andromeda_retry::retry_delay::RetryDelay;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::{

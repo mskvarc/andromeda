@@ -25,7 +25,7 @@ use andromeda_context_commit::{
     entity_record::EntityRecord,
     precondition::{AfterAttempt, Precondition, after_attempt},
     write_outcome::single,
-    write_retry::{WRITE_ATTEMPTS, backoff_after_lost_attempts},
+    write_retry::WRITE_RETRY,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
@@ -36,6 +36,7 @@ use andromeda_entity::{
 use andromeda_ngsi_ld_entity::history::current_state_fold::fold_into_current_state;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use chrono::Utc;
+use derive_more::{From, IsVariant};
 use std::sync::Arc;
 
 impl TemporalService {
@@ -56,34 +57,54 @@ impl TemporalService {
     /// [`TemporalError::Commit`] or [`TemporalError::Persistence`] when the
     /// write cannot be landed.
     pub(crate) async fn commit_evolution(&self, target: &ContextTarget, entity_id: &Identifier, evolution: &WrittenEvolution) -> Result<(), TemporalError> {
-        for lost_attempts in 0..WRITE_ATTEMPTS {
-            if lost_attempts > 0 {
-                self.retry_delay.wait(backoff_after_lost_attempts(lost_attempts)).await;
-            }
-            let current = self
-                .entity_reader
-                .get_snapshot(target, entity_id)
-                .await
-                .map_err(TemporalError::from_entity_failure)?;
-            let now = SystemInstant::new(Utc::now());
-            let EvolutionWrite { write, events } = evolution_write(&self.notifier, target, entity_id, evolution, current.as_ref(), now)?;
-            let outcome = single(self.writes.commit(target, now, vec![write]).await?)?;
-            match after_attempt(&outcome) {
-                AfterAttempt::Settled => {
-                    // The events describe the attempt the store accepted, never
-                    // one that was computed and lost to a concurrent writer.
-                    for event in events {
-                        self.notifier.publish(target, event);
+        let settled = WRITE_RETRY
+            .run(
+                &*self.retry_delay,
+                |attempt: &EvolutionAttempt, _| attempt.is_lost(),
+                async |_| {
+                    let current = self
+                        .entity_reader
+                        .get_snapshot(target, entity_id)
+                        .await
+                        .map_err(TemporalError::from_entity_failure)?;
+                    let now = SystemInstant::new(Utc::now());
+                    let EvolutionWrite { write, events } = evolution_write(&self.notifier, target, entity_id, evolution, current.as_ref(), now)?;
+                    let committed = self.writes.commit(target, now, vec![write]).await.map_err(TemporalError::from)?;
+                    let outcome = single(committed).map_err(TemporalError::from)?;
+                    match after_attempt(&outcome) {
+                        AfterAttempt::Settled => Ok(events),
+                        // A concurrent writer created or changed the Entity, or
+                        // deleted it, since the read: the fold is recomputed
+                        // against what it did.
+                        AfterAttempt::Reread | AfterAttempt::Vanished => Err(EvolutionAttempt::Lost),
                     }
-                    return Ok(());
+                },
+            )
+            .await;
+        match settled {
+            Ok(events) => {
+                // The events describe the attempt the store accepted, never one
+                // that was computed and lost to a concurrent writer.
+                for event in events {
+                    self.notifier.publish(target, event);
                 }
-                // A concurrent writer created or changed the Entity, or deleted
-                // it, since the read: the fold is recomputed against what it did.
-                AfterAttempt::Reread | AfterAttempt::Vanished => (),
+                Ok(())
             }
+            Err(EvolutionAttempt::Lost) => Err(TemporalError::TransactionContended),
+            Err(EvolutionAttempt::Failed(error)) => Err(error),
         }
-        Err(TemporalError::TransactionContended)
     }
+}
+
+/// Why one attempt of an evolution write did not settle.
+#[derive(Debug, From, IsVariant)]
+enum EvolutionAttempt {
+    /// A concurrent writer superseded the current state the fold was computed
+    /// from.
+    #[from(ignore)]
+    Lost,
+    /// The attempt failed for a reason another attempt cannot clear.
+    Failed(TemporalError),
 }
 
 /// The write that records `evolution` and applies its fold to `current`, with

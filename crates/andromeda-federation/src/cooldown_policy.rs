@@ -5,28 +5,17 @@
 //! further requests to a failed endpoint; this policy decides how long it
 //! declines when the registration sets no cooldown, or a shorter one.
 
-use crate::config::{CooldownMode, FederationConfig, FederationConfigError};
-use backon::{BackoffBuilder, ExponentialBackoff, ExponentialBuilder};
+use crate::config::{FederationConfig, FederationConfigError};
+use andromeda_retry::{cursor::BackoffCursor, schedule::BackoffSchedule};
 use std::time::Duration;
-
-/// The factor each failure of an unbroken episode multiplies an exponential
-/// window by.
-const COOLDOWN_FACTOR: f32 = 2.0;
 
 /// How long the broker holds a failed source back.
 #[derive(Debug)]
 pub(crate) enum CooldownPolicy {
     /// No broker window: only the registration's own cooldown applies.
     Off,
-    /// The same window for every failure.
-    Constant(Duration),
-    /// A window that grows with each failure of an unbroken episode.
-    Exponential {
-        /// The sequence of windows one episode walks.
-        sequence: ExponentialBuilder,
-        /// The cap no window exceeds, jitter included.
-        max: Duration,
-    },
+    /// The windows one episode of failures walks.
+    Windowed(BackoffSchedule),
 }
 
 impl CooldownPolicy {
@@ -35,12 +24,7 @@ impl CooldownPolicy {
     pub(crate) fn first_episode(&self) -> Option<CooldownEpisode> {
         match self {
             CooldownPolicy::Off => None,
-            CooldownPolicy::Constant(window) => Some(CooldownEpisode::Fixed(*window)),
-            CooldownPolicy::Exponential { sequence, max } => {
-                let mut backoff = sequence.build();
-                let window = next_window(&mut backoff, *max);
-                Some(CooldownEpisode::Growing { backoff, max: *max, window })
-            }
+            CooldownPolicy::Windowed(schedule) => Some(CooldownEpisode::new(*schedule)),
         }
     }
 }
@@ -49,65 +33,36 @@ impl TryFrom<&FederationConfig> for CooldownPolicy {
     type Error = FederationConfigError;
 
     fn try_from(config: &FederationConfig) -> Result<CooldownPolicy, FederationConfigError> {
-        config.validate_cooldown()?;
-        let window = config.cooldown_window.duration();
-        Ok(match config.cooldown_mode {
-            CooldownMode::Off => CooldownPolicy::Off,
-            CooldownMode::Constant => CooldownPolicy::Constant(window),
-            CooldownMode::Exponential => {
-                let max = config.cooldown_max.duration();
-                CooldownPolicy::Exponential {
-                    sequence: ExponentialBuilder::default()
-                        .with_min_delay(window)
-                        .with_max_delay(max)
-                        .with_factor(COOLDOWN_FACTOR)
-                        .with_jitter()
-                        .without_max_times(),
-                    max,
-                }
-            }
-        })
+        Ok(config.cooldown_schedule()?.map_or(CooldownPolicy::Off, CooldownPolicy::Windowed))
     }
 }
 
 /// The windows of one unbroken run of failures, which a success ends.
 #[derive(Debug)]
-pub(crate) enum CooldownEpisode {
-    /// Every failure of the episode opens the same window.
-    Fixed(Duration),
-    /// Every failure of the episode opens the next window of a sequence.
-    Growing {
-        /// The rest of the episode's sequence.
-        backoff: ExponentialBackoff,
-        /// The cap no window exceeds.
-        max: Duration,
-        /// The window the latest failure opened.
-        window: Duration,
-    },
+pub(crate) struct CooldownEpisode {
+    /// The episode's position in its schedule.
+    cursor: BackoffCursor,
+    /// The window the latest failure opened.
+    window: Duration,
 }
 
 impl CooldownEpisode {
+    /// The episode a first failure opens on `schedule`.
+    pub(crate) fn new(schedule: BackoffSchedule) -> CooldownEpisode {
+        let mut cursor = BackoffCursor::new(schedule);
+        let window = cursor.advance();
+        CooldownEpisode { cursor, window }
+    }
+
     /// The window the latest failure of the episode opened.
     pub(crate) const fn window(&self) -> Duration {
-        match self {
-            CooldownEpisode::Fixed(window) | CooldownEpisode::Growing { window, .. } => *window,
-        }
+        self.window
     }
 
     /// Move to the window a further failure of the episode opens.
     pub(crate) fn advance(&mut self) {
-        match self {
-            CooldownEpisode::Fixed(_) => {}
-            CooldownEpisode::Growing { backoff, max, window } => *window = next_window(backoff, *max),
-        }
+        self.window = self.cursor.advance();
     }
-}
-
-/// The next window of `backoff`, clamped to `max`: jitter adds up to the
-/// window itself on top of the sequence's own cap. A sequence that ends holds
-/// the cap.
-fn next_window(backoff: &mut ExponentialBackoff, max: Duration) -> Duration {
-    backoff.next().map_or(max, |window| window.min(max))
 }
 
 #[cfg(test)]
@@ -117,7 +72,7 @@ fn next_window(backoff: &mut ExponentialBackoff, max: Duration) -> Duration {
 )]
 mod tests {
     use crate::cooldown_policy::{CooldownEpisode, CooldownPolicy};
-    use backon::ExponentialBuilder;
+    use andromeda_retry::{growth::Growth, jitter::Jitter, schedule::BackoffSchedule};
     use std::time::Duration;
 
     fn windows(mut episode: CooldownEpisode, count: usize) -> Vec<Duration> {
@@ -137,7 +92,7 @@ mod tests {
 
     #[test]
     fn constant_arms_the_same_window_every_episode() {
-        let policy = CooldownPolicy::Constant(Duration::from_secs(5));
+        let policy = CooldownPolicy::Windowed(BackoffSchedule::constant(Duration::from_secs(5)));
         let five = Duration::from_secs(5);
         pretty_assertions::assert_eq!(windows(policy.first_episode().expect("an episode"), 3), [five, five, five]);
         pretty_assertions::assert_eq!(policy.first_episode().expect("a later episode").window(), five);
@@ -145,15 +100,7 @@ mod tests {
 
     #[test]
     fn exponential_doubles_from_its_first_window() {
-        let max = Duration::from_secs(8);
-        let policy = CooldownPolicy::Exponential {
-            sequence: ExponentialBuilder::default()
-                .with_min_delay(Duration::from_secs(1))
-                .with_max_delay(max)
-                .with_factor(2.0)
-                .without_max_times(),
-            max,
-        };
+        let policy = CooldownPolicy::Windowed(BackoffSchedule::new(Duration::from_secs(1), Duration::from_secs(8), Growth::Doubling));
         let seconds: Vec<u64> = windows(policy.first_episode().expect("an episode"), 5).iter().map(Duration::as_secs).collect();
         pretty_assertions::assert_eq!(seconds, [1, 2, 4, 8, 8]);
     }
@@ -161,15 +108,7 @@ mod tests {
     #[test]
     fn jitter_never_lifts_a_window_past_the_cap() {
         let max = Duration::from_secs(4);
-        let policy = CooldownPolicy::Exponential {
-            sequence: ExponentialBuilder::default()
-                .with_min_delay(Duration::from_secs(1))
-                .with_max_delay(max)
-                .with_factor(2.0)
-                .with_jitter()
-                .without_max_times(),
-            max,
-        };
+        let policy = CooldownPolicy::Windowed(BackoffSchedule::new(Duration::from_secs(1), max, Growth::Doubling).with_jitter(Jitter::Additive));
         assert!(windows(policy.first_episode().expect("an episode"), 1000).iter().all(|window| *window <= max));
     }
 }

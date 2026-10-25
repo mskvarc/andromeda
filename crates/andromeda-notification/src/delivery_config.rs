@@ -7,6 +7,7 @@ use crate::{
     delivery_lease::{LeaseTerm, LeaseTermError},
 };
 use andromeda_configuration_scalars::human_duration::HumanDuration;
+use andromeda_retry::{growth::Growth, schedule::BackoffSchedule, schedule_error::BackoffScheduleError};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use strum::{Display, EnumString};
@@ -29,9 +30,9 @@ pub enum DeliveryConfigError {
     /// The attempt ceiling was outside the accepted range.
     #[error("notifications.delivery.max_attempts is invalid: {0}")]
     AttemptCeiling(#[from] DeliveryAttemptCeilingError),
-    /// Retry backoff was configured as zero.
-    #[error("notifications.delivery.base_backoff must be greater than zero")]
-    ZeroBaseBackoff,
+    /// The retry backoff does not bound a retry schedule.
+    #[error("notifications.delivery.base_backoff does not form a retry schedule: {0}")]
+    RetrySchedule(#[source] BackoffScheduleError),
     /// Polling cadence was configured as zero.
     #[error("notifications.delivery.poll_interval must be greater than zero")]
     ZeroPollInterval,
@@ -131,6 +132,8 @@ pub struct DeliveryConfig {
     /// without a migration; the only bound is that it is at least one.
     pub max_attempts: i32,
     /// Base exponential retry backoff, in human-readable form (`"5s"`).
+    ///
+    /// The wait doubles with every failed attempt until the attempt ceiling.
     #[toml_comment(inline)]
     pub base_backoff: HumanDuration,
     /// Poll interval for the delivery worker: the floor of its idle backoff, in
@@ -238,9 +241,7 @@ impl DeliveryConfig {
         if self.batch_size <= 0 {
             return Err(DeliveryConfigError::NonPositiveBatchSize);
         }
-        if self.base_backoff.is_zero() {
-            return Err(DeliveryConfigError::ZeroBaseBackoff);
-        }
+        self.retry_schedule()?;
         if self.poll_interval.is_zero() {
             return Err(DeliveryConfigError::ZeroPollInterval);
         }
@@ -303,6 +304,21 @@ impl DeliveryConfig {
     /// configured attempt ceiling is zero or negative.
     pub const fn attempt_ceiling(&self) -> Result<DeliveryAttemptCeiling, DeliveryAttemptCeilingError> {
         DeliveryAttemptCeiling::from_attempts(self.max_attempts)
+    }
+
+    /// The schedule a failed delivery is retried on: doubling from
+    /// `base_backoff` with every failed attempt, and no longer growing once a
+    /// delivery reaches its attempt ceiling, where it cannot be claimed again.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeliveryConfigError::AttemptCeiling`] when the attempt ceiling
+    /// is not positive, and [`DeliveryConfigError::RetrySchedule`] when
+    /// `base_backoff` is zero.
+    pub fn retry_schedule(&self) -> Result<BackoffSchedule, DeliveryConfigError> {
+        let first = self.base_backoff.duration();
+        let ceiling = Growth::Doubling.grow(first, self.attempt_ceiling()?.last_retry());
+        BackoffSchedule::validated(first, ceiling, Growth::Doubling).map_err(DeliveryConfigError::RetrySchedule)
     }
 
     /// The configured claim lease term.

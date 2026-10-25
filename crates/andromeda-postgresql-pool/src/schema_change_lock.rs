@@ -10,7 +10,8 @@
 //! it drains, and [`SCHEMA_CHANGE_LOCK_RETRY`] tries again after a pause, a
 //! bounded number of times.
 
-use crate::{contention_retry::ContentionRetry, sql_state::SqlState};
+use crate::sql_state::SqlState;
+use andromeda_retry::{retry_policy::RetryPolicy, schedule::BackoffSchedule};
 use sqlx::postgres::PgConnectOptions;
 use std::{num::NonZeroU32, str::FromStr, time::Duration};
 
@@ -24,9 +25,9 @@ pub const SCHEMA_CHANGE_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 /// so a lock held by a transaction shorter than about ten seconds is still
 /// taken, and one held longer fails the change rather than the tenant's
 /// requests.
-pub const SCHEMA_CHANGE_LOCK_RETRY: ContentionRetry<Duration> = ContentionRetry {
+pub const SCHEMA_CHANGE_LOCK_RETRY: RetryPolicy = RetryPolicy {
     attempts: NonZeroU32::MIN.saturating_add(4),
-    pause: Duration::from_secs(2),
+    schedule: BackoffSchedule::constant(Duration::from_secs(2)),
 };
 
 /// Whether a driver error is a lock wait cut short by `lock_timeout`
@@ -66,6 +67,7 @@ mod tests {
         fake_database_error::FakeDatabaseError,
         schema_change_lock::{SCHEMA_CHANGE_LOCK_RETRY, is_lock_not_available, schema_change_connect_options},
     };
+    use andromeda_retry::schedule::BackoffSchedule;
     use pretty_assertions::assert_eq;
     use std::time::Duration;
 
@@ -79,7 +81,7 @@ mod tests {
     #[test]
     fn a_schema_change_runs_five_times_two_seconds_apart() {
         assert_eq!(SCHEMA_CHANGE_LOCK_RETRY.attempts.get(), 5);
-        assert_eq!(SCHEMA_CHANGE_LOCK_RETRY.pause, Duration::from_secs(2));
+        assert_eq!(SCHEMA_CHANGE_LOCK_RETRY.schedule, BackoffSchedule::constant(Duration::from_secs(2)));
     }
 
     #[test]

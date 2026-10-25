@@ -13,12 +13,15 @@ use crate::{
     executor::{execution_failure::ExecutionFailure, lease_deadline, status::failure_detail},
     store::{SnapshotPreparationJob, SnapshotStore},
 };
-use andromeda_context_commit::{lease_holder::LeaseHolder, write_retry::backoff_after_lost_attempts};
+use andromeda_context_commit::{lease_holder::LeaseHolder, write_retry::WRITE_BACKOFF};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::snapshot::{ExecutionResultDetails, SnapshotStatus};
+use andromeda_retry::{
+    retry_policy::{RetryAttempt, RetryPolicy},
+    tokio_retry_delay::TokioRetryDelay,
+};
 use futures::future::BoxFuture;
-use std::{iter::repeat_with, time::Duration};
-use tokio::time::sleep;
+use std::{iter::repeat_with, num::NonZeroU32, time::Duration};
 use tracing::warn;
 
 /// Attempts one claimed preparation is given before it records `failure`.
@@ -27,6 +30,22 @@ use tracing::warn;
 /// clears on the next attempt once the winner commits, and the jittered backoff
 /// between attempts separates contenders rather than waiting anything out.
 pub(crate) const PREPARATION_ATTEMPTS: u32 = 5;
+
+/// The budget and the jittered wait between attempts of one preparation.
+const PREPARATION_RETRY: RetryPolicy = RetryPolicy {
+    attempts: NonZeroU32::MIN.saturating_add(PREPARATION_ATTEMPTS - 1),
+    schedule: WRITE_BACKOFF,
+};
+
+/// Why one run of a claimed preparation did not complete.
+enum PreparationFailure {
+    /// The attempt itself failed.
+    Attempt(SnapshotError),
+    /// Restarting the claim before the attempt did not complete.
+    Restart(SnapshotError),
+    /// The claim was no longer this worker's when it was restarted.
+    ClaimLost,
+}
 
 /// How one claimed preparation ended.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -101,22 +120,43 @@ impl PreparationClaim<'_> {
     /// `failure` could be recorded is [`PreparationEnd::ClaimLost`], not an
     /// error.
     pub(crate) async fn run<'f>(&self, mut attempt: impl FnMut() -> BoxFuture<'f, Result<(), SnapshotError>>) -> Result<PreparationEnd, SnapshotError> {
-        let mut lost_attempts = 0;
-        loop {
-            let Err(error) = attempt().await else {
-                return Ok(PreparationEnd::Completed);
-            };
-            lost_attempts += 1;
-            match error.recurrence() {
-                Recurrence::Transient if lost_attempts < PREPARATION_ATTEMPTS => {
-                    warn!(snapshot_id = %self.id, attempt = lost_attempts, %error, "Snapshot preparation attempt failed transiently; restarting it");
-                    sleep(backoff_after_lost_attempts(lost_attempts)).await;
-                    if !self.store.restart_preparation(self.id, self.worker, lease_deadline(self.lease)?).await? {
-                        return Ok(PreparationEnd::ClaimLost);
+        let outcome = PREPARATION_RETRY
+            .run(
+                &TokioRetryDelay,
+                |failure, retry| match failure {
+                    PreparationFailure::Attempt(error) => match error.recurrence() {
+                        Recurrence::Transient => {
+                            warn!(snapshot_id = %self.id, attempt = retry.get(), %error, "Snapshot preparation attempt failed transiently; restarting it");
+                            true
+                        }
+                        Recurrence::Persistent => false,
+                    },
+                    PreparationFailure::Restart(_) | PreparationFailure::ClaimLost => false,
+                },
+                async |run| {
+                    match run {
+                        RetryAttempt::First => (),
+                        RetryAttempt::Retry(_) => self.restart().await?,
                     }
-                }
-                Recurrence::Transient | Recurrence::Persistent => return self.record_failure(&error).await,
-            }
+                    attempt().await.map_err(PreparationFailure::Attempt)
+                },
+            )
+            .await;
+        match outcome {
+            Ok(()) => Ok(PreparationEnd::Completed),
+            Err(PreparationFailure::Attempt(error)) => self.record_failure(&error).await,
+            Err(PreparationFailure::Restart(error)) => Err(error),
+            Err(PreparationFailure::ClaimLost) => Ok(PreparationEnd::ClaimLost),
+        }
+    }
+
+    /// Restart the claim from an empty staging branch before another attempt.
+    async fn restart(&self) -> Result<(), PreparationFailure> {
+        let deadline = lease_deadline(self.lease).map_err(PreparationFailure::Restart)?;
+        match self.store.restart_preparation(self.id, self.worker, deadline).await {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(PreparationFailure::ClaimLost),
+            Err(error) => Err(PreparationFailure::Restart(error)),
         }
     }
 

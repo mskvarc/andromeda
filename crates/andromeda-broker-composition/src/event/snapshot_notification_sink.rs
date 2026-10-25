@@ -9,8 +9,9 @@ use andromeda_delivery::{
     request::DeliveryRequest,
 };
 use andromeda_http_headers::media_type::ResponseMediaType;
-use andromeda_notification::{delivery_backoff::backoff_seconds, delivery_config::DeliveryConfig, delivery_error_bound::DeliveryErrorBound};
+use andromeda_notification::{delivery_backoff::retry_due_at, delivery_config::DeliveryConfig, delivery_error_bound::DeliveryErrorBound};
 use andromeda_postgresql_context_store::snapshot::status_outbox::{SnapshotDeliveryFailure, SnapshotStatusDelivery, SnapshotStatusOutbox};
+use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_snapshot::{error::SnapshotError, snapshot_invariant::SnapshotInvariant};
 use chrono::{DateTime, Duration, Utc};
 use futures::{StreamExt, stream};
@@ -28,7 +29,8 @@ pub struct SnapshotStatusDeliveryDrain {
     worker: LeaseHolder,
     lease: Duration,
     max_attempts: i32,
-    base_backoff_secs: i64,
+    /// The wait before a failed status notification is due again.
+    retry_schedule: BackoffSchedule,
     batch_size: i32,
     concurrency: usize,
     error_bound: DeliveryErrorBound,
@@ -49,7 +51,10 @@ impl SnapshotStatusDeliveryDrain {
             worker: LeaseHolder::mint(),
             lease: Duration::seconds(i64::try_from(config.lease.duration().as_secs()).unwrap_or(i64::MAX)),
             max_attempts: config.max_attempts.max(1),
-            base_backoff_secs: i64::try_from(config.base_backoff.duration().as_secs()).map_err(SnapshotInvariant::NotificationBackoff)?,
+            retry_schedule: config.retry_schedule().map_err(|error| {
+                tracing::error!(%error, "the configured Snapshot notification retry schedule is unusable");
+                SnapshotInvariant::NotificationRetrySchedule
+            })?,
             batch_size: config.batch_size.max(1),
             concurrency: usize::try_from(config.concurrency).unwrap_or(usize::MAX).max(1),
             error_bound: config.error_bound().map_err(|error| {
@@ -115,8 +120,7 @@ impl SnapshotStatusDeliveryDrain {
                 } else {
                     SnapshotDeliveryFailure::Terminal
                 };
-                let backoff = backoff_seconds(self.base_backoff_secs, entry.attempt_count, self.max_attempts);
-                let retry_at = now.checked_add_signed(Duration::seconds(backoff)).unwrap_or(DateTime::<Utc>::MAX_UTC);
+                let retry_at = retry_due_at(&self.retry_schedule, entry.attempt_count, now).map_err(SnapshotInvariant::NotificationAttemptCount)?;
                 let detail = if retryable {
                     "Snapshot notification delivery failed transiently"
                 } else {

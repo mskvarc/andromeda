@@ -63,9 +63,10 @@ use andromeda_context_commit::{
     side_effect_job_id::SideEffectJobId,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_retry::{retry_number::RetryNumber, schedule::BackoffSchedule};
 use andromeda_telemetry::queue::{QueueName, QueueOutcome, record_queue_outcome};
 use chrono::{DateTime, Utc};
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 /// Policy-owned retry and lease configuration for durable side effects.
 #[derive(Debug)]
@@ -81,8 +82,9 @@ pub struct EntitySideEffectDrainConfig {
     /// Attempts permitted before dead-lettering, counting attempts that ended
     /// without settling or releasing the job.
     pub max_attempts: u16,
-    /// Base exponential retry delay.
-    pub base_backoff: Duration,
+    /// The wait before a failed job is claimable again, read from the
+    /// attempt that failed.
+    pub retry_schedule: BackoffSchedule,
     /// The worker identity recorded on queue leases.
     ///
     /// Minted for this drain alone and never shared: releases are guarded by
@@ -263,9 +265,8 @@ impl EntitySideEffectDrain {
                 QueueOutcome::Exhausted,
             )
         } else {
-            let exponent = u32::from(attempt.saturating_sub(1)).min(15);
-            let multiplier = 1_u32 << exponent;
-            let backoff = self.config.base_backoff.saturating_mul(multiplier);
+            let retry = RetryNumber::try_from(u32::from(attempt)).map_err(|refused| EntityError::from(EntityInvariant::RetryNumber(refused)))?;
+            let backoff = self.config.retry_schedule.delay(retry);
             let retry_at =
                 clock.now() + chrono::Duration::from_std(backoff).map_err(|conversion| EntityError::from(EntityInvariant::BackoffOutOfRange(conversion)))?;
             (self.queue.nack(id, &self.config.lease_holder, &detail, retry_at).await?, QueueOutcome::Retried)
@@ -362,6 +363,7 @@ mod tests {
         NotificationWriteConfig,
         building_subscription_fixture::{BUILDING_TYPE_IRI, building_subscription_cache, subscription_key},
         change_sink::EntityChangeSink,
+        config::PENDING_SIDE_EFFECTS_LAST_GROWING_RETRY,
         error::EntityError,
         side_effect_drain::{EntitySideEffectDrain, EntitySideEffectDrainConfig},
         side_effect_notification::SideEffectNotificationRoute,
@@ -403,6 +405,7 @@ mod tests {
         notification::ChangeOrigin,
     };
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+    use andromeda_retry::{growth::Growth, schedule::BackoffSchedule};
     use chrono::{DateTime, TimeZone, Utc};
     use futures::future::BoxFuture;
     use serde_json::json;
@@ -615,7 +618,7 @@ mod tests {
             lease_seconds: 30,
             batch_size: 1,
             max_attempts: 3,
-            base_backoff: Duration::from_secs(5),
+            retry_schedule: BackoffSchedule::growing_until(Duration::from_secs(5), Growth::Doubling, PENDING_SIDE_EFFECTS_LAST_GROWING_RETRY),
             lease_holder: lease_holder(),
         }
     }

@@ -20,7 +20,6 @@ pub mod outcome;
 mod planes;
 mod postgresql_maintenance;
 mod registered_entity_probe;
-mod retry_delay;
 mod routes;
 mod shutdown_signal;
 mod startup_report;

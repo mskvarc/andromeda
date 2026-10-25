@@ -17,6 +17,7 @@ andromeda-postgresql-context-store.workspace = true
 andromeda-postgresql-pool.workspace = true
 andromeda-postgresql-schema.workspace = true
 andromeda-postgresql-seaquery.workspace = true
+andromeda-retry.workspace = true
 andromeda-telemetry.workspace = true
 andromeda-tenancy.workspace = true
 chrono = "0.4.45"

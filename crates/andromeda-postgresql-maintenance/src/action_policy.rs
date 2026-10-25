@@ -1,7 +1,13 @@
 //! How a completed or failed maintenance action is judged, and how long its
 //! target cools down afterwards.
 
-use crate::{action_measurement::ActionComparison, candidate::MaintenanceTarget, columnstore_partiality::ChunkPartiality, policy::PolicyProfile};
+use crate::{
+    action_measurement::ActionComparison,
+    candidate::MaintenanceTarget,
+    columnstore_partiality::ChunkPartiality,
+    policy::{FAILURE_BACKOFF_CEILING, PolicyProfile},
+};
+use andromeda_retry::retry_number::RetryNumber;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 
 /// Cooldown after a completed `ANALYZE`, whatever the profile. An analyze
@@ -64,7 +70,7 @@ pub enum ActionEnding {
     /// The statement failed.
     Failed {
         /// Consecutive failures including this one.
-        consecutive_failures: u32,
+        consecutive_failures: RetryNumber,
     },
 }
 
@@ -72,9 +78,9 @@ pub enum ActionEnding {
 ///
 /// A completed analyze cools down for [`ANALYZE_COOLDOWN`] and a completed
 /// recompression for [`RECOMPRESSION_COOLDOWN`] in every profile. A failure
-/// backs off exponentially from the ineffective cooldown, doubling with each
-/// consecutive failure up to 24 hours, so a rebuild that keeps failing stops
-/// leaving an artifact to recover on every visit.
+/// follows the profile's failure backoff, so a rebuild that keeps failing
+/// stops leaving an artifact to recover on every visit. A backoff past what a
+/// calendar duration represents is past [`FAILURE_BACKOFF_CEILING`].
 #[must_use]
 pub fn cooldown_after(profile: PolicyProfile, target: MaintenanceTarget, ending: ActionEnding, now: DateTime<Utc>) -> DateTime<Utc> {
     now + match (target, ending) {
@@ -85,18 +91,8 @@ pub fn cooldown_after(profile: PolicyProfile, target: MaintenanceTarget, ending:
         (
             MaintenanceTarget::Index(_) | MaintenanceTarget::Heap(_) | MaintenanceTarget::Statistics(_) | MaintenanceTarget::Columnstore(_),
             ActionEnding::Failed { consecutive_failures },
-        ) => failure_backoff(profile.ineffective_cooldown, consecutive_failures),
+        ) => ChronoDuration::from_std(profile.failure_backoff.delay(consecutive_failures)).unwrap_or(FAILURE_BACKOFF_CEILING),
     }
-}
-
-/// `base * 2^(consecutive_failures - 1)`, capped at 24 hours. A product too
-/// large to represent is past the cap.
-fn failure_backoff(base: ChronoDuration, consecutive_failures: u32) -> ChronoDuration {
-    let cap = ChronoDuration::hours(24);
-    2_i32
-        .checked_pow(consecutive_failures.saturating_sub(1))
-        .and_then(|factor| base.checked_mul(factor))
-        .map_or(cap, |backoff| backoff.min(cap))
 }
 
 #[cfg(test)]
@@ -109,8 +105,16 @@ mod tests {
         policy::PolicyProfile,
     };
     use andromeda_postgresql_context_store::maintenance_config::MaintenanceProfile;
+    use andromeda_retry::retry_number::RetryNumber;
     use chrono::{Duration as ChronoDuration, Utc};
     use pretty_assertions::assert_eq;
+    use std::num::NonZeroU32;
+
+    fn failure(consecutive_failures: u32) -> ActionEnding {
+        ActionEnding::Failed {
+            consecutive_failures: RetryNumber::new(NonZeroU32::new(consecutive_failures).unwrap_or(NonZeroU32::MIN)),
+        }
+    }
 
     const VACUUM: MaintenanceTarget = MaintenanceTarget::Heap(HeapTarget::CurrentAttributes);
 
@@ -152,7 +156,7 @@ mod tests {
         let now = Utc::now();
         for (consecutive_failures, minutes) in [(1, 15), (2, 30), (3, 60)] {
             assert_eq!(
-                cooldown_after(profile, VACUUM, ActionEnding::Failed { consecutive_failures }, now),
+                cooldown_after(profile, VACUUM, failure(consecutive_failures), now),
                 now + ChronoDuration::minutes(minutes)
             );
         }
@@ -164,7 +168,7 @@ mod tests {
         let now = Utc::now();
         for (consecutive_failures, hours) in [(7, 16), (8, 24), (40, 24)] {
             assert_eq!(
-                cooldown_after(profile, VACUUM, ActionEnding::Failed { consecutive_failures }, now),
+                cooldown_after(profile, VACUUM, failure(consecutive_failures), now),
                 now + ChronoDuration::hours(hours)
             );
         }
@@ -180,10 +184,7 @@ mod tests {
                 cooldown_after(profile, analyze, ActionEnding::Completed(ActionVerdict::Effective), now),
                 now + ChronoDuration::hours(1)
             );
-            assert_eq!(
-                cooldown_after(profile, analyze, ActionEnding::Failed { consecutive_failures: 2 }, now),
-                now + profile.ineffective_cooldown * 2
-            );
+            assert_eq!(cooldown_after(profile, analyze, failure(2), now), now + profile.ineffective_cooldown * 2);
         }
     }
 
@@ -201,9 +202,6 @@ mod tests {
         for verdict in [ActionVerdict::Effective, ActionVerdict::Ineffective] {
             assert_eq!(cooldown_after(profile, recompression, ActionEnding::Completed(verdict), now), now);
         }
-        assert_eq!(
-            cooldown_after(profile, recompression, ActionEnding::Failed { consecutive_failures: 1 }, now),
-            now + profile.ineffective_cooldown
-        );
+        assert_eq!(cooldown_after(profile, recompression, failure(1), now), now + profile.ineffective_cooldown);
     }
 }

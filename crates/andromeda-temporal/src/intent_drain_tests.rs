@@ -19,6 +19,7 @@ use andromeda_context_commit::{
 use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+use andromeda_retry::{growth::Growth, schedule::BackoffSchedule};
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use std::{
@@ -426,8 +427,10 @@ fn snapshot_target() -> ContextTarget {
 /// The retry schedule the drains under test use: two seconds a step, capped
 /// at five, stuck from the third completed attempt.
 fn retry_policy() -> TemporalIntentRetryPolicy {
-    TemporalIntentRetryPolicy::new(Duration::from_secs(2), Duration::from_secs(5), NonZeroU32::new(3).expect("non-zero threshold"))
-        .expect("the ceiling is above the base delay")
+    TemporalIntentRetryPolicy::new(
+        BackoffSchedule::new(Duration::from_secs(2), Duration::from_secs(5), Growth::Linear),
+        NonZeroU32::new(3).expect("non-zero threshold"),
+    )
 }
 
 /// The longest the barrier of the drains under test waits on another owner.

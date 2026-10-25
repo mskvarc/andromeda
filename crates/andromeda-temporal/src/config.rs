@@ -7,6 +7,7 @@ use crate::{
     storage_policy::TemporalStoragePolicy,
 };
 use andromeda_configuration_scalars::human_duration::HumanDuration;
+use andromeda_retry::{growth::Growth, schedule::BackoffSchedule};
 use serde::{Deserialize, Serialize};
 use std::num::{NonZeroU32, NonZeroU64};
 use toml_comment::TomlComment;
@@ -147,8 +148,8 @@ pub struct TemporalConfig {
     /// Base retry delay for a sink rejection, in human-readable form (`"2s"`).
     #[toml_comment(inline)]
     pub intent_retry: HumanDuration,
-    /// Ceiling the exponential retry delay is clamped to, in human-readable form
-    /// (`"5m"`).
+    /// Ceiling the linearly growing retry delay is clamped to, in
+    /// human-readable form (`"5m"`).
     #[toml_comment(inline)]
     pub intent_retry_max: HumanDuration,
     /// Attempt count from which an intent that keeps failing is reported as stuck.
@@ -284,11 +285,8 @@ impl TemporalConfig {
         if self.intent_lease.is_zero() {
             return Err(TemporalConfigError::ZeroIntentLease);
         }
-        if self.intent_retry.is_zero() {
-            return Err(TemporalConfigError::ZeroIntentRetry);
-        }
-        if self.intent_retry_max.duration().as_secs() < self.intent_retry.duration().as_secs() {
-            return Err(TemporalConfigError::IntentRetryCeilingBelowBase);
+        if let Err(error) = self.intent_retry_schedule() {
+            return Err(error);
         }
         if self.intent_stuck_after_attempts == 0 {
             return Err(TemporalConfigError::ZeroIntentStuckThreshold);
@@ -330,6 +328,21 @@ impl TemporalConfig {
             maximum: self.max_last_n,
             edge_group: self.max_edge_group,
             aggregation_instances: self.aggregation_instance_budget,
+        }
+    }
+
+    /// The schedule a rejected temporal append intent is retried on: linear
+    /// from `intent_retry`, clamped at `intent_retry_max`, so an intent that
+    /// keeps failing is retried at a bounded cadence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalConfigError::IntentRetry`] when the delay is zero or
+    /// the ceiling is below it.
+    pub const fn intent_retry_schedule(&self) -> Result<BackoffSchedule, TemporalConfigError> {
+        match BackoffSchedule::validated(self.intent_retry.duration(), self.intent_retry_max.duration(), Growth::Linear) {
+            Ok(schedule) => Ok(schedule),
+            Err(error) => Err(TemporalConfigError::IntentRetry(error)),
         }
     }
 
@@ -375,6 +388,7 @@ mod config_tests {
         storage_policy::TemporalStoragePolicy,
     };
     use andromeda_configuration_scalars::human_duration::HumanDuration;
+    use andromeda_retry::schedule_error::BackoffScheduleError;
     use pretty_assertions::assert_eq;
     use std::{
         num::{NonZeroU32, NonZeroU64},
@@ -588,7 +602,10 @@ mod config_tests {
             intent_retry_max: HumanDuration::from_secs(5),
             ..valid()
         };
-        assert_eq!(config.validate(), Err(TemporalConfigError::IntentRetryCeilingBelowBase));
+        assert_eq!(
+            config.validate(),
+            Err(TemporalConfigError::IntentRetry(BackoffScheduleError::CeilingBelowFirst))
+        );
     }
 
     #[test]

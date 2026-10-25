@@ -25,6 +25,7 @@ use andromeda_entity::{
 use andromeda_jsonld::compound_context_host::ContextHostingError;
 use andromeda_postgresql_context_store::pending_side_effects::repo::PendingSideEffectsRepository;
 use andromeda_registration::error::RegistrationError;
+use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_subscription::error::SubscriptionError;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
@@ -89,7 +90,9 @@ pub(super) fn register_entity_side_effects(
             lease_seconds: i32::try_from(entity_config.pending_side_effects_lease.duration().as_secs()).unwrap_or(i32::MAX),
             batch_size: i32::try_from(entity_config.pending_side_effects_batch_size).unwrap_or(i32::MAX),
             max_attempts: entity_config.pending_side_effects_max_attempts,
-            base_backoff: entity_config.pending_side_effects_base_backoff.duration(),
+            retry_schedule: entity_config
+                .pending_side_effects_retry_schedule()
+                .map_err(AssemblyInvariant::SideEffectRetry)?,
             lease_holder: LeaseHolder::mint(),
         },
     ));
@@ -165,7 +168,7 @@ fn register_entity_side_effect_drain(
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::TenantDegrading,
-        RestartPolicy::transient(u32::MAX, fallback_floor, fallback_ceiling),
+        RestartPolicy::transient(u32::MAX, fallback.schedule()),
         ShutdownPolicy::new(lease_duration),
     );
     let task = DrainTask::new(registration, fallback, move |execution| {
@@ -204,7 +207,7 @@ fn register_entity_side_effect_reap(
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, cadence, cadence),
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(cadence)),
         ShutdownPolicy::new(cadence),
     );
     let task = ScheduledTask::new(registration, schedule, move |execution| {
@@ -233,7 +236,7 @@ where
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, cadence, cadence),
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(cadence)),
         ShutdownPolicy::new(cadence),
     );
     let task = ScheduledTask::new(registration, schedule, move |_execution| {

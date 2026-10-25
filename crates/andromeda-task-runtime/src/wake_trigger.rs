@@ -1,7 +1,7 @@
 //! Coalescing drain wake control and the validated fallback policy.
 
+use andromeda_retry::{growth::Growth, schedule::BackoffSchedule, schedule_error::BackoffScheduleError};
 use std::time::Duration;
-use thiserror::Error;
 use tokio::sync::mpsc;
 
 /// Result of signalling a drain task to inspect durable work promptly.
@@ -55,60 +55,47 @@ impl DrainWakeReceiver {
     }
 }
 
-/// A validated geometric backoff band for a wake-triggered drain's idle sleeps.
+/// A validated doubling backoff band for a wake-triggered drain's idle sleeps.
 ///
-/// The `floor` is the shortest sleep between passes (and the clause-mandated
-/// minimum cadence where one applies); the `ceiling` is the longest. A policy
+/// The floor is the shortest sleep between passes (and the clause-mandated
+/// minimum cadence where one applies); the ceiling is the longest. A policy
 /// whose ceiling equals its floor is a fixed cadence with no backoff.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct DrainFallbackPolicy {
-    /// The shortest sleep between passes.
-    floor: Duration,
-    /// The longest sleep between passes.
-    ceiling: Duration,
-}
+pub struct DrainFallbackPolicy(BackoffSchedule);
 
 impl DrainFallbackPolicy {
-    /// Construct a fallback policy from its floor and ceiling.
+    /// Construct a fallback policy doubling from `floor` to `ceiling`.
     ///
     /// # Errors
     ///
-    /// Returns [`DrainFallbackPolicyError::ZeroFloor`] when `floor` is zero,
+    /// Returns [`BackoffScheduleError::ZeroFirst`] when `floor` is zero,
     /// because a zero floor would drain continuously instead of recovering a
-    /// missed edge wake, and [`DrainFallbackPolicyError::CeilingBelowFloor`]
-    /// when `ceiling` is shorter than `floor`.
-    pub const fn new(floor: Duration, ceiling: Duration) -> Result<DrainFallbackPolicy, DrainFallbackPolicyError> {
-        if floor.is_zero() {
-            Err(DrainFallbackPolicyError::ZeroFloor)
-        } else if ceiling.as_nanos() < floor.as_nanos() {
-            Err(DrainFallbackPolicyError::CeilingBelowFloor)
-        } else {
-            Ok(DrainFallbackPolicy { floor, ceiling })
+    /// missed edge wake, and [`BackoffScheduleError::CeilingBelowFirst`] when
+    /// `ceiling` is shorter than `floor`.
+    pub const fn new(floor: Duration, ceiling: Duration) -> Result<DrainFallbackPolicy, BackoffScheduleError> {
+        match BackoffSchedule::validated(floor, ceiling, Growth::Doubling) {
+            Ok(schedule) => Ok(DrainFallbackPolicy(schedule)),
+            Err(error) => Err(error),
         }
     }
 
     /// Return the floor, the shortest sleep between passes.
     #[must_use]
     pub const fn floor(self) -> Duration {
-        self.floor
+        self.0.first()
     }
 
     /// Return the ceiling, the longest sleep between passes.
     #[must_use]
     pub const fn ceiling(self) -> Duration {
-        self.ceiling
+        self.0.ceiling_bound()
     }
-}
 
-/// A drain fallback policy was not well formed.
-#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
-pub enum DrainFallbackPolicyError {
-    /// The floor cadence was zero.
-    #[error("drain fallback floor must be non-zero")]
-    ZeroFloor,
-    /// The ceiling was shorter than the floor.
-    #[error("drain fallback ceiling must be at least the floor")]
-    CeilingBelowFloor,
+    /// The idle sleeps as a schedule: doubling from the floor to the ceiling.
+    #[must_use]
+    pub const fn schedule(self) -> BackoffSchedule {
+        self.0
+    }
 }
 
 /// Construct one coalescing wake channel before the drain task that reads it.

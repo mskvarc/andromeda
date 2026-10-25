@@ -153,6 +153,7 @@ dependencies = [
  "andromeda-postgresql-pool",
  "andromeda-postgresql-temporal-store",
  "andromeda-registration",
+ "andromeda-retry",
  "andromeda-server-tls",
  "andromeda-snapshot",
  "andromeda-spatial-index",
@@ -214,6 +215,7 @@ dependencies = [
 name = "andromeda-configuration-scalars"
 version = "0.1.0"
 dependencies = [
+ "andromeda-architecture-checks",
  "bytesize",
  "humantime-serde",
  "pretty_assertions",
@@ -234,9 +236,9 @@ dependencies = [
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-number",
  "andromeda-persistence-failure",
+ "andromeda-retry",
  "chrono",
  "derive_more",
- "fastrand",
  "iri-rs",
  "pretty_assertions",
  "serde",
@@ -276,6 +278,7 @@ dependencies = [
 name = "andromeda-context-space"
 version = "0.1.0"
 dependencies = [
+ "andromeda-architecture-checks",
  "andromeda-ngsi-ld-lexicon",
  "pretty_assertions",
  "thiserror 2.0.21",
@@ -293,9 +296,9 @@ dependencies = [
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-vocabulary",
+ "andromeda-retry",
  "andromeda-telemetry",
  "async-trait",
- "backon",
  "chrono",
  "dashmap",
  "derive_more",
@@ -346,6 +349,7 @@ dependencies = [
  "andromeda-ngsi-ld-request",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-persistence-failure",
+ "andromeda-retry",
  "andromeda-spatial-index",
  "andromeda-subscription",
  "andromeda-telemetry",
@@ -435,8 +439,8 @@ dependencies = [
  "andromeda-ngsi-ld-request",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-registration",
+ "andromeda-retry",
  "andromeda-telemetry",
- "backon",
  "bytes",
  "chrono",
  "dashmap",
@@ -1114,8 +1118,8 @@ dependencies = [
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-persistence-failure",
+ "andromeda-retry",
  "async-trait",
- "backon",
  "dashmap",
  "derive_more",
  "headers",
@@ -1512,6 +1516,7 @@ dependencies = [
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-persistence-failure",
  "andromeda-registration",
+ "andromeda-retry",
  "andromeda-subscription",
  "andromeda-telemetry",
  "andromeda-tenancy",
@@ -1567,6 +1572,7 @@ dependencies = [
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
  "andromeda-postgresql-temporal-store",
+ "andromeda-retry",
  "andromeda-telemetry",
  "andromeda-temporal",
  "async-trait",
@@ -1611,6 +1617,7 @@ dependencies = [
 name = "andromeda-postgresql-branch"
 version = "0.1.0"
 dependencies = [
+ "andromeda-architecture-checks",
  "andromeda-context-space",
  "andromeda-postgresql-seaquery",
  "pretty_assertions",
@@ -1707,6 +1714,7 @@ dependencies = [
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
  "andromeda-registration",
+ "andromeda-retry",
  "andromeda-snapshot",
  "andromeda-subscription",
  "andromeda-subscription-forwarding",
@@ -1768,6 +1776,7 @@ dependencies = [
  "andromeda-postgresql-pool",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
+ "andromeda-retry",
  "andromeda-telemetry",
  "andromeda-tenancy",
  "chrono",
@@ -1814,6 +1823,7 @@ dependencies = [
  "andromeda-architecture-checks",
  "andromeda-persistence-failure",
  "andromeda-postgresql-seaquery",
+ "andromeda-retry",
  "derive_more",
  "pretty_assertions",
  "sea-query",
@@ -1928,6 +1938,7 @@ dependencies = [
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
  "andromeda-postgresql-temporal-query",
+ "andromeda-retry",
  "andromeda-telemetry",
  "andromeda-temporal",
  "async-trait",
@@ -1982,6 +1993,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-retry"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "derive_more",
+ "fastrand",
+ "futures",
+ "pretty_assertions",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "andromeda-server-tls"
 version = "0.1.0"
 dependencies = [
@@ -2025,6 +2049,7 @@ dependencies = [
  "andromeda-ngsi-ld-request",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-persistence-failure",
+ "andromeda-retry",
  "andromeda-temporal",
  "chrono",
  "futures",
@@ -2150,6 +2175,7 @@ name = "andromeda-task-runtime"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-retry",
  "andromeda-telemetry",
  "compact_str",
  "dashmap",
@@ -2201,6 +2227,7 @@ dependencies = [
  "andromeda-ngsi-ld-request",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-persistence-failure",
+ "andromeda-retry",
  "andromeda-telemetry",
  "async-lock",
  "async-trait",
@@ -2582,17 +2609,6 @@ dependencies = [
  "http",
  "pin-project-lite",
  "tower",
-]
-
-[[package]]
-name = "backon"
-version = "1.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cffb0e931875b666fc4fcb20fee52e9bbd1ef836fd9e9e04ec21555f9f85f7ef"
-dependencies = [
- "fastrand",
- "gloo-timers",
- "tokio",
 ]
 
 [[package]]
@@ -4076,18 +4092,6 @@ dependencies = [
  "libgit2-sys",
  "log",
  "url",
-]
-
-[[package]]
-name = "gloo-timers"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbb143cf96099802033e0d4f4963b19fd2e0b728bcf076cd9cf7f6634f092994"
-dependencies = [
- "futures-channel",
- "futures-core",
- "js-sys",
- "wasm-bindgen",
 ]
 
 [[package]]

@@ -86,6 +86,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-number",
         "andromeda-persistence-failure",
+        "andromeda-retry",
     ],
     allow_workspace_dev_dependencies: [
     ],

@@ -24,12 +24,12 @@ use crate::{
 };
 use andromeda_http_headers::json_ld_accept::JsonLdAccept;
 use andromeda_json_literal::JsonLiteral;
-use backon::{ConstantBuilder, Retryable};
+use andromeda_retry::{retry_policy::RetryPolicy, schedule::BackoffSchedule, tokio_retry_delay::TokioRetryDelay};
 use headers::HeaderMapExt;
 use iri_rs::IriBuf;
 use mediatype::MediaTypeBuf;
 use reqwest::{Client, Response, header::HeaderMap};
-use std::{str::from_utf8, sync::Arc, time::Duration};
+use std::{num::NonZeroU32, str::from_utf8, sync::Arc, time::Duration};
 use tracing::warn;
 
 /// A parsed remote context, the freshness its response granted it, and where
@@ -180,13 +180,14 @@ fn invalid(url: &IriBuf, reason: InvalidContextDocument) -> LoaderError {
     }
 }
 
-/// How many extra attempts a transport-level fetch failure is given after the
-/// first, before it is reported. A context host that drops or refuses a
-/// connection under load recovers within a few hundred milliseconds; only a
+/// How often, and how far apart, a transport-level fetch failure is retried:
+/// three attempts in all, 250 ms apart. A context host that drops or refuses
+/// a connection under load recovers within a few hundred milliseconds; only a
 /// genuinely unreachable source exhausts all attempts.
-const MAX_TRANSPORT_RETRIES: usize = 2;
-/// How long to wait between transport-level retries.
-const TRANSPORT_RETRY_BACKOFF: Duration = Duration::from_millis(250);
+const TRANSPORT_RETRY: RetryPolicy = RetryPolicy {
+    attempts: NonZeroU32::MIN.saturating_add(2),
+    schedule: BackoffSchedule::constant(Duration::from_millis(250)),
+};
 
 /// [`fetch_and_parse`], retrying only a transport-level failure.
 ///
@@ -205,16 +206,22 @@ pub(crate) async fn fetch_and_parse_retrying(
     max_bytes: usize,
     default_lifetime: CacheLifetime,
 ) -> Result<RemoteContextDocument, LoaderError> {
-    let backoff = ConstantBuilder::default()
-        .with_delay(TRANSPORT_RETRY_BACKOFF)
-        .with_max_times(MAX_TRANSPORT_RETRIES);
-    (|| fetch_and_parse(client, url, max_bytes, default_lifetime))
-        .retry(backoff)
-        .when(is_transient_transport_failure)
-        .notify(
-            |error: &LoaderError, delay| warn!(url = %error.url, error = %error.kind, ?delay, "Remote context fetch failed at the transport level; retrying"),
-        )
-        .await
+    // Boxed: the requests that await a context fetch are already deep
+    // futures, and holding the retry loop inline takes their layout past the
+    // compiler's query depth.
+    Box::pin(TRANSPORT_RETRY.run(
+        &TokioRetryDelay,
+        |error: &LoaderError, retry| {
+            let transient = is_transient_transport_failure(error);
+            if transient {
+                let delay = TRANSPORT_RETRY.schedule.delay(retry);
+                warn!(url = %error.url, error = %error.kind, ?delay, "Remote context fetch failed at the transport level; retrying");
+            }
+            transient
+        },
+        |_| fetch_and_parse(client, url, max_bytes, default_lifetime),
+    ))
+    .await
 }
 
 /// Whether a loader failure is a transient transport error worth retrying.

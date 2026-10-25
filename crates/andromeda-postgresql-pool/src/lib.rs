@@ -18,8 +18,6 @@
 
 /// Returning a connection to its pool after its request let go of it.
 pub mod connection_release;
-/// The one loop that runs an operation again after contention refused it.
-pub mod contention_retry;
 /// A database error the tests can construct without a live driver connection.
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_database_error;
@@ -46,7 +44,10 @@ pub mod write_reserve;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
-    allow_workspace_dependencies: ["andromeda-persistence-failure", "andromeda-postgresql-seaquery"],
+    allow_workspace_dependencies: [
+        "andromeda-persistence-failure", "andromeda-postgresql-seaquery",
+        "andromeda-retry",
+    ],
     allow_workspace_dev_dependencies: [],
     allow_production_dependencies: ["sea-query", "sqlx", "tokio"],
 }

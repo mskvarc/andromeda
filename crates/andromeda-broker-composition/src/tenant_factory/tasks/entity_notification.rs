@@ -35,6 +35,7 @@ use andromeda_notification::{
     interval::{IntervalNotificationDeps, IntervalNotificationOperation},
     processor::{NotificationProcessor, NotificationProcessorDeps},
 };
+use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_subscription::{change::SubscriptionChange, store::SubscriptionStore};
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
@@ -262,7 +263,7 @@ fn register_notification_processor(
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::TenantDegrading,
-        RestartPolicy::transient(u32::MAX, restart_delay, restart_delay),
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(restart_delay)),
         ShutdownPolicy::new(restart_delay),
     );
     let task = ResidentTask::new(registration, move |execution| {

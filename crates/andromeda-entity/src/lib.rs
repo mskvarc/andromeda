@@ -53,6 +53,8 @@ mod compare_and_set_fixture;
 pub mod compiled_cache;
 /// Entity execution and background-operation configuration.
 pub mod config;
+/// One compare-and-set attempt and the loop that repeats it under contention.
+mod contended_attempt;
 /// What a deletion needs to know about the entity it removes, short of its payload.
 pub mod deletion_outline;
 /// A deletion-outline reader answering from a fixture state, for tests.
@@ -260,7 +262,6 @@ use crate::{
         blocking_executor::BlockingExecutor,
         deletion_outline::DeletionOutlineReader,
         reader::EntityReader,
-        retry_delay::RetryDelay,
         service_ports::EntityServicePorts,
     },
     side_effect::{AsyncPreference, SideEffectPlacement, resolve_side_effect_placement},
@@ -270,6 +271,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_representation::payload_budget::EntityPayloadBudget;
+use andromeda_retry::retry_delay::RetryDelay;
 use andromeda_subscription::cache::SubscriptionCache;
 use async_lock::MutexGuardArc;
 use dashmap::DashMap;
@@ -378,6 +380,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-request",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-persistence-failure",
+        "andromeda-retry",
         "andromeda-spatial-index",
         "andromeda-subscription",
         "andromeda-telemetry",

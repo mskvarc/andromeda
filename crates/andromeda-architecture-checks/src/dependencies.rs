@@ -57,18 +57,28 @@ impl DependencyKind {
 /// alternate JSON parser (`sonic-rs`), the type-erased error crate (`anyhow`,
 /// whose `Error` the workspace bans in favour of typed enums) and the global
 /// allocator (`mimalloc`) are all things a specification or storage-neutral
-/// crate has no business shipping.
+/// crate has no business shipping. The retry, backoff and jitter crates
+/// (`again`, `backoff`, `backon`, `exponential-backoff`, `fastrand`, `retry`,
+/// `tokio-retry`, `tokio-retry2`) are forbidden because `andromeda-retry` owns
+/// retry policy: it alone carves out `fastrand`, and nothing carves out the
+/// rest, whose delays an engine evaluating any retry number cannot be built on.
 /// A crate that legitimately ships one subtracts it through
 /// [`forbidden_production_dependencies_except`]; nothing adds to the list.
 pub const FORBIDDEN_PRODUCTION_DEPENDENCIES: &[&str] = &[
+    "again",
     "anyhow",
     "axum",
+    "backoff",
+    "backon",
     "bytes",
     "clap",
+    "exponential-backoff",
+    "fastrand",
     "figment2",
     "geozero",
     "mimalloc",
     "reqwest",
+    "retry",
     "rumqttc",
     "sea-query",
     "sea-query-sqlx",
@@ -76,6 +86,8 @@ pub const FORBIDDEN_PRODUCTION_DEPENDENCIES: &[&str] = &[
     "sqlx",
     "sqlx-core",
     "tokio",
+    "tokio-retry",
+    "tokio-retry2",
 ];
 
 /// [`FORBIDDEN_PRODUCTION_DEPENDENCIES`] without the dependencies a particular
@@ -409,6 +421,28 @@ workspace = true
         for gap in ["anyhow", "rumqttc", "sea-query-sqlx", "sonic-rs", "mimalloc"] {
             assert!(FORBIDDEN_PRODUCTION_DEPENDENCIES.contains(&gap), "{gap} must be forbidden by default");
         }
+    }
+
+    #[test]
+    fn the_baseline_forbids_every_retry_and_jitter_crate() {
+        for retry in [
+            "again",
+            "backoff",
+            "backon",
+            "exponential-backoff",
+            "fastrand",
+            "retry",
+            "tokio-retry",
+            "tokio-retry2",
+        ] {
+            assert!(FORBIDDEN_PRODUCTION_DEPENDENCIES.contains(&retry), "{retry} must be forbidden by default");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "must not depend on backon")]
+    fn a_retry_crate_is_rejected_outside_the_engine() {
+        assert_permitted(&[(DependencyKind::Normal, "backon")], FORBIDDEN_PRODUCTION_DEPENDENCIES, &[], &[]);
     }
 
     #[test]

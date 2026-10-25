@@ -180,3 +180,13 @@ mod tests {
         assert!(render(&snapshot_target(SnapshotBranch::Staging)).contains(r#"FROM "snap_7_stg"."entities""#));
     }
 }
+
+#[cfg(test)]
+andromeda_architecture_checks::dependency_boundary! {
+    allow_workspace_dependencies: [
+        "andromeda-context-space",
+        "andromeda-postgresql-seaquery",
+    ],
+    allow_workspace_dev_dependencies: [],
+    allow_production_dependencies: ["sea-query"],
+}

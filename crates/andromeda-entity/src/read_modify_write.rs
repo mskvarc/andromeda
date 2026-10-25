@@ -13,12 +13,11 @@
 //! their history rows land. The Entity API and the Temporal Evolution then
 //! disagree permanently, because nothing sweeps the difference away.
 
-use crate::{EntityService, entity_invariant::EntityInvariant, error::EntityError, write_target::WriteTarget};
+use crate::{EntityService, contended_attempt::ContendedAttempt, entity_invariant::EntityInvariant, error::EntityError, write_target::WriteTarget};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     precondition::{AfterAttempt, Precondition, after_attempt},
     write_outcome::{WriteOutcome, single},
-    write_retry::{WRITE_ATTEMPTS, backoff_after_lost_attempts},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
@@ -63,8 +62,8 @@ impl EntityService {
     /// the compare-and-set only ever loses to a writer this process does not
     /// own, another broker instance, or a batch chunk holding the guard for a
     /// set of identifiers. Those losses are absorbed by re-reading behind the
-    /// [`backoff_after_lost_attempts`] wait, which separates writers that
-    /// collided rather than restarting them together.
+    /// write backoff, which separates writers that collided rather than
+    /// restarting them together.
     ///
     /// # Errors
     ///
@@ -76,9 +75,7 @@ impl EntityService {
     {
         let _id_guard = self.acquire_id_locks(target, from_ref(id)).await;
 
-        for lost_attempts in 0..WRITE_ATTEMPTS {
-            self.wait_before_retry(lost_attempts).await;
-
+        self.retry_contended(async |_| {
             let Some(snapshot) = self.reader.get_snapshot(target, id).await? else {
                 return Ok(None);
             };
@@ -88,24 +85,18 @@ impl EntityService {
             };
             write.precondition = Precondition::UnchangedSince(snapshot.modified_at);
 
-            let outcome = single(self.writes.commit(target, now, vec![write]).await?)?;
+            let committed = self.writes.commit(target, now, vec![write]).await.map_err(EntityError::from)?;
+            let outcome = single(committed).map_err(EntityError::from)?;
             match after_attempt(&outcome) {
-                AfterAttempt::Settled => return Ok(Some(outcome)),
-                AfterAttempt::Vanished => return Ok(None),
-                // The attempt lost its precondition: fall through to the next
-                // one, which re-reads the state the write is computed from.
-                AfterAttempt::Reread => (),
+                AfterAttempt::Settled => Ok(Some(outcome)),
+                AfterAttempt::Vanished => Ok(None),
+                // The next attempt re-reads the state the write is computed
+                // from.
+                AfterAttempt::Reread => Err(ContendedAttempt::Lost),
             }
-        }
-        Err(EntityError::contention(id, WRITE_ATTEMPTS))
-    }
-
-    /// Hold a writer that has lost `lost_attempts` attempts before it tries
-    /// again; a writer that has lost none is not held at all.
-    pub(crate) async fn wait_before_retry(&self, lost_attempts: u32) {
-        if lost_attempts > 0 {
-            self.retry_delay.wait(backoff_after_lost_attempts(lost_attempts)).await;
-        }
+        })
+        .await
+        .map_err(|failure| failure.into_entity_error(id))
     }
 
     /// Commit a read-modify-write and hand back whatever its computation

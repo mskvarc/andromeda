@@ -29,6 +29,7 @@ use andromeda_postgresql_pool::{
     schema_change_lock::{SCHEMA_CHANGE_LOCK_RETRY, is_lock_not_available, schema_change_connect_options},
     sql_state::SqlState,
 };
+use andromeda_retry::tokio_retry_delay::TokioRetryDelay;
 use sqlx::{
     PgPool,
     migrate::{MigrateError, Migrator},
@@ -64,7 +65,9 @@ pub async fn migrate_platform_db(pool: &PgPool) -> Result<(), ContextStoreError>
 /// A migration that waited out its `lock_timeout` rolled back, so running the
 /// migrator again resumes at that migration with nothing half-applied.
 async fn run_migrator(migrator: &Migrator, pool: &PgPool) -> Result<(), MigrateError> {
-    SCHEMA_CHANGE_LOCK_RETRY.run(migration_lock_not_available, || migrator.run(pool)).await
+    SCHEMA_CHANGE_LOCK_RETRY
+        .run(&TokioRetryDelay, |error, _| migration_lock_not_available(error), |_| migrator.run(pool))
+        .await
 }
 
 /// Whether a migration failed because a statement was refused a lock.

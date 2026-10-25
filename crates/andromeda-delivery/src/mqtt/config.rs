@@ -1,5 +1,6 @@
 //! How the MQTT connection pool is tuned.
 
+use andromeda_retry::{growth::Growth, jitter::Jitter, schedule::BackoffSchedule};
 use std::time::Duration;
 
 /// Default number of broker connections held open.
@@ -24,8 +25,10 @@ const RECONNECT_MIN_DELAY: Duration = Duration::from_secs(1);
 /// Longest wait before retrying a broker that refused a connection.
 const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(60);
 
-/// Multiplier applied to the reconnect delay after each failure.
-const RECONNECT_FACTOR: f32 = 2.0;
+/// The wait before redialling a broker that refused a connection: doubling
+/// with each consecutive failure, and jittered upwards so the brokers a network
+/// fault cut off together are not all redialled together.
+const RECONNECT_BACKOFF: BackoffSchedule = BackoffSchedule::new(RECONNECT_MIN_DELAY, RECONNECT_MAX_DELAY, Growth::Doubling).with_jitter(Jitter::Additive);
 
 /// MQTT connection pool configuration.
 #[derive(Debug, Clone)]
@@ -37,7 +40,7 @@ pub struct MqttPoolConfig {
     /// The MQTT keep-alive interval.
     pub keepalive: Duration,
     /// The backoff applied between reconnection attempts.
-    pub reconnect_backoff: backon::ExponentialBuilder,
+    pub reconnect_backoff: BackoffSchedule,
     /// How often connections are swept for having gone quiet.
     pub health_probe_interval: Duration,
     /// How long a `QoS` 1/2 publish waits for the broker's acknowledgement before
@@ -51,12 +54,7 @@ impl Default for MqttPoolConfig {
             max_connections: DEFAULT_MAX_CONNECTIONS,
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
             keepalive: DEFAULT_KEEPALIVE,
-            reconnect_backoff: backon::ExponentialBuilder::default()
-                .with_min_delay(RECONNECT_MIN_DELAY)
-                .with_max_delay(RECONNECT_MAX_DELAY)
-                .with_factor(RECONNECT_FACTOR)
-                .with_jitter()
-                .without_max_times(),
+            reconnect_backoff: RECONNECT_BACKOFF,
             health_probe_interval: DEFAULT_HEALTH_PROBE_INTERVAL,
             publish_ack_timeout: DEFAULT_PUBLISH_ACK_TIMEOUT,
         }

@@ -24,14 +24,16 @@
 use crate::{
     EntityService,
     batch::chunk::{ChunkOutcome, ChunkWrite, GuardedWrite},
+    contended_attempt::ContendedAttempt,
     entity_snapshot::EntitySnapshot,
     error::EntityError,
     side_effect::SideEffectPlacement,
 };
 use andromeda_context_commit::{precondition::Precondition, write_retry::WRITE_ATTEMPTS};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
+use andromeda_retry::retry_policy::RetryAttempt;
 use chrono::Utc;
-use std::{collections::HashSet, future::Future};
+use std::{collections::HashSet, future::Future, mem::take};
 
 /// One batch path's part in a chunk read-modify-write: what it reads besides
 /// the entities' snapshots, and the write it builds for one entity against the
@@ -114,20 +116,32 @@ impl EntityService {
         let _id_guards = self.acquire_id_locks(placement.target(), &chunk_ids).await;
         let now = SystemInstant::new(Utc::now());
 
-        let mut pending = self.rewrite_attempt(placement, rewrite, entries, &chunk_ids, now, &mut settled).await?;
-        for lost_attempts in 1..WRITE_ATTEMPTS {
-            if pending.is_empty() {
-                return Ok(settled);
+        let mut pending = entries;
+        let contended = self
+            .retry_contended(async |attempt| {
+                let entries = take(&mut pending);
+                let remaining = match attempt {
+                    RetryAttempt::First => self.rewrite_attempt(placement, rewrite, entries, &chunk_ids, now, &mut settled).await?,
+                    RetryAttempt::Retry(_) => {
+                        let pending_ids: Vec<Identifier> = entries.iter().map(|entry| R::id(entry).clone()).collect(); // clone: the re-read owns the identifiers
+                        self.rewrite_attempt(placement, rewrite, entries, &pending_ids, now, &mut settled).await?
+                    }
+                };
+                pending = remaining;
+                if pending.is_empty() { Ok(()) } else { Err(ContendedAttempt::Lost) }
+            })
+            .await;
+        match contended {
+            Ok(()) => Ok(settled),
+            Err(ContendedAttempt::Lost) => {
+                settled.errors.extend(pending.iter().map(|entry| {
+                    let id = R::id(entry);
+                    (id.clone(), EntityError::contention(id, WRITE_ATTEMPTS)) // clone: the report owns the identifier it names
+                }));
+                Ok(settled)
             }
-            self.wait_before_retry(lost_attempts).await;
-            let pending_ids: Vec<Identifier> = pending.iter().map(|entry| R::id(entry).clone()).collect(); // clone: the re-read owns the identifiers
-            pending = self.rewrite_attempt(placement, rewrite, pending, &pending_ids, now, &mut settled).await?;
+            Err(ContendedAttempt::Failed(error)) => Err(error),
         }
-        settled.errors.extend(pending.iter().map(|entry| {
-            let id = R::id(entry);
-            (id.clone(), EntityError::contention(id, WRITE_ATTEMPTS)) // clone: the report owns the identifier it names
-        }));
-        Ok(settled)
     }
 
     /// One attempt over the `pending` entities, whose identifiers are `ids`:

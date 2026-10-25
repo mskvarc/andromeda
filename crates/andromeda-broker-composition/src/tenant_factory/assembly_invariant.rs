@@ -5,18 +5,14 @@
 //! an operator reads which part refused and why, not a flattened sentence.
 
 use andromeda_delivery::error::TransportError;
-use andromeda_entity::{error::EntityError, expiry::EntityExpiryBatchSizeError};
+use andromeda_entity::{config::EntityConfigError, error::EntityError, expiry::EntityExpiryBatchSizeError};
 use andromeda_federation::error::FederationError;
 use andromeda_notification::error::NotificationError;
 use andromeda_postgresql_temporal_store::retention_sweep::TemporalRetentionHorizonInvalid;
+use andromeda_retry::schedule_error::BackoffScheduleError;
 use andromeda_snapshot::error::SnapshotError;
-use andromeda_task_runtime::{
-    periodic_trigger::PeriodicScheduleError,
-    registration::TaskRegistrationError,
-    task_name::TaskNameError,
-    wake_trigger::DrainFallbackPolicyError,
-};
-use andromeda_temporal::{config_error::TemporalConfigError, intent_retry_policy::RetryCeilingBelowBase};
+use andromeda_task_runtime::{periodic_trigger::PeriodicScheduleError, registration::TaskRegistrationError, task_name::TaskNameError};
+use andromeda_temporal::config_error::TemporalConfigError;
 use thiserror::Error;
 
 /// A setting that must name a positive count.
@@ -61,19 +57,24 @@ pub(super) enum AssemblyInvariant {
     Schedule(#[from] PeriodicScheduleError),
     /// A drain's fallback interval names no usable policy.
     #[error("a drain fallback policy is not valid: {0}")]
-    DrainFallback(#[from] DrainFallbackPolicyError),
+    DrainFallback(#[from] BackoffScheduleError),
     /// The task supervisor refused a registration.
     #[error("the task supervisor refused a registration: {0}")]
     Registration(#[from] TaskRegistrationError),
-    /// The temporal intent retry ceiling is below its base.
-    #[error("the temporal intent retry policy is not valid: {0}")]
-    IntentRetry(#[from] RetryCeilingBelowBase),
     /// A count setting is zero.
     #[error("{0} must be non-zero")]
     ZeroCount(CountSetting),
     /// A retention age is past the range a signed duration represents.
     #[error("{0} is out of range")]
     RetentionOutOfRange(RetentionSetting),
+    /// The temporal intent retry schedule the configuration names is not
+    /// valid.
+    #[error("the temporal intent retry policy is not valid: {0}")]
+    IntentRetry(#[source] TemporalConfigError),
+    /// The pending side-effect retry schedule the configuration names is not
+    /// valid.
+    #[error("the pending side-effect retry schedule is not valid: {0}")]
+    SideEffectRetry(#[source] EntityConfigError),
     /// The temporal storage policy the configuration names is not valid.
     #[error("the temporal storage policy is not valid: {0}")]
     StoragePolicy(#[from] TemporalConfigError),

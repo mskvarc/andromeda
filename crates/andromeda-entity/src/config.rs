@@ -4,10 +4,20 @@ use andromeda_configuration_scalars::human_duration::HumanDuration;
 use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use andromeda_ngsi_ld_representation::{attribute_nesting::AttributeNestingLimit, payload_budget::EntityPayloadBudget};
+use andromeda_retry::{growth::Growth, retry_number::RetryNumber, schedule::BackoffSchedule, schedule_error::BackoffScheduleError};
 use serde::{Deserialize, Serialize};
-use std::{num::NonZeroUsize, time::Duration};
+use std::{
+    num::{NonZeroU32, NonZeroUsize},
+    time::Duration,
+};
 use thiserror::Error;
 use toml_comment::TomlComment;
+
+/// The retry from which a failed side-effect job's backoff stops doubling.
+///
+/// Fifteen doublings take the default two-second base past eighteen hours, so
+/// a job that keeps failing still comes due again within a day.
+pub const PENDING_SIDE_EFFECTS_LAST_GROWING_RETRY: RetryNumber = RetryNumber::new(NonZeroU32::MIN.saturating_add(15));
 
 /// How much longer than the connection acquire deadline a side-effect lease
 /// must run.
@@ -85,9 +95,9 @@ pub enum EntityConfigError {
     /// Pending side-effect attempt limit was configured as zero.
     #[error("entity.pending_side_effects_max_attempts must be at least 1")]
     ZeroPendingSideEffectsMaxAttempts,
-    /// Pending side-effect backoff was configured as zero.
-    #[error("entity.pending_side_effects_base_backoff must be greater than zero")]
-    ZeroPendingSideEffectsBaseBackoff,
+    /// Pending side-effect backoff does not bound a retry schedule.
+    #[error("entity.pending_side_effects_base_backoff does not form a retry schedule: {0}")]
+    PendingSideEffectsRetrySchedule(#[source] BackoffScheduleError),
     /// Dead-lettered side-effect retention was configured as zero.
     #[error("entity.pending_side_effects_dead_letter_after must be greater than zero")]
     ZeroPendingSideEffectsDeadLetterRetention,
@@ -280,9 +290,7 @@ impl EntityConfig {
         if self.pending_side_effects_max_attempts == 0 {
             return Err(EntityConfigError::ZeroPendingSideEffectsMaxAttempts);
         }
-        if self.pending_side_effects_base_backoff.is_zero() {
-            return Err(EntityConfigError::ZeroPendingSideEffectsBaseBackoff);
-        }
+        self.pending_side_effects_retry_schedule()?;
         if self.pending_side_effects_dead_letter_after.is_zero() {
             return Err(EntityConfigError::ZeroPendingSideEffectsDeadLetterRetention);
         }
@@ -300,6 +308,20 @@ impl EntityConfig {
             });
         }
         Ok(())
+    }
+
+    /// The schedule a failed side-effect job is retried on: doubling from
+    /// `pending_side_effects_base_backoff` until
+    /// [`PENDING_SIDE_EFFECTS_LAST_GROWING_RETRY`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityConfigError::PendingSideEffectsRetrySchedule`] when the
+    /// base backoff is zero.
+    pub fn pending_side_effects_retry_schedule(&self) -> Result<BackoffSchedule, EntityConfigError> {
+        let first = self.pending_side_effects_base_backoff.duration();
+        let ceiling = Growth::Doubling.grow(first, PENDING_SIDE_EFFECTS_LAST_GROWING_RETRY);
+        BackoffSchedule::validated(first, ceiling, Growth::Doubling).map_err(EntityConfigError::PendingSideEffectsRetrySchedule)
     }
 
     /// Check that the side-effect lease outlasts the wait between a job's

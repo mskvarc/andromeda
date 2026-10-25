@@ -9,6 +9,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+andromeda-retry.workspace = true
 andromeda-telemetry.workspace = true
 compact_str = "0.10.0"
 dashmap = "6.2.1"

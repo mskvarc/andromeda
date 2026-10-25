@@ -130,8 +130,8 @@ pub(crate) mod window_relationship_read;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
-        "andromeda-context-space",
         "andromeda-context-commit",
+        "andromeda-context-space",
         "andromeda-entity",
         "andromeda-ngsi-ld-entity",
         "andromeda-ngsi-ld-geometry",
@@ -143,15 +143,16 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-persistence-failure",
         "andromeda-postgresql-attribute-instance",
         "andromeda-postgresql-branch",
-        "andromeda-postgresql-name-dictionary",
-        "andromeda-postgresql-pool",
         "andromeda-postgresql-codes",
         "andromeda-postgresql-collation",
         "andromeda-postgresql-encoding",
+        "andromeda-postgresql-name-dictionary",
+        "andromeda-postgresql-pool",
         "andromeda-postgresql-query",
         "andromeda-postgresql-schema",
         "andromeda-postgresql-seaquery",
         "andromeda-postgresql-temporal-query",
+        "andromeda-retry",
         "andromeda-telemetry",
         "andromeda-temporal",
     ],

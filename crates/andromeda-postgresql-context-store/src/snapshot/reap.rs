@@ -21,7 +21,6 @@ use crate::{
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::SNAPSHOT_SCHEMA_PATTERN;
-use andromeda_postgresql_pool::contention_retry::ContentionRetry;
 use andromeda_postgresql_schema::snapshot::Snapshots;
 use andromeda_postgresql_seaquery::{
     advisory_lock::try_advisory_xact_lock,
@@ -30,6 +29,7 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
     statement::Statement,
 };
+use andromeda_retry::{retry_number::RetryNumber, retry_policy::RetryPolicy, schedule::BackoffSchedule, tokio_retry_delay::TokioRetryDelay};
 use andromeda_snapshot::error::SnapshotError;
 use chrono::{DateTime, Utc};
 use sea_query::{Alias, Expr, ExprTrait, LockType, Query, SelectStatement};
@@ -44,13 +44,13 @@ use tracing::info;
 /// PostgreSQL rolls the victim's whole transaction back, so re-running it from a
 /// fresh transaction clears the contention. Kept small because heavy contention
 /// is rare and each attempt re-runs the entire delete.
-const BRANCH_REAP_RETRY: ContentionRetry<Duration> = ContentionRetry {
+const BRANCH_REAP_RETRY: RetryPolicy = RetryPolicy {
     attempts: NonZeroU32::MIN.saturating_add(4),
-    pause: Duration::from_millis(50),
+    schedule: BackoffSchedule::constant(Duration::from_millis(50)),
 };
 
 /// Whether a reap failed because a deadlock rolled its transaction back.
-const fn is_contended(error: &SnapshotError) -> bool {
+const fn is_contended(error: &SnapshotError, _retry: RetryNumber) -> bool {
     matches!(error, SnapshotError::Contended)
 }
 
@@ -59,7 +59,9 @@ const fn is_contended(error: &SnapshotError) -> bool {
 /// transaction a deadlock with branch delivery rolls back, up to
 /// [`BRANCH_REAP_RETRY`] attempts.
 pub(crate) async fn delete_snapshot(pool: &PgPool, id: &Identifier) -> Result<u64, SnapshotError> {
-    BRANCH_REAP_RETRY.run(is_contended, async || delete_snapshot_once(pool, id).await).await
+    BRANCH_REAP_RETRY
+        .run(&TokioRetryDelay, is_contended, async |_| delete_snapshot_once(pool, id).await)
+        .await
 }
 
 /// Delete one Snapshot's control record and branch schema in a single
@@ -93,9 +95,11 @@ async fn delete_snapshot_once(pool: &PgPool, id: &Identifier) -> Result<u64, Sna
 /// expired Snapshots deleted.
 pub(crate) async fn delete_expired_snapshots(pool: &PgPool, cutoff: DateTime<Utc>) -> Result<u64, SnapshotError> {
     let deleted = BRANCH_REAP_RETRY
-        .run(is_contended, async || delete_expired_snapshots_once(pool, cutoff).await)
+        .run(&TokioRetryDelay, is_contended, async |_| delete_expired_snapshots_once(pool, cutoff).await)
         .await?;
-    let swept = BRANCH_REAP_RETRY.run(is_contended, async || sweep_orphan_branches_once(pool).await).await?;
+    let swept = BRANCH_REAP_RETRY
+        .run(&TokioRetryDelay, is_contended, async |_| sweep_orphan_branches_once(pool).await)
+        .await?;
     if swept > 0 {
         info!(
             swept_snapshots = swept,

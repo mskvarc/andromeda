@@ -139,6 +139,7 @@ andromeda-postgresql-seaquery = { path = "crates/andromeda-postgresql-seaquery" 
 andromeda-postgresql-temporal-query = { path = "crates/andromeda-postgresql-temporal-query" }
 andromeda-postgresql-temporal-store = { path = "crates/andromeda-postgresql-temporal-store" }
 andromeda-registration = { path = "crates/andromeda-registration" }
+andromeda-retry = { path = "crates/andromeda-retry" }
 andromeda-server-tls = { path = "crates/andromeda-server-tls" }
 andromeda-snapshot = { path = "crates/andromeda-snapshot" }
 andromeda-spatial-index = { path = "crates/andromeda-spatial-index" }

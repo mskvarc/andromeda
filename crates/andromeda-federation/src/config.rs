@@ -1,6 +1,7 @@
 //! Federation operation configuration.
 
 use andromeda_configuration_scalars::human_duration::HumanDuration;
+use andromeda_retry::{growth::Growth, jitter::Jitter, schedule::BackoffSchedule, schedule_error::BackoffScheduleError};
 use serde::{Deserialize, Serialize};
 use std::{num::NonZeroU32, time::Duration};
 use thiserror::Error;
@@ -85,12 +86,10 @@ pub enum FederationConfigError {
     /// Connecting to a source needs a positive deadline.
     #[error("federation.connect_timeout must be greater than zero")]
     ZeroConnectTimeout,
-    /// A cooldown that holds sources back needs a positive window.
-    #[error("federation.cooldown_window must be greater than zero unless federation.cooldown_mode is off")]
-    ZeroCooldownWindow,
-    /// An exponential cooldown cannot be capped below its first window.
-    #[error("federation.cooldown_max must not be below federation.cooldown_window when federation.cooldown_mode is exponential")]
-    CooldownMaxBelowWindow,
+    /// A cooldown that holds sources back needs a positive window, and an
+    /// exponential one a cap no shorter than its first window.
+    #[error("federation.cooldown_window and federation.cooldown_max do not form a cooldown schedule unless federation.cooldown_mode is off: {0}")]
+    CooldownSchedule(#[source] BackoffScheduleError),
 }
 
 /// The default of [`FederationConfig::max_query_entities`]: ten times the
@@ -169,7 +168,7 @@ impl FederationConfig {
     /// forwarding slot is allowed, [`FederationConfigError::ZeroRequestTimeout`]
     /// when the per-request deadline is zero, and
     /// [`FederationConfigError::ZeroConnectTimeout`] when the connection
-    /// deadline is zero, and the errors of [`Self::validate_cooldown`].
+    /// deadline is zero, and the errors of [`Self::cooldown_schedule`].
     pub const fn validate(&self) -> Result<(), FederationConfigError> {
         if self.forward_concurrency == 0 {
             return Err(FederationConfigError::ZeroForwardConcurrency);
@@ -180,24 +179,36 @@ impl FederationConfig {
         if self.connect_timeout.is_zero() {
             return Err(FederationConfigError::ZeroConnectTimeout);
         }
-        self.validate_cooldown()
+        match self.cooldown_schedule() {
+            Ok(_) => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 
-    /// Validate the broker cooldown policy.
+    /// The windows the broker holds a failed source back for: none when the
+    /// mode is `off`, `cooldown_window` after every failure when `constant`,
+    /// and when `exponential` a window doubling from `cooldown_window` with
+    /// each failure of an unbroken episode, jittered upwards by up to itself
+    /// and never past `cooldown_max`.
     ///
     /// # Errors
     ///
-    /// Returns [`FederationConfigError::ZeroCooldownWindow`] when a mode other
-    /// than `off` has a zero window, and
-    /// [`FederationConfigError::CooldownMaxBelowWindow`] when an `exponential`
-    /// cap is below its first window.
-    pub const fn validate_cooldown(&self) -> Result<(), FederationConfigError> {
-        match self.cooldown_mode {
-            CooldownMode::Constant | CooldownMode::Exponential if self.cooldown_window.is_zero() => Err(FederationConfigError::ZeroCooldownWindow),
-            CooldownMode::Exponential if self.cooldown_max.duration().as_nanos() < self.cooldown_window.duration().as_nanos() => {
-                Err(FederationConfigError::CooldownMaxBelowWindow)
-            }
-            CooldownMode::Off | CooldownMode::Constant | CooldownMode::Exponential => Ok(()),
+    /// Returns [`FederationConfigError::CooldownSchedule`] when a mode other
+    /// than `off` has a zero window, or an `exponential` cap is below its
+    /// first window.
+    pub const fn cooldown_schedule(&self) -> Result<Option<BackoffSchedule>, FederationConfigError> {
+        let window = self.cooldown_window.duration();
+        let schedule = match self.cooldown_mode {
+            CooldownMode::Off => return Ok(None),
+            CooldownMode::Constant => BackoffSchedule::validated(window, window, Growth::Doubling),
+            CooldownMode::Exponential => match BackoffSchedule::validated(window, self.cooldown_max.duration(), Growth::Doubling) {
+                Ok(schedule) => Ok(schedule.with_jitter(Jitter::Additive)),
+                Err(error) => Err(error),
+            },
+        };
+        match schedule {
+            Ok(schedule) => Ok(Some(schedule)),
+            Err(error) => Err(FederationConfigError::CooldownSchedule(error)),
         }
     }
 
@@ -230,6 +241,7 @@ mod tests {
         SplitEntitiesDefault,
     };
     use andromeda_configuration_scalars::human_duration::HumanDuration;
+    use andromeda_retry::schedule_error::BackoffScheduleError;
     use std::time::Duration;
 
     fn config() -> FederationConfig {
@@ -310,8 +322,9 @@ mod tests {
             cooldown_window: HumanDuration::from_millis(0),
             ..config()
         };
-        assert_eq!(zero(CooldownMode::Constant).validate(), Err(FederationConfigError::ZeroCooldownWindow));
-        assert_eq!(zero(CooldownMode::Exponential).validate(), Err(FederationConfigError::ZeroCooldownWindow));
+        let refused = Err(FederationConfigError::CooldownSchedule(BackoffScheduleError::ZeroFirst));
+        assert_eq!(zero(CooldownMode::Constant).validate(), refused);
+        assert_eq!(zero(CooldownMode::Exponential).validate(), refused);
         assert!(zero(CooldownMode::Off).validate().is_ok());
     }
 
@@ -322,7 +335,10 @@ mod tests {
             cooldown_max: HumanDuration::from_secs(5),
             ..config()
         };
-        assert_eq!(config.validate(), Err(FederationConfigError::CooldownMaxBelowWindow));
+        assert_eq!(
+            config.validate(),
+            Err(FederationConfigError::CooldownSchedule(BackoffScheduleError::CeilingBelowFirst))
+        );
     }
 
     #[test]

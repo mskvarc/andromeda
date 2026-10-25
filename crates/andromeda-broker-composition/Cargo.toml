@@ -59,6 +59,7 @@ andromeda-postgresql-name-dictionary.workspace = true
 andromeda-postgresql-pool.workspace = true
 andromeda-postgresql-temporal-store.workspace = true
 andromeda-registration.workspace = true
+andromeda-retry = { workspace = true, features = ["tokio"] }
 andromeda-server-tls.workspace = true
 andromeda-snapshot.workspace = true
 andromeda-spatial-index.workspace = true

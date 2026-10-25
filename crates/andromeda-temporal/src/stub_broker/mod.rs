@@ -19,7 +19,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     change_notifier::{ChangeNotifier, SubscriptionMatching},
     config::EntityConfig,
-    port::{reader::EntityReader, retry_delay::RetryDelay},
+    port::reader::EntityReader,
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_linked_retrieval::admission::TemporalJoin;
@@ -38,6 +38,7 @@ use andromeda_ngsi_ld_query::{
     geo::near_distance_band::NearDistanceBand,
     split_filter::LeafTruths,
 };
+use andromeda_retry::retry_delay::RetryDelay;
 use async_trait::async_trait;
 use std::{
     collections::HashMap,

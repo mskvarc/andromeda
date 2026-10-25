@@ -13,3 +13,10 @@
 pub mod header_section_limit;
 pub mod human_byte_size;
 pub mod human_duration;
+
+#[cfg(test)]
+andromeda_architecture_checks::dependency_boundary! {
+    allow_workspace_dependencies: [],
+    allow_workspace_dev_dependencies: [],
+    allow_production_dependencies: [],
+}

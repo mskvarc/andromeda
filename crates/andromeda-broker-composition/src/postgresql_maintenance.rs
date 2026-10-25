@@ -11,6 +11,7 @@ use andromeda_postgresql_maintenance::{
     expected_deployment::ExpectedDeployment,
     policy::PolicyProfile,
 };
+use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
     failure::{FailureClass, TaskFailure},
@@ -58,7 +59,7 @@ pub(crate) fn register_postgresql_maintenance(
     let registration = TaskRegistration::new(
         TaskName::try_from("postgresql-maintenance")?,
         TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, profile.cadence, profile.cadence),
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(profile.cadence)),
         ShutdownPolicy::new(Duration::from_secs(30)),
     );
     let controller = Arc::new(MaintenanceController::new(platform_pool, direct_url, config, acquire_timeout, expected));

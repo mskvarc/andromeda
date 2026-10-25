@@ -10,3 +10,12 @@ pub mod context_target;
 pub mod snapshot_branch;
 pub mod snapshot_key;
 pub mod snapshot_target;
+
+#[cfg(test)]
+andromeda_architecture_checks::dependency_boundary! {
+    allow_workspace_dependencies: [
+        "andromeda-ngsi-ld-lexicon",
+    ],
+    allow_workspace_dev_dependencies: [],
+    allow_production_dependencies: [],
+}

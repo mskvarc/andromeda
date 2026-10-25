@@ -13,7 +13,7 @@ use crate::{
         health::MqttConnectionHealthSummary,
     },
 };
-use backon::BackoffBuilder;
+use andromeda_retry::cursor::BackoffCursor;
 use dashmap::DashMap;
 use std::{sync::Arc, time::Duration};
 use tokio::{
@@ -22,9 +22,6 @@ use tokio::{
     time::{Instant, interval as tokio_interval},
 };
 use tracing::{debug, info};
-
-/// The delay used when the backoff sequence has nothing left to give.
-const BACKOFF_EXHAUSTED_DELAY: Duration = Duration::from_secs(60);
 
 /// How many keep-alive intervals of silence make a connection degraded.
 const DEGRADED_AFTER_KEEPALIVES: u64 = 2;
@@ -194,10 +191,10 @@ impl MqttTransportPool {
     fn advance_backoff(&self, key: &MqttConnectionKey) {
         // clone: the map owns the key; the backoff outlives this call
         let mut state = self.reconnect.entry(key.clone()).or_insert_with(|| ReconnectState {
-            backoff: self.config.reconnect_backoff.build(),
+            backoff: BackoffCursor::new(self.config.reconnect_backoff),
             next_attempt_at: Instant::now(),
         });
-        let delay = state.backoff.next().unwrap_or(BACKOFF_EXHAUSTED_DELAY);
+        let delay = state.backoff.advance();
         state.next_attempt_at = Instant::now() + delay;
     }
 
@@ -296,7 +293,7 @@ mod tests {
             pool::MqttTransportPool,
         },
     };
-    use backon::ExponentialBuilder;
+    use andromeda_retry::{growth::Growth, schedule::BackoffSchedule};
     use pretty_assertions::assert_eq;
     use std::{
         future::pending,
@@ -389,10 +386,7 @@ mod tests {
         // A short, jitter-free backoff so the test's timing is deterministic.
         let config = MqttPoolConfig {
             connect_timeout: Duration::from_secs(2),
-            reconnect_backoff: ExponentialBuilder::default()
-                .with_min_delay(Duration::from_millis(200))
-                .with_max_delay(Duration::from_millis(400))
-                .without_max_times(),
+            reconnect_backoff: BackoffSchedule::new(Duration::from_millis(200), Duration::from_millis(400), Growth::Doubling),
             ..MqttPoolConfig::default()
         };
         let pool = MqttTransportPool::new(config, Arc::new(RumqttcDialer));

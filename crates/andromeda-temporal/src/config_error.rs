@@ -1,6 +1,7 @@
 //! The ways a temporal policy configuration is refused as it is read.
 
 use crate::config::{AGGREGATION_INSTANCE_BUDGET_CEILING, MAX_EDGE_GROUP_CEILING, MAX_LAST_N_CEILING};
+use andromeda_retry::schedule_error::BackoffScheduleError;
 use thiserror::Error;
 
 /// Invalid temporal policy configuration.
@@ -47,12 +48,10 @@ pub enum TemporalConfigError {
     /// Intent lease duration was configured as zero.
     #[error("temporal.intent_lease must be greater than zero")]
     ZeroIntentLease,
-    /// Intent retry delay was configured as zero.
-    #[error("temporal.intent_retry must be greater than zero")]
-    ZeroIntentRetry,
-    /// Intent retry ceiling was configured below the base delay.
-    #[error("temporal.intent_retry_max must be at least temporal.intent_retry")]
-    IntentRetryCeilingBelowBase,
+    /// `temporal.intent_retry` and `temporal.intent_retry_max` do not bound a
+    /// retry schedule: the delay is zero or the ceiling is below it.
+    #[error("temporal.intent_retry and temporal.intent_retry_max do not form a retry schedule: {0}")]
+    IntentRetry(#[source] BackoffScheduleError),
     /// The stuck-intent warning threshold was configured as zero.
     #[error("temporal.intent_stuck_after_attempts must be at least 1")]
     ZeroIntentStuckThreshold,

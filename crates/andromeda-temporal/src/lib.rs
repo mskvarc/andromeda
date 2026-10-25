@@ -145,6 +145,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-request",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-persistence-failure",
+        "andromeda-retry",
         "andromeda-telemetry",
     ],
     allow_workspace_dev_dependencies: [

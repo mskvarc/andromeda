@@ -13,8 +13,9 @@ use crate::{
     supervisor::TaskSupervisor,
     task_health::TaskHealthState,
     task_name::{TaskName, TaskNameError},
-    wake_trigger::{DrainFallbackPolicy, DrainFallbackPolicyError, WakeRequest, wake_channel},
+    wake_trigger::{DrainFallbackPolicy, WakeRequest, wake_channel},
 };
+use andromeda_retry::{growth::Growth, schedule::BackoffSchedule, schedule_error::BackoffScheduleError};
 use pretty_assertions::assert_eq;
 use std::{
     future,
@@ -68,7 +69,7 @@ enum TestError {
     #[error(transparent)]
     Join(#[from] JoinError),
     #[error(transparent)]
-    DrainPolicy(#[from] DrainFallbackPolicyError),
+    DrainPolicy(#[from] BackoffScheduleError),
 }
 
 fn registration(name: &str, restart_policy: RestartPolicy, grace: Duration) -> Result<TaskRegistration, TestError> {
@@ -272,7 +273,7 @@ async fn unexpected_resident_completion_consults_restart_policy() -> Result<(), 
     let task = ResidentTask::new(
         registration(
             "resident-complete",
-            RestartPolicy::transient(1, Duration::from_secs(1), Duration::from_secs(1)),
+            RestartPolicy::transient(1, BackoffSchedule::new(Duration::from_secs(1), Duration::from_secs(1), Growth::Doubling)),
             Duration::from_secs(1),
         )?,
         move |_| {
@@ -304,7 +305,7 @@ async fn transient_restarts_follow_one_and_two_second_backoff() -> Result<(), Te
     let task = ResidentTask::new(
         registration(
             "resident-backoff",
-            RestartPolicy::transient(3, Duration::from_secs(1), Duration::from_secs(2)),
+            RestartPolicy::transient(3, BackoffSchedule::new(Duration::from_secs(1), Duration::from_secs(2), Growth::Doubling)),
             Duration::from_secs(1),
         )?,
         move |execution| {
@@ -350,7 +351,7 @@ async fn resident_readiness_resets_failures_before_an_immediate_later_failure() 
     let task = ResidentTask::new(
         registration(
             "resident-readiness-reset",
-            RestartPolicy::transient(3, Duration::from_secs(1), Duration::from_secs(2)),
+            RestartPolicy::transient(3, BackoffSchedule::new(Duration::from_secs(1), Duration::from_secs(2), Growth::Doubling)),
             Duration::from_secs(1),
         )?,
         move |execution| {
@@ -393,7 +394,7 @@ async fn permanent_failure_does_not_restart() -> Result<(), TestError> {
     let task = ResidentTask::new(
         registration(
             "permanent",
-            RestartPolicy::transient(5, Duration::from_secs(1), Duration::from_secs(2)),
+            RestartPolicy::transient(5, BackoffSchedule::new(Duration::from_secs(1), Duration::from_secs(2), Growth::Doubling)),
             Duration::from_secs(1),
         )?,
         move |_| {
@@ -751,7 +752,7 @@ async fn health_transitions_from_backoff_to_success_and_resets_failures() -> Res
     let task = ScheduledTask::new(
         registration(
             "health-transition",
-            RestartPolicy::transient(1, Duration::from_secs(1), Duration::from_secs(1)),
+            RestartPolicy::transient(1, BackoffSchedule::new(Duration::from_secs(1), Duration::from_secs(1), Growth::Doubling)),
             Duration::from_secs(1),
         )?,
         schedule(Duration::from_secs(60), InitialExecution::Immediate)?,

@@ -27,6 +27,7 @@ use andromeda_entity::{
 use andromeda_entity_map::{error::EntityMapError, expiry::EntityMapExpiry, store::EntityMapStore};
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
 use andromeda_registration::{RegistrationChangeSink, expiry::RegistrationExpiry, removal_hook::RegistrationRemovalHook, store::RegistrationStore};
+use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_subscription::{expiry::SubscriptionExpiry, lifecycle::SubscriptionService, variant::SubscriptionVariant};
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
@@ -125,7 +126,7 @@ fn register_cached_context_invalidation(
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, CACHED_CONTEXT_INVALIDATION_INTERVAL, CACHED_CONTEXT_INVALIDATION_INTERVAL),
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(CACHED_CONTEXT_INVALIDATION_INTERVAL)),
         ShutdownPolicy::new(CACHED_CONTEXT_INVALIDATION_INTERVAL),
     );
     let task = ScheduledTask::new(registration, schedule, move |_execution| {
@@ -160,7 +161,7 @@ fn register_entity_expiry(
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, cadence, cadence),
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(cadence)),
         ShutdownPolicy::new(cadence),
     );
     let expiry_batch_size = EntityExpiryBatchSize::try_from(expiry_batch_size).map_err(AssemblyInvariant::from)?;
@@ -205,7 +206,7 @@ where
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, cadence, cadence),
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(cadence)),
         ShutdownPolicy::new(cadence),
     );
     let expiry = Arc::new(SubscriptionExpiry::new(target, policy));
@@ -253,7 +254,7 @@ fn register_registration_expiry(
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, cadence, cadence),
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(cadence)),
         ShutdownPolicy::new(cadence),
     );
     let expiry = Arc::new(RegistrationExpiry::new(store, Some(change_sink), removal_hook));
@@ -291,7 +292,7 @@ fn register_entity_map_expiry(
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, cadence, cadence),
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(cadence)),
         ShutdownPolicy::new(cadence),
     );
     let expiry = Arc::new(EntityMapExpiry::new(store));
