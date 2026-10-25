@@ -346,7 +346,7 @@ mod tests {
             "entities": [{"type": "Vehicle"}],
             "watchedAttributes": ["speed"],
             "scopeQ": "/Madrid",
-            "geoQ": {"georel": "within", "geometry": "Polygon", "coordinates": [[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 0.0]]]},
+            "geoQ": {"georel": "within", "geometry": "Polygon", "coordinates": [[[0, 0], [10, 0], [10, 10], [0, 0]]]},
             "temporalQ": {"timeAt": "2024-01-01T00:00:00Z", "timerel": "between", "endTimeAt": "2024-02-01T00:00:00Z", "timeproperty": "createdAt"},
             "csf": "tier==\"gold\"",
             "throttling": 2.5,

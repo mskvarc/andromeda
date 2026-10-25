@@ -156,7 +156,7 @@ fn temporal_values_of_each_family_use_its_plural_member() {
     let at = "2025-01-01T00:00:00Z";
     let body = evolution(json!({
         "speed": [{"type": "Property", "value": 25, "observedAt": at}],
-        "location": [{"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0]}, "observedAt": at}],
+        "location": [{"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1, 2]}, "observedAt": at}],
         "spouse": [{"type": "Relationship", "object": "urn:ngsi-ld:Person:1", "observedAt": at}],
         "says": [{"type": "LanguageProperty", "languageMap": {"en": "yes"}, "observedAt": at}],
         "gender": [{"type": "VocabProperty", "vocab": "Male", "observedAt": at}],
@@ -167,7 +167,7 @@ fn temporal_values_of_each_family_use_its_plural_member() {
     }));
     let result = written(&body, VALUES, None, None);
     assert_eq!(result["speed"]["values"], json!([[25, at]]));
-    assert_eq!(result["location"]["values"], json!([[{"type": "Point", "coordinates": [1.0, 2.0]}, at]]));
+    assert_eq!(result["location"]["values"], json!([[{"type": "Point", "coordinates": [1, 2]}, at]]));
     assert_eq!(result["spouse"]["objects"], json!([["urn:ngsi-ld:Person:1", at]]));
     assert_eq!(result["says"]["languageMaps"], json!([[{"languageMap": {"en": "yes"}}, at]]));
     assert_eq!(result["gender"]["vocabs"], json!([[{"vocab": "Male"}, at]]));

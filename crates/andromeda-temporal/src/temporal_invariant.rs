@@ -6,6 +6,7 @@
 
 use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
+use andromeda_ngsi_ld_expansion::assembly_error::UnspellableOrdinate;
 use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReferenceError, time::date_time::NgsiLdDateTimeError};
 use andromeda_ngsi_ld_render::temporal::history_row::HistoryRowRenderError;
 use chrono::OutOfRangeError;
@@ -20,6 +21,10 @@ pub enum TemporalInvariant {
     /// A temporal entity the broker assembled could not be compacted.
     #[error("an assembled temporal entity does not compact: {0}")]
     Compaction(#[source] CompactionError),
+    /// A geometry held as a Property value has an ordinate with no JSON number,
+    /// although every ordinate the broker holds is finite.
+    #[error("{0}")]
+    UnspellableOrdinate(#[source] UnspellableOrdinate),
     /// A JSON literal merged into a stored one could not be written back.
     #[error("a merged JSON literal could not be written: {0}")]
     LiteralMerge(#[source] JsonLiteralError),

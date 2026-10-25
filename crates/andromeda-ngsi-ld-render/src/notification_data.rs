@@ -109,7 +109,7 @@ mod tests {
         serde_json::from_value(json!({
             "id": id,
             "type": "Building",
-            "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [4.0, 52.0]}}
+            "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [4, 52]}}
         }))
         .expect("a Building")
     }
@@ -193,7 +193,7 @@ mod tests {
         pretty_assertions::assert_eq!(features.len(), 2);
         for feature in features {
             pretty_assertions::assert_eq!(feature["type"], json!("Feature"));
-            pretty_assertions::assert_eq!(feature["geometry"], json!({"type": "Point", "coordinates": [4.0, 52.0]}));
+            pretty_assertions::assert_eq!(feature["geometry"], json!({"type": "Point", "coordinates": [4, 52]}));
             assert!(feature.get("@context").is_none(), "{feature}");
             assert!(feature["properties"].get("@context").is_none(), "{feature}");
         }

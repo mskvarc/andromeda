@@ -172,8 +172,8 @@ mod tests {
             "id": "urn:ngsi-ld:ContextSourceRegistration:merge",
             "type": "ContextSourceRegistration",
             "information": [{"propertyNames": ["speed"]}],
-            "location": {"type": "Point", "coordinates": [1.0, 2.0]},
-            "operationSpace": {"type": "Point", "coordinates": [3.0, 4.0]},
+            "location": {"type": "Point", "coordinates": [1, 2]},
+            "operationSpace": {"type": "Point", "coordinates": [3, 4]},
             "endpoint": "https://source.example.com/",
             "createdAt": "2024-01-01T00:00:00Z",
             "modifiedAt": "2024-01-02T00:00:00Z",
@@ -228,7 +228,7 @@ mod tests {
     /// deletes it, and a value replaces it.
     #[test]
     fn a_geometry_is_kept_removed_or_replaced_as_the_fragment_says() {
-        let replacement = serde_json::from_value(json!({"type": "Point", "coordinates": [9.0, 9.0]})).expect("a geometry");
+        let replacement = serde_json::from_value(json!({"type": "Point", "coordinates": [9, 9]})).expect("a geometry");
         let fragment = CsrUpdateFragment {
             location: Clearable::Absent,
             observation_space: Clearable::NgsiLdNull,
@@ -240,14 +240,14 @@ mod tests {
 
         pretty_assertions::assert_eq!(
             resolved.location.map(|geometry| serde_json::to_value(geometry).expect("a geometry writes")),
-            Some(json!({"type": "Point", "coordinates": [1.0, 2.0]}))
+            Some(json!({"type": "Point", "coordinates": [1, 2]}))
         );
         assert!(resolved.observation_space.is_none());
         pretty_assertions::assert_eq!(
             resolved
                 .operation_space
                 .map(|geometry| serde_json::to_value(geometry).expect("a geometry writes")),
-            Some(json!({"type": "Point", "coordinates": [9.0, 9.0]}))
+            Some(json!({"type": "Point", "coordinates": [9, 9]}))
         );
     }
 }

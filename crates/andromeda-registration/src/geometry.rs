@@ -140,24 +140,24 @@ mod tests {
 
     #[test]
     fn geo_property_wrapper_returns_inner_value() {
-        let input = json!({ "type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0]} });
+        let input = json!({ "type": "GeoProperty", "value": {"type": "Point", "coordinates": [1, 2]} });
         let geometry = read(&input).expect("decode");
         pretty_assertions::assert_eq!(
             serde_json::to_value(&geometry).expect("serialize"),
-            json!({"type": "Point", "coordinates": [1.0, 2.0]})
+            json!({"type": "Point", "coordinates": [1, 2]})
         );
     }
 
     #[test]
     fn raw_geojson_returns_as_is() {
-        let input = json!({"type": "Point", "coordinates": [1.0, 2.0]});
+        let input = json!({"type": "Point", "coordinates": [1, 2]});
         let geometry = read(&input).expect("decode");
         pretty_assertions::assert_eq!(serde_json::to_value(&geometry).expect("serialize"), input);
     }
 
     #[test]
     fn invalid_geometry_returns_error() {
-        let input = json!({ "type": "Property", "value": {"type": "Point", "coordinates": [1.0, 2.0]} });
+        let input = json!({ "type": "Property", "value": {"type": "Point", "coordinates": [1, 2]} });
         assert!(read(&input).is_err());
     }
 
@@ -165,7 +165,7 @@ mod tests {
     /// off the CRS84 axes, as it does anywhere a geometry is read.
     #[test]
     fn a_refused_geometry_names_why() {
-        let error = read(&json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [0.0, 91.0]}})).expect_err("latitude 91");
+        let error = read(&json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [0, 91]}})).expect_err("latitude 91");
         assert!(error.to_string().contains("latitude 91 is outside [-90, 90]"), "{error}");
     }
 
@@ -173,7 +173,7 @@ mod tests {
     /// entity model reads; a registration holds the geometry object itself.
     #[test]
     fn a_geometry_written_as_a_string_is_no_registration_geometry() {
-        let encoded = serde_json::Value::String(json!({"type": "Point", "coordinates": [1.0, 2.0]}).to_string());
+        let encoded = serde_json::Value::String(json!({"type": "Point", "coordinates": [1, 2]}).to_string());
         assert!(read(&encoded).is_err());
     }
 

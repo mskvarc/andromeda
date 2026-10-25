@@ -5,9 +5,11 @@
 //! and positions, its `bbox` and its foreign members (sections 5 and 6.1).
 //! Writing the positions one ordinate at a time into the serializer is what
 //! keeps a geometry of a million positions from being copied into any
-//! intermediate tree on its way to the wire. Each ordinate is written as the
-//! `f64` it is held as; the `bbox` and the foreign members follow the
-//! coordinates, as clause 4.6.4 returns the content of a value as provided.
+//! intermediate tree on its way to the wire. Each ordinate is written in the
+//! canonical spelling of the double it is held as, the spelling the stored
+//! document gives it (`13`, `0.0000001`); the `bbox` and the foreign members
+//! follow the coordinates, as clause 4.6.4 returns the content of a value as
+//! provided.
 
 use crate::{
     bounding_box::BoundingBox,
@@ -18,6 +20,7 @@ use crate::{
     linear_ring::LinearRing,
     position::Position,
 };
+use andromeda_ngsi_ld_number::float_spelling::CanonicalFloat;
 use serde::{
     Serialize,
     Serializer,
@@ -63,7 +66,7 @@ struct BoundingBoxBody<'a>(&'a BoundingBox);
 
 impl Serialize for BoundingBoxBody<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_seq(self.0.ordinates())
+        serializer.collect_seq(self.0.ordinates().map(CanonicalFloat))
     }
 }
 
@@ -110,10 +113,10 @@ impl Serialize for PositionBody<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let altitude = self.0.altitude();
         let mut ordinates = serializer.serialize_seq(Some(if altitude.is_some() { 3 } else { 2 }))?;
-        ordinates.serialize_element(&self.0.longitude())?;
-        ordinates.serialize_element(&self.0.latitude())?;
+        ordinates.serialize_element(&CanonicalFloat(self.0.longitude()))?;
+        ordinates.serialize_element(&CanonicalFloat(self.0.latitude()))?;
         if let Some(altitude) = altitude {
-            ordinates.serialize_element(&altitude)?;
+            ordinates.serialize_element(&CanonicalFloat(altitude))?;
         }
         ordinates.end()
     }
@@ -126,26 +129,64 @@ impl Serialize for PositionBody<'_> {
 )]
 mod tests {
     use crate::geometry::Geometry;
-    use serde_json::json;
+    use andromeda_ngsi_ld_number::float_spelling::canonical_float_text;
 
     /// IETF RFC 7946 sections 5 and 6.1, clause 4.5.16.2: the `bbox` and the
     /// foreign members render beside the coordinates, so a Feature's geometry
     /// is the one written.
     #[test]
     fn a_geometry_writes_its_box_and_foreign_members() {
-        let written = json!({"type": "Point", "coordinates": [1.0, 2.0], "bbox": [1.0, 2.0, 1.0, 2.0], "plotName": {"b": 1, "a": [2.5]}});
-        let geometry = Geometry::from_geojson_text(&written.to_string()).expect("a valid geometry");
-        let streamed: serde_json::Value = serde_json::from_str(&serde_json::to_string(&geometry).expect("renders")).expect("JSON");
-        pretty_assertions::assert_eq!(streamed, written);
+        pretty_assertions::assert_eq!(
+            written_back(r#"{"type": "Point", "coordinates": [1.5, 2], "bbox": [1.5, 2, 1.5, 2.0], "plotName": {"b": 1, "a": [2.5]}}"#),
+            r#"{"type":"Point","coordinates":[1.5,2],"bbox":[1.5,2,1.5,2],"plotName":{"b":1,"a":[2.5]}}"#
+        );
     }
 
     /// A bare form writes its type and positions.
     #[test]
     fn a_form_writes_its_type_and_positions() {
-        let written = json!({"type": "Point", "coordinates": [1.0, 2.0], "bbox": [1.0, 2.0, 1.0, 2.0]});
-        let geometry = Geometry::from_geojson_text(&written.to_string()).expect("a valid geometry");
-        let streamed: serde_json::Value = serde_json::from_str(&serde_json::to_string(geometry.form()).expect("renders")).expect("JSON");
-        pretty_assertions::assert_eq!(streamed, json!({"type": "Point", "coordinates": [1.0, 2.0]}));
+        let geometry = Geometry::from_geojson_text(r#"{"type": "Point", "coordinates": [1.5, 2], "bbox": [1.5, 2, 1.5, 2]}"#).expect("a valid geometry");
+        pretty_assertions::assert_eq!(
+            serde_json::to_string(geometry.form()).expect("renders"),
+            r#"{"type":"Point","coordinates":[1.5,2]}"#
+        );
+    }
+
+    /// The writer spells every ordinate the way the stored document does,
+    /// with the one canonical conversion: a whole double without a fraction.
+    #[test]
+    fn an_ordinate_is_written_in_its_canonical_spelling() {
+        pretty_assertions::assert_eq!(
+            written_back(r#"{"type": "Point", "coordinates": [13, 52]}"#),
+            r#"{"type":"Point","coordinates":[13,52]}"#
+        );
+        pretty_assertions::assert_eq!(
+            written_back(r#"{"type": "Point", "coordinates": [-180.0, -0.0, 13.0]}"#),
+            r#"{"type":"Point","coordinates":[-180,0,13]}"#
+        );
+    }
+
+    /// An ordinate past the plain spellings takes the canonical conversion's
+    /// rendering, exactly as the stored document writes it.
+    #[test]
+    fn an_ordinate_past_the_plain_spellings_is_written_as_the_canonical_conversion_renders_it() {
+        for ordinate in [1e-7, 1.5e300, 0.001, 5e-324] {
+            let canonical = canonical_float_text(ordinate).expect("a finite ordinate has a spelling");
+            pretty_assertions::assert_eq!(
+                written_back(&format!(r#"{{"type": "Point", "coordinates": [13.4, 52.5, {ordinate:e}]}}"#)),
+                format!(r#"{{"type":"Point","coordinates":[13.4,52.5,{canonical}]}}"#),
+                "{ordinate:e}"
+            );
+        }
+    }
+
+    /// A `bbox` is spelled as its corners' ordinates are.
+    #[test]
+    fn a_bounding_box_is_written_in_the_canonical_spelling() {
+        pretty_assertions::assert_eq!(
+            written_back(r#"{"type": "Point", "coordinates": [13, 52], "bbox": [13.0, 52.0, 13, 52]}"#),
+            r#"{"type":"Point","coordinates":[13,52],"bbox":[13,52,13,52]}"#
+        );
     }
 
     /// The text `geometry` is written back as after it is read from `written`.
@@ -210,31 +251,24 @@ mod tests {
     fn an_ordinate_whose_nearest_double_is_an_axis_end_is_held_as_that_end() {
         pretty_assertions::assert_eq!(
             written_back(r#"{"type": "Point", "coordinates": [180.00000000000000001, -90.000000000000000001]}"#),
-            r#"{"type":"Point","coordinates":[180.0,-90.0]}"#
+            r#"{"type":"Point","coordinates":[180,-90]}"#
         );
     }
 
-    /// Every geometry type renders as the `geojson` rendering of the same
-    /// positions does, altitude and ordinate spelling included.
+    /// Every geometry type writes its nested coordinates in the canonical
+    /// spelling, altitude included.
     #[test]
-    fn every_geometry_type_renders_as_its_geojson_rendering() {
+    fn every_geometry_type_writes_its_coordinates_in_the_canonical_spelling() {
         for written in [
-            json!({"type": "Point", "coordinates": [13.4, 52.5]}),
-            json!({"type": "Point", "coordinates": [13.0, 52.0, 34.5]}),
-            json!({"type": "MultiPoint", "coordinates": [[1.0, 2.0], [3.5, 4.25]]}),
-            json!({"type": "LineString", "coordinates": [[0.0, 0.0, 3.0], [1.0, 1.0, 7.0]]}),
-            json!({"type": "MultiLineString", "coordinates": [[[0.0, 0.0], [1.0, 1.0]], [[2.0, 2.0], [3.0, 3.0]]]}),
-            json!({"type": "Polygon", "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]]}),
-            json!({"type": "MultiPolygon", "coordinates": [[[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]], [[[5.0, 5.0], [6.0, 5.0], [6.0, 6.0], [5.0, 5.0]]]]}),
+            r#"{"type":"Point","coordinates":[13.4,52.5]}"#,
+            r#"{"type":"Point","coordinates":[13,52,34.5]}"#,
+            r#"{"type":"MultiPoint","coordinates":[[1,2],[3.5,4.25]]}"#,
+            r#"{"type":"LineString","coordinates":[[0,0,3],[1,1,7]]}"#,
+            r#"{"type":"MultiLineString","coordinates":[[[0,0],[1,1]],[[2,2],[3,3]]]}"#,
+            r#"{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}"#,
+            r#"{"type":"MultiPolygon","coordinates":[[[[0,0],[1,0],[1,1],[0,0]]],[[[5,5],[6,5],[6,6],[5,5]]]]}"#,
         ] {
-            let geometry = Geometry::from_geojson_text(&written.to_string()).expect("a valid geometry");
-            let streamed = serde_json::to_string(&geometry).expect("renders");
-            let reference = serde_json::to_string(&geometry.form().to_geojson()).expect("renders");
-            pretty_assertions::assert_eq!(
-                serde_json::from_str::<serde_json::Value>(&streamed).expect("JSON"),
-                serde_json::from_str::<serde_json::Value>(&reference).expect("JSON"),
-                "{written}"
-            );
+            pretty_assertions::assert_eq!(written_back(written), written);
         }
     }
 }

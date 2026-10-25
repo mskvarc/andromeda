@@ -459,7 +459,7 @@ fn every_family_with_every_member_renders_as_it_was_written() {
             "accuracy": {"type": "Property", "value": 0.5}}),
         json!({"type": "Relationship", "object": ["urn:ngsi-ld:A:1", "urn:ngsi-ld:A:2"], "objectType": ["A", "ex:B"], "previousObject": "urn:ngsi-ld:A:0",
             "entity": {"id": "urn:ngsi-ld:A:1", "type": "A", "name": {"type": "Property", "value": "a"}}}),
-        json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0]}, "valueType": "geojson:Point"}),
+        json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1, 2]}, "valueType": "geojson:Point"}),
         json!({"type": "JsonProperty", "json": {"id": "x", "n": [1, 2.25]}, "previousJson": {"a": 1}, "valueType": "json"}),
         json!({"type": "ListProperty", "valueList": [1, "a", [3]], "previousValueList": [0], "valueType": "Integer"}),
     ] {

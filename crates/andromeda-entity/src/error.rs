@@ -232,12 +232,14 @@ impl From<MutationError> for EntityError {
 
 /// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
 /// A context that does not load and a document the processor refuses are
-/// JSON-LD failures; a refused document is classified as the model refuses it.
+/// JSON-LD failures; a refused document is classified as the model refuses it,
+/// and an ordinate with no JSON number is the broker's fault.
 impl From<ExpansionError> for EntityError {
     fn from(error: ExpansionError) -> EntityError {
         match error {
             ExpansionError::Context(failure) | ExpansionError::Processor(failure) => EntityError::JsonLd(failure),
             ExpansionError::Refused(refusal) => EntityError::from(refusal),
+            ExpansionError::UnspellableOrdinate(fault) => EntityError::Internal(EntityInvariant::UnspellableOrdinate(fault)),
             ExpansionError::CompactDocument(source) => EntityError::Validation(EntityValidationReason::CompactDocument(source)),
         }
     }
@@ -305,10 +307,12 @@ impl EntityError {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{entity_validation_reason::EntityValidationReason, error::EntityError};
+    use crate::{entity_invariant::EntityInvariant, entity_validation_reason::EntityValidationReason, error::EntityError};
     use andromeda_context_commit::{error::CommitError, submission_refusal::SubmissionRefusal};
     use andromeda_ngsi_ld_entity::{operation::mutation_error::MutationError, refusal::EntityRefusal};
+    use andromeda_ngsi_ld_expansion::{assembly_error::UnspellableOrdinate, error::ExpansionError};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
+    use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 
     fn speed() -> AttributeName {
@@ -325,6 +329,16 @@ mod tests {
             "{error:?}"
         );
         assert!(error.to_string().starts_with("invalid entity operation: "), "{error}");
+    }
+
+    /// Clause 5.5.6: a geometry ordinate with no JSON number is the broker's
+    /// fault, reported with the attribute holding it.
+    #[test]
+    fn an_unspellable_ordinate_is_an_internal_error_naming_its_attribute() {
+        let source = JsonNumber::try_from(f64::NAN).expect_err("NaN has no JSON number");
+        let error = EntityError::from(ExpansionError::UnspellableOrdinate(UnspellableOrdinate { attribute: speed(), source }));
+        assert!(matches!(error, EntityError::Internal(EntityInvariant::UnspellableOrdinate(_))), "{error:?}");
+        assert!(error.to_string().contains("https://example.org/speed"), "{error}");
     }
 
     /// Clause 5.5.2: a well-formed request naming a member the entity lacks is

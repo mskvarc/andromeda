@@ -285,7 +285,7 @@ mod tests {
     #[test]
     fn every_ordinate_round_trips_through_ewkb_bit_for_bit() {
         let written =
-            r#"{"type":"LineString","coordinates":[[13.123456789012346,52.123456789012344,667.1234567890124],[179.99999999999997,-89.99999999999999,5e-324]]}"#;
+            r#"{"type":"LineString","coordinates":[[13.123456789012346,52.123456789012344,667.1234567890124],[179.99999999999997,-89.99999999999999,5E-324]]}"#;
         let original = Geometry::from_geojson_text(written).expect("valid GeoJSON");
         let ewkb = Ewkb::try_from(original.form()).expect("encodes");
         let decoded = Geometry::try_from(&ewkb).expect("decodes");

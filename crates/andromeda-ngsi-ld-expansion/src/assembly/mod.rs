@@ -19,6 +19,7 @@ use crate::{
         member_value::{malformed, null_beside_data},
         null_sentinel::{is_null, is_sole_null},
     },
+    assembly_error::AssemblyError,
     attribute_fragment::AttributeFragment,
     expanded_tree::{ExpandedItem, ExpandedNode},
 };
@@ -41,7 +42,7 @@ use indexmap::IndexMap;
 ///
 /// Returns the refusal of the first member that is not what its expanded IRI
 /// names.
-pub fn entity_document(node: Option<ExpandedNode>) -> Result<EntityDocument, EntityRefusal> {
+pub fn entity_document(node: Option<ExpandedNode>) -> Result<EntityDocument, AssemblyError> {
     let Some(node) = node else {
         return Ok(EntityDocument::default());
     };
@@ -72,7 +73,7 @@ pub fn entity_document(node: Option<ExpandedNode>) -> Result<EntityDocument, Ent
         } else {
             let name = name.parse::<AttributeName>().map_err(EntityRefusal::ExpandedAttributeName)?;
             if MemberRole::is_reserved(name.as_str()) {
-                return Err(EntityRefusal::ReservedAttributeName { attribute: name });
+                return Err(EntityRefusal::ReservedAttributeName { attribute: name }.into());
             }
             let member = attribute_member(&name, items)?;
             attributes.insert(name, member);
@@ -88,11 +89,11 @@ pub fn entity_document(node: Option<ExpandedNode>) -> Result<EntityDocument, Ent
 ///
 /// Returns [`EntityRefusal::Malformed`] when the fragment is not one instance,
 /// and the refusal of the instance's first malformed member.
-pub fn attribute_fragment(name: &str, items: Vec<ExpandedItem>) -> Result<AttributeFragment, EntityRefusal> {
+pub fn attribute_fragment(name: &str, items: Vec<ExpandedItem>) -> Result<AttributeFragment, AssemblyError> {
     let name = name.parse::<AttributeName>().map_err(EntityRefusal::ExpandedAttributeName)?;
     let mut items = items.into_iter();
     let (Some(ExpandedItem::Node(node)), None) = (items.next(), items.next()) else {
-        return Err(malformed(&name, MemberShape::Attribute));
+        return Err(malformed(&name, MemberShape::Attribute).into());
     };
     let instance = instance_document(&name, node)?;
     Ok(AttributeFragment::new(name, instance))
@@ -106,18 +107,20 @@ pub fn attribute_fragment(name: &str, items: Vec<ExpandedItem>) -> Result<Attrib
 /// Returns [`EntityRefusal::NullBesideData`] for a Null beside instances,
 /// [`EntityRefusal::Malformed`] for a value that is no instance, and the
 /// refusal of an instance's first malformed member.
-pub fn attribute_member(name: &AttributeName, items: Vec<ExpandedItem>) -> Result<AttributeMember, EntityRefusal> {
+pub fn attribute_member(name: &AttributeName, items: Vec<ExpandedItem>) -> Result<AttributeMember, AssemblyError> {
     if is_sole_null(&items) {
         return Ok(AttributeMember::Remove);
     }
     if items.iter().any(is_null) {
-        return Err(null_beside_data(name));
+        return Err(null_beside_data(name).into());
     }
     items
         .into_iter()
         .map(|item| match item {
             ExpandedItem::Node(node) => instance_document(name, node),
-            ExpandedItem::Value(_) | ExpandedItem::Json(_) | ExpandedItem::List(_) | ExpandedItem::Geometry(_) => Err(malformed(name, MemberShape::Attribute)),
+            ExpandedItem::Value(_) | ExpandedItem::Json(_) | ExpandedItem::List(_) | ExpandedItem::Geometry(_) => {
+                Err(malformed(name, MemberShape::Attribute).into())
+            }
         })
         .collect::<Result<Vec<_>, _>>()
         .map(AttributeMember::Instances)

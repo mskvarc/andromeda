@@ -7,6 +7,7 @@
 
 use crate::{
     assembly::{attribute_fragment, entity_document, temporal_document::temporal_document},
+    assembly_error::AssemblyError,
     attribute_fragment::AttributeFragment,
     compact_walk::element::Expanded,
     decline::Decline,
@@ -18,7 +19,7 @@ use crate::{
     written_member::WrittenMember,
 };
 use andromeda_jsonld::engine::expansion_context::ExpansionContext;
-use andromeda_ngsi_ld_entity::{document::EntityDocument, refusal::EntityRefusal};
+use andromeda_ngsi_ld_entity::document::EntityDocument;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::{
     attribute::instance::AttributeValue,
@@ -47,9 +48,9 @@ impl<'c> TypedExpander<'c> {
     ///
     /// # Errors
     ///
-    /// Returns the [`EntityRefusal`] of an expanded document that is not a
+    /// Returns the [`AssemblyError`] of an expanded document that is not a
     /// write.
-    pub fn entity<M: WrittenMember>(&self, entity: &Entity<M>, normalization: Normalization) -> Result<TypedExpansion<EntityDocument>, EntityRefusal> {
+    pub fn entity<M: WrittenMember>(&self, entity: &Entity<M>, normalization: Normalization) -> Result<TypedExpansion<EntityDocument>, AssemblyError> {
         self.document(|scope| entity_node(scope, entity, normalization), entity_document)
     }
 
@@ -63,7 +64,7 @@ impl<'c> TypedExpander<'c> {
         &self,
         patch: &EntityPatch<M>,
         normalization: Normalization,
-    ) -> Result<TypedExpansion<EntityDocument>, EntityRefusal> {
+    ) -> Result<TypedExpansion<EntityDocument>, AssemblyError> {
         self.document(|scope| patch_node(scope, patch, normalization), entity_document)
     }
 
@@ -75,7 +76,7 @@ impl<'c> TypedExpander<'c> {
     /// # Errors
     ///
     /// As [`TypedExpander::entity`].
-    pub fn temporal(&self, entity: &Entity<AttributeValue>, system_times: EntitySystemTimes) -> Result<TypedExpansion<TemporalDocument>, EntityRefusal> {
+    pub fn temporal(&self, entity: &Entity<AttributeValue>, system_times: EntitySystemTimes) -> Result<TypedExpansion<TemporalDocument>, AssemblyError> {
         self.document(
             |scope| entity_node(scope, entity, Normalization::Entity),
             |node| temporal_document(node, system_times),
@@ -89,8 +90,8 @@ impl<'c> TypedExpander<'c> {
     ///
     /// # Errors
     ///
-    /// Returns the [`EntityRefusal`] of a fragment that is not one instance.
-    pub fn attribute<M: WrittenMember>(&self, attribute: &AttributeName, member: &M) -> Result<TypedExpansion<AttributeFragment>, EntityRefusal> {
+    /// Returns the [`AssemblyError`] of a fragment that is not one instance.
+    pub fn attribute<M: WrittenMember>(&self, attribute: &AttributeName, member: &M) -> Result<TypedExpansion<AttributeFragment>, AssemblyError> {
         let walked = TermScope::root(self.context).and_then(|scope| expanded(member, &scope, attribute.as_str())?.ok_or(Decline::MalformedJsonLd));
         match walked {
             Ok((name, items)) => attribute_fragment(&name, items).map(TypedExpansion::Expanded),
@@ -103,8 +104,8 @@ impl<'c> TypedExpander<'c> {
     fn document<T>(
         self,
         walk: impl FnOnce(&TermScope<'c>) -> Result<Expanded, Decline>,
-        assemble: impl FnOnce(Option<ExpandedNode>) -> Result<T, EntityRefusal>,
-    ) -> Result<TypedExpansion<T>, EntityRefusal> {
+        assemble: impl FnOnce(Option<ExpandedNode>) -> Result<T, AssemblyError>,
+    ) -> Result<TypedExpansion<T>, AssemblyError> {
         let walked = TermScope::root(self.context).and_then(|scope| walk(&scope)).and_then(entity_node_of);
         match walked {
             Ok(node) => assemble(node).map(TypedExpansion::Expanded),

@@ -11,6 +11,7 @@
 
 use crate::{
     assembly::{attribute_fragment, entity_document, member_value::malformed, temporal_document::temporal_document},
+    assembly_error::AssemblyError,
     attribute_fragment::AttributeFragment,
     compact_walk::literal::direction_of,
     expanded_tree::{ExpandedItem, ExpandedNode, Scalar, ValueObject},
@@ -31,8 +32,8 @@ use rdfx::BlankIdBuf;
 ///
 /// Returns [`EntityRefusal::Malformed`] for a document that expanded to more
 /// than one top-level object or to something other than a node, and the
-/// assembly's refusal of the node.
-pub fn decode_entity(document: ExpandedDocument<IriBuf, BlankIdBuf>) -> Result<EntityDocument, EntityRefusal> {
+/// assembly's failure on the node.
+pub fn decode_entity(document: ExpandedDocument<IriBuf, BlankIdBuf>) -> Result<EntityDocument, AssemblyError> {
     entity_document(top_level_node(document)?)
 }
 
@@ -42,7 +43,7 @@ pub fn decode_entity(document: ExpandedDocument<IriBuf, BlankIdBuf>) -> Result<E
 /// # Errors
 ///
 /// As [`decode_entity`].
-pub fn decode_temporal(document: ExpandedDocument<IriBuf, BlankIdBuf>, system_times: EntitySystemTimes) -> Result<TemporalDocument, EntityRefusal> {
+pub fn decode_temporal(document: ExpandedDocument<IriBuf, BlankIdBuf>, system_times: EntitySystemTimes) -> Result<TemporalDocument, AssemblyError> {
     temporal_document(top_level_node(document)?, system_times)
 }
 
@@ -52,12 +53,12 @@ pub fn decode_temporal(document: ExpandedDocument<IriBuf, BlankIdBuf>, system_ti
 /// # Errors
 ///
 /// Returns [`EntityRefusal::Malformed`] when the expansion holds no attribute
-/// member, or holds more than one, and the assembly's refusal of the instance.
-pub fn decode_attribute_fragment(attribute: &AttributeName, document: ExpandedDocument<IriBuf, BlankIdBuf>) -> Result<AttributeFragment, EntityRefusal> {
+/// member, or holds more than one, and the assembly's failure on the instance.
+pub fn decode_attribute_fragment(attribute: &AttributeName, document: ExpandedDocument<IriBuf, BlankIdBuf>) -> Result<AttributeFragment, AssemblyError> {
     let node = top_level_node(document)?.ok_or_else(|| malformed(attribute, MemberShape::Attribute))?;
     let mut members = node.members.into_iter();
     let (Some((name, items)), None) = (members.next(), members.next()) else {
-        return Err(malformed(attribute, MemberShape::Attribute));
+        return Err(malformed(attribute, MemberShape::Attribute).into());
     };
     attribute_fragment(&name, items)
 }

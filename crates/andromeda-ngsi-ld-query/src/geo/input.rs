@@ -174,11 +174,11 @@ mod tests {
 
     #[test]
     fn a_geo_query_serializes_its_geometry_as_type_and_coordinates_members() {
-        let geometry: Geometry = serde_json::from_value(json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("a valid point");
+        let geometry: Geometry = serde_json::from_value(json!({"type": "Point", "coordinates": [1, 2]})).expect("a valid point");
         let georel: GeoRel = serde_json::from_value(json!("intersects")).expect("a valid georel");
         let serialized = serde_json::to_value(GeoQueryInput::new(georel, geometry, None)).expect("serializes");
         pretty_assertions::assert_eq!(serialized["geometry"], json!("Point"));
-        pretty_assertions::assert_eq!(serialized["coordinates"], json!([1.0, 2.0]));
+        pretty_assertions::assert_eq!(serialized["coordinates"], json!([1, 2]));
     }
 
     /// Table 5.2.13-1: coordinates encoded as a string are held as written,
@@ -201,8 +201,8 @@ mod tests {
     /// the compilation refuses them.
     #[test]
     fn string_coordinates_are_not_parsed_at_extraction() {
-        assert!(GeoQueryInput::from_wire("within", "Point", coordinates(json!("[1.0, ")), None).is_ok());
-        assert!(GeoQueryInput::from_wire("within", "Point", coordinates(json!([1.0])), None).is_err());
+        assert!(GeoQueryInput::from_wire("within", "Point", coordinates(json!("[1, ")), None).is_ok());
+        assert!(GeoQueryInput::from_wire("within", "Point", coordinates(json!([1])), None).is_err());
     }
 
     /// Table 5.2.13-1 gives `georel`, `geometry` and `coordinates` cardinality
@@ -213,7 +213,7 @@ mod tests {
         for (body, member) in [
             (json!({"georel": "near;maxDistance==2000"}), "geometry"),
             (json!({"georel": "within", "geometry": "Point"}), "coordinates"),
-            (json!({"geometry": "Point", "coordinates": [1.0, 2.0]}), "georel"),
+            (json!({"geometry": "Point", "coordinates": [1, 2]}), "georel"),
         ] {
             let error = serde_json::from_value::<GeoQueryInput>(body).expect_err("an incomplete geo-query is refused");
             let message = error.to_string();
@@ -228,7 +228,7 @@ mod tests {
     /// at extraction, never held as text.
     #[test]
     fn array_coordinates_are_read_into_the_reference_geometry() {
-        let input = GeoQueryInput::from_wire("within", "Point", coordinates(json!([1.0, 2.0])), None).expect("a decoded geo-query");
+        let input = GeoQueryInput::from_wire("within", "Point", coordinates(json!([1, 2])), None).expect("a decoded geo-query");
         assert!(matches!(input.reference, ReferenceGeometry::Read(_)));
     }
 }

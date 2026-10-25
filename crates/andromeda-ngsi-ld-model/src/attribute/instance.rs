@@ -231,7 +231,7 @@ mod tests {
     fn geo_property_round_trip_with_expires_at() {
         let json = serde_json::json!({
             "type": "GeoProperty",
-            "value": {"type": "Point", "coordinates": [13.0, 52.0]},
+            "value": {"type": "Point", "coordinates": [13, 52]},
             "expiresAt": "2030-01-01T00:00:00Z"
         });
         let attr: Attribute = serde_json::from_value(json).unwrap();
@@ -376,9 +376,9 @@ mod tests {
             }),
             serde_json::json!({
                 "type": "GeoProperty",
-                "value": {"type": "Point", "coordinates": [13.0, 52.0]},
+                "value": {"type": "Point", "coordinates": [13, 52]},
                 "valueType": "geojson:Point",
-                "previousValue": {"type": "Point", "coordinates": [12.0, 51.0]},
+                "previousValue": {"type": "Point", "coordinates": [12, 51]},
                 "observedAt": "2026-04-12T12:00:00Z",
                 "accuracy": {"type": "Property", "value": 1.5}
             }),

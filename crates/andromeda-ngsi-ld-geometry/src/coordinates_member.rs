@@ -41,7 +41,7 @@ mod tests {
 
     #[test]
     fn a_polygon_writes_only_its_nested_positions() {
-        let text = "[[[0.0,0.0,12.5],[4.0,0.0,12.5],[4.0,4.0,12.5],[0.0,0.0,12.5]]]";
+        let text = "[[[0,0,12.5],[4,0,12.5],[4,4,12.5],[0,0,12.5]]]";
         let geometry: Geometry = WrittenCoordinates::from_text(text)
             .expect("valid JSON")
             .read_as(GeometryType::Polygon)

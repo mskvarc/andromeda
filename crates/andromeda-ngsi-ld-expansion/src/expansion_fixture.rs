@@ -8,6 +8,7 @@
 //! hands it, read through the processor decoding.
 
 use crate::{
+    assembly_error::AssemblyError,
     attribute_fragment::AttributeFragment,
     error::ExpansionError,
     normalization::Normalization,
@@ -106,9 +107,9 @@ impl FixtureFailure {
 /// Both expansions of one request.
 pub struct BothWays<T> {
     /// The typed walk's.
-    pub typed: Result<TypedExpansion<T>, EntityRefusal>,
+    pub typed: Result<TypedExpansion<T>, AssemblyError>,
     /// The processor's.
-    pub processor: Result<T, EntityRefusal>,
+    pub processor: Result<T, AssemblyError>,
 }
 
 impl<T: Debug + PartialEq> BothWays<T> {
@@ -213,7 +214,7 @@ pub async fn decoded_both_ways(
     engine: &JsonLdEngine,
     body: Value,
     normalization: Normalization,
-) -> Result<(Result<EntityDocument, EntityRefusal>, Result<EntityDocument, EntityRefusal>), FixtureFailure> {
+) -> Result<(Result<EntityDocument, AssemblyError>, Result<EntityDocument, EntityRefusal>), FixtureFailure> {
     let (body, spec) = admitted(body);
     let patch: EntityPatch = typed(&body)?;
     let context = context(engine, &spec).await?;

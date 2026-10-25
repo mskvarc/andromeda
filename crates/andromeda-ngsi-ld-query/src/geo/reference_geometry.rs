@@ -225,7 +225,7 @@ mod tests {
                 .expect("a point"),
         );
         pretty_assertions::assert_eq!(read.geometry_type(), GeometryType::Point);
-        pretty_assertions::assert_eq!(serde_json::to_value(read.coordinates_member()).expect("renders"), json!([1.0, 2.0]));
-        pretty_assertions::assert_eq!(read.coordinates_text().expect("renders"), "[1.0,2.0]");
+        pretty_assertions::assert_eq!(serde_json::to_value(read.coordinates_member()).expect("renders"), json!([1, 2]));
+        pretty_assertions::assert_eq!(read.coordinates_text().expect("renders"), "[1,2]");
     }
 }

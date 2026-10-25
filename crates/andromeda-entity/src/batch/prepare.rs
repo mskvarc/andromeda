@@ -23,7 +23,7 @@ use crate::{
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::expansion_context::ExpansionContext};
 use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState};
-use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, typed_expander::TypedExpander, typed_expansion::TypedExpansion};
+use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, error::ExpansionError, typed_expander::TypedExpander, typed_expansion::TypedExpansion};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::payload_budget::EntityPayloadBudget;
@@ -151,9 +151,9 @@ fn walk<M: BatchMember>(entry: PendingEntity<M>, context: &ExpansionContext, scr
             result: Box::new(screened(entity, document, screening)),
         },
         Ok(TypedExpansion::Declined(_)) => WalkOutcome::Declined(Box::new(PendingEntity { idx, entity })),
-        Err(refusal) => WalkOutcome::Done {
+        Err(failure) => WalkOutcome::Done {
             idx,
-            result: Box::new(Err(Box::new((entity.id, EntityError::from(refusal))))),
+            result: Box::new(Err(Box::new((entity.id, EntityError::from(ExpansionError::from(failure)))))),
         },
     }
 }

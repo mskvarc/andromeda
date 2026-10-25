@@ -195,7 +195,7 @@ mod tests {
     fn elevated_polygon_json() -> Value {
         serde_json::json!({
             "type": "Polygon",
-            "coordinates": [[[1.0, 2.0, 10.0], [5.0, 2.0, 10.0], [5.0, 8.0, 10.0], [1.0, 8.0, 10.0], [1.0, 2.0, 10.0]]]
+            "coordinates": [[[1, 2, 10], [5, 2, 10], [5, 8, 10], [1, 8, 10], [1, 2, 10]]]
         })
     }
 
@@ -398,7 +398,7 @@ mod tests {
     /// the box and the foreign members render back beside the coordinates.
     #[test]
     fn a_geometry_with_members_serialises_them_beside_its_coordinates() {
-        let written = serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0], "bbox": [1.0, 2.0, 1.0, 2.0], "title": "x"});
+        let written = serde_json::json!({"type": "Point", "coordinates": [1.5, 2], "bbox": [1.5, 2, 1.5, 2], "title": "x"});
         let geometry = read(&written).expect("a point");
         pretty_assertions::assert_eq!(serde_json::to_value(&geometry).expect("serialises"), written);
     }

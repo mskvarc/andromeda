@@ -24,14 +24,9 @@ use andromeda_ngsi_ld_geometry::{
     linear_ring::LinearRing,
     position::Position,
 };
-use andromeda_ngsi_ld_number::float_spelling::canonical_float_text;
+use andromeda_ngsi_ld_number::float_spelling::CanonicalFloat;
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
-use serde::{
-    Serialize,
-    Serializer,
-    ser::{Error, SerializeMap},
-};
-use serde_json::Number;
+use serde::{Serialize, Serializer, ser::SerializeMap};
 
 /// One `GeoProperty` value, as the element of its `hasValue` array.
 pub(crate) struct GeoValueOut<'a>(pub(crate) &'a GeoValue);
@@ -159,9 +154,40 @@ struct OrdinateOut(f64);
 
 impl Serialize for OrdinateOut {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let text = canonical_float_text(self.0).map_err(S::Error::custom)?;
         let mut map = serializer.serialize_map(Some(1))?;
-        map.serialize_entry("@value", &Number::from_string_unchecked(text))?;
+        map.serialize_entry("@value", &CanonicalFloat(self.0))?;
         map.end()
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod tests {
+    use crate::{codec::geometry_encode::GeoValueOut, geo_value::GeoValue, geometry_value::GeometryValue};
+    use andromeda_ngsi_ld_geometry::geometry::Geometry;
+
+    /// The number tokens of `text`, in order: every run of number characters.
+    fn number_tokens(text: &str) -> Vec<&str> {
+        text.split(|character: char| !(character.is_ascii_digit() || matches!(character, '-' | '+' | '.' | 'e' | 'E')))
+            .filter(|token| token.bytes().any(|byte| byte.is_ascii_digit()))
+            .collect()
+    }
+
+    /// A response writes each ordinate with the very token the stored document
+    /// holds it with, whatever the ordinate.
+    #[test]
+    fn the_stored_document_and_a_response_spell_every_ordinate_alike() {
+        let written = r#"{"type":"Polygon","coordinates":[[[13,52,1.5e300],[-180,1e-7,0],[179.8451356,-0.0,13.123456789012345678],[13,52,1.5e300]]]}"#;
+        let geometry = Geometry::from_geojson_text(written).expect("a valid geometry");
+        let response = serde_json::to_string(geometry.form()).expect("the geometry writes");
+        let (form, _) = geometry.into_parts();
+        let stored = serde_json::to_string(&GeoValueOut(&GeoValue::Geometry(GeometryValue::with_members(form, None)))).expect("the stored form writes");
+        let stored_tokens: Vec<&str> = number_tokens(stored.split_once("coordinates").map_or("", |(_, rest)| rest));
+        pretty_assertions::assert_eq!(number_tokens(&response), stored_tokens);
+        assert!(!response.contains("13.0"), "{response}");
+        assert!(!response.contains("1e-7"), "{response}");
     }
 }

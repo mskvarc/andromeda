@@ -14,6 +14,7 @@ derive_more = { version = "2.1.1", features = ["display"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["arbitrary_precision", "raw_value"] }
 thiserror = "2.0.21"
+zmij = "1.0.23"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true

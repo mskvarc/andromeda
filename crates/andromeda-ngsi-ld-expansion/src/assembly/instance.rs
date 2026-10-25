@@ -15,6 +15,7 @@ use crate::{
         member_value::{dataset_id, date_time, date_time_slot, instance_id, malformed, reference_slot, references_slot, system_instant, unit_code_slot},
         written_value::value_slot,
     },
+    assembly_error::AssemblyError,
     expanded_tree::{ExpandedItem, ExpandedNode},
 };
 use andromeda_native_stack::on_sufficient_stack;
@@ -42,14 +43,14 @@ use indexmap::IndexMap;
 ///
 /// Returns the refusal of the first member that is not what its expanded IRI
 /// names.
-pub fn instance_document(attribute: &AttributeName, node: ExpandedNode) -> Result<InstanceDocument, EntityRefusal> {
+pub fn instance_document(attribute: &AttributeName, node: ExpandedNode) -> Result<InstanceDocument, AssemblyError> {
     on_sufficient_stack(|| read_instance(attribute, node))
 }
 
 /// Read one expanded instance of `attribute` on the stack the caller left.
-fn read_instance(attribute: &AttributeName, node: ExpandedNode) -> Result<InstanceDocument, EntityRefusal> {
+fn read_instance(attribute: &AttributeName, node: ExpandedNode) -> Result<InstanceDocument, AssemblyError> {
     if node.id.is_some() {
-        return Err(malformed(attribute, MemberShape::Attribute));
+        return Err(malformed(attribute, MemberShape::Attribute).into());
     }
     let family = family(attribute, &node.types)?;
     let mut parts = InstanceParts::default();
@@ -128,7 +129,7 @@ struct InstanceParts {
 
 impl InstanceParts {
     /// Read the member `name` of an instance of `attribute`.
-    fn read(&mut self, attribute: &AttributeName, family: Option<AttributeType>, name: &str, items: Vec<ExpandedItem>) -> Result<(), EntityRefusal> {
+    fn read(&mut self, attribute: &AttributeName, family: Option<AttributeType>, name: &str, items: Vec<ExpandedItem>) -> Result<(), AssemblyError> {
         let iri = name;
         if let Some(carrier) = ValueCarrier::from_iri(iri) {
             if self.carrier.is_some() {
@@ -136,7 +137,8 @@ impl InstanceParts {
                     attribute: Some(attribute.clone()), // clone: the refusal names the attribute the caller keeps
                     family,
                     member: name.parse::<AttributeName>().map_err(EntityRefusal::ExpandedAttributeName)?,
-                });
+                }
+                .into());
             }
             self.carrier = Some(carrier);
             self.value = Some(value_slot(attribute, family, carrier, items)?);
@@ -170,7 +172,8 @@ impl InstanceParts {
                 return Err(EntityRefusal::OutputOnlyMember {
                     attribute: attribute.clone(), // clone: the refusal names the attribute the caller keeps
                     member,
-                });
+                }
+                .into());
             }
             let written = attribute_member(&member, items)?;
             self.sub_attributes.insert(member, written);
