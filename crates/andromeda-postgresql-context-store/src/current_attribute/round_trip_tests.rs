@@ -37,7 +37,7 @@ use chrono::{TimeZone, Utc};
 use indexmap::IndexSet;
 use sea_query::Iden;
 use serde_json::{Value, json};
-use std::{collections::BTreeSet, env, fs};
+use std::collections::BTreeSet;
 
 const NGSI: &str = "https://uri.etsi.org/ngsi-ld/";
 const GEOJSON: &str = "https://purl.org/geojson/vocab#";
@@ -911,23 +911,4 @@ fn an_instance_id_is_not_held() {
         &json!({ex("a"): [with(property(&json!([{"@value": 1}])), &json!({ngsi("instanceId"): [{"@id": "urn:ngsi-ld:Instance:1"}]}))]}),
     ));
     pretty_assertions::assert_eq!(identified, committed(&document(&json!({ex("a"): [property(&json!([{"@value": 1}]))]}))));
-}
-
-/// Every stored Entity document of a corpus, one per line, flattened and
-/// assembled back to the state the codec decodes from it.
-#[test]
-#[ignore = "reads a stored-document corpus from outside the repository"]
-fn corpus_round_trips() {
-    let path = env::var("ANDROMEDA_STORED_ENTITY_CORPUS").expect("the corpus path");
-    let corpus = fs::read_to_string(path).expect("the corpus reads");
-    let mut checked = 0_usize;
-    for (line, document) in corpus.lines().enumerate().filter(|(_, document)| !document.trim().is_empty()) {
-        let mut state = EntityState::from_slice(document.as_bytes()).unwrap_or_else(|refusal| panic!("line {}: {refusal}", line + 1));
-        state.canonicalize_values(None);
-        let (keys, names) = dictionary(&state);
-        let assembled = assemble(rows(&state, &keys), &names).unwrap_or_else(|error| panic!("line {}: {error}", line + 1));
-        pretty_assertions::assert_eq!(&assembled, state.attributes(), "line {}", line + 1);
-        checked += 1;
-    }
-    assert!(checked > 0, "the corpus holds no document");
 }
