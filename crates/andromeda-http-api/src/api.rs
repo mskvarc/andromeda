@@ -431,8 +431,6 @@ mod tests {
             (Method::GET, "/ngsi-ld/v1/subscriptions/urn:ngsi-ld:Subscription:1"),
             (Method::PATCH, "/ngsi-ld/v1/subscriptions/urn:ngsi-ld:Subscription:1"),
             (Method::DELETE, "/ngsi-ld/v1/subscriptions/urn:ngsi-ld:Subscription:1"),
-            (Method::GET, "/ngsi-ld/v1/subscriptions/urn:ngsi-ld:Subscription:1/stream"),
-            (Method::GET, "/ngsi-ld/v1/subscriptions/urn:ngsi-ld:Subscription:1/ws"),
             (Method::POST, "/ngsi-ld/v1/csourceSubscriptions"),
             (Method::GET, "/ngsi-ld/v1/csourceSubscriptions"),
             (Method::GET, "/ngsi-ld/v1/csourceSubscriptions/urn:ngsi-ld:Subscription:2"),

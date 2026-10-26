@@ -59,8 +59,7 @@ const CAPACITY: u64 = 16;
 /// context URL resolve to anything else. Kept for the life of the process: the
 /// term memo of each kept context is capped, so its size does not grow with the
 /// attribute names written.
-static EMBEDDED_CONTEXTS: LazyLock<Cache<Arc<str>, Arc<ExpansionContext>>> =
-    LazyLock::new(|| Cache::builder().max_capacity(CAPACITY).build());
+static EMBEDDED_CONTEXTS: LazyLock<Cache<Arc<str>, Arc<ExpansionContext>>> = LazyLock::new(|| Cache::builder().max_capacity(CAPACITY).build());
 
 /// The active context one request is expanded under.
 #[derive(derive_more::Debug)]
@@ -270,6 +269,7 @@ mod tests {
         Id,
         NoLoader,
         Term,
+        context::MAX_ENTRIES,
         context_processing::{
             Warning,
             algorithm::{Action, expand_iri_simple},
@@ -317,15 +317,12 @@ mod tests {
         let engine = offline_engine();
         let context = engine.expansion_context(&ContextSpec::none()).await.expect("the core context processes");
 
-        for i in 0..2 * jsonld::context::MAX_ENTRIES {
+        for i in 0..2 * MAX_ENTRIES {
             key_iri(context.active(), &format!("attribute{i}"));
         }
 
         let memoised = context.active().term_resolution_cache().len();
-        assert!(
-            memoised > 0 && memoised <= jsonld::context::MAX_ENTRIES,
-            "the term memo holds {memoised} entries"
-        );
+        assert!(memoised > 0 && memoised <= MAX_ENTRIES, "the term memo holds {memoised} entries");
         pretty_assertions::assert_eq!(key_iri(context.active(), "location"), "https://uri.etsi.org/ngsi-ld/location");
     }
 

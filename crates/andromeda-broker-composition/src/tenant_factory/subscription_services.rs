@@ -5,8 +5,9 @@ use crate::{
         subscription_change_sink::{BroadcastSubscriptionChangeSink, CoherentSubscriptionChangeSink},
         subscription_endpoint_validator::DeliverySubscriptionEndpointValidator,
     },
-    tenant_factory::{storage::TenantStorage, tasks::TenantSignals, transport::TenantTransports},
+    tenant_factory::{storage::TenantStorage, tasks::TenantSignals},
 };
+use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::FederationService;
 use andromeda_http_source_identity::config::InfoConfig;
@@ -81,7 +82,7 @@ impl<'edge> DistributedSubscriptionEdge<'edge> {
 pub(super) fn compose_subscription_services(
     storage: &TenantStorage,
     signals: &TenantSignals,
-    transports: &TenantTransports,
+    dispatcher: &Arc<TransportDispatcher>,
     edge: Option<DistributedSubscriptionEdge<'_>>,
     entity_query: &Arc<EntityQueryService>,
     geo_admission: GeoQueryAdmission,
@@ -100,7 +101,7 @@ pub(super) fn compose_subscription_services(
     ));
     // clone: see above.
     let store = Arc::new(SubscriptionRepository::new(&storage.pool, Arc::clone(&storage.attribute_names))) as Arc<dyn SubscriptionStore>;
-    let forwarding = edge.map(|edge| compose_subscription_forwarding(edge, storage, transports, entity_query, &csource, &store));
+    let forwarding = edge.map(|edge| compose_subscription_forwarding(edge, storage, dispatcher, entity_query, &csource, &store));
     let mut entity = SubscriptionService::new(
         Arc::clone(&store),
         storage.engine.clone(),                                 // clone: each subscription service owns its engine handle.
@@ -128,7 +129,7 @@ pub(super) fn compose_subscription_services(
 fn compose_subscription_forwarding(
     edge: DistributedSubscriptionEdge<'_>,
     storage: &TenantStorage,
-    transports: &TenantTransports,
+    dispatcher: &Arc<TransportDispatcher>,
     entity_query: &Arc<EntityQueryService>,
     csource_subscriptions: &Arc<SubscriptionService<CsrSubscriptionVariant>>,
     subscriptions: &Arc<dyn SubscriptionStore>,
@@ -144,7 +145,7 @@ fn compose_subscription_forwarding(
             .router(Arc::clone(edge.router))
             .federation(Arc::clone(edge.federation))
             .entity_query(Arc::clone(entity_query))
-            .transport(Arc::clone(&transports.dispatcher))
+            .transport(Arc::clone(dispatcher))
             .engine(storage.engine.clone()) // clone: forwarding owns its engine handle.
             .build(),
     )

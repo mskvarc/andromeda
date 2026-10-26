@@ -65,8 +65,8 @@ fn notification(data: &Value) -> Value {
 
 /// The entities of the notification the local subscriber was sent, none when it
 /// was sent no notification.
-fn relayed(scene: &mut ReassemblyScene) -> Vec<Value> {
-    scene.delivered().and_then(|sent| sent["data"].as_array().cloned()).unwrap_or_default()
+async fn relayed(scene: &mut ReassemblyScene) -> Vec<Value> {
+    scene.delivered().await.and_then(|sent| sent["data"].as_array().cloned()).unwrap_or_default()
 }
 
 /// The identifiers of `entities`, in order.
@@ -85,7 +85,7 @@ fn stored_projection(lists: &[&str]) -> Value {
 /// subscriber is sent one notification.
 #[tokio::test]
 async fn a_bad_entity_does_not_stop_the_others() {
-    let mut scene = ReassemblyScene::start(SceneSpec::default());
+    let mut scene = ReassemblyScene::start(SceneSpec::default()).await;
     let data = json!([
         compact_vehicle("urn:ngsi-ld:Vehicle:1", &[("speed", property(&json!(40)))]),
         {"id": "urn:ngsi-ld:Vehicle:2", "speed": property(&json!(41))},
@@ -94,7 +94,7 @@ async fn a_bad_entity_does_not_stop_the_others() {
 
     scene.post(&notification(&data)).await.expect("the notification is handled");
 
-    let entities = relayed(&mut scene);
+    let entities = relayed(&mut scene).await;
     pretty_assertions::assert_eq!(ids(&entities), vec!["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:3"]);
     pretty_assertions::assert_eq!((scene.slots_claimed(), scene.deliveries_succeeded()), (1, 1));
 }
@@ -113,12 +113,13 @@ async fn split_entities_merge_local_and_other_holders() {
         held: vec![held_vehicle(id.as_str(), &[("name", json!("Roadster"))])],
         registrations: vec![sender.registration(), third.registration()],
         ..SceneSpec::default()
-    });
+    })
+    .await;
     let data = json!([compact_vehicle(id.as_str(), &[("speed", property(&json!(40)))])]);
 
     scene.post(&notification(&data)).await.expect("the notification is handled");
 
-    let entities = relayed(&mut scene);
+    let entities = relayed(&mut scene).await;
     let [entity] = entities.as_slice() else {
         panic!("one entity is relayed, got {entities:?}");
     };
@@ -139,7 +140,8 @@ async fn a_relayed_null_survives_split_reassembly() {
         subscription_members: json!({"splitEntities": true}),
         held: vec![held_vehicle(id.as_str(), &[("owner", json!("Ada")), ("name", json!("Roadster"))])],
         ..SceneSpec::default()
-    });
+    })
+    .await;
     let data = json!([compact_vehicle(
         id.as_str(),
         &[("owner", json!("urn:ngsi-ld:null")), ("speed", property(&json!(40)))]
@@ -147,7 +149,7 @@ async fn a_relayed_null_survives_split_reassembly() {
 
     scene.post(&notification(&data)).await.expect("the notification is handled");
 
-    let entities = relayed(&mut scene);
+    let entities = relayed(&mut scene).await;
     let [entity] = entities.as_slice() else {
         panic!("one entity is relayed, got {entities:?}");
     };
@@ -167,12 +169,13 @@ async fn filters_run_on_the_merged_state() {
             subscription_members: json!({"splitEntities": true, "q": q}),
             held: vec![held_vehicle(id.as_str(), &[("colour", json!(colour))])],
             ..SceneSpec::default()
-        });
+        })
+        .await;
         let data = json!([compact_vehicle(id.as_str(), &[("speed", property(&json!(40)))])]);
 
         scene.post(&notification(&data)).await.expect("the notification is handled");
 
-        let entities = relayed(&mut scene);
+        let entities = relayed(&mut scene).await;
         pretty_assertions::assert_eq!(ids(&entities), expected, "the local copy is {colour}");
     }
 }
@@ -183,12 +186,12 @@ async fn filters_run_on_the_merged_state() {
 async fn the_structural_projection_applies() {
     let mut scene = ReassemblyScene::start(SceneSpec {
         subscription_members: json!({"notification": {
-            "endpoint": {"uri": "sse://subscriber"},
             "format": "normalized",
             "pick": stored_projection(&["id", &default_iri("speed")])
         }}),
         ..SceneSpec::default()
-    });
+    })
+    .await;
     let data = json!([compact_vehicle(
         "urn:ngsi-ld:Vehicle:1",
         &[("speed", property(&json!(40))), ("colour", property(&json!("red")))]
@@ -196,7 +199,7 @@ async fn the_structural_projection_applies() {
 
     scene.post(&notification(&data)).await.expect("the notification is handled");
 
-    let entities = relayed(&mut scene);
+    let entities = relayed(&mut scene).await;
     let [entity] = entities.as_slice() else {
         panic!("one entity is relayed, got {entities:?}");
     };
@@ -210,7 +213,7 @@ async fn the_structural_projection_applies() {
 /// sent with (RFC 3986 section 6.2.2.2).
 #[tokio::test]
 async fn relayed_targets_keep_their_percent_encoding() {
-    let mut scene = ReassemblyScene::start(SceneSpec::default());
+    let mut scene = ReassemblyScene::start(SceneSpec::default()).await;
     let data = json!([compact_vehicle(
         "urn:ngsi-ld:Vehicle:1",
         &[("owner", json!({"type": "Relationship", "object": "urn:ngsi-ld:Person:a%3Ab"}))]
@@ -218,7 +221,7 @@ async fn relayed_targets_keep_their_percent_encoding() {
 
     scene.post(&notification(&data)).await.expect("the notification is handled");
 
-    let entities = relayed(&mut scene);
+    let entities = relayed(&mut scene).await;
     let [entity] = entities.as_slice() else {
         panic!("one entity is relayed, got {entities:?}");
     };
@@ -234,7 +237,8 @@ async fn conformance_applies_through_the_walk() {
     let mut scene = ReassemblyScene::start(SceneSpec {
         subscription_members: json!({"ngsildConformance": "1.0"}),
         ..SceneSpec::default()
-    });
+    })
+    .await;
     let data = json!([compact_vehicle(
         "urn:ngsi-ld:Vehicle:1",
         &[
@@ -245,7 +249,7 @@ async fn conformance_applies_through_the_walk() {
 
     scene.post(&notification(&data)).await.expect("the notification is handled");
 
-    let entities = relayed(&mut scene);
+    let entities = relayed(&mut scene).await;
     let [entity] = entities.as_slice() else {
         panic!("one entity is relayed, got {entities:?}");
     };
@@ -264,14 +268,15 @@ async fn a_failed_completion_keeps_the_throttling_slot() {
         held: vec![held_vehicle(id.as_str(), &[("name", json!("Roadster"))])],
         registration_failures: 1,
         ..SceneSpec::default()
-    });
+    })
+    .await;
     let data = json!([compact_vehicle(id.as_str(), &[("speed", property(&json!(40)))])]);
 
     let first = scene.post(&notification(&data)).await;
-    pretty_assertions::assert_eq!((first.is_err(), scene.slots_claimed(), scene.delivered().is_none()), (true, 0, true));
+    pretty_assertions::assert_eq!((first.is_err(), scene.slots_claimed(), scene.delivered().await.is_none()), (true, 0, true));
 
     scene.post(&notification(&data)).await.expect("the retry is handled");
-    pretty_assertions::assert_eq!(ids(&relayed(&mut scene)), vec![id.as_str()]);
+    pretty_assertions::assert_eq!(ids(&relayed(&mut scene).await), vec![id.as_str()]);
     pretty_assertions::assert_eq!((scene.slots_claimed(), scene.deliveries_succeeded()), (1, 1));
 }
 
@@ -307,7 +312,8 @@ async fn existing_copies_are_loaded_once() {
     let scene = ReassemblyScene::start(SceneSpec {
         copies,
         ..SceneSpec::default()
-    });
+    })
+    .await;
     let companion_notification = json!({
         "id": "urn:ngsi-ld:Notification:companion",
         "type": "ContextSourceNotification",

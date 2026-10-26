@@ -2,8 +2,8 @@
 //!
 //! The notification is written once, by whoever knows what it says, and every
 //! transport sends that text: the HTTP body as it is, the MQTT envelope with it
-//! as its `body`, the SSE and WebSocket frames as their data. No transport
-//! reads the document back, and none writes it a second time.
+//! as its `body`. No transport reads the document back, and none writes it a
+//! second time.
 
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::NotificationIdParseError};
 use serde::Serialize;
@@ -25,7 +25,7 @@ pub enum NotificationWriteError {
 /// A written notification and the identifier it names itself by.
 #[derive(Debug, Clone)]
 pub struct NotificationBody {
-    /// The notification's own `id`, which an SSE frame names its event by.
+    /// The identifier the written notification names itself by.
     id: Identifier,
     /// The written notification, shared by every delivery attempt.
     json: Arc<RawValue>,

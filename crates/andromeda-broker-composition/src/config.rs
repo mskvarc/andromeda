@@ -3,7 +3,7 @@
 mod error;
 /// Management-plane topology and metrics-exposure configuration.
 pub mod management;
-/// Composition of the durable-delivery and streaming notification configurations.
+/// Composition of the durable and live notification delivery configurations.
 pub mod notifications;
 pub mod observability;
 pub(crate) mod pagination;

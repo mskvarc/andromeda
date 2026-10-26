@@ -2,10 +2,8 @@
 
 use crate::{
     csource_subscription,
-    sse,
     state::{SubscriptionRouteState, SubscriptionStateResolver},
     subscription,
-    ws,
 };
 use andromeda_http_extraction::{scoped_response::echo_scope_headers, snapshot_scope_guard::reject_snapshot_scope};
 use axum::{
@@ -21,7 +19,7 @@ pub struct SubscriptionRoutes {
 }
 
 impl SubscriptionRoutes {
-    /// Construct subscription lifecycle and streaming routes with focused state.
+    /// Construct subscription lifecycle routes with focused state.
     pub fn new(resolver: Arc<dyn SubscriptionStateResolver>) -> SubscriptionRoutes {
         let subscriptions = Router::new()
             .route("/", post(subscription::create).get(subscription::query))
@@ -29,8 +27,6 @@ impl SubscriptionRoutes {
                 "/{subscription_id}",
                 get(subscription::get).patch(subscription::update).delete(subscription::delete),
             )
-            .route("/{subscription_id}/stream", get(sse::stream))
-            .route("/{subscription_id}/ws", get(ws::stream))
             .layer(from_fn(echo_scope_headers));
         let csource_subscriptions = Router::new()
             .route("/", post(csource_subscription::create).get(csource_subscription::query))
@@ -80,7 +76,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn owns_subscription_and_streaming_route_inventory() -> Result<(), Box<dyn Error>> {
+    async fn owns_subscription_route_inventory() -> Result<(), Box<dyn Error>> {
         let routes = super::SubscriptionRoutes::new(Arc::new(RejectingResolver)).into_router();
         for (method, path) in [
             (Method::POST, "/subscriptions"),
@@ -88,8 +84,6 @@ mod tests {
             (Method::GET, "/subscriptions/urn:ngsi-ld:Subscription:1"),
             (Method::PATCH, "/subscriptions/urn:ngsi-ld:Subscription:1"),
             (Method::DELETE, "/subscriptions/urn:ngsi-ld:Subscription:1"),
-            (Method::GET, "/subscriptions/urn:ngsi-ld:Subscription:1/stream"),
-            (Method::GET, "/subscriptions/urn:ngsi-ld:Subscription:1/ws"),
             (Method::POST, "/csourceSubscriptions"),
             (Method::GET, "/csourceSubscriptions"),
             (Method::GET, "/csourceSubscriptions/urn:ngsi-ld:Subscription:2"),

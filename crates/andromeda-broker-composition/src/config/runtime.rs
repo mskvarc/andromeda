@@ -116,7 +116,7 @@ pub struct RuntimeConfig {
     /// Snapshot operation configuration.
     pub snapshot: SnapshotConfig,
 
-    /// Durable-delivery and streaming notification configuration.
+    /// Durable and live notification delivery configuration.
     pub notifications: NotificationsConfig,
 
     /// Spatial projection and reconciliation configuration.
@@ -169,8 +169,8 @@ impl RuntimeConfig {
     /// TOML file (silently absent when the path does not exist), the
     /// `ANDROMEDA__`-prefixed environment, and finally the CLI listener
     /// overrides. Environment nesting uses `__` between every level, so
-    /// `ANDROMEDA__NOTIFICATIONS__STREAMING__WS__PING_INTERVAL` reaches
-    /// `notifications.streaming.ws.ping_interval`; a single underscore separates the
+    /// `ANDROMEDA__NOTIFICATIONS__INTERVAL_MAX_SLEEP` reaches
+    /// `notifications.interval_max_sleep`; a single underscore separates the
     /// words of one key and never nests.
     ///
     /// A `None` file means no TOML layer contributes: the broker loads from
@@ -514,8 +514,8 @@ mod tests {
 [server]
 port = 1600
 
-[notifications.streaming.ws]
-ping_interval = "45s"
+[notifications]
+interval_max_sleep = "45s"
 "#,
         );
 
@@ -523,7 +523,7 @@ ping_interval = "45s"
         fs::remove_file(path).expect("temp config should be removed");
 
         pretty_assertions::assert_eq!(config.server.port, 1600);
-        pretty_assertions::assert_eq!(config.notifications.streaming.ws.ping_interval.duration().as_secs(), 45);
+        pretty_assertions::assert_eq!(config.notifications.interval_max_sleep.duration().as_secs(), 45);
     }
 
     #[test]

@@ -2,11 +2,11 @@
 //! tests of what it does with a notification posted under a forwarded copy's
 //! identifier.
 //!
-//! The scene holds one local subscription delivering to an `sse://` endpoint,
-//! so what the subscriber is sent is read off the stream registry the
-//! dispatcher pushes it into, the entities this broker holds, the mappings of
-//! the copy a source holds, and the registrations through which the other
-//! holders of an entity are found.
+//! The scene holds one local subscription delivering to an `http://` endpoint
+//! that a loopback receiver serves, so what the subscriber is sent is read off
+//! the requests that receiver recorded, the entities this broker holds, the
+//! mappings of the copy a source holds, and the registrations through which
+//! the other holders of an entity are found.
 
 pub(crate) mod answering_source;
 pub(crate) mod forwarding_maps;
@@ -27,12 +27,7 @@ use crate::{
     service::SubscriptionForwardingService,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_delivery::{
-    dispatch::TransportDispatcher,
-    http::config::HttpTransportConfig,
-    mqtt::config::MqttPoolConfig,
-    stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage},
-};
+use andromeda_delivery::{dispatch::TransportDispatcher, http::config::HttpTransportConfig, mqtt::config::MqttPoolConfig};
 use andromeda_entity::{config::EntityConfig, query::EntityQueryService, spatial_acceleration::SpatialAcceleration};
 use andromeda_federation::{FederationService, config::FederationConfig, local_entity_type::LocalEntityTypeResolver};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
@@ -54,8 +49,8 @@ use andromeda_tenancy::tenant_ref::TenantRef;
 use futures::future::BoxFuture;
 use serde_json::{Value, json};
 use std::sync::Arc;
-use tokio::sync::mpsc::Receiver;
 use url::Url;
+use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
 
 /// The vocabulary a context-free name expands under (clause 5.5.7: the default
 /// context), which is how a source spells an entity under the core context.
@@ -90,8 +85,10 @@ pub(crate) struct ReassemblyScene {
     subscriptions: Arc<RecordingSubscriptions>,
     /// The mappings, which count how often the copies were asked for.
     maps: Arc<ForwardingMaps>,
-    /// What the local subscriber is sent.
-    delivered: Receiver<SseNotificationEvent>,
+    /// The loopback receiver the local subscription's endpoint names.
+    receiver: MockServer,
+    /// How many of the receiver's recorded requests `delivered` has returned.
+    returned: usize,
 }
 
 /// An endpoint validator for a broker that serves every scheme.
@@ -147,14 +144,15 @@ pub(crate) fn companion_subscription() -> Identifier {
     identifier("urn:ngsi-ld:Subscription:companion")
 }
 
-/// The stored form of the local subscription: it watches `Vehicle`, notifies an
-/// `sse://` endpoint in the normalized format, and takes `members` over.
-fn stored_subscription(members: &Value) -> Value {
+/// The stored form of the local subscription: it watches `Vehicle`, notifies
+/// `endpoint` in the normalized format, and takes `members` over. The
+/// endpoint is always the receiver's, whatever `members` say about it.
+fn stored_subscription(members: &Value, endpoint: &str) -> Value {
     let mut stored = json!({
         "id": local_subscription().as_str(),
         "type": "Subscription",
         "entities": [{"type": default_iri("Vehicle")}],
-        "notification": {"endpoint": {"uri": "sse://subscriber"}, "format": "normalized"},
+        "notification": {"format": "normalized"},
         "status": "active",
         "createdAt": "2020-01-01T00:00:00Z",
         "modifiedAt": "2020-01-01T00:00:00Z"
@@ -162,12 +160,13 @@ fn stored_subscription(members: &Value) -> Value {
     if let (Some(base), Some(replacements)) = (stored.as_object_mut(), members.as_object()) {
         base.extend(replacements.iter().map(|(name, value)| (name.clone(), value.clone()))); // clone: the stored form owns its members
     }
+    stored["notification"]["endpoint"] = json!({"uri": endpoint});
     stored
 }
 
 impl ReassemblyScene {
     /// The scene `spec` describes.
-    pub(crate) fn start(spec: SceneSpec) -> ReassemblyScene {
+    pub(crate) async fn start(spec: SceneSpec) -> ReassemblyScene {
         let SceneSpec {
             subscription_members,
             held,
@@ -175,7 +174,10 @@ impl ReassemblyScene {
             registration_failures,
             copies,
         } = spec;
-        let subscriptions = Arc::new(RecordingSubscriptions::holding(stored_subscription(&subscription_members)));
+        let receiver = MockServer::start().await;
+        Mock::given(method("POST")).respond_with(ResponseTemplate::new(204)).mount(&receiver).await;
+        let endpoint = format!("{}/subscriber", receiver.uri());
+        let subscriptions = Arc::new(RecordingSubscriptions::holding(stored_subscription(&subscription_members, &endpoint)));
         let maps = Arc::new(ForwardingMaps::new(
             local_subscription(),
             sender_registration(),
@@ -183,10 +185,7 @@ impl ReassemblyScene {
             companion_subscription(),
             copies,
         ));
-        let sse = Arc::new(ConnectionRegistry::<SseNotificationEvent>::new());
-        let ws = Arc::new(ConnectionRegistry::<WsNotificationMessage>::new());
-        let (_connection, delivered, _cancelled) = sse.register(&local_subscription(), 16);
-        let transport = TransportDispatcher::new(HttpTransportConfig::default(), MqttPoolConfig::default(), sse, ws).expect("the dispatcher builds");
+        let transport = TransportDispatcher::new(HttpTransportConfig::default(), MqttPoolConfig::default()).expect("the dispatcher builds");
         let csource_subscriptions = SubscriptionService::new(
             subscriptions.clone(), // clone: the scene keeps its handle for the counts
             offline_engine(),
@@ -235,7 +234,8 @@ impl ReassemblyScene {
             service,
             subscriptions,
             maps,
-            delivered,
+            receiver,
+            returned: 0,
         }
     }
 
@@ -250,12 +250,13 @@ impl ReassemblyScene {
     }
 
     /// The notification the local subscriber was sent since the last call, as
-    /// the JSON it was written as.
-    pub(crate) fn delivered(&mut self) -> Option<Value> {
-        self.delivered
-            .try_recv()
-            .ok()
-            .map(|event| serde_json::from_str(&event.data).expect("the delivered notification is JSON"))
+    /// the JSON it was written as. A delivery is recorded before its POST is
+    /// answered, so every notification `post` has returned for is visible here.
+    pub(crate) async fn delivered(&mut self) -> Option<Value> {
+        let requests = self.receiver.received_requests().await.expect("the receiver records its requests");
+        let next = requests.get(self.returned)?;
+        self.returned += 1;
+        Some(serde_json::from_slice(&next.body).expect("the delivered notification is JSON"))
     }
 
     /// How many notification slots of the local subscription were claimed.

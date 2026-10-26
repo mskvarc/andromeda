@@ -7,24 +7,18 @@ use crate::{
     mqtt::{config::MqttPoolConfig, dial::RumqttcDialer, handle::MqttTransportHandle, pool::MqttTransportPool},
     outcome::DeliveryOutcome,
     request::DeliveryRequest,
-    stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage},
     transport::NotificationTransport,
 };
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use async_trait::async_trait;
-use std::{error::Error, sync::Arc};
+use std::sync::Arc;
 use tracing::{debug, warn};
 
-/// Unified dispatcher routing to HTTP, MQTT, SSE or WebSocket.
+/// Unified dispatcher routing to HTTP or MQTT.
 pub struct TransportDispatcher {
     /// The HTTP transport, which owns its own client.
     http: HttpTransport,
     /// The MQTT connection pool.
     mqtt_pool: Arc<MqttTransportPool>,
-    /// Clients streaming over Server-Sent Events.
-    sse_registry: Arc<ConnectionRegistry<SseNotificationEvent>>,
-    /// Clients streaming over WebSocket.
-    ws_registry: Arc<ConnectionRegistry<WsNotificationMessage>>,
 }
 
 /// Result of a notification delivery attempt.
@@ -76,25 +70,17 @@ fn classify(outcome: Result<DeliveryOutcome, TransportError>) -> DeliveryResult 
 }
 
 impl TransportDispatcher {
-    /// Build a dispatcher over the four transports.
+    /// Build a dispatcher over the HTTP and MQTT transports.
     ///
     /// # Errors
     ///
     /// Returns [`TransportError::ClientInitializationFailed`] when the HTTP
-    /// client cannot be built from `http_config`. The MQTT pool and both
-    /// stream registries are constructed without a fallible step, so no other
-    /// variant can arise here.
-    pub fn new(
-        http_config: HttpTransportConfig,
-        mqtt_config: MqttPoolConfig,
-        sse_registry: Arc<ConnectionRegistry<SseNotificationEvent>>,
-        ws_registry: Arc<ConnectionRegistry<WsNotificationMessage>>,
-    ) -> Result<TransportDispatcher, TransportError> {
+    /// client cannot be built from `http_config`. The MQTT pool is constructed
+    /// without a fallible step, so no other variant can arise here.
+    pub fn new(http_config: HttpTransportConfig, mqtt_config: MqttPoolConfig) -> Result<TransportDispatcher, TransportError> {
         Ok(TransportDispatcher {
             http: HttpTransport::new(http_config)?,
             mqtt_pool: Arc::new(MqttTransportPool::new(mqtt_config, Arc::new(RumqttcDialer))),
-            sse_registry,
-            ws_registry,
         })
     }
 
@@ -107,8 +93,6 @@ impl TransportDispatcher {
     /// an MQTT publish would govern one transport by another's.
     pub async fn deliver(&self, endpoint: &EndpointTransport, request: &DeliveryRequest) -> DeliveryResult {
         let handle = match endpoint {
-            EndpointTransport::Sse => return self.deliver_sse(request),
-            EndpointTransport::WebSocket => return self.deliver_ws(request),
             EndpointTransport::Http => TransportHandle::Http(&self.http),
             EndpointTransport::Mqtt(config) => TransportHandle::Mqtt(self.mqtt_pool.transport_for(config)),
         };
@@ -139,47 +123,10 @@ impl TransportDispatcher {
         classify(outcome)
     }
 
-    /// Push a notification to whichever SSE clients are streaming it.
-    ///
-    /// The SSE `id:` field is the notification's own identifier so a client
-    /// reconnecting with `Last-Event-ID` names something meaningful.
-    fn deliver_sse(&self, request: &DeliveryRequest) -> DeliveryResult {
-        // The event owns its data, and the request keeps the written notification.
-        let data = request.body.text().to_owned();
-        // clone: the event owns its id, and the request keeps the notification's own
-        let event_id = request.body.id().clone();
-        report_stream(
-            &request.subscription_id,
-            self.sse_registry.try_send(&request.subscription_id, &SseNotificationEvent { event_id, data }),
-        )
-    }
-
-    /// Push a notification to whichever WebSocket clients are streaming it.
-    fn deliver_ws(&self, request: &DeliveryRequest) -> DeliveryResult {
-        // The message owns its data, and the request keeps the written notification.
-        let data = request.body.text().to_owned();
-        report_stream(
-            &request.subscription_id,
-            self.ws_registry.try_send(&request.subscription_id, &WsNotificationMessage { data }),
-        )
-    }
-
     /// The MQTT pool, for the health indicator and the probe task.
     #[must_use]
     pub const fn mqtt_pool(&self) -> &Arc<MqttTransportPool> {
         &self.mqtt_pool
-    }
-
-    /// The Server-Sent Events connection registry.
-    #[must_use]
-    pub const fn sse_registry(&self) -> &Arc<ConnectionRegistry<SseNotificationEvent>> {
-        &self.sse_registry
-    }
-
-    /// The WebSocket connection registry.
-    #[must_use]
-    pub const fn ws_registry(&self) -> &Arc<ConnectionRegistry<WsNotificationMessage>> {
-        &self.ws_registry
     }
 
     /// Gracefully shut down every transport that holds a persistent connection.
@@ -187,22 +134,6 @@ impl TransportDispatcher {
     /// Only MQTT does; the HTTP client cleans its pool up on drop.
     pub async fn shutdown(&self) {
         self.mqtt_pool.shutdown_all().await;
-    }
-}
-
-/// Log and translate the outcome of a push to a streaming client.
-fn report_stream<E: Error>(subscription_id: &Identifier, outcome: Result<(), E>) -> DeliveryResult {
-    match outcome {
-        Ok(()) => {
-            debug!(subscription_id = %subscription_id, "streaming notification delivered");
-            DeliveryResult::Delivered
-        }
-        Err(error) => {
-            debug!(subscription_id = %subscription_id, error = %error, "streaming notification delivery failed");
-            // A stream push has no delivery queue to retry through and the client must
-            // reconnect, so a failed push is terminal, not retryable.
-            DeliveryResult::TerminalFailure
-        }
     }
 }
 
@@ -231,71 +162,15 @@ impl NotificationTransport for TransportHandle<'_> {
 )]
 mod tests {
     use crate::{
-        dispatch::{TransportDispatcher, classify},
-        endpoint::transport::EndpointTransport,
+        dispatch::classify,
         error::TransportError,
-        http::config::HttpTransportConfig,
-        mqtt::config::MqttPoolConfig,
-        notification_body::NotificationBody,
-        notification_context::NotificationContext,
         outcome::{DeliveryOutcome, EndpointRejection},
-        request::{DeliveryRequest, NotificationDelivery},
-        stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage},
     };
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use std::{
         net::{IpAddr, Ipv4Addr},
-        str::FromStr,
-        sync::Arc,
         time::Duration,
     };
     use url::Url;
-
-    /// The delivery of one written notification to a streaming endpoint of
-    /// `subscription`.
-    fn streamed(subscription: &Identifier, notification_id: &Identifier) -> DeliveryRequest {
-        let endpoint = Url::parse("https://receiver.example.com/stream").expect("a well-formed endpoint URI");
-        let context = NotificationContext::core();
-        let document = serde_json::json!({
-            "id": notification_id.as_str(),
-            "type": "Notification",
-            "subscriptionId": subscription.as_str(),
-            "data": []
-        });
-        NotificationDelivery::builder()
-            .endpoint_uri(&endpoint)
-            .context(&context)
-            .subscription_id(subscription)
-            .build()
-            .assemble(NotificationBody::written(notification_id, &document).expect("a written notification"))
-    }
-
-    /// Clause 5.3.1: the notification's own `id` is the SSE event `id:` and
-    /// rides inside the data of both streams, which carry the written text
-    /// unchanged.
-    #[tokio::test]
-    async fn sse_and_ws_frames_carry_the_notification_id() {
-        let subscription = Identifier::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id");
-        let notification_id = Identifier::from_str("urn:ngsi-ld:Notification:abc").expect("a well-formed notification id");
-        let sse = Arc::new(ConnectionRegistry::<SseNotificationEvent>::new());
-        let ws = Arc::new(ConnectionRegistry::<WsNotificationMessage>::new());
-        let dispatcher = TransportDispatcher::new(HttpTransportConfig::default(), MqttPoolConfig::default(), Arc::clone(&sse), Arc::clone(&ws))
-            .expect("the dispatcher is built");
-        let (_sse_connection, mut sse_events, _sse_token) = sse.register(&subscription, 4);
-        let (_ws_connection, mut ws_messages, _ws_token) = ws.register(&subscription, 4);
-        let request = streamed(&subscription, &notification_id);
-
-        assert!(dispatcher.deliver(&EndpointTransport::Sse, &request).await.is_delivered());
-        assert!(dispatcher.deliver(&EndpointTransport::WebSocket, &request).await.is_delivered());
-
-        let event = sse_events.recv().await.expect("an SSE event");
-        pretty_assertions::assert_eq!(event.event_id, notification_id);
-        pretty_assertions::assert_eq!(event.data.as_str(), request.body.text());
-        let message = ws_messages.recv().await.expect("a WebSocket message");
-        pretty_assertions::assert_eq!(message.data.as_str(), request.body.text());
-        let named: serde_json::Value = serde_json::from_str(&message.data).expect("the frame is JSON");
-        pretty_assertions::assert_eq!(named["id"], serde_json::json!(notification_id.as_str()));
-    }
 
     #[test]
     fn a_success_is_delivered_and_not_retried() {

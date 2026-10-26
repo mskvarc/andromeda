@@ -43,12 +43,6 @@ impl SubscriptionStateResolver for BrokerSubscriptionStateResolver {
                     .csource_subscriptions(Arc::clone(&state.csr_subscriptions))
                     .engine(state.entity_query.engine().clone()) // clone: the engine shares its loader and caches behind `Arc`s
                     .context_hosting(state.context_hosting.clone()) // clone: the route services own a handle on the tenant's hosting
-                    .sse_registry(Arc::clone(&state.sse_registry))
-                    .sse_channel_buffer_size(state.sse_channel_buffer_size)
-                    .sse_keep_alive_interval_secs(state.sse_keep_alive_interval_secs)
-                    .ws_registry(Arc::clone(&state.ws_registry))
-                    .ws_channel_buffer_size(state.ws_channel_buffer_size)
-                    .ws_ping_interval_secs(state.ws_ping_interval_secs)
                     .build(),
             ))
         })

@@ -42,7 +42,7 @@ fn notification() -> Value {
 
 /// The members a local subscription with `notification_members` stores.
 fn subscription_members(notification_members: &Value) -> Value {
-    let mut members = json!({"endpoint": {"uri": "sse://subscriber"}, "format": "normalized"});
+    let mut members = json!({"format": "normalized"});
     if let (Some(base), Some(extra)) = (members.as_object_mut(), notification_members.as_object()) {
         base.extend(extra.iter().map(|(name, value)| (name.clone(), value.clone()))); // clone: the stored form owns its members
     }
@@ -56,9 +56,10 @@ async fn relayed_with(notification_members: &Value, held: Vec<EntityState>) -> V
         subscription_members: subscription_members(notification_members),
         held,
         ..SceneSpec::default()
-    });
+    })
+    .await;
     scene.post(&notification()).await.expect("the notification is handled");
-    scene.delivered().and_then(|sent| sent["data"].as_array().cloned()).unwrap_or_default()
+    scene.delivered().await.and_then(|sent| sent["data"].as_array().cloned()).unwrap_or_default()
 }
 
 /// The identifiers of `entities`, in order.

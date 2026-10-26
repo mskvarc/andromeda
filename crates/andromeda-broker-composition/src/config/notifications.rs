@@ -1,7 +1,6 @@
-//! Composition of the durable-delivery and streaming notification configurations.
+//! Composition of the durable and live notification delivery configurations.
 
 use andromeda_configuration_scalars::human_duration::HumanDuration;
-use andromeda_http_subscription::config::{NotificationConfig, NotificationConfigError};
 use andromeda_notification::delivery_config::{DeliveryConfig, DeliveryConfigError};
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
@@ -17,9 +16,6 @@ pub enum NotificationsConfigError {
     /// The durable delivery configuration was rejected by its owner.
     #[error(transparent)]
     Delivery(#[from] DeliveryConfigError),
-    /// The streaming transport configuration was rejected by its owner.
-    #[error(transparent)]
-    Streaming(#[from] NotificationConfigError),
     /// The interval-notification idle sleep ceiling was configured as zero.
     #[error("notifications.interval_max_sleep must be greater than zero")]
     ZeroIntervalMaxSleep,
@@ -28,17 +24,12 @@ pub enum NotificationsConfigError {
     ZeroLiveChangeCapacity,
 }
 
-/// Durable-delivery and streaming notification configuration.
-///
-/// The two sub-configurations are unrelated in what they own -- one governs the
-/// durable HTTP/MQTT delivery queue, the other the SSE and WebSocket streaming
-/// transports -- but both are one operator-facing `notifications` section.
+/// Notification delivery configuration: the durable delivery queue, live
+/// evaluation, and the interval drain, all under one `notifications` section.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
 pub struct NotificationsConfig {
     /// Durable notification event and delivery configuration.
     pub delivery: DeliveryConfig,
-    /// Streaming (Server-Sent Events and WebSocket) transport configuration.
-    pub streaming: NotificationConfig,
     /// Ceiling the periodic (`timeInterval`) notification drain's idle backoff
     /// reaches while no subscription change wakes it.
     ///
@@ -76,7 +67,6 @@ impl Default for NotificationsConfig {
     fn default() -> NotificationsConfig {
         NotificationsConfig {
             delivery: DeliveryConfig::default(),
-            streaming: NotificationConfig::default(),
             interval_max_sleep: HumanDuration::from_secs(30),
             live_change_capacity: 8192,
             live_evaluation_lanes: DEFAULT_LIVE_EVALUATION_LANES,
@@ -85,18 +75,17 @@ impl Default for NotificationsConfig {
 }
 
 impl NotificationsConfig {
-    /// Validate both notification sub-configurations and the interval ceiling.
+    /// Validate the delivery sub-configuration, the interval ceiling and the live buffer.
     ///
     /// # Errors
     ///
-    /// Returns [`NotificationsConfigError`] wrapping the delivery or streaming
-    /// error its owner reported for whichever sub-configuration is invalid, or
+    /// Returns [`NotificationsConfigError`] wrapping the delivery error its owner
+    /// reported when the delivery configuration is invalid, or
     /// [`NotificationsConfigError::ZeroIntervalMaxSleep`] when the interval idle
     /// ceiling is zero, or [`NotificationsConfigError::ZeroLiveChangeCapacity`]
     /// when the live change buffer holds no change.
     pub fn validate(&self) -> Result<(), NotificationsConfigError> {
         self.delivery.validate()?;
-        self.streaming.validate()?;
         if self.interval_max_sleep.is_zero() {
             return Err(NotificationsConfigError::ZeroIntervalMaxSleep);
         }

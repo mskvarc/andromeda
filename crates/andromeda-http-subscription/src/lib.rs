@@ -1,24 +1,18 @@
-//! HTTP binding for entity and context-source subscription lifecycle and streaming routes.
+//! HTTP binding for entity and context-source subscription lifecycle routes.
 
 #![deny(missing_docs)]
 
-/// Streaming subscription transport configuration.
-pub mod config;
 mod csource_subscription;
 pub mod error;
 mod listing;
 pub mod routes;
-mod sse;
 pub mod state;
 mod subscription;
-mod ws;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
-        "andromeda-configuration-scalars",
         "andromeda-context-space",
-        "andromeda-delivery",
         "andromeda-http-context-registry",
         "andromeda-http-extraction",
         "andromeda-http-headers",
@@ -34,7 +28,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-tenancy",
     ],
     allow_workspace_dev_dependencies: ["andromeda-ngsi-ld-geometry", "andromeda-persistence-failure"],
-    allow_production_dependencies: ["axum", "tokio"],
+    allow_production_dependencies: ["axum"],
 }
 
 #[cfg(test)]

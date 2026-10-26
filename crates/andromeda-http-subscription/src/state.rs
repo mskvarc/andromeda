@@ -1,7 +1,6 @@
 //! Focused tenant-state resolution for subscription routes.
 
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_delivery::stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage};
 use andromeda_http_context_registry::tenant_context_hosting::TenantContextHosting;
 use andromeda_http_extraction::{
     classification::classify_tenancy_error,
@@ -37,18 +36,6 @@ pub struct SubscriptionRouteServices {
     /// The tenant's host of the contexts its responses and subscriptions name
     /// when no single URL names them (Annex C.8, clause 5.8.1.4).
     pub context_hosting: TenantContextHosting,
-    /// Live SSE connections.
-    pub sse_registry: Arc<ConnectionRegistry<SseNotificationEvent>>,
-    /// Per-connection SSE channel capacity.
-    pub sse_channel_buffer_size: usize,
-    /// SSE keep-alive cadence in seconds.
-    pub sse_keep_alive_interval_secs: u64,
-    /// Live WebSocket connections.
-    pub ws_registry: Arc<ConnectionRegistry<WsNotificationMessage>>,
-    /// Per-connection WebSocket channel capacity.
-    pub ws_channel_buffer_size: usize,
-    /// WebSocket ping cadence in seconds.
-    pub ws_ping_interval_secs: u64,
 }
 
 /// Existing-tenant extraction specialized to subscription capabilities.

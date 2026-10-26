@@ -9,7 +9,7 @@ use thiserror::Error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum EndpointRefusal {
     /// The scheme names a protocol this broker does not deliver over.
-    #[error("unsupported endpoint URI scheme; expected http, https, mqtt, mqtts, sse or ws")]
+    #[error("unsupported endpoint URI scheme; expected http, https, mqtt or mqtts")]
     UnsupportedScheme,
     /// An `mqtt` endpoint named no broker host.
     #[error("MQTT URI missing host")]

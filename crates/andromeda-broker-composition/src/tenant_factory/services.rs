@@ -14,13 +14,13 @@ use crate::{
         subscription_services::{DistributedSubscriptionEdge, compose_subscription_services},
         tasks::TenantSignals,
         temporal_history::TemporalPorts,
-        transport::TenantTransports,
     },
     tenant_state::AndromedaState,
 };
 use andromeda_configuration_scalars::human_byte_size::HumanByteSize;
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_context_registry::{service::ContextRegistryService, store::ContextRegistryStore};
+use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_entity::{
     EntityService,
     NotificationWriteConfig,
@@ -80,7 +80,7 @@ pub(super) fn construct_services(
     config: &TenantFactoryConfig,
     storage: &TenantStorage,
     signals: &TenantSignals,
-    transports: &TenantTransports,
+    dispatcher: &Arc<TransportDispatcher>,
     temporal_ports: &TemporalPorts,
     collaborators: TenantServiceCollaborators<'_>,
 ) -> Result<ConstructedServices, TenantAssemblyError> {
@@ -119,7 +119,7 @@ pub(super) fn construct_services(
     let subscriptions = compose_subscription_services(
         storage,
         signals,
-        transports,
+        dispatcher,
         edge,
         &entity_query,
         geo_query_admission(config),
@@ -143,12 +143,6 @@ pub(super) fn construct_services(
         entity_maps: Arc::new(EntityMapService::new(Arc::clone(&storage.entity_map_store))),
         subscription_forwarding: subscriptions.forwarding,
         snapshots,
-        sse_registry: Arc::clone(&transports.sse_registry),
-        sse_channel_buffer_size: config.notifications.streaming.sse.channel_buffer_size,
-        sse_keep_alive_interval_secs: config.notifications.streaming.sse.keep_alive_interval.duration().as_secs(),
-        ws_registry: Arc::clone(&transports.ws_registry),
-        ws_channel_buffer_size: config.notifications.streaming.ws.channel_buffer_size,
-        ws_ping_interval_secs: config.notifications.streaming.ws.ping_interval.duration().as_secs(),
     };
     Ok(ConstructedServices { state, snapshot_preparation })
 }

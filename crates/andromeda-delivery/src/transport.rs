@@ -6,9 +6,7 @@ use async_trait::async_trait;
 /// Abstraction over notification delivery transports.
 ///
 /// Implemented by the HTTP and MQTT transports and by the dispatcher's
-/// internal handle. The streaming transports do not implement it: SSE and
-/// WebSocket deliver by pushing into a connection registry rather than by
-/// opening one, so they have no outcome beyond "a client was listening".
+/// internal handle.
 ///
 /// Graceful shutdown is not part of this abstraction: the only transport that
 /// holds persistent connections is MQTT, whose pool is closed directly through

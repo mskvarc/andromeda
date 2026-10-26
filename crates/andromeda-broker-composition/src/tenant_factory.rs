@@ -16,7 +16,7 @@ use crate::{
         storage::initialize_storage,
         tasks::{TenantSignals, TenantTaskChannels, snapshot_delivery_signal, supervise_tasks},
         temporal_history::compose_temporal_history,
-        transport::construct_transports,
+        transport::construct_dispatcher,
     },
     tenant_state::AndromedaState,
 };
@@ -282,12 +282,12 @@ async fn build_tenant_state(
         consequence_publisher,
     ));
     let writes = indexed_commits(writes, &storage.spatial, tenant)?;
-    let transports = construct_transports(config.notifications.delivery.request_timeout(), config.link_field)?;
+    let dispatcher = construct_dispatcher(config.notifications.delivery.request_timeout(), config.link_field)?;
     let services = construct_services(
         config,
         &storage,
         &signals,
-        &transports,
+        &dispatcher,
         &temporal.ports,
         TenantServiceCollaborators {
             writes: &writes,
@@ -303,13 +303,13 @@ async fn build_tenant_state(
         snapshot_status_receiver,
         pacer: Arc::clone(&pacer), // clone: the tasks consult the pacer the runtime reports use to.
     };
-    let supervision = supervise_tasks(config, &storage, &services, &writes, &transports.dispatcher, task_supervisor, channels)?;
+    let supervision = supervise_tasks(config, &storage, &services, &writes, &dispatcher, task_supervisor, channels)?;
     Ok((
         services.state,
         BrokerTenantRuntime::new(
             storage.context_workers,
             supervision.handles,
-            transports.dispatcher,
+            dispatcher,
             storage.pool,
             supervision.health_shutdown,
             supervision.task_supervisor,

@@ -67,7 +67,7 @@ mod tests {
         let uri = uri.parse().expect("the URI parses");
         match parse_endpoint_transport(&uri, None).expect("the endpoint parses") {
             EndpointTransport::Mqtt(config) => config,
-            EndpointTransport::Http | EndpointTransport::Sse | EndpointTransport::WebSocket => panic!("expected an MQTT transport for {uri}"),
+            EndpointTransport::Http => panic!("expected an MQTT transport for {uri}"),
         }
     }
 

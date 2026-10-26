@@ -2,9 +2,8 @@
 //!
 //! ETSI GS CIM 009 v1.9.1 clause 5.2.15 lets a subscription name an endpoint
 //! by URI, and the scheme of that URI decides everything else: `https` is an
-//! HTTP POST, `mqtt` is a publish to a pooled broker connection, `sse` and `ws`
-//! are a push down a connection the client already opened. [`endpoint`] reads
-//! the URI, [`dispatch`] routes on what it read, and each transport module
+//! HTTP POST and `mqtt` is a publish to a pooled broker connection. [`endpoint`]
+//! reads the URI, [`dispatch`] routes on what it read, and each transport module
 //! knows only its own protocol.
 //!
 //! This is a capability, not a policy. Nothing here decides *whether* to
@@ -39,7 +38,6 @@ pub mod notification_context;
 pub mod notification_context_placement;
 pub mod outcome;
 pub mod request;
-pub mod stream;
 pub mod transport;
 
 #[cfg(test)]

@@ -21,20 +21,13 @@ const MQTTS_DEFAULT_PORT: u16 = 8883;
 
 /// Notification delivery transport.
 ///
-/// Chosen entirely by the endpoint URI's scheme (clause 5.2.15). `sse` and
-/// `ws` are Andromeda extensions: they name a connection the client opens and
-/// the broker pushes down, so the URI's authority and path carry no meaning
-/// and are not read.
+/// Chosen entirely by the endpoint URI's scheme (clause 5.2.15).
 #[derive(Debug, Clone)]
 pub enum EndpointTransport {
     /// `http` or `https`: one POST per notification.
     Http,
     /// `mqtt` or `mqtts`: a publish on a pooled broker connection.
     Mqtt(MqttEndpointConfig),
-    /// `sse`: pushed to whichever clients are streaming this subscription.
-    Sse,
-    /// `ws`: pushed to whichever clients hold a WebSocket for this subscription.
-    WebSocket,
 }
 
 impl MqttVersion {
@@ -71,7 +64,7 @@ impl MqttQoS {
 /// # Errors
 ///
 /// Returns [`EndpointParseError::UnsupportedScheme`] when the scheme is none of
-/// `http`, `https`, `mqtt`, `mqtts`, `sse` or `ws`. An `mqtt` or `mqtts` URI
+/// `http`, `https`, `mqtt` or `mqtts`. An `mqtt` or `mqtts` URI
 /// additionally fails with [`EndpointParseError::MissingHost`] when it names no
 /// broker, [`EndpointParseError::MissingTopic`] when its path is empty,
 /// [`EndpointParseError::InvalidTopic`] when the path is not a valid publish
@@ -83,8 +76,6 @@ impl MqttQoS {
 pub fn parse_endpoint_transport(uri: &Url, notifier_info: Option<&[KeyValuePair]>) -> Result<EndpointTransport, EndpointParseError> {
     match uri.scheme() {
         "http" | "https" => Ok(EndpointTransport::Http),
-        "sse" => Ok(EndpointTransport::Sse),
-        "ws" => Ok(EndpointTransport::WebSocket),
         "mqtt" | "mqtts" => Ok(EndpointTransport::Mqtt(parse_mqtt_endpoint(uri, notifier_info)?)),
         _unsupported => Err(EndpointParseError::UnsupportedScheme),
     }
@@ -177,7 +168,7 @@ mod tests {
     fn mqtt_config(uri: &str, info: Option<&[KeyValuePair]>) -> MqttEndpointConfig {
         match parse_endpoint_transport(uri, info).expect("the URI parses") {
             EndpointTransport::Mqtt(config) => config,
-            EndpointTransport::Http | EndpointTransport::Sse | EndpointTransport::WebSocket => panic!("expected an MQTT transport for {uri}"),
+            EndpointTransport::Http => panic!("expected an MQTT transport for {uri}"),
         }
     }
 
@@ -255,13 +246,17 @@ mod tests {
     }
 
     #[test]
-    fn the_streaming_schemes_resolve_regardless_of_authority_path_or_case() {
-        for uri in ["sse://internal", "sse://internal/anything", "SSE://internal"] {
-            assert!(matches!(parse_endpoint_transport(uri, None).expect("parses"), EndpointTransport::Sse), "{uri}");
-        }
-        for uri in ["ws://internal", "ws://internal/anything", "WS://internal"] {
+    fn sse_ws_and_wss_are_unsupported_endpoint_schemes() {
+        for uri in [
+            "sse://internal",
+            "sse://internal/anything",
+            "SSE://internal",
+            "ws://internal",
+            "wss://internal/anything",
+            "WS://internal",
+        ] {
             assert!(
-                matches!(parse_endpoint_transport(uri, None).expect("parses"), EndpointTransport::WebSocket),
+                matches!(parse_endpoint_transport(uri, None), Err(EndpointParseError::UnsupportedScheme)),
                 "{uri}"
             );
         }

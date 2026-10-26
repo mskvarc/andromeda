@@ -152,26 +152,7 @@ impl NotificationProcessor {
 
     /// Apply one committed subscription lifecycle change to matching state.
     pub async fn apply_subscription_change(&self, change: SubscriptionChange) {
-        // Close any active SSE/WebSocket connections when a subscription is deleted.
-        if let SubscriptionChange::Deleted { ref id, .. } = change {
-            self.transport.sse_registry().close(id);
-            self.transport.ws_registry().close(id);
-        }
         self.cache.handle_change(&change, self.sub_repo.as_ref()).await;
-
-        // After cache update, close lingering SSE/WebSocket connections if
-        // transport was changed away from the streaming type.
-        if let SubscriptionChange::Upserted { ref target, ref id } = change
-            && let Some(compiled) = self.cache.get(target, id)
-        {
-            let endpoint_transport = compiled_transport(&compiled);
-            if !matches!(endpoint_transport, Some(EndpointTransport::Sse)) {
-                self.transport.sse_registry().close(id);
-            }
-            if !matches!(endpoint_transport, Some(EndpointTransport::WebSocket)) {
-                self.transport.ws_registry().close(id);
-            }
-        }
     }
 
     /// Evaluate and deliver notifications for one committed entity change.

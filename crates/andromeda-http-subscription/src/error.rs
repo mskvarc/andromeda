@@ -94,10 +94,6 @@ where
     }
 }
 
-pub(crate) fn public_problem(detail: impl Into<String>, instance: &Uri) -> ProblemResponse {
-    ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail).with_instance(instance.clone())
-}
-
 /// Sanitize a failure that no client input can provoke, attaching `instance`.
 pub(crate) fn internal_problem(error: &impl Display, summary: InternalFailureSummary, instance: &Uri) -> ProblemResponse {
     ClassifiedReport::internal(error, summary).with_instance(instance.clone())
