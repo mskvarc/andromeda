@@ -177,7 +177,7 @@ impl CsourceNotificationDelivery {
             .data(&data)
             .trigger_reason(trigger_reason)
             .build();
-        let body = match NotificationBody::written(&notification_id, &notification) {
+        let body = match NotificationBody::written(&notification) {
             Ok(body) => body,
             Err(error) => {
                 error!("Failed to write CsourceNotification for {}: {}", sub_id, error);

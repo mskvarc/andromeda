@@ -14,7 +14,6 @@ use andromeda_postgresql_seaquery::{cast::cast, clock::now, pg_type::PostgresTyp
 use andromeda_snapshot::error::SnapshotError;
 use chrono::{DateTime, Utc};
 use sea_query::{Alias, CaseStatement, Expr, ExprTrait, InsertStatement, JoinType, Keyword, LockBehavior, LockType, Order, Query};
-use serde::Deserialize;
 use serde_json::value::RawValue;
 use sqlx::{PgPool, Postgres, Row, Transaction, postgres::PgRow};
 use url::Url;
@@ -34,8 +33,6 @@ pub struct SnapshotStatusDelivery {
     /// The `SnapshotNotification` (clause 5.3.4) as it was written when the
     /// lifecycle event committed, `@context` included.
     pub notification: Box<RawValue>,
-    /// The identifier the written notification names itself by.
-    pub notification_id: Identifier,
     /// Number of attempts already completed before this lease.
     pub attempt_count: i32,
 }
@@ -287,13 +284,6 @@ fn outbox_insert(snapshot_key: i64, endpoint: &Url, receiver_info: Option<&[KeyV
     Ok(insert)
 }
 
-/// The member of a written notification its delivery is identified by.
-#[derive(Deserialize)]
-struct NotificationIdentity {
-    /// The notification's own identifier.
-    id: Identifier,
-}
-
 /// Decode one claimed outbox row into its transport-facing delivery value.
 fn map_delivery(row: &PgRow) -> Result<SnapshotStatusDelivery, SnapshotError> {
     let raw_snapshot: String = row.try_get("snapshot_id").map_err(|error| persistence_error::<SnapshotError>(error))?;
@@ -310,7 +300,6 @@ fn map_delivery(row: &PgRow) -> Result<SnapshotStatusDelivery, SnapshotError> {
         snapshot_id: raw_snapshot.parse().map_err(|error| SnapshotError::from(undecodable(&error)))?,
         endpoint: Url::parse(&raw_endpoint).map_err(|error| SnapshotError::from(undecodable(&error)))?,
         receiver_info,
-        notification_id: serde_json::from_str::<NotificationIdentity>(notification.get())?.id,
         notification,
         attempt_count: row.try_get("attempt_count").map_err(|error| persistence_error::<SnapshotError>(error))?,
     })

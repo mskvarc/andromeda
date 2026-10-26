@@ -144,7 +144,7 @@ impl DeliverySnapshotNotificationSink {
     pub async fn deliver_status(&self, delivery: &SnapshotStatusDelivery) -> DeliveryResult {
         let request = DeliveryRequest {
             // clone: the leased outbox row remains available to record the result after transport completes
-            body: NotificationBody::new(delivery.notification_id.clone(), delivery.notification.clone()),
+            body: NotificationBody::new(delivery.notification.clone()),
             endpoint_uri: delivery.endpoint.clone(),
             content_type: ResponseMediaType::JsonLd,
             // The notification was written with its `@context` when the event

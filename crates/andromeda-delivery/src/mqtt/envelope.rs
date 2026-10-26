@@ -83,7 +83,6 @@ mod tests {
         let endpoint = Url::parse("mqtt://broker:1883/topic").expect("a well-formed endpoint URI");
         let subscription = Identifier::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id");
         let context = NotificationContext::core();
-        let id = Identifier::from_str("urn:ngsi-ld:Notification:1").expect("a well-formed notification id");
         NotificationDelivery::builder()
             .endpoint_uri(&endpoint)
             .accept(Some(&media))
@@ -92,7 +91,7 @@ mod tests {
             .tenant(tenant)
             .subscription_id(&subscription)
             .build()
-            .assemble(NotificationBody::written(&id, payload).expect("a written notification"))
+            .assemble(NotificationBody::written(payload).expect("a written notification"))
     }
 
     /// Table 5.3.1-1 over MQTT (clause 7.2): the body is the document the

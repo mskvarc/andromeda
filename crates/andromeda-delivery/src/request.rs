@@ -167,7 +167,7 @@ impl<'a> NotificationDelivery<'a> {
             .notified_at(Utc::now())
             .data(data)
             .build();
-        Ok(self.assemble(NotificationBody::written(&id, &notification)?))
+        Ok(self.assemble(NotificationBody::written(&notification)?))
     }
 
     /// Everything a transport reads to send `body`, the notification written
@@ -255,8 +255,7 @@ mod tests {
     }
 
     fn body() -> NotificationBody {
-        let id = Identifier::from_str("urn:ngsi-ld:Notification:1").expect("a well-formed notification id");
-        NotificationBody::written(&id, &json!({"id": "urn:ngsi-ld:Notification:1"})).expect("a written notification")
+        NotificationBody::written(&json!({"id": "urn:ngsi-ld:Notification:1"})).expect("a written notification")
     }
 
     /// Whether the delivery of an endpoint accepting `accept`, with
@@ -429,7 +428,6 @@ mod tests {
     fn the_written_notification_reaches_the_request_unchanged() {
         let request = delivered(None, None, None).1;
         pretty_assertions::assert_eq!(request.body.text(), r#"{"id":"urn:ngsi-ld:Notification:1"}"#);
-        pretty_assertions::assert_eq!(request.body.id().as_str(), "urn:ngsi-ld:Notification:1");
     }
 
     #[test]

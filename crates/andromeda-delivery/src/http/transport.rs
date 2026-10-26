@@ -411,8 +411,7 @@ mod tests {
 
     /// The written notification `document`.
     fn notification(document: &serde_json::Value) -> NotificationBody {
-        let id = Identifier::from_str("urn:ngsi-ld:Notification:1").expect("a well-formed notification id");
-        NotificationBody::written(&id, document).expect("a written notification")
+        NotificationBody::written(document).expect("a written notification")
     }
 
     async fn deliver(transport: &HttpTransport, endpoint: &Url) -> DeliveryOutcome {

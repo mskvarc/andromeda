@@ -5,7 +5,7 @@
 //! as its `body`. No transport reads the document back, and none writes it a
 //! second time.
 
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::NotificationIdParseError};
+use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::NotificationIdParseError;
 use serde::Serialize;
 use serde_json::value::{RawValue, to_raw_value};
 use std::sync::Arc;
@@ -22,39 +22,27 @@ pub enum NotificationWriteError {
     Written(#[from] serde_json::Error),
 }
 
-/// A written notification and the identifier it names itself by.
+/// A written notification, shared by every delivery attempt.
 #[derive(Debug, Clone)]
 pub struct NotificationBody {
-    /// The identifier the written notification names itself by.
-    id: Identifier,
-    /// The written notification, shared by every delivery attempt.
+    /// The written notification.
     json: Arc<RawValue>,
 }
 
 impl NotificationBody {
-    /// The notification `document`, written, naming itself `id`.
-    ///
-    /// The document borrows the identifier it writes, so the body takes its
-    /// own copy of it.
+    /// The notification `document`, written.
     ///
     /// # Errors
     ///
     /// Returns the [`serde_json::Error`] `document` cannot be written with.
-    pub fn written<T: Serialize + ?Sized>(id: &Identifier, document: &T) -> Result<NotificationBody, serde_json::Error> {
-        // clone: the body owns the identifier the document only borrows
-        to_raw_value(document).map(|json| NotificationBody::new(id.clone(), json))
+    pub fn written<T: Serialize + ?Sized>(document: &T) -> Result<NotificationBody, serde_json::Error> {
+        to_raw_value(document).map(NotificationBody::new)
     }
 
-    /// A notification already written as `json`, naming itself `id`.
+    /// A notification already written as `json`.
     #[must_use]
-    pub fn new(id: Identifier, json: Box<RawValue>) -> NotificationBody {
-        NotificationBody { id, json: Arc::from(json) }
-    }
-
-    /// The notification's own identifier.
-    #[must_use]
-    pub const fn id(&self) -> &Identifier {
-        &self.id
+    pub fn new(json: Box<RawValue>) -> NotificationBody {
+        NotificationBody { json: Arc::from(json) }
     }
 
     /// The written notification.
@@ -77,15 +65,11 @@ impl NotificationBody {
 )]
 mod tests {
     use crate::notification_body::NotificationBody;
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use std::str::FromStr;
 
     #[test]
-    fn a_written_notification_keeps_its_text_and_its_identifier() {
-        let id = Identifier::from_str("urn:ngsi-ld:Notification:1").expect("an identifier");
+    fn a_written_notification_keeps_its_text() {
         let document: serde_json::Value = serde_json::from_str(r#"{"id":"urn:ngsi-ld:Notification:1","data":[0.100000000000000005]}"#).expect("JSON");
-        let body = NotificationBody::written(&id, &document).expect("written");
-        pretty_assertions::assert_eq!(body.id().as_str(), "urn:ngsi-ld:Notification:1");
+        let body = NotificationBody::written(&document).expect("written");
         pretty_assertions::assert_eq!(body.text(), r#"{"data":[0.100000000000000005],"id":"urn:ngsi-ld:Notification:1"}"#);
     }
 }
