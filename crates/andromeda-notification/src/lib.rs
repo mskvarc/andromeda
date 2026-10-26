@@ -3,8 +3,6 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-/// The `@context` of a notification whose slot is already claimed.
-mod claimed_notification_context;
 /// The order context source registrations and subscriptions were written in.
 pub mod csource_change_order;
 /// Sending one context source notification.
@@ -63,6 +61,8 @@ mod notification_outcome;
 pub mod notified_registration_store;
 /// Entity event notification evaluation.
 pub mod processor;
+/// The `@context` a notification is rendered under, and the failure recorded when it cannot be loaded.
+mod resolved_notification_context;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

@@ -9,7 +9,7 @@
 //! drifting apart, for instance on the `triggerReason` Table 5.3.2-1 makes
 //! mandatory.
 
-use crate::{claimed_notification_context::claimed_notification_context, error::NotificationError, notification_outcome::notification_outcome};
+use crate::{error::NotificationError, notification_outcome::notification_outcome, resolved_notification_context::claimed_notification_context};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::{
     dispatch::TransportDispatcher,

@@ -119,15 +119,24 @@ pub fn slot_claim_statement(target: &ContextTarget, id: &Identifier, kind: Store
             statement.value(SubscriptionDeliveryState::LastIntervalTick, Expr::val(tick));
             SlotClaimStatement::Stamping(statement)
         }
-        NotificationStamp::WithOutcome => {
-            let mut statement = Query::select();
-            statement.expr(now()).from(table_of(target, SubscriptionDeliveryState::Table)).and_where(owner);
-            if let Some(cooldown) = cooldown {
-                statement.cond_where(cooldown);
-            }
-            SlotClaimStatement::Checking(statement)
-        }
+        NotificationStamp::WithOutcome => SlotClaimStatement::Checking(checking_claim(target, owner, cooldown, None)),
+        NotificationStamp::Unstamped { ceiling } => SlotClaimStatement::Checking(checking_claim(target, owner, cooldown, ceiling)),
     }
+}
+
+/// The `SELECT NOW()` that reads whether the `owner` row admits a notification,
+/// refused inside the endpoint's `cooldown` window and, when a `throttling`
+/// ceiling is given, inside the subscription's `throttling` window.
+fn checking_claim(target: &ContextTarget, owner: SimpleExpr, cooldown: Option<Cond>, throttling: Option<DateTime<Utc>>) -> SelectStatement {
+    let mut statement = Query::select();
+    statement.expr(now()).from(table_of(target, SubscriptionDeliveryState::Table)).and_where(owner);
+    if let Some(cooldown) = cooldown {
+        statement.cond_where(cooldown);
+    }
+    if let Some(ceiling) = throttling {
+        statement.cond_where(admitted_by(SubscriptionDeliveryState::LastNotification, ceiling));
+    }
+    statement
 }
 
 /// The `UPDATE` counting a notification at its claim on the `owner` row,
@@ -323,6 +332,17 @@ mod tests {
             SlotClaimStatement::Stamping(statement) => statement.to_string(PostgresQueryBuilder),
             SlotClaimStatement::Checking(statement) => statement.to_string(PostgresQueryBuilder),
         }
+    }
+
+    /// A probe reads the throttling and cooldown windows and writes nothing.
+    #[test]
+    fn an_unstamped_claim_selects_under_both_windows_and_updates_nothing() {
+        let cooldown = PositiveMilliseconds::try_from(2_000).expect("positive");
+        let sql = claim_sql(StoredKind::Entity, NotificationSlotGate::at(instant(30), THROTTLED, Some(cooldown)).unstamped());
+        assert!(sql.starts_with("SELECT NOW()"), "{sql}");
+        assert!(!sql.contains("UPDATE"), "{sql}");
+        assert!(sql.contains("last_notification"), "{sql}");
+        assert!(sql.contains("last_failure"), "{sql}");
     }
 
     fn outcome_sql(outcome: NotificationOutcome, record: OutcomeRecord) -> String {

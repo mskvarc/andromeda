@@ -50,6 +50,14 @@ pub enum NotificationStamp {
         /// Latest `last_notification` that still permits a claim.
         ceiling: DateTime<Utc>,
     },
+    /// Never: the claim only reads whether a `throttling` window and the
+    /// endpoint's `cooldown` would admit a notification, and moves nothing,
+    /// so a notification that is not going to be sent takes no slot. A
+    /// `ceiling` of `None` is an unthrottled subscription.
+    Unstamped {
+        /// Latest `last_notification` that still permits a claim.
+        ceiling: Option<DateTime<Utc>>,
+    },
     /// At the claim, before the notification is sent, with `tick` recorded as
     /// the sweep instant the notification answers the `timeInterval` grid at
     /// (clause 5.8.6).
@@ -92,6 +100,26 @@ impl NotificationSlotGate {
         NotificationSlotGate {
             notification,
             last_failure: ceiling_for_cooldown(now, cooldown),
+        }
+    }
+}
+
+impl NotificationSlotGate {
+    /// This gate with its stamping removed: it refuses exactly what `self`
+    /// refuses and takes no slot.
+    ///
+    /// Used to ask whether a notification that cannot be built would have
+    /// been sent, so that a failure is recorded only for a notification the
+    /// subscription was entitled to.
+    #[must_use]
+    pub const fn unstamped(self) -> NotificationSlotGate {
+        let ceiling = match self.notification {
+            NotificationStamp::Throttled { ceiling } | NotificationStamp::Unstamped { ceiling: Some(ceiling) } => Some(ceiling),
+            NotificationStamp::WithOutcome | NotificationStamp::Periodic { .. } | NotificationStamp::Unstamped { ceiling: None } => None,
+        };
+        NotificationSlotGate {
+            notification: NotificationStamp::Unstamped { ceiling },
+            last_failure: self.last_failure,
         }
     }
 }
@@ -209,6 +237,30 @@ mod tests {
         }
         let disabled = NotificationCadence::OnChange { throttling_secs: Some(0.0) };
         pretty_assertions::assert_eq!(NotificationSlotGate::at(now, disabled, None).notification, NotificationStamp::WithOutcome);
+        Ok(())
+    }
+
+    /// Removing the stamping keeps the ceilings, so the probe refuses what the
+    /// claim would have refused.
+    #[test]
+    fn an_unstamped_gate_keeps_both_ceilings_and_stamps_nothing() -> Result<(), &'static str> {
+        let now = Utc.timestamp_opt(1_000, 0).single().ok_or("the fixture timestamp must be valid")?;
+        let cooldown = PositiveMilliseconds::try_from(2_000).map_err(|_error| "a positive millisecond count")?;
+        let throttling = NotificationCadence::OnChange { throttling_secs: Some(5.0) };
+
+        let gate = NotificationSlotGate::at(now, throttling, Some(cooldown)).unstamped();
+        pretty_assertions::assert_eq!(
+            gate.notification,
+            NotificationStamp::Unstamped {
+                ceiling: Some(now - Duration::seconds(5))
+            }
+        );
+        pretty_assertions::assert_eq!(gate.last_failure, Some(now - Duration::milliseconds(2_000)));
+
+        pretty_assertions::assert_eq!(
+            NotificationSlotGate::at(now, UNTHROTTLED, None).unstamped().notification,
+            NotificationStamp::Unstamped { ceiling: None }
+        );
         Ok(())
     }
 }

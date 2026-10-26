@@ -1,12 +1,12 @@
 //! Periodic (`timeInterval`) entity notification evaluation (clause 5.8.6).
 
 use crate::{
-    claimed_notification_context::claimed_notification_context,
     error::NotificationError,
     interval_candidates::IntervalCandidates,
     interval_match::matching_entities,
     interval_payload::PeriodicPayload,
     notification_outcome::notification_outcome,
+    resolved_notification_context::claimed_notification_context,
 };
 use andromeda_context_space::{context_target::ContextTarget, snapshot_target::SnapshotTarget};
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};

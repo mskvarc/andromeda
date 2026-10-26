@@ -13,10 +13,11 @@ use crate::{
         compiled_transport,
         payload::{NotificationBuildParams, build_notification_data, cache::NotificationCompactionCache},
     },
+    resolved_notification_context::{UnclaimedContext, unclaimed_notification_context},
 };
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_context_space::{context_target::ContextTarget, snapshot_target::SnapshotTarget};
-use andromeda_delivery::{dispatch::DeliveryResult, notification_context::NotificationContext, request::NotificationDelivery};
+use andromeda_delivery::{dispatch::DeliveryResult, request::NotificationDelivery};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_render::{geometry_selection::GeometrySelection, notification_data::DataShape};
@@ -26,7 +27,7 @@ use andromeda_subscription::{
 };
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 /// The committed change every subscription matched by it is notified of.
 ///
@@ -62,15 +63,25 @@ impl NotificationProcessor {
     /// notification.
     pub(super) async fn notify_subscription(&self, compiled_sub: &CompiledSubscription, change: &NotifiedChange<'_>) -> Option<DeliveryResult> {
         let subscription_id = &compiled_sub.id;
-        let record = match self
-            .sub_repo
-            .claim_notification_slot(
-                change.target,
-                subscription_id,
-                NotificationSlotGate::at(Utc::now(), compiled_sub.cadence(), compiled_sub.endpoint_cooldown),
-            )
-            .await
+        let gate = NotificationSlotGate::at(Utc::now(), compiled_sub.cadence(), compiled_sub.endpoint_cooldown);
+        // Clause 5.5.6: a `jsonldContext` that cannot be loaded names no context
+        // this notification can be rendered under. It is resolved before the
+        // slot is claimed so that failure takes no throttling slot.
+        let context = match unclaimed_notification_context(
+            &self.engine,
+            compiled_sub.jsonld_context.as_ref(),
+            self.sub_repo.as_ref(),
+            change.target,
+            subscription_id,
+            gate,
+        )
+        .await
         {
+            UnclaimedContext::Resolved(context) => context,
+            UnclaimedContext::Failed => return Some(DeliveryResult::RetryableFailure),
+            UnclaimedContext::Suppressed => return None,
+        };
+        let record = match self.sub_repo.claim_notification_slot(change.target, subscription_id, gate).await {
             Ok(NotificationSlot::Claimed(record)) => record,
             Ok(NotificationSlot::Suppressed) => return None,
             Err(error) => {
@@ -84,16 +95,6 @@ impl NotificationProcessor {
         };
         let Some(endpoint_transport) = compiled_transport(compiled_sub) else {
             return Some(DeliveryResult::TerminalFailure);
-        };
-        // Clause 5.5.6: a `jsonldContext` that cannot be loaded names no context
-        // this notification can be rendered under; the document may be reachable
-        // again on a later attempt.
-        let context = match NotificationContext::resolve(compiled_sub.jsonld_context.as_ref(), &self.engine).await {
-            Ok(context) => context,
-            Err(error) => {
-                warn!("the jsonldContext of subscription {} cannot be loaded: {}", subscription_id, error);
-                return Some(DeliveryResult::RetryableFailure);
-            }
         };
         let delivery = NotificationDelivery::builder()
             .endpoint_uri(&compiled_sub.endpoint_uri)
