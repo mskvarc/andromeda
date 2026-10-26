@@ -29,9 +29,9 @@ dashmap = { version = "6.2.1", features = ["inline"] }
 derive_more = { version = "2.1.1", features = ["debug", "deref", "display", "from"] }
 headers = "0.4.2"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
-jsonld = { version = "0.25.0", features = ["expandable-chrono", "reqwest", "serde", "vocab"] }
-jsonld-core = "0.25.0"
-jsonld-syntax = "0.25.0"
+jsonld = { version = "0.26.0", features = ["expandable-chrono", "reqwest", "serde", "vocab"] }
+jsonld-core = "0.26.0"
+jsonld-syntax = "0.26.0"
 jstrict = "0.16.0"
 mediatype = "0.23.0"
 moka = { version = "0.12.16", features = ["future"] }

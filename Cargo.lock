@@ -4985,9 +4985,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld"
-version = "0.25.0"
+version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bcecbf768c80a03e6210147bc167836cd0b070b658072170886ade8ffbb1c7c"
+checksum = "a8b73c1d47e22ec7f6f7ba2ab6d928228f396fc5e25f647ee3a5c72ea221cbed"
 dependencies = [
  "contextual",
  "iri-rs",
@@ -5007,9 +5007,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-compaction"
-version = "0.25.0"
+version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a90928e2b1083614ae9d709ab0e9787f3c01cf02ffcc55eb48519f0525379dc"
+checksum = "205b713f9097cf83fef339da0ac861a5e110b60e8c3cf9a3943c09b0018a354c"
 dependencies = [
  "contextual",
  "derive-where",
@@ -5025,25 +5025,25 @@ dependencies = [
 
 [[package]]
 name = "jsonld-context-processing"
-version = "0.25.0"
+version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4af3ff5189c878446552b9df0819b8cb01e7f4dc7a882f6c2ba7e00b8650de20"
+checksum = "3ed1b5e5fb760549f49def7e09ee332fcc8b70f3bb222337db2340b364bdce2d"
 dependencies = [
  "contextual",
  "foldhash",
  "iri-rs",
  "jsonld-core",
  "jsonld-syntax",
- "parking_lot 0.12.5",
+ "parking_lot 0.13.0",
  "rdfx",
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "jsonld-core"
-version = "0.25.0"
+version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4edbbd84d7a9bfca3a385c4c7d1e3addcc1bbad853d222c406b0374d0ce5e77"
+checksum = "63731f85f96bd271a1f7cbec99f9cba2c9b2a3bf3ca8ba8a50aacddf78289bab"
 dependencies = [
  "contextual",
  "derive-where",
@@ -5058,7 +5058,7 @@ dependencies = [
  "log",
  "mediatype",
  "once_cell",
- "parking_lot 0.12.5",
+ "parking_lot 0.13.0",
  "pretty_dtoa",
  "rdfx",
  "reqwest",
@@ -5073,9 +5073,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-expandable"
-version = "0.25.0"
+version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f82d2f53d0a1d662a8ede1fdbf0750a4c7b3eba035ea080503603da0b1f27ce"
+checksum = "ba1b298f48fd83eba5527548b51a0a43018b8f662c710953b8602795a493971e"
 dependencies = [
  "jsonld-expandable-core",
  "proc-macro-crate",
@@ -5086,9 +5086,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-expandable-core"
-version = "0.25.0"
+version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aca320b373f93ed4c632f25e3c0ac550c2bf29a209bf56806a0aee72ad765a12"
+checksum = "644f9d8fe02040e0b32297153e5b7a4887ce509a9e65100158b395a1118ce1f1"
 dependencies = [
  "chrono",
  "proc-macro2",
@@ -5098,9 +5098,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-expansion"
-version = "0.25.0"
+version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4104336db4e5c93379987f8e41d9f275781f8023ecfa3efa2e539b6090f5d469"
+checksum = "85840f13b50f7433c9db530c82497a056aed154a5a2bee7edee2b2e25d25ffbb"
 dependencies = [
  "contextual",
  "jsonld-context-processing",
@@ -5115,9 +5115,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-serialization"
-version = "0.25.0"
+version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0786883771fb646416cca47d6d8e89b9d3f6c86fb1decc8d0fc2445ec5aff199"
+checksum = "4c20e9400f5a050b033a20237001b733f80329c097167dbf21c4926bfbe3f3df"
 dependencies = [
  "iri-rs",
  "jsonld-core",
@@ -5130,9 +5130,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-syntax"
-version = "0.25.0"
+version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "620e6d3ac1aca488d1065a9108b343a8d3314ea289b1f500ac00de0240a65f6d"
+checksum = "76070cd986d93980dc64fbde1f157e3b33b694bbdc19694de83747d66898feff"
 dependencies = [
  "contextual",
  "hashbrown 0.17.1",
@@ -5149,9 +5149,9 @@ dependencies = [
 
 [[package]]
 name = "jsonld-vocab"
-version = "0.25.0"
+version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1954b5649b5b8a9239517a928853289cb98a33a6d307c03edaacb01c8eda3099"
+checksum = "78a7cf3ca48a4b98bcf6ec1bc7c2b3aeca4f9df94ed679eeb1e3a32e34ffcf4f"
 dependencies = [
  "heck 0.5.0",
  "proc-macro-crate",

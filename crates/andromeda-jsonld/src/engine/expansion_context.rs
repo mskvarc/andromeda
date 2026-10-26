@@ -43,7 +43,6 @@ use rdfx::{BlankIdBuf, vocabulary::no_vocabulary_mut};
 use std::{
     collections::HashMap,
     sync::{Arc, LazyLock},
-    time::Duration,
 };
 
 /// How many distinct processed contexts are kept.
@@ -52,22 +51,16 @@ use std::{
 /// set is a handful of entries.
 const CAPACITY: u64 = 16;
 
-/// How long one processed context is kept.
-///
-/// The active context memoizes every term it expands, so a context kept forever
-/// would accumulate one entry per attribute name ever written. Dropping it
-/// periodically bounds that at the price of processing the core context again
-/// once per period.
-const TIME_TO_LIVE: Duration = Duration::from_secs(600);
-
 /// Processed contexts built only from documents embedded in the broker, keyed
 /// by the resolved `@context` they were processed from.
 ///
 /// Process-wide rather than per engine: an embedded core context is the same
 /// document for every engine of the process, and no engine can make a core
-/// context URL resolve to anything else.
+/// context URL resolve to anything else. Kept for the life of the process: the
+/// term memo of each kept context is capped, so its size does not grow with the
+/// attribute names written.
 static EMBEDDED_CONTEXTS: LazyLock<Cache<Arc<str>, Arc<ExpansionContext>>> =
-    LazyLock::new(|| Cache::builder().max_capacity(CAPACITY).time_to_live(TIME_TO_LIVE).build());
+    LazyLock::new(|| Cache::builder().max_capacity(CAPACITY).build());
 
 /// The active context one request is expanded under.
 #[derive(derive_more::Debug)]
@@ -317,6 +310,23 @@ mod tests {
             Term::Id(Id::Valid(id)) => id.to_string(),
             Term::Null | Term::Id(Id::Invalid(_)) | Term::Keyword(_) => panic!("{term} expands to no IRI"),
         }
+    }
+
+    #[tokio::test]
+    async fn the_shared_core_contexts_term_memo_stays_capped_under_more_distinct_terms_than_the_cap() {
+        let engine = offline_engine();
+        let context = engine.expansion_context(&ContextSpec::none()).await.expect("the core context processes");
+
+        for i in 0..2 * jsonld::context::MAX_ENTRIES {
+            key_iri(context.active(), &format!("attribute{i}"));
+        }
+
+        let memoised = context.active().term_resolution_cache().len();
+        assert!(
+            memoised > 0 && memoised <= jsonld::context::MAX_ENTRIES,
+            "the term memo holds {memoised} entries"
+        );
+        pretty_assertions::assert_eq!(key_iri(context.active(), "location"), "https://uri.etsi.org/ngsi-ld/location");
     }
 
     #[tokio::test]

@@ -24,7 +24,7 @@ chrono = "0.4.45"
 compact_str = "0.10.0"
 indexmap = "2.14.2"
 iri-rs = "3.4.1"
-jsonld = "0.25.0"
+jsonld = "0.26.0"
 langtag = "1.1.0"
 rdfx = "0.24.0"
 serde = "1.0.229"
@@ -35,7 +35,7 @@ thiserror = "2.0.21"
 [dev-dependencies]
 allocation-counter = "0.8.1"
 andromeda-architecture-checks.workspace = true
-jsonld = { version = "0.25.0", features = ["serde-json"] }
+jsonld = { version = "0.26.0", features = ["serde-json"] }
 pretty_assertions = "1.4.1"
 serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread"] }

@@ -15,7 +15,7 @@ andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 derive_more = { version = "2.1.1", features = ["display"] }
-jsonld-syntax = "0.25.0"
+jsonld-syntax = "0.26.0"
 serde ={ version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["arbitrary_precision", "raw_value"] }
 strum = { version = "0.28.0", features = ["derive"] }
