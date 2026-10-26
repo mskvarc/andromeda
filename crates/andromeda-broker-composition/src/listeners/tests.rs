@@ -112,6 +112,7 @@ async fn one_long_query_is_served_or_refused_identically_over_http11_http2_and_h
         ..ServerConfig::default()
     };
     let limit = server.max_request_header_section;
+    let policy = server.close_policy();
     let mut identity = SharedTlsIdentity::new(&tls);
     let security = identity.tcp_security(ListenerTransport::Tls)?;
     let feed = identity.quic_feed()?;
@@ -131,7 +132,7 @@ async fn one_long_query_is_served_or_refused_identically_over_http11_http2_and_h
     let quic = endpoint::bind(&feed, SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?;
     let quic_address = quic.local_addr()?;
     let (quic_stop, quic_stopped) = oneshot::channel::<()>();
-    let quic_server = tokio::spawn(serve_endpoint(quic, feed, router, limit, async move {
+    let quic_server = tokio::spawn(serve_endpoint(quic, feed, router, limit, policy, async move {
         let _ = quic_stopped.await;
     }));
 

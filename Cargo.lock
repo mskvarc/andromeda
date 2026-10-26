@@ -1060,6 +1060,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration-scalars",
+ "andromeda-http-server",
  "andromeda-server-tls",
  "axum",
  "bytes",

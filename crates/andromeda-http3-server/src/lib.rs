@@ -28,7 +28,7 @@ mod test_support;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
-    allow_workspace_dependencies: ["andromeda-configuration-scalars", "andromeda-server-tls"],
+    allow_workspace_dependencies: ["andromeda-configuration-scalars", "andromeda-http-server", "andromeda-server-tls"],
     allow_workspace_dev_dependencies: ["andromeda-server-tls"],
     allow_production_dependencies: ["axum", "tokio"],
 }

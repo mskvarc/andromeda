@@ -7,20 +7,30 @@
 //! certificate, a changed client CA -- is installed on the endpoint, so new
 //! connections present it while open ones keep the session they negotiated.
 //! Serving ends when the supplied shutdown future resolves, after which
-//! in-flight connections are given until the endpoint goes idle to finish.
+//! open connections announce their close and are given the shared close
+//! policy's drain deadline to finish.
 
-use crate::{quic_crypto::quic_server_config, request_loop::accept_connections};
+use crate::{
+    quic_crypto::quic_server_config,
+    request_loop::{Drain, accept_connections},
+};
 use andromeda_configuration_scalars::header_section_limit::HeaderSectionLimit;
+use andromeda_http_server::close_policy::ClosePolicy;
 use andromeda_server_tls::server_config_feed::ServerConfigFeed;
 use axum::Router;
 use h3_util::quinn::H3QuinnAcceptor;
-use quinn::Endpoint;
+use quinn::{Endpoint, VarInt};
 use std::{
     convert::Infallible,
     future::{Future, pending},
     io,
+    time::Duration,
 };
 use thiserror::Error;
+
+/// The application error code `H3_NO_ERROR` (RFC 9114 section 8.1) a drained
+/// endpoint closes its remaining connections with.
+const H3_NO_ERROR: VarInt = VarInt::from_u32(0x100);
 
 /// Failure while serving HTTP/3.
 #[derive(Debug, Error)]
@@ -35,6 +45,12 @@ pub enum Http3ServeError {
     /// instead.
     #[error("HTTP/3 connection accept loop failed")]
     Serve,
+    /// Connections were still open once the drain deadline passed and were cut off.
+    #[error("HTTP/3 connections did not drain before the configured deadline")]
+    DrainDeadlineExceeded {
+        /// The drain deadline the connections overran.
+        deadline: Duration,
+    },
 }
 
 /// Serve `router` over the bound QUIC `endpoint` until `shutdown` resolves,
@@ -44,19 +60,23 @@ pub enum Http3ServeError {
 /// (see [`crate::request_loop`]).
 ///
 /// After the shutdown future resolves the accept loop stops taking new
-/// connections and the endpoint is awaited idle, letting connections already in
-/// flight complete before the function returns.
+/// connections, every open connection announces its close, and requests
+/// already accepted get until `policy`'s drain deadline to complete. What is
+/// still open then is cut off, and the endpoint is awaited idle before the
+/// function returns.
 ///
 /// # Errors
 ///
 /// Returns [`Http3ServeError::LocalAddress`] when the endpoint's address cannot
-/// be read for logging, and [`Http3ServeError::Serve`] when the accept loop
-/// fails.
+/// be read for logging, [`Http3ServeError::Serve`] when the accept loop fails,
+/// and [`Http3ServeError::DrainDeadlineExceeded`] when connections were still
+/// open at the drain deadline.
 pub async fn serve_endpoint<F>(
     endpoint: Endpoint,
     feed: ServerConfigFeed,
     router: Router,
     limit: HeaderSectionLimit,
+    policy: ClosePolicy,
     shutdown: F,
 ) -> Result<(), Http3ServeError>
 where
@@ -69,14 +89,30 @@ where
     // await the endpoint idle once serving stops.
     let acceptor = H3QuinnAcceptor::new(endpoint.clone());
     let result = tokio::select! {
-        result = accept_connections(acceptor, router, limit, shutdown) => result,
+        result = accept_connections(acceptor, router, limit, policy, shutdown) => result,
         never = install_rotations(&endpoint, feed) => match never {},
     };
-    endpoint.wait_idle().await;
-    result.map_err(|error| {
-        tracing::error!(error = %error, "HTTP/3 connection accept loop failed");
-        Http3ServeError::Serve
-    })
+    let drain = match result {
+        Ok(drain) => drain,
+        Err(error) => {
+            tracing::error!(error = %error, "HTTP/3 connection accept loop failed");
+            endpoint.wait_idle().await;
+            return Err(Http3ServeError::Serve);
+        }
+    };
+    match drain {
+        Drain::Complete => {
+            endpoint.wait_idle().await;
+            Ok(())
+        }
+        Drain::DeadlineExceeded => {
+            endpoint.close(H3_NO_ERROR, b"drain deadline");
+            endpoint.wait_idle().await;
+            Err(Http3ServeError::DrainDeadlineExceeded {
+                deadline: policy.drain_deadline,
+            })
+        }
+    }
 }
 
 /// Install every configuration `feed` rebuilds on `endpoint`, for as long as
@@ -115,6 +151,7 @@ mod tests {
         test_support::QuicIdentity,
     };
     use andromeda_configuration_scalars::header_section_limit::HeaderSectionLimit;
+    use andromeda_http_server::close_policy::ClosePolicy;
     use andromeda_server_tls::test_identity::authority::TestAuthority;
     use axum::{
         Router,
@@ -128,6 +165,7 @@ mod tests {
     use std::{
         collections::HashMap,
         error::Error,
+        future::pending,
         net::{Ipv4Addr, SocketAddr},
         sync::Arc,
         time::{Duration, Instant},
@@ -135,13 +173,19 @@ mod tests {
     use tokio::{
         sync::{Notify, oneshot},
         task::JoinHandle,
-        time::sleep,
+        time::{sleep, timeout},
     };
     use tower::Layer;
     use tower_http::normalize_path::NormalizePathLayer;
 
     /// The request header section limit every fixture listener runs under.
     const LIMIT: HeaderSectionLimit = HeaderSectionLimit::MINIMUM;
+
+    /// The close policy every fixture listener runs under unless a test sets its own.
+    const POLICY: ClosePolicy = ClosePolicy {
+        drain_deadline: Duration::from_secs(5),
+        announced_close_delay: Duration::from_millis(200),
+    };
 
     /// A router exercising the request and response shapes an HTTP/3 client cares about.
     fn test_router() -> Router {
@@ -194,7 +238,7 @@ mod tests {
             let endpoint = bind(identity.feed(), SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?;
             let address = endpoint.local_addr()?;
             let (shutdown_sender, shutdown_receiver) = oneshot::channel();
-            let handle = tokio::spawn(serve_endpoint(endpoint, identity.feed().clone(), router, LIMIT, async move {
+            let handle = tokio::spawn(serve_endpoint(endpoint, identity.feed().clone(), router, LIMIT, POLICY, async move {
                 let _ = shutdown_receiver.await;
             }));
             Ok(RunningListener {
@@ -389,7 +433,7 @@ mod tests {
         let endpoint = bind(identity.feed(), SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?;
         let address = endpoint.local_addr()?;
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
-        let server = tokio::spawn(serve_endpoint(endpoint, identity.feed().clone(), router, LIMIT, async move {
+        let server = tokio::spawn(serve_endpoint(endpoint, identity.feed().clone(), router, LIMIT, POLICY, async move {
             let _ = shutdown_receiver.await;
         }));
 
@@ -412,6 +456,95 @@ mod tests {
         coordinator.await?;
         client.close().await;
         server.await??;
+        Ok(())
+    }
+
+    /// Start `router` under `policy`.
+    fn start_under(router: Router, policy: ClosePolicy) -> Result<RunningListener, Box<dyn Error + Send + Sync>> {
+        let identity = QuicIdentity::anonymous()?;
+        let endpoint = bind(identity.feed(), SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?;
+        let address = endpoint.local_addr()?;
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel();
+        let handle = tokio::spawn(serve_endpoint(endpoint, identity.feed().clone(), router, LIMIT, policy, async move {
+            let _ = shutdown_receiver.await;
+        }));
+        Ok(RunningListener {
+            identity,
+            address,
+            shutdown: Some(shutdown_sender),
+            handle,
+        })
+    }
+
+    #[tokio::test]
+    async fn a_request_still_running_at_the_drain_deadline_is_cut_off() -> Result<(), Box<dyn Error + Send + Sync>> {
+        let started = Arc::new(Notify::new());
+        let handler_started = Arc::clone(&started);
+        let router = Router::new().route(
+            "/stuck",
+            get(move || {
+                let started = Arc::clone(&handler_started);
+                async move {
+                    started.notify_one();
+                    pending::<()>().await;
+                    "never"
+                }
+            }),
+        );
+        let deadline = Duration::from_millis(300);
+        let policy = ClosePolicy {
+            drain_deadline: deadline,
+            announced_close_delay: Duration::from_millis(100),
+        };
+        let mut running = start_under(router, policy)?;
+        let address = running.address;
+        let mut client = running.dial().await?;
+        let stuck = tokio::spawn(async move {
+            client
+                .send(request(Method::GET, address.port(), "/stuck")?, &[])
+                .await
+                .map(|response| response.status)
+        });
+        started.notified().await;
+        let shutdown_at = Instant::now();
+        if let Some(sender) = running.shutdown.take() {
+            let _ = sender.send(());
+        }
+        let outcome = timeout(Duration::from_secs(5), &mut running.handle).await??;
+        assert!(
+            matches!(outcome, Err(Http3ServeError::DrainDeadlineExceeded { deadline: reported }) if reported == deadline),
+            "{outcome:?}"
+        );
+        assert!(
+            shutdown_at.elapsed() < Duration::from_secs(3),
+            "the stuck request held the server open past its deadline"
+        );
+        assert!(stuck.await?.is_err(), "the cut-off request must not complete");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_idle_connection_is_told_to_close_and_does_not_hold_the_drain_open() -> Result<(), Box<dyn Error + Send + Sync>> {
+        let policy = ClosePolicy {
+            drain_deadline: Duration::from_secs(5),
+            announced_close_delay: Duration::from_millis(100),
+        };
+        let mut running = start_under(test_router(), policy)?;
+        let address = running.address;
+        let mut client = running.dial().await?;
+        if let Some(sender) = running.shutdown.take() {
+            let _ = sender.send(());
+        }
+        let started = Instant::now();
+        let outcome = timeout(Duration::from_secs(3), &mut running.handle).await??;
+        assert!(outcome.is_ok(), "{outcome:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "an idle connection must close at the announced-close delay, not the drain deadline"
+        );
+        let after = client.send(request(Method::GET, address.port(), "/probe")?, &[]).await;
+        assert!(after.is_err(), "a closing connection accepts no new request");
+        client.close().await;
         Ok(())
     }
 

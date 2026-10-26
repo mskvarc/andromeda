@@ -8,6 +8,7 @@
 //! reaches the router.
 
 use andromeda_configuration_scalars::header_section_limit::HeaderSectionLimit;
+use andromeda_http_server::close_policy::ClosePolicy;
 use axum::{
     Router,
     body::{Body, Bytes},
@@ -20,35 +21,78 @@ use h3_util::{
     server::H3Acceptor,
     server_body::{H3IncomingServer, send_h3_server_body},
 };
-use std::future::Future;
+use std::{future::Future, time::Duration};
+use tokio::{sync::watch, task::JoinSet, time::timeout};
 use tower::ServiceExt;
 
+/// How a drain after shutdown ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Drain {
+    /// Every connection finished before the drain deadline.
+    Complete,
+    /// Connections were still open at the drain deadline and were cut off.
+    DeadlineExceeded,
+}
+
 /// Accept connections from `acceptor` and serve each on its own task until
-/// `shutdown` resolves or the endpoint closes.
+/// `shutdown` resolves or the endpoint closes, then drain them.
+///
+/// Draining announces the close on every open connection with a GOAWAY frame
+/// (RFC 9114 section 5.2), lets the requests already accepted finish, and
+/// cuts off whatever is still open once `policy`'s drain deadline has passed.
 ///
 /// # Errors
 ///
 /// Returns the acceptor's type-erased failure when accepting fails.
-pub(crate) async fn accept_connections<F>(mut acceptor: H3QuinnAcceptor, router: Router, limit: HeaderSectionLimit, shutdown: F) -> Result<(), h3_util::Error>
+pub(crate) async fn accept_connections<F>(
+    mut acceptor: H3QuinnAcceptor,
+    router: Router,
+    limit: HeaderSectionLimit,
+    policy: ClosePolicy,
+    shutdown: F,
+) -> Result<Drain, h3_util::Error>
 where
     F: Future<Output = ()>,
 {
+    let (draining, drain_signal) = watch::channel(());
+    let mut connections = JoinSet::new();
     tokio::pin!(shutdown);
     loop {
         let accepted = tokio::select! {
             accepted = acceptor.accept() => accepted?,
-            () = &mut shutdown => return Ok(()),
+            () = &mut shutdown => break,
+            Some(_finished) = connections.join_next(), if !connections.is_empty() => continue,
         };
         let Some(connection) = accepted else {
-            return Ok(());
+            break;
         };
         // clone: every connection dispatches to the one shared router.
-        tokio::spawn(serve_connection(connection, router.clone(), limit));
+        connections.spawn(serve_connection(
+            connection,
+            router.clone(),
+            limit,
+            drain_signal.clone(),
+            policy.announced_close_delay,
+        ));
+    }
+    draining.send_replace(());
+    let finished = timeout(policy.drain_deadline, async { while connections.join_next().await.is_some() {} }).await;
+    match finished {
+        Ok(()) => Ok(Drain::Complete),
+        Err(_elapsed) => {
+            connections.abort_all();
+            Ok(Drain::DeadlineExceeded)
+        }
     }
 }
 
 /// Serve every request `connection` carries, each on its own task.
-async fn serve_connection(connection: Connection, router: Router, limit: HeaderSectionLimit) {
+///
+/// When `draining` fires the connection announces its close and finishes its
+/// accepted requests. Once none is left it waits up to `linger` for the peer
+/// to close first, so a response already written is not cut off by a close
+/// that outruns it.
+async fn serve_connection(connection: Connection, router: Router, limit: HeaderSectionLimit, mut draining: watch::Receiver<()>, linger: Duration) {
     let mut connection = match server::builder()
         .max_field_section_size(u64::from(limit.octets()))
         .build::<Connection, Bytes>(connection)
@@ -60,21 +104,45 @@ async fn serve_connection(connection: Connection, router: Router, limit: HeaderS
             return;
         }
     };
+    let mut requests = JoinSet::new();
+    let mut announced = false;
     loop {
-        match connection.accept().await {
-            Ok(Some(resolver)) => {
-                // clone: every request dispatches to the one shared router.
-                tokio::spawn(serve_request(resolver, router.clone()));
-            }
-            Ok(None) => break,
-            Err(error) => {
-                if !error.is_h3_no_error() {
-                    tracing::warn!(error = %error, "HTTP/3 connection ended with an error");
+        if announced && requests.is_empty() {
+            let _closed_by_peer = timeout(linger, wait_for_peer_close(&mut connection)).await;
+            return;
+        }
+        tokio::select! {
+            accepted = connection.accept() => match accepted {
+                Ok(Some(resolver)) => {
+                    // clone: every request dispatches to the one shared router.
+                    requests.spawn(serve_request(resolver, router.clone()));
                 }
-                break;
+                Ok(None) => return,
+                Err(error) => {
+                    if !error.is_h3_no_error() {
+                        tracing::warn!(error = %error, "HTTP/3 connection ended with an error");
+                    }
+                    return;
+                }
+            },
+            Some(_finished) = requests.join_next(), if !requests.is_empty() => {}
+            _changed = draining.changed(), if !announced => {
+                announced = true;
+                if let Err(error) = connection.shutdown(0).await {
+                    tracing::warn!(error = %error, "HTTP/3 close announcement failed");
+                    return;
+                }
             }
         }
     }
+}
+
+/// Resolve once the peer has closed `connection` or finished its side of it.
+///
+/// A connection that announced its close accepts no further request, so
+/// anything it yields before the peer closes is dropped.
+async fn wait_for_peer_close(connection: &mut server::Connection<Connection, Bytes>) {
+    while let Ok(Some(_resolver)) = connection.accept().await {}
 }
 
 /// Read one request, answer it from `router` and stream the response back.

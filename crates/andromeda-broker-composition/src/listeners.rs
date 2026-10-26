@@ -131,7 +131,14 @@ pub async fn serve(
 
     if let (Some(feed), Some(router)) = (quic_feed, h3_router) {
         let endpoint = endpoint::bind(&feed, address)?;
-        let http3 = serve_endpoint(endpoint, feed, router, config.server.max_request_header_section, wait_for(&shutdown_token));
+        let http3 = serve_endpoint(
+            endpoint,
+            feed,
+            router,
+            config.server.max_request_header_section,
+            config.server.close_policy(),
+            wait_for(&shutdown_token),
+        );
         listeners.push(Box::pin(async move { http3.await.map_err(ListenerError::from) }));
     }
 

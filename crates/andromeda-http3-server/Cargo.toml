@@ -16,6 +16,7 @@ workspace = true
 
 [dependencies]
 andromeda-configuration-scalars.workspace = true
+andromeda-http-server.workspace = true
 andromeda-server-tls.workspace = true
 axum = "0.8.9"
 h3 = "0.0.8"
@@ -26,7 +27,7 @@ rustls = { version = "0.23.46", default-features = false, features = ["aws_lc_rs
 serde = { version = "1.0.229", features = ["derive"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
-tokio = { version = "1.54.1", features = ["macros", "net", "rt"] }
+tokio = { version = "1.54.1", features = ["macros", "net", "rt", "sync", "time"] }
 toml = "1.1.8"
 toml-comment = "0.3.0"
 tower = { version = "0.5.3", features = ["util"] }
